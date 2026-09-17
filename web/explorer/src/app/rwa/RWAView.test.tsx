@@ -360,7 +360,9 @@ describe('RWAView', () => {
     expect(
       screen.getByText(/statement from a primary source/),
     ).toBeInTheDocument();
-    expect(screen.getByText('bond, commodity, realestate, stock')).toBeInTheDocument();
+    expect(
+      screen.getByText('bond, commodity, realestate, stock'),
+    ).toBeInTheDocument();
   });
 
   it('omits the contract-class clause entirely when the server publishes no contract vocabulary', async () => {
@@ -1582,5 +1584,102 @@ describe('sumStablecoins', () => {
     expect(
       sumStablecoins([{ listing_valuation: { status: 'no_supply' } }]),
     ).toEqual({ total: null, valued: 0, unvalued: 1, listingPriced: 0 });
+  });
+
+  it('renders the curated arm apart: three figures, the curator-only badge, and an unchanged verified headline', async () => {
+    const VUME = 'CBUBVYRKTQLMDRUBPP6SH4GO33KZCEEYBIWB5AWNGKODP4A6KPKM2VJ4';
+    apiGetData.mockResolvedValue(
+      view({
+        curated_assets: [
+          {
+            ...asset(),
+            asset_id: VUME,
+            code: '',
+            issuer: '',
+            contract_id: VUME,
+            symbol: 'TPT30',
+            slug: VUME,
+            name: 'VuMe Bond 2030',
+            basis: 'third_party_curated',
+            recognition: 'third_party_curator',
+            anchor_class: undefined,
+            anchor_asset: undefined,
+            curator: {
+              curator: 'dune:stellar',
+              company: 'Realiz',
+              subclass: 'Corporate Credit',
+              also_verified: false,
+            },
+            reference: {
+              price_usd: '1.1174',
+              source: 'dune',
+              feed: 'dune:stellar',
+              quote: 'fiat:USD',
+              as_of: '2026-09-16T00:00:00Z',
+              stale: false,
+              provenance: 'curator_uploaded_price',
+            },
+            reference_valuation: {
+              status: 'published',
+              value_usd: '558700000.00',
+            },
+            premium: { status: 'reference_is_a_listing_price' },
+          },
+        ],
+        curated: {
+          curator: 'dune:stellar',
+          status: 'served',
+          assets: 1,
+          also_verified: 0,
+          assets_valued: 1,
+          additional_value_usd: '558700000.00',
+          combined_value_usd: '560024956.69',
+          verified_value_usd: '1324956.69',
+          census: { entries: 1, priced: 1, stale: 0 },
+          basis:
+            'Rows a named third-party curator lists as tokenized real-world assets on Stellar. Nothing here is verified by this index.',
+        },
+      }),
+    );
+    renderView();
+    expect(
+      await screen.findByText(/As a third-party curator counts it/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Counted by the curator, not verified here'),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('$558,700,000.00').length).toBeGreaterThan(0);
+    expect(screen.getByText('$560,024,956.69')).toBeInTheDocument();
+    expect(screen.getByText('No — curator only')).toBeInTheDocument();
+    expect(screen.getByText('Realiz')).toBeInTheDocument();
+    // The verified headline is the verified figure, untouched by the
+    // curated row beside it.
+    expect(screen.getAllByText('$1,324,956.69').length).toBeGreaterThan(0);
+    expect(
+      screen.queryByText('$560,024,956.69', {
+        selector: '.text-3xl, .text-4xl',
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('renders no curated panel when the deployment has no curated reader', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        curated: {
+          curator: 'dune:stellar',
+          status: 'unwired',
+          assets: 0,
+          also_verified: 0,
+          assets_valued: 0,
+          census: { entries: 0, priced: 0, stale: 0 },
+          basis: '',
+        },
+      }),
+    );
+    renderView();
+    await screen.findByText(/The set/);
+    expect(
+      screen.queryByText(/As a third-party curator counts it/),
+    ).not.toBeInTheDocument();
   });
 });

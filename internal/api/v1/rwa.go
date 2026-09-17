@@ -107,6 +107,13 @@ type RWAAssetsView struct {
 	// admitted on the oracle basis declare no class and are grouped
 	// under `unclassified`.
 	ByClass []RWAGroupTotal `json:"by_class"`
+	// CuratedAssets are the rows a named third-party curator lists as
+	// real-world assets, served APART from `assets`: never in the
+	// summary, the class or the issuer breakdown above. See
+	// [RWACuratedSummary]. Absent when no curated reader is wired.
+	CuratedAssets []RWAAsset `json:"curated_assets,omitempty"`
+	// Curated is the curated arm's own total and status.
+	Curated *RWACuratedSummary `json:"curated,omitempty"`
 	// ByIssuer totals the set per issuer G-address.
 	ByIssuer []RWAIssuerTotal `json:"by_issuer"`
 	// Refused counts the candidates each requirement turned away, so
@@ -856,6 +863,10 @@ type RWAAsset struct {
 	// present, always with a status — an absent premium and a premium of
 	// zero are different findings and the wire keeps them apart.
 	Premium RWAPremium `json:"premium"`
+	// Curator is present only on rows served in `curated_assets`: what
+	// the curator said about the row, verbatim, and whether the verified
+	// set carries the same address.
+	Curator *RWACurator `json:"curator,omitempty"`
 	// CirculatingSupply is a raw chain fact and is served even when the
 	// valuation is withheld, in the smallest integer unit.
 	CirculatingSupply *string `json:"circulating_supply,omitempty"`
@@ -1597,6 +1608,10 @@ func (s *Server) handleRWAAssets(w http.ResponseWriter, r *http.Request) {
 	view.ByClass = rwaByClass(view.Assets)
 	view.ByIssuer = rwaByIssuer(view.Assets)
 	view.Funnel = rwaFunnelOf(m, join, len(classicAssets), dirCounts.served, listingCounts.served, view.Assets)
+	// The curated arm runs LAST, over the finished verified view, so it
+	// can say which of its rows the verified set already carries and can
+	// never feed a figure back into the totals above.
+	s.attachRWACurated(r, &view, now)
 	writeEnvelope(w, Envelope{Data: view, Flags: Flags{}})
 }
 

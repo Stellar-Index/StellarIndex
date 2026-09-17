@@ -380,6 +380,10 @@ export function RWAView() {
               />
             </div>
           </Panel>
+          <CuratedPanel
+            curated={data.curated}
+            rows={data.curated_assets ?? []}
+          />
         </div>
       )}
 
@@ -399,6 +403,139 @@ export function RWAView() {
  * issuer's file yet" and "the rule refused an impersonator" are
  * opposite findings that a bare count renders identically.
  */
+/**
+ * The curated arm: what a named third-party curator counts, beside what
+ * this index verifies, and their sum. Rendered APART from every panel
+ * above it, because its rows are never in them. Three figures read
+ * together so the comparison a reader came here to make — "why is your
+ * number different from that dashboard's" — is one panel, not a
+ * document.
+ */
+function CuratedPanel({
+  curated,
+  rows,
+}: {
+  curated?: Schemas['RWACuratedSummary'];
+  rows: RWAAsset[];
+}) {
+  if (!curated || curated.status === 'unwired') return null;
+  const verified = usd(curated.verified_value_usd);
+  const additional = usd(curated.additional_value_usd);
+  const combined = usd(curated.combined_value_usd);
+  const { lead, rest } = splitBasis(curated.basis);
+  return (
+    <Panel
+      title={`As a third-party curator counts it (${curated.curator})`}
+      headingLevel={2}
+    >
+      {curated.status === 'unavailable' ? (
+        <p className="text-ink-muted text-sm">
+          The curator&rsquo;s cache did not answer, or holds no row inside its
+          recognition bound ({curated.census.stale} stale). Nothing is asserted
+          either way.
+        </p>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <StatCell>
+              <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+                Verified by this index
+              </div>
+              <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+                {verified ?? '—'}
+              </div>
+              <div className="text-ink-muted mt-0.5 text-xs">
+                the value-of-backing figure above
+              </div>
+            </StatCell>
+            <StatCell>
+              <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+                Counted by the curator, not verified here
+              </div>
+              <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+                {additional ?? '—'}
+              </div>
+              <div className="text-ink-muted mt-0.5 text-xs">
+                {curated.assets - curated.also_verified} row
+                {curated.assets - curated.also_verified === 1 ? '' : 's'} the
+                verified set does not carry, at the curator&rsquo;s own price
+              </div>
+            </StatCell>
+            <StatCell>
+              <div className="text-ink-muted text-[11px] font-medium tracking-wider uppercase">
+                Combined, the way the curator counts
+              </div>
+              <div className="tnum text-ink mt-1 text-2xl font-semibold tracking-tight">
+                {combined ?? '—'}
+              </div>
+              <div className="text-ink-muted mt-0.5 text-xs">
+                published for comparison, not vouched for
+              </div>
+            </StatCell>
+          </div>
+          {lead && (
+            <p className="text-ink-muted mt-3 text-xs leading-relaxed">
+              {lead}
+            </p>
+          )}
+          {rest && (
+            <BasisDisclosure label="What this arm is, in full" text={rest} />
+          )}
+          {rows.length > 0 && (
+            <div className="-mx-4 mt-4">
+              <Table>
+                <THead>
+                  <TR>
+                    <Th>Contract</Th>
+                    <Th>Curator&rsquo;s label</Th>
+                    <Th>Curator&rsquo;s class</Th>
+                    <Th align="right">Curator&rsquo;s price</Th>
+                    <Th align="right">Value at that price</Th>
+                    <Th>In the verified set?</Th>
+                  </TR>
+                </THead>
+                <TBody>
+                  {rows.map((a) => (
+                    <TR key={a.asset_id}>
+                      <Td>
+                        <Link
+                          href={`/assets/${a.slug || a.asset_id}`}
+                          className="hover:text-brand-600 font-medium"
+                        >
+                          {a.symbol ||
+                            truncateMiddle(a.contract_id ?? a.asset_id, 6, 6)}
+                        </Link>
+                        <div className="text-ink-faint font-mono text-[11px]">
+                          {truncateMiddle(a.contract_id ?? a.asset_id, 6, 6)}
+                        </div>
+                      </Td>
+                      <Td>{a.curator?.company || '—'}</Td>
+                      <Td>{a.curator?.subclass || '—'}</Td>
+                      <Td align="right" className="tnum">
+                        {usd(a.reference?.price_usd) ?? '—'}
+                      </Td>
+                      <Td align="right" className="tnum">
+                        {usd(a.reference_valuation.value_usd) ?? '—'}
+                      </Td>
+                      <Td>
+                        {a.curator?.also_verified ? (
+                          <Badge tone="neutral">Yes — counted above</Badge>
+                        ) : (
+                          <Badge tone="neutral">No — curator only</Badge>
+                        )}
+                      </Td>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
+            </div>
+          )}
+        </>
+      )}
+    </Panel>
+  );
+}
+
 function CoveragePanel({ funnel }: { funnel?: Schemas['RWAFunnel'] }) {
   if (!funnel || funnel.stages.length === 0) return null;
   // Grouped by arm, in served order. The two arms narrow different
@@ -1453,9 +1590,8 @@ function DefinitionPanel({
             <span className="font-mono">
               {contractOnlyClasses(definition).join(', ')}
             </span>{' '}
-            on a contract, where the class is this index&rsquo;s own
-            statement from a primary source rather than something an issuer
-            declared
+            on a contract, where the class is this index&rsquo;s own statement
+            from a primary source rather than something an issuer declared
           </>
         ) : null}
         . Fiat-anchored tokens are stablecoins and are counted elsewhere.

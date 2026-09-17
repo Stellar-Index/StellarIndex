@@ -755,6 +755,21 @@
     group: root
     mode: "0755"
 
+- name: Provision the curated-rwa-sync env file placeholder (first install only)
+  # Operator-populated: DUNE_API_KEY goes here and nowhere in git. `force:
+  # false` so a re-apply never overwrites the key the operator pasted in.
+  # Without the key the unit refuses to run rather than pretending it read
+  # the curator, and the RWA surface reports the arm as unavailable.
+  ansible.builtin.copy:
+    dest: /etc/default/curated-rwa-sync
+    content: |
+      # curated-rwa-sync: paste the Dune API key here. Never commit this file.
+      DUNE_API_KEY=
+    owner: root
+    group: stellarindex
+    mode: "0640"
+    force: false
+
 - name: Install verify-archive-tier-a / supply-snapshot / galexie-archive-trim units
   ansible.builtin.template:
     src: "systemd/{{ item }}.j2"
@@ -779,6 +794,8 @@
     - directory-sync.timer
     - listing-sync.service
     - listing-sync.timer
+    - curated-rwa-sync.service
+    - curated-rwa-sync.timer
     # cap67-movements: a continuous FOLLOW DAEMON now (5.3), not a
     # timer+oneshot — only the .service is rendered; the old .timer is
     # retired below.
@@ -834,6 +851,7 @@
     - sep1-refresh.timer
     - directory-sync.timer
     - listing-sync.timer
+    - curated-rwa-sync.timer
     - holders-rollup.timer
     - creators-rollup.timer
     - sponsors-rollup.timer

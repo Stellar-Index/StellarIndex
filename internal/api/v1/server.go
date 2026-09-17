@@ -86,7 +86,7 @@ type ReadyChecker interface {
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
-const ExpectedSchemaVersion uint = 160
+const ExpectedSchemaVersion uint = 161
 
 // SchemaVersionReader reports the applied golang-migrate schema state
 // (schema_migrations.version + dirty). cmd/stellarindex-api adapts
@@ -172,6 +172,8 @@ type Server struct {
 	rwaContracts        RWADirectoryContractReader
 	rwaListings         RWAListingDirectoryReader
 	listings            AssetListingDirectoryReader
+	rwaCurated          RWACuratedDirectoryReader
+	rwaCuratedSnap      rwaCuratedCache
 	// assetListings memoises one read of the listing directory for the
 	// /v1/assets listing-priced valuation arm — see
 	// asset_listing_valuation.go. Not shared with rwaListings' snapshot:
@@ -896,6 +898,11 @@ type Options struct {
 	// as a measured finding that no independent party names these
 	// addresses, which nobody looked to establish.
 	RWAListings RWAListingDirectoryReader
+	// RWACurated, when non-nil, backs the curated arm on GET
+	// /v1/rwa/assets: a named third party's list of real-world assets and
+	// its own prices, served apart from the verified set. See
+	// internal/rwa/curated.go.
+	RWACurated RWACuratedDirectoryReader
 
 	// Listings, when non-nil, backs the listing-priced valuation arm on
 	// GET /v1/assets and GET /v1/assets/{asset_id}: the same cached
@@ -1566,6 +1573,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		tokenSymbol:             opts.TokenSymbol,
 		rwaContracts:            opts.RWAContracts,
 		rwaListings:             opts.RWAListings,
+		rwaCurated:              opts.RWACurated,
 		listings:                opts.Listings,
 		contractCatalogue:       opts.ContractCatalogue,
 		lakeWatermarkReader:     opts.LakeWatermark,

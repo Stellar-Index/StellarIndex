@@ -7001,6 +7001,16 @@ export interface components {
             /** @description Per-issuer totals, keyed on the G-address. */
             by_issuer: components["schemas"]["RWAIssuerTotal"][];
             /**
+             * @description Rows a named third-party curator lists as tokenized real-world
+             *     assets, served APART from `assets`: never in `summary`,
+             *     `by_class` or `by_issuer`. Each carries `basis:
+             *     third_party_curated`, a `curator` block with the curator's own
+             *     labels, and a reference valuation at the curator's uploaded
+             *     price. Absent when no curated reader is wired.
+             */
+            curated_assets?: components["schemas"]["RWAAsset"][];
+            curated?: components["schemas"]["RWACuratedSummary"];
+            /**
              * @description How many candidate assets each requirement turned away, over
              *     the issuer-bound SEP-1 attestations that reached the ordered
              *     R1→R4 evaluation. The largest bucket is normally
@@ -7456,7 +7466,7 @@ export interface components {
              *     WHETHER the address is vouched for.
              * @enum {string}
              */
-            basis: "sep1_anchor_declaration" | "sep1_isin_declaration" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed";
+            basis: "sep1_anchor_declaration" | "sep1_isin_declaration" | "oracle_rwa_feed" | "curated_contract_instrument" | "contract_oracle_rwa_feed" | "third_party_curated";
             /**
              * @description Which independent party's naming satisfied the contract
              *     arm's second requirement. Present on CONTRACT-issued rows
@@ -7475,7 +7485,7 @@ export interface components {
              *     than reconstructing the rule.
              * @enum {string}
              */
-            recognition?: "curated_account_directory" | "independent_listing_corroborating_curated_binding";
+            recognition?: "curated_account_directory" | "independent_listing_corroborating_curated_binding" | "third_party_curator";
             /**
              * @description Declared class. Present under `sep1_anchor_declaration` and
              *     `curated_contract_instrument`. Absent under either oracle
@@ -7489,6 +7499,7 @@ export interface components {
             valuation: components["schemas"]["RWAValuation"];
             reference_valuation: components["schemas"]["RWAReferenceValuation"];
             reference?: components["schemas"]["RWAReference"];
+            curator?: components["schemas"]["RWACurator"];
             premium: components["schemas"]["RWAPremium"];
             /**
              * @description Raw chain fact in the smallest integer unit. Served even when
@@ -7790,7 +7801,7 @@ export interface components {
              *     the listing.
              * @enum {string}
              */
-            provenance: "oracle_instrument_nav" | "listing_platform_price";
+            provenance: "oracle_instrument_nav" | "listing_platform_price" | "curator_uploaded_price";
             /**
              * @description True when the reference is older than 72h — the longest
              *     ordinary gap between two strikes of a real-world instrument's
@@ -7911,6 +7922,73 @@ export interface components {
             reference_value_usd?: string;
             /** @description Members of this group with no reference valuation. */
             assets_reference_unvalued: number;
+            /**
+             * @description Present only on `unclassified`: why the group carries no class.
+             *     Its members were admitted because an independent oracle prices
+             *     the instrument, and no issuer declared a class in the SEP-1
+             *     vocabulary — one declares `other`, another declares none. A
+             *     class here would contradict an issuer on their own asset, so
+             *     the group is named rather than filled.
+             */
+            note?: string;
+        };
+        /** @description What a third-party curator said about a row, verbatim. Present only on rows served in `curated_assets`. */
+        RWACurator: {
+            /** @description Which curation the row came from, e.g. `dune:stellar`. */
+            curator: string;
+            /** @description The curator's issuing-entity label. The curator's word, not this index's. */
+            company?: string;
+            /** @description The curator's instrument class. Served verbatim beside this index's own vocabulary and never mapped onto it. */
+            subclass?: string;
+            /**
+             * @description True when the verified set above carries the same address. Such
+             *     a row is served here for reconciliation and is NOT counted in
+             *     `additional_value_usd`, or it would be counted twice in the
+             *     combined figure.
+             */
+            also_verified: boolean;
+        };
+        /** @description The storage layer's account of the curator cache, taken in the same read as the rows. */
+        RWACuratedCensus: {
+            /** @description Rows inside the recognition bound. */
+            entries: number;
+            /** @description Recognised rows whose price is inside its own bound. */
+            priced: number;
+            /** @description Rows present in the cache but past the recognition bound — the only evidence, from this side, that the sync has stopped. */
+            stale: number;
+            /** Format: date-time */
+            observed_at?: string;
+        };
+        /**
+         * @description The curated arm's own total, published BESIDE the verified
+         *     summary and never folded into it. Three figures read together:
+         *     what this index verifies, what the curator additionally counts,
+         *     and their sum — the number a reader gets by counting the way the
+         *     curator counts. Published so the comparison is one number on one
+         *     page, not because this index vouches for it.
+         */
+        RWACuratedSummary: {
+            curator: string;
+            /**
+             * @description `served` — the curator's cache answered and the rows are
+             *     below; `unavailable` — the reader failed or the cache is
+             *     entirely stale, so nothing is asserted either way; `unwired`
+             *     — no curated reader is configured on this deployment.
+             * @enum {string}
+             */
+            status: "served" | "unavailable" | "unwired";
+            assets: number;
+            /** @description How many curated rows the verified set already carries. */
+            also_verified: number;
+            assets_valued: number;
+            /** @description Sum of the curator-priced valuations of rows the verified set does NOT carry. */
+            additional_value_usd?: string;
+            /** @description The verified reference total plus `additional_value_usd`. */
+            combined_value_usd?: string;
+            /** @description Repeats `summary.reference_valuation.value_usd` so the three figures read together. */
+            verified_value_usd?: string;
+            census: components["schemas"]["RWACuratedCensus"];
+            basis: string;
         };
         /** @description One row of the per-issuer breakdown, keyed on the G-address rather than on a company name, on both valuation bases. */
         RWAIssuerTotal: {

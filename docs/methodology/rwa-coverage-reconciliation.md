@@ -229,6 +229,43 @@ read the field, and 14 of the 16 entities have no fetched payload at
 all. Building it today would admit nothing and would bury lever 3 behind
 machinery. It becomes worthwhile once the refresh queue is drained.
 
+## The curated arm — reading the curator's own tables
+
+The external figures this page reconciles against are not measurements
+of Stellar; they are a curation. The "RWAs on Stellar" dashboard's own
+query (dune.com/queries/6961846) values `stellar.token_balances` against
+`dune.stellar.dataset_asset_prices` and takes membership, company and
+subclass from `dune.stellar.dataset_recognized_assets`. Both are CSV
+uploads by the Stellar team — `dune.<team>.dataset_<name>` is Dune's
+upload namespace by its own documentation — and the private-credit line
+above is those 24 contracts at an uploaded `close_usd` of exactly `1.00`.
+
+Since 2026-09-17 this index reads the same two tables
+(`stellarindex-ops curated-rwa-sync`, migration 0161) and serves what
+they admit under a **third arm**, apart from the two verified ones:
+
+- `curated_assets[]` — one row per address the curator lists, with
+  `basis: third_party_curated`, `recognition: third_party_curator`, a
+  `curator` block carrying the curator's company and subclass labels
+  verbatim, and a reference valuation at the curator's uploaded price
+  (`provenance: curator_uploaded_price`) times the supply this index
+  reads from the lake. No premium is published against it.
+- `curated` — the arm's own total: `verified_value_usd` (the figure
+  above), `additional_value_usd` (curated-only rows), and
+  `combined_value_usd` (their sum — the number a reader gets by counting
+  the way the curator counts). A row the verified set already carries is
+  marked `also_verified` and is not counted twice.
+
+**What it does not do.** A curated row never reaches `assets`, `summary`,
+`by_class` or `by_issuer`. The test that pins this
+(`TestRWACurated_ServesTheCuratorsRowsApart`) fails the moment one does,
+and was proven red by merging them. The arm exists so that "why does
+your number differ from that dashboard's" is answered by a row on the
+page rather than by this document — not because this index vouches for
+any figure in it. The VuMe Bond 2030 line is the worked example: on this
+arm it is $558,700,000 at the curator's `1.1174`; on the verified arms
+it is refused, and the row says both.
+
 ## The bar, restated
 
 The requirement was that our tracked RWA value equal or surpass the

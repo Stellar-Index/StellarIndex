@@ -14411,6 +14411,18 @@ components:
           type: array
           description: Per-issuer totals, keyed on the G-address.
           items: { $ref: "#/components/schemas/RWAIssuerTotal" }
+        curated_assets:
+          type: array
+          description: |
+            Rows a named third-party curator lists as tokenized real-world
+            assets, served APART from `assets`: never in `summary`,
+            `by_class` or `by_issuer`. Each carries `basis:
+            third_party_curated`, a `curator` block with the curator's own
+            labels, and a reference valuation at the curator's uploaded
+            price. Absent when no curated reader is wired.
+          items: { $ref: "#/components/schemas/RWAAsset" }
+        curated:
+          $ref: "#/components/schemas/RWACuratedSummary"
         refused:
           type: array
           description: |
@@ -14903,7 +14915,7 @@ components:
           type: string
           enum:
             [sep1_anchor_declaration, sep1_isin_declaration, oracle_rwa_feed,
-             curated_contract_instrument, contract_oracle_rwa_feed]
+             curated_contract_instrument, contract_oracle_rwa_feed, third_party_curated]
           description: |
             Which final requirement admitted this asset. The first two
             belong to the classic arm, the last two to the contract arm.
@@ -14939,6 +14951,7 @@ components:
           enum:
             - curated_account_directory
             - independent_listing_corroborating_curated_binding
+            - third_party_curator
           description: |
             Which independent party's naming satisfied the contract
             arm's second requirement. Present on CONTRACT-issued rows
@@ -14969,6 +14982,8 @@ components:
         valuation: { $ref: "#/components/schemas/RWAValuation" }
         reference_valuation: { $ref: "#/components/schemas/RWAReferenceValuation" }
         reference: { $ref: "#/components/schemas/RWAReference" }
+        curator:
+          $ref: "#/components/schemas/RWACurator"
         premium: { $ref: "#/components/schemas/RWAPremium" }
         circulating_supply:
           type: string
@@ -15265,7 +15280,7 @@ components:
             separately visible.
         provenance:
           type: string
-          enum: [oracle_instrument_nav, listing_platform_price]
+          enum: [oracle_instrument_nav, listing_platform_price, curator_uploaded_price]
           description: |
             WHAT KIND of figure this is. Two are published and they are
             not the same claim, so this is mandatory on every served
@@ -15429,6 +15444,86 @@ components:
         assets_reference_unvalued:
           type: integer
           description: Members of this group with no reference valuation.
+        note:
+          type: string
+          description: |
+            Present only on `unclassified`: why the group carries no class.
+            Its members were admitted because an independent oracle prices
+            the instrument, and no issuer declared a class in the SEP-1
+            vocabulary — one declares `other`, another declares none. A
+            class here would contradict an issuer on their own asset, so
+            the group is named rather than filled.
+
+    RWACurator:
+      type: object
+      description: What a third-party curator said about a row, verbatim. Present only on rows served in `curated_assets`.
+      required: [curator, also_verified]
+      properties:
+        curator:
+          type: string
+          description: Which curation the row came from, e.g. `dune:stellar`.
+        company:
+          type: string
+          description: The curator's issuing-entity label. The curator's word, not this index's.
+        subclass:
+          type: string
+          description: The curator's instrument class. Served verbatim beside this index's own vocabulary and never mapped onto it.
+        also_verified:
+          type: boolean
+          description: |
+            True when the verified set above carries the same address. Such
+            a row is served here for reconciliation and is NOT counted in
+            `additional_value_usd`, or it would be counted twice in the
+            combined figure.
+
+    RWACuratedCensus:
+      type: object
+      description: The storage layer's account of the curator cache, taken in the same read as the rows.
+      required: [entries, priced, stale]
+      properties:
+        entries: { type: integer, description: Rows inside the recognition bound. }
+        priced: { type: integer, description: Recognised rows whose price is inside its own bound. }
+        stale:
+          type: integer
+          description: Rows present in the cache but past the recognition bound — the only evidence, from this side, that the sync has stopped.
+        observed_at: { type: string, format: date-time }
+
+    RWACuratedSummary:
+      type: object
+      description: |
+        The curated arm's own total, published BESIDE the verified
+        summary and never folded into it. Three figures read together:
+        what this index verifies, what the curator additionally counts,
+        and their sum — the number a reader gets by counting the way the
+        curator counts. Published so the comparison is one number on one
+        page, not because this index vouches for it.
+      required: [curator, status, assets, also_verified, assets_valued, census, basis]
+      properties:
+        curator: { type: string }
+        status:
+          type: string
+          enum: [served, unavailable, unwired]
+          description: |
+            `served` — the curator's cache answered and the rows are
+            below; `unavailable` — the reader failed or the cache is
+            entirely stale, so nothing is asserted either way; `unwired`
+            — no curated reader is configured on this deployment.
+        assets: { type: integer }
+        also_verified:
+          type: integer
+          description: How many curated rows the verified set already carries.
+        assets_valued: { type: integer }
+        additional_value_usd:
+          type: string
+          description: Sum of the curator-priced valuations of rows the verified set does NOT carry.
+        combined_value_usd:
+          type: string
+          description: The verified reference total plus `additional_value_usd`.
+        verified_value_usd:
+          type: string
+          description: Repeats `summary.reference_valuation.value_usd` so the three figures read together.
+        census: { $ref: "#/components/schemas/RWACuratedCensus" }
+        basis: { type: string }
 
     RWAIssuerTotal:
       type: object

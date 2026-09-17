@@ -1385,6 +1385,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		// own SQL so a stale snapshot closes the arm rather than
 		// admitting on it.
 		RWAListings:        store,
+		RWACurated:         store,
 		Listings:           store,
 		ContractCatalogue:  store,
 		LakeWatermark:      lakeWatermarkReader,

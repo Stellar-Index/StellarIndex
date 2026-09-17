@@ -33,8 +33,32 @@ against.
   curator's day stamp (7 days) — so a stale price reads as an absence.
   One SQL execution per run on Dune's "small" tier; the execution's
   credit cost is printed and, with `-textfile`, emitted as a gauge so the
-  cost of the arm is a metric. Key from `DUNE_API_KEY`. Nothing on the
-  served surface reads the table yet; that arm follows.
+  cost of the arm is a metric. Key from `DUNE_API_KEY`.
+
+- **rwa:** `/v1/rwa/assets` gains a CURATED arm — `curated_assets` and a
+  `curated` block — served APART from everything above it. A row there
+  is on the page because a named third-party curator lists it as a
+  real-world asset, and is valued at that curator's own uploaded price
+  times the supply this index reads from the lake. `basis:
+  third_party_curated`, `recognition: third_party_curator`, reference
+  `provenance: curator_uploaded_price`, no premium, and a `curator`
+  block carrying the curator's company and subclass labels verbatim —
+  never mapped onto this index's vocabulary.
+
+  The property everything rests on: a curated row is NEVER merged into
+  `assets`, `summary`, `by_class` or `by_issuer`. A consumer that reads
+  only the verified surface is unaffected; the test that pins this fails
+  the moment a curated row reaches the verified summary. The `curated`
+  block publishes three figures side by side — `verified_value_usd`,
+  `additional_value_usd` (curated-only rows, so an address the verified
+  set already carries is marked `also_verified` and not counted twice),
+  and `combined_value_usd`, which is the number a reader gets by
+  counting the way the curator counts. It is published so the comparison
+  is one number on one page, not because this index vouches for it.
+
+  Why: the external figures this index is compared against are produced
+  from exactly such a curation. Reading the same tables turns "why do
+  you differ" from a document into a row.
 
 ## [v0.87.0] — 2026-09-17
 
