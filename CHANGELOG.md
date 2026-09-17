@@ -26,6 +26,11 @@ against.
   tables the "RWAs on Stellar" dashboard's own query values
   `stellar.token_balances` against. Reading them is the only way to show
   line by line why that dashboard and this index differ.
+- **ops:** `stellarindex_curated_rwa_sync_stale` (ticket) fires when the
+  curated sync has not stamped a run in 30 hours, or never has — 18
+  hours before the reader's 48-hour recognition bound empties the arm
+  on the wire. Runbook `curated-rwa-sync-stale`; promtool fixture
+  proven red against the never-ran case.
 
   A row is the curator's word: no signature, no proof of control, no
   market. The table keys on `(curator, address)` and the reader enforces

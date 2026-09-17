@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 57 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 160 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 161 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -241,6 +241,7 @@ the api-plane tickets it exists to complement.
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_api_smoke_failing` | `stellarindex_api_smoke_failures` | > 0 for ≥ 30 min (six consecutive failing runs at the 5-min cadence) | ticket | [api-smoke-failing](runbooks/api-smoke-failing.md) |
 | `stellarindex_api_smoke_stale` | `time() - stellarindex_api_smoke_last_run_unix`, plus an `absent_over_time(…[30m])` branch for the never-ran case | > 30 min for ≥ 5 min | ticket | [api-smoke-stale](runbooks/api-smoke-stale.md) |
+| `stellarindex_curated_rwa_sync_stale` | `time() - stellarindex_curated_rwa_sync_last_run_unix`, plus an `absent_over_time(…[30h])` branch for the never-ran case | > 30 h for ≥ 10 min | ticket | [curated-rwa-sync-stale](runbooks/curated-rwa-sync-stale.md) |
 
 ## Healthchecks.io ping delivery
 

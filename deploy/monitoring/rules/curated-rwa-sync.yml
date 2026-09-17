@@ -1,0 +1,51 @@
+---
+# Curated RWA sync alerts. Pair with curated-rwa-sync.service/.timer
+# (configs/ansible/roles/archival-node/templates/systemd/) — the daily unit that caches a named third party's list of tokenized
+# real-world assets and its prices into rwa_curated_directory.
+#
+# Scrape source: node_exporter's textfile_collector reads
+# `/var/lib/node_exporter/textfile_collector/curated_rwa_sync.prom`,
+# written by the run itself on every pass, dry or wet.
+#
+# Why this rule exists. The curated arm's reader enforces a 48-hour
+# recognition bound in SQL: past it the arm reports `unavailable` and the
+# curated panel says so — which is correct, and also silent. A sync that
+# stopped (unit failing before it writes, key rotated out, Dune refusing
+# the execution) would otherwise be discovered by a reader of the page.
+# 30h is one missed daily run plus jitter: the first firing arrives well
+# before the 48h bound empties the arm on the wire.
+#
+# `ticket`, not `page`: the curated arm going dark degrades a comparison
+# panel, not the verified surface beside it.
+
+groups:
+  - name: stellarindex.curated_rwa_sync
+    interval: 60s
+    rules:
+
+      - alert: stellarindex_curated_rwa_sync_stale
+        expr: |
+          (time() - stellarindex_curated_rwa_sync_last_run_unix) > (30 * 3600)
+          or
+          absent_over_time(stellarindex_curated_rwa_sync_last_run_unix[30h])
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+          summary: "the curated RWA sync has not recorded a run in ≥ 30h (cadence daily) — the curated arm will read unavailable at 48h"
+          description: |
+            No curated-rwa-sync run has stamped `last_run_unix` in over 30
+            hours, or none ever has. Either curated-rwa-sync.timer is not
+            scheduled, the unit is refusing to start (DUNE_API_KEY unset
+            in /etc/default/curated-rwa-sync), the Dune execution is
+            failing, or the textfile directory is not writable by the
+            unit. At 48 hours the reader's recognition bound empties the
+            arm and /v1/rwa/assets reports `curated.status:
+            unavailable`. Check `systemctl list-timers
+            curated-rwa-sync.timer`, `journalctl -u curated-rwa-sync`,
+            and the credit cost gauge — a run that executed but was
+            refused still costs nothing, and a run that never executed
+            leaves the gauge frozen.
