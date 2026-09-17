@@ -1850,6 +1850,16 @@ type sep1ImagesReader interface {
 	AllSep1Images(ctx context.Context) ([]timescale.Sep1Image, error)
 }
 
+// Compile-time proof that the production reader still satisfies the seam —
+// the same guard [Sep1FetchStateReader] and [preciseSupplyReader] carry,
+// for the same reason: an optional seam that stops matching is not a build
+// failure, it is a silent opt-out, and here the opt-out is every listing
+// row losing its SEP-1 logo with nothing red anywhere. Only the bare store
+// is listed because that is what the binary wires (cmd/stellarindex-api/
+// main.go, `Sep1Cache: store`); a caching wrapper that one day stands in
+// front of this seam must be added here the same day.
+var _ sep1ImagesReader = (*timescale.Store)(nil)
+
 // cachedSep1Images returns the SEP-1 logo map (case-folded CODE-ISSUER →
 // safe image URL) built from every verified issuer's cached payload.
 //

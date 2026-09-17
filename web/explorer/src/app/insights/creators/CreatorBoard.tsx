@@ -15,6 +15,7 @@ import {
   Td,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
+import type { CreatorRow, CreatorsResp } from '@/api/relationTypes';
 import { formatCompact, truncateMiddle } from '@/lib/format';
 import {
   type Envelope,
@@ -22,33 +23,10 @@ import {
   formatTimestamp,
 } from '../../explorer-shared';
 
-// Mirrors api/v1 explorer.AccountCreatorsView (GET /v1/accounts/creators).
-// Stroops arrive as strings (ADR-0003) and are never parsed through
-// Number() here — stroopsToXlm does the BigInt division.
-interface CreatorRow {
-  rank: number;
-  account: string;
-  accounts_created: number;
-  funded_stroops: string;
-  live_accounts: number;
-  live_stroops: string;
-  first_ledger: number;
-  last_ledger: number;
-  first_created_at: string;
-  last_created_at: string;
-}
-
-interface CreatorsResp {
-  creators: CreatorRow[];
-  totals: { creators: number; accounts_created: number; live_accounts: number };
-  coverage: {
-    from_ledger: number;
-    thru_ledger: number;
-    from_time: string;
-    thru_time: string;
-  };
-  computed_at: string;
-}
+// Both board shapes come from the generated OpenAPI contract via
+// src/api/relationTypes.ts — never restated here. Stroops arrive as
+// strings (ADR-0003) and are never parsed through Number() here —
+// stroopsToXlm does the BigInt division.
 
 const BOARD_LIMIT = 50;
 

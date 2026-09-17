@@ -6,7 +6,12 @@ import { useQuery } from '@tanstack/react-query';
 import { Panel } from '@/components/reveal';
 import { Stat } from '@/components/ui';
 import { apiGet, asExample, type Envelope } from '@/api/client';
-import type { operations } from '@/api/types';
+import type {
+  CreatorRow,
+  CreatorsResp,
+  SponsorRow,
+  SponsorsResp,
+} from '@/api/relationTypes';
 import { formatCompact } from '@/lib/format';
 
 import { formatTimestamp, stroopsToXlm } from '../explorer-shared';
@@ -21,19 +26,6 @@ import { RELATION, type Relation } from './accountRelation';
 //
 // An empty result is therefore unambiguous here — it means this address
 // holds no row on this board, not that it fell outside a page.
-
-// Both board bodies are derived from the generated OpenAPI contract
-// (src/api/types.ts, `make web-generate-api`) rather than restated here:
-// a hand-written copy matches the wire today and is free to drift from it
-// the day the spec moves.
-type CreatorsResp = NonNullable<
-  operations['getAccountCreators']['responses'][200]['content']['application/json']['data']
->;
-type SponsorsResp = NonNullable<
-  operations['getAccountSponsors']['responses'][200]['content']['application/json']['data']
->;
-type CreatorRow = CreatorsResp['creators'][number];
-type SponsorRow = SponsorsResp['sponsors'][number];
 
 const numFmt = new Intl.NumberFormat('en-US');
 

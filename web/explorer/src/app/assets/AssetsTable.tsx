@@ -5,7 +5,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
 
-import { useAssets, type AssetClassFilter, type Coin } from '@/api/hooks';
+import {
+  useAssets,
+  coinSlug,
+  type AssetClassFilter,
+  type Coin,
+} from '@/api/hooks';
 import { useTableSort, SortableTh, type SortColumn } from '@/lib/useTableSort';
 import { formatCompact, formatPriceSmall, truncateMiddle } from '@/lib/format';
 import { demoteFlaggedLast, scamFlagTags } from '@/lib/directory-tags';
@@ -394,7 +399,7 @@ export function AssetsTable({
                     // verified set — the API's per-row
                     // unverified_ticker_collision flag distinguishes it.
                     verified={
-                      verifiedSlugSet.has(coin.slug.toLowerCase()) &&
+                      verifiedSlugSet.has(coinSlug(coin).toLowerCase()) &&
                       !coin.unverified_ticker_collision
                     }
                     basePath={basePath}
@@ -548,10 +553,9 @@ function AssetRow({
   // The raw canonical identifier, when it says something the code above
   // does not: `JFKBANK2-GB7KFNUR…` next to code `JFKBANK2`, but nothing
   // extra for a catalogue row whose slug IS its ticker (XLM / "xlm").
+  const slug = coinSlug(coin);
   const rawAssetId =
-    coin.code && coin.slug.toLowerCase() !== coin.code.toLowerCase()
-      ? coin.slug
-      : null;
+    coin.code && slug.toLowerCase() !== coin.code.toLowerCase() ? slug : null;
   return (
     <TR>
       <Td>
@@ -559,7 +563,7 @@ function AssetRow({
       </Td>
       <Td>
         <Link
-          href={`${basePath}/${coin.slug}`}
+          href={`${basePath}/${slug}`}
           className="group flex items-baseline gap-2"
         >
           <span className="text-ink group-hover:text-brand-600 font-medium">
@@ -569,8 +573,8 @@ function AssetRow({
                 empty cell (#356 note: whether it should get a synthetic
                 placeholder name instead is a separate product call). */}
             {coin.code || (
-              <span className="font-mono text-[13px]" title={coin.slug}>
-                {truncateMiddle(coin.slug, 6, 4)}
+              <span className="font-mono text-[13px]" title={slug}>
+                {truncateMiddle(slug, 6, 4)}
               </span>
             )}
           </span>
@@ -733,7 +737,9 @@ function ClassBadge({ cls }: { cls?: string }) {
 function RowSparkline({
   points,
 }: {
-  points?: { t: string; p?: string | null }[];
+  // The wire's own shape: absent, null, or the samples. Null and absent
+  // both draw the dash below.
+  points?: Coin['price_history_7d'];
 }) {
   const values = (points ?? [])
     .map((pt) => (pt.p ? Number(pt.p) : null))

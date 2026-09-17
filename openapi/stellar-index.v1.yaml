@@ -10949,7 +10949,7 @@ paths:
                         type: array
                         items:
                           type: object
-                          required: [rank, account, accounts_created, funded_stroops, live_accounts, live_stroops]
+                          required: [rank, account, accounts_created, funded_stroops, live_accounts, live_stroops, first_ledger, last_ledger, first_created_at, last_created_at]
                           properties:
                             rank: { type: integer, description: 1-based position on the board, by accounts_created descending. }
                             account: { type: string, description: The funding account's G-strkey. }
@@ -10964,6 +10964,7 @@ paths:
                       totals:
                         type: object
                         description: Totals over the whole aggregation, not the returned page.
+                        required: [creators, accounts_created, live_accounts]
                         properties:
                           creators: { type: integer, format: int64, description: Distinct funding accounts in the covered span. }
                           accounts_created: { type: integer, format: int64 }
@@ -10971,6 +10972,7 @@ paths:
                       coverage:
                         type: object
                         description: The ledger span the rollup actually aggregated. Data-derived (ADR-0031), not a constant.
+                        required: [from_ledger, thru_ledger, from_time, thru_time]
                         properties:
                           from_ledger: { type: integer }
                           thru_ledger: { type: integer }
@@ -11103,7 +11105,7 @@ paths:
                         type: array
                         items:
                           type: object
-                          required: [rank, account, sponsorships_started, distinct_sponsored, revocations_issued]
+                          required: [rank, account, sponsorships_started, distinct_sponsored, revocations_issued, first_ledger, last_ledger, first_seen_at, last_seen_at]
                           properties:
                             rank: { type: integer, description: 1-based position, by sponsorships_started descending. }
                             account: { type: string, description: The sponsoring account's G-strkey. }
@@ -11117,6 +11119,7 @@ paths:
                       totals:
                         type: object
                         description: Totals over the whole aggregation, not the returned page.
+                        required: [sponsors, sponsorships_started, distinct_sponsored, revocations_issued]
                         properties:
                           sponsors: { type: integer, format: int64 }
                           sponsorships_started: { type: integer, format: int64 }
@@ -11125,6 +11128,7 @@ paths:
                       coverage:
                         type: object
                         description: The ledger span the rollup aggregated. Data-derived (ADR-0031); its floor is protocol 14, where sponsorship began.
+                        required: [from_ledger, thru_ledger, from_time, thru_time, ambiguous_transactions]
                         properties:
                           from_ledger: { type: integer }
                           thru_ledger: { type: integer }

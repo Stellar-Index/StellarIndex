@@ -7,6 +7,7 @@ import {
   useCoins,
   useNativeCoin,
   useVerifiedSlugs,
+  coinSlug,
   type Coin,
 } from '@/api/hooks';
 import { useLedgerFollow } from '@/lib/live/hooks';
@@ -120,7 +121,8 @@ export function HomeTopAssets() {
                   // COALESCE(slug, code) makes an impersonator's slug the
                   // verified code, so gate on the per-row API flag too.
                   verified={
-                    (verifiedSlugs?.has(coin.slug.toLowerCase()) ?? false) &&
+                    (verifiedSlugs?.has(coinSlug(coin).toLowerCase()) ??
+                      false) &&
                     !coin.unverified_ticker_collision
                   }
                 />
@@ -151,7 +153,7 @@ function Row({
       <Td className="text-ink-faint">{rank}</Td>
       <Td>
         <Link
-          href={`/assets/${coin.slug}`}
+          href={`/assets/${coinSlug(coin)}`}
           className="group flex items-center gap-2"
         >
           <AssetIcon image={coin.image} code={coin.code} />
@@ -216,7 +218,11 @@ function Row({
       )}
       <Td align="right">
         <span className="text-ink-body font-mono">
-          {formatCompact(coin.observation_count)}
+          {/* Absent only when the asset has no catalogue row at all —
+              unknown, not zero, so it draws as a dash and not as 0. */}
+          {coin.observation_count != null
+            ? formatCompact(coin.observation_count)
+            : '—'}
         </span>
       </Td>
     </TR>
@@ -276,7 +282,8 @@ function Dash() {
 function RowSparkline({
   points,
 }: {
-  points?: { t: string; p?: string | null }[];
+  // The wire's own shape: absent, null, or the samples.
+  points?: Coin['price_history_24h'];
 }) {
   const values = (points ?? [])
     .map((pt) => (pt.p ? Number(pt.p) : null))

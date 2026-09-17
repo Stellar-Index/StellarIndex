@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { apiGet } from '@/api/client';
-import { useCoins, useVerifiedSlugs, type Coin } from '@/api/hooks';
+import { useCoins, useVerifiedSlugs, coinSlug, type Coin } from '@/api/hooks';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import { availableRoutes } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -642,7 +642,7 @@ export function search(
       // copy of the rule that disagreed with the other three, so an
       // impersonator the backend had correctly identified rendered with
       // the badge in ⌘K search (cold audit 2026-08-04).
-      (verifiedSlugs?.has(c.slug.toLowerCase()) ?? false) &&
+      (verifiedSlugs?.has(coinSlug(c).toLowerCase()) ?? false) &&
         !c.unverified_ticker_collision,
     ),
   );
@@ -772,8 +772,8 @@ function coinResult(c: Coin, verified: boolean): Result {
       ((c.asset_id ?? '').length > 12
         ? `${(c.asset_id ?? '').slice(0, 4)}…${(c.asset_id ?? '').slice(-4)}`
         : (c.asset_id ?? 'Asset')),
-    hint: c.slug,
-    href: `/assets/${c.slug}`,
+    hint: coinSlug(c),
+    href: `/assets/${coinSlug(c)}`,
     verified,
   };
 }

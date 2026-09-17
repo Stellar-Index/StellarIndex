@@ -32,6 +32,28 @@ against.
   in place of the execute-and-poll design it replaced; directives are
   untouched. The alerts catalog and the `curated-rwa-sync-stale`
   runbook were checked for the same leftovers and carried none.
+- **explorer/api:** the three follow-ups the #515 verifier listed. The
+  creator and sponsor league tables under `/insights` read their board
+  shapes from one `src/api/relationTypes.ts`, derived from the generated
+  `operations['getAccountCreators']` / `['getAccountSponsors']` types
+  alongside the standing panel that already did — the two hand-written
+  copies are gone, and deriving them exposed that the spec never listed
+  `totals.*`, `coverage.*` or a row's `first_/last_ledger` and
+  timestamps as required although the handler emits every one
+  unconditionally; the spec now says so. The explorer's `Coin` is the
+  generated `Asset` schema outright — every field the hand-typed
+  intersection carried has been spec'd since board #33, and the copy had
+  drifted the other way, declaring `slug`, `first_seen_ledger`,
+  `last_seen_ledger` and `observation_count` required while the handler
+  serves each `omitempty`; the consumers that dereferenced `slug` now go
+  through `coinSlug()` (falls back to `asset_id`, which `/assets/{id}`
+  resolves), the home table draws an absent `observation_count` as a
+  dash rather than `0`, and the sparklines take the wire's own nullable
+  shape. `sep1ImagesReader` (the SEP-1 logo overlay) and
+  `Sep1BoundCurrencyReader` (RWA classic membership) carry the
+  compile-time `*timescale.Store` assertion the other optional seams
+  have, so a reader that stops satisfying either is a build failure
+  rather than a silent opt-out.
 
 ## [v0.90.0] — 2026-09-18
 

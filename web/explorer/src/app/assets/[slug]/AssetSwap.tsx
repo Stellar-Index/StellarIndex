@@ -6,7 +6,7 @@ import { ArrowDownUp, ChevronDown, Search, X } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
-import { useCoins } from '@/api/hooks';
+import { useCoins, coinSlug } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { formatSubunitPrice } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -527,7 +527,7 @@ function TokenPicker({
           const price = c.price_usd != null ? Number(c.price_usd) : null;
           return {
             key: c.asset_id ?? c.slug,
-            symbol: c.code ?? c.slug,
+            symbol: c.code ?? coinSlug(c),
             name: c.issuer ? undefined : undefined,
             image: c.image,
             usdPrice: price != null && price > 0 ? price : null,

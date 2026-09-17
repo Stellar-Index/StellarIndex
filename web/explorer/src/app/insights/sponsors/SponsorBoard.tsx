@@ -15,39 +15,12 @@ import {
   Td,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
+import type { SponsorRow, SponsorsResp } from '@/api/relationTypes';
 import { formatCompact, truncateMiddle } from '@/lib/format';
 import { type Envelope, formatTimestamp } from '../../explorer-shared';
 
-// Mirrors api/v1 explorer.AccountSponsorsView (GET /v1/accounts/sponsors).
-interface SponsorRow {
-  rank: number;
-  account: string;
-  sponsorships_started: number;
-  distinct_sponsored: number;
-  revocations_issued: number;
-  first_ledger: number;
-  last_ledger: number;
-  first_seen_at: string;
-  last_seen_at: string;
-}
-
-interface SponsorsResp {
-  sponsors: SponsorRow[];
-  totals: {
-    sponsors: number;
-    sponsorships_started: number;
-    distinct_sponsored: number;
-    revocations_issued: number;
-  };
-  coverage: {
-    from_ledger: number;
-    thru_ledger: number;
-    from_time: string;
-    thru_time: string;
-    ambiguous_transactions: number;
-  };
-  computed_at: string;
-}
+// Both board shapes come from the generated OpenAPI contract via
+// src/api/relationTypes.ts — never restated here.
 
 const BOARD_LIMIT = 50;
 

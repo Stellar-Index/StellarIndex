@@ -21679,13 +21679,13 @@ export interface operations {
                                 /** @description Native XLM held by the surviving created set */
                                 live_stroops: string;
                                 /** @description First ledger this creator created an account in */
-                                first_ledger?: number;
+                                first_ledger: number;
                                 /** @description Last such ledger. */
-                                last_ledger?: number;
+                                last_ledger: number;
                                 /** Format: date-time */
-                                first_created_at?: string;
+                                first_created_at: string;
                                 /** Format: date-time */
-                                last_created_at?: string;
+                                last_created_at: string;
                             }[];
                             /** @description Totals over the whole aggregation, not the returned page. */
                             totals: {
@@ -21693,20 +21693,20 @@ export interface operations {
                                  * Format: int64
                                  * @description Distinct funding accounts in the covered span.
                                  */
-                                creators?: number;
+                                creators: number;
                                 /** Format: int64 */
-                                accounts_created?: number;
+                                accounts_created: number;
                                 /** Format: int64 */
-                                live_accounts?: number;
+                                live_accounts: number;
                             };
                             /** @description The ledger span the rollup actually aggregated. Data-derived (ADR-0031), not a constant. */
                             coverage: {
-                                from_ledger?: number;
-                                thru_ledger?: number;
+                                from_ledger: number;
+                                thru_ledger: number;
                                 /** Format: date-time */
-                                from_time?: string;
+                                from_time: string;
                                 /** Format: date-time */
-                                thru_time?: string;
+                                thru_time: string;
                             };
                             /**
                              * Format: date-time
@@ -21824,37 +21824,37 @@ export interface operations {
                                  * @description RevokeSponsorship operations sourced by this account. A LOWER BOUND on arrangements that ended.
                                  */
                                 revocations_issued: number;
-                                first_ledger?: number;
-                                last_ledger?: number;
+                                first_ledger: number;
+                                last_ledger: number;
                                 /** Format: date-time */
-                                first_seen_at?: string;
+                                first_seen_at: string;
                                 /** Format: date-time */
-                                last_seen_at?: string;
+                                last_seen_at: string;
                             }[];
                             /** @description Totals over the whole aggregation, not the returned page. */
                             totals: {
                                 /** Format: int64 */
-                                sponsors?: number;
+                                sponsors: number;
                                 /** Format: int64 */
-                                sponsorships_started?: number;
+                                sponsorships_started: number;
                                 /** Format: int64 */
-                                distinct_sponsored?: number;
+                                distinct_sponsored: number;
                                 /** Format: int64 */
-                                revocations_issued?: number;
+                                revocations_issued: number;
                             };
                             /** @description The ledger span the rollup aggregated. Data-derived (ADR-0031); its floor is protocol 14, where sponsorship began. */
                             coverage: {
-                                from_ledger?: number;
-                                thru_ledger?: number;
+                                from_ledger: number;
+                                thru_ledger: number;
                                 /** Format: date-time */
-                                from_time?: string;
+                                from_time: string;
                                 /** Format: date-time */
-                                thru_time?: string;
+                                thru_time: string;
                                 /**
                                  * Format: int64
                                  * @description Transactions with more than one distinct sponsor
                                  */
-                                ambiguous_transactions?: number;
+                                ambiguous_transactions: number;
                             };
                             /**
                              * Format: date-time

@@ -502,44 +502,32 @@ export function useNativeUsdPrice() {
   };
 }
 
-// Coin — one row of the /v1/assets listing. The spec models listing rows
-// as `Asset` (the per-asset detail schema); the coin-overlay extension
-// fields (internal/api/v1/assets.go AssetDetail's "Coin-equivalence
-// extension") are not in the spec yet, so they're kept as a spec'd since board #33; local narrowing retained
-// intersection below.
-export type Coin = Omit<Schemas['Asset'], 'type'> & {
-  // spec'd since board #33; local narrowing retained: the spec's Asset.type enum ("native" | "classic" |
-  // "soroban" | "fiat") omits "global" (catalogue cross-chain rows —
-  // assets.go:978) and "external" — widened to string until the spec
-  // covers the unified-listing dispatch.
-  type?: string;
-  // spec'd since board #33; local narrowing retained: class — populated for catalogue-backed rows ("fiat" |
-  // "stablecoin" | "crypto"; assets.go AssetDetail.Class). Absent on
-  // classic_assets rows and from the spec's Asset schema.
-  class?: string;
-  // spec'd since board #33; local narrowing retained: the coin-overlay listing fields below are served by
-  // /v1/assets (assets.go "Coin-equivalence extension") but missing
-  // from the spec's Asset schema.
-  slug: string;
-  first_seen_ledger: number;
-  last_seen_ledger: number;
-  observation_count: number;
-  change_1h_pct?: string | null;
-  change_7d_pct?: string | null;
-  // 24 hourly USD-price samples (oldest first). Populated only
-  // when the request includes `?include=sparkline`.
-  price_history_24h?: { t: string; p?: string | null }[];
-  // 7 daily USD-price samples (oldest first). Populated only
-  // when the request includes `?include=sparkline7d`.
-  price_history_7d?: { t: string; p?: string | null }[];
-  // All-time-high USD price + day it was set. Populated only
-  // when the request includes `?include=ath`.
-  ath?: { usd: string; at: string } | null;
-  // Non-empty when the asset's `issuer` G-strkey appears in the
-  // curated scam directory. Mirrors the `scam_reason` field on
-  // /v1/issuers; clients render a prominent warning when present.
-  issuer_scam_reason?: string | null;
-};
+// Coin — one row of the /v1/assets listing. It IS the spec's `Asset`
+// schema (the per-asset detail shape; the listing serves the same rows,
+// assets.go assetDetailFromAssetRow / projectCatalogueRow), read from the
+// generated contract and not restated. The coin-overlay extension fields
+// this alias once hand-typed — slug, class, first/last_seen_ledger,
+// observation_count, change_1h/7d_pct, price_history_24h/7d, ath,
+// issuer_scam_reason, and the `global` / `external` members of `type` —
+// have all been spec'd since board #33, and the copy kept here had
+// drifted the other way: it declared `slug`, `first_seen_ledger`,
+// `last_seen_ledger` and `observation_count` REQUIRED while the handler
+// emits every one of them `omitempty` (a classic asset with no catalogue
+// identity carries no slug at all). Consumers that dereference those
+// fields now see the wire's real optionality at compile time.
+export type Coin = Schemas['Asset'];
+
+// coinSlug is the path segment a listing row is linked and badge-matched
+// by. `slug` is optional on the contract (the schema is shared with the
+// per-asset detail read), and the fallback is the row's canonical
+// asset_id, which /assets/{id} resolves — the same `slug || asset_id`
+// idiom the RWA and embed surfaces use. The listing SQL COALESCEs slug
+// to code then asset_id (timescale/asset_catalogue.go), so on today's
+// wire this fallback is never taken; it exists so the branch the
+// contract permits is a working link rather than "/assets/undefined".
+export function coinSlug(c: Coin): string {
+  return c.slug ?? c.asset_id;
+}
 
 export type CoinsPage = {
   coins: Coin[];
