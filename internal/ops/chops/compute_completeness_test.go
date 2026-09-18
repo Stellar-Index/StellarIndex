@@ -627,6 +627,58 @@ func TestSubstrateForGenesis_PerSourceScanFindsTheHoleAboveItsOwnGenesis(t *test
 	}
 }
 
+// TestSubstrateForGenesis_GlobalHeadTruncationDoesNotSkipASourcesOwnWalk pins
+// RLT-123 (adjudicator FALSE-POSITIVE, skeptic OVERTURNED, final STILL-OPEN):
+// SubstrateProblem's endpoint-presence head guard fires on ANY truncation at
+// the low end of the QUERIED range and returns immediately, before the
+// windowed contiguity/hash walk ever runs. Scanning once at the run's GLOBAL
+// floor (below every source's genesis, e.g. sdex at genesis 2) trips that
+// guard even when a high-genesis source's own range is otherwise intact
+// except for a REAL interior hole the walk would have found — the early
+// return means that hole is never looked for, and the source reads
+// substrate_ok=true over a range that has one. Scoping the scan to the
+// source's own genesis (substrateForGenesis) must let the walk run and find
+// it.
+func TestSubstrateForGenesis_GlobalHeadTruncationDoesNotSkipASourcesOwnWalk(t *testing.T) {
+	const genesis = uint32(50_746_266) // soroswap
+	const tip = uint32(63_000_000)
+	const floor = uint32(2)                 // full/deep run: the run's global scan floor
+	const haveMin = uint32(40_000_000)      // lake truncated below EVERY source's genesis
+	const interiorHole = uint32(55_000_000) // a REAL hole inside soroswap's own range
+
+	scan := fakeSubstrateLake(haveMin, nil, interiorHole)
+
+	// Contrast (test setup sanity): the OLD architecture's single global call
+	// at the run's floor trips the head guard immediately and NEVER reaches
+	// the interior walk — the exact RLT-123 mechanism.
+	globalProblem, globalHas, _, gerr := scan(context.Background(), floor, tip)
+	if gerr != nil {
+		t.Fatalf("scan: %v", gerr)
+	}
+	if globalProblem != haveMin-1 || !globalHas {
+		t.Fatalf("test setup: fake lake's global scan should trip the head guard at %d, got (%d,%v)", haveMin-1, globalProblem, globalHas)
+	}
+	if !sourceSubstrateOK(globalProblem, globalHas, genesis) {
+		t.Fatalf("test setup: the head-guard problem must read as 'clean' for genesis=%d under the OLD single-call wiring (that's the bug this test pins)", genesis)
+	}
+
+	// The fix: substrateForGenesis scopes the scan to this source's own
+	// genesis, so the truncation below it never trips the guard and the
+	// walk finds this source's own interior hole.
+	cache := make(map[uint32]substrateScan)
+	got, err := substrateForGenesis(context.Background(), scan, cache, genesis, floor, tip)
+	if err != nil {
+		t.Fatalf("substrateForGenesis: %v", err)
+	}
+	if !got.has || got.problem != interiorHole {
+		t.Fatalf("substrateForGenesis(genesis=%d) = (problem=%d,has=%v), want (problem=%d,has=true) — the global head truncation at %d must not skip this source's own interior hole at %d",
+			genesis, got.problem, got.has, interiorHole, haveMin, interiorHole)
+	}
+	if sourceSubstrateOK(got.problem, got.has, genesis) {
+		t.Fatalf("sourceSubstrateOK reported clean for genesis=%d despite its own interior hole at %d — RLT-123 regression", genesis, interiorHole)
+	}
+}
+
 // TestSubstrateForGenesis_MemoizesByScanFloorAndSkipsWhenFloorExceedsTip
 // pins the efficiency + -skip-substrate contract substrateForGenesis adds on
 // top of the F073/RLT-123 fix: two sources sharing a scan floor must not

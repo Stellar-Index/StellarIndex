@@ -180,6 +180,15 @@ against.
   problem. `substrateForGenesis` now scans from `max(run-floor,
   source-genesis)`, memoised per distinct floor so sources sharing a genesis
   reuse one scan.
+- **completeness (clickhouse-lake):** the same per-source substrate scan
+  (F073, above) also closes a head-truncation blind spot (RLT-123): the
+  shared scan's endpoint-presence head guard tripped on ANY truncation at
+  the low end of the run's global query and returned immediately, before the
+  windowed contiguity/hash walk ever ran — so a lake truncated below a
+  low-genesis source (sdex, genesis 2) skipped the walk that would have
+  found a real interior gap or hash break in a high-genesis source's own,
+  otherwise-untruncated range. Scoping the scan to each source's own genesis
+  means a truncation entirely below it no longer trips that source's guard.
 - **api:** four more surfaces now apply the dex-nonstandard-decimals
   normalisation instead of publishing the RAW `prices_1m` ratio for a
   confirmed non-7-decimals token (F017). The class was half-fixed, and
