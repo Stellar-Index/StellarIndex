@@ -163,6 +163,8 @@ func (s *RedisAPIKeyStore) writeRecord(ctx context.Context, hash string, rec API
 // skipped — one corrupt record must not fail every lookup.
 func (s *RedisAPIKeyStore) walkAPIKeyRecords(ctx context.Context, visit func(hash string, rec APIKeyRecord) (stop bool, err error)) error {
 	prefix := cachekeys.APIKey("").String()
+	// apikey-scan-ok: the one sanctioned walk — builds the lookup index
+	// and answers lookups only while that index is unusable.
 	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*").String(), 1000).Iterator()
 	for iter.Next(ctx) {
 		hash := strings.TrimPrefix(iter.Val(), prefix)

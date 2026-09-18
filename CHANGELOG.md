@@ -52,6 +52,19 @@ against.
   is ever removed and re-granted, or if keys were minted by a binary
   older than this release after the index went ready.
 
+- **ci (api keys):** `scripts/ci/lint-apikey-scan.sh` bans any new walk
+  of the `apikey:*` credential keyspace: no Redis scan-family call in
+  `internal/auth`, nobody in `internal/`, `cmd/` or `pkg/` may build the
+  `apikey:*` wildcard, exactly one site may carry an `apikey-scan-ok:`
+  marker (the index build), and a marker that exempts nothing fails. On
+  the code before the index it reports the four sites the finding
+  names. The four walks that shipped were each written by copying the
+  one before, and each passed its tests, because a test keyspace holds
+  three keys. `internal/auth`'s `TestNoNewAPIKeyKeyspaceWalk` runs the
+  script and its 13-case self-test, so the ban is enforced wherever
+  `go test ./...` runs; the script is not yet named in
+  `scripts/dev/verify.sh` or `.github/workflows/ci.yml`. (K051)
+
 - **assets listing:** the listing `market_cap_usd` of a confirmed
   non-7-decimals token divides supply by the token's confirmed decimals,
   not by the standard 7 (F017, the market-cap leg). This corrects the
