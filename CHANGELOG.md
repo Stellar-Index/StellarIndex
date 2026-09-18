@@ -17,6 +17,23 @@ against.
 
 ### Fixed
 
+- **price serving (money):** a cached VWAP can no longer outlive the
+  aggregator that publishes it. `cachekeys.VWAPTTL` now bounds every
+  `vwap:` (and, through it, `confidence:`) key by a 5-minute silence
+  grace — 10 missed ticks at the default 30 s cadence, the same number
+  and the same reasoning as `FreezeTTL` — instead of keying the TTL to
+  the aggregation window. Before this, `/v1/price?window=86400` served
+  the 24 h key for a full day after the aggregator stopped (crash,
+  deploy, OOM, failing Redis writes) with `observed_at` stamped at
+  request time and `flags.stale` unset, so a day-old price was asserted
+  as current and no field on the wire could reveal it; the same lie
+  covered a window that had simply run out of trades. A stopped
+  publisher's value now expires and the surface answers its documented
+  404 rather than substituting a different TIME for the window the
+  caller asked for. Windows at or below the grace (the 300 s surface,
+  the API's 5-minute triangulation fallback) are unchanged, and a
+  freeze still extends the last-known-good value to cover the ADR-0019
+  hold. (audit-2026-09-02 F034)
 - **storage (test):** the both-directions query-shape guard no longer
   depends on a hand-maintained list of subjects — the list is why four
   readers carrying the exact shape it forbids shipped green. It now

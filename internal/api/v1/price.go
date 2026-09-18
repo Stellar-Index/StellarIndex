@@ -2739,11 +2739,18 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 				continue
 			}
 			snap := PriceSnapshot{
-				AssetID:       asset.String(),
-				Quote:         quote.String(),
-				Price:         value,
-				PriceType:     "vwap",
-				ObservedAt:    WireTime(time.Now().UTC()), // F-1305 semantics: cache TTL is window-bound + tick-refreshed
+				AssetID:   asset.String(),
+				Quote:     quote.String(),
+				Price:     value,
+				PriceType: "vwap",
+				// F-1305 semantics: the value is re-published every
+				// aggregator tick, and its key cannot outlive that
+				// publisher by more than cachekeys.VWAPMaxAge — a
+				// stopped aggregator's value expires and this surface
+				// 404s below rather than stamping a fresh observed_at
+				// on a value hours old. So request time is accurate to
+				// within the silence grace, not to within the window.
+				ObservedAt:    WireTime(time.Now().UTC()),
 				WindowSeconds: int(window / time.Second),
 			}
 			flags := Flags{Triangulated: triangulated, Frozen: s.lookupFrozen(r, asset, quote)}

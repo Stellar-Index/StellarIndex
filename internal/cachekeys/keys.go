@@ -68,7 +68,7 @@ const PriceTTL = 60 * time.Second
 // ─── VWAP — per-pair + window pre-compute ─────────────────────────
 //
 // Wire shape: `vwap:<base>:<quote>:<window-seconds>`
-// TTL matches window.
+// TTL: the window, bounded by [VWAPMaxAge] — see [VWAPTTL].
 
 // VWAPKey is the typed Redis key for the
 // `vwap:<base>:<quote>:<window-seconds>` family.
@@ -84,9 +84,50 @@ func VWAP(base, quote canonical.Asset, window time.Duration) VWAPKey {
 		base.String(), quote.String(), int(window.Seconds())))
 }
 
-// VWAPTTL is the TTL for a VWAP key — equal to its window. Returns 0
-// for zero window (callers should treat as "don't cache").
-func VWAPTTL(window time.Duration) time.Duration { return window }
+// VWAPMaxAge is the SILENCE GRACE on a published VWAP: how long a
+// cached rolling VWAP may keep serving after the aggregator stops
+// refreshing it (crash, deploy, OOM, Redis writes failing, or simply
+// a window with no trades left in it).
+//
+// It is NOT the aggregation window, and the distinction is the whole
+// point. Every configured (pair, window) is recomputed and re-written
+// on EVERY tick (orchestrator.Tick walks Pairs × Windows; default
+// cadence [orchestrator.DefaultInterval] = 30 s), so a value older
+// than a handful of ticks does not mean "a long window", it means
+// "nobody is publishing". Keying the TTL to the window instead made
+// `vwap:<pair>:86400` outlive its own writer by up to 24 hours, and
+// the windowed /v1/price surface stamps `observed_at` at request time
+// — so a stopped aggregator was served as a current price for a day,
+// with no age field on the wire able to reveal it.
+//
+// 5 minutes = 10 missed ticks at the default cadence. Deliberately the
+// same number, and the same reasoning, as [FreezeTTL]: long enough to
+// ride out a deploy or a slow tick, short enough that a dead publisher
+// stops serving. It also sits well above the freshness SLO the serving
+// path already alarms on — `stellarindex_api_price_stale` pages at
+// `stellarindex_price_staleness_seconds > 120` (deploy/monitoring/
+// rules/api.yml), i.e. operators are alerted minutes before the value
+// expires and the surface starts answering 404 instead.
+//
+// Expiry is the fail-closed answer for a rolling window: `/v1/price
+// ?window=…` documents a missing key as an honest 404 and refuses to
+// substitute a different window, so refusing to substitute a different
+// TIME is the same contract. A freeze is the one deliberate exception —
+// the orchestrator extends the last-known-good value's TTL to cover the
+// ADR-0019 hold (keepFrozenVWAPAlive), and that response carries
+// `flags.frozen`.
+const VWAPMaxAge = 5 * time.Minute
+
+// VWAPTTL is the TTL for a VWAP key — its window, bounded by
+// [VWAPMaxAge] so a value can never outlive its publisher by more than
+// the silence grace. Returns 0 for zero window (callers should treat
+// as "don't cache").
+func VWAPTTL(window time.Duration) time.Duration {
+	if window <= 0 || window < VWAPMaxAge {
+		return window
+	}
+	return VWAPMaxAge
+}
 
 // ─── VWAP Provenance — was this VWAP triangulated? ──────────────────
 //
@@ -225,9 +266,12 @@ func Confidence(base, quote canonical.Asset, window time.Duration) ConfidenceKey
 		base.String(), quote.String(), int(window.Seconds())))
 }
 
-// ConfidenceTTL is the TTL for a confidence: key. Matches VWAPTTL —
-// the score is tied to its underlying VWAP and should expire with it.
-func ConfidenceTTL(window time.Duration) time.Duration { return window }
+// ConfidenceTTL is the TTL for a confidence: key. Delegates to
+// [VWAPTTL] — the score is tied to its underlying VWAP and must expire
+// with it, including under the [VWAPMaxAge] bound; a score that
+// outlived the value it scored would be attached to whatever the next
+// publish put there.
+func ConfidenceTTL(window time.Duration) time.Duration { return VWAPTTL(window) }
 
 // ─── OHLC — one candle per (pair, granularity, bucket-start) ──────
 //
