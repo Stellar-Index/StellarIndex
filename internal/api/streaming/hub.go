@@ -40,18 +40,28 @@ const subscriberQueueDepth = 32
 // leaves, without waiting out this TTL.
 const DefaultTopicIdleTTL = 15 * time.Minute
 
-// DefaultMaxTopics is the ceiling on live topics per Hub. Real
-// deployments key topics by traded pair — hundreds, not thousands — so
-// 4096 leaves generous headroom while capping the worst case (an empty
-// 256-event ring is ~20 KiB, so ~80 MiB at the ceiling) well short of
-// anything that could exhaust the API process.
+// DefaultMaxTopics is the reap threshold for live topics per Hub — not
+// a hard ceiling, and deliberately so. Over it the reaper evicts
+// SUBSCRIBER-LESS topics oldest-first; a topic with a live subscriber is
+// never evicted, because dropping it would silently detach an open
+// stream from its fanout. So the topic COUNT is bounded by
+// max(DefaultMaxTopics, concurrent subscribers × their topics), and
+// concurrent subscribers are capped before Subscribe runs (see [Stream]
+// / maxConcurrentStreams).
 //
-// Over the ceiling the reaper evicts SUBSCRIBER-LESS topics
-// oldest-first. Topics with a live subscriber are never evicted (that
-// would silently break an open stream), so the true bound is
-// max(DefaultMaxTopics, concurrent subscribers) — and concurrent
-// subscribers are themselves capped before Subscribe can allocate
-// anything (see [Stream] / maxConcurrentStreams).
+// What is bounded here is the MEMORY, which is what the count was ever
+// standing in for. The expensive part of a topic is its replay ring (an
+// empty 256-event ring reserves ~20 KiB), and that is allocated only on
+// a topic's first PUBLISH — see [topicState.buffer]. Rings therefore
+// scale with topics that actually carry events, which the reaper does
+// bound at roughly this threshold (~80 MiB), while a subscriber-only
+// topic — the shape a client mints by naming an arbitrary pair, window
+// or alias spelling — costs a map entry rather than a ring
+// (audit-2026-09-02 F058/K010). [Hub.BufferedTopicCount] reports the
+// count that carries the memory.
+//
+// Real deployments key topics by traded pair — hundreds, not thousands
+// — so 4096 leaves generous headroom for the reaper to work in.
 const DefaultMaxTopics = 4096
 
 const (
@@ -101,7 +111,33 @@ type Hub struct {
 // alone, not the whole Hub — avoids lock-contention spikes when many
 // topics publish concurrently.
 type topicState struct {
-	mu     sync.Mutex
+	mu sync.Mutex
+	// buffer is the replay ring, allocated LAZILY on the topic's first
+	// publish and nil until then.
+	//
+	// It is nil-until-published because the ring is by far the
+	// expensive part of a topic (an empty 256-event ring pre-allocates
+	// ~20 KiB) while the topic KEY is client-supplied and the topic
+	// count is not bounded by [Hub.maxTopics] — the reaper can only
+	// evict topics with no subscribers, so a caller holding
+	// subscriptions grows the map past the ceiling by design (dropping
+	// a subscribed topic would silently detach an open stream). Eager
+	// allocation therefore made resident memory scale with
+	// concurrent-streams × alias fan-out: /v1/price/stream subscribes
+	// one connection to assetAliases(base) × assetAliases(quote) — up
+	// to 9 topics — of which the aggregator publishes to at most a few,
+	// so at the shipped 8192-stream cap the never-published remainder
+	// alone reserved well over a gigabyte of rings that could never
+	// hold an event (audit-2026-09-02 F058/K010).
+	//
+	// A topic with no publisher has nothing to replay, so the ring is
+	// pure cost until the first push. Allocating it there instead makes
+	// ring memory scale with topics that actually CARRY data — which
+	// the reaper does bound, since a published topic that loses its
+	// subscribers is evicted on idleTTL.
+	//
+	// Every read goes through [topicState.replayAfter] /
+	// [topicState.bufferEmpty]; only Hub.Publish allocates it.
 	buffer *ring
 	subs   map[*subscription]struct{}
 
@@ -112,6 +148,23 @@ type topicState struct {
 	// re-checks it under mu (see Hub.withTopic).
 	lastUsed time.Time
 	evicted  bool
+}
+
+// replayAfter is [ring.snapshotAfter] over a topic whose ring may not
+// exist yet: a topic that has never been published to has nothing to
+// replay. Caller holds t.mu.
+func (t *topicState) replayAfter(lastEventID string) []Event {
+	if t.buffer == nil {
+		return nil
+	}
+	return t.buffer.snapshotAfter(lastEventID)
+}
+
+// bufferEmpty reports whether the topic holds nothing a reconnecting
+// client could replay — true both for a never-published topic (no ring)
+// and for one whose ring is empty. Caller holds t.mu.
+func (t *topicState) bufferEmpty() bool {
+	return t.buffer == nil || t.buffer.empty()
 }
 
 // NewHub returns a Hub with [DefaultBufferSize] per topic. Pass 0 to
@@ -156,11 +209,39 @@ func (h *Hub) SetMaxTopics(n int) {
 }
 
 // TopicCount reports how many topics the Hub currently holds — the
-// gauge for the bound [DefaultMaxTopics] enforces.
+// gauge for the reap threshold [DefaultMaxTopics] works against.
 func (h *Hub) TopicCount() int {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return len(h.topics)
+}
+
+// BufferedTopicCount reports how many topics have actually allocated a
+// replay ring, i.e. have been published to at least once since they
+// were created.
+//
+// This is the count that carries the Hub's memory: rings are allocated
+// lazily (see [topicState.buffer]), so the difference between this and
+// [Hub.TopicCount] is the set of topics a client has subscribed to but
+// nothing ever published on — arbitrary pairs, windows and alias
+// spellings, which cost a map entry each rather than ~20 KiB each.
+func (h *Hub) BufferedTopicCount() int {
+	h.mu.RLock()
+	topics := make([]*topicState, 0, len(h.topics))
+	for _, t := range h.topics {
+		topics = append(topics, t)
+	}
+	h.mu.RUnlock()
+
+	n := 0
+	for _, t := range topics {
+		t.mu.Lock()
+		if t.buffer != nil {
+			n++
+		}
+		t.mu.Unlock()
+	}
+	return n
 }
 
 // TopicsReaped reports the cumulative number of topics the reaper has
@@ -200,6 +281,13 @@ func (h *Hub) Publish(topic, eventType string, data []byte) string {
 		// slot 0, which under inversion is not the lowest-ID event
 		// (cold audit 2026-08-04).
 		ev.ID = h.gen.Next()
+		// The ring is allocated on FIRST PUBLISH, never on subscribe —
+		// see [topicState.buffer]. A topic that only ever had
+		// subscribers has nothing to replay, so the allocation would be
+		// a pure 20 KiB tax on a client-supplied key.
+		if t.buffer == nil {
+			t.buffer = newRing(h.bufferSize)
+		}
 		t.buffer.push(ev)
 		// Snapshot subscribers so we can release the topic lock before
 		// sending — keeps a slow sub from blocking publishers (sends
@@ -276,7 +364,7 @@ func (h *Hub) Subscribe(topics []string, lastEventID string) (<-chan Event, func
 			// client lands on the CURRENT price immediately and stays
 			// connected. The lost span is exactly the gap the ID jump is
 			// documented to signal (cold audit 2026-08-04).
-			replay := t.buffer.snapshotAfter(lastEventID)
+			replay := t.replayAfter(lastEventID)
 			if len(replay) > subscriberQueueDepth {
 				replay = replay[len(replay)-subscriberQueueDepth:]
 			}
@@ -367,8 +455,9 @@ func (h *Hub) getOrCreateTopic(name string) *topicState {
 	// on the /v1/price/stream path, client-supplied — without this a
 	// stream of made-up pairs grows h.topics forever (REL-05).
 	h.maybeReapLocked(now)
+	// buffer is left nil: the ring is allocated on first PUBLISH, not
+	// here. See [topicState.buffer].
 	t = &topicState{
-		buffer:   newRing(h.bufferSize),
 		subs:     make(map[*subscription]struct{}),
 		lastUsed: now,
 	}
@@ -417,7 +506,7 @@ func (h *Hub) reapLocked(now time.Time) {
 	for name, t := range h.topics {
 		t.mu.Lock()
 		unused := len(t.subs) == 0
-		expired := unused && (t.buffer.empty() || now.Sub(t.lastUsed) >= h.idleTTL)
+		expired := unused && (t.bufferEmpty() || now.Sub(t.lastUsed) >= h.idleTTL)
 		if expired {
 			t.evicted = true
 		}

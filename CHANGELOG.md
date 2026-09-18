@@ -17,6 +17,25 @@ against.
 
 ### Fixed
 
+- **api:** the SSE Hub no longer reserves a 20 KiB replay ring for a
+  topic nothing has ever published to. `DefaultMaxTopics` was never a
+  ceiling — `getOrCreateTopic` inserts unconditionally and the reaper
+  evicts only SUBSCRIBER-LESS topics, since dropping a subscribed one
+  would silently detach an open stream — so the live topic count scales
+  with concurrent streams x alias fan-out, and with the ring allocated
+  eagerly so did resident memory: `/v1/price/stream` subscribes one
+  connection to `assetAliases(base)` x `assetAliases(quote)` (up to 9
+  topics, of which the aggregator publishes to at most a few), which at
+  the shipped 8192-stream cap reserved ~1.5 GiB of rings that could
+  never hold an event. The ring is now allocated on a topic's first
+  PUBLISH, so a subscriber-only topic costs a map entry (measured 317
+  bytes) instead of ~22 KiB, and ring memory scales with topics that
+  actually carry data — which the reaper does bound. Replay,
+  `Last-Event-ID` resume and reaping are unchanged; the new
+  `Hub.BufferedTopicCount` reports the count that carries the memory,
+  and `DefaultMaxTopics`' doc now says what it is (a reap threshold)
+  rather than what it never was. (audit-2026-09-02 F058, K010)
+
 - **api:** one unauthenticated address can no longer take the whole
   shared tip-producer pool and 503 everybody else's
   `/v1/price/tip/stream`. The 512-slot ceiling bounded the total but
