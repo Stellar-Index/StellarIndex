@@ -754,8 +754,10 @@ type SEP41RollupAdvance struct {
 // AdvanceSEP41SupplyRollup folds a contract's newly-SETTLED
 // sep41_supply_events into its sep41_supply_rollup checkpoint — the
 // incremental maintainer that keeps the SEP41KindTotalsAtOrBefore fast
-// path cheap (migration 0085, incident 2026-07-06). This is the ONLY
-// writer of sep41_supply_rollup.
+// path cheap (migration 0085, incident 2026-07-06). It is the only writer
+// that ACCUMULATES the fold columns; the other two zero them
+// ([Store.ResetSEP41SupplyRollupFold], and [Store.UpsertSEP41GenesisBaseline]
+// when the floor moves), and the genesis columns are the seed's alone.
 //
 // It sums only rows with `ledger > last_ledger` AND strictly below the
 // contract's current max ledger. The `< max(ledger)` guard defers the
