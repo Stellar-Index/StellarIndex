@@ -97,6 +97,25 @@ against.
   F037, F039, K004, RLT-391 / #788 — `rejectAggregatorOutliers` in
   `internal/aggregate/global.go` carries the same additive band and is
   NOT covered here)
+- **api:** a client-abort flood can no longer fail the rate limiter
+  CLOSED for every caller on a bucket. The throttle's Redis round-trip
+  ran on the REQUEST's context, and `ratelimit.Bucket` cannot tell a
+  caller-cancelled call from a Redis outage — every error out of the
+  take arms its dwell clock and resets the recovery streak — so a client
+  that connected, sent a request and immediately RST, a few times a
+  second, kept the fail-closed clock armed indefinitely and denied the
+  30 s unbroken-success streak needed to disarm it. Past the window the
+  limiter answered `throttle-unavailable` and the middleware returned
+  503 to the whole anonymous (or whole authenticated) tier while Redis
+  was healthy: a remote kill switch costing one TCP handshake per tick.
+  The take now runs on the request's values WITHOUT its cancellation,
+  bounded by its own 5 s timeout, mirroring the post-response usage
+  writes. That also closes the mirror-image hole — an aborted request
+  used to fail open and spend no token, so aborting was free traffic.
+  A real Redis outage still fails open inside the dwell window and
+  closed past it, with a regression test pinning both.
+  (reverification-2026-09-18 F059 / RLT-160)
+
 - **api:** `GET /v1/history/since-inception` now applies the
   directory-scam gate, so a flagged issuer's full VWAP trajectory is no
   longer served at 200 while every other aggregated-price surface —

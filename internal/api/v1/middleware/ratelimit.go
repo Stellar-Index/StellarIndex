@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -12,6 +13,48 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
+
+// throttleTakeTimeout bounds the throttle's own backend round-trip.
+//
+// The take deliberately does NOT inherit the request's cancellation —
+// see [throttleContext] — so, exactly like the post-response
+// bookkeeping writes, it needs a bound of its own or a wedged Redis
+// would pin the request goroutine forever. 5 s matches
+// [postResponseWriteTimeout] and is generous relative to go-redis's 3 s
+// default: a backstop, not the usual limiter.
+const throttleTakeTimeout = 5 * time.Second
+
+// throttleContext derives the context the throttle's backend call runs
+// under: the request's values, WITHOUT its cancellation, bounded by
+// [throttleTakeTimeout].
+//
+// A client abort must not reach the limiter as an error. The bucket
+// cannot tell a caller-cancelled call from a Redis outage — every error
+// out of the take arms its dwell clock — so a client that opens a
+// connection, sends a request and immediately RSTs, a few times a
+// second, kept `redisErrorSince` armed and `healthySince` reset for as
+// long as it cared to, and the 30 s unbroken-success streak needed to
+// disarm could never accumulate. The limiter then answered
+// ErrThrottleUnavailable and the middleware failed CLOSED with 503 for
+// EVERY caller sharing that bucket (the whole anonymous tier, or the
+// whole authenticated tier) while Redis was perfectly healthy: a remote
+// kill switch for the API, costing an attacker one TCP handshake per
+// tick (REL-06 F059, reverification-2026-09-18).
+//
+// Detaching is also the correct charge semantics, and closes the
+// mirror-image hole: an aborted request had its take error out and the
+// middleware fall OPEN, so the token was never spent. The request
+// consumed the connection and the dispatch either way — the same
+// reasoning [postResponseWriteTimeout]'s call site records for usage
+// counters, where not counting an aborted request is a quota-evasion
+// vector.
+//
+// The bound is only as hard as the backend's context honouring; go-redis
+// respects ctx cancellation on the wire, so it holds for the bucket as
+// wired today.
+func throttleContext(r *http.Request) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(r.Context()), throttleTakeTimeout)
+}
 
 // MaxRateLimitKeyLen caps the caller-supplied KeyFn output so a
 // hostile header (multi-KB X-Forwarded-For) can't blow up the
@@ -84,7 +127,9 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 				key = key[:MaxRateLimitKeyLen]
 			}
 
-			res, err := bucket.Take(r.Context(), key)
+			takeCtx, takeCancel := throttleContext(r)
+			res, err := bucket.Take(takeCtx, key)
+			takeCancel()
 			if err != nil {
 				if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
 					// Dwell-time exceeded: sustained Redis outage —
@@ -186,7 +231,9 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 				key = key[:MaxRateLimitKeyLen]
 			}
 
-			res, err := bucket.TakeN(r.Context(), key, override)
+			takeCtx, takeCancel := throttleContext(r)
+			res, err := bucket.TakeN(takeCtx, key, override)
+			takeCancel()
 			if err != nil {
 				if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
 					logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
