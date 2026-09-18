@@ -73,6 +73,17 @@ against.
   (`TestScamGateIsAskedThePairQuestion`) so no NEW surface can join them.
   (audit-2026-09-02 F002/K001, partial: F019/F032/T039 carry the four
   remaining handlers)
+- **price-alerts:** the aggregator's price-alert evaluator now consults
+  the same withholding chokepoint the API serves under
+  (`pricingguard.PriceWithheld`), rather than the thin-market half alone.
+  It reads the same closed `prices_1m` bucket `/v1/price` reads and
+  delivers the number to a customer's webhook, signed — so a
+  directory-scam-flagged issuer's price, refused with 404 on every API
+  surface, was still deliverable from this binary, whose seam the API's
+  gate guard structurally cannot see. Both binaries now import one
+  expression instead of keeping a copy each, and this binary has its own
+  seam guard. Off by default (`[price_alerts] enabled=false`).
+  (audit-2026-09-02 K001)
 - **divergence:** the Chainlink reference no longer writes the operator's
   RPC API key into the divergence cache. `[divergence.chainlink].rpc_url`
   is populated from the same `CHAINLINK_RPC_URL` the ingest poller uses,
