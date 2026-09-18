@@ -66,8 +66,13 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	// were: the ScamGate is consumed at exactly four sites, none of them
 	// here, and no middleware does asset-level withholding.
 	//
-	// Keyed on the BASE so it covers every quote, including the
-	// XLM-triangulated headline — same shape as computeTip.
+	// Asked about BOTH legs, via the package's one spelling of the
+	// decision (scamWithheld → pricingguard's pair fold). Keyed on the
+	// base alone it covered every quote but not itself as one: the price
+	// of XLM in a flagged issuer's asset IS the flagged market's price,
+	// inverted, so `?base=native&quote=<FLAGGED>` served the exact
+	// reciprocal of the number this handler had just withheld for the
+	// other orientation (F019). Both orientations name one market.
 	//
 	// SCAM ONLY, deliberately not the substance gate. The scam gate is
 	// targeted (flagged issuers) and directly implements the 2026-08-25
@@ -84,7 +89,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	// config docs and the withheld problem's own guidance text all
 	// promise /v1/ohlc stays visible. Gating there would make our own
 	// error message's escape-hatch advice a lie.
-	if s.scam != nil && s.scam.Withheld(r.Context(), base, "twap") {
+	if scamWithheld(r.Context(), s.scam, base, quote, "twap") {
 		writePriceWithheldProblem(w, r, base, quote)
 		return
 	}

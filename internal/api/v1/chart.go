@@ -178,9 +178,12 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 //
 // Called from handleChart after the pair is known and BEFORE
 // dispatchSpecialisedChart, and from handleHistorySinceInception after
-// its pair is known — the load-bearing placement. Keying
-// on the BASE (not the pair) survives the frontend's XLM triangulation,
-// so a flagged asset cannot slip through against a different quote. And
+// its pair is known — the load-bearing placement. It asks about BOTH
+// legs through the package's one spelling of the decision
+// ([scamWithheld]): the base question survives the frontend's XLM
+// triangulation, and the quote question closes the orientation swap
+// that republished the whole withheld trajectory, inverted, whenever
+// the client named the flagged asset as the quote (F019). And
 // sitting ahead of the dispatch covers the default path plus every
 // specialised variant (market-cap, fiat-cross, TWAP) with ONE check —
 // gating each variant separately is precisely how this class keeps
@@ -206,7 +209,7 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 // was right: the handler already dispatches four ways. It now has a
 // second caller, which is the better reason to keep it one function.
 func (s *Server) seriesWithheldForScam(w http.ResponseWriter, r *http.Request, pair canonical.Pair, surface string) bool {
-	if s.scam == nil || !s.scam.Withheld(r.Context(), pair.Base, surface) {
+	if !scamWithheld(r.Context(), s.scam, pair.Base, pair.Quote, surface) {
 		return false
 	}
 	writePriceWithheldProblem(w, r, pair.Base, pair.Quote)

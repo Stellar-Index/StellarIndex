@@ -34,6 +34,17 @@ against.
   the API's 5-minute triangulation fallback) are unchanged, and a
   freeze still extends the last-known-good value to cover the ADR-0019
   hold. (audit-2026-09-02 F034)
+- **api (security):** `/v1/twap`, `/v1/chart` and
+  `/v1/history/since-inception` now ask the scam-issuer gate about BOTH
+  legs of the pair. Keyed on the base alone they withheld
+  `?base=<FLAGGED>&quote=native` at 404 while serving
+  `?base=native&quote=<FLAGGED>` at 200 — the same market, the same
+  number, inverted, because the aggregate reads fold both stored
+  directions. On the series surfaces that published the flagged
+  issuer's whole trajectory. All three now route through the package's
+  single `scamWithheld` spelling, whose fold lives in `pricingguard`,
+  and the two files leave the pair-question ratchet so they cannot
+  regress. (audit-2026-09-02 F019, F032)
 - **storage (test):** the both-directions query-shape guard no longer
   depends on a hand-maintained list of subjects — the list is why four
   readers carrying the exact shape it forbids shipped green. It now

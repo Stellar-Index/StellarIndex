@@ -43,8 +43,6 @@ func TestProductionScamGateIsPairAware(t *testing.T) {
 // code rather than in a tracker. Migrating a file means deleting its
 // entry here, not adding one.
 var scamPairPendingFiles = map[string]string{
-	"twap.go":         "F019/F032 — /v1/twap?base=native&quote=<FLAGGED>",
-	"chart.go":        "F019/F032 — /v1/chart with a flagged quote leg",
 	"price_tip.go":    "T039 — /v1/price/tip computeTip",
 	"price_stream.go": "T039 — the closed-price SSE stream",
 }
