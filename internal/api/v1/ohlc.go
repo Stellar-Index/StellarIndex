@@ -222,34 +222,10 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		trades = aggregate.FilterOutliers(trades, sigma)
 	}
 
-	bar, err := aggregate.ComputeOHLC(trades)
-	if errors.Is(err, aggregate.ErrNoTrades) {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/no-trades",
-			"No trades in window", http.StatusNotFound,
-			"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
-				" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
+	bar, ok := s.computeOHLCSingleBar(w, r, pair, from, to, trades)
+	if !ok {
 		return
 	}
-	if err != nil {
-		s.logger.Error("ComputeOHLC failed", "err", err)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/internal",
-			"Internal error", http.StatusInternalServerError, "")
-		return
-	}
-
-	// dex-nonstandard-decimals forward normalization: ComputeOHLC derives
-	// every one of Open/High/Low/Close from the same raw quote/base ratio
-	// VWAP uses, so the SAME per-pair scalar factor corrects all four —
-	// see aggregate.AdjustPrice's doc comment for why a post-hoc multiply
-	// is exact here. No-op for a pair with no confirmed non-7-decimals leg.
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
-	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
-	bar.Open = aggregate.AdjustPrice(bar.Open, baseDec, quoteDec)
-	bar.High = aggregate.AdjustPrice(bar.High, baseDec, quoteDec)
-	bar.Low = aggregate.AdjustPrice(bar.Low, baseDec, quoteDec)
-	bar.Close = aggregate.AdjustPrice(bar.Close, baseDec, quoteDec)
 
 	writeJSON(w, OHLCBar{
 		From:                WireTime(from),
@@ -265,6 +241,49 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
 	}, Flags{Triangulated: triangulated})
+}
+
+// computeOHLCSingleBar folds the single-bar path's compute-and-normalize
+// tail into one seam: it derives the bar, answers the caller directly on
+// the two failure shapes, and applies the dex-nonstandard-decimals
+// forward normalization before handing the bar back.
+//
+// Normalization lives here rather than at the call site because
+// ComputeOHLC derives every one of Open/High/Low/Close from the same raw
+// quote/base ratio VWAP uses, so the SAME per-pair scalar factor corrects
+// all four — see [aggregate.AdjustPrice] for why a post-hoc multiply is
+// exact. No-op for a pair with no confirmed non-7-decimals leg.
+//
+// Returns ok=false when it has already written the response.
+func (s *Server) computeOHLCSingleBar(
+	w http.ResponseWriter, r *http.Request,
+	pair canonical.Pair, from, to time.Time,
+	trades []canonical.Trade,
+) (*aggregate.OHLC, bool) {
+	bar, err := aggregate.ComputeOHLC(trades)
+	if errors.Is(err, aggregate.ErrNoTrades) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/no-trades",
+			"No trades in window", http.StatusNotFound,
+			"no trades observed for "+pair.Base.String()+"/"+pair.Quote.String()+
+				" between "+from.Format(time.RFC3339)+" and "+to.Format(time.RFC3339))
+		return nil, false
+	}
+	if err != nil {
+		s.logger.Error("ComputeOHLC failed", "err", err)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/internal",
+			"Internal error", http.StatusInternalServerError, "")
+		return nil, false
+	}
+
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
+	bar.Open = aggregate.AdjustPrice(bar.Open, baseDec, quoteDec)
+	bar.High = aggregate.AdjustPrice(bar.High, baseDec, quoteDec)
+	bar.Low = aggregate.AdjustPrice(bar.Low, baseDec, quoteDec)
+	bar.Close = aggregate.AdjustPrice(bar.Close, baseDec, quoteDec)
+	return bar, true
 }
 
 // commonAmountScaleDecimals is the smallest-unit scale a window's volume
