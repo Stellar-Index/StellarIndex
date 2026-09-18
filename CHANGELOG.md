@@ -118,6 +118,25 @@ against.
   than truncated — a surviving staleness key still escalates, an
   erased one never does. Value gauges are still not carried: they
   would report supply the failed run never computed.
+- **api,clickhouse:** `GET /v1/accounts/{g}/movements` no longer strands
+  an account's pre-watermark history. The cap67 ceiling that splits the
+  ClickHouse archive arm from the Postgres tail was applied to the page
+  the archive query had ALREADY returned — after its SQL `LIMIT` — so
+  whenever the `limit` newest rows for an address sat above the ceiling
+  (routine while the cap67 follow daemon is mid-window, and continuous
+  for any account moving more than a page per derive tick) the page
+  collapsed to zero rows, `next_cursor` was suppressed, and every
+  movement BELOW the ceiling became unreachable through the endpoint.
+  The ceiling now travels to ClickHouse as a `ledger <= ?` predicate
+  (`AccountMovementFilter.MaxLedger` with an explicit `HasMaxLedger`
+  set-signal, so a ceiling of **0** — an installed genesis movements
+  floor with no watermark — still serves nothing from the archive arm
+  rather than everything), and each page fills from the rows that are
+  actually servable. Regression tests: the handler's full-page +
+  `next_cursor` case, the genesis-floor fail-closed case, the query
+  builder's ceiling-zero clause, and an executing ClickHouse
+  integration test.
+
 - **ci,ops:** `config_acknowledged=true` can no longer clear a config
   surface the deploy PROVED unapplied by asking the host. The deploy's
   ClickHouse evidence step has asked the target which objects exist

@@ -672,6 +672,30 @@ type AccountMovementFilter struct {
 	Kind      string                   // movement_kind exact match; "" = any
 	Direction AccountMovementDirection // exact match; "" = any
 	Asset     string                   // canonical asset id exact match; "" = any
+
+	// MaxLedger is the INCLUSIVE ledger ceiling this read is clamped
+	// to (`AND ledger <= ?`), read only when HasMaxLedger is set.
+	//
+	// It is a SQL predicate rather than a caller-side post-filter on
+	// purpose: /v1/accounts/{g}/movements clamps this arm to the cap67
+	// watermark, and dropping rows in Go AFTER the SQL LIMIT shrinks
+	// the page — to EMPTY whenever every one of the `limit` newest rows
+	// sits above the ceiling, which is the routine shape while the
+	// cap67 follow daemon is mid-window. An empty page suppresses
+	// next_cursor and makes the account's whole pre-watermark history
+	// unreachable (F055). Bounding inside the query fills the page from
+	// the rows that are actually servable.
+	MaxLedger uint32
+	// HasMaxLedger is the explicit set-signal for MaxLedger: 0 is a
+	// REACHABLE ceiling, not "unset". A deployment whose movements
+	// floor is installed at genesis (testnet/futurenet,
+	// timescale.InstallMovementsFloor(1)) computes ceiling = floor-1 =
+	// 0 whenever the watermark is absent or unreadable, and MUST then
+	// serve NOTHING from this arm — a `MaxLedger > 0` sentinel would
+	// silently drop the clause and serve the whole archive alongside
+	// the Postgres tail instead. Callers reading the unbounded archive
+	// leave both fields zero.
+	HasMaxLedger bool
 }
 
 // AccountMovementCursor is the keyset position for AccountMovements
@@ -716,6 +740,9 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 	if filter.Asset != "" {
 		sb.WriteString(" AND asset = ?")
 	}
+	if filter.HasMaxLedger {
+		sb.WriteString(" AND ledger <= ?")
+	}
 	if hasCursor {
 		sb.WriteString(" AND (ledger, tx_hash, op_index, leg_index) < (?, ?, ?, ?)")
 	}
@@ -744,7 +771,10 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 // internal/api/v1/explorer/movements.go merges this CH-native
 // pre-P23 archive with timescale.Store.ListSEP41TransfersByAddress's
 // post-P23 Postgres tail to serve the full GET
-// /v1/accounts/{g}/movements feed (ADR-0048 D5).
+// /v1/accounts/{g}/movements feed (ADR-0048 D5). That merge's ledger
+// ceiling travels in filter.MaxLedger/HasMaxLedger so it is applied
+// BEFORE this query's LIMIT — never as a post-read trim, which would
+// return short (or empty) pages and strand the history below it.
 //
 // No FINAL, but LIMIT 1 BY (see accountMovementsQuery): the previous
 // comment here claimed parity with AccountOperations/AccountTransactions
@@ -765,6 +795,9 @@ func (r *ExplorerReader) AccountMovements(ctx context.Context, address string, l
 	}
 	if filter.Asset != "" {
 		args = append(args, filter.Asset)
+	}
+	if filter.HasMaxLedger {
+		args = append(args, filter.MaxLedger)
 	}
 	if cur.IsSet() {
 		args = append(args, cur.Ledger, cur.TxHash, cur.OpIndex, cur.LegIndex)

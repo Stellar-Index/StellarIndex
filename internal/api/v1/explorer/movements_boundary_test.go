@@ -39,17 +39,35 @@ type movementsArmReader struct {
 	wm     uint32
 	wmErr  error
 	chRows []clickhouse.AccountMovementRow
+
+	// gotFilter is the filter the handler actually passed to the CH arm
+	// — the seam F055's ceiling travels through.
+	gotFilter clickhouse.AccountMovementFilter
 }
 
 func (r *movementsArmReader) Cap67MovementsWatermark(context.Context) (uint32, error) {
 	return r.wm, r.wmErr
 }
 
-func (r *movementsArmReader) AccountMovements(ctx context.Context, _ string, _ int, _ clickhouse.AccountMovementCursor, _ clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {
+func (r *movementsArmReader) AccountMovements(ctx context.Context, _ string, limit int, _ clickhouse.AccountMovementCursor, f clickhouse.AccountMovementFilter) ([]clickhouse.AccountMovementRow, error) {
 	r.probe.record(ctx)
-	// Return a fresh copy: the handler trims the CH slice in place
-	// (chRows[:0]), which would otherwise corrupt the fixture.
-	return append([]clickhouse.AccountMovementRow(nil), r.chRows...), nil
+	r.gotFilter = f
+	// Model the real reader's SQL semantics (F055): the ledger ceiling
+	// is a WHERE predicate applied BEFORE the LIMIT, so a fixture row
+	// above filter.MaxLedger is never returned at all. A fake that
+	// ignored the filter would let a post-read trim in the handler look
+	// indistinguishable from a bounded query.
+	out := make([]clickhouse.AccountMovementRow, 0, len(r.chRows))
+	for _, row := range r.chRows {
+		if f.HasMaxLedger && row.Ledger > f.MaxLedger {
+			continue
+		}
+		out = append(out, row)
+		if limit > 0 && len(out) == limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 // stubSEP41Tail is the Postgres recent-tail seam: it honours the floor

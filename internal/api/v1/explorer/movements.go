@@ -279,7 +279,35 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		wm = liveWM
 	}
 
-	chRows, err := h.Reader.AccountMovements(ctx, g, limit, chCur, filter)
+	// Clamp the CH arm to its ceiling ALWAYS — not only when wm>0
+	// (W1-chrollup-1). With a populated cap67 archive but a zero/failed
+	// watermark, an unclamped CH arm returns cap67_derived rows across the
+	// whole post-P23 range that the Postgres tail ALSO serves, double-
+	// listing every post-P23 watched transfer. When the watermark is
+	// unknown/absent the ceiling is the static P23 boundary
+	// (MovementsFloor()-1): a no-op for a genuinely-absent archive
+	// (no post-P23 rows exist) and a real trim for a populated one.
+	//
+	// The ceiling is a SQL predicate on the CH read, NOT a post-read trim
+	// (F055). Trimming the fetched page in Go happens AFTER the SQL LIMIT,
+	// so a page whose `limit` newest rows all sit above the ceiling —
+	// routine while the cap67 follow daemon is mid-window, and permanent
+	// for any account busier than one page per derive tick — collapsed to
+	// zero rows; len(merged) != limit then suppressed next_cursor and the
+	// account's entire pre-watermark history became unreachable. Pushing
+	// the bound into the WHERE clause fills each page from the servable
+	// rows instead. HasMaxLedger (not a MaxLedger>0 sentinel) carries the
+	// clamp because ceiling 0 is REACHABLE — an installed genesis floor
+	// (testnet/futurenet) with no watermark — and must serve nothing here.
+	chCeiling := timescale.MovementsFloor() - 1
+	if wm > 0 {
+		chCeiling = wm
+	}
+	chFilter := filter
+	chFilter.MaxLedger = chCeiling
+	chFilter.HasMaxLedger = true
+
+	chRows, err := h.Reader.AccountMovements(ctx, g, limit, chCur, chFilter)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -295,26 +323,6 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-
-	// Clamp the CH arm to its ceiling ALWAYS — not only when wm>0
-	// (W1-chrollup-1). With a populated cap67 archive but a zero/failed
-	// watermark, an unclamped CH arm returns cap67_derived rows across the
-	// whole post-P23 range that the Postgres tail ALSO serves, double-
-	// listing every post-P23 watched transfer. When the watermark is
-	// unknown/absent the ceiling is the static P23 boundary
-	// (SEP41MovementsFloorLedger-1): a no-op for a genuinely-absent archive
-	// (no post-P23 rows exist) and a real trim for a populated one.
-	chCeiling := timescale.MovementsFloor() - 1
-	if wm > 0 {
-		chCeiling = wm
-	}
-	trimmed := chRows[:0]
-	for _, row := range chRows {
-		if row.Ledger <= chCeiling {
-			trimmed = append(trimmed, row)
-		}
-	}
-	chRows = trimmed
 
 	pgFloor := timescale.MovementsFloor()
 	if wm+1 > pgFloor {
