@@ -73,12 +73,41 @@
 -- under key "0"; it ages out on the same hold-plus-grace bound as every
 -- other durable ladder.
 --
--- Rollback note. A roll BACK to the previous binary followed by a roll
--- FORWARD inside one hold can leave an entry for a window the old binary
--- released while a sibling stayed frozen (it has no way to retire it). The
--- reader bounds every entry by its own hold_until plus the grace, so the
--- worst case is that one window is over-held for the remainder of a hold it
--- had already been granted, and only if Redis is also lost in that span.
+-- Rollback note. A roll BACK to the previous binary leaves this column in
+-- place (migrations/README.md rule 9), and that binary neither reads nor
+-- writes it: it keeps ADVANCING the four pair-level columns and leaves
+-- window_ladders exactly as the new binary last wrote it. After a roll
+-- FORWARD inside the same freeze the map is therefore STALE, in two ways:
+--
+--   * it can be BEHIND. The old binary extends or ESCALATES the freeze in
+--     the pair-level columns only. A reader that simply preferred a non-NULL
+--     map would resume the window from the map's older rung and discard the
+--     escalation — an UNDER-hold, the dangerous direction. (An earlier
+--     revision of this note claimed over-holding was the worst case. It was
+--     not: that reader shipped, and did exactly this.)
+--   * it can hold an entry for a window the old binary released while a
+--     sibling stayed frozen (it has no way to retire it). The reader bounds
+--     every entry by its own hold_until plus the grace, so that window is
+--     over-held for the remainder of a hold it had already been granted.
+--
+-- So the reader does not trust a map the pair-level columns have outrun.
+-- When the columns record a WORSE freeze than the map's own summary —
+-- escalated where no entry is, a higher rung, or a later hold — every held
+-- entry is raised to the fail-closed fold of itself and the pair-level
+-- ladder, and the pair-level ladder is carried as the UNOWNED entry (key
+-- "0") for the windows the map does not name. Folded, not replaced: the old
+-- binary's 5m window can overwrite the columns with a fresh, LATER hold
+-- while the map still holds a 1h window's escalation, and that must survive
+-- too. This binary itself only ever writes the columns AS the map's
+-- summary, so on a row no other binary touched the rule never fires.
+--
+-- With that, the worst case of a rollback really is over-holding: windows of
+-- the pair that were never frozen rehydrate the ownerless ladder, as they do
+-- for a row written before this migration, until it lapses or an operator
+-- lifts the freeze — and, like everything above, only if Redis is also lost
+-- in that span. Executed against real TimescaleDB with the previous
+-- binary's own UPDATE in
+-- test/integration/freeze_window_ladders_rollback_test.go.
 --
 -- Additive: one nullable column, no default, no existing column touched, no
 -- constraint tightened. `freeze_events` is a compressed hypertable;

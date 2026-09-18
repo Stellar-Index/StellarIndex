@@ -54,6 +54,33 @@ against.
   XLM that moved, so the value is exact. Not in this change: the DEX TVL
   valuer still consumes the resolver rate uncapped behind its substance
   gate. (audit-2026-09-02 F044; K045, insert path only)
+- **aggregator (freeze, money path):** the durable freeze ladder no
+  longer trusts a `window_ladders` map the pair-level columns have
+  outrun. Migration 0163 stays applied across a binary rollback
+  (migrations rule 9), and the previous binary keeps ADVANCING the four
+  0119 columns while never touching the map — so after a roll-forward
+  inside one freeze the map is stale, and the reader preferred it simply
+  because it was non-NULL: with the columns saying escalated, held 30
+  minutes, the 1h window rehydrated the map's older rung, not escalated,
+  4 minutes left, and resumed auto-unfreezing. When the columns record a
+  worse freeze than the map's own summary (escalated where no entry is, a
+  higher rung, a later hold) every held entry is now raised to the
+  fail-closed fold of itself and the pair-level ladder, and that ladder
+  is carried as the unowned `"0"` entry for windows the map does not
+  name. Folded, not replaced: the old binary's 5m window can overwrite
+  the columns with a fresh LATER hold while the map still holds a 1h
+  escalation, and that survives too. The write path reads the row through
+  the same rule, so the record converges on the next tick. This binary
+  only ever writes the columns as the map's summary, so the rule never
+  fires on a row no other binary touched — pinned through the production
+  writer on real TimescaleDB with nanosecond holds, and, because the
+  column is whole microseconds while the map keeps nanoseconds, the hold
+  is compared at stored precision (the driver truncates today; the rule
+  does not depend on it). The migration header and `migrations/README.md`
+  claimed the rollback worst case was over-holding; that was false when
+  written and is corrected — with this change it is true. Also adds the
+  executing test for the 0163 DOWN beside a compressed chunk and a live
+  escalated freeze. (audit-2026-09-02 F043, F036)
 - **docs (ADR-0019):** amended to record that the freeze lifecycle runs
   per (pair, window) and that both records of it — the Redis marker and
   the durable ladder — are now window-scoped while the marker's PRESENCE

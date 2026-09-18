@@ -417,7 +417,7 @@ func loadOpenLadderRow(ctx context.Context, q ladderQuerier, asset, quote canoni
 	return row, true, nil
 }
 
-// entries returns the row's live per-window map, applying the two rules
+// entries returns the row's live per-window map, applying the three rules
 // that make the 0163 column safe beside the 0119 ones:
 //
 //   - hold_until IS NULL → no ladder, whatever window_ladders holds. The
@@ -426,6 +426,16 @@ func loadOpenLadderRow(ctx context.Context, q ladderQuerier, asset, quote canoni
 //   - window_ladders IS NULL with a live pair-level ladder → a row written
 //     before 0163. Its ladder has no recorded owner, so it is carried as
 //     the UNOWNED entry rather than dropped.
+//   - window_ladders present but OUTRUN by the pair-level columns → a map
+//     gone stale under a rolled-back binary ([pairLadderAhead]). It fails
+//     closed against the columns ([foldPairLadderInto]) instead of winning
+//     because it is non-NULL: preferring it discarded an escalation the
+//     previous binary had made.
+//
+// Both callers inherit the third rule, and it matters that the WRITE path
+// does: [FreezeEventSink.SaveWindowLadder] merges into what this returns,
+// so a window's next tick persists the fold and the record converges on it
+// rather than writing the stale map's summary back over the columns.
 func (r openLadderRow) entries() map[string]freeze.State {
 	out := map[string]freeze.State{}
 	if !r.pair.Active() {
@@ -438,7 +448,69 @@ func (r openLadderRow) entries() map[string]freeze.State {
 	for k, st := range r.windows {
 		out[k] = st
 	}
+	if pairLadderAhead(r.pair, summariseLadders(out)) {
+		foldPairLadderInto(out, r.pair)
+	}
 	return out
+}
+
+// pairLadderAhead reports whether the pair-level 0119 columns record a
+// WORSE freeze than `summary`, the fold of the row's own window_ladders:
+// escalated where no entry is, a higher rung, or a later hold.
+//
+// This binary never produces that. It writes the columns only as the
+// summary of the map ([writeWindowLadders]) or nulls both together
+// ([FreezeEventSink.SaveLadder]'s retire), so on a row only it has written
+// the two agree. They disagree after a binary ROLLBACK with the schema left
+// at 0163 (migrations/README.md rule 9): the previous binary keeps
+// advancing the columns and does not know the map exists, so the map goes
+// stale underneath it.
+//
+// The hold is compared at the precision it is STORED at. hold_until is
+// timestamptz, whole microseconds, while a map entry keeps the nanoseconds
+// it was written with, so the column and the entry it summarises are never
+// bit-equal. The production driver truncates (the column is never later),
+// but nothing here may depend on that: under a store that rounded instead,
+// a bare After would read every freeze as stale and mint an ownerless
+// ladder for windows that were never frozen. A real disagreement is a
+// lifecycle extension — minutes.
+func pairLadderAhead(pair, summary freeze.State) bool {
+	if pair.Escalated && !summary.Escalated {
+		return true
+	}
+	if pair.ExtensionsUsed > summary.ExtensionsUsed {
+		return true
+	}
+	return pair.HoldUntil.Sub(summary.HoldUntil) > time.Microsecond
+}
+
+// foldPairLadderInto makes a stale per-window map fail closed against the
+// pair-level ladder that outran it.
+//
+// Which entries are stale is unknowable — the previous binary's pair-level
+// write is last-writer-wins across the pair's windows and names none — so
+// no entry may answer with less than the columns record: every held entry
+// is raised to the fail-closed fold of itself and the pair-level ladder
+// (furthest hold, highest rung, escalated if either is), and the pair-level
+// ladder is carried as the UNOWNED entry for any window the map does not
+// name. Folding rather than replacing matters in the other direction: the
+// previous binary's 5m window can overwrite the columns with a fresh ladder
+// whose hold is LATER while the map still holds a 1h window's escalation,
+// and replacing would drop it.
+//
+// This errs towards over-holding, deliberately and boundedly: a window of
+// the pair that was never frozen rehydrates the ownerless ladder after a
+// Redis loss, exactly as it does for a row written before 0163, until the
+// ladder lapses or an operator lifts the freeze.
+func foldPairLadderInto(entries map[string]freeze.State, pair freeze.State) {
+	for k, st := range entries {
+		if st.Active() {
+			entries[k] = summariseLadders(map[string]freeze.State{"entry": st, "pair": pair})
+		}
+	}
+	if _, carried := entries[unownedLadderKey]; !carried {
+		entries[unownedLadderKey] = pair
+	}
 }
 
 // summariseLadders folds per-window ladders into the pair-level 0119
