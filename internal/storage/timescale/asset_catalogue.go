@@ -1062,6 +1062,51 @@ type AssetPricePoint struct {
 	P *string
 }
 
+// Rounding scale for the catalogue reads that serve a USD price as
+// ROUNDed text from RAW prices_1m ratios: the per-asset row's price_usd
+// ([getAssetBySlugSQL]) and the four price-history series.
+//
+// These reads stay RAW — the API corrects them for a confirmed
+// non-7-decimals token (v1.Server.normalizeCatalogueUSD), and doing it
+// here as well would apply the factor twice. What belongs here is the
+// ROUNDING, because it used to run before that correction could: a flat
+// ROUND(raw, 10) on an 18-decimals token (correction 10^11) turns a
+// 1 USD price, raw 1e-11, into zero, and a 14 USD one into a raw 1e-10
+// that reads back as exactly 10 USD. The reader could only withhold.
+//
+// Rounding the raw ratio to 10 + k places, where the correction is 10^k,
+// IS rounding the corrected price to 10 places:
+//
+//	ROUND(raw, 10 + k) * 10^k  ==  ROUND(raw * 10^k, 10)
+//
+// so the rounding moves after the correction without moving the multiply
+// out of the one place that owns it. k comes from
+// nonstandard_decimals_assets and is floored at zero: a token with FEWER
+// than 7 decimals scales DOWN, which only shrinks the rounding error, so
+// it keeps the 10 places it always had. An asset with no confirmed row
+// resolves to exactly 10 — the same ROUND(…, 10), the same bytes.
+//
+// The API tells the two apart by the text itself (ROUND(x, n)::text has
+// exactly n fraction places), so a value rounded at the old scale keeps
+// its precision floor and one rounded here does not need it.
+//
+// Three spellings of one expression, differing only in how the asset is
+// named at each site. MAX because the alias-array form may match more
+// than one spelling of the asset.
+const (
+	catalogueRoundPlacesHead = `10 + COALESCE((SELECT MAX(GREATEST(nda.decimals - 7, 0))
+		                          FROM nonstandard_decimals_assets nda
+		                         WHERE nda.asset = `
+	catalogueRoundPlacesTail = `), 0)`
+
+	// $1 is the asset's alias array (single-asset history reads).
+	catalogueRoundPlacesForAliases = catalogueRoundPlacesHead + `ANY($1)` + catalogueRoundPlacesTail
+	// `ca` is the chosen catalogue row (GetAssetBySlug).
+	catalogueRoundPlacesForRow = catalogueRoundPlacesHead + `ca.asset_id` + catalogueRoundPlacesTail
+	// `w` is the wanted-ids row (batch history reads).
+	catalogueRoundPlacesForWanted = catalogueRoundPlacesHead + `w.asset_id` + catalogueRoundPlacesTail
+)
+
 // GetAssetPriceHistory24h returns up to 24 hourly USD price samples
 // for the asset, ordered by bucket ASC (oldest first). Each
 // sample uses the same direct-then-XLM-triangulated path as
@@ -1196,7 +1241,7 @@ const getAssetPriceHistory24hSQL = `
 		      CASE WHEN 'native' = ANY($1) THEN xu.vwap ELSE NULL END,
 		      d.vwap,
 		      x.vwap * xu.vwap
-		    ), 10)::text AS p
+		    ), ` + catalogueRoundPlacesForAliases + `)::text AS p
 		  FROM hours
 		  LEFT JOIN direct_per_hour     d  ON d.h  = hours.bucket
 		  LEFT JOIN asset_xlm_per_hour  x  ON x.h  = hours.bucket
@@ -1326,7 +1371,7 @@ const getAssetPriceHistory7dSQL = `
 		      CASE WHEN 'native' = ANY($1) THEN xu.vwap ELSE NULL END,
 		      d.vwap,
 		      x.vwap * xu.vwap
-		    ), 10)::text AS p
+		    ), ` + catalogueRoundPlacesForAliases + `)::text AS p
 		  FROM days
 		  LEFT JOIN direct_per_day      d  ON d.d  = days.bucket
 		  LEFT JOIN asset_xlm_per_day   x  ON x.d  = days.bucket
@@ -1874,7 +1919,7 @@ const getAssetBySlugSQL = `
 		      END,
 		      (SELECT vwap FROM direct_usd),
 		      (SELECT vwap FROM asset_vs_xlm) * (SELECT vwap FROM xlm_usd)
-		    ), 10)::text                          AS price_usd,
+		    ), ` + catalogueRoundPlacesForRow + `)::text AS price_usd,
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
 		    NULL::numeric                         AS circulating_supply,
@@ -2465,7 +2510,7 @@ const getAssetsPriceHistory24hBatchSQL = `
 		      CASE WHEN w.asset_id = 'native' THEN xu.vwap ELSE NULL END,
 		      d.vwap,
 		      x.vwap * xu.vwap
-		    ), 10)::text AS p
+		    ), ` + catalogueRoundPlacesForWanted + `)::text AS p
 		  FROM want w
 		  CROSS JOIN hours
 		  LEFT JOIN direct_per_hour     d  ON d.h  = hours.bucket AND d.asset_id  = w.asset_id
@@ -2584,7 +2629,7 @@ const getAssetsPriceHistory7dBatchSQL = `
 		      CASE WHEN w.asset_id = 'native' THEN xu.vwap ELSE NULL END,
 		      d.vwap,
 		      x.vwap * xu.vwap
-		    ), 10)::text AS p
+		    ), ` + catalogueRoundPlacesForWanted + `)::text AS p
 		  FROM want w
 		  CROSS JOIN days
 		  LEFT JOIN direct_per_day     d  ON d.d  = days.bucket AND d.asset_id  = w.asset_id

@@ -17,6 +17,29 @@ against.
 
 ### Fixed
 
+- **asset catalogue:** the catalogue reads that serve a USD price as
+  rounded text — the per-asset row's `price_usd` and the four
+  price-history series (24h, 7d, and both batch forms) — no longer round
+  a confirmed non-7-decimals token's RAW ratio to 10 places before the
+  API can correct it (F017, the rounding leg). A flat `ROUND(raw, 10)`
+  on an 18-decimals token, whose correction is 10^11, turned a 1 USD
+  price (raw 1e-11) into zero and a 14 USD one into a raw 1e-10 that
+  reads back as exactly 10 USD; the API could only withhold. These reads
+  now round to 10 + k places where the correction is 10^k, which is the
+  corrected price rounded to 10 places:
+  `ROUND(raw, 10 + k) * 10^k == ROUND(raw * 10^k, 10)`. The values stay
+  RAW and the multiply stays in the API, the one place that owns it —
+  correcting here as well would apply the factor twice. k is floored at
+  zero, so a token with fewer than 7 decimals (scaling down only shrinks
+  the error) keeps the 10 places it had, and an asset with no confirmed
+  row resolves to exactly `ROUND(…, 10)`: the same bytes. On the wire
+  today this reaches the listing sparkline and the on-chain price
+  fallback, which read the rounding scale off the value. The
+  `/v1/assets/{id}` overlay still applies its flat precision floor to
+  these strings, so it withholds exactly what it withheld before and
+  serves nothing less precise; teaching it the wider scale is a
+  follow-up in `asset_catalogue_extension.go`.
+
 - **assets listing:** `?include=sparkline7d` now serves a
   decimals-normalised series for a confirmed non-7-decimals token (F017,
   the sparkline leg). The batch price-history reader returns RAW
@@ -103,9 +126,9 @@ against.
   on, so its quote leg is taken as the standard scale. Every path is a
   byte-identical no-op for an asset with no confirmed row — no parse, no
   reformat — so no served value moves for any 7-decimals asset.
-  **Not covered here, same defect, other files:** the `/v1/assets`
-  LISTING's `price_usd` (read from `asset_price_snapshot`, whose writer
-  does not normalise) and its `?include=sparkline7d` series.
+  The `/v1/assets` LISTING's `price_usd` and its `?include=sparkline7d`
+  series, left out of that change, are covered by the three entries
+  above.
 
 - **customer webhooks:** a timed-out delivery is no longer re-POSTed
   forever (K025, webhook leg). The write recording a delivery's outcome

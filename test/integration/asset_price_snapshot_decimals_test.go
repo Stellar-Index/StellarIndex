@@ -274,3 +274,117 @@ func derefOrNil(s *string) string {
 	}
 	return *s
 }
+
+// TestAssetCatalogue_RoundsAfterDecimalsCorrection is the F017 regression
+// for the catalogue reads that stay RAW and are corrected by the API: the
+// per-asset row's price_usd and the four price-history series. They
+// rounded the raw ratio to 10 places BEFORE the correction could run, so
+// an 18-decimals token worth 14 USD (raw 1.4e-10) came back as
+// 0.0000000001 — exactly 10 USD once scaled — and the API could only
+// withhold it.
+//
+// The read now rounds a confirmed token's raw ratio to 10 + k places for
+// a 10^k correction, which is the corrected price rounded to 10 places.
+// The strings asserted here are the ones the API's unit tests feed
+// normalizeCatalogueReadUSD ("0.000000000140000000000" -> 14.0000000000),
+// so the two halves are pinned to each other by value.
+func TestAssetCatalogue_RoundsAfterDecimalsCorrection(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	seedDecimalsFixture(t, ctx, store)
+	// GetAssetBySlug admits a discovered contract only with a volume row.
+	if err := store.RefreshAssetListingRollups(ctx); err != nil {
+		t.Fatalf("RefreshAssetListingRollups: %v", err)
+	}
+
+	// RAW ratios, by design — only the number of places moves.
+	cases := []struct {
+		name, id, latest, earlier string
+	}{
+		// 9 dp, k = 2: 12 places.
+		{"nine", decimalsNineContract, "0.025000000000", "0.012500000000"},
+		// 18 dp, k = 11: 21 places. Was 0.0000000001.
+		{"eighteen", decimalsEighteenContract, "0.000000000140000000000", ""},
+		// 5 dp scales DOWN: k floors at 0, the 10 places it always had.
+		{"five", decimalsFiveContract, "200.0000000000", ""},
+		// Unflagged: byte-identical.
+		{"seven", decimalsSevenContract, "0.6500000000", ""},
+	}
+	checkSeries := func(t *testing.T, label string, pts []timescale.AssetPricePoint, latest, earlier string) {
+		t.Helper()
+		last := ""
+		for _, pt := range pts {
+			if pt.P == nil {
+				continue
+			}
+			if *pt.P != latest && (earlier == "" || *pt.P != earlier) {
+				t.Errorf("%s: unexpected point %s at %s, want %s", label, *pt.P, pt.T, latest)
+			}
+			last = *pt.P
+		}
+		if last != latest {
+			t.Errorf("%s: latest priced point = %q, want %s", label, last, latest)
+		}
+	}
+
+	t.Run("GetAssetBySlug", func(t *testing.T) {
+		for _, tc := range cases {
+			row, err := store.GetAssetBySlug(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("GetAssetBySlug(%s): %v", tc.name, err)
+			}
+			if row.PriceUSD == nil || *row.PriceUSD != tc.latest {
+				t.Errorf("%s: price_usd = %s, want %s", tc.name, derefOrNil(row.PriceUSD), tc.latest)
+			}
+		}
+	})
+	t.Run("PriceHistory24h", func(t *testing.T) {
+		for _, tc := range cases {
+			pts, err := store.GetAssetPriceHistory24h(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("GetAssetPriceHistory24h(%s): %v", tc.name, err)
+			}
+			checkSeries(t, "24h "+tc.name, pts, tc.latest, tc.earlier)
+		}
+	})
+	t.Run("PriceHistory7d", func(t *testing.T) {
+		for _, tc := range cases {
+			pts, err := store.GetAssetPriceHistory7d(ctx, tc.id)
+			if err != nil {
+				t.Fatalf("GetAssetPriceHistory7d(%s): %v", tc.name, err)
+			}
+			checkSeries(t, "7d "+tc.name, pts, tc.latest, tc.earlier)
+		}
+	})
+
+	ids := make([]string, 0, len(cases))
+	for _, tc := range cases {
+		ids = append(ids, tc.id)
+	}
+	t.Run("PriceHistory24hBatch", func(t *testing.T) {
+		got, err := store.GetAssetsPriceHistory24hBatch(ctx, ids)
+		if err != nil {
+			t.Fatalf("GetAssetsPriceHistory24hBatch: %v", err)
+		}
+		for _, tc := range cases {
+			checkSeries(t, "24h batch "+tc.name, got[tc.id], tc.latest, tc.earlier)
+		}
+	})
+	t.Run("PriceHistory7dBatch", func(t *testing.T) {
+		got, err := store.GetAssetsPriceHistory7dBatch(ctx, ids)
+		if err != nil {
+			t.Fatalf("GetAssetsPriceHistory7dBatch: %v", err)
+		}
+		for _, tc := range cases {
+			checkSeries(t, "7d batch "+tc.name, got[tc.id], tc.latest, tc.earlier)
+		}
+	})
+}
