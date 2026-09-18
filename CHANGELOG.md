@@ -83,6 +83,20 @@ against.
   single `scamWithheld` spelling, whose fold lives in `pricingguard`,
   and the two files leave the pair-question ratchet so they cannot
   regress. (audit-2026-09-02 F019, F032)
+- **api (security):** `/v1/price/tip` and `/v1/price/stream` — the last
+  two price surfaces keyed on one leg — now ask the scam-issuer gate
+  about BOTH legs of the pair. A directory-scam-flagged issuer named as
+  the QUOTE was served at 200, unauthenticated: on the tip, the freshest
+  number we publish, computed from that issuer's own trades; on the
+  closed-bucket SSE stream, fanned out once per bucket for the hours a
+  connection lives, with no gate anywhere on the producer path. Both are
+  the same market, the same number, inverted, that
+  `?asset=<FLAGGED>&quote=native` was refused. Both now route through
+  the package's single `scamWithheld` spelling, whose fold lives in
+  `pricingguard`. With them migrated, the pair-question ratchet's
+  exemption list is not empty but DELETED — the guard permits zero
+  base-only consultations and has no mechanism to park a new one.
+  (audit-2026-09-02 F002, K001)
 - **api / explorer (money display):** `/v1/ohlc`'s single-bar
   `base_volume` / `quote_volume` now state their own smallest-unit scale
   (`base_volume_decimals` / `quote_volume_decimals`). The smallest unit

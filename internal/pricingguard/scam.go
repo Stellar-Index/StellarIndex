@@ -37,7 +37,15 @@
 //     customer webhooks fire off the same closed VWAP buckets;
 //   - /v1/price/tip, in computeTip (the reader seam covers only the
 //     middle branch of that function);
+//   - /v1/price/stream, in closedStreamWithheld — at connect AND on
+//     every forwarded closed bucket, because the aggregator publishes
+//     that bucket with no gate consultation on the producer path;
 //   - /v1/vwap, /v1/twap and /v1/chart, in their handlers.
+//
+// Every one of those sites asks the PAIR question. Inside
+// internal/api/v1 they all route through its scamWithheld helper, whose
+// AST guard (TestScamGateIsAskedThePairQuestion) permits no base-only
+// consultation and no exemption for one.
 //
 // The handlers are the correct site for the last group, NOT their
 // shared tradesInRangeWithStablecoinFallback: that helper is also the
@@ -215,16 +223,27 @@ func (g *ScamGate) WithheldPair(ctx context.Context, base, quote canonical.Asset
 	return g.withheldLeg(ctx, base, surface) || g.withheldLeg(ctx, quote, surface)
 }
 
-// Withheld is the BASE-ONLY spelling of the decision, kept for the
-// call sites not yet migrated to [ScamGate.WithheldPair]: the
-// /v1/price/tip and closed-price-stream handlers in internal/api/v1,
-// whose files are outside this change's scope (T039 carries them;
-// /v1/twap and /v1/chart migrated under F019/F032). The pending set is
-// pinned in code by internal/api/v1's scamPairPendingFiles ratchet, so
-// this list shrinks with it rather than drifting from it. It is not a
-// second policy — it shares
-// withheldLeg with the pair form — but it answers HALF the question,
-// so it must not be the form a new surface reaches for.
+// Withheld is the BASE-ONLY spelling of the decision. It answers HALF
+// the question and NO price-serving path asks it any more.
+//
+// Every surface that once did was migrated to [ScamGate.WithheldPair]
+// (via internal/api/v1's scamWithheld helper): /v1/twap and /v1/chart
+// under F019/F032, and /v1/price/tip plus the closed-bucket price
+// stream — the last two — under F002/K001. internal/api/v1's
+// TestScamGateIsAskedThePairQuestion now permits ZERO base-only
+// consultations and carries no exemption mechanism, so one cannot be
+// reintroduced there without failing CI.
+//
+// It survives only because the v1.PriceScamGate interface declares it,
+// and that interface is what v1.PriceScamPairGate embeds; production
+// wires *ScamGate, which satisfies the pair form
+// (TestProductionScamGateIsPairAware pins that, so v1.scamWithheld's
+// base-only fallback is unreachable in production). Deleting the method
+// outright means editing internal/api/v1/price.go and the fakes in
+// several test files — a follow-up, not a change this one can make.
+// Until then: it is not a second policy — it shares withheldLeg with
+// the pair form — but it must not be the form a new surface reaches
+// for.
 //
 // `surface` labels the metric (obs.PriceServeScamWithheldTotal) — a
 // low-cardinality constant ("price_read", "tip", "asset_headline", …),

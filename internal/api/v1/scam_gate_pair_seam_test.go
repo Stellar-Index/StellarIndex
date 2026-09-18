@@ -32,24 +32,19 @@ func TestProductionScamGateIsPairAware(t *testing.T) {
 	}
 }
 
-// scamPairPendingFiles are the handlers that still ask the BASE-ONLY
-// question. Each is a live instance of the same defect — the price is
-// republished by naming the flagged asset as the quote — and each lives
-// in a file outside the change that made the gate pair-aware
-// (F019/F032/T039 carry them).
+// TestScamGateIsAskedThePairQuestion fails when ANY handler in this
+// package spells `s.scam.Withheld(...)` — the base-only question.
 //
-// This is a shrinking ratchet, not an allow-list: it exists so a NEW
-// handler cannot join them silently, and so the follow-up is named in
-// code rather than in a tracker. Migrating a file means deleting its
-// entry here, not adding one.
-var scamPairPendingFiles = map[string]string{
-	"price_tip.go":    "T039 — /v1/price/tip computeTip",
-	"price_stream.go": "T039 — the closed-price SSE stream",
-}
-
-// TestScamGateIsAskedThePairQuestion fails when a handler spells
-// `s.scam.Withheld(...)` — the base-only question — anywhere but the
-// files already known to be mid-migration.
+// There is no exemption list and no mechanism for one. This guard used
+// to carry a shrinking `scamPairPendingFiles` ratchet naming the
+// handlers still mid-migration (/v1/price/tip and the closed-bucket SSE
+// stream, the last two); every one of those entries was a live instance
+// of the defect — a flagged issuer's withheld price republished, exactly,
+// by naming it as the quote — and an exemption map is a place for the
+// next one to be parked rather than fixed. Both entries were migrated to
+// [scamWithheld] (F002/K001) and the map was deleted with them, so the
+// only way to add a base-only consultation back is to make this test
+// fail.
 //
 // An AST guard rather than a behavioural test for the same reason the
 // API binary's chokepoint guard is one: a behavioural test only covers
@@ -86,9 +81,6 @@ func TestScamGateIsAskedThePairQuestion(t *testing.T) {
 			if !ok || recv.Sel.Name != "scam" {
 				return true
 			}
-			if _, pending := scamPairPendingFiles[name]; pending {
-				return true
-			}
 			t.Errorf("%s: asks the scam gate the BASE-ONLY question (s.scam.Withheld) at %s "+
 				"— call scamWithheld(ctx, s.scam, base, quote, surface) instead. Keyed on "+
 				"the base alone, this surface republishes a flagged issuer's withheld price "+
@@ -102,10 +94,5 @@ func TestScamGateIsAskedThePairQuestion(t *testing.T) {
 	if scanned == 0 {
 		t.Fatal("scanned no package files — the guard is broken, not the code clean")
 	}
-	for name := range scamPairPendingFiles {
-		if _, err := os.Stat(name); err != nil {
-			t.Errorf("pending file %q no longer exists — delete its entry rather than "+
-				"leaving a stale exemption that could match a future file of the same name", name)
-		}
-	}
+	t.Logf("scanned %d package files for base-only scam-gate consultations (0 permitted)", scanned)
 }
