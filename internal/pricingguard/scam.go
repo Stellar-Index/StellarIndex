@@ -216,10 +216,13 @@ func (g *ScamGate) WithheldPair(ctx context.Context, base, quote canonical.Asset
 }
 
 // Withheld is the BASE-ONLY spelling of the decision, kept for the
-// call sites not yet migrated to [ScamGate.WithheldPair]: the /v1/twap,
-// /v1/chart, /v1/price/tip and closed-stream handlers in
-// internal/api/v1, whose files are outside this change's scope
-// (F019/F032/T039 carry them). It is not a second policy — it shares
+// call sites not yet migrated to [ScamGate.WithheldPair]: the
+// /v1/price/tip and closed-price-stream handlers in internal/api/v1,
+// whose files are outside this change's scope (T039 carries them;
+// /v1/twap and /v1/chart migrated under F019/F032). The pending set is
+// pinned in code by internal/api/v1's scamPairPendingFiles ratchet, so
+// this list shrinks with it rather than drifting from it. It is not a
+// second policy — it shares
 // withheldLeg with the pair form — but it answers HALF the question,
 // so it must not be the form a new surface reaches for.
 //
