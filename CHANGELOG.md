@@ -17,6 +17,17 @@ against.
 
 ### Fixed
 
+- **ohlc / anomaly baseline (perf):** the same both-directions OR
+  disjunction is gone from `OHLCSeries`, `OHLCSeriesReBucketed`,
+  `TimedVWAPsForPair1m` and `VWAPsForPair1m`. A `[from, to)` bind range
+  does not rescue the shape — `/v1/ohlc`'s window is caller-chosen and
+  can span the whole retained history — so each now folds the
+  orientations as a `UNION ALL` of two single-direction branches feeding
+  the existing normalise/group pass. `OHLCSeries`'s closed-bucket guard
+  and `OHLCSeriesReBucketed`'s post-fold `HAVING` move to the sargable
+  spelling. Bars and baselines are byte-identical; proven by the
+  existing on-Postgres direction-fold, dust-floor and interval-fold
+  integration tests. (audit-2026-09-02 F038)
 - **history/chart (perf, unauth DoS lever):** `/v1/history/since-inception`
   and `/v1/chart` no longer fold the two stored market orientations with
   an `(A AND B) OR (B AND A)` disjunction. Postgres cannot drive

@@ -1681,11 +1681,19 @@ func (s *Store) TimedVWAPsForPair1m(ctx context.Context, p canonical.Pair, from,
                   / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
                                     ELSE vwap * COALESCE(volume, 0) END), 0))::float8 AS vwap,
                bucket + INTERVAL '1 minute'
-          FROM prices_1m
-         WHERE ((base_asset = $1 AND quote_asset = $2)
-             OR (base_asset = $2 AND quote_asset = $1))
-           AND bucket >= $3
-           AND bucket <  $4
+          FROM (
+            (SELECT bucket, base_asset, vwap, volume
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2
+                AND bucket >= $3
+                AND bucket <  $4)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap, volume
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1
+                AND bucket >= $3
+                AND bucket <  $4)
+          ) AS both_directions
          GROUP BY bucket
         HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
                         ELSE vwap * COALESCE(volume, 0) END) > 0
@@ -1742,11 +1750,19 @@ func (s *Store) VWAPsForPair1m(ctx context.Context, p canonical.Pair, from, to t
                          ELSE COALESCE(volume, 0) END)
                   / NULLIF(SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
                                     ELSE vwap * COALESCE(volume, 0) END), 0))::float8 AS vwap
-          FROM prices_1m
-         WHERE ((base_asset = $1 AND quote_asset = $2)
-             OR (base_asset = $2 AND quote_asset = $1))
-           AND bucket >= $3
-           AND bucket <  $4
+          FROM (
+            (SELECT bucket, base_asset, vwap, volume
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2
+                AND bucket >= $3
+                AND bucket <  $4)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap, volume
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1
+                AND bucket >= $3
+                AND bucket <  $4)
+          ) AS both_directions
          GROUP BY bucket
         HAVING SUM(CASE WHEN base_asset = $1 THEN COALESCE(volume, 0)
                         ELSE vwap * COALESCE(volume, 0) END) > 0
@@ -1938,7 +1954,8 @@ type OHLCBar struct {
 // [Store.OHLCSeriesReBucketed].
 //
 // Per ADR-0015 the in-progress bucket is excluded via a
-// `bucket + <interval> <= now()` guard. `limit` clamps row count
+// `bucket <= now() - <interval>` guard — the sargable spelling, so the
+// predicate still prunes chunks. `limit` clamps row count
 // (0 = unbounded). Returns empty slice + nil error when no
 // closed buckets exist in window.
 //
@@ -1963,8 +1980,12 @@ func (s *Store) OHLCSeries(
 	interval := granularity.closedBucketInterval()
 	// Combine BOTH stored directions of the market into the requested
 	// ($1, $2) orientation (the SDEX decoder records XLM/USDC and
-	// USDC/XLM as separate rows). The `norm` CTE re-expresses each row in
-	// the requested orientation: flipped rows invert every price
+	// USDC/XLM as separate rows). The directions are read as a UNION ALL
+	// of two index-drivable branches rather than an OR disjunction — see
+	// [Store.HistoryPoints] for the measurement; a window bound does not
+	// rescue the OR here, because /v1/ohlc's window is caller-chosen and
+	// can span the whole retained history. The `norm` CTE re-expresses
+	// each row in the requested orientation: flipped rows invert every price
 	// (1/price) — which SWAPS high↔low — and swap base↔quote volume. Then
 	// per bucket: high = max, low = min (order-independent extrema);
 	// open/close prefer the requested-direction row and fall back to the
@@ -1976,9 +1997,9 @@ func (s *Store) OHLCSeries(
 	// markets can resolve each bar's smallest-unit scale — see
 	// [OHLCBar.Sources]. The two stored directions are folded by taking
 	// each one's array and concatenating: the CAGG groups on (bucket,
-	// base_asset, quote_asset) and the WHERE above admits exactly two
-	// (base_asset, quote_asset) values, so a bucket holds AT MOST ONE
-	// row per direction and max() over that single row is that row.
+	// base_asset, quote_asset) and the two branches above admit exactly
+	// one (base_asset, quote_asset) value each, so a bucket holds AT MOST
+	// ONE row per direction and max() over that single row is that row.
 	// Doing it inline keeps the whole read in one grouping pass — a
 	// second CTE joined back on bucket costs 1.34x on r1, this costs
 	// 1.005x (29911 -> 30076, 30 days of 1h on the flagship pair,
@@ -1998,12 +2019,23 @@ func (s *Store) OHLCSeries(
 		        CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
 		        trade_count AS tc,
 		        sources     AS srcs
-		      FROM %s
-		     WHERE ((base_asset = $1 AND quote_asset = $2)
-		         OR (base_asset = $2 AND quote_asset = $1))
-		       AND bucket >= $3
-		       AND bucket <  $4
-		       AND bucket + INTERVAL '%s' <= now()
+		      FROM (
+		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
+		                vwap, volume, trade_count, sources
+		           FROM %[1]s
+		          WHERE base_asset = $1 AND quote_asset = $2
+		            AND bucket >= $3
+		            AND bucket <  $4
+		            AND bucket <= now() - INTERVAL '%[2]s')
+		        UNION ALL
+		        (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
+		                vwap, volume, trade_count, sources
+		           FROM %[1]s
+		          WHERE base_asset = $2 AND quote_asset = $1
+		            AND bucket >= $3
+		            AND bucket <  $4
+		            AND bucket <= now() - INTERVAL '%[2]s')
+		      ) AS both_directions
 		)
 		SELECT
 		    bucket,
@@ -2083,11 +2115,21 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		               CASE WHEN base_asset = $1 THEN vwap * volume ELSE volume        END AS quote_vol,
 		               trade_count AS tc,
 		               sources     AS srcs
-		          FROM %[1]s
-		         WHERE ((base_asset = $1 AND quote_asset = $2)
-		             OR (base_asset = $2 AND quote_asset = $1))
-		           AND bucket >= $3
-		           AND bucket <  $4
+		          FROM (
+		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
+		                    vwap, volume, trade_count, sources
+		               FROM %[1]s
+		              WHERE base_asset = $1 AND quote_asset = $2
+		                AND bucket >= $3
+		                AND bucket <  $4)
+		            UNION ALL
+		            (SELECT bucket, base_asset, first_price, last_price, high_price, low_price,
+		                    vwap, volume, trade_count, sources
+		               FROM %[1]s
+		              WHERE base_asset = $2 AND quote_asset = $1
+		                AND bucket >= $3
+		                AND bucket <  $4)
+		          ) AS both_directions
 		      ) raw
 		     GROUP BY bucket
 		),
@@ -2110,7 +2152,7 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		  FROM norm n
 		  LEFT JOIN src sc ON sc.ob = time_bucket(INTERVAL '%[2]s', n.bucket)
 		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
-		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) + INTERVAL '%[2]s' <= now()
+		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) <= now() - INTERVAL '%[2]s'
 		 ORDER BY out_bucket ASC
 	`, table, outInterval)
 }
