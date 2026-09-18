@@ -280,52 +280,70 @@ func tradeUSDVolumeViaFX(ctx context.Context, t canonical.Trade, md external.Met
 	q := new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), scaleDenominator(decimals))
 	usdAmount := new(big.Rat).Mul(q, usdRate)
 
-	// LEG CROSS-CHECK (fake-XMR incident 2026-08-11, task #32): a
-	// resolver rate for an on-chain token is usually tier 3b's
-	// <token>/XLM x XLM/USD bridge, and the token leg of that bridge is
-	// WRITABLE by anyone willing to pay bridgeLegMinUSDVolume — an
-	// attacker planted INDUSX/XLM at 3,395 XLM and two dust trades
-	// stamped $182M of fake usd_volume (real value <$0.01; ledgers
-	// 63890020/63890022). A volume floor cannot stop that (the floor is
-	// just the plant's price), but DOUBLE-planting is: value the BASE
-	// leg through the same resolver, and when the two legs disagree by
-	// more than usdLegAgreementFactor, store the SMALLER — an attacker
-	// must now pump BOTH legs' markets with real value to inflate a
-	// print. DEX-only: CEX/FX quote rates are vendor feeds, not
-	// poisonable bridges, and their pairs' base legs are often
-	// unresolvable anyway.
+	// DEX-only: CEX/FX quote rates are vendor feeds, not poisonable
+	// bridges, and their pairs' base legs are often unresolvable anyway.
 	if md.Subclass == external.SubclassDEX {
-		if baseVal := fxLegValue(ctx, r, t.Pair.Base, t.BaseAmount, decimals, t.Timestamp); baseVal != nil {
-			hi, lo := usdAmount, baseVal
-			if hi.Cmp(lo) < 0 {
-				hi, lo = lo, hi
-			}
-			// hi > lo * factor → divergent → conservative leg wins.
-			bound := new(big.Rat).Mul(lo, usdLegAgreementFactor)
-			if hi.Cmp(bound) > 0 && usdAmount.Cmp(baseVal) > 0 {
-				usdAmount = baseVal
-			}
-		} else if usdAmount.Cmp(singleLegMaxUSDVolume) > 0 {
-			// W1-flow-price-serve-1: the base leg is UNRESOLVABLE, so the
-			// double-plant cross-check above cannot fire — the whole value
-			// rests on the quote leg, which for an on-chain token is usually
-			// the tier-3b <token>/XLM bridge an attacker can author for the
-			// cost of bridgeLegMinUSDVolume. A fresh never-priced base token
-			// therefore BYPASSES the cross-check and re-opens the $182M
-			// fake-print class through the quote side alone. USDPriceAt exposes
-			// only (rate, ok, err) — it cannot tell a poisoned bridge from an
-			// honest direct market — and base legs are legitimately unresolvable
-			// on most DEX pairs, so we do NOT blanket-NULL the single-leg class.
-			// Instead we BOUND it: an uncross-checkable single-leg DEX print
-			// above singleLegMaxUSDVolume is implausible for any real Stellar
-			// swap, so it is refused (usd_volume left NULL) rather than served
-			// and propagated to /v1/markets volume and the confidence
-			// LiquidityUSD factor.
+		usdAmount = boundUSDVolume(ctx, r, usdAmount, t.Pair.Base, t.BaseAmount, decimals, t.Timestamp)
+		if usdAmount == nil {
 			return nil
 		}
 	}
 	rendered := usdAmount.FloatString(8)
 	return &rendered
+}
+
+// boundUSDVolume is the one bound every ESTIMATED on-chain tier shares
+// (F044 / K045). `candidate` is a USD value resting on a resolver rate
+// for one leg of a DEX trade; `other` / `otherAmount` name the leg it
+// does NOT rest on. Returns the value to store, or nil to refuse the
+// print (usd_volume left NULL).
+//
+// LEG CROSS-CHECK (fake-XMR incident 2026-08-11, task #32): a resolver
+// rate for an on-chain token is usually tier 3b's <token>/XLM x XLM/USD
+// bridge, and the token leg of that bridge is WRITABLE by anyone willing
+// to pay bridgeLegMinUSDVolume — an attacker planted INDUSX/XLM at 3,395
+// XLM and two dust trades stamped $182M of fake usd_volume (real value
+// <$0.01; ledgers 63890020/63890022). A volume floor cannot stop that
+// (the floor is just the plant's price), but DOUBLE-planting is: value
+// the OTHER leg through the same resolver, and when the two legs
+// disagree by more than usdLegAgreementFactor, store the SMALLER — an
+// attacker must now pump BOTH legs' markets with real value to inflate a
+// print.
+//
+// SINGLE-LEG CEILING (W1-flow-price-serve-1): when the other leg is
+// UNRESOLVABLE the cross-check cannot fire and the whole value rests on
+// one leg an attacker can author for the cost of bridgeLegMinUSDVolume.
+// USDPriceAt exposes only (rate, ok, err) — it cannot tell a poisoned
+// bridge from an honest direct market — and legs are legitimately
+// unresolvable on most DEX pairs, so the single-leg class is NOT
+// blanket-NULLed. It is BOUNDED: an uncross-checkable single-leg DEX
+// print above singleLegMaxUSDVolume is implausible for any real Stellar
+// swap, so it is refused rather than served and propagated to
+// /v1/markets volume and the confidence LiquidityUSD factor.
+//
+// Both guards lived inline in [tradeUSDVolumeViaFX] until the base
+// anchor was found consuming the identical rate with neither. They are
+// one function so that a tier cannot acquire the rate without the bound.
+// Callers must NOT route an XLM-anchored value through here — see
+// [tradeUSDVolumeViaXLMBaseAnchor].
+func boundUSDVolume(ctx context.Context, r USDVolumeFXResolver, candidate *big.Rat, other canonical.Asset, otherAmount canonical.Amount, decimals int, at time.Time) *big.Rat {
+	otherVal := fxLegValue(ctx, r, other, otherAmount, decimals, at)
+	if otherVal == nil {
+		if candidate.Cmp(singleLegMaxUSDVolume) > 0 {
+			return nil
+		}
+		return candidate
+	}
+	hi, lo := candidate, otherVal
+	if hi.Cmp(lo) < 0 {
+		hi, lo = lo, hi
+	}
+	// hi > lo * factor → divergent → conservative leg wins.
+	bound := new(big.Rat).Mul(lo, usdLegAgreementFactor)
+	if hi.Cmp(bound) > 0 && candidate.Cmp(otherVal) > 0 {
+		return otherVal
+	}
+	return candidate
 }
 
 // usdLegAgreementFactor is how far the two independently-valued legs of
@@ -449,6 +467,24 @@ func tradeUSDVolumeViaXLMBaseAnchor(ctx context.Context, t canonical.Trade, subc
 	}
 	q := new(big.Rat).SetFrac(base, scaleDenominator(stellarClassicDecimals))
 	usdAmount := new(big.Rat).Mul(q, usdRate)
+	// A non-XLM anchor's rate is the same poisonable tier-3b bridge the
+	// quote-side FX tier reads, so it takes the same bound (F044 / K045):
+	// the base leg used to store it verbatim, which re-opened the $182M
+	// fake-print class for anyone who planted <base>/XLM and swapped
+	// against a never-priced quote. XLM is exempt, and must stay so: its
+	// rate is a direct XLM/USD market nobody can author and base_amount
+	// is XLM that actually moved, so the value is exact — a ceiling would
+	// NULL a real trade, and a cross-check could only drag an exact value
+	// down to a rate the counterparty wrote (the reasoning
+	// [tradeUSDVolumeViaXLMQuoteAnchorFor] records for the mirror tier).
+	// Applied HERE rather than at the waterfall's call sites so the
+	// restamp tiers, which reach this function directly, inherit it.
+	if !isXLMAsset(t.Pair.Base) {
+		usdAmount = boundUSDVolume(ctx, r, usdAmount, t.Pair.Quote, t.QuoteAmount, stellarClassicDecimals, t.Timestamp)
+		if usdAmount == nil {
+			return nil
+		}
+	}
 	rendered := usdAmount.FloatString(8)
 	return &rendered
 }

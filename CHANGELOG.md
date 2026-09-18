@@ -17,6 +17,25 @@ against.
 
 ### Fixed
 
+- **trades (usd_volume):** the base-anchored tier now takes the same
+  bound the quote-side FX tier does. For a non-XLM base the anchor read
+  the identical resolver rate — usually the tier-3b `<token>/XLM x
+  XLM/USD` bridge, writable for the price of `bridgeLegMinUSDVolume` —
+  and stored `base_amount / 1e7 x rate` verbatim, with neither the
+  two-leg cross-check nor the `singleLegMaxUSDVolume` ceiling. Planting
+  `TOKEN_A/XLM` and swapping base=`TOKEN_A` against a never-priced quote
+  made the FX tier decline and the anchor fire, so the $182M fake-print
+  class stayed open through the base leg. Both guards move out of
+  `tradeUSDVolumeViaFX` into one `boundUSDVolume`, called by both tiers
+  (the quote side is unchanged: its cross-check and ceiling tests pass
+  untouched). The bound sits inside the anchor rather than at the
+  waterfall's call sites, so the `usd-volume-restamp` tiers, which reach
+  the anchor directly, inherit it and a backfill cannot re-write what
+  the live path refuses. XLM-anchored values are exempt and
+  byte-identical: the rate is a direct XLM/USD market and the amount is
+  XLM that moved, so the value is exact. Not in this change: the DEX TVL
+  valuer still consumes the resolver rate uncapped behind its substance
+  gate. (audit-2026-09-02 F044; K045, insert path only)
 - **markets (internal):** the static head of the `/v1/markets` listing
   query — the `prices_1d` active-pair CTE and the 24h `prices_1m` CTE —
   moves out of `buildDistinctPairsQuery` into one package-level literal,
