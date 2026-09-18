@@ -762,6 +762,19 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Directory-scam gate, the SAME one /v1/chart applies and for the
+	// same reason: this endpoint is named for the raw-trade family but
+	// serves the AGGREGATED CAGG VWAP series, so withholding a flagged
+	// issuer's price point everywhere else while handing over the whole
+	// trajectory here defeated the gate. /v1/chart?timeframe=all and
+	// this route answer the identical question about the identical
+	// pair; only this one answered it (audit-2026-09-02 T012). The raw
+	// surfaces scam.go promises stay visible — /v1/history's trade rows
+	// and /v1/observations — are untouched.
+	if s.seriesWithheldForScam(w, r, pair, "history_series") {
+		return
+	}
+
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
 	// Deliberately the SAME chain /v1/chart runs

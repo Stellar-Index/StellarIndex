@@ -164,9 +164,10 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 	"all": {Duration: 0, DefaultGranule: "1d"},
 }
 
-// chartWithheldForScam applies the directory-scam gate to /v1/chart,
-// writing the withheld problem and reporting true when the series must
-// not be served.
+// seriesWithheldForScam applies the directory-scam gate to a served
+// price SERIES, writing the withheld problem and reporting true when
+// the series must not be served. `surface` is the low-cardinality
+// metric label for the calling endpoint ("chart", "history_series").
 //
 // /v1/chart served a full price SERIES for a flagged issuer while
 // /v1/price, /v1/price/tip, /v1/price/batch, /v1/vwap, /v1/twap, the
@@ -176,7 +177,8 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 // makes a manufactured market look legitimate.
 //
 // Called from handleChart after the pair is known and BEFORE
-// dispatchSpecialisedChart, which is the load-bearing placement. Keying
+// dispatchSpecialisedChart, and from handleHistorySinceInception after
+// its pair is known — the load-bearing placement. Keying
 // on the BASE (not the pair) survives the frontend's XLM triangulation,
 // so a flagged asset cannot slip through against a different quote. And
 // sitting ahead of the dispatch covers the default path plus every
@@ -193,13 +195,18 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 // the withheld problem's own guidance text all promise those raw
 // surfaces stay visible. Gating there would make our own error
 // message's escape-hatch advice a lie — the same reasoning vwap.go
-// records for tradesInRangeWithStablecoinFallback.
+// records for tradesInRangeWithStablecoinFallback. The distinction is
+// raw trades versus an AGGREGATED price claim, not the route prefix:
+// /v1/history/since-inception is named for the raw family but serves
+// the CAGG VWAP series, so it takes this gate while /v1/history's trade
+// rows do not (audit-2026-09-02 T012).
 //
 // Extracted rather than inlined because inlining pushed handleChart to
 // cognitive complexity 21 against the package's ceiling of 20. The lint
-// was right: the handler already dispatches four ways.
-func (s *Server) chartWithheldForScam(w http.ResponseWriter, r *http.Request, pair canonical.Pair) bool {
-	if s.scam == nil || !s.scam.Withheld(r.Context(), pair.Base, "chart") {
+// was right: the handler already dispatches four ways. It now has a
+// second caller, which is the better reason to keep it one function.
+func (s *Server) seriesWithheldForScam(w http.ResponseWriter, r *http.Request, pair canonical.Pair, surface string) bool {
+	if s.scam == nil || !s.scam.Withheld(r.Context(), pair.Base, surface) {
 		return false
 	}
 	writePriceWithheldProblem(w, r, pair.Base, pair.Quote)
@@ -231,7 +238,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.chartWithheldForScam(w, r, pair) {
+	if s.seriesWithheldForScam(w, r, pair, "chart") {
 		return
 	}
 

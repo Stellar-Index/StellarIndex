@@ -97,6 +97,24 @@ against.
   F037, F039, K004, RLT-391 / #788 — `rejectAggregatorOutliers` in
   `internal/aggregate/global.go` carries the same additive band and is
   NOT covered here)
+- **api:** `GET /v1/history/since-inception` now applies the
+  directory-scam gate, so a flagged issuer's full VWAP trajectory is no
+  longer served at 200 while every other aggregated-price surface —
+  `/v1/price`, `/v1/price/tip`, `/v1/price/batch`, `/v1/vwap`,
+  `/v1/twap`, the SEP-40 oracle, the asset headline and
+  `/v1/chart?timeframe=all` — withholds it. The two endpoints run the
+  identical CAGG series chain over the identical pair, differing only in
+  the read closure, and the gate sat in `handleChart` rather than in the
+  shared chain, so the cheaper route answered the same question
+  ungated. A series is worse than a point: withholding one number denies
+  a quote, an ungated series hands over the whole trajectory, which is
+  what makes a manufactured market look legitimate. The raw surfaces
+  `scam.go` promises stay visible — `/v1/history`'s trade rows,
+  `/v1/observations`, `/v1/ohlc` — are untouched; the distinction is raw
+  trades versus an aggregated price claim, not the route prefix. The one
+  gate helper is now shared by both callers and labels its metric per
+  surface (`chart`, `history_series`). (audit-2026-09-02 T012)
+
 - **api:** `POST /v1/admin/keys` now runs the same delegation clamp
   (`middleware.ClampMintScopes`) the self-service mint path runs, so a
   scope-narrowed operator credential can no longer mint itself an
