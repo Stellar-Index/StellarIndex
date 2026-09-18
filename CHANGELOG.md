@@ -202,6 +202,15 @@ against.
   `internal/ops/chops/ch_txindex_backfill.go` that this package cannot
   add alone (NEEDS-COORDINATION; a naive row-count coverage check was
   tried and reverted, see the KNOWN GAP note in `tier1_schema.sql`).
+- **clickhouse:** `ch-schema-drift.sh` now compares secondary INDEX
+  declarations (name + TYPE + params + GRANULARITY) between the repo's
+  intent and the live schema as real drift, not silence (T339). The
+  checker's column parser previously discarded `INDEX` clauses inside a
+  `CREATE TABLE` outright, so `ledger_entry_changes.idx_lec_key_xdr`'s
+  bloom-filter false-positive rate could be retuned in
+  `tier1_schema.sql` (or left un-applied on a live host via the
+  operator-run `ledger_entry_changes_key_xdr_index_fp.sql` migration)
+  and this checker would report "no drift" either way.
 - **api:** four more surfaces now apply the dex-nonstandard-decimals
   normalisation instead of publishing the RAW `prices_1m` ratio for a
   confirmed non-7-decimals token (F017). The class was half-fixed, and

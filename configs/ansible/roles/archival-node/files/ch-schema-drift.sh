@@ -322,6 +322,25 @@ parse_schema() {
             cols = (cols == "" ? name : cols "," name)
             printf "%s\ttype\t%s\t%s\n", tbl, name, rest
           }
+        } else if (c ~ /^INDEX[ (]/) {
+          # Secondary (skip) indices: compared as real DRIFT, not INFO
+          # (T339, 2026-09 reverification). Unlike a DEFAULT/CODEC text
+          # rendering, which ClickHouse re-renders into its own canonical
+          # form, making textual equality a false-positive machine, an
+          # index TYPE+params+GRANULARITY is exact declared text on BOTH
+          # sides. Before this, an index bloom_filter false-positive rate
+          # (e.g. idx_lec_key_xdr) could be retuned in the repo (or left
+          # un-applied on a live host) and this checker would report "no
+          # drift" either way: the column parser discarded the whole INDEX
+          # line here without emitting anything for it.
+          ic = c
+          sub(/^INDEX +/, "", ic)
+          gsub(/`/, "", ic)
+          iname = ic; sub(/[ (].*$/, "", iname)
+          irest = ic; sub(/^[A-Za-z0-9_]+ +/, "", irest)
+          if (iname != "" && iname ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
+            printf "%s\tindex\t%s\t%s\n", tbl, iname, norm(irest)
+          }
         }
         next
       }
@@ -776,6 +795,28 @@ while IFS= read -r t; do
       drift=$((drift + 1)); bad=1
     fi
   done
+  # ─── indices: real DRIFT, not INFO (T339, 2026-09 reverification) ─────
+  # A secondary index's TYPE+params+GRANULARITY (e.g. idx_lec_key_xdr's
+  # bloom_filter false-positive rate) is exact declared text on both
+  # sides — unlike a column's DEFAULT/CODEC rendering, this is not the
+  # type-rendering false-positive machine the header above refuses. Each
+  # index declared in the repo is checked by NAME against its live
+  # counterpart; an index the repo does not declare is left to the
+  # existing "uncodified" accounting, same as any other undeclared object.
+  while IFS=$'\t' read -r iname iwant; do
+    [[ -z "$iname" ]] && continue
+    igot="$(awk -F'\t' -v t="$live_src" -v n="$iname" \
+      '$1==t && $2=="index" && $3==n {print $4; exit}' "$work/live.facts")"
+    if [[ -z "$igot" ]]; then
+      note "DRIFT $t.INDEX $iname: declared in $(basename "$INTENT") but ABSENT from $live_origin"
+      drift=$((drift + 1)); bad=1
+    elif [[ "$iwant" != "$igot" ]]; then
+      note "DRIFT $t.INDEX $iname:"
+      note "    repo: $iwant"
+      note "    live: $igot"
+      drift=$((drift + 1)); bad=1
+    fi
+  done < <(awk -F'\t' -v t="$intent_src" '$1==t && $2=="index" {print $3"\t"$4}' "$work/intent.facts")
   [[ "$bad" -eq 1 ]] && divergent_tables=$((divergent_tables + 1))
 done <<<"$declared"
 

@@ -194,6 +194,27 @@ sed "/${bt}op_index${bt} UInt32,/d" "$tmp/live-ok.sql" > "$tmp/live-col.sql"
 run       "drift: column dropped live"            1 "$tmp/intent.sql" "$tmp/live-col.sql"
 expect_msg "drift: names the columns" "DRIFT account_movements.columns" "$tmp/intent.sql" "$tmp/live-col.sql"
 
+# ─── secondary index (T339, 2026-09 reverification) ──────────────────
+# idx_am_tx is declared IDENTICALLY in intent.sql and live-ok.sql above —
+# the clean case (rc=0) already proves a matching index does not itself
+# manufacture drift. The repo retunes the bloom-filter false-positive
+# rate (the exact idx_lec_key_xdr shape this finding is about) while the
+# live host still carries the old value: this must now be caught, where
+# before the column parser discarded the whole INDEX clause and this
+# comparison never existed.
+sed 's/INDEX idx_am_tx tx_hash TYPE bloom_filter(0.01) GRANULARITY 1/INDEX idx_am_tx tx_hash TYPE bloom_filter(0.0001) GRANULARITY 1/' \
+  "$tmp/intent.sql" > "$tmp/intent-idxfp.sql"
+run       "drift: repo retunes a bloom-filter FP rate the deployment does not have (T339)" 1 \
+  "$tmp/intent-idxfp.sql" "$tmp/live-ok.sql"
+expect_msg "drift: names the index" "DRIFT account_movements.INDEX idx_am_tx" \
+  "$tmp/intent-idxfp.sql" "$tmp/live-ok.sql"
+
+# An index the live host dropped entirely (not just retuned) must also drift.
+sed '/INDEX idx_am_tx tx_hash TYPE bloom_filter(0.01) GRANULARITY 1/d' "$tmp/live-ok.sql" > "$tmp/live-idx-missing.sql"
+run       "drift: index absent live entirely"     1 "$tmp/intent.sql" "$tmp/live-idx-missing.sql"
+expect_msg "drift: names the missing index" "DRIFT account_movements.INDEX idx_am_tx" \
+  "$tmp/intent.sql" "$tmp/live-idx-missing.sql"
+
 # A whole table never created on the box.
 awk '/^CREATE TABLE stellar.account_movements/{skip=1} skip && /^SETTINGS index_granularity/{skip=0; next} !skip' \
   "$tmp/live-ok.sql" > "$tmp/live-missing.sql"
