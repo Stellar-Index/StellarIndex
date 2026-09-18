@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
 // ChainlinkReference is a [Reference] backed by Chainlink Data
@@ -361,16 +362,26 @@ func (r *ChainlinkReference) ethCall(ctx context.Context, to, data string) (stri
 		return "", fmt.Errorf("chainlink: marshal request: %w", err)
 	}
 
+	// NS12: rpcURL is a SECRET. It is populated from the same
+	// CHAINLINK_RPC_URL the ingest poller uses, and keyed providers
+	// (Alchemy, Infura, QuickNode) carry the API key in the URL path
+	// (.../v2/<KEY>) — config.go documents the whole value as a
+	// secret. Both error paths below produce a *url.Error whose
+	// Error() quotes that URL verbatim, and every error out of this
+	// function lands in Result.Failures, which the worker JSON-marshals
+	// into the divergence cache in Redis (a no-AUTH internal bind).
+	// So neither may wrap the raw error with %w: they render it through
+	// the shared redactor, the same one the sibling ingest client uses.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.rpcURL, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("chainlink: new request: %w", err)
+		return "", fmt.Errorf("chainlink: new request: %s", externalchainlink.RedactURLError(err, r.rpcURL))
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := r.httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("chainlink: rpc transport: %w", err)
+		return "", fmt.Errorf("chainlink: rpc transport: %s", externalchainlink.RedactURLError(err, r.rpcURL))
 	}
 	defer func() { _ = resp.Body.Close() }()
 

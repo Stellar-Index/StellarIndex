@@ -17,6 +17,23 @@ against.
 
 ### Fixed
 
+- **divergence:** the Chainlink reference no longer writes the operator's
+  RPC API key into the divergence cache. `[divergence.chainlink].rpc_url`
+  is populated from the same `CHAINLINK_RPC_URL` the ingest poller uses,
+  and keyed providers carry the key in the URL PATH (`.../v2/<KEY>`) —
+  config already documents the whole value as a secret. Both URL-bearing
+  error paths in the reference's `eth_call` wrapper (request build and
+  transport) wrapped the raw `*url.Error`, whose `Error()` quotes that
+  URL verbatim; `Compare` copies the message into `Result.Failures` and
+  the worker JSON-marshals it into the per-pair `div:` key in Redis,
+  which is a no-AUTH internal bind. So an ordinary timeout, TLS failure
+  or 429 — no attacker action at all — parked the key in plaintext at
+  rest and re-wrote it every refresh cycle, and the decimals() retry WARN
+  logged the same string. Both paths now render the error through the
+  redactor the sibling ingest client already had, which is exported
+  rather than copied so the two clients onto the same endpoint cannot
+  drift apart again: the host stays (it is the whole diagnostic), the
+  path becomes `/<redacted>`. (audit-2026-09-02 NS12)
 - **aggregator:** a ClickHouse that is still loading metadata at boot no
   longer disables the decimals-assumption guard for the whole process
   lifetime. The lake reader was dialled inline at startup and one failed

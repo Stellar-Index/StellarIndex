@@ -180,7 +180,7 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 		// the raw error would leak the secret into the journal. Redact
 		// the URL before wrapping so the error stays diagnostic without
 		// exposing the key.
-		return fmt.Errorf("chainlink: %s transport: %s", method, redactURLError(err, c.Endpoint))
+		return fmt.Errorf("chainlink: %s transport: %s", method, RedactURLError(err, c.Endpoint))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -216,7 +216,7 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 	return nil
 }
 
-// redactURLError converts a transport error into a string with any
+// RedactURLError converts a transport error into a string with any
 // secret-bearing URL scrubbed. Keyed RPC providers (Alchemy, Infura,
 // QuickNode) embed the API key in the endpoint path
 // (e.g. https://eth-mainnet.g.alchemy.com/v2/<KEY>), so a *url.Error's
@@ -226,22 +226,32 @@ func (c *Client) do(ctx context.Context, method string, params []any, out any) e
 //
 // Non-*url.Error inputs are returned via Error() unchanged — those
 // don't carry the request URL.
-func redactURLError(err error, endpoint string) string {
+//
+// Exported because internal/divergence's ChainlinkReference talks to
+// the SAME operator endpoint (both read config's CHAINLINK_RPC_URL)
+// and must scrub it the same way (NS12). One implementation, one set
+// of tests: a second hand-rolled copy is how the first redaction came
+// to cover only one of the two clients.
+func RedactURLError(err error, endpoint string) string {
 	var ue *url.Error
 	if !errors.As(err, &ue) {
 		return err.Error()
 	}
 	// Rebuild the message as "<op> <redacted-url>: <underlying>" so it
 	// stays shaped like the original *url.Error but without the secret.
-	return fmt.Sprintf("%s %q: %v", ue.Op, redactEndpoint(endpoint), ue.Err)
+	return fmt.Sprintf("%s %q: %v", ue.Op, RedactEndpoint(endpoint), ue.Err)
 }
 
-// redactEndpoint returns a log-safe form of an RPC endpoint: scheme +
+// RedactEndpoint returns a log-safe form of an RPC endpoint: scheme +
 // host only, with the path/query (where keyed providers stash the API
 // key) replaced by "/<redacted>". Falls back to the bare scheme+host
 // string when the endpoint can't be parsed (never echoes the raw
 // input, which might be the secret-bearing URL).
-func redactEndpoint(endpoint string) string {
+//
+// Exported alongside [RedactURLError] for the non-transport error
+// paths (request construction, status lines) that also name the
+// endpoint.
+func RedactEndpoint(endpoint string) string {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Host == "" {
 		return "[redacted-endpoint]"
