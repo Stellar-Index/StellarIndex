@@ -57,12 +57,17 @@ type DivergenceLooker interface {
 // Production implementation: a Redis-backed adapter the aggregator
 // populates at bucket-close time, wired in the binary.
 //
-// When FrozenForPair returns true, the snapshot served by
-// PriceReader.LatestPrice IS the previous bucket's last-known-good
-// VWAP — not a fresh aggregation. The handler sets flags.frozen=true
-// and flags.single_source=true on the response (per the
+// FrozenForPair reports the MARKER only. It says nothing about the
+// value: PriceReader.LatestPrice reads the raw prices_1m bucket, which
+// the anomaly checker never gates, so on a frozen pair that snapshot is
+// the bucket the freeze refused. /v1/price and /v1/price/batch
+// therefore never serve it under the flag — [Server.resolveFrozenServe]
+// replaces it with the value the freeze is holding in the aggregator's
+// VWAP cache (or refuses when nothing is held), and only then sets
+// flags.frozen=true and flags.single_source=true (per the
 // anomaly.ActionFreeze contract in
-// internal/aggregate/anomaly/decision.go).
+// internal/aggregate/anomaly/decision.go). This comment used to assert
+// the LatestPrice snapshot WAS the last-known-good; it never was (F013).
 //
 // Read errors fall through with frozen=false (better to serve a
 // price without the warning flag than to 5xx because of a Redis
@@ -533,7 +538,9 @@ func (s *Server) parsePricePairParams(w http.ResponseWriter, r *http.Request) (a
 // instead (still closed-bucket-flavoured, see [Server.handlePriceWindowed]);
 // sub-minute freshness is /v1/price/tip's job, per the URL discipline in
 // ADR-0018. `flags.stale` here means specifically "the closed bucket
-// wasn't available and this degraded to a last-trade fallback".
+// wasn't available and this degraded to a last-trade fallback" — or
+// that the pair is frozen and the response is the held value, which
+// also sets `flags.frozen` (see [Server.resolveFrozenServe]).
 //
 // This surface will read slightly differently from /v1/price/tip and
 // from the price_usd inlined on /v1/assets rows — different windows,
@@ -575,7 +582,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// VWAP is sitting in cache. The 39-hour-stale signal we shipped
 	// on 2026-05-29 was exactly this — F-1308 fixed the staleness
 	// gauge but not the price-read path. ADR-0010 + F-1308.
-	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, asset, quote)
+	snapshot, sources, stale, served, err := s.readPriceWithAliasesServed(r.Context(), reader, asset, quote)
 	// Withheld beats every fallback: the substance gate refused to
 	// publish an aggregated price for this pair, and the fallback chain
 	// (Redis VWAP / stablecoin proxy / cross-rate) would just re-serve
@@ -631,6 +638,22 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A frozen pair serves the value the freeze is HOLDING, never the
+	// one just read — see [Server.resolveFrozenServe]. The held value
+	// comes from the aggregator's VWAP cache, so it takes the
+	// viaFallback treatment: already normalized upstream, and below
+	// this surface's closed-bucket baseline (stale, per F-1254).
+	held := s.resolveFrozenServe(r, asset, served, quote)
+	if held.outcome == frozenServeNothingHeld {
+		writeFrozenNothingHeldProblem(w, r, asset, quote)
+		return
+	}
+	frozen := held.outcome == frozenServeHeld
+	if frozen {
+		snapshot, sources, triangulated = held.snapshot, []string{}, held.triangulated
+		stale, viaFallback = true, true
+	}
+
 	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
 	// the deferred CAGG-reading tail from docs/operations/runbooks/
 	// dex-nonstandard-decimals.md): only when the snapshot came from the
@@ -665,7 +688,6 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// cachekeys.VWAPCompositeMeta — a no-op unless the served value is a
 	// triangulated composite. Best-effort.
 	s.attachCompositeFlags(r, &flags, asset, quote, triangulated)
-	frozen := s.lookupFrozen(r, asset, quote)
 	flags.Frozen = frozen
 	// SingleSource is forced true when the snapshot is the LKG
 	// fallback — by the ActionFreeze contract every frozen response
@@ -939,9 +961,24 @@ func echoRequestedAsset(snap PriceSnapshot, requested canonical.Asset) PriceSnap
 }
 
 func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, error) {
+	snap, srcs, stale, _, err := s.readPriceWithAliasesServed(ctx, reader, asset, quote)
+	return snap, srcs, stale, err
+}
+
+// readPriceWithAliasesServed is [Server.readPriceWithAliases] plus the
+// one thing its echo deliberately hides: WHICH alias's market the
+// snapshot was read from. The snapshot still echoes the requested id.
+//
+// The freeze marker is keyed on the literal pair the aggregator prices
+// (`crypto:XLM/fiat:GBP`), so a caller that must ask "is the pair I am
+// about to serve frozen?" needs the pair that was actually read, not
+// the spelling the client used — see [Server.resolveFrozenServe]. The
+// served alias is the zero Asset whenever err is non-nil.
+func (s *Server) readPriceWithAliasesServed(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, error) {
 	aliases := assetAliases(asset)
 	var firstSnap PriceSnapshot
 	var firstSrcs []string
+	var firstServed canonical.Asset
 	var firstErr error
 	sawWithheld := false
 	freshFound := false
@@ -958,12 +995,12 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 		}
 		if !stale {
 			// Fresh hit — return immediately.
-			return echoRequestedAsset(snap, asset), srcs, false, nil
+			return echoRequestedAsset(snap, asset), srcs, false, a, nil
 		}
 		// Stale — remember the first stale result as a fallback
 		// in case every alias is stale.
 		if !freshFound {
-			firstSnap, firstSrcs = echoRequestedAsset(snap, asset), srcs
+			firstSnap, firstSrcs, firstServed = echoRequestedAsset(snap, asset), srcs, a
 			freshFound = true
 		}
 	}
@@ -971,7 +1008,7 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 		// Every alias was stale; return the first stale result so
 		// the caller still surfaces flags.stale=true rather than
 		// falling all the way through to priceFallback.
-		return firstSnap, firstSrcs, true, nil
+		return firstSnap, firstSrcs, true, firstServed, nil
 	}
 	// Every alias errored. A withheld verdict on ANY alias wins over
 	// not-found: the pair demonstrably exists but was refused by the
@@ -981,12 +1018,12 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 	// so a pair that is genuinely healthy under a sibling alias was
 	// already allowed above, not withheld.)
 	if sawWithheld {
-		return PriceSnapshot{}, nil, false, ErrPriceWithheld
+		return PriceSnapshot{}, nil, false, canonical.Asset{}, ErrPriceWithheld
 	}
 	// Otherwise return the first error so the caller's
 	// errors.Is(err, ErrPriceNotFound) branch still triggers
 	// priceFallback as before.
-	return PriceSnapshot{}, nil, false, firstErr
+	return PriceSnapshot{}, nil, false, canonical.Asset{}, firstErr
 }
 
 // normalizeRawPriceSnapshot applies the dex-nonstandard-decimals forward
@@ -2160,6 +2197,163 @@ func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) boo
 	return frozen
 }
 
+// frozenServe is the outcome of [Server.resolveFrozenServe]. Three
+// states, spelled out: "frozen but nothing to serve" is its own state
+// and must never travel as one of the other two — read as "not frozen"
+// it publishes the bucket the freeze is withholding; read as "held" it
+// publishes an empty price.
+type frozenServe int
+
+const (
+	// frozenServeNotFrozen — no live freeze; serve what was read.
+	frozenServeNotFrozen frozenServe = iota
+	// frozenServeHeld — frozen, and resolution.snapshot is the held value.
+	frozenServeHeld
+	// frozenServeNothingHeld — frozen, and no held value is readable.
+	// The caller serves NOTHING for the pair.
+	frozenServeNothingHeld
+)
+
+// frozenResolution carries [Server.resolveFrozenServe]'s verdict.
+// snapshot and triangulated are meaningful only for frozenServeHeld.
+type frozenResolution struct {
+	outcome      frozenServe
+	snapshot     PriceSnapshot
+	triangulated bool
+}
+
+// frozenHeldWindows are the aggregator windows a freeze can be holding
+// a value for ([orchestrator.DefaultWindows], the same set
+// [priceWindows] serves), smallest first. The freeze lifecycle runs per
+// (pair, window) while the marker is per pair (ADR-0019, 2026-09-18
+// amendment), so the marker alone does not say which window holds the
+// value; smallest-first keeps the answer closest to the 1-minute bucket
+// it stands in for, and matches [triangulationLookupWindow] — what the
+// fallback chain has always served for a frozen pair with no prices_1m
+// rows.
+var frozenHeldWindows = []time.Duration{5 * time.Minute, time.Hour, 24 * time.Hour}
+
+// resolveFrozenServe makes `flags.frozen` true in the only honest way:
+// by making the VALUE the one the freeze is holding.
+//
+// The flag's published contract (openapi `frozen`, ADR-0019 "When
+// freeze fires") is that the response carries the last-known-good
+// value. The closed-bucket read cannot deliver that: prices_1m is a raw
+// Σquote/Σbase the anomaly checker never gates, so its newest bucket on
+// a frozen pair is the very bucket the freeze refused. Until F013 the
+// handler served that bucket and stamped the flag on it from an
+// independent marker read — a client branching on `frozen` believed it
+// held a protected value while holding the rejected one.
+//
+// What a freeze holds lives in the aggregator's VWAP cache
+// (`vwap:<asset>:<quote>:<window>`): a frozen window skips its publish
+// and the orchestrator keeps the prior value alive for the hold
+// (keepFrozenVWAPAlive); a sibling window that is NOT frozen carries a
+// value the same checker accepted. Either way it is a value the freeze
+// machinery selected, which the raw bucket never is.
+//
+// `served` is the alias whose market the closed-bucket read came from
+// (zero when the read missed). It is checked first: the marker is keyed
+// on the literal pair the aggregator prices, so a `native` request
+// answered from crypto:XLM's bucket is governed by crypto:XLM's freeze.
+// The held value is read for the pair whose marker fired — one venue
+// population's held value is never substituted for another's.
+//
+// No readable held value (first-bucket freeze, an expired key, a cache
+// read error) is frozenServeNothingHeld, and the caller refuses. That
+// is NOT the "503 instead of last-known-good" alternative ADR-0019
+// rejected: there is no last-known-good to prefer, and the only other
+// value on hand is the one being withheld.
+func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote canonical.Asset) frozenResolution {
+	pairBase, frozen := s.frozenPairBase(r, requested, served, quote)
+	if !frozen {
+		return frozenResolution{outcome: frozenServeNotFrozen}
+	}
+	if s.triangulated == nil {
+		return frozenResolution{outcome: frozenServeNothingHeld}
+	}
+	for _, window := range frozenHeldWindows {
+		value, isTriangulated, found, err := s.triangulated.LookupTriangulatedVWAP(r.Context(), pairBase, quote, window)
+		if err != nil {
+			if !clientAborted(r, err) {
+				s.logger.Warn("frozen pair: held-value lookup failed",
+					"err", err, "asset", pairBase.String(), "quote", quote.String(), "window", window)
+			}
+			continue
+		}
+		if !found {
+			continue
+		}
+		return frozenResolution{
+			outcome:      frozenServeHeld,
+			triangulated: isTriangulated,
+			snapshot: PriceSnapshot{
+				AssetID:   requested.String(),
+				Quote:     quote.String(),
+				Price:     value,
+				PriceType: "vwap",
+				// Same stamp every VWAP-cache serve carries (F-1305). For
+				// a held value it is the READ time, not the time the value
+				// was fresh — which the cache does not record — so the
+				// caller marks the response stale as well as frozen.
+				ObservedAt:    WireTime(time.Now().UTC()),
+				WindowSeconds: int(window / time.Second),
+			},
+		}
+	}
+	return frozenResolution{outcome: frozenServeNothingHeld}
+}
+
+// frozenPairBase reports which spelling of the pair carries a live
+// freeze marker: the alias the closed-bucket read was served from
+// first, then the requested literal. One marker read in the common case
+// (served == requested), two at most.
+func (s *Server) frozenPairBase(r *http.Request, requested, served, quote canonical.Asset) (canonical.Asset, bool) {
+	if !served.IsZero() && s.lookupFrozen(r, served, quote) {
+		return served, true
+	}
+	if !served.Equal(requested) && s.lookupFrozen(r, requested, quote) {
+		return requested, true
+	}
+	return canonical.Asset{}, false
+}
+
+// writeFrozenNothingHeldProblem is the single-asset refusal for
+// frozenServeNothingHeld. 503, not 404: prices exist and the condition
+// clears on its own (the freeze releases, or the aggregator republishes
+// the window), so "retry" is the right client reaction. Its own title
+// and detail rather than the price-withheld body, whose "market too
+// thin" wording would misstate why.
+func writeFrozenNothingHeldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset) {
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/price-unavailable",
+		"Price frozen — no last-known-good value available", http.StatusServiceUnavailable,
+		asset.String()+" / "+quote.String()+
+			" is frozen by anomaly detection (ADR-0019) and no last-known-good value is currently held,"+
+			" so the refused bucket is not published in its place — retry shortly,"+
+			" or read the raw market via /v1/price/tip or /v1/observations and apply your own judgement")
+}
+
+// holdFrozenBatchRow is [Server.resolveFrozenServe] for one
+// /v1/price/batch row: a frozen row carries the held value, and a
+// frozen row with nothing held is omitted — the batch contract's only
+// spelling of "no price for this asset" (it has no per-row problem
+// shape; callers probe /v1/price for the reason).
+func (s *Server) holdFrozenBatchRow(r *http.Request, row batchRowResult, served, quote canonical.Asset) batchRowResult {
+	held := s.resolveFrozenServe(r, row.asset, served, quote)
+	switch held.outcome {
+	case frozenServeNotFrozen:
+		return row
+	case frozenServeNothingHeld:
+		return batchRowResult{skip: true}
+	case frozenServeHeld:
+	}
+	held.snapshot.Change24hPct = s.batchChange24h(r.Context(), row.asset, quote, held.snapshot.Price)
+	row.snap, row.sources, row.triangulated = held.snapshot, []string{}, held.triangulated
+	row.stale, row.frozen = true, true
+	return row
+}
+
 // handlePriceBatch serves GET /v1/price/batch?asset_ids=A,B,C&quote=<id>.
 //
 // Looks up the latest price for each asset_id in turn. Missing
@@ -2417,7 +2611,7 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 	// queried the literal form only, so asset_ids=native returned
 	// stale/empty while /v1/price?asset=native served fresh CEX VWAP
 	// published under the crypto:XLM alias key.
-	snap, sources, stale, err := s.readPriceWithAliases(ctx, s.prices, asset, quote)
+	snap, sources, stale, served, err := s.readPriceWithAliasesServed(ctx, s.prices, asset, quote)
 	if errors.Is(err, ErrPriceWithheld) {
 		// Substance-gated pair: omit the row, exactly like a miss (the
 		// batch wire contract omits rather than nulls), and do NOT run
@@ -2451,11 +2645,12 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 			// the batch envelope must OR it in for parity rather than
 			// silently dropping it.
 			fs.Change24hPct = s.batchChange24h(ctx, asset, quote, fs.Price)
-			return batchRowResult{
+			// No closed-bucket read served this row, so there is no
+			// served alias: the freeze check is on the literal pair.
+			return s.holdFrozenBatchRow(r, batchRowResult{
 				snap: fs, sources: fsrc, stale: true, triangulated: ftri,
 				asset: asset, ok: true,
-				frozen: s.lookupFrozen(r, asset, quote),
-			}
+			}, canonical.Asset{}, quote)
 		}
 		return batchRowResult{skip: true} // omit, do not 404 the batch
 	}
@@ -2483,10 +2678,11 @@ func (s *Server) resolveBatchRow(ctx context.Context, r *http.Request, raw strin
 	// go through this again.
 	s.normalizeRawPriceSnapshot(&snap, asset, quote)
 	snap.Change24hPct = s.batchChange24h(ctx, asset, quote, snap.Price)
-	return batchRowResult{
+	// F013: a frozen row carries the value the freeze is holding, not
+	// the raw bucket just read — see [Server.resolveFrozenServe].
+	return s.holdFrozenBatchRow(r, batchRowResult{
 		snap: snap, sources: sources, stale: stale, asset: asset, ok: true,
-		frozen: s.lookupFrozen(r, asset, quote),
-	}
+	}, served, quote)
 }
 
 // batchChange24h computes the trailing-24h percentage change for a

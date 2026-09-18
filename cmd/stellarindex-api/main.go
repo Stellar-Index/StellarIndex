@@ -3998,7 +3998,11 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// bare Σ(quote)/Σ(base) per bucket — it is NOT the orchestrator's
 	// filtered VWAP. The σ-outlier filter, the min-USD-volume gate, and
 	// freeze value-protection all live on the ORCHESTRATOR path that writes
-	// the filtered value to Redis (which this CAGG bypasses). A pair with no
+	// the filtered value to Redis (which this CAGG bypasses). Freeze is the
+	// one of the three this reader's callers make good: on a pair with a
+	// live freeze marker /v1/price and /v1/price/batch discard this bucket
+	// for the value the freeze is holding (v1.Server.resolveFrozenServe,
+	// F013) — the other surfaces that read this bucket do not. A pair with no
 	// prices_1m rows at all (pure-synthetic fiat like native/fiat:USD —
 	// SDEX native trades are quoted in issuer-stablecoins, never fiat:USD)
 	// misses here (ErrNoRows) and the handler's Redis-VWAP fallback — which

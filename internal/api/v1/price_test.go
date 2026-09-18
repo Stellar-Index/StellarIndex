@@ -1101,7 +1101,13 @@ func TestPrice_FrozenSetsBothFlags(t *testing.T) {
 		},
 	}
 	frz := &stubFrozenLooker{frozen: true}
-	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
+	// F013: a frozen response IS the held last-known-good, so the
+	// fixture has to hold one. This test used to wire a freeze with no
+	// VWAP cache at all — a shape production cannot take (both lookers
+	// hang off the same Redis client) — and thereby certified the
+	// defect: the reader's raw 0.07 served under frozen=true.
+	held := &stubTriangulatedPriceLooker{value: "0.0655", found: true}
+	srv := v1.New(v1.Options{Prices: reader, Freeze: frz, Triangulated: held})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
@@ -1111,6 +1117,9 @@ func TestPrice_FrozenSetsBothFlags(t *testing.T) {
 	}
 	if !strings.Contains(body, `"single_source":true`) {
 		t.Errorf("single_source flag should be forced true on freeze: %s", body)
+	}
+	if !strings.Contains(body, `"price":"0.0655"`) || strings.Contains(body, `"0.07"`) {
+		t.Errorf("frozen response must carry the held value, not the raw bucket: %s", body)
 	}
 	if frz.calls != 1 {
 		t.Errorf("freeze lookup calls = %d, want 1", frz.calls)
@@ -1235,11 +1244,21 @@ func TestPriceBatch_FrozenORedAcrossRows(t *testing.T) {
 	}
 	// Looker freezes only the EUR row, not native.
 	frz := &batchFreezeLooker{frozenForBase: "EUR"}
-	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
+	// F013: the frozen row serves its held last-known-good, so the
+	// fixture holds one (see TestPrice_FrozenSetsBothFlags). Only the
+	// frozen row consults it — both rows have a closed bucket.
+	held := &stubTriangulatedPriceLooker{value: "1.08", found: true}
+	srv := v1.New(v1.Options{Prices: reader, Freeze: frz, Triangulated: held})
 	ts := startHTTPTest(t, srv.Handler())
 
 	resp := mustGet(t, ts.URL+"/v1/price/batch?asset_ids=native,fiat:EUR&quote=fiat:USD")
 	body, _ := readAll(resp)
+	if !strings.Contains(body, `"price":"1.08"`) || strings.Contains(body, `"1.10"`) {
+		t.Errorf("frozen row must carry the held value, not the raw bucket: %s", body)
+	}
+	if !strings.Contains(body, `"price":"0.07"`) {
+		t.Errorf("unfrozen row must still serve its closed bucket: %s", body)
+	}
 	if !strings.Contains(body, `"frozen":true`) {
 		t.Errorf("envelope frozen should fire when ANY row is frozen: %s", body)
 	}

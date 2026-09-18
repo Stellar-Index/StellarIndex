@@ -83,6 +83,38 @@ against.
   path (`~/.ansible/collections`) ahead of the ones shipped inside the
   `ansible` package, so all three workflows now lint/dry-run/apply
   against the same collection versions.
+- **price:** a frozen pair on `/v1/price` and `/v1/price/batch` serves
+  the value the freeze is holding, not the bucket it refused (F013,
+  MNY-22). `flags.frozen` promises the last-known-good (ADR-0019, and
+  the flag's own OpenAPI wording), but the default path reads the raw
+  `prices_1m` bucket — which the anomaly checker never gates — and
+  stamped the flag on it from an independent marker read. On a frozen
+  XLM/GBP a client got the newest Kraken minute, the very print the
+  freeze rejected, labelled as the protected value. The handler now
+  replaces that bucket with the aggregator's held value from the VWAP
+  cache: the 5m window first, then 1h, then 24h, because the lifecycle
+  is per (pair, window) while the marker is per pair, and the response
+  carries the real `window_seconds` of whichever window held it. It is
+  `stale: true` as well as `frozen: true` (it is below the closed-bucket
+  baseline, and `observed_at` is the read time — the cache does not
+  record when the held value was fresh), and it credits no sources,
+  since the refused bucket's venues did not produce it. The freeze
+  check follows the alias the bucket was actually read from, so
+  `asset=native` answered from `crypto:XLM`'s bucket is governed by
+  `crypto:XLM`'s freeze rather than slipping past it on a spelling. A
+  frozen pair with NO held value readable (a first-bucket freeze, an
+  expired key) is refused — `503 price-unavailable` on `/v1/price`, the
+  row omitted on the batch — rather than published as something it is
+  not; that is not the "503 instead of last-known-good" ADR-0019
+  rejected, because there is no last-known-good to prefer. Unfrozen
+  pairs are byte-identical. Two existing tests wired a freeze with no
+  VWAP cache at all, a shape production cannot take, and so certified
+  the defect (raw `0.07` under `frozen: true`); their fixtures now hold
+  a value and they assert it is the one served. Not changed, and still
+  reading the raw bucket with no freeze protection: `/v1/oracle/*`
+  (SEP-40), the `/v1/assets` price columns, and the USD leg of the
+  derived-fiat cross — none of them carries `flags.frozen`, so none of
+  them makes the false claim, but none of them is protected either.
 
 - **assets listing:** the listing `market_cap_usd` of a confirmed
   non-7-decimals token divides supply by the token's confirmed decimals,
