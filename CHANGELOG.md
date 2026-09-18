@@ -97,6 +97,20 @@ against.
   F037, F039, K004, RLT-391 / #788 — `rejectAggregatorOutliers` in
   `internal/aggregate/global.go` carries the same additive band and is
   NOT covered here)
+- **api:** `POST /v1/admin/keys` now runs the same delegation clamp
+  (`middleware.ClampMintScopes`) the self-service mint path runs, so a
+  scope-narrowed operator credential can no longer mint itself an
+  unscoped — i.e. full-access — key. The handler gated on tier alone and
+  passed the requested scope list straight into the account store, while
+  the clamp's own doc described itself as "the single chokepoint every
+  mint path funnels through"; that held for `POST /v1/account/keys`
+  only. The escalation was closed rather than theoretical: this handler
+  mints `tier: operator` keys WITH an explicit scope list, so a narrowed
+  operator key exists by construction, and an empty scope list means
+  every capability. A scoped caller asking for nothing now inherits its
+  own scopes; asking for a scope it does not hold is refused with 403
+  before the mint, and the audit row records the clamped set actually
+  issued. (reverification-2026-09-18 RSEC-A2 / RLT-162)
 
 - **aggregator:** a ClickHouse that is still loading metadata at boot no
   longer disables the decimals-assumption guard for the whole process

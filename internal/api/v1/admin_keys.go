@@ -102,6 +102,31 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Delegation clamp — the SAME chokepoint the self-service path
+	// runs (handleAccountKeysCreate). The tier check above is not the
+	// whole authority question: this very handler mints `tier:
+	// operator` keys with an explicit `scopes` list, so a
+	// scope-narrowed operator credential exists by construction, and
+	// an empty scope list means EVERY capability (auth.Subject.HasScope
+	// / checkScopes short-circuit on len(Scopes)==0). Without the clamp
+	// a staff key minted as `tier: operator, scopes: ["admin"]` —
+	// deliberately unable to read customer data — could POST
+	// `scopes: []` here and mint itself a full-access operator key,
+	// with the audit row as the only signal. ClampMintScopes' own doc
+	// calls itself "the single chokepoint every mint path funnels
+	// through"; until now that held for the customer path alone
+	// (security review A-2, 2026-09-17).
+	scopes, problem := middleware.ClampMintScopes(subject, req.Scopes)
+	if problem != "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/scope-exceeds-caller",
+			"Scope exceeds caller", http.StatusForbidden, problem)
+		return
+	}
+	// Persist, audit-log and echo the CLAMPED set, never the request's:
+	// the audit trail has to record what was actually issued.
+	req.Scopes = scopes
+
 	rec, plaintext, err := s.accounts.Create(r.Context(), auth.CreateAPIKeyRequest{
 		Identifier:      req.Identifier,
 		Label:           req.Label,
