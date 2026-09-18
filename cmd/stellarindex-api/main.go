@@ -1392,7 +1392,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Explorer:           explorerReader,
 		Volume:             storeVolumeReader{s: store},
 		Change24h:          storeChange24hReader{s: store, pegs: usdPegs},
-		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate},
+		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate, logger: logger.With("component", "price-at-guard")},
 		ChangeSummary:      store,
 		AssetsReader:       cachedAssetsReader,
 		Issuers:            cachedIssuersReader,
@@ -5709,6 +5709,7 @@ type storePriceAtReader struct {
 	s         *timescale.Store
 	substance *pricingguard.SubstanceGate // nil → no thin-market gate
 	scam      *pricingguard.ScamGate      // nil → no scam-issuer gate
+	logger    *slog.Logger                // nil → guard logging disabled
 }
 
 func (r storePriceAtReader) PriceAt(
@@ -5723,6 +5724,27 @@ func (r storePriceAtReader) PriceAt(
 			return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
 		}
 		return "", time.Time{}, 0, err
+	}
+	// F031: the ladder's FINEST rung is the same raw prices_1m
+	// closed bucket storePriceReader.LatestPrice serves — a bare
+	// Σ(quote)/Σ(base) CAGG bucket with no outlier filter, no volume
+	// floor and no freeze protection. Carrying only the withholding
+	// gates here left /v1/price/at and every /v1/price/changes horizon
+	// republishing the manipulated minute /v1/price refuses, though
+	// pricingguard's package doc claimed to cover every raw-bucket
+	// path. Apply the same trailing-baseline guard, on the 1m rung
+	// only: the coarser rungs are hour/day bars a trailing 1-minute
+	// baseline cannot judge. A rejected candidate with no in-contract
+	// last-known-good is an honest "no price at this instant" — the
+	// handler 404s (or nulls that horizon) rather than serve a value
+	// the manipulation band rejected.
+	if row.Resolution == timescale.Granularity1m {
+		served, ok := pricingguard.GuardServedVWAP1mAt(ctx, r.s, r.logger, pair,
+			timescale.Vwap1mRow{Bucket: row.Bucket, VWAP: row.VWAP}, ts, maxStaleness)
+		if !ok {
+			return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+		}
+		row.VWAP, row.Bucket = served.VWAP, served.Bucket
 	}
 	// observed_at = bucket close = bucket start + resolution: the
 	// instant the bucket's VWAP became final (ADR-0015). window_seconds

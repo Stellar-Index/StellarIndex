@@ -34,6 +34,22 @@ against.
   rather than copied so the two clients onto the same endpoint cannot
   drift apart again: the host stays (it is the whole diagnostic), the
   path becomes `/<redacted>`. (audit-2026-09-02 NS12)
+- **api:** `/v1/price/at` and `/v1/price/changes` now apply the
+  serving-sanity guard to a prices_1m answer. Their shared reader seam
+  resolves an instant through a CAGG ladder whose finest rung is the
+  same raw closed 1-minute bucket `/v1/price` serves, and it carried the
+  withholding gates but not the trailing-baseline guard — so one extra
+  path segment republished the manipulated minute `/v1/price` refuses
+  (as the current price AND as every horizon reference behind a
+  `change_pct`), while `pricingguard`'s package doc claimed it covered
+  "every raw prices_1m closed-bucket serving path". A rejected candidate
+  is replaced by the newest clean trailing bucket, but only while that
+  bucket still closes within the caller's own at-or-before staleness
+  bound; otherwise the instant is reported unavailable (a 404, or a null
+  horizon) rather than answered with a value the manipulation band
+  rejected or one that silently breaches the requested staleness. The
+  package doc now enumerates wired call sites. (audit-2026-09-02 F031)
+
 - **aggregator/pricing:** the robust outlier and served-price bands are
   no longer blind to downward prints. Every band in `internal/aggregate`
   was ADDITIVE in price space (`|p − centre| > K·1.4826·MAD`), and a

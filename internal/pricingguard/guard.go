@@ -2,20 +2,29 @@
 // prices_1m closed-bucket serving path across the API and aggregator
 // binaries (adversarial-review HIGH).
 //
-// Several serving paths read the most-recent CLOSED prices_1m bucket
-// directly via [timescale.Store.LatestClosedVWAP1mForPair] — a bare
-// Σ(quote)/Σ(base) continuous-aggregate bucket that BYPASSES the
-// orchestrator's σ-outlier filter, its min-USD-volume gate, and freeze
-// value-protection (those guard the ORCHESTRATOR path that writes the
-// filtered VWAP to Redis, which the CAGG does not touch). So each such
-// path carries the identical unfiltered fat-finger / manipulation vector:
-// a single manipulated print in the served minute would otherwise be
-// served verbatim, with stale=false and no volume floor. The three known
-// raw-bucket consumers are:
+// Several serving paths read a CLOSED prices_1m bucket directly — via
+// [timescale.Store.LatestClosedVWAP1mForPair] for the latest one, or via
+// [timescale.Store.ClosedVWAPAtOrBefore]'s finest ladder rung for a
+// historical instant — a bare Σ(quote)/Σ(base) continuous-aggregate
+// bucket that BYPASSES the orchestrator's σ-outlier filter, its
+// min-USD-volume gate, and freeze value-protection (those guard the
+// ORCHESTRATOR path that writes the filtered VWAP to Redis, which the
+// CAGG does not touch). So each such path carries the identical
+// unfiltered fat-finger / manipulation vector: a single manipulated
+// print in the served minute would otherwise be served verbatim, with
+// stale=false and no volume floor. The raw-bucket consumers are:
 //
 //   - /v1/price               (cmd/stellarindex-api storePriceReader.LatestPrice)
 //   - /v1/assets/{slug}        (cmd/stellarindex-api globalPriceReader.LatestVWAP, GlobalAssetView headline)
 //   - the price-alert evaluator (cmd/stellarindex-aggregator priceAlertVWAPReader.LatestVWAP)
+//   - /v1/price/at + /v1/price/changes (cmd/stellarindex-api
+//     storePriceAtReader.PriceAt, via [GuardServedVWAP1mAt] — the
+//     point-in-time ladder's 1m rung; added for finding F031, which
+//     found this doc claiming coverage the wiring did not have)
+//
+// Each entry is a WIRED call site, not an intention: a raw prices_1m
+// read that reaches a response without one of the entry points below is
+// this package's doc lying again.
 //
 // This package hosts the WIRING that turns the pure robust-band decision
 // ([aggregate.GuardServedVWAP], ADR-0003 exact-rational) into a servable
@@ -31,6 +40,7 @@ import (
 	"context"
 	"log/slog"
 	"math/big"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -126,6 +136,84 @@ func GuardServedVWAP1mConfidence(
 			"candidate_vwap", candidate.VWAP)
 	}
 	return served, lowConfidence
+}
+
+// GuardServedVWAP1mAt is [GuardServedVWAP1m] for the POINT-IN-TIME
+// serving path (/v1/price/at and, through it, every /v1/price/changes
+// horizon — MSP-01/MSP-02's reader seam). Those routes resolve an
+// instant through a CAGG ladder whose FIRST rung is the same raw
+// prices_1m bucket /v1/price serves, so they carried the identical
+// unfiltered fat-finger / manipulation vector on a path the guard had
+// never been wired into (finding F031). Callers apply it ONLY to a
+// prices_1m answer; coarser rungs are hour/day bars, a different
+// (diluted) exposure the trailing 1-minute baseline cannot judge.
+//
+// `ts` and `maxStaleness` are the caller's at-or-before contract, and
+// they are what make this distinct from [GuardServedVWAP1m]: a rejected
+// candidate is replaced by the newest clean trailing bucket only while
+// that bucket still CLOSES within maxStaleness of ts — the same test
+// [timescale.Store.ClosedVWAPAtOrBefore] applied to the candidate. When
+// no clean bucket satisfies the contract the answer is ok=false and the
+// caller reports "no price at this instant" (a 404, or a null horizon),
+// never a value the manipulation band rejected and never one that
+// silently breaches the staleness the caller asked for.
+//
+// Fail-open posture is otherwise unchanged from [GuardServedVWAP1m]: a
+// trailing-fetch error or an empty baseline serves the candidate.
+func GuardServedVWAP1mAt(
+	ctx context.Context,
+	store TrailingReader,
+	logger *slog.Logger,
+	pair canonical.Pair,
+	candidate timescale.Vwap1mRow,
+	ts time.Time,
+	maxStaleness time.Duration,
+) (served timescale.Vwap1mRow, ok bool) {
+	rows, err := store.RecentClosedVWAP1mCombined(ctx, pair, SampleFetch)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("served-vwap guard (point-in-time): trailing fetch failed — serving candidate unguarded",
+				"pair", pair.String(), "err", err)
+		}
+		return candidate, true // fail-open (transient), as on the /v1/price path
+	}
+	served, ok = SelectGuardedVWAP1mAt(candidate, rows, ts, maxStaleness)
+	if logger != nil && (!ok || !served.Bucket.Equal(candidate.Bucket)) {
+		logger.Warn("served-vwap guard (point-in-time): candidate bucket rejected as outlier",
+			"pair", pair.String(),
+			"requested_at", ts,
+			"candidate_bucket", candidate.Bucket,
+			"candidate_vwap", candidate.VWAP,
+			"served_bucket", served.Bucket,
+			"served_vwap", served.VWAP,
+			"served", ok)
+	}
+	return served, ok
+}
+
+// SelectGuardedVWAP1mAt is the pure decision half of
+// [GuardServedVWAP1mAt]. ok=false means the candidate was rejected and
+// no last-known-good bucket closes within `maxStaleness` of `ts`, so the
+// caller has no servable answer for that instant. Store-free so the
+// staleness contract is unit-testable without a database.
+func SelectGuardedVWAP1mAt(
+	candidate timescale.Vwap1mRow,
+	rows []timescale.Vwap1mRow,
+	ts time.Time,
+	maxStaleness time.Duration,
+) (served timescale.Vwap1mRow, ok bool) {
+	served, rejected, _ := selectGuardedVWAP1m(candidate, rows)
+	if !rejected {
+		return served, true
+	}
+	// The last-known-good bucket is by construction OLDER than the
+	// rejected candidate, so it has to re-clear the caller's own
+	// at-or-before staleness bound (bucket close within maxStaleness of
+	// ts) before it can stand in for it.
+	if ts.Sub(served.Bucket.Add(time.Minute)) > maxStaleness {
+		return timescale.Vwap1mRow{}, false
+	}
+	return served, true
 }
 
 // SelectGuardedVWAP1m is the pure decision half of [GuardServedVWAP1m]:
