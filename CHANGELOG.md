@@ -55,6 +55,18 @@ against.
   frozen window has claimed its own entry. Presence semantics are
   untouched: `flags.frozen` stays pair-wide and `stellarindex-ops
   freeze-unfreeze` still releases every window. (audit-2026-09-02 E1)
+- **api (observability):** `stellarindex_dependency_up{dependency=
+  "clickhouse"}` is now published when ClickHouse is configured but was
+  unreachable at API start. The readiness checker was appended inside
+  the success branch of the boot dial, so the one state the alert's own
+  annotation calls "the only signal that it is gone" produced no series
+  at all — and the alert is `stellarindex_dependency_up == 0`, with an
+  in-file rationale deliberately rejecting `absent()`, so it had nothing
+  to match while every lake-backed endpoint 503'd. A configured lake now
+  always registers the checker; when the boot dial failed it reports
+  down with an error saying a restart is what re-wires the ten
+  lake-backed seams, since none of them is re-dialled. A deployment with
+  no lake configured still publishes nothing. (audit-2026-09-02 F122)
 - **data-freshness (observability):** a feed dead long enough no longer
   deletes its own alarm. Each per-source leg of the watchdog enumerated
   its sources from the same window it judged them in (`WHERE ingested_at

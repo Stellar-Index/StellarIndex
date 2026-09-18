@@ -1092,6 +1092,9 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	var sdexOfferBook v1.SDEXOfferBookReader
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
 		er, err := clickhouse.NewExplorerReaderAuth(rootCtx, addr, cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword)
+		// The readiness checker is registered for a CONFIGURED ClickHouse
+		// whether or not this dial succeeded — see clickhouseReadyChecks.
+		checks = append(checks, clickhouseReadyChecks(addr, er, err)...)
 		if err != nil {
 			logger.Warn("explorer reader unavailable; /v1/ledgers etc. will 503", "addr", addr, "err", err)
 		} else {
@@ -1114,17 +1117,6 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			cometTVLReserves = er
 			sdexOfferBook = er
 			logger.Info("explorer reader wired (ClickHouse lake, ADR-0038)", "addr", addr)
-			// OBS-07 (audit-2026-07-23): ClickHouse was entirely absent
-			// from /v1/readyz, so a CH outage was invisible to the
-			// dependency poll — operators only found out when
-			// /v1/ledgers etc. started 503ing in the wild. Non-critical
-			// (Critical()==false), matching the redisChecker precedent
-			// a few lines up: CH is documented + wired throughout this
-			// file as an OPTIONAL, nil-degrading dependency (Postgres-
-			// backed endpoints keep serving without it), so a CH blip
-			// should surface as status="degraded", not take the whole
-			// API out of load-balancer rotation.
-			checks = append(checks, clickhouseChecker{r: er})
 		}
 	}
 
@@ -2880,13 +2872,55 @@ func (c redisChecker) Ping(ctx context.Context) error {
 // LakeTipLedger (already exported for the protocol-analytics window
 // cutoff) as the Ping probe: a cheap query against the small
 // `stellar.ledgers` table, no new ClickHouse-side surface needed.
-type clickhouseChecker struct{ r *clickhouse.ExplorerReader }
+//
+// `r` is nil when the boot dial failed. The checker still exists in
+// that state and still reports down — see clickhouseReadyChecks.
+type clickhouseChecker struct {
+	r       *clickhouse.ExplorerReader
+	dialErr error
+}
 
 func (c clickhouseChecker) Name() string   { return "clickhouse" }
 func (c clickhouseChecker) Critical() bool { return false }
 func (c clickhouseChecker) Ping(ctx context.Context) error {
+	if c.r == nil {
+		return fmt.Errorf("clickhouse was unreachable when this process started and has not been re-dialled since; every lake-backed endpoint is 503ing and a restart is required to re-wire them: %w", c.dialErr)
+	}
 	_, err := c.r.LakeTipLedger(ctx)
 	return err
+}
+
+// clickhouseReadyChecks returns the readiness checkers for ClickHouse:
+// none when no address is configured, and exactly one when there is —
+// wired or not.
+//
+// The "or not" is the whole point (F122). The checker used to be
+// appended inside the success branch of the boot dial, so a ClickHouse
+// that was already down when the API started published NO
+// `stellarindex_dependency_up{dependency="clickhouse"}` series at all.
+// The alert over it is `stellarindex_dependency_up == 0`, with an
+// in-file rationale deliberately rejecting absent() — so it had no
+// series to match, and the one state the annotation calls "the only
+// signal that it is gone" was the state with no signal. Endpoints
+// 503'd and nothing paged.
+//
+// A configured-but-unreachable ClickHouse therefore registers a checker
+// that reports down for the process's lifetime. That is the truth: none
+// of the ten lake-backed seams is re-dialled after a failed boot dial,
+// so the dependency really is down until the process restarts, and the
+// error says so rather than implying a transient probe failure.
+//
+// No address configured is the one case that publishes nothing, and
+// that is correct: a deployment without a lake has no such dependency,
+// and a 0 there would page for a component it does not run.
+func clickhouseReadyChecks(addr string, er *clickhouse.ExplorerReader, dialErr error) []v1.ReadyChecker {
+	if addr == "" {
+		return nil
+	}
+	if dialErr != nil {
+		return []v1.ReadyChecker{clickhouseChecker{dialErr: dialErr}}
+	}
+	return []v1.ReadyChecker{clickhouseChecker{r: er}}
 }
 
 // storeAssetReader adapts *timescale.Store to v1.AssetReader. Keeps
