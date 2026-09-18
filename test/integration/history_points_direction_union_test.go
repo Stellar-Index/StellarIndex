@@ -199,4 +199,16 @@ func TestHistoryPointsDirectionUnion(t *testing.T) {
 		t.Fatalf("HistoryPointsInRange(no to, limit 1): %v", err)
 	}
 	assertSeries(t, "HistoryPointsInRange(no to, limit 1)", noTo, wantBuckets[:1])
+
+	// Every optional clause at once — the maximal-placeholder path
+	// ($1..$5), which is what /v1/chart issues. The bounds now live
+	// inside both branches and the LIMIT is bound last, so an
+	// off-by-one in the placeholder arithmetic surfaces here as a
+	// bind error or as the wrong window.
+	all, err := store.HistoryPointsInRange(ctx, xlmUSDC, timescale.Granularity1m,
+		from, to, 2)
+	if err != nil {
+		t.Fatalf("HistoryPointsInRange(from, to, limit 2): %v", err)
+	}
+	assertSeries(t, "HistoryPointsInRange(from, to, limit 2)", all, wantBuckets[:2])
 }
