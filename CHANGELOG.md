@@ -54,6 +54,29 @@ against.
   XLM that moved, so the value is exact. Not in this change: the DEX TVL
   valuer still consumes the resolver rate uncapped behind its substance
   gate. (audit-2026-09-02 F044; K045, insert path only)
+- **aggregator (freeze, money path):** the DURABLE ADR-0019 freeze
+  ladder is now recorded per aggregation window (migration 0163,
+  `freeze_events.window_ladders`). The 0119 ladder columns are keyed
+  (asset, quote) while the lifecycle runs one state machine per (pair,
+  window) and every frozen window mirrors its ladder on every tick, so
+  the durable record was whichever window wrote last. It is read at
+  exactly one moment — after Redis has lost the marker — and at that
+  moment a 1h window that had ESCALATED ("stays active until manual
+  unfreeze") rehydrated a 5m sibling's fresh ten-minute ladder and
+  resumed auto-unfreezing, while windows that were never frozen
+  rehydrated the same freeze. Each window now reads, advances and retires
+  only its own durable ladder; the first re-mark after a Redis loss
+  rebuilds the marker with every window's ladder; and a window that
+  releases while a sibling stays frozen has its durable entry retired
+  with its marker entry. The window dimension is a jsonb map on the
+  pair's open row, not a row per window: one `freeze_events` row stays
+  one freeze event, so `/v1/anomalies`, the `anomaly.freeze` webhook and
+  `stellarindex-ops freeze-unfreeze` are unchanged. The 0119 columns stay
+  as the fail-closed summary (furthest hold, highest rung, escalated if
+  any window is), which is what the recovery worker and `freeze-unfreeze
+  -list` keep reading. A row written before 0163 has no recorded owner
+  and keeps rehydrating onto every window rather than being dropped.
+  (audit-2026-09-02 F043, F036, F011, K003)
 - **markets (internal):** the static head of the `/v1/markets` listing
   query — the `prices_1d` active-pair CTE and the 24h `prices_1m` CTE —
   moves out of `buildDistinctPairsQuery` into one package-level literal,

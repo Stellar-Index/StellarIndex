@@ -90,14 +90,17 @@ type Marker struct {
 	//
 	//   - upgrading a marker written before [Marker.Ladders] existed:
 	//     its pair-level [Marker.State] becomes the unowned ladder.
-	//   - recovering from the migration-0119 durable ladder, which is
-	//     keyed (asset, quote) with no window column. When the marker is
-	//     gone and that ladder is still live, the first window to
-	//     re-mark records it here, so the pair's OTHER windows — cold in
-	//     the same recovery, and with no prev-VWAP comparator to
-	//     re-fire on — do not read the freshly narrowed marker as "you
-	//     were never frozen" and publish the bucket the freeze was
-	//     withholding.
+	//   - recovering from a durable ladder with no recorded owner: a
+	//     `freeze_events` row written before migration 0163 (one
+	//     pair-level ladder, no window), or any [LadderStore] that is not
+	//     a [WindowLadderStore]. When the marker is gone and that ladder
+	//     is still live, the first window to re-mark records it here, so
+	//     the pair's OTHER windows — cold in the same recovery, and with
+	//     no prev-VWAP comparator to re-fire on — do not read the freshly
+	//     narrowed marker as "you were never frozen" and publish the
+	//     bucket the freeze was withholding. (A per-window durable record
+	//     needs none of this: each window's ladder is restored under its
+	//     own label.)
 	//
 	// It is carried forward only while [LadderStillLive] holds for it:
 	// an unowned ladder is a snapshot nobody is advancing, so it retires
@@ -215,6 +218,49 @@ type LadderStore interface {
 	LoadLadder(ctx context.Context, asset, quote canonical.Asset) (State, bool, error)
 }
 
+// WindowLadderStore is the window-aware half of [LadderStore]
+// (migration 0163): the same durable record, told WHICH window's ladder
+// is being written and able to answer for one window at a time.
+//
+// It exists because [LadderStore] is keyed (asset, quote) while the
+// ADR-0019 lifecycle advances per (pair, window). Every frozen window
+// mirrors its ladder on every tick, so the pair-keyed record was simply
+// whichever window wrote LAST — and the durable ladder is read at exactly
+// one moment, after Redis has lost the marker, when it is the only
+// authority left. A 5m window's fresh ten-minute ladder overwriting a 1h
+// window's ESCALATED one therefore brought the escalated freeze back as
+// an ordinary one that auto-unfreezes; the same record, copied onto every
+// cold window, also froze windows nothing was wrong with.
+//
+// Optional, in the same idiom as the orchestrator's window-aware marker
+// interface: a store that cannot scope a ladder keeps the pair-wide
+// behaviour, which errs towards holding a freeze. Production wires
+// `internal/storage/timescale.FreezeEventSink`, which implements both.
+//
+// Implementations MUST keep the pair-level [LadderStore] view in step as
+// a fail-closed summary of the live per-window ladders (furthest hold,
+// highest rung, escalated if any window is). [Recovery] and
+// `stellarindex-ops freeze-unfreeze` read that view and need no window.
+type WindowLadderStore interface {
+	// SaveWindowLadder records `state` as `window`'s ladder on the pair's
+	// open freeze record, leaving every other window's untouched. An
+	// inactive `state` retires the window's ladder. Same "never creates a
+	// record, zero rows is an error" contract as [LadderStore.SaveLadder].
+	SaveWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration, state State) error
+
+	// LoadWindowLadders returns every window's durable ladder for the
+	// pair, verbatim (the caller applies [LadderStillLive]).
+	//
+	// `unowned` is a ladder the record holds with no owning window: the
+	// pair-level ladder of a row written before 0163. It answers for any
+	// window with no entry of its own, because narrowing it to "nobody's"
+	// would drop a freeze that is still running.
+	//
+	// ok=false carries the [LadderStore.LoadLadder] meaning exactly: no
+	// open record, or one whose ladder has been retired.
+	LoadWindowLadders(ctx context.Context, asset, quote canonical.Asset) (ladders map[time.Duration]State, unowned State, ok bool, err error)
+}
+
 // Writer marks a (asset, quote) pair as frozen by writing a
 // [Marker] to Redis at the `freeze:<asset>:<quote>` key with the
 // configured TTL. Constructed by the aggregator orchestrator at
@@ -232,6 +278,10 @@ type Writer struct {
 	ttl    time.Duration
 	sink   EventSink
 	ladder LadderStore
+	// windowLadder is `ladder` when it can scope a durable ladder to the
+	// window that owns it ([WindowLadderStore]), nil otherwise. Resolved
+	// once in [WithLadderStore].
+	windowLadder WindowLadderStore
 	// ladderGrace is how far past a durable hold's expiry the ladder is
 	// still honoured on a marker miss — see [WithLadderStore].
 	ladderGrace time.Duration
@@ -301,6 +351,10 @@ func WithLadderStore(store LadderStore, grace time.Duration) WriterOption {
 	return func(w *Writer) {
 		w.ladder = store
 		w.ladderGrace = grace
+		// A store that records which window owns each ladder lets every
+		// window rehydrate ITS OWN freeze after a Redis loss instead of
+		// the last writer's — see [WindowLadderStore].
+		w.windowLadder, _ = store.(WindowLadderStore)
 	}
 }
 
@@ -460,10 +514,35 @@ func (w *Writer) markHold(
 	// zero State (the triangulated-composite refusal, which owns no
 	// ladder), and stamping that would overwrite a real pair's ladder with
 	// zeros the reader would then mistake for "fired just now".
-	if w.ladder != nil && state.Active() {
+	//
+	// A window-scoped write goes to the window's OWN durable ladder when
+	// the store can carry one (migration 0163). The pair-level write is
+	// last-writer-wins across the pair's windows, which is how a 5m
+	// window's fresh ladder came to replace a 1h window's ESCALATED one in
+	// the only record that survives Redis.
+	switch {
+	case w.windowLadder != nil && window > 0:
+		w.saveWindowLadder(ctx, asset, quote, window, state, "mark_hold")
+	case w.ladder != nil && state.Active():
 		w.saveLadder(ctx, asset, quote, state, "mark_hold")
 	}
 	return nil
+}
+
+// saveWindowLadder is [Writer.saveLadder] for one window's durable ladder.
+// An inactive `state` retires the entry. Counted on the same failure
+// counter, for the same reason: a durable ladder that silently is not
+// there is only discovered when a Redis loss needs it.
+func (w *Writer) saveWindowLadder(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+	window time.Duration,
+	state State,
+	op string,
+) {
+	if err := w.windowLadder.SaveWindowLadder(ctx, asset, quote, window, state); err != nil {
+		obs.AnomalyFreezeLadderWriteFailuresTotal.WithLabelValues(op).Inc()
+	}
 }
 
 // saveLadder mirrors a lifecycle state to the durable store, counting every
@@ -513,6 +592,15 @@ func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.
 	label := windowLabel(window)
 	if label == "" {
 		return nil
+	}
+	// The durable entry goes first, and regardless of what the marker
+	// holds: it is the record a Redis loss falls back to, and a released
+	// window left in it is rehydrated as a freeze that had already ended.
+	// Retiring it also recomputes the pair-level summary from the windows
+	// that are still frozen. Best-effort and counted, like every durable
+	// write (op "clear" — this IS a retire).
+	if w.windowLadder != nil {
+		w.saveWindowLadder(ctx, asset, quote, window, State{}, "clear")
 	}
 	key := cachekeys.Freeze(asset, quote)
 	marker, ok, err := w.readMarker(ctx, key)
@@ -575,8 +663,13 @@ func (w *Writer) mergeLadders(
 	case err != nil || !ok:
 		// No marker to merge with. Either this is the pair's first
 		// freeze, or Redis lost the marker while the freeze ran — and
-		// those differ only in the durable record, so ask it.
-		unowned = w.liveDurableLadder(ctx, asset, quote)
+		// those differ only in the durable record, so ask it. Every
+		// window's still-live durable ladder is restored under its own
+		// label: from this write on the MARKER answers the pair's cold
+		// windows, so a marker rebuilt from one window's view would lose
+		// a sibling's escalation one tick after the durable read saved it.
+		ladders, unowned = w.liveDurableLadders(ctx, asset, quote)
+		windowed = len(ladders) > 0
 	case marker.Windowed:
 		windowed = true
 		for k, v := range marker.Ladders {
@@ -623,6 +716,34 @@ func (w *Writer) liveDurableLadder(ctx context.Context, asset, quote canonical.A
 		return State{}
 	}
 	return st
+}
+
+// liveDurableLadders is [Writer.liveDurableLadder] for a store that
+// records a ladder per window (migration 0163): the still-live durable
+// ladders keyed by marker label, plus the record's unowned ladder.
+//
+// A store with no window dimension yields no owned ladders and its single
+// pair-level ladder as the unowned one — the pre-0163 answer, unchanged.
+// Lapsed entries are dropped here rather than copied into the marker: a
+// window whose own hold plus the grace has passed describes no running
+// freeze, which is the same [LadderStillLive] bound every other durable
+// read applies.
+func (w *Writer) liveDurableLadders(ctx context.Context, asset, quote canonical.Asset) (map[string]State, State) {
+	ladders := map[string]State{}
+	if w.windowLadder == nil {
+		return ladders, w.liveDurableLadder(ctx, asset, quote)
+	}
+	stored, unowned, ok, err := w.windowLadder.LoadWindowLadders(ctx, asset, quote)
+	if err != nil || !ok {
+		return ladders, State{}
+	}
+	now := time.Now()
+	for window, st := range stored {
+		if label := windowLabel(window); label != "" && LadderStillLive(st, w.ladderGrace, now) {
+			ladders[label] = st
+		}
+	}
+	return ladders, unowned
 }
 
 // readMarker fetches and decodes the marker at `key`. ok=false means no
@@ -702,7 +823,7 @@ func windowLabel(window time.Duration) string {
 //
 // With no ladder store wired, behaviour is bit-for-bit the pre-0119 one.
 func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (State, bool, error) {
-	return w.loadState(ctx, asset, quote, "")
+	return w.loadState(ctx, asset, quote, 0)
 }
 
 // LoadStateForWindow is [Writer.LoadState] answering for ONE aggregation
@@ -735,11 +856,14 @@ func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (S
 //   - a marker written before [Marker.Ladders] existed. It is replaced
 //     by the owning window's next lifecycle write, so it survives at
 //     most from an upgrade until the freeze's next tick.
-//   - the migration-0119 durable ladder, read only when the marker is
-//     gone (the [Writer.LoadState] contract above). It is keyed (asset,
-//     quote) with no window column, and a Redis flush leaves it as the
-//     one surviving record that this pair is inside an unreleased
-//     freeze.
+//   - a durable ladder with no recorded owner, read only when the marker
+//     is gone (the [Writer.LoadState] contract above): a `freeze_events`
+//     row written before migration 0163, or a [LadderStore] that is not
+//     a [WindowLadderStore]. A Redis flush leaves it as the one surviving
+//     record that this pair is inside an unreleased freeze.
+//
+// A durable record that DOES carry the window (migration 0163) is scoped
+// exactly like the marker — see [Writer.loadDurableWindowLadder].
 //
 // Both therefore hold for every window of the pair until a window-scoped
 // record replaces them: over-freezing a window is a degraded price that
@@ -751,16 +875,20 @@ func (w *Writer) LoadStateForWindow(
 	asset, quote canonical.Asset,
 	window time.Duration,
 ) (State, bool, error) {
-	return w.loadState(ctx, asset, quote, windowLabel(window))
+	return w.loadState(ctx, asset, quote, window)
 }
 
 // loadState is the shared body of [Writer.LoadState] and
-// [Writer.LoadStateForWindow]; `label` is the caller's window label,
-// empty for the pair-wide read.
-func (w *Writer) loadState(ctx context.Context, asset, quote canonical.Asset, label string) (State, bool, error) {
+// [Writer.LoadStateForWindow]; `window` is the caller's window, zero (or
+// negative) for the pair-wide read.
+func (w *Writer) loadState(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (State, bool, error) {
+	label := windowLabel(window)
 	key := cachekeys.Freeze(asset, quote)
 	raw, err := w.cache.Get(ctx, key.String()).Bytes()
 	if errors.Is(err, redis.Nil) {
+		if label != "" && w.windowLadder != nil {
+			return w.loadDurableWindowLadder(ctx, asset, quote, window)
+		}
 		return w.loadDurableLadder(ctx, asset, quote)
 	}
 	if err != nil {
@@ -819,6 +947,51 @@ func (w *Writer) loadDurableLadder(ctx context.Context, asset, quote canonical.A
 	}
 	obs.AnomalyFreezeLadderRehydratedTotal.Inc()
 	return st, true, nil
+}
+
+// loadDurableWindowLadder is [Writer.loadDurableLadder] answering for ONE
+// window, from a store that records a ladder per window (migration 0163).
+//
+// The marker is gone, so the durable record is the only authority left,
+// and it is read with the same three-way split the marker uses:
+//
+//   - `window` has a still-live durable ladder of its own → that ladder.
+//     An escalated window comes back escalated whatever its siblings have
+//     written since, which is the fix.
+//   - it has none, but the record holds a still-live UNOWNED ladder (a row
+//     written before 0163 — owner unknowable) → that ladder, for every
+//     window, because dropping it releases a freeze that is still running.
+//   - it has none, and a SIBLING window's ladder is still live → the pair
+//     is frozen and this window is not: (State{}, true). Present, so a
+//     live in-memory freeze does not read a Redis loss as the operator
+//     override; zero, so a cold window does not inherit a freeze.
+//
+// Anything else — no store answer, no open record, every hold lapsed — is
+// the pre-0119 (State{}, false), on [Writer.loadDurableLadder]'s grounds.
+func (w *Writer) loadDurableWindowLadder(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+	window time.Duration,
+) (State, bool, error) {
+	stored, unowned, ok, err := w.windowLadder.LoadWindowLadders(ctx, asset, quote)
+	if err != nil || !ok {
+		return State{}, false, nil //nolint:nilerr // as loadDurableLadder: degrade to the pre-0119 answer, never invent a freeze
+	}
+	now := time.Now()
+	if own, held := stored[window]; held && LadderStillLive(own, w.ladderGrace, now) {
+		obs.AnomalyFreezeLadderRehydratedTotal.Inc()
+		return own, true, nil
+	}
+	if LadderStillLive(unowned, w.ladderGrace, now) {
+		obs.AnomalyFreezeLadderRehydratedTotal.Inc()
+		return unowned, true, nil
+	}
+	for _, sibling := range stored {
+		if LadderStillLive(sibling, w.ladderGrace, now) {
+			return State{}, true, nil
+		}
+	}
+	return State{}, false, nil
 }
 
 // LadderStillLive reports whether a durable ladder describes a freeze that

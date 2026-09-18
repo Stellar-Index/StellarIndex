@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"strconv"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
@@ -240,12 +241,23 @@ func (s *FreezeEventSink) SaveLadder(ctx context.Context, asset, quote canonical
 	if !state.HoldUntil.IsZero() {
 		holdUntil = state.HoldUntil.UTC()
 	}
+	// Migration 0163: a RETIRE (NULL hold_until — what freeze.Writer.Clear
+	// writes on the last window's release and on the operator override)
+	// drops the per-window ladders with it. hold_until is already the
+	// switch LoadWindowLadders honours them on, so this is not what makes
+	// the retire take; it is what stops a LATER freeze on the same
+	// still-open row (the recovery worker closes it up to 60s afterwards)
+	// from inheriting the ended freeze's windows. An active pair-level
+	// write leaves them alone: it comes from a caller with no window to
+	// name, which by construction knows nothing about them.
 	const q = `
 		UPDATE freeze_events
-		   SET hold_until      = $3,
+		   SET hold_until      = $3::timestamptz,
 		       extensions_used = $4,
 		       escalated       = $5,
-		       corroborated    = $6
+		       corroborated    = $6,
+		       window_ladders  = CASE WHEN $3::timestamptz IS NULL THEN NULL
+		                              ELSE window_ladders END
 		 WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL
 	`
 	res, err := s.db.ExecContext(ctx, q,
@@ -327,6 +339,278 @@ func (s *FreezeEventSink) LoadLadder(ctx context.Context, asset, quote canonical
 	st.FiredAt = firedAt.UTC()
 	st.HoldUntil = holdUntil.UTC()
 	return st, true, nil
+}
+
+// The production sink must carry the window dimension. freeze.Writer
+// discovers it by type assertion, so without this a signature drift would
+// compile cleanly and silently fall back to the pair-keyed ladder.
+var _ freeze.WindowLadderStore = (*FreezeEventSink)(nil)
+
+// unownedLadderKey is the `window_ladders` key of a ladder with no
+// recorded owning window — the pair-level ladder of a row written before
+// migration 0163. Zero is not a window, so it cannot collide with one.
+const unownedLadderKey = "0"
+
+// ladderQuerier is the read seam [loadOpenLadderRow] needs, satisfied by
+// both *sql.DB and *sql.Tx so the read runs inside SaveWindowLadder's
+// transaction and outside one for LoadWindowLadders.
+type ladderQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// openLadderRow is the durable ladder as stored on a pair's open
+// `freeze_events` row: the 0119 pair-level columns plus the 0163
+// per-window map.
+type openLadderRow struct {
+	// pair is the 0119 pair-level ladder; pair.Active() is false when
+	// hold_until IS NULL, i.e. no ladder has been recorded or it has been
+	// retired. hold_until is the switch the whole record is honoured on.
+	pair freeze.State
+	// windows is the decoded `window_ladders`, keyed as stored. nil when
+	// the column IS NULL (a row written before 0163).
+	windows map[string]freeze.State
+}
+
+// loadOpenLadderRow reads the newest open row's ladder for (asset,
+// quote). ok=false means there is no open row at all.
+func loadOpenLadderRow(ctx context.Context, q ladderQuerier, asset, quote canonical.Asset) (openLadderRow, bool, error) {
+	const query = `
+		SELECT frozen_at, hold_until,
+		       COALESCE(extensions_used, 0),
+		       COALESCE(escalated, false),
+		       COALESCE(corroborated, false),
+		       window_ladders::text
+		  FROM freeze_events
+		 WHERE asset_id = $1 AND quote_id = $2
+		   AND recovered_at IS NULL
+		 ORDER BY frozen_at DESC
+		 LIMIT 1
+	`
+	var (
+		firedAt   time.Time
+		holdUntil sql.NullTime
+		raw       sql.NullString
+		row       openLadderRow
+	)
+	err := q.QueryRowContext(ctx, query, asset.String(), quote.String()).
+		Scan(&firedAt, &holdUntil, &row.pair.ExtensionsUsed, &row.pair.Escalated, &row.pair.Corroborated, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return openLadderRow{}, false, nil
+	}
+	if err != nil {
+		return openLadderRow{}, false, err
+	}
+	if holdUntil.Valid {
+		row.pair.FiredAt = firedAt.UTC()
+		row.pair.HoldUntil = holdUntil.Time.UTC()
+	} else {
+		row.pair = freeze.State{}
+	}
+	if raw.Valid {
+		if err := json.Unmarshal([]byte(raw.String), &row.windows); err != nil {
+			return openLadderRow{}, false, fmt.Errorf("decode window_ladders: %w", err)
+		}
+		if row.windows == nil {
+			row.windows = map[string]freeze.State{} // a stored JSON null
+		}
+	}
+	return row, true, nil
+}
+
+// entries returns the row's live per-window map, applying the two rules
+// that make the 0163 column safe beside the 0119 ones:
+//
+//   - hold_until IS NULL → no ladder, whatever window_ladders holds. The
+//     previous binary retires a ladder by nulling hold_until and does not
+//     know the new column exists; its retire must still switch it off.
+//   - window_ladders IS NULL with a live pair-level ladder → a row written
+//     before 0163. Its ladder has no recorded owner, so it is carried as
+//     the UNOWNED entry rather than dropped.
+func (r openLadderRow) entries() map[string]freeze.State {
+	out := map[string]freeze.State{}
+	if !r.pair.Active() {
+		return out
+	}
+	if r.windows == nil {
+		out[unownedLadderKey] = r.pair
+		return out
+	}
+	for k, st := range r.windows {
+		out[k] = st
+	}
+	return out
+}
+
+// summariseLadders folds per-window ladders into the pair-level 0119
+// columns, fail-closed: the furthest hold, the highest rung, escalated /
+// corroborated if ANY window is. The zero State (NULL hold_until — "no
+// ladder") when nothing is held.
+//
+// It is what keeps every pair-level reader correct without knowing about
+// windows: [freeze.Recovery] asks "is any window of this pair still inside
+// a hold" before closing the row, `stellarindex-ops freeze-unfreeze -list`
+// shows the worst rung, and a rolled-back binary rehydrates a ladder that
+// can over-hold a window but never drop an escalation.
+func summariseLadders(entries map[string]freeze.State) freeze.State {
+	var out freeze.State
+	for _, st := range entries {
+		if !st.Active() {
+			continue
+		}
+		if out.FiredAt.IsZero() || st.FiredAt.Before(out.FiredAt) {
+			out.FiredAt = st.FiredAt
+		}
+		if st.HoldUntil.After(out.HoldUntil) {
+			out.HoldUntil = st.HoldUntil
+		}
+		if st.ExtensionsUsed > out.ExtensionsUsed {
+			out.ExtensionsUsed = st.ExtensionsUsed
+		}
+		out.Escalated = out.Escalated || st.Escalated
+		out.Corroborated = out.Corroborated || st.Corroborated
+	}
+	return out
+}
+
+// windowLadderKey renders a window as its `window_ladders` key: whole
+// seconds, decimal.
+func windowLadderKey(window time.Duration) string {
+	return strconv.FormatInt(int64(window/time.Second), 10)
+}
+
+// SaveWindowLadder persists `state` as `window`'s ADR-0019 ladder on the
+// pair's open row, leaving every other window's entry untouched, and
+// refreshes the pair-level columns as the summary of what is held.
+// Implements freeze.WindowLadderStore (migration 0163).
+//
+// An inactive `state` retires the window's entry. When that was the last
+// one the summary nulls hold_until, which is the same "ladder retired"
+// state [FreezeEventSink.SaveLadder] writes for freeze.Writer.Clear.
+//
+// Read-merge-write under the pair's advisory lock — the one RecordFreeze
+// takes — rather than a jsonb expression in a single UPDATE: the summary
+// is a fold over decoded lifecycle states, and the rule for a pre-0163 row
+// (keep its ownerless ladder as the unowned entry) is a decision about
+// the row's prior state. The lock makes the merge atomic against every
+// other writer of this pair's open row; an advisory lock rather than a
+// row lock for RecordFreeze's reason, and because `freeze_events` is a
+// compressed hypertable.
+//
+// Same contract as SaveLadder otherwise: UPDATE only, never an INSERT, and
+// "no open row" is [ErrNotFound] so the caller can count it.
+func (s *FreezeEventSink) SaveWindowLadder(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+	window time.Duration,
+	state freeze.State,
+) error {
+	if window < time.Second {
+		return fmt.Errorf("timescale: SaveWindowLadder %s/%s: window %s is not a whole-second aggregation window",
+			asset.String(), quote.String(), window)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("timescale: SaveWindowLadder: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // safe no-op after COMMIT
+
+	pairKey := pairAdvisoryLockKey(asset.String(), quote.String())
+	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock($1)`, pairKey); err != nil {
+		return fmt.Errorf("timescale: SaveWindowLadder: advisory lock: %w", err)
+	}
+	row, ok, err := loadOpenLadderRow(ctx, tx, asset, quote)
+	if err != nil {
+		return fmt.Errorf("timescale: SaveWindowLadder %s/%s: %w", asset.String(), quote.String(), err)
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	entries := row.entries()
+	if state.Active() {
+		entries[windowLadderKey(window)] = state
+	} else {
+		delete(entries, windowLadderKey(window))
+	}
+	if err := writeWindowLadders(ctx, tx, asset, quote, entries); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("timescale: SaveWindowLadder: commit: %w", err)
+	}
+	return nil
+}
+
+// writeWindowLadders stamps `entries` and their pair-level summary onto
+// the pair's open row(s), inside the caller's transaction.
+func writeWindowLadders(
+	ctx context.Context,
+	tx *sql.Tx,
+	asset, quote canonical.Asset,
+	entries map[string]freeze.State,
+) error {
+	body, err := json.Marshal(entries)
+	if err != nil {
+		return fmt.Errorf("timescale: SaveWindowLadder: encode window_ladders: %w", err)
+	}
+	summary := summariseLadders(entries)
+	var holdUntil any
+	if !summary.HoldUntil.IsZero() {
+		holdUntil = summary.HoldUntil.UTC()
+	}
+	const q = `
+		UPDATE freeze_events
+		   SET window_ladders  = $3::jsonb,
+		       hold_until      = $4::timestamptz,
+		       extensions_used = $5,
+		       escalated       = $6,
+		       corroborated    = $7
+		 WHERE asset_id = $1 AND quote_id = $2 AND recovered_at IS NULL
+	`
+	if _, err := tx.ExecContext(ctx, q,
+		asset.String(), quote.String(),
+		string(body), holdUntil, summary.ExtensionsUsed, summary.Escalated, summary.Corroborated,
+	); err != nil {
+		return fmt.Errorf("timescale: SaveWindowLadder %s/%s: %w", asset.String(), quote.String(), err)
+	}
+	return nil
+}
+
+// LoadWindowLadders reads every window's durable ladder for (asset,
+// quote). Implements freeze.WindowLadderStore (migration 0163).
+//
+// ok=false on exactly [FreezeEventSink.LoadLadder]'s conditions — no OPEN
+// row, or one whose hold_until IS NULL — so the operator override and a
+// retired ladder read the same through either method.
+//
+// `unowned` is the ladder of a row written before 0163 (or that ladder,
+// preserved under key "0" by the first window-aware write). States are
+// reported verbatim; the caller applies the freshness bound.
+func (s *FreezeEventSink) LoadWindowLadders(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+) (map[time.Duration]freeze.State, freeze.State, bool, error) {
+	row, ok, err := loadOpenLadderRow(ctx, s.db, asset, quote)
+	if err != nil {
+		return nil, freeze.State{}, false, fmt.Errorf("timescale: LoadWindowLadders %s/%s: %w",
+			asset.String(), quote.String(), err)
+	}
+	if !ok || !row.pair.Active() {
+		return nil, freeze.State{}, false, nil
+	}
+	ladders := map[time.Duration]freeze.State{}
+	var unowned freeze.State
+	for key, st := range row.entries() {
+		if key == unownedLadderKey {
+			unowned = st
+			continue
+		}
+		secs, perr := strconv.ParseInt(key, 10, 64)
+		if perr != nil || secs <= 0 {
+			continue // not a window this build wrote; ignore rather than fail the rehydrate
+		}
+		ladders[time.Duration(secs)*time.Second] = st
+	}
+	return ladders, unowned, true, nil
 }
 
 // pairAdvisoryLockKey derives a stable int64 advisory-lock key
