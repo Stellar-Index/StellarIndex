@@ -54,6 +54,23 @@ against.
   XLM that moved, so the value is exact. Not in this change: the DEX TVL
   valuer still consumes the resolver rate uncapped behind its substance
   gate. (audit-2026-09-02 F044; K045, insert path only)
+- **aggregator (freeze, money path):** a frozen pair's last-known-good
+  price can no longer be laundered through triangulation on the ticks
+  AFTER the one that froze it (MNY-22's second half). The guard read a
+  set rebuilt every tick and written only from the freeze step, but
+  `refreshPairWindow` returns before that step when the window is empty,
+  under `min_usd_volume`, or has no VWAP — and a pair whose thin venue
+  was just manipulated is exactly the pair whose next bucket is empty.
+  On that tick the pair was still frozen, with its marker and its
+  last-known-good value both deliberately still in Redis, yet in
+  nobody's per-tick set, so the chain read the value as a fresh leg and
+  published the product to a target carrying no frozen flag.
+  `frozenLeg` now also honours a live freeze this process is holding for
+  the window, bounded by the hold plus the marker grace — the span the
+  value can still be read back — so an unevaluated ladder cannot refuse
+  a chain indefinitely. The same guard protects a self-frozen
+  triangulation target from being overwritten by a fresh composite on
+  such a tick. (review 2026-09-17 RLT-261, #691)
 - **aggregator (freeze, money path):** a window's auto-release no longer
   clears a sibling window's freeze it has never seen. The pair's marker
   is deleted by the last window to release, and "last" was decided from

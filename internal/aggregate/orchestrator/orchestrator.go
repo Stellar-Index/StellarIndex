@@ -752,9 +752,13 @@ type Orchestrator struct {
 	// re-publish a frozen leg's last-known-good value as a fresh
 	// derived price (MNY-22) — see [Orchestrator.legPriceFromCache].
 	//
-	// Rebuilt at the top of every [Tick]: a freeze is a per-bucket
-	// decision, and the leg's cache holds LKG only for as long as the
-	// freeze keeps being re-decided. Same single-Tick-at-a-time
+	// Rebuilt at the top of every [Tick], and written only from the
+	// freeze step — so it is NOT the whole answer to "is this leg
+	// frozen". A frozen window that returns early this tick (empty,
+	// under the USD-volume floor) never re-enters it, while the hold's
+	// TTL keeps its LKG in cache for tens of minutes;
+	// [Orchestrator.frozenLeg] therefore also reads the live ladder in
+	// freezeStates. Same single-Tick-at-a-time
 	// invariant as prevVWAPs (refreshPairWindow and triangulateAll run
 	// sequentially inside one Tick), so no lock is needed.
 	//
@@ -1370,14 +1374,35 @@ func (o *Orchestrator) markFrozenThisTick(pair canonical.Pair, window time.Durat
 	o.frozenThisTick[frozenTickKey(pair, window)] = struct{}{}
 }
 
-// frozenLeg reports whether (pair, window) was frozen earlier in this
-// tick.
+// frozenLeg reports whether (pair, window) is frozen as far as the
+// triangulation pass is concerned: refused publication earlier in this
+// tick, OR still inside a freeze this process is holding for it.
+//
+// The second arm is not redundant with the first. frozenThisTick is
+// rebuilt every tick and written only from the freeze step, and
+// refreshPairWindow returns BEFORE that step when the window is empty,
+// under [Config.MinUSDVolume], or has no VWAP. A pair that froze a tick
+// ago and whose next bucket is empty — the ordinary aftermath of a thin
+// venue being manipulated — is therefore in nobody's per-tick set, while
+// its hold runs for tens of minutes and its last-known-good value is
+// still in Redis because the freeze deliberately kept it there
+// ([Orchestrator.keepFrozenVWAPAlive]). Reading that value as a leg
+// laundered it into a derived price with no frozen flag (MNY-22, one tick
+// later than the case the per-tick set closes).
+//
+// Bounded by the hold plus the marker grace, which is exactly how long the
+// freeze keeps the marker and the LKG alive. An in-memory ladder that is
+// never evaluated is never advanced and never released either, so an
+// unbounded read would refuse every chain through the pair for as long as
+// its window stayed empty — long after there was any LKG left to launder.
 func (o *Orchestrator) frozenLeg(pair canonical.Pair, window time.Duration) bool {
-	if len(o.frozenThisTick) == 0 {
-		return false
+	if _, ok := o.frozenThisTick[frozenTickKey(pair, window)]; ok {
+		return true
 	}
-	_, ok := o.frozenThisTick[frozenTickKey(pair, window)]
-	return ok
+	// Same `pair:window` shape refreshPairWindow keys o.freezeStates by.
+	st := o.freezeStates[pair.String()+":"+window.String()]
+	grace := o.cfg.Phase2Thresholds.Lifecycle.WithDefaults().MarkerGrace
+	return freeze.LadderStillLive(st, grace, o.clock())
 }
 
 // frozenTickKey is the [Orchestrator.frozenThisTick] key. Its own key
