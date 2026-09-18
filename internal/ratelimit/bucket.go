@@ -237,13 +237,20 @@ func (b *Bucket) Window() time.Duration { return b.window }
 // KEYS[1]  — the rate-limit key (e.g. "rl:rek_abc:12345")
 // ARGV[1]  — TTL in seconds (window * 2 so keys drain)
 // ARGV[2]  — max (the limit)
+// ARGV[3]  — cost (tokens this call spends; >= 1)
 //
 // Returns  — two-element array [count, retry_after_seconds].
 //
 //	retry_after is 0 when allowed.
+//
+// The expiry is armed when the post-increment count EQUALS the cost —
+// i.e. this call created the key — which is the weighted form of the
+// old `current == 1`. Keying it on 1 would leave a key first written
+// by a cost-N charge with no TTL at all.
 const lua = `
-local current = redis.call('INCR', KEYS[1])
-if current == 1 then
+local cost = tonumber(ARGV[3])
+local current = redis.call('INCRBY', KEYS[1], cost)
+if current == cost then
   redis.call('EXPIRE', KEYS[1], ARGV[1])
 end
 local max_count = tonumber(ARGV[2])
@@ -290,17 +297,52 @@ func (b *Bucket) Take(ctx context.Context, key string) (Result, error) {
 // the design today (RateLimitPerMin lives on the APIKeyRecord, not
 // on the request).
 func (b *Bucket) TakeN(ctx context.Context, key string, limit int) (Result, error) {
+	return b.Charge(ctx, key, 1, limit)
+}
+
+// Charge spends cost tokens against key's counter for the current
+// window in ONE atomic step and reports whether the request still fits.
+// It is the weighted form of [Bucket.TakeN] — `TakeN(ctx, key, limit)`
+// is exactly `Charge(ctx, key, 1, limit)` — and exists because a
+// request's price must track the work it buys: a batch route that
+// resolves 1000 ids for the single token a one-id request pays turns
+// the per-minute ceiling into a 1000x amplifier (F035 / F046 / K009,
+// reverification-2026-09-18). limit carries TakeN's per-subject
+// override semantics unchanged, including the stable-per-key rule.
+//
+// One round-trip whatever the cost (INCRBY). Never weight a request by
+// calling Take in a loop: that is cost round-trips, and no longer
+// atomic against concurrent callers.
+//
+// Cost is normalised into [1, effective limit]:
+//
+//   - cost < 1 charges 1. A caller that computes a zero or negative
+//     weight still spends a token; there is no free request, and a
+//     negative INCRBY would REFUND budget.
+//   - cost > the effective limit charges the whole limit. A request
+//     priced above the ceiling would otherwise be unservable in every
+//     window — a 1000-id batch against a 60/min limit could never
+//     succeed, and its Retry-After would be a lie. Clamped, it fits
+//     only an untouched window and leaves nothing behind it, which is
+//     the strongest statement a fixed window can make.
+//
+// A denied charge is still counted, exactly as a denied Take always
+// has been (the script increments, then compares). Nothing is lost by
+// that: the denial's Retry-After already names the end of the window,
+// which is when the counter resets.
+func (b *Bucket) Charge(ctx context.Context, key string, cost, limit int) (Result, error) {
 	effectiveMax := b.max
 	if limit > 0 {
 		effectiveMax = limit
 	}
+	cost = clampCost(cost, effectiveMax)
 	minute := b.nowFn().Unix() / int64(b.window.Seconds())
 
 	// In-process fallback (rdb was nil at construction). No Redis
 	// round-trip, no error path, no fail-open — the limit is enforced
 	// from an in-memory fixed-window map. C3-13 / C3-22.
 	if b.local != nil {
-		return b.localTakeN(key, effectiveMax, minute), nil
+		return b.localCharge(key, cost, effectiveMax, minute), nil
 	}
 
 	// url.QueryEscape the caller-supplied key before concatenating
@@ -322,7 +364,7 @@ func (b *Bucket) TakeN(ctx context.Context, key string, limit int) (Result, erro
 	}
 
 	resRaw, err := luaScript.Run(ctx, b.rdb, []string{rlKey},
-		ttlSeconds, effectiveMax,
+		ttlSeconds, effectiveMax, cost,
 	).Result()
 	if err != nil {
 		if b.observeRedisFailure() {
@@ -384,15 +426,43 @@ func (b *Bucket) TakeN(ctx context.Context, key string, limit int) (Result, erro
 	}, nil
 }
 
-// localTakeN is the in-process fixed-window path taken when rdb was nil
+// clampCost normalises a caller-computed cost into [1, effectiveMax].
+// See [Bucket.Charge] for why both ends are clamped rather than
+// rejected.
+func clampCost(cost, effectiveMax int) int {
+	if cost < 1 {
+		return 1
+	}
+	if cost > effectiveMax {
+		return effectiveMax
+	}
+	return cost
+}
+
+// localCharge is the in-process fixed-window path taken when rdb was nil
 // at construction. Mirrors the Redis path's Result derivation
 // (Remaining clamped at zero; RetryAfter = seconds left in the current
 // window, floored at 1s on a denial) so callers can't tell the two
 // backends apart from the Result shape. Never errors — the whole point
 // of the fallback is that it stays enforced when Redis is unavailable.
-func (b *Bucket) localTakeN(key string, effectiveMax int, minute int64) Result {
+//
+// The weight is spent as cost single-token takes against the store.
+// This is the one place a loop is right: there is no round-trip to
+// multiply (each take is a map write under a mutex, and cost is bounded
+// by the effective limit), and it keeps the store's capacity/overflow
+// routing and sweep cadence in exactly one implementation rather than a
+// second, weighted copy that could drift from it. The verdict is read
+// off the LAST take, so a concurrent caller interleaving with the loop
+// can only make it stricter, never looser.
+func (b *Bucket) localCharge(key string, cost, effectiveMax int, minute int64) Result {
 	now := b.nowFn()
-	count, allowed := b.local.take(key, minute, effectiveMax, now, b.window)
+	var (
+		count   int
+		allowed bool
+	)
+	for i := 0; i < cost; i++ {
+		count, allowed = b.local.take(key, minute, effectiveMax, now, b.window)
+	}
 
 	remaining := effectiveMax - count
 	if remaining < 0 {

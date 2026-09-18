@@ -45,6 +45,21 @@ against.
   guard now pins both hops, and the tail is tested directly — it
   refreshes every view over exactly the replayed range, and never
   refreshes ahead of the projector. (audit-2026-09-02 K006)
+- **ratelimit (security):** the limiter can now charge a request more
+  than one token. It had no notion of cost at all: `Bucket.TakeN`'s
+  third argument is the per-subject LIMIT, and the Lua script did a
+  plain `INCR`, so nothing a caller could pass made a request dearer.
+  `Bucket.Charge(ctx, key, cost, limit)` spends `cost` tokens in one
+  atomic `INCRBY` round-trip (`TakeN` is now `Charge` at cost 1, so
+  every existing caller is unchanged), on the Redis path and on the
+  in-process fallback that enforces the limit when Redis is absent at
+  boot. Cost is normalised into `[1, effective limit]`: a zero or
+  negative cost still spends a token (a negative `INCRBY` would refund
+  budget), and a cost above the ceiling spends the whole window rather
+  than being refused in every window. The script's expire-on-create
+  branch keyed on `current == 1`; it now keys on `current == cost`, or
+  a key first written by a weighted charge would never drain (F046,
+  reverification-2026-09-18).
 - **aggregator (money):** the ADR-0019 freeze marker now carries one
   lifecycle ladder PER aggregation window instead of a single
   pair-level one. The `freeze:<asset>:<quote>` key is pair-scoped
