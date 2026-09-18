@@ -30,6 +30,17 @@ import (
 // at the boundary; changesummary stays free of a storage import to
 // avoid the cycle (storage owns the read-side Point type via the
 // PriceSource adapter).
+//
+// SCALE. Every *Value field is the RAW prices_1m ratio the PriceSource
+// returned — deliberately NOT dex-nonstandard-decimals normalised. The
+// sink ratchets ATHValue / ATLValue against the stored row (GREATEST /
+// LEAST), and an asset is confirmed non-7-decimals only after it has
+// been trading, so normalising here would change a row's scale mid-life
+// and pin the ratchet to an extreme from the old scale permanently. The
+// table stays raw, like the CAGG it is derived from, and the reader
+// normalises: internal/api/v1's changeSummaryResponse. Any NEW reader of
+// change_summary_5m must do the same. The *DeltaPct fields, the streak
+// and the acceleration are scale-free.
 type Row struct {
 	EntityType   string
 	EntityID     string

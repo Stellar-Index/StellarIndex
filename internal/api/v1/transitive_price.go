@@ -74,5 +74,29 @@ func (s *Server) transitivePriceFor(ctx context.Context, asset canonical.Asset, 
 	if !s.listingPriceAllowed(ctx, hop) {
 		return "", false
 	}
-	return tp.PriceUSD, true
+	return s.normalizeTransitiveUSD(tp.PriceUSD, asset), true
+}
+
+// normalizeTransitiveUSD applies the dex-nonstandard-decimals forward
+// normalisation to the resolver's product, which is a chain of RAW
+// prices_1m ratios: asset→hop, then hop→USD-proxy (or hop→XLM→USD-proxy).
+//
+// Each raw leg is off by 10^(its base's decimals − its quote's decimals)
+// — inverted legs included, since inverting the ratio inverts the raw
+// factor with it — so the chain's factors TELESCOPE: the hop's (and
+// XLM's) decimals cancel and the whole product is off by exactly
+// 10^(asset decimals − terminal quote decimals). The terminal quote is
+// always one of the resolver's USD proxies (classic USDC, its SAC,
+// fiat:USD), every one of them on the standard scale, which is what
+// resolving [defaultPriceQuote] yields. One exact multiply therefore
+// corrects the product no matter which hop or arm produced it, and the
+// hop never needs to be resolved at all.
+//
+// Byte-identical for an asset with no confirmed non-7-decimals row (see
+// [Server.normalizeRawRatioString]). Before this the fill published the
+// raw product while every sibling price surface normalised, so a 9dp
+// token's price_usd read 100x low on exactly the assets this fill exists
+// for — Soroban-native contracts, the only class that can be non-7dp.
+func (s *Server) normalizeTransitiveUSD(priceUSD string, asset canonical.Asset) string {
+	return s.normalizeRawRatioString(priceUSD, asset, defaultPriceQuote)
 }

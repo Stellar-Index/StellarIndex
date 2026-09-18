@@ -17,6 +17,49 @@ against.
 
 ### Fixed
 
+- **api:** four more surfaces now apply the dex-nonstandard-decimals
+  normalisation instead of publishing the RAW `prices_1m` ratio for a
+  confirmed non-7-decimals token (F017). The class was half-fixed, and
+  the half that remained was worse than the whole: `/v1/assets/{id}`
+  normalised `price_usd` on its canonical path, so **`change_24h_pct`
+  divided a corrected price by an uncorrected 24h-ago anchor** — for a
+  9-decimals token a flat market served about +9900%, where two raw legs
+  had at least cancelled. The anchor (`storeChange24hReader`, shared by
+  the detail page and the `/v1/price` batch row) is now normalised
+  against the pair it was actually read from, the peg fallback included;
+  for a flagged pair an anchor that cannot be corrected reads as "no
+  anchor" rather than being served raw. On the same payload, the
+  one-hop transitive `price_usd` — which exists precisely for
+  Soroban-native contracts, the only class that can be non-7dp — the
+  catalogue-row `price_usd`, `price_history_24h`, `price_history_7d`
+  and `ath` are normalised too. One factor serves all of them,
+  10^(asset decimals − 7): every leg these readers chain through (a USD
+  proxy, XLM, or an intermediate hop) is either on the standard scale or
+  cancels, which a test pins by flagging the hop and asserting nothing
+  moves. The catalogue SQL rounds to 10 places BEFORE the correction can
+  run, and scaling up promotes that rounding error by the same power of
+  ten — an 18-decimals token worth $1 comes back as zero, one worth $14
+  as exactly $10 — so a scaled-up value that kept fewer than 1000
+  rounding quanta is withheld as a gap (the series keeps its bucket
+  grid; a withheld row price falls through to the full-precision
+  transitive fill) instead of being published as precise-looking
+  fiction. The un-rounded ATH is exact and never floored.
+  `/v1/changes/{entity_type}/{id}` normalises `current_value`, the four
+  window values and the ATH/ATL **at read time, deliberately not in the
+  rollup worker**: the upsert ratchets `ath_value`/`atl_value` with
+  GREATEST/LEAST and a token is only flagged after it has been trading,
+  so switching a row's scale at write would pin the ratchet to an
+  extreme from the old scale for good. `change_summary_5m` stays raw
+  like the CAGG under it; the percentages, streak and acceleration are
+  scale-free and unchanged. A `pair` row's factor is exact (the id is the
+  source pair); a `coin` row does not record which pair it was computed
+  on, so its quote leg is taken as the standard scale. Every path is a
+  byte-identical no-op for an asset with no confirmed row — no parse, no
+  reformat — so no served value moves for any 7-decimals asset.
+  **Not covered here, same defect, other files:** the `/v1/assets`
+  LISTING's `price_usd` (read from `asset_price_snapshot`, whose writer
+  does not normalise) and its `?include=sparkline7d` series.
+
 - **price/at, price/changes:** the thin-market gate now judges the
   market that existed AT the requested instant. `/v1/price/at` and every
   `/v1/price/changes` horizon serve the bucket at-or-before a past `ts`,

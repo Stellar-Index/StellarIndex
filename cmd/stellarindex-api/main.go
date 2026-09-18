@@ -51,6 +51,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net"
 	"net/http"
 	"os"
@@ -1389,7 +1390,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		LakeWatermark:      lakeWatermarkReader,
 		Explorer:           explorerReader,
 		Volume:             storeVolumeReader{s: store},
-		Change24h:          storeChange24hReader{s: store, pegs: usdPegs},
+		Change24h:          storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache},
 		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate, logger: logger.With("component", "price-at-guard")},
 		ChangeSummary:      store,
 		AssetsReader:       cachedAssetsReader,
@@ -4256,9 +4257,16 @@ var usdQuoteAsset = func() canonical.Asset {
 // this, /v1/assets/{id}.change_24h_pct silently stays null for
 // every on-chain asset (mirrors the same gap fixed in #1217 for
 // the /v1/price handler).
+//
+// decimals is the confirmed non-7-decimals table. The bucket this
+// returns is a RAW prices_1m ratio, and both callers divide it into a
+// current price that is ALREADY decimals-normalised (lookupUSDPrice and
+// the batch row), so an un-normalised anchor put the two legs of one
+// percentage on different scales — see [normalizeChange24hAnchor].
 type storeChange24hReader struct {
-	s    *timescale.Store
-	pegs []canonical.Asset
+	s        *timescale.Store
+	pegs     []canonical.Asset
+	decimals aggregate.DecimalsLookup
 }
 
 func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonical.Asset) (string, error) {
@@ -4268,7 +4276,7 @@ func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonica
 		time.Now().Add(-24*time.Hour),
 	)
 	if err == nil {
-		return row.VWAP, nil
+		return normalizeChange24hAnchor(r.decimals, row.VWAP, asset, usdQuoteAsset)
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return "", err
@@ -4292,10 +4300,46 @@ func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonica
 			time.Now().Add(-24*time.Hour),
 		)
 		if pegErr == nil {
-			return pegRow.VWAP, nil
+			// Against the peg it was READ from, not the requested
+			// fiat:USD: the factor belongs to the pair behind the bucket.
+			return normalizeChange24hAnchor(r.decimals, pegRow.VWAP, asset, peg)
 		}
 	}
 	return "", v1.ErrChange24hUnavailable
+}
+
+// change24hAnchorDigits is the precision a normalised anchor is rendered
+// at. The anchor is only ever a divisor for a two-decimal percentage, so
+// this is generous rather than load-bearing — wide enough that scaling a
+// small ratio DOWN cannot round it to zero.
+const change24hAnchorDigits = 20
+
+// normalizeChange24hAnchor applies the dex-nonstandard-decimals forward
+// normalisation (aggregate.AdjustPrice) to the RAW 24h-ago bucket, with
+// the legs of the pair it was actually read from.
+//
+// The current-price leg of change_24h_pct has been normalised since the
+// /v1/assets price_usd fix; the anchor was not. So for a confirmed
+// 9-decimals token the percentage compared a corrected price with a raw
+// one a hundred times smaller, and a FLAT market served roughly +9900%.
+// That is worse than both legs being raw, where the factor cancelled.
+//
+// Returns vwap byte-identical when the legs share a scale (every pair
+// with no confirmed row — the common case). For a flagged pair a value
+// that cannot be parsed cannot be corrected, and a raw anchor against a
+// normalised price is the defect itself, so that reads as "no anchor"
+// (v1.ErrChange24hUnavailable → a null change, never a wrong one).
+func normalizeChange24hAnchor(lookup aggregate.DecimalsLookup, vwap string, base, quote canonical.Asset) (string, error) {
+	baseDec := aggregate.ResolveDecimals(lookup, base)
+	quoteDec := aggregate.ResolveDecimals(lookup, quote)
+	if baseDec == quoteDec {
+		return vwap, nil
+	}
+	raw, ok := new(big.Rat).SetString(vwap)
+	if !ok || raw.Sign() <= 0 {
+		return "", v1.ErrChange24hUnavailable
+	}
+	return aggregate.AdjustPrice(raw, baseDec, quoteDec).FloatString(change24hAnchorDigits), nil
 }
 
 // storeSupplyLooker adapts *timescale.Store to v1.SupplyLooker for

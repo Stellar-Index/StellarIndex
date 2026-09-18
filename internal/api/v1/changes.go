@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -65,15 +67,6 @@ type ChangeSummaryResponse struct {
 // moneyStr formats a display-grade money value as the shortest decimal string
 // that round-trips the float64 (so 1.1 → "1.1", not "1.1000000000000001").
 func moneyStr(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
-
-// moneyStrPtr is the nullable-money form: nil stays nil (omitempty → absent).
-func moneyStrPtr(v *float64) *string {
-	if v == nil {
-		return nil
-	}
-	s := moneyStr(*v)
-	return &s
-}
 
 // allowedChangeSummaryEntityTypes pins the set of entity_type values
 // the API accepts: the families a change-summary worker actually
@@ -249,21 +242,47 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	writeJSON(w, s.changeSummaryResponse(row), Flags{})
+}
+
+// changeSummaryResponse projects a stored row onto the wire shape,
+// decimals-normalising every absolute value on the way out.
+//
+// change_summary_5m holds RAW prices_1m ratios: the rollup worker copies
+// the CAGG's vwap through untouched (internal/aggregate/changesummary).
+// The *_delta_pct fields survive that — both legs of each percentage come
+// from the same raw series, so the factor cancels — and so do the streak
+// and acceleration labels. The absolute figures do not: current_value,
+// the four window values and the ATH/ATL were published unscaled for a
+// confirmed non-7-decimals token while /v1/price normalised the same
+// bucket.
+//
+// WHY AT READ TIME, not in the worker. The upsert RATCHETS ath_value /
+// atl_value (GREATEST / LEAST against the stored row), and a token is
+// flagged only after it has already been trading. Normalising at write
+// would switch a row's scale mid-life and leave the ratchet pinned to an
+// extreme from the other scale for good. Keeping the table raw and
+// scaling here keeps one scale per row for ever, follows the table the
+// moment a row is confirmed or corrected, and matches how every other
+// CAGG-derived surface is handled (the CAGGs stay raw; serving
+// normalises).
+func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSummaryResponse {
+	scale := s.changeSummaryValueScale(row.EntityType, row.EntityID)
 	resp := ChangeSummaryResponse{
 		EntityType:      row.EntityType,
 		EntityID:        row.EntityID,
 		RefreshedAt:     row.RefreshedAt.UTC().Format(time.RFC3339),
-		CurrentValue:    moneyStr(row.CurrentValue),
-		H1Value:         moneyStrPtr(row.H1Value),
+		CurrentValue:    scaledMoneyStr(row.CurrentValue, scale),
+		H1Value:         scaledMoneyStrPtr(row.H1Value, scale),
 		H1DeltaPct:      row.H1DeltaPct,
-		H24Value:        moneyStrPtr(row.H24Value),
+		H24Value:        scaledMoneyStrPtr(row.H24Value, scale),
 		H24DeltaPct:     row.H24DeltaPct,
-		D7Value:         moneyStrPtr(row.D7Value),
+		D7Value:         scaledMoneyStrPtr(row.D7Value, scale),
 		D7DeltaPct:      row.D7DeltaPct,
-		D30Value:        moneyStrPtr(row.D30Value),
+		D30Value:        scaledMoneyStrPtr(row.D30Value, scale),
 		D30DeltaPct:     row.D30DeltaPct,
-		ATHValue:        moneyStrPtr(row.ATHValue),
-		ATLValue:        moneyStrPtr(row.ATLValue),
+		ATHValue:        scaledMoneyStrPtr(row.ATHValue, scale),
+		ATLValue:        scaledMoneyStrPtr(row.ATLValue, scale),
 		StreakDirection: row.StreakDirection,
 		StreakDays:      row.StreakDays,
 		Acceleration:    row.Acceleration,
@@ -274,6 +293,81 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 	if row.ATLAt != nil {
 		resp.ATLAt = row.ATLAt.UTC().Format(time.RFC3339)
 	}
+	return resp
+}
 
-	writeJSON(w, resp, Flags{})
+// changeSummaryValueScale returns the exact dex-nonstandard-decimals
+// factor for a stored row's absolute values, or nil when there is nothing
+// to scale (the overwhelmingly common case — callers then format the
+// stored float exactly as before).
+//
+// The legs come from the STORED entity id, which is what the worker keyed
+// the row on, never from what the caller typed:
+//
+//   - "pair": the id IS the source pair (`base/quote`), so both legs are
+//     known and the factor is exact.
+//   - "coin": the id is the base asset only. The worker computes a coin
+//     row off the first configured aggregator pair for that base and does
+//     not record which, so the quote leg is taken as the standard scale.
+//     That is exact for every quote a coin row is realistically computed
+//     against (XLM, a classic or SAC-wrapped stablecoin, a fiat or global
+//     ticker — none of which can be non-7dp); recording the source pair on
+//     the row would remove the assumption and needs a schema change.
+//
+// An id that does not parse names nothing the confirmed table could hold,
+// so it scales by nothing.
+func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
+	var base, quote canonical.Asset
+	switch entityType {
+	case "pair":
+		pair, err := canonical.ParsePair(entityID)
+		if err != nil {
+			return nil
+		}
+		base, quote = pair.Base, pair.Quote
+	case "coin":
+		asset, err := canonical.ParseAsset(entityID)
+		if err != nil {
+			return nil
+		}
+		base, quote = asset, defaultPriceQuote
+	default:
+		return nil
+	}
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	if baseDec == quoteDec {
+		return nil
+	}
+	return aggregate.DecimalsAdjustment(baseDec, quoteDec)
+}
+
+// scaledMoneyStr is [moneyStr] with the decimals factor applied. A nil
+// scale is byte-identical to moneyStr.
+//
+// The multiply runs on the value's DECIMAL rendering, not on the float:
+// 1.15 × 100 in binary floating point is 114.99999999999999, and the
+// shortest round-trip string of that is exactly the kind of number this
+// endpoint must not print. Through the decimal it is 115.
+func scaledMoneyStr(v float64, scale *big.Rat) string {
+	if scale == nil {
+		return moneyStr(v)
+	}
+	r, ok := new(big.Rat).SetString(moneyStr(v))
+	if !ok {
+		// NaN / ±Inf have no decimal to scale; print them as before.
+		return moneyStr(v)
+	}
+	f, _ := r.Mul(r, scale).Float64()
+	return moneyStr(f)
+}
+
+// scaledMoneyStrPtr is the nullable-money form of [scaledMoneyStr]: nil
+// stays nil (omitempty → absent).
+func scaledMoneyStrPtr(v *float64, scale *big.Rat) *string {
+	if v == nil {
+		return nil
+	}
+	out := scaledMoneyStr(*v, scale)
+	return &out
 }

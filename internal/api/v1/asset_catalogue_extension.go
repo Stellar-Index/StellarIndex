@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"math/big"
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -63,7 +65,7 @@ func (s *Server) applyAssetExtensionFields(ctx context.Context, detail *AssetDet
 	results := s.fetchAssetExtensionResults(cctx, assetID)
 
 	s.applyAssetRowToDetail(cctx, detail, asset, row, rowErr, assetID)
-	applyAssetExtensionResults(detail, results)
+	s.applyAssetExtensionResults(detail, asset, results)
 	s.logAssetExtensionFailures(assetID, results)
 }
 
@@ -166,8 +168,20 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// /v1/assets/native in agreement with /v1/price and
 	// /v1/assets/crypto:XLM, while still pricing the XLM-triangulated
 	// long tail (SHX, AQUA, …) that the canonical reader can't reach.
+	//
+	// The row's price is a RAW prices_1m ratio like every other CAGG
+	// read, so it goes through the dex-nonstandard-decimals
+	// normalisation before it is published (see normalizeCatalogueUSD).
+	// A row price that normalisation has to withhold leaves PriceUSD nil
+	// for the transitive fill below, which reads at full precision.
 	if priceAllowed && row.PriceUSD != nil && detail.PriceUSD == nil {
-		detail.PriceUSD = row.PriceUSD
+		if p, ok := s.normalizeCatalogueUSD(*row.PriceUSD, asset, true); ok {
+			detail.PriceUSD = &p
+		} else {
+			// The change pills derive from the price just withheld, and
+			// must not outlive it — same rule as the substance gate above.
+			priceAllowed = false
+		}
 	}
 	// LAST resort, after both the canonical price path and the catalogue
 	// row have declined: a one-hop transitive price. Only reached when
@@ -222,15 +236,21 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 // applyAssetExtensionResults populates the array-shaped fields from
 // the parallel-fetch results. Each field is independent — one
 // failure doesn't fail the others.
-func applyAssetExtensionResults(detail *AssetDetail, r assetExtensionResults) {
+//
+// The three PRICE fields (both histories and the ATH) arrive as RAW
+// prices_1m / prices_1d ratios and are normalised for a confirmed
+// non-7-decimals asset on the way out — see normalizeCatalogueUSD. They
+// used to be assigned verbatim, which put an unscaled sparkline and ATH
+// beside a price_usd the canonical path had already normalised.
+func (s *Server) applyAssetExtensionResults(detail *AssetDetail, asset canonical.Asset, r assetExtensionResults) {
 	if r.topMarketsErr == nil && len(r.topMarkets) > 0 {
 		detail.TopMarkets = topMarketsToWire(r.topMarkets)
 	}
 	if r.hist24Err == nil && len(r.hist24) > 0 {
-		detail.PriceHistory24h = assetPointsToWire(r.hist24)
+		detail.PriceHistory24h = s.normalizedAssetPointsToWire(r.hist24, asset)
 	}
 	if r.hist7dErr == nil && len(r.hist7d) > 0 {
-		detail.PriceHistory7d = assetPointsToWire(r.hist7d)
+		detail.PriceHistory7d = s.normalizedAssetPointsToWire(r.hist7d, asset)
 	}
 	if r.marketsErr == nil {
 		v := r.marketsCount
@@ -241,8 +261,89 @@ func applyAssetExtensionResults(detail *AssetDetail, r assetExtensionResults) {
 		detail.TradeCount24h = &v
 	}
 	if r.athErr == nil && r.ath != nil {
-		detail.ATH = &AssetATH{USD: r.ath.USD, At: r.ath.At}
+		// prices_1d's vwap arrives at full NUMERIC precision (no SQL
+		// ROUND), so the scale-up is exact and needs no precision floor.
+		if usd, ok := s.normalizeCatalogueUSD(r.ath.USD, asset, false); ok {
+			detail.ATH = &AssetATH{USD: usd, At: r.ath.At}
+		}
 	}
+}
+
+// catalogueUSDRoundDigits is the ROUND(…, 10) the asset-catalogue SQL
+// applies to every USD price it returns as text (the row's price_usd and
+// each price-history point; the ATH is NOT rounded). It matters here only
+// because that rounding happens BEFORE the decimals normalisation can.
+const catalogueUSDRoundDigits = 10
+
+// catalogueUSDMinQuanta is the fewest rounding quanta (units of
+// 10^-catalogueUSDRoundDigits) a SQL-rounded raw ratio must retain for a
+// scaled-UP value to be published: 1000 quanta bounds the rounding error
+// the multiply carries forward at 0.05%.
+const catalogueUSDMinQuanta = 1000
+
+// normalizeCatalogueUSD applies the dex-nonstandard-decimals forward
+// normalisation to a USD price the asset-catalogue readers produced from
+// RAW prices_1m / prices_1d ratios. Returns ok=false when the value must
+// be withheld instead.
+//
+// ONE FACTOR. Every catalogue price is the asset's ratio against a USD
+// proxy (classic USDC, its SAC, fiat:USD) or against XLM times XLM/USD —
+// every quote leg on the standard scale, inverted arms included — so the
+// factor is 10^(asset decimals − standard) whichever arm answered; see
+// [Server.normalizeTransitiveUSD] for why a chained product telescopes
+// to the same thing.
+//
+// Byte-identical, with no parse round-trip, for an asset with no
+// confirmed non-7-decimals row — every classic asset and native XLM, by
+// protocol.
+//
+// WITHHOLDING. For a flagged asset an unparseable or non-positive value
+// cannot be corrected, and publishing it raw is the defect this exists
+// to remove, so it is dropped. And when `rounded`, the SQL has already
+// cut the RAW ratio to catalogueUSDRoundDigits places: scaling UP by
+// 10^k promotes that rounding error by the same 10^k. An 18-decimals
+// token worth $1 has a raw ratio of 1e-11, which the SQL rounds to zero
+// — and one worth $14 comes back as exactly $10. Below
+// catalogueUSDMinQuanta the corrected number would be precise-looking
+// fiction, so the point is a gap instead. Scaling DOWN only shrinks the
+// error and needs no floor.
+func (s *Server) normalizeCatalogueUSD(value string, asset canonical.Asset, rounded bool) (string, bool) {
+	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, asset)
+	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, defaultPriceQuote)
+	if baseDec == quoteDec {
+		return value, true
+	}
+	raw := ratFromDecimal(value)
+	if raw == nil || raw.Sign() <= 0 {
+		return "", false
+	}
+	if rounded && baseDec > quoteDec {
+		quanta := new(big.Rat).Mul(raw, aggregate.DecimalsAdjustment(catalogueUSDRoundDigits, 0))
+		if quanta.Cmp(big.NewRat(catalogueUSDMinQuanta, 1)) < 0 {
+			return "", false
+		}
+	}
+	return ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits), true
+}
+
+// normalizedAssetPointsToWire is [assetPointsToWire] with every priced
+// point passed through [Server.normalizeCatalogueUSD]. A point that has
+// to be withheld becomes a null-priced bucket — the shape the series
+// already uses for an hour or day with no trades — so the bucket grid
+// the client draws against is unchanged.
+func (s *Server) normalizedAssetPointsToWire(pts []timescale.AssetPricePoint, asset canonical.Asset) []AssetPricePoint {
+	out := assetPointsToWire(pts)
+	for i := range out {
+		if out[i].P == nil {
+			continue
+		}
+		if p, ok := s.normalizeCatalogueUSD(*out[i].P, asset, true); ok {
+			out[i].P = &p
+		} else {
+			out[i].P = nil
+		}
+	}
+	return out
 }
 
 // logAssetExtensionFailures emits one Debug line per failed sub-fetch
