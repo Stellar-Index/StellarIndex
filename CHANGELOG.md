@@ -118,6 +118,19 @@ against.
   than truncated — a surviving staleness key still escalates, an
   erased one never does. Value gauges are still not carried: they
   would report supply the failed run never computed.
+- **sources:** pre-P23 classic movements now record a MUXED
+  counterparty under the G-account that actually holds the balance.
+  `PaymentOp.Destination`, `ClawbackOp.From` and
+  `AccountMergeOp.Destination` are muxed-typed, and their `M…` strkey
+  was written verbatim into `stellar.account_movements` — an address no
+  reader can ask for (`/v1/accounts/{g}/movements` filters by G-strkey
+  equality), so the movement was invisible to everyone AND missing from
+  the underlying account's own feed. They resolve to the base account
+  now, the same rule the shared participant derivation and the lake's
+  op-source extraction already apply; the memo id is a routing detail
+  and is not carried into the movement. Non-muxed counterparties
+  round-trip byte-identically.
+
 - **clickhouse,ops:** a `classic-movements-backfill` run interrupted
   mid-batch can no longer leave a silent hole in
   `stellar.account_movements`. The chunked INSERT sorted its rows by

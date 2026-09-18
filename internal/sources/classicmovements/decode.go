@@ -174,7 +174,7 @@ func decodePayment(ledger uint32, closedAt time.Time, txHash string, opIndex uin
 		return nil, fmt.Errorf("%w: non-positive Amount %d (ledger %d tx %s op %d)",
 			ErrMalformedMovement, body.Amount, ledger, txHash, opIndex)
 	}
-	dest, derr := body.Destination.GetAddress()
+	dest, derr := baseAccountAddress(body.Destination)
 	if derr != nil {
 		return nil, fmt.Errorf("%w: unresolvable destination: %w (ledger %d tx %s op %d)",
 			ErrMalformedMovement, derr, ledger, txHash, opIndex)
@@ -206,6 +206,43 @@ func decodePayment(ledger uint32, closedAt time.Time, txHash string, opIndex uin
 // "no Tr()" causes for a reader.
 func opSucceeded(result xdr.OperationResult) bool {
 	return result.Code == xdr.OperationResultCodeOpInner
+}
+
+// baseAccountAddress resolves one of the three MUXED-typed classic
+// counterparties — PaymentOp.Destination, ClawbackOp.From and
+// AccountMergeOp.Destination — to the G-strkey of the account that
+// actually holds the balance.
+//
+// MuxedAccount.GetAddress() renders a CryptoKeyTypeKeyTypeMuxedEd25519
+// account as its M-strkey (SEP-23), and an M-strkey is a routing label
+// for a custodian's sub-account, not an on-chain account: no ledger
+// entry, no balance, and nothing any reader can ask for. These rows
+// land in stellar.account_movements' `address` / `counterparty`
+// columns, which are queried by G-strkey equality
+// (/v1/accounts/{g}/movements), so a movement recorded under an
+// M-address is a movement no reader can ever reach, and the underlying
+// account's own feed is missing it. Resolving to the base account is
+// the same rule the shared participant derivation applies
+// (xdrjson.ParticipantAccounts: "an M-strkey is resolved to its
+// underlying ed25519 account — that's the account whose RECEIVED
+// activity we index") and the same one the lake's op extractor applies
+// to a muxed op source.
+//
+// The memo id is deliberately not carried into the movement: it is a
+// destination-side routing detail with no on-chain balance effect, the
+// same call internal/sources/upshift makes for CAP-67's to_muxed_id.
+//
+// The remaining counterparties this package decodes are AccountId-typed
+// (create-account destination, claimable-balance claimants,
+// path-payment's SimplePaymentResult.Destination) and are structurally
+// incapable of being muxed, so they need no resolution.
+func baseAccountAddress(m xdr.MuxedAccount) (string, error) {
+	switch m.Type {
+	case xdr.CryptoKeyTypeKeyTypeEd25519, xdr.CryptoKeyTypeKeyTypeMuxedEd25519:
+		return m.ToAccountId().Address(), nil
+	default:
+		return "", fmt.Errorf("unknown muxed account type %v", m.Type)
+	}
 }
 
 // ─── Phase 2: PathPaymentStrictReceive / PathPaymentStrictSend ────
@@ -669,8 +706,7 @@ func decodeClawback(ledger uint32, closedAt time.Time, txHash string, opIndex ui
 		return nil, fmt.Errorf("%w: non-positive Amount %d (ledger %d tx %s op %d)",
 			ErrMalformedMovement, body.Amount, ledger, txHash, opIndex)
 	}
-	holderMuxed := body.From
-	holderAddr, herr := holderMuxed.GetAddress()
+	holderAddr, herr := baseAccountAddress(body.From)
 	if herr != nil {
 		return nil, fmt.Errorf("%w: unresolvable From: %w (ledger %d tx %s op %d)",
 			ErrMalformedMovement, herr, ledger, txHash, opIndex)
@@ -749,7 +785,7 @@ func decodeAccountMerge(ledger uint32, closedAt time.Time, txHash string, opInde
 		return nil, fmt.Errorf("%w: op type AccountMerge but body has no Destination (ledger %d tx %s op %d)",
 			ErrMalformedMovement, ledger, txHash, opIndex)
 	}
-	destAddr, derr := destMuxed.GetAddress()
+	destAddr, derr := baseAccountAddress(destMuxed)
 	if derr != nil {
 		return nil, fmt.Errorf("%w: unresolvable destination: %w (ledger %d tx %s op %d)",
 			ErrMalformedMovement, derr, ledger, txHash, opIndex)
