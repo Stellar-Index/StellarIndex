@@ -407,11 +407,20 @@ func isUSDQuoted(pair canonical.Pair) bool {
 }
 
 // baselineAgeDays returns how much real history backs the 30d
-// baseline, in DAYS-EQUIVALENT of 1-minute buckets: Day30.N (the
-// count of bucket-to-bucket returns that fed the median/MAD) divided
-// by 1440 (1m buckets per 24h). Returns -1 (the
-// [confidence.BaselineQualityFactor] sentinel) when the 30d window is
-// in bootstrap.
+// baseline, in DAYS-EQUIVALENT of 1-minute buckets: the number of 1m
+// buckets that fed the median/MAD divided by 1440 (1m buckets per
+// 24h). Returns -1 (the [confidence.BaselineQualityFactor] sentinel)
+// when the 30d window is in bootstrap.
+//
+// The bucket count is Day30.N+1, not Day30.N: N counts bucket-to-
+// bucket RETURNS and N returns span N+1 buckets. Dividing N itself
+// made this measure structurally unable to reach 30 (RLT-260) — a
+// window in which the pair traded in all 43,200 minutes yields 43,199
+// returns and read 29.99931, under every threshold in
+// [confidence] — which left the bootstrap cap engaged for every asset
+// forever and pinned each served confidence at 0.5. A completely-
+// observed window now reads exactly 30.0, and no window can read
+// higher.
 //
 // This is sample DENSITY, not calendar age, and the name is
 // historical (COR-14). It deliberately takes no wall-clock input:
@@ -445,6 +454,7 @@ func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 		return -1
 	}
 	// 1440 = minutes per day. Day30.N is the number of bucket-to-
-	// bucket returns in the window (one per 1m bucket pair).
-	return float64(multi.Day30.N) / 1440.0
+	// bucket returns in the window (one per 1m bucket pair), so the
+	// buckets behind them number N+1.
+	return float64(multi.Day30.N+1) / 1440.0
 }

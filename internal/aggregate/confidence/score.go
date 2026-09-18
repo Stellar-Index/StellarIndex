@@ -2,10 +2,9 @@ package confidence
 
 import "math"
 
-// BootstrapDays is the age threshold below which the confidence
-// score is hard-capped at [BootstrapConfidenceCap], regardless of
-// other factor values. Per ADR-0019 §"Bootstrap (warmup) policy
-// for new assets":
+// BootstrapDays is ADR-0019's CALENDAR warmup threshold, kept here as
+// the documented policy input. Per ADR-0019 §"Bootstrap (warmup)
+// policy for new assets":
 //
 //	"For an asset with < 30 days of history: ... cap confidence at
 //	 0.5 regardless of other factors."
@@ -15,10 +14,50 @@ import "math"
 // agreement and tight liquidity, we lack the historical signal
 // to know what's normal for THIS asset. 0.5 says "we can serve
 // the price, but consumers should treat it as provisional".
+//
+// It is NOT the number [applyBootstrapCap] compares against: no
+// calendar age reaches this package. [Inputs.BaselineAgeDays] carries
+// bucket DENSITY expressed in days-equivalent (COR-14, W8.8), so the
+// cap gates on [BootstrapDensityDays].
 const (
 	BootstrapDays          = 30.0
 	BootstrapConfidenceCap = 0.5
 )
+
+// BootstrapDensityDays is the days-equivalent of 1-minute bucket
+// density at or above which the bootstrap cap releases — the
+// translation of [BootstrapDays] into the only unit this package is
+// ever handed.
+//
+// Why it is not simply [BootstrapDays] (RLT-260): the 30-day window
+// behind [Inputs.BaselineAgeDays] holds at most 43,200 one-minute
+// buckets, so the density reading is bounded ABOVE by 30.0 and
+// reaches it only for a window in which the pair traded in every
+// single minute. Gating at 30.0 demanded literal perfection, so the
+// cap never released for any asset: every served confidence was
+// pinned at exactly 0.5 and the multi-factor score underneath it was
+// unobservable — including to the Phase 2 freeze leg that reads it.
+//
+// 0.95 of the window is the relaxation, and it stays on the safe side
+// of the ADR in the way that matters. Buckets accrue at no more than
+// 1,440 a day, so a reading of X days-equivalent PROVES at least X
+// calendar days of observed history; clearing 28.5 therefore implies
+// a pair observed across at least 28.5 of ADR-0019's 30 calendar
+// days. It cannot un-cap a genuinely new asset — the failure mode the
+// W8.8 money-safety panel refused — and it does not un-cap a
+// mature-but-sparse pair either, which W8.8 deliberately keeps capped:
+// a pair trading 200 minutes a day reads 4.17 days-equivalent, an
+// order of magnitude below the gate. The headroom the other way is
+// measured, not guessed: r1's densest pairs run ≈99.2% coverage
+// (served baseline_quality 0.996 → 29.76 days-equivalent), a shortfall
+// roughly four times smaller than the 5% allowed here.
+const BootstrapDensityDays = BootstrapDays * bootstrapDensityFraction
+
+// bootstrapDensityFraction is the share of a perfectly-observed
+// 30-day window that counts as a mature baseline. See
+// [BootstrapDensityDays] for why it is below 1.0, and why it is not
+// much below.
+const bootstrapDensityFraction = 0.95
 
 // Inputs are the raw observations a single bucket carries. The
 // orchestrator populates this from the bucket's stats + the per-
@@ -114,11 +153,12 @@ type Inputs struct {
 
 	// BaselineAgeDays — days-equivalent of baseline DENSITY, not
 	// calendar age (COR-14). The only production caller
-	// (orchestrator.baselineAgeDays) passes Day30.N / 1440, i.e. how
-	// many 1-minute buckets of real history back the 30d window
+	// (orchestrator.baselineAgeDays) passes (Day30.N + 1) / 1440 — the
+	// count of 1-minute buckets behind the 30d window's returns,
 	// expressed in days-worth-of-buckets; a pair that trades in 200
 	// buckets a day reads as 0.14 "days" no matter how many calendar
-	// months it has existed.
+	// months it has existed. A completely-observed window reads exactly
+	// [BootstrapDays]; nothing reads higher.
 	//
 	// That is deliberate — a baseline is trustworthy in proportion to
 	// the samples that fed its median/MAD, not to how long ago it was
@@ -340,8 +380,10 @@ func triangulationInput(in Inputs) float64 {
 }
 
 // applyBootstrapCap caps the final confidence at
-// [BootstrapConfidenceCap] when the asset is still in bootstrap
-// (BaselineAgeDays known and below [BootstrapDays]).
+// [BootstrapConfidenceCap] when the baseline behind the bucket is
+// still thin (BaselineAgeDays known and below
+// [BootstrapDensityDays] — a density threshold, not a calendar one;
+// see that constant).
 //
 // A negative BaselineAgeDays is the "no baseline yet" sentinel —
 // stricter than bootstrap, so we apply the cap there too. Callers
@@ -352,7 +394,7 @@ func applyBootstrapCap(c, ageDays float64) float64 {
 	if math.IsNaN(ageDays) {
 		return c
 	}
-	if ageDays >= BootstrapDays {
+	if ageDays >= BootstrapDensityDays {
 		return c
 	}
 	if c > BootstrapConfidenceCap {

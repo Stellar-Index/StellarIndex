@@ -164,6 +164,29 @@ against.
   `next_cursor` case, the genesis-floor fail-closed case, the query
   builder's ceiling-zero clause, and an executing ClickHouse
   integration test.
+- **aggregator:** every asset's served `confidence` is no longer pinned
+  at exactly `0.5`. ADR-0019's bootstrap cap — "for an asset with < 30
+  days of history, cap confidence at 0.5 regardless of other factors" —
+  compared its CALENDAR constant (`BootstrapDays = 30.0`) against a
+  sample-DENSITY measure that could not reach it. The 30-day baseline
+  window holds at most 43,200 one-minute buckets, `Day30.N` counts
+  bucket-to-bucket RETURNS (one fewer than the buckets behind them), so
+  `N/1440` peaked at 29.99931: the cap engaged for every pair forever,
+  and the multi-factor score underneath it was unobservable — including
+  to the Phase 2 freeze leg that reads it. Live on r1, BTC, ETH and XLM
+  against USD all served `confidence: 0.5` with `z_score` 0.98,
+  `cross_oracle` 1.0 and `baseline_quality` 0.996 — a 99.2%-dense
+  baseline treated as freshly listed. Two corrections: the density
+  reading now counts the N+1 buckets behind the N returns, so a
+  completely-observed window reads exactly 30.0 days-equivalent; and the
+  cap gates on a new `confidence.BootstrapDensityDays` (95% of the
+  window, 28.5) instead of the calendar constant. The signal itself is
+  unchanged — density over calendar age (W8.8) stands, and a
+  mature-but-sparse pair trading 200 minutes a day still reads 4.17
+  days-equivalent and stays capped. Buckets accrue at no more than 1,440
+  a day, so clearing 28.5 days-equivalent still proves at least 28.5
+  calendar days of observed history: the gate cannot un-cap a genuinely
+  new asset.
 
 - **ci,ops:** `config_acknowledged=true` can no longer clear a config
   surface the deploy PROVED unapplied by asking the host. The deploy's

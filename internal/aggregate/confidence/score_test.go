@@ -731,3 +731,45 @@ func TestCompute_zeroWeightOnZeroFactorIsNotNaN(t *testing.T) {
 		t.Errorf("Confidence = %v, want > 0: the liquidity factor carries weight 0, so it must not affect the score at all", got.Confidence)
 	}
 }
+
+// ─── RLT-260: the bootstrap gate is a DENSITY threshold ──────────
+
+// TestCompute_BootstrapCapReleasesAtDensityThreshold pins the shipped
+// release point of the bootstrap cap as a NUMBER, both sides of it.
+//
+// [Inputs.BaselineAgeDays] carries days-equivalent of 1-minute bucket
+// DENSITY, and a 30-day window holds at most 43,200 of those buckets —
+// so a gate at 30.0 days-equivalent demands a literally perfect
+// window and, before RLT-260, was never satisfied by anything: the
+// cap was unconditional and every asset's served confidence was
+// pinned at 0.5. The gate is 28.5 days-equivalent (95% of the
+// window). Buckets accrue at no more than 1,440 a day, so clearing it
+// still implies at least 28.5 calendar days of observed history —
+// which is what keeps the relaxation on the safe side of ADR-0019's
+// 30-day warmup rule.
+//
+// Change these numbers only as a deliberate money-path decision.
+func TestCompute_BootstrapCapReleasesAtDensityThreshold(t *testing.T) {
+	const gate = 28.5
+
+	justUnder := healthyInputs()
+	justUnder.BaselineAgeDays = gate - 0.01
+	if got := confidence.Compute(justUnder, confidence.DefaultWeights()); got.Confidence != confidence.BootstrapConfidenceCap {
+		t.Errorf("at %.2f days-equivalent confidence = %v, want the %v cap",
+			justUnder.BaselineAgeDays, got.Confidence, confidence.BootstrapConfidenceCap)
+	}
+
+	atGate := healthyInputs()
+	atGate.BaselineAgeDays = gate
+	got := confidence.Compute(atGate, confidence.DefaultWeights())
+	if got.Confidence <= confidence.BootstrapConfidenceCap {
+		t.Errorf("at the %.2f-days-equivalent gate confidence = %v, want it above the %v cap",
+			gate, got.Confidence, confidence.BootstrapConfidenceCap)
+	}
+	f := got.Factors
+	want := math.Pow(f.ZScore*f.SourceCount*f.Diversity*f.Liquidity*f.CrossOracle*f.BaselineQuality, 1.0/6.0)
+	if math.Abs(got.Confidence-want) > 1e-12 {
+		t.Errorf("at the gate confidence = %.17f, want the uncapped geometric mean %.17f",
+			got.Confidence, want)
+	}
+}
