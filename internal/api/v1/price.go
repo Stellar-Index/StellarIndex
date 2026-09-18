@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
@@ -2271,6 +2272,16 @@ func (s *Server) runPriceBatch(w http.ResponseWriter, r *http.Request, rawIDs []
 	if !ok {
 		return
 	}
+	// Price the request at one rate-limit token PER ID before any of
+	// them is resolved. The limiter's pre-dispatch charge is one token
+	// whatever the request carries, so without this a 1000-id POST
+	// bought a thousand resolutions for the price of one (F035 / F046).
+	// Charged on the de-duplicated count — the work actually done —
+	// and only once the request is known to be well-formed, so a 400
+	// costs its caller the base token and nothing more.
+	if !middleware.ChargeRateLimit(w, r, len(ids)) {
+		return
+	}
 	s.lookupPriceBatch(w, r, ids, quote)
 }
 
@@ -2343,9 +2354,10 @@ func (s *Server) parsePriceBatchQuote(w http.ResponseWriter, r *http.Request, ra
 // stays "well inside the DB connection pool's headroom even with several
 // batches in flight", which does not hold for a 1000-id POST batch at
 // ~2 round-trips per id. The bound that actually matters there is the
-// rate limiter, and charging it PER ID rather than per request is the
-// sound way to close the amplification — a capacity decision, not a
-// constant to quietly shrink.
+// rate limiter, and it is charged PER ID rather than per request
+// (runPriceBatch, via middleware.ChargeRateLimit) — that, not a quietly
+// shrunk constant, is what bounds how much of this fan-out one caller
+// can buy per window.
 const priceBatchConcurrency = 16
 
 // batchRowResult is the per-id outcome computed by resolveBatchRow.

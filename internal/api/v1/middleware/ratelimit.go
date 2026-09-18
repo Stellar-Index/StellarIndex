@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -97,7 +98,7 @@ const MaxRateLimitKeyLen = 256
 // propagate through url.QueryEscape into the Redis key space.
 // Oversize keys get truncated to the cap — still bucketed, just
 // not uniquely per-caller past the first N bytes.
-func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip func(*http.Request) bool, logger *slog.Logger) Middleware { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
+func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -130,48 +131,149 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 				key = key[:MaxRateLimitKeyLen]
 			}
 
-			takeCtx, takeCancel := throttleContext(r)
-			res, err := bucket.Take(takeCtx, key) //nolint:contextcheck // intentional detach — a client abort must not reach the limiter as an error; see throttleContext
-			takeCancel()
-			if err != nil {
-				if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
-					// Dwell-time exceeded: sustained Redis outage —
-					// fail-CLOSED with 503 + Retry-After rather than
-					// disabling the rate limiter indefinitely. F-0050 /
-					// F-0150 (audit-2026-05-27). Header MUST precede
-					// writeRateLimitProblem's WriteHeader call.
-					logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
-						"err", err, "key", key, "request_id", RequestIDFrom(r))
-					writeThrottleUnavailableProblem(w, r)
-					return
-				}
-				// Log at debug so a Redis outage doesn't flood the
-				// error log — the metric below is the alertable
-				// signal, the log is for post-mortem detail.
-				logger.Debug("ratelimit redis error — failing open",
-					"err", err, "key", key, "request_id", RequestIDFrom(r))
-				obs.RateLimitFailOpenTotal.Inc()
-				next.ServeHTTP(w, r)
+			charge := &rateLimitCharge{bucket: bucket, key: key, logger: logger, paid: 1}
+			if !charge.spend(w, r, 1) { //nolint:contextcheck // intentional detach inside spend — see throttleContext
 				return
 			}
-
-			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(bucket.Max()))
-			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(nextWindowResetUnix(bucket.Window()), 10))
-
-			if !res.Allowed {
-				retryAfter := int(res.RetryAfter.Seconds())
-				if retryAfter < 1 {
-					retryAfter = 1
-				}
-				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-				writeRateLimitProblem(w, r, retryAfter)
-				return
-			}
-
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(withRateLimitCharge(r.Context(), charge)))
 		})
 	}
+}
+
+// rateLimitCharge is one request's account with the limiter: which
+// bucket and key it is being charged against, and how many tokens it
+// has paid so far. The middleware opens it with the one-token base
+// charge every request pays before dispatch and plants it on the
+// request context; a handler whose work scales with a client-chosen
+// parameter then re-prices the request through [ChargeRateLimit] once
+// it has parsed that parameter.
+//
+// It is per-request state. The mutex is there because nothing stops a
+// handler calling [ChargeRateLimit] from a worker goroutine, not
+// because any does today.
+type rateLimitCharge struct {
+	bucket   *ratelimit.Bucket
+	key      string
+	override int
+	logger   *slog.Logger
+
+	mu   sync.Mutex
+	paid int
+}
+
+type rateLimitChargeKey struct{}
+
+func withRateLimitCharge(ctx context.Context, c *rateLimitCharge) context.Context {
+	return context.WithValue(ctx, rateLimitChargeKey{}, c)
+}
+
+// effectiveMax is the ceiling this request's subject is held to: the
+// per-subject override when one is set, else the bucket's own max.
+func (c *rateLimitCharge) effectiveMax() int {
+	if c.override > 0 {
+		return c.override
+	}
+	return c.bucket.Max()
+}
+
+// spend charges tokens against the bucket and settles the outcome onto
+// w. It returns true when the request may proceed, and false once it
+// has written the response — a 429 (over budget) or a 503 (the throttle
+// layer has been unreachable past its dwell-time). Shared by the
+// pre-dispatch base charge and by [ChargeRateLimit] so the two cannot
+// drift on the failure policy or the header set.
+func (c *rateLimitCharge) spend(w http.ResponseWriter, r *http.Request, tokens int) bool {
+	takeCtx, takeCancel := throttleContext(r)
+	res, err := c.bucket.Charge(takeCtx, c.key, tokens, c.override)
+	takeCancel()
+	if err != nil {
+		if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
+			// Dwell-time exceeded: sustained Redis outage —
+			// fail-CLOSED with 503 + Retry-After rather than
+			// disabling the rate limiter indefinitely. F-0050 /
+			// F-0150 (audit-2026-05-27).
+			c.logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
+				"err", err, "key", c.key, "request_id", RequestIDFrom(r))
+			writeThrottleUnavailableProblem(w, r)
+			return false
+		}
+		// Log at debug so a Redis outage doesn't flood the error
+		// log — the metric below is the alertable signal, the log
+		// is for post-mortem detail.
+		c.logger.Debug("ratelimit redis error — failing open",
+			"err", err, "key", c.key, "request_id", RequestIDFrom(r))
+		obs.RateLimitFailOpenTotal.Inc()
+		return true
+	}
+
+	w.Header().Set("X-RateLimit-Limit", strconv.Itoa(c.effectiveMax()))
+	w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
+	w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(nextWindowResetUnix(c.bucket.Window()), 10))
+
+	if !res.Allowed {
+		retryAfter := int(res.RetryAfter.Seconds())
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+		writeRateLimitProblem(w, r, retryAfter)
+		return false
+	}
+	return true
+}
+
+// ChargeRateLimit re-prices the in-flight request at cost tokens IN
+// TOTAL and charges the difference over what it has already paid. It
+// returns true when the handler may go on, and false once it has
+// written the 429 (or the fail-closed 503) itself — the handler must
+// then return without writing anything.
+//
+// The limiter charges one token before dispatch because that is all it
+// can know there. For most routes that is the right price. It is wrong
+// for a route whose server-side work is chosen by the client: one token
+// bought a 1000-id POST /v1/price/batch — a thousand alias-looped price
+// resolutions, sixteen at a time against a 25-connection pool — so the
+// deployed 6000/min anonymous budget was really six million resolutions
+// a minute (F035 / F046 / K009, reverification-2026-09-18). Such a
+// handler calls this AFTER it has validated the parameter and BEFORE it
+// does the work, so the budget is denominated in work rather than in
+// HTTP requests.
+//
+// Why here and not in the middleware: the cost of the POST variant is
+// the length of an array in its JSON body. Pricing it before dispatch
+// would mean buffering and decoding up to 1 MiB of body for a caller
+// the limiter has not admitted yet — the limiter would be doing the
+// expensive thing in order to decide whether to allow the expensive
+// thing. The handler has to parse the body anyway, behind the base
+// charge, and its count is the deduplicated one that matches the work.
+//
+// The total is capped at the subject's ceiling, so a request priced
+// above it spends the whole window rather than being refused in every
+// window ([ratelimit.Bucket.Charge] explains the cap; applying it to
+// the TOTAL here is what keeps the base token from making such a
+// request one token too expensive to ever fit). On success the
+// X-RateLimit-Remaining header is restated to the post-charge value.
+//
+// A request that never crossed a rate-limit middleware (limiting
+// disabled for its class, a skipped path, a handler under test) has no
+// account to charge and proceeds. A cost at or below what has been paid
+// charges nothing: this can raise a request's price, never refund it.
+func ChargeRateLimit(w http.ResponseWriter, r *http.Request, cost int) bool {
+	c, ok := r.Context().Value(rateLimitChargeKey{}).(*rateLimitCharge)
+	if !ok || c == nil {
+		return true
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if ceiling := c.effectiveMax(); cost > ceiling {
+		cost = ceiling
+	}
+	extra := cost - c.paid
+	if extra <= 0 {
+		return true
+	}
+	c.paid += extra
+	return c.spend(w, r, extra) //nolint:contextcheck // intentional detach inside spend — see throttleContext
 }
 
 // nextWindowResetUnix returns the Unix-epoch seconds of when the
@@ -214,7 +316,7 @@ func nextWindowResetUnix(window time.Duration) int64 {
 // anonRateLimitPerMin is a deployment knob, not a per-IP override.
 //
 // Nil buckets disable rate limiting for that class.
-func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*http.Request) bool, logger *slog.Logger) Middleware { //nolint:gocognit // dispatch-heavy; splitting would reduce readability
+func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*http.Request) bool, logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -234,42 +336,11 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 				key = key[:MaxRateLimitKeyLen]
 			}
 
-			takeCtx, takeCancel := throttleContext(r)
-			res, err := bucket.TakeN(takeCtx, key, override) //nolint:contextcheck // intentional detach — a client abort must not reach the limiter as an error; see throttleContext
-			takeCancel()
-			if err != nil {
-				if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
-					logger.Warn("ratelimit unavailable — failing closed (sustained Redis errors)",
-						"err", err, "key", key, "request_id", RequestIDFrom(r))
-					writeThrottleUnavailableProblem(w, r)
-					return
-				}
-				logger.Debug("ratelimit redis error — failing open",
-					"err", err, "key", key, "request_id", RequestIDFrom(r))
-				obs.RateLimitFailOpenTotal.Inc()
-				next.ServeHTTP(w, r)
+			charge := &rateLimitCharge{bucket: bucket, key: key, override: override, logger: logger, paid: 1}
+			if !charge.spend(w, r, 1) { //nolint:contextcheck // intentional detach inside spend — see throttleContext
 				return
 			}
-
-			effectiveMax := bucket.Max()
-			if override > 0 {
-				effectiveMax = override
-			}
-			w.Header().Set("X-RateLimit-Limit", strconv.Itoa(effectiveMax))
-			w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(res.Remaining))
-			w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(nextWindowResetUnix(bucket.Window()), 10))
-
-			if !res.Allowed {
-				retryAfter := int(res.RetryAfter.Seconds())
-				if retryAfter < 1 {
-					retryAfter = 1
-				}
-				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
-				writeRateLimitProblem(w, r, retryAfter)
-				return
-			}
-
-			next.ServeHTTP(w, r)
+			next.ServeHTTP(w, r.WithContext(withRateLimitCharge(r.Context(), charge)))
 		})
 	}
 }

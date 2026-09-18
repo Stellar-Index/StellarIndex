@@ -60,6 +60,29 @@ against.
   branch keyed on `current == 1`; it now keys on `current == cost`, or
   a key first written by a weighted charge would never drain (F046,
   reverification-2026-09-18).
+- **api (security):** `GET` and `POST /v1/price/batch` now cost one
+  rate-limit token PER ASSET ID instead of one per request. One token
+  used to buy a whole batch — up to 1000 ids on the POST route, each an
+  alias-looped price read plus the fallback chain, sixteen at a time
+  against a 25-connection pool — so the deployed 6000/min anonymous
+  budget was really six million price resolutions a minute, and a
+  handful of POSTs from one unauthenticated client could pin the pool.
+  The limiter still takes its one base token before dispatch, which is
+  all it can know there (the POST cost is the length of an array in a
+  JSON body, and pricing that ahead of the limiter would mean decoding
+  up to 1 MiB for a caller not yet admitted). The handler then re-prices
+  the request through the new `middleware.ChargeRateLimit` once the ids
+  are parsed and BEFORE any is resolved: a denied batch is a 429 with
+  `Retry-After` and no database work. The cost is the de-duplicated id
+  count, and a request rejected as malformed costs the base token only.
+  A batch priced above the caller's whole per-minute ceiling (1000 ids
+  against the 60/min default) is served into an untouched window and
+  spends all of it, rather than being refused in every window behind a
+  `Retry-After` that never comes true. `X-RateLimit-Remaining` reports
+  the post-charge figure. **Integrators:** a batch now draws down the
+  same per-minute budget as the equivalent single-asset reads would;
+  size batches against `X-RateLimit-Remaining` (F035, F046, K009,
+  RLT-160).
 - **aggregator (money):** the ADR-0019 freeze marker now carries one
   lifecycle ladder PER aggregation window instead of a single
   pair-level one. The `freeze:<asset>:<quote>` key is pair-scoped
