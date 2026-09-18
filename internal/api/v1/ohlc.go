@@ -28,8 +28,25 @@ import (
 const ohlcDefaultOutlierSigma = 4.0
 
 // OHLCBar is the wire shape for /v1/ohlc entries. All prices are
-// decimal strings (ADR-0003). volume fields are in the asset's
-// smallest unit (stroop-equivalent).
+// decimal strings (ADR-0003).
+//
+// The volume fields are the RAW smallest-unit sums, and the smallest
+// unit is a per-SOURCE scale, NOT a fixed stroop: an on-chain DEX leg is
+// 7-decimal, a CEX leg 8 (internal/sources/external/coinbase.
+// externalAmountDecimals), an FX poller 6 — the scale
+// internal/api/v1.amountScaleDecimalsFor resolves from the trade's
+// source. This comment used to call them "stroop-equivalent"; that is
+// false for every CEX-fed pair (crypto:XLM/fiat:USD among them), and a
+// consumer that divided by a fixed 1e7 overstated the figure tenfold
+// (finding F096, live on the /markets/[pair] page).
+//
+// The wire carries no scale field, so a consumer CANNOT presently render
+// these as asset units. Fixing that means adding one (an explicit
+// base_volume_decimals / quote_volume_decimals, per OHLCSeriesBar.Sources'
+// precedent of letting a bar state its own scale) across
+// openapi/stellar-index.v1.yaml, pkg/client and the explorer's generated
+// types — outside this file's remit. Until then the honest reading of
+// these two fields is "an integer in the venue's own scale".
 //
 // Truncated signals the window hit the server's per-request trade
 // cap — Open/High/Low may not reflect the actual window values

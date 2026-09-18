@@ -35,14 +35,23 @@
 // MEDIAN by more than σ × 1.4826 × MAD (median absolute deviation),
 // σ defaulting to 4. Exact rational arithmetic throughout.
 //
+// The deviation is measured in RATIO space, so the acceptance band is
+// [median²/(median + σ·scale), median + σ·scale] — a ½× print is
+// exactly as outlying as a 2× one (ADR-0046 §1). Until 2026-09-18 the
+// band was ADDITIVE in price space, which put its lower edge below zero
+// above 1/(σ×1.4826) relative MAD — 16.9% at σ=4 — from where downward
+// prints, a price of 0 included, stopped being rejectable at all while
+// their mirror-image up-moves still were. The same correction applies
+// to the time-local filter and to the served-VWAP guard's MAD arm
+// (6.75% at its K=10); docs/methodology/vwap-aggregation.md still
+// records the old asymmetry as a known limitation and needs the same
+// correction. On-call guidance lives in
+// docs/operations/runbooks/aggregator-outlier-storm.md.
+//
 // Corrected 2026-08-04: this block used to describe a sigma-threshold
 // filter around the unweighted MEAN and said "the σ form is what the
 // methodology specifies". The median/MAD form shipped with the M5 fix;
-// the methodology page has now been corrected to match too. Note the
-// band is ADDITIVE in price space, so its lower edge goes non-positive
-// above 1/(σ×1.4826) relative MAD — 16.9% at σ=4 — and downward
-// outliers stop being rejectable there. On-call guidance lives in
-// docs/operations/runbooks/aggregator-outlier-storm.md.
+// the methodology page has now been corrected to match too.
 //
 // # Stablecoin fiat proxy
 //

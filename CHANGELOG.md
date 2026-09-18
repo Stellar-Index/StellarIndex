@@ -34,6 +34,16 @@ against.
   rather than copied so the two clients onto the same endpoint cannot
   drift apart again: the host stays (it is the whole diagnostic), the
   path becomes `/<redacted>`. (audit-2026-09-02 NS12)
+- **api (docs only):** the `/v1/ohlc` bar's `base_volume` /
+  `quote_volume` are no longer documented as "stroop-equivalent". They
+  are raw smallest-unit sums at a per-SOURCE scale — 7 decimals on-chain,
+  8 for a CEX-fed leg — so a consumer that divided by a fixed 1e7
+  overstated every CEX-quoted pair tenfold. The served values are
+  unchanged; making the scale readable needs a wire field across the
+  OpenAPI spec, `pkg/client` and the explorer's generated types, which
+  this change does not touch. (audit-2026-09-02 F096, partial: the wire
+  field and the `/markets/[pair]` divisor remain)
+
 - **aggregator:** a window's published VWAP is reproducible from its own
   inputs again. `aggregate.FiatBackers` returned the stablecoin backers
   in Go map-iteration order, so the orchestrator's fetch plan — and the
