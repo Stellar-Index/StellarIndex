@@ -1,6 +1,10 @@
 package aggregate
 
-import "github.com/Stellar-Index/StellarIndex/internal/canonical"
+import (
+	"sort"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+)
 
 // Stablecoin → fiat proxy mapping — **aggregator policy, not decoder
 // policy**.
@@ -135,10 +139,17 @@ func ProxyTrade(t canonical.Trade) (canonical.Trade, bool) {
 // proxy map targets — the orchestrator treats that as "nothing to
 // fetch beyond the direct pair."
 //
-// Deterministic ordering is not promised; callers that need stable
-// output for assertions should sort. The real consumer (the
-// orchestrator) treats the set as a fetch plan and the order of
-// parallel TradesInRange calls doesn't affect the VWAP.
+// The result is sorted, so it is the SAME list on every call and in
+// every process. It used to be returned in Go map-iteration order, with
+// a docstring promising nothing — but the orchestrator turns this list
+// into its fetch plan ([ExpandTargetPairWithClassicPegs]) and appends
+// each source's batch to one merged window in that order, and the
+// published-VWAP outlier filter ([FilterOutliersLocal]) references a
+// print's neighbours BY POSITION. Same-timestamp prints from different
+// sources therefore changed places tick to tick and moved a real trim
+// decision, so one window's VWAP was not reproducible from its own
+// inputs (finding K036). Call sites that had already noticed re-sorted
+// defensively (internal/api/v1/chart.go); the order belongs here.
 func FiatBackers(fiat string) []string {
 	var out []string
 	for stable, target := range stablecoinFiatProxy {
@@ -146,6 +157,7 @@ func FiatBackers(fiat string) []string {
 			out = append(out, stable)
 		}
 	}
+	sort.Strings(out)
 	return out
 }
 

@@ -281,8 +281,41 @@ type localIndex struct {
 	lastAnchored *big.Rat
 }
 
-// newLocalIndex sorts the usable prices by trade time and partitions
-// them into opts.Bucket-wide buckets.
+// tradeOrderLess is the total order the local index arranges prints in:
+// close time, then the trades hypertable's primary key (ledger, source,
+// tx_hash, op_index). It is the same comparator
+// internal/api/v1.sortTradesChronological uses, for the same reason.
+//
+// The tie-break is NOT decorative (finding K036). Ledger-close
+// timestamps are shared by every trade in the ledger, so same-timestamp
+// prints are the common case, and the index references a print's
+// neighbours BY POSITION ([localIndex.neighbourhoodRef]) and walks the
+// anchor chain in this order. A merge-order-preserving sort would let
+// the window's input assembly decide those positions — and the
+// aggregator assembles it by appending one batch per expanded source
+// pair, an order that used to come out of Go map iteration
+// ([FiatBackers]) — so the same window could produce different trim
+// decisions, and a different published VWAP, tick to tick.
+func tradeOrderLess(a, b *canonical.Trade) bool {
+	if !a.Timestamp.Equal(b.Timestamp) {
+		return a.Timestamp.Before(b.Timestamp)
+	}
+	if a.Ledger != b.Ledger {
+		return a.Ledger < b.Ledger
+	}
+	if a.Source != b.Source {
+		return a.Source < b.Source
+	}
+	if a.TxHash != b.TxHash {
+		return a.TxHash < b.TxHash
+	}
+	return a.OpIndex < b.OpIndex
+}
+
+// newLocalIndex sorts the usable prices by trade time (ties broken by
+// [tradeOrderLess], so the arrangement is a function of the trade set
+// and not of the caller's merge order) and partitions them into
+// opts.Bucket-wide buckets.
 func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, opts LocalOutlierOptions) *localIndex {
 	ix := &localIndex{opts: opts, prices: prices, window: newRobustRef(prices)}
 	ix.order = make([]int, len(prices))
@@ -290,7 +323,7 @@ func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, 
 		ix.order[k] = k
 	}
 	sort.SliceStable(ix.order, func(a, b int) bool {
-		return trades[validIdx[ix.order[a]]].Timestamp.Before(trades[validIdx[ix.order[b]]].Timestamp)
+		return tradeOrderLess(&trades[validIdx[ix.order[a]]], &trades[validIdx[ix.order[b]]])
 	})
 	ix.bucketOf = make([]int, len(ix.order))
 	var lastKey int64

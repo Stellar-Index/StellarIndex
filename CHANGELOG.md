@@ -34,6 +34,21 @@ against.
   rather than copied so the two clients onto the same endpoint cannot
   drift apart again: the host stays (it is the whole diagnostic), the
   path becomes `/<redacted>`. (audit-2026-09-02 NS12)
+- **aggregator:** a window's published VWAP is reproducible from its own
+  inputs again. `aggregate.FiatBackers` returned the stablecoin backers
+  in Go map-iteration order, so the orchestrator's fetch plan — and the
+  order it appends each source's batch into one merged window — differed
+  call to call; the time-local outlier filter then sorted only on
+  timestamp, and ledger-close timestamps are shared by every trade in
+  the ledger, so same-timestamp prints kept that merge order. Since the
+  filter takes a print's neighbourhood reference BY POSITION, the
+  reference centre and the trim decision moved tick to tick on identical
+  data. Backers are now sorted at the source (call sites that had
+  noticed were re-sorting defensively), and the local index breaks
+  timestamp ties on the trades primary key (ledger, source, tx_hash,
+  op_index) — the same comparator `sortTradesChronological` already uses
+  for the same reason. (audit-2026-09-02 K036)
+
 - **api:** `/v1/price/at` and `/v1/price/changes` now apply the
   serving-sanity guard to a prices_1m answer. Their shared reader seam
   resolves an instant through a CAGG ladder whose finest rung is the
