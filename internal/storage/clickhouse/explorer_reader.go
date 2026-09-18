@@ -1511,6 +1511,26 @@ func (r *ExplorerReader) AccountOperationTypeCounts(ctx context.Context, account
 // bloom-skip-index scan over stellar.transactions (~5s at 10.2B rows; the
 // bloom prunes granules but cannot seek). found=false only after the scan
 // also comes up empty.
+//
+// KNOWN RESIDUAL GAP (F106, 2026-09 reverification, NEEDS-COORDINATION):
+// non-emptiness rules out TOTAL index loss but not PARTIAL coverage — a
+// freshly (re)created tx_hash_index on a lake that already has history
+// goes non-empty after the very first live transaction (the MV writes
+// synchronously) while every row for that lake's EXISTING history is
+// still missing, so a miss against it is wrongly authoritative until the
+// one-time backfill catches up. Closing this needs either a genuine
+// coverage signal — ruled out here: a naive count(tx_hash_index) vs
+// count(stellar.transactions) comparison over-counts asymmetrically,
+// because stellar.transactions is a duplicate-bearing ReplacingMergeTree
+// (live-sink retries) while the one-time backfill inserts FINAL-deduped
+// rows into tx_hash_index (see [txHashIndexBackfillQuery]), so a healthy
+// fully-backfilled deployment would never reach parity and the fast path
+// would degrade to the scan forever — or a backfill-completion marker
+// written by stellarindex-ops ch-txindex-backfill
+// (internal/ops/chops/ch_txindex_backfill.go) once a run finishes, which
+// this package cannot land alone. tier1_schema.sql's comment above
+// CREATE TABLE stellar.tx_hash_index is corrected to state this file's
+// actual contract; it no longer claims a scan fallback on every miss.
 func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (TxSummary, bool, error) {
 	if r.txHashIndexAvailable(ctx) {
 		tx, found, indexHit, err := r.txByHashIndexed(ctx, hash)

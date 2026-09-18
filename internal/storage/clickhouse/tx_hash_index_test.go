@@ -337,6 +337,66 @@ func TestTransactionByHashRepopulatedIndexRegainsAuthority(t *testing.T) {
 	}
 }
 
+// TestTransactionByHashNonEmptyIndexIsNotProofOfCoverage is a RED, skipped
+// evidence test for the residual half of F106 (2026-09 reverification) that
+// this package cannot close alone — see the KNOWN RESIDUAL GAP note on
+// TransactionByHash. txHashIndexAvailable's LIMIT 1 probe rules out TOTAL
+// index loss, not PARTIAL coverage: a freshly (re)created tx_hash_index on
+// a lake that already has history goes non-empty after the very first live
+// transaction (the MV writes synchronously) while every row for that
+// lake's EXISTING history is still missing, so a miss against it is
+// wrongly treated as authoritative until the one-time backfill catches up.
+//
+// A naive count(tx_hash_index) vs count(stellar.transactions) gate was
+// tried and reverted here (lint-lake-dedup, 2026-09): stellar.transactions
+// is a duplicate-bearing ReplacingMergeTree (live-sink retries) while the
+// one-time backfill inserts FINAL-deduped rows into tx_hash_index, so a
+// healthy fully-backfilled deployment would never reach raw-count parity
+// and the fast path would degrade to the scan FOREVER — a new, worse
+// defect. The real fix needs a backfill-completion signal written by
+// stellarindex-ops ch-txindex-backfill (internal/ops/chops/
+// ch_txindex_backfill.go), outside this package's scope fence
+// (NEEDS-COORDINATION). This test asserts the CORRECT behaviour so the
+// coordinated fix has a red target: it is expected to fail against
+// TransactionByHash exactly as shipped today, and is skipped to keep the
+// suite green until that coordination lands.
+func TestTransactionByHashNonEmptyIndexIsNotProofOfCoverage(t *testing.T) {
+	t.Skip("F106 residual: needs a backfill-completion signal from " +
+		"internal/ops/chops/ch_txindex_backfill.go (NEEDS-COORDINATION, " +
+		"outside internal/storage/clickhouse's scope fence) — see the " +
+		"KNOWN RESIDUAL GAP note on TransactionByHash")
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case isIndexProbe(q):
+			return probeHit(), nil // the index is non-empty (one live-ingested row)
+		case isIndexLookup(q):
+			return nil, fmt.Errorf("an uncovered index must not be consulted: %s", q)
+		case isBloomScan(q):
+			return &stubRows{data: [][]any{{uint32(65_000_000)}}}, nil
+		case isLedgerScopedRead(q):
+			return &stubRows{data: [][]any{txRowFor(65_000_000, testTxHash)}}, nil
+		default:
+			return nil, fmt.Errorf("unexpected query: %s", q)
+		}
+	}
+	r := &ExplorerReader{conn: conn}
+
+	tx, found, err := r.TransactionByHash(context.Background(), testTxHash)
+	if err != nil || !found {
+		t.Fatalf("TransactionByHash = (found=%v, err=%v), want scan hit despite a non-empty-but-uncovered index", found, err)
+	}
+	if tx.Seq != 65_000_000 {
+		t.Fatalf("tx.Seq = %d, want 65000000 (via the bloom scan)", tx.Seq)
+	}
+	if n := countQueries(conn.queries, isIndexLookup); n != 0 {
+		t.Fatalf("index lookups = %d, want 0 — an uncovered index must not answer (queries: %v)", n, conn.queries)
+	}
+	if n := countQueries(conn.queries, isBloomScan); n != 1 {
+		t.Fatalf("bloom scans = %d, want 1 (queries: %v)", n, conn.queries)
+	}
+}
+
 func TestTransactionByHashIndexRowWithoutBaseRowFallsBack(t *testing.T) {
 	// An index row whose ledger-scoped read comes up empty (shouldn't happen,
 	// but e.g. a partial re-derive) must fall through to the scan rather than

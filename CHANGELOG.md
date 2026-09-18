@@ -189,6 +189,19 @@ against.
   found a real interior gap or hash break in a high-genesis source's own,
   otherwise-untruncated range. Scoping the scan to each source's own genesis
   means a truncation entirely below it no longer trips that source's guard.
+- **docs(clickhouse):** `tier1_schema.sql`'s comment above `tx_hash_index`
+  claimed the reader falls back to a bloom scan on any index miss —
+  the opposite of what `ExplorerReader.TransactionByHash` has done since
+  the 2026-07-30 account-filter class audit, which made a miss against a
+  NON-EMPTY index authoritative (F106). Corrected to state the true
+  contract and mark the one-time `ch-txindex-backfill` as a correctness
+  PREREQUISITE on any lake with prior history, not a deferrable
+  performance optimisation. The reader's remaining gap — its
+  availability probe proves the index is non-empty, not that the
+  backfill has finished — needs a completion signal from
+  `internal/ops/chops/ch_txindex_backfill.go` that this package cannot
+  add alone (NEEDS-COORDINATION; a naive row-count coverage check was
+  tried and reverted, see the KNOWN GAP note in `tier1_schema.sql`).
 - **api:** four more surfaces now apply the dex-nonstandard-decimals
   normalisation instead of publishing the RAW `prices_1m` ratio for a
   confirmed non-7-decimals token (F017). The class was half-fixed, and
