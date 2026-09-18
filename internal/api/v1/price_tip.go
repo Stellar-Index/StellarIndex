@@ -193,9 +193,18 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	}
 	// Scam-issuer gate: same posture as the substance gate on this
 	// surface — a directory-scam-flagged issuer's live tip is still an
-	// aggregated price claim we decline to publish. Keyed on the base, so
-	// it covers every quote (including the XLM-triangulated headline).
-	if s.scam != nil && s.scam.Withheld(ctx, asset, "tip") {
+	// aggregated price claim we decline to publish.
+	//
+	// Asked about BOTH legs, via [scamWithheld], because the withholding
+	// decision is a property of the MARKET rather than of whichever leg
+	// the client named first. This line used to read
+	// `s.scam.Withheld(ctx, asset, "tip")` and claim that keying on the
+	// base "covers every quote": it did the opposite — the tip of
+	// `?asset=native&quote=<FLAGGED>` is the flagged market's own price
+	// inverted, and it was served at 200, unauthenticated, live, off the
+	// flagged issuer's own trades, while `?asset=<FLAGGED>` 404'd
+	// (F002/K001). One call, both legs, folded inside pricingguard.
+	if scamWithheld(ctx, s.scam, asset, quote, "tip") {
 		return PriceSnapshot{}, nil, ErrPriceWithheld
 	}
 	// Which alias combinations the window merges, and which it holds back

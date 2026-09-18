@@ -103,9 +103,17 @@ const closedStreamGateBudget = tipStreamTickTimeout
 // would otherwise start fanning out a directory-flagged issuer's VWAP.
 //
 // Keyed on the requested (asset, quote): the substance gate measures
-// the pair's ALIAS UNION and the scam gate resolves the base to its
+// the pair's ALIAS UNION and the scam gate resolves each leg to its
 // canonical family form internally, so one consultation covers every
 // alias spelling this connection subscribes to.
+//
+// BOTH LEGS on the scam side too, via [scamWithheld]. This line used to
+// spell `s.scam.Withheld(ctx, asset, ...)` — the base-only question —
+// so a flagged issuer named as the QUOTE opened the stream at 200 and
+// was fanned its own market's price, inverted, once per closed bucket
+// for the hours an SSE connection lives, while the same issuer named as
+// the asset was refused (F002/K001). The fold over legs belongs inside
+// pricingguard, never hand-written at a call site.
 //
 // Nil gates (operator disabled [pricing_guard]) withhold nothing.
 func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) bool {
@@ -117,7 +125,7 @@ func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonica
 	if s.substance != nil && !s.substance.Allowed(ctx, asset, quote, closedStreamGateSurface) {
 		return true
 	}
-	return s.scam != nil && s.scam.Withheld(ctx, asset, closedStreamGateSurface)
+	return scamWithheld(ctx, s.scam, asset, quote, closedStreamGateSurface)
 }
 
 // forwardClosedStream bridges the Hub subscription onto the SSE writer
