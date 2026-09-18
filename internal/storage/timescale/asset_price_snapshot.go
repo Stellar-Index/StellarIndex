@@ -156,6 +156,16 @@ const snapshotPriceUSDExpr = `COALESCE(
 // columns need no factor: each is a ratio of two legs read through the
 // same arm, so the scale cancels.
 //
+// A MULTIPLIER OF THIS COLUMN MUST USE THE SAME DECIMALS. Reading is not
+// the only way to consume a scale: a market cap is this price times a
+// smallest-unit supply divided by 10^decimals, and with a true-scale
+// price that exponent has to be the token's real decimals. Against the
+// RAW ratio the standard 7 was right by cancellation, so storing the
+// corrected price moved the divisor's requirement with it. The shared
+// listing fill takes it from this same table
+// (v1.Server.applyConfirmedListingDecimals); the RWA contract arm's own
+// fill divides by the lake's decimals() reading.
+//
 // The CASE (rather than a COALESCE'd factor of 1) keeps the stored value
 // for every asset with no confirmed row the exact NUMERIC it always was,
 // display scale included. power(numeric, numeric) with an integral

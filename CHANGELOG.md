@@ -17,6 +17,34 @@ against.
 
 ### Fixed
 
+- **assets listing:** the listing `market_cap_usd` of a confirmed
+  non-7-decimals token divides supply by the token's confirmed decimals,
+  not by the standard 7 (F017, the market-cap leg). This corrects the
+  listing entry below, which claimed that normalising `price_usd` in the
+  `asset_price_snapshot` writer needed no reader-side change: that holds
+  for everything that READS the price and is wrong for the one place
+  that MULTIPLIES it. The cap is supply in the token's smallest unit,
+  divided by 10^decimals, times the price, so the divisor is a consumer
+  of the price column's scale. While the column held the RAW ratio the
+  two errors cancelled — supply / 10^7 times a price off by
+  10^(7 − decimals) is the right number — and moving the price to true
+  scale turned a correct cap into one wrong by 10^(decimals − 7): 1,000
+  tokens of a 9-decimals contract at 2.50 USD published 250000.00
+  instead of 2500.00, an 18-decimals token eleven orders of magnitude
+  too much, a 5-decimals one a hundredth. `fillRowMarketCap` now takes
+  the divisor from `nonstandard_decimals_assets`, the same table the
+  writer joins, so price and divisor switch on one fact; it is the
+  fallback the detail page already makes when it has no lake reading.
+  The row's `decimals` is set to the same value, so the published
+  divisor is the one the cap was computed with and the smallest-unit
+  `circulating_supply` beside it scales correctly. One fix covers every
+  caller of the shared fill — both `/v1/assets` listing variants, the
+  catalogue-twin merge, the RWA classic listing, and the RWA contract
+  listing, where this fill runs before the contract's decimals are read
+  and its cap survives whenever the later contract-specific fill
+  declines. A token with no confirmed row keeps 7 beside the raw ratio
+  it is still served with, byte for byte.
+
 - **asset catalogue:** the catalogue reads that serve a USD price as
   rounded text — the per-asset row's `price_usd` and the four
   price-history series (24h, 7d, and both batch forms) — no longer round
@@ -79,8 +107,11 @@ against.
   upsert overwrites every column, the table is recomputed every
   2-minute pass and pruned — which a test proves by withdrawing and
   restoring a confirmation and reading the stored value flip with no
-  residue. Writing it once corrects every reader of the column (none of
-  them normalised), keeps the multiply on unrounded NUMERIC so the wire
+  residue. Writing it once corrects every READER of the column (none of
+  them normalised) — but not the market cap, which multiplies the column
+  by a supply carrying its own scale and needed its divisor moved with
+  it; see the market-cap entry above. It keeps the multiply on unrounded
+  NUMERIC so the wire
   rounding now happens after the correction, and leaves the 1h/24h/7d
   change columns alone — each is a ratio of two same-scale legs. An asset
   with no confirmed row stores and serves the byte-identical value it

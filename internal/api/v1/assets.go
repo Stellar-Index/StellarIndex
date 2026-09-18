@@ -1354,6 +1354,10 @@ func (s *Server) fillRowMarketCap(
 	if circ == "" {
 		return
 	}
+	// Before ANY branch below publishes the supply: every one of them
+	// stamps a smallest-unit figure the row's `decimals` has to be able
+	// to scale, whether or not a cap goes out beside it.
+	s.applyConfirmedListingDecimals(row)
 	// Unverified ticker collision (stampListingCollisions runs before
 	// this fill on both listing variants): a look-alike of a verified
 	// currency must not publish price × supply as a headline valuation
@@ -1393,6 +1397,35 @@ func (s *Server) fillRowMarketCap(
 	}
 	row.MarketCapUSD = &mc
 	stampCirculatingSupply(row, circ, basis)
+}
+
+// applyConfirmedListingDecimals puts a listing row's supply divisor on the
+// scale its price is on.
+//
+// assetDetailFromAssetRow stamps the protocol's 7 on every row. The row's
+// price_usd comes from asset_price_snapshot, whose writer stores the
+// TRUE-scale price for a token with a confirmed row in
+// nonstandard_decimals_assets (timescale's snapshotNormalizedPriceUSDExpr),
+// so for exactly those tokens the divisor has to be the confirmed decimals:
+// supply / 10^7 times a true-scale price is wrong by 10^(decimals - 7).
+// While the rollup stored the RAW ratio the two errors cancelled, which is
+// why the divisor is a CONSUMER of that column's scale and moved with it.
+//
+// Keyed on the same table the writer joins, so price and divisor switch on
+// one fact. A token with no confirmed row keeps 7 beside the raw ratio it
+// is still served with — the pair that cancels — and is untouched. This is
+// the fallback [Server.applyTokenDecimals] makes when it has no lake
+// reading: the confirmed row IS a lake reading, and it is the one the price
+// was normalised with.
+//
+// The row's `decimals` is overwritten rather than the value only being
+// passed to the cap, so the published divisor is the one the published cap
+// was computed with, and the smallest-unit circulating_supply beside it
+// scales to the right number of whole tokens.
+func (s *Server) applyConfirmedListingDecimals(row *AssetDetail) {
+	if confirmed, flagged := s.nonstandardDecimals.Lookup(row.AssetID); flagged {
+		row.Decimals = confirmed
+	}
 }
 
 // applySubstanceGateToListing extends the thin-market substance gate
