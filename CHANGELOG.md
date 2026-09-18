@@ -54,6 +54,23 @@ against.
   XLM that moved, so the value is exact. Not in this change: the DEX TVL
   valuer still consumes the resolver rate uncapped behind its substance
   gate. (audit-2026-09-02 F044; K045, insert path only)
+- **aggregator (freeze, money path):** the lifecycle-free
+  `freeze.Writer.Mark` — the triangulated-composite refusal's writer,
+  whose targets are members of the aggregator's own pair set and whose
+  call sits on the `ErrNoRoute` branch ahead of the guard that protects a
+  self-frozen target — no longer rewrites a marker a live ADR-0019 ladder
+  owns. It used to replace the marker's `remaining hold + grace` TTL with
+  its flat five minutes, zero the pair-level state a legacy marker keeps
+  its only ladder in, and relabel an escalated freeze as an inherited
+  one; and as the first writer back after a Redis loss it re-created the
+  marker WITHOUT the durable ladder, which is never consulted again once
+  a marker is present. Mark now leaves an owned marker as it found it,
+  and carries the durable ladders into one it has to re-create. The
+  marker's single TTL is floored at the longest `remaining hold + grace`
+  of any live ladder in it, for every writer, so a 5m window's short
+  remainder cannot truncate a 1h sibling's hold either.
+  `inheritLegFreeze`'s signature and its flat `cachekeys.FreezeTTL`
+  last-known-good refresh are unchanged. (audit-2026-09-02 F068, K003)
 - **aggregator (freeze, money path):** the DURABLE ADR-0019 freeze
   ladder is now recorded per aggregation window (migration 0163,
   `freeze_events.window_ladders`). The 0119 ladder columns are keyed

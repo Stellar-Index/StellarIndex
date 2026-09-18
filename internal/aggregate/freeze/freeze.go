@@ -456,7 +456,9 @@ func (w *Writer) markHold(
 		ttl = w.ttl
 	}
 	key := cachekeys.Freeze(asset, quote)
-	windowed, ladders, unowned := w.mergeLadders(ctx, asset, quote, windowLabel(window), state)
+	label := windowLabel(window)
+	now := time.Now()
+	windowed, ladders, unowned, prior := w.mergeLadders(ctx, asset, quote, label, state)
 	marker := Marker{
 		AssetID:       asset.String(),
 		QuoteID:       quote.String(),
@@ -464,11 +466,36 @@ func (w *Writer) markHold(
 		Class:         decision.Class,
 		DeviationPct:  decision.DeviationPct,
 		Reason:        decision.Reason,
-		FrozenAt:      time.Now().UTC(),
+		FrozenAt:      now.UTC(),
 		Windowed:      windowed,
 		Ladders:       ladders,
 		UnownedLadder: unowned,
 		State:         state,
+	}
+	if label == "" && !state.Active() && prior != nil && w.lifecycleTTLFloor(*prior, "", now) > 0 {
+		// The lifecycle-free [Writer.Mark] landing on a marker a live
+		// ADR-0019 ladder owns. Mark is entitled to one thing — the pair
+		// carrying `flags.frozen` for its flat TTL — and the marker's
+		// presence already is that. Everything else in it belongs to the
+		// lifecycle: the ladders, the pair-level State a legacy marker
+		// keeps its only ladder in, and the owner's diagnostics. Rewriting
+		// them is how the triangulated-composite refusal (whose targets
+		// are members of the aggregator's own pair set) zeroed a legacy
+		// marker's ladder and relabelled an escalated freeze as an
+		// inherited one. Keep the owner's marker; only the expiry below
+		// can move, and only outwards.
+		marker = *prior
+	}
+	// One key, one TTL, several owners. Whoever writes must not pull the
+	// expiry in under a hold somebody else is still serving: the marker
+	// outlives every live ladder in it by the grace, which is what each
+	// ladder's own writer would have asked for. Without the floor Mark's
+	// flat five minutes replaced a 35-minute hold, and a 5m window's short
+	// remainder truncated a 1h sibling's — either of which lapses the
+	// marker, and with it the freeze, on the first tick the owning window
+	// returns early instead of re-marking.
+	if floor := w.lifecycleTTLFloor(marker, label, now); floor > ttl {
+		ttl = floor
 	}
 	body, err := json.Marshal(marker)
 	if err != nil {
@@ -653,12 +680,18 @@ func (w *Writer) mergeLadders(
 	asset, quote canonical.Asset,
 	label string,
 	state State,
-) (bool, map[string]State, State) {
+) (bool, map[string]State, State, *Marker) {
 	key := cachekeys.Freeze(asset, quote)
 	marker, ok, err := w.readMarker(ctx, key)
 	ladders := map[string]State{}
 	windowed := false
 	var unowned State
+	// prior is the marker this write replaces, for the one caller that
+	// may have to leave it as it is ([Writer.markHold]'s Mark branch).
+	var prior *Marker
+	if err == nil && ok {
+		prior = &marker
+	}
 	switch {
 	case err != nil || !ok:
 		// No marker to merge with. Either this is the pair's first
@@ -688,14 +721,60 @@ func (w *Writer) mergeLadders(
 		unowned = State{}
 	}
 	if label == "" {
-		return windowed, ladders, unowned
+		// An unscoped write claims no window, but it must not HIDE the
+		// ladders it found. When the marker was absent and the durable
+		// record supplied them (Redis lost the marker and the
+		// lifecycle-free [Writer.Mark] is the first writer back), the
+		// marker written here is what every cold window reads from now on
+		// — the durable record is only consulted while the marker is
+		// missing. It therefore has to be one whose ladders are honoured,
+		// i.e. a windowed marker, or a present-but-empty marker reads as
+		// "frozen pair-wide, this window never was" and the window
+		// publishes the bucket an escalated freeze was withholding.
+		return windowed || len(ladders) > 0 || unowned.Active(), ladders, unowned, prior
 	}
 	if state.Active() {
 		ladders[label] = state
 	} else {
 		delete(ladders, label)
 	}
-	return true, ladders, unowned
+	return true, ladders, unowned, prior
+}
+
+// lifecycleTTLFloor is the shortest TTL the marker may be written with
+// without lapsing under a hold one of its ladders is still serving: the
+// longest `remaining hold + grace` over every still-live ladder it
+// carries. Zero when it carries none — which doubles as "does a live
+// lifecycle own this marker".
+//
+// `own` is the label of the window doing the writing, skipped because
+// that window's caller passes its own lifecycle TTL (the policy's
+// MarkerGrace, which an operator may have tuned) and is the authority for
+// it. Empty for a writer that owns no window.
+//
+// A marker written before per-window ladders existed keeps its one ladder
+// in the pair-level State, so that counts too — but only there: on a
+// windowed marker State is a mirror of the last writer, not an authority.
+func (w *Writer) lifecycleTTLFloor(marker Marker, own string, now time.Time) time.Duration {
+	var floor time.Duration
+	consider := func(st State) {
+		if !LadderStillLive(st, w.ladderGrace, now) {
+			return
+		}
+		if need := st.HoldUntil.Sub(now) + w.ladderGrace; need > floor {
+			floor = need
+		}
+	}
+	for label, st := range marker.Ladders {
+		if label != own {
+			consider(st)
+		}
+	}
+	consider(marker.UnownedLadder)
+	if !marker.Windowed {
+		consider(marker.State)
+	}
+	return floor
 }
 
 // liveDurableLadder returns the migration-0119 ladder for the marker's
