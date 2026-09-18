@@ -729,14 +729,20 @@ type Orchestrator struct {
 	frozenPrevVWAPs map[string]*big.Rat
 
 	// lastWriteAt tracks the wall-clock timestamp of the most recent
-	// successful VWAP cache-write per pair (keyed by `pair.Base.String()`,
-	// matching the `asset` label on `obs.PriceStalenessSeconds`). Used
+	// successful VWAP cache-write per pair, keyed by `pair.String()` —
+	// base AND quote, so one quote's publishes cannot vouch for
+	// another's (F067). Written only through `recordPairWrite`: by both
+	// writers of the served VWAP key (refreshPairWindow's direct publish
+	// and publishComposite's composite publish) and by the first-sighting
+	// seed in `emitStalenessGauges`. Used
 	// by `emitStalenessGauges` at end-of-Tick to drive the
 	// `stellarindex_api_price_stale` alert (F-1306, codex audit-2026-05-13).
-	// Bounded by len(cfg.Pairs) — a small operator-curated allow-list,
-	// so cardinality fits well inside Prometheus's per-metric comfort
-	// zone. Same single-Tick-at-a-time invariant as prevVWAPs, so no
-	// lock needed.
+	// Bounded by len(cfg.Pairs) + len(cfg.Triangulations) — both small
+	// operator-curated lists (a chain target need not be a configured
+	// pair; its stamp is then recorded but never emitted, because the
+	// gauge iterates cfg.Pairs only), so gauge cardinality is unchanged
+	// and fits well inside Prometheus's per-metric comfort zone. Same
+	// single-Tick-at-a-time invariant as prevVWAPs, so no lock needed.
 	lastWriteAt map[string]time.Time
 
 	// lastDivergenceRefreshAt is the wall-clock time of the most
@@ -768,6 +774,14 @@ type Orchestrator struct {
 	// adding o.mu here would race those two and could silently launder a
 	// frozen leg into a derived price. See prevVWAPs.
 	frozenThisTick map[string]struct{}
+
+	// tickNow is the CURRENT tick's `now` — the injected clock, read once
+	// at the top of [Tick]. publishComposite stamps the pair-level write
+	// clock with it, so the composite writer, the direct writer and
+	// emitStalenessGauges all judge one instant rather than the composite
+	// stamping triangulateAll's own wall-clock read (F067). Zero outside
+	// a Tick. Same single-Tick-at-a-time invariant as frozenThisTick.
+	tickNow time.Time
 
 	// tickEdgeQuotes accumulates, per window, the priced-pair VWAPs of
 	// the CURRENT tick as router edge inputs (aggregate.Quote). The
@@ -963,6 +977,10 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	o.ticksTotal++
 	o.mu.Unlock()
 
+	// This tick's clock for every pair-level write stamp — see
+	// [Orchestrator.tickNow].
+	o.tickNow = now
+
 	// Fresh per-tick freeze set — see [Orchestrator.frozenThisTick].
 	o.frozenThisTick = make(map[string]struct{})
 
@@ -1043,8 +1061,65 @@ func (o *Orchestrator) activeFreezeCount() int {
 	return n
 }
 
+// The two canonical forms of XLM, as they appear in the `asset` label
+// of `stellarindex_price_staleness_seconds`.
+const (
+	stalenessXLMNative = "native"
+	stalenessXLMTicker = "crypto:XLM"
+)
+
+// recordPairWrite stamps a successful VWAP publish for `pair`. The key
+// is the FULL pair (base and quote): a base-only key let every publish
+// of XLM/USD reset the one timestamp a dead XLM/GBP was judged by, so
+// the only serving-freshness alert read fresh through a per-quote
+// outage (F067).
+//
+// It is the ONLY writer of lastWriteAt, and the served VWAP key has two
+// writers that both come through here: the direct publish in
+// refreshPairWindow and the composite publish in publishComposite. A
+// pair served only through a triangulation chain publishes every tick
+// without ever reaching the direct writer, so stamping from one of them
+// alone reads such a pair as dead while it serves.
+//
+// A zero `at` (publishComposite driven outside a Tick, where tickNow is
+// unset) records nothing. That is the fail-safe direction: an unstamped
+// pair's gauge keeps climbing; it is never vouched fresh by no clock.
+func (o *Orchestrator) recordPairWrite(pair canonical.Pair, at time.Time) {
+	if at.IsZero() {
+		return
+	}
+	o.lastWriteAt[pair.String()] = at
+}
+
+// pairLastWrite is the freshest write that can answer a lookup for
+// `pair`. For every base but XLM that is the pair's own stamp. XLM has
+// two interchangeable base forms (see emitStalenessGauges), so either
+// form's write for the SAME quote counts — never another quote's.
+func (o *Orchestrator) pairLastWrite(pair canonical.Pair) time.Time {
+	last := o.lastWriteAt[pair.String()]
+	var sibling string
+	switch pair.Base.String() {
+	case stalenessXLMNative:
+		sibling = stalenessXLMTicker
+	case stalenessXLMTicker:
+		sibling = stalenessXLMNative
+	default:
+		return last
+	}
+	if other, ok := o.lastWriteAt[sibling+"/"+pair.Quote.String()]; ok && other.After(last) {
+		return other
+	}
+	return last
+}
+
 // emitStalenessGauges sets `stellarindex_price_staleness_seconds` for
-// every configured pair to `time.Since(lastWriteAt[asset]).Seconds()`.
+// every configured base asset to the age of its STALEST configured
+// quote: max over the asset's pairs of `now - lastWriteAt[pair]`. The
+// gauge carries one `asset` label, and the alert on it is the only
+// serving-freshness alert, so the value has to be the worst pair — a
+// freshest-pair (or shared-key) reading stays at 0 while one quote
+// serves nothing (F067).
+//
 // Pairs that have never written carry the wall-clock age since the
 // aggregator started (orchestrator construction time would be cleaner
 // but the orchestrator doesn't currently track its own birthday — the
@@ -1061,45 +1136,43 @@ func (o *Orchestrator) activeFreezeCount() int {
 // pair (the same translation list `internal/api/v1/changes.go::
 // aliasEntityIDs` already documents).
 func (o *Orchestrator) emitStalenessGauges(now time.Time) {
+	// First sighting — treat as "just observed" so the metric is
+	// present but doesn't immediately page. Seeded for every pair
+	// BEFORE any is read, so the dual-form merge in pairLastWrite sees
+	// the same map whichever form cfg.Pairs lists first.
+	for _, pair := range o.cfg.Pairs {
+		if _, ok := o.lastWriteAt[pair.String()]; !ok {
+			o.recordPairWrite(pair, now)
+		}
+	}
+
+	// XLM appears in two canonical forms across the codebase:
+	// `native` (per-network) and `crypto:XLM` (global ticker).
+	// Customers query with `native` via /v1/price; oracles publish
+	// `crypto:XLM`. For ONE quote the customer's freshness is the
+	// freshest of the two forms — if EITHER has just been written, the
+	// API will resolve the lookup (pairLastWrite). Both forms fold into
+	// one entry here and both labels are set from it, so the
+	// api_price_stale alert isn't order-dependent on cfg.Pairs
+	// iteration. Pre-fix, the last pair iterated overwrote the other
+	// label via a one-way mirror; iteration order decided whether the
+	// alert was "always fresh" or "always stale".
+	worst := make(map[string]float64, len(o.cfg.Pairs))
 	for _, pair := range o.cfg.Pairs {
 		asset := pair.Base.String()
-		last, ok := o.lastWriteAt[asset]
-		if !ok {
-			// First sighting — treat as "just observed" so the metric
-			// is non-zero/present but doesn't immediately page.
-			last = now
-			o.lastWriteAt[asset] = last
+		if asset == stalenessXLMTicker {
+			asset = stalenessXLMNative
 		}
-		stale := now.Sub(last).Seconds()
-
-		// XLM appears in two canonical forms across the codebase:
-		// `native` (per-network) and `crypto:XLM` (global ticker).
-		// Customers query with `native` via /v1/price; oracles
-		// publish `crypto:XLM`. The customer's freshness is the
-		// freshest of the two — if EITHER form has just been written,
-		// the API will resolve the customer's lookup. We emit
-		// MIN(stale_native, stale_crypto_XLM) for BOTH labels so the
-		// api_price_stale alert isn't order-dependent on cfg.Pairs
-		// iteration. Pre-fix, the last pair iterated overwrote the
-		// other label via a one-way mirror; iteration order decided
-		// whether the alert was "always fresh" or "always stale".
-		if asset == "native" || asset == "crypto:XLM" {
-			native, nativeOK := o.lastWriteAt["native"]
-			ticker, tickerOK := o.lastWriteAt["crypto:XLM"]
-			fresh := last
-			if nativeOK && (fresh.IsZero() || native.After(fresh)) {
-				fresh = native
-			}
-			if tickerOK && (fresh.IsZero() || ticker.After(fresh)) {
-				fresh = ticker
-			}
-			stale = now.Sub(fresh).Seconds()
-			obs.PriceStalenessSeconds.WithLabelValues("native").Set(stale)
-			obs.PriceStalenessSeconds.WithLabelValues("crypto:XLM").Set(stale)
-			continue
+		stale := now.Sub(o.pairLastWrite(pair)).Seconds()
+		if cur, seen := worst[asset]; !seen || stale > cur {
+			worst[asset] = stale
 		}
-
+	}
+	for asset, stale := range worst {
 		obs.PriceStalenessSeconds.WithLabelValues(asset).Set(stale)
+		if asset == stalenessXLMNative {
+			obs.PriceStalenessSeconds.WithLabelValues(stalenessXLMTicker).Set(stale)
+		}
 	}
 }
 
@@ -1326,7 +1399,7 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// `stellarindex_price_staleness_seconds` series the api alert
 	// rule queries. Pair-level (not pair×window) — staleness reads
 	// off the asset/quote shape that customers see via /v1/price.
-	o.lastWriteAt[pair.Base.String()] = now
+	o.recordPairWrite(pair, now)
 
 	o.publishToStream(ctx, pair, window, value, now)
 	return nil

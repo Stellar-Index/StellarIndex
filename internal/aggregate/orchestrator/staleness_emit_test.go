@@ -110,7 +110,7 @@ func TestEmitStalenessGauges_xlmNativeMirrorOrderIndependent(t *testing.T) {
 
 			// 10 minutes later: native gets a fresh "write" via the
 			// VWAP path. crypto:XLM keeps its t0 first-sighting time.
-			orch.lastWriteAt["native"] = t0.Add(10 * time.Minute)
+			orch.lastWriteAt[xlmNativePair.String()] = t0.Add(10 * time.Minute)
 
 			emitAt := t0.Add(10 * time.Minute)
 			orch.emitStalenessGauges(emitAt)

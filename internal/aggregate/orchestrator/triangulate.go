@@ -433,6 +433,17 @@ func (o *Orchestrator) publishComposite(
 		return "redis_error"
 	}
 
+	// The served VWAP key was just written, so this pair published this
+	// tick: stamp the pair-level write clock the staleness gauge reads
+	// (F067). This is the key's SECOND writer — a target served only
+	// through its chain never reaches refreshPairWindow's stamp, and
+	// without this one it reads as a dead feed while publishing every
+	// tick. Only here, after the value landed: every refusal above
+	// (parse_error, redis_error) and every non-publishing outcome in
+	// routeTarget (low_confidence, missing_leg, frozen) returned without
+	// reaching it. The Tick's clock, not triangulateAll's wall-clock read.
+	o.recordPairWrite(chain.Target, o.tickNow)
+
 	// Corroboration input for the NEXT tick — both the freeze's
 	// source_count leg (via the INDEPENDENT corroboration count, not the
 	// raw survivor pathCount) and the confidence divergence factor

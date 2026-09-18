@@ -336,6 +336,45 @@ against.
   than 100 bytes is now a 400 (`invalid-parameter`) on every path; the
   longest value that can match a row is a 69-byte classic asset id
   (K009).
+- **aggregator (alerting):** `stellarindex_price_staleness_seconds` no
+  longer reads fresh through a per-quote price outage (F067). The
+  aggregator stamped each successful VWAP publish under the pair's BASE
+  asset alone, so with the shipped pair set (`crypto:XLM`, `native`,
+  `crypto:BTC`, `crypto:ETH` × USD/EUR/GBP) three quotes shared one
+  timestamp: every `XLM/USD` publish reset the clock a dead `XLM/GBP`
+  was judged by, and `stellarindex_api_price_stale` — the only
+  serving-freshness alert — stayed silent while
+  `/v1/price?asset=crypto:XLM&quote=fiat:GBP` served nothing. Writes are
+  now stamped per (base, quote), and the gauge for an asset is the age
+  of its STALEST configured quote. The native ↔ `crypto:XLM` merge is
+  applied within a quote only (either form's write answers a lookup for
+  that quote; neither says anything about another quote), and both
+  labels still carry the same value regardless of `aggregate.pairs`
+  order. The gauge keeps its single `asset` label, so the alert rule,
+  runbook and dashboards are unchanged — it names the asset, not the
+  quote. A pair's clock is stamped by BOTH writers of its served VWAP
+  key: the direct publish and the triangulation composite
+  (`publishComposite`, on a confident publish only — never on
+  `low_confidence`, `missing_leg`, a frozen leg or a Redis error). A
+  configured pair served only through its chain, such as a thin
+  `crypto:XLM/fiat:GBP` priced as XLM/USD × USD/GBP, therefore reads
+  fresh while it publishes and climbs when its chain goes dry; it is a
+  served pair, not a dead feed. **Operator note:** a configured pair that
+  NEITHER writer publishes — no direct trades clearing
+  `aggregate.min_usd_volume` in any window and no publishing chain — was
+  previously masked by its siblings and will now raise
+  `stellarindex_api_price_stale` for its base asset. That is hidden state
+  becoming visible. Find the quote from the asset, then: restore the
+  feed; or, where the pair has a deep USD market, give it a
+  `[[aggregate.triangulations]]` chain through USD (check `fx_quotes`
+  carries the fiat leg); and drop it from `aggregate.pairs` only if it
+  is not meant to be served at all. Regression tests drive the real
+  `Tick` → publish → gauge path
+  (`TestTick_DeadQuoteIsNotMaskedByALiveSiblingQuote`,
+  `TestTick_XLMDualFormIsMergedPerQuote`,
+  `TestTick_CompositeServedPairReadsFresh`,
+  `TestTick_CompositeThatDoesNotPublishStillClimbs`).
+
 - **aggregator (money):** the ADR-0019 freeze marker now carries one
   lifecycle ladder PER aggregation window instead of a single
   pair-level one. The `freeze:<asset>:<quote>` key is pair-scoped
