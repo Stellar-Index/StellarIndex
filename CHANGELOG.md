@@ -54,6 +54,16 @@ against.
   XLM that moved, so the value is exact. Not in this change: the DEX TVL
   valuer still consumes the resolver rate uncapped behind its substance
   gate. (audit-2026-09-02 F044; K045, insert path only)
+- **docs (ADR-0019):** amended to record that the freeze lifecycle runs
+  per (pair, window) and that both records of it — the Redis marker and
+  the durable ladder — are now window-scoped while the marker's PRESENCE
+  (`flags.frozen`, the operator override) stays pair-scoped; the
+  fail-closed rule for records with no recorded owner; the three rules
+  for anything that writes the marker (a release asks the record, the
+  lifecycle-free writer sets only the serving flag, no write shortens a
+  sibling's hold); and that "frozen" for triangulation is not "frozen
+  this tick". Describes the four entries below as shipped.
+  (audit-2026-09-02 F011, F036, F043, F068, K003; RLT-261)
 - **aggregator (freeze, money path):** a frozen pair's last-known-good
   price can no longer be laundered through triangulation on the ticks
   AFTER the one that froze it (MNY-22's second half). The guard read a

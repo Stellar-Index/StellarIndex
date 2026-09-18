@@ -213,6 +213,86 @@ superseded_by: null
 >   the marker, so an auto-release cannot be re-hydrated by a restart landing
 >   inside the recovery worker's 60-second poll window.
 
+> **Amendment (2026-09-18, migration 0163 — the lifecycle is per WINDOW, and
+> so is every record of it).** This ADR describes the freeze lifecycle as a
+> property of a pair. The aggregator runs it per **(pair, window)** — one
+> independent ladder for each of the 5m / 1h / 24h windows — while the two
+> records behind it, the Redis marker `freeze:<asset>:<quote>` and the 0119
+> durable ladder, were both keyed per pair. A pair-keyed record of a
+> per-window fact can only ever be one window's, with nothing saying whose.
+> Every defect below is that one mismatch, and they do not all fail the same
+> way: some over-hold a healthy window, and some **end an escalated freeze**,
+> which is the direction this ADR exists to prevent.
+>
+> What is pair-scoped, and stays so: the marker's **presence**. It is the
+> single `flags.frozen` the API serves for the pair, and its absence under a
+> live freeze is the operator override for every window. Nothing about
+> `flags.frozen` or `stellarindex-ops freeze-unfreeze` changes.
+>
+> What is window-scoped, in both records:
+>
+> * **The marker** carries one ladder per window (2026-09-18, E1). A window
+>   reads, advances and retires only its own.
+> * **The durable ladder** carries one ladder per window too:
+>   `freeze_events.window_ladders`, a jsonb map keyed by the window in
+>   seconds. Before it, every frozen window mirrored its ladder onto the same
+>   four 0119 columns on every tick, so the durable record was whichever
+>   window wrote last — and it is read only after Redis has lost the marker,
+>   when it is the sole authority. A 1h window that had `escalated` then
+>   rehydrated a 5m sibling's fresh ten-minute ladder and resumed
+>   auto-unfreezing. It is a map on the pair's open row, not a row per
+>   window, because one `freeze_events` row is one freeze *event*: what
+>   `/v1/anomalies` lists, what fires `anomaly.freeze`, what the recovery
+>   worker closes. The 0119 columns remain as the **fail-closed summary** of
+>   the entries (furthest hold, highest rung, escalated if any window is),
+>   which is what the recovery worker and `freeze-unfreeze -list` read, and
+>   `hold_until IS NOT NULL` remains the switch the whole record is honoured
+>   on.
+>
+> Where ownership is unknowable the answer is the conservative one. A marker
+> or a durable row written before its window dimension existed holds one
+> ladder with no owner; it keeps answering for **every** window (carried as
+> the "unowned" ladder, retiring on its own `hold_until + grace`) rather than
+> for none. Over-holding a window serves a price already flagged frozen and
+> releases on this ADR's own ratchet; dropping the ladder publishes the print
+> the freeze existed to withhold.
+>
+> Three rules follow for anything that touches the marker, each of which was
+> a live defect:
+>
+> 1. **A release asks the record, not only the process.** The marker is
+>    deleted by the last window to release, and "last" was decided from the
+>    in-memory ladder map — which a window only enters by reaching the freeze
+>    step in the current process. A window under `min_usd_volume` never does,
+>    and after a restart none has yet. A recovering 5m window therefore
+>    cleared the marker and retired the durable ladder under an `escalated`
+>    1h sibling. The release now keeps the marker whenever it still records
+>    another window's ladder, and a marker that cannot be read is left to its
+>    TTL rather than cleared.
+> 2. **The lifecycle-free writer sets the serving flag and nothing else.**
+>    The triangulated-composite refusal marks a *derived* target frozen with
+>    a flat TTL and no ladder. Its targets are themselves priced pairs, so it
+>    lands on markers a ladder owns; it used to replace the hold's TTL with
+>    its flat five minutes and zero the ladder a legacy marker carried, and as
+>    the first writer back after a Redis loss it re-created the marker
+>    without the durable ladder — which is never consulted again once a
+>    marker exists. It now leaves an owned marker as it found it and carries
+>    the durable ladders into one it must re-create.
+> 3. **One key has one TTL and several owners**, so no write may shorten it
+>    under a hold another window is still serving: the marker's TTL is
+>    floored at the longest `remaining hold + grace` of any live ladder in it.
+>
+> Finally, **"frozen" for triangulation is not "frozen this tick".** A freeze
+> keeps the pair's last-known-good value in Redis for the hold, and the
+> laundering guard (MNY-22) read a set rebuilt every tick and written only
+> from the freeze step — a step `refreshPairWindow` never reaches on a tick
+> the window is empty or under `min_usd_volume`. On such a tick a frozen leg's
+> last-known-good was read as a fresh price and published on a derived pair
+> with no frozen flag. The guard now also honours a live ladder held in
+> memory, bounded by `hold_until + the marker grace` — the span the value can
+> still be read back — so a window that simply stays empty cannot refuse its
+> chains indefinitely.
+
 > **Amendment (2026-07-24, audit-2026-07-23 R-003 / COR-14).** The
 > confidence formula block under §"Multi-factor confidence score"
 > writes the weighted product **without** its normalisation exponent,
