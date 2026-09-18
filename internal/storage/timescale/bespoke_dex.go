@@ -91,14 +91,56 @@ func dexRawWindowOK(source string, windowDays int) bool {
 // since-totals query binds source=$1 only (it is deliberately unwindowed
 // over the materialized-only CAGG — 0.23s for sdex's 3.13M rows on r1).
 
+// ─── the source_volume_1h read contract ──────────────────────────────────
+//
+// source_volume_1h (migration 0068) does NOT materialize a finished USD
+// figure: the XLM/USD multiply can't live in a continuous aggregate (it
+// cross-references prices_1m), so the CAGG stores the raw INPUTS and the
+// migration prescribes the read expression
+//
+//	sum_usd_priced + (sum_xlm_base + sum_xlm_quote)/10^7 * <XLM/USD vwap>
+//
+// Reading only `sum_usd_priced` serves every XLM-denominated leg the
+// ingest-time valuation left unpriced as $0 — the leg the CAGG exists to
+// carry. The other reader of this CAGG (sourceVolumeHistory,
+// sources_stats.go, behind /v1/sources' per-source volume + the source
+// page's own 24h/7d chart) applies the full expression, so a half read
+// here also served two different 24h volumes for one source on one page.
+//
+// dexXLMUSDVwapCTE / dexXLMLegUSD are the two halves, written to match
+// sourceVolumeHistory's expression exactly. The stroop divisor is spelled
+// 10000000 rather than the `1e7` of the sibling file because the DEX
+// suite's ADR-0003 guard (assertDEXNumericSafe) rejects exponent literals
+// in these query strings; the two constants are the same exact NUMERIC.
+const (
+	dexXLMUSDVwapCTE = `
+		WITH xlm_usd AS (
+		  SELECT vwap
+		    FROM prices_1m
+		   WHERE base_asset = 'native'
+		     AND quote_asset IN (
+		       'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+		       'fiat:USD'
+		     )
+		     AND vwap IS NOT NULL
+		     AND bucket >= NOW() - INTERVAL '24 hours'
+		   ORDER BY bucket DESC
+		   LIMIT 1
+		)`
+	dexXLMLegUSD = `COALESCE(sum(sum_usd_priced),0)
+		         + (COALESCE(sum(sum_xlm_base),0) + COALESCE(sum(sum_xlm_quote),0))
+		           / 10000000::numeric * COALESCE((SELECT vwap FROM xlm_usd),0)`
+)
+
 // dexActivitySeriesQuery returns the (bucket, usd_volume, trades) series
 // at the window's grain: hourly from the real-time source_volume_1h CAGG
 // at 24h (24 rows, 17ms on sdex), daily from dex_volume_by_pair_1d
-// otherwise (87 rows, 0.43s on sdex 90d).
+// otherwise (87 rows, 0.43s on sdex 90d). The 24h form applies migration
+// 0068's full read expression (see above), not just the priced leg.
 func dexActivitySeriesQuery(windowDays int) string {
 	if windowDays == 1 {
-		return `
-			SELECT to_char(bucket, 'YYYY-MM-DD"T"HH24:00'), COALESCE(sum(sum_usd_priced),0)::text, COALESCE(sum(trade_count),0)::text
+		return dexXLMUSDVwapCTE + `
+			SELECT to_char(bucket, 'YYYY-MM-DD"T"HH24:00'), (` + dexXLMLegUSD + `)::text, COALESCE(sum(trade_count),0)::text
 			FROM source_volume_1h WHERE source = $1 AND bucket > now() - $2::interval
 			GROUP BY 1 ORDER BY 1 ASC`
 	}
@@ -115,11 +157,12 @@ func dexActivitySeriesQuery(windowDays int) string {
 // the latter measured 6.0s on sdex 90d vs 0.67s for this shape (99,562
 // pairs). The 24h form reads source_volume_1h, which has no pair
 // dimension — the caller fills active-pairs from the raw KPI query
-// (dexRawWindowOK is always true at 24h).
+// (dexRawWindowOK is always true at 24h), and its USD volume applies
+// migration 0068's full read expression (dexXLMLegUSD).
 func dexWindowKPIQuery(windowDays int) string {
 	if windowDays == 1 {
-		return `
-			SELECT round(COALESCE(sum(sum_usd_priced),0),2)::text, COALESCE(sum(trade_count),0)::text
+		return dexXLMUSDVwapCTE + `
+			SELECT round(` + dexXLMLegUSD + `,2)::text, COALESCE(sum(trade_count),0)::text
 			FROM source_volume_1h WHERE source = $1 AND bucket > now() - $2::interval`
 	}
 	return `
@@ -338,6 +381,25 @@ func dexPairLabel(base, quote string) string {
 
 // ─── block assembly ──────────────────────────────────────────────────────
 
+// dexUSDValuationNote is the block's served statement of how its USD
+// figures are derived, and it is WINDOW-SPECIFIC because the derivation
+// is: every window sums the ingest-time trades.usd_volume valuation, and
+// the 24h window's volume KPI + hourly series additionally value the
+// XLM-denominated legs that valuation left unpriced, at the current
+// on-chain XLM/USD vwap (migration 0068's read contract — the same
+// derivation /v1/sources reports for the same source and window).
+//
+// The 24h per-pair surfaces (breakdown, top-pairs, largest trades, avg
+// trade size) come from raw trades and stay usd_volume-only — no CAGG
+// carries the XLM inputs per pair — so the note says where the extra leg
+// is counted rather than implying it is everywhere.
+func dexUSDValuationNote(windowDays int) string {
+	if windowDays == 1 {
+		return "USD figures are sums of the ingest-time trades.usd_volume valuation; the 24h volume KPI and hourly volume series additionally value XLM-denominated legs that valuation left unpriced, at the current on-chain XLM/USD vwap (the derivation /v1/sources reports), so they can exceed the per-pair breakdowns below, which stay usd_volume-only. Trades neither path can price are excluded from USD sums and averages but still count toward trade totals."
+	}
+	return "USD figures are sums of the ingest-time trades.usd_volume valuation only — never ad-hoc pricing. Trades whose quote never resolved to a USD price are excluded from USD sums and averages but still count toward trade totals."
+}
+
 // bespokeDEX builds the DEX/AMM bespoke block. See the file doc for the
 // three data tiers and the honesty rules each sub-part encodes.
 func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (*BespokeBlock, error) {
@@ -345,7 +407,7 @@ func (s *Store) bespokeDEX(ctx context.Context, source string, windowDays int) (
 	blk := &BespokeBlock{
 		Category: "dex",
 		Notes: []string{
-			"USD figures are sums of the ingest-time trades.usd_volume valuation only — never ad-hoc pricing. Trades whose quote never resolved to a USD price are excluded from USD sums and averages but still count toward trade totals.",
+			dexUSDValuationNote(windowDays),
 			"Pairs are labelled by verified token tickers (native XLM plus the verified-currency catalogue's SAC/token addresses); an unverified token shows a truncated contract id, never a guessed symbol. Base/quote amounts are token base units at per-asset decimals, not USD.",
 		},
 	}
@@ -389,7 +451,7 @@ func (s *Store) dexWindowBlocks(ctx context.Context, blk *BespokeBlock, source, 
 
 	raw := dexRawWindowOK(source, windowDays)
 	blk.KPIs = append(blk.KPIs,
-		BespokeKPI{Label: fmt.Sprintf("USD volume (%dd)", windowDays), Value: vol, Unit: "USD", Hint: "summed usd_volume of priced trades over the window"},
+		BespokeKPI{Label: fmt.Sprintf("USD volume (%dd)", windowDays), Value: vol, Unit: "USD", Hint: dexVolumeKPIHint(windowDays)},
 		BespokeKPI{Label: fmt.Sprintf("Trades (%dd)", windowDays), Value: trades},
 	)
 	var takersZero bool
@@ -418,6 +480,17 @@ func (s *Store) dexWindowBlocks(ctx context.Context, blk *BespokeBlock, source, 
 	}
 	s.dexOmissionNotes(blk, windowDays, raw, takersZero)
 	return nil
+}
+
+// dexVolumeKPIHint states the KPI's derivation for the window it was
+// computed on — the 24h figure carries the XLM-anchored leg that
+// migration 0068's read contract adds, the longer windows do not (the
+// daily pair CAGG materializes no XLM inputs).
+func dexVolumeKPIHint(windowDays int) string {
+	if windowDays == 1 {
+		return "summed usd_volume of priced trades, plus unpriced XLM-denominated legs at the current XLM/USD vwap"
+	}
+	return "summed usd_volume of priced trades over the window"
 }
 
 // dexWindowKPIs runs the window KPI query for the grain. The 24h form has

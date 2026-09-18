@@ -187,6 +187,26 @@ against.
   a day, so clearing 28.5 days-equivalent still proves at least 28.5
   calendar days of observed history: the gate cannot un-cap a genuinely
   new asset.
+- **api,storage:** the DEX/AMM protocol page's **24h USD volume no
+  longer drops XLM-denominated trades**. `source_volume_1h` (migration
+  0068) cannot materialize a finished USD figure — the XLM/USD multiply
+  cross-references `prices_1m`, which a continuous aggregate may not
+  join — so the CAGG materializes the raw inputs and its migration
+  prescribes the read expression `sum_usd_priced + (sum_xlm_base +
+  sum_xlm_quote)/10^7 * <XLM/USD vwap>`. The bespoke DEX block's two 24h
+  readers (the volume KPI and the hourly volume series) summed only
+  `sum_usd_priced`, so every leg the ingest-time valuation left unpriced
+  was served as $0 — while the OTHER reader of the same CAGG
+  (`/v1/sources`' per-source volume, rendered by the same source page's
+  own 24h chart) applied the whole expression. One page, one source, one
+  window, two different volumes. Both readers now apply the full
+  expression, and the block's served note + KPI hint say so: the 24h
+  figures are usd_volume plus XLM legs valued at the current on-chain
+  vwap, while the per-pair surfaces below stay usd_volume-only (no CAGG
+  carries XLM inputs per pair). Longer windows read the daily pair CAGG
+  (0064), which materializes no XLM inputs, and are unchanged. Proven
+  against a real TimescaleDB: a fixture of 57 USD priced + 30 XLM at
+  0.5 served 57.00 before and 72.00 after, matching the source chart.
 
 - **ci,ops:** `config_acknowledged=true` can no longer clear a config
   surface the deploy PROVED unapplied by asking the host. The deploy's
