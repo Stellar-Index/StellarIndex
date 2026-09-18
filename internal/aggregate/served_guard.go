@@ -158,8 +158,10 @@ func ServedBaselineValidated(trailing []*big.Rat) bool {
 // Regimes:
 //   - >= [guardMinSamples] usable values: the FULL band = union of the
 //     tight ratio band [centre/R, centre*R] ([guardRatioBound]) and the
-//     MAD band centre ± K·1.4826·MAD ([guardMADFactor]). A volatile
-//     pair earns the wider band from its own spread.
+//     MAD band [centre²/(centre + K·1.4826·MAD), centre + K·1.4826·MAD]
+//     ([guardMADFactor]) — ratio-symmetric, so its lower edge mirrors
+//     its upper edge instead of running off below zero (MNY-22). A
+//     volatile pair earns the wider band from its own spread.
 //   - 1..guardMinSamples-1 usable values (thin history, M11(b)): the
 //     WIDER but finite ratio-only band [centre/thinR, centre*thinR]
 //     ([guardThinRatioBound]). No stable MAD on so few points, so we
@@ -193,14 +195,27 @@ func robustBand(trailing []*big.Rat) (lo, hi *big.Rat, ok bool) {
 	lo = new(big.Rat).Quo(centre, guardRatioBound)
 	hi = new(big.Rat).Mul(centre, guardRatioBound)
 
-	// MAD band: centre ± K·(1.4826·MAD). Union with the ratio band; both
-	// intervals contain centre, so their union is a single interval.
+	// MAD band: up to centre + K·(1.4826·MAD), and down to that edge's
+	// RATIO-SYMMETRIC mirror centre²/(centre + K·scale) ([symmetricDev],
+	// MNY-22 / F039). Unioned with the ratio band; both intervals contain
+	// centre, so their union is a single interval.
+	//
+	// The lower edge used to be the additive centre − K·scale, which goes
+	// non-positive once the baseline's relative MAD reaches 1/(K·1.4826)
+	// = 6.75 % — ordinary long-tail volatility — and from there the guard
+	// had NO downside at all: a crafted bucket at any price down to 0 was
+	// served verbatim as a confident price, while the mirror-image pump
+	// was still caught. The mirrored edge is always strictly positive and
+	// never below the old one, so a volatile pair still earns its wider
+	// band from its own spread, symmetrically in both directions.
 	scale := new(big.Rat).Mul(madToStd, madRat(vals, centre)) // σ-equivalent
 	half := new(big.Rat).Mul(guardMADFactor, scale)           // K·scale
-	if madLo := new(big.Rat).Sub(centre, half); madLo.Cmp(lo) < 0 {
+	madHi := new(big.Rat).Add(centre, half)
+	madLo := new(big.Rat).Quo(new(big.Rat).Mul(centre, centre), madHi)
+	if madLo.Cmp(lo) < 0 {
 		lo = madLo
 	}
-	if madHi := new(big.Rat).Add(centre, half); madHi.Cmp(hi) > 0 {
+	if madHi.Cmp(hi) > 0 {
 		hi = madHi
 	}
 	return lo, hi, true

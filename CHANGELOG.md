@@ -34,6 +34,29 @@ against.
   rather than copied so the two clients onto the same endpoint cannot
   drift apart again: the host stays (it is the whole diagnostic), the
   path becomes `/<redacted>`. (audit-2026-09-02 NS12)
+- **aggregator/pricing:** the robust outlier and served-price bands are
+  no longer blind to downward prints. Every band in `internal/aggregate`
+  was ADDITIVE in price space (`|p − centre| > K·1.4826·MAD`), and a
+  price can only be `centre` below the centre — so once the window's
+  relative MAD reached 1/K the lower edge went non-positive and NO
+  downward print could be rejected at all, while the mirror-image
+  up-move still was. That threshold is 16.9 % relative MAD for the
+  window filter at the default σ=4 and 6.75 % for the served-VWAP
+  guard's MAD arm at K=10 — dispersion an ordinary long-tail pair
+  reaches routinely, after which a single crafted minute bucket at any
+  price down to 0 was published into the VWAP and served as a confident
+  price. The deviation is now measured symmetrically in RATIO space
+  (ADR-0046 §1 — a ½× and a 2× print are equally outlying), giving the
+  band `[centre²/(centre + K·scale), centre + K·scale]`: always strictly
+  positive, identical to the old band above the centre and never lower
+  than it below, so nothing previously rejected is newly accepted and a
+  volatile pair still earns its wider band from its own spread. Applied
+  to the window filter, the time-local published-VWAP filter and the
+  served-VWAP guard alike, exact `*big.Rat` throughout. (audit-2026-09-02
+  F037, F039, K004, RLT-391 / #788 — `rejectAggregatorOutliers` in
+  `internal/aggregate/global.go` carries the same additive band and is
+  NOT covered here)
+
 - **aggregator:** a ClickHouse that is still loading metadata at boot no
   longer disables the decimals-assumption guard for the whole process
   lifetime. The lake reader was dialled inline at startup and one failed

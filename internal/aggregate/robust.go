@@ -129,3 +129,57 @@ func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 	}
 	return centre, scale
 }
+
+// symmetricDev returns the deviation of p from centre measured
+// symmetrically in RATIO (log) space, expressed in the same price units
+// as the σ-equivalent scale the callers compare it against.
+//
+// Why (MNY-22, findings F037/F039/K004/RLT-391): every robust band here
+// used to be ADDITIVE in price space — `|p − centre| > K·scale` — which
+// is one-sided-blind by construction. `p` can only ever be `centre`
+// below the centre, so once `K·scale >= centre` NO downward print can
+// exceed the threshold: a crash print, a decimal-shift fat finger, even
+// an exact 0, all score inside the band, while the mirror-image up-move
+// is still rejected. The additive band goes blind below at a relative
+// scale of 1/K — 16.9 % for [FilterOutliers] at the default σ=4, 6.75 %
+// for [robustBand]'s MAD arm at K=10 — which ordinary long-tail
+// volatility reaches routinely.
+//
+// Price noise is MULTIPLICATIVE (ADR-0046 §1: "a 2× and a ½× deviation
+// should be equally outlying"), so the deviation is measured on the
+// ratio: a price below the centre is first mirrored to the up-move that
+// is the same distance away in log space (centre²/p — the reflection of
+// p about centre under multiplication) and then measured from the
+// centre. The resulting band is
+//
+//	[ centre² / (centre + K·scale) , centre + K·scale ]
+//
+// — geometrically symmetric (lo·hi = centre²), always strictly
+// positive, and IDENTICAL to the old band above the centre. Below it
+// the new edge is never lower than the old one (1/(1+r) >= 1 − r), so
+// this only ever tightens the downward side: nothing a caller used to
+// reject is newly accepted. Exact *big.Rat throughout (ADR-0003) — the
+// mirror is one multiply and one divide, so no logarithm (and no
+// float64) enters the value path.
+//
+// Returns nil for a non-positive p against a positive centre: such a
+// print has no finite ratio deviation at all, and callers treat nil as
+// "rejected" / "no finite score". A non-positive centre has nothing to
+// mirror around, so the plain additive deviation is returned unchanged
+// (defensive — every caller's centre is the median of positive prices).
+func symmetricDev(p, centre *big.Rat) *big.Rat {
+	if p == nil || centre == nil {
+		return nil
+	}
+	if centre.Sign() <= 0 || p.Cmp(centre) >= 0 {
+		dev := new(big.Rat).Sub(p, centre)
+		return dev.Abs(dev)
+	}
+	if p.Sign() <= 0 {
+		return nil
+	}
+	// centre²/p − centre = centre·(centre − p)/p, exact.
+	dev := new(big.Rat).Sub(centre, p)
+	dev.Mul(dev, centre)
+	return dev.Quo(dev, p)
+}

@@ -23,10 +23,20 @@ import (
 // median/MAD machinery (see robust.go).
 //
 // `sigma` keeps its meaning as a σ-equivalent multiplier: a price is
-// dropped when |price − median| > sigma · (1.4826 · MAD). The 1.4826
-// factor ([madToStd]) rescales MAD to a standard-deviation equivalent
-// for normal data, so an existing config default of 4.0 still reads as
-// "≈4σ" and callers need not change.
+// dropped when its deviation from the median exceeds
+// sigma · (1.4826 · MAD). The 1.4826 factor ([madToStd]) rescales MAD
+// to a standard-deviation equivalent for normal data, so an existing
+// config default of 4.0 still reads as "≈4σ" and callers need not
+// change.
+//
+// The deviation is measured symmetrically in RATIO space
+// ([symmetricDev], ADR-0046 §1), so the acceptance band is
+// [median²/(median + sigma·scale), median + sigma·scale]: a ½× print is
+// exactly as outlying as a 2× one. The band used to be additive in
+// price space, which made its lower edge non-positive once the relative
+// MAD reached 1/(sigma·1.4826) — 16.9 % at sigma=4 — from where NO
+// downward print, not even a 0, could be rejected while the mirrored
+// up-move still was (MNY-22 / F037).
 //
 // Everything on the value path is exact *big.Rat (ADR-0003): prices
 // are quote/base rationals, the median and MAD are exact, and the only
@@ -85,9 +95,8 @@ func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 
 	out := make([]canonical.Trade, 0, len(validIdx))
 	for k, p := range prices {
-		dev := new(big.Rat).Sub(p, centre)
-		dev.Abs(dev)
-		if dev.Cmp(threshold) > 0 {
+		dev := symmetricDev(p, centre)
+		if dev == nil || dev.Cmp(threshold) > 0 {
 			continue // outlier — drop
 		}
 		out = append(out, trades[validIdx[k]])

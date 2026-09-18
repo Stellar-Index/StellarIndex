@@ -214,12 +214,18 @@ func newLocalRef(prices []*big.Rat) *robustRef {
 	return r
 }
 
-// score returns |p − centre| / scale. A zero scale (only reachable
-// for a zero centre, where no relative floor exists) scores an exact
-// match as 0 and anything else as "no finite score" (ok=false).
+// score returns the ratio-symmetric deviation of p from centre
+// ([symmetricDev], MNY-22) divided by scale — the σ-equivalent distance
+// a caller compares against sigma. A zero scale (only reachable for a
+// zero centre, where no relative floor exists) scores an exact match as
+// 0 and anything else as "no finite score" (ok=false); so does a
+// non-positive price, which has no finite ratio deviation from a
+// positive centre.
 func (r *robustRef) score(p *big.Rat) (*big.Rat, bool) {
-	dev := new(big.Rat).Sub(p, r.centre)
-	dev.Abs(dev)
+	dev := symmetricDev(p, r.centre)
+	if dev == nil {
+		return nil, false
+	}
 	if r.scale.Sign() == 0 {
 		if dev.Sign() == 0 {
 			return new(big.Rat), true
