@@ -104,4 +104,20 @@ func TestAssetListing_MarketCapUsesTheScaleThePriceIsOn(t *testing.T) {
 			t.Errorf("%s: decimals = %d, want %d", id, row.Decimals, want.decimals)
 		}
 	}
+
+	// The same loop for the DETAIL page, whose row comes from the
+	// per-asset SQL instead: that read stays RAW and rounds to 10 + k
+	// places, and the handler corrects it. The 18-decimals token is the
+	// one a flat 10-place precision floor withholds — raw 1.4e-10 is 1.4
+	// quanta on that scale — so it is the one that proves the handler
+	// reads the scale the SQL actually rounded to.
+	t.Run("detail page price", func(t *testing.T) {
+		var detail struct {
+			Data v1.AssetDetail `json:"data"`
+		}
+		getJSON(t, ts.URL+"/v1/assets/"+decimalsEighteenContract, &detail)
+		if got := derefOrNil(detail.Data.PriceUSD); got != "14.0000000000" {
+			t.Errorf("/v1/assets/{18dp} price_usd = %s, want 14.0000000000", got)
+		}
+	})
 }

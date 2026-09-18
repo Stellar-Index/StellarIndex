@@ -171,11 +171,13 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	//
 	// The row's price is a RAW prices_1m ratio like every other CAGG
 	// read, so it goes through the dex-nonstandard-decimals
-	// normalisation before it is published (see normalizeCatalogueUSD).
+	// normalisation before it is published (see normalizeCatalogueReadUSD,
+	// which keeps the precision floor only for a value the SQL rounded on
+	// the raw scale).
 	// A row price that normalisation has to withhold leaves PriceUSD nil
 	// for the transitive fill below, which reads at full precision.
 	if priceAllowed && row.PriceUSD != nil && detail.PriceUSD == nil {
-		if p, ok := s.normalizeCatalogueUSD(*row.PriceUSD, asset, true); ok {
+		if p, ok := s.normalizeCatalogueReadUSD(*row.PriceUSD, asset); ok {
 			detail.PriceUSD = &p
 		} else {
 			// The change pills derive from the price just withheld, and
@@ -327,7 +329,7 @@ func (s *Server) normalizeCatalogueUSD(value string, asset canonical.Asset, roun
 }
 
 // normalizedAssetPointsToWire is [assetPointsToWire] with every priced
-// point passed through [Server.normalizeCatalogueUSD]. A point that has
+// point passed through [Server.normalizeCatalogueReadUSD]. A point that has
 // to be withheld becomes a null-priced bucket — the shape the series
 // already uses for an hour or day with no trades — so the bucket grid
 // the client draws against is unchanged.
@@ -337,7 +339,7 @@ func (s *Server) normalizedAssetPointsToWire(pts []timescale.AssetPricePoint, as
 		if out[i].P == nil {
 			continue
 		}
-		if p, ok := s.normalizeCatalogueUSD(*out[i].P, asset, true); ok {
+		if p, ok := s.normalizeCatalogueReadUSD(*out[i].P, asset); ok {
 			out[i].P = &p
 		} else {
 			out[i].P = nil

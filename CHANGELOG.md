@@ -61,12 +61,25 @@ against.
   zero, so a token with fewer than 7 decimals (scaling down only shrinks
   the error) keeps the 10 places it had, and an asset with no confirmed
   row resolves to exactly `ROUND(…, 10)`: the same bytes. On the wire
-  today this reaches the listing sparkline and the on-chain price
-  fallback, which read the rounding scale off the value. The
-  `/v1/assets/{id}` overlay still applies its flat precision floor to
-  these strings, so it withholds exactly what it withheld before and
-  serves nothing less precise; teaching it the wider scale is a
-  follow-up in `asset_catalogue_extension.go`.
+  this reaches the listing sparkline, the on-chain price fallback, and —
+  see the detail-page entry below — the `/v1/assets/{id}` row price and
+  its 24h / 7d price histories, all of which read the rounding scale off
+  the value.
+
+- **asset detail:** `GET /v1/assets/{id}` now serves the row price and
+  the `price_history_24h` / `price_history_7d` points of a confirmed
+  non-7-decimals token that its flat precision floor used to withhold
+  (F017, the rounding leg on the detail page). The entry above widened
+  the SQL's rounding to 10 + k places, but the detail overlay's two call
+  sites still treated every string as rounded to 10 on the raw scale, so
+  the extra places bought nothing there: an 18-decimals token at 14 USD —
+  raw 1.4e-10, 1.4 quanta at 10 places — stayed unpriced on its detail
+  page while the listing beside it served 14.0000000000. Both sites now
+  go through `normalizeCatalogueReadUSD`, the same function the listing
+  sparkline uses, which keeps the fail-closed floor for a string that
+  really was rounded on the raw scale (fewer than 10 + k places) and
+  corrects a longer one exactly. The all-time-high path is unchanged: it
+  was never rounded and never floored.
 
 - **assets listing:** `?include=sparkline7d` now serves a
   decimals-normalised series for a confirmed non-7-decimals token (F017,
