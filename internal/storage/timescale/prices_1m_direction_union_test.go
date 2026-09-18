@@ -1,6 +1,11 @@
 package timescale
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -116,5 +121,184 @@ func TestBothDirectionReadersKeepSargableBucketBound(t *testing.T) {
 					"`bucket <= x - INTERVAL …`", name)
 			}
 		})
+	}
+}
+
+// ── Package scan ────────────────────────────────────────────────────
+//
+// bothDirectionUnionQueries above is a HAND-MAINTAINED list, and that
+// is how four more readers carrying the exact shape it forbids shipped
+// green: HistoryPoints (/v1/history/since-inception, unauthenticated),
+// HistoryPointsInRange and TWAPPointsInRange (/v1/chart), OHLCSeries
+// and OHLCSeriesReBucketed (/v1/ohlc) were simply never added to it.
+// A guard whose coverage is a list only ever guards what someone
+// remembered to type.
+//
+// So the invariant below is not given subjects: it SCANS aggregates.go
+// — the file that holds the pair-bound CAGG reads — recovers each
+// declaration's SQL from its string literals, and picks its own
+// subjects by SHAPE. A new reader added to that file is covered the
+// moment it is written.
+//
+// Subject rule: a query that folds BOTH stored market orientations
+// (`base_asset = $1 AND quote_asset = $2` together with the flipped
+// spelling) AND emits bucket-ORDERED output. That pairing is precisely
+// the pathological plan: with rows ordered by bucket the planner
+// abandons prices_*_pair_bucket_idx (it cannot drive one index scan
+// from an OR of two different (base,quote) equality pairs) and applies
+// the pair test as a post-index FILTER, so proving an empty pair empty
+// walks every chunk — the 10682.994 ms vs 3.610 ms measured above.
+//
+// Deliberately NOT subjects, and why the rule excludes them by shape
+// rather than by name:
+//   - point reads (`bucket = (SELECT …)`) and the LIMIT 1 existence
+//     gate emit no bucket ordering, so the bucket-index plan that
+//     causes the walk is not available to them;
+//   - PairMarketSubstance aggregates an unordered window bounded by a
+//     literal TIMESTAMPTZ lower bound (plan-time chunk exclusion), and
+//     pair_market_substance_test.go pins its shape separately.
+//
+// Known sibling OUTSIDE this file, deliberately not swept here:
+// change_summary.go's timedVWAPs1mForChangeSummaryQuery carries the
+// same OR fold with ORDER BY bucket ASC. It is worker-driven with
+// mandatory [from, to) bind bounds rather than anon-reachable and
+// unbounded, and it sits outside this change's file set — it needs its
+// own change, not a silent one here.
+
+// pairFoldFwd / pairFoldRev are the two single-direction predicates a
+// both-orientations read must contain.
+const (
+	pairFoldFwd = "base_asset = $1 AND quote_asset = $2"
+	pairFoldRev = "base_asset = $2 AND quote_asset = $1"
+)
+
+// bucketOrderedRe matches an ORDER BY on a bucket column (`bucket`,
+// `n.bucket`, `out_bucket`).
+var bucketOrderedRe = regexp.MustCompile(`ORDER BY\s+[a-z_.]*bucket`)
+
+// nonSargableBucketRe matches the forbidden closed-bucket spelling —
+// an INTERVAL added to the indexed bucket column (or to an expression
+// over it) on the LEFT of the comparison, which the planner cannot use
+// for index access or chunk pruning. The sargable form puts the
+// interval on the right: `bucket <= now() - INTERVAL '…'`.
+var nonSargableBucketRe = regexp.MustCompile(`bucket[^<>=\n]*\+\s*INTERVAL\s*'[^']*'\s*<`)
+
+// declSQL returns the SQL text of every top-level declaration in
+// `file`, keyed by declaration name. A declaration's text is the
+// concatenation of ALL its string literals, so a query assembled from
+// fragments (a Sprintf template plus optional clause strings, the way
+// HistoryPointsInRange builds its bounds) is scanned as one statement
+// rather than slipping through as individually-innocent pieces.
+func declSQL(t *testing.T, file string) map[string]string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, file, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	out := make(map[string]string, len(f.Decls))
+	for _, d := range f.Decls {
+		var lits []string
+		ast.Inspect(d, func(n ast.Node) bool {
+			lit, ok := n.(*ast.BasicLit)
+			if !ok || lit.Kind != token.STRING {
+				return true
+			}
+			s, err := strconv.Unquote(lit.Value)
+			if err != nil {
+				return true
+			}
+			lits = append(lits, s)
+			return true
+		})
+		if len(lits) == 0 {
+			continue
+		}
+		out[declName(d)] = strings.Join(lits, "\n")
+	}
+	return out
+}
+
+// declName labels a declaration for test output: `Store.HistoryPoints`
+// for a method, the function name for a func, the first name for a
+// const/var block.
+func declName(d ast.Decl) string {
+	switch decl := d.(type) {
+	case *ast.FuncDecl:
+		name := decl.Name.Name
+		if decl.Recv != nil && len(decl.Recv.List) > 0 {
+			typ := decl.Recv.List[0].Type
+			if star, ok := typ.(*ast.StarExpr); ok {
+				typ = star.X
+			}
+			if id, ok := typ.(*ast.Ident); ok {
+				name = id.Name + "." + name
+			}
+		}
+		return name
+	case *ast.GenDecl:
+		for _, spec := range decl.Specs {
+			if vs, ok := spec.(*ast.ValueSpec); ok && len(vs.Names) > 0 {
+				return vs.Names[0].Name
+			}
+		}
+	}
+	return "?"
+}
+
+// TestCAGGSeriesReadsFoldDirectionsWithUnion is the list-free half of
+// TestBothDirectionReadersUseUnionNotOr: every bucket-ordered
+// both-directions read in aggregates.go must split the orientations
+// into two index-drivable UNION ALL branches.
+func TestCAGGSeriesReadsFoldDirectionsWithUnion(t *testing.T) {
+	subjects := 0
+	for name, q := range declSQL(t, "aggregates.go") {
+		if !strings.Contains(q, pairFoldFwd) || !strings.Contains(q, pairFoldRev) {
+			continue
+		}
+		if !bucketOrderedRe.MatchString(q) {
+			continue
+		}
+		subjects++
+		t.Run(name, func(t *testing.T) {
+			if strings.Contains(q, "OR (base_asset") {
+				t.Errorf("%s folds both directions with an OR disjunction. The "+
+					"planner cannot drive prices_*_pair_bucket_idx from an OR of two "+
+					"(base,quote) pairs, so a bucket-ordered read degrades to a full "+
+					"walk of every chunk — 10683 ms vs 3.6 ms measured on r1 for a "+
+					"pair with no rows. Use a UNION ALL of two single-direction "+
+					"branches.\n\nquery:\n%s", name, q)
+			}
+			if !strings.Contains(q, "UNION ALL") {
+				t.Errorf("%s does not use UNION ALL — the two stored orientations "+
+					"must each be their own indexable branch", name)
+			}
+		})
+	}
+	// Non-vacuity: the scan must not silently cover nothing. Renaming a
+	// column or moving the readers out of aggregates.go would otherwise
+	// turn this guard into a no-op that still reports PASS.
+	if subjects < 6 {
+		t.Errorf("scan found %d both-directions bucket-ordered readers in "+
+			"aggregates.go, expected at least 6 — the scan is no longer "+
+			"matching the readers it exists to guard", subjects)
+	}
+}
+
+// TestCAGGReadsKeepSargableBucketBound applies the sargable-bound rule
+// to EVERY query in aggregates.go, not to a list. The interval belongs
+// on the right of the comparison; on the left it is a function over the
+// indexed column, which forfeits index access and plan-time chunk
+// pruning.
+func TestCAGGReadsKeepSargableBucketBound(t *testing.T) {
+	for name, q := range declSQL(t, "aggregates.go") {
+		if !strings.Contains(q, "FROM") {
+			continue
+		}
+		if m := nonSargableBucketRe.FindString(q); m != "" {
+			t.Errorf("%s applies a function to the indexed bucket column (%q). "+
+				"Put the interval on the RHS: `bucket <= now() - INTERVAL …`",
+				name, strings.Join(strings.Fields(m), " "))
+		}
 	}
 }

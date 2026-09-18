@@ -17,6 +17,18 @@ against.
 
 ### Fixed
 
+- **storage (test):** the both-directions query-shape guard no longer
+  depends on a hand-maintained list of subjects — the list is why four
+  readers carrying the exact shape it forbids shipped green. It now
+  parses `aggregates.go`, recovers each declaration's SQL from its
+  string literals (so a statement assembled from a template plus
+  optional clause fragments is checked whole), and selects its subjects
+  by shape: a read that folds both stored orientations AND emits
+  bucket-ordered output must use `UNION ALL`, and no query in the file
+  may put an INTERVAL on the left of a bucket comparison. A new reader
+  in that file is covered the moment it is written. The scan asserts a
+  minimum subject count so it cannot go quietly vacuous.
+  (audit-2026-09-02 F117, F038)
 - **ohlc / anomaly baseline (perf):** the same both-directions OR
   disjunction is gone from `OHLCSeries`, `OHLCSeriesReBucketed`,
   `TimedVWAPsForPair1m` and `VWAPsForPair1m`. A `[from, to)` bind range
