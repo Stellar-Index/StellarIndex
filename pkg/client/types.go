@@ -604,6 +604,12 @@ type AggregatorRow struct {
 // fields are decimal strings (ADR-0003); volumes are smallest-unit
 // integers as strings.
 //
+// The volume smallest unit is NOT a fixed stroop: it is the
+// per-SOURCE scale of the venues that traded in the window — 7
+// decimals on-chain, 8 on a CEX, 6 on the FX feeds. Render asset
+// units as BaseVolume / 10^BaseVolumeDecimals; a hardcoded 1e7
+// overstates every CEX-fed pair tenfold.
+//
 // `Truncated` is true when the window's trade count hit the
 // server's per-request cap. The bar's High / Low may not reflect
 // the actual extreme over the full window — only the
@@ -618,8 +624,14 @@ type OHLCBar struct {
 	Close       string    `json:"close"`
 	BaseVolume  string    `json:"base_volume"`
 	QuoteVolume string    `json:"quote_volume"`
-	TradeCount  int       `json:"trade_count"`
-	Truncated   bool      `json:"truncated"`
+	// BaseVolumeDecimals / QuoteVolumeDecimals are the decimal
+	// exponent of the two sums above. Equal to each other today (a
+	// source stamps both legs of a trade at one scale); carried
+	// separately because a scale belongs to an amount, not a pair.
+	BaseVolumeDecimals  int  `json:"base_volume_decimals"`
+	QuoteVolumeDecimals int  `json:"quote_volume_decimals"`
+	TradeCount          int  `json:"trade_count"`
+	Truncated           bool `json:"truncated"`
 }
 
 // Source is the data shape returned by [Client.Sources] — one

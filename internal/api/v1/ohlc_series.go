@@ -240,10 +240,20 @@ func (s *Server) handleOHLCSeries(
 	// (every constituent shares the same base token and a 7dp quote
 	// peg, so K is identical for each — see AdjustPrice's doc comment).
 	// No-op (bars returned untouched, byte-identical) for a pair without
-	// a confirmed non-7-decimals leg. base_volume/quote_volume are NOT
-	// touched — they're raw smallest-unit sums of the asset's own
-	// decimals, correct regardless of the decimals value (same
-	// precedent as the single-bar OHLC path in ohlc.go).
+	// a confirmed non-7-decimals leg.
+	//
+	// v_base/v_quote are NOT touched, and K is not what they are missing:
+	// they are raw smallest-unit sums at the per-SOURCE scale — 7dp
+	// on-chain, 8 CEX, 6 FX — which [barScaleDecimals] reads off the
+	// CAGG's own `sources` column. The single-bar path states that scale
+	// on the wire ([OHLCBar.QuoteVolumeDecimals], finding F096); a series
+	// bar still carries it only internally ([OHLCSeriesBar.Sources],
+	// `json:"-"`), so a consumer must not divide v_quote by a fixed 1e7
+	// either. Stating it here needs the fiat-combine accumulator to
+	// surface its per-bucket lift target
+	// (internal/api/v1/ohlc_fiat_combine.go's ohlcBucketAcc.commonScale,
+	// which finalize currently drops) — a separate change, not a claim
+	// this comment gets to make in advance.
 	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
 	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
 	bars = adjustOHLCSeriesBars(bars, baseDec, quoteDec)

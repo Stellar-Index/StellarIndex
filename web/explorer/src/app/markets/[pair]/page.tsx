@@ -64,6 +64,14 @@ interface OhlcResp {
   close: string;
   base_volume: string;
   quote_volume: string;
+  // Decimal exponent of the two volume integers above. The smallest unit
+  // is the per-SOURCE scale of the venues that traded in the window — 7
+  // on-chain, 8 on a CEX, 6 on the FX feeds — so it must be read off the
+  // bar, never assumed. Optional here only so the page degrades honestly
+  // against an API older than this field rather than rendering a figure
+  // scaled by a guess.
+  base_volume_decimals?: number;
+  quote_volume_decimals?: number;
   trade_count: number;
   truncated: boolean;
 }
@@ -467,12 +475,19 @@ export default async function PairPage({ params }: { params: Params }) {
             <Stat label="High" value={ohlc.high} />
             <Stat label="Low" value={ohlc.low} />
             <Stat label="Close" value={ohlc.close} />
-            {/* AM-01: quote_volume is a 7-decimal scaled integer in
-                QUOTE-asset units — the old /1e8 understated it 10× and
-                the $ prefix mislabeled non-USD quotes. */}
+            {/* F096: quote_volume is a raw smallest-unit integer whose
+                scale is the trading VENUES', not a fixed stroop — 7
+                on-chain, 8 on a CEX. This read /1e7 unconditionally and
+                printed every Coinbase-quoted pair (crypto:XLM/fiat:USD
+                among them) at ten times the market's volume. Take the
+                scale from the bar. */}
             <Stat
               label={`Quote vol (${shortAssetText(quote)})`}
-              value={formatQuoteAmount(Number(ohlc.quote_volume) / 1e7, quote)}
+              value={formatScaledAmount(
+                ohlc.quote_volume,
+                ohlc.quote_volume_decimals,
+                quote,
+              )}
             />
             <Stat
               label="Trades"
@@ -772,6 +787,24 @@ function isUsdQuote(quote: string): boolean {
   return (
     quote === 'fiat:USD' || /^USDC[:-]/.test(quote) || /^USDT[:-]/.test(quote)
   );
+}
+
+// Renders a raw smallest-unit volume integer in the quote asset's own
+// units, using the scale the API stated for it (F096). A bar that states
+// no scale renders as "—": the divisor is a property of the venues that
+// traded, so guessing one is how this panel came to overstate every
+// CEX-quoted pair tenfold. An em-dash is the honest answer.
+function formatScaledAmount(
+  raw: string,
+  decimals: number | undefined,
+  quote: string,
+): string {
+  if (decimals === undefined || !Number.isFinite(decimals) || decimals < 0) {
+    return '—';
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return '—';
+  return formatQuoteAmount(n / 10 ** decimals, quote);
 }
 
 function formatQuoteAmount(n: number, quote: string): string {

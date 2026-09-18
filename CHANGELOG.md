@@ -45,6 +45,21 @@ against.
   single `scamWithheld` spelling, whose fold lives in `pricingguard`,
   and the two files leave the pair-question ratchet so they cannot
   regress. (audit-2026-09-02 F019, F032)
+- **api / explorer (money display):** `/v1/ohlc`'s single-bar
+  `base_volume` / `quote_volume` now state their own smallest-unit scale
+  (`base_volume_decimals` / `quote_volume_decimals`). The smallest unit
+  is the trading venues' — 7 decimals on-chain, 8 on a CEX, 6 on the FX
+  feeds — never a fixed stroop, and with nothing on the wire saying so
+  the `/markets/[pair]` page divided by a hardcoded `1e7` and printed
+  every Coinbase-quoted pair (`crypto:XLM/fiat:USD` among them) at ten
+  times the market's quote volume. The page now renders
+  `volume / 10^decimals`, and an em-dash rather than a guessed divisor
+  when a response omits the field. The scale is resolved over the
+  PRE-outlier-filter population — the set `NormalizeAmountScale` lifted
+  to a common scale — so a window whose only 8-decimal venue is filtered
+  out still reports 8 for the survivors that were lifted to meet it.
+  (audit-2026-09-02 F096)
+
 - **storage (test):** the both-directions query-shape guard no longer
   depends on a hand-maintained list of subjects — the list is why four
   readers carrying the exact shape it forbids shipped green. It now

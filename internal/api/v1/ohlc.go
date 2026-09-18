@@ -34,19 +34,29 @@ const ohlcDefaultOutlierSigma = 4.0
 // unit is a per-SOURCE scale, NOT a fixed stroop: an on-chain DEX leg is
 // 7-decimal, a CEX leg 8 (internal/sources/external/coinbase.
 // externalAmountDecimals), an FX poller 6 — the scale
-// internal/api/v1.amountScaleDecimalsFor resolves from the trade's
-// source. This comment used to call them "stroop-equivalent"; that is
-// false for every CEX-fed pair (crypto:XLM/fiat:USD among them), and a
-// consumer that divided by a fixed 1e7 overstated the figure tenfold
-// (finding F096, live on the /markets/[pair] page).
+// [amountScaleDecimalsFor] resolves from the trade's source. This comment
+// used to call them "stroop-equivalent"; that is false for every CEX-fed
+// pair (crypto:XLM/fiat:USD among them), and a consumer that divided by a
+// fixed 1e7 overstated the figure tenfold (finding F096, live on the
+// /markets/[pair] page).
 //
-// The wire carries no scale field, so a consumer CANNOT presently render
-// these as asset units. Fixing that means adding one (an explicit
-// base_volume_decimals / quote_volume_decimals, per OHLCSeriesBar.Sources'
-// precedent of letting a bar state its own scale) across
-// openapi/stellar-index.v1.yaml, pkg/client and the explorer's generated
-// types — outside this file's remit. Until then the honest reading of
-// these two fields is "an integer in the venue's own scale".
+// BaseVolumeDecimals / QuoteVolumeDecimals state that scale on the wire,
+// so a consumer renders asset units as volume / 10^decimals rather than
+// guessing a constant. A fiat-quoted window is lifted to ONE common scale
+// by [aggregate.NormalizeAmountScale] before the sums are taken, and the
+// stated value is that lift target — resolved by
+// [commonAmountScaleDecimals] over the PRE-outlier-filter population, the
+// set the lift ran over, so it remains the served integers' true scale
+// even in a window where the filter removes the only max-scale venue. The
+// two are equal today by construction (a source stamps both legs at one
+// scale); they are carried separately because a scale belongs to an
+// amount, not to a pair.
+//
+// This is the per-SOURCE axis only. A leg whose asset is in
+// `nonstandard_decimals_assets` is stamped on-chain at the ASSET's own
+// decimals, which NormalizeAmountScale does not model either — the same
+// gap [aggregate.AdjustPrice] patches on the price axis, and out of this
+// endpoint's reach.
 //
 // Truncated signals the window hit the server's per-request trade
 // cap — Open/High/Low may not reflect the actual window values
@@ -63,8 +73,12 @@ type OHLCBar struct {
 	Close       string   `json:"close"`
 	BaseVolume  string   `json:"base_volume"`
 	QuoteVolume string   `json:"quote_volume"`
-	TradeCount  int      `json:"trade_count"`
-	Truncated   bool     `json:"truncated"`
+	// BaseVolumeDecimals / QuoteVolumeDecimals are the smallest-unit
+	// scale of the two sums above — see this type's doc comment.
+	BaseVolumeDecimals  int  `json:"base_volume_decimals"`
+	QuoteVolumeDecimals int  `json:"quote_volume_decimals"`
+	TradeCount          int  `json:"trade_count"`
+	Truncated           bool `json:"truncated"`
 }
 
 // ohlcPriceDigits is how many fractional digits the wire OHLC
@@ -179,6 +193,25 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The volume sums below are only meaningful with a scale attached, and
+	// the scale is per-SOURCE (7dp on-chain, 8 CEX, 6 FX — CS-040). It is
+	// resolved HERE, over the population as fetched, because that is the
+	// population [aggregate.NormalizeAmountScale] lifted to a single
+	// common scale inside [Server.fiatCombinedTrades] — the lift target is
+	// the maximum source scale over exactly this slice.
+	//
+	// Not after FilterOutliers. The filter drops trades; it does not
+	// un-lift the ones it keeps. In a window whose only max-scale venue is
+	// an aberrant CEX print, the surviving on-chain rows are still
+	// carrying that venue's ×10, so a post-filter maximum states 7 for
+	// integers that are at 8 and hands the consumer the F096 tenfold error
+	// back through a narrower door.
+	//
+	// Nothing is re-normalized here: NormalizeAmountScale keys off Source,
+	// not off the amounts, so a second pass over an already-lifted slice
+	// would lift it a second time.
+	volumeDecimals := commonAmountScaleDecimals(trades)
+
 	// Capture the pre-filter length so Truncated reflects whether the
 	// WINDOW hit the cap — not whether the post-outlier-filter slice
 	// happens to equal it. Mirrors vwap.go; computing it after
@@ -219,17 +252,55 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	bar.Close = aggregate.AdjustPrice(bar.Close, baseDec, quoteDec)
 
 	writeJSON(w, OHLCBar{
-		From:        WireTime(from),
-		To:          WireTime(to),
-		Open:        ratToDecimal(bar.Open, ohlcPriceDigits),
-		High:        ratToDecimal(bar.High, ohlcPriceDigits),
-		Low:         ratToDecimal(bar.Low, ohlcPriceDigits),
-		Close:       ratToDecimal(bar.Close, ohlcPriceDigits),
-		BaseVolume:  bar.BaseVolume.String(),
-		QuoteVolume: bar.QuoteVolume.String(),
-		TradeCount:  bar.TradeCount,
-		Truncated:   preFilter == maxTradesForOHLC,
+		From:                WireTime(from),
+		To:                  WireTime(to),
+		Open:                ratToDecimal(bar.Open, ohlcPriceDigits),
+		High:                ratToDecimal(bar.High, ohlcPriceDigits),
+		Low:                 ratToDecimal(bar.Low, ohlcPriceDigits),
+		Close:               ratToDecimal(bar.Close, ohlcPriceDigits),
+		BaseVolume:          bar.BaseVolume.String(),
+		QuoteVolume:         bar.QuoteVolume.String(),
+		BaseVolumeDecimals:  volumeDecimals,
+		QuoteVolumeDecimals: volumeDecimals,
+		TradeCount:          bar.TradeCount,
+		Truncated:           preFilter == maxTradesForOHLC,
 	}, Flags{Triangulated: triangulated})
+}
+
+// commonAmountScaleDecimals is the smallest-unit scale a window's volume
+// sums end up in: the MAXIMUM per-source scale present, which is the lift
+// target [aggregate.NormalizeAmountScale] resolves over the same slice
+// (max, so every lift is an exact integer multiply and nothing is divided
+// — ADR-0003).
+//
+// Call it over the slice the lift was applied to, never over a subset: a
+// filter that drops the max-scale trades does not un-lift the ones it
+// keeps, so a subset's maximum can be smaller than the scale the surviving
+// integers are actually in (finding F096).
+//
+// A window nothing lifted — the non-fiat branch of
+// [Server.tradesInRangeWithStablecoinFallback] reads ONE pair and merges
+// nothing — is homogeneous in practice: a pair spelling is written by one
+// venue class, the same property the series arm measured over 129,854
+// spellings for [barScaleDecimals]. Were one ever mixed, its raw sum is
+// already incommensurable and no read-time scale can repair it; max is
+// then the conservative statement, since it renders the smaller number
+// rather than inflating the market.
+//
+// Zero for an empty window, which never reaches the wire — ComputeOHLC
+// 404s on ErrNoTrades first.
+//
+// [barScaleDecimals] is the series arm's bar-level twin, over a CAGG row's
+// `sources` column; both resolve a venue through [amountScaleDecimalsFor]
+// so the point and series paths cannot disagree about a source's scale.
+func commonAmountScaleDecimals(trades []canonical.Trade) int {
+	scale := 0
+	for i := range trades {
+		if d := amountScaleDecimalsFor(trades[i].Source); d > scale {
+			scale = d
+		}
+	}
+	return scale
 }
 
 // parseOHLCOutlierSigma parses the optional ?outlier_sigma=N query

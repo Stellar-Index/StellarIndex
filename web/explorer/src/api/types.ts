@@ -10097,10 +10097,37 @@ export interface components {
             high: string;
             low: string;
             close: string;
-            /** @description Σ base_amount integer stroops. */
+            /**
+             * @description Σ base_amount as a raw smallest-unit integer. The smallest
+             *     unit is NOT a fixed stroop — it is the per-SOURCE scale of the
+             *     venues in the window (on-chain DEX 7 decimals, CEX 8, FX feeds
+             *     6). Divide by 10^`base_volume_decimals` to get asset units;
+             *     dividing by a hardcoded 1e7 overstates any CEX-fed pair
+             *     tenfold.
+             */
             base_volume: string;
-            /** @description Σ quote_amount integer stroops. */
+            /**
+             * @description Σ quote_amount as a raw smallest-unit integer, on the same
+             *     per-source scale as `base_volume`. Divide by
+             *     10^`quote_volume_decimals` to get asset units.
+             */
             quote_volume: string;
+            /**
+             * @description Decimal exponent of `base_volume`: asset units =
+             *     base_volume / 10^base_volume_decimals. The window is lifted to
+             *     one common scale before the sum is taken and this is that
+             *     scale — resolved over the trades as fetched, so it stays
+             *     correct when the outlier filter removes the only venue that
+             *     set it.
+             */
+            base_volume_decimals: number;
+            /**
+             * @description Decimal exponent of `quote_volume` — see
+             *     `base_volume_decimals`. Equal to it today (a source stamps
+             *     both legs of a trade at one scale); carried separately because
+             *     a scale belongs to an amount, not to a pair.
+             */
+            quote_volume_decimals: number;
             trade_count: number;
             /** @description True when the window hit the per-request trade cap; the bar reflects only the chronologically LAST N trades (the reader drops the oldest rows under the limit), so open/high/low may not be the true window values. */
             truncated: boolean;
