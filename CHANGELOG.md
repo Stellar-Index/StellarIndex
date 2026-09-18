@@ -15,17 +15,7 @@ against.
 
 ## [Unreleased]
 
-### Fixed
-
-- **timescale:** `BatchInsertTrades` lifts TimescaleDB's per-transaction
-  decompression cap (`SET LOCAL … = 0`, scoped to the batch's own
-  transaction) before its upsert. It is the fallback writer for every
-  range whose `trades` chunks are compressed, and an upsert into a
-  compressed chunk decompresses whole segments per conflict: on
-  2026-09-18 every 5,000-row sub-batch of a Soroban-era SDEX re-derive
-  failed with `SQLSTATE 53400 tuple decompression limit exceeded` and the
-  writer dropped to one INSERT per row again. The restamp and COPY writers
-  already lifted the cap the same way.
+## [v0.91.0] — 2026-09-18
 
 ### Added
 
@@ -109,6 +99,16 @@ against.
   rather than a silent opt-out.
 
 ### Fixed
+
+- **timescale:** `BatchInsertTrades` lifts TimescaleDB's per-transaction
+  decompression cap (`SET LOCAL … = 0`, scoped to the batch's own
+  transaction) before its upsert. It is the fallback writer for every
+  range whose `trades` chunks are compressed, and an upsert into a
+  compressed chunk decompresses whole segments per conflict: on
+  2026-09-18 every 5,000-row sub-batch of a Soroban-era SDEX re-derive
+  failed with `SQLSTATE 53400 tuple decompression limit exceeded` and the
+  writer dropped to one INSERT per row again. The restamp and COPY writers
+  already lifted the cap the same way.
 
 - **api/aggregator:** token decimals are resolved from ONE source of truth,
   and a market cap is never computed across two scales (C1-050). The
