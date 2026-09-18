@@ -51,10 +51,21 @@ user stellarindex on >{{ redis_password }} \
   -@admin -@dangerous \
   ~vwap:* ~confidence:* ~freeze:* ~div:* \
   ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* \
-  ~toml:* ~meta:* ~price:* ~apikey:* ~health:* ~oracle:* \
+  ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~health:* ~oracle:* \
   ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* \
   ~assets:list:* ~markets:list:* \
   &closed-bucket-* &stream-*
+# F057 / K051 (reverification 2026-09-18): `apikey-index:*` is the
+# API-key lookup index (one HASH, `apikey-index:v1`, plus its SETNX
+# build lock) that replaces the per-request `SCAN apikey:*` behind
+# /v1/account/keys. `~apikey:*` does NOT cover it — the family is kept
+# outside `apikey:` so the record walk never GETs a hash. Omit this
+# pattern under lockdown and nothing breaks: every index access is
+# NOPERM, issuance writes the record alone, and lookups keep walking
+# the keyspace — i.e. the cost defect stays live until this template
+# is APPLIED (an ansible run; a binary deploy does not carry it). The
+# API builds the index itself on the first lookup after that.
+#
 # F-1254 (codex audit-2026-05-12): the previous allow-list named
 # `~ratelimit:*` (code writes `rl:*`) and `~subscriber:*` (code
 # writes `sub:*`), and omitted `~signup:email:*`, `~sep10:seen:*`,

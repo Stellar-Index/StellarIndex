@@ -17,6 +17,41 @@ against.
 
 ### Fixed
 
+- **auth (api keys):** listing, revoking, re-budgeting and
+  email-verifying a Redis-backed API key no longer walks the whole
+  credential keyspace. Four store lookups answered "which records does
+  this owner hold" / "which record has this KeyID" with a
+  `SCAN apikey:*` plus one GET per credential in the deployment, and
+  three of them sit behind `/v1/account/keys`, which any anonymously
+  registered key can call: measured against 300 other customers' keys, a
+  caller owning two keys cost 302 GETs per list and 128–217 per
+  by-KeyID operation, and the admin tier clamp paid one full walk per
+  key it lowered. Issuance (`Create`, and the `/v1/register` mirror
+  `CreateWithSecret`) now writes the record and its entries in one
+  lookup index — a single Redis hash, `apikey-index:v1` — as one atomic
+  script, and the lookups read that: 3 commands for a list of two keys,
+  no SCAN. Ownership is still decided from the record, never from the
+  index. It is one hash on purpose: Redis runs `allkeys-lru`, and a
+  per-owner key evicted on its own would hide live credentials from
+  revoke; evicting the one hash takes its `ready` marker with it and the
+  next lookup rebuilds. (F057, K051)
+
+  **Operator note — this fix is not live on a lockdown host until the
+  Redis ACL is applied.** `apikey-index:*` is a new key family and the
+  `stellarindex` Redis user allow-lists key patterns;
+  `redis-sentinel/templates/users.acl.j2` now grants it, but that is an
+  ansible surface and a binary deploy does not carry it. Until the role
+  is re-run the binary is safe and unchanged in behaviour: index access
+  is `NOPERM`, keys are issued record-only, and every lookup keeps
+  walking (so the cost defect is still open on that host). After the ACL
+  is applied no restart and no manual backfill are needed — the first
+  lookup builds the index for every existing key under a single-flight
+  lock, then marks it ready. Verify with
+  `redis-cli HGET apikey-index:v1 ready` → `1`. `DEL apikey-index:v1`
+  is always safe and forces a clean rebuild; do that if the ACL pattern
+  is ever removed and re-granted, or if keys were minted by a binary
+  older than this release after the index went ready.
+
 - **assets listing:** the listing `market_cap_usd` of a confirmed
   non-7-decimals token divides supply by the token's confirmed decimals,
   not by the standard 7 (F017, the market-cap leg). This corrects the

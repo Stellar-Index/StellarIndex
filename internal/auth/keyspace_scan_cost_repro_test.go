@@ -5,9 +5,9 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -15,13 +15,9 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
-)
 
-// scanCostReproEnv opts in to the reproduction below. It is OFF in the
-// suite because the test is RED by design: it documents a defect
-// (findings F057 / K051) whose fix needs files outside the unit that
-// wrote it — see the NEEDS-COORDINATION note on the test.
-const scanCostReproEnv = "STELLARINDEX_F057_REPRO"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+)
 
 // commandCounter is a go-redis hook that tallies the commands a store
 // method actually sends, so the test measures Redis work rather than
@@ -76,9 +72,7 @@ func (c *commandCounter) snapshot() map[string]int {
 }
 
 // TestKeyLookupsDoNotWalkTheKeyspace is the numeric reproduction of
-// findings F057 / K051, committed as evidence. Run it with
-//
-//	STELLARINDEX_F057_REPRO=1 go test ./internal/auth/ -run TestKeyLookupsDoNotWalkTheKeyspace -v
+// findings F057 / K051, and the regression guard for their fix.
 //
 // THE DEFECT. Four store methods answer "which record has this owner /
 // this KeyID" by SCANning `apikey:*` and issuing one GET per match:
@@ -95,34 +89,18 @@ func (c *commandCounter) snapshot() map[string]int {
 // THE PROPERTY. Work must be proportional to the caller's OWN keys: no
 // SCAN at all, and a GET count bounded by the records the caller owns.
 //
-// WHY THIS IS NOT FIXED HERE (NEEDS-COORDINATION). The fix is a
-// per-owner and a per-KeyID index written AT ISSUANCE, and both
-// issuance writers are outside this unit's file set:
+// THE FIX. Both issuance writers (Create, CreateWithSecret) write the
+// record and its entries in the `apikey-index:v1` hash as one atomic
+// step, and the four lookups read that hash. Records that predate the
+// index are covered by a build the first lookup runs — ONE walk per
+// index lifetime, which the "index is built once" subtest pins. The
+// fixture makes one of the caller's two keys such a legacy record, so
+// the numbers below also prove the build makes old keys reachable.
 //
-//   - internal/auth/store.go         — Create (POST /v1/account/keys, /v1/signup, ops mint)
-//   - internal/auth/store_mirror.go  — CreateWithSecret (POST /v1/register mirror)
-//
-// plus the places a new Redis key family has to be declared:
-//
-//   - internal/cachekeys/keys.go     — typed key family (ADR-0007 guard)
-//   - configs/ansible/roles/redis-sentinel/templates/users.acl.j2 — the
-//     API's Redis ACL allow-lists key patterns (`~apikey:*` …); an index
-//     family outside the list is NOPERM in production, and an index
-//     write that fails inside Create would take key issuance down.
-//
-// An index maintained only by the readers in this unit cannot be
-// correct: a key minted after a one-time backfill would be invisible to
-// list / revoke / clamp, which turns a cost defect into a revocation
-// that silently no-ops. The design also has to settle: backfilling the
-// records that exist today (including operator-seeded ones written
-// outside the store), pruning index members whose record TTL'd out (the
-// register mirror carries a 90-day idle TTL), and keeping the index
-// write and the record write atomic (MULTI or a script).
+// Measured on the unfixed code with this same fixture: 302 / 106 / 106
+// / 139 GETs and one SCAN per call. The budget is unchanged from the
+// reproduction as first committed.
 func TestKeyLookupsDoNotWalkTheKeyspace(t *testing.T) {
-	if os.Getenv(scanCostReproEnv) == "" {
-		t.Skipf("reproduction of open findings F057/K051 (red by design); set %s=1 to run", scanCostReproEnv)
-	}
-
 	mr := miniredis.RunT(t)
 	counter := &commandCounter{counts: map[string]int{}}
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -149,16 +127,39 @@ func TestKeyLookupsDoNotWalkTheKeyspace(t *testing.T) {
 		}
 	}
 
-	// The caller owns exactly two keys.
+	// The caller owns exactly two keys. The first is a LEGACY record:
+	// written raw, the way a binary that predates the index wrote it,
+	// so nothing in the index knows it until a build runs.
 	const owner = "account:caller"
-	var ownKeyIDs []string
-	for i := 0; i < 2; i++ {
-		rec, _, err := store.Create(ctx, CreateAPIKeyRequest{Identifier: owner, Tier: TierAPIKey})
-		if err != nil {
-			t.Fatalf("seed own key: %v", err)
-		}
-		ownKeyIDs = append(ownKeyIDs, rec.KeyID)
+	legacy := APIKeyRecord{KeyID: "kid_legacy0000000001", Identifier: owner, Tier: TierAPIKey, PermissionsAll: true}
+	legacyBody, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy record: %v", err)
 	}
+	legacyRecordKey := cachekeys.APIKey(hashAPIKey("legacy-fixture-not-a-credential")).String()
+	if err := rdb.Set(ctx, legacyRecordKey, legacyBody, 0).Err(); err != nil {
+		t.Fatalf("seed legacy record: %v", err)
+	}
+	minted, _, err := store.Create(ctx, CreateAPIKeyRequest{Identifier: owner, Tier: TierAPIKey})
+	if err != nil {
+		t.Fatalf("seed own key: %v", err)
+	}
+	ownKeyIDs := []string{legacy.KeyID, minted.KeyID}
+
+	// The index is built by the first lookup that finds it absent, and
+	// never again: the walk is a one-time migration cost, not a
+	// per-request one. (On the unfixed code both calls walk.)
+	t.Run("index is built once", func(t *testing.T) {
+		for call, wantScans := range []int{1, 0} {
+			counter.reset()
+			if _, err := store.ListKeysForIdentifier(ctx, "account:nobody"); err != nil {
+				t.Fatalf("warm-up lookup %d: %v", call, err)
+			}
+			if got := counter.snapshot()["scan"]; got != wantScans {
+				t.Errorf("warm-up lookup %d issued %d SCAN command(s), want %d", call, got, wantScans)
+			}
+		}
+	})
 
 	// A lookup may touch the caller's own records plus a constant
 	// number of index reads — never the foreign population.
@@ -193,6 +194,7 @@ func TestKeyLookupsDoNotWalkTheKeyspace(t *testing.T) {
 				t.Fatalf("%s: %v", tc.name, err)
 			}
 			got := counter.snapshot()
+			t.Logf("%s sent %v", tc.name, got)
 			if got["scan"] != 0 {
 				t.Errorf("%s issued %d SCAN command(s) over a keyspace of %d foreign credentials + 500 "+
 					"unrelated keys; a per-request lookup must not walk the keyspace",

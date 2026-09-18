@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
@@ -22,10 +20,9 @@ import (
 // calls this after Consume so the optional `RequireEmailVerified`
 // middleware can gate /v1/* access on the flag.
 //
-// Implementation mirrors `UpdateRateLimit`: SCAN the
-// `apikey:*` keyspace until the matching KeyID is found,
-// read-modify-write the JSON record back. O(N) in key count;
-// fine for v1's thousands-of-keys scale.
+// Implementation mirrors `UpdateRateLimit`: resolve the KeyID through
+// the index ([RedisAPIKeyStore.findRecordByKeyID]), then
+// read-modify-write the JSON record back.
 //
 // Idempotent: re-marking an already-verified key updates the
 // timestamp to the new value but doesn't error. The verify
@@ -42,35 +39,22 @@ func (s *RedisAPIKeyStore) MarkEmailVerified(ctx context.Context, keyID string, 
 		at = s.now().UTC()
 	}
 
-	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*").String(), 1000).Iterator()
-	for iter.Next(ctx) {
-		k := iter.Val()
-		raw, err := s.rdb.Get(ctx, k).Bytes()
-		if err != nil {
-			if errors.Is(err, redis.Nil) {
-				continue
-			}
-			return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: redis get %s: %w", k, err)
-		}
-		var rec APIKeyRecord
-		if err := json.Unmarshal(raw, &rec); err != nil {
-			continue
-		}
-		if rec.KeyID != keyID {
-			continue
-		}
-		rec.EmailVerifiedAt = at
-		body, err := json.Marshal(rec)
-		if err != nil {
-			return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: marshal: %w", err)
-		}
-		if err := s.rdb.Set(ctx, k, body, 0).Err(); err != nil {
-			return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: redis set %s: %w", k, err)
-		}
-		return rec, nil
+	hash, rec, found, err := s.findRecordByKeyID(ctx, keyID)
+	if err != nil {
+		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: %w", err)
 	}
-	if err := iter.Err(); err != nil {
-		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: redis scan: %w", err)
+	if !found {
+		return APIKeyRecord{}, ErrKeyNotFound
 	}
-	return APIKeyRecord{}, ErrKeyNotFound
+
+	rec.EmailVerifiedAt = at
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: marshal: %w", err)
+	}
+	k := cachekeys.APIKey(hash).String()
+	if err := s.rdb.Set(ctx, k, body, 0).Err(); err != nil {
+		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: redis set %s: %w", k, err)
+	}
+	return rec, nil
 }

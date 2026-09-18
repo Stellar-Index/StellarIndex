@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/redis/go-redis/v9"
-
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
@@ -24,11 +22,9 @@ var ErrKeyNotFound = errors.New("auth: key_id not found")
 //   - The admin tier-clamp path, which lowers every key an account
 //     holds when its tier ceiling drops.
 //
-// Implementation: SCANs the `apikey:*` keyspace until it finds the
-// record whose KeyID matches. O(N) in key count — fine for v1's
-// thousands-of-keys scale; if we ever need to scale into the
-// hundreds-of-thousands range, add a `apikey-byid:<keyid>` index
-// in Create + drop the SCAN.
+// The record is resolved through the KeyID index
+// ([RedisAPIKeyStore.findRecordByKeyID]) — one index read and one GET —
+// and only by walking the keyspace while that index is unusable.
 //
 // Returns the updated record (with the new RateLimitPerMin)
 // and nil on success, or [ErrKeyNotFound] if no matching key
@@ -41,44 +37,23 @@ func (s *RedisAPIKeyStore) UpdateRateLimit(ctx context.Context, keyID string, ne
 		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: rate-limit %d must be >= 0 (zero means tier default)", newRateLimitPerMin)
 	}
 
-	iter := s.rdb.Scan(ctx, 0, cachekeys.APIKey("*").String(), 1000).Iterator()
-	for iter.Next(ctx) {
-		k := iter.Val()
-		raw, err := s.rdb.Get(ctx, k).Bytes()
-		if err != nil {
-			if errors.Is(err, redis.Nil) {
-				// Key vanished between SCAN and GET — race with a
-				// delete. Skip; the next SCAN cursor will continue.
-				continue
-			}
-			return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: redis get %s: %w", k, err)
-		}
-		var rec APIKeyRecord
-		if err := json.Unmarshal(raw, &rec); err != nil {
-			// Malformed record — log-and-continue rather than abort
-			// the whole upgrade scan. Operator can clean these up
-			// out-of-band; the customer-facing UpdateRateLimit path
-			// shouldn't fail because some other key on the box has
-			// drift.
-			continue
-		}
-		if rec.KeyID != keyID {
-			continue
-		}
+	hash, rec, found, err := s.findRecordByKeyID(ctx, keyID)
+	if err != nil {
+		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: %w", err)
+	}
+	if !found {
+		return APIKeyRecord{}, ErrKeyNotFound
+	}
 
-		// Found it. Apply the new rate-limit + write back.
-		rec.RateLimitPerMin = newRateLimitPerMin
-		body, err := json.Marshal(rec)
-		if err != nil {
-			return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: marshal: %w", err)
-		}
-		if err := s.rdb.Set(ctx, k, body, 0).Err(); err != nil {
-			return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: redis set %s: %w", k, err)
-		}
-		return rec, nil
+	// Apply the new rate-limit + write back.
+	rec.RateLimitPerMin = newRateLimitPerMin
+	body, err := json.Marshal(rec)
+	if err != nil {
+		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: marshal: %w", err)
 	}
-	if err := iter.Err(); err != nil {
-		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: redis scan: %w", err)
+	k := cachekeys.APIKey(hash).String()
+	if err := s.rdb.Set(ctx, k, body, 0).Err(); err != nil {
+		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: redis set %s: %w", k, err)
 	}
-	return APIKeyRecord{}, ErrKeyNotFound
+	return rec, nil
 }

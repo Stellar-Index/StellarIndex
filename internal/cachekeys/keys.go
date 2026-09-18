@@ -582,6 +582,57 @@ func APIKey(keyHash string) APIKeyRecordKey {
 // (ErrTokenExpired vs ErrUnauthorized).
 const APIKeyTTL = time.Duration(0)
 
+// ─── API-key lookup index ─────────────────────────────────────────
+//
+// Wire shape: `apikey-index:v1` — ONE Redis HASH, fields:
+//
+//	ready            → "1", written only by a COMPLETE index build
+//	k:<key_id>       → <sha256-hex> of the record that KeyID names
+//	o:<identifier>   → space-separated <sha256-hex> list of the
+//	                   records that owner holds
+//
+// Writer: `internal/auth.RedisAPIKeyStore` — atomically with the
+// record at issuance (Create / CreateWithSecret), and by the one
+// sanctioned keyspace walk that builds it for records that predate it.
+// Reader: the same store's by-owner / by-KeyID lookups.
+//
+// Why ONE hash and not a SET per owner plus a pointer per KeyID: the
+// production instance runs `maxmemory-policy allkeys-lru`, so every
+// Redis key is independently evictable. A per-owner set evicted while
+// its records survive would make live credentials invisible to list,
+// revoke and the tier clamp — a revocation that silently no-ops. With
+// the entries and the `ready` marker in one key they share one fate:
+// eviction takes the marker too, readers see "not ready" and fall
+// back to the walk, which is always correct. (Same reasoning as the
+// eviction-safe passkey ceremony protocol, W1-auth-passkey-1.)
+//
+// The family is deliberately NOT under `apikey:` — a HASH there would
+// be matched by the `apikey:*` walk, whose GET would fail WRONGTYPE.
+// That makes it a NEW pattern for the Redis ACL allow-list
+// (configs/ansible/roles/redis-sentinel/templates/users.acl.j2,
+// `~apikey-index:*`); until a lockdown deployment applies it, every
+// access is NOPERM and the store keeps using the walk.
+//
+// No TTL: the index lives as long as the records it describes.
+
+// APIKeyIndexKey is the typed Redis key for the `apikey-index:*`
+// family.
+type APIKeyIndexKey string
+
+// String returns the wire-format key.
+func (k APIKeyIndexKey) String() string { return string(k) }
+
+// APIKeyIndex returns the key of the single-hash lookup index over the
+// `apikey:<sha256-hex>` records. The `v1` suffix versions the field
+// layout: a layout change writes a new key and rebuilds instead of
+// reinterpreting old fields.
+func APIKeyIndex() APIKeyIndexKey { return APIKeyIndexKey("apikey-index:v1") }
+
+// APIKeyIndexBuildLock returns the SET-NX lock that lets at most one
+// process run the index build at a time. Same family as the index so
+// one ACL pattern admits both.
+func APIKeyIndexBuildLock() APIKeyIndexKey { return APIKeyIndexKey("apikey-index:build-lock") }
+
 // ─── Per-source freshness gauge ───────────────────────────────────
 //
 // Wire shape: `health:<source>`

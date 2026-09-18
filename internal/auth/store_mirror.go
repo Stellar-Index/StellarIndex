@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
 // MirroredKey is an already-minted credential being written into the
@@ -80,7 +78,11 @@ func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) 
 	// ([RedisAPIKeyValidator.refreshIdleTTL]), so a key that is actually
 	// used never expires — only an abandoned one ages out
 	// (W1-flow-register-2).
-	if err := s.rdb.Set(ctx, cachekeys.APIKey(hash).String(), body, MirroredKeyIdleTTL).Err(); err != nil {
+	//
+	// Indexed in the same atomic write as the record, exactly as Create
+	// does: POST /v1/register rolls a failed registration back through
+	// RevokeKeyByID, which finds the record through that index.
+	if err := s.writeRecord(ctx, hash, rec, body, MirroredKeyIdleTTL); err != nil {
 		return fmt.Errorf("auth: CreateWithSecret: redis set: %w", err)
 	}
 	return nil
