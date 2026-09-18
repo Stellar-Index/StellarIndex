@@ -60,6 +60,24 @@ against.
   LISTING's `price_usd` (read from `asset_price_snapshot`, whose writer
   does not normalise) and its `?include=sparkline7d` series.
 
+- **customer webhooks:** a timed-out delivery is no longer re-POSTed
+  forever (K025, webhook leg). The write recording a delivery's outcome
+  ran on the attempt's context, whose deadline starts before the webhook
+  lookup and the POST and so expires no later than the HTTP client's own
+  timeout. A customer endpoint that hung — the
+  commonest way a delivery fails — reached `MarkAttemptFailed` with a
+  dead context; the write failed, `attempt_count` never advanced, and the
+  row kept its claim lease and was re-POSTed every 5 minutes into the
+  same timeout, forever, with `MaxAttempts` powerless because no attempt
+  was ever counted. Every outcome write (`MarkDelivered`, the retry mark,
+  the terminal mark) now goes through one `Worker.mark` chokepoint on a
+  context detached from the attempt (`context.WithoutCancel`) and bounded
+  by its own 1s `markWriteTimeout`. Detaching also covers shutdown: an
+  event the customer has already accepted is recorded delivered instead
+  of being re-sent when the lease expires. The mark budget is a new term
+  in the double-delivery invariant, and the compile-time guard now holds
+  `BatchLimit × (Timeout + markWriteTimeout)` under the lease
+  (25 × 11s = 275s < 300s; the margin goes from 50s to 25s).
 - **price/at, price/changes:** the thin-market gate now judges the
   market that existed AT the requested instant. `/v1/price/at` and every
   `/v1/price/changes` horizon serve the bucket at-or-before a past `ts`,

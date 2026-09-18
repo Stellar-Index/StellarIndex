@@ -83,8 +83,10 @@ const (
 	defaultBatchLimit = 25
 
 	// defaultHTTPTimeout bounds a single delivery POST. It also bounds
-	// each attempt's total store+HTTP work (see tick), so the worst-case
-	// serial batch time is defaultBatchLimit × defaultHTTPTimeout.
+	// each attempt's webhook lookup + HTTP work (see tick). The write that
+	// records the outcome is bounded separately by markWriteTimeout, so
+	// the worst-case serial batch time is
+	// defaultBatchLimit × (defaultHTTPTimeout + markWriteTimeout).
 	defaultHTTPTimeout = 10 * time.Second
 
 	// storeLeaseDuration is the claim lease ListPendingDeliveries places
@@ -92,9 +94,21 @@ const (
 	// internal/platform/postgresstore/webhook_store.go). A row not
 	// finished within the lease is re-claimed by a second worker and
 	// DOUBLE-delivered. The worker processes a batch SERIALLY, so the
-	// worst-case time to reach the last row is BatchLimit × Timeout; that
-	// product MUST stay comfortably under this lease.
+	// worst-case time to reach the last row is
+	// BatchLimit × (Timeout + markWriteTimeout); that product MUST stay
+	// comfortably under this lease.
 	storeLeaseDuration = 5 * time.Minute
+
+	// markWriteTimeout bounds the store write that records an attempt's
+	// outcome. That write runs on its OWN deadline, detached from the
+	// attempt's (see Worker.mark), so it is an additional term in the
+	// worst-case per-row time and therefore in the lease invariant. The
+	// lease leaves 50s of margin over 25 rows — 2s a row — so this must
+	// stay under 2s; 1s keeps 25s of margin and is three orders of
+	// magnitude above a healthy single-row UPDATE by primary key. A write
+	// that cannot land in 1s fails to mark_error and the row is retried
+	// on lease expiry with a fresh budget, exactly as a worker crash is.
+	markWriteTimeout = 1 * time.Second
 
 	// maxDrainBytes caps how much of a response body we drain to reuse
 	// the connection. We never read the body for content, so a hostile
@@ -104,11 +118,13 @@ const (
 
 // Compile-time guard for the two-worker double-delivery invariant
 // (MEDIUM, F-1270 hardening): the worst-case serial batch time
-// (defaultBatchLimit × defaultHTTPTimeout) must stay strictly under the
-// store's claim lease. Raising either default past that point fails the
-// build here rather than silently reintroducing the double-delivery
-// race. 25 × 10s = 250s < 300s, with 50s of margin.
-const _ = uint(storeLeaseDuration - defaultBatchLimit*defaultHTTPTimeout - time.Nanosecond)
+// (defaultBatchLimit × (defaultHTTPTimeout + markWriteTimeout)) must stay
+// strictly under the store's claim lease. Raising any of the three past
+// that point fails the build here rather than silently reintroducing the
+// double-delivery race. 25 × (10s + 1s) = 275s < 300s, with 25s of
+// margin. The mark term is in the product because the outcome write has
+// its own deadline (K025): it no longer shares the attempt's 10s.
+const _ = uint(storeLeaseDuration - defaultBatchLimit*(defaultHTTPTimeout+markWriteTimeout) - time.Nanosecond)
 
 // Options tunes the worker. Zero values yield production defaults.
 type Options struct {
@@ -122,8 +138,9 @@ type Options struct {
 	// SERIALLY and the store leases each claimed row for
 	// storeLeaseDuration (5m); a row not reached before its lease
 	// expires is re-claimed by a second worker and DOUBLE-delivered.
-	// INVARIANT: BatchLimit × HTTPClient.Timeout MUST stay under the
-	// 5-minute store lease (default 25 × 10s = 250s < 300s). The
+	// INVARIANT: BatchLimit × (HTTPClient.Timeout + markWriteTimeout)
+	// MUST stay under the 5-minute store lease (default
+	// 25 × (10s + 1s) = 275s < 300s). The
 	// compile-time guard beside the defaults enforces it for the
 	// default values; if you raise this, keep the product under the
 	// lease. Higher values bias toward throughput at the cost of
@@ -263,10 +280,13 @@ func (w *Worker) tick(ctx context.Context) {
 	}
 	for _, d := range pending {
 		// Bound each attempt to the per-request timeout so the worst-case
-		// serial batch time stays BatchLimit × Timeout — the basis for the
-		// BatchLimit-vs-lease invariant (see Options.BatchLimit). A single
-		// stuck delivery can't blow the batch past the 5-minute store lease
-		// and let a second worker re-claim the tail.
+		// serial batch time stays BatchLimit × (Timeout + markWriteTimeout)
+		// — the basis for the BatchLimit-vs-lease invariant (see
+		// Options.BatchLimit). A single stuck delivery can't blow the batch
+		// past the 5-minute store lease and let a second worker re-claim
+		// the tail. This deadline covers the webhook lookup and the POST
+		// only; the outcome write has its own (see Worker.mark), because
+		// this one is already spent exactly when the POST timed out.
 		attemptCtx, cancel := context.WithTimeout(ctx, w.attemptTimeout())
 		w.deliverOne(attemptCtx, d)
 		cancel()
@@ -274,8 +294,9 @@ func (w *Worker) tick(ctx context.Context) {
 }
 
 // attemptTimeout is the per-delivery deadline: the HTTP client's own
-// per-request timeout (default defaultHTTPTimeout). Bounding each attempt
-// keeps the worst-case serial batch time at BatchLimit × Timeout.
+// per-request timeout (default defaultHTTPTimeout). Bounding each attempt,
+// and separately each outcome write, keeps the worst-case serial batch
+// time at BatchLimit × (Timeout + markWriteTimeout).
 func (w *Worker) attemptTimeout() time.Duration {
 	if t := w.opts.HTTPClient.Timeout; t > 0 {
 		return t
@@ -382,7 +403,9 @@ func (w *Worker) classifyResponse(ctx context.Context, d platform.WebhookDeliver
 	switch {
 	case status >= 200 && status < 300:
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("delivered").Observe(elapsed)
-		if err := w.store.MarkDelivered(ctx, d.ID, status); err != nil {
+		if err := w.mark(ctx, func(markCtx context.Context) error {
+			return w.store.MarkDelivered(markCtx, d.ID, status)
+		}); err != nil {
 			w.opts.Logger.Warn("customer-webhook: MarkDelivered failed",
 				"err", err, "delivery_id", d.ID)
 			obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error").Inc()
@@ -447,6 +470,32 @@ func isRetryable4xx(status int) bool {
 	}
 }
 
+// mark runs a store write that records an attempt's OUTCOME, on a
+// context whose lifetime belongs to the write rather than to the attempt
+// it is recording (K025). Every outcome write goes through here.
+//
+// The attempt context is the wrong lifetime for it twice over. Its
+// deadline starts before GetWebhook and the POST, so it expires no later
+// than the HTTP client's own timeout: a POST that times out — the
+// commonest failure there is — reached the mark with a context that was
+// already dead, MarkAttemptFailed failed on it, attempt_count never
+// advanced, and the row kept its claim lease and was re-POSTed every
+// lease interval, timing out again each time. The loop never ended on
+// its own and MaxAttempts could not end it, because no attempt was ever
+// counted. And its cancellation is the worker's shutdown signal: a
+// customer who was just sent an event must not be sent it again because
+// the process was stopping when the 200 came back.
+//
+// WithoutCancel drops both the parent's deadline and its cancellation
+// while keeping its values; markWriteTimeout then bounds the write so a
+// hung store cannot stall the batch past the claim lease (the guard
+// beside the defaults holds the sum under it).
+func (w *Worker) mark(ctx context.Context, write func(context.Context) error) error {
+	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), markWriteTimeout)
+	defer cancel()
+	return write(markCtx)
+}
+
 // markTerminal records a no-retry outcome for a delivery (webhook
 // missing/disabled, empty secret, un-buildable request), clearing its
 // schedule so it drops out of the pending list.
@@ -461,7 +510,9 @@ func isRetryable4xx(status int) bool {
 // terminal `outcome` counter is advanced only when the mark persisted, so
 // a mark_error and a terminal outcome are never both counted for one call.
 func (w *Worker) markTerminal(ctx context.Context, d platform.WebhookDelivery, msg, outcome string) {
-	if err := w.store.MarkAttemptFailed(ctx, d.ID, msg, 0, time.Time{}); err != nil {
+	if err := w.mark(ctx, func(markCtx context.Context) error {
+		return w.store.MarkAttemptFailed(markCtx, d.ID, msg, 0, time.Time{})
+	}); err != nil {
 		w.opts.Logger.Warn("customer-webhook: terminal MarkAttemptFailed failed; delivery keeps its claim lease and will re-POST until the write succeeds",
 			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID, "outcome", outcome)
 		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error").Inc()
@@ -484,7 +535,9 @@ func (w *Worker) handleFailure(ctx context.Context, d platform.WebhookDelivery, 
 			outcome = "exhausted"
 		}
 	}
-	if err := w.store.MarkAttemptFailed(ctx, d.ID, msg, status, nextAttempt); err != nil {
+	if err := w.mark(ctx, func(markCtx context.Context) error {
+		return w.store.MarkAttemptFailed(markCtx, d.ID, msg, status, nextAttempt)
+	}); err != nil {
 		w.opts.Logger.Warn("customer-webhook: MarkAttemptFailed failed",
 			"err", err, "delivery_id", d.ID)
 		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error").Inc()
