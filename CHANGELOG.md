@@ -92,13 +92,27 @@ against.
   had ESCALATED ("stays active until manual unfreeze"), whose next
   qualifying bucket — cold, with no prev-VWAP comparator to re-fire on —
   then published. The release now goes through
-  `freeze.Writer.ReleaseWindow`, which asks the marker's own record: if
-  another window still owns a ladder in it (or it carries a live unowned
-  one) only the releasing window's ladder is retired and `flags.frozen`
-  stays; otherwise the marker is cleared as before. A marker that cannot
-  be read is left to its TTL rather than cleared. The operator override
-  (`stellarindex-ops freeze-unfreeze`) is unchanged and still ends every
-  window. (audit-2026-09-02 F011, K003)
+  `freeze.Writer.ReleaseWindow`, which asks the record rather than the
+  process: the marker first, and — because the marker is only the first
+  place the record lives — the durable per-window ladders behind it
+  whenever the marker names no sibling. That second read is what covers
+  a Redis loss, the one situation migration 0163 exists for: an absent,
+  undecodable or pre-window marker used to read as "no sibling", and the
+  clear that followed retires the WHOLE durable record, so a 5m window
+  recovering while the marker was gone still ended an escalated 1h
+  sibling's freeze. If another window still owns a live ladder in either
+  place (or either carries a live unowned one) only the releasing
+  window's ladder is retired, in both, and `flags.frozen` stays;
+  otherwise the marker is cleared as before. A marker OR a durable record
+  that cannot be read is left alone rather than cleared — not knowing
+  whether a sibling is frozen is no ground for unfreezing it. The
+  operator override (`stellarindex-ops freeze-unfreeze`) is unchanged and
+  still ends every window: it retires the durable record itself, so the
+  releases that follow find no sibling anywhere. Regressions at three
+  levels, the orchestrator one on a fixture that wires a ladder store the
+  way `cmd/stellarindex-aggregator` does — the window-isolation fixture
+  wires none, which is how the first cut of this fix shipped green with
+  the durable half unreached. (audit-2026-09-02 F011, K003)
 - **aggregator (freeze, money path):** the lifecycle-free
   `freeze.Writer.Mark` — the triangulated-composite refusal's writer,
   whose targets are members of the aggregator's own pair set and whose

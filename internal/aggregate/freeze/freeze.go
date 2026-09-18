@@ -680,21 +680,87 @@ func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.
 // ladder the very next read would have honoured. The marker's own TTL is
 // what bounds a sibling nobody is advancing.
 //
-// A marker that cannot be read is NOT cleared — the error is returned and
-// the marker is left to its TTL. Not knowing whether a sibling is frozen
-// is no ground for unfreezing it. An absent, undecodable or pre-window
-// marker has no sibling to protect and is cleared exactly as before, which
-// keeps the operator-override path (marker already deleted) idempotent.
+// The marker is only the FIRST place the record lives. A marker that names
+// no sibling — absent, undecodable, written before per-window ladders, or
+// rebuilt while the durable read was failing — is not evidence that no
+// sibling is frozen, and [Writer.Clear] is not only a Redis DEL: it retires
+// the WHOLE durable record, every window's ladder with it. So before
+// clearing, the durable record (migration 0163) is asked the same question
+// ([Writer.durableSiblingHeld]). Reading the absent marker as "no sibling"
+// let a recovering 5m window's release during a Redis loss — the one
+// situation the durable ladders exist for — retire an escalated 1h
+// sibling's freeze, and the escalated window published.
+//
+// A record that cannot be read is NOT cleared, marker or durable — the
+// error is returned, the marker is left to its TTL and the durable ladders
+// to their own holds. Not knowing whether a sibling is frozen is no ground
+// for unfreezing it.
+//
+// The operator override is unaffected. `stellarindex-ops freeze-unfreeze`
+// calls [Writer.Clear] directly, which retires the durable record, and
+// then stamps recovered_at; by the time a window's release lands here both
+// the marker and the record read as absent, no sibling is found, and this
+// is the same idempotent clear it always was.
 func (w *Writer) ReleaseWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (bool, error) {
 	label := windowLabel(window)
 	marker, ok, err := w.readMarker(ctx, cachekeys.Freeze(asset, quote))
 	if err != nil {
 		return true, err
 	}
-	if ok && marker.Windowed && label != "" && w.siblingLadderHeld(marker, label) {
+	if label == "" {
+		// No window to scope a retire to: the unscoped release it always was.
+		return false, w.Clear(ctx, asset, quote)
+	}
+	held := ok && marker.Windowed && w.siblingLadderHeld(marker, label)
+	if !held {
+		if held, err = w.durableSiblingHeld(ctx, asset, quote, window); err != nil {
+			return true, err
+		}
+	}
+	if held {
 		return true, w.RetireWindowLadder(ctx, asset, quote, window)
 	}
 	return false, w.Clear(ctx, asset, quote)
+}
+
+// durableSiblingHeld reports whether the DURABLE record holds a freeze for
+// any window other than `own`: a sibling's still-live ladder, or a
+// still-live unowned one (a row written before 0163, or a pair-level
+// ladder a rolled-back binary advanced — owner unknown, so it may be a
+// sibling's).
+//
+// [LadderStillLive] is the bound, as for every other durable read: it is
+// the test the durable rehydrate applies, so a ladder this keeps is exactly
+// one the next cold read would have honoured.
+//
+// False, with no read, for a store that cannot scope a ladder to a window.
+// Its single pair-level ladder is last-writer-wins across the pair's
+// windows, so it cannot say whose it is, and [Writer.RetireWindowLadder]
+// has nothing to retire in it: holding it back would mean the release
+// never reached the durable side at all. That store keeps the pair-wide
+// clear it has always had. Production wires the window-aware sink.
+//
+// Unlike the rehydrate reads, a store ERROR is returned rather than
+// degraded to "absent". There, "absent" is the answer that invents
+// nothing. Here it is the answer that destroys the record.
+func (w *Writer) durableSiblingHeld(ctx context.Context, asset, quote canonical.Asset, own time.Duration) (bool, error) {
+	if w.windowLadder == nil {
+		return false, nil
+	}
+	stored, unowned, ok, err := w.windowLadder.LoadWindowLadders(ctx, asset, quote)
+	if err != nil {
+		return false, fmt.Errorf("freeze: load durable ladders %s/%s: %w", asset.String(), quote.String(), err)
+	}
+	if !ok {
+		return false, nil
+	}
+	now := time.Now()
+	for window, st := range stored {
+		if window != own && LadderStillLive(st, w.ladderGrace, now) {
+			return true, nil
+		}
+	}
+	return LadderStillLive(unowned, w.ladderGrace, now), nil
 }
 
 // siblingLadderHeld reports whether `marker` records a freeze for any
