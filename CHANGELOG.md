@@ -41,6 +41,23 @@ against.
   code, including the end-to-end one that extracts deploy.yml's real
   step, runs it over the real `v0.61.1..v0.62.0` range against a host
   lacking the object, and feeds its output to the gate.
+- **supply:** the SEP-41 rollup pass now reads its OWN input boundary
+  (`last_ledger`) and floor (`genesis_baseline_ledger`) inside the folding
+  statement, behind `SELECT … FOR UPDATE` on the rollup row, instead of in a
+  round trip beforehand — so a fold reset that commits mid-pass is no longer
+  stranded. Both resetters run against a live aggregator (`ch-rebuild -sep41
+  -write`, and now `supply seed-sep41-genesis -write` when the floor moves);
+  with the boundary decided before the write, a reset landing in that gap was
+  silently undone — the pass added its delta over (stale `last_ledger`, max)
+  on top of the freshly-zeroed totals and pushed `last_ledger` back up, so
+  every row at-or-below the stale checkpoint was excluded from the fold
+  forever (measured on the regression fixture: 4,000,001 served for a true
+  5,500,001), exactly the undercount the reset exists to prevent. The
+  interleave is now pinned by an integration test that waits on
+  `pg_stat_activity` until the pass is genuinely blocked on the lock before
+  committing the reset. No behaviour change on the uncontended path, and no
+  migration — schema unchanged. Closes audit-2026-09-02 K005/F108.
+
 - **supply:** seeding a SEP-41 pre-Soroban genesis baseline now zeroes the
   worker-owned rollup fold whenever the baseline ledger MOVES, so the
   documented `missing_baseline` remedy no longer re-arms the pre-Soroban

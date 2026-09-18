@@ -777,61 +777,106 @@ type SEP41RollupAdvance struct {
 // already passed. `ch-rebuild -sep41 -write` does this automatically via
 // [Store.ResetSEP41SupplyRollupFold] (which preserves the genesis
 // baseline, unlike a bare `TRUNCATE sep41_supply_rollup`).
+//
+// Self-contained under a row lock (audit 2026-09-02, K005/F108). The pass
+// reads its OWN input boundary (last_ledger) and floor
+// (genesis_baseline_ledger) inside the folding statement, behind
+// `SELECT … FOR UPDATE` on the rollup row, rather than in a separate
+// round trip beforehand. Both of the other writers of those two columns
+// — [Store.ResetSEP41SupplyRollupFold] (`ch-rebuild -sep41 -write`) and
+// [Store.UpsertSEP41GenesisBaseline] (`supply seed-sep41-genesis`, which
+// now zeroes the fold when the floor moves) — run against a LIVE
+// aggregator. With the boundary decided before the write, a reset landing
+// in that gap was stranded: the pass added its delta over
+// (stale last_ledger, mx) on top of the freshly-zeroed totals and then
+// pushed last_ledger back up, so every row at-or-below the stale
+// checkpoint was permanently excluded from the fold — a served
+// UNDERCOUNT that the next pass can never repair. Taking the row lock
+// first makes the two orderings the only two outcomes: the reset lands
+// before this pass (which then re-folds from zero under the current
+// floor) or after it (which re-folds on the next cadence).
 func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (SEP41RollupAdvance, error) {
 	if contractID == "" {
 		return SEP41RollupAdvance{}, errors.New("timescale: AdvanceSEP41SupplyRollup: empty contractID")
 	}
-	cp, _, err := s.sep41RollupCheckpoint(ctx, contractID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return SEP41RollupAdvance{}, err
+		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s begin: %w", contractID, err)
 	}
-	fromLedger := cp.lastLedger
+	defer func() { _ = tx.Rollback() }()
+
+	// Materialise the row so the FOR UPDATE below has something to lock.
+	// DO NOTHING takes no row lock of its own, so this never contends; the
+	// column DEFAULTs give a fresh contract an empty fold (0 / 0), exactly
+	// what the previous INSERT arm produced.
+	const ensure = `
+        INSERT INTO sep41_supply_rollup (contract_id)
+        VALUES ($1)
+        ON CONFLICT (contract_id) DO NOTHING
+    `
+	if _, err := tx.ExecContext(ctx, ensure, contractID); err != nil {
+		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s ensure row: %w", contractID, err)
+	}
 
 	// One statement:
+	//   locked   — this pass's OWN input boundary + floor, read under the
+	//              rollup row's write lock so a concurrent reset or genesis
+	//              re-seed is either already visible here or waits for us.
+	//              MATERIALIZED: evaluate (and lock) exactly once.
 	//   bound.mx — the contract's current max ledger; we fold strictly
 	//              below it so the (possibly mid-write) tip is deferred.
-	//   delta    — the settled tail sum over (from_ledger, mx).
-	//   UPSERT   — add the delta into the running totals and move
+	//   delta    — the settled tail sum over (from_ledger, mx), floored.
+	//   UPDATE   — add the delta into the running totals and move
 	//              last_ledger to the max ledger actually folded
 	//              (COALESCE back to from_ledger when nothing settled).
 	const q = `
-        WITH bound AS (
+        WITH locked AS MATERIALIZED (
+            SELECT last_ledger                          AS from_ledger,
+                   COALESCE(genesis_baseline_ledger, 0) AS floor_ledger
+              FROM sep41_supply_rollup
+             WHERE contract_id = $1
+               FOR UPDATE
+        ),
+        bound AS (
             SELECT COALESCE(max(ledger), 0) AS mx
               FROM sep41_supply_events
              WHERE contract_id = $1
         ),
         delta AS (
             SELECT
+                (SELECT from_ledger FROM locked)                                   AS from_ledger,
                 COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'mint'),     0) AS d_mint,
                 COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'burn'),     0) AS d_burn,
                 COALESCE(sum(e.amount) FILTER (WHERE e.event_kind = 'clawback'), 0) AS d_clawback,
-                COALESCE(max(e.ledger), $2)                                        AS to_ledger
-              FROM sep41_supply_events e, bound
+                COALESCE(max(e.ledger), (SELECT from_ledger FROM locked))           AS to_ledger
+              FROM sep41_supply_events e
              WHERE e.contract_id = $1
-               AND e.ledger       > $2
-               AND e.ledger      >= $3
-               AND e.ledger       < bound.mx
+               AND e.ledger       > (SELECT from_ledger  FROM locked)
+               AND e.ledger      >= (SELECT floor_ledger FROM locked)
+               AND e.ledger       < (SELECT mx FROM bound)
         )
-        INSERT INTO sep41_supply_rollup
-            (contract_id, mint_total, burn_total, clawback_total, last_ledger, updated_at)
-        SELECT $1, d_mint, d_burn, d_clawback, to_ledger, now() FROM delta
-        ON CONFLICT (contract_id) DO UPDATE SET
-            mint_total     = sep41_supply_rollup.mint_total     + EXCLUDED.mint_total,
-            burn_total     = sep41_supply_rollup.burn_total     + EXCLUDED.burn_total,
-            clawback_total = sep41_supply_rollup.clawback_total + EXCLUDED.clawback_total,
-            last_ledger    = EXCLUDED.last_ledger,
-            updated_at     = now()
-        RETURNING last_ledger
+        UPDATE sep41_supply_rollup r
+           SET mint_total     = r.mint_total     + d.d_mint,
+               burn_total     = r.burn_total     + d.d_burn,
+               clawback_total = r.clawback_total + d.d_clawback,
+               last_ledger    = d.to_ledger,
+               updated_at     = now()
+          FROM delta d
+         WHERE r.contract_id = $1
+        RETURNING d.from_ledger, r.last_ledger
     `
-	var toLedger int64
-	if err := s.db.QueryRowContext(ctx, q, contractID, int(fromLedger), int(sep41SorobanFloor(cp))).Scan(&toLedger); err != nil {
+	var fromLedger, toLedger int64
+	if err := tx.QueryRowContext(ctx, q, contractID).Scan(&fromLedger, &toLedger); err != nil {
 		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s commit: %w", contractID, err)
 	}
 	return SEP41RollupAdvance{
 		ContractID: contractID,
-		FromLedger: fromLedger,
+		FromLedger: uint32(fromLedger),
 		ToLedger:   uint32(toLedger),
-		Advanced:   uint32(toLedger) > fromLedger,
+		Advanced:   toLedger > fromLedger,
 	}, nil
 }
 

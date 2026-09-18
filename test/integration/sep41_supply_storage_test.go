@@ -934,6 +934,194 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 	}
 }
 
+// TestSEP41SupplyRollup_ResetDuringAdvanceIsNotStranded proves the
+// audit-2026-09-02 K005/F108 defect is gone: a fold reset that commits while
+// the aggregator's rollup worker is mid-pass must not be stranded.
+//
+// Both writers of the fold's input boundary run against a LIVE aggregator:
+// `ch-rebuild -sep41 -write` resets the fold after a re-derive, and (since the
+// F022/F029 fix) `supply seed-sep41-genesis -write` resets it whenever the
+// genesis floor moves. When the pass decided its own boundary in a round trip
+// BEFORE the write, a reset landing in that gap was silently undone: the pass
+// added its delta over (stale last_ledger, mx) on top of the freshly-zeroed
+// totals and then pushed last_ledger back up, so every row at-or-below the
+// stale checkpoint was excluded from the fold forever — a served UNDERCOUNT
+// the next pass can never repair, and the exact failure the reset exists to
+// prevent.
+//
+// The interleave is pinned, not raced: a blocker transaction holds the rollup
+// row's write lock with the literal statement ResetSEP41SupplyRollupFold
+// issues, the worker pass is started against it, the test WAITS (via
+// pg_stat_activity) until that pass is genuinely blocked on the lock, and only
+// then does the reset commit. If the pass never blocks the test fails rather
+// than passing vacuously.
+func TestSEP41SupplyRollup_ResetDuringAdvanceIsNotStranded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	rawdb, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	t.Cleanup(func() { _ = rawdb.Close() })
+
+	const (
+		contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+
+		boundary  uint32 = 50457424 // clickhouse.SorobanGenesisLedger
+		lSettled1 uint32 = 50457500
+		lSettled2 uint32 = 50458000 // becomes last_ledger
+		lTip      uint32 = 50460000 // deferred by the < max(ledger) settled guard
+		readAt    uint32 = 50460000
+
+		genesisMint int64 = 4_000_000
+		settled1    int64 = 1_000_000
+		settled2    int64 = 500_000
+		tipMint     int64 = 1
+
+		// genesis(4M) + settled(1M + 0.5M) + tip(1), each counted once.
+		wantLifetime int64 = 5_500_001
+	)
+	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+
+	insert := func(ledger uint32, amount int64, tx int) {
+		t.Helper()
+		if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+			ContractID: contractID, Ledger: ledger, TxHash: fmt.Sprintf("%064x", tx), OpIndex: 0,
+			ObservedAt: t0, Kind: timescale.SEP41EventMint, Amount: big.NewInt(amount), Counterparty: "GA1",
+		}); err != nil {
+			t.Fatalf("insert mint@%d: %v", ledger, err)
+		}
+	}
+
+	insert(lSettled1, settled1, 1)
+	insert(lSettled2, settled2, 2)
+	insert(lTip, tipMint, 3)
+	if err := store.UpsertSEP41GenesisBaseline(ctx, contractID,
+		timescale.SEP41KindTotals{Mint: big.NewInt(genesisMint), Burn: big.NewInt(0), Clawback: big.NewInt(0)},
+		boundary); err != nil {
+		t.Fatalf("seed genesis: %v", err)
+	}
+	if _, err := store.AdvanceSEP41SupplyRollup(ctx, contractID); err != nil {
+		t.Fatalf("first advance: %v", err)
+	}
+	if got := lifetimeSEP41Mint(t, ctx, store, contractID, readAt); got != wantLifetime {
+		t.Fatalf("baseline lifetime mint = %d; want %d", got, wantLifetime)
+	}
+
+	// ─── Blocker: the scoped reset, held open on its own connection ───────
+	blockerConn, err := rawdb.Conn(ctx)
+	if err != nil {
+		t.Fatalf("blocker conn: %v", err)
+	}
+	defer func() { _ = blockerConn.Close() }()
+	blockerTx, err := blockerConn.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("blocker begin: %v", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = blockerTx.Rollback()
+		}
+	}()
+	// Byte-for-byte the scoped statement ResetSEP41SupplyRollupFold issues.
+	if _, err := blockerTx.ExecContext(ctx, `
+            UPDATE sep41_supply_rollup
+               SET mint_total = 0, burn_total = 0, clawback_total = 0,
+                   last_ledger = 0, updated_at = now()
+             WHERE contract_id = ANY($1)
+    `, []string{contractID}); err != nil {
+		t.Fatalf("blocker reset: %v", err)
+	}
+
+	// ─── The worker pass, which must end up waiting on that row lock ──────
+	type advResult struct {
+		res timescale.SEP41RollupAdvance
+		err error
+	}
+	done := make(chan advResult, 1)
+	go func() {
+		res, aerr := store.AdvanceSEP41SupplyRollup(ctx, contractID)
+		done <- advResult{res, aerr}
+	}()
+
+	waitForLockWait := func() {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			var n int
+			if err := rawdb.QueryRowContext(ctx, `
+				SELECT count(*) FROM pg_stat_activity
+				 WHERE datname = current_database()
+				   AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
+				t.Fatalf("pg_stat_activity: %v", err)
+			}
+			if n > 0 {
+				return
+			}
+			select {
+			case r := <-done:
+				t.Fatalf("the rollup pass finished without ever waiting on the row lock (res=%+v err=%v) — the interleave never armed, so this test would prove nothing", r.res, r.err)
+			case <-time.After(50 * time.Millisecond):
+			}
+		}
+		t.Fatalf("rollup pass never blocked on the rollup row lock within 30s")
+	}
+	waitForLockWait()
+
+	// The reset commits INSIDE the worker's pass.
+	if err := blockerTx.Commit(); err != nil {
+		t.Fatalf("blocker commit: %v", err)
+	}
+	committed = true
+
+	select {
+	case r := <-done:
+		if r.err != nil {
+			t.Fatalf("advance across the reset: %v", r.err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("rollup pass did not finish after the reset committed")
+	}
+
+	// ─── The reset must have been honoured, not stranded ──────────────────
+	var mint string
+	var lastLedger int64
+	if err := rawdb.QueryRowContext(ctx, `
+		SELECT mint_total::text, last_ledger
+		  FROM sep41_supply_rollup WHERE contract_id = $1`, contractID).
+		Scan(&mint, &lastLedger); err != nil {
+		t.Fatalf("read rollup row: %v", err)
+	}
+	if mint != "1500000" || lastLedger != int64(lSettled2) {
+		t.Errorf("fold after reset-during-advance = mint %s last_ledger %d; want 1500000 / %d (the pass must re-fold from the reset boundary, not resume from the stale one)",
+			mint, lastLedger, lSettled2)
+	}
+	if got := lifetimeSEP41Mint(t, ctx, store, contractID, readAt); got != wantLifetime {
+		t.Errorf("lifetime mint after a reset during an advance = %d; want %d (rows at-or-below the stale checkpoint must not be stranded)", got, wantLifetime)
+	}
+}
+
+// lifetimeSEP41Mint reads the served Algorithm-3 mint component.
+func lifetimeSEP41Mint(t *testing.T, ctx context.Context, store *timescale.Store, contractID string, asOf uint32) int64 {
+	t.Helper()
+	got, err := store.SEP41KindTotalsAtOrBefore(ctx, contractID, asOf)
+	if err != nil {
+		t.Fatalf("SEP41KindTotalsAtOrBefore %s@%d: %v", contractID, asOf, err)
+	}
+	return got.Mint.Int64()
+}
+
 // TestSEP41RollupCheckpoints_DerivedReconcile exercises the two storage
 // seams the derived-checkpoint reconcile (`stellarindex-ops supply
 // verify-rollup`) is built on — ListSEP41RollupCheckpoints (the
