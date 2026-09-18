@@ -163,7 +163,24 @@ against.
   served-VWAP guard alike, exact `*big.Rat` throughout. (audit-2026-09-02
   F037, F039, K004, RLT-391 / #788 — `rejectAggregatorOutliers` in
   `internal/aggregate/global.go` carries the same additive band and is
-  NOT covered here)
+  swept by the next entry)
+- **aggregator:** the oracle-aggregator tier's divergence filter is
+  symmetric in ratio space too, closing the seventh and last site of
+  that band. `rejectAggregatorOutliers` scored a vendor quote additively
+  against the median of its peers at K=5, so the band's lower edge went
+  non-positive at a relative MAD of 1/(5·1.4826) = 13.5 % — routine
+  disagreement between three vendors on a thin RWA, or on a major
+  mid-crash — and from there NO downward quote could be rejected while
+  its mirror-image pump still was. A vendor publishing a decimal-shifted
+  or stale-to-zero price was then averaged straight into the plain-mean
+  headline that this filter exists to protect: on a 70/85/100/115/130
+  source set a 1.00 quote dragged the served price from 100.00 to 83.50.
+  It now uses the same `symmetricDev` helper as the other six sites, so
+  the band is `[centre²/(centre + K·scale), centre + K·scale]` —
+  unchanged above the centre and never below the old edge underneath it,
+  so no vendor that used to survive is newly dropped for being merely
+  low, and the tier still never fails closed. (audit-2026-09-02 K004 /
+  #788)
 - **api:** a client-abort flood can no longer fail the rate limiter
   CLOSED for every caller on a bucket. The throttle's Redis round-trip
   ran on the REQUEST's context, and `ratelimit.Bucket` cannot tell a

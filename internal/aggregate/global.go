@@ -359,10 +359,26 @@ var aggregatorMADFactor = big.NewRat(5, 1)
 // M8: a 2-source example moved the mean 50%; a 3-source example ~33%).
 //
 // It computes the EXACT median of the sources' prices (each projected
-// onto [aggregatorCommonDecimals]) and drops any source outside
-// median ± aggregatorMADFactor·(1.4826·MAD). When a strict majority of
-// sources agree exactly (MAD == 0) any divergent source is dropped.
-// All comparison arithmetic is exact *big.Rat (ADR-0003).
+// onto [aggregatorCommonDecimals]) and drops any source whose deviation
+// from that median exceeds aggregatorMADFactor·(1.4826·MAD). When a
+// strict majority of sources agree exactly (MAD == 0) any divergent
+// source is dropped. All comparison arithmetic is exact *big.Rat
+// (ADR-0003).
+//
+// The deviation is measured in RATIO space ([symmetricDev], MNY-22 /
+// finding K004), not additively in price space. The additive band
+// `|p − centre| > K·scale` is one-sided-blind by construction: a source
+// can only ever be `centre` below the centre, so once K·scale reaches
+// the centre — a relative MAD of 1/(5·1.4826) = 13.5 %, which three
+// aggregators quoting a thin RWA or a mid-crash major reach routinely —
+// the lower edge goes non-positive and NO downward print can be
+// rejected, while the mirror-image up-move still is. A single vendor
+// publishing a decimal-shifted or stale-to-zero quote then halved the
+// plain-mean headline that this filter exists to protect. The
+// ratio-symmetric band [centre²/(centre + K·scale), centre + K·scale] is
+// identical above the centre and never below the old edge underneath
+// it, so no source that used to survive is newly dropped for being
+// merely low.
 //
 // It NEVER fails closed: with fewer than [aggregatorMinForOutlierReject]
 // usable sources (no majority to define consensus) it returns the input
@@ -391,9 +407,8 @@ func rejectAggregatorOutliers(rows []canonical.OracleUpdate) []canonical.OracleU
 
 	kept := make([]canonical.OracleUpdate, 0, len(rows))
 	for k, v := range vals {
-		dev := new(big.Rat).Sub(v, centre)
-		dev.Abs(dev)
-		if dev.Cmp(half) > 0 {
+		dev := symmetricDev(v, centre)
+		if dev == nil || dev.Cmp(half) > 0 {
 			continue // divergent print — drop
 		}
 		kept = append(kept, rows[idx[k]])
