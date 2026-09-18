@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -743,11 +744,104 @@ func parseAssetListFilters(w http.ResponseWriter, r *http.Request) (assetListFil
 		f.issuer = iss
 	}
 
-	// q: free-text search. No validation to fail — any string is a
-	// legal substring — so it never contributes a 400.
+	// q: free-text search. Any string is a legal substring, so the only
+	// thing to validate is its size — see [assetListMaxQueryLen].
 	f.q = strings.TrimSpace(q.Get("q"))
+	if len(f.q) > assetListMaxQueryLen {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-parameter",
+			"Invalid q", http.StatusBadRequest,
+			fmt.Sprintf("q may be at most %d bytes", assetListMaxQueryLen))
+		return assetListFilters{}, false
+	}
 
 	return f, true
+}
+
+// assetListMaxQueryLen bounds the free-text `q` filter, in bytes.
+//
+// `q` had no bound but the server's header limit, and it is carried
+// verbatim into the listing cache key and into three LIKE patterns. The
+// longest thing a caller can usefully search for is a full classic
+// asset id — a 12-byte code, a dash and a 56-byte issuer strkey, 69
+// bytes — since `q` substring-matches code, slug and issuer VALUES and
+// none of those is longer. 100 leaves headroom over that; anything past
+// it cannot match a row and exists only to be expensive (K009 / F175).
+const assetListMaxQueryLen = 100
+
+// Rate-limit surcharges for the /v1/assets plans a caller can select.
+//
+// /v1/assets is one route and several query plans, and the query string
+// picks the plan. The limiter's pre-dispatch charge is one token for
+// all of them, so the per-minute budget bought the dearest plan at the
+// cheapest plan's price (K009 / F175 / F176). Each surcharge is added to
+// the base token through [middleware.ChargeRateLimit].
+//
+// These are weights, not measurements of any one request, and they are
+// deliberately CONSERVATIVE — set below the measured cost ratio, so that
+// if they are wrong they under-charge an abuser rather than lock out an
+// honest client. They are capacity knobs: re-derive them from the
+// slow-request log (middleware.SlowRequestThreshold records the query
+// shape) when the plans change.
+const (
+	// assetListSurchargeVolumePlan prices the volume-ranked listing
+	// plan: the concentration-adjusted sort over per-asset CTEs.
+	// Measured on r1 2026-09-01 at 1523 ms against 82 ms for the default
+	// ordering at the same limit — 18x. Charged at 10 tokens in total.
+	assetListSurchargeVolumePlan = 9
+
+	// assetListSurchargeSearch prices a `q` that reaches the store: three
+	// unindexed LOWER(col) LIKE predicates over the ~190K-row listing
+	// spine, behind a cache whose key includes `q` verbatim — so a
+	// caller cycling values misses it every time. Charged at 5 tokens
+	// in total.
+	assetListSurchargeSearch = 4
+)
+
+// assetListCost is the rate-limit price, in tokens, of one /v1/assets
+// request, decided by the PLAN it selects rather than by the parameter
+// that selected it — `order_by=volume_24h_usd_desc` and
+// `asset_class=all` reach the same volume-ranked store read, and pricing
+// only the one the finding named would leave the other as the way
+// around it.
+//
+// storeBacked is whether an AssetsReader is wired. Without one, and on
+// the class-scoped catalogue listings (a few dozen curated rows filtered
+// in-process, which ignore `q` altogether), no plan is selected and the
+// request costs the base token.
+func assetListCost(f assetListFilters, order timescale.AssetsOrder, assetClass string, storeBacked bool) int {
+	const base = 1
+	if !storeBacked || (assetClass != "" && assetClass != "all") {
+		return base
+	}
+	cost := base
+	if assetClass == "all" || order == timescale.AssetsOrderVolume24hUSDDesc {
+		cost += assetListSurchargeVolumePlan
+	}
+	if f.q != "" {
+		cost += assetListSurchargeSearch
+	}
+	return cost
+}
+
+// parseAssetListLimit extracts + validates `limit` for /v1/assets:
+// an integer in [1, 500], default 100. ok=false means a problem+json
+// 400 has already been written. Lifted out of handleAssetList verbatim
+// to keep that dispatcher inside the cyclomatic budget.
+func parseAssetListLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return 100, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < 1 || parsed > 500 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-limit",
+			"Invalid limit", http.StatusBadRequest,
+			"limit must be an integer in [1, 500]")
+		return 0, false
+	}
+	return parsed, true
 }
 
 // typeMatchesListingSpine reports whether a structural `type` filter
@@ -855,17 +949,9 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	// Parse + validate query params FIRST — bad input is 400
 	// regardless of whether the backing reader is wired.
 	cursor := r.URL.Query().Get("cursor")
-	limit := 100
-	if raw := r.URL.Query().Get("limit"); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 500 {
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/invalid-limit",
-				"Invalid limit", http.StatusBadRequest,
-				"limit must be an integer in [1, 500]")
-			return
-		}
-		limit = parsed
+	limit, ok := parseAssetListLimit(w, r)
+	if !ok {
+		return
 	}
 
 	// Row filters (type / code / issuer). Validated BEFORE the
@@ -938,6 +1024,12 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 				"asset_class listings rank on their own fixed scheme "+
 				"(catalogue by market cap, then classic by 24h volume). "+
 				"Request order_by without asset_class.")
+		return
+	}
+
+	// Price the request by the plan it selected — after validation, so a
+	// 400 costs the base token only, and before any path reads.
+	if !middleware.ChargeRateLimit(w, r, assetListCost(filters, orderBy.order, assetClass, s.assetsReader != nil)) {
 		return
 	}
 

@@ -83,6 +83,28 @@ against.
   same per-minute budget as the equivalent single-asset reads would;
   size batches against `X-RateLimit-Remaining` (F035, F046, K009,
   RLT-160).
+- **api (security):** `GET /v1/assets` is now charged by the query plan
+  a request selects, and its free-text `q` is bounded. The route is one
+  URL and several plans, picked by the query string, and every one cost
+  a single rate-limit token: the volume-ranked listing, measured on r1
+  at 1523 ms against 82 ms for the default ordering at the same limit,
+  and the `q` search — three unindexed `LIKE` predicates over the
+  ~190K-row spine, behind a cache keyed on `q` verbatim, so a caller
+  cycling values misses it every time. The volume-ranked plan now costs
+  10 tokens and a `q` that reaches the store 5 (14 together), charged
+  after validation and before any read, so a denied request is a 429
+  that touched nothing. The price follows the PLAN, not the parameter:
+  `asset_class=all` reaches the same volume-ranked store read as
+  `order_by=volume_24h_usd_desc` and is charged the same, where pricing
+  only the named parameter would have left the other as the way round
+  it. The class-scoped listings (`fiat` / `stablecoin` / `crypto`) and a
+  deployment with no assets store select no plan and still cost one
+  token. The weights are deliberately below the measured ratio — a wrong
+  weight should under-charge an abuser, not lock out the explorer — and
+  are capacity knobs to re-derive from the slow-request log. `q` longer
+  than 100 bytes is now a 400 (`invalid-parameter`) on every path; the
+  longest value that can match a row is a 69-byte classic asset id
+  (K009).
 - **aggregator (money):** the ADR-0019 freeze marker now carries one
   lifecycle ladder PER aggregation window instead of a single
   pair-level one. The `freeze:<asset>:<quote>` key is pair-scoped

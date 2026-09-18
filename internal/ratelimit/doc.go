@@ -13,10 +13,27 @@
 //
 // # Atomicity
 //
-// The check is a Lua script (EVAL) that does INCR + EXPIRE-on-first
+// The check is a Lua script (EVAL) that does INCRBY + EXPIRE-on-first
 // + TTL-return atomically. No race between "read counter" and "set
 // TTL" — if two requests arrive simultaneously on a cold key, only
 // one sets the expiry and both see the correct incremented count.
+//
+// # Weighted charges
+//
+// A request is not always worth one token. [Bucket.Take] and
+// [Bucket.TakeN] spend one; [Bucket.Charge] spends a caller-supplied
+// cost in the same single round-trip, for routes whose server-side
+// work is chosen by the client. Note the naming trap: TakeN's N is the
+// per-subject LIMIT override, not a cost — Charge is the only way to
+// make a request dearer.
+//
+// The production middleware charges one token before dispatch and
+// lets a handler re-price the request once it has parsed the parameter
+// that sets the cost (middleware.ChargeRateLimit). Today that is
+// GET/POST /v1/price/batch, at one token per de-duplicated asset id,
+// and GET /v1/assets, by the query plan the request selects. Cost is
+// clamped into [1, limit]; see [Bucket.Charge] for why neither end is
+// an error.
 //
 // # Redis key shape
 //
