@@ -48,6 +48,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -136,6 +137,36 @@ type DecimalsAssetWriter interface {
 	UpsertNonstandardDecimalsAsset(ctx context.Context, asset string, decimals uint32, source string) error
 }
 
+// DecimalsAssetReconciler is the read + delete half the LOCKSTEP reconcile
+// needs on top of DecimalsAssetWriter. `nonstandard_decimals_assets` is a
+// materialised projection of the lake's on-chain decimals() for the non-7
+// subset, and two independent resolvers read the two sides of it: every
+// price-shaped serving path and the aggregator's VWAP normalise through the
+// projection (aggregate.ResolveDecimals), while GET /v1/assets/{id} scales
+// supply by the lake reading directly (clickhouse.TokenDecimals). The
+// projection can drift from the lake — a hand-seeded row that contradicts
+// the instance, an instance captured or re-captured after the guard's
+// per-process resolved cache latched, a row left behind by a token whose
+// metadata now reads 7 — and nothing re-checked it, so Guard.Reconcile
+// re-reads every persisted row against the lake on each tick and repairs
+// it toward the lake (upsert the lake's value; delete when the lake confirms
+// 7, since the table's CHECK forbids storing 7).
+//
+// Satisfied by *timescale.Store. The Writer option is type-asserted for it
+// in New so no wiring changes; the compile-time assertion below is what
+// stops that optional seam from becoming a silent opt-out if the store ever
+// stops matching.
+type DecimalsAssetReconciler interface {
+	DecimalsAssetWriter
+	LoadNonstandardDecimalsAssets(ctx context.Context) ([]timescale.NonstandardDecimalsAsset, error)
+	DeleteNonstandardDecimalsAsset(ctx context.Context, asset string) error
+}
+
+// Compile-time proof the production store satisfies the reconcile seam, so
+// the type assertion in New cannot quietly disarm the lockstep in the one
+// binary that matters.
+var _ DecimalsAssetReconciler = (*timescale.Store)(nil)
+
 // Guard periodically sweeps recently-DEX-traded Soroban tokens and raises
 // obs.DEXTradeNonstandardDecimalsTotal for any whose on-chain decimals() is
 // confirmed != 7. It is conservative: it alarms ONLY on a confirmed non-7
@@ -144,8 +175,13 @@ type Guard struct {
 	reader   TradeReader
 	resolver DecimalsResolver
 	writer   DecimalsAssetWriter
-	window   time.Duration
-	logger   *slog.Logger
+	// reconciler is writer when it also satisfies DecimalsAssetReconciler
+	// (the production *timescale.Store does — see the compile-time
+	// assertion). Nil disables Reconcile; detection and persistence are
+	// unaffected.
+	reconciler DecimalsAssetReconciler
+	window     time.Duration
+	logger     *slog.Logger
 
 	// backfillWindow / backfillThrottle configure the one-time startup
 	// self-seed pass. See Backfill.
@@ -212,10 +248,15 @@ func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// The reconcile seam rides on the Writer option: the production store
+	// satisfies both, and a test fake that only implements the Writer keeps
+	// the pre-lockstep behaviour (no reconcile) without any wiring change.
+	reconciler, _ := opts.Writer.(DecimalsAssetReconciler)
 	return &Guard{
 		reader:           reader,
 		resolver:         resolver,
 		writer:           opts.Writer,
+		reconciler:       reconciler,
 		window:           window,
 		backfillWindow:   backfillWindow,
 		backfillThrottle: backfillThrottle,
@@ -236,9 +277,7 @@ func (g *Guard) Run(ctx context.Context, interval time.Duration) error {
 	}
 	g.logger.Info("decimals-guard started", "interval", interval, "window", g.window)
 
-	if err := g.Sweep(ctx); err != nil && !errors.Is(err, context.Canceled) {
-		g.logger.Warn("decimals-guard: initial sweep failed", "err", err)
-	}
+	g.tick(ctx, "initial")
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -247,10 +286,22 @@ func (g *Guard) Run(ctx context.Context, interval time.Duration) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if err := g.Sweep(ctx); err != nil && !errors.Is(err, context.Canceled) {
-				g.logger.Warn("decimals-guard: sweep failed", "err", err)
-			}
+			g.tick(ctx, "periodic")
 		}
+	}
+}
+
+// tick is one Run iteration: the freshness Sweep, then the lockstep
+// Reconcile of every persisted row against the lake. The two are
+// independent — a failed Sweep (trade enumeration) must not skip the
+// reconcile, and vice versa — and both are logged-and-retried-next-tick,
+// never fatal.
+func (g *Guard) tick(ctx context.Context, phase string) {
+	if err := g.Sweep(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		g.logger.Warn("decimals-guard: sweep failed", "phase", phase, "err", err)
+	}
+	if err := g.Reconcile(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		g.logger.Warn("decimals-guard: lockstep reconcile failed", "phase", phase, "err", err)
 	}
 }
 
@@ -432,6 +483,121 @@ func (g *Guard) report(ctx context.Context, ref timescale.SorobanDEXTradeRef, de
 	}
 	g.mu.Lock()
 	g.persisted[key] = struct{}{}
+	g.mu.Unlock()
+}
+
+// Reconcile is the LOCKSTEP pass: it re-reads every persisted
+// `nonstandard_decimals_assets` row against the lake and repairs any row
+// that disagrees with the lake's on-chain decimals(), so the projection the
+// serving paths normalise through cannot drift from the reading
+// GET /v1/assets/{id} scales supply by. Runs after every Sweep (see tick).
+//
+// Per row, with the resolved cache deliberately BYPASSED (a fresh lake read
+// is the entire point — the cache is what let a row go unchecked for a
+// process lifetime):
+//
+//   - lake read error or found=false → leave the row alone, no metric. An
+//     unresolvable reading is not evidence the row is wrong, and a row an
+//     operator hand-seeded for an uncaptured instance (runbook
+//     "Mitigation") must survive a lake that cannot see the instance.
+//   - lake == row.Decimals → in lockstep; refresh the resolved cache.
+//   - lake != row.Decimals → count it
+//     (obs.NonstandardDecimalsLockstepMismatchTotal{site="guard_reconcile"}),
+//     log at ERROR naming both values, and repair toward the lake: upsert
+//     the lake's value when it is non-7, DELETE the row when the lake
+//     confirms 7 (the table's CHECK forbids storing 7, and a 7-dp token has
+//     no business being normalised). The counter increments on OBSERVATION,
+//     so a repair that fails re-counts next tick and a sustained value is
+//     what the correction_failing alert reads.
+//
+// Returns an error only when the row load itself fails. Bounded by
+// construction: the table holds confirmed offenders only (single digits in
+// production), so this is a handful of PK-prefix lake lookups per tick.
+func (g *Guard) Reconcile(ctx context.Context) error {
+	if g.reconciler == nil {
+		return nil
+	}
+	rows, err := g.reconciler.LoadNonstandardDecimalsAssets(ctx)
+	if err != nil {
+		return err
+	}
+	repaired := 0
+	for _, row := range rows {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if g.reconcileRow(ctx, row) {
+			repaired++
+		}
+	}
+	if repaired > 0 {
+		g.logger.Info("decimals-guard: lockstep reconcile repaired drifted rows toward the lake",
+			"rows", len(rows), "repaired", repaired)
+	}
+	return nil
+}
+
+// reconcileRow checks one persisted row against a fresh lake read and
+// repairs it on a mismatch. Reports whether a repair was WRITTEN (a
+// mismatch whose write failed reports false and is retried next tick).
+func (g *Guard) reconcileRow(ctx context.Context, row timescale.NonstandardDecimalsAsset) bool {
+	lake, found, rerr := g.resolver.TokenDecimals(ctx, row.Asset)
+	if rerr != nil {
+		g.logger.Debug("decimals-guard: lockstep lake read failed; leaving row as-is", "asset", row.Asset, "err", rerr)
+		return false
+	}
+	if !found {
+		g.logger.Debug("decimals-guard: lockstep lake read not derivable; leaving row as-is", "asset", row.Asset)
+		return false
+	}
+	if int(lake) == row.Decimals {
+		g.remember(row.Asset, lake)
+		return false
+	}
+
+	obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("guard_reconcile", row.Asset).Inc()
+	g.logger.Error(
+		"decimals-guard: nonstandard_decimals_assets row DISAGREES with the lake's on-chain decimals() — "+
+			"repairing toward the lake (every serving path normalised on the stale value until now)",
+		"asset", row.Asset, "source", row.Source,
+		"persisted_decimals", row.Decimals, "lake_decimals", lake,
+	)
+
+	if lake == StandardDecimals {
+		if err := g.reconciler.DeleteNonstandardDecimalsAsset(ctx, row.Asset); err != nil {
+			g.logger.Warn("decimals-guard: lockstep delete failed; retrying next tick", "asset", row.Asset, "err", err)
+			return false
+		}
+		g.forgetPersisted(row.Asset)
+	} else {
+		if err := g.reconciler.UpsertNonstandardDecimalsAsset(ctx, row.Asset, lake, row.Source); err != nil {
+			g.logger.Warn("decimals-guard: lockstep upsert failed; retrying next tick", "asset", row.Asset, "err", err)
+			return false
+		}
+	}
+	g.remember(row.Asset, lake)
+	return true
+}
+
+// remember records a CONFIRMED lake reading in the resolved cache so the
+// next Sweep's classify agrees with what Reconcile just verified.
+func (g *Guard) remember(asset string, decimals uint32) {
+	g.mu.Lock()
+	g.resolved[asset] = decimals
+	g.mu.Unlock()
+}
+
+// forgetPersisted clears the durable-write latch for every (source, asset)
+// key of a row Reconcile just deleted, so a later confirmed non-7 reading
+// for the same token is persisted again rather than treated as handled.
+func (g *Guard) forgetPersisted(asset string) {
+	suffix := "\x00" + asset
+	g.mu.Lock()
+	for key := range g.persisted {
+		if strings.HasSuffix(key, suffix) {
+			delete(g.persisted, key)
+		}
+	}
 	g.mu.Unlock()
 }
 

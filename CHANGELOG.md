@@ -71,6 +71,31 @@ against.
   stale list was undetectable. New `-config` flag (default
   `/etc/stellarindex.toml`; empty skips the check), passed by the systemd
   unit. Runbook section in `served-value-drift.md`; catalogue row.
+### Fixed
+
+- **api/aggregator:** token decimals are resolved from ONE source of truth,
+  and a market cap is never computed across two scales (C1-050). The
+  aggregator normalised VWAP through `nonstandard_decimals_assets` while
+  `GET /v1/assets/{asset_id}` scaled supply by the lake's on-chain
+  `decimals()`, and `market_cap_usd` / `fdv_usd` were computed regardless
+  of whether the two agreed — a lake read that failed or timed out fell
+  back to 7 while the price stayed normalised on the projection's value,
+  so an 18-dp token's cap came out 10^11× too large on every lake blip.
+  The lake is now the source of truth and the projection its materialised
+  view: the aggregator's decimals-guard re-reads every persisted row
+  against the lake on each sweep tick and repairs drift
+  (`decimalsguard.Guard.Reconcile` — upsert the lake's value, or delete
+  the row when the lake confirms 7 dp; a row the lake cannot read is left
+  alone). The detail endpoint refuses the cap with a new
+  `market_cap_decimals_mismatch: true` reason flag when the two disagree
+  at request time, and falls back to the projection's value when the lake
+  is unreadable so supply and price stay on one scale. New counter
+  `stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}`
+  is a third arm of `stellarindex_nonstandard_decimals_correction_failing`.
+  Measured on r1 before the change: 9 projection rows, the 6 with an asset
+  row all equal to the lake, 0 disagreeing — the defect was structural, not
+  a live divergence. Runbook: `docs/operations/runbooks/dex-nonstandard-decimals.md`
+  ("Decimals lockstep").
 
 ## [v0.90.0] — 2026-09-18
 

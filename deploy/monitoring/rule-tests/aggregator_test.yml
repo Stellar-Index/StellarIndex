@@ -298,15 +298,21 @@ tests:
               component: aggregator
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
-              summary: "Non-7-decimals correction sweep failing or serving declining — tokens at risk of silent price skew (P2)"
+              summary: "Non-7-decimals correction sweep failing, serving declining, or decimals resolvers out of lockstep — tokens at risk of silent price skew (P2)"
               description: |
                 Either the aggregator's nonstandard_decimals_assets
                 refresh sweep is erroring
                 (stellarindex_nonstandard_decimals_cache_refresh_failures_total),
                 or a serving path is actively declining instead of
-                normalizing (stellarindex_price_serve_declined_nonstandard_decimals_total).
-                When the refresh sweep fails, newly-detected non-7-decimal
-                tokens don't get their nonstandard_decimals_assets
+                normalizing (stellarindex_price_serve_declined_nonstandard_decimals_total),
+                or the two decimals resolvers disagreed for an asset
+                (stellarindex_nonstandard_decimals_lockstep_mismatch_total,
+                labelled site=guard_reconcile when the aggregator repaired
+                a drifted nonstandard_decimals_assets row toward the lake,
+                site=asset_detail when GET /v1/assets/{id} refused a market
+                cap because the lake and the projection disagreed at
+                request time). When the refresh sweep fails, newly-detected
+                non-7-decimal tokens don't get their nonstandard_decimals_assets
                 correction entry seeded/refreshed, so their pairs revert
                 to the raw, skewed ratio that
                 stellarindex_dex_nonstandard_decimals_detected exists to
@@ -315,6 +321,72 @@ tests:
                 decimals-guard component (internal/decimalsguard) and the
                 nonstandard_decimals_assets table directly.
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+
+  # ── the decimals-lockstep arm (C1-050) ───────────────────────────
+  # stellarindex_nonstandard_decimals_lockstep_mismatch_total is a
+  # CounterVec whose {site,asset} children are born on first use, so
+  # its first sample is already 1 — the same increase()-blind shape as
+  # the refresh counter above. A drifted row the aggregator repaired
+  # once (or one refused market cap) must ticket, and the alert carries
+  # the child's site + asset labels so the ticket names the token.
+  #
+  # PROVEN-RED: delete the two lockstep arms from ../rules/aggregator.yml
+  # and this case fails with "exp:[…], got:[]".
+  - interval: 1m
+    name: a repaired resolver mismatch born before the first scrape tickets and names the asset
+    input_series:
+      - series: 'stellarindex_nonstandard_decimals_lockstep_mismatch_total{job="stellarindex_aggregator",instance="r1:9102",site="guard_reconcile",asset="CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"}'
+        values: '1+0x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: stellarindex_nonstandard_decimals_correction_failing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_aggregator
+              instance: r1:9102
+              site: guard_reconcile
+              asset: CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+              summary: "Non-7-decimals correction sweep failing, serving declining, or decimals resolvers out of lockstep — tokens at risk of silent price skew (P2)"
+              description: |
+                Either the aggregator's nonstandard_decimals_assets
+                refresh sweep is erroring
+                (stellarindex_nonstandard_decimals_cache_refresh_failures_total),
+                or a serving path is actively declining instead of
+                normalizing (stellarindex_price_serve_declined_nonstandard_decimals_total),
+                or the two decimals resolvers disagreed for an asset
+                (stellarindex_nonstandard_decimals_lockstep_mismatch_total,
+                labelled site=guard_reconcile when the aggregator repaired
+                a drifted nonstandard_decimals_assets row toward the lake,
+                site=asset_detail when GET /v1/assets/{id} refused a market
+                cap because the lake and the projection disagreed at
+                request time). When the refresh sweep fails, newly-detected
+                non-7-decimal tokens don't get their nonstandard_decimals_assets
+                correction entry seeded/refreshed, so their pairs revert
+                to the raw, skewed ratio that
+                stellarindex_dex_nonstandard_decimals_detected exists to
+                warn about — this is the genuine action item behind that
+                latching detector. Investigate the aggregator's
+                decimals-guard component (internal/decimalsguard) and the
+                nonstandard_decimals_assets table directly.
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+
+  # A mismatch that was repaired once and never recurs ages out with
+  # the window — the lockstep arm must not latch the way the removed
+  # detector did.
+  - interval: 1m
+    name: a single repaired mismatch stops ticketing once the window passes
+    input_series:
+      - series: 'stellarindex_nonstandard_decimals_lockstep_mismatch_total{job="stellarindex_aggregator",instance="r1:9102",site="guard_reconcile",asset="CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO"}'
+        values: '1+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_nonstandard_decimals_correction_failing
+        exp_alerts: []
 
   # ── the blip resolves; it does not latch ─────────────────────────
   # One failure, then clean sweeps. Once the birth ages out of the 15m

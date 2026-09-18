@@ -3268,6 +3268,37 @@ No dedicated alert: the condition is operator-introduced at row-insert time
 rather than emergent, and the counter plus the accompanying `WARN` line naming
 both the flagged id and the unflagged alias is what a reviewer needs.
 
+### `stellarindex_nonstandard_decimals_lockstep_mismatch_total`
+
+Counter. Labels: `site` (`guard_reconcile` | `asset_detail`), `asset` (C-strkey).
+
+Observations that the two decimals resolvers DISAGREE for one asset: the
+lake's on-chain `decimals()` (`clickhouse.TokenDecimals` — the source of
+truth) versus the `nonstandard_decimals_assets` projection of it that every
+price-shaped serving path and the aggregator's VWAP normalise through
+(`aggregate.ResolveDecimals`). The projection is a materialised view of the
+lake for the non-7 subset, so the invariant is: row present ⇔ lake decimals
+≠ 7, and equal when present.
+
+- `site="guard_reconcile"` — the aggregator's decimals-guard re-read a
+  persisted row against the lake on its sweep tick
+  (`decimalsguard.Guard.Reconcile`) and it disagreed; the row is repaired
+  toward the lake (upsert the lake's value, or delete when the lake confirms
+  7). Increments on observation, once per tick, so a repair whose write
+  fails keeps counting until it lands.
+- `site="asset_detail"` — `GET /v1/assets/{id}` found the lake and the
+  projection disagreeing at request time (a different value, or the lake
+  read non-7 with no row seeded yet) and REFUSED `market_cap_usd` / `fdv_usd`
+  for that request (`market_cap_decimals_mismatch: true`) rather than divide
+  a supply on one scale by a price normalised on another. One increment per
+  refused request.
+
+Expected value is 0. Measured on r1 2026-09-18 before the counter shipped:
+9 projection rows, the 6 resolvable through the API all equal to the lake,
+so the steady state is genuinely zero. Third arm of
+`stellarindex_nonstandard_decimals_correction_failing`; runbook
+`docs/operations/runbooks/dex-nonstandard-decimals.md` ("Decimals lockstep").
+
 ## Background cache workers (API binary, v0.21.4)
 
 ### `stellarindex_dex_tvl_refresh_total`

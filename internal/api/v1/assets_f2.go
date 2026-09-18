@@ -365,6 +365,19 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		// market_cap / fdv have no value to compute against.
 		return
 	}
+	if detail.MarketCapDecimalsMismatch {
+		// Decimals lockstep refusal (applyTokenDecimals): the USD price
+		// above was normalised through the nonstandard_decimals_assets
+		// projection while detail.Decimals is the lake's reading, and the
+		// two disagree for this token. usdMarketValue would divide a
+		// supply on one scale by a price on another — wrong by
+		// 10^|difference| with both inputs looking plausible. The flag is
+		// the machine-readable reason; price_usd and the supply fields
+		// still serve as the per-scale facts they are. Deliberately
+		// before the liquidity guards: this is not a liquidity verdict
+		// and must not be reported as one.
+		return
+	}
 	usdPrice := *detail.PriceUSD
 	_ = ctx
 	// Valuation-integrity guard: when the backing price came from a single

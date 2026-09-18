@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -185,6 +186,21 @@ type AssetDetail struct {
 	// The price_usd itself still serves; we guard the VALUATION, not the
 	// price. Omitted (false) whenever a cap is present or unaffected.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
+
+	// MarketCapDecimalsMismatch is true when market_cap_usd and fdv_usd were
+	// deliberately REFUSED — served null — because the two decimals resolvers
+	// disagreed for this Soroban token at request time: the lake's on-chain
+	// decimals() (which `decimals` reports and the supply divisor uses) versus
+	// the `nonstandard_decimals_assets` projection every price-shaped path
+	// normalises the USD price through. Either the projection carries a
+	// different value, or the lake reads non-7 and the projection has no row
+	// (the guard has not seeded it yet), so price and supply sit on different
+	// scales and their product is wrong by a power of ten. price_usd,
+	// circulating_supply and decimals all still serve — each is a fact on its
+	// own scale; only the cross-scale product is withheld. Self-clearing: the
+	// aggregator's lockstep reconcile repairs the projection toward the lake
+	// on its next tick. Omitted (false) whenever the resolvers agree.
+	MarketCapDecimalsMismatch bool `json:"market_cap_decimals_mismatch,omitempty"`
 
 	// ListingReference / ListingValuation are the listing-sourced
 	// second opinion for a VERIFIED-CATALOGUE asset whose market cap
@@ -3209,9 +3225,34 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 // METADATA (token-sdk convention — see clickhouse.TokenDecimals). Only
 // Soroban assets are consulted: classic + native assets ARE 7 by protocol
 // (stroops), so their default is already correct, not an approximation.
-// Best-effort: an uncaptured instance, a non-standard token with no stored
-// metadata, a read error OR a read that blows tokenMetadataReadTimeout all
-// leave the documented default of 7 in place.
+//
+// It is also the LOCKSTEP check between the two decimals resolvers this
+// response depends on. detail.Decimals is the supply divisor for
+// market_cap_usd / fdv_usd, while the USD price those multiply was
+// normalised through the `nonstandard_decimals_assets` projection
+// (s.nonstandardDecimals, via aggregate.ResolveDecimals in
+// lookupUSDPriceWithSources). The projection is a materialised view of the
+// same lake reading for the non-7 subset, maintained by the aggregator's
+// decimals-guard, so the invariant is: projection row present ⇔ lake
+// decimals ≠ 7, and equal when present. Outcomes:
+//
+//   - lake readable, projection agrees (or lake is 7 and no row): serve the
+//     lake value; the cap math is on one scale.
+//   - lake readable, projection DISAGREES (different value, or lake is non-7
+//     with no row because the guard has not seeded it yet): serve the lake
+//     value for `decimals`, but flag MarketCapDecimalsMismatch so
+//     populateMarketCap refuses the cap — supply on the lake's scale times a
+//     price on the projection's scale is wrong by a power of ten, and a null
+//     with a reason beats a number nobody can trust. Counted on
+//     obs.NonstandardDecimalsLockstepMismatchTotal{site="asset_detail"}.
+//   - lake unreadable (no reader wired, uncaptured instance, no metadata, a
+//     read error, or a read past tokenMetadataReadTimeout): fall back to the
+//     projection's value when it has one — the row IS a lake reading the
+//     guard confirmed earlier, and it is what the price was normalised with,
+//     so using it keeps supply and price on ONE scale. Pre-lockstep this kept
+//     the default 7 while the price was normalised on the row's value, and
+//     the cap came out 10^(decimals−7)× too large. No row → the documented
+//     default of 7 stays.
 //
 // The sub-budget is the point (#371 F9): pre-fix this ran on the raw
 // request context, so a slow lake held GET /v1/assets/{id} for the whole
@@ -3220,19 +3261,47 @@ func (s *Server) resolveAssetDetail(w http.ResponseWriter, r *http.Request, pars
 // the bound; this call site and the SEP-41 supply overlay in assets_f2.go
 // did not.
 func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a canonical.Asset) {
-	if s.tokenDecimals == nil || a.Type != canonical.AssetSoroban || a.ContractID == "" {
+	if a.Type != canonical.AssetSoroban || a.ContractID == "" {
 		return
+	}
+	confirmed, hasConfirmed := s.nonstandardDecimals.Lookup(a.ContractID)
+	lake, lakeKnown := s.lakeTokenDecimals(ctx, a.ContractID)
+	if !lakeKnown {
+		if hasConfirmed {
+			detail.Decimals = confirmed
+		}
+		return
+	}
+	detail.Decimals = lake
+	if (hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals) {
+		detail.MarketCapDecimalsMismatch = true
+		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_detail", a.ContractID).Inc()
+		s.logger.Warn("token decimals resolvers disagree; refusing market cap for this request",
+			"contract_id", a.ContractID, "lake_decimals", lake,
+			"projection_decimals", confirmed, "projection_row", hasConfirmed)
+	}
+}
+
+// lakeTokenDecimals is the bounded, best-effort lake read behind
+// applyTokenDecimals. known=false covers every way the reading can be
+// missing — no reader wired, an uncaptured instance, a contract with no
+// usable metadata, a read error, or a read past tokenMetadataReadTimeout —
+// because the caller's fallback is the same for all of them.
+func (s *Server) lakeTokenDecimals(ctx context.Context, contractID string) (decimals int, known bool) {
+	if s.tokenDecimals == nil {
+		return 0, false
 	}
 	dctx, cancel := context.WithTimeout(ctx, tokenMetadataReadTimeout)
 	defer cancel()
-	d, found, err := s.tokenDecimals.TokenDecimals(dctx, a.ContractID)
+	d, found, err := s.tokenDecimals.TokenDecimals(dctx, contractID)
 	if err != nil {
-		s.logger.Debug("token decimals overlay failed; keeping default", "contract_id", a.ContractID, "err", err)
-		return
+		s.logger.Debug("token decimals overlay failed; falling back", "contract_id", contractID, "err", err)
+		return 0, false
 	}
-	if found {
-		detail.Decimals = int(d)
+	if !found {
+		return 0, false
 	}
+	return int(d), true
 }
 
 // tryServeGlobalAsset returns true when `raw` matched a verified-

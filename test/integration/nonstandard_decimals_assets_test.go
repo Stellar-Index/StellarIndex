@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/decimalsguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -82,5 +83,107 @@ func TestNonstandardDecimalsAssets_UpsertAndLoad(t *testing.T) {
 	}
 	if !rows[0].ConfirmedAt.After(firstConfirmedAt) {
 		t.Fatalf("ConfirmedAt did not advance on re-confirm: first=%v second=%v", firstConfirmedAt, rows[0].ConfirmedAt)
+	}
+
+	// Delete (the lockstep reconcile's repair when the lake confirms 7 dp)
+	// removes the row; a second delete of the now-absent row is a no-op,
+	// not an error.
+	if err := store.DeleteNonstandardDecimalsAsset(ctx, asset); err != nil {
+		t.Fatalf("DeleteNonstandardDecimalsAsset: %v", err)
+	}
+	rows, err = store.LoadNonstandardDecimalsAssets(ctx)
+	if err != nil {
+		t.Fatalf("LoadNonstandardDecimalsAssets (after delete): %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("LoadNonstandardDecimalsAssets (after delete) = %d rows, want 0", len(rows))
+	}
+	if err := store.DeleteNonstandardDecimalsAsset(ctx, asset); err != nil {
+		t.Fatalf("DeleteNonstandardDecimalsAsset (absent row): %v", err)
+	}
+}
+
+// lockstepTradeReader is a decimalsguard.TradeReader that enumerates
+// nothing — Reconcile does not consult trades, and this keeps the test
+// about the projection table.
+type lockstepTradeReader struct{}
+
+func (lockstepTradeReader) RecentSorobanDEXTrades(_ context.Context, _ time.Time) ([]timescale.SorobanDEXTradeRef, error) {
+	return nil, nil
+}
+
+// lockstepResolver stands in for the lake: present ⇒ found.
+type lockstepResolver map[string]uint32
+
+func (r lockstepResolver) TokenDecimals(_ context.Context, contractID string) (uint32, bool, error) {
+	d, ok := r[contractID]
+	return d, ok, nil
+}
+
+// TestNonstandardDecimalsAssets_LockstepReconcileThroughStore runs the
+// aggregator's lockstep reconcile (decimalsguard.Guard.Reconcile) against
+// the REAL store on a real Postgres: the production wiring passes
+// *timescale.Store as the guard's Writer, and the compile-time assertion
+// in decimalsguard says it satisfies the reconcile seam — this proves the
+// three statements behind that seam (load, upsert-repair, delete-repair)
+// execute and converge the table on the lake.
+func TestNonstandardDecimalsAssets_LockstepReconcileThroughStore(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		drifted      = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J" // persisted 6, lake 8
+		staleStd     = "CC2RBGYNCFBCVENIDL5BFBWPH4OUZM2UA3OD2K2N54GLMWCC4KWPVAGO" // persisted 9, lake 7
+		agreed       = "CBI7UCH5KGSVQRO5H4SUCZUTZABCITZLRHQQZTWL2TK4RZ72TAR6IHRV" // persisted 18, lake 18
+		unresolvable = "CDPV3H7C3MR2R4Y4GAEJN4AXXY4LBITRRVE74VSMVCSBWISIU3Q4QTMW" // persisted 6, lake not derivable
+	)
+	seed := map[string]uint32{drifted: 6, staleStd: 9, agreed: 18, unresolvable: 6}
+	for asset, d := range seed {
+		if err := store.UpsertNonstandardDecimalsAsset(ctx, asset, d, "aquarius"); err != nil {
+			t.Fatalf("seed %s: %v", asset, err)
+		}
+	}
+
+	lake := lockstepResolver{drifted: 8, staleStd: 7, agreed: 18}
+	guard := decimalsguard.New(lockstepTradeReader{}, lake, decimalsguard.Options{Writer: store})
+	if err := guard.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	rows, err := store.LoadNonstandardDecimalsAssets(ctx)
+	if err != nil {
+		t.Fatalf("LoadNonstandardDecimalsAssets (after reconcile): %v", err)
+	}
+	got := make(map[string]int, len(rows))
+	for _, r := range rows {
+		got[r.Asset] = r.Decimals
+	}
+	want := map[string]int{drifted: 8, agreed: 18, unresolvable: 6}
+	if len(got) != len(want) {
+		t.Fatalf("rows after reconcile = %v, want %v", got, want)
+	}
+	for asset, d := range want {
+		if got[asset] != d {
+			t.Errorf("row %s = %d, want %d", asset, got[asset], d)
+		}
+	}
+	if _, still := got[staleStd]; still {
+		t.Errorf("row %s remains although the lake confirms 7 dp", staleStd)
+	}
+	// The invariant the reconcile exists for, checked against the lake:
+	// every remaining row the lake can read equals the lake.
+	for asset, d := range got {
+		if l, ok := lake[asset]; ok && int(l) != d {
+			t.Errorf("row %s persisted %d but the lake says %d", asset, d, l)
+		}
 	}
 }

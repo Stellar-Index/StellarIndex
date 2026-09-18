@@ -453,6 +453,12 @@ groups:
             stellarindex_price_serve_declined_nonstandard_decimals_total > 0
             unless stellarindex_price_serve_declined_nonstandard_decimals_total offset 15m
           )
+          or
+          increase(stellarindex_nonstandard_decimals_lockstep_mismatch_total[15m]) > 0
+          or (
+            stellarindex_nonstandard_decimals_lockstep_mismatch_total > 0
+            unless stellarindex_nonstandard_decimals_lockstep_mismatch_total offset 15m
+          )
         for: 5m
         labels:
           severity: ticket
@@ -460,15 +466,21 @@ groups:
           component: aggregator
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
-          summary: "Non-7-decimals correction sweep failing or serving declining — tokens at risk of silent price skew (P2)"
+          summary: "Non-7-decimals correction sweep failing, serving declining, or decimals resolvers out of lockstep — tokens at risk of silent price skew (P2)"
           description: |
             Either the aggregator's nonstandard_decimals_assets
             refresh sweep is erroring
             (stellarindex_nonstandard_decimals_cache_refresh_failures_total),
             or a serving path is actively declining instead of
-            normalizing (stellarindex_price_serve_declined_nonstandard_decimals_total).
-            When the refresh sweep fails, newly-detected non-7-decimal
-            tokens don't get their nonstandard_decimals_assets
+            normalizing (stellarindex_price_serve_declined_nonstandard_decimals_total),
+            or the two decimals resolvers disagreed for an asset
+            (stellarindex_nonstandard_decimals_lockstep_mismatch_total,
+            labelled site=guard_reconcile when the aggregator repaired
+            a drifted nonstandard_decimals_assets row toward the lake,
+            site=asset_detail when GET /v1/assets/{id} refused a market
+            cap because the lake and the projection disagreed at
+            request time). When the refresh sweep fails, newly-detected
+            non-7-decimal tokens don't get their nonstandard_decimals_assets
             correction entry seeded/refreshed, so their pairs revert
             to the raw, skewed ratio that
             stellarindex_dex_nonstandard_decimals_detected exists to

@@ -69,7 +69,7 @@ only a detector — see "Mitigation" below.
 | Detected by | Prometheus rule in `deploy/monitoring/rules/aggregator.yml` (and `configs/prometheus/rules.r1/aggregator.yml`) |
 | Typical MTTR | Detection: none required — automatic within ~60s of confirmation (every serving path is normalized live). Correction failing: depends on the underlying cause (Postgres blip, cache-wiring regression) — see Mitigation. |
 | Impact (detection) | A **real, live pair** has a leg with confirmed non-7 `decimals()`. As of 2026-07-10 (second wave), **every serving path is decimals-corrected**: `/v1/vwap`, `/v1/twap`, `/v1/history`, `/v1/ohlc` (BOTH single-bar and `interval=` series modes), `/v1/price` (closed-1m CAGG bucket, batch, and windowed), `/v1/price/tip` (+ SSE), `/v1/chart` (vwap/twap/market-cap price legs), `/v1/markets` / `/v1/pools` / `/v1/pairs` `last_price`, the SEP-40 oracle passthroughs (`/v1/oracle/lastprice`, `/v1/oracle/prices`), and the aggregator's own published VWAP (feeds `/v1/price/stream` + the Redis fallback). Nothing declines anymore — the 422 guard was removed once every path served the corrected value. For any deployment that hasn't run migration 0093 / doesn't wire `NonstandardDecimals`, every path still serves the raw (wrong) ratio with no warning — normalization fails OPEN to 7dp. |
-| Impact (correction failing) | The `nonstandard_decimals_assets` refresh sweep is erroring (`stellarindex_nonstandard_decimals_cache_refresh_failures_total`) or a serving path is actively declining (`stellarindex_price_serve_declined_nonstandard_decimals_total`, dormant since the 422 removal but a real signal if it ever increments). While this fires, newly-detected non-7-decimal tokens do NOT get a correction entry, so their pairs revert to the raw, silently-skewed ratio — this is the actual mispricing risk the detection alert warns about. |
+| Impact (correction failing) | The `nonstandard_decimals_assets` refresh sweep is erroring (`stellarindex_nonstandard_decimals_cache_refresh_failures_total`), a serving path is actively declining (`stellarindex_price_serve_declined_nonstandard_decimals_total`, dormant since the 422 removal but a real signal if it ever increments), or the two decimals resolvers disagreed for an asset (`stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}` — see "Decimals lockstep" below). While the first fires, newly-detected non-7-decimal tokens do NOT get a correction entry, so their pairs revert to the raw, silently-skewed ratio — this is the actual mispricing risk the detection alert warns about. While the lockstep arm fires, `GET /v1/assets/{id}` withholds `market_cap_usd` / `fdv_usd` for the named token (`market_cap_decimals_mismatch: true`) rather than publish a figure off by a power of ten; the aggregator repairs the row on its next 15m tick. |
 
 ## Symptoms
 
@@ -96,8 +96,54 @@ only a detector — see "Mitigation" below.
   which should not happen post-2026-07-10 (the 422 guard was deleted);
   its return is a signal of a regression, e.g. a reverted commit or a
   code path that reintroduced a decline.
-- No per-asset labels on either metric — this alert doesn't name which
-  token is affected, only that the correction mechanism is unhealthy.
+- `stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}`
+  is incrementing — the two decimals resolvers disagreed for `asset`.
+  This arm DOES name the token; the two above do not (they say only
+  that the correction mechanism is unhealthy).
+
+**Decimals lockstep (C1-050):**
+
+Two resolvers read the same on-chain fact. The lake's `decimals()`
+(`clickhouse.TokenDecimals`) is the source of truth: `GET /v1/assets/{id}`
+reports it as `decimals` and divides supply by it for `market_cap_usd` /
+`fdv_usd`. `nonstandard_decimals_assets` is a materialised projection of
+that reading for the non-7 subset, written by the guard from the same
+resolver, and it is what EVERY price-shaped path and the aggregator's VWAP
+normalise through (`aggregate.ResolveDecimals`). The invariant is:
+projection row present ⇔ lake `decimals() ≠ 7`, and equal when present.
+Two things hold it:
+
+- `site="guard_reconcile"` — the aggregator re-reads every persisted row
+  against the lake on each 15m tick (`decimalsguard.Guard.Reconcile`,
+  bypassing its per-process resolved cache) and repairs a disagreeing row
+  toward the lake: upsert the lake's value, or DELETE the row when the lake
+  confirms 7 (the table's CHECK forbids storing 7). A row the lake cannot
+  read (uncaptured instance, no metadata, read error) is left alone — an
+  operator hand-seeded row survives a lake that cannot see the instance.
+  One increment per observed disagreement per tick, so a repair whose
+  write fails keeps counting until it lands. Measured on r1 2026-09-18:
+  9 projection rows, 6 resolvable through the API, 0 disagreeing.
+- `site="asset_detail"` — the detail endpoint compared the two at request
+  time and they disagreed (a different value, or the lake read non-7 with
+  no projection row because the guard has not seeded it yet). It served
+  `decimals` from the lake, `price_usd` as normalised, `circulating_supply`
+  as the raw fact, and REFUSED `market_cap_usd` / `fdv_usd` with
+  `market_cap_decimals_mismatch: true` — never a number computed on
+  mismatched scales (pre-fix the same request served a cap off by
+  10^|difference|). When the lake is unreadable for the request, it falls
+  back to the projection's value so supply and price stay on one scale.
+
+Action: read the ERROR line (`decimals-guard: nonstandard_decimals_assets
+row DISAGREES with the lake`) for `persisted_decimals` vs `lake_decimals`.
+A `guard_reconcile` hit is a repaired drift — find out who wrote the wrong
+row (a hand-seed per "Mitigation" below that contradicted the instance is
+the usual cause). A sustained `asset_detail` count with no matching
+`guard_reconcile` repair means the guard is not converging: check the
+aggregator is running its sweep (`journalctl -u stellarindex-aggregator |
+grep decimals-guard`), and whether the token is outside the guard's 90-day
+backfill window (a dormant token trades nowhere the guard enumerates —
+hand-seed the row per "Mitigation" and the refusal clears within one 60s
+cache refresh).
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -377,15 +423,33 @@ skew was live before normalization/suppression.
   (`adjustOHLCSeriesBars`), `chart.go` (`adjustHistoryPointPrices`),
   `markets.go` / `pairs.go` (`adjustListingPrice` on `last_price`),
   `oracle_sep40.go` (SEP-40 passthroughs).
+- Lockstep (C1-050, 2026-09-18): `internal/decimalsguard/guard.go`
+  (`Guard.Reconcile`, run after every `Sweep` from `Guard.Run`'s tick;
+  `DecimalsAssetReconciler` seam satisfied by `*timescale.Store`, pinned at
+  compile time), `internal/storage/timescale/nonstandard_decimals_assets.go`
+  (`DeleteNonstandardDecimalsAsset`), `internal/api/v1/assets.go`
+  (`applyTokenDecimals` compares the lake reading with the projection and
+  sets `AssetDetail.MarketCapDecimalsMismatch`), `internal/api/v1/assets_f2.go`
+  (`populateMarketCap` refuses the cap on the flag). Tests:
+  `internal/decimalsguard/lockstep_test.go`
+  (`TestLockstep_EveryPersistedRowMatchesTheLake` is the invariant),
+  `internal/api/v1/assets_decimals_lockstep_test.go` (null-not-a-number on
+  every disagreement shape), `test/integration/nonstandard_decimals_assets_test.go`
+  (reconcile through the real store on Postgres).
 - Metrics: `stellarindex_dex_trade_nonstandard_decimals_total` (detection),
   `stellarindex_price_serve_declined_nonstandard_decimals_total` (live
   enforcement impact), `stellarindex_nonstandard_decimals_cache_refresh_failures_total`
-  (cache infra health) — `docs/reference/metrics/README.md`.
-- Alerting: both `stellarindex_dex_nonstandard_decimals_detected`
-  (informational) and `stellarindex_nonstandard_decimals_correction_failing`
-  (ticket) are defined in `deploy/monitoring/rules/aggregator.yml` and
-  mirrored in `configs/prometheus/rules.r1/aggregator.yml`; both are
-  catalogued in `docs/operations/alerts-catalog.md`.
+  (cache infra health), `stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}`
+  (resolver disagreement, repaired or refused) — `docs/reference/metrics/README.md`.
+- Alerting: `stellarindex_nonstandard_decimals_correction_failing` (ticket;
+  three arms — refresh failures, serving declines, lockstep mismatches) is
+  defined in `deploy/monitoring/rules/aggregator.yml` and mirrored in
+  `configs/prometheus/rules.r1/aggregator.yml`, unit-tested in
+  `deploy/monitoring/rule-tests/aggregator_test.yml`, and catalogued in
+  `docs/operations/alerts-catalog.md`. The former informational
+  `stellarindex_dex_nonstandard_decimals_detected` rule was removed
+  2026-08-05 (it compared an all-time counter to zero and never resolved);
+  the detection counter itself remains a dashboard signal.
 - The correctness invariant it protects: ADR-0003 (i128/decimals discipline)
   and the "external-source amount scaling is NOT uniform" note in `AGENTS.md`.
 - Companion serving-sanity guard: `internal/pricingguard` (guards the raw
@@ -394,6 +458,22 @@ skew was live before normalization/suppression.
 
 ## Changelog
 
+- 2026-09-18 — **decimals lockstep (C1-050).** The aggregator resolved token
+  decimals from `nonstandard_decimals_assets` while `GET /v1/assets/{id}`
+  resolved them from the lake, and computed `market_cap_usd` / `fdv_usd`
+  regardless of whether the two agreed. Measured on r1 (read-only): the
+  projection held 9 rows; the 6 with an asset row all matched the API's
+  lake-backed `decimals` (8/18/8/9/18/18), 0 disagreed — so the defect was
+  structural (nothing enforced agreement), not a live divergence. The lake
+  is the single source of truth and the projection its materialised view:
+  the guard now re-reads every persisted row against the lake each tick and
+  repairs drift (`Guard.Reconcile`); the detail endpoint refuses the cap
+  with `market_cap_decimals_mismatch: true` when the two disagree at request
+  time, and falls back to the projection's value when the lake is
+  unreadable (pre-fix that path served a cap 10^(decimals−7)× too large on
+  every lake blip). New counter
+  `stellarindex_nonstandard_decimals_lockstep_mismatch_total{site,asset}`
+  is a third arm of `stellarindex_nonstandard_decimals_correction_failing`.
 - 2026-07-15 — **alert hygiene: split detection from the real risk.**
   `stellarindex_dex_nonstandard_decimals_detected` had been sitting in
   the firing list forever at `severity: ticket` even though, per the

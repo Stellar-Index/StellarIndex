@@ -345,6 +345,16 @@ type AssetDetail struct {
 	// itself still serves. Omitted (false) when a cap is present.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
+	// MarketCapDecimalsMismatch is true when market_cap_usd (and fdv_usd)
+	// were deliberately refused — served null — because the server's two
+	// decimals resolvers disagreed for this Soroban token at request time
+	// (the lake's on-chain decimals(), which Decimals reports, versus the
+	// projection the USD price was normalised through), so supply and price
+	// sat on different scales. Not a liquidity verdict; PriceUSD,
+	// CirculatingSupply and Decimals still serve. Self-clearing once the
+	// aggregator reconciles the projection. Omitted (false) on agreement.
+	MarketCapDecimalsMismatch bool `json:"market_cap_decimals_mismatch,omitempty"`
+
 	// ListingReference and ListingValuation carry an independent listing
 	// platform's price for this exact address, and the supply valued at
 	// it. Present only where this index declines to publish a market cap;

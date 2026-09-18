@@ -85,3 +85,26 @@ func (s *Store) LoadNonstandardDecimalsAssets(ctx context.Context) ([]Nonstandar
 	}
 	return out, nil
 }
+
+// DeleteNonstandardDecimalsAsset removes asset's confirmed-offender row.
+// Idempotent: deleting an absent row is not an error (the guard's
+// reconcile pass may race a manual operator clean-up, and both must
+// converge on "no row" without complaint).
+//
+// The ONE caller is the aggregator's decimals-guard lockstep reconcile
+// (internal/decimalsguard.Guard.Reconcile): this table is a materialised
+// projection of the lake's on-chain decimals() for the non-7 subset, and
+// the CHECK (decimals <> 7) on migration 0093 means a token the lake now
+// confirms as 7 dp cannot be corrected in place — the only way to keep
+// the projection faithful is to drop the row. Never called for a token
+// whose declaration the lake cannot resolve (found=false or a read
+// error): an unresolvable reading is not evidence the row is wrong, and
+// an operator hand-seeded row for an uncaptured instance (runbook
+// "Mitigation") must survive a lake that cannot see the instance.
+func (s *Store) DeleteNonstandardDecimalsAsset(ctx context.Context, asset string) error {
+	const q = `DELETE FROM nonstandard_decimals_assets WHERE asset = $1`
+	if _, err := s.db.ExecContext(ctx, q, asset); err != nil {
+		return fmt.Errorf("timescale: DeleteNonstandardDecimalsAsset %s: %w", asset, err)
+	}
+	return nil
+}
