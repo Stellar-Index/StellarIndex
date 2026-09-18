@@ -1085,6 +1085,14 @@ func (s *Store) SEP41SupplyEventKindResum(ctx context.Context, contractID string
 //
 // Resetting the fold columns forces a clean re-fold over the corrected set.
 //
+// Two callers rely on this, for the identical reason: `ch-rebuild -sep41
+// -write` (above) and `stellarindex-ops projector-replay -source
+// sep41_supply` (internal/ops/ingest/projector.go's resetSEP41RollupAfterReplay),
+// which rewinds and re-walks the projector's own cursor over the same
+// checkpointed range and would otherwise leave any row it re-drives or
+// corrects at-or-below the checkpoint permanently invisible to the fold
+// (finding F024/F107).
+//
 // This is the automated form of the manual "TRUNCATE sep41_supply_rollup" the
 // migration-0085 header prescribed — but it PRESERVES the migration-0088
 // pre-Soroban genesis-baseline columns (genesis_mint_total / genesis_burn_total

@@ -194,6 +194,14 @@ against.
   construction — the reader falls back to the exact full-sum aggregate
   until the worker re-folds, so served supply stays correct throughout.
 
+- **docs (timescale):** `Store.ResetSEP41SupplyRollupFold`'s docstring now
+  names `stellarindex-ops projector-replay -source sep41_supply` alongside
+  `ch-rebuild -sep41 -write` as a caller (F107, a duplicate audit finding
+  of F024's already-fixed defect above). The doc previously described only
+  the ch-rebuild recovery path, so an operator reading it for the
+  behavioral contract had no way to tell that the projector's replay path
+  depends on the identical reset.
+
 - **api/auth:** `PATCH /v1/admin/accounts/{id}` no longer **permanently
   destroys the account's `/v1/register` API keys** under the default
   `auth_backend=redis` (F056, K050, Q145). The "key cache invalidator"
