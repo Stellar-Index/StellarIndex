@@ -1408,6 +1408,26 @@ against.
   and the reference mirror, the Postman collection and the explorer's
   generated types are regenerated from it.
 
+### Added
+
+- **test:** `test/controlwiring` — a build-tagged (`k023evidence`)
+  reproduction of audit class K023, "a control exists in the tree but
+  the production path never invokes it". One test per control, each
+  reading BOTH sides of the seam: the verify-archive units that engage
+  the checkpoint tier pass no `-fail-on-missed` (F144 — the tier-a
+  units run `-tier chain`, where that flag is inert, so they are not
+  the site); `pnpm build`, the build command Cloudflare Pages runs,
+  reaches neither the `__next.*` prune nor `explorer-file-budget.sh`
+  (F085); neither `projector-replay` nor `ch-rebuild` calls
+  `external.BackfillSafe` (F050); phoenix's `Matches` rejects the
+  factory's `("create","liquidity_pool")` event, so
+  `seed-protocol-contracts` and the live-upsert hook cannot admit a
+  pool (F048); and `branch-protection-status` is `continue-on-error`
+  (F133). All five are red today and this entry fixes none of them —
+  each fix belongs with the files that consume the control. Run
+  `go test -tags k023evidence ./test/controlwiring/ -run TestK023 -v`
+  for the live status; drop the tag once all five are green.
+
 ## [v0.91.0] — 2026-09-18
 
 ### Added
