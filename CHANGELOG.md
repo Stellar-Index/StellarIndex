@@ -55,6 +55,22 @@ against.
   frozen window has claimed its own entry. Presence semantics are
   untouched: `flags.frozen` stays pair-wide and `stellarindex-ops
   freeze-unfreeze` still releases every window. (audit-2026-09-02 E1)
+- **data-freshness (observability):** a feed dead long enough no longer
+  deletes its own alarm. Each per-source leg of the watchdog enumerated
+  its sources from the same window it judged them in (`WHERE ingested_at
+  > now() - 30 days GROUP BY source`, 7 days for supply), so a source
+  dead past that window left the GROUP BY entirely: its
+  `stellarindex_data_freshness_stale` series went ABSENT rather than to
+  1, Prometheus aged it out, and the `== 1` alert RESOLVED — the
+  watchdog went quiet the worse the outage got. The universe is now
+  every source the table has ever held (the scan cost is unchanged: the
+  oracle predicate was on `ingested_at`, not the hypertable's time
+  dimension, so it never pruned a chunk), a domain that has never
+  observed anything reads stale rather than rendering an empty value the
+  publication guard withholds, and the CS-102 per-asset supply window is
+  anchored to the newest supply row instead of `now()` so an all-asset
+  freeze no longer empties the CTE and reports a literal healthy 0.
+  (audit-2026-09-02 F149)
 - **continuous aggregates (completeness):** an emptied price aggregate
   is now detected, and a replay re-materializes the range it rewrote.
   Migrations 0115 and 0147 drop and recreate all nine price/TWAP views

@@ -84,6 +84,30 @@ trap 'rm -f "$TMP"' EXIT
 # (domain, source, age_seconds, threshold_seconds) per domain. Thresholds are a
 # generous multiple of each domain's natural cadence so only a real stall fires.
 #
+# ── NO WINDOW ON THE SOURCE ENUMERATION (F149) ───────────────────────────
+# Each per-source leg below used to read `WHERE <time col> > now() - interval
+# '30 days' GROUP BY source`, which makes the window that defines the universe
+# the same window that defines health. A source dead longer than it — the
+# coingecko-quota shape, 11 days and climbing — leaves the GROUP BY entirely,
+# its stale series goes ABSENT rather than to 1, Prometheus ages it out, and
+# `stellarindex_data_source_stale == 1` RESOLVES. The watchdog got quieter the
+# worse the outage got, and the same window silenced the supply leg at 7 days.
+#
+# So the universe is now every source the table has EVER held, and the age is
+# measured against that source's own newest row. The scan cost is unchanged
+# where it mattered: `oracle_updates` is a hypertable on `ts`, and the old
+# predicate was on `ingested_at` — not a dimension, so it never pruned a chunk;
+# `fx_quotes` is daily-grain (one row per ticker per bucket, upserted), so its
+# whole history is small; `asset_supply_history` answers max(time) from its
+# time index.
+#
+# The cost of the change is the other direction: a source RETIRED on purpose
+# keeps its history and therefore keeps reporting stale. That is the
+# fail-closed side of the trade and it is deliberate — a retired feed is a
+# deliberate act with an operator behind it, a dead feed is not. Retiring one
+# means deleting its rows (or excluding it here in the same change), and the
+# ticket it raises until then is the reminder.
+#
 # shellcheck disable=SC2129  # the appends below are separate on purpose: each is a distinct query with its own reasoning between them, and a single `{ … } >> $TMP` would bury that
 "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
 WITH f AS (
@@ -94,7 +118,7 @@ WITH f AS (
   -- false-firing — otherwise it reads stale ~21h of every day.
   SELECT 'oracle'  AS domain, source AS src, extract(epoch FROM now()-max(ingested_at)) AS age,
          CASE WHEN source = 'ecb' THEN 345600 ELSE 10800 END AS thr
-    FROM oracle_updates WHERE ingested_at > now()-interval '30 days' GROUP BY source
+    FROM oracle_updates GROUP BY source
   UNION ALL
   -- FX is daily-grain: observed_at is the data-point time (lags ~a day even
   -- when healthy), so freshness is measured off `bucket` (today's bucket
@@ -120,7 +144,7 @@ WITH f AS (
   -- health. A feed genuinely dead on a Tuesday still trips this within
   -- the day.
   SELECT 'fx', source, extract(epoch FROM now()-max(bucket)), 273600
-    FROM fx_quotes WHERE bucket > now()-interval '30 days' GROUP BY source
+    FROM fx_quotes GROUP BY source
   UNION ALL
   -- Sparse Soroban AMMs get 24h: phoenix's MEASURED 30-day gap
   -- distribution (2026-08-05, 3,278 trades) is max 8h28m / p99 3h12m,
@@ -134,7 +158,7 @@ WITH f AS (
     FROM source_volume_1h GROUP BY source
   UNION ALL
   SELECT 'supply', 'asset_supply_history', extract(epoch FROM now()-max(time)), 108000
-    FROM asset_supply_history WHERE time > now()-interval '7 days'
+    FROM asset_supply_history
   UNION ALL
   SELECT 'verdict', source, extract(epoch FROM now()-max(computed_at)), 129600
     FROM completeness_snapshots GROUP BY source
@@ -142,10 +166,17 @@ WITH f AS (
   SELECT 'sep1', 'issuers', extract(epoch FROM now()-max(sep1_resolved_at)), 172800
     FROM issuers WHERE sep1_resolved_at IS NOT NULL
 )
+-- The age sample is emitted only when an age EXISTS; the verdict is emitted
+-- always. A domain whose table holds no rows at all (the sep1 refresh that
+-- never ran, a supply history that never started) has no age to report, and
+-- the old form rendered `... ` with an empty value field — a line the
+-- publication validator withholds, so the verdict went absent and every
+-- `== 1` alert over it stayed quiet. Unknown is NOT healthy: no observation
+-- ever is the most stale a domain can be, so it reads 1.
 SELECT 'stellarindex_data_freshness_age_seconds{domain="'||domain||'",source="'||src||'"} '||round(age)::text
-  FROM f
+  FROM f WHERE age IS NOT NULL
 UNION ALL
-SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||'"} '||(age>thr)::int::text
+SELECT 'stellarindex_data_freshness_stale{domain="'||domain||'",source="'||src||'"} '||(COALESCE(age, thr + 1) > thr)::int::text
   FROM f;
 SQL
 
@@ -156,11 +187,21 @@ SQL
 # freeze, so emit the per-asset shape too: how many watched assets are stale,
 # and the worst age among them. Low cardinality (two series) on purpose —
 # per-asset series would grow with the watched set.
+#
+# The 30-day window here bounds the WATCHED SET, not the health verdict, and it
+# is anchored to the newest supply row in the table rather than to now() (F149).
+# Anchored to now(), a freeze that outlasts it empties the CTE and the gauge
+# reports a literal healthy 0 — `count(*) FILTER (age > 108000)` over no rows —
+# at the exact moment every watched asset has stopped. Anchored to the domain's
+# own newest observation, the set an all-stop froze stays in view and its ages
+# go on climbing, while an asset genuinely retired 30 days before the last
+# publication still ages out of the watched set as intended.
 "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
-WITH per_asset AS (
+WITH newest AS (SELECT max(time) AS t FROM asset_supply_history),
+     per_asset AS (
   SELECT asset_key, extract(epoch FROM now()-max(time)) AS age
     FROM asset_supply_history
-   WHERE time > now()-interval '30 days'
+   WHERE time > (SELECT t FROM newest) - interval '30 days'
    GROUP BY asset_key
 )
 SELECT 'stellarindex_supply_assets_stale '||count(*) FILTER (WHERE age > 108000)::text
