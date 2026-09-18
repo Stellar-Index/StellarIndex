@@ -311,6 +311,14 @@ func (s *Server) clampKeysAfterTierChange(
 //     per-direction guard) is exactly the seam the override knob previously
 //     slipped through.
 //
+// POSTGRES BACKEND ONLY. Under the default auth_backend=redis there is no
+// read-through cache: the key this would DEL is the canonical credential (the
+// /v1/register mirror), so an "eviction" there is the permanent loss of the
+// customer's key on what may be a quota RAISE. [NewAPIKeyBudgetStores] leaves
+// CacheInvalidator nil in that mode and this function returns (0, 0); the
+// redis validator enforces suspension through its own account-status gate and
+// does not resolve account overrides at all, so nothing is left stale.
+//
 // Reuses the tier-clamp eviction seam exactly (ListForAccount +
 // InvalidateCachedKey). Best-effort and idempotent — a failure on one key never
 // stops the others, and a failed eviction just means that key waits out the

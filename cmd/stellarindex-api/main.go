@@ -1290,19 +1290,21 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// self-service keys. Each half is nil-safe: a missing store means
 	// that half is skipped and the endpoint's audit row records
 	// keys_clamped=0.
-	var apiKeyBudgets v1.APIKeyBudgetStores
+	//
+	// The key-cache invalidator is decided by auth_backend inside
+	// v1.NewAPIKeyBudgetStores, NOT by "is Redis configured": under the
+	// default redis backend apikey:<hash> is the canonical credential,
+	// and an invalidator wired here DELeted every /v1/register key an
+	// account held on any override / status / tier PATCH.
+	var platformKeys platform.APIKeyStore
 	if pgDB := store.DB(); pgDB != nil {
-		apiKeyBudgets.Platform = postgresstore.NewAPIKeyStore(postgresstore.New(pgDB))
+		platformKeys = postgresstore.NewAPIKeyStore(postgresstore.New(pgDB))
 	}
+	var budgetsRedis redis.Cmdable
 	if rdb != nil {
-		redisKeys := auth.NewRedisAPIKeyStore(rdb)
-		apiKeyBudgets.Redis = redisKeys
-		// Same store, mirror seam: POST /v1/register writes its
-		// credential here too so it validates against the Redis
-		// validator this deployment runs.
-		apiKeyBudgets.RedisMirror = redisKeys
-		apiKeyBudgets.CacheInvalidator = auth.NewRedisKeyCacheInvalidator(rdb)
+		budgetsRedis = rdb
 	}
+	apiKeyBudgets := v1.NewAPIKeyBudgetStores(platformKeys, budgetsRedis, cfg.API.AuthBackend)
 
 	apiSrv := v1.New(v1.Options{
 		Network:     cfg.Stellar.Network,

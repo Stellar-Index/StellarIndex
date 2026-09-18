@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/hex"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
@@ -21,13 +23,6 @@ type SelfServiceKeyManager interface {
 	UpdateRateLimit(ctx context.Context, keyID string, newRateLimitPerMin int) (auth.APIKeyRecord, error)
 }
 
-// KeyCacheInvalidator evicts one API-key record from the runtime
-// auth read-through cache by its SHA-256 hex hash. Implemented by
-// both auth.RedisKeyCacheInvalidator and
-// auth.PostgresAPIKeyValidator. Declared here (rather than importing
-// internal/auth) so the v1 package stays free of an auth dependency
-// in its exported bridge type — the same narrowing pattern as
-// dashboardkeys.CacheInvalidator.
 // KeyMirror writes a caller-minted credential into the validator's
 // own store. Implemented by [auth.RedisAPIKeyStore].
 type KeyMirror interface {
@@ -40,6 +35,16 @@ type KeyMirror interface {
 	RevokeKeyByID(ctx context.Context, identifier, keyID string) error
 }
 
+// KeyCacheInvalidator evicts one API-key record from the runtime
+// auth read-through cache by its SHA-256 hex hash. Implemented by
+// both auth.RedisKeyCacheInvalidator and
+// auth.PostgresAPIKeyValidator — the same narrowing pattern as
+// dashboardkeys.CacheInvalidator.
+//
+// It is meaningful ONLY under auth_backend=postgres. Under the default
+// redis backend `apikey:<hash>` is the canonical credential, not a
+// cache, so an "eviction" there deletes a customer's key for good;
+// [NewAPIKeyBudgetStores] leaves the field nil in that mode.
 type KeyCacheInvalidator interface {
 	InvalidateCachedKey(ctx context.Context, hexHash string) error
 }
@@ -71,12 +76,54 @@ type APIKeyBudgetStores struct {
 	RedisMirror KeyMirror
 	// CacheInvalidator evicts each lowered Postgres key from the auth
 	// read-through cache so the new budget is enforced on the next
-	// request rather than after the validator's ~1h TTL. Nil is safe.
+	// request rather than after the validator's ~1h TTL. Nil is safe,
+	// and is REQUIRED under auth_backend=redis (see
+	// [KeyCacheInvalidator]); build the struct with
+	// [NewAPIKeyBudgetStores] rather than setting this by hand.
 	CacheInvalidator KeyCacheInvalidator
 	// OnError, when non-nil, is called with the failing step name
 	// (list_keys | key_update | key_cache_invalidate) so a caller can
 	// attach its OWN observability.
 	OnError func(step string)
+}
+
+// NewAPIKeyBudgetStores assembles the credential stores for one
+// deployment: the single place that decides, from `[api].auth_backend`,
+// whether a key-cache invalidator exists at all.
+//
+// platformKeys is the Postgres dashboard key store (nil without
+// Postgres); rdb is the shared Redis client (nil without Redis).
+//
+// The invalidator is wired ONLY under auth_backend=postgres. It used to
+// be wired whenever Redis was configured, which under the default redis
+// backend pointed a DEL at the canonical credential: any admin PATCH
+// that changed an override, suspended the account or lowered its tier
+// permanently destroyed every POST /v1/register key the account held —
+// the plaintext is shown once and Postgres keeps only the hash, so the
+// record cannot be rebuilt. Under the redis backend nothing needs
+// evicting: the tier clamp rewrites the canonical record in place
+// through [SelfServiceKeyManager], and suspension is enforced by the
+// Redis validator's own account-status gate.
+func NewAPIKeyBudgetStores(platformKeys platform.APIKeyStore, rdb redis.Cmdable, authBackend string) APIKeyBudgetStores {
+	var st APIKeyBudgetStores
+	if platformKeys != nil {
+		st.Platform = platformKeys
+	}
+	if rdb == nil {
+		return st
+	}
+	redisKeys := auth.NewRedisAPIKeyStore(rdb)
+	st.Redis = redisKeys
+	// Same store, mirror seam: POST /v1/register writes its credential
+	// here too so it validates against the Redis validator.
+	st.RedisMirror = redisKeys
+	// Assign only a non-nil invalidator: a typed-nil pointer in the
+	// interface field would defeat the `== nil` guards at the eviction
+	// call sites and count evictions that never happened.
+	if inv := auth.NewKeyCacheInvalidatorForBackend(authBackend, rdb); inv != nil {
+		st.CacheInvalidator = inv
+	}
+	return st
 }
 
 // note reports a step failure through the caller's own observability, if any.

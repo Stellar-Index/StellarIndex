@@ -146,6 +146,28 @@ against.
   construction — the reader falls back to the exact full-sum aggregate
   until the worker re-folds, so served supply stays correct throughout.
 
+- **api/auth:** `PATCH /v1/admin/accounts/{id}` no longer **permanently
+  destroys the account's `/v1/register` API keys** under the default
+  `auth_backend=redis` (F056, K050, Q145). The "key cache invalidator"
+  was wired whenever Redis was configured, but `apikey:<hash>` is a
+  rebuildable read-through cache only under `auth_backend=postgres`; on
+  the redis backend that key IS the credential (the register mirror), the
+  plaintext is shown once and Postgres keeps only its hash — so any
+  override change (a quota or rate-limit RAISE included), any suspension
+  and any tier lowering that clamped a key DELeted the customer's key
+  with no recovery path, and a suspend-then-reinstate left the account
+  active with nothing that could authenticate. The credential stores are
+  now assembled by `v1.NewAPIKeyBudgetStores`, which takes
+  `auth_backend` and wires the invalidator
+  (`auth.NewKeyCacheInvalidatorForBackend`) for postgres only; on redis
+  the tier clamp already rewrites the canonical record in place and the
+  validator's account-status gate enforces suspension. Postgres-backend
+  eviction is unchanged. Proven against real Redis + Postgres through the
+  real register and PATCH handlers
+  (`TestAdminAccountPatch_PreservesRegisterCredential_RedisBackend`), with
+  an AST guard keeping `main.go` on the backend-aware constructor. Keys
+  already deleted by this defect cannot be restored — affected accounts
+  need a new key minted.
 - **api:** four more surfaces now apply the dex-nonstandard-decimals
   normalisation instead of publishing the RAW `prices_1m` ratio for a
   confirmed non-7-decimals token (F017). The class was half-fixed, and
