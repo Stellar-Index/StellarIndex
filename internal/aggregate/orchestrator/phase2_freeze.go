@@ -637,11 +637,42 @@ func (o *Orchestrator) releaseFreeze(
 		return
 	}
 
-	// An operator override already deleted the marker; clearing again
-	// is a harmless idempotent DEL and keeps the two paths identical.
-	if err := o.cfg.FreezeWriter.Clear(ctx, pair.Base, pair.Quote); err != nil {
-		o.logger.Warn("freeze marker clear failed — flags.frozen stays set until its TTL",
-			"pair", pair.String(), "err", err)
+	o.clearReleasedMarker(ctx, pair, window)
+}
+
+// clearReleasedMarker deletes the pair's freeze marker on the release of
+// what THIS PROCESS believes is its last frozen window.
+//
+// [Orchestrator.siblingWindowFrozen] reads o.freezeStates, and a window
+// only enters that map by reaching the freeze step in this process. A
+// window under [Config.MinUSDVolume] never does, and after a restart none
+// has yet — so its freeze lives only in the marker, invisible to that
+// check. A window-aware writer is therefore asked to release against the
+// marker's own record ([WindowedFreezeMarker.ReleaseWindow]): it keeps the
+// marker, and the sibling's ladder in it, when one is still there. Before
+// this a recovering 5m window cleared an ESCALATED 1h sibling's marker and
+// durable ladder, ending a freeze ADR-0019 holds "until manual unfreeze".
+//
+// A writer that cannot scope a marker clears it outright, as before. An
+// operator override already deleted the marker; clearing again is a
+// harmless idempotent DEL and keeps the two paths identical.
+func (o *Orchestrator) clearReleasedMarker(ctx context.Context, pair canonical.Pair, window time.Duration) {
+	if o.windowedFreeze == nil {
+		if err := o.cfg.FreezeWriter.Clear(ctx, pair.Base, pair.Quote); err != nil {
+			o.logger.Warn("freeze marker clear failed — flags.frozen stays set until its TTL",
+				"pair", pair.String(), "err", err)
+		}
+		return
+	}
+	kept, err := o.windowedFreeze.ReleaseWindow(ctx, pair.Base, pair.Quote, window)
+	if err != nil {
+		o.logger.Warn("freeze marker release failed — flags.frozen stays set until its TTL",
+			"pair", pair.String(), "window", window.String(), "err", err)
+		return
+	}
+	if kept {
+		o.logger.Info("freeze marker kept — it still records a sibling window's freeze this process has not evaluated",
+			"pair", pair.String(), "released_window", window.String())
 	}
 }
 

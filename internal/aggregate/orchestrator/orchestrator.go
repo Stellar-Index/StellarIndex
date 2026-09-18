@@ -183,6 +183,16 @@ type WindowedFreezeMarker interface {
 	// leaving the marker in place, for the release of one window of a
 	// pair whose other windows are still frozen.
 	RetireWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration) error
+
+	// ReleaseWindow ends `window`'s freeze when this process knows of no
+	// other frozen window for the pair: it clears the marker UNLESS the
+	// marker itself still records a sibling window's ladder, in which
+	// case it only retires `window`'s and reports kept=true. The marker
+	// is asked because this process's ladder map cannot see a window it
+	// has not evaluated — one under [Config.MinUSDVolume], or any window
+	// after a restart — and deleting the marker on that blind spot ended
+	// a sibling's freeze, escalated or not.
+	ReleaseWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (kept bool, err error)
 }
 
 // Config controls the orchestrator's behaviour. Built from config.go

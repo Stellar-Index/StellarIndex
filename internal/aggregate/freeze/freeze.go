@@ -653,6 +653,62 @@ func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.
 	return nil
 }
 
+// ReleaseWindow ends `window`'s freeze on the serving path for a caller
+// that believes it is the pair's LAST frozen window, and reports whether
+// the marker was nevertheless kept.
+//
+// The belief is the problem. The orchestrator decides "last" from its
+// in-memory ladder map, and a window only enters that map by reaching the
+// freeze step in the current process. A window sitting under the
+// USD-volume floor never does, and after a restart no window has yet —
+// so such a window's freeze exists ONLY in the marker (and the durable
+// record behind it), where the in-memory check cannot see it. Clearing on
+// that check deleted the marker and retired the durable ladder out from
+// under it: an ESCALATED freeze, which ADR-0019 holds "until manual
+// unfreeze", ended because a sibling window recovered, and the window's
+// next qualifying bucket — cold, so with no prev-VWAP comparator to
+// re-fire on — published.
+//
+// So the record is asked, not only the process. If any OTHER window still
+// owns a ladder in the marker, or the marker still carries a live unowned
+// one, this is [Writer.RetireWindowLadder]: the window's own ladder goes,
+// the marker and `flags.frozen` stay. Otherwise it is [Writer.Clear].
+//
+// An owned sibling ladder counts while it is merely ACTIVE, not only while
+// [LadderStillLive]: that is the test the cold-key rehydrate applies to an
+// owned entry, and a release that used a narrower one would delete a
+// ladder the very next read would have honoured. The marker's own TTL is
+// what bounds a sibling nobody is advancing.
+//
+// A marker that cannot be read is NOT cleared — the error is returned and
+// the marker is left to its TTL. Not knowing whether a sibling is frozen
+// is no ground for unfreezing it. An absent, undecodable or pre-window
+// marker has no sibling to protect and is cleared exactly as before, which
+// keeps the operator-override path (marker already deleted) idempotent.
+func (w *Writer) ReleaseWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration) (bool, error) {
+	label := windowLabel(window)
+	marker, ok, err := w.readMarker(ctx, cachekeys.Freeze(asset, quote))
+	if err != nil {
+		return true, err
+	}
+	if ok && marker.Windowed && label != "" && w.siblingLadderHeld(marker, label) {
+		return true, w.RetireWindowLadder(ctx, asset, quote, window)
+	}
+	return false, w.Clear(ctx, asset, quote)
+}
+
+// siblingLadderHeld reports whether `marker` records a freeze for any
+// window other than `own`: an owned ladder that is still active, or an
+// unowned one that is still live (owner unknown, so it may be a sibling's).
+func (w *Writer) siblingLadderHeld(marker Marker, own string) bool {
+	for label, st := range marker.Ladders {
+		if label != own && st.Active() {
+			return true
+		}
+	}
+	return LadderStillLive(marker.UnownedLadder, w.ladderGrace, time.Now())
+}
+
 // mergeLadders computes the per-window ladder map for the marker about
 // to be written at `key`: the ladders already stored there, with
 // `label`'s entry set to `state` (or removed, when `state` is no longer

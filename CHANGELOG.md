@@ -54,6 +54,24 @@ against.
   XLM that moved, so the value is exact. Not in this change: the DEX TVL
   valuer still consumes the resolver rate uncapped behind its substance
   gate. (audit-2026-09-02 F044; K045, insert path only)
+- **aggregator (freeze, money path):** a window's auto-release no longer
+  clears a sibling window's freeze it has never seen. The pair's marker
+  is deleted by the last window to release, and "last" was decided from
+  the in-memory ladder map alone — which a window only enters by reaching
+  the freeze step in the current process. A window under
+  `min_usd_volume` never does, and after a restart none has yet, so its
+  freeze exists only in the marker: a recovering 5m window deleted the
+  marker AND retired the durable ladder out from under a 1h sibling that
+  had ESCALATED ("stays active until manual unfreeze"), whose next
+  qualifying bucket — cold, with no prev-VWAP comparator to re-fire on —
+  then published. The release now goes through
+  `freeze.Writer.ReleaseWindow`, which asks the marker's own record: if
+  another window still owns a ladder in it (or it carries a live unowned
+  one) only the releasing window's ladder is retired and `flags.frozen`
+  stays; otherwise the marker is cleared as before. A marker that cannot
+  be read is left to its TTL rather than cleared. The operator override
+  (`stellarindex-ops freeze-unfreeze`) is unchanged and still ends every
+  window. (audit-2026-09-02 F011, K003)
 - **aggregator (freeze, money path):** the lifecycle-free
   `freeze.Writer.Mark` — the triangulated-composite refusal's writer,
   whose targets are members of the aggregator's own pair set and whose
