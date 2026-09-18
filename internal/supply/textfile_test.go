@@ -160,3 +160,183 @@ func abs(x float64) float64 {
 	}
 	return x
 }
+
+// grepLines returns every line of body that starts with prefix.
+func grepLines(t *testing.T, body, prefix string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, prefix) {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp is the
+// regression guard for the 36 h ticket / 72 h page escalation. The
+// textfile collector serves exactly what the `.prom` file holds on
+// each scrape, so a failure-path rewrite that omits
+// last_success_timestamp RETIRES the series and both alerts — which
+// evaluate `time() - <metric>` — go permanently no-data. Days 2..n of
+// an outage must still carry the day-0 success timestamp verbatim.
+func TestWriteSnapshotFailureTextfile_CarriesLastSuccessTimestamp(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supply_snapshot.prom")
+	snap := Supply{
+		AssetKey:          "XLM",
+		TotalSupply:       big.NewInt(50_001_806_812 * 10_000_000),
+		CirculatingSupply: big.NewInt(30_000_000_000 * 10_000_000),
+		LedgerSequence:    50_000_000,
+		ObservedAt:        time.Unix(1_770_000_000, 0).UTC(),
+	}
+	if err := WriteSnapshotTextfile(path, snap, 1.0, true); err != nil {
+		t.Fatalf("seed success write: %v", err)
+	}
+	seeded, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded file: %v", err)
+	}
+	want := grepLines(t, string(seeded), `stellarindex_supply_snapshot_last_success_timestamp{`)
+	if len(want) != 1 {
+		t.Fatalf("seed should hold exactly one last_success sample, got %d:\n%s", len(want), seeded)
+	}
+
+	// Three consecutive failed daily runs.
+	for day := 1; day <= 3; day++ {
+		if err := WriteSnapshotFailureTextfile(path, "native", 0.2); err != nil {
+			t.Fatalf("failure write day %d: %v", day, err)
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read back day %d: %v", day, err)
+		}
+		body := string(raw)
+
+		got := grepLines(t, body, `stellarindex_supply_snapshot_last_success_timestamp{`)
+		if len(got) != 1 || got[0] != want[0] {
+			t.Fatalf("day %d: last_success_timestamp must survive verbatim as %q, got %q\nfile:\n%s",
+				day, want[0], got, body)
+		}
+		// The family must be declared exactly once or the textfile
+		// collector rejects the whole file.
+		if n := len(grepLines(t, body, "# HELP stellarindex_supply_snapshot_last_success_timestamp ")); n != 1 {
+			t.Errorf("day %d: want exactly 1 HELP line for the family, got %d:\n%s", day, n, body)
+		}
+		if n := len(grepLines(t, body, "# TYPE stellarindex_supply_snapshot_last_success_timestamp ")); n != 1 {
+			t.Errorf("day %d: want exactly 1 TYPE line for the family, got %d:\n%s", day, n, body)
+		}
+		// …and the failure itself must still be reported.
+		if !strings.Contains(body, `stellarindex_supply_snapshot_unit_failed{asset_key="native"} 1`) {
+			t.Errorf("day %d: failure write should emit unit_failed=1:\n%s", day, body)
+		}
+		// No stale value gauges from the seeded success run — they
+		// would read as a supply figure the failed run never computed.
+		if strings.Contains(body, "stellarindex_supply_snapshot_total_xlm") {
+			t.Errorf("day %d: value gauges must not be carried forward:\n%s", day, body)
+		}
+	}
+}
+
+// TestWriteSnapshotFailureTextfile_NoPriorFileEmitsNothing — a first-ever
+// run that fails has no success to carry. The series must stay absent so
+// `_never_initialized` (absent_over_time … == 1) still fires, rather than
+// a fabricated timestamp making an uninitialized deployment look healthy.
+func TestWriteSnapshotFailureTextfile_NoPriorFileEmitsNothing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supply_snapshot.prom")
+	if err := WriteSnapshotFailureTextfile(path, "native", 0.2); err != nil {
+		t.Fatalf("WriteSnapshotFailureTextfile: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if strings.Contains(string(raw), "stellarindex_supply_snapshot_last_success_timestamp") {
+		t.Errorf("no prior success to carry, must not fabricate one:\n%s", raw)
+	}
+	if !strings.Contains(string(raw), `stellarindex_supply_snapshot_unit_failed{asset_key="native"} 1`) {
+		t.Errorf("first-run failure should still emit unit_failed=1:\n%s", raw)
+	}
+}
+
+// TestWriteSnapshotFailureTextfile_UnreadablePriorFileIsNotErased pins the
+// fail-safe choice: when the previous exposition exists but cannot be read,
+// leave it in place (the staleness alerts keep escalating on the surviving
+// series) rather than truncate it to publish unit_failed.
+func TestWriteSnapshotFailureTextfile_UnreadablePriorFileIsNotErased(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the read permission bit")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supply_snapshot.prom")
+	snap := Supply{
+		AssetKey:          "XLM",
+		TotalSupply:       big.NewInt(10_000_000),
+		CirculatingSupply: big.NewInt(9_000_000),
+		LedgerSequence:    7,
+		ObservedAt:        time.Unix(1_770_000_000, 0).UTC(),
+	}
+	if err := WriteSnapshotTextfile(path, snap, 1.0, true); err != nil {
+		t.Fatalf("seed success write: %v", err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded file: %v", err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o644) })
+
+	if err := WriteSnapshotFailureTextfile(path, "native", 0.2); err == nil {
+		t.Fatal("unreadable prior exposition should surface an error, not a silent erase")
+	}
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod back: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if string(after) != string(before) {
+		t.Errorf("prior exposition must be left intact:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+}
+
+// TestWriteSnapshotTextfile_FailFlagCarriesLastSuccess — the same invariant
+// through the other exported writer. pass=false emits no fresh timestamp,
+// so the previous one must survive here too.
+func TestWriteSnapshotTextfile_FailFlagCarriesLastSuccess(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "supply_snapshot.prom")
+	snap := Supply{
+		AssetKey:          "XLM",
+		TotalSupply:       big.NewInt(10_000_000),
+		CirculatingSupply: big.NewInt(9_000_000),
+		LedgerSequence:    7,
+		ObservedAt:        time.Unix(1_770_000_000, 0).UTC(),
+	}
+	if err := WriteSnapshotTextfile(path, snap, 1.0, true); err != nil {
+		t.Fatalf("seed success write: %v", err)
+	}
+	seeded, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read seeded file: %v", err)
+	}
+	want := grepLines(t, string(seeded), `stellarindex_supply_snapshot_last_success_timestamp{`)
+	if len(want) != 1 {
+		t.Fatalf("seed should hold exactly one last_success sample, got %d", len(want))
+	}
+	if err := WriteSnapshotTextfile(path, snap, 1.0, false); err != nil {
+		t.Fatalf("fail-flag write: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	got := grepLines(t, string(raw), `stellarindex_supply_snapshot_last_success_timestamp{`)
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("want last_success carried verbatim as %q, got %q\nfile:\n%s", want[0], got, raw)
+	}
+}

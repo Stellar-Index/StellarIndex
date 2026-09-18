@@ -96,6 +96,28 @@ against.
   ceiling"; the 503 + `Retry-After` wire contract is unchanged.
   (audit-2026-09-02 F054, K010)
 
+- **supply:** a failed supply-snapshot run no longer erases the
+  staleness key its own escalation depends on. node_exporter's
+  textfile collector serves exactly what the `.prom` file holds on
+  each scrape, so the failure path's whole-file rewrite — which emits
+  only `unit_failed` and the run duration — retired
+  `stellarindex_supply_snapshot_last_success_timestamp` after the
+  FIRST failure. Both `stellarindex_supply_snapshot_stale` (36 h
+  ticket) and `stellarindex_supply_snapshot_critical_stale` (72 h
+  **page**) evaluate `time() - <that metric>`, which is no-data rather
+  than "very old" once the series is gone: days 2, 3 and 4 of an
+  outage produced only the repeating "most recent run failed" ticket
+  plus, at 36 h, the misleading "never initialized" one, and the page
+  tier could never fire. Every write through `internal/supply` now
+  carries the previous file's samples for that family through
+  verbatim (labels and value untouched, so the timestamp still names
+  the last genuinely successful run) whenever the run has no fresh
+  success to stamp; with no prior file nothing is emitted, leaving
+  `_never_initialized` to cover a first run that fails. A prior
+  exposition that exists but cannot be read is left intact rather
+  than truncated — a surviving staleness key still escalates, an
+  erased one never does. Value gauges are still not carried: they
+  would report supply the failed run never computed.
 - **ci,ops:** `config_acknowledged=true` can no longer clear a config
   surface the deploy PROVED unapplied by asking the host. The deploy's
   ClickHouse evidence step has asked the target which objects exist

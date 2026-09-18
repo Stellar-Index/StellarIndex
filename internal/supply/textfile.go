@@ -1,20 +1,40 @@
 package supply
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"math/big"
 	"os"
+	"strings"
 	"time"
 )
+
+// metricLastSuccessTimestamp is the staleness key the
+// `stellarindex_supply_snapshot_stale` (36 h ticket) and
+// `_critical_stale` (72 h page) alerts in
+// deploy/monitoring/rules/supply-snapshot.yml consume as
+// `time() - <metric>`. node_exporter's textfile collector re-reads
+// the whole `.prom` file on every scrape, so a write that omits
+// this series DELETES it from the exposition — `time() - <missing>`
+// is no-data and neither alert can ever fire again. Every write
+// through this package therefore carries the previous file's
+// samples for this family forward unless it emits fresh ones.
+const metricLastSuccessTimestamp = "stellarindex_supply_snapshot_last_success_timestamp"
+
+const helpLastSuccessTimestamp = "Unix timestamp of the most recent successful snapshot."
 
 // WriteSnapshotTextfile renders a [Supply] snapshot to path in the
 // Prometheus textfile-collector format used by node_exporter.
 //
-// pass=true → emits the success metric set including the
+// pass=true → emits the success metric set including a fresh
 // `last_success_timestamp` gauge that the staleness alert keys on.
-// pass=false → caller should use [WriteSnapshotFailureTextfile]
-// instead so a failed run leaves the success-timestamp untouched.
+// pass=false → the metric set carries no fresh timestamp, so the
+// previous file's samples are carried forward (see
+// [metricLastSuccessTimestamp]); the failure path proper should
+// still use [WriteSnapshotFailureTextfile], which has no Supply to
+// report value gauges from.
 //
 // Atomic write protocol matches the established pattern in
 // internal/archivecompleteness/metrics.go::WriteTextfileAtomic and
@@ -22,22 +42,24 @@ import (
 // `<path>.tmp` first, rename into place. node_exporter skips
 // `.tmp` files, so a partial write never appears in a scrape.
 func WriteSnapshotTextfile(path string, snap Supply, durationSec float64, pass bool) error {
-	return writeAtomic(path, func(w io.Writer) error {
+	return writeAtomicCarryingLastSuccess(path, func(w io.Writer) error {
 		return writeSnapshotMetrics(w, snap, durationSec, pass)
 	})
 }
 
 // WriteSnapshotFailureTextfile is the failure-path emit. Writes
-// `unit_failed=1` and the run-duration gauge but OMITS the
-// `last_success_timestamp` so node_exporter surfaces the
-// previous-scrape value (which is what the staleness alert
-// consumes when the current run failed).
+// `unit_failed=1` and the run-duration gauge; it has no successful
+// run to stamp, so the `last_success_timestamp` samples already in
+// `path` are carried through verbatim (nothing is emitted when no
+// prior file exists, which is what the `_never_initialized` alert
+// keys on). Without that carry a single failed run would erase the
+// series the 36 h ticket and the 72 h page both depend on.
 //
 // `assetRaw` is the operator-supplied -asset flag value (e.g.
 // "native" / "USDC-G…"); it goes on the `unit_failed` label so an
 // operator running multiple assets sees per-asset failure status.
 func WriteSnapshotFailureTextfile(path, assetRaw string, durationSec float64) error {
-	return writeAtomic(path, func(w io.Writer) error {
+	return writeAtomicCarryingLastSuccess(path, func(w io.Writer) error {
 		return writeFailureMetrics(w, assetRaw, durationSec)
 	})
 }
@@ -112,8 +134,8 @@ func writeSnapshotMetrics(w io.Writer, snap Supply, durationSec float64, pass bo
 	}
 	if pass {
 		if err := writeGaugeInt(w,
-			"stellarindex_supply_snapshot_last_success_timestamp",
-			"Unix timestamp of the most recent successful snapshot.",
+			metricLastSuccessTimestamp,
+			helpLastSuccessTimestamp,
 			asset, time.Now().Unix()); err != nil {
 			return err
 		}
@@ -122,9 +144,10 @@ func writeSnapshotMetrics(w io.Writer, snap Supply, durationSec float64, pass bo
 }
 
 // writeFailureMetrics emits a minimal failure-path block. Only
-// `unit_failed` and the run-duration gauge — no value gauges
-// (we don't have a Supply to report) and no `last_success_timestamp`
-// (so the staleness alert keys on the previous-scrape value).
+// `unit_failed` and the run-duration gauge — no value gauges (we
+// don't have a Supply to report) and no `last_success_timestamp`
+// (there was no success to stamp; the previous file's samples are
+// carried forward by [writeAtomicCarryingLastSuccess] instead).
 func writeFailureMetrics(w io.Writer, assetRaw string, durationSec float64) error {
 	if err := writeGaugeInt(w,
 		"stellarindex_supply_snapshot_unit_failed",
@@ -165,6 +188,97 @@ func stroopsToXLM(stroops *big.Int) float64 {
 	rat := new(big.Rat).SetFrac(stroops, big.NewInt(10_000_000))
 	f, _ := rat.Float64()
 	return f
+}
+
+// writeAtomicCarryingLastSuccess writes `body` through [writeAtomic],
+// appending the `last_success_timestamp` samples already present in
+// `path` whenever `body` emits none of its own.
+//
+// The textfile collector serves exactly what this file contains, so
+// a rewrite that drops the family retires the series and silently
+// disarms the staleness alerts (they evaluate `time() - <missing>`,
+// which is no-data, not "very old"). Carrying the previous samples
+// through verbatim keeps the timestamp truthful — it still names the
+// last genuinely successful run — so the 36 h ticket and 72 h page
+// fire on schedule while runs keep failing.
+//
+// A prior file that exists but cannot be read is NOT overwritten:
+// destroying a readable staleness key is worse than missing one
+// scrape of `unit_failed`, since `_stale` still escalates on the
+// surviving series while an erased one escalates never.
+func writeAtomicCarryingLastSuccess(path string, body func(io.Writer) error) error {
+	carried, err := readLastSuccessSamples(path)
+	if err != nil {
+		return err
+	}
+	return writeAtomic(path, func(w io.Writer) error {
+		var buf bytes.Buffer
+		if err := body(&buf); err != nil {
+			return err
+		}
+		fresh, err := lastSuccessSamples(buf.Bytes())
+		if err != nil {
+			return err
+		}
+		if len(fresh) == 0 && len(carried) > 0 {
+			if _, err := fmt.Fprintf(&buf, "# HELP %s %s\n# TYPE %s gauge\n",
+				metricLastSuccessTimestamp, helpLastSuccessTimestamp,
+				metricLastSuccessTimestamp); err != nil {
+				return err
+			}
+			for _, line := range carried {
+				if _, err := fmt.Fprintln(&buf, line); err != nil {
+					return err
+				}
+			}
+		}
+		_, werr := w.Write(buf.Bytes())
+		return werr
+	})
+}
+
+// readLastSuccessSamples returns the `last_success_timestamp` sample
+// lines of an existing textfile. A missing file yields no samples and
+// no error (first run — `_never_initialized` covers that state); any
+// other read error is returned so the caller leaves the file alone.
+func readLastSuccessSamples(path string) ([]string, error) {
+	body, err := os.ReadFile(path) //nolint:gosec // same operator-supplied path this package writes
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read textfile %q: %w", path, err)
+	}
+	return lastSuccessSamples(body)
+}
+
+// lastSuccessSamples extracts the sample lines (labels and value
+// verbatim) of the `last_success_timestamp` family from textfile
+// content, skipping `# HELP` / `# TYPE` metadata — the caller
+// re-emits those so the family is declared exactly once. A scan
+// error is returned rather than swallowed: reporting "no samples"
+// for an unreadable file is exactly the erasure this guards.
+func lastSuccessSamples(body []byte) ([]string, error) {
+	var out []string
+	sc := bufio.NewScanner(bytes.NewReader(body))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), "\r")
+		rest, ok := strings.CutPrefix(line, metricLastSuccessTimestamp)
+		if !ok {
+			continue
+		}
+		// Guard against a longer metric name sharing the prefix:
+		// a sample line continues with a label set or the value.
+		if rest == "" || (rest[0] != '{' && rest[0] != ' ') {
+			continue
+		}
+		out = append(out, line)
+	}
+	if err := sc.Err(); err != nil {
+		return nil, fmt.Errorf("scan textfile for %s: %w", metricLastSuccessTimestamp, err)
+	}
+	return out, nil
 }
 
 // writeAtomic runs `body` against a `<path>.tmp` file then renames
