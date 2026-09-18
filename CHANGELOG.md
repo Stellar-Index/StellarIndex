@@ -17,6 +17,41 @@ against.
 
 ### Fixed
 
+- **aggregator:** a ClickHouse that is still loading metadata at boot no
+  longer disables the decimals-assumption guard for the whole process
+  lifetime. The lake reader was dialled inline at startup and one failed
+  ping emitted a single WARN and skipped the guard entirely — Backfill
+  and periodic Sweep both — with no retry and no metric that separates
+  "the guard found nothing" from "the guard never ran". That is the
+  EXPECTED shape after a reboot, not an edge case: `clickhouse-server`
+  spends minutes loading metadata for the 150B-row lake and the
+  aggregator unit's ordering does not wait for it. A non-7-decimal
+  SEP-41 token listing afterwards then gets no
+  `nonstandard_decimals_assets` row, `aggregate.AdjustPrice` applies no
+  correction, and every served price on its pairs is skewed by
+  10^(7-decimals) with no other alarm. The dial now lives inside the
+  guard's own goroutine and retries with exponential backoff (15 s to a
+  5 min ceiling) until it succeeds or the process shuts down, logging
+  once at the first failure, once per ceiling-length interval while it
+  persists, and once when the guard finally arms. A source-level
+  tripwire keeps the wiring — and accounts for the two other components
+  that still dial the reader inline. (audit-2026-09-02 F040, partial:
+  the sweep-heartbeat gauge and its staleness alert need
+  `internal/obs` + `internal/decimalsguard`)
+- **aggregator:** `internal/aggregate/anomaly`'s package doc no longer
+  describes a decision model the code does not implement. It documented
+  the Phase-1 thresholds as calibrated against "the previous
+  closed-bucket VWAP", while the orchestrator computes a ROLLING window
+  on the tick clock and compares against the PREVIOUS TICK's value over
+  the same rolling window — consecutive comparands overlap 90% at 5 m,
+  99.17% at 1 h and 99.965% at 24 h, so `deviation_pct` shrinks with
+  window length and `freeze_pct` is structurally unreachable at 1 h and
+  24 h. The doc now states the deviation as a known, named defect
+  (audit-2026-09-02 RLT-356) so the thresholds are not re-derived from
+  observations produced by the wrong comparand. The code fix spans the
+  orchestrator, the baseline's one-minute MAD grain and the confidence
+  step together and is not landed here.
+
 - **api:** the SSE Hub no longer reserves a 20 KiB replay ring for a
   topic nothing has ever published to. `DefaultMaxTopics` was never a
   ceiling — `getOrCreateTopic` inserts unconditionally and the reaper

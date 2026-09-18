@@ -898,18 +898,33 @@ func run(cfgPath string, dryRun bool) error {
 	// orchestrator.Config.DecimalsLookup above) consumes to apply the
 	// forward normalization to this binary's own published VWAP. This
 	// guard's own logic is detection-only; it does not normalize.
-	// Best-effort: needs the lake for decimals(), so it's off when
-	// ClickHouse is unreachable (like the MEV order resolver).
+	//
+	// Needs the lake for decimals(). A ClickHouse that is not answering
+	// YET must delay this guard, never disable it: the single dial used
+	// to happen inline at startup and one failure meant no Backfill and
+	// no Sweep for the whole process lifetime, behind one WARN line. That
+	// is not a hypothetical — after a reboot clickhouse-server spends
+	// minutes loading metadata for the 150B-row lake while this unit's
+	// After= ordering does not name it, so the cold-boot race is the
+	// EXPECTED shape, and its outcome was a silently unguarded aggregator
+	// until someone restarted it (audit-2026-09-02 F040). The dial now
+	// lives inside the guard's own goroutine and retries with backoff
+	// until it succeeds or the process is shutting down.
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		if er, err := clickhouse.NewExplorerReader(rootCtx, addr); err != nil {
-			logger.Warn("decimals-guard: ClickHouse decimals resolver unavailable — non-7-decimal DEX-token detection disabled",
-				"addr", addr, "err", err)
-		} else {
-			defer func() { _ = er.Close() }()
-			backfillWindow := decimalsguard.DefaultBackfillWindow
-			if days := cfg.DecimalsGuard.BackfillWindowDays; days > 0 {
-				backfillWindow = time.Duration(days) * 24 * time.Hour
+		backfillWindow := decimalsguard.DefaultBackfillWindow
+		if days := cfg.DecimalsGuard.BackfillWindowDays; days > 0 {
+			backfillWindow = time.Duration(days) * 24 * time.Hour
+		}
+		refresherWG.Add(1)
+		go func() {
+			defer worker.Recover(logger, "decimals-guard")
+			defer refresherWG.Done()
+			er, ok := dialDecimalsResolver(rootCtx, logger, addr, clickhouse.NewExplorerReader)
+			if !ok {
+				// Shutdown before the lake ever answered.
+				return
 			}
+			defer func() { _ = er.Close() }()
 			guard := decimalsguard.New(store, er, decimalsguard.Options{
 				Window:         decimalsguard.DefaultWindow,
 				BackfillWindow: backfillWindow,
@@ -920,25 +935,20 @@ func run(cfgPath string, dryRun bool) error {
 				// turns detection into an actual stop-serving lever.
 				Writer: store,
 			})
-			refresherWG.Add(1)
-			go func() {
-				defer worker.Recover(logger, "decimals-guard")
-				defer refresherWG.Done()
-				// One-time startup self-seed: catches a non-7-decimal
-				// token that traded and then went DORMANT before the
-				// periodic sweep's short (20m) window ever saw it — the
-				// gap that let CC2RB… go unseeded until an operator
-				// hand-inserted the row (2026-07-09). Runs before Run's
-				// periodic loop starts; a failure here is logged and
-				// does not block the periodic sweep from starting.
-				if err := guard.Backfill(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("decimals-guard: startup backfill failed — a dormant nonstandard-decimals token may remain unseeded until the operator hand-seeds it per the runbook", "err", err)
-				}
-				if err := guard.Run(rootCtx, decimalsguard.DefaultInterval); err != nil && !errors.Is(err, context.Canceled) {
-					logger.Error("decimals-guard exited with error", "err", err)
-				}
-			}()
-		}
+			// One-time startup self-seed: catches a non-7-decimal
+			// token that traded and then went DORMANT before the
+			// periodic sweep's short (20m) window ever saw it — the
+			// gap that let CC2RB… go unseeded until an operator
+			// hand-inserted the row (2026-07-09). Runs before Run's
+			// periodic loop starts; a failure here is logged and
+			// does not block the periodic sweep from starting.
+			if err := guard.Backfill(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("decimals-guard: startup backfill failed — a dormant nonstandard-decimals token may remain unseeded until the operator hand-seeds it per the runbook", "err", err)
+			}
+			if err := guard.Run(rootCtx, decimalsguard.DefaultInterval); err != nil && !errors.Is(err, context.Canceled) {
+				logger.Error("decimals-guard exited with error", "err", err)
+			}
+		}()
 	}
 
 	// ─── Price-alert evaluator (BACKLOG #60) ────────────────────
@@ -2473,4 +2483,77 @@ func canonicalSACName(name string) (string, bool) {
 		return "", false
 	}
 	return asset.String(), true
+}
+
+// Decimals-resolver dial backoff. Overridden by the tests that exercise
+// [dialDecimalsResolver]; production takes these.
+//
+// The floor is short because the failure this exists for is a COLD
+// ClickHouse loading metadata after a reboot — minutes, not hours — and
+// arming the guard promptly is the whole point. The ceiling keeps a
+// genuinely down lake from becoming a dial loop: at five minutes a retry
+// costs nothing and still re-arms the guard well inside one sweep
+// interval of the lake coming back.
+var (
+	decimalsResolverRetryMin = 15 * time.Second
+	decimalsResolverRetryMax = 5 * time.Minute
+)
+
+// dialDecimalsResolver opens the lake reader the decimals-assumption
+// guard needs, retrying with exponential backoff until it succeeds or
+// ctx is done. ok is false only on shutdown.
+//
+// Retrying rather than giving up is the correctness property
+// (audit-2026-09-02 F040). The guard is what turns a newly-listed
+// non-7-decimal SEP-41 token into a nonstandard_decimals_assets row, and
+// without that row aggregate.AdjustPrice applies no correction: every
+// served price on that token's pairs is skewed by 10^(7-decimals), with
+// no other alarm and no way to tell "the guard found nothing" from "the
+// guard never ran". A dial that fails once at boot — the EXPECTED
+// outcome of a reboot, since clickhouse-server spends minutes loading
+// metadata for the 150B-row lake while this unit's ordering does not
+// wait for it — must therefore delay the guard, not retire it for the
+// process lifetime.
+//
+// Failures are logged at Warn on the FIRST attempt and thereafter only
+// once the backoff has reached its ceiling, so a persistent outage costs
+// one line per [decimalsResolverRetryMax] rather than a flood, while a
+// transient one is still visible at the moment it happens. Arming after
+// a retry logs too — an operator reading the log must be able to see the
+// guard come up, not just see it fail.
+func dialDecimalsResolver(
+	ctx context.Context,
+	logger *slog.Logger,
+	addr string,
+	dial func(context.Context, string) (*clickhouse.ExplorerReader, error),
+) (reader *clickhouse.ExplorerReader, ok bool) {
+	backoff := decimalsResolverRetryMin
+	for attempt := 1; ; attempt++ {
+		er, err := dial(ctx, addr)
+		if err == nil {
+			if attempt > 1 {
+				logger.Info("decimals-guard: ClickHouse decimals resolver reached — non-7-decimal DEX-token detection armed",
+					"addr", addr, "attempts", attempt)
+			}
+			return er, true
+		}
+		if ctx.Err() != nil {
+			return nil, false
+		}
+		if attempt == 1 || backoff >= decimalsResolverRetryMax {
+			logger.Warn("decimals-guard: ClickHouse decimals resolver unavailable — non-7-decimal DEX-token detection NOT YET armed, retrying",
+				"addr", addr, "err", err, "attempt", attempt, "retry_in", backoff)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-time.After(backoff):
+		}
+		if backoff < decimalsResolverRetryMax {
+			backoff *= 2
+			if backoff > decimalsResolverRetryMax {
+				backoff = decimalsResolverRetryMax
+			}
+		}
+	}
 }
