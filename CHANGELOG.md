@@ -17,6 +17,31 @@ against.
 
 ### Fixed
 
+- **api:** one unauthenticated address can no longer take the whole
+  shared tip-producer pool and 503 everybody else's
+  `/v1/price/tip/stream`. The 512-slot ceiling bounded the total but
+  partitioned it by nothing, and a tip-stream connection mints a
+  DETACHED producer — `context.Background()`, 30 s of linger — so
+  looping the key space (~9 real pairs x `window_seconds` 1..60,
+  aborting each connection as the headers arrive) filled every slot
+  with junk the connection caps cannot see, after which every OTHER
+  caller's first request for an unwatched pair was refused. Each
+  producer is now charged to the caller that MINTED it, for as long as
+  its registry entry lives — through the linger, since the linger is
+  the window the flood runs in — and a new producer is refused above a
+  per-caller quota (24, against the shipped per-IP concurrent-stream
+  cap of 20) BEFORE the global ceiling is consulted, so one address
+  holds under 5% of the pool instead of all of it. Joining an
+  already-running producer is never charged, so a page reload — the
+  case the linger exists for — can never hit the quota. The caller key
+  is the /64 prefix for IPv6 (SEC-15): keying on the full address is
+  bypassed by rotating within a prefix the caller already owns. The two
+  refusals are distinct outcomes, not one boolean, and are separated in
+  the log and in the problem detail so an operator can tell "one client
+  is enumerating the key space" from "the deployment has outgrown its
+  ceiling"; the 503 + `Retry-After` wire contract is unchanged.
+  (audit-2026-09-02 F054, K010)
+
 - **ci,ops:** `config_acknowledged=true` can no longer clear a config
   surface the deploy PROVED unapplied by asking the host. The deploy's
   ClickHouse evidence step has asked the target which objects exist

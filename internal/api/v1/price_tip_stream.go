@@ -233,27 +233,9 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 		// (contextcheck): the shared compute loop outlives any single
 		// connection — it stops via the registry's refcount + linger, not
 		// via this request's cancellation.
-		topic, releaseProducer, ok := s.acquireTipProducer(asset, quote, window) //nolint:contextcheck
-		if !ok {
-			// At the producer ceiling and this pair has none running
-			// (wave-D UNAUTH-DOS-1). Refuse rather than fall through to
-			// the per-connection loop below: that path is the unbounded
-			// compute the ceiling exists to prevent, so falling back
-			// would make the cap decorative.
-			//
-			// 503 + Retry-After, not 429: the client is not at fault and
-			// nothing about retrying the same request is invalid — the
-			// server is at capacity for NEW pairs, and a viewer of an
-			// already-watched pair is still served normally.
-			s.logger.Warn("tip producer ceiling reached — refusing stream",
-				"asset", asset.String(), "quote", quote.String(), "window", window,
-				"running", s.tipProducers.running(),
-				"refused_total", s.tipProducers.refusedCount())
-			w.Header().Set("Retry-After", "30")
-			writeProblem(w, r,
-				"https://api.stellarindex.io/errors/capacity",
-				"Stream capacity reached", http.StatusServiceUnavailable,
-				"too many distinct price-tip streams are active; retry shortly")
+		topic, releaseProducer, outcome := s.acquireTipProducer(r, asset, quote, window) //nolint:contextcheck
+		if outcome != tipProducerAdmitted {
+			s.writeTipProducerRefused(w, r, outcome, asset, quote, window)
 			return
 		}
 		defer releaseProducer()
@@ -273,6 +255,42 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	go s.runTipStreamProducer(prodCtx, ch, &gen, asset, quote, window, firstEv)
 
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
+}
+
+// writeTipProducerRefused answers a connection whose pair has no shared
+// producer running and may not mint one (wave-D UNAUTH-DOS-1).
+//
+// Refusing is the point: falling through to the per-connection tick loop
+// would reintroduce exactly the unbounded detached compute the bounds
+// exist to prevent, making them decorative.
+//
+// 503 + Retry-After, not 429, for BOTH refusals. The status code is part
+// of this endpoint's published contract, and the per-caller refusal is
+// still honestly "come back shortly": the caller's own lingering
+// producers expire within [tipProducerLinger] without it doing anything,
+// and a viewer of an ALREADY-watched pair is served normally throughout.
+// The two refusals are told apart in the log and the detail rather than
+// the status line — an operator needs to know whether ONE address is
+// enumerating the key space or the deployment has outgrown its ceiling.
+func (s *Server) writeTipProducerRefused(
+	w http.ResponseWriter, r *http.Request,
+	outcome tipProducerOutcome, asset, quote canonical.Asset, window int,
+) {
+	detail := "too many distinct price-tip streams are active; retry shortly"
+	if outcome == tipProducerAtCallerQuota {
+		detail = "too many distinct price-tip streams are already active from your address; retry shortly"
+	}
+	s.logger.Warn("tip producer refused — refusing stream",
+		"reason", outcome.String(),
+		"asset", asset.String(), "quote", quote.String(), "window", window,
+		"running", s.tipProducers.running(),
+		"refused_total", s.tipProducers.refusedCount(),
+		"refused_per_caller_total", s.tipProducers.refusedPerCallerCount())
+	w.Header().Set("Retry-After", "30")
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/capacity",
+		"Stream capacity reached", http.StatusServiceUnavailable,
+		detail)
 }
 
 // forwardTipStream bridges a Hub subscription onto the SSE writer
