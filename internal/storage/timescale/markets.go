@@ -779,6 +779,51 @@ func encodeMarketsCursor(last Market, order MarketsOrder) string {
 	return pairKey
 }
 
+// distinctPairsActivityCTEs is the static head of the /v1/markets
+// listing query: `d`, the 14-day active-pair set from prices_1d, and `h`,
+// the trailing-24h prices_1m scan that carries the volume, trade count,
+// fresh last_price and same-day membership. It takes no interpolation —
+// only the bind parameters $1 (since), $4 (source) and $5 (asset alias
+// set) — so it lives in one literal, the way perSourcePoolsCTE does, and
+// buildDistinctPairsQuery appends the `raw` and `canon` CTEs that depend
+// on the canonical-orientation expressions. Why each CTE reads the view
+// it reads is argued at length in buildDistinctPairsQuery.
+const distinctPairsActivityCTEs = `
+        WITH d AS (
+            SELECT p.base_asset, p.quote_asset,
+                   MAX(p.bucket) AS bucket_close_at,
+                   (array_agg(p.last_price ORDER BY p.bucket DESC)
+                      FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
+              FROM prices_1d p
+             WHERE p.bucket >= $1
+               AND ($4 = '' OR $4 = ANY(p.sources))
+               AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
+             GROUP BY p.base_asset, p.quote_asset
+        ),
+        h AS (
+            SELECT p.base_asset, p.quote_asset,
+                   MAX(p.bucket)       AS last_bucket_1m,
+                   SUM(p.trade_count)  AS count_24h,
+                   SUM(p.volume_usd)   AS vol_24h_num,
+                   -- last(), not an ordered array_agg: this scan covers
+                   -- every active pair's 24h of MINUTE buckets, and a
+                   -- per-group ORDER BY would sort all of them to read one
+                   -- value per group. last() keeps the newest bucket's
+                   -- close in the same single pass the sums already make;
+                   -- FILTER drops null closes so a quiet tail bucket
+                   -- cannot mask the last real price. (The prices_1d CTE
+                   -- keeps array_agg: ~14 buckets per pair, nothing to
+                   -- gain.)
+                   last(p.last_price, p.bucket)
+                      FILTER (WHERE p.last_price IS NOT NULL)::text AS last_price
+              FROM prices_1m p
+             WHERE p.bucket > NOW() - INTERVAL '24 hours'
+               AND ($4 = '' OR $4 = ANY(p.sources))
+               AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
+             GROUP BY p.base_asset, p.quote_asset
+        ),
+`
+
 // buildDistinctPairsQuery composes the per-pair-volume CTE +
 // SELECT for DistinctPairs given the limit and ordering. Pulled
 // out of DistinctPairs so the latter stays under the gocognit
@@ -885,41 +930,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// orientation (inverted for the flipped direction). See
 	// canonOrientSQL / canonical.Orient.
 	canonBase, canonQuote, flipped := canonOrientSQL("base_asset", "quote_asset")
-	ctes := `
-        WITH d AS (
-            SELECT p.base_asset, p.quote_asset,
-                   MAX(p.bucket) AS bucket_close_at,
-                   (array_agg(p.last_price ORDER BY p.bucket DESC)
-                      FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
-              FROM prices_1d p
-             WHERE p.bucket >= $1
-               AND ($4 = '' OR $4 = ANY(p.sources))
-               AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
-             GROUP BY p.base_asset, p.quote_asset
-        ),
-        h AS (
-            SELECT p.base_asset, p.quote_asset,
-                   MAX(p.bucket)       AS last_bucket_1m,
-                   SUM(p.trade_count)  AS count_24h,
-                   SUM(p.volume_usd)   AS vol_24h_num,
-                   -- last(), not an ordered array_agg: this scan covers
-                   -- every active pair's 24h of MINUTE buckets, and a
-                   -- per-group ORDER BY would sort all of them to read one
-                   -- value per group. last() keeps the newest bucket's
-                   -- close in the same single pass the sums already make;
-                   -- FILTER drops null closes so a quiet tail bucket
-                   -- cannot mask the last real price. (The prices_1d CTE
-                   -- keeps array_agg: ~14 buckets per pair, nothing to
-                   -- gain.)
-                   last(p.last_price, p.bucket)
-                      FILTER (WHERE p.last_price IS NOT NULL)::text AS last_price
-              FROM prices_1m p
-             WHERE p.bucket > NOW() - INTERVAL '24 hours'
-               AND ($4 = '' OR $4 = ANY(p.sources))
-               AND (cardinality($5::text[]) = 0 OR p.base_asset = ANY($5) OR p.quote_asset = ANY($5))
-             GROUP BY p.base_asset, p.quote_asset
-        ),
-        raw AS (
+	ctes := distinctPairsActivityCTEs + `        raw AS (
             SELECT COALESCE(d.base_asset, h.base_asset)   AS base_asset,
                    COALESCE(d.quote_asset, h.quote_asset) AS quote_asset,
                    COALESCE(h.last_bucket_1m, d.bucket_close_at) AS last_trade_at,

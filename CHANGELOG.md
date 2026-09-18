@@ -17,6 +17,16 @@ against.
 
 ### Fixed
 
+- **markets (internal):** the static head of the `/v1/markets` listing
+  query — the `prices_1d` active-pair CTE and the 24h `prices_1m` CTE —
+  moves out of `buildDistinctPairsQuery` into one package-level literal,
+  `distinctPairsActivityCTEs`, the shape `perSourcePoolsCTE` already
+  uses. The F027/F028 fix below took the function to 101 lines against
+  the 100-line limit; the limit ignores Go comments, so it was the SQL
+  that crossed it, and the SQL is what moved. No statement changes: the
+  composed query text is byte-identical across both orderings, with and
+  without a cursor and an asset filter (sha256 compared before and
+  after). (audit-2026-09-02 F027, F028, K031)
 - **ops (runbook):** `docs/operations/runbooks/projector-replay.md`
   now describes the command that ships. It still promised a wall time of
   "≤ 5 s" and an impact of "None" for a command that, since the K006
