@@ -124,8 +124,9 @@ func (g *monthlyQuotaGate) observeReadSuccess() {
 	}
 }
 
-// MonthlyQuota returns a [Middleware] that enforces the per-key
-// `Subject.MonthlyQuota` ceiling. F-1226 (codex audit-2026-05-12):
+// MonthlyQuota returns a [Middleware] that enforces the
+// `Subject.MonthlyQuota` ceiling against the caller's ACCOUNT-wide
+// month-to-date count. F-1226 (codex audit-2026-05-12):
 // the dashboard accepted a per-key `monthly_quota` value and the
 // Postgres store persisted it, but no runtime middleware
 // enforced it — paid customers on metered plans could spend
@@ -139,10 +140,12 @@ func (g *monthlyQuotaGate) observeReadSuccess() {
 //   - Subject with `MonthlyQuota > 0` and a non-nil reader: read
 //     the month-to-date counter for the subject key (via
 //     [UsageKeyForSubject], the same derivation `UsageTracker` writes
-//     under, so the writer and reader stay in lock-step). When the
-//     count >= quota, reject
-//     with `429 Too Many Requests` + Problem-JSON body listing
-//     the cap. The counter this reads is BILLABLE traffic only —
+//     under, so the writer and reader stay in lock-step). That key is
+//     the OWNER ACCOUNT, not the credential (RLT-404) — the ceiling is
+//     a plan budget, so every key the account holds spends the same
+//     counter and neither minting a second key nor revoking and
+//     re-minting this one resets it. When the count >= quota, reject
+//     with `429 Too Many Requests` + Problem-JSON body listing the cap. The counter this reads is BILLABLE traffic only —
 //     `UsageTracker` keeps 429s and 5xx out of it (see
 //     [billableClass]), so neither our throttle nor our outage can
 //     consume the customer's cap.
@@ -263,7 +266,9 @@ func retryAfterForDwell(d time.Duration) int {
 // detail for the customer's client to surface "you hit your
 // monthly cap" plus the actual cap + observed counter. Kept
 // separate from the rate-limit 429 so dashboards can split the
-// two failure modes cleanly.
+// two failure modes cleanly. `month_to_date` is the ACCOUNT's
+// count (RLT-404), so the body says so rather than implying that
+// rotating the key would clear it.
 //
 // The body is built via `encoding/json.Marshal` so the
 // caller-controlled `r.URL.Path` is properly escaped (any quote
@@ -274,7 +279,7 @@ func writeMonthlyQuotaDenied(w http.ResponseWriter, r *http.Request, quota, used
 		"type":          "https://api.stellarindex.io/errors/monthly-quota-exceeded",
 		"title":         "Monthly quota exceeded",
 		"status":        429,
-		"detail":        "The API key's monthly request quota has been reached. Reset on the 1st UTC.",
+		"detail":        "The account's monthly request quota has been reached (every API key on the account shares it). Reset on the 1st UTC.",
 		"instance":      r.URL.Path,
 		"monthly_quota": quota,
 		"month_to_date": used,

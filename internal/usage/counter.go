@@ -4,6 +4,13 @@
 // middleware.UsageTracker on every authenticated request; reads
 // back the wire shapes /v1/account/usage emits.
 //
+// `subject` is the OWNER-ACCOUNT key middleware.UsageKeyForSubject
+// derives ("id:acct:<slug>"; "key:<KeyID>" only for a credential whose
+// store stamped no owner reference), so every credential an account
+// holds shares one counter — the monthly ceiling is a plan budget, and
+// keying it per credential let a customer multiply it by minting keys
+// and reset it by rotating one (RLT-404).
+//
 // Storage shape — two key families per (subject, day):
 //
 //	usage:<sub>:<YYYY-MM-DD>     → INCR-counted request total
@@ -174,7 +181,7 @@ func (c *Counter) IncrementDetail(ctx context.Context, subject, endpoint, class 
 // [RollupRow]s before handing them to the Timescale sink.
 type DetailRow struct {
 	Date     string // YYYY-MM-DD UTC
-	Subject  string // decoded subject ("key:<id>" / "id:<ident>")
+	Subject  string // decoded subject ("id:<ident>" / "key:<id>")
 	Endpoint string // route pattern
 	Class    string // one of the Class* constants
 	Count    int64
@@ -304,8 +311,10 @@ type Day struct {
 
 // MonthToDate returns the sum of `subject`'s per-day counters
 // from the 1st of the current UTC month through (and including)
-// today. Used by [middleware.MonthlyQuota] to enforce per-key
-// monthly request ceilings. F-1226 (codex audit-2026-05-12).
+// today. Used by [middleware.MonthlyQuota] to enforce monthly
+// request ceilings; `subject` is the owner-account key (see the
+// package doc), so the sum spans every credential the account
+// holds. F-1226 (codex audit-2026-05-12).
 //
 // Empty subject or a Redis-side failure returns (0, err); the
 // caller treats both as "fail open" — usage caps must never be

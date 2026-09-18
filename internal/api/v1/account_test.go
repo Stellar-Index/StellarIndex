@@ -676,7 +676,9 @@ func getUsageRows(t *testing.T, ts *httptest.Server) []v1.UsageRow {
 // TestAccountUsage_RollupRows — the rollup reader backs the wire
 // shape: one row per (day, endpoint) with endpoint + errors +
 // throttled populated, keyed by the same subject derivation the
-// tracker middleware writes under (key:<KeyID>).
+// tracker middleware writes under — the OWNER ACCOUNT (id:<Identifier>),
+// not the credential, so the endpoint covers every key the account holds
+// and survives a key rotation (RLT-404).
 func TestAccountUsage_RollupRows(t *testing.T) {
 	rollup := &fakeUsageRollupReader{rows: []v1.UsageEndpointDay{
 		{Date: "2026-07-02", Endpoint: "/v1/price", Requests: 120, Errors: 3, Throttled: 0},
@@ -689,8 +691,8 @@ func TestAccountUsage_RollupRows(t *testing.T) {
 	}, rollup, &fakeUsageReader{days: []v1.UsageDay{{Date: "2026-07-03", Requests: 999}}})
 
 	rows := getUsageRows(t, ts)
-	if rollup.gotSubject != "key:kid_9" {
-		t.Errorf("subject = %q, want key:kid_9 (must match the tracker's derivation)", rollup.gotSubject)
+	if rollup.gotSubject != "id:owner-9" {
+		t.Errorf("subject = %q, want id:owner-9 (must match the tracker's derivation: the owner account, not the KeyID)", rollup.gotSubject)
 	}
 	if rollup.gotDays != 30 {
 		t.Errorf("days = %d, want 30", rollup.gotDays)

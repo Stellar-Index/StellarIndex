@@ -287,8 +287,11 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 // Subject keying calls [middleware.UsageKeyForSubject] directly (HLT-01:
 // this used to reimplement the derivation inline, which could silently
 // drift from the writer's copy) so the writer + both readers stay in
-// lock-step (`key:<KeyID>` for API-key callers; `id:<Identifier>`
-// when KeyID is empty). Anonymous callers receive 401. The
+// lock-step (`id:<Identifier>` — the OWNER ACCOUNT — with `key:<KeyID>`
+// only for credentials carrying no owner reference). The account key is
+// what makes this endpoint's name true: the rows cover every key the
+// account holds, not just the one that authenticated the call, and they
+// survive a key rotation (RLT-404). Anonymous callers receive 401. The
 // `?from=` / `?to=` query params are reserved in the OpenAPI spec
 // but ignored — every successful response is the trailing 30-day
 // window today; full from/to honouring lands when an operator
@@ -308,9 +311,10 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 			"/v1/account/usage requires an API key (or a SEP-10 token, on a deployment running auth_mode=sep10 — a deployment accepts one or the other, never both)")
 		return
 	}
-	// The single UsageTracker-shared derivation (key:<KeyID> or
-	// id:<Identifier>) — calling it directly instead of reimplementing
-	// it here means the writer and this reader can never drift apart.
+	// The single UsageTracker-shared derivation (id:<Identifier>, the
+	// owner account, or key:<KeyID> as fallback) — calling it directly
+	// instead of reimplementing it here means the writer and this reader
+	// can never drift apart.
 	key := middleware.UsageKeyForSubject(subject)
 	if key == "" {
 		writeJSON(w, []UsageRow{}, Flags{})

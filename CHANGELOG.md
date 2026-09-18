@@ -59,6 +59,27 @@ against.
   to a common scale — so a window whose only 8-decimal venue is filtered
   out still reports 8 for the survivors that were lifted to meet it.
   (audit-2026-09-02 F096)
+- **api (billing/security):** the monthly request ceiling is now metered
+  per OWNER ACCOUNT, not per credential. `middleware.UsageKeyForSubject`
+  — the single derivation the usage writer and both readers share — now
+  prefers `Subject.Identifier` (`acct:<slug>`, the owner reference the
+  key stores stamp) and falls back to `KeyID` only for a credential that
+  carries none. The ceiling it is compared against is a PLAN budget
+  (`platform.Tier.MaxMonthlyQuota`, clamped by the account-level
+  override, which a customer may only ever LOWER), but the counter's
+  identity was the credential's: N live keys under one account meant N
+  independent month-to-date counters, so the plan allowance multiplied
+  by the number of keys held, and a revoke-and-mint minted a fresh
+  `KeyID` — hence a month-to-date of zero — resetting the cap on demand
+  mid-month at no cost, since the key-count check counts only un-revoked
+  keys. Writer and readers moved together: pointing a reader at an
+  account key the writer never writes would have metered nothing at all.
+  Two consequences, both intended: `/v1/account/usage` now reports every
+  key the account holds (which is what its name promised) and its
+  history is keyed on the account, so rollup rows written under the old
+  per-credential subject fall out of the trailing 30-day window as it
+  rolls forward; and the quota 429's Problem+JSON `detail` now says the
+  account's quota, not the API key's. (RLT-404)
 
 - **storage (test):** the both-directions query-shape guard no longer
   depends on a hand-maintained list of subjects — the list is why four

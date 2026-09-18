@@ -58,7 +58,7 @@ func TestUsageTracker_RecordsAfterClientAbort(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/ohlc", nil).WithContext(ctx)
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
-	days, err := counter.Read(context.Background(), "key:kid_abort", 3)
+	days, err := counter.Read(context.Background(), middleware.UsageKeyForSubject(subject), 3)
 	if err != nil {
 		t.Fatalf("counter.Read: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestUsageTracker_AbortedRequestConsumesQuota(t *testing.T) {
 			httptest.NewRequest(http.MethodGet, "/v1/ohlc", nil).WithContext(ctx))
 	}
 
-	mtd, err := counter.MonthToDate(context.Background(), "key:kid_evade")
+	mtd, err := counter.MonthToDate(context.Background(), middleware.UsageKeyForSubject(subject))
 	if err != nil {
 		t.Fatalf("MonthToDate: %v", err)
 	}

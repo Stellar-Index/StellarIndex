@@ -21,8 +21,9 @@ import (
 const postResponseWriteTimeout = 5 * time.Second
 
 // UsageTracker records per-request daily counters keyed on the
-// authenticated subject (KeyID for API-key callers; the auth.Subject
-// Identifier when KeyID is empty). Anonymous requests are skipped —
+// authenticated subject's OWNER ACCOUNT (auth.Subject Identifier, with
+// KeyID as the fallback for credentials carrying no owner reference —
+// see [UsageKeyForSubject]). Anonymous requests are skipped —
 // /v1/account/usage is per-account, and there's no account to bill
 // for IP-only callers.
 //
@@ -118,25 +119,62 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 
 // UsageKeyForSubject picks the stable identifier we count under.
 // Order of preference:
-//  1. KeyID — distinguishes per-key when one account has many.
-//  2. Identifier — group-by stable identifier across keys.
+//  1. Identifier — the OWNER-ACCOUNT reference ([auth.AccountIdentifier],
+//     `acct:<slug>`, for API keys; the client account id for SEP-10).
+//     Every credential the same account holds shares ONE counter.
+//  2. KeyID — per-credential fallback, reached only by a credential
+//     whose store stamped no owner reference (legacy hand-seeded Redis
+//     records). Metered narrowly beats not metered at all.
 //  3. "" — anonymous; skip.
+//
+// # Why the ACCOUNT, not the credential (RLT-404)
+//
+// The counter this derives feeds [MonthlyQuota], and the ceiling it is
+// compared against is a PLAN budget, not a per-credential allowance:
+// platform.Tier.MaxMonthlyQuota is the ladder a dashboard-minted
+// key's quota is clamped to, and the account-level
+// `MonthlyRequestQuotaOverride` is the hard ceiling above it — the
+// documented contract is that a customer may only ever LOWER their cap,
+// never raise it. Keying on KeyID handed them two ways to raise it
+// anyway, because the counter's identity was the credential's:
+//
+//   - MINT: N live keys under one account meant N independent
+//     month-to-date counters, so the plan's allowance multiplied by the
+//     number of keys held (bounded by account.go's
+//     defaultAccountKeyQuota, but bounded is not capped).
+//   - ROTATE: revoke-and-mint produced a fresh KeyID, hence a
+//     month-to-date of zero, so the cap reset on demand mid-month —
+//     and `accountKeyQuotaOK` counts only un-revoked keys, so the
+//     rotation was free.
+//
+// Counting per account closes both: the allowance is conserved across
+// every credential the account holds and survives rotation, which is
+// what a plan budget means.
+//
+// The per-credential `Subject.MonthlyQuota` still decides the ceiling
+// for the request in front of us, so a customer who deliberately lowers
+// ONE key's quota now gets that key cut off at that many ACCOUNT-wide
+// requests. That is stricter than the pre-fix reading and deliberately
+// so: it fails closed, and in the ordinary case every key on an account
+// carries the same clamped plan value, where the two readings coincide.
 //
 // Exported (HLT-01) so every reader of these counters — [MonthlyQuota]
 // and /v1/account/usage's handler — calls this single implementation
 // instead of reimplementing the derivation. A duplicated copy that
 // drifts from this one silently breaks the reader: it would key off
 // something the writer never wrote under, and /v1/account/usage would
-// return [] despite incoming requests being recorded.
+// return [] despite incoming requests being recorded. That coupling is
+// why the derivation can only move with its writer: a reader pointed at
+// an account key the writer never writes meters NOTHING.
 func UsageKeyForSubject(s auth.Subject) string {
 	if s.Tier == auth.TierAnonymous || s.Tier == "" {
 		return ""
 	}
-	if s.KeyID != "" {
-		return "key:" + s.KeyID
-	}
 	if s.Identifier != "" {
 		return "id:" + s.Identifier
+	}
+	if s.KeyID != "" {
+		return "key:" + s.KeyID
 	}
 	return ""
 }
