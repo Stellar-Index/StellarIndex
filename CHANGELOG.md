@@ -41,6 +41,25 @@ against.
   code, including the end-to-end one that extracts deploy.yml's real
   step, runs it over the real `v0.61.1..v0.62.0` range against a host
   lacking the object, and feeds its output to the gate.
+- **supply:** seeding a SEP-41 pre-Soroban genesis baseline now zeroes the
+  worker-owned rollup fold whenever the baseline ledger MOVES, so the
+  documented `missing_baseline` remedy no longer re-arms the pre-Soroban
+  double-count it exists to fix. `genesis_baseline_ledger` is also the
+  Soroban-era slice's floor, and the aggregator's rollup worker folds a
+  newly-watched contract immediately — with no baseline seeded the floor is 0,
+  so the fold swept the CAP-67-replayed pre-boundary rows into `mint_total` and
+  moved `last_ledger` past them; a later `supply seed-sep41-genesis -write`
+  wrote only the genesis columns, and the reader then added that same band a
+  second time (measured on the regression fixture: 1901 served for a true
+  1001). `UpsertSEP41GenesisBaseline` now resets `mint_total` / `burn_total` /
+  `clawback_total` / `last_ledger` in the same statement when the floor is
+  distinct from the stored one, and leaves them untouched when it is not — so a
+  repeat seed of the same boundary stays the no-op the runbook calls
+  idempotent. The reader serves the exact floored full-sum fallback until the
+  worker re-folds, so supply stays correct throughout. Restores the invariant
+  that the fold columns sum exactly the rows with
+  `COALESCE(genesis_baseline_ledger, 0) <= ledger <= last_ledger`. No migration
+  — schema unchanged. Closes audit-2026-09-02 F022 / F029.
 
 ## [v0.91.0] — 2026-09-18
 

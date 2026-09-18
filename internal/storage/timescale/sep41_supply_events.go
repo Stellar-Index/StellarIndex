@@ -335,11 +335,38 @@ func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (s
 // per-kind opening balance into sep41_supply_rollup (migration 0088, incident
 // 2026-07-06). It SETS the genesis columns (not add) so re-running is
 // idempotent — the CH-lake pre-genesis sum is deterministic — and never
-// double-counts. It leaves the worker-owned Soroban-era rollup columns
-// (mint_total / burn_total / clawback_total / last_ledger) untouched: the
-// INSERT arm gives them their column DEFAULT (0), the ON CONFLICT arm updates
-// only the genesis columns, so the seed and the rollup worker coexist on the
-// same row regardless of which runs first.
+// double-counts.
+//
+// genesis_baseline_ledger is ALSO the Soroban-era slice's floor
+// ([sep41SorobanFloor]), so writing it redefines which sep41_supply_events rows
+// the worker-owned fold columns are supposed to contain. The fold is cumulative
+// and the worker only ever looks ABOVE its own last_ledger, so a fold
+// accumulated under the OLD floor can never re-apply the new one. This upsert
+// therefore zeroes the worker-owned fold columns (mint_total / burn_total /
+// clawback_total / last_ledger) in the SAME statement whenever the floor
+// actually MOVES (IS DISTINCT FROM — so NULL → N, the first seed, counts), and
+// leaves them alone when it does not, so a repeat seed of the same boundary
+// stays the no-op the runbook calls idempotent.
+//
+// Without that reset the documented remedy re-armed the very double-count it
+// exists to fix (audit 2026-09-02, F022/F029). The aggregator's rollup worker
+// starts folding a newly-watched contract immediately; with no baseline seeded
+// the floor is 0, so the fold sweeps the CAP-67-replayed pre-Soroban rows into
+// mint_total and advances last_ledger past them. A later
+// `stellarindex-ops supply seed-sep41-genesis -write` then ADDED that same
+// pre-boundary band a second time as the genesis baseline, because it wrote
+// only the genesis columns — the identical shape as the 13 double-counting
+// contracts measured on r1 2026-08-04 (worst case +114%).
+//
+// The invariant this restores, and which every fold path now preserves: the
+// fold columns sum EXACTLY the rows with
+// COALESCE(genesis_baseline_ledger, 0) ≤ ledger ≤ last_ledger.
+//
+// Correctness during the gap: a zeroed fold sends last_ledger back to 0, so the
+// reader ([Store.SEP41KindTotalsAtOrBefore]) serves the exact floored full-sum
+// fallback until the worker re-folds — supply stays correct throughout, just off
+// the fast path for a cadence or two. Same trade as
+// [Store.ResetSEP41SupplyRollupFold].
 //
 // baselineLedger is the EXCLUSIVE upper ledger bound of the seeded sum
 // (typically clickhouse.SorobanGenesisLedger); it is stored so the reader can
@@ -367,7 +394,21 @@ func (s *Store) UpsertSEP41GenesisBaseline(ctx context.Context, contractID strin
             genesis_burn_total      = EXCLUDED.genesis_burn_total,
             genesis_clawback_total  = EXCLUDED.genesis_clawback_total,
             genesis_baseline_ledger = EXCLUDED.genesis_baseline_ledger,
-            genesis_seeded_at       = now()
+            genesis_seeded_at       = now(),
+            -- Moving the floor invalidates the cumulative fold beneath it, so
+            -- zero the worker-owned columns and let the next pass re-fold from
+            -- scratch under the new floor. Floor unchanged -> the fold is left
+            -- exactly as it was, keeping a repeat seed a no-op.
+            mint_total     = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
+                                  THEN 0     ELSE sep41_supply_rollup.mint_total     END,
+            burn_total     = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
+                                  THEN 0     ELSE sep41_supply_rollup.burn_total     END,
+            clawback_total = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
+                                  THEN 0     ELSE sep41_supply_rollup.clawback_total END,
+            last_ledger    = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
+                                  THEN 0     ELSE sep41_supply_rollup.last_ledger    END,
+            updated_at     = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
+                                  THEN now() ELSE sep41_supply_rollup.updated_at     END
     `
 	if _, err := s.db.ExecContext(ctx, q,
 		contractID, genesis.Mint.String(), genesis.Burn.String(), genesis.Clawback.String(),
