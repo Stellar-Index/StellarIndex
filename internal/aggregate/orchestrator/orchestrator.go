@@ -146,6 +146,45 @@ type FreezeMarker interface {
 	Clear(ctx context.Context, asset, quote canonical.Asset) error
 }
 
+// WindowedFreezeMarker is the window-aware half of [FreezeMarker]: the
+// same lifecycle calls, told WHICH window's ADR-0019 ladder they are
+// writing, reading or retiring.
+//
+// It exists because the marker is keyed (asset, quote) — its presence is
+// the pair-wide `flags.frozen` the API serves — while the lifecycle it
+// carries advances per (pair, window), and the windows of a pair freeze
+// and release independently. A marker that records a single pair-level
+// ladder cannot say whose it is, so a window arriving at the freeze step
+// with a cold key — one dropped under [Config.MinUSDVolume] before the
+// freeze step, or any window on the first tick after a restart — adopted
+// whatever ladder the marker happened to carry: a sibling's FiredAt,
+// HoldUntil, ExtensionsUsed and Escalated, on evidence that was never
+// about it.
+//
+// Optional rather than folded into [FreezeMarker]: a writer that cannot
+// scope a marker keeps exactly the pre-existing pair-wide behaviour,
+// which errs towards holding a freeze rather than dropping one.
+// Production wires freeze.Writer, which implements this.
+type WindowedFreezeMarker interface {
+	// MarkHoldForWindow is [FreezeMarker.MarkHold] recording `window`
+	// as the owner of `state`, merging with the ladders the marker
+	// already carries for the pair's other windows.
+	MarkHoldForWindow(ctx context.Context, asset, quote canonical.Asset, window time.Duration,
+		frozenValue string, decision anomaly.Decision, state freeze.State, ttl time.Duration) error
+
+	// LoadStateForWindow is [FreezeMarker.LoadState] with the ladder
+	// scoped to `window`: presence stays pair-wide (so the operator
+	// override still reads identically), but the state returned is the
+	// one `window` itself owns — the zero State when it owns none.
+	LoadStateForWindow(ctx context.Context, asset, quote canonical.Asset,
+		window time.Duration) (freeze.State, bool, error)
+
+	// RetireWindowLadder drops `window`'s ladder from the marker while
+	// leaving the marker in place, for the release of one window of a
+	// pair whose other windows are still frozen.
+	RetireWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration) error
+}
+
 // Config controls the orchestrator's behaviour. Built from config.go
 // at startup; the orchestrator itself doesn't know about TOML.
 type Config struct {
@@ -799,6 +838,12 @@ type Orchestrator struct {
 	// first. See prevVWAPs.
 	freezeStates map[string]freeze.State
 
+	// windowedFreeze is [Config.FreezeWriter] when it can scope a
+	// marker's ladder to the window that owns it
+	// ([WindowedFreezeMarker]), nil otherwise. Resolved once in [New]
+	// rather than type-asserted per tick.
+	windowedFreeze WindowedFreezeMarker
+
 	// clock is the orchestrator's time source, injectable so the
 	// freeze lifecycle's hold/extension/escalation ladder — which is
 	// measured in tens of minutes — is testable without sleeping.
@@ -842,7 +887,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Orchestrator{
+	o := &Orchestrator{
 		store:           store,
 		cache:           cache,
 		cfg:             cfg,
@@ -855,6 +900,13 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		refreshOrder:    refreshOrder(cfg),
 		clock:           time.Now,
 	}
+	// A freeze writer that records which window owns each ladder lets
+	// every window rehydrate ITS OWN freeze on a cold key instead of a
+	// sibling's — see [WindowedFreezeMarker].
+	if windowed, ok := cfg.FreezeWriter.(WindowedFreezeMarker); ok {
+		o.windowedFreeze = windowed
+	}
+	return o
 }
 
 // Run blocks until ctx is cancelled, invoking [Tick] on

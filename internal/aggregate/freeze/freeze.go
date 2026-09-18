@@ -48,6 +48,64 @@ type Marker struct {
 	// the freeze's age. Read [State.FiredAt] for that.
 	FrozenAt time.Time `json:"frozen_at"`
 
+	// Windowed reports that this marker was written by a build that
+	// records per-window ladders, i.e. that [Marker.Ladders] — and not
+	// [Marker.State] — is the authority for "which ladder does window W
+	// own". It is a separate flag rather than `len(Ladders) > 0` so an
+	// EMPTY map (every window's ladder retired while the marker is kept
+	// alive for a still-frozen sibling, see
+	// [Writer.RetireWindowLadder]) cannot be mistaken for a marker
+	// written before per-window ladders existed.
+	Windowed bool `json:"windowed,omitempty"`
+
+	// Ladders is the ADR-0019 lifecycle PER aggregation window, keyed by
+	// the canonical [time.Duration] label ("5m0s", "1h0m0s", "24h0m0s").
+	// Authoritative when [Marker.Windowed]; a window with no entry owns
+	// no ladder.
+	//
+	// The marker's key is (asset, quote) because its PRESENCE is the
+	// single flag the API serves as `flags.frozen` for the whole pair —
+	// but the lifecycle inside it advances per (pair, window), and the
+	// windows run independently. One ladder per marker could therefore
+	// only ever be one window's, with nothing to say whose: a window
+	// arriving at the freeze step with a cold key (the aggregator drops
+	// a window under its USD-volume floor BEFORE the confidence and
+	// freeze steps, so a thin window's key stays cold across ticks)
+	// adopted a SIBLING window's FiredAt, HoldUntil, ExtensionsUsed and
+	// Escalated as its own — pinning a last-known-good price on a window
+	// nothing was wrong with and, once the inherited ladder had
+	// escalated, leaving a manual `freeze-unfreeze` as the only exit.
+	// Carrying every window's ladder keeps each window's rehydrate its
+	// own, INCLUDING across a restart, where every window is cold at
+	// once and a single owner tag would strand every window but one.
+	Ladders map[string]State `json:"ladders,omitempty"`
+
+	// UnownedLadder is a ladder known to be live for the PAIR but with
+	// no recorded owning window. It is what a window with no entry in
+	// [Marker.Ladders] falls back to, and it exists so narrowing the
+	// record can never DROP a freeze that is still running.
+	//
+	// Exactly two things produce one, and both are records that predate
+	// or lack the window dimension:
+	//
+	//   - upgrading a marker written before [Marker.Ladders] existed:
+	//     its pair-level [Marker.State] becomes the unowned ladder.
+	//   - recovering from the migration-0119 durable ladder, which is
+	//     keyed (asset, quote) with no window column. When the marker is
+	//     gone and that ladder is still live, the first window to
+	//     re-mark records it here, so the pair's OTHER windows — cold in
+	//     the same recovery, and with no prev-VWAP comparator to
+	//     re-fire on — do not read the freshly narrowed marker as "you
+	//     were never frozen" and publish the bucket the freeze was
+	//     withholding.
+	//
+	// It is carried forward only while [LadderStillLive] holds for it:
+	// an unowned ladder is a snapshot nobody is advancing, so it retires
+	// itself once its own hold plus the grace has passed, and every
+	// window that is genuinely still frozen has claimed an owned entry
+	// long before then (a live freeze re-marks every tick).
+	UnownedLadder State `json:"unowned_ladder,omitempty"`
+
 	// State is the ADR-0019 freeze-lifecycle state (fired_at,
 	// hold_until, extensions_used, escalated, unfreeze_streak). Zero
 	// for markers written by the pre-lifecycle [Writer.Mark] path.
@@ -57,6 +115,12 @@ type Marker struct {
 	// without reading logs, and the aggregator re-hydrates the ladder
 	// from here after a restart instead of silently starting the
 	// 2-hour escalation clock over.
+	//
+	// On a [Marker.Windowed] marker this mirrors the most recently
+	// written window's ladder and is NOT the per-window authority: it
+	// exists so a reader from before [Marker.Ladders] — a rolled-back
+	// binary, an operator script — keeps reading exactly what it read
+	// before. [Writer.LoadStateForWindow] reads Ladders.
 	State State `json:"state,omitempty"`
 }
 
@@ -289,18 +353,68 @@ func (w *Writer) MarkHold(
 	state State,
 	ttl time.Duration,
 ) error {
+	return w.markHold(ctx, asset, quote, 0, frozenValue, decision, state, ttl)
+}
+
+// MarkHoldForWindow is [Writer.MarkHold] for a caller whose freeze
+// lifecycle is scoped to ONE window of the pair — which is every
+// lifecycle caller, since ADR-0019's ladder advances per (pair, window)
+// while this marker is keyed per (asset, quote).
+//
+// It records `state` as `window`'s ladder in [Marker.Ladders], MERGING
+// with the ladders already in the marker so a sibling window's freeze
+// survives this write. Every other window's ladder is preserved
+// verbatim, including one this process knows nothing about (a window
+// that has been sitting under the USD-volume floor since startup, so
+// its ladder exists only in the marker) — which is why this is a merge
+// and not a rewrite from the caller's in-memory view.
+//
+// An inactive `state` RETIRES the window's ladder, the same as
+// [Writer.RetireWindowLadder], so a release can never leave a stale
+// ladder behind for a restart to rehydrate.
+//
+// window <= 0 writes an unscoped marker, i.e. exactly
+// [Writer.MarkHold]: the existing ladder map is carried over untouched.
+func (w *Writer) MarkHoldForWindow(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+	window time.Duration,
+	frozenValue string,
+	decision anomaly.Decision,
+	state State,
+	ttl time.Duration,
+) error {
+	return w.markHold(ctx, asset, quote, window, frozenValue, decision, state, ttl)
+}
+
+// markHold is the shared body of [Writer.MarkHold] and
+// [Writer.MarkHoldForWindow].
+func (w *Writer) markHold(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+	window time.Duration,
+	frozenValue string,
+	decision anomaly.Decision,
+	state State,
+	ttl time.Duration,
+) error {
 	if ttl <= 0 {
 		ttl = w.ttl
 	}
+	key := cachekeys.Freeze(asset, quote)
+	windowed, ladders, unowned := w.mergeLadders(ctx, asset, quote, windowLabel(window), state)
 	marker := Marker{
-		AssetID:      asset.String(),
-		QuoteID:      quote.String(),
-		Action:       decision.Action,
-		Class:        decision.Class,
-		DeviationPct: decision.DeviationPct,
-		Reason:       decision.Reason,
-		FrozenAt:     time.Now().UTC(),
-		State:        state,
+		AssetID:       asset.String(),
+		QuoteID:       quote.String(),
+		Action:        decision.Action,
+		Class:         decision.Class,
+		DeviationPct:  decision.DeviationPct,
+		Reason:        decision.Reason,
+		FrozenAt:      time.Now().UTC(),
+		Windowed:      windowed,
+		Ladders:       ladders,
+		UnownedLadder: unowned,
+		State:         state,
 	}
 	body, err := json.Marshal(marker)
 	if err != nil {
@@ -308,7 +422,6 @@ func (w *Writer) MarkHold(
 		// diagnostic completeness.
 		return fmt.Errorf("freeze: marshal marker: %w", err)
 	}
-	key := cachekeys.Freeze(asset, quote)
 	if err := w.cache.Set(ctx, key.String(), body, ttl).Err(); err != nil {
 		return fmt.Errorf("freeze: cache set %s: %w", key, err)
 	}
@@ -375,6 +488,171 @@ func (w *Writer) saveLadder(ctx context.Context, asset, quote canonical.Asset, s
 	}
 }
 
+// RetireWindowLadder drops ONE window's ladder from the shared marker
+// while leaving the marker — and therefore `flags.frozen` — in place.
+//
+// This is the release half of [Writer.MarkHoldForWindow], for the case
+// the orchestrator cannot express any other way: a window auto-releases
+// while a SIBLING window of the same pair is still frozen, so the marker
+// must stay (its presence is the pair-wide flag the API serves) but the
+// releasing window's ladder must not. Without it the released ladder
+// would sit in the marker until the next writer happened to overwrite
+// it, and a restart in between would rehydrate a freeze that had
+// already ended.
+//
+// The marker's TTL is preserved (Redis SET ... KEEPTTL): the remaining
+// hold belongs to the sibling that is still frozen, and this call is not
+// entitled to extend or truncate it.
+//
+// No-ops when the marker is absent (nothing to retire) or was written by
+// a build with no per-window ladders (nothing that can be scoped — the
+// sibling's next lifecycle write upgrades the marker in place).
+// Idempotent, and best-effort in the same sense as the rest of the
+// durable side: the caller logs, the freeze itself is unaffected.
+func (w *Writer) RetireWindowLadder(ctx context.Context, asset, quote canonical.Asset, window time.Duration) error {
+	label := windowLabel(window)
+	if label == "" {
+		return nil
+	}
+	key := cachekeys.Freeze(asset, quote)
+	marker, ok, err := w.readMarker(ctx, key)
+	if err != nil {
+		return err
+	}
+	if !ok || !marker.Windowed {
+		return nil
+	}
+	if _, held := marker.Ladders[label]; !held {
+		return nil
+	}
+	delete(marker.Ladders, label)
+	body, err := json.Marshal(marker)
+	if err != nil {
+		// Unreachable — Marker has no func/chan fields. Wrap for
+		// diagnostic completeness.
+		return fmt.Errorf("freeze: marshal marker: %w", err)
+	}
+	if err := w.cache.Set(ctx, key.String(), body, redis.KeepTTL).Err(); err != nil {
+		return fmt.Errorf("freeze: cache set %s: %w", key, err)
+	}
+	return nil
+}
+
+// mergeLadders computes the per-window ladder map for the marker about
+// to be written at `key`: the ladders already stored there, with
+// `label`'s entry set to `state` (or removed, when `state` is no longer
+// active). Returns whether the resulting marker records per-window
+// ladders at all.
+//
+// Merging rather than rewriting is the load-bearing part. The caller
+// only ever knows ONE window's ladder, and the windows of a pair freeze
+// and release independently — a window can even be frozen while never
+// reaching the freeze step in this process, because the aggregator drops
+// a window under its USD-volume floor first. Anything this write does
+// not know about must therefore survive it untouched.
+//
+// An unreadable or absent marker yields a fresh map: the pair has no
+// freeze on the serving path, so there is no ladder to preserve. A
+// legacy marker (no per-window ladders) is upgraded in place — its
+// pair-level [Marker.State] stays readable in the field it was written
+// to, and the window being written becomes the first recorded owner.
+//
+// `label` empty is the unscoped [Writer.Mark] / [Writer.MarkHold] path:
+// it owns no window's ladder, so it preserves what is there and claims
+// nothing.
+func (w *Writer) mergeLadders(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+	label string,
+	state State,
+) (bool, map[string]State, State) {
+	key := cachekeys.Freeze(asset, quote)
+	marker, ok, err := w.readMarker(ctx, key)
+	ladders := map[string]State{}
+	windowed := false
+	var unowned State
+	switch {
+	case err != nil || !ok:
+		// No marker to merge with. Either this is the pair's first
+		// freeze, or Redis lost the marker while the freeze ran — and
+		// those differ only in the durable record, so ask it.
+		unowned = w.liveDurableLadder(ctx, asset, quote)
+	case marker.Windowed:
+		windowed = true
+		for k, v := range marker.Ladders {
+			ladders[k] = v
+		}
+		unowned = marker.UnownedLadder
+	default:
+		// Upgrading a marker written before per-window ladders existed:
+		// its pair-level ladder has no owner, so it stays readable by
+		// every window until each has claimed its own.
+		unowned = marker.State
+	}
+	if !LadderStillLive(unowned, w.ladderGrace, time.Now()) {
+		// Nobody is advancing an unowned snapshot; once its own hold
+		// plus the grace has passed it describes no running freeze.
+		unowned = State{}
+	}
+	if label == "" {
+		return windowed, ladders, unowned
+	}
+	if state.Active() {
+		ladders[label] = state
+	} else {
+		delete(ladders, label)
+	}
+	return true, ladders, unowned
+}
+
+// liveDurableLadder returns the migration-0119 ladder for the marker's
+// pair when one is still running, and the zero State otherwise (no
+// store wired, no open row, a lapsed hold, or a store error).
+//
+// Used only when the marker is ABSENT at write time, which — given the
+// write that follows is a live freeze's — is the "Redis lost the
+// marker" case [Writer.LoadState] documents. Best-effort by the same
+// reasoning as every other durable read: degrade to the pre-0119
+// answer, never invent a freeze.
+func (w *Writer) liveDurableLadder(ctx context.Context, asset, quote canonical.Asset) State {
+	if w.ladder == nil {
+		return State{}
+	}
+	st, ok, err := w.ladder.LoadLadder(ctx, asset, quote)
+	if err != nil || !ok {
+		return State{}
+	}
+	return st
+}
+
+// readMarker fetches and decodes the marker at `key`. ok=false means no
+// marker (or one that does not decode — treated as "nothing to merge
+// with" by the writers, which then replace it).
+func (w *Writer) readMarker(ctx context.Context, key cachekeys.FreezeKey) (Marker, bool, error) {
+	raw, err := w.cache.Get(ctx, key.String()).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return Marker{}, false, nil
+	}
+	if err != nil {
+		return Marker{}, false, fmt.Errorf("freeze: cache get %s: %w", key, err)
+	}
+	var marker Marker
+	if err := json.Unmarshal(raw, &marker); err != nil {
+		return Marker{}, false, nil //nolint:nilerr // an undecodable marker carries no ladder to merge with
+	}
+	return marker, true, nil
+}
+
+// windowLabel renders a lifecycle window as the [Marker.Ladders] key.
+// The zero duration is the "unscoped" sentinel — the lifecycle-free
+// [Writer.Mark] path, which carries no ladder to scope.
+func windowLabel(window time.Duration) string {
+	if window <= 0 {
+		return ""
+	}
+	return window.String()
+}
+
 // LoadState reads the ADR-0019 lifecycle state a previous
 // [Writer.MarkHold] stamped into the marker for (asset, quote), falling
 // back to the durable ladder (migration 0119) when the marker is gone.
@@ -424,6 +702,62 @@ func (w *Writer) saveLadder(ctx context.Context, asset, quote canonical.Asset, s
 //
 // With no ladder store wired, behaviour is bit-for-bit the pre-0119 one.
 func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (State, bool, error) {
+	return w.loadState(ctx, asset, quote, "")
+}
+
+// LoadStateForWindow is [Writer.LoadState] answering for ONE aggregation
+// window of the pair — which is what every ADR-0019 lifecycle caller
+// actually needs, because the ladder advances per (pair, window) while
+// this marker is keyed per (asset, quote).
+//
+// PRESENCE is unchanged and stays pair-scoped: the marker is what the
+// API serves as `flags.frozen` for the whole (asset, quote), and its
+// absence under a live freeze is the ADR-0019 operator override for
+// EVERY window — so a marker only a sibling window's freeze is keeping
+// alive still reports present=true here, and deleting it still releases
+// every window.
+//
+// The LADDER is what gets scoped, to [Marker.Ladders]`[window]`. A
+// window with no entry owns no ladder and returns the zero [State]: it
+// is not mid-freeze, and if its own bucket is anomalous it fires its own
+// ladder from the bottom. Adopting another window's instead is the
+// defect this method exists to remove — a window that had been sitting
+// under the aggregator's USD-volume floor (so it never entered the
+// in-memory ladder map) inherited a sibling's FiredAt, HoldUntil,
+// ExtensionsUsed and Escalated on its first qualifying bucket, pinning a
+// last-known-good price on a window nothing was wrong with, with a
+// manual unfreeze the only exit once the inherited ladder escalated.
+//
+// Two shapes carry no per-window ladders and both answer pair-wide, on
+// purpose, because the alternative is silently DROPPING a freeze that is
+// still running:
+//
+//   - a marker written before [Marker.Ladders] existed. It is replaced
+//     by the owning window's next lifecycle write, so it survives at
+//     most from an upgrade until the freeze's next tick.
+//   - the migration-0119 durable ladder, read only when the marker is
+//     gone (the [Writer.LoadState] contract above). It is keyed (asset,
+//     quote) with no window column, and a Redis flush leaves it as the
+//     one surviving record that this pair is inside an unreleased
+//     freeze.
+//
+// Both therefore hold for every window of the pair until a window-scoped
+// record replaces them: over-freezing a window is a degraded price that
+// is already flagged frozen pair-wide and releases itself on the ADR's
+// auto-unfreeze, whereas under-freezing publishes the manipulated print
+// the freeze exists to withhold.
+func (w *Writer) LoadStateForWindow(
+	ctx context.Context,
+	asset, quote canonical.Asset,
+	window time.Duration,
+) (State, bool, error) {
+	return w.loadState(ctx, asset, quote, windowLabel(window))
+}
+
+// loadState is the shared body of [Writer.LoadState] and
+// [Writer.LoadStateForWindow]; `label` is the caller's window label,
+// empty for the pair-wide read.
+func (w *Writer) loadState(ctx context.Context, asset, quote canonical.Asset, label string) (State, bool, error) {
 	key := cachekeys.Freeze(asset, quote)
 	raw, err := w.cache.Get(ctx, key.String()).Bytes()
 	if errors.Is(err, redis.Nil) {
@@ -435,6 +769,20 @@ func (w *Writer) LoadState(ctx context.Context, asset, quote canonical.Asset) (S
 	var marker Marker
 	if err := json.Unmarshal(raw, &marker); err != nil {
 		return State{}, true, nil //nolint:nilerr // deliberate: present-but-undecodable must not read as unfrozen
+	}
+	if label != "" && marker.Windowed {
+		// Present (the pair is frozen), and this window's ladder is
+		// whatever the marker records for it. With no entry of its own
+		// it falls back to a still-live ladder the pair holds with no
+		// recorded owner, and to the zero State when there is none.
+		// See the doc comment above.
+		if st, owned := marker.Ladders[label]; owned {
+			return st, true, nil
+		}
+		if LadderStillLive(marker.UnownedLadder, w.ladderGrace, time.Now()) {
+			return marker.UnownedLadder, true, nil
+		}
+		return State{}, true, nil
 	}
 	return marker.State, true, nil
 }

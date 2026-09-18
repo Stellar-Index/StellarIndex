@@ -322,7 +322,7 @@ func (o *Orchestrator) stepFreezeLifecycle(
 	decision anomaly.Decision,
 	prevVWAP *big.Rat,
 ) bool {
-	prev, overridden := o.loadFreezeState(ctx, pair, stateKey)
+	prev, overridden := o.loadFreezeState(ctx, pair, window, stateKey)
 	if overridden {
 		o.releaseFreeze(ctx, pair, window, stateKey, prev, freeze.TransitionOverridden)
 		return false
@@ -343,22 +343,29 @@ func (o *Orchestrator) stepFreezeLifecycle(
 //
 // Two Redis reads, both deliberate and both cheap:
 //
-//   - Cold key (first evaluation in this process): re-hydrate the
-//     ladder from the marker. Without it, every deploy would restart
-//     the 2-hour escalation clock, so a rolling restart cadence
-//     shorter than 2 hours could hold a pair frozen indefinitely
-//     while never paging anyone.
+//   - Cold key (first evaluation in this process): re-hydrate THIS
+//     window's ladder from the marker (see
+//     [Orchestrator.loadMarkerState]). Without the rehydrate, every
+//     deploy would restart the 2-hour escalation clock, so a rolling
+//     restart cadence shorter than 2 hours could hold a pair frozen
+//     indefinitely while never paging anyone — and, worse, a restart
+//     leaves no prev-VWAP comparator behind, so the window cannot even
+//     re-fire on its own signal: it would publish the very bucket the
+//     freeze was withholding.
 //   - Live freeze: confirm the marker still exists. ADR-0019 requires
 //     "operator override always available: force unfreeze", and
 //     deleting the marker is that override — but without this check
 //     the orchestrator's in-memory ladder would simply re-write the
-//     marker on the next tick and the override would not stick.
+//     marker on the next tick and the override would not stick. This
+//     read stays window-AGNOSTIC: the marker is pair-scoped, so its
+//     absence is the override for every window of the pair.
 //
 // Healthy pairs cost nothing steady-state: an inactive-but-present
 // entry short-circuits both reads.
 func (o *Orchestrator) loadFreezeState(
 	ctx context.Context,
 	pair canonical.Pair,
+	window time.Duration,
 	stateKey string,
 ) (freeze.State, bool) {
 	st, cached := o.freezeStates[stateKey]
@@ -367,7 +374,7 @@ func (o *Orchestrator) loadFreezeState(
 	}
 
 	if !cached {
-		marked, ok, err := o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote)
+		marked, ok, err := o.loadMarkerState(ctx, pair, window)
 		switch {
 		case err != nil:
 			// Transient Redis failure on a cold key. Start clean rather
@@ -379,6 +386,7 @@ func (o *Orchestrator) loadFreezeState(
 			st = marked
 			o.logger.Info("freeze lifecycle rehydrated from marker",
 				"pair", pair.String(),
+				"window", window.String(),
 				"fired_at", marked.FiredAt,
 				"hold_until", marked.HoldUntil,
 				"extensions_used", marked.ExtensionsUsed,
@@ -394,6 +402,28 @@ func (o *Orchestrator) loadFreezeState(
 		}
 	}
 	return st, false
+}
+
+// loadMarkerState reads the lifecycle the marker records for (pair,
+// window), asking the window-aware reader when the configured writer has
+// one.
+//
+// The pair-wide [FreezeMarker.LoadState] is the fallback, not the
+// preference: it answers with whichever ladder the marker happens to
+// carry, which for a pair whose windows freeze independently is the
+// cross-window bleed [WindowedFreezeMarker] exists to stop. Production
+// wires the window-aware writer; the fallback keeps a writer that cannot
+// scope a marker behaving exactly as it did before, i.e. erring towards
+// holding a freeze rather than dropping one.
+func (o *Orchestrator) loadMarkerState(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+) (freeze.State, bool, error) {
+	if o.windowedFreeze != nil {
+		return o.windowedFreeze.LoadStateForWindow(ctx, pair.Base, pair.Quote, window)
+	}
+	return o.cfg.FreezeWriter.LoadState(ctx, pair.Base, pair.Quote)
 }
 
 // engageFreeze applies a still-frozen [freeze.Outcome]: persist the
@@ -445,7 +475,12 @@ func (o *Orchestrator) engageFreeze(
 	if prevVWAP != nil {
 		frozenValue = formatRatFixed(prevVWAP, 12)
 	}
-	if err := o.cfg.FreezeWriter.MarkHold(ctx, pair.Base, pair.Quote,
+	// Record the ladder against the window that owns it: the marker is
+	// pair-scoped (its presence is the API's pair-wide flags.frozen) but
+	// the lifecycle inside it is this window's alone, and a cold sibling
+	// that cannot tell the difference adopts it — see
+	// [WindowedFreezeMarker].
+	if err := o.markHoldForWindow(ctx, pair, window,
 		frozenValue, decision, out.State, out.MarkerTTL); err != nil {
 		o.logger.Warn("freeze marker write failed",
 			"pair", pair.String(), "window", window, "err", err)
@@ -454,6 +489,26 @@ func (o *Orchestrator) engageFreeze(
 		// AnomalyFreezeEngagedTotal vs the API-side flag rate; a
 		// sustained gap = the writer is broken. Don't fail the tick.
 	}
+}
+
+// markHoldForWindow writes the freeze marker for (pair, window),
+// recording the owning window when the configured writer can carry it
+// and falling back to the pair-wide write when it cannot.
+func (o *Orchestrator) markHoldForWindow(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	frozenValue string,
+	decision anomaly.Decision,
+	state freeze.State,
+	ttl time.Duration,
+) error {
+	if o.windowedFreeze != nil {
+		return o.windowedFreeze.MarkHoldForWindow(ctx, pair.Base, pair.Quote, window,
+			frozenValue, decision, state, ttl)
+	}
+	return o.cfg.FreezeWriter.MarkHold(ctx, pair.Base, pair.Quote,
+		frozenValue, decision, state, ttl)
 }
 
 // logFreezeTransition emits the per-transition operator signal and
@@ -567,6 +622,18 @@ func (o *Orchestrator) releaseFreeze(
 	// window releases regardless of which one's releaseFreeze reaches the
 	// Clear below.
 	if o.siblingWindowFrozen(pair, window) {
+		// The marker stays for the sibling, but THIS window's ladder must
+		// not: left behind it would be rehydrated by a restart as a
+		// freeze that had already released, and re-pin a healthy window
+		// to a last-known-good price for the rest of the stale hold.
+		// Retiring it keeps the marker's per-window ladders a faithful
+		// record of which windows are actually frozen.
+		if o.windowedFreeze != nil {
+			if err := o.windowedFreeze.RetireWindowLadder(ctx, pair.Base, pair.Quote, window); err != nil {
+				o.logger.Warn("freeze ladder retire failed — this window's released ladder stays in the marker",
+					"pair", pair.String(), "window", window.String(), "err", err)
+			}
+		}
 		return
 	}
 

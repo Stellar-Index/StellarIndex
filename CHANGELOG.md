@@ -17,6 +17,44 @@ against.
 
 ### Fixed
 
+- **aggregator (money):** the ADR-0019 freeze marker now carries one
+  lifecycle ladder PER aggregation window instead of a single
+  pair-level one. The `freeze:<asset>:<quote>` key is pair-scoped
+  because its presence is the `flags.frozen` the API serves for the
+  whole pair, but the ladder inside it advances per (pair, window) —
+  so one ladder per marker could only ever be one window's, with
+  nothing recording whose. `refreshPairWindow` drops a window under
+  `min_usd_volume` BEFORE the VWAP, confidence and freeze steps, so a
+  thin window's key never enters the in-memory ladder map however many
+  ticks pass; its first bucket above the floor was therefore a COLD key
+  that rehydrated the marker wholesale, adopting a SIBLING window's
+  `fired_at`, `hold_until`, `extensions_used` and `escalated`. That
+  window then served a last-known-good price with nothing wrong with
+  it, kept the `severity:page` sustained-freeze rule firing, and — once
+  the inherited ladder escalated, which the ADR holds "until manual
+  unfreeze" — could only be ended by an operator. Each window now
+  writes, reads and retires its own ladder (`ladders: {"5m0s": …,
+  "1h0m0s": …}`), merged into the shared marker so a write for one
+  window never disturbs another's, and a window that auto-releases
+  while a sibling is still frozen has its ladder retired from the
+  marker rather than left for the next restart to resurrect. Because
+  every frozen window's ladder is recorded, a restart still rehydrates
+  EVERY frozen window: a single owning-window tag would have stranded
+  all but one, and a restarted process has no prev-VWAP comparator, so
+  a stranded window cannot re-fire on its own signal — it publishes the
+  manipulated bucket the freeze existed to withhold. The two records
+  that predate the window dimension keep answering pair-wide for the
+  same reason, carried in the marker as an explicit `unowned_ladder`:
+  a marker written before this change, and the migration-0119 durable
+  ladder — keyed (asset, quote) with no window column — which is the
+  only authority left when Redis has lost the marker, so the first
+  window to re-mark during that recovery must not narrow "this pair is
+  frozen" into "only I am". An unowned ladder is a snapshot nobody
+  advances, so it retires itself on the same `LadderStillLive` bound
+  the durable rehydrate already uses, by which time every genuinely
+  frozen window has claimed its own entry. Presence semantics are
+  untouched: `flags.frozen` stays pair-wide and `stellarindex-ops
+  freeze-unfreeze` still releases every window. (audit-2026-09-02 E1)
 - **price serving (money):** a cached VWAP can no longer outlive the
   aggregator that publishes it. `cachekeys.VWAPTTL` now bounds every
   `vwap:` (and, through it, `confidence:`) key by a 5-minute silence
