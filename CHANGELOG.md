@@ -17,6 +17,27 @@ against.
 
 ### Fixed
 
+- **assets listing:** `?include=sparkline7d` now serves a
+  decimals-normalised series for a confirmed non-7-decimals token (F017,
+  the sparkline leg). The batch price-history reader returns RAW
+  `prices_1m` ratios and the listing put them on the wire verbatim, so a
+  9-decimals token listed at 2.50 USD over a chart that ran along 0.025.
+  Each point now takes the same single factor the detail page's
+  histories take, and a point that cannot be corrected becomes a
+  null-priced bucket so the 7-day grid is unchanged. The same correction
+  is applied to the one other raw catalogue read `assets.go` published:
+  the per-asset price behind the global asset view's on-chain fallback
+  (`onChainListingPriceUSD`), which read the raw per-asset row, not the
+  writer-normalised listing rollup its name suggests. Whether the
+  precision floor applies is read off the value itself:
+  `ROUND(x, n)::text` carries exactly n fraction places, so a string
+  with at least 10 + k places for a 10^k scale-up was effectively rounded
+  after the correction and is corrected exactly, while a shorter one was
+  rounded on the raw scale and keeps the fail-closed floor (an
+  18-decimals token's `0.0000000001` is withheld, not served as exactly
+  10 USD). Byte-identical, with no parse, for every asset with no
+  confirmed row.
+
 - **assets listing:** `price_usd` on `GET /v1/assets` is now
   decimals-normalised for a confirmed non-7-decimals token (F017, the
   listing leg). The column is read from `asset_price_snapshot`, whose

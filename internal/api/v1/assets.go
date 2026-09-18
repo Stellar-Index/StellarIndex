@@ -2210,7 +2210,8 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	// (timescale's snapshotNormalizedPriceUSDExpr), so scaling it here
 	// would apply the factor twice. The per-asset reader's row
 	// (GetAssetByAssetID) is a different source — RAW — and a caller that
-	// publishes ITS price has to normalise it first.
+	// publishes ITS price has to normalise it first; see
+	// [Server.normalizeCatalogueReadUSD].
 	if row.PriceUSD != nil {
 		d.PriceUSD = row.PriceUSD
 	}
@@ -2582,7 +2583,15 @@ func (s *Server) onChainListingPriceUSD(ctx context.Context, assetID string) *st
 	if err != nil || row.PriceUSD == nil {
 		return nil
 	}
-	return row.PriceUSD
+	// The per-asset reader's price is a RAW prices_1m ratio (it is not
+	// the writer-normalised listing rollup, whatever this function's name
+	// suggests), so it takes the same correction the detail page gives
+	// the same row. Withheld means unpriced, never raw.
+	price, ok := s.normalizeCatalogueReadUSDByID(*row.PriceUSD, assetID)
+	if !ok {
+		return nil
+	}
+	return &price
 }
 
 // assetTypeGlobal is [AssetDetail.Type] on a catalogue-projected listing
@@ -4085,7 +4094,11 @@ func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetai
 		}
 		obs.APISparkline7dRowsTotal.WithLabelValues("served").Add(float64(len(idx)))
 		served += len(idx)
-		wire := assetPointsToWire(points)
+		// The batch reader hands back RAW prices_1m ratios, unlike the
+		// row's price_usd beside it (asset_price_snapshot is normalised
+		// by its writer), so the series is corrected here or the chart
+		// would sit a power of ten away from the number it illustrates.
+		wire := s.sparkline7dToWire(id, points)
 		for _, i := range idx {
 			rows[i].PriceHistory7d = wire
 		}
@@ -4110,6 +4123,81 @@ func (s *Server) attachSparkline7dIfRequested(r *http.Request, rows []AssetDetai
 // simply-priceless rows, which have nothing to chart anyway.
 func sparkline7dEligible(d *AssetDetail) bool {
 	return priceSeriesPublishable(d)
+}
+
+// sparkline7dToWire projects one asset's batch-read 7d series onto the
+// wire with the dex-nonstandard-decimals normalisation applied — see
+// [Server.normalizeCatalogueReadUSD]. A point that has to be withheld
+// becomes a null-priced bucket, the shape the series already uses for a
+// day with no trades, so the grid the client draws against is unchanged.
+// The reader's points are never mutated: they may be a shared cache
+// entry.
+func (s *Server) sparkline7dToWire(assetID string, pts []timescale.AssetPricePoint) []AssetPricePoint {
+	out := assetPointsToWire(pts)
+	for i := range out {
+		if out[i].P == nil {
+			continue
+		}
+		if p, ok := s.normalizeCatalogueReadUSDByID(*out[i].P, assetID); ok {
+			out[i].P = &p
+		} else {
+			out[i].P = nil
+		}
+	}
+	return out
+}
+
+// normalizeCatalogueReadUSDByID is [Server.normalizeCatalogueReadUSD]
+// for a caller that holds the asset id as a string.
+//
+// Every confirmed row is a C-strkey, which parses, so an id that does
+// not parse is unflagged in practice and passes through byte-identical.
+// The one exception fails closed: an id that does not parse yet IS on
+// record cannot be corrected, and serving it raw is the defect.
+func (s *Server) normalizeCatalogueReadUSDByID(value, assetID string) (string, bool) {
+	asset, err := canonical.ParseAsset(assetID)
+	if err != nil {
+		if _, flagged := s.nonstandardDecimals.Lookup(assetID); flagged {
+			return "", false
+		}
+		return value, true
+	}
+	return s.normalizeCatalogueReadUSD(value, asset)
+}
+
+// normalizeCatalogueReadUSD normalises a USD price the asset-catalogue
+// SQL produced as ROUNDed text from RAW prices_1m ratios — the per-asset
+// row's price_usd and every price-history point. It is
+// [Server.normalizeCatalogueUSD] plus one decision that function leaves
+// to its caller: whether the value was rounded BEFORE the correction
+// (and so needs the precision floor) or effectively AFTER it.
+//
+// The value answers that itself. ROUND(x, n)::text carries exactly n
+// fraction places, and a catalogue read that rounds a confirmed
+// non-7-decimals asset's raw ratio to catalogueUSDRoundDigits + k places,
+// where the correction is 10^k, has — once multiplied — produced the
+// corrected price rounded to catalogueUSDRoundDigits: the precision
+// every other asset is served at. A string that long is corrected
+// exactly with no floor. A SHORTER string was rounded on the raw scale
+// and keeps the fail-closed floor, so an 18-decimals token's
+// 0.0000000001 is withheld rather than published as exactly 10 USD.
+//
+// Byte-identical, with no parse, for an asset with no confirmed row.
+func (s *Server) normalizeCatalogueReadUSD(value string, asset canonical.Asset) (string, bool) {
+	scaleUp := aggregate.ResolveDecimals(s.nonstandardDecimals, asset) - aggregate.StandardDecimals
+	roundedAfter := scaleUp > 0 && decimalFractionPlaces(value) >= catalogueUSDRoundDigits+scaleUp
+	return s.normalizeCatalogueUSD(value, asset, !roundedAfter)
+}
+
+// decimalFractionPlaces counts the fraction places a plain decimal
+// string carries — "0.0250000000" has 10, "14" has 0. Postgres renders
+// NUMERIC as plain positional text, never with an exponent.
+func decimalFractionPlaces(v string) int {
+	dot := strings.IndexByte(v, '.')
+	if dot < 0 {
+		return 0
+	}
+	return len(v) - dot - 1
 }
 
 // priceSeriesPublishable is the ONE rule for whether a payload may carry
