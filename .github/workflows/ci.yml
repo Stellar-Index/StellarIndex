@@ -1936,10 +1936,25 @@ jobs:
         # ansible-drift.yml — this job carries no secrets, but an
         # unpinned install still runs arbitrary upstream code in CI on
         # every PR. Pinned to what it already resolved to.
+        #
+        # F146 (audit-2026-09-02): the `ansible` bundle carries its own
+        # community.general/ansible.posix/community.postgresql at
+        # whatever version pipx resolved for 14.2.0 (community.general
+        # 11.x-class) — a different set than deploy.yml applies to r1
+        # (community.general 9.5.0 / ansible.posix 1.5.4 / community.
+        # postgresql 3.10.0, pinned in configs/ansible/requirements.yml).
+        # A task using a module argument present in the bundle but
+        # absent or changed in the pinned collection passed this
+        # syntax-check + lint gate and only broke on the real apply.
+        # Installing the pinned collections AFTER the bundle puts them
+        # in ~/.ansible/collections, which Ansible resolves ahead of
+        # the collections shipped inside the `ansible` package — this
+        # job now lints against the same collections deploy.yml applies.
         run: |
           set -euo pipefail
           pipx install --include-deps 'ansible==14.2.0'
           pipx install 'ansible-lint==26.6.0'
+          ansible-galaxy collection install -r configs/ansible/requirements.yml
       - name: Syntax check (secrets stubbed — structure only)
         if: needs.preflight.outputs.ansible == 'true'
         working-directory: configs/ansible

@@ -8,6 +8,14 @@
 # across runs of the same repo revision. Bumps are deliberate edits
 # of this file — re-test deploys after every change.
 #
+# F146 (audit-2026-09-02): ci.yml's `ansible-check` job and
+# ansible-drift.yml's `drift-check` job (which can APPLY to production
+# r1) now ALSO install from this file, after their `ansible` bundle
+# install, so syntax-check/lint/dry-run/apply all evaluate against the
+# same collections deploy.yml actually applies. A bump here is a
+# three-workflow-relevant pin: re-test both a deploy dry-run AND the
+# drift-check dry-run after every change.
+#
 # To bump: `ansible-galaxy collection install <name>:<new-version>`
 # locally, run a deploy dry-run against r1-staging, then update both
 # the pin here and the deploy.yml `pip install` pin in the same PR.

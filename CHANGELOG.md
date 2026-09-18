@@ -64,6 +64,25 @@ against.
   script and its 13-case self-test, so the ban is enforced wherever
   `go test ./...` runs; the script is not yet named in
   `scripts/dev/verify.sh` or `.github/workflows/ci.yml`. (K051)
+- **ci/ansible-drift:** `ci.yml`'s ansible syntax/lint job and
+  `ansible-drift.yml`'s drift-check job (which can APPLY to production
+  r1) now install the pinned collections from
+  `configs/ansible/requirements.yml` after their `ansible` pipx bundle,
+  the same file `deploy.yml` installs from at apply time (F146).
+  Previously both CI-side jobs validated tasks against whatever
+  community.general/ansible.posix/community.postgresql versions the
+  bundle happened to resolve (community.general 11.x-class under
+  `ansible==14.2.0`), while only the real deploy path pinned
+  community.general to 9.5.0. A module argument present in the bundle
+  but absent or changed in the pinned collection passed syntax-check,
+  ansible-lint and drift's `--check --diff` clean and only broke — or
+  silently diverged — on the real r1 apply; the drift workflow's
+  `apply=true` input made this two-collection-sets-mutating-production
+  risk, not just a CI-parity nit. Installing the pinned collections
+  after the bundle relies on Ansible resolving the explicit collections
+  path (`~/.ansible/collections`) ahead of the ones shipped inside the
+  `ansible` package, so all three workflows now lint/dry-run/apply
+  against the same collection versions.
 
 - **assets listing:** the listing `market_cap_usd` of a confirmed
   non-7-decimals token divides supply by the token's confirmed decimals,

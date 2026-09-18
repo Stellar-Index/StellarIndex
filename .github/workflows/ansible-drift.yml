@@ -180,10 +180,27 @@ jobs:
         # pinning (`pip install --require-hashes`) would need a
         # generated constraints file covering ansible's entire closure;
         # tracked as follow-up, not hand-maintainable here.
+        #
+        # F146 (audit-2026-09-02): the `ansible` bundle carries its own
+        # community.general/ansible.posix/community.postgresql at
+        # whatever version pipx resolved (community.general 11.x-class
+        # under ansible 14.2.0) — a different set than deploy.yml
+        # applies to r1 (community.general 9.5.0 / ansible.posix 1.5.4
+        # / community.postgresql 3.10.0, pinned in requirements.yml).
+        # This job's `--check --diff` (and its opt-in `apply=true` real
+        # run against r1) evaluated under the bundle's collections, not
+        # the ones actually applied at deploy time — two different
+        # collection sets both able to mutate production r1. Installing
+        # the pinned collections AFTER the bundle puts them in
+        # ~/.ansible/collections, which Ansible resolves ahead of the
+        # collections shipped inside the `ansible` package, so this
+        # job's dry-run and apply now use the same collections deploy.yml
+        # does.
         run: |
           set -euo pipefail
           pipx install --include-deps 'ansible==14.2.0'
           pipx inject ansible 'passlib==1.7.4'
+          ansible-galaxy collection install -r configs/ansible/requirements.yml
 
       - name: SSH key + known_hosts
         # Mirrors deploy.yml's "Set up SSH" step (F-1297/F-1298):
