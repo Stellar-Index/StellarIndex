@@ -257,6 +257,21 @@ superseded_by: null
 > releases on this ADR's own ratchet; dropping the ladder publishes the print
 > the freeze existed to withhold.
 >
+> The same answer covers a `window_ladders` map that has gone **stale**. The
+> schema stays at 0163 across a binary rollback, and the previous binary
+> keeps advancing the four pair-level columns while never touching the map —
+> so after a roll-forward inside one freeze, an escalation the old binary made
+> exists only in the columns. A map is therefore not preferred merely for
+> being present: when the columns record a worse freeze than the map's own
+> summary (escalated where no entry is, a higher rung, a later hold), every
+> held entry is raised to the fail-closed fold of itself and the pair-level
+> ladder, and that ladder is carried as the unowned one. Folded, not
+> replaced, because the columns can be ahead on one axis and behind on
+> another: the old binary's 5m window overwrites them with a fresh, later
+> hold while the map still holds the 1h window's escalation. This binary only
+> writes the columns as the map's summary, so the rule is inert on any row no
+> other binary has touched.
+>
 > Three rules follow for anything that touches the marker, each of which was
 > a live defect:
 >
@@ -266,9 +281,21 @@ superseded_by: null
 >    step in the current process. A window under `min_usd_volume` never does,
 >    and after a restart none has yet. A recovering 5m window therefore
 >    cleared the marker and retired the durable ladder under an `escalated`
->    1h sibling. The release now keeps the marker whenever it still records
->    another window's ladder, and a marker that cannot be read is left to its
->    TTL rather than cleared.
+>    1h sibling. "The record" is the marker **and the durable ladders behind
+>    it**: the marker is only the first place the record lives, and clearing
+>    is not only a Redis delete — it retires the whole durable record, every
+>    window's entry with it. So when the marker names no sibling (it is
+>    absent, undecodable, predates per-window ladders, or was rebuilt on a
+>    tick the durable read failed) the durable ladders are asked the same
+>    question before anything is cleared. Without that second read the rule
+>    held everywhere except during a Redis loss — the one situation the
+>    durable ladders exist for — where a recovering 5m window still ended an
+>    `escalated` 1h sibling's freeze. The release keeps the freeze whenever
+>    either place still records another window's live ladder (or a live
+>    unowned one) and retires only its own entry, in both; and a marker *or*
+>    a durable record that cannot be read is left alone rather than cleared.
+>    The operator override is untouched: it retires the durable record
+>    itself, so the releases that follow find no sibling anywhere.
 > 2. **The lifecycle-free writer sets the serving flag and nothing else.**
 >    The triangulated-composite refusal marks a *derived* target frozen with
 >    a flat TTL and no ladder. Its targets are themselves priced pairs, so it

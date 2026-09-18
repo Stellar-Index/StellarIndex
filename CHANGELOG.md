@@ -85,11 +85,14 @@ against.
   per (pair, window) and that both records of it — the Redis marker and
   the durable ladder — are now window-scoped while the marker's PRESENCE
   (`flags.frozen`, the operator override) stays pair-scoped; the
-  fail-closed rule for records with no recorded owner; the three rules
-  for anything that writes the marker (a release asks the record, the
-  lifecycle-free writer sets only the serving flag, no write shortens a
-  sibling's hold); and that "frozen" for triangulation is not "frozen
-  this tick". Describes the four entries below as shipped.
+  fail-closed rule for records with no recorded owner, and for a
+  `window_ladders` map gone stale under a rolled-back binary; the three
+  rules for anything that writes the marker (a release asks the record —
+  the marker AND the durable ladders behind it — the lifecycle-free
+  writer sets only the serving flag, no write shortens a sibling's hold);
+  and that "frozen" for triangulation is not "frozen this tick".
+  Describes the freeze entries around it — the one above and the four
+  below — as shipped.
   (audit-2026-09-02 F011, F036, F043, F068, K003; RLT-261)
 - **aggregator (freeze, money path):** a frozen pair's last-known-good
   price can no longer be laundered through triangulation on the ticks
