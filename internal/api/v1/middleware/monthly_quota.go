@@ -209,7 +209,7 @@ func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger, opts ...Monthly
 			// 429s EVERY metered customer while the counter is healthy
 			// (REL-06 F059, reverification-2026-09-18).
 			readCtx, readCancel := throttleContext(r)
-			used, err := reader.MonthToDate(readCtx, id)
+			used, err := reader.MonthToDate(readCtx, id) //nolint:contextcheck // intentional detach — a client abort must not arm this gate's process-wide dwell clock; see throttleContext
 			readCancel()
 			if err != nil {
 				if gate.observeReadFailure() {

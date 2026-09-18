@@ -131,7 +131,7 @@ func RateLimit(bucket *ratelimit.Bucket, keyFn func(*http.Request) string, skip 
 			}
 
 			takeCtx, takeCancel := throttleContext(r)
-			res, err := bucket.Take(takeCtx, key)
+			res, err := bucket.Take(takeCtx, key) //nolint:contextcheck // intentional detach — a client abort must not reach the limiter as an error; see throttleContext
 			takeCancel()
 			if err != nil {
 				if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
@@ -235,7 +235,7 @@ func RateLimitBySubject(anonBucket, authBucket *ratelimit.Bucket, skip func(*htt
 			}
 
 			takeCtx, takeCancel := throttleContext(r)
-			res, err := bucket.TakeN(takeCtx, key, override)
+			res, err := bucket.TakeN(takeCtx, key, override) //nolint:contextcheck // intentional detach — a client abort must not reach the limiter as an error; see throttleContext
 			takeCancel()
 			if err != nil {
 				if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
