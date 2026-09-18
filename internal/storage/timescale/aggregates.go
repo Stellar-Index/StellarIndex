@@ -1226,6 +1226,15 @@ type VWAPAtRow struct {
 	Resolution HistoryGranularity
 }
 
+// PriceAtMinuteRungMaxAge is how far behind now a point-in-time lookup
+// may be and still be answered from a raw prices_1m bucket — the first
+// boundary of [priceAtResolutionLadder]. Exported because the
+// thin-market gate reads it too (pricingguard.SubstanceGate.AllowedAt):
+// an instant that can be SERVED a minute bucket is held to the minute
+// floor, and one served an hour/day bar to the hour floor, so the two
+// boundaries have to be one number rather than two that agree today.
+const PriceAtMinuteRungMaxAge = 48 * time.Hour
+
 // priceAtResolutionLadder returns the CAGG resolutions to probe for a
 // point-in-time lookup whose target instant is `age` behind now, in
 // FINEST-first order. The ladder encodes the served-tier reality
@@ -1237,7 +1246,7 @@ type VWAPAtRow struct {
 // back. Pure — unit-tested without a DB.
 func priceAtResolutionLadder(age time.Duration) []HistoryGranularity {
 	switch {
-	case age <= 48*time.Hour:
+	case age <= PriceAtMinuteRungMaxAge:
 		return []HistoryGranularity{Granularity1m, Granularity15m, Granularity1h, Granularity4h, Granularity1d}
 	case age <= 45*24*time.Hour:
 		return []HistoryGranularity{Granularity1h, Granularity4h, Granularity1d}
@@ -2325,6 +2334,80 @@ func (s *Store) PairMarketSubstance(ctx context.Context, p canonical.Pair, windo
 		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds,
 	); err != nil {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstance: %w", err)
+	}
+	return sub, nil
+}
+
+// PairMarketSubstanceAt measures [MarketSubstance] for the pair over the
+// `window` ENDING AT `asOf` — the point-in-time twin of
+// [Store.PairMarketSubstance], whose window always ends now.
+//
+// It exists because a trailing-from-now measurement says nothing about
+// a historical instant (finding T038). /v1/price/at and the
+// /v1/price/changes horizons serve the bucket at-or-before `ts`, and
+// whether THAT bucket came from a market of substance is a question
+// about the hours before `ts`: a pair that is thick today may have
+// been attacker-seeded dust at `ts`, and a pair that is dormant today
+// may have been deep and honest at `ts`.
+//
+// `g` is the grain the three legs are counted at, and only the two
+// grains with a stated serve floor are accepted:
+//
+//   - [Granularity1m] — the live gate's own grain. Its reach back
+//     through history is a deployment setting (see
+//     [Store.DailyMarketDays], "Why prices_1h"), so callers use it only
+//     for instants recent enough that every retention setting the
+//     schema has ever shipped still holds the whole window.
+//   - [Granularity1h] — indefinite by design (migration 0002), so it is
+//     the grain a historical instant is held to.
+//
+// The window is the buckets that had already CLOSED at asOf (ADR-0015):
+// `bucket + g <= asOf`, written sargably as `bucket <= asOf - g`, and
+// `bucket >= asOf - window`. Both bounds are LITERAL timestamptz values
+// computed in Go (plan-time chunk pruning, no injection surface — the
+// [Store.ClosedVWAPAtOrBefore] discipline); the `now()` guard stays so
+// an asOf at or past the present can never admit the in-progress
+// bucket.
+//
+// An empty window returns {VolumeUSD: "0", Buckets: 0, SpanSeconds: 0}
+// with a nil error — absence of market is a measurement, not an error.
+func (s *Store) PairMarketSubstanceAt(
+	ctx context.Context, p canonical.Pair, asOf time.Time, window time.Duration, g HistoryGranularity,
+) (MarketSubstance, error) {
+	if window <= 0 {
+		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstanceAt: non-positive window %v", window)
+	}
+	if g != Granularity1m && g != Granularity1h {
+		return MarketSubstance{}, fmt.Errorf(
+			"timescale: PairMarketSubstanceAt: unsupported grain %q (want %s or %s)", g, Granularity1m, Granularity1h)
+	}
+	const layout = "2006-01-02 15:04:05-07"
+	upper := asOf.UTC().Add(-g.BucketDuration())
+	lower := asOf.UTC().Add(-window)
+	// #nosec G201 — the interpolated values are the table suffix and the
+	// closed-bucket interval (both derived from the two-member grain
+	// allowlist checked above, never user input) and two of our own
+	// time.Time bounds in a fixed layout; pair strings bind as $1/$2.
+	q := fmt.Sprintf(`
+        SELECT COALESCE(sum(bucket_usd), 0)::text,
+               count(*),
+               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0)
+          FROM (
+            SELECT bucket, sum(volume_usd) AS bucket_usd
+              FROM prices_%[1]s
+             WHERE ((base_asset = $1 AND quote_asset = $2)
+                 OR (base_asset = $2 AND quote_asset = $1))
+               AND bucket <= now() - INTERVAL '%[2]s'
+               AND bucket <= TIMESTAMPTZ '%[3]s'
+               AND bucket >= TIMESTAMPTZ '%[4]s'
+             GROUP BY bucket
+          ) b
+    `, string(g), g.closedBucketInterval(), upper.Format(layout), lower.Format(layout)) //nolint:gosec // G201: see note above
+	var sub MarketSubstance
+	if err := s.db.QueryRowContext(ctx, q, p.Base.String(), p.Quote.String()).Scan(
+		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds,
+	); err != nil {
+		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstanceAt: %w", err)
 	}
 	return sub, nil
 }

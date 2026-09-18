@@ -3788,14 +3788,50 @@ const defaultVWAPFreshness = 15 * time.Minute
 //
 // Both gates are nil-receiver safe (nil == allow-everything), so an
 // operator who disabled [pricing_guard] keeps today's behaviour.
+//
+// A seam that serves the price AS OF a past instant says so with
+// [asOfInstant], and the thin-market half is then measured over the
+// window ending at that instant instead of at now (T038). It is an
+// option on THIS function rather than a second chokepoint so that both
+// structural guards keep holding by construction: there is still one
+// name a seam must call, and still no gate method spelled outside it.
 func priceWithheld(
 	ctx context.Context,
 	substance *pricingguard.SubstanceGate,
 	scam *pricingguard.ScamGate,
 	base, quote canonical.Asset,
 	surface string,
+	opts ...withholdingOption,
 ) bool {
+	var q withholdingQuery
+	for _, opt := range opts {
+		opt(&q)
+	}
+	if q.pointInTime {
+		return pricingguard.PriceWithheldAt(ctx, substance, scam, base, quote, q.at, surface)
+	}
 	return pricingguard.PriceWithheld(ctx, substance, scam, base, quote, surface)
+}
+
+// withholdingQuery is what a seam may tell the chokepoint about the
+// read it is gating. pointInTime is an explicit flag rather than "at is
+// non-zero" so that a zero time.Time — what a caller gets from a failed
+// parse — can never quietly select the live measurement.
+type withholdingQuery struct {
+	pointInTime bool
+	at          time.Time
+}
+
+type withholdingOption func(*withholdingQuery)
+
+// asOfInstant marks the gated read as point-in-time: the number being
+// served is the bucket at-or-before ts, so the market whose substance
+// matters is the one that existed in the window ending at ts.
+func asOfInstant(ts time.Time) withholdingOption {
+	return func(q *withholdingQuery) {
+		q.pointInTime = true
+		q.at = ts
+	}
 }
 
 type storePriceReader struct {
@@ -5752,6 +5788,12 @@ func (r *fxHistoryReader) SourceEntryCounts(ctx context.Context) (map[string]int
 // gates live here, at the reader seam, rather than in each handler:
 // both leaking routes call PriceAt, so gating once covers both and any
 // future PriceAt consumer inherits it. See priceWithheld().
+//
+// T038: the thin-market half is asked about `ts`, not about now. The
+// number served here is the bucket at-or-before ts, and a trailing
+// window ending today decides nothing about it — it withheld the whole
+// history of a market that has since gone quiet, and it passed the
+// dust-seeded early history of a market that has since become real.
 type storePriceAtReader struct {
 	s         *timescale.Store
 	substance *pricingguard.SubstanceGate // nil → no thin-market gate
@@ -5762,7 +5804,7 @@ type storePriceAtReader struct {
 func (r storePriceAtReader) PriceAt(
 	ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration,
 ) (string, time.Time, int, error) {
-	if priceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "price_at") {
+	if priceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "price_at", asOfInstant(ts)) {
 		return "", time.Time{}, 0, v1.ErrPriceWithheld
 	}
 	row, err := r.s.ClosedVWAPAtOrBefore(ctx, pair, ts, maxStaleness)

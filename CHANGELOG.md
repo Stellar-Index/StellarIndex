@@ -17,6 +17,28 @@ against.
 
 ### Fixed
 
+- **price/at, price/changes:** the thin-market gate now judges the
+  market that existed AT the requested instant. `/v1/price/at` and every
+  `/v1/price/changes` horizon serve the bucket at-or-before a past `ts`,
+  but the gate deciding whether to serve it measured the trailing 24
+  hours ending NOW, and the two are unrelated. It was wrong both ways: a
+  market that was deep and honest at `ts` but is dormant today had its
+  whole history withheld (a cost-basis read 404'd for data we hold and
+  trust), and a market that is thick today but was attacker-seeded dust
+  at `ts` PASSED, so the historical read published exactly the seeded
+  price the gate exists to refuse. Substance is now measured over the
+  policy window ending at `ts` (`Store.PairMarketSubstanceAt`,
+  `SubstanceGate.AllowedAt`), through the same `priceWithheld`
+  chokepoint and with the scam half unchanged. An instant the reader can
+  answer from a raw minute bucket (within 48h — now one shared constant,
+  `timescale.PriceAtMinuteRungMaxAge`) keeps the live floor unweakened
+  at minute grain; an older instant, served from hour/day bars, is held
+  to the same volume and span legs on `prices_1h` with a two-bucket
+  floor — the largest hour floor that never refuses a market the minute
+  floor admits. Live surfaces are untouched. Operators: historical
+  verdicts depend on `prices_1h` being materialised as deep as
+  `prices_1d`; where it is not, old instants read as "no market" and are
+  withheld (T038).
 - **dex tvl:** a USD price read that ERRORS is no longer published as
   "nobody prices this token". `rateFor` folded a resolver error into the
   unpriceable outcome and memoised it for the refresh, so the leg read

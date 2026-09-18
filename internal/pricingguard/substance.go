@@ -37,6 +37,7 @@ import (
 	"context"
 	"log/slog"
 	"math/big"
+	"strconv"
 	"sync"
 	"time"
 
@@ -51,6 +52,23 @@ import (
 type MarketSubstanceReader interface {
 	PairMarketSubstance(ctx context.Context, p canonical.Pair, window time.Duration) (timescale.MarketSubstance, error)
 }
+
+// MarketSubstanceAtReader is the storage seam for the POINT-IN-TIME
+// question ([SubstanceGate.AllowedAt]): the same three legs, measured
+// over the window ending at `asOf` rather than at now, at the named
+// grain. It is a separate interface so the live gate's seam (and every
+// fake of it) is untouched; [NewSubstanceGate] picks it up from the
+// same store value.
+type MarketSubstanceAtReader interface {
+	PairMarketSubstanceAt(ctx context.Context, p canonical.Pair, asOf time.Time, window time.Duration, g timescale.HistoryGranularity) (timescale.MarketSubstance, error)
+}
+
+// The production store MUST answer the point-in-time question. The gate
+// discovers the capability by type assertion, and a store that silently
+// stopped satisfying it would send every /v1/price/at read back to the
+// trailing-from-now verdict (finding T038) with nothing failing — so
+// the assertion is made here, at compile time, instead.
+var _ MarketSubstanceAtReader = (*timescale.Store)(nil)
 
 // SubstancePolicy is the serve floor. Zero-valued fields are replaced
 // by the defaults below at gate construction; the binaries map
@@ -142,13 +160,20 @@ type substanceVerdict struct {
 // [NewSubstanceGate]; a nil *SubstanceGate is a valid no-op gate that
 // allows everything (so callers don't need their own nil checks).
 type SubstanceGate struct {
-	store  MarketSubstanceReader
-	policy SubstancePolicy
-	logger *slog.Logger
-	now    func() time.Time // nil → time.Now
+	store   MarketSubstanceReader
+	atStore MarketSubstanceAtReader // nil → store cannot answer point-in-time; see AllowedAt
+	policy  SubstancePolicy
+	logger  *slog.Logger
+	now     func() time.Time // nil → time.Now
 
 	mu    sync.Mutex
 	cache map[string]substanceVerdict
+	// atCache holds point-in-time verdicts, keyed by pair + grain +
+	// truncated instant. Separate from `cache` on purpose: the instant
+	// is caller-chosen, so a client walking timestamps can fill this
+	// map at will, and the overflow reset must not be able to evict
+	// the LIVE verdicts every other price surface runs on.
+	atCache map[string]substanceVerdict
 }
 
 // SubstanceGateOptions configures [NewSubstanceGate]. Zero-valued
@@ -159,13 +184,19 @@ type SubstanceGateOptions struct {
 	Logger *slog.Logger
 }
 
-// NewSubstanceGate builds a gate over the store.
+// NewSubstanceGate builds a gate over the store. A store that also
+// implements [MarketSubstanceAtReader] (the production *timescale.Store
+// does — asserted at compile time above) additionally answers the
+// point-in-time question behind [SubstanceGate.AllowedAt].
 func NewSubstanceGate(store MarketSubstanceReader, opts SubstanceGateOptions) *SubstanceGate {
+	atStore, _ := store.(MarketSubstanceAtReader)
 	return &SubstanceGate{
-		store:  store,
-		policy: opts.Policy.withDefaults(),
-		logger: opts.Logger,
-		cache:  make(map[string]substanceVerdict),
+		store:   store,
+		atStore: atStore,
+		policy:  opts.Policy.withDefaults(),
+		logger:  opts.Logger,
+		cache:   make(map[string]substanceVerdict),
+		atCache: make(map[string]substanceVerdict),
 	}
 }
 
@@ -280,6 +311,20 @@ func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset
 // means an infrastructure error prevented a verdict (caller fails
 // open).
 func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool) {
+	return g.measureUnion(ctx, base, quote, g.policy,
+		func(ctx context.Context, pair canonical.Pair) (timescale.MarketSubstance, error) {
+			return g.store.PairMarketSubstance(ctx, pair, g.policy.Window)
+		})
+}
+
+// measureUnion is the alias-union fold shared by the live and the
+// point-in-time measurement: `read` supplies one spelling's substance,
+// and the union is held to `policy`. One fold, so the two questions
+// cannot come to disagree about what "the pair's market" is.
+func (g *SubstanceGate) measureUnion(
+	ctx context.Context, base, quote canonical.Asset, policy SubstancePolicy,
+	read func(context.Context, canonical.Pair) (timescale.MarketSubstance, error),
+) (allowed, measured bool) {
 	totalVol := new(big.Rat)
 	var buckets, span int64
 	for _, a := range canonical.AssetAliases(base) {
@@ -290,7 +335,7 @@ func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset
 				// collapsing to an identity pair) — skip.
 				continue
 			}
-			sub, err := g.store.PairMarketSubstance(ctx, pair, g.policy.Window)
+			sub, err := read(ctx, pair)
 			if err != nil {
 				if g.logger != nil && ctx.Err() == nil {
 					g.logger.Warn("substance gate: measurement failed — serving unguarded",
@@ -307,7 +352,153 @@ func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset
 			}
 		}
 	}
-	return SubstanceOK(totalVol, buckets, span, g.policy), true
+	return SubstanceOK(totalVol, buckets, span, policy), true
+}
+
+// substanceHourGrainMinBuckets is the distinct-bucket leg of the floor
+// when the legs are counted at HOUR grain (a historical instant — see
+// [SubstanceGate.AllowedAt]).
+//
+// The minute floor's number cannot be inherited: it counts distinct
+// minutes, of which a 24-hour window holds 1440, and an hour-grain
+// window holds 24 buckets in total. Two is not a guess. It is the
+// LARGEST hour floor that never refuses a market the minute floor
+// admits: 20 distinct minutes spread over a 6-hour span are guaranteed
+// to touch two hour buckets, and can touch exactly two and no more
+// (ten minutes in one hour, ten in an hour six later). Any larger number
+// would withhold, in history, a market this gate serves live. It is
+// also the number the sibling per-day floor already uses for the same
+// reason (internal/api/v1 rwaPremiumDayFloor). The volume and span legs
+// are grain-independent and carry over unchanged — an hour-bucket span
+// of N hours is implied by a minute span of N hours, never the reverse.
+const substanceHourGrainMinBuckets = 2
+
+// policyAt returns the grain a point-in-time measurement is counted at
+// and the floor that grain is held to, for an instant `age` behind now.
+//
+// The boundary is the point-in-time READER's own
+// ([timescale.PriceAtMinuteRungMaxAge]): inside it the served number
+// can be a raw prices_1m bucket — the attacker-authorable minute this
+// gate exists for — so the measurement is the live gate's, grain and
+// floor, with only the window moved. prices_1m's reach through history
+// is a deployment setting (a retention policy on it ships disarmed,
+// migration 0156), but 48h + one window is inside every retention the
+// schema has ever carried. Past the boundary the reader serves hour and
+// day bars, and the legs are counted on prices_1h — indefinite by
+// design (migration 0002), and re-materialised by the backfill tool in
+// the same pass as the prices_1d bars the reader serves from.
+func (g *SubstanceGate) policyAt(age time.Duration) (timescale.HistoryGranularity, SubstancePolicy) {
+	if age <= timescale.PriceAtMinuteRungMaxAge {
+		return timescale.Granularity1m, g.policy
+	}
+	hourly := g.policy
+	if hourly.MinBuckets > substanceHourGrainMinBuckets {
+		hourly.MinBuckets = substanceHourGrainMinBuckets
+	}
+	return timescale.Granularity1h, hourly
+}
+
+// AllowedAt reports whether an aggregated price claim for (base, quote)
+// AS OF the instant `at` may be served — the point-in-time form of
+// [SubstanceGate.Allowed], for the reads that answer "what was the
+// price at ts" (/v1/price/at, and each /v1/price/changes horizon).
+//
+// Those reads used to ask [SubstanceGate.Allowed], and a trailing
+// window ending NOW decides nothing about a bucket that closed at ts
+// (finding T038). It was wrong in both directions. A market that was
+// deep and honest at ts but is dormant today had every historical
+// price withheld — a cost-basis read 404'd for data we hold and trust.
+// And a market that is thick today but was attacker-seeded dust at ts
+// PASSED, so the historical read served exactly the manipulated price
+// the gate exists to refuse. The safety property does not transfer
+// across time, so the window has to: substance is measured over
+// [policy.Window] ending at `at`, closed buckets only, alias union as
+// for the live gate. See [SubstanceGate.policyAt] for the grain.
+//
+// An `at` in the future is measured as of now. The fail postures are
+// the live gate's: below floor → withhold; measurement error → serve,
+// uncached. Verdicts are cached per (pair, grain, truncated instant)
+// for [substanceCacheTTL] in a map of their own. Withheld verdicts
+// count on the same metric under `surface`; they are NOT logged — the
+// transition log is a statement about a pair's present, and a
+// caller-chosen instant has no transitions to report.
+//
+// A gate whose store cannot answer the point-in-time question falls
+// back to the trailing verdict rather than serving unguarded. That is
+// unreachable in production: *timescale.Store is asserted to implement
+// [MarketSubstanceAtReader] at compile time.
+//
+// Nil-receiver safe: a nil gate allows everything.
+func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Asset, at time.Time, surface string) bool {
+	if g == nil {
+		return true
+	}
+	if !SubstanceGated(base, quote) {
+		return true
+	}
+	if g.atStore == nil {
+		return g.Allowed(ctx, base, quote, surface)
+	}
+	now := g.clock()
+	asOf := at.UTC()
+	if asOf.After(now) {
+		asOf = now.UTC()
+	}
+	grain, policy := g.policyAt(now.Sub(asOf))
+	// Truncating to the grain changes no verdict's upper edge (a bucket
+	// closed at the truncated instant iff it closed at the raw one) and
+	// makes the window a whole number of buckets and the key shareable.
+	asOf = asOf.Truncate(grain.BucketDuration())
+	key := pairCacheKey(base, quote) + "\x00" + string(grain) + "\x00" + strconv.FormatInt(asOf.Unix(), 10)
+
+	g.mu.Lock()
+	prior, hadPrior := g.atCache[key]
+	g.mu.Unlock()
+	if hadPrior && now.Before(prior.expires) {
+		if !prior.allowed {
+			obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
+		}
+		return prior.allowed
+	}
+
+	allowed, measured := g.measureUnion(ctx, base, quote, policy,
+		func(ctx context.Context, pair canonical.Pair) (timescale.MarketSubstance, error) {
+			return g.atStore.PairMarketSubstanceAt(ctx, pair, asOf, policy.Window, grain)
+		})
+	if !measured {
+		return true
+	}
+	g.mu.Lock()
+	if len(g.atCache) >= substanceCacheMax {
+		g.atCache = make(map[string]substanceVerdict)
+	}
+	g.atCache[key] = substanceVerdict{allowed: allowed, expires: now.Add(substanceCacheTTL)}
+	g.mu.Unlock()
+	if !allowed {
+		obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
+	}
+	return allowed
+}
+
+// PriceWithheldAt is [PriceWithheld] for a point-in-time read: the same
+// one expression over the same two gates, with the substance half asked
+// about the instant being served instead of about now. The scam half is
+// deliberately NOT moved in time — a directory flag is an owner-level
+// trust decision about the issuer, and it withholds that issuer's
+// history along with its present.
+//
+// It sits beside [SubstanceGate.AllowedAt] rather than being spelled by
+// a caller for the reason [PriceWithheld] exists at all: a hand-written
+// call site can consult one gate and forget the other (MSP-07).
+func PriceWithheldAt(
+	ctx context.Context,
+	substance *SubstanceGate,
+	scam *ScamGate,
+	base, quote canonical.Asset,
+	at time.Time,
+	surface string,
+) bool {
+	return !substance.AllowedAt(ctx, base, quote, at, surface) || scam.WithheldPair(ctx, base, quote, surface)
 }
 
 func (g *SubstanceGate) clock() time.Time {
