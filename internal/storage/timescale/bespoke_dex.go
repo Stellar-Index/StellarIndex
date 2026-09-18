@@ -50,10 +50,17 @@ package timescale
 // served when the window has taker-stamped rows, omitted (with a Note)
 // when it observably has none.
 //
-// All USD figures come ONLY from trades.usd_volume (or its CAGG sums) —
-// never ad-hoc pricing. NULL-usd trades are excluded from USD sums and
-// averages but still count toward trade totals. All division is exact
-// NUMERIC (ADR-0003); rounding is round(x, 2) — never a float literal.
+// USD figures come from trades.usd_volume (or its CAGG sums), with ONE
+// deliberate exception: the 24h volume KPI + hourly series also carry the
+// XLM-denominated legs that valuation left unpriced, valued at the
+// current XLM/USD vwap, because that is source_volume_1h's documented
+// read contract (see "the source_volume_1h read contract" below) and the
+// figure the source page's own chart shows for the same source and
+// window. Everything else — every >1d figure and every per-pair surface —
+// is usd_volume only, never ad-hoc pricing; its NULL-usd trades are
+// excluded from USD sums and averages but still count toward trade
+// totals. All division is exact NUMERIC (ADR-0003); rounding is
+// round(x, 2) — never a float literal.
 
 import (
 	"context"
