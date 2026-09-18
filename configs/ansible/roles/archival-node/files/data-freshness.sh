@@ -58,6 +58,8 @@ trap 'rm -f "$TMP"' EXIT
   echo '# TYPE stellarindex_recognition_unattributed_shapes gauge'
   echo '# HELP stellarindex_recognition_ok UNRECOGNIZED EVENTS FROM A KNOWN PROTOCOL: 0 when a source WE INDEX emitted a (contract, topic) shape none of its decoders claimed, 1 when every shape on its owned contracts decodes. This is the bucket that means OUR bug — a protocol we promised to cover is silently dropping events — and it is the one worth paging on. Distinct from unattributed_shapes, which counts other people contracts and is inert.'
   echo '# TYPE stellarindex_recognition_ok gauge'
+  echo '# HELP stellarindex_cagg_history_missing 1 when a price continuous aggregate (prices_1m..prices_1mo) holds less history than the trades hypertable it aggregates — a migration recreated it WITH NO DATA, or a replay rewrote its base rows, and the manual refresh_continuous_aggregate follow-up never ran. Its refresh policy re-fills only a trailing sliver, so every newest-bar and last-refresh signal reads green while the back-history serves empty.'
+  echo '# TYPE stellarindex_cagg_history_missing gauge'
   echo '# HELP stellarindex_twap_history_missing 1 when a TWAP continuous aggregate is missing the history prices_1m holds — a migration recreated/emptied it (WITH NO DATA) and the manual refresh_continuous_aggregate follow-up never ran.'
   echo '# TYPE stellarindex_twap_history_missing gauge'
   # The three families below are composed inside the SQL blocks further
@@ -228,42 +230,82 @@ SELECT 'stellarindex_recognition_unattributed_shapes '||
          ORDER BY computed_at DESC LIMIT 1) r;
 SQL
 
-# W1-migrations-1 / REC-01: the TWAP continuous aggregates (twap_1h/twap_1d)
-# are hierarchical roll-ups over prices_1m that a migration recreates WITH NO
-# DATA whenever their SELECT changes (0081 → 0115 → 0126). A recreate DELETES
-# all materialized history; re-materialization is a MANUAL operator step
-# (`CALL refresh_continuous_aggregate('twap_1h', NULL, now())`) that nothing
-# enforces. The trap that hides a skipped follow-up: each view's refresh POLICY
-# only auto-materializes a recent trailing window (twap_1h start_offset 4h,
-# twap_1d 7d), so RECENT bars reappear on the next policy tick and every
-# newest-bar freshness/age check reads GREEN while the entire back-history
-# stays silently empty — the API serves no TWAP for older ranges. The
-# ADR-0033 completeness verdict cannot see this: twap_* are derived price
-# CAGGs, not reconcile TARGETS. So detect it directly — a view is emptied-
-# pending-refresh when prices_1m holds real history but the view's OLDEST
-# materialized bar is far newer than prices_1m's oldest (i.e. it only carries
-# the policy's trailing sliver). Cheap: min(bucket) rides each view's
-# time index; the 1-day slack absorbs twap_1d's daily bucket truncation.
+# W1-migrations-1 / REC-01 / F047 / F116 / T425: a continuous aggregate that a
+# migration recreated WITH NO DATA — or that a replay rewrote the base rows of —
+# is EMPTIED PENDING REFRESH, and nothing else in this system can see that
+# state. Migrations 0115 and 0147 both DROP and recreate all nine price/TWAP
+# views and leave `CALL refresh_continuous_aggregate(...)` to an operator
+# banner; a fresh database (a new region, a test net, a restore) applies them
+# from zero and is left the same way. The trap that hides a skipped follow-up:
+# each view's refresh POLICY only auto-materializes its trailing start_offset
+# window (prices_1m 5 minutes, twap_1h 4 hours), so the NEWEST bars reappear on
+# the next policy tick and every newest-bar freshness/age/last-refresh check —
+# stellarindex_cagg_last_refresh_unix included — reads GREEN while the entire
+# back-history serves empty. The ADR-0033 completeness verdict cannot see it
+# either: these are derived price views, not reconcile TARGETS.
+#
+# So detect it directly, and judge EVERY view against the thing that is not
+# emptied with them. The reference is `trades` — the raw hypertable all nine
+# aggregate, kept forever (migration 0031 removed its retention). It used to be
+# prices_1m's own min(bucket), which made the detector self-muting in exactly
+# the scenario it names: 0147 empties prices_1m TOO, so after it runs the
+# reference is the policy's minutes-old sliver, `tmin > pmin + 1 day` is false
+# for every view, and the gauge publishes a healthy 0 for a database with no
+# OHLC history at all.
+#
+# A view is emptied-pending-refresh when it is empty, or when its OLDEST
+# materialized bar trails the oldest bar it OUGHT to hold by more than a day.
+# That floor is the oldest trade — except where an ARMED retention policy makes
+# a shorter history correct: migration 0156 attaches a 90-day retention to
+# prices_1m and ships it disabled, and an operator who arms it deliberately
+# moves that view's floor to now()-90d. Reading the armed policies out of
+# timescaledb_information.jobs keeps the two facts in step automatically
+# instead of hardcoding a window here that a later arming would falsify.
+#
+# Cheap: min(bucket) rides each view's time index and min(ts) rides the trades
+# time index. The 1-day slack absorbs bucket truncation (time_bucket rounds
+# DOWN, so a healthy view's oldest bar is at or before the oldest trade) and
+# the 2-day gate keeps a fresh deploy's legitimate initial-materialization
+# window from false-firing.
 "$PSQL" "$STELLARINDEX_POSTGRES_DSN" -tA -F$'\t' >> "$TMP" <<'SQL'
-WITH pm  AS (SELECT min(bucket) AS pmin FROM prices_1m),
-     t1h AS (SELECT min(bucket) AS tmin, count(*) AS n FROM twap_1h),
-     t1d AS (SELECT min(bucket) AS tmin, count(*) AS n FROM twap_1d)
--- Only judge once prices_1m has >2 days of history (a fresh/empty deploy or the
--- legitimate initial-materialization window must not false-fire). Missing iff
--- the view is empty OR its oldest bar trails prices_1m's oldest by >1 day.
-SELECT 'stellarindex_twap_history_missing{view="twap_1h"} '||
-       (CASE WHEN (SELECT pmin FROM pm) IS NOT NULL
-                  AND (SELECT pmin FROM pm) < now() - interval '2 days'
-                  AND ((SELECT n FROM t1h) = 0
-                       OR (SELECT tmin FROM t1h) > (SELECT pmin FROM pm) + interval '1 day')
-             THEN 1 ELSE 0 END)::text
+WITH base AS (SELECT min(ts) AS tmin FROM trades),
+     ret AS (
+       SELECT hypertable_name AS view_name,
+              (config->>'drop_after')::interval AS drop_after
+         FROM timescaledb_information.jobs
+        WHERE proc_name = 'policy_retention'
+          AND scheduled
+          AND config ? 'drop_after'
+     ),
+     v (view_name, vmin) AS (
+       VALUES ('prices_1m'::text, (SELECT min(bucket) FROM prices_1m)),
+              ('prices_15m',      (SELECT min(bucket) FROM prices_15m)),
+              ('prices_1h',       (SELECT min(bucket) FROM prices_1h)),
+              ('prices_4h',       (SELECT min(bucket) FROM prices_4h)),
+              ('prices_1d',       (SELECT min(bucket) FROM prices_1d)),
+              ('prices_1w',       (SELECT min(bucket) FROM prices_1w)),
+              ('prices_1mo',      (SELECT min(bucket) FROM prices_1mo)),
+              ('twap_1h',         (SELECT min(bucket) FROM twap_1h)),
+              ('twap_1d',         (SELECT min(bucket) FROM twap_1d))
+     ),
+     j AS (
+       SELECT v.view_name,
+              (CASE WHEN b.tmin IS NOT NULL
+                     AND b.tmin < now() - interval '2 days'
+                     AND (v.vmin IS NULL
+                          OR v.vmin > greatest(b.tmin,
+                                               now() - COALESCE(r.drop_after, interval '100 years'))
+                                      + interval '1 day')
+                    THEN 1 ELSE 0 END) AS missing
+         FROM v
+         CROSS JOIN base b
+         LEFT JOIN ret r ON r.view_name = v.view_name
+     )
+SELECT 'stellarindex_cagg_history_missing{view="'||view_name||'"} '||missing::text
+  FROM j WHERE view_name LIKE 'prices%'
 UNION ALL
-SELECT 'stellarindex_twap_history_missing{view="twap_1d"} '||
-       (CASE WHEN (SELECT pmin FROM pm) IS NOT NULL
-                  AND (SELECT pmin FROM pm) < now() - interval '2 days'
-                  AND ((SELECT n FROM t1d) = 0
-                       OR (SELECT tmin FROM t1d) > (SELECT pmin FROM pm) + interval '1 day')
-             THEN 1 ELSE 0 END)::text;
+SELECT 'stellarindex_twap_history_missing{view="'||view_name||'"} '||missing::text
+  FROM j WHERE view_name LIKE 'twap%';
 SQL
 
 # CS-090: a verdict can read complete=true while its watermark lags the live

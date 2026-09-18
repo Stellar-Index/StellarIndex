@@ -55,6 +55,27 @@ against.
   frozen window has claimed its own entry. Presence semantics are
   untouched: `flags.frozen` stays pair-wide and `stellarindex-ops
   freeze-unfreeze` still releases every window. (audit-2026-09-02 E1)
+- **continuous aggregates (completeness):** an emptied price aggregate
+  is now detected, and a replay re-materializes the range it rewrote.
+  Migrations 0115 and 0147 drop and recreate all nine price/TWAP views
+  `WITH NO DATA` and leave `refresh_continuous_aggregate` to an operator
+  banner; each view's refresh policy then re-fills only its trailing
+  `start_offset` window, so the newest bars reappear and every freshness,
+  bar-age and last-refresh signal reads green while the whole
+  back-history serves empty. Only `twap_1h`/`twap_1d` had a detector, and
+  it derived its reference from `prices_1m` — a view the same migrations
+  empty — so it published a healthy 0 in exactly the state it existed to
+  name. The data-freshness watchdog now judges all nine views against the
+  `trades` hypertable (allowing for an armed retention policy on a view,
+  migration 0156), publishing `stellarindex_cagg_history_missing{view}`
+  alongside the TWAP gauge; both arm the same alert. Separately,
+  `stellarindex-ops projector-replay` now waits for the projector to
+  re-walk the rewound range and re-materializes the price CAGGs over it,
+  failing loudly if it cannot: the aggregates' policies only roll
+  forward, so re-projected historical trades were durable in the
+  hypertable and invisible to every /v1/ohlc, /v1/chart, /v1/vwap and
+  /v1/history/since-inception read. (audit-2026-09-02 F047, F116, K006,
+  T425)
 - **markets (money):** `/v1/markets?source=X` now reports X's OWN 24h
   volume, 24h trade count and last price, and the unfiltered listing
   serves a last price from the current day rather than the previous

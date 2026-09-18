@@ -126,19 +126,31 @@ groups:
             counts shapes on contracts nobody owns (foreign protocols). That number is large,
             always growing, and inert.
 
-      # A TWAP continuous aggregate is emptied-pending-refresh: a migration
-      # recreated it WITH NO DATA (0081/0115/0126) and the MANUAL
+      # A continuous aggregate is emptied-pending-refresh: a migration
+      # recreated it WITH NO DATA (0081/0115/0126/0147) — or a replay
+      # rewrote the base rows underneath it — and the MANUAL
       # `refresh_continuous_aggregate` follow-up that re-materializes its
       # history was never run. The view's refresh policy silently re-fills
       # only a recent trailing sliver, so every newest-bar freshness check
       # reads green while the whole back-history serves empty — and the
-      # ADR-0033 completeness verdict can't catch it (twap_* are derived
+      # ADR-0033 completeness verdict can't catch it (these are derived
       # price CAGGs, not reconcile targets). `for: 2h` gives an operator time
       # to run the refresh after a deploy that recreates the view; a genuinely
       # forgotten follow-up keeps firing past it. Emitted by data-freshness.sh.
+      #
+      # Two families, one alert, because the operator action is identical.
+      # `_cagg_history_missing` covers the seven prices_* views that serve
+      # /v1/ohlc, /v1/chart and /v1/history/since-inception; migrations 0115
+      # and 0147 drop and recreate all nine of these views together, and for
+      # a year only the two TWAPs were judged. Both gauges are computed
+      # against the `trades` hypertable, not against prices_1m — prices_1m is
+      # emptied by the same migrations, so a reference taken from it read
+      # healthy in exactly the state the alert exists to name.
       - alert: stellarindex_twap_history_missing
         expr: |
           stellarindex_twap_history_missing == 1
+            or
+          stellarindex_cagg_history_missing == 1
         for: 2h
         labels:
           severity: ticket
@@ -146,15 +158,16 @@ groups:
           component: completeness
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/twap-history-missing.md
-          summary: "TWAP view {{ $labels.view }} is missing its history — post-migration refresh_continuous_aggregate follow-up not run"
+          summary: "Continuous aggregate {{ $labels.view }} is missing its history — post-migration refresh_continuous_aggregate follow-up not run"
           description: |
-            stellarindex_twap_history_missing{view="{{ $labels.view }}"} = 1 — prices_1m
-            holds real back-history but {{ $labels.view }}'s oldest materialized bar is far
-            newer, so the view carries only the trailing window its refresh policy
-            auto-fills. A migration recreated the view WITH NO DATA (the 0081→0115→0126
-            TWAP-CAGG recreate pattern) and the manual re-materialization step was skipped,
-            so the API serves NO TWAP for older ranges while recent bars — and every
-            newest-bar freshness check — look healthy.
+            {{ $labels.view }} is missing history the `trades` hypertable holds: the view
+            is empty, or its oldest materialized bar is far newer than the oldest trade
+            (allowing for an armed retention policy on that view), so it carries only the
+            trailing window its refresh policy auto-fills. A migration recreated the view
+            WITH NO DATA (the 0081→0115→0126→0147 CAGG-recreate pattern), or a replay
+            rewrote its base rows, and the manual re-materialization step was skipped — so
+            the API serves NO bars for older ranges at this grain while recent bars, and
+            every newest-bar freshness check, look healthy.
 
             Fix: run the documented follow-up once prices_1m is whole —
             `CALL refresh_continuous_aggregate('{{ $labels.view }}', NULL, now());` — then

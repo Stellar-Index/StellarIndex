@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -30,16 +31,29 @@ import (
 //   - `INSERT … ON CONFLICT DO NOTHING` in every per-source table
 //     makes the re-walk idempotent.
 //
-// This is intentionally a one-shot SQL operation: the projector
-// goroutine in `stellarindex-indexer` does the actual work. Operators
-// don't need a dedicated subprocess for replay because the
-// projector is already in steady-state. See
+// The rewind itself is one SQL operation — the projector goroutine in
+// `stellarindex-indexer` does the re-walk. The command then STAYS to
+// finish the job: a replay writes trades (aquarius/soroswap/phoenix/
+// comet all persist trades through the projector) into a historical
+// time range, and every continuous aggregate over `trades` only ever
+// rolls its refresh policy FORWARD over its own start_offset window —
+// prices_1m's is five minutes. Rows re-projected into a range older
+// than that are durable in the hypertable and invisible to every read:
+// /v1/ohlc, /v1/chart, /v1/vwap and /v1/history/since-inception all
+// serve from the aggregates. So once the projector has re-walked past
+// the original cursor, this command re-materializes the price CAGGs
+// over the replayed range and fails loudly if it cannot — rather than
+// leaving that as a sentence in a runbook (K006). `-refresh-caggs=false`
+// opts out explicitly and says what it costs. See
 // docs/operations/runbooks/projector-replay.md.
 func projectorReplay(args []string) error {
 	fs := flag.NewFlagSet("projector-replay", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	source := fs.String("source", "", "Projector source name to rewind (required); see internal/projector/registry.go for the list")
 	from := fs.Uint("from", 0, "Rewind the projector cursor to this ledger (inclusive); the projector tails forward to the live tip from here")
+	refreshCAGGs := fs.Bool("refresh-caggs", true, "After the projector re-walks the rewound range, re-materialize the price continuous aggregates over it. The CAGG policies only roll forward, so re-projected historical trades are invisible to every OHLC/VWAP read until this runs")
+	catchUp := fs.Bool("wait", true, "Wait for the projector to re-walk the rewound range before refreshing the CAGGs. -wait=false returns as soon as the cursor is rewound and leaves the refresh to the operator")
+	catchUpTimeout := fs.Duration("wait-timeout", 30*time.Minute, "How long to wait for the projector to re-walk the rewound range")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -119,6 +133,11 @@ func projectorReplay(args []string) error {
 		_, _ = fmt.Fprintf(os.Stdout,
 			"dry-run: would RecordProjectionDirtyWindow(%q, [%d,%d]) then UpsertCursor(projector, %q, %d)\n",
 			*source, target, currentLedger, *source, rewindTo)
+		if *refreshCAGGs && *catchUp {
+			_, _ = fmt.Fprintf(os.Stdout,
+				"dry-run: would then wait up to %s for the projector cursor to reach %d and refresh the price CAGGs over ledgers [%d,%d]\n",
+				*catchUpTimeout, currentLedger, target, currentLedger)
+		}
 		return nil
 	}
 	// Record the dirty window BEFORE the rewind, and FAIL the replay if the
@@ -155,5 +174,86 @@ func projectorReplay(args []string) error {
 	_, _ = fmt.Fprintf(os.Stdout,
 		"projector cursor rewound — next projector cycle (≤ 5s) will start re-projecting from ledger %d\n",
 		target)
+
+	replayed := chunkRange{from: target, to: currentLedger}
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	switch {
+	case !*refreshCAGGs:
+		logger.Warn("skipping post-replay CAGG refresh (-refresh-caggs=false)",
+			"from", replayed.from, "to", replayed.to,
+			"impact", "trades re-projected into this range stay unmaterialised in prices_1m/15m/1h/4h/1d/1w/1mo: the CAGG refresh policies only roll forward over their own start_offset window, so nothing picks a historical bucket up on its own cadence. The rows are durable, but /v1/ohlc, /v1/chart, /v1/vwap and /v1/history/since-inception read the aggregates and will serve short over this range until a manual refresh_continuous_aggregate covers it",
+		)
+		return nil
+	case !*catchUp:
+		logger.Warn("not waiting for the projector to re-walk (-wait=false); the CAGG refresh is now the operator's",
+			"from", replayed.from, "to", replayed.to,
+			"follow_up", "once the projector cursor passes the pre-rewind ledger, re-run with -from the same value, or refresh the price CAGGs over the range by hand",
+		)
+		return nil
+	}
+
+	// Fresh context: the 30s budget above covers the cursor statements,
+	// not a re-walk of the replayed range plus seven materializations.
+	rctx, rcancel := context.WithTimeout(context.Background(), *catchUpTimeout+caggRefreshGrace)
+	defer rcancel()
+	if err := awaitProjectorCursor(rctx, logger, store, *source, currentLedger, *catchUpTimeout, projectorCatchUpPoll); err != nil {
+		return err
+	}
+	if err := refreshCAGGsForChunk(rctx, logger, store, replayed); err != nil {
+		return fmt.Errorf("post-replay CAGG refresh over ledgers [%d,%d]: %w — the re-projected trades are in the hypertable but no OHLC/VWAP read can reach them until a refresh covers this range; re-run this command with the same -from, or refresh the views by hand",
+			replayed.from, replayed.to, err)
+	}
+	_, _ = fmt.Fprintf(os.Stdout,
+		"price CAGGs re-materialized over the replayed range [%d,%d]\n",
+		replayed.from, replayed.to)
 	return nil
+}
+
+// caggRefreshGrace is the head-room the post-replay context carries on
+// top of the catch-up budget, for the refresh itself.
+const caggRefreshGrace = 30 * time.Minute
+
+// projectorCatchUpPoll is how often the catch-up loop re-reads the
+// projector cursor — well inside the projector's own 5s cycle.
+const projectorCatchUpPoll = 5 * time.Second
+
+// projectorCursorReader is the slice of the store awaitProjectorCursor
+// needs — one cursor read, so a test can drive the catch-up loop.
+type projectorCursorReader interface {
+	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
+}
+
+// awaitProjectorCursor blocks until the projector's cursor for `source`
+// has re-walked back up to `target` (the ledger it sat at before the
+// rewind), i.e. until the replayed range has actually been re-projected.
+//
+// Returning early would refresh the continuous aggregates over rows that
+// are not written yet — a refresh that reports success and materializes
+// the old, short answer, which is worse than not refreshing at all
+// because the operator has a green run to point at. On timeout it fails,
+// naming what is left to do: the rewind is already durable at that point,
+// so a silent return would leave the range invisible to every read with
+// nothing to say so.
+func awaitProjectorCursor(ctx context.Context, logger *slog.Logger, r projectorCursorReader, source string, target uint32, budget, poll time.Duration) error {
+	deadline := time.Now().Add(budget)
+	for {
+		cursor, err := r.GetCursor(ctx, "projector", source)
+		if err != nil {
+			return fmt.Errorf("read projector cursor while waiting for the re-walk: %w", err)
+		}
+		if cursor.LastLedger >= target {
+			logger.Info("projector has re-walked the replayed range",
+				"source", source, "cursor", cursor.LastLedger, "target", target)
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("projector cursor for %q is at ledger %d after %s, still short of the pre-rewind ledger %d: the replayed range is not fully re-projected, so the price CAGGs were NOT refreshed over it. Let the projector catch up and re-run this command with the same -from (the rewind is already durable and idempotent), or raise -wait-timeout",
+				source, cursor.LastLedger, budget, target)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("waiting for the projector to re-walk %q: %w", source, ctx.Err())
+		case <-time.After(poll):
+		}
+	}
 }
