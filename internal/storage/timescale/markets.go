@@ -902,8 +902,17 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                    MAX(p.bucket)       AS last_bucket_1m,
                    SUM(p.trade_count)  AS count_24h,
                    SUM(p.volume_usd)   AS vol_24h_num,
-                   (array_agg(p.last_price ORDER BY p.bucket DESC)
-                      FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
+                   -- last(), not an ordered array_agg: this scan covers
+                   -- every active pair's 24h of MINUTE buckets, and a
+                   -- per-group ORDER BY would sort all of them to read one
+                   -- value per group. last() keeps the newest bucket's
+                   -- close in the same single pass the sums already make;
+                   -- FILTER drops null closes so a quiet tail bucket
+                   -- cannot mask the last real price. (The prices_1d CTE
+                   -- keeps array_agg: ~14 buckets per pair, nothing to
+                   -- gain.)
+                   last(p.last_price, p.bucket)
+                      FILTER (WHERE p.last_price IS NOT NULL)::text AS last_price
               FROM prices_1m p
              WHERE p.bucket > NOW() - INTERVAL '24 hours'
                AND ($4 = '' OR $4 = ANY(p.sources))
