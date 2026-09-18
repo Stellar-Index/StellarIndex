@@ -55,6 +55,19 @@ against.
   frozen window has claimed its own entry. Presence semantics are
   untouched: `flags.frozen` stays pair-wide and `stellarindex-ops
   freeze-unfreeze` still releases every window. (audit-2026-09-02 E1)
+- **monitoring (storage):** `stellarindex_timescale_job_failures_climbing`
+  can now fire for a slow TimescaleDB job. The counter is per job, so a
+  job scheduled every T accrues at most `6h / T` failures in the rule's
+  window — `increase(...[6h]) > 10` therefore required a schedule under
+  ~36 minutes, and every compression policy (12h) plus five of the CAGG
+  refresh policies were arithmetically unable to trip it, which is
+  precisely the set r1's probe found failing 66-81%. A second arm, 3 or
+  more failures in 3 days, judges the slow half of the fleet. Measured on
+  r1 while adding it: `policy_compression` on `trades` had failed 6 times
+  in 7 days with "Failed to convert '1' chunks to columnstore" and
+  nothing could fire on it, while the only other failing job in that week
+  had a single failure — below the new threshold. Both rule trees and the
+  runbook updated. (audit-2026-09-02 F160)
 - **api (observability):** `stellarindex_dependency_up{dependency=
   "clickhouse"}` is now published when ClickHouse is configured but was
   unreachable at API start. The readiness checker was appended inside

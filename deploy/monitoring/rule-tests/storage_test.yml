@@ -1193,3 +1193,65 @@ tests:
       - eval_time: 15m
         alertname: stellarindex_nvme_media_errors
         exp_alerts: []
+
+  # ── a SLOW job that fails every run ──────────────────────────────
+  # The shape the 6h arm cannot see. This counter is per job, so a job
+  # scheduled every T accrues at most 6h/T failures: `> 10 in 6h` needs
+  # T < 36 minutes, and every compression policy runs on a 12h schedule.
+  # Measured on r1 2026-09-18, policy_compression on `trades` (job 1000)
+  # had failed 6 times in 7 days with "Failed to convert '1' chunks to
+  # columnstore" and no rule could fire on it.
+  #
+  # Input is that job: one more failure every 12h (24 samples at the 30m
+  # interval), for three days.
+  - interval: 30m
+    name: a 12h-schedule job failing every run is caught by the 3-day arm
+    input_series:
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1000",proc="policy_compression",hypertable="trades"}'
+        values: '0x23 1x23 2x23 3x23 4x23 5x23'
+    alert_rule_test:
+      - eval_time: 71h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              job_id: "1000"
+              proc: policy_compression
+              hypertable: trades
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              summary: "TimescaleDB job policy_compression failing repeatedly (trades)"
+              description: |
+                Job 1000 (policy_compression on
+                trades) is failing repeatedly: more than 10 runs in
+                6 hours, or 3 or more runs in 3 days. TimescaleDB retries on the next
+                tick, so the caggs may look fresh and no staleness ticket will fire —
+                that is exactly how the 2026 background-worker starvation stayed
+                invisible.
+
+                The two windows are not redundant. This counter is per job, so a job
+                scheduled every T can accrue at most 6h/T failures and the 6h arm is
+                unreachable for anything slower than ~36 minutes — every compression
+                policy and five of the CAGG refresh policies. The 3-day arm is what
+                judges those, and a slow job failing every run trips it in three days.
+
+                Check max_parallel_workers / timescaledb.max_background_workers
+                headroom first; "failed to start job" in the job_errors view means
+                starvation, not a broken job body.
+
+  # ── a slow job that fails ONCE in three days is not a ticket ─────
+  # The threshold has to leave the fleet's ordinary retry noise alone:
+  # over the same 7 days on r1, the prices_1m refresh failed once.
+  - interval: 30m
+    name: an isolated failure does not fire either arm
+    input_series:
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1088",proc="policy_refresh_continuous_aggregate",hypertable="prices_1m"}'
+        values: '0x71 1x72'
+    alert_rule_test:
+      - eval_time: 71h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts: []

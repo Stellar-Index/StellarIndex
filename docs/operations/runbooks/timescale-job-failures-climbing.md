@@ -1,6 +1,6 @@
 ---
 title: Runbook — stellarindex_timescale_job_failures_climbing
-last_verified: 2026-08-30
+last_verified: 2026-09-18
 status: ratified
 severity: P3
 ---
@@ -11,8 +11,8 @@ severity: P3
 
 | | |
 | --- | --- |
-| **Severity** | informational (P3) — no immediate customer impact |
-| **Fires when** | a single TimescaleDB background job accumulates >10 failed runs in 6h, sustained 30m |
+| **Severity** | ticket — no immediate customer impact, but the safety margin is gone |
+| **Fires when** | a single TimescaleDB background job accumulates **>10 failed runs in 6h**, or **3 or more in 3 days**, sustained 30m |
 | **Producer** | `timescale-jobs-probe.timer` on r1 (60s), writing `timescale_jobs.prom` into the node_exporter textfile dir. If that probe stops, or its `job_stats` query fails or returns nothing, this counter goes absent and the alert is blind rather than quiet — `stellarindex_timescale_probe_degraded` ([timescale-probe-degraded](timescale-probe-degraded.md)) is the standing signal for it. |
 | **Metric** | `stellarindex_timescale_job_failures_total{job_id,proc,hypertable}` |
 | **Customer impact** | usually none *yet* — TimescaleDB retries on the next tick |
@@ -28,6 +28,30 @@ evidence was this counter, which no rule referenced until 2026-08-30
 
 So treat a firing here as **"the thing that hid the last incident is
 happening again"**, not as a broken job.
+
+**Why two windows.** The counter is per job
+(`{job_id,proc,hypertable}`), so a job scheduled every *T* can accrue at
+most `6h / T` failures — and `> 10 in 6h` therefore needs *T* under ~36
+minutes. Every compression policy (12h `schedule_interval`) and five of
+the CAGG refresh policies (`prices_4h` 1h, `prices_1d` 6h, `prices_1w`
+and `prices_1mo` 1d, `twap_1d` 6h) are slower than that, so for a year
+this alert was *arithmetically unable* to fire for them — the same jobs
+the r1 probe found failing 66–81 %. The second arm, **3 or more failures
+in 3 days**, is the one that judges the slow half of the fleet: a job on
+a daily schedule failing every run trips it on the third day, a 12h
+compression policy inside two.
+
+Measured on r1 (2026-09-18) while adding it: `policy_compression` on
+`trades` (job 1000, 12h schedule) had failed **6 times in 7 days** with
+`Failed to convert '1' chunks to columnstore`, three of them inside
+three hours, and no rule could fire on it. Over the same week the only
+other failing job was the `prices_1m` refresh, with a single failure —
+below the new threshold, which is what keeps ordinary retry noise out of
+the ticket queue.
+
+The 3-day window is not a week on purpose: local Prometheus retains 7
+days (`local_prometheus_retention_time`), and an `increase()` window at
+the retention edge loses its left-hand samples silently.
 
 ## Quick diagnosis (≤ 5 min)
 
@@ -82,7 +106,8 @@ and takes priority over this one.
 
 - **A short burst after a restart or a heavy one-shot job** is expected —
   contention clears and the counter stops climbing. The 6h window plus
-  `for: 30m` is sized to ride those out.
+  `for: 30m` is sized to ride those out. The 3-day arm needs three
+  failures, so a single retried blip does not reach it either.
 - **This alert alone, with caggs fresh**, is not a customer-facing
   incident. It is a warning that the safety margin is gone.
 

@@ -399,7 +399,37 @@ groups:
         # per-job cumulative and jobs run on minute-scale intervals, so a
         # meaningful burst is "more than a handful in a long window", not
         # a per-second rate.
-        expr: increase(stellarindex_timescale_job_failures_total[6h]) > 10
+        #
+        # TWO ARMS, because one absolute count over one fixed window can
+        # only judge the FAST jobs. The counter is per job — the producer
+        # labels it {job_id,proc,hypertable} — so a job scheduled every T
+        # can accrue at most 6h/T failures, and `> 10` therefore requires
+        # T < 36 minutes. Every compression policy (12h schedule_interval)
+        # and five of the CAGG refresh policies (prices_4h 1h, prices_1d
+        # 6h, prices_1w and prices_1mo 1d, twap_1d 6h) are slower than
+        # that, so for them this alert was arithmetically unable to fire —
+        # and they are exactly the jobs r1's probe found failing 66-81%.
+        #
+        # Measured on r1 2026-09-18, which is why the second arm is worth
+        # its noise: `policy_compression` on `trades` (job 1000, 12h
+        # schedule) had failed 6 times in 7 days with "Failed to convert
+        # '1' chunks to columnstore", three of them inside three hours,
+        # and nothing fired or could have. Over the same 7 days the only
+        # other failing job was the prices_1m refresh with a single
+        # failure — under the 3-in-3-days threshold, so the arm buys that
+        # detection without turning the fleet's ordinary retry noise into
+        # tickets.
+        #
+        # 3 days rather than a week: local Prometheus keeps 7 days
+        # (local_prometheus_retention_time), and an increase() window at
+        # the retention edge silently loses its left-hand samples. Three
+        # days gives the slowest job on the box (schedule_interval 1 day)
+        # three chances to fail and leaves the window well inside what is
+        # stored.
+        expr: |
+          increase(stellarindex_timescale_job_failures_total[6h]) > 10
+            or
+          increase(stellarindex_timescale_job_failures_total[3d]) >= 3
         for: 30m
         labels:
           severity: ticket
@@ -410,10 +440,17 @@ groups:
           summary: "TimescaleDB job {{ $labels.proc }} failing repeatedly ({{ $labels.hypertable }})"
           description: |
             Job {{ $labels.job_id }} ({{ $labels.proc }} on
-            {{ $labels.hypertable }}) has accumulated more than 10 failed runs
-            in 6 hours. TimescaleDB retries on the next tick, so the caggs may
-            look fresh and no staleness ticket will fire — that is exactly how
-            the 2026 background-worker starvation stayed invisible.
+            {{ $labels.hypertable }}) is failing repeatedly: more than 10 runs in
+            6 hours, or 3 or more runs in 3 days. TimescaleDB retries on the next
+            tick, so the caggs may look fresh and no staleness ticket will fire —
+            that is exactly how the 2026 background-worker starvation stayed
+            invisible.
+
+            The two windows are not redundant. This counter is per job, so a job
+            scheduled every T can accrue at most 6h/T failures and the 6h arm is
+            unreachable for anything slower than ~36 minutes — every compression
+            policy and five of the CAGG refresh policies. The 3-day arm is what
+            judges those, and a slow job failing every run trips it in three days.
 
             Check max_parallel_workers / timescaledb.max_background_workers
             headroom first; "failed to start job" in the job_errors view means
