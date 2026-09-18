@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 	"time"
 
@@ -28,26 +27,6 @@ import (
 // Redis is HEALTHY in both tests below. Every 503 they could produce is
 // manufactured entirely by aborted requests.
 
-// fakeClock is a manually-advanced time source for the bucket's dwell
-// clock, so the 30 s window is crossed deterministically without
-// sleeping.
-type fakeClock struct {
-	mu sync.Mutex
-	t  time.Time
-}
-
-func (c *fakeClock) now() time.Time {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.t
-}
-
-func (c *fakeClock) advance(d time.Duration) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.t = c.t.Add(d)
-}
-
 // abortedRequest is a request whose context is already cancelled — what
 // the middleware sees once the client has gone away.
 func abortedRequest(t *testing.T) *http.Request {
@@ -59,7 +38,7 @@ func abortedRequest(t *testing.T) *http.Request {
 
 func TestRateLimitBySubject_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	clock := &fakeClock{t: time.Unix(1_770_000_000, 0).UTC()}
+	clock := newManualClock()
 	b := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithClock(clock.now))
 
 	h := middleware.RateLimitBySubject(b, nil, nil, nil)(okHandler())
@@ -97,7 +76,7 @@ func TestRateLimitBySubject_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 // which shares the take-with-request-context shape.
 func TestRateLimit_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 	rdb, _ := newRLRedis(t)
-	clock := &fakeClock{t: time.Unix(1_770_000_000, 0).UTC()}
+	clock := newManualClock()
 	b := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithClock(clock.now))
 
 	h := middleware.RateLimit(b, fixedKeyFn("abort-k"), nil, nil)(okHandler())
@@ -129,7 +108,7 @@ func TestRateLimit_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 // inversion (F-0050 / F-0150) is the reason the clock exists.
 func TestRateLimitBySubject_RealRedisOutageStillFailsClosed(t *testing.T) {
 	rdb, mr := newRLRedis(t)
-	clock := &fakeClock{t: time.Unix(1_770_000_000, 0).UTC()}
+	clock := newManualClock()
 	b := ratelimit.New(rdb, 100, time.Minute, ratelimit.WithClock(clock.now))
 
 	h := middleware.RateLimitBySubject(b, nil, nil, nil)(okHandler())

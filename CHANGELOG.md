@@ -115,6 +115,18 @@ against.
   A real Redis outage still fails open inside the dwell window and
   closed past it, with a regression test pinning both.
   (reverification-2026-09-18 F059 / RLT-160)
+- **api:** the two sibling seams that mirror the same dwell clock are
+  swept with it. The monthly-quota gate's month-to-date read is
+  detached the same way: its clock is process-wide, so an abort flood
+  pre-armed it and turned the next genuine blip — which the gate
+  documents as fail-OPEN, since the cap is billing fairness and not a
+  security boundary — into a 429 for whichever metered customer hit it
+  first. The signup per-IP throttle's increment likewise no longer
+  inherits the caller's cancellation, which also stops an aborted
+  signup from being an UNCOUNTED one: abandoning the connection
+  mid-flight used to buy unlimited attempts against the cap that exists
+  to stop bulk account minting. (reverification-2026-09-18 F059 class
+  sweep)
 
 - **api:** `GET /v1/history/since-inception` now applies the
   directory-scam gate, so a flagged issuer's full VWAP trajectory is no

@@ -25,6 +25,16 @@ import (
 // different Redis-availability SLO.
 const DefaultSignupThrottleDwellTime = 30 * time.Second
 
+// signupThrottleIncrTimeout bounds the throttle's own Redis round-trip.
+//
+// The increment deliberately does NOT inherit the CALLER's
+// cancellation (see [RedisSignupIPThrottle.CheckIP]), so it needs a
+// bound of its own or a wedged Redis would pin the signup handler's
+// goroutine forever. Mirrors the API middleware's throttle bound; 5 s
+// is generous relative to go-redis's 3 s default — a backstop, not the
+// usual limiter.
+const signupThrottleIncrTimeout = 5 * time.Second
+
 // RedisSignupIPThrottle implements [v1.SignupIPThrottle] (the per-IP
 // signup rate-limit boundary, declared in v1 to keep the v1 package
 // the source of truth for its own boundaries) with a sliding-window
@@ -167,7 +177,24 @@ func (t *RedisSignupIPThrottle) CheckIP(ctx context.Context, ip string) error {
 	// each landing on its own empty bucket, so the bulk-account-mint
 	// vector F-1232 exists to close was open to anyone with IPv6
 	// (audit-2026-07-23).
-	count, err := t.counter.Incr(ctx, t.keyPrefix+throttleIPKey(ip))
+	// The increment runs on the caller's VALUES without its
+	// cancellation, bounded by [signupThrottleIncrTimeout].
+	//
+	// Two reasons, both load-bearing. First, this counter cannot tell a
+	// caller-cancelled call from a Redis outage: every error below arms
+	// the dwell clock and resets the recovery streak, so a client that
+	// connects, posts a signup and immediately RSTs a few times a second
+	// keeps the clock armed forever — the 30 s unbroken-success streak
+	// that disarms it can never accumulate — and past the window CheckIP
+	// returns ErrThrottleUnavailable, taking signup offline for
+	// EVERYONE while Redis is healthy (REL-06 F059,
+	// reverification-2026-09-18). Second, an attempt that errors out is
+	// an attempt that was never counted: aborting mid-flight would
+	// otherwise buy unlimited uncounted signup attempts, which is
+	// exactly the bulk-mint vector F-1232 exists to close.
+	incrCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), signupThrottleIncrTimeout)
+	defer cancel()
+	count, err := t.counter.Incr(incrCtx, t.keyPrefix+throttleIPKey(ip))
 	if err != nil {
 		if t.observeRedisFailure() {
 			return ErrThrottleUnavailable

@@ -24,9 +24,12 @@ import (
 // default: a backstop, not the usual limiter.
 const throttleTakeTimeout = 5 * time.Second
 
-// throttleContext derives the context the throttle's backend call runs
-// under: the request's values, WITHOUT its cancellation, bounded by
-// [throttleTakeTimeout].
+// throttleContext derives the context an abuse-prevention seam's
+// backend call runs under: the request's values, WITHOUT its
+// cancellation, bounded by [throttleTakeTimeout]. Shared by the two
+// pre-dispatch seams in this package — the rate-limit take and the
+// [MonthlyQuota] month-to-date read — because the hazard below is a
+// property of the dwell-clock design both mirror, not of either seam.
 //
 // A client abort must not reach the limiter as an error. The bucket
 // cannot tell a caller-cancelled call from a Redis outage — every error

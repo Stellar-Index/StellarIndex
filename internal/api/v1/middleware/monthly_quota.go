@@ -199,7 +199,18 @@ func MonthlyQuota(reader MonthToDateReader, logger *slog.Logger, opts ...Monthly
 				next.ServeHTTP(w, r)
 				return
 			}
-			used, err := reader.MonthToDate(r.Context(), id)
+			// Detached from the client's cancellation, bounded by
+			// [throttleTakeTimeout] — the same derivation the rate-limit
+			// take uses, for the same reason. This gate's dwell clock is
+			// process-wide and cannot tell a caller-cancelled read from a
+			// counter outage, so without the detach a client that
+			// connects and immediately RSTs a few times a second holds
+			// redisErrorSince armed indefinitely and, past the window,
+			// 429s EVERY metered customer while the counter is healthy
+			// (REL-06 F059, reverification-2026-09-18).
+			readCtx, readCancel := throttleContext(r)
+			used, err := reader.MonthToDate(readCtx, id)
+			readCancel()
 			if err != nil {
 				if gate.observeReadFailure() {
 					// W1-flow-register-4: the counter has been unreadable
