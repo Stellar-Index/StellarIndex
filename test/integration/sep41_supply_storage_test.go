@@ -254,6 +254,11 @@ func TestSEP41SupplyRollup_AdvanceDeltaAndFallback(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
+	// This test pins the tip-deferral guard, so declare the domain durably
+	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
+	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
+
 	const contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 	const otherContract = "CC4WPS7HRSPRZAXBVUDYLRXLZRHPLA6VTZARKZJTNVNECAS5IDRXRUB6"
 	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
@@ -362,6 +367,11 @@ func TestSEP41GenesisBaseline_LifetimeSupplyEndToEnd(t *testing.T) {
 		t.Fatalf("store open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+
+	// This test pins the tip-deferral guard, so declare the domain durably
+	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
+	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	// Real production reader → computer over the store.
 	reader := supply.NewStorageSEP41SupplyReader(sep41StoreAdapter{s: store})
@@ -610,6 +620,11 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
+	// This test pins the tip-deferral guard, so declare the domain durably
+	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
+	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
+
 	// Raw connection for DIRECT column assertions — the exported reader hides
 	// last_ledger and the fold-vs-genesis column split, so this is the literal
 	// proof that the reset zeroes the fold columns and spares the genesis ones.
@@ -801,6 +816,11 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
+	// This test pins the tip-deferral guard, so declare the domain durably
+	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
+	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
+
 	// Raw connection for DIRECT fold-column assertions — the exported reader
 	// hides last_ledger and the fold-vs-genesis column split.
 	rawdb, err := sql.Open("pgx", dsn)
@@ -967,6 +987,11 @@ func TestSEP41SupplyRollup_ResetDuringAdvanceIsNotStranded(t *testing.T) {
 		t.Fatalf("store open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+
+	// This test pins the tip-deferral guard, so declare the domain durably
+	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
+	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	rawdb, err := sql.Open("pgx", dsn)
 	if err != nil {
@@ -1150,6 +1175,11 @@ func TestSEP41RollupCheckpoints_DerivedReconcile(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
+	// This test pins the tip-deferral guard, so declare the domain durably
+	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
+	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
+
 	const (
 		contractA = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 		contractB = "CC4WPS7HRSPRZAXBVUDYLRXLZRHPLA6VTZARKZJTNVNECAS5IDRXRUB6"
@@ -1246,6 +1276,11 @@ func TestSEP41SupplyRollup_LargeI128(t *testing.T) {
 		t.Fatalf("store open: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+
+	// This test pins the tip-deferral guard, so declare the domain durably
+	// ingested past every ledger it uses: AdvanceSEP41SupplyRollup folds no
+	// further than the projector's cursor (F118, see settleSEP41Cursor).
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
 
 	const contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 	huge, _ := new(big.Int).SetString("123456789012345678901234567890", 10)

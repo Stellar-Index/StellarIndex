@@ -351,6 +351,28 @@ against.
   (0064), which materializes no XLM inputs, and are unchanged. Proven
   against a real TimescaleDB: a fixture of 57 USD priced + 30 XLM at
   0.5 served 57.00 before and 72.00 after, matching the source chart.
+- **storage:** a SEP-41 supply event whose write hit a TRANSIENT fault is
+  no longer **dropped from served supply** when it finally lands. The
+  projector does not abort a cycle on a deadlock / statement_timeout: it
+  writes the rest of the window and caps its ingestion cursor at (held
+  ledger − 1) so the failed row is retried later. The 5-minute rollup
+  pass, bounding its "settled tail" by `max(ledger)` alone, folded the
+  later rows and pushed `sep41_supply_rollup.last_ledger` ABOVE the held
+  ledger — after which the retried row was invisible to BOTH halves of
+  the read (folds look only above `last_ledger`; the reader's live delta
+  adds only `ledger > last_ledger`), so its mint/burn was silently and
+  permanently missing from the token's total supply while the pass
+  reported a normal advance. The fold now requires BOTH bounds — below
+  `max(ledger)` (the tip may be mid-write) **and** at-or-below the
+  projector's `sep41_supply` ingestion cursor — i.e. it folds only what
+  the sole writer has COMMITTED, and leaves the held ledger to the
+  reader's live delta until its row exists. With no cursor row at all
+  (the projector has never committed a cycle) the pass folds nothing
+  rather than assuming settlement: the reader stays exact via the
+  full-sum path and the fold resumes on the first cursor commit. Proven
+  against a real TimescaleDB — a 1,000,000-unit mint retried after the
+  fold passed its ledger was absent from served supply before and is
+  present after. (audit-2026-09-02 F118)
 
 - **ci,ops:** `config_acknowledged=true` can no longer clear a config
   surface the deploy PROVED unapplied by asking the host. The deploy's

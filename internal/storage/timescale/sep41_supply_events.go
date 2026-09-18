@@ -742,6 +742,21 @@ func dedupeSEP41SupplyRows(rows []SEP41SupplyEvent) []SEP41SupplyEvent {
 	return out
 }
 
+// sep41SupplyCursorSource / sep41SupplyCursorSub name the ingestion_cursors
+// row that records how far the sep41_supply domain is DURABLY written: the
+// projector's per-source cursor, upserted as
+// `UpsertCursor(ctx, "projector", src.Name, commitTo)` by
+// internal/projector once a cycle's sink writes have all committed
+// (src.Name is internal/sources/sep41_supply.SourceName). Spelled as
+// literals rather than imported so the storage layer keeps no dependency
+// on the source packages; the pairing is pinned end-to-end by
+// TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor, which seeds the
+// cursor through the exact call the projector makes.
+const (
+	sep41SupplyCursorSource = "projector"
+	sep41SupplyCursorSub    = "sep41_supply"
+)
+
 // SEP41RollupAdvance reports what one AdvanceSEP41SupplyRollup pass
 // folded, for the worker's metrics + logging.
 type SEP41RollupAdvance struct {
@@ -759,14 +774,43 @@ type SEP41RollupAdvance struct {
 // ([Store.ResetSEP41SupplyRollupFold], and [Store.UpsertSEP41GenesisBaseline]
 // when the floor moves), and the genesis columns are the seed's alone.
 //
-// It sums only rows with `ledger > last_ledger` AND strictly below the
-// contract's current max ledger. The `< max(ledger)` guard defers the
-// tip ledger — which may still be mid-write in the indexer (a separate
-// process) — so a partially-written ledger is never half-folded into
-// the running total (that would permanently undercount, since the
-// reader's delta only picks up `ledger > last_ledger`). The tip folds
-// on a later pass, once a higher ledger exists to prove it settled;
-// meanwhile the reader's live delta covers it, so nothing is lost.
+// It sums only rows with `ledger > last_ledger` that are SETTLED by BOTH
+// independent pieces of evidence that a ledger will receive no further
+// write:
+//
+//   - `< max(ledger)` defers the tip ledger, which may still be
+//     mid-write, so a partially-written ledger is never half-folded;
+//   - `<= durable_cursor` defers everything the sole writer has not yet
+//     COMMITTED, where durable_cursor is the projector's ingestion
+//     cursor for the `sep41_supply` domain
+//     (ingestion_cursors(projector, sep41_supply), written by
+//     internal/projector after a cycle's sink writes all succeeded).
+//
+// The second bound is what makes the fold safe against OUT-OF-ORDER
+// writes (audit 2026-09-02, F118). A sink write that fails transiently
+// — a deadlock, a statement_timeout — does NOT abort the projector's
+// cycle: the rest of the window's rows are written and the cursor is
+// capped at (lowest held ledger − 1) so the failed row is retried on a
+// later cycle. Bounding the fold by max(ledger) alone let a 5-minute
+// rollup pass fold PAST the held ledger L and set last_ledger above it;
+// when the retry finally wrote L, that row was below the checkpoint
+// (so no later fold could ever see it — the incremental watermark only
+// looks above last_ledger) and below the reader's delta floor (which
+// only adds `ledger > last_ledger`), so its amount was permanently
+// excluded from served SEP-41 supply — a silent UNDERCOUNT reported as
+// a normal advance. Folding no further than the durable cursor keeps
+// ledger L inside the reader's live delta until the row that belongs to
+// it has actually committed.
+//
+// Fail-closed when the cursor row is ABSENT (the projector has never
+// committed a cycle for this domain): the pass folds nothing and
+// reports Advanced=false. Nothing is lost or wrong — with last_ledger
+// unmoved the reader answers from the exact full-sum/delta path, the
+// same answer at a higher query cost — and the fold resumes by itself
+// on the projector's first cursor commit. The alternative (assume
+// settlement with no evidence of it) is the defect above. Same posture
+// as the density projection's refusal to credit a cursor span it cannot
+// evidence (see [Cursor] / migration 0046).
 //
 // Idempotent + monotonic: re-running with no newly-settled rows is a
 // no-op (zero delta, unchanged last_ledger); the per-kind totals only
@@ -827,7 +871,12 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 	//              MATERIALIZED: evaluate (and lock) exactly once.
 	//   bound.mx — the contract's current max ledger; we fold strictly
 	//              below it so the (possibly mid-write) tip is deferred.
-	//   delta    — the settled tail sum over (from_ledger, mx), floored.
+	//   settled  — the sep41_supply domain's durable ingestion cursor:
+	//              every ledger at-or-below it has fully committed, so
+	//              nothing can still arrive there. 0 (fold nothing) when
+	//              the projector has never committed a cycle.
+	//   delta    — the settled tail sum over (from_ledger, settled bound),
+	//              floored.
 	//   UPDATE   — add the delta into the running totals and move
 	//              last_ledger to the max ledger actually folded
 	//              (COALESCE back to from_ledger when nothing settled).
@@ -844,6 +893,13 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
               FROM sep41_supply_events
              WHERE contract_id = $1
         ),
+        settled AS (
+            SELECT COALESCE(
+                       (SELECT last_ledger
+                          FROM ingestion_cursors
+                         WHERE source = $2 AND sub_source = $3),
+                       0) AS through
+        ),
         delta AS (
             SELECT
                 (SELECT from_ledger FROM locked)                                   AS from_ledger,
@@ -856,6 +912,7 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
                AND e.ledger       > (SELECT from_ledger  FROM locked)
                AND e.ledger      >= (SELECT floor_ledger FROM locked)
                AND e.ledger       < (SELECT mx FROM bound)
+               AND e.ledger      <= (SELECT through FROM settled)
         )
         UPDATE sep41_supply_rollup r
            SET mint_total     = r.mint_total     + d.d_mint,
@@ -868,7 +925,9 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
         RETURNING d.from_ledger, r.last_ledger
     `
 	var fromLedger, toLedger int64
-	if err := tx.QueryRowContext(ctx, q, contractID).Scan(&fromLedger, &toLedger); err != nil {
+	if err := tx.QueryRowContext(ctx, q, contractID,
+		sep41SupplyCursorSource, sep41SupplyCursorSub,
+	).Scan(&fromLedger, &toLedger); err != nil {
 		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
 	}
 	if err := tx.Commit(); err != nil {
