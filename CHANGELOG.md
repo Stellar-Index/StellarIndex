@@ -168,6 +168,18 @@ against.
   an AST guard keeping `main.go` on the backend-aware constructor. Keys
   already deleted by this defect cannot be restored — affected accounts
   need a new key minted.
+- **completeness (clickhouse-lake):** the substrate axis (Claim 1) now scans
+  each source's own `[genesis,tip]` range instead of reusing one lake-wide
+  scan's single result for every source (F073). The shared scan called
+  `SubstrateProblem` ONCE at the run's global floor and returns on the
+  FIRST problem it finds; feeding that single earliest value into every
+  source's `problem < genesis` test meant a hole below a high-genesis
+  source's own start silently masked a SECOND, later hole INSIDE that
+  source's own range — the scan never got far enough to find it, so the
+  source published `substrate_ok=true` over a range that demonstrably had a
+  problem. `substrateForGenesis` now scans from `max(run-floor,
+  source-genesis)`, memoised per distinct floor so sources sharing a genesis
+  reuse one scan.
 - **api:** four more surfaces now apply the dex-nonstandard-decimals
   normalisation instead of publishing the RAW `prices_1m` ratio for a
   confirmed non-7-decimals token (F017). The class was half-fixed, and

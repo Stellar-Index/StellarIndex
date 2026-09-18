@@ -4,6 +4,7 @@
 package chops
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -547,6 +548,109 @@ func TestSourceSubstrateOK(t *testing.T) {
 					tc.problem, tc.hasProblem, tc.genesis, got, tc.want)
 			}
 		})
+	}
+}
+
+// fakeSubstrateLake returns a substrateScanner reproducing the two
+// clickhouse.SubstrateProblem behaviours the F073/RLT-123 regression tests
+// exercise: an endpoint-presence head guard that returns immediately when the
+// requested `from` is below the lake's true floor (mirroring
+// substrateHeadProblem's early return, which sits ABOVE the windowed walk),
+// and — once `from` is at/above that floor — the FIRST interior hole at or
+// after `from` (mirroring SubstrateProblem's "return on the first non-clean
+// window" semantics). calls, if non-nil, records every (from,to) the scanner
+// was invoked with.
+func fakeSubstrateLake(haveMin uint32, calls *[]struct{ from, to uint32 }, interiorHoles ...uint32) substrateScanner {
+	return func(_ context.Context, from, to uint32) (uint32, bool, string, error) {
+		if calls != nil {
+			*calls = append(*calls, struct{ from, to uint32 }{from, to})
+		}
+		if from < haveMin {
+			return haveMin - 1, true, fmt.Sprintf("head truncated — first present is %d", haveMin), nil
+		}
+		for _, h := range interiorHoles {
+			if h >= from && h <= to {
+				return h, true, fmt.Sprintf("interior hole at %d", h), nil
+			}
+		}
+		return 0, false, "", nil
+	}
+}
+
+// TestSubstrateForGenesis_PerSourceScanFindsTheHoleAboveItsOwnGenesis pins
+// F073 (CONFIRMED, STILL-OPEN at re-verification): a single global scan
+// reused across every source returns only the FIRST (lowest) problem in the
+// whole queried range, so a hole below a high-genesis source's own start
+// silently masks a SECOND, LATER hole INSIDE that source's own range —
+// sourceSubstrateOK sees the low problem, reads `problem < genesis` = true,
+// and the source is certified substrate-OK over a range that demonstrably
+// contains its own hole. Scoping the scan to the source's own
+// [genesis,tip] (substrateForGenesis) must surface the source's own hole
+// instead.
+func TestSubstrateForGenesis_PerSourceScanFindsTheHoleAboveItsOwnGenesis(t *testing.T) {
+	const genesis = uint32(55_000_000) // strictly between the two holes
+	const tip = uint32(70_000_000)
+	const floor = uint32(2)             // full/deep run: the run's global scan floor
+	const lowHole = uint32(51_000_000)  // below genesis — must NOT mask the source
+	const highHole = uint32(62_500_000) // inside this source's own range
+
+	scan := fakeSubstrateLake(2 /* lake head is intact */, nil, lowHole, highHole)
+
+	// Contrast (test setup sanity): the OLD architecture called the scanner
+	// ONCE at the run's global floor and reused the result for every source.
+	// That single call surfaces the LOWER hole and reads as clean for
+	// genesis=55M — the exact F073 mechanism.
+	globalProblem, globalHas, _, gerr := scan(context.Background(), floor, tip)
+	if gerr != nil {
+		t.Fatalf("scan: %v", gerr)
+	}
+	if globalProblem != lowHole || !globalHas {
+		t.Fatalf("test setup: fake lake's global scan should surface the lower hole at %d first, got (%d,%v)", lowHole, globalProblem, globalHas)
+	}
+	if !sourceSubstrateOK(globalProblem, globalHas, genesis) {
+		t.Fatalf("test setup: the global problem must read as 'clean' for genesis=%d under the OLD single-call wiring (that's the bug this test pins)", genesis)
+	}
+
+	// The fix: substrateForGenesis scopes the scan to this source's own
+	// range and must find ITS OWN hole, not the masking lower one.
+	cache := make(map[uint32]substrateScan)
+	got, err := substrateForGenesis(context.Background(), scan, cache, genesis, floor, tip)
+	if err != nil {
+		t.Fatalf("substrateForGenesis: %v", err)
+	}
+	if !got.has || got.problem != highHole {
+		t.Fatalf("substrateForGenesis(genesis=%d) = (problem=%d,has=%v), want (problem=%d,has=true) — the lower hole at %d must not mask this source's own hole at %d",
+			genesis, got.problem, got.has, highHole, lowHole, highHole)
+	}
+	if sourceSubstrateOK(got.problem, got.has, genesis) {
+		t.Fatalf("sourceSubstrateOK reported clean for genesis=%d despite its own hole at %d — F073 regression", genesis, highHole)
+	}
+}
+
+// TestSubstrateForGenesis_MemoizesByScanFloorAndSkipsWhenFloorExceedsTip
+// pins the efficiency + -skip-substrate contract substrateForGenesis adds on
+// top of the F073/RLT-123 fix: two sources sharing a scan floor must not
+// re-query the lake, and floor > tip (-skip-substrate: this run scanned no
+// substrate at all) must not query it either.
+func TestSubstrateForGenesis_MemoizesByScanFloorAndSkipsWhenFloorExceedsTip(t *testing.T) {
+	var calls []struct{ from, to uint32 }
+	scan := fakeSubstrateLake(2, &calls)
+	cache := make(map[uint32]substrateScan)
+
+	for i := 0; i < 2; i++ {
+		if _, err := substrateForGenesis(context.Background(), scan, cache, 2, 2, 100); err != nil {
+			t.Fatalf("substrateForGenesis: %v", err)
+		}
+	}
+	if len(calls) != 1 {
+		t.Fatalf("substrateForGenesis queried the lake %d times for the same floor, want 1 (memoised)", len(calls))
+	}
+
+	if res, err := substrateForGenesis(context.Background(), scan, cache, 2, 101, 100); err != nil || res.has {
+		t.Fatalf("substrateForGenesis(floor>tip) = (%+v,%v), want zero value with no query", res, err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("substrateForGenesis queried the lake on a floor>tip (-skip-substrate) run; want no additional calls, got %d total", len(calls))
 	}
 }
 

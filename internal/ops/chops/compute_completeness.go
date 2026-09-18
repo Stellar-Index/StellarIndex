@@ -46,6 +46,70 @@ func sourceSubstrateOK(problem uint32, hasProblem bool, genesis uint32) bool {
 	return !hasProblem || problem < genesis
 }
 
+// substrateScan is the memoized CH substrate-check result for one scanned
+// floor (see substrateForGenesis).
+type substrateScan struct {
+	problem uint32
+	has     bool
+	detail  string
+}
+
+// substrateScanner performs a [from,to] CH substrate query. It is the seam
+// clickhouse.SubstrateProblem is exposed through so substrateForGenesis is
+// unit-testable without a live lake.
+type substrateScanner func(ctx context.Context, from, to uint32) (problem uint32, hasProblem bool, detail string, err error)
+
+// substrateForGenesis returns the CH substrate verdict for ONE source's own
+// [max(floor,genesis), tip] range, scanning at most once per distinct floor
+// value (memoised in cache — only a handful of distinct genesis values exist
+// across the catalogue, so sources sharing a genesis reuse the same scan).
+//
+// F073 + RLT-123: scanning ONCE at the run's global floor and reusing that
+// single (problem, hasProblem) pair for every source's `problem < genesis`
+// test (sourceSubstrateOK) conflates "the earliest problem anywhere in the
+// whole queried range" with "does THIS source's own [genesis,tip] have a
+// problem". Two distinct ways that breaks:
+//   - F073: SubstrateProblem returns the FIRST problem it finds and stops.
+//     A hole below a high-genesis source's own start reads `problem <
+//     genesis` = true (clean) for that source even when a SECOND, LATER
+//     hole exists INSIDE its own range — the global scan never reached it
+//     because it already returned on the first (lower) one.
+//   - RLT-123: SubstrateProblem's endpoint-presence head guard fires on ANY
+//     truncation at the low end of the QUERIED range and returns
+//     immediately, before the windowed contiguity/hash walk ever runs. A
+//     lake truncated below a low-genesis source's floor (e.g. sdex, genesis
+//     2) but fully intact and hash-linked above a high-genesis source's own
+//     genesis trips that guard on the shared global call and skips the
+//     walk for EVERY source — masking a real interior gap/hash-break that
+//     the high-genesis source's own range does have.
+//
+// Scoping each call to the source's own floor fixes both: the windowed walk
+// runs over exactly that source's own range, and the head guard only fires
+// when THAT source's own floor is itself missing — never on a truncation
+// that lies entirely below it. floor > tip means the run scanned no
+// substrate at all (-skip-substrate); returns the zero value without
+// calling the scanner. Pure aside from the injected scanner call — the
+// dispatch logic itself is unit-testable with a fake scanner.
+func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[uint32]substrateScan, genesis, floor, tip uint32) (substrateScan, error) {
+	if floor > tip {
+		return substrateScan{}, nil
+	}
+	scanFrom := floor
+	if genesis > scanFrom {
+		scanFrom = genesis
+	}
+	if cached, ok := cache[scanFrom]; ok {
+		return cached, nil
+	}
+	p, has, d, err := scan(ctx, scanFrom, tip)
+	if err != nil {
+		return substrateScan{}, err
+	}
+	res := substrateScan{problem: p, has: has, detail: d}
+	cache[scanFrom] = res
+	return res, nil
+}
+
 // computeCompleteness is the ADR-0033 Phase 6 computor: it derives the
 // per-source completeness WATERMARK (substrate ∧ recognition ∧
 // projection) and writes it to completeness_snapshots for the API +
@@ -251,11 +315,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	recBySource, unattributed := attributeRecognitionGaps(ownerOf, recGaps)
 
-	// Substrate (Claim 1) is a property of the lake, not a source — compute the
-	// earliest gap/break ONCE in -ch mode (over the whole Soroban-era range) and
-	// reuse per source. The CH lake is the certified authoritative substrate.
-	var chSubProblem uint32
-	var chSubHas bool
+	// Substrate (Claim 1) is a property of the lake, but "does THIS source's
+	// own [genesis,tip] have a problem" is scoped per source (F073 / RLT-123
+	// — see substrateForGenesis): each source gets its own scan, floored at
+	// its own genesis and memoised by that floor so sources sharing a
+	// genesis reuse the same scan. The CH lake is the certified authoritative
+	// substrate.
+	chSubstrateScanner := substrateScanner(func(ctx context.Context, from, to uint32) (uint32, bool, string, error) {
+		return clickhouse.SubstrateProblem(ctx, *chAddr, from, to)
+	})
+	chSubstrateCache := make(map[uint32]substrateScan)
 	// subScanFrom is the FLOOR this run's substrate scan actually reached.
 	// subScanFrom > tip means "this run scanned no substrate at all"
 	// (-skip-substrate). Carried out of the switch because substrateClaim
@@ -269,16 +338,6 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		subScanFrom = uint32(2)
 		if *fromLedger > 2 {
 			subScanFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
-		}
-		p, has, d, serr := clickhouse.SubstrateProblem(ctx, *chAddr, subScanFrom, tip)
-		if serr != nil {
-			return fmt.Errorf("ch substrate: %w", serr)
-		}
-		chSubProblem, chSubHas = p, has
-		if has {
-			fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate problem at %d (%s)\n", p, d)
-		} else {
-			fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate intact [%d,tip] — contiguous + hash-chained\n", subScanFrom)
 		}
 	}
 
@@ -351,21 +410,36 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// Claim 1: substrate continuity + hash chain over [genesis, tip].
 		var substrateOK bool
 		if *useCH {
-			// Reuse the once-computed lake substrate; it's this source's
-			// problem only if the reported problem ledger falls at/after the
-			// source's genesis. SubstrateProblem returns coverage-correct
-			// problem ledgers for empty/head/tail absences (see its
-			// substrateHeadProblem doc) so a high-genesis source can't read a
-			// COVERAGE failure as "below my genesis, I'm fine" (F1 fail-open).
-			scanClean := sourceSubstrateOK(chSubProblem, chSubHas, genesis)
+			// Scan THIS source's own [genesis,tip] (memoised per floor — see
+			// substrateForGenesis); it's this source's problem only if the
+			// reported problem ledger falls at/after the source's genesis.
+			// SubstrateProblem returns coverage-correct problem ledgers for
+			// empty/head/tail absences (see its substrateHeadProblem doc) so
+			// a high-genesis source can't read a COVERAGE failure as "below
+			// my genesis, I'm fine" (F1 fail-open).
+			srcScanFrom := subScanFrom
+			if genesis > srcScanFrom {
+				srcScanFrom = genesis
+			}
+			srcSub, serr := substrateForGenesis(ctx, chSubstrateScanner, chSubstrateCache, genesis, subScanFrom, tip)
+			if serr != nil {
+				return fmt.Errorf("%s: ch substrate [%d,%d]: %w", src.name, srcScanFrom, tip, serr)
+			}
+			switch {
+			case srcSub.has:
+				fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate problem for %s at %d (%s)\n", src.name, srcSub.problem, srcSub.detail)
+			case subScanFrom <= tip:
+				fmt.Fprintf(os.Stderr, "compute-completeness: CH substrate intact [%d,tip] for %s — contiguous + hash-chained\n", srcScanFrom, src.name)
+			}
+			scanClean := sourceSubstrateOK(srcSub.problem, srcSub.has, genesis)
 			if !scanClean {
-				problems = append(problems, chSubProblem)
+				problems = append(problems, srcSub.problem)
 			}
 			// C4-057: gate what the run may PUBLISH on the range it actually
 			// scanned. The scan floor and the claim are different things and
 			// only the projection axis used to know that.
 			var subDetail string
-			substrateOK, subDetail = substrateClaim(genesis, tip, subScanFrom, scanClean, chSubProblem, priorSub[src.name])
+			substrateOK, subDetail = substrateClaim(genesis, tip, srcScanFrom, scanClean, srcSub.problem, priorSub[src.name])
 			detail = append(detail, subDetail)
 			// C4-057 (numeric-field gap): substrateClaim can refuse a CLEAN
 			// suffix scan (no prior / a FAILING prior / a stale prior leaving an
