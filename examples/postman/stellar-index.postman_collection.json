@@ -6106,6 +6106,78 @@
                   "_postman_previewlanguage": "json"
                 },
                 {
+                  "name": "Not found.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "price",
+                        "stream"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) Canonical asset identifier — matches the `asset_id` on\nresponse bodies. Query-parameter form is the shorter `asset`\nper the handler implementations (/v1/price, /v1/oracle/latest).\nStrict canonical form only — `XLM` / `USDC` are rejected;\nuse `native` for XLM and the full `<code>-<G…>` strkey for\ncredit assets.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "asset",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Quote-side asset. Either a canonical asset identifier (`native`,\n`<code>-<issuer>`, contract ID) for crypto-quoted pairs, or\nthe `fiat:<ISO-4217>` form for fiat quotes (e.g. `fiat:USD`,\n`fiat:EUR`). Default `fiat:USD`.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "quote",
+                          "value": "fiat:USD"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Which closed-bucket window series to follow, in seconds. The standard aggregator windows are 300, 3600, and 86400; a window the aggregator doesn't publish yields a silent (heartbeat-only) stream.",
+                            "type": "text/plain"
+                          },
+                          "key": "window_seconds",
+                          "value": "300"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "disabled": false,
+                        "description": {
+                          "content": "Opaque ID for resuming a previously-broken stream.",
+                          "type": "text/plain"
+                        },
+                        "key": "Last-Event-ID",
+                        "value": "<string>"
+                      },
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Not Found",
+                  "code": 404,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
                   "name": "Rate-limit quota exhausted. See `Retry-After` header.",
                   "originalRequest": {
                     "url": {

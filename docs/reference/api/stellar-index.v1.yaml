@@ -1890,6 +1890,7 @@ paths:
                 data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00.417Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
 
         "400":        { $ref: "#/components/responses/BadRequest" }
+        "404":        { $ref: "#/components/responses/NotFound" }
         "429":        { $ref: "#/components/responses/RateLimited" }
         "503":        { $ref: "#/components/responses/ServiceUnavailable" }
 

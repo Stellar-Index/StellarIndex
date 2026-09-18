@@ -137,6 +137,11 @@ against.
   matching the tip stream's shared producer, so a pair that clears the
   floor again simply resumes. Nil gates (operator disabled
   `[pricing_guard]`) withhold nothing, as everywhere else.
+  `openapi/stellar-index.v1.yaml` documents the new 404 for this path —
+  it listed only 200/400/429/503 while both siblings that answer the
+  same refusal, `/price` and `/price/tip/stream`, already listed it —
+  and the reference mirror, the Postman collection and the explorer's
+  generated types are regenerated from it.
 
 ## [v0.91.0] — 2026-09-18
 
