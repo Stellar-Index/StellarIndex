@@ -263,20 +263,38 @@ func TestChunkStrings(t *testing.T) {
 	})
 }
 
-func TestSortAccountMovementRows(t *testing.T) {
+// TestSortAccountMovementRowsForInsert pins the batch order the chunked
+// send relies on: LEDGER first, then address and the rest of the table's
+// ORDER BY columns. The previous address-first order made a partially
+// sent batch an address prefix spanning the window's whole ledger range,
+// which the max(ledger) resume then skipped over (RLT-296).
+func TestSortAccountMovementRowsForInsert(t *testing.T) {
 	rows := []AccountMovementRow{
 		{Address: "GB", Ledger: 2, TxHash: "z"},
 		{Address: "GA", Ledger: 5, TxHash: "a"},
 		{Address: "GA", Ledger: 1, TxHash: "b"},
+		{Address: "GA", Ledger: 2, TxHash: "b", OpIndex: 1},
+		{Address: "GA", Ledger: 2, TxHash: "b", OpIndex: 0},
 	}
-	sortAccountMovementRows(rows)
-	if rows[0].Address != "GA" || rows[0].Ledger != 1 {
-		t.Errorf("rows[0] = %+v, want address=GA ledger=1", rows[0])
+	sortAccountMovementRowsForInsert(rows)
+
+	type key struct {
+		addr    string
+		ledger  uint32
+		tx      string
+		opIndex uint32
 	}
-	if rows[1].Address != "GA" || rows[1].Ledger != 5 {
-		t.Errorf("rows[1] = %+v, want address=GA ledger=5", rows[1])
+	want := []key{
+		{"GA", 1, "b", 0},
+		{"GA", 2, "b", 0},
+		{"GA", 2, "b", 1},
+		{"GB", 2, "z", 0},
+		{"GA", 5, "a", 0},
 	}
-	if rows[2].Address != "GB" {
-		t.Errorf("rows[2] = %+v, want address=GB", rows[2])
+	for i, w := range want {
+		got := key{rows[i].Address, rows[i].Ledger, rows[i].TxHash, rows[i].OpIndex}
+		if got != w {
+			t.Errorf("rows[%d] = %+v, want %+v (ledger, then address, tx_hash, op_index)", i, got, w)
+		}
 	}
 }

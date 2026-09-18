@@ -118,6 +118,21 @@ against.
   than truncated — a surviving staleness key still escalates, an
   erased one never does. Value gauges are still not carried: they
   would report supply the failed run never computed.
+- **clickhouse,ops:** a `classic-movements-backfill` run interrupted
+  mid-batch can no longer leave a silent hole in
+  `stellar.account_movements`. The chunked INSERT sorted its rows by
+  ADDRESS first, so each 20k-row chunk was an address prefix spanning
+  the window's whole ledger range — after a partial send `max(ledger)`
+  already sat at the top of the window while every address past the
+  failure point held nothing for any of it, and the data-derived
+  `-resume` (which restarts from exactly that `max(ledger)`) skipped
+  those addresses for the entire window with no row, log line or count
+  to show for it. Rows are now sent in LEDGER order, so what survives a
+  partial send is complete for every ledger below the highest one
+  written and the one-ledger resume overlap repairs the rest. The
+  cancellation notice no longer claims resume picks up at the window's
+  start — it states the data-derived rule it actually follows.
+
 - **api,clickhouse:** `GET /v1/accounts/{g}/movements` no longer strands
   an account's pre-watermark history. The cap67 ceiling that splits the
   ClickHouse archive arm from the Postgres tail was applied to the page

@@ -218,7 +218,13 @@ const accountMovementsInsertChunk = 20_000
 // duplicate re-send of an already-written window (the same idempotent
 // re-derivation guarantee as every other ADR-0034 lake/serving
 // writer) — a caller that fails partway through a multi-chunk send
-// can simply retry the whole batch. Returns the number of ROWS sent
+// can simply retry the whole batch. A caller that does NOT retry —
+// one cancelled mid-batch, then restarted from
+// MaxAccountMovementLedger — is covered too: rows are sent in ledger
+// order (sortAccountMovementRowsForInsert), so whatever survives a
+// partial send is COMPLETE for every ledger below the highest one
+// written, which is exactly what makes max(ledger) a sound resume
+// checkpoint (RLT-296). Returns the number of ROWS sent
 // (not deduped — unlike Postgres's ON CONFLICT ... RETURNING, a
 // ClickHouse INSERT doesn't observe how many rows survive merge-time
 // dedup; "landed" isn't directly measurable here the way
@@ -234,11 +240,11 @@ func InsertAccountMovements(ctx context.Context, addr string, movements []Accoun
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	// Deterministic order (matches the table's own ORDER BY key) —
-	// unlike the retired Postgres writer this isn't for row-lock
-	// ordering (ClickHouse inserts don't take row locks), just for
-	// reproducible batches in tests and logs.
-	sortAccountMovementRows(rows)
+	// Deterministic, LEDGER-ORDERED — see
+	// sortAccountMovementRowsForInsert: the order decides what a
+	// partially-sent multi-chunk batch leaves behind, and every caller
+	// checkpoints on max(ledger).
+	sortAccountMovementRowsForInsert(rows)
 
 	conn, err := openAccountMovementsWrite(ctx, addr)
 	if err != nil {
@@ -303,16 +309,40 @@ func marshalAccountMovementAttributes(attrs map[string]any) (string, error) {
 	return string(b), nil
 }
 
-// sortAccountMovementRows sorts by the table's exact ORDER BY key
-// (address, ledger, tx_hash, op_index, leg_index, direction).
-func sortAccountMovementRows(rows []AccountMovementRow) {
+// sortAccountMovementRowsForInsert orders a batch for
+// InsertAccountMovements' chunked send: LEDGER first, then the table's
+// remaining ORDER BY columns (address, tx_hash, op_index, leg_index,
+// direction) for a fully deterministic, reproducible batch.
+//
+// Ledger-first is a resume-safety requirement, not a cosmetic choice
+// (RLT-296). A batch larger than accountMovementsInsertChunk is sent as
+// several INSERTs, and ClickHouse has no transaction spanning them: a
+// send that fails partway leaves the earlier chunks durably written.
+// Every caller checkpoints on MaxAccountMovementLedger — "the data IS
+// the checkpoint" (ADR-0048 D2) — so what the survivors look like
+// decides whether that checkpoint is sound:
+//
+//   - ADDRESS-first (the previous order) made each chunk an address
+//     PREFIX spanning the window's entire ledger range. max(ledger) then
+//     already sat at the top of the window while every address past the
+//     failure point held nothing for it, and -resume restarted there —
+//     silently skipping those addresses for the whole window, with no
+//     row, log line or count to show for it.
+//   - LEDGER-first makes each chunk a ledger prefix: every ledger
+//     strictly below the highest written one is COMPLETE, and resume
+//     restarts AT that ledger (re-processing it in full, which
+//     ReplacingMergeTree absorbs). No gap is reachable.
+//
+// ClickHouse re-sorts each part by the table's ORDER BY key at merge
+// time, so the insert order costs nothing on the read side.
+func sortAccountMovementRowsForInsert(rows []AccountMovementRow) {
 	sort.Slice(rows, func(i, j int) bool {
 		a, b := &rows[i], &rows[j]
-		if a.Address != b.Address {
-			return a.Address < b.Address
-		}
 		if a.Ledger != b.Ledger {
 			return a.Ledger < b.Ledger
+		}
+		if a.Address != b.Address {
+			return a.Address < b.Address
 		}
 		if a.TxHash != b.TxHash {
 			return a.TxHash < b.TxHash

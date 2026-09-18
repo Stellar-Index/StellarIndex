@@ -133,7 +133,11 @@ const classicMovementsWindowDeadline = 20 * time.Minute
 // FROM that ledger (not past it — a deliberate one-ledger overlap so
 // a crash mid-window can never silently skip a partially-written
 // ledger; ReplacingMergeTree absorbs the resulting duplicate insert
-// for free). This mirrors ch-participant-backfill / ch-txindex-
+// for free). That overlap is only sufficient because
+// clickhouse.InsertAccountMovements sends its chunks in LEDGER order
+// (RLT-296): a batch interrupted mid-send leaves every ledger below
+// its highest written one COMPLETE, so re-processing that one ledger
+// is the whole of the repair. This mirrors ch-participant-backfill / ch-txindex-
 // backfill's "the data IS the checkpoint" convention rather than a
 // separate ingestion_cursors row. Idempotent either way — ClickHouse
 // re-inserting an already-written window collapses at merge time.
@@ -243,7 +247,11 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 		}
 		if werr != nil {
 			if errors.Is(werr, context.Canceled) || ctx.Err() != nil {
-				fmt.Fprintf(os.Stderr, "classic-movements-backfill: cancelled mid-window [%d,%d] — resume will pick up at %d\n", wlo, whi, wlo)
+				// -resume is data-derived (MaxAccountMovementLedger), so
+				// it restarts at the highest ledger this window managed to
+				// write, NOT at the window's start — saying otherwise sent
+				// operators looking for a gap in the wrong place (RLT-296).
+				fmt.Fprintf(os.Stderr, "classic-movements-backfill: cancelled mid-window [%d,%d] — a -resume run restarts from the highest ledger already written to stellar.account_movements in [-from,-to], which for a partially-written window is above %d; inserts are ledger-ordered, so every ledger below that point is complete and that ledger itself is re-processed\n", wlo, whi, wlo)
 				break
 			}
 			return fmt.Errorf("classic-movements-backfill: window [%d,%d]: %w", wlo, whi, werr)
