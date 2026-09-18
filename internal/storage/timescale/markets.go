@@ -17,7 +17,10 @@ import (
 //
 // Volume24hUSD is the trailing-24h USD volume summed from the
 // prices_1m hypertable (which has per-bucket volume_usd
-// computed by the aggregator). Pointer + nil-when-zero so a
+// computed by the aggregator) — or, for a source-filtered
+// listing, from pools_per_source_1h, so the figure is that
+// venue's own contribution and not the pair's cross-venue
+// total (see [Store.SourceMarkets]). Pointer + nil-when-zero so a
 // pair with no USD-equivalent trades emits JSON null rather
 // than "0" — important for downstream filtering.
 //
@@ -28,8 +31,8 @@ import (
 //     the 24h window. Falls back to BucketCloseAt for pairs that
 //     traded 14d-active-but-24h-idle (no minute-precise signal in
 //     the 24h scan window).
-//   - BucketCloseAt — start-of-day UTC of the prices_1d bucket the
-//     pair was last active in. Always populated. Aligns to UTC
+//   - BucketCloseAt — start-of-day UTC of the day bucket the pair
+//     was last active in. Always populated. Aligns to UTC
 //     midnight by construction (`time_bucket('1 day', ts)`); pre
 //     2026-05-27 this was misnamed `last_trade_at`, but most pairs
 //     surfaced exactly-midnight values and clients computing
@@ -41,10 +44,14 @@ type Market struct {
 	BucketCloseAt time.Time
 	TradeCount24h int64
 	Volume24hUSD  *string
-	// LastPrice is the last quote-per-base price observed in
-	// prices_1m for this pair. nil when no recent bucket has a
-	// non-null `last_price` (cold pair, freshly-ingested fixture,
-	// etc.). Numeric-stringified for precision parity.
+	// LastPrice is the last quote-per-base price observed for this
+	// pair: the newest prices_1m bucket close within the trailing 24h,
+	// or — for a pair that has been idle longer than that — the newest
+	// materialized prices_1d close inside the recency window. Under a
+	// source filter it is that VENUE's own last price, from
+	// pools_per_source_1h. nil when no bucket in range has a non-null
+	// `last_price` (cold pair, freshly-ingested fixture, etc.).
+	// Numeric-stringified for precision parity.
 	LastPrice *string
 }
 
@@ -139,12 +146,18 @@ func (s *Store) DistinctPairsExt(ctx context.Context, cursor string, limit int, 
 }
 
 // SourceMarkets returns one page of (base, quote) pairs the given
-// source observed in the trailing MarketsRecencyWindow. Same shape
-// as DistinctPairsExt but with `t.source = $source` filter applied
-// before the GROUP BY — gives a per-DEX pool list with per-pool
-// 24h volume + trade count + last-trade timestamp.
+// source observed in the trailing MarketsRecencyWindow — a per-DEX
+// pool list whose 24h volume, 24h trade count and last price are THAT
+// venue's own, computed from the per-source CAGG /v1/pools reads. Same
+// wire shape as DistinctPairsExt.
+//
+// It deliberately does NOT route through distinctPairsCommon: the
+// pair-wide price CAGGs have no per-source grain to filter on, only a
+// `sources` array to test membership against, so a source-filtered
+// read of them returns the whole market's figures (F027 / K031). See
+// [sourceMarketsCommon].
 func (s *Store) SourceMarkets(ctx context.Context, source, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
-	return s.distinctPairsCommon(ctx, source, "", cursor, limit, order)
+	return s.sourceMarketsCommon(ctx, source, cursor, limit, order)
 }
 
 // AssetMarkets returns one page of (base, quote) pairs where the
@@ -280,34 +293,24 @@ func (s *Store) AllPools(ctx context.Context, filter PoolsFilter, cursor string,
 	return out, nextCursor, nil
 }
 
-func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit int, order MarketsOrder) (string, []any) { //nolint:funlen // CTE + select + 2 ordering branches form one query template; splitting would scatter the SQL across helpers
-	// Pre-#25 this query scanned the trades hypertable three times:
-	// once for the vol_24h CTE (24h SUM grouped by source+pair),
-	// once for the last_px CTE (DISTINCT ON per-source latest price),
-	// and once for the outer FROM trades enumeration (14d window
-	// LEFT JOINing both CTEs). Measured 8-30s on a populated 2.7B-
-	// row hypertable; #23 wrapped the result in stale-while-
-	// revalidate so user requests stayed sub-ms warm but cold-fill
-	// + the background refresh both paid the full cost.
-	//
-	// Post-#25 every read collapses into a single scan of the
-	// pools_per_source_1h continuous aggregate (migration 0036).
-	// One row per (source, base, quote, 1h bucket) holds
-	// SUM(usd_volume) split by Phase-1-priced vs needs-XLM-fallback,
-	// COUNT(*), and last(quote_amount/base_amount, ts). The
-	// `pools` CTE re-aggregates those hourly rows over the 14d
-	// window with FILTER clauses pulling the 24h slice for
-	// vol_24h_usd + count_24h. Trade-off: last_trade_at lags by up
-	// to one refresh interval (5 min) — acceptable for a pools
-	// discovery surface.
-	//
-	// XLM-fallback semantics preserved exactly: priced trades
-	// contribute their stored usd_volume; unpriced trades with an
-	// XLM leg contribute base_amount × XLM/USD (or quote_amount
-	// × XLM/USD); pure-SEP-41/SEP-41 unpriced trades stay 0 (the
-	// pre-#25 query returned NULL; the handler scan collapses
-	// NULL and "0" identically, so functionally equivalent).
-	cte := `
+// perSourcePoolsCTE is the per-(source, base, quote) scan of the
+// pools_per_source_1h continuous aggregate (migration 0036) that BOTH
+// per-venue reads share: /v1/pools (buildPoolsQuery) and the
+// source-filtered /v1/markets listing (buildSourceMarketsQuery).
+//
+// It is one literal, not two, because the two surfaces are required to
+// agree: `/v1/markets?source=X` and `/v1/pools?source=X` describe the
+// same venue's same pair and used to disagree by orders of magnitude —
+// the markets listing read the PAIR-WIDE prices_1m/prices_1d CAGGs and
+// merely FILTERED them by `source = ANY(sources)`, which selects
+// BUCKETS a venue printed in, not that venue's contribution (F027 /
+// K031). Sharing the CTE makes the agreement structural instead of a
+// thing two query templates have to remember.
+//
+// Callers append their own filter predicates, the GROUP BY, and their
+// ordering tail. $1 is the recency-window lower bound; every caller
+// binds it first.
+const perSourcePoolsCTE = `
         WITH xlm_usd AS (
           SELECT vwap
             FROM prices_1m
@@ -347,6 +350,35 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
           FROM pools_per_source_1h p
          WHERE p.bucket >= $1
     `
+
+func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit int, order MarketsOrder) (string, []any) { //nolint:funlen // CTE + select + 2 ordering branches form one query template; splitting would scatter the SQL across helpers
+	// Pre-#25 this query scanned the trades hypertable three times:
+	// once for the vol_24h CTE (24h SUM grouped by source+pair),
+	// once for the last_px CTE (DISTINCT ON per-source latest price),
+	// and once for the outer FROM trades enumeration (14d window
+	// LEFT JOINing both CTEs). Measured 8-30s on a populated 2.7B-
+	// row hypertable; #23 wrapped the result in stale-while-
+	// revalidate so user requests stayed sub-ms warm but cold-fill
+	// + the background refresh both paid the full cost.
+	//
+	// Post-#25 every read collapses into a single scan of the
+	// pools_per_source_1h continuous aggregate (migration 0036).
+	// One row per (source, base, quote, 1h bucket) holds
+	// SUM(usd_volume) split by Phase-1-priced vs needs-XLM-fallback,
+	// COUNT(*), and last(quote_amount/base_amount, ts). The
+	// `pools` CTE re-aggregates those hourly rows over the 14d
+	// window with FILTER clauses pulling the 24h slice for
+	// vol_24h_usd + count_24h. Trade-off: last_trade_at lags by up
+	// to one refresh interval (5 min) — acceptable for a pools
+	// discovery surface.
+	//
+	// XLM-fallback semantics preserved exactly: priced trades
+	// contribute their stored usd_volume; unpriced trades with an
+	// XLM leg contribute base_amount × XLM/USD (or quote_amount
+	// × XLM/USD); pure-SEP-41/SEP-41 unpriced trades stay 0 (the
+	// pre-#25 query returned NULL; the handler scan collapses
+	// NULL and "0" identically, so functionally equivalent).
+	cte := perSourcePoolsCTE
 	// $4 sources, $5 base, $6 quote, $7 asset are always bound;
 	// empty values short-circuit each predicate so the planner
 	// skips it. Keeps the positional-arg layout stable across
@@ -439,7 +471,133 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	return cte + tail, args
 }
 
+// sourceMarketsCommon is the per-venue /v1/markets listing. It reads
+// the SAME per-source continuous aggregate /v1/pools reads
+// (pools_per_source_1h, via [perSourcePoolsCTE]) and collapses the
+// source dimension away — one row per canonical pair, carrying THAT
+// venue's own 24h trade count, 24h USD volume and last price.
+//
+// Why not distinctPairsCommon with a source filter (F027 / K031):
+// prices_1m and prices_1d are grouped by (bucket, base, quote) with an
+// `array_agg(DISTINCT source) AS sources` column, so `$source = ANY(
+// p.sources)` is a BUCKET-membership test, not a contribution filter.
+// A pair soroswap printed three times, in minutes SDEX printed a
+// thousand times in, came back with SDEX's thousand:
+// `/v1/markets?source=soroswap` reported the whole market's volume and
+// trade count while `/v1/pools?source=soroswap` reported soroswap's
+// own, so the two surfaces disagreed by orders of magnitude about the
+// same venue's same pair. The per-source grain only exists in
+// pools_per_source_1h, so that is what a per-source answer has to be
+// computed from.
+//
+// Freshness comes along with it: pools_per_source_1h has a 5-minute
+// end_offset against prices_1d's 6 hours, so the per-venue last_price
+// is minutes old rather than the previous UTC day's close (F028).
+func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	since := time.Now().UTC().Add(-MarketsRecencyWindow)
+	q, args := buildSourceMarketsQuery(since, source, cursor, limit, order)
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, "", fmt.Errorf("timescale: SourceMarkets: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out, hasMore, err := scanDistinctPairs(rows, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	nextCursor := ""
+	if hasMore && len(out) > 0 {
+		nextCursor = encodeMarketsCursor(out[len(out)-1], order)
+	}
+	return out, nextCursor, nil
+}
+
+// buildSourceMarketsQuery composes the per-venue listing over
+// [perSourcePoolsCTE]. Column list, cursor formats and ordering
+// branches are byte-compatible with buildDistinctPairsQuery so
+// [scanDistinctPairs] and [encodeMarketsCursor] serve both — only the
+// grain underneath differs.
+//
+// $1 since (14d window), $2 cursor, $3 limit+1 (overfetch-by-one),
+// $4 source.
+//
+// bucket_close_at is derived as `date_trunc('day', last_trade_at)`
+// rather than read from prices_1d: the field's documented meaning is
+// "start-of-day UTC of the day bucket the pair was last active in",
+// and the per-source last_trade_at answers that exactly — where
+// prices_1d could not, since its newest materialized bucket is the
+// PREVIOUS day (6h end_offset, materialized_only) and it is pair-wide
+// rather than per-venue anyway.
+func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
+	canonBase, canonQuote, flipped := canonOrientSQL("base_asset", "quote_asset")
+	ctes := perSourcePoolsCTE + `
+           AND p.source = $4
+         GROUP BY p.source, p.base_asset, p.quote_asset
+        ),
+        canon AS (
+          SELECT ` + canonBase + ` AS base_asset,
+                 ` + canonQuote + ` AS quote_asset,
+                 MAX(last_trade_at)              AS last_trade_at,
+                 SUM(count_24h)                  AS count_24h,
+                 SUM(vol_24h_usd::numeric)       AS vol_24h_num,
+                 (array_agg(
+                    CASE WHEN ` + flipped + ` AND last_price IS NOT NULL
+                         THEN (1.0 / NULLIF(last_price::numeric, 0))::text
+                         ELSE last_price END
+                    ORDER BY last_trade_at DESC NULLS LAST)
+                  FILTER (WHERE last_price IS NOT NULL))[1] AS last_price
+            FROM pools
+           GROUP BY ` + canonBase + `, ` + canonQuote + `
+        )
+        SELECT base_asset, quote_asset, last_trade_at,
+               date_trunc('day', last_trade_at) AS bucket_close_at,
+               count_24h, NULLIF(vol_24h_num, 0)::text AS vol_24h_usd, last_price
+          FROM canon
+    `
+	switch order {
+	case MarketsOrderVolume24hDesc:
+		const tail = `
+         WHERE $2 = ''
+            OR COALESCE(vol_24h_num, 0)
+                 <  CAST(NULLIF(split_part($2, ':', 1), '') AS numeric)
+            OR (
+                 COALESCE(vol_24h_num, 0)
+                 =  CAST(COALESCE(NULLIF(split_part($2, ':', 1), ''), '0') AS numeric)
+                 AND (base_asset || '|' || quote_asset)
+                     > substring($2 from position(':' in $2) + 1)
+               )
+         ORDER BY COALESCE(vol_24h_num, 0) DESC,
+                  (base_asset || '|' || quote_asset) ASC
+         LIMIT $3
+        `
+		return ctes + tail, []any{since, cursor, limit + 1, source}
+	default: // MarketsOrderPair
+		const tail = `
+         WHERE ($2 = '' OR (base_asset || '|' || quote_asset) > $2)
+         ORDER BY (base_asset || '|' || quote_asset) ASC
+         LIMIT $3
+        `
+		return ctes + tail, []any{since, cursor, limit + 1, source}
+	}
+}
+
 func (s *Store) distinctPairsCommon(ctx context.Context, source, asset, cursor string, limit int, order MarketsOrder) ([]Market, string, error) {
+	// A per-source listing is never answerable from the pair-wide price
+	// CAGGs — `$source = ANY(p.sources)` selects buckets a venue printed
+	// in, so every aggregate over them is the whole market's (F027 /
+	// K031). Route it to the per-source CAGG instead of computing a
+	// cross-source answer under a per-source label; no caller can reach
+	// the wrong shape by passing a source here.
+	if source != "" {
+		return s.sourceMarketsCommon(ctx, source, cursor, limit, order)
+	}
 	if limit < 1 {
 		limit = 100
 	}
@@ -652,8 +810,13 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// endpoint (/history, /ohlc, /chart, /vwap, /twap) are
 	// untouched; this changes only which CAGG this one *listing*
 	// query reads:
-	//   - active-pair set + last_trade_at + last_price (latest
-	//     within the 14d window) ← prices_1d   (~14 buckets/pair)
+	//   - 14d-active-pair set                   ← prices_1d
+	//     (~14 buckets/pair), UNIONed with the 24h prices_1m scan
+	//     below so a market whose first trade is today is listed
+	//     rather than omitted — see the FULL OUTER JOIN note.
+	//   - last_price: the newest prices_1m bucket's close within the
+	//     trailing 24h, falling back to prices_1d only for pairs idle
+	//     longer than that — see the last_price note below.
 	//   - 24h trade_count + volume_usd          ← prices_1m
 	//     RESTRICTED to the trailing 24h. Exact + fresh. A rolling
 	//     (non-hour-aligned) 24h window is NOT bucket-additive over
@@ -667,11 +830,29 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	//     stays prices_1m-accurate. (Corrects an earlier prices_1h
 	//     variant that shipped a ~9% headline-volume understatement
 	//     under a false "Σ-associative → identical" claim.)
-	// bucket_close_at rounds to the day (from prices_1d) — immaterial
-	// for a directory; the exact ts/price is on the detail
-	// endpoints. count_24h is COALESCE'd to 0 for
-	// 14d-active-but-24h-idle pairs (more robust than the prior
+	// bucket_close_at rounds to the day — immaterial for a directory;
+	// the exact ts/price is on the detail endpoints. It is the LATER
+	// of prices_1d's newest materialized bucket and the day of the
+	// newest prices_1m bucket, because prices_1d's newest bucket is
+	// the PREVIOUS UTC day for every pair that traded today (6h
+	// end_offset, materialized_only) and the field means "the day
+	// bucket the pair was last active in". count_24h is COALESCE'd to
+	// 0 for 14d-active-but-24h-idle pairs (more robust than the prior
 	// FILTER-SUM, which yielded NULL for that case).
+	//
+	// last_price + membership come from the FULL OUTER JOIN of d and h
+	// (F028). prices_1d is materialized_only with a 6-hour end_offset
+	// and a 6-hour schedule, so its newest bucket for an actively
+	// traded pair is yesterday's close — reading last_price from it
+	// served a price 12-36 h old under a field the spec documents as
+	// the latest observed price, and driving the listing off it ALONE
+	// (the prior LEFT JOIN, d on the left) omitted every market whose
+	// first trade is today, since such a pair has no prices_1d row at
+	// all. The 24h prices_1m scan already in `h` carries both answers
+	// at zero added cost: its newest non-null bucket close is the
+	// fresh price (30s end_offset), and its pair set is the missing
+	// membership. d still supplies pairs idle longer than 24h — and
+	// their last_price, which is genuinely older by construction.
 	//
 	// last_trade_at is sourced from the SAME 24h prices_1m scan as
 	// the volume aggregate (zero added cost) — MAX(bucket) gives
@@ -720,7 +901,9 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
             SELECT p.base_asset, p.quote_asset,
                    MAX(p.bucket)       AS last_bucket_1m,
                    SUM(p.trade_count)  AS count_24h,
-                   SUM(p.volume_usd)   AS vol_24h_num
+                   SUM(p.volume_usd)   AS vol_24h_num,
+                   (array_agg(p.last_price ORDER BY p.bucket DESC)
+                      FILTER (WHERE p.last_price IS NOT NULL))[1]::text AS last_price
               FROM prices_1m p
              WHERE p.bucket > NOW() - INTERVAL '24 hours'
                AND ($4 = '' OR $4 = ANY(p.sources))
@@ -728,14 +911,16 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
              GROUP BY p.base_asset, p.quote_asset
         ),
         raw AS (
-            SELECT d.base_asset, d.quote_asset,
+            SELECT COALESCE(d.base_asset, h.base_asset)   AS base_asset,
+                   COALESCE(d.quote_asset, h.quote_asset) AS quote_asset,
                    COALESCE(h.last_bucket_1m, d.bucket_close_at) AS last_trade_at,
-                   d.bucket_close_at,
+                   GREATEST(d.bucket_close_at,
+                            date_trunc('day', h.last_bucket_1m)) AS bucket_close_at,
                    COALESCE(h.count_24h, 0)  AS count_24h,
                    COALESCE(h.vol_24h_num, 0) AS vol_24h_num,
-                   d.last_price
+                   COALESCE(h.last_price, d.last_price) AS last_price
               FROM d
-              LEFT JOIN h
+              FULL OUTER JOIN h
                 ON h.base_asset = d.base_asset
                AND h.quote_asset = d.quote_asset
         ),

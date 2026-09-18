@@ -55,6 +55,25 @@ against.
   frozen window has claimed its own entry. Presence semantics are
   untouched: `flags.frozen` stays pair-wide and `stellarindex-ops
   freeze-unfreeze` still releases every window. (audit-2026-09-02 E1)
+- **markets (money):** `/v1/markets?source=X` now reports X's OWN 24h
+  volume, 24h trade count and last price, and the unfiltered listing
+  serves a last price from the current day rather than the previous
+  one. The per-source listing read the pair-wide `prices_1m` /
+  `prices_1d` continuous aggregates and filtered them by `$source =
+  ANY(sources)` — a test for the BUCKETS a venue printed in, which then
+  summed every venue's trades in those buckets: a pair soroswap printed
+  twice into minutes SDEX printed six times in came back with all
+  eight, and `/v1/pools?source=soroswap` (which always read the
+  per-source aggregate) disagreed with it by orders of magnitude on the
+  same venue's same pair. `SourceMarkets` now computes from
+  `pools_per_source_1h`, the same CTE `/v1/pools` uses, so the two
+  surfaces agree structurally. In the same read, `last_price` and
+  listing membership no longer come from `prices_1d` alone: that view
+  is materialized_only with a 6-hour end_offset, so its newest bucket
+  is the PREVIOUS UTC day's close for every pair that traded today, and
+  a market whose first trade was today had no row in it at all and went
+  unlisted. The 24h `prices_1m` scan already in the query now supplies
+  both. (audit-2026-09-02 F027, F028, K031)
 - **price serving (money):** a cached VWAP can no longer outlive the
   aggregator that publishes it. `cachekeys.VWAPTTL` now bounds every
   `vwap:` (and, through it, `confidence:`) key by a 5-minute silence
