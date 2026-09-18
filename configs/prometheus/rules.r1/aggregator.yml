@@ -490,6 +490,52 @@ groups:
             nonstandard_decimals_assets table directly.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
 
+      # ─── Decimals-guard sweep heartbeat (audit-2026-09-02 F040) ───
+      # The offender counters above (correction_failing and its inputs)
+      # cannot tell "the guard swept and found nothing" apart from "the
+      # guard never armed" — both read as a healthy-looking zero. A
+      # ClickHouse still loading metadata for the 150B-row lake at
+      # aggregator boot used to disable the guard for the WHOLE process
+      # lifetime with no metric surfacing it (the guard's lake dial now
+      # retries with backoff instead of retiring — see
+      # cmd/stellarindex-aggregator/main.go — but this alert is the
+      # backstop for a wedge the retry itself doesn't cover, e.g. the
+      # goroutine panicking past worker.Recover or the process losing
+      # its lake for good). internal/decimalsguard.Guard.Sweep stamps
+      # stellarindex_decimals_guard_sweep_last_success_unix on every
+      # completed pass, whether or not it finds an offender. Threshold
+      # is three sweep intervals (decimalsguard.DefaultInterval = 15m,
+      # so 45m) plus a 15m for-duration, and the query is scoped to
+      # job="stellarindex-aggregator" so the indexer/api binaries
+      # importing the same obs package — which register every gauge at
+      # its Go zero-value even though they never call Sweep — cannot
+      # hold the series at a permanent 0 and page a false positive (the
+      # same trap stellarindex_priceless_coverage_check_stale guards
+      # against in pricing-coverage.yml).
+      - alert: stellarindex_decimals_guard_sweep_stale
+        expr: |
+          (time() - stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}) > 2700
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+          summary: "Decimals-guard sweep has not completed in over 45 min — guard health is unknown"
+          description: |
+            The aggregator's decimals-assumption guard
+            (internal/decimalsguard) has not completed a Sweep pass in
+            over 45 minutes (three sweep intervals) plus a 15-minute
+            for-duration. The offender counters
+            (stellarindex_dex_trade_nonstandard_decimals_total,
+            stellarindex_nonstandard_decimals_lockstep_mismatch_total)
+            are now UNTRUSTWORTHY: a healthy zero and "the guard never
+            armed" look identical without this heartbeat. Check the
+            aggregator's `decimals-guard started` / `decimals-guard
+            exited with error` log lines and ClickHouse reachability,
+            then the runbook.
+
       # ─── Customer-webhook FAN-OUT losing events (C3-023) ───
       # Distinct from the two delivery alerts in api.yml, which only
       # start counting once a `webhook_deliveries` row exists. This one

@@ -215,6 +215,48 @@ func TestSweep_PropagatesEnumerationError(t *testing.T) {
 	}
 }
 
+// TestSweep_StampsHeartbeatOnSuccess proves a completed Sweep pass — even
+// one that finds zero offenders — stamps
+// obs.DecimalsGuardSweepLastSuccessUnix. Without this stamp (audit-2026-09-02
+// F040), a healthy "found nothing" sweep and a guard that never armed at all
+// (e.g. a ClickHouse that failed to answer at aggregator boot) are both
+// silent: the offender counters sit at zero either way.
+func TestSweep_StampsHeartbeatOnSuccess(t *testing.T) {
+	reader := &fakeReader{} // no refs at all — a completed, offender-free pass.
+	resolver := &fakeResolver{decimals: map[string]uint32{}}
+	g := New(reader, resolver, Options{Window: time.Minute})
+
+	before := time.Now().Unix()
+	if err := g.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	after := time.Now().Unix()
+
+	got := int64(testutil.ToFloat64(obs.DecimalsGuardSweepLastSuccessUnix))
+	if got < before || got > after {
+		t.Fatalf("DecimalsGuardSweepLastSuccessUnix = %d, want within [%d, %d] (stamped on this successful pass)", got, before, after)
+	}
+}
+
+// TestSweep_DoesNotStampHeartbeatOnEnumerationFailure proves a FAILED
+// enumeration does not stamp the heartbeat — stamping unconditionally would
+// hide exactly the "guard never armed" failure mode the gauge exists to
+// surface (a lake that never answers would still look freshly-swept).
+func TestSweep_DoesNotStampHeartbeatOnEnumerationFailure(t *testing.T) {
+	obs.DecimalsGuardSweepLastSuccessUnix.Set(0)
+
+	reader := &fakeReader{err: errors.New("db unreachable")}
+	resolver := &fakeResolver{decimals: map[string]uint32{}}
+	g := New(reader, resolver, Options{Window: time.Minute})
+
+	if err := g.Sweep(context.Background()); err == nil {
+		t.Fatal("expected enumeration error to propagate")
+	}
+	if got := testutil.ToFloat64(obs.DecimalsGuardSweepLastSuccessUnix); got != 0 {
+		t.Fatalf("DecimalsGuardSweepLastSuccessUnix = %v, want 0 (a failed enumeration must not stamp the heartbeat)", got)
+	}
+}
+
 // fakeWriter records every UpsertNonstandardDecimalsAsset call so tests can
 // assert the confirmed-offender persistence side of report().
 type fakeWriter struct {

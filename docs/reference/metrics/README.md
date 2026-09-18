@@ -3207,6 +3207,28 @@ ERROR log line, not a label. Any non-zero value is a real, silent mispricing
 on a live pair — page-adjacent (P2). Runbook:
 `docs/operations/runbooks/dex-nonstandard-decimals.md`.
 
+### `stellarindex_decimals_guard_sweep_last_success_unix`
+
+Gauge, no labels.
+
+Unix seconds of the most recent successful decimals-guard `Sweep` pass
+(`internal/decimalsguard.Guard.Sweep`), stamped whether or not that pass
+found an offender. Without it, `time() - this` is the staleness signal:
+the offender counters above
+(`stellarindex_dex_trade_nonstandard_decimals_total`,
+`stellarindex_nonstandard_decimals_lockstep_mismatch_total`) sitting at a
+healthy-looking zero cannot be told apart from "the guard swept and found
+nothing" versus "the guard never armed" — a ClickHouse that is still
+loading metadata for the 150B-row lake at aggregator boot used to disable
+the guard for the whole process lifetime with no metric surfacing it
+(audit-2026-09-02 F040). Alert: `stellarindex_decimals_guard_sweep_stale`
+(> 45 min, three sweep intervals, `for: 15m`), scoped to
+`job="stellarindex-aggregator"` so the indexer/api binaries — which
+register every metric in `internal/obs` at its Go zero-value even though
+they never call `Sweep` — cannot hold the series at a permanent 0 and page
+a false positive, the same trap
+`stellarindex_priceless_coverage_check_stale` guards against above.
+
 ## Nonstandard-decimals serving guard (API binary)
 
 ### `stellarindex_price_serve_declined_nonstandard_decimals_total`
@@ -3628,6 +3650,15 @@ them absent; this is the only series that can see that.
 
 ## Changelog
 
+- 2026-09-18 — added `stellarindex_decimals_guard_sweep_last_success_unix`
+  (gauge, no labels), emitted by the aggregator's decimals-guard
+  (`internal/decimalsguard.Guard.Sweep`) on every completed pass. Closes
+  the observability half of audit-2026-09-02 F040: the offender counters
+  alone could not tell "the guard found nothing" from "the guard never
+  ran". New `stellarindex_decimals_guard_sweep_stale` alert in
+  `deploy/monitoring/rules/aggregator.yml` +
+  `configs/prometheus/rules.r1/aggregator.yml`, plus a matching
+  `docs/operations/alerts-catalog.md` row, land in the same commit.
 - 2026-09-10 — added the per-process mapping-headroom family
   (`stellarindex_process_memory_mappings*`), emitted by
   `configs/ansible/roles/archival-node/files/memory-mappings.sh`. NOT

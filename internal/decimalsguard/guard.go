@@ -309,6 +309,13 @@ func (g *Guard) tick(ctx context.Context, phase string) {
 // decimals, and raises the metric (once per source+asset) for any confirmed
 // non-7 value. Returns an error only when the trade enumeration itself fails
 // — per-asset resolution failures are swallowed (retried next sweep).
+//
+// On every pass that completes its enumeration — whether or not it finds an
+// offender — it stamps obs.DecimalsGuardSweepLastSuccessUnix. Without that,
+// "the guard swept and found nothing" and "the guard never armed" both read
+// as the offender counters sitting at zero, and a ClickHouse that fails to
+// answer at aggregator boot used to disable the guard for the whole process
+// lifetime with no metric surfacing it.
 func (g *Guard) Sweep(ctx context.Context) error {
 	refs, err := g.reader.RecentSorobanDEXTrades(ctx, time.Now().Add(-g.window))
 	if err != nil {
@@ -321,6 +328,7 @@ func (g *Guard) Sweep(ctx context.Context) error {
 		}
 		g.report(ctx, ref, decimals)
 	}
+	obs.DecimalsGuardSweepLastSuccessUnix.Set(float64(time.Now().Unix()))
 	return nil
 }
 

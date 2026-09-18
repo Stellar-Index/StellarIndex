@@ -246,9 +246,30 @@ against.
   once at the first failure, once per ceiling-length interval while it
   persists, and once when the guard finally arms. A source-level
   tripwire keeps the wiring — and accounts for the two other components
-  that still dial the reader inline. (audit-2026-09-02 F040, partial:
-  the sweep-heartbeat gauge and its staleness alert need
-  `internal/obs` + `internal/decimalsguard`)
+  that still dial the reader inline. (audit-2026-09-02 F040, retry half;
+  the sweep-heartbeat gauge and its staleness alert land in the next
+  entry below, closing the finding)
+- **aggregator:** the decimals-assumption guard now emits
+  `stellarindex_decimals_guard_sweep_last_success_unix`, stamped by
+  `internal/decimalsguard.Guard.Sweep` on every pass that completes its
+  trade enumeration, whether or not it finds an offender. Closes the
+  observability half of audit-2026-09-02 F040: the offender counters
+  above (`stellarindex_dex_trade_nonstandard_decimals_total`,
+  `stellarindex_nonstandard_decimals_lockstep_mismatch_total`) sit at a
+  healthy-looking zero whether the guard swept and found nothing or
+  never armed at all, so an operator had no metric to tell the two
+  apart. The new `stellarindex_decimals_guard_sweep_stale` alert (>
+  45 min, three sweep intervals, `for: 15m`, scoped to
+  `job="stellarindex-aggregator"` so the indexer/api binaries exporting
+  the same gauge at its zero value cannot page a permanent false
+  positive) ships in this same commit in both rule trees —
+  `deploy/monitoring/rules/aggregator.yml` and
+  `configs/prometheus/rules.r1/aggregator.yml` — together with its
+  `docs/operations/alerts-catalog.md` row, because the repo's own
+  `lint-rule-equivalence` and `lint-alerts-catalog` gates require all
+  three in lockstep for any commit touching an alert tree. Both
+  companion trees are current as of this commit; nothing here is
+  tracked as a follow-up.
 - **aggregator:** `internal/aggregate/anomaly`'s package doc no longer
   describes a decision model the code does not implement. It documented
   the Phase-1 thresholds as calibrated against "the previous

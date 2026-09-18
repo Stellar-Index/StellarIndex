@@ -266,6 +266,7 @@ func registerAppMetricsTail() {
 		NotifySendsTotal,
 
 		DEXTradeNonstandardDecimalsTotal,
+		DecimalsGuardSweepLastSuccessUnix,
 		PriceServeDeclinedNonstandardDecimalsTotal,
 		NonstandardDecimalsCacheRefreshFailuresTotal,
 		NonstandardDecimalsPartialAliasFamilyTotal,
@@ -3969,6 +3970,25 @@ var DEXTradeNonstandardDecimalsTotal = prometheus.NewCounterVec(
 		Help: "DEX trades observed for a Soroban token whose on-chain decimals() != 7 — the served price for pairs involving this asset is silently skewed by 10^(7-decimals). Labels: source, asset (C-strkey). Any non-zero value is an unmitigated mispricing landmine; see runbook dex-nonstandard-decimals.md.",
 	},
 	[]string{"source", "asset"},
+)
+
+// DecimalsGuardSweepLastSuccessUnix — wall-clock unix seconds of the most
+// recent successful decimals-guard Sweep pass (decimalsguard.Guard.Sweep),
+// stamped whether or not that pass found an offender. Without it, the only
+// observability on the guard's health was DEXTradeNonstandardDecimalsTotal
+// and NonstandardDecimalsLockstepMismatchTotal — both offender counters —
+// so "the guard swept and found nothing" and "the guard never armed" were
+// indistinguishable: a ClickHouse that is still loading metadata for the
+// 150B-row lake at aggregator boot used to disable the guard for the whole
+// process lifetime with both counters sitting at a healthy-looking zero.
+// `time() - this` powers the staleness alert
+// (stellarindex_decimals_guard_sweep_stale), the same shape as
+// PricelessCoverageCheckLastSuccessUnix above.
+var DecimalsGuardSweepLastSuccessUnix = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_decimals_guard_sweep_last_success_unix",
+		Help: "Unix seconds of the most recent successful decimals-guard Sweep pass, stamped whether or not an offender was found. Staleness (vs the sweep interval) means the guard never armed or has wedged, not that no offenders exist.",
+	},
 )
 
 // PriceServeDeclinedNonstandardDecimalsTotal — HISTORICAL (permanently
