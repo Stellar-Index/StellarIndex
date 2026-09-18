@@ -280,7 +280,10 @@ func newListingClient(baseURL string) *listingClient {
 	c := &listingClient{
 		authMode: "none",
 		baseURL:  listingDemoBaseURL,
-		http:     &http.Client{Timeout: listingFetchTimeout},
+		http: &http.Client{
+			Timeout:       listingFetchTimeout,
+			CheckRedirect: listingCheckRedirect,
+		},
 	}
 	if k := strings.TrimSpace(os.Getenv("COINGECKO_API_KEY")); k != "" {
 		c.key, c.keyHeader, c.authMode, c.baseURL = k, "x-cg-pro-api-key", "pro", listingProBaseURL
@@ -291,6 +294,33 @@ func newListingClient(baseURL string) *listingClient {
 		c.baseURL = strings.TrimRight(baseURL, "/")
 	}
 	return c
+}
+
+// listingCheckRedirect refuses any hop that would leave the origin this
+// run dialled.
+//
+// The key travels in an x-cg-*-api-key HEADER (see get). Go's own
+// redirect header copier strips ONLY Authorization, WWW-Authenticate
+// and Cookie when a hop crosses hosts; every other header — this one
+// included — is re-sent verbatim. So a vendor 302, a hijacked edge or a
+// mistyped -base-url would otherwise hand the paid key to whatever the
+// Location names, including a plain-http downgrade, and the https://
+// check on -base-url only ever saw the CONFIGURED URL, never the
+// dialled one. Keeping the key out of the query string (G10-04) is only
+// half of keeping it out of a stranger's logs.
+//
+// A hop that stays on the same scheme and host is followed — the
+// credential goes nowhere it has not already been sent.
+func listingCheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	origin := via[0].URL
+	if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
+		return fmt.Errorf("listing-sync: refusing to follow a redirect from %s://%s to %s://%s — the API key would follow it",
+			origin.Scheme, origin.Host, req.URL.Scheme, req.URL.Host)
+	}
+	return nil
 }
 
 // get issues one bounded GET and returns the response for the caller to

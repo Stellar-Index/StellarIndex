@@ -309,3 +309,77 @@ func TestCuratedRWATextfileStampsARefusedRun(t *testing.T) {
 		}
 	}
 }
+
+// curatedRWATestResultsPath is the route every read in this file takes:
+// one public query's latest result.
+const curatedRWATestResultsPath = "/api/v1/query/6961845/results"
+
+// TestCuratedRWAClient_RefusesARedirectThatWouldCarryTheKey pins the
+// paid key to the origin the run dialled.
+//
+// Go's redirect header copier strips ONLY Authorization,
+// WWW-Authenticate and Cookie when a hop crosses hosts, so
+// X-Dune-API-Key is otherwise re-sent verbatim to whatever a 302 names
+// — a vendor redirect, a hijacked edge, or a mistyped -base-url,
+// including an https:// -> http:// downgrade. The https:// check on
+// -base-url only ever saw the CONFIGURED URL, never the dialled one.
+func TestCuratedRWAClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
+	var elsewhereHits atomic.Int32
+	var elsewhereSawKey atomic.Bool
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhereHits.Add(1)
+		if r.Header.Get("X-Dune-API-Key") != "" {
+			elsewhereSawKey.Store(true)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"state": "QUERY_STATE_COMPLETED", "execution_ended_at": "2026-09-17T04:58:12Z",
+			"result": map[string]any{"rows": []map[string]any{}, "metadata": map[string]any{"total_row_count": 0}},
+		})
+	}))
+	t.Cleanup(elsewhere.Close)
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(origin.Close)
+
+	_, err := newCuratedRWAClient(origin.URL, "k-secret").get(context.Background(), curatedRWATestResultsPath)
+	if err == nil {
+		t.Fatal("a cross-host redirect was followed — the run must refuse it, not carry the key over")
+	}
+	if !strings.Contains(err.Error(), "refusing to follow a redirect") {
+		t.Errorf("err = %v, want a refusal naming the redirect", err)
+	}
+	if elsewhereHits.Load() != 0 || elsewhereSawKey.Load() {
+		t.Errorf("the redirect target was dialled %d time(s) and saw the key = %v; X-Dune-API-Key must never leave the origin the run dialled",
+			elsewhereHits.Load(), elsewhereSawKey.Load())
+	}
+}
+
+// TestCuratedRWAClient_FollowsASameOriginRedirect — the policy is "the
+// key does not leave this origin", not "no redirects": a hop that keeps
+// the scheme and host is still followed, carrying the key as before.
+func TestCuratedRWAClient_FollowsASameOriginRedirect(t *testing.T) {
+	var gotKey string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/moved", func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("X-Dune-API-Key")
+		_ = json.NewEncoder(w).Encode(map[string]any{"state": "QUERY_STATE_COMPLETED"})
+	})
+	mux.HandleFunc("/api/v1/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/moved", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	b, err := newCuratedRWAClient(srv.URL, "k-secret").get(context.Background(), curatedRWATestResultsPath)
+	if err != nil {
+		t.Fatalf("same-origin redirect: %v", err)
+	}
+	if !strings.Contains(string(b), "QUERY_STATE_COMPLETED") {
+		t.Errorf("body = %q, want the moved resource", string(b))
+	}
+	if gotKey != "k-secret" {
+		t.Errorf("key at the same-origin hop = %q, want it carried", gotKey)
+	}
+}

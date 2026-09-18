@@ -97,6 +97,15 @@ against.
   correction is made on the directory row all three consumers read, so
   "price withheld", "demoted in the ranking" and "shows a flag pill" can
   never disagree.
+- **ops:** `curated-rwa-sync` and `listing-sync` now refuse to follow a
+  redirect that leaves the origin they dialled. Go's redirect header
+  copier strips only `Authorization`, `WWW-Authenticate` and `Cookie`
+  across hosts, so `X-Dune-API-Key` and `x-cg-*-api-key` were re-sent
+  verbatim to whatever a `302` named — a vendor redirect, a hijacked
+  edge or a mistyped `-base-url`, including an `https://` → `http://`
+  downgrade. The `-base-url` https check only ever saw the CONFIGURED
+  URL, never the dialled one. A same-origin hop is still followed
+  (RSEC-E1).
 
 ## [v0.91.0] — 2026-09-18
 

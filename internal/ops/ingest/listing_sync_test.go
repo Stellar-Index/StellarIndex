@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -559,4 +560,79 @@ func runListingSyncCapturingStderr(t *testing.T, args []string) (error, string) 
 	_ = w.Close()
 	os.Stderr = orig
 	return runErr, <-done
+}
+
+// TestListingClient_RefusesARedirectThatWouldCarryTheKey pins the paid
+// key to the origin the run dialled.
+//
+// Go's redirect header copier strips ONLY Authorization,
+// WWW-Authenticate and Cookie when a hop crosses hosts, so
+// x-cg-pro-api-key is otherwise re-sent verbatim to whatever a 302
+// names — a vendor redirect, a hijacked edge, or a mistyped -base-url,
+// including an https:// -> http:// downgrade. Keeping the key out of
+// the query string is only half of keeping it out of a stranger's logs.
+func TestListingClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
+	// Not parallel: it sets process environment.
+	t.Setenv("COINGECKO_API_KEY", "pro-secret")
+	t.Setenv("COINGECKO_DEMO_API_KEY", "")
+
+	var elsewhereHits atomic.Int32
+	var elsewhereSawKey atomic.Bool
+	elsewhere := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		elsewhereHits.Add(1)
+		if r.Header.Get("x-cg-pro-api-key") != "" {
+			elsewhereSawKey.Store(true)
+		}
+		_, _ = io.WriteString(w, listingCoinsFixture)
+	}))
+	defer elsewhere.Close()
+
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, elsewhere.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer origin.Close()
+
+	_, _, err := newListingClient(origin.URL).fetchStellarListings(context.Background())
+	if err == nil {
+		t.Fatal("a cross-host redirect was followed — the run must refuse it, not carry the key over")
+	}
+	if !strings.Contains(err.Error(), "refusing to follow a redirect") {
+		t.Errorf("err = %v, want a refusal naming the redirect", err)
+	}
+	if elsewhereHits.Load() != 0 || elsewhereSawKey.Load() {
+		t.Errorf("the redirect target was dialled %d time(s) and saw the key = %v; the API key must never leave the origin the run dialled",
+			elsewhereHits.Load(), elsewhereSawKey.Load())
+	}
+}
+
+// TestListingClient_FollowsASameOriginRedirect — the policy is "the key
+// does not leave this origin", not "no redirects": a hop that keeps the
+// scheme and host is still followed, carrying the key as before.
+func TestListingClient_FollowsASameOriginRedirect(t *testing.T) {
+	// Not parallel: it sets process environment.
+	t.Setenv("COINGECKO_API_KEY", "pro-secret")
+	t.Setenv("COINGECKO_DEMO_API_KEY", "")
+
+	var gotKey string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/moved", func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("x-cg-pro-api-key")
+		_, _ = io.WriteString(w, listingCoinsFixture)
+	})
+	mux.HandleFunc(listingCataloguePath, func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/moved", http.StatusFound)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	entries, _, err := newListingClient(srv.URL).fetchStellarListings(context.Background())
+	if err != nil {
+		t.Fatalf("same-origin redirect: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Error("no entries from the moved resource")
+	}
+	if gotKey != "pro-secret" {
+		t.Errorf("key at the same-origin hop = %q, want it carried", gotKey)
+	}
 }

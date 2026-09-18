@@ -184,8 +184,38 @@ func newCuratedRWAClient(baseURL, key string) *curatedRWAClient {
 	return &curatedRWAClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		key:     key,
-		http:    &http.Client{Timeout: curatedRWAFetchTimeout},
+		http: &http.Client{
+			Timeout:       curatedRWAFetchTimeout,
+			CheckRedirect: curatedRWACheckRedirect,
+		},
 	}
+}
+
+// curatedRWACheckRedirect refuses any hop that would leave the origin
+// this run dialled.
+//
+// The key travels in X-Dune-API-Key. Go's own redirect header copier
+// strips ONLY Authorization, WWW-Authenticate and Cookie when a hop
+// crosses hosts; every other header — this one included — is re-sent
+// verbatim. So a vendor 302, a hijacked edge or a mistyped -base-url
+// would otherwise hand the paid key to whatever the Location names,
+// including a plain-http downgrade, and the https:// check on -base-url
+// only ever saw the CONFIGURED URL, never the dialled one.
+//
+// Same posture as the customer-webhook sender, which refuses redirects
+// outright: a redirect a keyed read cannot follow safely is an error,
+// not a route. A hop that stays on the same scheme and host is followed
+// — the credential goes nowhere it has not already been sent.
+func curatedRWACheckRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) == 0 {
+		return nil
+	}
+	origin := via[0].URL
+	if req.URL.Scheme != origin.Scheme || req.URL.Host != origin.Host {
+		return fmt.Errorf("curated-rwa-sync: refusing to follow a redirect from %s://%s to %s://%s — the API key would follow it",
+			origin.Scheme, origin.Host, req.URL.Scheme, req.URL.Host)
+	}
+	return nil
 }
 
 // get performs one read. Every route this file touches is a GET of a
