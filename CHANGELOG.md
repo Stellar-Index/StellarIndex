@@ -77,6 +77,26 @@ against.
   that the fold columns sum exactly the rows with
   `COALESCE(genesis_baseline_ledger, 0) <= ledger <= last_ledger`. No migration
   — schema unchanged. Closes audit-2026-09-02 F022 / F029.
+- **directory:** a false-positive scam flag is now correctable durably. The
+  daily `directory-sync` upsert rewrote `source` on conflict, so a
+  hand-held correction to `account_directory` was adopted into the
+  upstream snapshot and overwritten on the next run — and a scam-class tag
+  there is not cosmetic: it withholds the issuer's published price and
+  market cap on `/v1/price`, `/v1/vwap`, `/v1/twap`, `/v1/chart` and
+  `/v1/price/tip` (`pricingguard.ScamGate`), demotes its assets below
+  every unflagged one in the `/v1/assets` ranking, and draws the
+  explorer's flag pill. The conflict arm is now ownership-scoped (`WHERE
+  account_directory.source = EXCLUDED.source`), which is what migration
+  0136 already promised ("scoped by `source` so a future second directory
+  source can coexist without the syncs deleting each other's rows") and
+  which no sync kept: a second upstream also stole every address the first
+  one carried. An operator correction is a row carrying the reserved
+  source `operator-override` (`timescale.Store.UpsertDirectoryOverride`,
+  undone by `.DeleteDirectoryOverride`); no sync of any upstream updates
+  or prunes it, and `ReplaceDirectory` refuses to run AS that source. The
+  correction is made on the directory row all three consumers read, so
+  "price withheld", "demoted in the ranking" and "shows a flag pill" can
+  never disagree.
 
 ## [v0.91.0] — 2026-09-18
 

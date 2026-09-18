@@ -56,6 +56,18 @@
 // withhold — failing closed would blank EVERY asset's price on a DB
 // blip and take the whole money surface dark. The fail-open path logs
 // (transition-only) so a silent re-exposure is observable.
+//
+// OPERATOR OVERRIDE of a false positive. The tags are a third party's
+// judgement, and a wrong one withholds a legitimate issuer's price
+// across every gated surface. There is deliberately no allow-list in
+// THIS package: a second opinion stored here would disagree with the
+// /v1/assets rank tier and the explorer's flag pill, which read the
+// directory row directly. The correction is made where all three read
+// from — an operator-owned row in account_directory carrying
+// timescale.DirectoryOperatorOverrideSource, which `directory-sync`
+// neither updates nor prunes (timescale.Store.UpsertDirectoryOverride,
+// .DeleteDirectoryOverride). Drop the scam-class tags there and this
+// gate stops withholding within scamCacheTTL.
 package pricingguard
 
 import (
