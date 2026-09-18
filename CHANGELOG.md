@@ -118,6 +118,25 @@ against.
   and any row that still cannot be read refuses the run before anything
   is written, leaving the previous whole series served and the unit in
   `failed` for the catch-all alert (RLT-182).
+- **api:** `GET /v1/price/stream` no longer fans out the aggregated
+  prices `/v1/price` withholds. The closed-bucket SSE path ran
+  aggregator → Redis → Hub → handler without consulting either serving
+  gate on any leg, so a market below the thin-market substance floor
+  (the 2026-08-04 valuation-incident class) and a directory-scam-flagged
+  issuer's VWAP were both obtainable in real time from the surface that
+  shares `/v1/price`'s consistency contract — while `/v1/price`,
+  `/v1/price/tip`, `/v1/price/tip/stream`, `/v1/vwap`, `/v1/twap`,
+  `/v1/chart` and the SEP-40 oracle all answered 404
+  `errors/price-withheld` for the same pair. The handler now consults
+  both gates (surface label `price_stream`) at connect — refusing with
+  the same 404 and problem type before the response switches into SSE
+  mode — and again for every forwarded bucket, because an SSE connection
+  outlives a withholding verdict by hours and a connect-time-only check
+  would keep serving every connection opened before a pair was flagged.
+  A withheld bucket is dropped and the stream stays open heartbeat-only,
+  matching the tip stream's shared producer, so a pair that clears the
+  floor again simply resumes. Nil gates (operator disabled
+  `[pricing_guard]`) withhold nothing, as everywhere else.
 
 ## [v0.91.0] — 2026-09-18
 
