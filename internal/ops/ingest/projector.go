@@ -11,6 +11,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -138,6 +139,7 @@ func projectorReplay(args []string) error {
 				"dry-run: would then wait up to %s for the projector cursor to reach %d and refresh the price CAGGs over ledgers [%d,%d]\n",
 				*catchUpTimeout, currentLedger, target, currentLedger)
 		}
+		printSEP41ReplayDryRunNote(*source)
 		return nil
 	}
 	// Record the dirty window BEFORE the rewind, and FAIL the replay if the
@@ -175,11 +177,89 @@ func projectorReplay(args []string) error {
 		"projector cursor rewound — next projector cycle (≤ 5s) will start re-projecting from ledger %d\n",
 		target)
 
+	if err := reportSEP41RollupReset(ctx, store, *source); err != nil {
+		return err
+	}
+
 	return rematerializeReplayedRange(
 		slog.New(slog.NewTextHandler(os.Stdout, nil)), store, *source,
 		chunkRange{from: target, to: currentLedger},
 		replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout},
 	)
+}
+
+// sep41RollupResetter is the slice of the store
+// resetSEP41RollupAfterReplay needs — one call, so a test can drive it
+// without a real Postgres connection.
+type sep41RollupResetter interface {
+	ResetSEP41SupplyRollupFold(ctx context.Context, contractIDs []string) (int64, error)
+}
+
+// resetSEP41RollupAfterReplay resets the sep41_supply_rollup fold
+// checkpoint whenever a replay rewinds and re-walks the sep41_supply
+// source itself (finding F024, audit 2026-09-02).
+//
+// [Store.AdvanceSEP41SupplyRollup] only ever folds `ledger >
+// last_ledger`, and [Store.SEP41KindTotalsAtOrBefore]'s fast path trusts
+// that checkpoint. A replay's whole point is to re-drive rows a held-row
+// retry gave up on (quarantined per [projector.quarantineCandidate]) or
+// to correct rows already written — exactly rows at-or-below the ledger
+// this command just rewound the cursor below. Without a reset those
+// corrected or newly-inserted rows sit beneath the rollup's checkpoint
+// forever: the fold never looks back down to find them, and served
+// supply stays wrong no matter how many times the replay runs. The
+// fold's own NOTE documents the requirement; `ch-rebuild -sep41 -write`
+// already satisfies it for its own re-derive path (sep41RollupResetPlan
+// in internal/ops/chops/ch_rebuild.go) — this is the same requirement
+// for the projector's replay path, which had no reset at all.
+//
+// A FULL reset (nil contractIDs), not scoped: a source-level replay
+// re-walks every watched contract's events over the rewound range, not
+// just the one row that triggered it, and a reset is always safe —
+// [Store.ResetSEP41SupplyRollupFold]'s doc guarantees served supply
+// stays correct (just off the fast path) until the worker re-folds.
+//
+// Returns reset=false (and does nothing) for every source other than
+// sep41_supply — a replay of trades/blend/phoenix/etc. never touches
+// sep41_supply_events, so there is nothing to re-fold.
+func resetSEP41RollupAfterReplay(ctx context.Context, store sep41RollupResetter, source string) (reset bool, n int64, err error) {
+	if source != sep41supply.SourceName {
+		return false, 0, nil
+	}
+	n, err = store.ResetSEP41SupplyRollupFold(ctx, nil)
+	if err != nil {
+		return true, 0, err
+	}
+	return true, n, nil
+}
+
+// reportSEP41RollupReset calls resetSEP41RollupAfterReplay and prints its
+// outcome, or fails loudly. Split out of projectorReplay (alongside
+// printSEP41ReplayDryRunNote) purely to keep that function's branch count
+// under the cognitive-complexity limit — see rematerializeReplayedRange's
+// own godoc for the identical reason the CAGG-refresh tail was split out.
+func reportSEP41RollupReset(ctx context.Context, store sep41RollupResetter, source string) error {
+	reset, n, err := resetSEP41RollupAfterReplay(ctx, store, source)
+	if err != nil {
+		return fmt.Errorf("reset sep41_supply_rollup fold after replay (the cursor rewind is already durable, but served SEP-41 supply stays wrong for any row this replay corrects at or below the old fold checkpoint until the fold is reset): %w", err)
+	}
+	if reset {
+		_, _ = fmt.Fprintf(os.Stdout,
+			"reset %d sep41_supply_rollup fold row(s) — the aggregator worker will re-fold sep41_supply_events from zero as the replayed range lands (genesis baseline preserved)\n", n)
+	}
+	return nil
+}
+
+// printSEP41ReplayDryRunNote prints the dry-run line for the SEP-41 rollup
+// reset a real run of `-source sep41_supply` would perform. Split out of
+// projectorReplay's dry-run block for the same cognitive-complexity reason
+// as reportSEP41RollupReset.
+func printSEP41ReplayDryRunNote(source string) {
+	if source != sep41supply.SourceName {
+		return
+	}
+	_, _ = fmt.Fprintf(os.Stdout,
+		"dry-run: would then ResetSEP41SupplyRollupFold(nil) — the rewound range may already be behind the sep41_supply_rollup fold checkpoint, and the fold only ever looks ABOVE it\n")
 }
 
 // replayFollowUp carries projector-replay's post-rewind flags

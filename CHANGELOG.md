@@ -130,6 +130,21 @@ against.
   with no confirmed row stores and serves the byte-identical value it
   always did. Readers of the column must not normalise it again; a unit
   test fails if the listing SELECT ever joins the decimals table.
+- **ops (projector-replay):** `stellarindex-ops projector-replay -source
+  sep41_supply` now resets the `sep41_supply_rollup` fold checkpoint after
+  rewinding the cursor (F024). `AdvanceSEP41SupplyRollup` only ever folds
+  `ledger > last_ledger`, so a replay's whole point — re-driving a row the
+  projector's own held-row retry gave up on (quarantined) or correcting a
+  row already written — lands at-or-below that checkpoint and was
+  permanently invisible to the fold and to `SEP41KindTotalsAtOrBefore`'s
+  fast path, no matter how many times the replay ran. `ch-rebuild -sep41
+  -write` already reset the fold for its own re-derive path
+  (`sep41RollupResetPlan`); the projector's replay path had no reset at
+  all. The reset is a FULL reset (every watched contract), matching the
+  fact that a source-level replay re-walks every contract over the
+  rewound range, not just the one row that triggered it; it is safe by
+  construction — the reader falls back to the exact full-sum aggregate
+  until the worker re-folds, so served supply stays correct throughout.
 
 - **api:** four more surfaces now apply the dex-nonstandard-decimals
   normalisation instead of publishing the RAW `prices_1m` ratio for a
