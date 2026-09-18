@@ -17,6 +17,24 @@ against.
 
 ### Fixed
 
+- **dex tvl:** a USD price read that ERRORS is no longer published as
+  "nobody prices this token". `rateFor` folded a resolver error into the
+  unpriceable outcome and memoised it for the refresh, so the leg read
+  `excluded: no_served_price`, the protocol's refresh succeeded, and the
+  carry-forward — which runs only on a refresh error — could not fire:
+  one transient Postgres error on the XLM rate dropped every XLM leg
+  from the published DEX TVL (the fixture's soroswap figure went from
+  $25.50 to $10.50) and the shrunken total was admitted as fresh. An
+  error is now its own outcome. It is remembered for the refresh, so a
+  failing store is asked once rather than once per protocol, and the one
+  function that builds a protocol result refuses a pass that met one, so
+  the protocol serves its previous figure with `carried_forward: true`
+  and the refresher logs the cause — the same path a failed reserve read
+  already took. Judged per protocol: one that never held the unreadable
+  token still publishes this cycle's figure. A token with genuinely no
+  served price is unchanged. A read cancelled by the refresh's own
+  deadline arrives as an error too, so it takes the same path. No wire
+  change. (#580; RLT-090, RLT-239)
 - **trades (usd_volume):** the base-anchored tier now takes the same
   bound the quote-side FX tier does. For a non-XLM base the anchor read
   the identical resolver rate — usually the tier-3b `<token>/XLM x

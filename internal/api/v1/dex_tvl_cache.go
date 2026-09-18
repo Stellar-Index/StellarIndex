@@ -310,6 +310,8 @@ func (c *DEXTVLCache) Refresh(ctx context.Context) error {
 	carriedSet := map[string]bool{}
 
 	for _, p := range c.derivations() {
+		// A price-read failure is judged per protocol — see beginPass.
+		valuer.beginPass()
 		if res, err := p.refresh(ctx, valuer, now); err != nil {
 			errs = append(errs, fmt.Errorf("%s tvl: %w", p.name, err))
 			if carryPrev(next, prev, p.name) {
@@ -449,14 +451,22 @@ func (c *DEXTVLCache) refreshSoroswap(ctx context.Context, valuer *tvlValuer, no
 			{token: st.Token1, raw: st.Reserve1},
 		})
 	}
-	return finishTVLProtocol(acc), nil
+	return finishTVLProtocol(acc)
 }
 
 // finishTVLProtocol renders an accumulator into the result Refresh
-// publishes.
-func finishTVLProtocol(acc *tvlProtocolAccumulator) *tvlProtocolResult {
+// publishes — or refuses to, when valuing the protocol met a price read
+// that ERRORED. Such a figure is short by every leg of the unreadable
+// token and says so nowhere, so it is returned as the protocol's refresh
+// error and Refresh carries the previous figure forward, marked carried,
+// exactly as it does when the reserve read fails (#580). It is the one
+// place a result is built, so no protocol can publish around it.
+func finishTVLProtocol(acc *tvlProtocolAccumulator) (*tvlProtocolResult, error) {
+	if err := acc.valuer.passFailure(); err != nil {
+		return nil, err
+	}
 	view, pools := acc.finish()
-	return &tvlProtocolResult{view: view, pools: pools}
+	return &tvlProtocolResult{view: view, pools: pools}, nil
 }
 
 // refreshAquarius computes Aquarius TVL from the latest per-pool
@@ -486,7 +496,7 @@ func (c *DEXTVLCache) refreshAquarius(ctx context.Context, valuer *tvlValuer, no
 		}
 		acc.addPool(ctx, p.ContractID, p.Ledger, legs)
 	}
-	return finishTVLProtocol(acc), nil
+	return finishTVLProtocol(acc)
 }
 
 // refreshPhoenix computes Phoenix TVL from CURRENT pool reserves in
@@ -519,7 +529,7 @@ func (c *DEXTVLCache) refreshPhoenix(ctx context.Context, valuer *tvlValuer, now
 	}
 	acc.addUndecodable(undecodable)
 	c.warnUndecodablePools("phoenix", undecodable)
-	return finishTVLProtocol(acc), nil
+	return finishTVLProtocol(acc)
 }
 
 // refreshComet computes Comet TVL from the CURRENT per-token balance
@@ -548,7 +558,7 @@ func (c *DEXTVLCache) refreshComet(ctx context.Context, valuer *tvlValuer, now t
 	}
 	acc.addUndecodable(undecodable)
 	c.warnUndecodablePools("comet", undecodable)
-	return finishTVLProtocol(acc), nil
+	return finishTVLProtocol(acc)
 }
 
 // warnUndecodablePools emits one metric-friendly warn line for pools
@@ -574,6 +584,16 @@ type tvlValuer struct {
 	at       time.Time
 	memo     map[string]*big.Rat // token strkey → raw-ratio USD rate; nil = unpriceable
 	gateMemo map[string]bool     // token strkey → "the trust gates withhold this asset"
+	// failed is NOT memo's nil. memo[token] == nil says nobody prices the
+	// token — a fact about the token, honestly published as
+	// no_served_price. failed[token] says the price READ errored — a fact
+	// about this refresh, under which the token is exactly as priced as it
+	// was last cycle. See [tvlValuer.rateFor].
+	failed map[string]error
+	// passErr is the first price-read failure met since [tvlValuer.beginPass]:
+	// the protocol being valued touched a token whose price could not be
+	// read, so its figure must not be published ([finishTVLProtocol]).
+	passErr error
 }
 
 func newTVLValuer(pricer TVLUSDPricer, pegInfo TVLUSDPegInfo, gate TVLValueGate, at time.Time) *tvlValuer {
@@ -584,12 +604,31 @@ func newTVLValuer(pricer TVLUSDPricer, pegInfo TVLUSDPegInfo, gate TVLValueGate,
 		at:       at,
 		memo:     map[string]*big.Rat{},
 		gateMemo: map[string]bool{},
+		failed:   map[string]error{},
 	}
 }
+
+// beginPass opens one protocol's valuation. The memos are shared across
+// the refresh — that is their point — but whether a price read failed is
+// a per-protocol verdict: a protocol that never held the failing token
+// publishes this cycle's figure.
+func (v *tvlValuer) beginPass() { v.passErr = nil }
+
+// passFailure reports the first price-read failure the current pass met,
+// memoised or fresh.
+func (v *tvlValuer) passFailure() error { return v.passErr }
 
 // classicScaleDecimals is the 7-decimal Stellar classic scale every
 // raw-ratio rate is anchored against (see tvlLegUSD).
 const classicScaleDecimals = 7
+
+// tvlLegPriceReadFailed marks a leg whose price read ERRORED. It is
+// deliberately unexported and deliberately not a DEXTVLLeg* reason: it
+// is never published. A pass that produced one is refused whole by
+// [finishTVLProtocol] and the protocol serves its previous figure, so
+// the value only exists to keep a failed read from borrowing
+// DEXTVLLegNoServedPrice — the borrowing that was the defect.
+const tvlLegPriceReadFailed = "price_read_failed"
 
 // legUSD values `raw` base units of `token` (a C-strkey) in USD.
 // ok=false when the leg cannot be priced honestly.
@@ -666,7 +705,10 @@ func (v *tvlValuer) value(ctx context.Context, token string, raw *big.Int) tvlLe
 			}
 		}
 	}
-	rate, ok := v.rateFor(ctx, asset, token)
+	rate, ok, err := v.rateFor(ctx, asset, token)
+	if err != nil {
+		return tvlLegValue{asset: id, excluded: tvlLegPriceReadFailed}
+	}
 	if !ok {
 		return tvlLegValue{asset: id, excluded: DEXTVLLegNoServedPrice}
 	}
@@ -700,21 +742,49 @@ func (v *tvlValuer) withheld(ctx context.Context, token string, asset canonical.
 }
 
 // rateFor memoises the resolver lookup per token per refresh.
-func (v *tvlValuer) rateFor(ctx context.Context, asset canonical.Asset, token string) (*big.Rat, bool) {
+//
+// It has THREE outcomes, and until #580 (RLT-090 / RLT-239) it reported
+// two. A read that ERRORED was folded into "unpriceable" and memoised as
+// such, so value() published the leg as no_served_price with no error,
+// the protocol's refresh SUCCEEDED, and Refresh's carry-forward — which
+// runs only on a refresh error — could not fire: one transient Postgres
+// error on the XLM rate removed every XLM leg from the published DEX TVL
+// and the shrunken total was admitted as fresh. An error is now its own
+// outcome (err != nil), remembered in v.failed rather than v.memo so the
+// failing store is asked once per refresh, and recorded against the
+// current pass so [finishTVLProtocol] refuses to publish the figure.
+func (v *tvlValuer) rateFor(ctx context.Context, asset canonical.Asset, token string) (*big.Rat, bool, error) {
+	if err, bad := v.failed[token]; bad {
+		return nil, false, v.notePassFailure(err)
+	}
 	if cached, seen := v.memo[token]; seen {
-		return cached, cached != nil
+		return cached, cached != nil, nil
 	}
 	var out *big.Rat
 	if v.pricer != nil {
 		rateStr, ok, err := v.pricer.USDPriceAt(ctx, asset, v.at)
-		if err == nil && ok && rateStr != "" {
+		if err != nil {
+			err = fmt.Errorf("usd price read for %s: %w", token, err)
+			v.failed[token] = err
+			return nil, false, v.notePassFailure(err)
+		}
+		if ok && rateStr != "" {
 			if r, parsed := new(big.Rat).SetString(rateStr); parsed && r.Sign() > 0 {
 				out = r
 			}
 		}
 	}
 	v.memo[token] = out
-	return out, out != nil
+	return out, out != nil, nil
+}
+
+// notePassFailure records err against the current pass, keeping the
+// first, and hands it back.
+func (v *tvlValuer) notePassFailure(err error) error {
+	if v.passErr == nil {
+		v.passErr = err
+	}
+	return err
 }
 
 // tvlAssetForToken maps a pool token strkey to its canonical pricing
