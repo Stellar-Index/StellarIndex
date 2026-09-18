@@ -225,6 +225,40 @@ private credit and one refused bond — reachable only through the curated arm
 (SDF's own prices) or a par policy, never through a measurement. That is the
 honest ceiling of "independent", and it is written here so it is not re-derived.
 
+> **v0.90.0 LIVE — measured 2026-09-18 00:25–00:45 UTC (every region; explorer
+> deployed too).** Served RWA reference total **$2,608,585,915.48** across
+> **32 assets / 21 issuers** (from $2,529.9M / 29 / 18): gBENJI priced at the
+> prospectus NAV ($56.68M, `prospectus_constant_nav`), grBENJI admitted through
+> the sibling arm and priced ($0.59M), sgBENJI admitted unpriced (VNAV, needs a
+> live NAV); `refused[no_real_world_instrument_basis]` 102,303 → 102,297.
+> The curated arm serves **`curated.status: published_totals`** —
+> the curator's monthly total **$4,004,795,860.08** (month_end 2026-09-15,
+> executed 2026-09-17T02:58Z) with its subclass split (Active Strategies
+> $1.18B, US Treasuries $1.14B, Private Credit $0.59B, Public Credit $0.50B,
+> …) and the signed gap to our verified total, read daily from Dune's public
+> query results at 683 datapoints a run (≈ 0.07 credits). The cohort endpoint
+> answers in **1.5 s** (was pinned at 8.0 s) and labels 8 of GDB3RSSW…'s 14
+> contracts with a protocol. `/v1/ohlc` at 2h/12h/3d/2w answers 200
+> (W8-17/W8-20 closed). Test nets: movements archive derived to the tip on
+> both (testnet 27.9M rows → tip 4,733,690 after one backfilled ledger;
+> futurenet 158k → 613,991); created cohorts serve (testnet 1,955 roots /
+> 3.81M members). Issues #512 #513 #514 #515 #516 #518 #519 #520 #521 closed
+> with evidence. SDEX history: the chunk [61249957,61289956] retried on the
+> sub-batched writer and hit a second wall — every sub-batch into a
+> compressed `trades` chunk fails `SQLSTATE 53400 tuple decompression limit
+> exceeded` and drops to per-row again; fixed in v0.91.0 (the batch upsert
+> lifts the cap with `SET LOCAL` in its own transaction, as the COPY and
+> restamp writers do). The driver is paused (stop file) until v0.91.0 lands.
+>
+> **v0.91.0 (in clearance at the time of writing):** month-priced cohort
+> flows (`inflow_usd_then` / `outflow_usd_then` / `price_usd_then` from the
+> index's own monthly USD VWAPs, ClickHouse `asset_month_usd_prices` loaded
+> each cohort cycle; explorer "USD today / USD then" toggle); a standing diff
+> of `sdf_reserve_accounts` against the list SDF publishes (C4-069); one
+> token-decimals resolver with market-cap/FDV refused on a cross-scale
+> mismatch (C1-050); drift-guard follow-ups; the R4 methodology and unit
+> comments aligned with the code; the decompression-cap fix above.
+
 > **CORRECTION + STATE, 2026-09-18 00:30 UTC — the two v0.89.2 arms had
 > zero live effect, the Dune arm could never load, and both are fixed in
 > the release after v0.89.3.** Read this box before the table above it.
