@@ -175,16 +175,47 @@ func projectorReplay(args []string) error {
 		"projector cursor rewound — next projector cycle (≤ 5s) will start re-projecting from ledger %d\n",
 		target)
 
-	replayed := chunkRange{from: target, to: currentLedger}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	return rematerializeReplayedRange(
+		slog.New(slog.NewTextHandler(os.Stdout, nil)), store, *source,
+		chunkRange{from: target, to: currentLedger},
+		replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout},
+	)
+}
+
+// replayFollowUp carries projector-replay's post-rewind flags
+// (-refresh-caggs, -wait, -wait-timeout) to rematerializeReplayedRange.
+type replayFollowUp struct {
+	refreshCAGGs bool
+	wait         bool
+	waitTimeout  time.Duration
+}
+
+// replayFinisher is the slice of the store the post-rewind tail needs:
+// the cursor read the catch-up loop polls, and the CAGG refresh.
+type replayFinisher interface {
+	projectorCursorReader
+	caggRefresher
+}
+
+// rematerializeReplayedRange is projectorReplay's post-rewind tail: wait
+// for the projector to re-walk `replayed` (its upper bound is the ledger
+// the cursor sat at before the rewind), then re-materialize the price
+// CAGGs over it. Split out of projectorReplay so the command stays under
+// the cyclomatic limit; the AST guard in projector_replay_wiring_test.go
+// pins both hops — projectorReplay calls this, and this calls
+// awaitProjectorCursor and refreshCAGGsForChunk.
+//
+// Both opt-outs return nil on purpose — the rewind they follow is
+// already durable — and each logs what the operator now owes.
+func rematerializeReplayedRange(logger *slog.Logger, store replayFinisher, source string, replayed chunkRange, opts replayFollowUp) error {
 	switch {
-	case !*refreshCAGGs:
+	case !opts.refreshCAGGs:
 		logger.Warn("skipping post-replay CAGG refresh (-refresh-caggs=false)",
 			"from", replayed.from, "to", replayed.to,
 			"impact", "trades re-projected into this range stay unmaterialised in prices_1m/15m/1h/4h/1d/1w/1mo: the CAGG refresh policies only roll forward over their own start_offset window, so nothing picks a historical bucket up on its own cadence. The rows are durable, but /v1/ohlc, /v1/chart, /v1/vwap and /v1/history/since-inception read the aggregates and will serve short over this range until a manual refresh_continuous_aggregate covers it",
 		)
 		return nil
-	case !*catchUp:
+	case !opts.wait:
 		logger.Warn("not waiting for the projector to re-walk (-wait=false); the CAGG refresh is now the operator's",
 			"from", replayed.from, "to", replayed.to,
 			"follow_up", "once the projector cursor passes the pre-rewind ledger, re-run with -from the same value, or refresh the price CAGGs over the range by hand",
@@ -192,11 +223,12 @@ func projectorReplay(args []string) error {
 		return nil
 	}
 
-	// Fresh context: the 30s budget above covers the cursor statements,
-	// not a re-walk of the replayed range plus seven materializations.
-	rctx, rcancel := context.WithTimeout(context.Background(), *catchUpTimeout+caggRefreshGrace)
+	// Fresh context: projectorReplay's 30s budget covers the cursor
+	// statements, not a re-walk of the replayed range plus seven
+	// materializations.
+	rctx, rcancel := context.WithTimeout(context.Background(), opts.waitTimeout+caggRefreshGrace)
 	defer rcancel()
-	if err := awaitProjectorCursor(rctx, logger, store, *source, currentLedger, *catchUpTimeout, projectorCatchUpPoll); err != nil {
+	if err := awaitProjectorCursor(rctx, logger, store, source, replayed.to, opts.waitTimeout, projectorCatchUpPoll); err != nil {
 		return err
 	}
 	if err := refreshCAGGsForChunk(rctx, logger, store, replayed); err != nil {

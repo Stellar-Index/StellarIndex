@@ -1,6 +1,6 @@
 ---
 title: Runbook — projector-replay
-last_verified: 2026-07-10
+last_verified: 2026-09-18
 status: ratified
 severity: P3
 ---
@@ -13,8 +13,8 @@ severity: P3
 | ----- | ----- |
 | Trigger | Per-source projection is stale or missing rows for a known ledger range (e.g. post-decoder-fix re-walk). Also the runbook for `stellarindex_projector_replay_stalled` — a replay STARTED here that has stopped advancing. |
 | Tool | `stellarindex-ops projector-replay -source <name> -from <ledger> -write` (fail-closed: no `-write` = dry run) |
-| Typical wall time | ≤ 5 s SQL + projector catch-up (≈ 1 min per 100k ledgers per source) |
-| Impact | None — the projector tails `soroban_events` (ADR-0029); replay just rewinds a cursor. `ON CONFLICT DO NOTHING` makes re-writes idempotent. |
+| Typical wall time | The rewind is ≤ 5 s of SQL, but the command does **not** return then: by default it blocks until the projector has re-walked the range (≈ 1 min per 100k ledgers per source, bounded by `-wait-timeout`, default 30 min) and then re-materializes the seven `prices_*` continuous aggregates over it (its context allows a further 30 min). Run it under `tmux`/`screen`, not a bare ssh session. `-wait=false` or `-refresh-caggs=false` restore the old return-immediately behaviour and hand the refresh to you — see [After the rewind](#after-the-rewind-the-command-waits-then-refreshes-the-price-caggs). |
+| Impact | Data-safe, not load-free. The rewind only moves a cursor and the projector tails `soroban_events` (ADR-0029); `ON CONFLICT DO NOTHING` makes re-writes idempotent. The load is what follows: the projector re-walks the range (see the decompress-first pre-flight below — a replay through compressed chunks livelocks), and the post-replay refresh runs seven `refresh_continuous_aggregate` calls over the replayed time range. Each is padded to its view's minimum window (up to ~93 days for `prices_1mo`), reads `trades`, and can contend with that view's own refresh policy (Timescale rejects the loser with 55P03; the store retries within a bound). |
 
 ## Before you start: is this the right tool?
 
@@ -92,8 +92,74 @@ stellarindex-ops projector-replay -config /etc/stellarindex.toml \
 Source names match the projector registry
 (`internal/projector/registry.go`):
 `aquarius`, `soroswap`, `phoenix`, `comet`, `blend`, `cctp`, `rozo`,
-`defindex`, `soroswap-skim`, `sep41-transfers`, `sep41-supply`,
+`defindex`, `soroswap-skim`, `sep41_transfers`, `sep41_supply`,
 `reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`.
+
+Spelling matters and the list above is not exhaustive — the registry is
+the authority. The `sep41_*` and `blend_*` sources are **underscored**
+(`sep41_transfers`, `sep41_supply`, `blend_backstop`); the hyphenated
+per-table target names `find-data-gaps` prints are not valid here. An
+unknown `-source` fails with a non-zero exit rather than printing
+"no action".
+
+## After the rewind: the command waits, then refreshes the price CAGGs
+
+A replay re-projects trades into a **historical** time range
+(aquarius, soroswap, phoenix and comet all persist trades through the
+projector). Every continuous aggregate over `trades` only rolls its
+refresh policy forward over its own `start_offset` window — five
+minutes for `prices_1m` — so nothing ever picks those historical
+buckets up on its own. The re-projected rows are durable in the
+hypertable and invisible to `/v1/ohlc`, `/v1/chart`, `/v1/vwap` and
+`/v1/history/since-inception`, which all read the aggregates.
+
+So with `-write` the command now finishes the job itself:
+
+1. records the dirty window and rewinds the cursor (as before);
+2. polls the projector cursor every 5 s until it is back at the ledger
+   it sat at **before** the rewind — i.e. the range is actually
+   re-projected. Refreshing earlier would succeed and materialize the
+   old, short answer;
+3. re-materializes `prices_1m`, `prices_15m`, `prices_1h`, `prices_4h`,
+   `prices_1d`, `prices_1w` and `prices_1mo` over the replayed range and
+   prints `price CAGGs re-materialized over the replayed range [from,to]`.
+
+| Flag | Default | Effect |
+| ---- | ------- | ------ |
+| `-refresh-caggs` | `true` | `false` skips steps 2–3 and logs a warning naming the cost: the range stays unmaterialised until a manual refresh covers it. |
+| `-wait` | `true` | `false` returns right after the rewind (the pre-2026-09-18 behaviour) and logs that the refresh is now yours. |
+| `-wait-timeout` | `30m` | Budget for step 2. Size it from the rewind: ≈ 1 min per 100k ledgers, plus head-room. |
+
+The dry run prints the wait-and-refresh it would perform.
+
+**Exit codes are now meaningful past the rewind.** Both opt-outs exit 0.
+Non-zero after the `projector cursor rewound` line means the rewind IS
+durable and the refresh did NOT complete:
+
+- *cursor still short of the pre-rewind ledger after `-wait-timeout`* —
+  the projector is slow or wedged (check the decompress-first pre-flight
+  and [projector-lag](projector-lag.md)). No view was refreshed.
+- *post-replay CAGG refresh … failed* — every view is still attempted
+  after one fails, and the error names the ones that did not
+  materialize.
+
+Either way, finish it one of two ways once the projector has caught up.
+Re-running with the same `-from` works and is idempotent, but it
+**rewinds again** — the projector re-walks the whole range a second
+time before the refresh. For a large range, refresh by hand instead:
+
+```sql
+-- once per view: prices_1m, prices_15m, prices_1h, prices_4h,
+-- prices_1d, prices_1w, prices_1mo. The window must span at least two
+-- buckets of the view, so widen it for the coarse ones.
+CALL refresh_continuous_aggregate('prices_1m', '<range start ts>', '<range end ts>');
+```
+
+**Not covered: `twap_1h` and `twap_1d`.** They are materialised from
+`prices_1m`, are deliberately outside the refresh set this command
+shares with `backfill` (`timescale.CAGGsLiveForever`), and stay stale
+over the replayed range until re-materialized per
+[twap-history-missing](twap-history-missing.md).
 
 ## Verification
 
@@ -106,6 +172,12 @@ ssh root@136.243.90.96 'journalctl -u stellarindex-indexer -n 100 -f | grep proj
 
 `projector_lag_ledgers{source="<name>"}` falls to 0 once the
 replay is caught up to the live tip.
+
+The command's own last line is the other half: `price CAGGs
+re-materialized over the replayed range [from,to]` and exit 0. If you
+ran with `-wait=false` or `-refresh-caggs=false`, or it exited non-zero
+after the rewind, the projection is repaired but the served OHLC/VWAP
+history over the range is not — see the section above.
 
 ### What the alerts do while a replay runs (issue #325)
 
@@ -205,6 +277,12 @@ sink-side adaptive shrink converges the window automatically.
 
 ## Changelog
 
+- 2026-09-18 — K006: the command no longer returns at the rewind. It
+  waits for the projector to re-walk the range, then re-materializes the
+  seven `prices_*` aggregates over it; `-wait`, `-refresh-caggs` and
+  `-wait-timeout` documented, wall time and impact rows corrected (they
+  still read "≤ 5 s" and "None"), and the `sep41_*` source names
+  corrected to the underscored spelling the registry uses.
 - 2026-08-29 — issue #325: a replay is now an alerting state, not a
   4-hour lag ticket. `stellarindex_projector_lag_high` is excused while
   the recorded rewind window is still climbing;

@@ -17,6 +17,24 @@ against.
 
 ### Fixed
 
+- **ops (runbook):** `docs/operations/runbooks/projector-replay.md`
+  now describes the command that ships. It still promised a wall time of
+  "≤ 5 s" and an impact of "None" for a command that, since the K006
+  fix below, blocks by default until the projector has re-walked the
+  rewound range (up to `-wait-timeout`, 30 min) and then re-materializes
+  seven continuous aggregates — an operator running it from a bare ssh
+  session on that advice would lose it mid-refresh. `-wait`,
+  `-refresh-caggs` and `-wait-timeout` are documented with their exit
+  semantics, including the two things the command does NOT do: a re-run
+  with the same `-from` rewinds again rather than resuming, and
+  `twap_1h`/`twap_1d` are outside the refresh set. The `sep41_*` source
+  names are corrected to the underscored registry spelling. In the same
+  change the post-rewind tail of `projectorReplay` moves into
+  `rematerializeReplayedRange` (behaviour unchanged; the command was
+  over the cyclomatic limit), which gives it a store seam: the wiring
+  guard now pins both hops, and the tail is tested directly — it
+  refreshes every view over exactly the replayed range, and never
+  refreshes ahead of the projector. (audit-2026-09-02 K006)
 - **aggregator (money):** the ADR-0019 freeze marker now carries one
   lifecycle ladder PER aggregation window instead of a single
   pair-level one. The `freeze:<asset>:<quote>` key is pair-scoped
