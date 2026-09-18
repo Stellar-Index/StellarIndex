@@ -17,6 +17,22 @@ against.
 
 ### Fixed
 
+- **history/chart (perf, unauth DoS lever):** `/v1/history/since-inception`
+  and `/v1/chart` no longer fold the two stored market orientations with
+  an `(A AND B) OR (B AND A)` disjunction. Postgres cannot drive
+  `prices_*_pair_bucket_idx` from an OR of two different (base, quote)
+  equality pairs, so a bucket-ordered read fell back to the plain bucket
+  index with the pair test as a post-index FILTER — and proving an
+  unknown pair EMPTY then walked every chunk to exhaustion (10682.994 ms
+  vs 3.610 ms, measured on r1 for a zero-row pair). `HistoryPoints` is
+  the worst case: it is anon-reachable and carries no lower time bound
+  at all. `HistoryPoints`, `HistoryPointsInRange` and
+  `TWAPPointsInRange` now read a `UNION ALL` of two single-direction
+  branches, each with its own bound and `LIMIT`, merged under an
+  `ORDER BY bucket ASC, base_asset` outer sort; the closed-bucket guard
+  moves to its sargable spelling (`bucket <= now() - INTERVAL …`, never
+  `bucket + INTERVAL … <= now()`). Served values are unchanged.
+  (audit-2026-09-02 F169, F117, F038)
 - **divergence:** the Chainlink reference no longer writes the operator's
   RPC API key into the divergence cache. `[divergence.chainlink].rpc_url`
   is populated from the same `CHAINLINK_RPC_URL` the ingest poller uses,

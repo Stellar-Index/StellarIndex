@@ -385,7 +385,8 @@ func bucketRowCap(limit int) int {
 // series at the requested granularity.
 //
 // Per ADR-0015 the in-progress bucket is excluded via a
-// `bucket + <granularity> <= now()` guard.
+// `bucket <= now() - <granularity>` guard (the sargable spelling — a
+// constant on the right, no function on the indexed column).
 //
 // `limit` clamps the BUCKET count; passing 0 returns all buckets. The
 // API caller passes the spec-bounded value (default unbounded for
@@ -413,21 +414,57 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	// after Validate(), not from user input.
 	table := "prices_" + string(granularity)
 	interval := granularity.closedBucketInterval()
+	// The two stored orientations are a UNION ALL of two single-direction
+	// branches, NOT one `(A AND B) OR (B AND A)` disjunction: the planner
+	// cannot drive prices_*_pair_bucket_idx from an OR of two different
+	// (base, quote) equality pairs, so the bucket-ordered read falls back
+	// to the plain bucket index with the pair test as a post-index filter
+	// — and proving an unknown pair EMPTY then walks every chunk to
+	// exhaustion (10682.994 ms vs 3.610 ms, measured on r1; see
+	// prices_1m_direction_union_test.go). This read is the one anyone can
+	// drive unauthenticated and with no lower time bound at all, via
+	// /v1/history/since-inception.
+	//
+	// `LIMIT $3` is repeated on each branch as well as the outer query:
+	// the first `2n+1` rows of the merged series are always contained in
+	// the union of each branch's first `2n+1`, so the per-branch cap is
+	// correctness-preserving and it is what keeps a branch from
+	// materialising in full before the outer sort.
+	//
+	// Closed-bucket guard (ADR-0015) in its SARGABLE spelling —
+	// `bucket <= now() - INTERVAL '…'`, never `bucket + INTERVAL '…' <=
+	// now()`, which puts a function on the indexed column and forfeits
+	// both index access and chunk pruning.
+	//
+	// `base_asset` joins the outer sort as a tiebreaker: `bucket ASC`
+	// alone is not a total order once a bucket holds both directions, and
+	// ADR-0015's byte-identical cross-region serving should not rest on a
+	// planner-defined intra-bucket order. [combineDirVWAP] is commutative,
+	// so the served value is unchanged either way.
+	args := []any{p.Base.String(), p.Quote.String()}
+	limitClause := ""
+	if rowCap := bucketRowCap(limit); rowCap > 0 {
+		args = append(args, rowCap)
+		limitClause = fmt.Sprintf("\n              LIMIT $%d", len(args))
+	}
 	// #nosec G201 — table + interval are derived from the validated
 	// enum, not user input. See HistoryGranularity.Validate above.
 	q := fmt.Sprintf(`
-		SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
-		  FROM %s
-		 WHERE ((base_asset = $1 AND quote_asset = $2)
-		     OR (base_asset = $2 AND quote_asset = $1))
-		   AND bucket + INTERVAL '%s' <= now()
-		 ORDER BY bucket ASC
-	`, table, interval)
-	args := []any{p.Base.String(), p.Quote.String()}
-	if rowCap := bucketRowCap(limit); rowCap > 0 {
-		q += " LIMIT $3"
-		args = append(args, rowCap)
-	}
+		SELECT * FROM (
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
+		       FROM %[1]s
+		      WHERE base_asset = $1 AND quote_asset = $2
+		        AND bucket <= now() - INTERVAL '%[2]s'
+		      ORDER BY bucket ASC%[3]s)
+		    UNION ALL
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
+		       FROM %[1]s
+		      WHERE base_asset = $2 AND quote_asset = $1
+		        AND bucket <= now() - INTERVAL '%[2]s'
+		      ORDER BY bucket ASC%[3]s)
+		) AS both_directions
+		 ORDER BY bucket ASC, base_asset%[3]s
+	`, table, interval, limitClause)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: HistoryPoints[%s]: %w", granularity, err)
@@ -592,28 +629,47 @@ func (s *Store) HistoryPointsInRange(
 	// Build args incrementally so the placeholder count matches the
 	// optional from/to/limit clauses.
 	args := []any{p.Base.String(), p.Quote.String()}
-	clauses := "((base_asset = $1 AND quote_asset = $2)\n        OR (base_asset = $2 AND quote_asset = $1))" +
-		"\n   AND bucket + INTERVAL '" + interval + "' <= now()"
+	// Bounds shared by both direction branches. After the split neither
+	// branch can inherit a predicate from the other, so every bound is
+	// spelled into each one — the same discipline
+	// [recentClosedVWAP1mCombinedTemplate] documents for its lower bound.
+	// Closed-bucket guard in the sargable form (interval on the RHS).
+	bounds := "\n        AND bucket <= now() - INTERVAL '" + interval + "'"
 	if !from.IsZero() {
 		args = append(args, from.UTC())
-		clauses += fmt.Sprintf("\n   AND bucket >= $%d", len(args))
+		bounds += fmt.Sprintf("\n        AND bucket >= $%d", len(args))
 	}
 	if !to.IsZero() {
 		args = append(args, to.UTC())
-		clauses += fmt.Sprintf("\n   AND bucket < $%d", len(args))
+		bounds += fmt.Sprintf("\n        AND bucket < $%d", len(args))
 	}
+	limitClause := ""
+	if rowCap := bucketRowCap(limit); rowCap > 0 {
+		args = append(args, rowCap)
+		limitClause = fmt.Sprintf("\n              LIMIT $%d", len(args))
+	}
+	// Both orientations as a UNION ALL of index-drivable branches rather
+	// than an OR disjunction, and the outer sort carries the base_asset
+	// tiebreaker — see [Store.HistoryPoints] for the measurement and the
+	// reason. `from` is OPTIONAL on this path (/v1/chart passes a window,
+	// but a caller may omit it), so the read is not saved by its range
+	// bound.
 	// #nosec G201 — table + interval are derived from the validated
 	// enum, not user input. See HistoryGranularity.Validate.
 	q := fmt.Sprintf(`
-		SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
-		  FROM %s
-		 WHERE %s
-		 ORDER BY bucket ASC
-	`, table, clauses)
-	if rowCap := bucketRowCap(limit); rowCap > 0 {
-		args = append(args, rowCap)
-		q += fmt.Sprintf(" LIMIT $%d", len(args))
-	}
+		SELECT * FROM (
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
+		       FROM %[1]s
+		      WHERE base_asset = $1 AND quote_asset = $2%[2]s
+		      ORDER BY bucket ASC%[3]s)
+		    UNION ALL
+		    (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text, volume_usd::text
+		       FROM %[1]s
+		      WHERE base_asset = $2 AND quote_asset = $1%[2]s
+		      ORDER BY bucket ASC%[3]s)
+		) AS both_directions
+		 ORDER BY bucket ASC, base_asset%[3]s
+	`, table, bounds, limitClause)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: HistoryPointsInRange[%s]: %w", granularity, err)
@@ -692,28 +748,43 @@ func (s *Store) TWAPPointsInRange(
 	// `1.0/twap` SQL rounding — ADR-0003). A bucket has at most two rows
 	// (one per stored direction), so this is a plain index-ordered scan.
 	args := []any{p.Base.String(), p.Quote.String()}
-	clauses := "((base_asset = $1 AND quote_asset = $2)\n         OR (base_asset = $2 AND quote_asset = $1))" +
-		"\n       AND bucket <= now() - INTERVAL '" + interval + "'"
+	// Bounds are spelled into BOTH branches (after the split neither
+	// inherits a predicate from the other); closed-bucket guard stays in
+	// its sargable form.
+	bounds := "\n        AND bucket <= now() - INTERVAL '" + interval + "'"
 	if !from.IsZero() {
 		args = append(args, from.UTC())
-		clauses += fmt.Sprintf("\n       AND bucket >= $%d", len(args))
+		bounds += fmt.Sprintf("\n        AND bucket >= $%d", len(args))
 	}
 	if !to.IsZero() {
 		args = append(args, to.UTC())
-		clauses += fmt.Sprintf("\n       AND bucket < $%d", len(args))
+		bounds += fmt.Sprintf("\n        AND bucket < $%d", len(args))
 	}
+	limitClause := ""
+	if rowCap := bucketRowCap(limit); rowCap > 0 {
+		args = append(args, rowCap)
+		limitClause = fmt.Sprintf("\n              LIMIT $%d", len(args))
+	}
+	// UNION ALL of two index-drivable branches, not an OR disjunction:
+	// twap_* carries the same (base_asset, quote_asset, bucket) index
+	// shape as prices_*, and `from`/`to` are optional here too — see
+	// [Store.HistoryPoints] for the measurement.
 	// #nosec G201 — table + interval derive from the validated
 	// twapGranularities set, not user input. See TWAPGranularitySupported.
 	q := fmt.Sprintf(`
-		SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), volume_usd::text
-		  FROM %s
-		 WHERE %s
-		 ORDER BY bucket ASC
-	`, table, clauses)
-	if rowCap := bucketRowCap(limit); rowCap > 0 {
-		args = append(args, rowCap)
-		q += fmt.Sprintf(" LIMIT $%d", len(args))
-	}
+		SELECT * FROM (
+		    (SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), volume_usd::text
+		       FROM %[1]s
+		      WHERE base_asset = $1 AND quote_asset = $2%[2]s
+		      ORDER BY bucket ASC%[3]s)
+		    UNION ALL
+		    (SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), volume_usd::text
+		       FROM %[1]s
+		      WHERE base_asset = $2 AND quote_asset = $1%[2]s
+		      ORDER BY bucket ASC%[3]s)
+		) AS both_directions
+		 ORDER BY bucket ASC, base_asset%[3]s
+	`, table, bounds, limitClause)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: TWAPPointsInRange[%s]: %w", granularity, err)
