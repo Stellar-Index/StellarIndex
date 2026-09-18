@@ -1317,6 +1317,7 @@ jobs:
           fi
 
           applied=""
+          refuted=""
           while IFS= read -r entry; do
             [ -n "$entry" ] || continue
             f="${entry%%=*}"
@@ -1326,7 +1327,8 @@ jobs:
               grep -qxF -- "$o" <<<"$existing" || missing="${missing}${o} "
             done
             if [ -n "$missing" ]; then
-              echo "::warning::${f} creates ${missing% }, which ${DEPLOY_HOST} does NOT have — NOT applied. The config-apply gate will demand it, correctly."
+              echo "::warning::${f} creates ${missing% }, which ${DEPLOY_HOST} does NOT have — NOT applied. The config-apply gate will demand it, correctly, and no acknowledgement can clear it."
+              refuted="${refuted}${f} "
             else
               echo "  ${f}: applied — every object it creates is present on ${DEPLOY_HOST} (${objects% })."
               applied="${applied}${f} "
@@ -1337,6 +1339,17 @@ jobs:
           # schema surface stays in the gate.
           if [ -n "$applied" ]; then
             echo "applied=${applied% }" >> "$GITHUB_OUTPUT"
+          fi
+          # The other half of the answer, and the one that was missing on
+          # 2026-09-18: files this host PROVED it does not carry. The gate
+          # refuses these even when the operator acknowledged, because an
+          # acknowledgement asserts a surface is applied and the host just
+          # said otherwise. Its empty direction is the SAME as applied's —
+          # a fault above publishes nothing and the gate falls back to
+          # asking the operator — so this adds a refusal where there is
+          # evidence and changes nothing where there is none.
+          if [ -n "$refuted" ]; then
+            echo "refuted=${refuted% }" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Config-apply gate
@@ -1365,8 +1378,13 @@ jobs:
           # system.tables. A step that failed or was skipped contributes
           # nothing and its surface stays gated.
           APPLIED: ${{ steps.prom_rules.outputs.applied }} ${{ steps.ch_ddl.outputs.applied }}
+          # Surfaces the ClickHouse step PROVED unapplied by asking the
+          # host. CONFIG_ACK cannot clear these — see the gate's own
+          # comment. Nothing else produces a refutation: a surface no
+          # step could check simply never appears here.
+          REFUTED: ${{ steps.ch_ddl.outputs.refuted }}
         run: |
-          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE" "$APPLIED"
+          bash scripts/ci/config-apply-gate.sh "$VERSION" "$CONFIG_ACK" "$BASELINE" "$APPLIED" "$REFUTED"
 
       - name: Served-path smoke
         # Runs AFTER the config-apply gate, i.e. after every deploy

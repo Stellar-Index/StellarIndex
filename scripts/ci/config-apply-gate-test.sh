@@ -167,10 +167,11 @@ editAs() {
   )
 }
 
-# runGate <version> [ack] → sets RC + OUT. GITHUB_STEP_SUMMARY is pointed
-# at a scratch file so the summary block does not pollute OUT.
+# runGate <version> [ack] [baseline] [applied] [refuted] → sets RC + OUT.
+# GITHUB_STEP_SUMMARY is pointed at a scratch file so the summary block
+# does not pollute OUT.
 runGate() {
-  OUT="$(cd "$TMP/repo" && GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" "$1" "${2:-false}" "${3:-}" "${4:-}" 2>&1)"
+  OUT="$(cd "$TMP/repo" && GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" "$1" "${2:-false}" "${3:-}" "${4:-}" "${5:-}" 2>&1)"
   RC=$?
 }
 
@@ -1133,7 +1134,8 @@ else
               GATE=scripts/ci/config-apply-gate.sh GITHUB_OUTPUT="$TMP/chddl_out" \
               bash "$TMP/chddl.sh" 2>&1)"
     CH_RC=$?
-    CH_APPLIED="$(sed -E 's/^applied=//' "$TMP/chddl_out")"
+    CH_APPLIED="$(sed -n -E 's/^applied=//p' "$TMP/chddl_out")"
+    CH_REFUTED="$(sed -n -E 's/^refuted=//p' "$TMP/chddl_out")"
   }
 
   run_chddl 0 "stellar.account_creators_ops
@@ -1176,6 +1178,36 @@ stellar.ledgers"
     fail=$((fail + 1))
   fi
 
+  # THE ACKNOWLEDGEMENT HOLE (found live, 2026-09-18). Certifying nothing
+  # is only half the answer. On the v0.91.0 deploy this step asked r1,
+  # was told stellar.asset_month_usd_prices was absent, printed exactly
+  # that as a ::warning:: — and the gate passed the release anyway,
+  # because the operator had passed config_acknowledged=true. The table
+  # stayed missing, the flows read LEFT JOINs it, and every
+  # GET /v1/accounts/{g}/graph/cohort answered 500 until it was applied
+  # by hand. An acknowledgement is the operator ASSERTING a surface is
+  # applied; here the host answered NO in this same run, so the assertion
+  # is refuted by evidence this run gathered and cannot stand. The step
+  # must therefore publish what it REFUTED, not only what it certified.
+  if [[ "$CH_REFUTED" == *"account_creators_rollup.sql"* && "$CH_REFUTED" == *"tier1_schema.sql"* ]]; then
+    echo "ok: the evidence step publishes the files the host PROVED unapplied"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: the host lacked the object, but the step refuted nothing (refuted='$CH_REFUTED'): $CH_OUT"
+    fail=$((fail + 1))
+  fi
+
+  OUT="$(GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" v0.62.0 true v0.61.1 "$CH_APPLIED" "$CH_REFUTED" 2>&1)"
+  RC=$?
+  expect "an acknowledgement cannot clear a surface the host PROVED unapplied" 1 "PROVED unapplied"
+
+  # The refusal must be driven by the evidence, not by a blanket ban on
+  # acknowledging schema surfaces: with nothing refuted, the operator's
+  # assertion still clears the release exactly as it did before.
+  OUT="$(GITHUB_STEP_SUMMARY="$TMP/summary" bash "$GATE" v0.62.0 true v0.61.1 "" "" 2>&1)"
+  RC=$?
+  expect "an acknowledgement still clears a surface nothing refuted" 0 "config-apply acknowledged"
+
   # And it must not redden the job to say so: a host with no ClickHouse is a
   # normal state, and the gate keeping the surface is the whole response.
   run_chddl 255 ""
@@ -1187,6 +1219,50 @@ stellar.ledgers"
     fail=$((fail + 1))
   fi
 fi
+
+# --- 31. a REFUTED surface outranks the acknowledgement ----------------
+#
+# The 5th argument carries the surfaces this run PROVED unapplied by
+# asking the host. It is narrow by construction — only a
+# deploy/clickhouse/*.sql file whose diff is purely new CREATE statements
+# can be refuted — and it must behave as evidence, not as a mood: it
+# blocks exactly the files named and nothing else.
+
+mkrepo
+release deploy/clickhouse/schema.sql
+runGate v0.2.0 true "" "" "deploy/clickhouse/schema.sql"
+expect "ack does not clear a surface the host proved unapplied" 1 "PROVED unapplied"
+
+# The refused file must be NAMED. A refusal that does not say which
+# surface to apply sends the operator back to the whole diff.
+if [[ "$OUT" == *"deploy/clickhouse/schema.sql"* ]]; then
+  echo "ok: the refusal names the surface to apply"; pass=$((pass + 1))
+else
+  echo "FAIL: the refusal did not name the refuted surface"
+  echo "$OUT" | sed -n '1,8s/^/    | /p'; fail=$((fail + 1))
+fi
+
+# A refutation of a DIFFERENT file says nothing about this one.
+mkrepo
+release deploy/clickhouse/schema.sql
+runGate v0.2.0 true "" "" "deploy/clickhouse/other.sql"
+expect "a refutation of another file does not block this one" 0 "config-apply acknowledged"
+
+# Matching is exact-path, not a prefix — the failure mode the [applied]
+# exemption already carries a test for, in the opposite direction: a
+# loose match here would refuse surfaces nothing was asked about.
+mkrepo
+release deploy/clickhouse/schema.sql
+runGate v0.2.0 true "" "" "deploy/clickhouse/schema.sql.bak"
+expect "refutation matching is exact-path, not a prefix" 0 "config-apply acknowledged"
+
+# And it still blocks WITHOUT an acknowledgement, under its own reason
+# rather than the generic one — the operator has been told the host was
+# asked and answered.
+mkrepo
+release deploy/clickhouse/schema.sql
+runGate v0.2.0 false "" "" "deploy/clickhouse/schema.sql"
+expect "a refuted surface blocks un-acknowledged too" 1 "PROVED unapplied"
 
 echo
 echo "config-apply-gate-test: $pass passed, $fail failed, $skipped corroboration(s) skipped (history=$has_history)"

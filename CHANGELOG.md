@@ -15,6 +15,33 @@ against.
 
 ## [Unreleased]
 
+### Fixed
+
+- **ci,ops:** `config_acknowledged=true` can no longer clear a config
+  surface the deploy PROVED unapplied by asking the host. The deploy's
+  ClickHouse evidence step has asked the target which objects exist
+  since 2026-09-07, but it published only what it CERTIFIED — so the
+  gate could not tell "nobody asked" from "asked, and the answer was
+  no", and an acknowledgement cleared both alike. That is not a
+  theoretical gap: on **2026-09-18 it cleared v0.91.0 to r1** while the
+  step's own `::warning::` named `stellar.asset_month_usd_prices` and
+  `…_staging` as absent, and because the month-priced cohort flows
+  `LEFT JOIN` that table, **every**
+  `GET /v1/accounts/{g}/graph/cohort` answered **500** — in 0.33 s,
+  against 200 in ~1.5 s the release before — until the DDL was applied
+  by hand. The step now publishes a `refuted` output beside `applied`,
+  and the gate refuses those surfaces whatever the operator asserted:
+  an acknowledgement asserts a surface IS applied, and here the host
+  said otherwise in the same run. It NARROWS the acknowledgement rather
+  than removing it — a surface no step could check behaves exactly as
+  before, matching is exact-path so a refutation never spreads to a
+  file nobody asked about, and an evidence step that faults publishes
+  nothing and falls back to asking the operator. Five assertions in
+  `scripts/ci/config-apply-gate-test.sh` are red against the previous
+  code, including the end-to-end one that extracts deploy.yml's real
+  step, runs it over the real `v0.61.1..v0.62.0` range against a host
+  lacking the object, and feeds its output to the gate.
+
 ## [v0.91.0] — 2026-09-18
 
 ### Added

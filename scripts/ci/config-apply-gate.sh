@@ -87,6 +87,9 @@
 # Usage: config-apply-gate.sh <version-tag> [acknowledged] [baseline-tag] [applied]
 #   <version-tag>   the deploying tag, e.g. v0.43.0
 #   [acknowledged]  "true" if the operator passed config_acknowledged=true
+#   [applied]       path prefixes this run applied AND verified live
+#   [refuted]       exact paths this run PROVED unapplied by asking the
+#                   host; [acknowledged] cannot clear these
 #   [baseline-tag]  the version live on the host, if known; defaults to
 #                   the previous release tag by ancestry
 #   [applied]       space-separated surface prefixes this deploy already
@@ -231,6 +234,7 @@ VERSION="${1:?deploying version tag, e.g. v0.43.0}"
 ACK="${2:-false}"
 BASELINE="${3:-}"
 APPLIED="${4:-}"
+REFUTED="${5:-}"
 
 # Config surfaces a binary deploy does NOT apply. Directory prefixes are
 # git pathspecs: the trailing slash matches everything beneath them.
@@ -362,6 +366,59 @@ if [ -z "$CHANGED" ]; then
     echo "- ✓ config-apply gate: no config-surface changes between \`${PREV}\` and \`${VERSION}\`." >>"$SUMMARY" 2>/dev/null || true
   fi
   exit 0
+fi
+
+# Surfaces this run PROVED unapplied by ASKING THE HOST — deploy.yml's
+# ch_ddl step found every object the file creates absent from
+# system.tables.
+#
+# 2026-09-18, live. That step already knew this and said so as a
+# ::warning::, but it published only what it CERTIFIED, so this gate
+# could not tell "nobody asked" from "asked, and the answer was no" —
+# and an acknowledgement cleared both alike. v0.91.0 deployed with
+# stellar.asset_month_usd_prices missing; the cohort flows read LEFT
+# JOINs it, so every GET /v1/accounts/{g}/graph/cohort answered 500
+# until the DDL was applied by hand. config_acknowledged=true is the
+# operator ASSERTING a surface is applied; where the host answered
+# otherwise in this same run that assertion is refuted by the run's own
+# evidence and cannot stand. Surfaces the host was never asked about
+# keep the old behaviour exactly — this NARROWS the acknowledgement to
+# the cases where it is still an open question, it does not remove it.
+#
+# Matching is exact-path (the evidence step emits whole paths), the
+# mirror of the [applied] exemption's anchored prefix test: a loose
+# match here would refuse surfaces nobody was asked about.
+REFUTED_HERE=""
+if [ -n "$REFUTED" ] && [ -n "$CHANGED" ]; then
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    for r in $REFUTED; do
+      [ "$path" = "$r" ] || continue
+      REFUTED_HERE="${REFUTED_HERE}${path}"$'\n'
+      break
+    done
+  done <<EOF
+$CHANGED
+EOF
+fi
+
+if [ -n "$REFUTED_HERE" ]; then
+  n=$(printf '%s' "$REFUTED_HERE" | grep -c . || true)
+  {
+    echo "## ⛔ Config-apply PROVED outstanding — the host was asked"
+    echo ""
+    echo "This deploy asked the host which ClickHouse objects exist, and **${n}** changed"
+    echo "surface(s) create objects it does **not** have. \`config_acknowledged\` cannot"
+    echo "clear these: an acknowledgement asserts a surface is applied, and the host"
+    echo "answered otherwise in this same run."
+    echo ""
+    echo '```'
+    printf '%s' "$REFUTED_HERE"
+    echo '```'
+  } >>"$SUMMARY" 2>/dev/null || true
+  echo "::error::${n} config surface(s) were PROVED unapplied on ${VERSION}'s target during this run — every object they create is absent from system.tables. config_acknowledged does NOT clear these: an acknowledgement asserts a surface is applied, and the host answered otherwise in this same run. Apply them per docs/operations/deploy-config-apply.md, confirm the objects exist, then re-run the deploy. The binaries are already live, and a feature whose schema half is missing does not degrade quietly — it fails: v0.91.0 shipped with stellar.asset_month_usd_prices absent and every cohort request answered 500."
+  printf '%s' "$REFUTED_HERE" | sed 's/^/    /'
+  exit 1
 fi
 
 {
