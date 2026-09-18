@@ -213,6 +213,21 @@ type Config struct {
 	// headroom for tick lateness.
 	Interval time.Duration
 
+	// TickTimeout is the deadline one [Tick] runs under, inherited by
+	// every store, cache and reference call the tick makes — the trades
+	// fetch, both FX snap queries (triangulation and the
+	// composite-reference evaluator), the freeze record and the
+	// divergence refresh. Before it existed a tick ran on the process
+	// context, so ONE query that stopped answering (a half-open
+	// connection, a lock wait) stalled every price indefinitely (K025).
+	//
+	// It is a WEDGE GUARD, not a budget: it must never cut a tick that
+	// is merely slow. refreshOrder is fixed, so a bound a healthy tick
+	// can exceed would starve the same tail pairs on every tick — a
+	// pricing outage caused by the guard. Zero defaults to
+	// DefaultTickTimeoutIntervals × Interval.
+	TickTimeout time.Duration
+
 	// MaxTradesPerWindow caps per-query row count to protect
 	// Timescale from a runaway scan on an unexpectedly active
 	// pair. Defaults to 10_000.
@@ -657,6 +672,17 @@ var DefaultWindows = []time.Duration{
 // consumer pattern stabilises.
 const DefaultInterval = 30 * time.Second
 
+// DefaultTickTimeoutIntervals sizes the default [Config.TickTimeout] as
+// a multiple of the tick cadence: 4 × 30s = 120s. That is the
+// `stellarindex_api_price_stale` threshold, which is what makes it a
+// safe wedge guard rather than a guess at a budget: a tick still running
+// at 120s is already serving prices the alert calls stale, so cutting it
+// costs nothing the alert does not already say, while a wedged call is
+// released inside the alert's 5-minute `for:` instead of never. Ticks
+// have no duration metric yet, so a tighter bound (one Interval was
+// suggested) could not be shown safe for the slowest healthy tick.
+const DefaultTickTimeoutIntervals = 4
+
 // DefaultMaxTradesPerWindow caps per-query scan size to bound a single
 // refresh's Timescale cost. 10,000 rows is comfortably wider than the
 // 5m default window at network-wide trade rates, but a single liquid
@@ -893,6 +919,9 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 	if cfg.Interval <= 0 {
 		cfg.Interval = DefaultInterval
 	}
+	if cfg.TickTimeout <= 0 {
+		cfg.TickTimeout = DefaultTickTimeoutIntervals * cfg.Interval
+	}
 	if len(cfg.Windows) == 0 {
 		cfg.Windows = DefaultWindows
 	}
@@ -993,40 +1022,51 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	o.tickLegRefs = make(map[time.Duration]map[string]legRef, len(o.cfg.Windows))
 	o.tickCompositeRefs = make(map[string]compositeReference)
 
-	tickHadError := false
-	for _, pair := range o.refreshOrder {
-		for _, window := range o.cfg.Windows {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if err := o.refreshPairWindow(ctx, pair, window, now); err != nil {
-				tickHadError = true
-				o.mu.Lock()
-				o.errors++
-				o.mu.Unlock()
-				o.logger.Warn("refresh failed",
-					"pair", pair.String(),
-					"window", window,
-					"err", err)
-				continue
-			}
-		}
+	// Every store and cache call below runs on tickCtx, so none of them
+	// can outlive the tick's wedge guard — see [Config.TickTimeout].
+	tickCtx, cancel := context.WithTimeout(ctx, o.cfg.TickTimeout)
+	defer cancel()
+
+	tickHadError, loopErr := o.refreshAllPairs(tickCtx, now)
+	if loopErr != nil && ctx.Err() != nil {
+		// The CALLER's context ended (shutdown): stop where we are, as
+		// before. Only the tick's own deadline finishes the accounting.
+		return loopErr
 	}
 
-	// Triangulation pass — runs AFTER the per-pair refresh so each
-	// chain's legs read from the freshly-cached VWAPs. Per-chain
-	// failures are logged + counted but never abort the tick.
-	o.triangulateAll(ctx)
+	// Both passes are skipped once the tick's deadline has fired, whether
+	// it cut the loop short (loopErr) or landed inside its last refresh.
+	if tickCtx.Err() == nil {
+		// Triangulation pass — runs AFTER the per-pair refresh so each
+		// chain's legs read from the freshly-cached VWAPs. Per-chain
+		// failures are logged + counted but never abort the tick.
+		// Skipped on a cut tick: a composite must not be routed over
+		// the partial edge set of a refresh that did not finish, and the
+		// divergence pass must not record a refresh it could not run.
+		o.triangulateAll(tickCtx)
 
-	// Divergence refresh — runs AFTER the per-pair VWAPs are in
-	// cache so RefreshPair has a fresh price to compare against
-	// external references. Best-effort per-pair (errors logged +
-	// counted, never abort the tick); the API's
-	// `flags.divergence_warning` reads from the cache this populates.
-	o.refreshDivergenceAll(ctx, now)
+		// Divergence refresh — runs AFTER the per-pair VWAPs are in
+		// cache so RefreshPair has a fresh price to compare against
+		// external references. Best-effort per-pair (errors logged +
+		// counted, never abort the tick); the API's
+		// `flags.divergence_warning` reads from the cache this populates.
+		o.refreshDivergenceAll(tickCtx, now)
+	}
+
+	// The tick's own deadline fired (the caller's context is still
+	// live): some call stopped answering. The tick is an error, and it
+	// still does its end-of-tick accounting below — the staleness gauges
+	// in particular must keep climbing for every pair the cut tick did
+	// not reach, not sit frozen at their last "fresh" reading.
+	timedOut := ctx.Err() == nil && tickCtx.Err() != nil
+	if timedOut {
+		o.mu.Lock()
+		o.errors++
+		o.mu.Unlock()
+	}
 
 	outcome := "ok"
-	if tickHadError {
+	if tickHadError || timedOut {
 		outcome = "error"
 	}
 	obs.AggregatorTicksTotal.WithLabelValues(outcome).Inc()
@@ -1044,7 +1084,38 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	// pairs frozen for one tick" — see obs.AnomalyFreezeActive.
 	obs.AnomalyFreezeActive.Set(float64(o.activeFreezeCount()))
 
+	if timedOut {
+		return fmt.Errorf("orchestrator: tick cut by its %s wedge guard: %w",
+			o.cfg.TickTimeout, context.DeadlineExceeded)
+	}
 	return nil
+}
+
+// refreshAllPairs runs the per-(pair, window) refresh in refreshOrder.
+// hadError reports a refresh that failed and was skipped (the tick
+// carries on); err is non-nil only when ctx ended before the loop did —
+// the caller's cancellation or the tick's own deadline — and the loop
+// stopped early.
+func (o *Orchestrator) refreshAllPairs(ctx context.Context, now time.Time) (hadError bool, err error) {
+	for _, pair := range o.refreshOrder {
+		for _, window := range o.cfg.Windows {
+			if err := ctx.Err(); err != nil {
+				return hadError, err
+			}
+			if err := o.refreshPairWindow(ctx, pair, window, now); err != nil {
+				hadError = true
+				o.mu.Lock()
+				o.errors++
+				o.mu.Unlock()
+				o.logger.Warn("refresh failed",
+					"pair", pair.String(),
+					"window", window,
+					"err", err)
+				continue
+			}
+		}
+	}
+	return hadError, nil
 }
 
 // activeFreezeCount counts the (pair, window) keys currently holding

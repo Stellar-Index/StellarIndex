@@ -78,6 +78,28 @@ against.
   in the double-delivery invariant, and the compile-time guard now holds
   `BatchLimit × (Timeout + markWriteTimeout)` under the lease
   (25 × 11s = 275s < 300s; the margin goes from 50s to 25s).
+- **aggregator:** one store call that stops answering no longer stalls
+  every price (K025, aggregator leg). `Orchestrator.Tick` ran on the
+  process-lifetime context with no deadline, so a single wedged call —
+  the trades fetch, either FX snap query (triangulation or the
+  composite-reference evaluator), the freeze record, the divergence
+  refresh — stalled every published price until a restart. A tick now
+  runs under `Config.TickTimeout`, inherited by every call it makes. It
+  is a wedge guard, not a budget: the default is 4 × `Interval` (120s, the
+  `stellarindex_api_price_stale` threshold), because `refreshOrder` is
+  fixed and a bound a slow-but-healthy tick could exceed would starve the
+  same tail pairs every tick. A cut tick skips triangulation and the
+  divergence pass (no composite over a partial edge set), counts as
+  `ticks_total{outcome="error"}`, still emits the staleness gauges so
+  they climb rather than freeze, and returns an error wrapping
+  `context.DeadlineExceeded`; the next tick starts with a fresh budget.
+  A caller cancellation (shutdown) is unchanged. **Operator note:**
+  `TickTimeout` is not yet settable from TOML, and ticks have no duration
+  metric — if `tick cut by its 2m0s wedge guard` appears in the
+  aggregator log on a healthy database, ticks are legitimately slower
+  than 120s and that, not the guard, is the finding. The third K025 site,
+  the shared SEP-1 image refresh, was already detached and needed no
+  change.
 - **price/at, price/changes:** the thin-market gate now judges the
   market that existed AT the requested instant. `/v1/price/at` and every
   `/v1/price/changes` horizon serve the bucket at-or-before a past `ts`,
