@@ -2203,6 +2203,14 @@ func assetDetailFromAssetRow(row timescale.AssetRow) AssetDetail {
 	obs := row.ObservationCount
 	d.ObservationCount = &obs
 	// Asset-catalogue overlay scalars (price / volume / change percentages).
+	//
+	// A LISTING row's price is copied verbatim ON PURPOSE: it comes from
+	// asset_price_snapshot, whose writer already applies the
+	// dex-nonstandard-decimals correction at full NUMERIC precision
+	// (timescale's snapshotNormalizedPriceUSDExpr), so scaling it here
+	// would apply the factor twice. The per-asset reader's row
+	// (GetAssetByAssetID) is a different source — RAW — and a caller that
+	// publishes ITS price has to normalise it first.
 	if row.PriceUSD != nil {
 		d.PriceUSD = row.PriceUSD
 	}

@@ -113,6 +113,60 @@ const snapshotPriceUSDExpr = `COALESCE(
 		      vs_xlm.vwap * (SELECT vwap FROM xlm_usd)
 		    )`
 
+// snapshotNormalizedPriceUSDExpr is [snapshotPriceUSDExpr] with the
+// dex-nonstandard-decimals forward normalisation applied, and it is the
+// value the rollup STORES. `nda` is the refresh's LEFT JOIN onto
+// nonstandard_decimals_assets (migration 0093).
+//
+// prices_1m holds RAW quote/base ratios of smallest-unit amounts, so for
+// a token whose on-chain decimals() is not 7 every arm of the COALESCE
+// chain above is off by the same 10^(7 - decimals): the direct arm
+// divides by a 7-decimals USD proxy, the XLM arm by 7-decimals XLM and
+// then multiplies by a 7/7 XLM/USD ratio, and the inverted XLM arm is
+// the reciprocal of a ratio that was off the other way. One exact
+// factor, 10^(decimals - 7), corrects whichever arm answered — the same
+// single factor the API's catalogue reader applies
+// (v1.Server.normalizeCatalogueUSD).
+//
+// Why the WRITER, when every other surface normalises at read time
+// (prices_1m and change_summary_5m stay raw on purpose):
+//
+//   - No ratchet. /v1/changes normalises at read because its upsert
+//     keeps ath_value / atl_value with GREATEST / LEAST, and a token is
+//     flagged only after it has traded, so a write-side switch would pin
+//     the extreme to a figure from the old scale for good. This rollup
+//     has nothing of the kind: the upsert OVERWRITES every column, the
+//     whole table is recomputed each pass, and the prune drops what was
+//     not rewritten. A newly confirmed (or reconciled-away) row takes
+//     full effect on the next 2-minute pass and leaves no residue.
+//   - One place, every reader. The column is read by the listing spine,
+//     by [Store.ContractCatalogueRows], and through them by every API
+//     projection of a listing row (the /v1/assets listing phases, the
+//     RWA classic and contract listings, the catalogue-twin merge and
+//     the lake-supply prewarm). None of them normalised, and the RWA
+//     contract listing multiplies this price by supply to publish a
+//     market cap.
+//   - Full precision. The column is unrounded NUMERIC, so the multiply
+//     is exact and the listing's ROUND(price_usd, 10) now runs AFTER the
+//     correction. Correcting at read would scale an already-rounded
+//     string: an 18-decimals token worth 1 USD has a raw ratio of 1e-11,
+//     which ROUND(…, 10) turns into zero before any reader sees it.
+//
+// A READER OF THIS COLUMN MUST NOT NORMALISE IT AGAIN. The three change
+// columns need no factor: each is a ratio of two legs read through the
+// same arm, so the scale cancels.
+//
+// The CASE (rather than a COALESCE'd factor of 1) keeps the stored value
+// for every asset with no confirmed row the exact NUMERIC it always was,
+// display scale included. power(numeric, numeric) with an integral
+// exponent is exact in both directions, so money stays NUMERIC end to
+// end (ADR-0003).
+const snapshotNormalizedPriceUSDExpr = `CASE WHEN nda.decimals IS NULL
+		         THEN ` + snapshotPriceUSDExpr + `
+		         ELSE ` + snapshotPriceUSDExpr + `
+		              * power(10::numeric, (nda.decimals - 7)::numeric)
+		    END`
+
 // assetPriceCTEs is the price substrate: four USD-quoted lookbacks
 // (`direct_usd*`), four XLM-quoted lookbacks read in BOTH stored
 // directions (`asset_vs_xlm*`), and four XLM/USD scalar lookups
@@ -413,6 +467,9 @@ const assetPriceCTEs = `
 // applies the identical `ROUND(…, 10)::text` / `to_char(…,
 // 'FM999999990.00')` wire rendering it always applied — so the bytes on
 // the wire are the bytes the inline derivation produced. Never a float.
+// The one deliberate difference from that inline derivation is the
+// decimals correction for a CONFIRMED non-7-decimals token, applied here
+// before anything is rounded — see [snapshotNormalizedPriceUSDExpr].
 //
 // `computed_at` is stamped to the transaction timestamp so the sibling
 // prune can drop assets whose price lapsed this pass, exactly as
@@ -437,7 +494,7 @@ WITH ` + assetPriceCTEs + `,
 		derived AS (
 		  SELECT
 		    ca.asset_id,
-		    ` + snapshotPriceUSDExpr + ` AS price_usd,
+		    ` + snapshotNormalizedPriceUSDExpr + ` AS price_usd,
 		    CASE
 		      WHEN ca.asset_id = 'native'
 		           AND (SELECT vwap FROM xlm_usd) IS NOT NULL
@@ -514,6 +571,10 @@ WITH ` + assetPriceCTEs + `,
 		  LEFT JOIN asset_vs_xlm_1h   vs_xlm_1h   ON vs_xlm_1h.asset_id  = ca.asset_id
 		  LEFT JOIN asset_vs_xlm_24h  vs_xlm_24h  ON vs_xlm_24h.asset_id = ca.asset_id
 		  LEFT JOIN asset_vs_xlm_7d   vs_xlm_7d   ON vs_xlm_7d.asset_id  = ca.asset_id
+		  -- Confirmed non-7-decimals tokens only; see
+		  -- snapshotNormalizedPriceUSDExpr. The table is tiny (near-zero
+		  -- confirmed offenders) and keyed on its primary key.
+		  LEFT JOIN nonstandard_decimals_assets nda ON nda.asset = ca.asset_id
 		)
 		SELECT asset_id, price_usd, change_1h_pct, change_24h_pct,
 		       change_7d_pct, source_count, now()

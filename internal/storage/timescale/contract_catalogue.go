@@ -59,6 +59,13 @@ func (s *Store) ContractCatalogueRows(ctx context.Context, contractIDs []string)
 	// produced for it, digit for digit. A different rounding here would
 	// show up as the two surfaces disagreeing about the same token's
 	// price.
+	//
+	// The rounding is safe for a non-7-decimals contract — the class this
+	// read exists for — only because asset_price_snapshot stores the
+	// decimals-CORRECTED price (snapshotNormalizedPriceUSDExpr): the raw
+	// prices_1m ratio of an 18-decimals token worth 1 USD is 1e-11, which
+	// this ROUND would turn into zero. The caller multiplies this price
+	// by supply to publish a market cap, and must not scale it again.
 	const q = `
 		SELECT d.contract_id,
 		       d.first_seen_ledger,

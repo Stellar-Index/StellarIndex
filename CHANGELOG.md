@@ -17,6 +17,32 @@ against.
 
 ### Fixed
 
+- **assets listing:** `price_usd` on `GET /v1/assets` is now
+  decimals-normalised for a confirmed non-7-decimals token (F017, the
+  listing leg). The column is read from `asset_price_snapshot`, whose
+  writer stored the RAW `prices_1m` ratio, so a 9-decimals token listed
+  at a hundredth of its price, a 5-decimals one at a hundred times it,
+  and an 18-decimals token worth $14 as `0.0000000001` — the listing's
+  `ROUND(…, 10)` ran on the raw ratio and left nothing to correct. The
+  same column feeds `ContractCatalogueRows`, and through it the RWA
+  contract listing, which multiplies that price by supply to publish a
+  market cap. The correction is applied **in the rollup's writer**, one
+  exact factor of 10^(decimals − 7) joined from
+  `nonstandard_decimals_assets`, and not at read time like the rest of
+  the class. `/v1/changes` had to normalise at read because its upsert
+  ratchets ATH/ATL with GREATEST/LEAST and a write-side switch would pin
+  an extreme from the old scale; this rollup has no such hazard — the
+  upsert overwrites every column, the table is recomputed every
+  2-minute pass and pruned — which a test proves by withdrawing and
+  restoring a confirmation and reading the stored value flip with no
+  residue. Writing it once corrects every reader of the column (none of
+  them normalised), keeps the multiply on unrounded NUMERIC so the wire
+  rounding now happens after the correction, and leaves the 1h/24h/7d
+  change columns alone — each is a ratio of two same-scale legs. An asset
+  with no confirmed row stores and serves the byte-identical value it
+  always did. Readers of the column must not normalise it again; a unit
+  test fails if the listing SELECT ever joins the decimals table.
+
 - **api:** four more surfaces now apply the dex-nonstandard-decimals
   normalisation instead of publishing the RAW `prices_1m` ratio for a
   confirmed non-7-decimals token (F017). The class was half-fixed, and

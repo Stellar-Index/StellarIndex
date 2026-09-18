@@ -462,6 +462,9 @@ const adjustedVolume24hExpr = `(COALESCE(vol.vol_usd, 0) * ` +
 // Since #331 F1 that chain is not evaluated here: it is
 // [snapshotPriceUSDExpr], resolved once per aggregator pass into
 // asset_price_snapshot, and this is the rollup column the listing reads.
+// The stored value is already decimals-normalised for a confirmed
+// non-7-decimals token ([snapshotNormalizedPriceUSDExpr]); it is served
+// as read, never scaled again.
 // The indirection still earns its keep — listingRankTierExpr splices it
 // into the SELECT, the ORDER BY and the keyset WHERE, and the join that
 // supplies `aps` carries the staleness ceiling, so "unpriced" and
@@ -694,7 +697,11 @@ const listAssetsBaseSelect = `
 		    -- asset_price_snapshot stores the same unrounded NUMERIC the
 		    -- inline COALESCE chain produced (snapshotPriceUSDExpr), so
 		    -- the wire string is the string it always was — the rollup
-		    -- moved the compute, not the value.
+		    -- moved the compute, not the value. One exception, on
+		    -- purpose: for a CONFIRMED non-7-decimals token the rollup
+		    -- stores the decimals-CORRECTED price
+		    -- (snapshotNormalizedPriceUSDExpr), so this ROUND runs after
+		    -- the correction and no reader may normalise it again.
 		    ROUND(` + listingPriceUSDExpr + `, 10)::text  AS price_usd,
 		    vol.vol_usd                           AS volume_24h_usd,
 		    NULL::numeric                         AS market_cap_usd,
