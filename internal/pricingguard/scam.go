@@ -25,27 +25,43 @@
 // flagged issuer's aggregated price at 200 (wave-D MSP-02/EXR-04,
 // reproduced live). PR #182's merged body repeated the same claim.
 //
-// The gate is now consumed at SIX sites, and the honest way to state
-// the invariant is per-surface rather than "one seam":
+// The gate is consumed per-surface, and the honest way to state the
+// invariant is per-surface rather than "one seam":
 //
 //   - the price-reader seam — /v1/price, /v1/price/batch, and the
-//     asset headline, via cmd/stellarindex-api's priceWithheld
-//     chokepoint;
-//   - the SEP-40 oracle price paths, same chokepoint;
+//     asset headline, via [PriceWithheld] (cmd/stellarindex-api's
+//     priceWithheld chokepoint delegates to it);
+//   - the SEP-40 oracle price paths, /v1/price/at and the DEX-TVL
+//     valuation, same chokepoint;
+//   - the aggregator's price-alert evaluator, same chokepoint —
+//     customer webhooks fire off the same closed VWAP buckets;
 //   - /v1/price/tip, in computeTip (the reader seam covers only the
 //     middle branch of that function);
-//   - /v1/vwap and /v1/twap, in their handlers.
+//   - /v1/vwap, /v1/twap and /v1/chart, in their handlers.
 //
-// The handlers are the correct site for the last two, NOT their shared
-// tradesInRangeWithStablecoinFallback: that helper is also the fetch
-// behind the single-bar /v1/ohlc, which this very paragraph promises
-// stays visible.
+// The handlers are the correct site for the last group, NOT their
+// shared tradesInRangeWithStablecoinFallback: that helper is also the
+// fetch behind the single-bar /v1/ohlc, which this very paragraph
+// promises stays visible.
 //
 // A new price-claim surface must add its own call. There is no seam
 // that covers them all, and asserting one in a comment is how this gap
 // survived — cmd/stellarindex-api's TestPriceServingSeamsAreGated
 // enumerates the reader-backed ones so a new ungated seam fails CI,
 // but it cannot see a handler that computes its own price.
+//
+// BOTH LEGS, always. The withholding decision is a property of the
+// MARKET, not of whichever leg the client happened to name first: a
+// price of X in a flagged issuer's asset is the flagged market's own
+// price, inverted. Keying the gate on the base alone meant
+// `?base=native&quote=<FLAGGED>` republished, at 200 and
+// unauthenticated, the exact reciprocal of the number
+// `?base=<FLAGGED>&quote=native` had just refused — together with its
+// volumes and trade counts (F002/F019/F032/T039). [ScamGate.WithheldPair]
+// folds both legs INSIDE this package so no call site can consult one
+// leg and forget the other; that fold is the thing new surfaces
+// inherit, and a hand-written `Withheld(base) || Withheld(quote)` at a
+// call site is the per-site drift it exists to prevent.
 //
 // It DELIBERATELY overturns the directory's historical "display-only,
 // tags never gate pricing" invariant (asset_directory_tags.go).
@@ -160,27 +176,81 @@ func NewScamGate(dir ScamDirectoryReader, opts ScamGateOptions) *ScamGate {
 	return &ScamGate{dir: dir, logger: opts.Logger, cache: make(map[string]scamVerdict)}
 }
 
-// Withheld reports whether the aggregated price for `base` must be
-// withheld because its issuer is directory-scam-flagged. `surface`
-// labels the metric (obs.PriceServeScamWithheldTotal) — a
+// PriceWithheld is the ONE withholding decision, consumed by BOTH
+// binaries: withhold when the thin-market substance gate refuses the
+// pair, OR when either leg's issuer is directory-scam-flagged.
+//
+// It lives here rather than in cmd/stellarindex-api because a decision
+// spelled once per binary drifts once per binary. The API binary had
+// the only copy, so the aggregator's price-alert evaluator — which
+// fires customer webhooks off the same closed VWAP buckets the API
+// serves — consulted the substance gate alone and the scam gate not at
+// all: an alert could name a price /v1/price refuses to publish
+// (F002/K001). cmd/stellarindex-api's priceWithheld and the
+// aggregator's price-alert reader both delegate here.
+//
+// Both gates are nil-receiver safe (nil == allow everything), so an
+// operator who disabled [pricing_guard] keeps today's behaviour.
+func PriceWithheld(
+	ctx context.Context,
+	substance *SubstanceGate,
+	scam *ScamGate,
+	base, quote canonical.Asset,
+	surface string,
+) bool {
+	return !substance.Allowed(ctx, base, quote, surface) || scam.WithheldPair(ctx, base, quote, surface)
+}
+
+// WithheldPair reports whether the aggregated price for the pair
+// base/quote must be withheld because EITHER leg's issuer is
+// directory-scam-flagged. This is the form every price surface should
+// consult: the decision is a property of the market, and the same
+// market is named by both orientations of the pair (see the "BOTH
+// LEGS, always" paragraph in the package doc).
+//
+// The fold is a short-circuiting OR, so a flagged base costs exactly
+// the one directory lookup it always did and increments the metric
+// once.
+func (g *ScamGate) WithheldPair(ctx context.Context, base, quote canonical.Asset, surface string) bool {
+	return g.withheldLeg(ctx, base, surface) || g.withheldLeg(ctx, quote, surface)
+}
+
+// Withheld is the BASE-ONLY spelling of the decision, kept for the
+// call sites not yet migrated to [ScamGate.WithheldPair]: the /v1/twap,
+// /v1/chart, /v1/price/tip and closed-stream handlers in
+// internal/api/v1, whose files are outside this change's scope
+// (F019/F032/T039 carry them). It is not a second policy — it shares
+// withheldLeg with the pair form — but it answers HALF the question,
+// so it must not be the form a new surface reaches for.
+//
+// `surface` labels the metric (obs.PriceServeScamWithheldTotal) — a
 // low-cardinality constant ("price_read", "tip", "asset_headline", …),
 // never a pair string. Nil-receiver safe. Fail-open on directory error.
+func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface string) bool {
+	return g.withheldLeg(ctx, base, surface)
+}
+
+// withheldLeg is the single-asset predicate both exported forms fold
+// over: it answers "is THIS asset's issuer directory-scam-flagged?".
+// Nil-receiver safe. Fail-open on directory error.
 //
 // Only CLASSIC assets have a directory-flaggable issuer G-address;
 // native / fiat / crypto-CEX / bare-Soroban assets return false.
 //
-// The base is resolved to its CANONICAL family form before that check
+// The asset is resolved to its CANONICAL family form before that check
 // (canonical.CanonicalAsset), because a Stellar Asset Contract wrapper
 // is the same asset as the classic issuance it wraps while carrying no
 // G-address of its own. Without the resolution the classic check
 // rejected every SAC spelling as "nothing to flag", so a flagged
 // issuer's price stayed servable to anyone who named the wrapper's
 // C-address instead of `CODE-ISSUER` — on /v1/price, /v1/vwap,
-// /v1/twap, /v1/price/tip and /v1/chart alike, since all ten
-// consultations pass the raw requested base straight through
+// /v1/twap, /v1/price/tip and /v1/chart alike, since every consultation
+// passes the raw requested asset straight through
 // (docs/audit/d7-thin-pool-third-alias-vwap-review-2026-09-04.md, R8).
-// Resolving HERE rather than at each caller is what makes the ten
-// consultations agree: a new price surface inherits it.
+// Resolving HERE rather than at each caller is what makes the
+// consultations agree: a new price surface inherits it — and now so
+// does the quote leg, which the SAC bypass would otherwise re-open one
+// orientation at a time.
 //
 // Direction matters and is one-way. A configured classic↔SAC family is
 // ordered classic-first (canonical.NewAliasRegistry), so the canonical
@@ -190,15 +260,15 @@ func NewScamGate(dir ScamDirectoryReader, opts ScamGateOptions) *ScamGate {
 // so the resolution is a no-op there rather than a behaviour change.
 // XLM's SAC canonicalises to `native`, which has no issuer and so still
 // returns false — as it did before.
-func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface string) bool {
+func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surface string) bool {
 	if g == nil {
 		return false
 	}
-	base = canonical.CanonicalAsset(base)
-	if base.Type != canonical.AssetClassic || base.Issuer == "" {
+	asset = canonical.CanonicalAsset(asset)
+	if asset.Type != canonical.AssetClassic || asset.Issuer == "" {
 		return false
 	}
-	key := base.Issuer
+	key := asset.Issuer
 	now := g.clock()
 
 	g.mu.Lock()

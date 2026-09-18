@@ -87,8 +87,12 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// were: the ScamGate is consumed at exactly four sites, none of them
 	// here, and no middleware does asset-level withholding.
 	//
-	// Keyed on the BASE so it covers every quote, including the
-	// XLM-triangulated headline — same shape as computeTip.
+	// BOTH LEGS. It covers every quote of a flagged base (including the
+	// XLM-triangulated headline) and every base quoted IN a flagged
+	// asset: keyed on the base alone, `?base=native&quote=<FLAGGED>`
+	// republished the withheld market's price as its exact reciprocal,
+	// at 200, unauthenticated (F002). The fold lives in pricingguard —
+	// this site passes the pair and asks once.
 	//
 	// SCAM ONLY, deliberately not the substance gate. The scam gate is
 	// targeted (flagged issuers) and directly implements the 2026-08-25
@@ -105,7 +109,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// config docs and the withheld problem's own guidance text all
 	// promise /v1/ohlc stays visible. Gating there would make our own
 	// error message's escape-hatch advice a lie.
-	if s.scam != nil && s.scam.Withheld(r.Context(), base, "vwap") {
+	if scamWithheld(r.Context(), s.scam, base, quote, "vwap") {
 		writePriceWithheldProblem(w, r, base, quote)
 		return
 	}

@@ -56,6 +56,23 @@ against.
   moves to its sargable spelling (`bucket <= now() - INTERVAL …`, never
   `bucket + INTERVAL … <= now()`). Served values are unchanged.
   (audit-2026-09-02 F169, F117, F038)
+- **pricing-guard:** the scam-issuer price gate is now keyed on the PAIR,
+  not on the base leg alone. Asking for a directory-flagged issuer as the
+  QUOTE — `?base=native&quote=<FLAGGED>` — republished at 200, and
+  unauthenticated, the exact reciprocal of the number the very same
+  endpoint had just withheld for the opposite orientation, together with
+  its volumes and trade counts. `ScamGate.WithheldPair` folds both legs
+  (each still resolved through the SAC/classic alias family, so a wrapper
+  spelling cannot re-open it one orientation at a time) INSIDE the guard
+  package, so no call site can consult one leg and forget the other. The
+  fold reaches `/v1/price`, `/v1/price/batch`, `/v1/price/at`, the SEP-40
+  oracle paths, the asset headline and the DEX-TVL valuation via the
+  chokepoint, plus `/v1/vwap`. `/v1/twap`, `/v1/chart`, `/v1/price/tip`
+  and the closed-price SSE stream still ask the base-only question; they
+  are named in a shrinking ratchet
+  (`TestScamGateIsAskedThePairQuestion`) so no NEW surface can join them.
+  (audit-2026-09-02 F002/K001, partial: F019/F032/T039 carry the four
+  remaining handlers)
 - **divergence:** the Chainlink reference no longer writes the operator's
   RPC API key into the divergence cache. `[divergence.chainlink].rpc_url`
   is populated from the same `CHAINLINK_RPC_URL` the ingest poller uses,

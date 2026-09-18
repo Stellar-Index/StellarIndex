@@ -652,10 +652,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// the verdict cache) on which pairs are too thin to price.
 	substanceGate := buildSubstanceGate(cfg.PricingGuard, store, logger)
 	// Scam-pricing gate: withhold the aggregated price for issuers flagged
-	// scam-class in the curated account directory. Wired at the reader seam
-	// so every reader-backed price surface (/v1/price, /v1/price/batch,
-	// /v1/twap, /v1/vwap, the SEP-40 oracle price paths, the asset headline)
-	// is covered by ONE gate. Nil when the directory reader is absent.
+	// scam-class in the curated account directory, on EITHER leg of the
+	// pair. Wired at the reader seam, which covers the reader-backed
+	// surfaces (/v1/price, /v1/price/batch, /v1/price/at, the SEP-40
+	// oracle price paths, the asset headline) via priceWithheld; the
+	// surfaces that compute their own price — /v1/vwap, /v1/twap,
+	// /v1/chart, /v1/price/tip — consult the same gate from their
+	// handlers, because they never touch this reader (see scam.go's
+	// "WHERE IT IS CONSUMED" note; claiming one seam covered them all is
+	// how they went ungated for a release). Nil when the directory reader
+	// is absent.
 	scamGate := pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{Logger: logger})
 	priceReader := storePriceReader{s: store, logger: logger, substance: substanceGate, scam: scamGate}
 
@@ -3739,6 +3745,13 @@ const defaultVWAPFreshness = 15 * time.Minute
 // TestWithholdingGatesAreSpelledOnlyAtTheChokepoint fails if a future
 // call site spells either gate out again.
 //
+// The expression itself now lives in pricingguard.PriceWithheld: the
+// aggregator's price-alert evaluator serves customer webhooks off the
+// same closed VWAP buckets and had NO copy of the scam half at all, so
+// one binary-local chokepoint was one chokepoint short (F002/K001).
+// This function stays because the seam guard above derives its subject
+// set from calls to it by name.
+//
 // Both gates are nil-receiver safe (nil == allow-everything), so an
 // operator who disabled [pricing_guard] keeps today's behaviour.
 func priceWithheld(
@@ -3748,7 +3761,7 @@ func priceWithheld(
 	base, quote canonical.Asset,
 	surface string,
 ) bool {
-	return !substance.Allowed(ctx, base, quote, surface) || scam.Withheld(ctx, base, surface)
+	return pricingguard.PriceWithheld(ctx, substance, scam, base, quote, surface)
 }
 
 type storePriceReader struct {

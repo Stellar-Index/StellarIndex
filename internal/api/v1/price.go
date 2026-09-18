@@ -152,11 +152,57 @@ type PriceSubstanceGate interface {
 // internal/pricingguard.ScamGate. Like the substance gate, the v1 server
 // consults it only on paths that compute a price WITHOUT going through
 // PriceReader (the tip rolling-window VWAP); reader-backed paths get the
-// gate inside the readers themselves (cmd/stellarindex-api wiring). It is
-// keyed on the base alone, so it gates every quote (defeating the
-// frontend's XLM triangulation). Nil-safe: a nil gate withholds nothing.
+// gate inside the readers themselves (cmd/stellarindex-api wiring).
+// Nil-safe: a nil gate withholds nothing.
+//
+// This is the BASE-ONLY question, and it is half the decision — see
+// [PriceScamPairGate]. Handlers must ask via [scamWithheld], never by
+// calling this method directly.
 type PriceScamGate interface {
 	Withheld(ctx context.Context, base canonical.Asset, surface string) bool
+}
+
+// PriceScamPairGate is the pair-aware form of [PriceScamGate]: it
+// withholds when EITHER leg's issuer is flagged.
+//
+// Why it exists. The withholding decision is a property of the MARKET,
+// not of whichever leg the client named first — the price of X in a
+// flagged issuer's asset IS the flagged market's price, inverted. While
+// the gate was keyed on the base alone, `?base=native&quote=<FLAGGED>`
+// served, unauthenticated and at 200, the exact reciprocal of the number
+// the same endpoint had just withheld for `?base=<FLAGGED>&quote=native`
+// (F002/F019/F032/T039). It gates every quote AND every base, so the
+// frontend's XLM triangulation is still covered.
+//
+// A SEPARATE interface rather than a second method on PriceScamGate so
+// that a deployment (or a test) wiring a base-only gate keeps compiling
+// and keeps its base-only behaviour rather than silently satisfying a
+// widened contract it does not implement. The production gate,
+// *pricingguard.ScamGate, implements this form — pinned by
+// TestProductionScamGateIsPairAware so the fallback below can never
+// become the live path.
+type PriceScamPairGate interface {
+	PriceScamGate
+	WithheldPair(ctx context.Context, base, quote canonical.Asset, surface string) bool
+}
+
+// scamWithheld is the ONE spelling of the scam decision inside this
+// package: every handler asks it with BOTH legs, and the fold over legs
+// happens inside pricingguard rather than at the call site. A
+// hand-written `gate.Withheld(base) || gate.Withheld(quote)` per handler
+// is the per-site drift that let /v1/vwap and /v1/twap serve a flagged
+// issuer's price for a whole release while /v1/price withheld it.
+//
+// The type assertion is the migration seam, not a policy: gates that
+// predate the pair form answer the base-only question they always did.
+func scamWithheld(ctx context.Context, gate PriceScamGate, base, quote canonical.Asset, surface string) bool {
+	if gate == nil {
+		return false
+	}
+	if pair, ok := gate.(PriceScamPairGate); ok {
+		return pair.WithheldPair(ctx, base, quote, surface)
+	}
+	return gate.Withheld(ctx, base, surface)
 }
 
 // writePriceWithheldProblem is the single serializer for the withheld
