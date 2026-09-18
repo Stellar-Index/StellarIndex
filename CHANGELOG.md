@@ -15,6 +15,47 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **ops:** `verify-served-values` now diffs `supply.sdf_reserve_accounts`
+  against the reserve list SDF publishes — the `accounts` table plus the
+  network-upgrade reserve in stellar/dashboard's `common/lumens.js`, the
+  source of `dashboard.stellar.org`'s `circulatingSupply` (its API exposes
+  program sums only, never the accounts) — on the same daily timer as the
+  2% value cross-check, and emits
+  `stellarindex_sdf_reserve_list_drift{kind="missing"|"extra"}`.
+  `stellarindex_sdf_reserve_list_drift` (ticket, 26 h) alerts on any
+  verified difference in both rule trees; a dark or reshaped source is a
+  skip (`served_value_skipped{check="sdf_reserve_list"}`), never a verdict.
+  Closes tail-triage C4-069: one account SDF adds or retires moves
+  circulating supply by well under the value check's 2% tolerance, so a
+  stale list was undetectable. New `-config` flag (default
+  `/etc/stellarindex.toml`; empty skips the check), passed by the systemd
+  unit. Runbook section in `served-value-drift.md`; catalogue row.
+
+- **explorer:** the sponsor / creator cohort pages' flows panel now
+  values each month's movement at THAT month's USD price beside the
+  live-price figure — "USD then" beside "USD today", as a toggle on the
+  value-moved chart. `GET /v1/accounts/{g}/graph/cohort` gains
+  `flows.points[].by_asset[].{inflow_usd_then,outflow_usd_then,price_usd_then}`
+  and the month point's `inflow_usd_then` / `outflow_usd_then` (the priced
+  assets' exact sum, rounded once); every one is omitted — never zero —
+  where no USD-quoted market priced the asset that month. "Then" is the
+  month's volume-weighted USD price on this index's own markets:
+  `timescale.Store.MonthlyUSDVWAPs` folds `prices_1mo`'s USD-proxy-quoted
+  rows onto ONE row per (canonical asset, month) across every alias
+  spelling (XLM's three forms land under `native`, a registered SAC under
+  its classic id) with exact arithmetic; `ch-cohort-rollup` loads it each
+  cycle into the new `stellar.asset_month_usd_prices` (+ `_staging`,
+  swapped with the cohort tables — `deploy/clickhouse/tier1_schema.sql`
+  and the operator mirror `account_cohort_rollup.sql`), and the flows read
+  LEFT JOINs it on (asset, month). XLM's own monthly USD row is in the
+  table so an asset quoted only in XLM can be priced through it later.
+  Operators on an existing deployment re-run step 1 of the
+  `account_cohort_rollup.sql` runbook (idempotent DDL) before the next
+  cycle; the cycle now installs the `[supply].sac_wrappers` alias
+  registry so SAC-quoted months fold onto the classic id the flows carry.
+
 ### Changed
 
 - **docs:** `docs/methodology/rwa-definition.md` R4 names all three of
@@ -54,23 +95,7 @@ against.
   compile-time `*timescale.Store` assertion the other optional seams
   have, so a reader that stops satisfying either is a build failure
   rather than a silent opt-out.
-### Added
 
-- **ops:** `verify-served-values` now diffs `supply.sdf_reserve_accounts`
-  against the reserve list SDF publishes — the `accounts` table plus the
-  network-upgrade reserve in stellar/dashboard's `common/lumens.js`, the
-  source of `dashboard.stellar.org`'s `circulatingSupply` (its API exposes
-  program sums only, never the accounts) — on the same daily timer as the
-  2% value cross-check, and emits
-  `stellarindex_sdf_reserve_list_drift{kind="missing"|"extra"}`.
-  `stellarindex_sdf_reserve_list_drift` (ticket, 26 h) alerts on any
-  verified difference in both rule trees; a dark or reshaped source is a
-  skip (`served_value_skipped{check="sdf_reserve_list"}`), never a verdict.
-  Closes tail-triage C4-069: one account SDF adds or retires moves
-  circulating supply by well under the value check's 2% tolerance, so a
-  stale list was undetectable. New `-config` flag (default
-  `/etc/stellarindex.toml`; empty skips the check), passed by the systemd
-  unit. Runbook section in `served-value-drift.md`; catalogue row.
 ### Fixed
 
 - **api/aggregator:** token decimals are resolved from ONE source of truth,
@@ -96,30 +121,6 @@ against.
   row all equal to the lake, 0 disagreeing — the defect was structural, not
   a live divergence. Runbook: `docs/operations/runbooks/dex-nonstandard-decimals.md`
   ("Decimals lockstep").
-### Added
-
-- **explorer:** the sponsor / creator cohort pages' flows panel now
-  values each month's movement at THAT month's USD price beside the
-  live-price figure — "USD then" beside "USD today", as a toggle on the
-  value-moved chart. `GET /v1/accounts/{g}/graph/cohort` gains
-  `flows.points[].by_asset[].{inflow_usd_then,outflow_usd_then,price_usd_then}`
-  and the month point's `inflow_usd_then` / `outflow_usd_then` (the priced
-  assets' exact sum, rounded once); every one is omitted — never zero —
-  where no USD-quoted market priced the asset that month. "Then" is the
-  month's volume-weighted USD price on this index's own markets:
-  `timescale.Store.MonthlyUSDVWAPs` folds `prices_1mo`'s USD-proxy-quoted
-  rows onto ONE row per (canonical asset, month) across every alias
-  spelling (XLM's three forms land under `native`, a registered SAC under
-  its classic id) with exact arithmetic; `ch-cohort-rollup` loads it each
-  cycle into the new `stellar.asset_month_usd_prices` (+ `_staging`,
-  swapped with the cohort tables — `deploy/clickhouse/tier1_schema.sql`
-  and the operator mirror `account_cohort_rollup.sql`), and the flows read
-  LEFT JOINs it on (asset, month). XLM's own monthly USD row is in the
-  table so an asset quoted only in XLM can be priced through it later.
-  Operators on an existing deployment re-run step 1 of the
-  `account_cohort_rollup.sql` runbook (idempotent DDL) before the next
-  cycle; the cycle now installs the `[supply].sac_wrappers` alias
-  registry so SAC-quoted months fold onto the classic id the flows carry.
 
 ## [v0.90.0] — 2026-09-18
 
