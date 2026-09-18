@@ -384,3 +384,71 @@ func TestOHLCSeries_WireShapeFields(t *testing.T) {
 		t.Errorf("N decoded = %d, want 3", env.Data.Intervals[0].N)
 	}
 }
+
+// TestOHLCSeries_TruncatedSetWhenRowCountHitsCap pins the second half of
+// RLT-453: OHLCSeriesBar.Truncated was declared on the wire (OpenAPI:
+// "Reserved for future row-cap signalling; absent today") but never
+// assigned anywhere, so a capped response gave a caller no way to tell
+// its window was cut. A row count equal to the requested `limit` means
+// the underlying store's `ORDER BY bucket DESC LIMIT n` (see
+// aggregates.go) cut the window — mirrors ohlc.go's single-bar
+// `Truncated: preFilter == maxTradesForOHLC`.
+func TestOHLCSeries_TruncatedSetWhenRowCountHitsCap(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	bars := []v1.OHLCSeriesBar{
+		mkSeriesBar(t0, "0.16", "0.17", "0.15", "0.165", "1000", "165", 4),
+		mkSeriesBar(t0.Add(time.Hour), "0.165", "0.18", "0.16", "0.175", "1200", "200", 5),
+	}
+	reader := &stubHistoryReader{ohlcBars: bars}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	// limit=2 matches the stub's 2 returned bars exactly — the cap-hit
+	// signal.
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=crypto:BTC&interval=1h&limit=2")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.OHLCSeriesResponse `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if len(body.Data.Intervals) != 2 {
+		t.Fatalf("len(intervals) = %d, want 2", len(body.Data.Intervals))
+	}
+	for i, bar := range body.Data.Intervals {
+		if !bar.Truncated {
+			t.Errorf("Intervals[%d].Truncated = false, want true — the response hit the "+
+				"row-cap and never signalled it (RLT-453)", i)
+		}
+	}
+}
+
+// TestOHLCSeries_NotTruncatedWhenBelowCap is the non-triggering twin of
+// TestOHLCSeries_TruncatedSetWhenRowCountHitsCap: a response that did NOT
+// hit the cap must not claim it did.
+func TestOHLCSeries_NotTruncatedWhenBelowCap(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	bars := []v1.OHLCSeriesBar{
+		mkSeriesBar(t0, "0.16", "0.17", "0.15", "0.165", "1000", "165", 4),
+	}
+	reader := &stubHistoryReader{ohlcBars: bars}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	// limit=24 is well above the stub's single returned bar.
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=crypto:BTC&interval=1h&limit=24")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.OHLCSeriesResponse `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if len(body.Data.Intervals) != 1 {
+		t.Fatalf("len(intervals) = %d, want 1", len(body.Data.Intervals))
+	}
+	if body.Data.Intervals[0].Truncated {
+		t.Errorf("Intervals[0].Truncated = true, want false — the window did not hit the cap")
+	}
+}

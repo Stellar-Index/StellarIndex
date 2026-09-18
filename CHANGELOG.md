@@ -274,6 +274,20 @@ against.
   `test/integration/account_activity_backfill_verify_test.go` (window 1
   backfilled, a later window skipped, an account active in both: the
   verify counts it, and returns 0 once the window is re-run).
+- **`/v1/ohlc` multi-bar series:** an explicit `from`/`to` window wider
+  than `limit` intervals now serves the NEWEST `limit` buckets instead
+  of the OLDEST (RLT-453). `Store.OHLCSeries` / `Store.OHLCSeriesReBucketed`
+  ended their query `ORDER BY bucket ASC` and then applied `LIMIT`, so a
+  10,080-bucket window capped at the default 100 silently returned the
+  first 100 minutes of a week-old window and never reached `to` — a
+  stale slice for exactly the wide-window request `limit` exists to
+  bound. Both readers now order `DESC` and reverse in Go before
+  returning (mirrors `Store.TradesInRange`, F-1319), so the documented
+  ascending-order contract is unchanged and only which end survives a
+  cap is corrected. `OHLCSeriesBar.Truncated` — declared on the wire
+  since F-0071 but never assigned (OpenAPI: "reserved for future
+  row-cap signalling") — is now set on every bar in a capped response,
+  so a caller can finally tell its window was cut.
 
 - **assets listing:** the listing `market_cap_usd` of a confirmed
   non-7-decimals token divides supply by the token's confirmed decimals,

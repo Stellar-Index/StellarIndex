@@ -1968,6 +1968,15 @@ type OHLCBar struct {
 // (0 = unbounded). Returns empty slice + nil error when no
 // closed buckets exist in window.
 //
+// When `limit` caps the row count, the query orders DESC and takes the
+// LIMIT so the cap keeps the NEWEST buckets in the window, then reverses
+// to the ascending order this method's contract promises — mirrors
+// [Store.TradesInRange] (F-1319). The previous `ORDER BY bucket ASC
+// LIMIT` kept the OLDEST `limit` buckets, so an explicit window wider
+// than `limit` intervals silently served history starting at `from` and
+// never reaching `to` — a stale slice for exactly the wide-window
+// request a caller sizes `limit` down to bound.
+//
 // `quote_amount` is derived as `vwap * volume` at SELECT time:
 // VWAP is defined as Σ(price·base) / Σ(base), so vwap·Σ(base) =
 // Σ(price·base) = Σ(quote). This is exact in NUMERIC arithmetic
@@ -2061,12 +2070,16 @@ func (s *Store) OHLCSeries(
 		                                                                            AS sources
 		  FROM norm
 		 GROUP BY bucket
-		 ORDER BY bucket ASC
 	`, table, interval)
 	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC()}
 	if limit > 0 {
-		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		// DESC + LIMIT keeps the NEWEST `limit` buckets when the window
+		// holds more than that many; reversed to ascending below. See the
+		// doc comment above.
 		args = append(args, limit)
+		q += fmt.Sprintf(" ORDER BY bucket DESC LIMIT $%d", len(args))
+	} else {
+		q += " ORDER BY bucket ASC"
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -2091,6 +2104,13 @@ func (s *Store) OHLCSeries(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: OHLCSeries[%s] rows: %w", granularity, err)
+	}
+	if limit > 0 {
+		// Scanned newest-first (DESC above); reverse to the ascending
+		// order this method's contract promises its callers.
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
 	}
 	return out, nil
 }
@@ -2162,7 +2182,6 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 		  LEFT JOIN src sc ON sc.ob = time_bucket(INTERVAL '%[2]s', n.bucket)
 		 GROUP BY time_bucket(INTERVAL '%[2]s', n.bucket), sc.sources
 		 HAVING time_bucket(INTERVAL '%[2]s', n.bucket) <= now() - INTERVAL '%[2]s'
-		 ORDER BY out_bucket ASC
 	`, table, outInterval)
 }
 
@@ -2191,6 +2210,10 @@ func ohlcReBucketedQuery(table, outInterval string) string {
 // `outInterval` composes directly into the SQL after the
 // [OHLCRoutes] allow-list check — never user-passed verbatim. Same
 // ADR-0015 closed-bucket guard as [Store.OHLCSeries].
+//
+// Same `limit`-cap ordering as [Store.OHLCSeries]: a capped read orders
+// DESC and reverses, so the LIMIT keeps the NEWEST `limit` out-buckets
+// rather than the oldest.
 func (s *Store) OHLCSeriesReBucketed(
 	ctx context.Context,
 	p canonical.Pair,
@@ -2240,8 +2263,14 @@ func (s *Store) OHLCSeriesReBucketed(
 	q := ohlcReBucketedQuery(table, outInterval)
 	args := []any{p.Base.String(), p.Quote.String(), from.UTC(), to.UTC()}
 	if limit > 0 {
-		q += fmt.Sprintf(" LIMIT $%d", len(args)+1)
+		// DESC + LIMIT keeps the NEWEST `limit` out-buckets when the window
+		// holds more than that many; reversed to ascending below. Same
+		// F-1319 shape as [Store.OHLCSeries] — the previous `ORDER BY
+		// out_bucket ASC LIMIT` kept the OLDEST `limit` buckets.
 		args = append(args, limit)
+		q += fmt.Sprintf(" ORDER BY out_bucket DESC LIMIT $%d", len(args))
+	} else {
+		q += " ORDER BY out_bucket ASC"
 	}
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -2266,6 +2295,13 @@ func (s *Store) OHLCSeriesReBucketed(
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("timescale: OHLCSeriesReBucketed[%s→%s] rows: %w", sourceGranularity, outInterval, err)
+	}
+	if limit > 0 {
+		// Scanned newest-first (DESC above); reverse to the ascending
+		// order this method's contract promises its callers.
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
 	}
 	return out, nil
 }

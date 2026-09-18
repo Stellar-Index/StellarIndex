@@ -229,6 +229,23 @@ func (s *Server) handleOHLCSeries(
 		return
 	}
 
+	// A capped read (row count == limit) means the window held at least
+	// `limit` buckets — [Store.OHLCSeries] / [Store.OHLCSeriesReBucketed]
+	// order DESC-then-reverse when capped (see their doc comments), so a
+	// truncated response still carries the NEWEST bars in the window
+	// rather than the oldest; this flag is what tells the caller some of
+	// the requested window was dropped at all. Mirrors ohlc.go's
+	// single-bar `Truncated: preFilter == maxTradesForOHLC` — an
+	// equality check against the cap, same accepted imprecision (a window
+	// with exactly `limit` buckets reads as truncated too; the schema
+	// documents this as "reserved for future row-cap signalling" and it
+	// was never wired up before this fix).
+	if limit > 0 && len(bars) == limit {
+		for i := range bars {
+			bars[i].Truncated = true
+		}
+	}
+
 	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
 	// the deferred CAGG-reading tail from docs/operations/runbooks/
 	// dex-nonstandard-decimals.md): the SAME per-pair scalar factor that
