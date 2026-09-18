@@ -84,6 +84,20 @@ against.
   expression instead of keeping a copy each, and this binary has its own
   seam guard. Off by default (`[price_alerts] enabled=false`).
   (audit-2026-09-02 K001)
+- **api:** a key minted through `POST /v1/account/keys` now inherits the
+  calling key's monthly request ceiling. `auth.CreateAPIKeyRequest` had
+  no `MonthlyQuota` field at all, so the self-service rotation path
+  persisted `monthly_quota: 0` on every child — and the quota
+  middleware's `MonthlyQuota <= 0` short-circuit treats zero as "no
+  ceiling". A metered customer could therefore mint an UNMETERED
+  credential from their capped one in a single call, and the cap the
+  operator sold them survived exactly until the first rotation. The
+  request now carries the ceiling and the store persists it, so the
+  validator maps it onto the Subject the middleware reads. It copies a
+  cap and never invents one: a caller without a ceiling still mints a
+  child without one, because the cap is opt-in by contract and
+  defaulting it here would arm a 429 for keys that never had a limit.
+  (reverification-2026-09-18 RLT-404)
 - **divergence:** the Chainlink reference no longer writes the operator's
   RPC API key into the divergence cache. `[divergence.chainlink].rpc_url`
   is populated from the same `CHAINLINK_RPC_URL` the ingest poller uses,

@@ -451,6 +451,19 @@ func (s *Server) handleAccountKeysCreate(w http.ResponseWriter, r *http.Request)
 		// Inherit the caller's per-key budget when set; otherwise
 		// leave zero so the per-tier default applies.
 		RateLimitPerMin: subject.RateLimitPerMin,
+		// Inherit the caller's monthly ceiling for the same reason and
+		// in the same direction: a child minted from a METERED key must
+		// be metered too. Pre-fix the request had no such field, so the
+		// child persisted 0 and middleware.MonthlyQuota's
+		// `MonthlyQuota <= 0` short-circuit left it unmetered — a
+		// metered customer could mint an uncapped credential from a
+		// capped one (RLT-404, reverification 2026-09-18).
+		//
+		// Copies a cap; never invents one. Zero stays zero because the
+		// ceiling is opt-in by contract — defaulting it to the tier
+		// maximum here would arm a 429 for every key that has never
+		// had one, which is a product-policy change, not a fix.
+		MonthlyQuota: subject.MonthlyQuota,
 		// Inherit the caller's email-verification stamp. The caller
 		// already passed RequireEmailVerified on this identifier to
 		// reach this handler; a child born unverified would 403

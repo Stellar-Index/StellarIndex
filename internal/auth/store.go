@@ -28,7 +28,7 @@ type APIKeyStore interface {
 	// dropping the response.
 	//
 	// req carries the operator-supplied fields (Identifier, Label,
-	// Tier, Scopes, RateLimitPerMin, ExpiresAt). The store fills
+	// Tier, Scopes, RateLimitPerMin, MonthlyQuota, ExpiresAt). The store fills
 	// in KeyID + CreatedAt and generates the plaintext.
 	//
 	// Returns the public-safe APIKeyRecord (without the plaintext)
@@ -58,6 +58,22 @@ type CreateAPIKeyRequest struct {
 	// RateLimitPerMin — non-zero overrides the per-tier default.
 	// Zero means "use the tier default".
 	RateLimitPerMin int
+
+	// MonthlyQuota — non-zero is the calendar-month billable-request
+	// ceiling `middleware.MonthlyQuota` enforces against the key.
+	// Zero means "no ceiling": the cap is opt-in by contract and the
+	// store never invents one (see [APIKeyRecord.MonthlyQuota]).
+	//
+	// Set by the self-service rotation path (POST /v1/account/keys)
+	// to the caller's own effective quota, so a child key inherits
+	// its parent's ceiling — the same reasoning as EmailVerifiedAt
+	// below: the cap is a property of the identifier's plan, not of
+	// one record. Pre-fix the field did not exist, so a child minted
+	// from a metered parent persisted 0 and the middleware's
+	// `MonthlyQuota <= 0` short-circuit left it UNMETERED — one
+	// rotation turned a capped customer into an uncapped one
+	// (RLT-404, reverification 2026-09-18).
+	MonthlyQuota int64
 
 	// ExpiresAt — zero means never.
 	ExpiresAt time.Time
@@ -171,6 +187,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		Tier:            tier,
 		Scopes:          req.Scopes,
 		RateLimitPerMin: req.RateLimitPerMin,
+		MonthlyQuota:    req.MonthlyQuota,
 		CreatedAt:       s.now().UTC(),
 		ExpiresAt:       req.ExpiresAt,
 		EmailVerifiedAt: req.EmailVerifiedAt,
