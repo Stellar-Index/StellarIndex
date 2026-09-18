@@ -106,6 +106,18 @@ against.
   downgrade. The `-base-url` https check only ever saw the CONFIGURED
   URL, never the dialled one. A same-origin hop is still followed
   (RSEC-E1).
+- **rwa:** `curated-rwa-sync` no longer publishes a curated series it
+  could only read part of, and no longer discards a month the curator
+  printed in exponent form. A row that failed to parse was counted and
+  skipped under a green run — and because the cache is replaced
+  series-whole, the survivors DELETED the month already cached; when the
+  lost row was the newest month, the published total was silently
+  re-dated to an older month and understated. Exponent literals
+  (`4.28e9`) are now stored as the plain figure (`4280000000`) by an
+  exact point shift — no float, no rounding, the curator's own digits —
+  and any row that still cannot be read refuses the run before anything
+  is written, leaving the previous whole series served and the unit in
+  `failed` for the catch-all alert (RLT-182).
 
 ## [v0.91.0] — 2026-09-18
 

@@ -6,6 +6,7 @@ package ingest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -90,19 +91,19 @@ func TestCuratedRWAFetch_ReadsBothPublicResultsAndPages(t *testing.T) {
 			{"month_end": "2025-08-31", "total_rwa_market_cap_usd": json.Number("4004795860.00")},
 			{"month_end": "2024-09-30 00:00:00.000 UTC", "total_rwa_market_cap_usd": json.Number("436023166.55")},
 			{"month_end": "2025-07-31", "total_rwa_market_cap_usd": json.Number("3900000000.123456789")},
-			// Malformed: a renamed column is not guessed at.
-			{"month_end": "2025-06-30", "market_cap_usd": 1},
-			// Malformed: no month.
-			{"month_end": nil, "total_rwa_market_cap_usd": 5},
+			// The NEWEST month, printed in exponent form — a rendering a
+			// query engine picks for a large numeric whenever it likes.
+			// This row is the curator's headline; refusing it would
+			// publish the series dated to July.
+			{"month_end": "2025-09-30", "total_rwa_market_cap_usd": json.Number("4.28e9")},
+			{"month_end": "2024-10-31", "total_rwa_market_cap_usd": json.Number("5.135e8")},
 		},
 		curatedRWAQueryMonthlyBySubclass: {
 			{"month_end": "2025-08-31", "asset_subclass": "US Treasuries", "market_cap_usd": 3100000000.0},
 			{"month_end": "2025-08-31", "asset_subclass": "Private Credit", "market_cap_usd": 904795860},
 			{"month_end": "2025-07-31", "asset_subclass": "US Treasuries", "market_cap_usd": json.Number("3000000000.10")},
-			// Malformed: an empty subclass would collide with the total.
-			{"month_end": "2025-07-31", "asset_subclass": "", "market_cap_usd": 1},
-			// Malformed: a non-decimal value.
-			{"month_end": "2025-07-31", "asset_subclass": "Private Credit", "market_cap_usd": "n/a"},
+			{"month_end": "2025-09-30", "asset_subclass": "US Treasuries", "market_cap_usd": json.Number("3.9E+9")},
+			{"month_end": "2025-09-30", "asset_subclass": "Private Credit", "market_cap_usd": json.Number("3.8e8")},
 		},
 	}
 	srv, gets, gotKey := stubDuneResults(t, byQuery, "QUERY_STATE_COMPLETED")
@@ -119,11 +120,14 @@ func TestCuratedRWAFetch_ReadsBothPublicResultsAndPages(t *testing.T) {
 	if gets.Load() != 6 {
 		t.Errorf("GETs = %d, want 6 (three pages per query)", gets.Load())
 	}
-	if counts.Rows != 10 || counts.Kept != 6 || counts.Malformed != 4 {
-		t.Errorf("counts = %+v, want rows=10 kept=6 malformed=4", counts)
+	if counts.Rows != 10 || counts.Kept != 10 || counts.Malformed != 0 {
+		t.Errorf("counts = %+v, want rows=10 kept=10 malformed=0 — every row the curator printed is readable", counts)
 	}
-	if counts.Months != 3 || counts.LatestMonthEnd != "2025-08-31" || counts.LatestTotalUSD != "4004795860.00" {
-		t.Errorf("headline = %d months, latest %s = %s; want 3 months, 2025-08-31 = 4004795860.00", counts.Months, counts.LatestMonthEnd, counts.LatestTotalUSD)
+	// The headline is the NEWEST month, with its exponent form shifted
+	// out into the figure the curator published. Refusing that literal
+	// dated the whole series to August and understated it by $275M.
+	if counts.Months != 5 || counts.LatestMonthEnd != "2025-09-30" || counts.LatestTotalUSD != "4280000000" {
+		t.Errorf("headline = %d months, latest %s = %s; want 5 months, 2025-09-30 = 4280000000", counts.Months, counts.LatestMonthEnd, counts.LatestTotalUSD)
 	}
 	// Datapoints as the platform reported them per result: 3×5 + 3×5.
 	if counts.Datapoints != 30 {
@@ -132,14 +136,20 @@ func TestCuratedRWAFetch_ReadsBothPublicResultsAndPages(t *testing.T) {
 	if want := time.Date(2026, 9, 17, 4, 58, 12, 345000000, time.UTC); !counts.ExecutedAt.Equal(want) {
 		t.Errorf("executed_at = %v, want %v from execution_ended_at", counts.ExecutedAt, want)
 	}
-	if len(rows) != 6 {
-		t.Fatalf("rows = %d, want 6", len(rows))
+	if len(rows) != 10 {
+		t.Fatalf("rows = %d, want 10", len(rows))
 	}
 	// The total series comes first, oldest month first, every value the
-	// literal the curator printed.
-	total := rows[:3]
+	// figure the curator printed — verbatim when it printed one plainly,
+	// and with the point shifted out when it printed an exponent. No
+	// float ever holds it, so the digits are the curator's own.
+	total := rows[:5]
 	for i, want := range []struct{ month, value string }{
-		{"2024-09-30", "436023166.55"}, {"2025-07-31", "3900000000.123456789"}, {"2025-08-31", "4004795860.00"},
+		{"2024-09-30", "436023166.55"},
+		{"2024-10-31", "513500000"},
+		{"2025-07-31", "3900000000.123456789"},
+		{"2025-08-31", "4004795860.00"},
+		{"2025-09-30", "4280000000"},
 	} {
 		r := total[i]
 		if r.Series != timescale.CuratedRWASeriesMonthlyTotal || r.MonthEnd.Format("2006-01-02") != want.month ||
@@ -147,9 +157,13 @@ func TestCuratedRWAFetch_ReadsBothPublicResultsAndPages(t *testing.T) {
 			t.Errorf("total[%d] = %+v, want %s = %s from query %d", i, r, want.month, want.value, curatedRWAQueryMonthlyTotal)
 		}
 	}
-	split := rows[3:]
+	split := rows[5:]
 	if split[0].MonthEnd.Format("2006-01-02") != "2025-07-31" || split[0].Subclass != "US Treasuries" || split[0].ValueUSD != "3000000000.10" {
 		t.Errorf("split[0] = %+v", split[0])
+	}
+	// The split's newest month is exponent-printed too, in both cases.
+	if split[3].ValueUSD != "3900000000" || split[4].ValueUSD != "380000000" {
+		t.Errorf("split newest month = %q / %q, want 3900000000 / 380000000 — the exponent shifted out, not rounded", split[3].ValueUSD, split[4].ValueUSD)
 	}
 	for _, r := range split {
 		if r.Series != timescale.CuratedRWASeriesMonthlyBySubclass || r.SourceQuery != curatedRWAQueryMonthlyBySubclass || !r.ExecutedAt.Equal(counts.ExecutedAt) {
@@ -209,6 +223,136 @@ func TestCuratedRWAFetch_RefusesAnIncompleteOrShortResult(t *testing.T) {
 	}
 }
 
+// TestCuratedRWAFetch_RefusesToPublishAPartiallyParsedResult pins the
+// fail-closed half of the drop.
+//
+// A row the curator printed that this run cannot read used to be
+// counted and skipped: the run exited 0 and published the survivors.
+// The cache is replaced series-whole, so that does not merely fail to
+// add the unread row — it DELETES the month already cached and serves
+// the hole, and when the unread row is the newest month the headline
+// is re-dated to an older one and understates. Nothing was red
+// anywhere. So a result this run could only read part of is now a
+// refusal, before anything is written.
+func TestCuratedRWAFetch_RefusesToPublishAPartiallyParsedResult(t *testing.T) {
+	goodTotal := []map[string]any{
+		{"month_end": "2025-07-31", "total_rwa_market_cap_usd": json.Number("3900000000")},
+		{"month_end": "2025-08-31", "total_rwa_market_cap_usd": json.Number("4004795860.00")},
+	}
+	goodSplit := []map[string]any{
+		{"month_end": "2025-08-31", "asset_subclass": "US Treasuries", "market_cap_usd": json.Number("3100000000")},
+	}
+
+	for _, tc := range []struct {
+		name          string
+		total, split  []map[string]any
+		wantQuery     int64
+		wantGets      int32
+		wantSubstring string
+	}{
+		{
+			// The newest month carries no value at all: the survivors
+			// would publish August as the curator's latest figure.
+			name: "the newest month of the total is unreadable",
+			total: append(append([]map[string]any{}, goodTotal...),
+				map[string]any{"month_end": "2025-09-30", "total_rwa_market_cap_usd": nil}),
+			split:         goodSplit,
+			wantQuery:     curatedRWAQueryMonthlyTotal,
+			wantGets:      2, // the split is never read, so it is never billed
+			wantSubstring: "printed 1 of 3 rows this run could not parse",
+		},
+		{
+			// A hole in the middle is just as fatal: the replace would
+			// delete a month already cached and serve the gap.
+			name: "a month in the middle of the total is unreadable",
+			total: append([]map[string]any{
+				{"month_end": "not a month", "total_rwa_market_cap_usd": json.Number("1")},
+			}, goodTotal...),
+			split:         goodSplit,
+			wantQuery:     curatedRWAQueryMonthlyTotal,
+			wantGets:      2,
+			wantSubstring: "printed 1 of 3 rows this run could not parse",
+		},
+		{
+			// The split is the same series under another name: a
+			// subclass row lost is a month whose parts stop summing.
+			name:  "a subclass row is unreadable",
+			total: goodTotal,
+			split: append(append([]map[string]any{}, goodSplit...),
+				map[string]any{"month_end": "2025-08-31", "asset_subclass": "", "market_cap_usd": json.Number("1")}),
+			wantQuery:     curatedRWAQueryMonthlyBySubclass,
+			wantGets:      2, // total (1 page of 2) + split (1 page of 2)
+			wantSubstring: "printed 1 of 2 rows this run could not parse",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, gets, _ := stubDuneResults(t, map[int64][]map[string]any{
+				curatedRWAQueryMonthlyTotal: tc.total, curatedRWAQueryMonthlyBySubclass: tc.split,
+			}, "QUERY_STATE_COMPLETED")
+
+			rows, counts, err := newCuratedRWAClient(srv.URL, "k").fetch(context.Background())
+			if err == nil {
+				t.Fatalf("fetch returned %d rows and no error; a result read only in part must refuse, not publish the survivors (counts %+v)", len(rows), counts)
+			}
+			if rows != nil {
+				t.Errorf("rows = %d on a refusal, want none to reach the store", len(rows))
+			}
+			for _, want := range []string{fmt.Sprintf("query %d", tc.wantQuery), tc.wantSubstring, "refusing to publish a partial series"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %v, want it to name %q", err, want)
+				}
+			}
+			if got := gets.Load(); got != tc.wantGets {
+				t.Errorf("GETs = %d, want %d — a refused total must not go on to bill the split", got, tc.wantGets)
+			}
+		})
+	}
+}
+
+// TestCuratedRWAParse_CountsEveryUnreadableRow keeps the per-shape
+// accounting the refusal above reports: each of these is one row the
+// curator printed and this run cannot read, counted once.
+func TestCuratedRWAParse_CountsEveryUnreadableRow(t *testing.T) {
+	var counts curatedRWACounts
+	total := parseCuratedRWAMonthlyTotal(duneQueryResult{Rows: rawRows(t, []map[string]any{
+		{"month_end": "2025-08-31", "total_rwa_market_cap_usd": json.Number("4004795860.00")},
+		// A renamed column is not guessed at.
+		{"month_end": "2025-06-30", "market_cap_usd": json.Number("1")},
+		// No month.
+		{"month_end": nil, "total_rwa_market_cap_usd": json.Number("5")},
+		// A value that is not a figure.
+		{"month_end": "2025-05-31", "total_rwa_market_cap_usd": "n/a"},
+	})}, &counts)
+	if len(total) != 1 || counts.Kept != 1 || counts.Malformed != 3 || counts.Rows != 4 {
+		t.Errorf("total parse = %d rows, counts %+v; want 1 kept, 3 unreadable of 4", len(total), counts)
+	}
+
+	counts = curatedRWACounts{}
+	split := parseCuratedRWAMonthlyBySubclass(duneQueryResult{Rows: rawRows(t, []map[string]any{
+		{"month_end": "2025-08-31", "asset_subclass": "US Treasuries", "market_cap_usd": json.Number("3100000000")},
+		// An empty subclass would collide with the total series.
+		{"month_end": "2025-08-31", "asset_subclass": "  ", "market_cap_usd": json.Number("1")},
+		{"month_end": "2025-08-31", "asset_subclass": "Private Credit", "market_cap_usd": "n/a"},
+	})}, &counts)
+	if len(split) != 1 || counts.Kept != 1 || counts.Malformed != 2 || counts.Rows != 3 {
+		t.Errorf("split parse = %d rows, counts %+v; want 1 kept, 2 unreadable of 3", len(split), counts)
+	}
+}
+
+// rawRows renders fixture rows as the decoder receives them.
+func rawRows(t *testing.T, rows []map[string]any) []json.RawMessage {
+	t.Helper()
+	out := make([]json.RawMessage, 0, len(rows))
+	for _, r := range rows {
+		b, err := json.Marshal(r)
+		if err != nil {
+			t.Fatalf("marshal fixture row: %v", err)
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
 func TestCuratedRWAMonthEndAndDecimal(t *testing.T) {
 	want := time.Date(2025, 8, 31, 0, 0, 0, 0, time.UTC)
 	for _, s := range []string{"2025-08-31", "2025-08-31 00:00:00.000 UTC", "2025-08-31 13:45:00", "2025-08-31T13:45:00Z"} {
@@ -221,15 +365,44 @@ func TestCuratedRWAMonthEndAndDecimal(t *testing.T) {
 			t.Errorf("month %q accepted", s)
 		}
 	}
+	// A plainly-printed literal is stored byte-for-byte as printed:
+	// trailing zeros, every digit of the fraction, the sign.
 	for _, s := range []string{"4004795860.00", "0", "436023166.55", "-1.5"} {
 		if got, ok := curatedRWADecimal(json.Number(s)); !ok || got != s {
 			t.Errorf("decimal %q -> (%q, %v), want itself", s, got, ok)
 		}
 	}
-	// An exponent form is a float rendering, not a printed figure.
-	for _, s := range []string{"", "4.0e9", "abc", "1,000"} {
-		if _, ok := curatedRWADecimal(json.Number(s)); ok {
-			t.Errorf("decimal %q accepted", s)
+	// An exponent form is a RENDERING of the curator's figure, not a
+	// different figure: the point is shifted out exactly, so the row is
+	// kept and the stored literal is readable. Refusing it dropped the
+	// row — and when it was the newest month, published the series
+	// dated to an older one under a green run.
+	for _, tc := range []struct{ in, want string }{
+		{"4.0e9", "4000000000"},
+		{"4.00479586e9", "4004795860"},
+		{"1e2", "100"},
+		{"1E+2", "100"},
+		{"-2.5e3", "-2500"},
+		{"1.23e1", "12.3"},
+		{"1.5e-3", "0.0015"},
+		{"5e-1", "0.5"},
+		{"1.500e3", "1500"},
+		{"0e0", "0"},
+		// Exact to the last digit: a float64 round-trip of this literal
+		// loses the tail, and the store carries the curator's digits.
+		{"1.234567890123456789e18", "1234567890123456789"},
+	} {
+		if got, ok := curatedRWADecimal(json.Number(tc.in)); !ok || got != tc.want {
+			t.Errorf("decimal %q -> (%q, %v), want (%q, true)", tc.in, got, ok, tc.want)
+		}
+	}
+	// What is still not a published figure. "5/3" and "0x1p-2" are the
+	// reason this parses the literal itself rather than deferring to
+	// big.Rat, which accepts both; the last two are exponents wide
+	// enough to be an allocation rather than a market capitalisation.
+	for _, s := range []string{"", "abc", "1,000", "5/3", "0x1p-2", "1e", "1e+", ".", "1.2.3", "1 000", "1e99999", "9e400"} {
+		if got, ok := curatedRWADecimal(json.Number(s)); ok {
+			t.Errorf("decimal %q accepted as %q", s, got)
 		}
 	}
 }

@@ -11,10 +11,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +62,12 @@ const (
 	// under twenty rows and the split a few hundred; a result past this
 	// is not one of those queries.
 	curatedRWAMaxRows = 5000
+	// curatedRWAMaxPlainDigits bounds the plain rendering of a literal
+	// the curator printed in exponent form. A market capitalisation in
+	// USD needs a dozen digits; forty is room for any of them, and a
+	// refusal for a literal whose exponent is an allocation rather than
+	// a figure.
+	curatedRWAMaxPlainDigits = 40
 )
 
 // The dashboard's PUBLIC queries, by id and title as the curator names
@@ -80,7 +86,8 @@ const (
 // curatedRWACounts is one run's accounting, printed and emitted.
 type curatedRWACounts struct {
 	// Rows is every row the two results carried; Kept is what parsed;
-	// Malformed is the difference.
+	// Malformed is the difference — and any of it refuses the run (see
+	// curatedRWAWholeResult), so a run that returns rows carries zero.
 	Rows      int
 	Kept      int
 	Malformed int
@@ -144,7 +151,7 @@ func curatedRWASync(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Read %d rows; kept %d (%d months on the total series, latest %s = %s USD, executed %s); %d skipped-malformed; %d datapoints metered.\n",
+	fmt.Printf("Read %d rows; kept %d (%d months on the total series, latest %s = %s USD, executed %s); %d unreadable, none of which a published run tolerates; %d datapoints metered.\n",
 		counts.Rows, counts.Kept, counts.Months, counts.LatestMonthEnd, counts.LatestTotalUSD,
 		counts.ExecutedAt.UTC().Format(time.RFC3339), counts.Malformed, counts.Datapoints)
 
@@ -270,8 +277,9 @@ type duneQueryResult struct {
 }
 
 // fetch reads both public results and turns them into the rows one
-// sync writes. Either result failing to read, or parsing to nothing,
-// fails the run: a half-read pair would be written as a whole.
+// sync writes. Either result failing to read, parsing to nothing, or
+// parsing to less than the whole of itself fails the run: a half-read
+// pair would be written as a whole.
 func (c *curatedRWAClient) fetch(ctx context.Context) ([]timescale.CuratedRWAPublishedRow, curatedRWACounts, error) {
 	var counts curatedRWACounts
 
@@ -286,16 +294,23 @@ func (c *curatedRWAClient) fetch(ctx context.Context) ([]timescale.CuratedRWAPub
 		return nil, counts, fmt.Errorf("curated-rwa-sync: query %d printed no usable row (%d read, %d malformed)",
 			curatedRWAQueryMonthlyTotal, len(total.Rows), counts.Malformed)
 	}
+	if err := curatedRWAWholeResult(curatedRWAQueryMonthlyTotal, len(total.Rows), counts.Malformed); err != nil {
+		return nil, counts, err
+	}
 
 	split, err := c.readQueryResult(ctx, curatedRWAQueryMonthlyBySubclass)
 	if err != nil {
 		return nil, counts, err
 	}
 	counts.Datapoints += split.Datapoints
+	malformedBeforeSplit := counts.Malformed // zero: the total's own check passed
 	splitRows := parseCuratedRWAMonthlyBySubclass(split, &counts)
 	if len(splitRows) == 0 {
 		return nil, counts, fmt.Errorf("curated-rwa-sync: query %d printed no usable row (%d read, %d malformed)",
 			curatedRWAQueryMonthlyBySubclass, len(split.Rows), counts.Malformed)
+	}
+	if err := curatedRWAWholeResult(curatedRWAQueryMonthlyBySubclass, len(split.Rows), counts.Malformed-malformedBeforeSplit); err != nil {
+		return nil, counts, err
 	}
 
 	counts.Months = len(totalRows)
@@ -303,6 +318,33 @@ func (c *curatedRWAClient) fetch(ctx context.Context) ([]timescale.CuratedRWAPub
 	counts.LatestMonthEnd = last.MonthEnd.Format("2006-01-02")
 	counts.LatestTotalUSD = last.ValueUSD
 	return append(totalRows, splitRows...), counts, nil
+}
+
+// curatedRWAWholeResult refuses a result this run could only read PART
+// of. A row the curator printed that the parse below could not read is
+// data loss, and every layer under it was silent about that:
+//
+//   - the cache is replaced series-whole (ReplaceCuratedRWAPublished
+//     deletes and re-inserts), so publishing the survivors does not
+//     merely fail to add the dropped month — it DELETES the month
+//     already cached and serves the hole;
+//   - the run's headline (LatestMonthEnd/LatestTotalUSD) is the last
+//     SURVIVING row, so losing the newest month re-dates the curator's
+//     total to an older one and understates it, on a money surface;
+//   - and the run still exited 0, so nothing anywhere said so.
+//
+// Refusing is the conservation-correct half of that trade: the previous
+// good series stays served (stale, and the reader's own 48h recognition
+// bound says so), the unit lands in `failed`, and the catch-all
+// stellarindex_systemd_unit_failed alert tickets it within 15 minutes
+// with the counts below in the journal. Stale-but-whole beats
+// fresh-but-holed for a published figure.
+func curatedRWAWholeResult(queryID int64, read, malformed int) error {
+	if malformed == 0 {
+		return nil
+	}
+	return fmt.Errorf("curated-rwa-sync: query %d printed %d of %d rows this run could not parse — refusing to publish a partial series: the cache is replaced whole, so the survivors would delete the months already cached and re-date the curator's headline",
+		queryID, malformed, read)
 }
 
 // readQueryResult pages one query's latest result until the row count
@@ -456,18 +498,124 @@ func curatedRWAMonthEnd(s string) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// curatedRWADecimal accepts a finite decimal literal and returns it as
-// printed. Exponent forms are refused: the store carries the literal,
-// and "4.0e9" is not a figure a reader can compare by eye.
+// curatedRWADecimal accepts a finite decimal literal and returns it in
+// PLAIN form: byte-for-byte as printed when the curator printed it
+// plainly, and with the decimal point shifted out when the curator
+// printed an exponent.
+//
+// Exponent forms used to be refused outright, on the grounds that the
+// store carries the literal and "4.0e9" is not a figure a reader can
+// compare by eye. That is a good reason to normalise the STORED form
+// and a bad one to refuse the row: a query engine renders a large
+// numeric in exponent form whenever it feels like it, and the refusal
+// made a whole month of the curator's headline series unreadable to
+// this run — which, before the parse became fatal below, meant the
+// month was dropped and the series published dated to an older one.
+//
+// Shifting the point is exact: it moves the digits the curator printed
+// and invents none, so the stored value is still the curator's own
+// figure (ADR-0003) — no float ever holds it — and is now also a figure
+// a reader can compare by eye. The sibling tolerance off-chain sources
+// use, scale.SciDecimalStringToScaledInt, is deliberately not reached
+// for here: it normalises through float64 and lands on a scaled
+// integer, and this column stores the curator's literal in a numeric of
+// its own precision.
 func curatedRWADecimal(n json.Number) (string, bool) {
 	s := strings.TrimSpace(n.String())
-	if s == "" || strings.ContainsAny(s, "eE") {
+	sign, intPart, fracPart, exp, ok := splitCuratedRWADecimal(s)
+	if !ok {
 		return "", false
 	}
-	if _, ok := new(big.Rat).SetString(s); !ok {
+	if !strings.ContainsAny(s, "eE") {
+		return s, true
+	}
+	return plainCuratedRWADecimal(sign, intPart, fracPart, exp)
+}
+
+// splitCuratedRWADecimal takes a decimal literal apart into sign,
+// integer digits, fraction digits and exponent, accepting exactly what
+// a JSON number may be and nothing else.
+//
+// It is deliberately stricter than [big.Rat.SetString], which this used
+// to validate through: that also accepts a fraction bar ("5/3") and a
+// hexadecimal float ("0x1p-2"), neither of which is a figure a curator
+// published, and both of which would have been carried into the store
+// as one.
+func splitCuratedRWADecimal(s string) (sign, intPart, fracPart string, exp int, ok bool) {
+	if s == "" {
+		return "", "", "", 0, false
+	}
+	if s[0] == '+' || s[0] == '-' {
+		if s[0] == '-' {
+			sign = "-"
+		}
+		s = s[1:]
+	}
+	mant := s
+	if i := strings.IndexAny(s, "eE"); i >= 0 {
+		mant = s[:i]
+		e := s[i+1:]
+		negExp := false
+		if e != "" && (e[0] == '+' || e[0] == '-') {
+			negExp = e[0] == '-'
+			e = e[1:]
+		}
+		// Four digits of exponent keeps the shift arithmetic in range;
+		// the rendering bound below is what decides whether the result
+		// is a figure at all.
+		if e == "" || len(e) > 4 || !curatedRWAAllDigits(e) {
+			return "", "", "", 0, false
+		}
+		v, err := strconv.Atoi(e)
+		if err != nil {
+			return "", "", "", 0, false
+		}
+		exp = v
+		if negExp {
+			exp = -exp
+		}
+	}
+	intPart, fracPart, _ = strings.Cut(mant, ".")
+	if intPart+fracPart == "" || !curatedRWAAllDigits(intPart) || !curatedRWAAllDigits(fracPart) {
+		return "", "", "", 0, false
+	}
+	return sign, intPart, fracPart, exp, true
+}
+
+// plainCuratedRWADecimal renders a split literal with its exponent
+// applied, padding with zeros and rounding nothing. A rendering wider
+// than the bound is refused rather than allocated.
+func plainCuratedRWADecimal(sign, intPart, fracPart string, exp int) (string, bool) {
+	digits := intPart + fracPart
+	point := len(intPart) + exp // how many of them fall before the point
+	if len(digits) > curatedRWAMaxPlainDigits || point > curatedRWAMaxPlainDigits || point < -curatedRWAMaxPlainDigits {
 		return "", false
 	}
-	return s, true
+	var whole, frac string
+	switch {
+	case point <= 0:
+		whole, frac = "0", strings.Repeat("0", -point)+digits
+	case point >= len(digits):
+		whole, frac = digits+strings.Repeat("0", point-len(digits)), ""
+	default:
+		whole, frac = digits[:point], digits[point:]
+	}
+	if whole = strings.TrimLeft(whole, "0"); whole == "" {
+		whole = "0"
+	}
+	if frac == "" {
+		return sign + whole, true
+	}
+	return sign + whole + "." + frac, true
+}
+
+func curatedRWAAllDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func sortPublishedRowsByMonth(rows []timescale.CuratedRWAPublishedRow) {
