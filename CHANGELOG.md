@@ -320,6 +320,22 @@ against.
   handles — that is the axis reporting for the first time, not a regression.
   A lockstep test holds each pin against the decoder's own identity check
   (audit 2026-09-02 F071).
+- **migrate (credential redaction):** a Postgres password containing an
+  unescaped `@`, a space or a quote no longer reaches the migration tool's
+  stderr. The redaction landed for `stellarindex-migrate` was a pattern over
+  the error text that ended the password at the FIRST `@` and would not cross
+  whitespace or a quote, and it was proven only on a password with a bad `%`.
+  Reproduced on the built binary: `…:head%ZZ@tail@host…` printed
+  `<redacted>@tail@host` (the tail of the password), and a password holding a
+  space, `'` or `"` did not match at all and printed the DSN whole — into the
+  deploy log, journald and Loki. `internal/redact` now cuts to the LAST `@`
+  of the token, and handles a URL inside a Go-quoted string (how `net/url`
+  renders the DSN it rejects) by its real boundary, the closing quote, so the
+  password may contain anything. The cost is stated in the code: a URL whose
+  query holds an `@` loses its host to the redaction. New tests run the real
+  binary over each shape by both routes the DSN arrives by (flag and env) and
+  assert neither half of the password appears and the host survives (audit
+  2026-09-02 F077).
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock

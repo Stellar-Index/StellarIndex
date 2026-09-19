@@ -61,7 +61,32 @@ func ConnString(v string) string {
 // secret through. The cost is that `scheme://host:port/path@x`, a
 // URL with a port and a later `@`, is redacted as though the port were
 // a password; over-redacting a rare path beats printing a password.
-var urlPasswordPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://[^/@\s"']*?):[^@\s"']*@`)
+//
+// The password runs to the LAST `@` of the token, not the first. It used
+// to exclude `@`, which ended the match at the first one: a password
+// pasted raw with an `@` in it — the very character that makes the DSN
+// unparseable and sends it into an error — had its first segment cut
+// and the rest printed (`u:<redacted>@rest-of-password@host`). Nothing
+// in the text distinguishes the `@` that ends the userinfo from one
+// inside the secret, so the only reading that cannot leak is the
+// greedy one. Its cost is the same kind as above and as rare: a URL
+// whose query holds an `@` (`…@host/db?application_name=me@corp`) loses
+// its host to the redaction.
+var urlPasswordPattern = regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.\-]*://[^/@\s"']*?):[^\s"']*@`)
+
+// quotedURLPasswordPattern is the same cut for a URL that opens a Go
+// %q-quoted string, which is how net/url's *url.Error — the one producer
+// known to embed a whole DSN — renders it: `parse "<url>": <reason>`.
+//
+// It exists because the token pattern above ends a password at
+// whitespace or a quote, which is the only boundary unquoted text
+// offers. A password containing a space, a `'` or a `"` therefore did
+// not match at all and printed WHOLE. Inside a quoted string the
+// boundary is known exactly — the closing unescaped `"` — so the
+// password may hold anything, a `\"` included, and still ends at the
+// last `@` before that quote. It cannot run on into a second quoted URL
+// in the same message, because it cannot cross the quote between them.
+var quotedURLPasswordPattern = regexp.MustCompile(`("[a-zA-Z][a-zA-Z0-9+.\-]*://[^/@"\\]*?):(?:\\.|[^"\\])*@`)
 
 // keywordPasswordPattern matches the other spellings Postgres accepts:
 // the libpq keyword/value DSN (`host=h password=SECRET`), its quoted
@@ -89,6 +114,9 @@ var keywordPasswordPattern = regexp.MustCompile(`(?i)\b(sslpassword|password)\s*
 // Everything that is not a secret survives, because an operator staring
 // at a failed migration needs the host, the database and the reason.
 func Credentials(s string) string {
+	// Quoted first: it knows where the URL ends, so it must see the text
+	// before the token pattern has cut a first segment out of it.
+	s = quotedURLPasswordPattern.ReplaceAllString(s, "${1}:<redacted>@")
 	s = urlPasswordPattern.ReplaceAllString(s, "${1}:<redacted>@")
 	return keywordPasswordPattern.ReplaceAllString(s, "${1}=<redacted>")
 }
