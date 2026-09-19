@@ -367,6 +367,32 @@ const unrelated = `SELECT 1`
 GO
 check "prose and a Go comment quoting the bad query are not flagged" 0 "$prose"
 
+# ── the aggregate/collapse floor (the canary) ─────────────────────────
+# RLT-050: `examined == 0` proves the FROM/JOIN extraction is alive, but
+# nothing proved the AGGREGATE half (mult_agg()) was — a regression
+# there stops every real read from registering as aggregating, and a
+# tree that legitimately aggregates nothing (like "good" above) looks
+# identical from the outside. Simulate that regression by blinding
+# mult_agg() in a throwaway copy of the gate: it must die on its own
+# canary rather than print a clean "0 aggregating", and the SAME tree
+# must still pass on the real, unblinded gate — the floor must not cost
+# a false positive on a genuinely quiet tree.
+blinded="$TMP/lint-lake-dedup-blinded.sh"
+sed '/function mult_agg(s) {/a\
+      return 0
+' "$LINT" > "$blinded"
+blind="$(mk blind)"
+blind_out="$(bash "$blinded" "$blind" 2>&1)"
+blind_got=$?
+if [ "$blind_got" -ne 0 ] && grep -q 'did not flag its own canary' <<<"$blind_out"; then
+  echo "  ok   a blinded aggregate classifier dies on its own canary, not a silent 0-aggregating pass"
+  pass=$((pass + 1))
+else
+  echo "  FAIL a blinded aggregate classifier dies on its own canary (exit $blind_got)"
+  fail=$((fail + 1))
+fi
+check "the same aggregates-nothing tree still passes on the real gate" 0 "$blind"
+
 # ── baseline mechanics ───────────────────────────────────────────────
 based="$(mk based)"
 cp "$naive/$GODIR/sponsors.go" "$based/$GODIR/sponsors.go"

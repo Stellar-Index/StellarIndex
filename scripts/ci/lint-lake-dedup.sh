@@ -139,6 +139,23 @@ if [ "${#subjects[@]}" -eq 0 ]; then
   renamed, rename them here too — do not delete the check."
 fi
 
+# ── canary ───────────────────────────────────────────────────────────
+#
+# `examined == 0` below proves the FROM/JOIN extraction still matches
+# something, but nothing proves the AGGREGATE/collapse half of the
+# analyser still works: a mult_agg() or covers_identity() regression
+# that stopped every real read from registering as aggregating would
+# report a clean "0 aggregating" run, indistinguishable from a tree
+# that legitimately aggregates nothing. Run one synthetic,
+# guaranteed-uncollapsed aggregating read through the SAME analyser as
+# the real subjects and require it come back flagged.
+canary_dir="$(mktemp -d "${TMPDIR:-/tmp}/lint-lake-dedup-canary.XXXXXX")"
+trap 'rm -rf "$canary_dir"' EXIT
+canary_file="$canary_dir/canary.sql"
+cat > "$canary_file" <<'SQL'
+SELECT count() AS canary FROM stellar.transactions WHERE ledger_seq > 1;
+SQL
+
 # ── The analyser ─────────────────────────────────────────────────────
 #
 # Emits one TAB-separated `<file>\t<line>\t<table>\t<snippet>` record per
@@ -364,14 +381,36 @@ violations="$(
                is_sql = (FILENAME ~ /\.sql$/) }
     { if (is_sql) sql_line($0); else go_line($0) }
     END { flush(); printf "#counts %d %d\n", examined + 0, aggregating + 0 }
-  ' "${subjects[@]}"
+  ' "$canary_file" "${subjects[@]}"
 )"
 
 examined="$(printf '%s\n' "$violations" | awk '/^#counts /{print $2}')"
 aggregating="$(printf '%s\n' "$violations" | awk '/^#counts /{print $3}')"
 violations="$(printf '%s\n' "$violations" | grep -v '^#counts ' || true)"
 
-if [ -z "${examined:-}" ] || [ "$examined" -eq 0 ]; then
+if [ -z "${examined:-}" ] || [ -z "${aggregating:-}" ]; then
+  die "the analyser produced no #counts line — a gate reporting clean over
+  an empty accounting stream. Fix the analyser, do not delete the check."
+fi
+
+# The canary is a subject too, so its own +1/+1 is baked into
+# `examined`/`aggregating` above; pull its violation record out by
+# filename (field 1) and require it fired before trusting either count
+# — that is the proof the classifier is awake, not just quiet.
+canary_report="$(printf '%s\n' "$violations" | awk -F'\t' -v f="$canary_file" '$1 == f')"
+violations="$(printf '%s\n' "$violations" | awk -F'\t' -v f="$canary_file" '$1 != f')"
+if [ -z "$canary_report" ]; then
+  die "the analyser did not flag its own canary aggregate
+  ($canary_file: a bare count() over stellar.transactions with no FINAL,
+  GROUP BY, LIMIT 1 BY, uniqExact or SELECT DISTINCT). The
+  aggregate/collapse classifier — mult_agg() or the covers_identity()
+  family — is broken silently, not merely quiet on this tree. Fix the
+  classifier, do not delete the check."
+fi
+examined=$((examined - 1))
+aggregating=$((aggregating - 1))
+
+if [ "$examined" -eq 0 ]; then
   die "the analyser classified 0 lake-table reads across ${#subjects[@]} subject file(s).
   Every one of them NAMES a lake table, so a zero here means the FROM/JOIN
   extraction no longer matches this tree — a gate reporting clean because it
