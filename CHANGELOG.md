@@ -269,6 +269,32 @@ against.
     nobody takes, and `close(next)` stays the feeder's outermost defer. Every
     non-panicking path is byte-identical; the per-row resolve, batch cuts,
     written accounting and `filterStorableTrades` are untouched.
+- **money / a fiat-coded SEP anchor was reported as an impersonator (K033):**
+  the verified-currency catalogue's nineteen sovereign-currency entries carry
+  `networks: []`, so `indexTickerOnlyEntry` filed `USD`, `EUR`, `GBP`, `JPY`, …
+  into `byStellarCode` — the impersonation index — and `StellarCollision`
+  reported a collision for EVERY classic asset bearing one of those codes,
+  whoever issued it. On Stellar the ISO code is exactly how SEP-1 tells an
+  anchor to code a deposit token it denominates (`anchor_asset_type: fiat`,
+  `anchor_asset: USD`), so a regulated dollar anchor lost its `market_cap_usd`
+  on `/v1/assets/{id}` (`populateMarketCap` returned before the cap fill), was
+  stamped `unverified_ticker_collision: true` on the listing, was refused a
+  `listing_valuation`, and was served a warning saying its code "matches a
+  well-known asset that has NO verified issuance on Stellar" — said of a dollar
+  token, about the dollar. The contract is now decided and stated in one place:
+  a fiat ticker is a DENOMINATION, not a Stellar asset identity, so `ClassFiat`
+  entries with no Stellar issuance are indexed in `byFiatCode` and answered by
+  the new `Catalogue.FiatDenomination`, while `StellarCollision` keeps every
+  reference-only ticker (`USDT`, `XRP`, `BTC`, …) — which DO name an asset
+  issued elsewhere — and every verified Stellar code exactly as before. A fiat
+  entry that ever gains a verified Stellar issuance falls back under the
+  collision rule with everything else, and a fiat-coded classic asset is now
+  judged by the mechanisms that actually judge an anchor: the issuer directory,
+  the scam tags and the substance gate. No wire field changed shape;
+  `unverified_ticker_collision` simply stops firing on the compliant case.
+  `TestStellarCollision_CoversEveryCatalogueTicker` asserts the new truth rather
+  than a relaxed one — every ticker must still be answerable, by one index or
+  the other.
 
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before

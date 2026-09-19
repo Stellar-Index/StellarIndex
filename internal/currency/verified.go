@@ -134,6 +134,13 @@ type Catalogue struct {
 	// StellarCollision — given a (code, issuer) pair we look up by
 	// code and check whether the issuer matches the verified entry.
 	byStellarCode map[string]*VerifiedCurrency
+	// byFiatCode maps an uppercase ISO-4217 code to the sovereign
+	// currency entry that denominates it. DISJOINT from byStellarCode
+	// by construction (see indexTickerOnlyEntry): a fiat ticker names a
+	// unit of account nobody issues, so a classic asset carrying it is
+	// denominating, not impersonating, and must not be routed through
+	// StellarCollision. Read by FiatDenomination.
+	byFiatCode map[string]*VerifiedCurrency
 }
 
 // rawCatalogue is the on-disk shape of seed.yaml; unmarshalling
@@ -185,6 +192,7 @@ func LoadFromBytes(b []byte) (*Catalogue, error) {
 		byTicker:         make(map[string]*VerifiedCurrency, len(raw.VerifiedCurrencies)),
 		byStellarAssetID: make(map[string]*VerifiedCurrency),
 		byStellarCode:    make(map[string]*VerifiedCurrency),
+		byFiatCode:       make(map[string]*VerifiedCurrency),
 	}
 
 	for i, rc := range raw.VerifiedCurrencies {
@@ -352,8 +360,7 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 // ticker never reached byStellarCode and StellarCollision could not speak
 // about it. That is the same gap the native-XLM branch closes, and it is
 // much wider: it covers every `reference_only` entry (USDT, BTC, ETH,
-// SOL, BNB, XRP, ADA, DOGE, AVAX, POL, DOT, LINK, UNI, AAVE, WBTC) and
-// every fiat ticker.
+// SOL, BNB, XRP, ADA, DOGE, AVAX, POL, DOT, LINK, UNI, AAVE, WBTC).
 //
 // Before this, byStellarCode held 11 keys — so those were the ONLY codes
 // an impersonation could ever be reported for. Measured on r1: 22,496
@@ -363,11 +370,44 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 //
 // The reasoning is the native-XLM one: no legitimate classic asset can
 // bear a ticker this catalogue has verified as belonging to an
-// off-Stellar asset, so EVERY classic `USDT-G…` is by construction an
+// off-Stellar ASSET, so EVERY classic `USDT-G…` is by construction an
 // impersonator and every issuer is the right answer to report.
+//
+// A SOVEREIGN CURRENCY is the one kind of entry that reasoning does not
+// reach, so ClassFiat lands in byFiatCode instead (K033). USDT, XRP and
+// BTC each name a token somebody issues somewhere, and a classic
+// `USDT-G…` claims to be that token. `USD` names a unit of account
+// nobody issues — the catalogue's own fiat entries carry `networks: []`
+// and an M2 supply, and External() routes them off the Stellar listing
+// entirely. On Stellar the ISO code is how SEP-1 tells an anchor to
+// denominate a deposit token (`anchor_asset_type: fiat`,
+// `anchor_asset: USD`, classic code `USD`), so a regulated anchor
+// issuing `USD-G…` is following the spec, not impersonating the dollar
+// — and there is no verified issuer for it to be mistaken for, because
+// the entry has none. Reporting it as an impersonation cost every such
+// anchor its market cap, its listing valuation and a warning saying its
+// code "matches a well-known asset that has NO verified issuance on
+// Stellar" — said of a dollar token, about the dollar.
+//
+// Nothing is dropped from the catalogue's reach by this: the code stays
+// answerable through FiatDenomination, and a fiat entry that ever GAINS
+// a verified Stellar issuance is indexed by the loop above and collides
+// like any other verified code. What a fiat-coded classic asset gets
+// instead is the treatment every other uncatalogued classic asset gets
+// — the issuer directory, the scam tags and the substance gate, which
+// are the mechanisms that actually judge an anchor.
 func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
 	codeKey := strings.ToUpper(vc.Ticker)
 	if codeKey == "" {
+		return nil
+	}
+	if vc.Class == ClassFiat {
+		if existing, dup := cat.byFiatCode[codeKey]; dup {
+			return fmt.Errorf(
+				"currency: fiat code %q claimed by both %q and %q",
+				codeKey, existing.Ticker, vc.Ticker)
+		}
+		cat.byFiatCode[codeKey] = vc
 		return nil
 	}
 	if existing, dup := cat.byStellarCode[codeKey]; dup {
@@ -495,6 +535,12 @@ func (c *Catalogue) LookupByStellarAssetID(assetID string) (*VerifiedCurrency, b
 // asset with code "XLM" matches the native entry and always reports a
 // collision, because no legitimate classic asset can carry that code.
 // Callers passing empty code or issuer get (nil, false).
+//
+// A code that only matches a SOVEREIGN CURRENCY entry with no Stellar
+// issuance (USD, EUR, GBP, …) is NOT a collision and returns
+// (nil, false) — it is a denomination, not an asset identity; see
+// indexTickerOnlyEntry for the reasoning and FiatDenomination for the
+// lookup that does answer it (K033).
 func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bool) {
 	if c == nil || code == "" || issuer == "" {
 		return nil, false
@@ -512,6 +558,29 @@ func (c *Catalogue) StellarCollision(code, issuer string) (*VerifiedCurrency, bo
 		}
 	}
 	return v, true
+}
+
+// FiatDenomination returns the sovereign-currency entry a classic code
+// denominates in, for a code the catalogue holds as fiat with no Stellar
+// issuance of its own ("USD" → the US Dollar entry). Case-insensitive.
+//
+// This is the answer StellarCollision deliberately does not give for
+// such a code (K033): the pair is a DENOMINATION statement, not an
+// identity claim, so it carries no impersonation verdict and must not
+// gate a valuation. It exists so the catalogue still speaks about every
+// ticker it holds — a fiat entry is in exactly one of the two indexes,
+// never neither, which is what
+// TestStellarCollision_CoversEveryCatalogueTicker pins.
+//
+// Returns (nil, false) for an unknown code, and for a fiat entry that
+// has a verified Stellar issuance — that one is a Stellar identity and
+// StellarCollision owns it.
+func (c *Catalogue) FiatDenomination(code string) (*VerifiedCurrency, bool) {
+	if c == nil || code == "" {
+		return nil, false
+	}
+	v, ok := c.byFiatCode[strings.ToUpper(code)]
+	return v, ok
 }
 
 // StellarEntry returns the Stellar network entry for a verified

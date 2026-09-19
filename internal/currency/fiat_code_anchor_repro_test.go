@@ -2,17 +2,18 @@ package currency
 
 import "testing"
 
-// K033 — a SEP anchor's fiat-coded token is reported as an impersonation.
+// K033 — a SEP anchor's fiat-coded token must not be reported as an
+// impersonation.
 //
-// # The reproduction, which runs below when this test is un-skipped
+// # What used to happen
 //
-// The catalogue's twenty sovereign-currency entries carry `networks: []`
+// The catalogue's nineteen sovereign-currency entries carry `networks: []`
 // and an M2 circulating supply: they are units of account, not issued
 // tokens. Having no Stellar issuance, they never reach
-// indexStellarEntries' issuance loop, so indexTickerOnlyEntry files each
+// indexStellarEntries' issuance loop, so indexTickerOnlyEntry filed each
 // ticker into byStellarCode — the impersonation index. StellarCollision
-// then finds the code, finds no Stellar issuance whose issuer matches,
-// and reports a collision for EVERY classic asset coded USD, EUR, GBP,
+// then found the code, found no Stellar issuance whose issuer matched,
+// and reported a collision for EVERY classic asset coded USD, EUR, GBP,
 // JPY, … whoever issued it.
 //
 // The reasoning that put reference-only tickers there is sound for USDT,
@@ -24,36 +25,22 @@ import "testing"
 // `anchor_asset = "USD"`). A regulated anchor issuing `USD-G…` is
 // denominating in dollars, not impersonating the dollar.
 //
-// What the flag costs such an anchor is not cosmetic: it withholds the
-// market cap (internal/api/v1/assets_f2.go returns before the cap fill,
-// and the listing's fillRowMarketCap has the same guard), refuses the
-// listing valuation (asset_listing_valuation.go), and attaches a warning
+// What the flag cost such an anchor was not cosmetic: it withheld the
+// market cap (internal/api/v1/assets_f2.go returned before the cap fill,
+// and the listing's fillRowMarketCap has the same guard), refused the
+// listing valuation (asset_listing_valuation.go), and attached a warning
 // saying the asset "matches a well-known asset that has NO verified
 // issuance on Stellar" — said of a dollar token, about the dollar.
 //
-// # Why this is skipped rather than fixed here
+// # The contract this pins
 //
-// The correct fix is a fiat-class branch that keeps a SIGNAL but stops
-// the money suppression and rewords the warning, and it cannot be made
-// from this unit's file set:
-//
-//   - internal/api/v1/assets_f2.go holds populateMarketCap, the DETAIL
-//     path's suppression. Fixing only the listing path would leave the
-//     defect live on the surface a client lands on.
-//   - internal/currency/verified_test.go holds
-//     TestStellarCollision_CoversEveryCatalogueTicker, which deliberately
-//     requires every catalogue ticker — fiat included — to be
-//     collision-flaggable. That expectation is the opposite of this one
-//     and has to be revised as a decision, not flipped in passing.
-//   - internal/currency/data/seed.yaml would carry the operator-curated
-//     known-anchor issuer set the original finding asks the collision
-//     check to consult.
-//
-// Un-skip this test with that change; it is the acceptance check.
+// A fiat TICKER in the reference catalogue is a DENOMINATION, not a
+// Stellar asset identity. ClassFiat entries with no Stellar issuance are
+// filed into byFiatCode, so StellarCollision stays silent for them and
+// every consumer of it stops suppressing at the source. The code stays
+// answerable through FiatDenomination, and a fiat entry that ever gains
+// a verified Stellar issuance collides like any other verified code.
 func TestFiatCodedAnchorIsNotAnImpersonator(t *testing.T) {
-	t.Skip("K033: needs internal/api/v1/assets_f2.go, internal/currency/verified_test.go and " +
-		"internal/currency/data/seed.yaml, which are outside this unit's file set")
-
 	cat, err := LoadEmbedded()
 	if err != nil {
 		t.Fatalf("LoadEmbedded: %v", err)
@@ -68,10 +55,10 @@ func TestFiatCodedAnchorIsNotAnImpersonator(t *testing.T) {
 		t.Run(ticker, func(t *testing.T) {
 			entry, ok := cat.LookupByTicker(ticker)
 			if !ok {
-				t.Fatalf("catalogue has no %s entry; this reproduction is out of date", ticker)
+				t.Fatalf("catalogue has no %s entry; this check is out of date", ticker)
 			}
 			if entry.Class != ClassFiat {
-				t.Fatalf("%s is class %q, want fiat; this reproduction is out of date", ticker, entry.Class)
+				t.Fatalf("%s is class %q, want fiat; this check is out of date", ticker, entry.Class)
 			}
 			if entry.StellarEntry() != nil {
 				t.Skipf("%s now has a verified Stellar issuance — the collision report is correct for it", ticker)
@@ -81,6 +68,36 @@ func TestFiatCodedAnchorIsNotAnImpersonator(t *testing.T) {
 					"denomination with no issuer, and SEP-1 codes a fiat anchor's deposit token with "+
 					"exactly this code — so the anchor loses its market cap and is warned about for "+
 					"following the spec", ticker)
+			}
+			// Silent is not the same as forgotten: the catalogue must
+			// still be able to say what the code denominates, or a
+			// future entry could drop out of both indexes unnoticed.
+			denom, ok := cat.FiatDenomination(ticker)
+			if !ok {
+				t.Fatalf("FiatDenomination(%q) found nothing — the code is in neither index", ticker)
+			}
+			if denom != entry {
+				t.Errorf("FiatDenomination(%q) = %q, want the catalogue's own %q entry",
+					ticker, denom.Ticker, entry.Ticker)
+			}
+		})
+	}
+
+	// The control. The carve-out is by CLASS, so the reference-only
+	// tickers the impersonation index exists for must still report —
+	// otherwise this change would read as a pass while having disarmed
+	// the whole check.
+	for _, ticker := range []string{"USDT", "XRP", "BTC"} {
+		t.Run("control/"+ticker, func(t *testing.T) {
+			if _, ok := cat.LookupByTicker(ticker); !ok {
+				t.Skipf("catalogue no longer holds %s", ticker)
+			}
+			if _, collision := cat.StellarCollision(ticker, anchorAccount); !collision {
+				t.Errorf("StellarCollision(%q, third party) reports no impersonation; %s names a "+
+					"token issued elsewhere, so every classic %s-G… is one", ticker, ticker, ticker)
+			}
+			if _, fiat := cat.FiatDenomination(ticker); fiat {
+				t.Errorf("%s resolved as a fiat denomination; it is an issued asset", ticker)
 			}
 		})
 	}

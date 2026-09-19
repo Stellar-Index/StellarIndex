@@ -614,16 +614,30 @@ func TestStellarCollision_nativeAssetImpersonator(t *testing.T) {
 }
 
 // TestStellarCollision_CoversEveryCatalogueTicker pins that an
-// impersonation can be reported for EVERY verified ticker, not only the
-// handful that happen to have a Stellar issuance.
+// impersonation can be reported for EVERY verified ticker that names an
+// ISSUED asset, not only the handful that happen to have a Stellar
+// issuance.
 //
 // byStellarCode used to be populated solely inside the Issuance loop, so
-// `reference_only` entries (USDT, BTC, ETH, XRP, …) and every fiat ticker
-// never entered it — 11 keys total, meaning those were the only codes an
-// impersonation could ever be flagged for. Measured on r1: 22,496 codes
-// are claimed by more than one issuer across 132,808 of 194,034 classic
-// assets, and `?code=XRP` returned 645 rows with not one flagged (cold
-// audit 2026-08-04).
+// `reference_only` entries (USDT, BTC, ETH, XRP, …) never entered it —
+// 11 keys total, meaning those were the only codes an impersonation
+// could ever be flagged for. Measured on r1: 22,496 codes are claimed by
+// more than one issuer across 132,808 of 194,034 classic assets, and
+// `?code=XRP` returned 645 rows with not one flagged (cold audit
+// 2026-08-04).
+//
+// The census originally ran over cat.All() with no carve-out, which put
+// the twenty sovereign-currency entries inside it too. That was the
+// wrong half of the rule, not a stricter version of it: the reasoning
+// above is "no legitimate classic asset can bear the code of an asset
+// issued elsewhere", and a sovereign currency is issued nowhere — SEP-1
+// codes a fiat anchor's deposit token with exactly the ISO code, so the
+// census was requiring every compliant anchor to be reportable as an
+// impersonator (K033). The carve is by CLASS and only where the entry
+// has no Stellar issuance of its own; the census itself is unchanged in
+// strength, because a fiat code must still be ANSWERABLE — via
+// FiatDenomination — and a fiat entry that ever gains a verified Stellar
+// issuance falls back under the collision rule with everything else.
 func TestStellarCollision_CoversEveryCatalogueTicker(t *testing.T) {
 	cat, err := LoadEmbedded()
 	if err != nil {
@@ -633,9 +647,21 @@ func TestStellarCollision_CoversEveryCatalogueTicker(t *testing.T) {
 	// ticker — every hit below is therefore a true impersonation.
 	const attacker = "GBEO62ZYQXBGDQEHPTMBHRJVUEBNMXAWZFPBQBLPJXLJKMQTOEVEDGRA"
 
-	var missed []string
+	var missed, unanswerable, defamed []string
+	fiat := 0
 	for _, vc := range cat.All() {
-		if _, ok := cat.StellarCollision(vc.Ticker, attacker); !ok {
+		_, collision := cat.StellarCollision(vc.Ticker, attacker)
+		if vc.Class == ClassFiat && vc.StellarEntry() == nil {
+			fiat++
+			if collision {
+				defamed = append(defamed, vc.Ticker)
+			}
+			if _, ok := cat.FiatDenomination(vc.Ticker); !ok {
+				unanswerable = append(unanswerable, vc.Ticker)
+			}
+			continue
+		}
+		if !collision {
 			missed = append(missed, vc.Ticker)
 		}
 	}
@@ -643,6 +669,18 @@ func TestStellarCollision_CoversEveryCatalogueTicker(t *testing.T) {
 		t.Errorf("StellarCollision cannot speak about %d of %d verified tickers: %v\n"+
 			"an attacker minting a classic asset with any of these codes is unflaggable",
 			len(missed), len(cat.All()), missed)
+	}
+	if len(defamed) > 0 {
+		t.Errorf("StellarCollision reports an impersonation for %d sovereign currency code(s): %v\n"+
+			"a fiat code is a denomination with no issuer to impersonate, and SEP-1 codes an "+
+			"anchor's deposit token with exactly it", len(defamed), defamed)
+	}
+	if len(unanswerable) > 0 {
+		t.Errorf("%d fiat code(s) are in neither index — the catalogue cannot speak about them "+
+			"at all: %v", len(unanswerable), unanswerable)
+	}
+	if fiat == 0 {
+		t.Fatal("no issuance-free fiat entries in the catalogue — the carve-out proved nothing")
 	}
 }
 
