@@ -51,6 +51,23 @@ const rwaFunnelBasis = "Every issuer account that could carry a SEP-1 attestatio
 	"the same unit. `actor` names who can move a number: an operator, the token's own issuer, or nobody — the " +
 	"definition refusing it."
 
+// rwaFunnelClassicUnmeasured corrects the sentence above when the
+// classic arm was not walked: no issuer-bound attestation reader is
+// wired. The correction is the one the other two arms have carried
+// since they were added, missing on the only arm the basis sentence is
+// actually written about — its stages then read zero, and a narrowing
+// of zeros asserts that no issuer on this network attests to a
+// real-world asset, which is the strongest claim this surface can make
+// and would be made out of a scan that never ran.
+//
+// A WIRED scan that did not answer is a different state and never
+// reaches here: that rebuild is refused at the cache, the last good
+// set keeps being served, and the response says so in
+// `membership.rebuild_failed_at` beside `stale: true`.
+const rwaFunnelClassicUnmeasured = "The `classic` arm was NOT MEASURED: no issuer-bound SEP-1 attestation reader " +
+	"is wired, so that population was never walked. Its stages below read zero because nobody looked, not because " +
+	"no issuer on this network attests to a real-world asset."
+
 // rwaFunnelContractsBasis describes the second arm. It is appended
 // rather than folded into the sentence above because the two arms walk
 // different populations: a reader who took one narrowing for the whole
@@ -202,7 +219,7 @@ func rwaFunnelOf(
 		// list. A reader may branch on either.
 		Balanced:         len(why) == 0,
 		Imbalance:        strings.Join(why, "; "),
-		Basis:            rwaFunnelBasisFor(m.contractCensus.available, m.listingCensus.available),
+		Basis:            rwaFunnelBasisFor(m.available, m.contractCensus.available, m.listingCensus.available),
 		ListingDirectory: rwaListingDirectoryOf(m.listingCensus),
 	}
 }
@@ -360,10 +377,16 @@ func rwaReferenceDrops(byReason map[string]int) []RWAFunnelDrop {
 	return out
 }
 
-// rwaFunnelBasisFor states what was measured, including whether the
-// contract arm was walked at all.
-func rwaFunnelBasisFor(contractsMeasured, listingMeasured bool) string {
+// rwaFunnelBasisFor states what was measured, including whether each
+// arm was walked at all.
+func rwaFunnelBasisFor(classicMeasured, contractsMeasured, listingMeasured bool) string {
 	parts := []string{rwaFunnelBasis}
+	// Appended as a correction to the sentence above rather than
+	// replacing it, because that sentence also defines the units and
+	// the `actor` column every other arm's stages use.
+	if !classicMeasured {
+		parts = append(parts, rwaFunnelClassicUnmeasured)
+	}
 	if contractsMeasured {
 		parts = append(parts, rwaFunnelContractsBasis)
 	} else {

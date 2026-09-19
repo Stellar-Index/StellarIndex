@@ -1013,6 +1013,19 @@ type rwaMembership struct {
 	// available is false when no attestation reader is wired, which is
 	// a configuration statement rather than an empty population.
 	available bool
+	// readFailed records that an arm which IS wired did not answer —
+	// the attestation scan, the classic arm's directory lookup, or the
+	// contract arm's directory scan returned an error.
+	//
+	// It exists because `available` cannot say this. That field is
+	// false for an unwired reader AND for a read that failed, and the
+	// two need opposite handling at the cache: an unwired arm is a
+	// permanent, honest property of the deployment and its rebuild is
+	// worth caching, while a failed read is an outage whose empty arm
+	// must never be written over a good set. Conflating them is how a
+	// half-empty membership set came to be served, self-certified
+	// fresh, for a full lifetime — see [Server.refreshRWAMembership].
+	readFailed bool
 
 	// contracts is the CONTRACT arm's admitted set — tokens with no
 	// (code, issuer) pair, drawn from a different population by a
@@ -1100,6 +1113,19 @@ func (s *Server) buildRWAMembership(ctx context.Context) rwaMembership {
 	out.listingCensus = c.listingCensus
 	out.contractRefusals = c.refusals
 	out.listingRefusals = c.listingRefusals
+	// A WIRED contract reader whose scan errored leaves
+	// census.available false in exactly the way an unwired one does,
+	// and only this layer holds the wiring, so only this layer can tell
+	// the two apart. The distinction decides whether the rebuild may be
+	// cached over the last good set — see [rwaMembership.readFailed].
+	//
+	// The LISTING arm is deliberately not folded in here: it fails
+	// CLOSED inside the measured branch, dropping every binding under
+	// `independent_listing_unavailable`, so its outage is already a
+	// stated refusal on the wire rather than a silent absence.
+	if s.rwaContracts != nil && !c.census.available {
+		out.readFailed = true
+	}
 	// One `refused[]` for the whole surface. The per-arm tallies stay
 	// on the membership for the funnel, which has to attribute a
 	// refusal to the narrowing it belongs to; a consumer counting how
@@ -1130,6 +1156,7 @@ func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 	if err != nil {
 		s.logger.Warn("rwa membership: bound sep1 scan failed", "err", err)
 		out.available = false
+		out.readFailed = true
 		return out
 	}
 	out.census = census
@@ -1175,6 +1202,7 @@ func (s *Server) buildRWAClassicMembership(ctx context.Context) rwaMembership {
 			// as real-world assets.
 			s.logger.Warn("rwa membership: directory batch lookup failed", "n", len(addrs), "err", err)
 			out.available = false
+			out.readFailed = true
 			return out
 		}
 	}
@@ -1433,11 +1461,34 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 
 	s.rwaMu.Lock()
 	defer s.rwaMu.Unlock()
-	// EITHER arm answering makes the rebuild worth caching. Requiring
-	// both would mean a deployment with only one reader wired rebuilt on
-	// every request and never cached, and a transient failure of one arm
-	// would discard a good rebuild of the other.
-	if !built.available && !built.contractCensus.available {
+	// Every WIRED arm must have answered. An arm that is not wired is
+	// no obstacle — requiring it would mean a deployment with only one
+	// reader rebuilt on every request and never cached — but an arm
+	// that IS wired and did not answer makes this rebuild a PARTIAL
+	// measurement, and a partial measurement may not be published as
+	// the set.
+	//
+	// It used to be enough for EITHER arm to answer, which sounds like
+	// the same rule and is not: a failed classic scan beside a healthy
+	// contract scan wrote a set with no classic members over the last
+	// good one, re-dated it to now and cleared the failure stamp below,
+	// so the surface served a half-empty set reporting `stale: false`
+	// and no `rebuild_failed_at` for the whole ten-minute lifetime.
+	// Membership is what this index CALLS a real-world asset, so that
+	// is published coverage which is wrong AND self-certified fresh —
+	// the one combination a reader cannot defend against.
+	//
+	// The good half of a partial rebuild is discarded deliberately. The
+	// alternative is merging one arm of a new set into the other arm of
+	// an older one, which would publish a single `built_at` over two
+	// different moments; and the last good set is a FULL measurement
+	// whose inputs move on a daily cadence, so keeping it and saying it
+	// is stale is both more complete and more honest than half of a
+	// fresh one. A cold cache with an arm down therefore stays cold and
+	// the handler states the absence — the posture rwaBasisUnavailable
+	// already describes: no set is published rather than an unverified
+	// one.
+	if built.readFailed || (!built.available && !built.contractCensus.available) {
 		// Not an error path for the caller: the previous set keeps being
 		// served, and rwaAttemptAt (already advanced) is what stops this
 		// becoming a retry storm.
@@ -1447,7 +1498,12 @@ func (s *Server) refreshRWAMembership(done chan struct{}) {
 		// nothing is replacing are identical — and the second is the
 		// only one anybody needs to act on.
 		s.rwaFailedAt = at
-		s.logger.Warn("rwa membership rebuild failed (serving the last good set)")
+		// Which arm went down is named here because it is the one thing
+		// the wire deliberately does not carry: the response says a
+		// rebuild failed, the log says what to go and look at.
+		s.logger.Warn("rwa membership rebuild failed (serving the last good set)",
+			"classic_answered", built.available,
+			"contracts_answered", built.contractCensus.available)
 		return
 	}
 	// Cleared on success: the field answers "is the latest thing to

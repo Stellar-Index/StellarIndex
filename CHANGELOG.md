@@ -151,6 +151,32 @@ against.
   lake is retried at most once per gap instead of once per request, and the
   last-good watermark keeps being served (its ageing close time still drives
   `flags.stale` correctly). No response shape changes.
+- **api / a half-empty RWA membership set was cached and self-certified fresh (RLT-096):**
+  the membership rebuild cached whenever EITHER arm answered, so a failed
+  SEP-1 attestation scan (or a failed classic directory lookup) beside a
+  healthy contract scan wrote a set with NO classic members over the last
+  good one, re-dated it to now and cleared the failure stamp — publishing
+  `stale: false` and no `rebuild_failed_at` over half a set for the full
+  ten-minute lifetime, on the surface that decides what this index CALLS a
+  real-world asset. The handler's only availability test needs BOTH arms
+  down, so nothing anywhere went red. The rule is now that every WIRED arm
+  must have answered: an arm that is not wired is still no obstacle (a
+  one-reader deployment must not rebuild on every request), but a wired arm
+  that did not answer makes the rebuild a partial measurement, which is
+  refused at the cache. The last good FULL set keeps being served with
+  `stale: true` and the real `rebuild_failed_at` beside it, and a cold cache
+  with an arm down states the absence rather than publishing a half set —
+  the posture the unavailable basis already describes. `available` could not
+  express this on its own: it is false both for an unwired reader and for a
+  read that failed, and only the second may refuse a cache write.
+- **api / the RWA funnel basis never said whether the CLASSIC arm was measured (RLT-096):**
+  it was built from the contract and listing arms' availability only, so a
+  deployment with no attestation reader wired published the classic
+  narrowing as stages of zeros under a sentence describing a measurement —
+  asserting that no issuer on this network attests to a real-world asset,
+  out of a scan that never ran. The basis now carries the same NOT MEASURED
+  correction the other two arms have had since they were added.
+
 - **ops / the archival-node role still hard-failed one import earlier (F128):**
   the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,
   `21-clickhouse-drop-guard.yml` and `22-clickhouse-exporter.yml`, but
