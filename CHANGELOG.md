@@ -17,6 +17,18 @@ against.
 
 ### Fixed
 
+- **projector / `projector-replay`:** a replay's cursor rewind can no longer
+  be reverted by the live projector's in-flight cycle. A cycle reads its
+  cursor, spends up to `PerSourceTimeout` scanning and sinking, then
+  commits a position derived from that read; the commit was a
+  never-regress upsert, so a rewind landing in between — a lower value —
+  was simply overwritten by the forward write. The replay printed success,
+  its dirty window stayed open, and nothing was re-projected. The
+  projector now commits through `Store.AdvanceCursorFrom`, a
+  compare-and-swap against the position the cycle read: if the cursor
+  moved, the cycle abandons its advance (its idempotent sink writes stay),
+  logs it, and the next cycle starts from the rewind point. The rewind
+  wins whichever writer reaches the row first (F159, K013).
 - **completeness / replay-rewind windows:** `compute-completeness` now
   stores a source's verdict and clears the replay-rewind dirty window that
   verdict discharged in one transaction

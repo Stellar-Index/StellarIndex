@@ -140,7 +140,13 @@ type SinkFunc func(ctx context.Context, ev consumer.Event) error
 // through [New].
 type eventStore interface {
 	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
-	UpsertCursor(ctx context.Context, source, sub string, lastLedger uint32) error
+	// AdvanceCursorFrom is the projector's ONLY cursor write: a
+	// compare-and-swap against the position the cycle read (finding F159).
+	// The unconditional never-regress upsert is deliberately not in this
+	// interface — a cycle's commit is derived from a read that may be
+	// PerSourceTimeout old, and an upsert let it overwrite a
+	// projector-replay rewind that landed in between.
+	AdvanceCursorFrom(ctx context.Context, source, sub string, expected timescale.CursorRead, newLast uint32) (bool, error)
 	StreamSorobanEvents(ctx context.Context, from, to uint32,
 		contractIDs, topic0Syms, excludeTopic0Syms []string,
 		fn func(row sorobanevents.Row) error) error
@@ -702,6 +708,42 @@ func lowestHeldLedger(held []heldRow) (uint32, bool) {
 	return lowest, found
 }
 
+// commitCursor advances a source's cursor to commitTo, conditional on the
+// row still being what this cycle READ, and reports whether the cycle may
+// go on to account itself as forward progress (finding F159).
+//
+// A cycle is a read-modify-write up to PerSourceTimeout long. commitTo is
+// derived from the cursor read at its start, so writing it unconditionally
+// is only correct if nobody moved the cursor meanwhile — and
+// `stellarindex-ops projector-replay` exists to do exactly that. Its
+// rewind, landing mid-cycle, used to be overwritten by this write (a
+// forward value always beats a just-rewound one under a never-regress
+// guard): the replay printed success, recorded a dirty window nothing
+// would ever clear, and re-projected nothing.
+//
+// Losing the compare-and-swap is NOT a fault in this cycle's work. Its
+// sink writes are idempotent and stay; only the position is abandoned, and
+// the next cycle re-reads the cursor — i.e. starts from the rewind point,
+// which is the repair the operator asked for. It is counted under the
+// "error" outcome because the cycle did not commit, and because the one
+// way to lose it REPEATEDLY — two projectors on one cursor — is precisely
+// what the sustained-error ticket should catch.
+func (p *Projector) commitCursor(ctx context.Context, source string, read timescale.CursorRead, commitTo uint32) bool {
+	advanced, err := p.store.AdvanceCursorFrom(ctx, "projector", source, read, commitTo)
+	if err != nil {
+		p.logger.Warn("projector: cursor advance failed", "source", source, "err", err)
+		obs.ProjectorRunsTotal.WithLabelValues(source, "error").Inc()
+		return false
+	}
+	if !advanced {
+		p.logger.Warn("projector: cursor moved during this cycle (a projector-replay rewind, or a second projector on this cursor) — abandoning this cycle's advance; the next cycle re-reads the cursor",
+			"source", source, "read_exists", read.Exists, "read_cursor", read.LastLedger, "abandoned_commit_to", commitTo)
+		obs.ProjectorRunsTotal.WithLabelValues(source, "error").Inc()
+		return false
+	}
+	return true
+}
+
 // cycleOneSource runs one read-decode-write cycle for one source.
 // Failure handling:
 //   - read / tip / cursor errors → log + leave the cursor untouched; the
@@ -757,7 +799,12 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		return
 	}
 	fromLedger := uint32(0)
+	// read is what this cycle's commit is conditional on (see commitCursor):
+	// everything below derives from it, so the advance may only land if the
+	// row still says the same thing when the cycle ends.
+	var read timescale.CursorRead
 	if err == nil {
+		read = timescale.CursorRead{Exists: true, LastLedger: cursor.LastLedger}
 		// Resume one ledger AFTER the last fully-processed one.
 		// soroban_events.ledger BETWEEN $1 AND $2 is inclusive on
 		// both ends so adding 1 here avoids reprocessing the seam.
@@ -1045,9 +1092,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if holding {
 		commitTo = firstHeldLedger - 1
 	}
-	if err := p.store.UpsertCursor(cycleCtx, "projector", src.Name, commitTo); err != nil {
-		p.logger.Warn("projector: cursor advance failed", "source", src.Name, "err", err)
-		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
+	if !p.commitCursor(cycleCtx, src.Name, read, commitTo) {
 		return
 	}
 

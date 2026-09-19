@@ -183,6 +183,82 @@ func (s *Store) UpsertCursor(ctx context.Context, source, sub string, lastLedger
 	return nil
 }
 
+// CursorRead is the cursor state a long-cycle reader observed when its
+// cycle STARTED — the "expected" half of [Store.AdvanceCursorFrom]'s
+// compare-and-swap. Exists=false means GetCursor answered ErrNotFound (a
+// source's first cycle); LastLedger is meaningless then.
+type CursorRead struct {
+	Exists     bool
+	LastLedger uint32
+}
+
+// AdvanceCursorFrom advances (source, sub) to newLast ONLY IF the row is
+// still exactly what the caller read — a compare-and-swap, for readers
+// whose read→write gap is long enough for someone else to move the cursor
+// in between (findings F159 / K013). It reports whether the advance was
+// applied; false with a nil error means "the cursor moved under you —
+// abandon this commit and re-read".
+//
+// [Store.UpsertCursor]'s guard is monotonic-FORWARD against whatever the
+// row holds NOW. That is the right guard for a writer that owns its cursor
+// outright, and the wrong one for the projector: its cycle reads the
+// cursor, spends up to PerSourceTimeout scanning and sinking, then writes
+// a position derived from that stale read. A `projector-replay`
+// [Store.RewindCursor] landing inside the gap writes a LOWER value, so the
+// in-flight cycle's forward write passed the guard and put the cursor
+// straight back at tip: the replay printed success, its dirty window
+// stayed open forever, and nothing was re-projected.
+//
+// Comparing against the value READ makes the rewind win no matter how the
+// two interleave: if the rewind commits first, the advance matches zero
+// rows; if the advance holds the row lock first, the rewind waits and then
+// rewinds the advanced value. Under READ COMMITTED an advance parked
+// behind the rewind's row lock re-evaluates `last_ledger = $3` against the
+// committed row once unblocked, so there is no window in which both
+// succeed against the same read.
+//
+// expected.Exists=false is the first-cycle seed: INSERT … ON CONFLICT DO
+// NOTHING, so a row that appeared since the read is likewise left alone.
+// first_ledger keeps UpsertCursor's semantics — set on insert, preserved
+// (COALESCE) on update.
+//
+// newLast must be strictly above expected.LastLedger: this is an ADVANCE.
+// Moving backward is [Store.RewindCursor]'s job, deliberately separate.
+func (s *Store) AdvanceCursorFrom(ctx context.Context, source, sub string, expected CursorRead, newLast uint32) (bool, error) {
+	var (
+		res sql.Result
+		err error
+	)
+	if expected.Exists {
+		if newLast <= expected.LastLedger {
+			return false, fmt.Errorf("timescale: AdvanceCursorFrom (%s,%s): %d is not an advance over the read position %d", source, sub, newLast, expected.LastLedger)
+		}
+		const q = `
+        UPDATE ingestion_cursors
+           SET first_ledger = COALESCE(first_ledger, $4),
+               last_ledger  = $4,
+               last_updated = now()
+         WHERE source = $1 AND sub_source = $2 AND last_ledger = $3
+    `
+		res, err = s.db.ExecContext(ctx, q, source, sub, int64(expected.LastLedger), int64(newLast))
+	} else {
+		const q = `
+        INSERT INTO ingestion_cursors (source, sub_source, first_ledger, last_ledger, last_updated)
+        VALUES ($1, $2, $3, $3, now())
+        ON CONFLICT (source, sub_source) DO NOTHING
+    `
+		res, err = s.db.ExecContext(ctx, q, source, sub, int64(newLast))
+	}
+	if err != nil {
+		return false, fmt.Errorf("timescale: AdvanceCursorFrom (%s,%s): %w", source, sub, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("timescale: AdvanceCursorFrom (%s,%s) rows: %w", source, sub, err)
+	}
+	return n > 0, nil
+}
+
 // RewindCursor moves an existing cursor BACKWARD to lastLedger — the
 // deliberate-rewind path that UpsertCursor's monotonic-forward guard
 // (WHERE EXCLUDED.last_ledger > last_ledger, F-0020) intentionally
