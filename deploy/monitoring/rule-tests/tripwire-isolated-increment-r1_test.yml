@@ -17,6 +17,7 @@ rule_files:
   - ../../../configs/prometheus/rules.r1/projector.yml
   - ../../../configs/prometheus/rules.r1/ledgerstream-tier.yml
   - ../../../configs/prometheus/rules.r1/stellar.yml
+  - ../../../configs/prometheus/rules.r1/api.yml
 
 evaluation_interval: 1m
 
@@ -271,6 +272,63 @@ tests:
                      are mis-configured for this binary.
       - eval_time: 12m
         alertname: stellarindex_ledgerstream_tier_both_missing
+        exp_alerts: []
+
+  # ══ stellarindex_customer_webhook_delivery_exhausted ══════════════
+  # The rate() twin of the class: `sum(rate(..{outcome="exhausted"}[1h])) > 0`
+  # with `for: 1h`, under a description about ONE delivery ("A delivery hit
+  # the 15-attempt retry budget"). rate() is increase()/W, so it is non-zero
+  # for exactly the window after one increment and `for: 1h` could never
+  # complete. All twelve outcomes are pre-seeded at 0
+  # (obs.seedBoundedLabelSeries, pinned by
+  # TestCustomerWebhookDeliveryOutcomesAreSeeded), so the existing-series
+  # shape is the production one and no born-arm is needed.
+  - interval: 1m
+    name: webhook_delivery_exhausted — ONE terminally failed delivery tickets
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="exhausted"}'
+        values: '0x3 1x120'
+      # Ordinary traffic on a sibling outcome must not be what fires it.
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="delivered"}'
+        values: '0+5x124'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_customer_webhook_delivery_exhausted
+        exp_alerts: &webhook_exhausted_alert
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/customer-webhook-delivery-failing.md"
+              summary: "Customer webhook deliveries permanently failed (budget exhausted)"
+              description: |
+                A delivery hit the 15-attempt retry budget (~8h) and
+                was marked terminally failed.
+      - eval_time: 60m
+        alertname: stellarindex_customer_webhook_delivery_exhausted
+        exp_alerts: *webhook_exhausted_alert
+      # The increment has left the 1h window: the ticket reports an event,
+      # it does not latch.
+      - eval_time: 70m
+        alertname: stellarindex_customer_webhook_delivery_exhausted
+        exp_alerts: []
+
+  - interval: 1m
+    name: webhook_delivery_exhausted — an old non-zero count and healthy traffic stay silent
+    input_series:
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="exhausted"}'
+        values: '4x124'
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="delivered"}'
+        values: '0+5x124'
+      - series: 'stellarindex_customer_webhook_delivery_attempts_total{job="stellarindex_api",instance="r1:8080",outcome="server_error"}'
+        values: '0+1x124'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_customer_webhook_delivery_exhausted
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: stellarindex_customer_webhook_delivery_exhausted
         exp_alerts: []
 
   # ══ the SUSTAINED five — silent on an isolated event BY DESIGN ════

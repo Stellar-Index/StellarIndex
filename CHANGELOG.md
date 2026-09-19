@@ -230,6 +230,26 @@ against.
   with a one-line notice and every source is still evaluated, the same
   split `verify-decoders` already makes. A factory that is set with no RPC
   endpoint to sweep it from is a failure. (RLT-416, #805)
+- **alerts (customer webhooks):**
+  `stellarindex_customer_webhook_delivery_exhausted` can now fire on the
+  event it describes. It was `sum(rate(…{outcome="exhausted"}[1h])) > 0`
+  with `for: 1h` — the `rate()` twin of the tripwire defect below. `rate()`
+  is `increase()` divided by the window, so after one exhausted delivery the
+  expression is true for exactly 1h and a 1h pending period could never
+  complete; the ticket was raised only if deliveries kept exhausting through
+  a second consecutive hour, while its text ("A delivery hit the 15-attempt
+  retry budget … Customer hasn't received the event") is about one. It is
+  now `for: 0m` in both rule trees. Nothing transient is left to filter — an
+  exhausted delivery is already the end of ~8h of retries — and the
+  expression is unchanged, so one ticket stays up while exhaustions continue
+  and resolves 1h after the last. No born-inside-the-window arm is needed:
+  every outcome child is pre-seeded at 0. New promtool cases in
+  `tripwire-isolated-increment{,-r1}_test.yml` feed ONE exhaustion against
+  each tree (red on the old rule: no alert at 5m or 60m) and pin that an old
+  non-zero count and healthy `delivered` traffic stay silent; the
+  alerts-catalog row is updated. **Operator note:** ticket severity; expect
+  it to appear for customer endpoints that have been dead all along. Reaches
+  r1 the same way as the rules below (audit Q261).
 - **alerts (data-loss tripwires):** four "any nonzero increase" alerts can
   now fire on the event they exist for.
   `stellarindex_ingestion_persist_drop`,

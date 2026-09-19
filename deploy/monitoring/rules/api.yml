@@ -251,10 +251,23 @@ groups:
             legacy rows. Data is safe in Redis for 35 days — fix the
             failing backend and the next sweep catches up.
 
+      # Q261: `for:` was 1h, equal to the rate() window. rate() is
+      # increase()/W, so after ONE exhausted delivery the expression is true
+      # for exactly 1h and a 1h pending period could never complete — this
+      # fired only when deliveries kept exhausting for a second hour on end,
+      # while the description below is about a single one ("A delivery hit
+      # the 15-attempt retry budget"). An exhausted delivery is already the
+      # end of ~8h of retries, so there is no transient left for a `for:` to
+      # filter, and any `for:` shorter than the window would only delay the
+      # ticket (the expression cannot go false sooner than 1h after the
+      # event). No born-inside-the-window arm: every outcome child is
+      # pre-seeded at 0 (obs.seedBoundedLabelSeries, #368 M6), so the first
+      # exhaustion of a process life is a 0 -> 1 step that rate() sees.
+      # Pinned by rule-tests/tripwire-isolated-increment{,-r1}_test.yml.
       - alert: stellarindex_customer_webhook_delivery_exhausted
         expr: |
           sum(rate(stellarindex_customer_webhook_delivery_attempts_total{outcome="exhausted"}[1h])) > 0
-        for: 1h
+        for: 0m
         labels:
           severity: ticket
           team: stellarindex
