@@ -329,6 +329,23 @@ against.
   the same way before. The validation and constraints that decide which
   trades the store rejects are not touched, nor is the dispatcher batch
   path, which carries a row only on a context error (audit RLT-132).
+- **ops (projected-rebuild):** a trade the store permanently rejects is
+  counted and reported, and does not hold its window. Now that
+  `pipeline.HandleEvent` reports that drop (above), counting every non-nil
+  return as a window-holding insert error would have left a
+  deterministically poison trade's window un-checkpointed on every resumed
+  run, under a log line saying "re-run to retry it" — which can never
+  succeed. `-write` recognises `*pipeline.TradeDroppedError`, counts it in
+  the new `PermanentDrops` result, logs it with the fact that no re-run can
+  land it, and checkpoints the window — the live projector's policy for the
+  same fault, and what this tool already does for a decode error. The
+  checkpoint behaviour for such a trade is what it was before the drop was
+  reported; what is new is that the loss is visible. The summary now
+  reports the two loss classes apart, because the operator's next step is
+  opposite: held windows say re-run, permanent drops say fix the defect
+  then re-run the range with `-resume=false`. Every other insert failure
+  still holds its window (COR-09). The comments claiming only non-trade
+  inserts can reach that seam are corrected (audit RLT-132).
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process

@@ -432,11 +432,28 @@ type ProjectedRebuildOptions struct {
 // applyProjectedEvent decodes one lake event and writes its outputs,
 // returning how many rows it emitted and how many of those FAILED to insert.
 //
-// The failure count is the load-bearing return value: only NON-TRADE inserts
-// can produce one, because trade events deliberately return nil from
-// HandleEvent (ADR-0041 block-and-retry owns their outcome). A non-zero count
-// therefore means rows were genuinely lost, and the caller must not
+// The failure count is the load-bearing return value: it counts the inserts a
+// RE-RUN CAN STILL LAND, so a non-zero count means the caller must not
 // checkpoint that window (COR-09 — see [checkpointWindow]).
+//
+// One class of HandleEvent error is deliberately NOT in that count: a
+// *[pipeline.TradeDroppedError] (RLT-132) — a trade the store PERMANENTLY
+// rejected. Until RLT-132 HandleEvent folded that drop into a nil return, so
+// only non-trade inserts could surface here; now the drop is reported. It is
+// counted on its own ([projectedRebuildCounters.permanentDrops]) and does NOT
+// hold the window, for three reasons:
+//
+//   - it is deterministic: the same value fails identically on every re-run,
+//     so holding the window makes every resumed run redo it forever and turns
+//     "re-run to retry" into an instruction that can never succeed;
+//   - it is the live projector's policy for the same fault (count + skip +
+//     advance the cursor — projector.dispositionSkip), and this tool's whole
+//     contract is to behave like the live projector, in bulk;
+//   - it is what this tool already does for the other deterministic per-row
+//     failure, a decode error: counted, window still checkpoints.
+//
+// The loop never stops at a failed output — a row's remaining outputs are
+// always offered to the sink.
 func applyProjectedEvent(
 	ctx context.Context,
 	opts ProjectedRebuildOptions,
@@ -455,9 +472,23 @@ func applyProjectedEvent(
 		if !opts.Write {
 			continue
 		}
-		if err := pipeline.HandleEvent(ctx, logger, opts.Store, out); err != nil {
-			insertErrs++
+		err := pipeline.HandleEvent(ctx, logger, opts.Store, out)
+		if err == nil {
+			continue
 		}
+		var dropped *pipeline.TradeDroppedError
+		if errors.As(err, &dropped) {
+			// Counted, never held — see the godoc. The pipeline already
+			// logged the store's error at ERROR; this line adds the fact an
+			// operator of THIS tool needs: no re-run will land it.
+			counters.permanentDrops.Add(1)
+			logger.Error("projected-rebuild: trade PERMANENTLY rejected by the store — counted, window still checkpoints; "+
+				"a re-run cannot land it (fix the defect, then re-run the range with -resume=false)",
+				"source", dropped.Source, "ledger", dropped.Ledger, "tx_hash", dropped.TxHash,
+				"op_index", dropped.OpIndex, "err", dropped.Cause)
+			continue
+		}
+		insertErrs++
 	}
 	return emitted, insertErrs
 }
@@ -473,9 +504,14 @@ func applyProjectedEvent(
 // makes that justification true again: the next resumed run redoes exactly
 // this window, and the writes are idempotent.
 //
-// Only NON-TRADE inserts can land here. Trade events deliberately return nil
-// from HandleEvent (ADR-0041 block-and-retry owns their outcome), so a
-// non-nil error is by construction a non-trade row that genuinely failed.
+// insertErrs is [applyProjectedEvent]'s count, so it EXCLUDES trades the store
+// permanently rejected (RLT-132): those are counted separately and never hold
+// a window, because no re-run can land them. What does land here is a
+// non-trade insert that failed, or a trade whose block-and-retry (ADR-0041)
+// was abandoned on ctx cancellation. A non-trade row the store rejects
+// DETERMINISTICALLY is still held — this tool does not classify non-trade
+// errors — so a window that re-fails identically on every re-run needs the
+// defect fixed, not another re-run; the summary says so.
 //
 // This is the only recovery path that works unattended. The completeness
 // verdict cannot be relied on: the reconciliation catalogue registers only
@@ -513,12 +549,19 @@ type ProjectedRebuildResult struct {
 	EventsRead       int64
 	EventsEmitted    int64
 	DecodeErrors     int64
-	// InsertErrors counts non-trade HandleEvent failures, and WindowsHeld
-	// the windows deliberately left un-checkpointed because of them. Both
-	// non-zero means this run did NOT cover its whole range: re-run to
-	// retry the held windows (writes are idempotent). COR-09.
+	// InsertErrors counts the HandleEvent failures a re-run can still land
+	// (see [applyProjectedEvent]), and WindowsHeld the windows deliberately
+	// left un-checkpointed because of them. Both non-zero means this run did
+	// NOT cover its whole range: re-run to retry the held windows (writes
+	// are idempotent). COR-09.
 	InsertErrors int64
 	WindowsHeld  int64
+	// PermanentDrops counts trades the store permanently rejected
+	// (*pipeline.TradeDroppedError, RLT-132). They are NOT in InsertErrors
+	// and hold no window: a re-run cannot land them. Non-zero means rows are
+	// missing from the served tier until the underlying defect is fixed and
+	// the range is re-run with -resume=false.
+	PermanentDrops int64
 	// KindCounts is emitted-event count by consumer.Event.EventKind() —
 	// the "per-topic emitted counts" report so an operator can eyeball
 	// against the census tables. ADR-0033 compute-completeness remains
@@ -551,7 +594,10 @@ type ProjectedRebuildResult struct {
 // soft-fail — logged and counted, the window still completes and
 // checkpoints — because a deterministically malformed row would just
 // re-fail identically on retry (same policy as
-// internal/projector.processEventSafely).
+// internal/projector.processEventSafely). A trade the store permanently
+// rejects (*pipeline.TradeDroppedError) gets the same treatment for the same
+// reason — counted in PermanentDrops, window still checkpoints — while every
+// other insert failure holds its window (COR-09); see [applyProjectedEvent].
 func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (ProjectedRebuildResult, error) {
 	logger := opts.Logger
 	if logger == nil {
@@ -635,6 +681,7 @@ func RunProjectedRebuild(ctx context.Context, opts ProjectedRebuildOptions) (Pro
 	result.DecodeErrors = counters.decodeErrors.Load()
 	result.InsertErrors = counters.insertErrors.Load()
 	result.WindowsHeld = counters.windowsHeld.Load()
+	result.PermanentDrops = counters.permanentDrops.Load()
 	result.KindCounts = counters.kindCounts
 	result.Elapsed = time.Since(start)
 	return result, runErr
@@ -650,13 +697,16 @@ type projectedRebuildCounters struct {
 	eventsRead       atomic.Int64
 	eventsEmitted    atomic.Int64
 	decodeErrors     atomic.Int64
-	// insertErrors counts non-trade HandleEvent failures. Non-zero means
-	// at least one window was deliberately NOT checkpointed, so a resumed
-	// run will redo it — see runProjectedRebuildWorker.
+	// insertErrors counts the HandleEvent failures a re-run can still land.
+	// Non-zero means at least one window was deliberately NOT checkpointed,
+	// so a resumed run will redo it — see runProjectedRebuildWorker.
 	insertErrors atomic.Int64
 	windowsHeld  atomic.Int64
-	kindMu       sync.Mutex
-	kindCounts   map[string]int64
+	// permanentDrops counts trades the store permanently rejected
+	// (RLT-132). Counted, never held — see applyProjectedEvent.
+	permanentDrops atomic.Int64
+	kindMu         sync.Mutex
+	kindCounts     map[string]int64
 }
 
 func newProjectedRebuildCounters() *projectedRebuildCounters {
@@ -889,6 +939,39 @@ func writeModeLabel(write bool) string {
 	return "DRY-RUN (count only)"
 }
 
+// projectedRebuildLossLines renders the summary's loss report: the two ways a
+// -write run can finish without having landed every row, kept apart because
+// the operator's next step is OPPOSITE for each.
+//
+//   - Held windows (COR-09): a re-run retries them. Loud, and phrased as an
+//     instruction, because the only unattended recovery is re-running. Do not
+//     point the operator at compute-completeness here — the reconciliation
+//     catalogue does not register every non-trade table (aquarius registers
+//     only `trades`), so it cannot see these rows.
+//   - Permanent drops (RLT-132): a re-run CANNOT land them, their windows ARE
+//     checkpointed, and saying "re-run" would be false.
+func projectedRebuildLossLines(r ProjectedRebuildResult) []string {
+	var lines []string
+	if r.WindowsHeld > 0 {
+		lines = append(lines,
+			fmt.Sprintf("\n!! %d window(s) NOT checkpointed — %d insert(s) failed and those rows were LOST.",
+				r.WindowsHeld, r.InsertErrors),
+			"!! This run did NOT cover its full range. RE-RUN the same command to retry the held",
+			"!! windows (writes are idempotent; -resume will skip the windows that did succeed).",
+			"!! A window that re-fails identically on every re-run is a deterministic store rejection:",
+			"!! read the insert error logged above and fix that — another re-run will not clear it.")
+	}
+	if r.PermanentDrops > 0 {
+		lines = append(lines,
+			fmt.Sprintf("\n!! %d trade(s) PERMANENTLY rejected by the store — those rows are NOT in the served tier.",
+				r.PermanentDrops),
+			"!! Their windows ARE checkpointed: the rejection is deterministic, so a re-run CANNOT land them.",
+			"!! Each is logged above with its ledger/tx/op and the store's error. Fix the defect, then",
+			"!! re-run the affected range with -resume=false.")
+	}
+	return lines
+}
+
 // printProjectedRebuildSummary prints the completion report: per-topic
 // emitted counts (task requirement, so an operator can eyeball against
 // the census tables) plus the headline counters. ADR-0033
@@ -899,16 +982,8 @@ func printProjectedRebuildSummary(name string, from, to uint32, write bool, r Pr
 	fmt.Printf("windows: planned=%d skipped(resume)=%d processed=%d\n", r.WindowsPlanned, r.WindowsSkipped, r.WindowsProcessed)
 	fmt.Printf("ledgers covered this run: %d\n", r.LedgersCovered)
 	fmt.Printf("events read: %d   emitted: %d   decode errors: %d\n", r.EventsRead, r.EventsEmitted, r.DecodeErrors)
-	if r.WindowsHeld > 0 {
-		// Loud, and phrased as an instruction: this run did NOT cover its
-		// whole range, and the only unattended recovery is re-running it.
-		// Do not point the operator at compute-completeness here — the
-		// reconciliation catalogue does not register every non-trade table
-		// (aquarius registers only `trades`), so it cannot see these rows.
-		fmt.Printf("\n!! %d window(s) NOT checkpointed — %d non-trade insert(s) failed and those rows were LOST.\n",
-			r.WindowsHeld, r.InsertErrors)
-		fmt.Printf("!! This run did NOT cover its full range. RE-RUN the same command to retry the held\n")
-		fmt.Printf("!! windows (writes are idempotent; -resume will skip the windows that did succeed).\n")
+	for _, line := range projectedRebuildLossLines(r) {
+		fmt.Println(line)
 	}
 	if r.Elapsed > 0 {
 		fmt.Printf("elapsed: %s   (%.1f ledgers/s, %.1f events/s)\n",

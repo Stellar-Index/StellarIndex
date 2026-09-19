@@ -855,9 +855,11 @@ const drainTimeout = ShutdownDeadline - drainFinalPassBudget - drainReportMargin
 //
 // A trade the store permanently rejects is returned as a
 // *[TradeDroppedError] (RLT-132), not nil: nil means the row landed, and
-// nothing else. `stellarindex-ops projected-rebuild` therefore counts such a
-// trade as an insert error and leaves its window un-checkpointed, exactly as
-// it already does for a lost non-trade row (COR-09).
+// nothing else. Both callers that act on the return recognise it: the
+// projector skips that OUTPUT, counts it outcome="sink_permanent" and keeps
+// sinking the row's other outputs; `stellarindex-ops projected-rebuild`
+// counts it as a permanent drop and still checkpoints the window, because no
+// re-run can land it (every OTHER insert failure holds the window — COR-09).
 //
 // A recovered panic is returned as a generic (non-classified) error: the
 // projector treats it as transient (retry-and-alert) per its safe-side
