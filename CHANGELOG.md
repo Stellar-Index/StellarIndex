@@ -284,10 +284,23 @@ against.
   bound. Both readers now order `DESC` and reverse in Go before
   returning (mirrors `Store.TradesInRange`, F-1319), so the documented
   ascending-order contract is unchanged and only which end survives a
-  cap is corrected. `OHLCSeriesBar.Truncated` — declared on the wire
-  since F-0071 but never assigned (OpenAPI: "reserved for future
-  row-cap signalling") — is now set on every bar in a capped response,
-  so a caller can finally tell its window was cut.
+  cap is corrected. The fiat combine (`quote=fiat:USD`) was the third
+  consumer of that ordering and is corrected with it: it passes `limit`
+  to every constituent read, merges, and used to keep the EARLIEST
+  `limit` of the merge — which, over newest-N constituent reads, is
+  exactly the buckets a dense constituent was cut out of (through the
+  handler, a 12h window at `limit=3` served 04:00 and 08:00 as `n=1`
+  bars where the market printed 101). It now keeps the newest `limit`,
+  which are inside every constituent's own newest `limit` and therefore
+  complete, and for the same reason never a bucket the held-back SAC
+  pass mistook for unanswered. `OHLCSeriesBar.truncated` — declared on
+  the wire since F-0071 but never assigned (OpenAPI: "reserved for
+  future row-cap signalling") — is now set on every bar of a response
+  whose window held more closed buckets than `limit`, and only then:
+  the handler reads one row past the cap to know, so a default request
+  that simply fills its `limit`-interval window is not flagged. The
+  envelope's `from` still echoes the requested bound; the OpenAPI prose
+  says so and says how to page back.
 
 - **assets listing:** the listing `market_cap_usd` of a confirmed
   non-7-decimals token divides supply by the token's confirmed decimals,

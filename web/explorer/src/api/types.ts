@@ -1133,7 +1133,17 @@ export interface paths {
          *        Returns `OHLCSeriesResponse` — an `intervals[]` array of
          *        closed CAGG-backed bars sourced from `prices_<N>`. The
          *        in-progress bucket is excluded (closed-bucket guard).
-         *        `limit` clamps the bar count (default 100, max 1000).
+         *        `limit` clamps the bar count (default 100, max 1000). When
+         *        an explicit `[from, to)` holds more closed buckets than
+         *        `limit`, the **newest** `limit` are served — the series always
+         *        runs up to `to` — and every served bar carries
+         *        `truncated: true`. The envelope's `from` still echoes the
+         *        requested bound; the first bar's `t` is where the served data
+         *        starts. Page further back by re-asking with `to` set to that
+         *        `t`. A default window (no `from`) is sized to `limit`
+         *        intervals, so `limit` bars back from a default request is the
+         *        whole window, not a cut — the flag is set only when a bucket
+         *        was actually dropped.
          *        **No cross-derivation.** This route reads the pair's own buckets
          *        (and the USD-pegged constituent spellings below). It does NOT
          *        triangulate through a pivot, so a pair whose only route to a quote
@@ -10168,7 +10178,16 @@ export interface components {
              * @description Trade count in the bucket.
              */
             n: number;
-            /** @description Reserved for future row-cap signalling; absent today. */
+            /**
+             * @description Present and `true` on EVERY bar of a response whose window
+             *     held more closed buckets than `limit`: the bars served are
+             *     the newest `limit` and older buckets inside `[from, to)` were
+             *     dropped. It describes the response, not the bar — each
+             *     served bar is complete. Omitted (never `false`) when nothing
+             *     was dropped, including when the window held exactly `limit`
+             *     buckets. To read the dropped part, re-ask with `to` set to
+             *     the first served bar's `t`.
+             */
             truncated?: boolean;
         };
         /** @description Multi-bar OHLC series response (F-0071). */
@@ -10181,8 +10200,11 @@ export interface components {
             interval: "1m" | "5m" | "15m" | "30m" | "1h" | "2h" | "4h" | "12h" | "1d" | "3d" | "1w" | "2w" | "1mo";
             /**
              * Format: date-time
-             * @description Inclusive lower bound of the series window. When the
-             *     client omitted `from`, this is `to - limit*interval`.
+             * @description Inclusive lower bound of the series window as REQUESTED.
+             *     When the client omitted `from`, this is `to - limit*interval`.
+             *     It is not moved when the response is truncated — see
+             *     `OHLCSeriesBar.truncated`; the first bar's `t` marks where
+             *     the served bars begin.
              */
             from: string;
             /**
@@ -13157,7 +13179,9 @@ export interface operations {
                 /**
                  * @description Series-mode bar count (max 1000, default 100). Ignored in
                  *     single-bar mode. Invalid values return 400
-                 *     `errors/limit-too-large`.
+                 *     `errors/limit-too-large`. A window holding more closed
+                 *     buckets than this serves the newest `limit` of them, each
+                 *     flagged `truncated: true`.
                  */
                 limit?: number;
                 /** @description Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable. */

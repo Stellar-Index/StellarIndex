@@ -195,7 +195,9 @@ func (s *Server) handleOHLCSeries(
 
 	hCtx, hCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer hCancel()
-	bars, err := s.ohlcSeriesWithAliases(hCtx, pair, interval, from, to, limit)
+	// One row past the cap: the only way to KNOW the window held more
+	// than `limit` buckets. See [capOHLCSeriesNewest].
+	bars, err := s.ohlcSeriesWithAliases(hCtx, pair, interval, from, to, limit+1)
 	if errors.Is(err, ErrUnknownGranularity) {
 		// Shouldn't fire — handler validated the interval — but guard
 		// against a future code path that wires the storage layer
@@ -229,22 +231,7 @@ func (s *Server) handleOHLCSeries(
 		return
 	}
 
-	// A capped read (row count == limit) means the window held at least
-	// `limit` buckets — [Store.OHLCSeries] / [Store.OHLCSeriesReBucketed]
-	// order DESC-then-reverse when capped (see their doc comments), so a
-	// truncated response still carries the NEWEST bars in the window
-	// rather than the oldest; this flag is what tells the caller some of
-	// the requested window was dropped at all. Mirrors ohlc.go's
-	// single-bar `Truncated: preFilter == maxTradesForOHLC` — an
-	// equality check against the cap, same accepted imprecision (a window
-	// with exactly `limit` buckets reads as truncated too; the schema
-	// documents this as "reserved for future row-cap signalling" and it
-	// was never wired up before this fix).
-	if limit > 0 && len(bars) == limit {
-		for i := range bars {
-			bars[i].Truncated = true
-		}
-	}
+	bars = capOHLCSeriesNewest(bars, limit)
 
 	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
 	// the deferred CAGG-reading tail from docs/operations/runbooks/
@@ -305,6 +292,39 @@ func (s *Server) handleOHLCSeries(
 		r.Context(), s.ohlcCoverageSet(pair), to, len(bars) == 0)
 	flags.OutsideCoverage = outside
 	writeJSONCoverage(w, resp, flags, coverageFrom)
+}
+
+// capOHLCSeriesNewest trims an ascending series read with a `limit+1`
+// probe down to the NEWEST `limit` bars, and marks every surviving bar
+// `truncated` when — and only when — the probe row came back, i.e. the
+// window really held a bucket the response does not carry (RLT-453).
+//
+// The probe is what makes the flag exact. `len(bars) == limit` is not
+// evidence of a cut: a request with no `from` is sized to exactly
+// `limit` intervals by [parseOHLCSeriesFromTo], so on any liquid pair
+// the default request returns `limit` bars with nothing dropped, and an
+// equality test flagged every one of those charts as cut. Nor is the
+// window's width: a wide window over a sparse market can hold exactly
+// `limit` populated buckets.
+//
+// Newest, because both capped readers keep the newest rows
+// ([timescale.Store.OHLCSeries] orders DESC-then-reverses, and
+// [Server.ohlcSeriesFiatCombined] keeps the newest of its merge), so the
+// row past the cap is the OLDEST one and is the one dropped. A caller
+// pages further back by re-asking with `to` = the first bar's `t`.
+//
+// The truncated result is a fresh slice: a reader may hand out bars it
+// still owns, and the flag is this response's, not the reader's.
+func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
+	if limit <= 0 || len(bars) <= limit {
+		return bars
+	}
+	out := make([]OHLCSeriesBar, limit)
+	copy(out, bars[len(bars)-limit:])
+	for i := range out {
+		out[i].Truncated = true
+	}
+	return out
 }
 
 // parseOHLCSeriesFromTo parses from/to for the series mode with

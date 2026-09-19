@@ -61,8 +61,12 @@ func TestOHLCSeries_ReturnsIntervalsArray(t *testing.T) {
 	if reader.LastInterval() != "1h" {
 		t.Errorf("storage call interval = %q, want 1h", reader.LastInterval())
 	}
-	if reader.LastLimit() != 24 {
-		t.Errorf("storage call limit = %d, want 24", reader.LastLimit())
+	// limit+1, exactly: the handler reads ONE row past the requested cap
+	// so it can tell a window that was cut from one that merely filled
+	// (RLT-453, see capOHLCSeriesNewest). Anything else forwarded here is
+	// a bug — `limit` loses the truncated signal, more over-reads.
+	if reader.LastLimit() != 25 {
+		t.Errorf("storage call limit = %d, want 25 (limit=24 + the one-row truncation probe)", reader.LastLimit())
 	}
 }
 
@@ -385,26 +389,124 @@ func TestOHLCSeries_WireShapeFields(t *testing.T) {
 	}
 }
 
-// TestOHLCSeries_TruncatedSetWhenRowCountHitsCap pins the second half of
-// RLT-453: OHLCSeriesBar.Truncated was declared on the wire (OpenAPI:
-// "Reserved for future row-cap signalling; absent today") but never
-// assigned anywhere, so a capped response gave a caller no way to tell
-// its window was cut. A row count equal to the requested `limit` means
-// the underlying store's `ORDER BY bucket DESC LIMIT n` (see
-// aggregates.go) cut the window — mirrors ohlc.go's single-bar
-// `Truncated: preFilter == maxTradesForOHLC`.
-func TestOHLCSeries_TruncatedSetWhenRowCountHitsCap(t *testing.T) {
-	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	bars := []v1.OHLCSeriesBar{
-		mkSeriesBar(t0, "0.16", "0.17", "0.15", "0.165", "1000", "165", 4),
-		mkSeriesBar(t0.Add(time.Hour), "0.165", "0.18", "0.16", "0.175", "1200", "200", 5),
+// newestNSeriesFn is a [stubHistoryReader.ohlcSeriesFn] with the STORE's
+// read semantics rather than a fixture's: bars outside [from, to) are
+// not returned, and a positive `limit` keeps the NEWEST `limit` of what
+// remains, ascending — what [timescale.Store.OHLCSeries] does with its
+// `ORDER BY bucket DESC LIMIT n` + reverse (RLT-453). A stub that
+// ignores `limit` cannot see any of the defects below, because every one
+// of them is about which rows a capped read leaves behind.
+func newestNSeriesFn(byPair map[string][]v1.OHLCSeriesBar) func(
+	context.Context, canonical.Pair, string, time.Time, time.Time, int,
+) ([]v1.OHLCSeriesBar, error) {
+	return func(_ context.Context, pair canonical.Pair, _ string, from, to time.Time, limit int) ([]v1.OHLCSeriesBar, error) {
+		var out []v1.OHLCSeriesBar
+		for _, b := range byPair[pair.String()] {
+			if !b.T.Time().Before(from) && b.T.Time().Before(to) {
+				out = append(out, b)
+			}
+		}
+		if limit > 0 && len(out) > limit {
+			out = out[len(out)-limit:]
+		}
+		return out, nil
 	}
-	reader := &stubHistoryReader{ohlcBars: bars}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
+}
 
-	// limit=2 matches the stub's 2 returned bars exactly — the cap-hit
-	// signal.
+// hourlyBars builds one ascending bar per listed hour offset from t0,
+// every bar sharing one shape.
+func hourlyBars(t0 time.Time, hours []int, h, l string, n int64) []v1.OHLCSeriesBar {
+	out := make([]v1.OHLCSeriesBar, 0, len(hours))
+	for _, hr := range hours {
+		out = append(out, mkSeriesBar(t0.Add(time.Duration(hr)*time.Hour), "1.00", h, l, "1.00", "1000", "1000", n))
+	}
+	return out
+}
+
+func seriesWindowURL(base, quote string, t0 time.Time, hours, limit int) string {
+	return "/v1/ohlc?base=" + base + "&quote=" + quote + "&interval=1h" +
+		"&from=" + t0.Format(time.RFC3339) +
+		"&to=" + t0.Add(time.Duration(hours)*time.Hour).Format(time.RFC3339) +
+		"&limit=" + strconv.Itoa(limit)
+}
+
+// TestOHLCSeries_TruncatedSetOnlyWhenBucketsWereDropped pins the second
+// half of RLT-453. OHLCSeriesBar.Truncated was declared on the wire
+// (OpenAPI: "Reserved for future row-cap signalling; absent today") and
+// assigned nowhere, so a capped response gave a caller no way to tell
+// its window was cut.
+//
+// It must be set when — and ONLY when — the window held buckets the
+// response does not carry. The first attempt at this set it on
+// `len(bars) == limit`, which is also the shape of every default
+// request on a liquid pair: no from/to sizes the window to exactly
+// `limit` intervals, a dense market fills every one, and nothing was
+// dropped. That version flagged every such chart as cut.
+func TestOHLCSeries_TruncatedSetOnlyWhenBucketsWereDropped(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	dense := []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}
+	for _, tc := range []struct {
+		name      string
+		hours     []int // populated buckets in the 12h window
+		limit     int
+		wantHours []int
+		truncated bool
+	}{
+		{"wide dense window is cut to the newest limit", dense, 2, []int{10, 11}, true},
+		{"one bucket over the cap is still a cut", dense, 11, dense[1:], true},
+		{"window holding exactly limit buckets is whole", dense, 12, dense, false},
+		{"wide sparse window holding exactly limit buckets is whole", []int{1, 7}, 2, []int{1, 7}, false},
+		{"window below the cap is whole", []int{3}, 24, []int{3}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := &stubHistoryReader{ohlcSeriesFn: newestNSeriesFn(map[string][]v1.OHLCSeriesBar{
+				"native/crypto:BTC": hourlyBars(t0, tc.hours, "1.10", "0.90", 4),
+			})}
+			ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+
+			resp := mustGet(t, ts.URL+seriesWindowURL("native", "crypto:BTC", t0, 12, tc.limit))
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			var body struct {
+				Data v1.OHLCSeriesResponse `json:"data"`
+			}
+			mustDecode(t, resp, &body)
+			if len(body.Data.Intervals) != len(tc.wantHours) {
+				t.Fatalf("len(intervals) = %d, want %d", len(body.Data.Intervals), len(tc.wantHours))
+			}
+			for i, bar := range body.Data.Intervals {
+				if want := t0.Add(time.Duration(tc.wantHours[i]) * time.Hour); !bar.T.Time().Equal(want) {
+					t.Errorf("Intervals[%d].t = %s, want %s — a cut keeps the NEWEST buckets",
+						i, bar.T.Time().Format(time.RFC3339), want.Format(time.RFC3339))
+				}
+				if bar.Truncated != tc.truncated {
+					t.Errorf("Intervals[%d].truncated = %v, want %v (RLT-453)", i, bar.Truncated, tc.truncated)
+				}
+			}
+		})
+	}
+}
+
+// TestOHLCSeries_DefaultWindowFullOfBarsIsNotTruncated is the twin the
+// first attempt's test got backwards: it asserted truncated=true for a
+// request with no from/to whose reader returned exactly `limit` bars.
+// That is the ordinary default request on a dense pair — the handler
+// sized the window to `limit` intervals itself, so `limit` bars is the
+// WHOLE window and nothing was dropped.
+func TestOHLCSeries_DefaultWindowFullOfBarsIsNotTruncated(t *testing.T) {
+	// Every hour for the last two days, so whatever two-hour window
+	// "now" snaps to is fully populated.
+	start := time.Now().UTC().Truncate(time.Hour).Add(-48 * time.Hour)
+	hours := make([]int, 48)
+	for i := range hours {
+		hours[i] = i
+	}
+	reader := &stubHistoryReader{ohlcSeriesFn: newestNSeriesFn(map[string][]v1.OHLCSeriesBar{
+		"native/crypto:BTC": hourlyBars(start, hours, "1.10", "0.90", 4),
+	})}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+
 	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=crypto:BTC&interval=1h&limit=2")
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -414,41 +516,106 @@ func TestOHLCSeries_TruncatedSetWhenRowCountHitsCap(t *testing.T) {
 	}
 	mustDecode(t, resp, &body)
 	if len(body.Data.Intervals) != 2 {
-		t.Fatalf("len(intervals) = %d, want 2", len(body.Data.Intervals))
+		t.Fatalf("len(intervals) = %d, want 2 — the default window is `limit` intervals wide", len(body.Data.Intervals))
 	}
 	for i, bar := range body.Data.Intervals {
-		if !bar.Truncated {
-			t.Errorf("Intervals[%d].Truncated = false, want true — the response hit the "+
-				"row-cap and never signalled it (RLT-453)", i)
+		if bar.Truncated {
+			t.Errorf("Intervals[%d].truncated = true, want false — the default window holds exactly "+
+				"`limit` intervals, all served; nothing was dropped", i)
 		}
 	}
 }
 
-// TestOHLCSeries_NotTruncatedWhenBelowCap is the non-triggering twin of
-// TestOHLCSeries_TruncatedSetWhenRowCountHitsCap: a response that did NOT
-// hit the cap must not claim it did.
-func TestOHLCSeries_NotTruncatedWhenBelowCap(t *testing.T) {
+// TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets is RLT-453
+// through the consumer the store-level fix alone made WORSE.
+//
+// A fiat quote is answered by combining several constituent series, and
+// each constituent read carries the request's `limit`. With the store
+// keeping the NEWEST rows of a capped read, a dense constituent is cut
+// to its last few hours while a sparse one still reaches far back — so
+// the merged set's OLD end is made of buckets the dense constituent
+// really traded in but was not asked for. Trimming that merged set to
+// its earliest `limit` (what the combine did, to match the store's old
+// ASC order) served exactly those: 04:00 and 08:00 as n=1 bars where the
+// market printed 101, beside a 09:00 that is not among the newest three
+// either. Wrong values, not merely stale ones.
+//
+// The newest `limit` buckets of the merged set are inside every
+// constituent's own newest `limit`, so they are complete — and for the
+// same reason the held-back pass cannot mistake one of them for a
+// bucket the book left unanswered. The pool below trades in hours the
+// book answered (07 and 09–11) at a mark far outside the book's range;
+// it must appear in no served bar.
+func TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets(t *testing.T) {
+	usdc := installPegAliasRegistry(t)
 	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	bars := []v1.OHLCSeriesBar{
-		mkSeriesBar(t0, "0.16", "0.17", "0.15", "0.165", "1000", "165", 4),
+	sparseHours := map[int]bool{0: true, 4: true, 8: true, 11: true}
+	const (
+		denseN, sparseN       = int64(100), int64(1)
+		denseHigh, denseLow   = "1.10", "0.90"
+		sparseHigh, sparseLow = "1.20", "0.80"
+		poolMark              = "5.00"
+	)
+	byPair := map[string][]v1.OHLCSeriesBar{
+		// Established, dense: the book, every hour.
+		pegAliasAquaClassic + "/" + usdcClassicID: hourlyBars(t0,
+			[]int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}, denseHigh, denseLow, denseN),
+		// Established, sparse: one print in four of the twelve hours.
+		pegAliasAquaClassic + "/crypto:USDT": hourlyBars(t0, []int{0, 4, 8, 11}, sparseHigh, sparseLow, sparseN),
+		// Held back: a thin pool, only in hours the book answered.
+		pegAliasAquaSAC + "/" + pegAliasUSDCSAC: hourlyBars(t0, []int{7, 9, 10, 11}, poolMark, poolMark, 1),
 	}
-	reader := &stubHistoryReader{ohlcBars: bars}
-	srv := v1.New(v1.Options{History: reader})
-	ts := httpTestServer(t, srv)
 
-	// limit=24 is well above the stub's single returned bar.
-	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=crypto:BTC&interval=1h&limit=24")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	var body struct {
-		Data v1.OHLCSeriesResponse `json:"data"`
-	}
-	mustDecode(t, resp, &body)
-	if len(body.Data.Intervals) != 1 {
-		t.Fatalf("len(intervals) = %d, want 1", len(body.Data.Intervals))
-	}
-	if body.Data.Intervals[0].Truncated {
-		t.Errorf("Intervals[0].Truncated = true, want false — the window did not hit the cap")
+	for _, tc := range []struct {
+		limit     int
+		truncated bool
+	}{
+		{limit: 3, truncated: true},   // the demonstrated red case
+		{limit: 5, truncated: true},   // reaches 07:00, where only the book and the pool trade
+		{limit: 12, truncated: false}, // the whole window: nothing dropped
+	} {
+		t.Run("limit="+strconv.Itoa(tc.limit), func(t *testing.T) {
+			reader := &stubHistoryReader{ohlcSeriesFn: newestNSeriesFn(byPair)}
+			ts := httpTestServer(t, v1.New(v1.Options{
+				History:           reader,
+				USDPeggedClassics: []canonical.Asset{usdc},
+			}))
+			resp := mustGet(t, ts.URL+seriesWindowURL(pegAliasAquaClassic, "fiat:USD", t0, 12, tc.limit))
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			var env fiatSeriesEnvelope
+			mustDecode(t, resp, &env)
+			if len(env.Data.Intervals) != tc.limit {
+				t.Fatalf("len(intervals) = %d, want %d (reads=%v)", len(env.Data.Intervals), tc.limit, reader.ohlcPairs)
+			}
+			for i, bar := range env.Data.Intervals {
+				if want := t0.Add(time.Duration(12-tc.limit+i) * time.Hour); !bar.T.Time().Equal(want) {
+					t.Errorf("Intervals[%d].t = %s, want %s — a capped fiat series serves the NEWEST "+
+						"`limit` buckets of the window", i, bar.T.Time().Format(time.RFC3339), want.Format(time.RFC3339))
+				}
+				// Values are judged against the hour the bar CLAIMS, so a
+				// wrong bucket that is also wrong-valued says so.
+				hr := int(bar.T.Time().Sub(t0) / time.Hour)
+				wantN, wantH, wantL := denseN, denseHigh, denseLow
+				if sparseHours[hr] {
+					wantN, wantH, wantL = denseN+sparseN, sparseHigh, sparseLow
+				}
+				if bar.N != wantN {
+					t.Errorf("%02d:00 n = %d, want %d — a served bar must carry EVERY established "+
+						"constituent's prints, never the remainder a capped read left behind, and never the pool's",
+						hr, bar.N, wantN)
+				}
+				if g, w := mustFloat(t, bar.H), mustFloat(t, wantH); !approxEq(g, w) {
+					t.Errorf("%02d:00 h = %s, want %s", hr, bar.H, wantH)
+				}
+				if g, w := mustFloat(t, bar.L), mustFloat(t, wantL); !approxEq(g, w) {
+					t.Errorf("%02d:00 l = %s, want %s", hr, bar.L, wantL)
+				}
+				if bar.Truncated != tc.truncated {
+					t.Errorf("%02d:00 truncated = %v, want %v", hr, bar.Truncated, tc.truncated)
+				}
+			}
+		})
 	}
 }

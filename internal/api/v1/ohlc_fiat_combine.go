@@ -132,13 +132,43 @@ func (s *Server) ohlcSeriesFiatCombined(
 		out = append(out, a.finalize(t))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T.Time().Before(out[j].T.Time()) })
-	// Match OHLCSeries' earliest-N-in-window semantics (ORDER BY bucket
-	// ASC LIMIT n): the handler sizes [from,to] to `limit` intervals, so
-	// this only bites when a caller passes an explicit wide window.
+	return newestCombinedBars(out, limit), nil
+}
+
+// newestCombinedBars keeps the NEWEST `limit` of an ascending merged
+// series. Which end survives is not a presentation choice here — it is
+// what decides whether the served bars are CORRECT (RLT-453).
+//
+// Every constituent read carries the same `limit`, and a capped
+// [timescale.Store.OHLCSeries] read keeps that constituent's newest
+// `limit` buckets. So the merge is a union of per-constituent TAILS: a
+// dense constituent is cut to its last few buckets while a sparse one
+// still reaches far back, and the old end of the union is made of
+// buckets the dense constituent traded in but was never asked for.
+// Keeping the EARLIEST `limit` — what this did while the store ordered
+// ASC — serves precisely those: measured through the handler, a 12h
+// window at limit=3 over an every-hour book (n=100) and a one-print
+// venue at 00/04/08/11 served 04:00 and 08:00 as n=1 bars where the
+// market printed 101.
+//
+// The newest `limit` are safe, by counting. Let t be among the newest
+// `limit` buckets of the union U. A constituent C contributes a subset
+// of U, so C has at most as many buckets at-or-after t as U does — at
+// most `limit` — and therefore every bucket C holds from t onward is
+// inside C's own newest `limit` and was read. Every served bar is thus
+// complete. The same count covers the held-back gate: had an
+// established constituent traded at t without that bar being read, it
+// would hold `limit` newer buckets, all of them in U, and t would not
+// be among U's newest `limit` — so a served bucket is never one the
+// held-back pass wrongly took for unanswered.
+//
+// Only bites on an explicit window wider than `limit` intervals; the
+// handler sizes a default window to fit.
+func newestCombinedBars(out []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	if limit > 0 && len(out) > limit {
-		out = out[:limit]
+		return out[len(out)-limit:]
 	}
-	return out, nil
+	return out
 }
 
 // usdPeggedConstituents is every source (base,quote) cagg pair a
