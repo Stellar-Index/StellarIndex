@@ -117,6 +117,27 @@ against.
   value with no `frozen` flag, and a marker on the requested literal flagged
   a healthy alias's value as frozen. The value served is unchanged: a frozen
   pair's windowed key already is what the freeze holds.
+- **test / ci:** the regression test for an INV-3 money invariant was
+  compiled and run by nothing (T424, T449).
+  `scripts/ops/fx-history-backfill/generation_test.go` pins that the FX
+  history backfill stamps a positive derive generation on its store — without
+  it an operator's `fx_quotes` correction is written at generation 0 and the
+  next daily worker refresh silently reverts it. The file is `//go:build
+  integration`, so the unit job never saw it, and its package was missing from
+  the Makefile's `INT_TEST_PKGS`, so neither `make test-integration`, the CI
+  compile gate, nor any CI shard did either: the seam could regress, or the
+  test stop compiling, with every gate green. `INT_TEST_PKGS` now lists
+  `./scripts/ops/...`; the shard script derives its package list from that
+  variable, so shard 0 runs the test and the four shards still partition the
+  suite exactly. This was the third package found stranded this way, one at a
+  time, so the class is now closed: an untagged test in `test/controlwiring`
+  walks the tree for integration-gated test files and fails the default suite
+  on any whose package `INT_TEST_PKGS` does not match. Still open, and
+  recorded as build-tagged red evidence (`-tags t424evidence`) rather than
+  claimed: a change confined to `scripts/ops/`, `cmd/stellarindex-ops/` or
+  `internal/ops/archive/` does not *trigger* the Docker suite, in CI's
+  path filter or in the local pre-push classifier, so for such a change the
+  test compiles but executes only when something else in the diff does.
 
 - **forex / `/v1/price` fiat paths:** the in-memory FX snapshot that
   `/v1/price` and `/v1/price/tip` read for fiat crosses now carries only

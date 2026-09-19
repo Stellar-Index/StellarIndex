@@ -37,7 +37,7 @@ BINARIES := \
   stellarindex-sla-probe
 
 # Packages that hold integration tests (gated by build tag). Besides
-# ./test/integration/..., two packages carry `//go:build integration`
+# ./test/integration/..., these packages carry `//go:build integration`
 # tests that a ./test/integration-only compile-check would miss:
 #   - cmd/stellarindex-ops   — F-1334: omitting it let an interface-signature
 #                              change break the ops integration test undetected.
@@ -45,13 +45,20 @@ BINARIES := \
 #                              archive-verify test (hash-chain integrity,
 #                              ADR-0033/0016) had zero executing coverage
 #                              until this package was listed.
+#   - scripts/ops            — T424/T449: fx-history-backfill's INV-3 test
+#                              (operator fx_quotes corrections must carry a
+#                              positive derive generation) was compiled and
+#                              run by nothing until this was listed.
+# A tagged test outside this list is compiled and run by NO path;
+# test/controlwiring's TestEveryIntegrationTaggedTestIsInIntTestPkgs
+# fails the default suite when one appears.
 # This variable is the SINGLE source of truth for the integration-suite
 # package set: scripts/ci/integration-shard.sh derives its shard-0-only
 # package list from `make print-int-test-pkgs` at run time (it used to
 # carry a hand-copied duplicate, so a package added here ran locally and
 # compiled in CI but was executed by no shard — #333 F1). Add a package
 # here and every CI path picks it up.
-INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/...
+INT_TEST_PKGS := ./test/integration/... ./test/harness/... ./cmd/stellarindex-ops/... ./internal/ops/archive/... ./scripts/ops/...
 SHARD ?= 0
 SHARDS ?= 4
 

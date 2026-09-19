@@ -21,8 +21,8 @@
 # (-tags=integration; only the deadline shrinks with the slice).
 #
 # Shard 0 additionally runs the non-sharded packages `make test-integration`
-# covers (INT_TEST_PKGS minus SHARDED_PKG: cmd/stellarindex-ops,
-# internal/ops/archive — they finish in seconds), so the union of all shards
+# covers (INT_TEST_PKGS minus SHARDED_PKG — see the Makefile for the list and
+# why each package is on it; they finish in seconds), so the union of all shards
 # == the Makefile target. That list is DERIVED from the Makefile at run time
 # (`make print-int-test-pkgs`), not copied here: the copy that used to live
 # in this file was guarded only by a "keep in lockstep" comment, so a package
