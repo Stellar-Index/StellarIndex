@@ -465,7 +465,17 @@ against.
   per call plus up to four extra attempts; across a sweep it is bounded by
   the caller's existing 15-minute seed context. The inter-call throttle
   now honours the context too. `seed-soroswap-pairs` and `verify-decoders`
-  share the sweep and get the same behaviour. (RLT-416, #805)
+  share the sweep and get the same behaviour. The seed notices from the two
+  completeness commands no longer claim to come from
+  `verify-reconciliation` when `compute-completeness` printed them.
+  **Operator note:** `seed_rpc_endpoint` on r1 stays the public
+  `https://mainnet.sorobanrpc.com`. Pointing it at the host's own
+  `127.0.0.1:8000` was considered and rejected: the archival-node role
+  deploys no stellar-rpc (removed from r1 on 2026-04-23), so nothing
+  listens there and the seed would fail closed every night. The ansible
+  template change is a non-rendering comment recording that; no role apply
+  is needed and the rendered `stellarindex.toml` is unchanged. (RLT-416,
+  #805)
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process

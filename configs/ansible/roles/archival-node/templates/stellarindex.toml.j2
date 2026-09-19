@@ -97,6 +97,16 @@ adapter_contract = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
 [oracle.band]
 standard_reference_contract = "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M"
 
+{# seed_rpc_endpoint is a PUBLIC third-party RPC on purpose, and must NOT be
+   repointed at stellar.rpc_endpoints (127.0.0.1:8000): this role deploys no
+   stellar-rpc (removed from r1 2026-04-23, tasks deleted 2026-05-22 — see
+   defaults/main.yml), so nothing listens there and nothing on the host can
+   answer simulateTransaction. compute-completeness / verify-reconciliation
+   fail CLOSED on a seed error (RLT-416), so a dead endpoint here stops the
+   nightly pass for every source. Transient failures of the public endpoint
+   are absorbed by the seed's bounded per-call retry
+   (internal/sources/soroswap/factory_seed.go). If a stellar-rpc is ever
+   re-added to the host, point this at it. #}
 [oracle.soroswap]
 factory_contract  = "CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
 seed_rpc_endpoint = "https://mainnet.sorobanrpc.com"

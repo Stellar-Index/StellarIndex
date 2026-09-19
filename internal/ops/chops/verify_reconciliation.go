@@ -200,10 +200,22 @@ func sumCounts(m map[uint32]int) int {
 //     rows, and compute-completeness would publish projection_ok=false
 //     over healthy data — which projectionFloor then answers the next
 //     night with a from-genesis re-derive of the first catalogue source.
+//
+// Failing closed must not make the run FRAGILE: on r1 the endpoint is a
+// public third-party RPC (the host runs no stellar-rpc) and the sweep is
+// ~640 sequential calls. SeedFromFactoryRPC therefore retries a
+// TRANSIENT failure per call within a bounded budget (5 attempts, 15s of
+// backoff); what reaches here as an error is a deterministic failure or
+// an endpoint that stayed down for a whole budget. The 15-minute context
+// below remains the bound on the sweep, retries included.
+//
+// The notices carry no command prefix: this helper serves both
+// verify-reconciliation and compute-completeness, and each caller
+// prefixes the ERROR with its own name.
 func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.Decoder) error {
 	factory := cfg.Oracle.Soroswap.FactoryContract
 	if factory == "" {
-		fmt.Fprintln(os.Stderr, "verify-reconciliation: soroswap pair seed disabled (oracle.soroswap.factory_contract empty)")
+		fmt.Fprintln(os.Stderr, "soroswap pair seed: disabled (oracle.soroswap.factory_contract empty)")
 		return nil
 	}
 	endpoint := cfg.Oracle.Soroswap.SeedRPCEndpoint
@@ -220,6 +232,6 @@ func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.
 	if err != nil {
 		return fmt.Errorf("after %d pair(s) seeded: %w", n, err)
 	}
-	fmt.Fprintf(os.Stderr, "verify-reconciliation: seeded %d soroswap pairs\n", n)
+	fmt.Fprintf(os.Stderr, "soroswap pair seed: seeded %d pairs\n", n)
 	return nil
 }
