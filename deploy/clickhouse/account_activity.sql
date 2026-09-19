@@ -110,48 +110,156 @@ GROUP BY account_id;
 -- on the invariant holds unconditionally (backfill + MVs jointly cover all
 -- history, and max() only ever rises).
 --
---   TIP=$(clickhouse-client --port 9300 -q "SELECT max(ledger_seq) FROM stellar.ledgers")
---   for W in $(seq 2 2000000 "$TIP"); do
---     /usr/local/sbin/run-heavy-job.sh "acct-activity-ops-$W" clickhouse-client --port 9300 -q "
---       INSERT INTO stellar.account_activity
---       SELECT source_account, max(ledger_seq), max(close_time)
---       FROM stellar.operations
---       WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
---       GROUP BY source_account
---       SETTINGS max_threads = 4, max_memory_usage = 8000000000"
---     /usr/local/sbin/run-heavy-job.sh "acct-activity-tx-$W" clickhouse-client --port 9300 -q "
---       INSERT INTO stellar.account_activity
---       SELECT source_account, max(ledger_seq), max(close_time)
---       FROM stellar.transactions
---       WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
---       GROUP BY source_account
---       SETTINGS max_threads = 4, max_memory_usage = 8000000000"
---     /usr/local/sbin/run-heavy-job.sh "acct-activity-part-$W" clickhouse-client --port 9300 -q "
---       INSERT INTO stellar.account_activity
---       SELECT account, max(ledger_seq), max(close_time)
---       FROM stellar.operation_participants
---       WHERE ledger_seq >= $W AND ledger_seq < $((W + 2000000))
---       GROUP BY account
---       SETTINGS max_threads = 4, max_memory_usage = 8000000000"
---   done
+-- FAIL-CLOSED (F112): nothing watches this loop, and the invariant above is
+-- only as good as its coverage, so every way the block can end WITHOUT
+-- having covered every window is made to end non-zero and WITHOUT the final
+-- COMPLETE line:
+-- * a job fails (OOM, a network blip, a bad SETTINGS value) → the run
+--  aborts on the spot instead of ploughing on to the next table/window;
+-- * the TIP probe fails or answers empty/0/garbage → the loop would run NO
+--  window and an unchecked one "succeeds" over nothing, so TIP is validated
+--  before anything runs (the windows are counted in bash, not by `seq`:
+--  BSD seq prints 2e+06 for a large value);
+-- * run-heavy-job.sh finds the per-job lock held → it prints "skipping
+--  this fire" and exits 0 WITHOUT running the payload. Exit status cannot
+--  tell that from success, so each payload writes a marker file only
+--  after its INSERT returns 0, and a job with no marker aborts the run;
+-- * the closing count must see every job's marker (N of N, N > 0).
+-- The whole loop is ONE parenthesised subshell with the COMPLETE line
+-- chained behind `&&`: an abort ends the subshell, never the operator's
+-- login shell, and no later line of the same paste can print success after
+-- a failure (pasted into a nested shell, a bare `exit 1` used to kill the
+-- inner shell and hand the rest of the paste — the success echo — to the
+-- outer one). Paste the block WHOLE. After an abort, fix the cause and
+-- re-run with the same TIP (every window is idempotent, see above); do not
+-- move on to Step 3 until COMPLETE has printed.
+--
+--   TIP=$(clickhouse-client --port 9300 -q "SELECT max(ledger_seq) FROM stellar.ledgers") || TIP=""
+--   (
+--     case "$TIP" in ''|*[^0-9]*|0*)
+--       echo "account_activity backfill: TIP='$TIP' is not a ledger number (probe failed) - aborting, NOTHING was backfilled" >&2; exit 1 ;;
+--     esac
+--     AA_MARKS=$(mktemp -d) || exit 1
+--     AA_DONE=0; AA_WANT=0
+--     aa_job() {
+--       AA_MARK="$AA_MARKS/$1-$2.ok"
+--       /usr/local/sbin/run-heavy-job.sh "acct-activity-$1-$2" bash -c 'clickhouse-client --port 9300 -q "$1" && : > "$2"' aa-job "$3" "$AA_MARK" </dev/null \
+--         || { echo "account_activity backfill: $1 window $2 FAILED - aborting, the watermark is INCOMPLETE from window $2 up" >&2; exit 1; }
+--       [ -e "$AA_MARK" ] \
+--         || { echo "account_activity backfill: $1 window $2 DID NOT RUN (the wrapper exited 0 with no success marker - its per-job lock was held and it skipped) - aborting, the watermark is INCOMPLETE from window $2 up" >&2; exit 1; }
+--       AA_DONE=$((AA_DONE + 1))
+--     }
+--     W=2
+--     while [ "$W" -le "$TIP" ]; do
+--       AA_WANT=$((AA_WANT + 3))
+--       aa_job ops "$W" "
+--         INSERT INTO stellar.account_activity
+--         SELECT source_account, max(ledger_seq), max(close_time)
+--         FROM stellar.operations
+--         WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--         GROUP BY source_account
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+--       aa_job tx "$W" "
+--         INSERT INTO stellar.account_activity
+--         SELECT source_account, max(ledger_seq), max(close_time)
+--         FROM stellar.transactions
+--         WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--         GROUP BY source_account
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+--       aa_job part "$W" "
+--         INSERT INTO stellar.account_activity
+--         SELECT account, max(ledger_seq), max(close_time)
+--         FROM stellar.operation_participants
+--         WHERE ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--         GROUP BY account
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000"
+--       W=$((W + 2000000))
+--     done
+--     echo "account_activity backfill: $AA_DONE of $AA_WANT jobs ran to success"
+--     [ "$AA_WANT" -gt 0 ] && [ "$AA_DONE" -eq "$AA_WANT" ] \
+--       || { echo "account_activity backfill: NOT every job ran (or TIP=$TIP yields no window) - aborting" >&2; exit 1; }
+--     rm -rf "$AA_MARKS"
+--   ) && echo "account_activity backfill: COMPLETE - every window 2..$TIP covered"
 --
 -- ── Step 3: verify ──────────────────────────────────────────────────────────
--- Spot-check N recently-active accounts: the watermark must be >= the true
--- max ledger over BOTH key sources (too-high is fine; ANY too-low row is a
--- data-hiding bug — expect 0):
+-- ***Heavy op.*** Same discipline as Step 2: run-heavy-job.sh, one 2M-ledger
+-- window at a time, every source read scoped by ledger_seq (partition
+-- pruning) and capped by SETTINGS. This is NOT a cheap spot check and must
+-- not be run as a bare query on the serving host.
 --
---   SELECT countIf(wm < truth) FROM (
---     SELECT
---       (SELECT max(last_ledger) FROM stellar.account_activity WHERE account_id = t.sa) AS wm,
---       greatest(
---         (SELECT max(ledger_seq) FROM stellar.ops_by_source WHERE source_account = t.sa),
---         (SELECT max(ledger_seq) FROM stellar.operation_participants WHERE account = t.sa)) AS truth,
---       sa
---     FROM (SELECT DISTINCT source_account AS sa FROM stellar.transactions
---           WHERE ledger_seq > (SELECT max(ledger_seq) - 10000 FROM stellar.ledgers)
---           LIMIT 20) t)
+-- What it checks, per window: for a hash sample of the accounts ACTIVE IN
+-- THAT WINDOW (1 in AA_MOD, default 64; AA_MOD=1 is exhaustive and needs
+-- the memory to group every account), the watermark is >= the account's
+-- max ledger in the window, read from the same three tables the MVs and
+-- the readers' key sources are fed from. A MISSING watermark row counts
+-- too (wm = 0): after a complete Step 2 every account has one. Too-high is
+-- fine; ANY too-low row is a data-hiding bug.
 --
--- Expect 0.
+-- Why per window (F112): the sample has to be drawn from the population a
+-- backfill gap can actually hurt, in EVERY window. Sampling recently
+-- active accounts tests only what the live MVs cover regardless of Step 2,
+-- and sampling the oldest accounts tests only the first window — either
+-- returns 0 over a backfill that skipped a window in between. Here a
+-- skipped window W leaves the accounts active in W with a watermark below
+-- their W activity (or none), and W's own check counts them.
+--
+-- Uses the TIP from Step 2 (a later re-probe is also fine: the extra
+-- windows are MV-covered). A failed or lock-skipped job aborts — the
+-- wrapper's skip prints nothing on stdout, and an empty answer is refused
+-- rather than read as 0 (the count is captured through a file, not $(...):
+-- as root the wrapper's disk watchdog leaves a `sleep 30` holding stdout, and
+-- a command substitution would wait on it after every window). Every bad
+-- window is named, then the block ends non-zero without the PASSED line;
+-- re-run Step 2 for the named windows (or all of it) and verify again.
+--
+--   (
+--     case "$TIP" in ''|*[^0-9]*|0*)
+--       echo "account_activity verify: TIP='$TIP' is not a ledger number - re-run the TIP probe (first line of Step 2), NOTHING was verified" >&2; exit 1 ;;
+--     esac
+--     AA_MOD="${AA_MOD:-64}"
+--     case "$AA_MOD" in ''|*[^0-9]*|0*)
+--       echo "account_activity verify: AA_MOD='$AA_MOD' is not a positive integer - aborting" >&2; exit 1 ;;
+--     esac
+--     AA_OUT=$(mktemp) || exit 1
+--     AA_SEEN=0; AA_BAD=0
+--     W=2
+--     while [ "$W" -le "$TIP" ]; do
+--       /usr/local/sbin/run-heavy-job.sh "acct-activity-verify-$W" clickhouse-client --port 9300 -q "
+--         SELECT countIf(wm < truth) FROM (
+--           SELECT acct, maxIf(l, src = 0) AS truth, maxIf(l, src = 1) AS wm FROM (
+--             SELECT source_account AS acct, ledger_seq AS l, 0 AS src FROM stellar.operations
+--             WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--               AND cityHash64(source_account) % $AA_MOD = 0
+--             UNION ALL
+--             SELECT source_account AS acct, ledger_seq AS l, 0 AS src FROM stellar.transactions
+--             WHERE source_account != '' AND ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--               AND cityHash64(source_account) % $AA_MOD = 0
+--             UNION ALL
+--             SELECT account AS acct, ledger_seq AS l, 0 AS src FROM stellar.operation_participants
+--             WHERE ledger_seq >= $W AND ledger_seq < $((W + 2000000))
+--               AND cityHash64(account) % $AA_MOD = 0
+--             UNION ALL
+--             SELECT account_id AS acct, last_ledger AS l, 1 AS src FROM stellar.account_activity
+--             WHERE cityHash64(account_id) % $AA_MOD = 0)
+--           GROUP BY acct
+--           HAVING truth > 0)
+--         SETTINGS max_threads = 4, max_memory_usage = 8000000000" </dev/null > "$AA_OUT" \
+--         || { echo "account_activity verify: window $W FAILED to run - aborting, NOTHING is verified" >&2; exit 1; }
+--       AA_N=$(cat "$AA_OUT")
+--       case "$AA_N" in ''|*[^0-9]*)
+--         echo "account_activity verify: window $W answered '$AA_N', not a count (the wrapper's lock-skip exits 0 and prints nothing) - aborting, NOTHING is verified" >&2; exit 1 ;;
+--       esac
+--       AA_SEEN=$((AA_SEEN + 1))
+--       [ "$AA_N" -eq 0 ] \
+--         || { echo "account_activity verify: window $W has $AA_N sampled account(s) with a too-LOW or MISSING watermark - re-run Step 2 for this window" >&2; AA_BAD=$((AA_BAD + 1)); }
+--       W=$((W + 2000000))
+--     done
+--     echo "account_activity verify: $AA_SEEN window(s) checked, $AA_BAD with a too-LOW watermark"
+--     rm -f "$AA_OUT"
+--     [ "$AA_SEEN" -gt 0 ] && [ "$AA_BAD" -eq 0 ]
+--   ) && echo "account_activity verify: PASSED - every window 2..$TIP is covered for the sample"
+--
+-- Expect PASSED. Anything else: do NOT deploy the reading binary.
 --
 -- ── ROLLBACK ────────────────────────────────────────────────────────────────
 -- Additive watermark; the reader falls back to the unbounded scan when the

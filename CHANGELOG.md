@@ -167,6 +167,37 @@ against.
   value or refuses, even when the literal holds a value of its own. The
   requested literal's marker is consulted only when no bucket was read
   at all (the fallback chain answered).
+- **clickhouse ops:** `deploy/clickhouse/account_activity.sql`'s backfill
+  runbook fails closed (F112). The per-account activity watermark is a
+  HARD `ledger_seq <=` bound on the account-history readers, and its
+  "exact upper bound by construction" invariant only holds once the
+  windowed Step-2 backfill has covered every account — but the runbook
+  could end looking complete without having done so. Step 2 now ends
+  non-zero, and without its `COMPLETE` line, when a window's job fails,
+  when the TIP probe fails or answers empty/0/garbage (the loop used to
+  run no window and "succeed"), and when `run-heavy-job.sh` finds the
+  per-job lock held — the wrapper exits 0 there without running the
+  payload, so each payload writes a success marker and a job with no
+  marker aborts the run; a closing count requires every job's marker.
+  The loop is one subshell with the success line chained behind `&&`, so
+  an abort neither kills the operator's login shell nor lets a later line
+  of the same paste print success, and the windows are counted in bash
+  rather than by `seq` (BSD `seq` prints `2e+06`). Step 3 is replaced: it
+  sampled recently active accounts, a population the live MVs cover
+  whether or not the backfill ran. It is now a per-window check in the
+  same 2M-ledger grid — a hash sample (`AA_MOD`, default 1 in 64; 1 is
+  exhaustive) of the accounts active in each window must have a
+  watermark at or above their activity there, a missing row counting as
+  too low — so a gap in any window is counted by that window's own
+  check. It is a labelled heavy op: run under `run-heavy-job.sh`, every
+  lake read scoped by ledger, `max_threads`/`max_memory_usage` capped; a
+  failed or lock-skipped check aborts rather than reading as 0. Proven
+  by `internal/storage/clickhouse/account_activity_runbook_test.go`
+  (the runbook's own text through the shipped wrapper, both its root and
+  non-root branches) and, against a live ClickHouse,
+  `test/integration/account_activity_backfill_verify_test.go` (window 1
+  backfilled, a later window skipped, an account active in both: the
+  verify counts it, and returns 0 once the window is re-run).
 
 - **assets listing:** the listing `market_cap_usd` of a confirmed
   non-7-decimals token divides supply by the token's confirmed decimals,
