@@ -2997,7 +2997,16 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 				ObservedAt:    WireTime(time.Now().UTC()),
 				WindowSeconds: int(window / time.Second),
 			}
-			flags := Flags{Triangulated: triangulated, Frozen: s.lookupFrozen(r, asset, quote)}
+			// The marker asked is the one for the pair the value was READ
+			// under, (a, q) — never the spelling the client used. The
+			// marker is keyed on the literal pair the aggregator prices,
+			// so the requested literal's marker is a verdict on a
+			// different venue population: asking it missed a freeze on
+			// the served alias and flagged a healthy alias value frozen
+			// (K037 class sweep; same rule as [Server.frozenPairBase]).
+			// The value needs no substitution here, unlike the default
+			// path: a frozen pair's `vwap:` key IS what the freeze holds.
+			flags := Flags{Triangulated: triangulated, Frozen: s.lookupFrozen(r, a, q)}
 			flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
 			writeJSON(w, snap, flags)
 			return

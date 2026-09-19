@@ -107,6 +107,16 @@ against.
   `generateMetadata` now short-circuits on `g_strkey === 'shell'` and
   returns generic, `noindex, follow` metadata with no canonical, matching
   the pattern already used by `/assets/[slug]` and `/markets/[pair]`.
+- **price:** `/v1/price?window=N` takes `flags.frozen` from the freeze
+  marker of the pair the value was read under, not from the spelling the
+  client used (K037 class sweep; closes the open site of T004). The
+  windowed path walks both legs' aliases to find the published
+  `vwap:` key, then asked the marker about the requested literal — and the
+  marker is keyed on the literal pair the aggregator prices. So
+  `asset=native` answered from a frozen `crypto:XLM` market carried a held
+  value with no `frozen` flag, and a marker on the requested literal flagged
+  a healthy alias's value as frozen. The value served is unchanged: a frozen
+  pair's windowed key already is what the freeze holds.
 
 - **forex / `/v1/price` fiat paths:** the in-memory FX snapshot that
   `/v1/price` and `/v1/price/tip` read for fiat crosses now carries only
