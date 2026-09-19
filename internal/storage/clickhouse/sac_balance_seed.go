@@ -413,6 +413,13 @@ func sacWatchedContractNeedles(watched map[string]string) ([]string, error) {
 // scan. Deliberately NOT floored at a hard-coded Soroban-activation constant:
 // the seed's semantics are "whatever contract_data the lake holds", and the
 // integration fixtures write contract_data far below mainnet activation.
+//
+// NOT hole-safe: max(ledger_seq) says nothing about the ledgers BELOW it. It is
+// right for a one-shot scan range or an "as of" label, and wrong as the upper
+// bound of a reader that PERSISTS a cursor — the LiveSink drops whole ledgers,
+// so a cursor committed at this max has skipped any hole beneath it for good
+// (the healed rows land below the cursor). Such readers bound themselves with
+// [ledgerContiguityFrom] instead.
 func entryChangeLedgerBounds(ctx context.Context, conn driver.Conn) (uint32, uint32, error) {
 	var lo, hi uint32
 	const q = `SELECT min(ledger_seq), max(ledger_seq) FROM stellar.ledger_entry_changes`
@@ -420,6 +427,48 @@ func entryChangeLedgerBounds(ctx context.Context, conn driver.Conn) (uint32, uin
 		return 0, 0, fmt.Errorf("clickhouse: read ledger_entry_changes ledger bounds: %w", err)
 	}
 	return lo, hi, nil
+}
+
+// ledgerContiguity is the lake's completeness picture at and above one
+// ledger, read off stellar.ledgers — the per-ledger commit marker Sink.Flush
+// writes LAST, so a ledger present there has all of its entry changes durable
+// (see [ContiguousWatermark] for the full argument). Zero means "none" in
+// every field: an empty lake, no hole, nothing present.
+type ledgerContiguity struct {
+	lakeMax    uint32 // highest ledger present anywhere in the lake
+	firstGap   uint32 // lowest MISSING ledger between two present ledgers >= from
+	minPresent uint32 // lowest PRESENT ledger >= from (> from ⟹ from itself is a hole)
+}
+
+// ledgerContiguityFrom is [ContiguousWatermark]'s read on a caller-owned
+// connection: the long-lived serving readers hold a pooled conn under their
+// own CH settings profile and must not dial a fresh ops-identity connection
+// per tick. Same SQL, same toUInt64(ifNull(…, 0)) normalisation, and the
+// result feeds the same pure [watermark] decision. The DISTINCT scan is
+// bounded below by `from`, so callers pass a ledger near the tip — never the
+// lake floor (a whole-lake window sort exceeds the CH memory cap).
+func ledgerContiguityFrom(ctx context.Context, conn driver.Conn, from uint32) (ledgerContiguity, error) {
+	const q = `
+		SELECT
+			toUInt64(ifNull((SELECT max(ledger_seq) FROM stellar.ledgers), 0)) AS ch_max,
+			toUInt64(ifNull((SELECT min(gap_start) FROM (
+				SELECT ledger_seq + 1 AS gap_start
+				FROM (
+					SELECT ledger_seq,
+					       leadInFrame(ledger_seq) OVER (
+					           ORDER BY ledger_seq ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING
+					       ) AS nxt
+					FROM (SELECT DISTINCT ledger_seq FROM stellar.ledgers WHERE ledger_seq >= ?)
+				)
+				WHERE nxt > ledger_seq + 1
+			)), 0)) AS first_gap_start,
+			toUInt64(ifNull((SELECT min(ledger_seq) FROM stellar.ledgers WHERE ledger_seq >= ?), 0)) AS min_present`
+	var chMax, firstGap, minPresent uint64
+	if err := conn.QueryRow(ctx, q, from, from).Scan(&chMax, &firstGap, &minPresent); err != nil {
+		return ledgerContiguity{}, fmt.Errorf("clickhouse: ledger contiguity from %d: %w", from, err)
+	}
+	// Ledger sequences are always well within uint32.
+	return ledgerContiguity{lakeMax: uint32(chMax), firstGap: uint32(firstGap), minPresent: uint32(minPresent)}, nil
 }
 
 // scanSACSeedWindow reduces one ledger window server-side to at most one row

@@ -40,6 +40,22 @@ against.
   test of its own, alongside tests that every serving branch of the cache
   (including stale-while-revalidate and callers parked on a cold fetch)
   hands out rows no other caller can see (audit K038).
+- **sdex order book:** `/v1/sdex/orderbook` no longer serves an offer that
+  was taken or cancelled in a ledger the lake's live sink dropped. The
+  in-process book bounded its incremental read by the raw
+  `max(ledger_seq)` of `ledger_entry_changes`, so it read across the hole
+  and committed its cursor above it; when `ch-live-catchup` filled the hole
+  minutes later those rows sat below the cursor and were never read — the
+  removed offer stayed up as resting liquidity, and an offer created in
+  that ledger never appeared, until the API restarted. Both the incremental
+  read and the full load's starting cursor are now bounded by the lake's
+  contiguous tip over `stellar.ledgers` (the same guard the projector and
+  the cap67 derive use), read on the reader's own connection: the cursor
+  holds just below a hole, logs that it is held, and resumes through it
+  once it is filled. The full load looks back 100,000 ledgers for an open
+  hole; a book loaded off an empty lake starts at the lake's first ledger
+  instead of stalling on the never-exported ledger 1 (audit 2026-09-02
+  F162).
 - **tests (storage):** `TestHistoryPointsDirectionUnion` no longer fails on
   every run between 00:00 and about 02:05 UTC. It seeds trades two hours
   back and asserted that the 1-day history series is empty because "today's

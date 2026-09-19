@@ -85,15 +85,68 @@ type OfferChange struct {
 	Offer   LiveOffer
 }
 
+// offerBookLoadHoleLookback is how far below the lake tip a full load
+// looks for an unhealed hole when it picks the book's starting cursor.
+// The cursor has no predecessor at load time, and a contiguity scan from
+// the lake floor is a whole-lake window sort (over the CH memory cap), so
+// the load anchors at the first ledger present in the last 100k — about
+// six days at the 5 s close cadence, against a healer that runs every ten
+// minutes. A hole older than that has outlived the healer by days and is
+// an operator incident, not a cursor concern; the periodic re-load in the
+// cache re-anchors once it is filled.
+const offerBookLoadHoleLookback = 100_000
+
+// offerBookTip is the order book's hole-safe upper read bound: the
+// highest ledger reachable from `from` without crossing a ledger the lake
+// does not hold. anchored=true is the incremental case — `from` is
+// cursor+1, so if `from` itself is missing the answer is from-1 and the
+// cursor HOLDS until catch-up fills it. anchored=false is the case with no
+// cursor to continue from (a full load, or a book loaded off an empty
+// lake): `from` is only a floor, so the run starts at the first ledger
+// actually present at or above it — every lake begins at ledger 2, and an
+// anchored read from 1 would report a boundary hole forever.
+func offerBookTip(from uint32, anchored bool, lc ledgerContiguity) uint32 {
+	if !anchored && lc.minPresent > from {
+		from = lc.minPresent
+	}
+	return watermark(from, lc.lakeMax, lc.firstGap, lc.minPresent)
+}
+
+// offerBookLoadCursor picks the cursor a full load hands the cache: the
+// contiguous tip of the lake's recent window, read BEFORE the offer scan.
+// A plain max(ledger_seq) here would start the book ABOVE any hole that is
+// open at load time, and the ledger catch-up later writes into that hole
+// would sit below the cursor for the life of the process.
+func (r *ExplorerReader) offerBookLoadCursor(ctx context.Context) (uint32, error) {
+	var lakeMax uint64
+	if err := r.conn.QueryRow(ctx, `SELECT toUInt64(max(ledger_seq)) FROM stellar.ledgers`).Scan(&lakeMax); err != nil {
+		return 0, fmt.Errorf("clickhouse: offer book lake tip: %w", err)
+	}
+	if lakeMax == 0 {
+		return 0, nil // empty lake — nothing applied, nothing to skip
+	}
+	var floor uint32
+	if lakeMax > offerBookLoadHoleLookback {
+		floor = uint32(lakeMax) - offerBookLoadHoleLookback // ledger sequences fit uint32
+	}
+	lc, err := ledgerContiguityFrom(ctx, r.conn, floor)
+	if err != nil {
+		return 0, err
+	}
+	return offerBookTip(floor, false, lc), nil
+}
+
 // LoadLiveOffers streams every LIVE offer entry from the lake's
-// current-state projection, returning the offers plus the
-// ledger_entry_changes high-water ledger read BEFORE the scan started —
-// the caller's incremental cursor (changes landing during the scan are
-// re-read by the first [OfferChangesSince] and re-applied idempotently
-// by version). Undecodable entries are skipped (counted by the caller
-// via len). See the package comment above for the design trade-offs.
+// current-state projection, returning the offers plus the lake's
+// CONTIGUOUS tip read BEFORE the scan started ([offerBookLoadCursor]) —
+// the caller's incremental cursor. Everything above that cursor —
+// changes landing during the scan, and ledgers the scan saw above a
+// still-open hole — is re-read by [OfferChangesSince] and re-applied
+// idempotently by version. Undecodable entries are skipped (counted by
+// the caller via len). See the package comment above for the design
+// trade-offs.
 func (r *ExplorerReader) LoadLiveOffers(ctx context.Context) ([]LiveOffer, uint32, error) {
-	_, cursor, err := entryChangeLedgerBounds(ctx, r.conn)
+	cursor, err := r.offerBookLoadCursor(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -131,15 +184,32 @@ func (r *ExplorerReader) LoadLiveOffers(ctx context.Context) ([]LiveOffer, uint3
 }
 
 // OfferChangesSince streams offer-entry changes with fromLedger <
-// ledger_seq <= the stream's current high-water ledger, in
+// ledger_seq <= the lake's CONTIGUOUS tip above fromLedger, in
 // (ledger_seq, intra_ledger_seq) order, returning the changes and the
 // new cursor. The read is partition-pruned by ledger_seq, so a 60s
 // cadence costs a few small partitions at most. Duplicate/overlapping
 // rows are safe: the caller applies changes by version, idempotently.
+//
+// The upper bound is [offerBookTip], never max(ledger_seq): the returned
+// cursor is committed by the caller, and the LiveSink drops whole ledgers
+// under pressure. Reading to the raw max crosses such a hole and commits
+// a cursor above it, so the rows ch-live-catchup later writes INTO the
+// hole are below the cursor forever — an offer removed in the dropped
+// ledger is served as resting liquidity until the process restarts
+// (audit 2026-09-02 F162). Bounded by the contiguous tip the cursor holds
+// just below the hole and resumes through it once it is filled — the
+// same guard as projector.resolveTip and chops.Cap67Range.
 func (r *ExplorerReader) OfferChangesSince(ctx context.Context, fromLedger uint32) ([]OfferChange, uint32, error) {
-	_, tip, err := entryChangeLedgerBounds(ctx, r.conn)
+	lc, err := ledgerContiguityFrom(ctx, r.conn, fromLedger+1)
 	if err != nil {
 		return nil, 0, err
+	}
+	// fromLedger == 0 is a book loaded off an empty lake: no cursor to
+	// continue from, so start at the lake's first ledger (see offerBookTip).
+	tip := offerBookTip(fromLedger+1, fromLedger > 0, lc)
+	if tip < lc.lakeMax {
+		slog.Warn("sdex order book: advance held below a lake hole; the book lags until ch-live-catchup fills it",
+			"cursor", fromLedger, "contiguous_tip", tip, "lake_max", lc.lakeMax)
 	}
 	if tip <= fromLedger {
 		return nil, fromLedger, nil
