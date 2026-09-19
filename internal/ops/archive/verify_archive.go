@@ -540,7 +540,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 				}
 				stateMu.Lock()
 				defer stateMu.Unlock()
-				stateNow = markChunkDone(stateNow, tier, originalIdx, res.LastHash, time.Now().UTC())
+				stateNow = markChunkDoneStitch(stateNow, tier, originalIdx, res, time.Now().UTC())
 				if err := writeVerifyArchiveState(stateFile, stateNow); err != nil {
 					fmt.Fprintf(os.Stderr,
 						"verify-archive: warn: per-chunk state write failed (chunk[%d] Done): %v\n",
@@ -576,19 +576,35 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// Stitch cross-chunk boundary chain integrity. Skip on walkErr
 	// (chunks may have aborted mid-flight; boundary check would be
 	// noisy on partial results).
+	//
+	// The stitch runs over the FULL plan, not over the chunks this run
+	// happened to walk: a resumed run supplies the skipped chunks'
+	// boundary terms from the evidence the prior run persisted
+	// (RLT-265). Handing stitchChunks only the live results made it
+	// compare chunks that are not adjacent in ledger space, which
+	// either missed the boundary beside a skipped chunk entirely or
+	// reported it as a gap that does not exist.
 	var stitchErr error
+	planResults := results
 	if walkErr == nil && doChain {
-		stitchErr = stitchChunks(results)
+		planResults, stitchErr = fullPlanStitchInput(priorState, tier, len(chunks), chunkIdxs, results)
+		if stitchErr == nil {
+			stitchErr = stitchChunks(planResults)
+		} else {
+			planResults = results
+		}
 	}
 
 	// Cross-run boundary check: when -resume-from-hash is set, the
 	// first chunk's FirstPrevHash must match (proves continuity with
 	// a previous verification run that ended at -from − 1). Runs
 	// only when no other error has fired and at least one chunk
-	// processed a ledger.
+	// processed a ledger. Indexed off the PLAN, so a resumed run that
+	// skipped chunk 0 compares the hash at effectiveFrom − 1 rather
+	// than at the first surviving chunk's own lower bound.
 	var resumeErr error
-	if walkErr == nil && stitchErr == nil && doChain && resumeFromHash != "" && len(results) > 0 && results[0].Verified > 0 {
-		resumeErr = checkResumeFromHash(resumeFromHash, results[0].FirstPrevHash, results[0].FirstSeq)
+	if walkErr == nil && stitchErr == nil && doChain && resumeFromHash != "" && len(planResults) > 0 && planResults[0].Verified > 0 {
+		resumeErr = checkResumeFromHash(resumeFromHash, planResults[0].FirstPrevHash, planResults[0].FirstSeq)
 	}
 
 	elapsed := time.Since(startedAt)
@@ -1091,6 +1107,24 @@ func extractLedgerHeader(lcm sdkxdr.LedgerCloseMeta) (sdkxdr.LedgerHeader, bool)
 // hashToHex renders an xdr.Hash as a lowercase 64-char hex string.
 func hashToHex(h sdkxdr.Hash) string {
 	return hex.EncodeToString(h[:])
+}
+
+// hashFromHex is hashToHex's inverse, used to read boundary hashes
+// back out of the state file. A truncated or non-hex value is an
+// error, never a zero hash — a zero hash would compare equal to
+// another zero hash and turn a corrupt state file into a passing
+// chain proof.
+func hashFromHex(s string) (sdkxdr.Hash, error) {
+	var h sdkxdr.Hash
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return sdkxdr.Hash{}, fmt.Errorf("parse hex %q: %w", s, err)
+	}
+	if len(b) != len(h) {
+		return sdkxdr.Hash{}, fmt.Errorf("hex length %d, want %d (32-byte SHA-256)", len(b), len(h))
+	}
+	copy(h[:], b)
+	return h, nil
 }
 
 // ─── wasm-history ───────────────────────────────────────────────

@@ -315,6 +315,27 @@ against.
   than a relaxed one — every ticker must still be answerable, by one index or
   the other.
 
+- **ops(verify-archive):** a resumed walk skipped the cross-chunk chain
+  proof (RLT-265). `stitchChunks` was handed only the chunks the run
+  actually walked, so on a resume it compared chunks that are not
+  adjacent in ledger space: a boundary next to a chunk skipped as `Done`
+  was either **never checked** (skipped chunk at an end of the run set —
+  a real chain break there was invisible in every run, since the prior
+  run's stitch covers only its own results) or reported as a **gap that
+  does not exist** (skipped chunk in the middle). The persisted
+  `ChunkProgress.LastVerifiedHash`, documented as the "cross-run
+  chain-continuity proof", was written and never read. The walk now
+  persists each finished chunk's full boundary evidence
+  (`first_seq`/`first_prev_hash`/`last_seq`/`last_hash`/`verified`, an
+  additive optional `stitch` object) and stitches over the **whole
+  plan**, supplying the skipped chunks' terms from that record; a
+  `Done` chunk that carries no evidence — anything written by an
+  earlier binary — is re-walked rather than assumed, which is
+  self-healing. A corrupt or truncated persisted hash is an error, never
+  a zero hash that would compare equal to another zero hash. The
+  `-resume-from-hash` cross-run check is likewise indexed off the plan,
+  so a resume that skipped chunk 0 no longer compares against the wrong
+  ledger's hash.
 - **ops(verify-archive):** an all-Done resume certified a run that
   verified zero ledgers (RLT-281). A chunk's `Done` marker records only
   that the chunk's own walk returned no error — the cross-chunk stitch,

@@ -86,6 +86,31 @@ type ChunkProgress struct {
 	// (chunk.to) ledger, captured when Done flips true. Used for
 	// the cross-run chain-continuity proof.
 	LastVerifiedHash string `json:"last_verified_hash,omitempty"`
+	// Stitch is the chunk's boundary evidence, captured when Done
+	// flips true. A resumed run skips this chunk's walk, so these
+	// are the only terms from which the two boundaries the chunk
+	// participates in can still be checked (RLT-265). Nil for a
+	// chunk recorded by a binary that predates it — planResumedWalk
+	// refuses to skip such a chunk, so the boundary is re-derived by
+	// re-walking rather than assumed.
+	Stitch *ChunkStitch `json:"stitch,omitempty"`
+}
+
+// ChunkStitch is the subset of a chunkResult that stitchChunks
+// consumes, persisted so a chunk skipped on resume can still supply
+// its side of a cross-chunk boundary.
+//
+// Verified distinguishes a chunk that legitimately saw zero ledgers
+// (the range predates the bucket) from one whose hashes are simply
+// unknown: stitchChunks re-targets a boundary at the nearest NON-empty
+// neighbours, so an empty chunk must be reconstructed as empty rather
+// than dropped.
+type ChunkStitch struct {
+	Verified      int    `json:"verified"`
+	FirstSeq      uint32 `json:"first_seq,omitempty"`
+	FirstPrevHash string `json:"first_prev_hash,omitempty"`
+	LastSeq       uint32 `json:"last_seq,omitempty"`
+	LastHash      string `json:"last_hash,omitempty"`
 }
 
 // readVerifyArchiveState loads state from disk. Missing file returns
@@ -338,6 +363,59 @@ func markChunkDone(st VerifyArchiveState, tier string, idx int, lastHash sdkxdr.
 	return out
 }
 
+// markChunkDoneStitch is markChunkDone plus the chunk's boundary
+// evidence — the form the walk uses. Without the evidence a resumed
+// run cannot check the boundaries either side of the chunk it skips,
+// and stitchChunks silently compares non-adjacent chunks instead
+// (RLT-265).
+func markChunkDoneStitch(st VerifyArchiveState, tier string, idx int, res chunkResult, now time.Time) VerifyArchiveState {
+	out := markChunkDone(st, tier, idx, res.LastHash, now)
+	ts, ok := out.Tiers[tier]
+	if !ok || ts.InProgress == nil || idx < 0 || idx >= len(ts.InProgress.Chunks) {
+		return out
+	}
+	// markChunkDone already deep-copied the RunProgress and its chunk
+	// slice, so writing through the pointer touches only `out`.
+	ts.InProgress.Chunks[idx].Stitch = &ChunkStitch{
+		Verified:      res.Verified,
+		FirstSeq:      res.FirstSeq,
+		FirstPrevHash: hashToHex(res.FirstPrevHash),
+		LastSeq:       res.LastSeq,
+		LastHash:      hashToHex(res.LastHash),
+	}
+	return out
+}
+
+// chunkResult rebuilds the persisted boundary terms into the shape
+// stitchChunks consumes. idx is the chunk's ORIGINAL plan index — the
+// label a boundary failure is reported under.
+func (s ChunkStitch) chunkResult(idx int, c ChunkProgress) (chunkResult, error) {
+	res := chunkResult{
+		Idx:      idx,
+		From:     c.From,
+		To:       c.To,
+		FirstSeq: s.FirstSeq,
+		LastSeq:  s.LastSeq,
+		Verified: s.Verified,
+	}
+	if s.Verified == 0 {
+		// An empty chunk carries no hashes and stitchChunks skips it
+		// when choosing pairs; reconstruct it as empty.
+		return res, nil
+	}
+	first, err := hashFromHex(s.FirstPrevHash)
+	if err != nil {
+		return chunkResult{}, fmt.Errorf("chunk[%d] persisted first_prev_hash: %w", idx, err)
+	}
+	last, err := hashFromHex(s.LastHash)
+	if err != nil {
+		return chunkResult{}, fmt.Errorf("chunk[%d] persisted last_hash: %w", idx, err)
+	}
+	res.FirstPrevHash = first
+	res.LastHash = last
+	return res, nil
+}
+
 // pinnedTipFromPriorRun returns the prior in-progress run's pinned
 // `To` ledger when a follow-up fire should adopt it instead of
 // re-resolving the live tip. Matches when the prior InProgress is
@@ -446,12 +524,89 @@ func allChunkIdxs(chunks []opsutil.RangeChunk) []int {
 // The proofs cannot be reconstructed from the Done markers (the
 // checkpoint OK/missed tallies are not persisted at all), so the
 // conservative reading is the only defensible one: re-walk.
+//
+// Second narrowing (RLT-265): a chunk may only be skipped when the
+// prior run persisted its boundary evidence. A skipped chunk supplies
+// no live chunkResult, so without that record the boundaries either
+// side of it cannot be checked at all — and stitchChunks, handed only
+// the chunks that ran, compares non-adjacent ones instead. A chunk
+// recorded before the evidence existed is re-walked, which is
+// self-healing: the next run records it and resume works again.
 func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk) ([]opsutil.RangeChunk, []int, string) {
 	keep, idxs, reason := resumeChunks(st, tier, from, to, workers, chunks)
-	if len(keep) > 0 {
+	if len(keep) == 0 {
+		return chunks, allChunkIdxs(chunks), reason +
+			" — re-walking the full plan: a Done marker records only that the chunk's own walk " +
+			"succeeded, not that the cross-chunk stitch or the checkpoint-anchor decision ran"
+	}
+	prior := priorChunkProgress(st, tier)
+	var unstitchable int
+	for i := range chunks {
+		if i < len(prior) && prior[i].Done && prior[i].Stitch == nil {
+			unstitchable++
+		}
+	}
+	if unstitchable == 0 {
 		return keep, idxs, reason
 	}
-	return chunks, allChunkIdxs(chunks), reason +
-		" — re-walking the full plan: a Done marker records only that the chunk's own walk " +
-		"succeeded, not that the cross-chunk stitch or the checkpoint-anchor decision ran"
+	return chunks, allChunkIdxs(chunks), fmt.Sprintf(
+		"%s — but %d of them recorded no cross-chunk boundary evidence, so skipping them would "+
+			"leave their boundaries unchecked; re-walking the full plan", reason, unstitchable)
+}
+
+// priorChunkProgress returns the tier's recorded per-chunk progress,
+// or nil when there is none.
+func priorChunkProgress(st VerifyArchiveState, tier string) []ChunkProgress {
+	ts, ok := st.Tiers[tier]
+	if !ok || ts.InProgress == nil {
+		return nil
+	}
+	return ts.InProgress.Chunks
+}
+
+// fullPlanStitchInput returns one chunkResult per chunk of the ORIGINAL
+// plan, in plan order: the live result for every chunk this run walked,
+// and the prior run's persisted boundary evidence for every chunk it
+// skipped.
+//
+// This is what makes the cross-chunk chain proof survive a resume
+// (RLT-265). stitchChunks was handed `results` — only the chunks that
+// RAN — so on a resumed walk it compared chunks that are not adjacent
+// in ledger space: a boundary next to a skipped chunk was either never
+// checked (skipped chunk at an end of the run set) or reported as a
+// spurious gap (skipped chunk in the middle). Neither is a proof.
+//
+// liveIdxs[i] is the original plan index of liveResults[i], as returned
+// by planResumedWalk.
+func fullPlanStitchInput(st VerifyArchiveState, tier string, planLen int, liveIdxs []int, liveResults []chunkResult) ([]chunkResult, error) {
+	if len(liveIdxs) != len(liveResults) {
+		return nil, fmt.Errorf("stitch input: %d chunk index(es) for %d result(s)", len(liveIdxs), len(liveResults))
+	}
+	out := make([]chunkResult, planLen)
+	filled := make([]bool, planLen)
+	for i, idx := range liveIdxs {
+		if idx < 0 || idx >= planLen {
+			return nil, fmt.Errorf("stitch input: chunk index %d outside the %d-chunk plan", idx, planLen)
+		}
+		out[idx] = liveResults[i]
+		filled[idx] = true
+	}
+	prior := priorChunkProgress(st, tier)
+	for i := range out {
+		if filled[i] {
+			continue
+		}
+		if i >= len(prior) || prior[i].Stitch == nil {
+			// planResumedWalk does not skip a chunk without evidence,
+			// so this is unreachable; refuse rather than stitch a
+			// plan with a hole in it.
+			return nil, fmt.Errorf("stitch input: chunk[%d] was skipped but recorded no boundary evidence", i)
+		}
+		res, err := prior[i].Stitch.chunkResult(i, prior[i])
+		if err != nil {
+			return nil, err
+		}
+		out[i] = res
+	}
+	return out, nil
 }

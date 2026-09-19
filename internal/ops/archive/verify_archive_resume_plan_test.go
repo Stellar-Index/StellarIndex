@@ -28,6 +28,21 @@ func hashByte(b byte) sdkxdr.Hash {
 	return h
 }
 
+// walkedChunk is the chunkResult a worker returns for a chunk that
+// covered its whole range cleanly.
+func walkedChunk(idx int, c opsutil.RangeChunk, firstPrev, last sdkxdr.Hash) chunkResult {
+	return chunkResult{
+		Idx:           idx,
+		From:          c.From,
+		To:            c.To,
+		FirstSeq:      c.From,
+		FirstPrevHash: firstPrev,
+		LastSeq:       c.To,
+		LastHash:      last,
+		Verified:      int(c.To-c.From) + 1,
+	}
+}
+
 // TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying is the
 // RLT-281 regression.
 //
@@ -80,15 +95,16 @@ func TestPlanResumedWalk_AllDoneRewalksRatherThanCertifying(t *testing.T) {
 	}
 }
 
-// TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks: the RLT-281
-// fix must not disable resume. A genuinely interrupted run (some
-// chunks Done, some not) still skips the finished ones.
+// TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks: neither fix
+// may disable resume. A genuinely interrupted run (some chunks Done
+// WITH their boundary evidence, some not) still skips the finished
+// ones.
 func TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
 	chunks := threeChunkPlan()
 	st := startTierProgress(VerifyArchiveState{}, "checkpoint", 2, 3000, 3, chunks, now)
-	st = markChunkDone(st, "checkpoint", 0, hashByte(0x11), now)
+	st = markChunkDoneStitch(st, "checkpoint", 0, walkedChunk(0, chunks[0], hashByte(0x10), hashByte(0x11)), now)
 
 	got, idxs, _ := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks)
 	if len(got) != 2 || got[0] != chunks[1] || got[1] != chunks[2] {
@@ -96,6 +112,201 @@ func TestPlanResumedWalk_PartialResumeStillSkipsDoneChunks(t *testing.T) {
 	}
 	if len(idxs) != 2 || idxs[0] != 1 || idxs[1] != 2 {
 		t.Fatalf("idxs = %v, want [1 2]", idxs)
+	}
+}
+
+// TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked is the
+// RLT-265 admission rule: a chunk recorded Done by a binary that never
+// persisted its boundary terms cannot supply either side of a
+// cross-chunk boundary, so skipping it would leave that boundary
+// unchecked in every run. It is re-walked instead — self-healing,
+// because the re-walk records the evidence and the next resume works.
+func TestPlanResumedWalk_DoneWithoutBoundaryEvidenceIsRewalked(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+	st := startTierProgress(VerifyArchiveState{}, "checkpoint", 2, 3000, 3, chunks, now)
+	// markChunkDone is the pre-RLT-265 recording: Done + the terminal
+	// hash, no FirstPrevHash and no verified count.
+	st = markChunkDone(st, "checkpoint", 0, hashByte(0x11), now)
+
+	got, idxs, reason := planResumedWalk(st, "checkpoint", 2, 3000, 3, chunks)
+	if len(got) != len(chunks) || len(idxs) != len(chunks) {
+		t.Fatalf("plan = %+v idxs = %v, want the full plan: a Done chunk with no boundary "+
+			"evidence must be re-walked, not skipped (RLT-265)", got, idxs)
+	}
+	if !strings.Contains(reason, "no cross-chunk boundary evidence") {
+		t.Errorf("reason = %q, want it to name the missing boundary evidence", reason)
+	}
+}
+
+// ─── RLT-265: the cross-chunk chain proof must survive a resume ────
+
+// TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught is the
+// RLT-265 regression, and its first assertion is the contrast that
+// makes the second non-vacuous: the SAME stitchChunks, over the chunks
+// this run walked, cannot see the break at all.
+//
+// Plan: three contiguous chunks. The prior run finished chunk 0; this
+// run walks chunks 1 and 2. Chunks 1 and 2 ARE adjacent to each other,
+// so the live-results stitch is clean — and the boundary between the
+// skipped chunk 0 and chunk 1 is checked by no run, in either run.
+// Plant a real chain break exactly there: the archive's ledger 1001
+// does not chain onto ledger 1000.
+func TestFullPlanStitchInput_ChainBreakBesideSkippedChunkIsCaught(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+
+	// Prior run: chunk 0 walked to ledger 1000, ending on hash 0xaa.
+	chunk0 := walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa))
+	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
+	st = markChunkDoneStitch(st, "chain", 0, chunk0, now)
+
+	// This run: chunk 1 starts at ledger 1001 whose PreviousLedgerHash
+	// is 0xbb — it does NOT chain onto chunk 0's 0xaa. Chunks 1→2
+	// chain cleanly, so nothing inside this run's own results is
+	// wrong.
+	chunk1 := walkedChunk(1, chunks[1], hashByte(0xbb), hashByte(0xcc))
+	chunk2 := walkedChunk(2, chunks[2], hashByte(0xcc), hashByte(0xdd))
+	live := []chunkResult{chunk1, chunk2}
+	liveIdxs := []int{1, 2}
+
+	// Contrast: what the walk used to hand stitchChunks. Adjacent to
+	// each other, so clean — the break is invisible.
+	if err := stitchChunks(live); err != nil {
+		t.Fatalf("precondition: the live results alone must stitch clean (that is the blindness "+
+			"this test is about), got %v", err)
+	}
+
+	planInput, err := fullPlanStitchInput(st, "chain", len(chunks), liveIdxs, live)
+	if err != nil {
+		t.Fatalf("fullPlanStitchInput: %v", err)
+	}
+	if len(planInput) != len(chunks) {
+		t.Fatalf("stitch input has %d chunk(s), want one per plan chunk (%d)", len(planInput), len(chunks))
+	}
+	// The reconstructed chunk 0 must carry the prior run's terms, not
+	// a zero value: a zero LastHash would compare equal to another
+	// zero hash and pass.
+	if planInput[0].LastSeq != 1000 || planInput[0].LastHash != hashByte(0xaa) {
+		t.Errorf("reconstructed chunk[0] = LastSeq %d hash %s, want 1000 / %s",
+			planInput[0].LastSeq, hashToHex(planInput[0].LastHash), hashToHex(hashByte(0xaa)))
+	}
+	if planInput[0].Verified != chunk0.Verified {
+		t.Errorf("reconstructed chunk[0].Verified = %d, want %d — a chunk reconstructed as empty "+
+			"would be skipped when stitchChunks picks pairs", planInput[0].Verified, chunk0.Verified)
+	}
+
+	stitchErr := stitchChunks(planInput)
+	if stitchErr == nil {
+		t.Fatal("stitchChunks over the full plan returned nil: the chain break at the boundary " +
+			"beside the skipped chunk 0 is still unchecked (RLT-265)")
+	}
+	if !strings.Contains(stitchErr.Error(), "chunk[0→1]") {
+		t.Errorf("error = %v, want it to name the chunk[0→1] boundary", stitchErr)
+	}
+	if !strings.Contains(stitchErr.Error(), "boundary chain break") {
+		t.Errorf("error = %v, want a chain-break verdict (not a sequence gap)", stitchErr)
+	}
+}
+
+// TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses is the
+// other half: a resumed walk whose chunks DO chain must not be failed.
+// Pre-fix this shape produced a spurious gap — stitchChunks compared
+// chunk 0 (ends 1000) against chunk 2 (starts 2001) because the
+// skipped chunk 1 was simply absent from the slice.
+func TestFullPlanStitchInput_IntactChainAcrossSkippedChunkPasses(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+
+	chunk0 := walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa))
+	chunk1 := walkedChunk(1, chunks[1], hashByte(0xaa), hashByte(0xbb))
+	chunk2 := walkedChunk(2, chunks[2], hashByte(0xbb), hashByte(0xcc))
+
+	// Prior run finished the MIDDLE chunk.
+	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
+	st = markChunkDoneStitch(st, "chain", 1, chunk1, now)
+
+	live := []chunkResult{chunk0, chunk2}
+	liveIdxs := []int{0, 2}
+
+	// Contrast: the pre-fix input reports a gap between two chunks
+	// that are not adjacent, on a chain that is in fact intact.
+	if err := stitchChunks(live); err == nil {
+		t.Fatal("precondition: the live results alone should report a spurious boundary gap")
+	}
+
+	planInput, err := fullPlanStitchInput(st, "chain", len(chunks), liveIdxs, live)
+	if err != nil {
+		t.Fatalf("fullPlanStitchInput: %v", err)
+	}
+	if err := stitchChunks(planInput); err != nil {
+		t.Fatalf("stitchChunks over the full plan failed on an intact chain: %v", err)
+	}
+	if planInput[1].FirstSeq != 1001 || planInput[1].FirstPrevHash != hashByte(0xaa) {
+		t.Errorf("reconstructed chunk[1] = FirstSeq %d prevHash %s, want 1001 / %s",
+			planInput[1].FirstSeq, hashToHex(planInput[1].FirstPrevHash), hashToHex(hashByte(0xaa)))
+	}
+}
+
+// TestFullPlanStitchInput_RefusesAHoleInThePlan: a skipped chunk with
+// no persisted evidence must be an error, never a silently shortened
+// plan. planResumedWalk does not produce this input, so it is the
+// defensive edge.
+func TestFullPlanStitchInput_RefusesAHoleInThePlan(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
+	st = markChunkDone(st, "chain", 0, hashByte(0xaa), now) // no Stitch record
+
+	live := []chunkResult{
+		walkedChunk(1, chunks[1], hashByte(0xaa), hashByte(0xbb)),
+		walkedChunk(2, chunks[2], hashByte(0xbb), hashByte(0xcc)),
+	}
+	if _, err := fullPlanStitchInput(st, "chain", len(chunks), []int{1, 2}, live); err == nil {
+		t.Fatal("fullPlanStitchInput accepted a plan with an unreconstructable chunk; want an error")
+	}
+}
+
+// TestChunkStitchRoundTrip: a corrupt or truncated persisted hash must
+// be an error, not a zero hash — two zero hashes compare equal and
+// would turn a corrupt state file into a passing chain proof.
+func TestChunkStitchRoundTrip(t *testing.T) {
+	t.Parallel()
+	cp := ChunkProgress{Idx: 0, From: 2, To: 1000}
+	good := ChunkStitch{
+		Verified:      999,
+		FirstSeq:      2,
+		FirstPrevHash: hashToHex(hashByte(0x01)),
+		LastSeq:       1000,
+		LastHash:      hashToHex(hashByte(0xaa)),
+	}
+	res, err := good.chunkResult(0, cp)
+	if err != nil {
+		t.Fatalf("round trip: %v", err)
+	}
+	if res.FirstPrevHash != hashByte(0x01) || res.LastHash != hashByte(0xaa) {
+		t.Errorf("round trip lost the hashes: %+v", res)
+	}
+
+	bad := good
+	bad.LastHash = "abcd"
+	if _, err := bad.chunkResult(0, cp); err == nil {
+		t.Error("a truncated persisted hash was accepted; want an error rather than a zero hash")
+	}
+
+	// A legitimately empty chunk carries no hashes and must
+	// reconstruct as empty rather than erroring.
+	empty := ChunkStitch{Verified: 0}
+	emptyRes, err := empty.chunkResult(1, cp)
+	if err != nil {
+		t.Fatalf("empty chunk: %v", err)
+	}
+	if emptyRes.Verified != 0 {
+		t.Errorf("empty chunk reconstructed with Verified=%d", emptyRes.Verified)
 	}
 }
 
