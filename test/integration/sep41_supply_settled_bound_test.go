@@ -14,11 +14,20 @@ import (
 )
 
 // settleSEP41Cursor marks the sep41_supply projection DURABLE through
-// `ledger` by writing the projector's ingestion cursor through the exact
-// call internal/projector makes at the end of a clean cycle —
-// `UpsertCursor(ctx, "projector", src.Name, commitTo)` — so the pairing
-// the storage layer hard-codes (sep41SupplyCursorSource /
-// sep41SupplyCursorSub) is pinned end-to-end rather than restated.
+// `ledger` by writing the projector's ingestion cursor on the exact
+// (source, sub) pair internal/projector commits to — `"projector"` /
+// `src.Name` — so the pairing the storage layer hard-codes
+// (sep41SupplyCursorSource / sep41SupplyCursorSub) is pinned end-to-end
+// rather than restated.
+//
+// The pair is the production shape; the CALL is not, deliberately. The
+// projector's only cursor write is `AdvanceCursorFrom` — a compare-and-swap
+// against the position the cycle read, since F159 (`7f2a32655`), so that an
+// in-flight cycle cannot clobber a `projector-replay` rewind. Seeding a
+// starting position has nothing to compare against, so this uses the
+// unconditional `UpsertCursor`. A helper that claimed to seed "through the
+// exact call the projector makes" would send a reader to a call the projector
+// no longer has.
 //
 // AdvanceSEP41SupplyRollup folds no further than this watermark (F118),
 // so a rollup test that wants "everything below the tip has settled"

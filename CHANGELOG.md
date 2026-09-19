@@ -467,6 +467,18 @@ against.
   the doc against the classifier's regex so the two cannot drift apart
   silently again.
 
+- **docs / sep41 settled-bound helper comment (F159 follow-up, second copy):**
+  `settleSEP41Cursor` in `test/integration/sep41_supply_settled_bound_test.go`
+  claimed to seed the cursor "through the exact call `internal/projector`
+  makes at the end of a clean cycle — `UpsertCursor(ctx, "projector",
+  src.Name, commitTo)`". Since F159 the projector's only cursor write is
+  `AdvanceCursorFrom`, a compare-and-swap; the same drift as the comment fixed
+  one file over, in the file that names the helper. The helper's CALL is
+  correct and unchanged — seeding a starting position has nothing to
+  compare-and-swap against — so the comment now says what is actually pinned
+  end-to-end (the `("projector", src.Name)` pair the storage layer hard-codes)
+  and why the call deliberately differs.
+
 - **docs / sep41 rollup cursor-write comment (F159 follow-up):** the
   `sep41SupplyCursorSource` / `sep41SupplyCursorSub` doc comment in
   `internal/storage/timescale/sep41_supply_events.go` still described the
