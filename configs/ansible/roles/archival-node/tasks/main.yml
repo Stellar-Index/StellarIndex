@@ -66,12 +66,13 @@
 #
 # Resolved HERE, right after preflight, rather than beside the imports
 # it currently guards: 15-log-discipline.yml carries SEVEN more
-# (counted from that file; an earlier note said six and a verifier counted
-# eight — re-derive the set from the file, do not trust any of the three)
 # unguarded ClickHouse-config tasks (the /var/lib/clickhouse/logs dir,
-# zzz-logpath.xml, zz-ratesengine.xml, zz-merge-memory-guard.xml, the
-# clickhouse-client drop-in and a bare `clickhouse-client -q "SELECT 1"`
-# assert) and is imported EARLIER, so it is the next thing to gate on
+# zzz-logpath.xml, zz-ratesengine.xml, the clickhouse-client port drop-in,
+# zz-merge-memory-guard.xml, zz-max-query-size.xml and zz-system-log-ttl.xml)
+# and is imported EARLIER, so it is the next thing to gate on.
+# COUNT THE SET FROM THE FILE, not from this list: an earlier note said six,
+# a verifier counted eight, and deriving it gives seven. A follow-up that
+# trusts a wrong count leaves tasks ungated and the role still hard-fails.
 # this same fact — and it can only do so if the fact already exists.
 #
 # Tagged `always` so a targeted apply (`--tags clickhouse-drop-guard`)
