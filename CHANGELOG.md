@@ -314,13 +314,21 @@ against.
   carried its own copy of the contract) now return a `*TradeDroppedError`
   that unwraps to the store's error: the projector classifies it as a
   permanent fault, counts it `outcome="sink_permanent"` and still advances
-  the cursor, so a poison row cannot wedge a sole-writer source. Which
-  trades are storable is unchanged, and so is the dispatcher batch path,
-  which carries a row only on a context error. One operator-visible
-  consequence: `stellarindex-ops projected-rebuild -write` now counts such
-  a trade as an insert error and leaves its window un-checkpointed, as it
-  already did for a lost non-trade row — before this it checkpointed over
-  the hole (audit RLT-132).
+  the cursor, so a poison row cannot wedge a sole-writer source. Reporting
+  the drop exposed a second defect, fixed with it: the projector stopped a
+  lake row at its FIRST sink error, so once a drop was an error the row's
+  remaining outputs were never offered to the sink while the cursor
+  advanced past them — and one row really does decode to several outputs
+  (soroswap emits one trade per completed swap+sync pair absorbed from a
+  single event; phoenix emits rescued evicted trades plus the completed
+  one). `processEventSafely` now continues past a permanently dropped
+  output and stops only at a retryable or unclassified fault, which still
+  holds the cursor; `outcome="sink_permanent"` is counted per dropped
+  OUTPUT, like `outcome="ok"`, not once per row. This also applies to a
+  permanently rejected non-trade output, whose later siblings were lost
+  the same way before. The validation and constraints that decide which
+  trades the store rejects are not touched, nor is the dispatcher batch
+  path, which carries a row only on a context error (audit RLT-132).
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process

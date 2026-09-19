@@ -478,11 +478,21 @@ func (p *Projector) observedCursor(source string) (uint32, bool) {
 //     error OR a recovered panic. A deterministically broken row would only
 //     re-fail on retry, so the caller advances the cursor regardless (the
 //     failure is counted for visibility).
-//   - sinkErr:    the FIRST sink (downstream write) error for this row, or
-//     nil. Unlike a decode failure this is NOT necessarily deterministic —
-//     the caller classifies it ([timescale.IsPermanentDataError]) to decide
-//     whether to hold the cursor for retry (transient) or skip (permanent).
-//     A recovered decode panic returns sinkErr=nil (nothing was written).
+//   - sinkErr:    nil when every output landed, otherwise a *[rowSinkFaults]
+//     carrying every sink (downstream write) fault of the row. A PERMANENT
+//     fault ([dispositionSkip]) drops that one output and the loop CONTINUES;
+//     the first retryable or unclassified fault STOPS the row, because the
+//     caller holds the cursor below it and the whole row is re-read next
+//     cycle. A recovered decode panic returns sinkErr=nil (nothing was
+//     written).
+//
+// Why a permanent drop must not stop the row (RLT-132): the caller SKIPS a
+// permanent fault — the cursor advances past the row — so any output not yet
+// offered to the sink would never be offered again. One lake row really does
+// decode to several outputs (soroswap emits one trade per completed swap+sync
+// pair absorbed from a single event; phoenix emits rescued evicted trades plus
+// the completed one), and one deterministically bad output says nothing about
+// its siblings.
 func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) error, log *slog.Logger) (emitted int, decodeFail bool, sinkErr error) {
 	defer func() {
 		if rec := recover(); rec != nil {
@@ -499,16 +509,80 @@ func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) e
 	if derr != nil {
 		return 0, true, nil
 	}
+	var faults rowSinkFaults
 	for _, out := range outs {
-		if err := sink(out); err != nil {
-			// Stop at the first sink failure for this row. `emitted` counts
-			// the outputs that DID commit; the caller classifies sinkErr
-			// against ev.Ledger to gate the cursor.
-			return emitted, false, err
+		err := sink(out)
+		if err == nil {
+			emitted++
+			continue
 		}
-		emitted++
+		if classifySinkFault(err) == dispositionSkip {
+			// This OUTPUT can never land; its siblings still can. Record the
+			// drop and keep going — see the godoc.
+			faults.dropped = append(faults.dropped, err)
+			continue
+		}
+		// Retryable or unclassified: stop here. `emitted` counts the outputs
+		// that DID commit; the caller holds the cursor below ev.Ledger, so the
+		// row — including the outputs after this one — is re-read next cycle.
+		faults.held = err
+		break
 	}
-	return emitted, false, nil
+	return emitted, false, faults.asError()
+}
+
+// rowSinkFaults is the sink-fault record for ONE lake row: what
+// [processEventSafely] returns as its sinkErr. The two halves are kept apart
+// because the caller reacts to them differently — and must never infer one
+// from the other.
+type rowSinkFaults struct {
+	// dropped holds one error per output the sink PERMANENTLY rejected
+	// ([dispositionSkip]), in decode order. Each is counted
+	// outcome="sink_permanent" — a per-OUTPUT count, like outcome="ok" — and
+	// none of them holds the cursor.
+	dropped []error
+	// held is the first retryable or unclassified fault, which stopped the
+	// row; nil when the row ran to its last output. It holds the cursor.
+	held error
+}
+
+// asError returns f as an error, or a true nil when the row had no sink fault
+// (never a typed-nil *rowSinkFaults inside a non-nil interface).
+func (f *rowSinkFaults) asError() error {
+	if len(f.dropped) == 0 && f.held == nil {
+		return nil
+	}
+	return f
+}
+
+func (f *rowSinkFaults) Error() string {
+	return errors.Join(f.Unwrap()...).Error()
+}
+
+// Unwrap exposes every fault of the row — the drops in decode order, then the
+// fault that stopped it — so errors.Is / errors.As see through the record.
+func (f *rowSinkFaults) Unwrap() []error {
+	all := make([]error, 0, len(f.dropped)+1)
+	all = append(all, f.dropped...)
+	if f.held != nil {
+		all = append(all, f.held)
+	}
+	return all
+}
+
+// rowFaultsOf recovers the per-row record from a [processEventSafely] sinkErr.
+// An error of any other shape is classified as a single fault, exactly as the
+// pre-RLT-132 caller did, so a future return path keeps both guarantees: a
+// permanent fault cannot hold the cursor, and nothing else can be skipped.
+func rowFaultsOf(sinkErr error) *rowSinkFaults {
+	var faults *rowSinkFaults
+	if errors.As(sinkErr, &faults) {
+		return faults
+	}
+	if classifySinkFault(sinkErr) == dispositionSkip {
+		return &rowSinkFaults{dropped: []error{sinkErr}}
+	}
+	return &rowSinkFaults{held: sinkErr}
 }
 
 // wedgeTracker counts the CONSECUTIVE cycles a single source has spent at the
@@ -794,18 +868,23 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			return
 		}
 		// `id` was computed at closure entry for the duplicate guard.
-		disposition := classifySinkFault(sinkErr)
-		if disposition == dispositionSkip {
-			// Poison row: retrying can never succeed, so skipping (letting
-			// the cursor advance past it) is safer than stalling the source
-			// forever. Log LOUD + count so it surfaces as an alert.
+		faults := rowFaultsOf(sinkErr)
+		// Poison OUTPUTS: retrying can never succeed, so skipping (letting the
+		// cursor advance past them) is safer than stalling the source forever.
+		// Log LOUD + count EACH one so it surfaces as an alert — the row's
+		// other outputs were still offered to the sink (RLT-132).
+		for _, dropErr := range faults.dropped {
 			sinkPermanentFails++
-			tracker.forget(id)
-			p.logger.Error("projector: PERMANENT sink failure — skipping poison row (cursor advances past it)",
+			p.logger.Error("projector: PERMANENT sink failure — skipping poison output (cursor advances past it)",
 				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
-				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", sinkErr)
+				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", dropErr)
+		}
+		if faults.held == nil {
+			tracker.forget(id)
 			return
 		}
+		sinkErr = faults.held
+		disposition := classifySinkFault(sinkErr)
 		// Transient (DB down / restarting / ctx) or unclassified (deadlock,
 		// statement-timeout, a store validation error, anything new): hold the
 		// cursor below this ledger so the next cycle re-reads and retries.
