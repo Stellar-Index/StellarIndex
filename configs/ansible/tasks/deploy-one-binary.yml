@@ -27,6 +27,12 @@
 #      the BINARY only — migrations already applied in this deploy's
 #      pre_tasks are never reverted (CS-099; that's policy, not a gap,
 #      see docs/operations/deploy-workflow.md).
+#      Every rollback — this binary's and the whole-deploy one below —
+#      acts on the record the forward path wrote BEFORE it touched the
+#      path (`rollback_record`), and moves nothing aside it cannot show
+#      it can put back. A binary this run installed for the first time
+#      has no backup: it is left installed, its service stopped, and it
+#      is NAMED in the failure rather than deleted (K078).
 #   9. Prune backups beyond the latest 5 to bound disk use.
 
 - name: "[{{ binary }}] Confirm new artefact exists on controller"
@@ -62,6 +68,38 @@
       {{ (sidecar.content | b64decode | trim) if sidecar is succeeded and sidecar.content is defined
          else 'untracked-' + ansible_date_time.iso8601_basic_short | default(lookup('pipe', 'date -u +%Y%m%dT%H%M%SZ')) }}
 
+- name: "[{{ binary }}] Check whether a current binary exists"
+  # Read-only, and deliberately OUTSIDE the block below: the rescue reads
+  # the record built from it, so it must describe THIS binary. Facts are
+  # host-scoped and persist across the include_tasks loop, so a stat that
+  # could be skipped by an early failure would leave the previous
+  # iteration's answer in scope (K078).
+  ansible.builtin.stat:
+    path: "{{ install_dir }}/{{ binary }}"
+  register: current_stat
+
+# K078 (audit-2026-09-02): what a rollback may undo is what this deploy
+# OBSERVED before it touched anything — never something re-derived while
+# the rescue runs. The two disagree exactly when it matters: a binary this
+# run installs for the FIRST time has no .prev-<tag> to go back to, and a
+# rescue that assumes one deletes a healthy binary. Empty string means
+# "nothing to restore", and every rollback task below is gated on it.
+- name: "[{{ binary }}] Record what a rollback of this binary may undo"
+  ansible.builtin.set_fact:
+    rollback_record:
+      live_path: "{{ install_dir }}/{{ binary }}"
+      # The backup the "Backup current binary" task below will create —
+      # empty when there is no current binary to back up.
+      prev_path: >-
+        {{ (install_dir ~ '/' ~ binary ~ '.prev-' ~ backup_tag) if current_stat.stat.exists else '' }}
+      # The version the sidecar recorded before this run. Empty for an
+      # untracked install (binary present, no sidecar) as well as for a
+      # first install — in both cases `backup_tag` is a synthetic
+      # "untracked-<timestamp>" that was never a deployed version and must
+      # never be written back into the sidecar as if it were one.
+      prev_version: >-
+        {{ backup_tag if (sidecar is succeeded and sidecar.content is defined) else '' }}
+
 - name: "[{{ binary }}] Stage new binary as .new alongside live path"
   ansible.builtin.copy:
     src: "{{ local_dist_dir }}/{{ binary }}-linux-amd64"
@@ -72,11 +110,6 @@
 
 - name: "[{{ binary }}] Block: backup → install → restart → probe → rollback-on-failure"
   block:
-    - name: "[{{ binary }}] Check whether a current binary exists"
-      ansible.builtin.stat:
-        path: "{{ install_dir }}/{{ binary }}"
-      register: current_stat
-
     - name: "[{{ binary }}] Backup current binary"
       ansible.builtin.command:
         cmd: "mv {{ install_dir }}/{{ binary }} {{ install_dir }}/{{ binary }}.prev-{{ backup_tag }}"
@@ -169,9 +202,14 @@
     # roll ALL of them back together, not just the failing one. Facts
     # persist across include_tasks loop iterations (host-scoped, not
     # loop-scoped), so this accumulates across the whole binary_list loop.
+    #
+    # The value is the restore RECORD built before this binary was touched
+    # (K078), not the backup tag: the rescue must be able to tell "roll
+    # this one back to <path>" from "this run installed it for the first
+    # time, there is nothing to roll back to".
     - name: "[{{ binary }}] Record successful swap (for whole-deploy rollback if a LATER binary fails)"
       ansible.builtin.set_fact:
-        swapped_binaries: "{{ (swapped_binaries | default({})) | combine({binary: backup_tag}) }}"
+        swapped_binaries: "{{ (swapped_binaries | default({})) | combine({binary: rollback_record}) }}"
 
   rescue:
     - name: "[{{ binary }}] FAILURE — rolling back"
@@ -194,22 +232,45 @@
         cmd: "mv {{ install_dir }}/{{ binary }} {{ install_dir }}/{{ binary }}.failed-{{ version }}"
       ignore_errors: true
 
+    # Gated on the record (K078): with no prior install there is no backup
+    # to move back, and the un-gated `mv` only ever failed into
+    # ignore_errors. `removes:` makes the restore a no-op if the recorded
+    # backup is gone (pruned, or a rollback that already ran) rather than
+    # a silent failure.
     - name: "[{{ binary }}] Restore backup binary"
+      when: rollback_record.prev_path | length > 0
       ansible.builtin.command:
-        cmd: "mv {{ install_dir }}/{{ binary }}.prev-{{ backup_tag }} {{ install_dir }}/{{ binary }}"
+        cmd: "mv {{ rollback_record.prev_path }} {{ rollback_record.live_path }}"
+        removes: "{{ rollback_record.prev_path }}"
       ignore_errors: true
 
     - name: "[{{ binary }}] Restore sidecar version marker"
+      when: rollback_record.prev_version | length > 0
       ansible.builtin.copy:
-        content: "{{ backup_tag }}"
+        content: "{{ rollback_record.prev_version }}"
         dest: "/var/lib/stellarindex/deployed-versions/{{ binary }}"
         owner: root
         group: root
         mode: "0644"
       ignore_errors: true
 
+    # No sidecar before this run (first install, or an untracked one):
+    # restoring the pre-deploy state means REMOVING the marker this run
+    # wrote, not stamping the synthetic "untracked-<timestamp>" tag as if
+    # it were a released version — the next deploy would back the binary
+    # up under that tag and `deploy.yml`'s skew check would read it as the
+    # live version.
+    - name: "[{{ binary }}] Drop sidecar version marker (there was none before this run)"
+      when: rollback_record.prev_version | length == 0
+      ansible.builtin.file:
+        path: "/var/lib/stellarindex/deployed-versions/{{ binary }}"
+        state: absent
+      ignore_errors: true
+
     - name: "[{{ binary }}] Restart with old binary"
-      when: binary not in cli_binaries
+      when:
+        - binary not in cli_binaries
+        - rollback_record.prev_path | length > 0
       ansible.builtin.systemd:
         name: "{{ binary }}.service"
         state: restarted
@@ -233,25 +294,76 @@
       when: item.key not in cli_binaries
       ignore_errors: true
 
-    - name: "[{{ binary }}] Whole-deploy rollback — move other newly-live binaries aside"
-      ansible.builtin.command:
-        cmd: "mv {{ install_dir }}/{{ item.key }} {{ install_dir }}/{{ item.key }}.rolledback-{{ version }}"
+    # K078 (audit-2026-09-02): this used to move EVERY recorded binary
+    # aside and then `mv` a .prev-<tag> back with ignore_errors. For a
+    # binary this run installed for the FIRST time no .prev-<tag> exists,
+    # so the restore failed silently and the install path was left EMPTY
+    # while the play reported it rolled back — a bad deploy turned into an
+    # outage for a binary that was healthy. Nothing is moved aside now
+    # unless the exact backup the forward path recorded is on disk at this
+    # moment; the rest are named in the failure instead of being deleted.
+    - name: "[{{ binary }}] Whole-deploy rollback — stat each recorded previous binary"
+      ansible.builtin.stat:
+        path: "{{ item.value.prev_path }}"
       loop: "{{ (swapped_binaries | default({})) | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
+      when: item.value.prev_path | length > 0
+      register: rollback_prev_stat
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Whole-deploy rollback — which recorded binaries can be put back"
+      ansible.builtin.set_fact:
+        rollback_restorable: >-
+          {{ rollback_prev_stat.results | default([]) | selectattr('stat', 'defined')
+             | selectattr('stat.exists') | map(attribute='item.key') | list }}
+
+    - name: "[{{ binary }}] Whole-deploy rollback — which recorded binaries cannot"
+      ansible.builtin.set_fact:
+        rollback_unrestorable: >-
+          {{ (swapped_binaries | default({})) | dict2items
+             | rejectattr('key', 'in', rollback_restorable) | map(attribute='key') | list }}
+
+    - name: "[{{ binary }}] Whole-deploy rollback — move restorable binaries aside"
+      ansible.builtin.command:
+        cmd: "mv {{ item.value.live_path }} {{ item.value.live_path }}.rolledback-{{ version }}"
+        removes: "{{ item.value.live_path }}"
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.key in rollback_restorable
       ignore_errors: true
 
     - name: "[{{ binary }}] Whole-deploy rollback — restore each one's previous binary"
       ansible.builtin.command:
-        cmd: "mv {{ install_dir }}/{{ item.key }}.prev-{{ item.value }} {{ install_dir }}/{{ item.key }}"
+        cmd: "mv {{ item.value.prev_path }} {{ item.value.live_path }}"
+        removes: "{{ item.value.prev_path }}"
+        creates: "{{ item.value.live_path }}"
       loop: "{{ (swapped_binaries | default({})) | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
+      when: item.key in rollback_restorable
       ignore_errors: true
+
+    - name: "[{{ binary }}] Whole-deploy rollback — confirm each restored binary is back"
+      ansible.builtin.stat:
+        path: "{{ item.value.live_path }}"
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: item.key in rollback_restorable
+      register: rollback_after_stat
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Whole-deploy rollback — name any restore that did not land"
+      ansible.builtin.set_fact:
+        rollback_missing: >-
+          {{ rollback_after_stat.results | default([]) | selectattr('stat', 'defined')
+             | rejectattr('stat.exists') | map(attribute='item.key') | list }}
 
     - name: "[{{ binary }}] Whole-deploy rollback — restore each one's sidecar version marker"
       ansible.builtin.copy:
-        content: "{{ item.value }}"
+        content: "{{ item.value.prev_version }}"
         dest: "/var/lib/stellarindex/deployed-versions/{{ item.key }}"
         owner: root
         group: root
@@ -259,8 +371,30 @@
       loop: "{{ (swapped_binaries | default({})) | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
+      when:
+        - item.key in rollback_restorable
+        - item.value.prev_version | length > 0
       ignore_errors: true
 
+    # Untracked prior install: the marker this run wrote is the only one
+    # that ever existed, so restoring the pre-deploy state removes it.
+    # A binary that stayed on the new version keeps its marker — the
+    # sidecar must name what is actually on disk.
+    - name: "[{{ binary }}] Whole-deploy rollback — drop sidecars that did not exist before this run"
+      ansible.builtin.file:
+        path: "/var/lib/stellarindex/deployed-versions/{{ item.key }}"
+        state: absent
+      loop: "{{ (swapped_binaries | default({})) | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when:
+        - item.key in rollback_restorable
+        - item.value.prev_version | length == 0
+      ignore_errors: true
+
+    # Only the ones actually put back. A binary left on the new version
+    # stays STOPPED — that is its pre-deploy state (nothing was installed
+    # at its path before this run) and the failure below says so.
     - name: "[{{ binary }}] Whole-deploy rollback — restart each one with its previous binary"
       ansible.builtin.systemd:
         name: "{{ item.key }}.service"
@@ -268,18 +402,40 @@
       loop: "{{ (swapped_binaries | default({})) | dict2items }}"
       loop_control:
         label: "{{ item.key }}"
-      when: item.key not in cli_binaries
+      when:
+        - item.key not in cli_binaries
+        - item.key in rollback_restorable
       ignore_errors: true
 
+    # The message must describe what the rescue ACTUALLY did. It used to
+    # list every recorded binary as "rolled back" whether or not the
+    # restore landed, so the one case that needs an operator — an install
+    # path the rollback cannot refill — read as a clean rollback (K078).
     - name: "[{{ binary }}] FAIL the play"
       ansible.builtin.fail:
         msg: >-
-          {{ binary }} health probe failed; rolled back to {{ backup_tag }}.
+          {{ binary }} health probe failed.
+          {% if rollback_record.prev_path | length > 0 %}
+          Rolled back to {{ backup_tag }}.
+          {% else %}
+          NOT rolled back: this run was its first install, there is no previous
+          binary, so {{ rollback_record.live_path }} is now unoccupied.
+          {% endif %}
           Bad binary preserved at {{ install_dir }}/{{ binary }}.failed-{{ version }}
           for forensics.
-          {% if (swapped_binaries | default({})) | length > 0 %}
+          {% if rollback_restorable | length > 0 %}
           Also rolled back these earlier-in-this-run binaries to keep the
-          host on one consistent version set: {{ (swapped_binaries | default({})) | dict2items | map(attribute='key') | join(', ') }}.
+          host on one consistent version set: {{ rollback_restorable | join(', ') }}.
+          {% endif %}
+          {% if rollback_unrestorable | length > 0 %}
+          NOT rolled back — no previous binary to restore (installed for the
+          first time by this run, or its recorded backup is gone):
+          {{ rollback_unrestorable | join(', ') }}. They are LEFT INSTALLED on
+          {{ version }} with their services stopped; start or remove them by hand.
+          {% endif %}
+          {% if rollback_missing | length > 0 %}
+          RESTORE FAILED — these install paths are EMPTY and need a hand:
+          {{ rollback_missing | join(', ') }}.
           {% endif %}
 
   always:

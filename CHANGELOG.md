@@ -246,6 +246,36 @@ against.
   `-preflight` for its whole source set and deletes only the subset the verdict
   names back.
 
+- **ops / deploy rollback deleted binaries it never backed up (K078):** the
+  whole-deploy rollback in `configs/ansible/tasks/deploy-one-binary.yml`
+  re-derived its restore state while it ran instead of consuming what the
+  forward path recorded. It `mv`'d **every** binary the run had already
+  swapped aside to `.rolledback-<version>` and then `mv`'d a `.prev-<tag>`
+  back with `ignore_errors: true` — but the forward path only creates a
+  `.prev-<tag>` `when: current_stat.stat.exists`, so a binary this run
+  installed for the **first** time (a new name in `binaries_csv`, or any host
+  rebuilt from bare metal) had nothing to restore: the restore failed
+  silently, the install path was left **empty**, and the play still reported
+  that binary among the ones it "rolled back to keep the host on one
+  consistent version set". A rollback runs when something is already wrong;
+  deleting a healthy binary there turns a bad deploy into an outage.
+  The forward path now records, before it touches anything, what a rollback
+  of that binary may undo — its live path, the backup it will be able to put
+  back (empty when there is none), and the version the sidecar held (empty
+  for an untracked or first install). Every rescue task consumes that record:
+  nothing is moved aside unless the exact recorded backup is on disk at that
+  moment, restores are `removes:`/`creates:`-guarded so a repeated rollback
+  is convergent rather than cumulative, and a binary that cannot be rolled
+  back is left installed with its service stopped and **named** in the
+  failure instead of deleted. The same record also stops a rolled-back
+  first/untracked install from having the synthetic `untracked-<timestamp>`
+  tag written into its `deployed-versions` sidecar as if it were a released
+  version — the marker is removed, which is the pre-deploy truth.
+  `scripts/ci/deploy-rollback-test.sh` pins it by running the real task file
+  against a throwaway container over a five-binary matrix (tracked prior
+  install, first-ever install, untracked prior install, the failing binary,
+  and a binary the deploy never names), plus a repeated run and a
+  single-binary run whose record set is empty.
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with
   `AND o.tx_hash IN (SELECT tx_hash FROM stellar.transactions WHERE successful = 1
