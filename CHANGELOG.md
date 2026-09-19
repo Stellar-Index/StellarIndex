@@ -149,6 +149,16 @@ against.
   answer out of that cache (`/v1/price`, `/v1/price?window=`, `/v1/price/tip`,
   `/v1/price/batch`, both SEP-40 passthroughs) is now pinned on one market by
   `TestCachedVWAPSurfacesWithholdScamFlaggedMarket` (RLT-350).
+- **pricing / GlobalAssetView headline:** the headline's triangulated tier
+  (tier 3, the aggregator's VWAP cache) now consults the withholding
+  chokepoint like tier 1 already did. Tier 3 is the tier a Stellar-only token
+  reaches — its literal `<asset>/fiat:USD` pair has no `prices_1m` rows, so
+  tier 1 misses by construction — which meant a directory-flagged issuer's
+  asset page could still carry a price and a market cap, the exact outcome the
+  scam gate was built for. Withheld degrades to "no data" and the caller falls
+  through, as tier 1 does. The scam half only: the substance floor is measured
+  on the pair's literal alias union, which is empty by construction on this
+  tier (RLT-350).
 - **projector / `projector-replay`:** a replay's cursor rewind can no longer
   be reverted by the live projector's in-flight cycle. A cycle reads its
   cursor, spends up to `PerSourceTimeout` scanning and sinking, then

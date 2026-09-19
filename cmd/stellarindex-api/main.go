@@ -3589,6 +3589,30 @@ func (g globalPriceReader) LatestAggregatorPrices(ctx context.Context, base, quo
 }
 
 func (g globalPriceReader) LookupTriangulated(ctx context.Context, base, quote canonical.Asset, window time.Duration) (string, time.Time, bool, error) {
+	// Scam-issuer gate, through the chokepoint. Tier 1 above withholds a
+	// flagged issuer's headline; this tier served it, and it is the tier a
+	// Stellar-only token actually reaches — its literal <asset>/fiat:USD
+	// pair has no prices_1m rows, so tier 1 misses by construction and the
+	// headline comes from the aggregator's cache instead. A flagged
+	// issuer's asset page carrying a price and a market cap IS the
+	// 2026-08-25 decision this gate was built for (RLT-350). Withheld
+	// degrades to "no data", exactly as tier 1 does: the caller falls
+	// through, and the on-chain headline fallback it lands on is gated by
+	// the listing's own substance screen.
+	//
+	// The substance gate is passed nil DELIBERATELY — it is not a gate
+	// this tier can ask. Its floor is measured over the pair's alias
+	// union, and a triangulated pair has zero rows in its literal form by
+	// construction (that absence is why this tier exists), so asking it
+	// here would withhold every Stellar-only token's headline for
+	// absence-of-a-literal-market rather than for a thin one. The
+	// substance question about the REAL underlying market is asked where
+	// it can be answered — tier 1, and the per-asset listing gate behind
+	// the on-chain fallback. Same split /v1/twap, /v1/vwap and
+	// /v1/price's cache-backed fallback chain make.
+	if priceWithheld(ctx, nil, g.scam, base, quote, "asset_headline") {
+		return "", time.Time{}, false, nil
+	}
 	val, isTri, found, err := g.tri.LookupTriangulatedVWAP(ctx, base, quote, window)
 	if err != nil || !found || !isTri {
 		// `found && !isTri` means the cache had a direct (non-
