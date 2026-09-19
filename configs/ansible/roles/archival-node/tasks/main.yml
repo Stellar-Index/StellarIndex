@@ -65,7 +65,9 @@
 # same run (08-clickhouse.yml) still gets configured.
 #
 # Resolved HERE, right after preflight, rather than beside the imports
-# it currently guards: 15-log-discipline.yml carries six more
+# it currently guards: 15-log-discipline.yml carries SEVEN more
+# (counted from that file; an earlier note said six and a verifier counted
+# eight — re-derive the set from the file, do not trust any of the three)
 # unguarded ClickHouse-config tasks (the /var/lib/clickhouse/logs dir,
 # zzz-logpath.xml, zz-ratesengine.xml, zz-merge-memory-guard.xml, the
 # clickhouse-client drop-in and a bare `clickhouse-client -q "SELECT 1"`

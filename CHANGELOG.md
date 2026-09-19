@@ -171,8 +171,11 @@ against.
   `clickhouse-client --port 9300`. So on a host that has no ClickHouse — the DR
   bring-up, a fresh r2/r3, a no-lake box — the FIRST of them aborted the role on
   its vault-password assert, and because a failed task ends the play, every task
-  after it (firewall, hardening, healthcheck, the stellarindex services, Caddy,
-  log discipline) never ran. The imports were unconditional on purpose, and that
+  after it never ran — which is `21-clickhouse-drop-guard.yml`,
+  `22-clickhouse-exporter.yml` and `23-local-prometheus.yml`. Firewall,
+  hardening, healthcheck, the stellarindex services, Caddy and log discipline
+  import BEFORE it (main.yml 193/197/201/205/222/227 against 231) and did run.
+  The imports were unconditional on purpose, and that
   purpose is why `run_clickhouse` is the WRONG gate: it is false on r1 by design
   (so `08-clickhouse.yml` never rebuilds r1's hand-tended lake) and r1 is exactly
   the host those three files were written for — gating on it would have silently
@@ -197,8 +200,10 @@ against.
   the one that fails on a `run_clickhouse`-only "fix".
   **This does not finish F128, and the remaining file is named rather than
   quietly left:** `tasks/15-log-discipline.yml` — imported EARLIER than these
-  three, and outside this unit's file set — carries six more unguarded
-  ClickHouse-config tasks (`/var/lib/clickhouse/logs` chowned to the
+  three, and outside this unit's file set — carries SEVEN more unguarded
+  ClickHouse-config tasks (counted from the file, not from this list: an
+  earlier draft of this entry said six and a verifier counted eight; whoever
+  closes it must re-derive the set rather than trust any of the three numbers) (`/var/lib/clickhouse/logs` chowned to the
   `clickhouse` user, which no task in this role creates; `zzz-logpath.xml`,
   `zz-ratesengine.xml`, `zz-merge-memory-guard.xml` and the clickhouse-client
   drop-in, all written under `/etc/clickhouse-server` or
