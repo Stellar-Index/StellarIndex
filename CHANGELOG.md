@@ -348,6 +348,21 @@ against.
   the workflow. Guarded by
   `test/controlwiring/ansible_default_inventory_test.go`, which resolves the
   real playbook through the real ansible.
+- **ops / ch-schema-snapshot offsite-configured direction (RLT-029):**
+  `ch-schema-snapshot.sh` blanked `SNAPSHOT_MC_TARGET` when the offsite push
+  was refused (unknown mc alias, or an alias resolving to loopback), so the
+  `stellarindex_ch_schema_snapshot_offsite_configured` gauge read back as `0`
+  — indistinguishable from a host that never configured an offsite target at
+  all. The alert's whole reason to split "never configured" from "configured
+  but failing" is to send the on-call engineer to the right fix (ack the gap,
+  vs. fix the alias/credentials); collapsing the two sent a typo'd-alias host
+  to the wrong runbook step. The refusal now sets a separate
+  `offsite_target_provable` flag that gates the push attempt below it, while
+  `SNAPSHOT_MC_TARGET` itself is left untouched so the metrics block still
+  reports `1`. `scripts/ops/ch-schema-snapshot-test.sh` was RED at HEAD
+  (12/13 — "offsite_configured missing/wrong with a target set") and is now
+  13/13.
+
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with
   `AND o.tx_hash IN (SELECT tx_hash FROM stellar.transactions WHERE successful = 1

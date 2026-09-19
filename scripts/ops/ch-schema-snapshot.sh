@@ -196,6 +196,14 @@ find "$OUT_DIR" -mindepth 1 -maxdepth 1 -type d -mtime "+$RETAIN_DAYS" -exec rm 
 # rather than drifting into it. Either way the offsite alert tickets
 # the host, by name, until a push lands.
 offsite_ok=0
+# Whether the configured target survived the "is it provably remote"
+# check below. A refusal here must NOT blank SNAPSHOT_MC_TARGET: the
+# metrics block (§6) reads that variable to report offsite_configured,
+# and a host with a typo'd/loopback alias is "configured but failing"
+# (1), not "never configured" (0) — the two read as opposite fixes to
+# an on-call engineer, and blanking the target on a refusal used to
+# collapse them into the wrong one.
+offsite_target_provable=1
 if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
   # `mc` honours AWS_* from the process environment ahead of the alias's
   # own stored credentials, and this unit's EnvironmentFile
@@ -231,15 +239,15 @@ if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
   if [[ -z "$alias_url" ]]; then
     note "OFFSITE PUSH REFUSED — '$offsite_alias' is not a configured mc alias, so the target would be written to LOCAL DISK on this host"
     rc=2
-    SNAPSHOT_MC_TARGET=""
+    offsite_target_provable=0
   elif [[ "$alias_url" == *//127.0.0.1* || "$alias_url" == *//localhost* || "$alias_url" == *//::1* ]]; then
     note "OFFSITE PUSH REFUSED — alias '$offsite_alias' resolves to $alias_url, which is this host; that is not off-site"
     rc=2
-    SNAPSHOT_MC_TARGET=""
+    offsite_target_provable=0
   fi
 fi
 
-if [[ -n "$SNAPSHOT_MC_TARGET" ]]; then
+if [[ -n "$SNAPSHOT_MC_TARGET" && "$offsite_target_provable" -eq 1 ]]; then
   want=$(find "$work" -type f | wc -l | tr -d ' ')
   if command -v mc >/dev/null 2>&1; then
     "${mc_clean[@]}" mc mirror --overwrite "$work" "$SNAPSHOT_MC_TARGET/$day" >/dev/null 2>&1 || true
