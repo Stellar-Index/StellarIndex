@@ -196,6 +196,19 @@ against.
   climbs. A row carrying both a poison output and a held fault is retried
   whole, so it is not a shed candidate and its quarantine budget still
   accumulates.
+- **ops / sdex-claim-audit counted no ledgers and defaulted to the trimmed
+  bucket (RLT-282):** the tool exists to be differenced against an external
+  anchor's trade count for the same range, so a walk that covered less of the
+  range than the anchor did turns straight into a phantom decoder gap of
+  exactly the ledgers nobody read — and it never counted the ledgers it
+  walked, so it could not tell. `-bucket` defaulted to `cfg.Storage.S3BucketLive`,
+  which is trimmed and cannot hold a historic range; a SIGINT was also treated
+  as a clean exit. The bucket now resolves through `opsutil.ResolveStreamBucket`
+  (the same seam policy as ch-backfill and census-backfill rather than a fourth
+  local copy), the walk counts delivered ledgers, the report prints walked over
+  requested, and the command exits non-zero through the shared `walkCoverage`
+  rule after printing the full diagnosis.
+
 - **ops / ch-gate measured the walk against itself (RLT-282):** the ADR-0034
   Phase-2 gate printed both the requested ledger count and the walked one, then
   gated on `ch.LedgerRows != walked` — so when a wrong bucket or a hole

@@ -216,7 +216,7 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	// it never reached there is nothing to disagree with. This is
 	// checked before gateFail because every mismatch above is downstream
 	// of it, and it names the bucket, which is the usual cause.
-	if cerr := walkCoverageErr("ch-gate", uint32(*from), uint32(*to), walked, streamBucket); cerr != nil {
+	if cerr := walkCoverage("ch-gate", uint32(*from), uint32(*to), walked, streamBucket); cerr != nil {
 		return cerr
 	}
 	if gateFail {
@@ -226,7 +226,7 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	return nil
 }
 
-// walkCoverageErr is the one rule every galexie-walking subcommand in
+// walkCoverage is the one rule every galexie-walking subcommand in
 // this package applies before it reports on what it saw: assert
 // DELIVERED == REQUESTED, or say so and fail. Returns nil when the walk
 // covered the whole range.
@@ -249,7 +249,13 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 // slice that was read and says nothing at all about the rest. The
 // zero-ledger case is called out separately because it is the loudest
 // shape of the same defect and the one an operator misreads as "clean".
-func walkCoverageErr(cmd string, from, to uint32, walked int, bucket string) error {
+//
+// Siblings, same rule in each command's own vocabulary:
+// [backfillCoverage] (ch-backfill, "is the range in ClickHouse"),
+// ingest.censusCoverage and ingest.backfillChunkCoverage. This one is
+// worded for READ-ONLY walks, which report rather than persist, and is
+// shared by ch-gate and sdex-claim-audit.
+func walkCoverage(cmd string, from, to uint32, walked int, bucket string) error {
 	requested := uint64(to) - uint64(from) + 1
 	if uint64(walked) == requested {
 		return nil

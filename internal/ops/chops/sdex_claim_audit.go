@@ -31,7 +31,7 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "first ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "last ledger sequence (inclusive, required)")
-	bucket := fs.String("bucket", "", "override storage bucket (default cfg.Storage.S3BucketLive)")
+	bucket := fs.String("bucket", "", "galexie bucket override. Default: the range vs ingestion.live_seam_ledger picks archive-or-live; with no seam configured it stays cfg.Storage.S3BucketLive, which does NOT hold historic ranges — pass the archive bucket for those (see opsutil.ResolveStreamBucket)")
 	examples := fs.Int("examples", 20, "max example drops to print")
 	dumpOps := fs.Bool("dump-ops", false, "dump every trade op (type, result codes, claim count) — diagnostic for non-extraction")
 	if err := fs.Parse(args); err != nil {
@@ -48,15 +48,23 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	streamBucket := cfg.Storage.S3BucketLive
-	if *bucket != "" {
-		streamBucket = *bucket
+	// Seam-aware bucket choice, shared with ch-backfill and
+	// census-backfill rather than re-derived: the old local default
+	// (cfg.Storage.S3BucketLive unless -bucket) sent every historic
+	// audit at the TRIMMED live bucket, which is how this tool's
+	// headline "total claim atoms (= Hubble trade count)" could be
+	// computed over a fraction of the range and still read as a
+	// decoder gap (RLT-282).
+	streamBucket, err := opsutil.ResolveStreamBucket(cfg, *bucket, uint32(*from), uint32(*to))
+	if err != nil {
+		return err
 	}
 	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 	passphrase := cfg.Stellar.Passphrase()
 
 	fmt.Fprintf(os.Stderr, "sdex-claim-audit: walking ledgers %d..%d from %q\n", *from, *to, streamBucket)
 
+	walked := 0
 	var totalClaims, totalDrops int
 	dropsByReason := map[string]int{}
 	ledgersWithDrops := map[uint32]int{}
@@ -65,6 +73,7 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 
 	walkErr := ledgerstream.Stream(ctx, lsCfg, uint32(*from), uint32(*to),
 		func(lcm sdkxdr.LedgerCloseMeta) error {
+			walked++
 			seq := lcm.LedgerSequence()
 			reader, rerr := ingest.NewLedgerTransactionReaderFromLedgerCloseMeta(passphrase, lcm)
 			if rerr != nil {
@@ -118,6 +127,8 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	}
 
 	fmt.Printf("\n=== sdex-claim-audit: %d..%d ===\n", *from, *to)
+	fmt.Printf("ledgers walked / requested:               %d / %d\n",
+		walked, uint64(*to)-uint64(*from)+1)
 	fmt.Printf("total claim atoms (= Hubble trade count): %d\n", totalClaims)
 	fmt.Printf("total dropped (NOT emitted as trades):    %d\n", totalDrops)
 	fmt.Printf("trades we emit (claims - drops):          %d\n", totalClaims-totalDrops)
@@ -149,7 +160,17 @@ func sdexClaimAudit(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 			fmt.Printf("  %s\n", l)
 		}
 	}
-	return nil
+
+	// Coverage last, so the operator still gets the full diagnosis, but
+	// non-zero so nothing downstream reads a partial audit as the answer
+	// (RLT-282). Every number above is a tally over the ledgers the walk
+	// delivered, and the tool's entire purpose is to be differenced
+	// against an EXTERNAL anchor's count for the same range — so a walk
+	// that covered less of the range than Hubble did turns straight into
+	// a phantom decoder gap of exactly the ledgers nobody read. A SIGINT
+	// lands here too: the walk treats context.Canceled as a clean exit,
+	// and an interrupted audit is not an audit.
+	return walkCoverage("sdex-claim-audit", uint32(*from), uint32(*to), walked, streamBucket)
 }
 
 // isTradeOpType reports whether an op type can emit ClaimAtoms.
