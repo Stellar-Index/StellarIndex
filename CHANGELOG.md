@@ -277,18 +277,32 @@ against.
   `ch_live_sink_drops_sustained` and `stellar_archive_publish_fail` share
   the shape but describe themselves, and are documented in their runbooks,
   as sustained signals (archive-publish.md relies on `for: 1h` to filter a
-  retried transient). **Operator
-  note:** these alerts go from never firing to firing at once, so expect
-  tickets that were previously silent — before the rules land, read
+  retried transient). Two things the rule comments now say plainly. The
+  born-inside-the-window arm has a known false positive: "did not exist one
+  window ago" is also true when Prometheus itself has no sample there, so
+  after a Prometheus outage or scrape gap longer than the 5m lookback an
+  already-non-zero child tickets for up to W with no new event — accepted
+  at ticket severity, as the oracle-symbol rules accept it, used on no
+  page, and pinned as a known limitation by a promtool case in each tree.
+  And `tier_both_missing` is safe at `for: 0m` because no scraped process
+  emits it benignly: tiering attaches only to archive-bucket reads, and the
+  one scraped process that makes them is the indexer in its bounded archive
+  phase, where a both-tiers miss is a real hole (the tip-racing reads that
+  miss harmlessly belong to `stellarindex-ops` backfills, which Prometheus
+  does not scrape). `docs/operations/alerts-catalog.md` (four rows) and
+  `projector-row-quarantined.md`'s "Detected by" row quoted the old `for:`
+  and are brought in line. **Operator note:**
+  `stellarindex_ledgerstream_tier_both_missing` is a PAGE and is now
+  `for: 0m` — one both-tiers miss pages at once. Before the rules land,
+  read
   `increase(stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}[30d])`
-  on r1, since that one is a page. Codified is not applied: the r1 overlay
-  (`configs/prometheus/rules.r1/`) reaches r1 through `deploy.yml`'s
-  rule-reconcile step on the next r1 deploy (that step is
-  `continue-on-error`, so read its result), and the multi-host tree
-  (`deploy/monitoring/rules/`) reaches a host only through the ansible
-  `prometheus` role. `docs/operations/alerts-catalog.md` (four rows) and
-  `projector-row-quarantined.md`'s "Detected by" row still quote the old
-  `for:` and are a follow-up (audit Q261).
+  on r1. The other alerts here go from never firing to firing at once, so
+  expect tickets that were previously silent. Codified is not applied:
+  `configs/prometheus/rules.r1/` is applied by `deploy.yml`'s `prom_rules`
+  step, which runs unconditionally on every r1 deploy (it is
+  `continue-on-error`, so read its result), and the multi-host
+  `deploy/monitoring/rules/` tree is shipped by the ansible `prometheus`
+  role (`tasks/03-prometheus-configure.yml`) (audit Q261).
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process

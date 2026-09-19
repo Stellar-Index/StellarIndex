@@ -119,7 +119,10 @@ groups:
       # {source,outcome="sink_quarantined"} child is also unseeded, so it is
       # born at 1 and increase() alone reads 0; `unless … offset 15m` reads
       # "exists now, did not exist one window ago" (same idiom as
-      # ingestion.yml's stellarindex_ingestion_persist_drop).
+      # ingestion.yml's stellarindex_ingestion_persist_drop — whose comment
+      # also records the arm's known false positive: a Prometheus scrape
+      # gap at t-15m makes an already-non-zero child read as newly born and
+      # tickets for up to 15m with no new quarantine).
       - alert: stellarindex_projector_row_quarantined
         expr: |
           increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m]) > 0

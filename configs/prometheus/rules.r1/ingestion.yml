@@ -473,6 +473,15 @@ groups:
       # — the same idiom as the oracle-symbol rules in this tree; it goes
       # quiet once the birth leaves the window, so an old count never
       # re-fires.
+      # KNOWN FALSE POSITIVE of that arm (accepted at ticket severity, as
+      # the oracle-symbol rules accept it): "did not exist one window ago"
+      # is also true when PROMETHEUS has no sample there. After a
+      # Prometheus outage or scrape gap longer than the 5m lookback, every
+      # child already above 0 reads as newly born while `offset 15m` lands
+      # in the hole, and this tickets for up to 15m with no new drop.
+      # Check `increase()` on the series before treating such a ticket as
+      # a drop. It is why the arm is not used on a page. Pinned as a known
+      # limitation in rule-tests/tripwire-isolated-increment*_test.yml.
       - alert: stellarindex_ingestion_persist_drop
         expr: |
           increase(stellarindex_source_insert_errors_total{kind=~"soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"}[15m]) > 0
@@ -701,8 +710,9 @@ groups:
       # nonzero increase).
       # Q261: `for: 0m` plus the born-inside-the-window arm — see
       # stellarindex_ingestion_persist_drop above for why `for: 15m` over a
-      # 15m increase window could never fire on a single drop, and why an
-      # unseeded {source,kind="dropped"} child needs the second arm.
+      # 15m increase window could never fire on a single drop, why an
+      # unseeded {source,kind="dropped"} child needs the second arm, and
+      # that arm's known false positive after a Prometheus scrape gap.
       - alert: stellarindex_ingestion_trade_buffer_drop
         expr: |
           increase(stellarindex_source_insert_errors_total{kind="dropped"}[15m]) > 0

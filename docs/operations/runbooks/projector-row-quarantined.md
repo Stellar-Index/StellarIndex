@@ -13,7 +13,7 @@ severity: P3
 | ----- | ----- |
 | Alert | `stellarindex_projector_row_quarantined` |
 | Severity | P3 (ticket) |
-| Detected by | `deploy/monitoring/rules/projector.yml` + `configs/prometheus/rules.r1/projector.yml` — `increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m]) > 0` for 15m |
+| Detected by | `deploy/monitoring/rules/projector.yml` + `configs/prometheus/rules.r1/projector.yml` — `increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m]) > 0`, or the `sink_quarantined` child born non-zero inside those 15m, with `for: 0m`: one quarantine tickets at once and the ticket clears 15m later on its own — the row is still skipped, so work from the journal, not from whether the alert is still up |
 | Typical MTTR | minutes to diagnose; the re-drive itself is usually fast once the underlying defect is fixed |
 | Impact | ONE event is durably skipped from the served tier for the affected source. Not data loss (the raw event still lives in the ClickHouse lake), but it IS a real, silent gap in the projected/served data until an operator re-drives it. |
 

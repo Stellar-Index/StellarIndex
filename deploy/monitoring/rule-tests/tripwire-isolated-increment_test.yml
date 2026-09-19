@@ -151,6 +151,33 @@ tests:
         alertname: stellarindex_ingestion_persist_drop
         exp_alerts: []
 
+  # KNOWN LIMITATION of the born-arm, pinned so it stays a documented
+  # trade-off rather than a surprise: "did not exist one window ago" is also
+  # true when Prometheus itself has no sample there. A scrape gap longer
+  # than the 5m lookback, sitting at t-15m, makes an OLD non-zero count read
+  # as newly born, and the rule tickets for as long as `offset 15m` lands in
+  # the hole — here scrapes are missing from 21m to 34m, so roughly 41m..49m.
+  # No drop happened. Accepted at ticket severity (the oracle-symbol rules carry the
+  # same behaviour); it is the reason the arm is not on any page.
+  - interval: 1m
+    name: persist_drop — KNOWN LIMITATION, a Prometheus scrape gap makes an old count ticket falsely
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="defindex",kind="defindex_flow_vault"}'
+        values: '3x20 _x14 3x40'
+    alert_rule_test:
+      # An old count, before any gap: silent.
+      - eval_time: 18m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: []
+      # `offset 15m` lands inside the hole: a false ticket.
+      - eval_time: 45m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: *persist_drop_alert
+      # The hole has left t-15m: quiet again, on its own.
+      - eval_time: 55m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: []
+
   # ══ stellarindex_ingestion_trade_buffer_drop ══════════════════════
   - interval: 1m
     name: trade_buffer_drop — one isolated permanent drop tickets
@@ -286,7 +313,7 @@ tests:
   # Seeded at 0 by obs.seedLedgerstreamTierSeries, so the existing-series
   # shape is the production one and no born-arm is needed.
   - interval: 1m
-    name: tier_both_missing — one isolated both-tiers miss pages (a one-shot backfill dies on a single miss)
+    name: tier_both_missing — one isolated both-tiers miss pages (an archive-phase miss in the indexer is a real hole)
     input_series:
       - series: 'stellarindex_ledgerstream_tier_read_total{job="stellarindex_indexer",instance="r1:9100",outcome="both_missing"}'
         values: '0x3 1x60'

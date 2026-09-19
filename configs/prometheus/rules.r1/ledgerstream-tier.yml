@@ -16,9 +16,17 @@ groups:
 
       # Q261: `for: 0m`. `for: 5m` over a 5m increase window could not
       # fire on ONE both-tiers miss (true for 5m after the increment, pending
-      # needs a further 5m) — and one miss is the whole event for a one-shot
-      # backfill, which dies on it rather than retrying. It paged only when a
-      # retrying consumer kept missing. The both_missing child is pre-seeded
+      # needs a further 5m). It paged only when a consumer kept missing.
+      # Firing at once is safe because no scraped process emits this
+      # benignly. Tiering attaches only to ARCHIVE-bucket reads
+      # (pipeline.LedgerstreamConfig; the live tail is single-source), and
+      # the one scraped process that makes them is the indexer, in its
+      # bounded archive phase [from, seam-1] — history that must exist, so a
+      # both-tiers miss there is a real hole and StreamArchiveThenLive
+      # refuses to hand off to live over it. The reads that DO race the tip
+      # and miss harmlessly belong to `stellarindex-ops` backfills, which
+      # prometheus.r1.yml does not scrape: they neither page nor are covered
+      # by this rule. The both_missing child is pre-seeded
       # (obs.seedLedgerstreamTierSeries), so increase() sees the first miss
       # and no born-inside-the-window arm is needed here.
       - alert: stellarindex_ledgerstream_tier_both_missing
