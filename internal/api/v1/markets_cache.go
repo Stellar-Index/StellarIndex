@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -31,6 +32,23 @@ import (
 // Per-pair lookups (PairMarket) and the sparkline batch are
 // pass-through — they're keyed too narrowly to benefit, and the
 // underlying queries are already fast.
+//
+// Ownership: the cache owns what it stores, the caller owns what it
+// gets. Every serving branch of fetchPairs / fetchPools returns a COPY
+// of the entry's row slice, never the entry's own backing array.
+// handleMarkets and handlePools write their rows in place (the
+// dex-nonstandard-decimals last_price correction, plus the
+// ?include=sparkline / inception enrichment), and that correction is
+// not idempotent: handed the shared array, every hit re-multiplied the
+// already-corrected price by K (41.32 → 4132 → 413200 → …), opt-in
+// enrichment leaked into requests that never asked for it, and
+// concurrent requests raced on the same elements (audit 2026-09-02
+// F014 / K038).
+//
+// The copy is one level deep — the row structs. Pointer and slice
+// FIELDS (LastPrice, Volume24hUSD, VolumeHistory24h, …) still alias
+// the cached values, so a caller may REPLACE a field on its row but
+// must never write THROUGH one.
 type CachedMarketsReader struct {
 	// logger sinks a panic recovered in a detached refresh goroutine.
 	// It is the PROCESS DEFAULT rather than the API Server's logger:
@@ -253,6 +271,12 @@ const marketsRefreshBudget = 30 * time.Second
 // fresh (W8 reconciliation; matches the REC-05 age>TTL bound). observedAt
 // is the zero time on a cold miss/error, where there is nothing served to
 // date.
+//
+// The rows returned are always a copy (slices.Clone) — including to the
+// cold LEADER, whose upstream result is the very slice the entry keeps.
+// The clone runs outside the mutex: a stored backing array is never
+// written again (a refresh swaps in a new slice rather than editing the
+// old one), so reading it unlocked is safe. See the type comment.
 func (c *CachedMarketsReader) fetchPairs(
 	ctx context.Context,
 	op, key string,
@@ -266,7 +290,7 @@ func (c *CachedMarketsReader) fetchPairs(
 		out, next, at := e.pairs, e.cursor, e.at
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-		return out, next, at, false, nil
+		return slices.Clone(out), next, at, false, nil
 	}
 
 	// (A') Stale-while-revalidate. A prior SUCCESSFUL fetch exists
@@ -294,11 +318,11 @@ func (c *CachedMarketsReader) fetchPairs(
 			// stale response is written, so reusing it would abort
 			// every refresh — defeating the entire point of SWR.
 			go c.refreshPairs(op, entry, done, upstream)
-			return out, next, at, true, nil
+			return slices.Clone(out), next, at, true, nil
 		}
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
-		return out, next, at, true, nil
+		return slices.Clone(out), next, at, true, nil
 	}
 
 	// (B) Cold fetch in flight (no prior success to serve) — join it
@@ -316,7 +340,7 @@ func (c *CachedMarketsReader) fetchPairs(
 				return nil, "", time.Time{}, false, entry.err
 			}
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-			return entry.pairs, entry.cursor, entry.at, false, nil
+			return slices.Clone(entry.pairs), entry.cursor, entry.at, false, nil
 		case <-ctx.Done():
 			return nil, "", time.Time{}, false, ctx.Err()
 		}
@@ -347,7 +371,7 @@ func (c *CachedMarketsReader) fetchPairs(
 	}
 	c.mu.Unlock()
 	close(done)
-	return rows, cursor, at, false, err
+	return slices.Clone(rows), cursor, at, false, err
 }
 
 // refreshPairs runs the upstream call OFF the request path for the
@@ -417,7 +441,7 @@ func (c *CachedMarketsReader) fetchPools(
 		out, next := e.pools, e.cursor
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-		return out, next, nil
+		return slices.Clone(out), next, nil
 	}
 
 	// (A') Stale-while-revalidate.
@@ -433,11 +457,11 @@ func (c *CachedMarketsReader) fetchPools(
 			// intentional — see fetchPairs (A'). The pools refresh
 			// MUST outlive the stale response's request ctx.
 			go c.refreshPools(op, entry, done, upstream)
-			return out, next, nil
+			return slices.Clone(out), next, nil
 		}
 		c.mu.Unlock()
 		obs.APICacheOpsTotal.WithLabelValues("markets", op, "stale").Inc()
-		return out, next, nil
+		return slices.Clone(out), next, nil
 	}
 
 	// (B) Cold fetch in flight — join.
@@ -452,7 +476,7 @@ func (c *CachedMarketsReader) fetchPools(
 				return nil, "", entry.err
 			}
 			obs.APICacheOpsTotal.WithLabelValues("markets", op, "hit").Inc()
-			return entry.pools, entry.cursor, nil
+			return slices.Clone(entry.pools), entry.cursor, nil
 		case <-ctx.Done():
 			return nil, "", ctx.Err()
 		}
@@ -480,7 +504,7 @@ func (c *CachedMarketsReader) fetchPools(
 	}
 	c.mu.Unlock()
 	close(done)
-	return rows, cursor, err
+	return slices.Clone(rows), cursor, err
 }
 
 // refreshPools is refreshPairs for the Pool return type. Mirrors

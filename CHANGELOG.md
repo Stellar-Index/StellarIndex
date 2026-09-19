@@ -17,6 +17,19 @@ against.
 
 ### Fixed
 
+- **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
+  longer grows by the decimals factor on every cache hit. Both handlers
+  correct a non-7-decimals pair's raw price in place, and the in-process
+  markets cache handed every request the cache entry's own row slice — so
+  the first request wrote the corrected price into the cache and each later
+  hit multiplied it again (a 9-decimals token's 41.32 served as 4132, then
+  413200, then 41320000 for the life of the entry), while concurrent
+  requests raced on the same array. The cache now returns a copy of its
+  rows from every serving branch (cold leader, fresh hit, stale-serve and
+  cold waiter), so a caller can only ever write its own page. Ordinary
+  7-decimals pairs were never affected. None of the existing listing tests
+  wired the handler to the cache the way production does; the new ones do,
+  and run concurrent hits under the race detector (audit F014).
 - **tests (storage):** `TestHistoryPointsDirectionUnion` no longer fails on
   every run between 00:00 and about 02:05 UTC. It seeds trades two hours
   back and asserted that the 1-day history series is empty because "today's

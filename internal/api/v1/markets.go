@@ -57,6 +57,12 @@ func CexSourceNames() []string {
 // MarketsReader is the storage-side interface for /v1/markets
 // and /v1/pairs lookups. Implementations: *timescale.Store
 // (DistinctPairsExt + PairMarket), in-memory stubs for tests.
+//
+// Ownership contract: the row slices the list methods return belong to
+// the CALLER. handleMarkets / handlePools normalise and enrich them in
+// place, so an implementation that retains rows across calls (a cache)
+// must hand out a copy — [CachedMarketsReader] does. Callers may replace
+// a row's fields but must not write through its pointer/slice fields.
 type MarketsReader interface {
 	// DistinctPairsExt returns one page of (base, quote) pairs
 	// present in the trades store under the requested ordering.
