@@ -704,3 +704,81 @@ func TestCycle_AdjacentDuplicateRowsDecodeOnce(t *testing.T) {
 		t.Fatalf("sink saw %d events, want 2 (three duplicate copies must decode once; the distinct row once)", emitted)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// RLT-131, alerting half: ADR-0003's SEV-1 promise on ErrI128Overflow.
+// ---------------------------------------------------------------------------
+
+// TestCycle_I128OverflowGetsItsOwnOutcomeNotSinkPermanent pins the counter the
+// stellarindex_projector_i128_overflow rule watches.
+//
+// canonical.ErrI128Overflow is one of valueShapeSentinels, so before this it
+// was skipped and counted as an ordinary outcome="sink_permanent" drop —
+// indistinguishable from a bad on-chain value, and outcome="sink_permanent"
+// had no rule at all. ADR-0003 §Operational impact promises the opposite:
+// "any observed errors.Is(err, canonical.ErrI128Overflow) in production fires
+// a SEV-1. It indicates an int64 sneaking in somewhere" — our bug, on an
+// amount path, so every value that path touched is suspect.
+//
+// The two outcomes must PARTITION: the overflow is counted once, under
+// sink_i128_overflow and not also under sink_permanent, or every expression
+// that sums the metric across outcomes double-counts the row.
+func TestCycle_I128OverflowGetsItsOwnOutcomeNotSinkPermanent(t *testing.T) {
+	const source = "rlt131-i128-overflow"
+	// Ledger 101 overflows; 102 commits — the sink-health proof, so the row is
+	// shed on cycle one and the counters land in the same cycle.
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	i128Before := decodedCount(t, source, "sink_i128_overflow")
+	permBefore := decodedCount(t, source, "sink_permanent")
+	okBefore := decodedCount(t, source, "ok")
+
+	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
+		if ev.(ledgerEvent).ledger == 101 {
+			return fmt.Errorf("%w: trade amount %s exceeds 128 bits", canonical.ErrI128Overflow,
+				"340282366920938463463374607431768211456")
+		}
+		return nil
+	})
+
+	h.cycle()
+
+	if got := decodedCount(t, source, "sink_i128_overflow") - i128Before; got != 1 {
+		t.Errorf("outcome=sink_i128_overflow delta = %v, want 1 — ADR-0003's SEV-1 rule watches this child; without it the promise has no implementation", got)
+	}
+	if got := decodedCount(t, source, "sink_permanent") - permBefore; got != 0 {
+		t.Errorf("outcome=sink_permanent delta = %v, want 0 — the outcomes must partition, or a sum across them counts this row twice", got)
+	}
+	if got := decodedCount(t, source, "ok") - okBefore; got != 1 {
+		t.Errorf("outcome=ok delta = %v, want 1 (only ledger 102 durably committed)", got)
+	}
+	if got := h.store.cursor(); got != 105 {
+		t.Fatalf("cursor = %d, want 105 — an overflow is still a deterministic drop and must not wedge the source", got)
+	}
+}
+
+// TestCycle_OrdinaryPoisonRowIsNotCountedAsAnI128Overflow is the
+// anti-false-page half: the SEV-1 child must stay at zero for the ordinary
+// class-22/23 drop the projector sees routinely, or the rule pages on every
+// poison row and stops meaning anything.
+func TestCycle_OrdinaryPoisonRowIsNotCountedAsAnI128Overflow(t *testing.T) {
+	const source = "rlt131-i128-negative-control"
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	i128Before := decodedCount(t, source, "sink_i128_overflow")
+	permBefore := decodedCount(t, source, "sink_permanent")
+
+	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
+		if ev.(ledgerEvent).ledger == 101 {
+			return notNullViolation()
+		}
+		return nil
+	})
+
+	h.cycle()
+
+	if got := decodedCount(t, source, "sink_i128_overflow") - i128Before; got != 0 {
+		t.Errorf("outcome=sink_i128_overflow delta = %v, want 0 — a class-23502 rejection is a data verdict, not proof of an int64 in our own pipeline", got)
+	}
+	if got := decodedCount(t, source, "sink_permanent") - permBefore; got != 1 {
+		t.Errorf("outcome=sink_permanent delta = %v, want 1", got)
+	}
+}

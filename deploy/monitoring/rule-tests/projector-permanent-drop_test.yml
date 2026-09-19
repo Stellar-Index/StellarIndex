@@ -1,0 +1,249 @@
+---
+# promtool unit tests for the two alerts RLT-131 added to
+# ../rules/projector.yml. Run via:
+#
+#   promtool test rules deploy/monitoring/rule-tests/projector-permanent-drop_test.yml
+#
+# WHAT THIS PINS. The projector's skip arm sheds a row the sink PERMANENTLY
+# rejected and advances the cursor past it — the served tier loses the row
+# until an operator re-drives it. The quarantine arm's identical outcome has
+# had a rule since COR-11; this arm had none, and its only signal was an ERROR
+# log. RLT-131 adds:
+#
+#   * stellarindex_projector_row_dropped_permanent (ticket) on
+#     outcome="sink_permanent";
+#   * stellarindex_projector_i128_overflow (page) on
+#     outcome="sink_i128_overflow" — ADR-0003's SEV-1 promise, which had no
+#     implementation because an i128 overflow was folded into the
+#     sink_permanent count and so was indistinguishable from a bad on-chain
+#     value.
+#
+# THE TRAP THESE CASES EXIST FOR. `stellarindex_projector_events_decoded_total`
+# is a CounterVec whose {source,outcome} children are not pre-seeded, and no
+# projector series in production has ever carried an outcome other than "ok" —
+# so both children are BORN by the very drop the rule is for, and
+# `increase()` over a series with no earlier sample reads 0. A naive
+# increase()-only rule for either alert is mute on exactly the event it
+# exists to report. Both carry the Q261 born-inside-the-window arm
+# (`or ( m > 0 unless m offset 15m )`) the quarantine rule already uses, and
+# case 2 below is the one that proves it.
+#
+# Four cases per alert, mirroring tripwire-isolated-increment_test.yml:
+#   1. ISOLATED increment on an existing series  → fires, then resolves
+#   2. child BORN non-zero (the r1 shape)        → fires, then resolves
+#   3. flat non-zero series older than the window → silent (the born-arm must
+#      not re-fire on an old count)
+#   4. flat zero                                  → silent
+#
+# Case 5 is the partition: an ordinary sink_permanent drop must NOT page as an
+# i128 overflow, and vice versa. The two outcomes are disjoint by construction
+# in cycleOneSource; a rule that watched both would page on every poison row.
+#
+# The r1 overlay's copies are exercised by
+# projector-permanent-drop-r1_test.yml (same cases, other tree).
+#
+# LABEL SHAPES ARE POST-SCRAPE (see ops-job_test.yml's header).
+
+rule_files:
+  - ../rules/projector.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ══ stellarindex_projector_row_dropped_permanent ══════════════════
+  - interval: 1m
+    name: row_dropped_permanent — one isolated drop on an existing series tickets
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="sink_permanent"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: &dropped_alert
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: sep41_transfers
+              outcome: sink_permanent
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md"
+              summary: "Projector permanently dropped a row on sep41_transfers — the sink rejected its VALUES"
+              description: |
+                stellarindex_projector_events_decoded_total{source="sep41_transfers",outcome="sink_permanent"}
+                incremented: the sink rejected the row's VALUES (SQLSTATE class
+                22/23, or a canonical value-shape check before the statement ran)
+                and the cursor advanced past it. The raw event is still in the
+                lake; the served tier is missing the row until it is re-driven
+                with `stellarindex-ops projector-replay -source
+                sep41_transfers` after the defect is fixed.
+
+                READ THE RATE, NOT JUST THE EVENT. One row is a poison value. A
+                burst across many ledgers of one source is the GLOBAL form of the
+                same SQLSTATE — usually a migration whose NOT NULL / CHECK the
+                live rows violate — and the projector will be stalling
+                (runs_total{outcome="sink_retry"}, rising lag) while it bleeds one
+                row per cycle. Fix the schema before the backlog drains.
+
+                Runbook: docs/operations/runbooks/projector-row-quarantined.md
+      - eval_time: 15m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: *dropped_alert
+      # The increment has left the 15m window: a tripwire reports an event,
+      # it does not latch.
+      - eval_time: 25m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: []
+
+  - interval: 1m
+    name: row_dropped_permanent — a child BORN at 1 (the r1 shape) tickets
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="sink_permanent"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: *dropped_alert
+      - eval_time: 15m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: *dropped_alert
+      - eval_time: 25m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: []
+
+  - interval: 1m
+    name: row_dropped_permanent — an old flat count does not re-fire the born-arm
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="sink_permanent"}'
+        values: '7x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: []
+
+  - interval: 1m
+    name: row_dropped_permanent — a flat zero is silent
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="sink_permanent"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: []
+
+  # ══ stellarindex_projector_i128_overflow ══════════════════════════
+  - interval: 1m
+    name: i128_overflow — one isolated overflow on an existing series pages
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",outcome="sink_i128_overflow"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: &i128_alert
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: soroswap
+              outcome: sink_i128_overflow
+              severity: page
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md"
+              summary: "i128 OVERFLOW on soroswap — an int64 has reached an amount path (ADR-0003 SEV-1)"
+              description: |
+                stellarindex_projector_events_decoded_total{source="soroswap",outcome="sink_i128_overflow"}
+                incremented: a canonical.Amount value that must fit in 128 bits
+                did not. ADR-0003 fixes i128 as the width of every amount in this
+                system, so this is never a property of the chain data — it is
+                proof that an int64 has been introduced on one of our own amount
+                paths.
+
+                TREAT EVERY AMOUNT THAT PATH TOUCHED AS SUSPECT, not just the
+                dropped row: a narrowed int64 truncates silently and only the
+                value that exceeded the bound raises this. Find the conversion
+                (`git log` the decoder and the sink for soroswap),
+                fix it, then re-drive with `stellarindex-ops projector-replay
+                -source soroswap` over the whole affected range — the
+                rows that did NOT overflow are the dangerous ones, because they
+                landed.
+
+                Runbook: docs/operations/runbooks/projector-row-quarantined.md
+      - eval_time: 15m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: *i128_alert
+      - eval_time: 25m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: []
+
+  - interval: 1m
+    name: i128_overflow — a child BORN at 1 (the r1 shape) pages
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",outcome="sink_i128_overflow"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: *i128_alert
+      - eval_time: 15m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: *i128_alert
+      - eval_time: 25m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: []
+
+  - interval: 1m
+    name: i128_overflow — an old flat count does not re-fire the born-arm
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",outcome="sink_i128_overflow"}'
+        values: '7x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: []
+
+  - interval: 1m
+    name: i128_overflow — a flat zero is silent
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",outcome="sink_i128_overflow"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: []
+
+  # ══ the partition ═════════════════════════════════════════════════
+  # The two outcomes are disjoint in cycleOneSource: a dropped output is
+  # counted under sink_i128_overflow OR sink_permanent, never both. These
+  # cases pin that the rules honour it — an i128 rule that also matched
+  # ordinary poison rows would page on the routine case and stop meaning
+  # "an int64 is in our pipeline", and a drop rule that matched overflows
+  # would file the SEV-1 as a ticket.
+  - interval: 1m
+    name: partition — an ordinary permanent drop does NOT page as an i128 overflow
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="sink_permanent"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_projector_i128_overflow
+        exp_alerts: []
+
+  - interval: 1m
+    name: partition — an i128 overflow does NOT also raise the drop ticket
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="soroswap",outcome="sink_i128_overflow"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: stellarindex_projector_row_dropped_permanent
+        exp_alerts: []

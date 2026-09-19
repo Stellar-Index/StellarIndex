@@ -183,6 +183,22 @@ func classifySinkFault(err error) sinkDisposition {
 	return dispositionUnclassified
 }
 
+// isI128Overflow reports whether a permanently-dropped output was rejected
+// because a value that must fit in 128 bits did not.
+//
+// It is one of [valueShapeSentinels] and is skipped like the rest, but it is
+// NOT a verdict about an on-chain value: ADR-0003 (§Operational impact) reads
+// "any observed errors.Is(err, canonical.ErrI128Overflow) in production fires
+// a SEV-1 — it indicates an int64 sneaking in somewhere". The bug is ours, and
+// an int64 on an amount path silently truncates every value it touches, not
+// just the one that tripped the check. So the drop is counted under its own
+// `outcome` rather than folded into the ordinary class-22/23 count, which is
+// what gives that promise a rule to hang on
+// (stellarindex_projector_i128_overflow, RLT-131).
+func isI128Overflow(err error) bool {
+	return errors.Is(err, canonical.ErrI128Overflow)
+}
+
 // isValueShapeError reports whether err wraps one of [valueShapeSentinels].
 func isValueShapeError(err error) bool {
 	for _, sentinel := range valueShapeSentinels {

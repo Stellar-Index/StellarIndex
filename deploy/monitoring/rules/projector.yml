@@ -185,6 +185,109 @@ groups:
 
             Runbook: docs/operations/runbooks/projector-row-quarantined.md
 
+      # RLT-131 (audit-2026-09-18). The SISTER of the quarantine rule above,
+      # and the gap that made this finding "high": the skip arm — a
+      # POSITIVELY-identified permanent data fault, SQLSTATE class 22/23 or a
+      # canonical value-shape rejection — sheds rows and advances the cursor
+      # past them exactly like a quarantine does, and had no rule of any kind.
+      # The only signal was an ERROR log. classifySinkFault returns
+      # dispositionSkip for ANY class 22/23 error, and those classes are not
+      # always row-local: a migration adding a NOT NULL or a CHECK the live
+      # rows violate rejects EVERY row of the window. The projector now holds
+      # such a window for QuarantineAfterCyclesNoProgress (~1 h) and then
+      # bleeds one row per cycle, which makes the stall visible — but the rows
+      # that do leave still leave the served tier silently without this.
+      # Same posture, and same Q261 born-inside-the-window arm, as the
+      # quarantine rule: the {source,outcome="sink_permanent"} child is
+      # unseeded (no projector series on r1 has ever carried an outcome other
+      # than "ok"), so it is born at 1 by the very drop the rule is for and
+      # increase() alone reads 0.
+      - alert: stellarindex_projector_row_dropped_permanent
+        expr: |
+          increase(stellarindex_projector_events_decoded_total{outcome="sink_permanent"}[15m]) > 0
+          or (
+            stellarindex_projector_events_decoded_total{outcome="sink_permanent"} > 0
+            unless stellarindex_projector_events_decoded_total{outcome="sink_permanent"} offset 15m
+          )
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: projector
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md
+          summary: "Projector permanently dropped a row on {{ $labels.source }} — the sink rejected its VALUES"
+          description: |
+            stellarindex_projector_events_decoded_total{source="{{ $labels.source }}",outcome="sink_permanent"}
+            incremented: the sink rejected the row's VALUES (SQLSTATE class
+            22/23, or a canonical value-shape check before the statement ran)
+            and the cursor advanced past it. The raw event is still in the
+            lake; the served tier is missing the row until it is re-driven
+            with `stellarindex-ops projector-replay -source
+            {{ $labels.source }}` after the defect is fixed.
+
+            READ THE RATE, NOT JUST THE EVENT. One row is a poison value. A
+            burst across many ledgers of one source is the GLOBAL form of the
+            same SQLSTATE — usually a migration whose NOT NULL / CHECK the
+            live rows violate — and the projector will be stalling
+            (runs_total{outcome="sink_retry"}, rising lag) while it bleeds one
+            row per cycle. Fix the schema before the backlog drains.
+
+            Runbook: docs/operations/runbooks/projector-row-quarantined.md
+
+      # RLT-131 / ADR-0003 (docs/adr/0003-i128-no-truncation.md, §Operational
+      # impact): "any observed errors.Is(err, canonical.ErrI128Overflow) in
+      # production fires a SEV-1. It indicates an int64 sneaking in
+      # somewhere." That promise had no implementation — the sentinel is in
+      # the projector's valueShapeSentinels, so an overflow was skipped and
+      # counted as an ordinary sink_permanent drop, indistinguishable from a
+      # bad on-chain value.
+      #
+      # It is NOT a data-quality verdict. i128 is the width every canonical
+      # amount is carried at; the error means one of OUR paths narrowed a
+      # value to int64, so every amount that path touched is suspect, not just
+      # the row that tripped the check. Hence `page` (this repo's SEV-1) where
+      # the sibling drop rule tickets, and `for: 0m` — ONE observation is the
+      # whole event.
+      #
+      # Born-inside-the-window arm for the same reason as the rules above: the
+      # child does not exist until the first overflow creates it, so
+      # increase() alone would read 0 on exactly the observation this exists
+      # to catch.
+      - alert: stellarindex_projector_i128_overflow
+        expr: |
+          increase(stellarindex_projector_events_decoded_total{outcome="sink_i128_overflow"}[15m]) > 0
+          or (
+            stellarindex_projector_events_decoded_total{outcome="sink_i128_overflow"} > 0
+            unless stellarindex_projector_events_decoded_total{outcome="sink_i128_overflow"} offset 15m
+          )
+        for: 0m
+        labels:
+          severity: page
+          team: stellarindex
+          component: projector
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md
+          summary: "i128 OVERFLOW on {{ $labels.source }} — an int64 has reached an amount path (ADR-0003 SEV-1)"
+          description: |
+            stellarindex_projector_events_decoded_total{source="{{ $labels.source }}",outcome="sink_i128_overflow"}
+            incremented: a canonical.Amount value that must fit in 128 bits
+            did not. ADR-0003 fixes i128 as the width of every amount in this
+            system, so this is never a property of the chain data — it is
+            proof that an int64 has been introduced on one of our own amount
+            paths.
+
+            TREAT EVERY AMOUNT THAT PATH TOUCHED AS SUSPECT, not just the
+            dropped row: a narrowed int64 truncates silently and only the
+            value that exceeded the bound raises this. Find the conversion
+            (`git log` the decoder and the sink for {{ $labels.source }}),
+            fix it, then re-drive with `stellarindex-ops projector-replay
+            -source {{ $labels.source }}` over the whole affected range — the
+            rows that did NOT overflow are the dangerous ones, because they
+            landed.
+
+            Runbook: docs/operations/runbooks/projector-row-quarantined.md
+
       # DATA-6 / NS-2 (audit-2026-08-14): a projector decode soft-fail (a
       # returned decode error or a recovered decoder panic) SKIPS the row and
       # lets the cursor advance past it. That is correct for a rare, scattered

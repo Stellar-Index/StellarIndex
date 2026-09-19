@@ -188,6 +188,24 @@ against.
   partition. A legitimate zero-candidate run still exits 0 and logs the
   zero, now distinguishable in the log from a failed enumeration because
   the failure path never reaches the `done` line at all.
+- **monitoring / the projector's permanent-drop arm gets a rule, and ADR-0003's
+  i128 SEV-1 gets an implementation (RLT-131):** the skip arm sheds a row the
+  sink permanently rejected and advances the cursor past it — the served tier
+  loses the row until it is re-driven — exactly like the quarantine arm, which
+  has had a rule since COR-11. This arm had none; its only signal was an ERROR
+  log. `stellarindex_projector_row_dropped_permanent` (ticket) now watches
+  `outcome="sink_permanent"` in both rule trees, with the Q261
+  born-inside-the-window arm the quarantine rule uses, because no projector
+  series in production has ever carried an outcome other than `ok`, so the
+  child is born by the very drop the rule is for and `increase()` alone reads
+  0. Separately, `canonical.ErrI128Overflow` was folded into that same count,
+  which made ADR-0003's "any observed overflow fires a SEV-1" unimplementable:
+  an overflow is not a verdict about chain data but proof that an `int64` has
+  been introduced on one of our own amount paths, so every amount that path
+  touched is suspect. It now gets its own `outcome="sink_i128_overflow"` (the
+  outcomes still partition — no row is counted twice) and
+  `stellarindex_projector_i128_overflow` pages on it.
+
 - **projector / a permanent sink verdict now needs the same sink-health proof
   a quarantine does (RLT-131):** `permanentSkipCandidate` takes
   `madeProgress` exactly as `quarantineCandidate` already did. A SQLSTATE

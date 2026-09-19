@@ -920,6 +920,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		poisoned           []heldRow
 		failedThisCycle    = make(map[rowIdentity]bool)
 		sinkPermanentFails int
+		sinkI128Overflows  int
 		sinkQuarantined    int
 	)
 	// process runs the per-event decode + route, identical regardless of the
@@ -979,6 +980,19 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// and counted EACH — the row's other outputs were still offered to the
 		// sink (RLT-132).
 		for _, dropErr := range faults.dropped {
+			// An i128 overflow is counted (and alerted) apart from the rest:
+			// it is not a verdict about an on-chain value but proof that an
+			// int64 has been introduced on one of OUR amount paths, which
+			// ADR-0003 promises a SEV-1 for. Own `outcome`, so the promise
+			// has a rule to hang on; the outcomes still partition, so nothing
+			// is double-counted.
+			if isI128Overflow(dropErr) {
+				sinkI128Overflows++
+				p.logger.Error("projector: PERMANENT sink failure — i128 OVERFLOW (SEV-1, ADR-0003): an int64 has reached an amount path; every value that path touched is suspect, not just this row",
+					"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
+					"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", dropErr)
+				continue
+			}
 			sinkPermanentFails++
 			p.logger.Error("projector: PERMANENT sink failure — poison output (the cursor advances past its row only under this cycle's shed cap)",
 				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
@@ -1180,6 +1194,9 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		if sinkPermanentFails > 0 {
 			obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_permanent").Add(float64(sinkPermanentFails))
 		}
+		if sinkI128Overflows > 0 {
+			obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_i128_overflow").Add(float64(sinkI128Overflows))
+		}
 		if sinkQuarantined > 0 {
 			obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_quarantined").Add(float64(sinkQuarantined))
 		}
@@ -1188,6 +1205,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"source", src.Name, "from", fromLedger, "to", toLedger,
 			"first_held_ledger", firstHeldLedger,
 			"transient_fails", sinkTransientFails, "permanent_fails", sinkPermanentFails,
+			"i128_overflows", sinkI128Overflows,
 			"poison_rows_held", sinkPoisonHeld, "quarantined", sinkQuarantined)
 		// Wedge detection, sink side: the same terminal stall reached via the
 		// sink-budget path (the 2026-08-01 aquarius-reserves incident) — the CH
@@ -1232,6 +1250,9 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if sinkPermanentFails > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_permanent").Add(float64(sinkPermanentFails))
 	}
+	if sinkI128Overflows > 0 {
+		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_i128_overflow").Add(float64(sinkI128Overflows))
+	}
 	if sinkQuarantined > 0 {
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_quarantined").Add(float64(sinkQuarantined))
 	}
@@ -1272,6 +1293,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	obs.ProjectorCycleDurationSeconds.WithLabelValues(src.Name).Observe(time.Since(start).Seconds())
 
 	if eventsEmitted > 0 || decodeErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 ||
+		sinkI128Overflows > 0 ||
 		sinkPoisonHeld > 0 || sinkQuarantined > 0 {
 		p.logger.Info("projector cycle",
 			"source", src.Name,
@@ -1281,6 +1303,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"decode_errors", decodeErrors,
 			"sink_transient_fails", sinkTransientFails,
 			"sink_permanent_fails", sinkPermanentFails,
+			"sink_i128_overflows", sinkI128Overflows,
 			"sink_poison_rows_held", sinkPoisonHeld,
 			"sink_quarantined", sinkQuarantined,
 			"lag_ledgers", tip-commitTo,
