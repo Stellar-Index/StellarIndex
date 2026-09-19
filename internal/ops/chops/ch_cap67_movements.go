@@ -346,7 +346,10 @@ func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32
 		last = to
 	}
 	if to > tip {
-		fmt.Fprintf(os.Stderr, "ch-cap67-movements: -to %d is above the contiguous lake tip %d — deriving through %d only (a hole below %d has yet to heal; re-run once ch-live-catchup has filled it)\n",
+		// Two reasons land here and the operator cannot tell them apart from
+		// the bound alone: an unhealed hole below -to, or a lake that simply
+		// has not reached it yet. Either way the derive is delayed, not short.
+		fmt.Fprintf(os.Stderr, "ch-cap67-movements: -to %d is above the contiguous lake tip %d — deriving through %d only; re-run once the lake is contiguous through %d (an unhealed hole below it, or ingest has yet to reach it)\n",
 			to, tip, last, to)
 	}
 	return start, last, nil
