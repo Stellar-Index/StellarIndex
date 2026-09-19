@@ -1783,6 +1783,25 @@ against.
   each fix belongs with the files that consume the control. Run
   `go test -tags k023evidence ./test/controlwiring/ -run TestK023 -v`
   for the live status; drop the tag once all five are green.
+- **test (storage):** `TestSeriesReadsUnknownPairCostIsBounded` — an
+  executing measurement of what an anonymous request for a pair that has
+  never traded costs the three series reads that can run with no lower
+  time bound (`HistoryPoints`, and `HistoryPointsInRange` /
+  `TWAPPointsInRange` with no `from`/`to`), audit class K008. It reads
+  each statement back out of `pg_prepared_statements` after the Store
+  method has run, so it measures the shipped SQL rather than a copy, and
+  `EXPLAIN (ANALYZE, BUFFERS)`s it over a 14-chunk, 124,800-row CAGG
+  under both the custom and the generic plan, for a pair whose assets
+  exist nowhere and for one whose assets are both heavily traded but
+  never together. Every chunk is visited — no bound exists to exclude
+  one — but each visit is an index probe: 68–84 shared buffers in total
+  (2.4–3.0 per chunk per direction), no row fetched and discarded, under
+  1 ms. The retired OR disjunction on the same fixture reads 5,597
+  buffers and discards all 124,800 rows under the generic plan, and the
+  test's bounds reject it. This entry changes no query and adds no gate:
+  the cost is O(chunks) and stays O(chunks). Getting below that needs a
+  lookup that does not touch the hypertable (a plain-table pair
+  registry), which is a migration and is not attempted here.
 
 ## [v0.91.0] — 2026-09-18
 
