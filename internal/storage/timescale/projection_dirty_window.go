@@ -36,8 +36,8 @@ type ProjectionDirtyWindow struct {
 	UpdatedAt time.Time
 }
 
-// Reason is PROVENANCE, not prose. Two tools write this table and they are
-// not interchangeable to every reader:
+// Reason is PROVENANCE, not prose. Three tools write this table and they
+// are not interchangeable to every reader:
 //
 //   - `projector-replay` RE-WINDS the live projector cursor, so the lag its
 //     window covers is an INTENDED lag (issue #325).
@@ -45,9 +45,13 @@ type ProjectionDirtyWindow struct {
 //     recorded range may legally sit AT it (`-to` defaults to the live
 //     cursor) or ABOVE it (`-allow-live-overlap` bypasses the one-writer
 //     guard entirely — exercised on r1 2026-07-27).
+//   - `ch-rebuild -record-dirty-window`, driven by
+//     scripts/ops/ch-rebuild-projected.sh when a clean-slate window was
+//     DELETEd and its re-derive did not complete: the range is not merely
+//     rewritten, it is EMPTY until the recovery run finishes (F075).
 //
 // The constructors and the predicate below are the ONE place the format
-// lives, so a reader can tell the two apart without matching a free-form
+// lives, so a reader can tell them apart without matching a free-form
 // string in three packages. The prefixes reproduce byte-for-byte what the
 // shipped binaries have written since migration 0125, so rows ALREADY in
 // the table classify correctly (pinned by
@@ -55,6 +59,7 @@ type ProjectionDirtyWindow struct {
 const (
 	reasonProjectorReplayPrefix  = "projector-replay rewind "
 	reasonProjectedRebuildPrefix = "projected-rebuild -write "
+	reasonCHRebuildEmptiedPrefix = "ch-rebuild-projected emptied "
 )
 
 // ProjectorReplayReason is the Reason `stellarindex-ops projector-replay`
@@ -69,6 +74,16 @@ func ProjectorReplayReason(fromCursor, toTarget uint32) string {
 // -write` stamps on the window covering the range it is about to rewrite.
 func ProjectedRebuildReason(from, to uint32) string {
 	return fmt.Sprintf("%s[%d,%d]", reasonProjectedRebuildPrefix, from, to)
+}
+
+// CHRebuildEmptiedReason is the Reason `ch-rebuild -record-dirty-window`
+// stamps on a window scripts/ops/ch-rebuild-projected.sh DELETEd and could
+// not (yet) re-derive. Distinct from ProjectedRebuildReason because the
+// served tier here is EMPTY over [from,to], not merely rewritten: until a
+// completeness verdict re-reconciles the range, /v1/coverage would carry
+// its prior clean claim over a hole (F075).
+func CHRebuildEmptiedReason(from, to uint32) string {
+	return fmt.Sprintf("%s[%d,%d]", reasonCHRebuildEmptiedPrefix, from, to)
 }
 
 // IsProjectorReplay reports whether this window was recorded by

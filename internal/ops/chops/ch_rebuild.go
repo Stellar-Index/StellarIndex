@@ -280,6 +280,99 @@ func checkCHRebuildPreflightFlags(preflight, write bool) error {
 	return nil
 }
 
+// chRebuildDirtyRecordedPrefix opens the single stdout line a successful
+// `ch-rebuild -write -record-dirty-window` prints. Like
+// chRebuildPreflightPrefix it is a CONTRACT with
+// scripts/ops/ch-rebuild-projected.sh, which logs the line verbatim so the
+// operator can see WHICH sources the completeness verifier now owes a
+// re-reconcile for.
+const chRebuildDirtyRecordedPrefix = "ch-rebuild: recorded projection dirty window"
+
+// checkCHRebuildRecordDirtyFlags keeps the three steps around a clean-slate
+// window separable. -preflight is the ASK that precedes the DELETE, -write
+// is the re-derive, and -record-dirty-window is the RECORD that outlives a
+// re-derive which did not happen — an invocation combining them would
+// either answer "ok, delete" while declaring the range already emptied, or
+// file an obligation for a re-derive that is about to run in the same
+// process (the routine case #408 measured and refused).
+func checkCHRebuildRecordDirtyFlags(recordDirty, preflight, write bool) error {
+	if recordDirty && write {
+		return fmt.Errorf("-record-dirty-window records that a range was emptied and NOT re-derived; it is not a mode of -write. Run the re-derive and, if it fails, the record, as separate invocations")
+	}
+	if recordDirty && preflight {
+		return fmt.Errorf("-record-dirty-window and -preflight are different steps (ask before the DELETE vs. record an emptied window); pass one")
+	}
+	return nil
+}
+
+// chRebuildRecordDirtySources resolves the sources a
+// `-record-dirty-window` invocation files an obligation for: the ones it
+// NAMED, each of which must carry a reconciliation-catalogue entry.
+//
+// Named rather than re-derivable, deliberately. The caller is telling this
+// process which sources' rows it already DELETED, and whether the current
+// config could re-derive them is a different question — a source whose
+// gate has since closed is the one whose hole will persist longest. But a
+// name outside the catalogue is refused: compute-completeness looks a
+// window up by the source it is verifying, so a row under a name no
+// verdict ever reads is a silent no-op dressed as an obligation.
+func chRebuildRecordDirtySources(cat []reconSource, named []string) ([]string, error) {
+	if len(named) == 0 {
+		return nil, fmt.Errorf("-record-dirty-window needs -sources: it records the obligation for the sources whose rows were deleted, and recording one for every catalogue source would force a full re-reconcile of ranges nothing touched")
+	}
+	known := make(map[string]bool, len(cat))
+	for _, src := range cat {
+		known[src.name] = true
+	}
+	for _, name := range named {
+		if !known[name] {
+			return nil, fmt.Errorf("-record-dirty-window: %q is not a reconciliation-catalogue source, so a window recorded under it would never be read by a completeness verdict; name the catalogue sources whose rows were deleted", name)
+		}
+	}
+	return named, nil
+}
+
+// projectionDirtyWindowRecorder is the slice of timescale.Store
+// [recordCHRebuildDirtyWindows] needs.
+type projectionDirtyWindowRecorder interface {
+	RecordProjectionDirtyWindow(ctx context.Context, w timescale.ProjectionDirtyWindow) error
+}
+
+// recordCHRebuildDirtyWindows records [lo,hi] as a pending projection dirty
+// window for every source in sources, so the next compute-completeness
+// re-reconciles the range instead of carrying its prior clean claim over
+// it (F075).
+//
+// One row PER SOURCE, under the catalogue names the reconcile keys on: the
+// table is keyed by source and compute-completeness looks a window up by
+// the source it is verifying, so a single record — or one under a name no
+// catalogue entry carries — silently no-ops. An empty set is therefore an
+// error, not a quiet success: the caller asked to record an obligation and
+// none was written.
+//
+// The obligation is discharged ONLY by a clean completeness verdict whose
+// scope covered the window (compute-completeness clears it in the same
+// transaction that stores the verdict — finding F072). Nothing in the
+// rebuild path clears it, because a re-derive is the CAUSE of the
+// dirtiness, never evidence against it.
+func recordCHRebuildDirtyWindows(ctx context.Context, store projectionDirtyWindowRecorder, w io.Writer, lo, hi uint32, sources []string) error {
+	if len(sources) == 0 {
+		return fmt.Errorf("ch-rebuild: -record-dirty-window [%d,%d]: this invocation would re-derive no source, so no obligation was recorded — name the sources whose rows were deleted in -sources", lo, hi)
+	}
+	for _, name := range sources {
+		if err := store.RecordProjectionDirtyWindow(ctx, timescale.ProjectionDirtyWindow{
+			Source: name,
+			From:   lo,
+			To:     hi,
+			Reason: timescale.CHRebuildEmptiedReason(lo, hi),
+		}); err != nil {
+			return fmt.Errorf("ch-rebuild: -record-dirty-window (%s): %w", name, err)
+		}
+	}
+	_, err := fmt.Fprintf(w, "%s [%d,%d] sources=%s\n", chRebuildDirtyRecordedPrefix, lo, hi, strings.Join(sources, ","))
+	return err
+}
+
 // reportCHRebuildPreflight prints the preflight verdict: the range and the
 // sources this invocation would re-derive, comma-separated, in catalogue
 // order. An empty list is a legal answer (nothing named resolves to a
@@ -348,6 +441,7 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	bulkTrades := fs.Bool("bulk-trades", false, "with -write: land trade rows through the BULK backfill writer (timescale.Store.BulkBackfillTrades) instead of the per-batch upsert. Opt-in and BACKFILL-ONLY. It proves - per source, scoped by ledger AND ts - that the target range holds no stored rows, then resolves usd_volume for the whole buffer through a worker pool and streams the rows in over parallel binary COPY connections. Rows are identical to the upsert path's (same storability gate, same intra-batch PK dedupe, same tradeUSDVolume waterfall, same derive_generation, same source_entry_counts / registry / sentinel side effects); the difference is that a latency-bound workload stops being serial. If the range is NOT empty - or a COPY hits a unique violation because something wrote underneath it - the buffer is handed to the ordinary generation-guarded upsert instead and the run says so. Worth it for a historical re-derive below the source's floor; pointless (and it will just fall back) for a recovery into populated ledgers.")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
 	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading ClickHouse or writing a row. A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
+	recordDirty := fs.Bool("record-dirty-window", false, "record [from,to] as a pending ADR-0033 projection dirty window for every source named in -sources (each must be a reconciliation-catalogue source; the list is REQUIRED), then exit 0 WITHOUT reading ClickHouse or writing a row. The next compute-completeness re-reconciles that range instead of carrying its prior clean projection claim over it, and clears the obligation only with the verdict that discharges it. This is the RECORD, not a re-derive, so it takes neither -write nor -preflight. It exists for the operator (and scripts/ops/ch-rebuild-projected.sh's TELL THE VERDICT line) after a clean-slate DELETE whose re-derive did not complete: the window is then EMPTY and /v1/coverage must stop certifying it complete (F075). An ordinary -write run deliberately records nothing — see the -write warning and #408.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -355,6 +449,9 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
 	}
 	if err := checkCHRebuildPreflightFlags(*preflight, *write); err != nil {
+		return err
+	}
+	if err := checkCHRebuildRecordDirtyFlags(*recordDirty, *preflight, *write); err != nil {
 		return err
 	}
 	// -contracts scopes both passes to a contract subset; the sep41 pass pushes
@@ -418,6 +515,24 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	cat, soroswapDec, cerr := buildReconciliationCatalogue(cfg)
 	if cerr != nil {
 		return fmt.Errorf("ch-rebuild: reconciliation catalogue: %w", cerr)
+	}
+	// -record-dirty-window returns HERE: as soon as there is a catalogue to
+	// check the named sources against, and before the gate warm-up, the
+	// factory preseed and any lake read.
+	//
+	// It writes no served row — it files an obligation ON the completeness
+	// verifier — so nothing downstream may be able to refuse it. That is
+	// the point in the case it exists for: a window
+	// ch-rebuild-projected.sh emptied for a source whose decoder gate has
+	// since closed, or whose preseed now errors, is exactly the hole
+	// /v1/coverage must stop certifying clean (F075), and a later
+	// placement would let a refusal swallow the record.
+	if *recordDirty {
+		named, rerr := chRebuildRecordDirtySources(cat, parseCSVList(*only))
+		if rerr != nil {
+			return rerr
+		}
+		return recordCHRebuildDirtyWindows(ctx, store, os.Stdout, lo, hi, named)
 	}
 	// Re-derive on the gate the live indexer runs with — curated set ∪
 	// protocol_contracts — not on the bare in-code seed (RLT-430): a
@@ -553,8 +668,19 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 		// is worse than the stale claim it fixes. It needs a bounded
 		// per-window re-reconcile and a re-measured pass wall-clock
 		// first.
+		//
+		// ONE case is carved out of that trade-off and IS recorded, via
+		// the separate -record-dirty-window mode: a window
+		// ch-rebuild-projected.sh DELETEd whose re-derive did not
+		// complete (F075). There the served tier is not "rewritten and
+		// probably fine", it is EMPTY, so a carried clean claim is
+		// certainly false rather than second-order — and the cost lands
+		// only in an incident the operator is already handling, for the
+		// deleted sources alone, instead of on every routine window.
 		logger.Warn("ch-rebuild -write does NOT record a projection dirty window — " +
-			"the next completeness verdict will carry its prior clean claim over this range. " +
+			"the next completeness verdict will carry its prior clean claim over this range " +
+			"(a window left EMPTIED by a failed clean-slate re-derive is the exception: " +
+			"ch-rebuild-projected.sh records that one with -record-dirty-window). " +
 			"Note the [from,to] window and source set on the change record, and re-check " +
 			"the affected sources' reconcile before trusting the next /v1/coverage verdict.")
 	}
