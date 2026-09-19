@@ -36,6 +36,25 @@ against.
   corrected. New two-connection integration test pins the interleave and
   fails if the pass parks anywhere but its locking statement (audit
   2026-09-02 F108).
+- **explorer (tx lookup, lake indexes):** a `stellar.tx_hash_index` that is
+  emptied while the API is running no longer turns every `/v1/tx/{hash}`
+  into a 404. A miss against the index is served as authoritative absence,
+  which is only safe while the index holds rows — and the reader checked
+  that once, then kept the "holds rows" answer for the life of the process.
+  Truncating the index, or dropping and recreating it ahead of a
+  `ch-txindex-backfill`, left every already-running API process answering
+  "no such transaction" for transactions that exist, until it was
+  restarted. The answer is now a 30-second lease: the first lookup after it
+  runs out re-asks (one `LIMIT 1` read per lease window per process, none
+  while idle — not one per request), an emptied index is dropped to the scan
+  path at once and picked back up once repopulated, and a re-check that
+  lands between the DROP and the CREATE does not pin the scan path for the
+  process lifetime. If the store will not answer the re-check, the last
+  answer is honoured for at most two minutes. The same lease covers every
+  other rows-required lake probe (contract active-ledgers, instance changes,
+  census, accounts stats, creator/sponsor boards and edges, holders rollup,
+  account-activity watermark); probes of a column's or table's existence
+  keep their process-lifetime cache (audit F119).
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process

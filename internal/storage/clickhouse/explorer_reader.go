@@ -55,19 +55,153 @@ const explorerScanSettings = ` SETTINGS max_threads = 4, max_memory_usage = 8589
 // that a recovered store is picked up within one window.
 const schemaProbeRetryAfter = 5 * time.Second
 
+// schemaProbeLease is how long a requireRows probe's POSITIVE verdict
+// ("exists AND holds rows") is trusted before the next caller re-confirms
+// it (F119). Rows, unlike a column or a table, can vanish under a running
+// process — a TRUNCATE, or the DROP+recreate idiom deploy/clickhouse's own
+// recreate files prescribe — and callers derive AUTHORITY from that verdict
+// (an index miss is a definitive 404), so it is a lease, never a latch.
+//
+// Cost chosen: at most ONE extra `… LIMIT 1` per leased probe per 30 s per
+// process, and only while that surface is actually being read (renewal is
+// lazy — an idle process issues nothing). 30 s bounds the wrong-404 window
+// after an index is emptied to roughly the time it takes an operator to
+// start the next command, while keeping the probe off the hot path: a
+// re-probe on every request would double the query count of exactly the
+// µs-class lookups these indexes exist to make cheap.
+const schemaProbeLease = 30 * time.Second
+
+// schemaProbeStaleLeases bounds how long an EXPIRED positive lease keeps
+// being honoured while renewal probes get NO answer (transport error,
+// deadline, resource exception): this many lease lengths from the last
+// observed row (2 min at the default lease). Dropping the verdict on the
+// first unanswered renewal would let one cancelled request or overload
+// blip push every reader onto the slow/503 arm for a retry window — and
+// for tx lookups that arm is the 10B-row bloom scan, i.e. more load on a
+// store that is already refusing queries. Honouring it without bound would
+// re-create the latch. Past the bound the probe reads unavailable until the
+// store answers again.
+const schemaProbeStaleLeases = 4
+
 // schemaProbe caches the answer to a "does this schema object exist"
 // question — but ONLY once the server has actually answered one
 // (C1-048, audit-2026-07-23). See [ExplorerReader.probeSchema] for why a
-// sync.Once was the wrong primitive here.
+// sync.Once was the wrong primitive here, and for which verdicts latch
+// for the process lifetime and which are only leased.
 type schemaProbe struct {
 	mu      sync.Mutex
 	settled bool      // an authoritative answer was received
 	present bool      // meaningful only when settled
-	retryAt time.Time // while now < retryAt, degrade without re-querying
+	retryAt time.Time // while now < retryAt, answer from cache without re-querying
+
+	// confirmedAt is when a probe last OBSERVED the object as usable (for a
+	// requireRows probe: saw a row). It anchors the positive lease, and a
+	// non-zero value also records that this process has seen the object —
+	// see [schemaProbe.record] for why a later "absent" then must not latch.
+	confirmedAt time.Time
 
 	// retryAfter overrides [schemaProbeRetryAfter]. Zero uses the default;
 	// tests set a negative value to disable the negative cache.
 	retryAfter time.Duration
+
+	// lease overrides [schemaProbeLease]; zero uses the default. now
+	// overrides time.Now. Both exist for tests.
+	lease time.Duration
+	now   func() time.Time
+}
+
+func (p *schemaProbe) clock() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
+}
+
+func (p *schemaProbe) leaseLength() time.Duration {
+	if p.lease != 0 {
+		return p.lease
+	}
+	return schemaProbeLease
+}
+
+// leaseExpired reports whether a settled verdict must be re-confirmed.
+// Only a requireRows POSITIVE verdict is leased. Callers hold p.mu.
+func (p *schemaProbe) leaseExpired(now time.Time, requireRows bool) bool {
+	return requireRows && p.present && !now.Before(p.confirmedAt.Add(p.leaseLength()))
+}
+
+// staleVerdict is the answer while an expired positive lease cannot be
+// renewed: still true inside the [schemaProbeStaleLeases] bound, false
+// past it (and false for a probe that holds no positive verdict at all).
+// Callers hold p.mu.
+func (p *schemaProbe) staleVerdict(now time.Time) bool {
+	return p.settled && p.present &&
+		now.Before(p.confirmedAt.Add(schemaProbeStaleLeases*p.leaseLength()))
+}
+
+// armRetry starts the back-off window after a probe that did not end in a
+// usable verdict. Callers hold p.mu.
+func (p *schemaProbe) armRetry(now time.Time) {
+	retryAfter := p.retryAfter
+	if retryAfter == 0 {
+		retryAfter = schemaProbeRetryAfter
+	}
+	if retryAfter > 0 {
+		p.retryAt = now.Add(retryAfter)
+	}
+}
+
+// cached returns the verdict to serve WITHOUT querying, or ok=false when
+// this caller must probe: nothing settled yet, or a positive lease has
+// run out — and the back-off window is not holding probes off.
+func (p *schemaProbe) cached(requireRows bool) (verdict, ok bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.clock()
+	if p.settled && !p.leaseExpired(now, requireRows) {
+		return p.present, true
+	}
+	if !p.retryAt.IsZero() && now.Before(p.retryAt) {
+		// A recent probe got no usable answer; don't pile on.
+		return p.staleVerdict(now), true
+	}
+	return false, false
+}
+
+// record folds one probe outcome into the cache and returns the verdict
+// for the caller that ran it. empty is meaningful only when err == nil.
+func (p *schemaProbe) record(err error, empty, requireRows bool) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	now := p.clock()
+	if p.settled && !p.leaseExpired(now, requireRows) {
+		// A concurrent probe already got (or renewed) the answer.
+		return p.present
+	}
+	switch {
+	case err == nil && !empty:
+		p.settled, p.present, p.confirmedAt = true, true, now
+		p.retryAt = time.Time{}
+		return true
+	case isSchemaAbsent(err) && p.confirmedAt.IsZero():
+		// Never seen by this process: a deployment shape, latched.
+		p.settled, p.present = true, false
+		return false
+	case err == nil || isSchemaAbsent(err):
+		// The server ANSWERED, and the object is not usable now: it is
+		// empty, or it has vanished from under a process that had seen it
+		// (the DROP half of a DROP+recreate — latching that would pin the
+		// slow path until a restart, the C1-048 shape re-entered through
+		// the lease). Any positive verdict is revoked at once; nothing
+		// latches, and a later probe picks the object back up.
+		p.settled, p.present = false, false
+		p.armRetry(now)
+		return false
+	default:
+		// No answer about the object at all.
+		p.armRetry(now)
+		return p.staleVerdict(now)
+	}
 }
 
 // schemaAbsentCodes are the ClickHouse error codes that constitute a
@@ -1567,11 +1701,16 @@ func (r *ExplorerReader) TransactionByHash(ctx context.Context, hash string) (Tx
 // for real transactions. "An empty table is not a definitive answer" —
 // the same convention as DailyActivityAvailable (protocol_reader.go):
 // emptiness is treated as index-unavailable (scan path) and is NOT cached,
-// so a later probe picks the index back up once it is repopulated; only
-// table-absent (schema verdict) and non-empty (rows seen) settle. The
-// complementary guard is the hourly tx_hash_index parity check — that
-// catches PARTIAL index/base divergence; this probe catches total loss.
-// A miss against a NON-EMPTY index remains authoritative.
+// so a later probe picks the index back up once it is repopulated.
+//
+// "Holds rows" is a LEASE, not a latch (F119): the verdict is re-confirmed
+// every [schemaProbeLease], so an index that is TRUNCATEd or DROP+recreated
+// under a RUNNING process stops granting authority within one lease — not
+// only on a cold start. Only table-absent on a process that has never seen
+// the table latches. The complementary guard is the hourly tx_hash_index
+// parity check — that catches PARTIAL index/base divergence; this probe
+// catches total loss. A miss against a NON-EMPTY index remains
+// authoritative.
 func (r *ExplorerReader) txHashIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.txIndexProbe,
 		`SELECT ledger_seq FROM stellar.tx_hash_index LIMIT 1`, true)
@@ -1770,7 +1909,7 @@ func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
 //
 //   - no error                          → the object exists (cache true);
 //   - an exception in [schemaAbsentCodes] → the object does not exist
-//     (cache false).
+//     (cache false — unless this process has already seen it, below).
 //
 // Everything else — transport errors, context deadline/cancel, and any
 // OTHER ClickHouse exception (resource limits, timeouts, overload) — means
@@ -1788,24 +1927,33 @@ func (r *ExplorerReader) ledgerEntriesVersioned(ctx context.Context) bool {
 // definitive answer" convention as DailyActivityAvailable. Only a
 // schema-absent verdict or an observed row settles a requireRows probe.
 //
+// An observed row settles it only for [schemaProbeLease] (F119). Existence
+// of a column or table is stable for a process lifetime; ROWS are not — a
+// TRUNCATE or a DROP+recreate empties the object under a running reader,
+// and a latched "holds rows" then keeps granting the authority the probe
+// exists to withhold (every /v1/tx/{hash} an authoritative 404) until a
+// restart. So the first caller after the lease runs out re-asks:
+//
+//   - rows                → lease renewed;
+//   - empty               → verdict revoked at once, re-probed after the
+//     retry window, exactly as an empty cold-start probe;
+//   - schema-absent       → likewise revoked but NOT latched: this process
+//     has seen the object, so its absence is an operator mid-recreate, not
+//     a deployment shape (see [schemaProbe.record]);
+//   - no answer           → the last verdict is honoured for a bounded
+//     grace ([schemaProbeStaleLeases]), then dropped.
+//
+// Non-requireRows probes keep the process-lifetime latch.
+//
 // The query runs OUTSIDE the mutex. sync.Mutex is not context-aware, so
 // holding it across a network round-trip would queue every concurrent
 // reader behind one slow probe and serialise the whole explorer read path
 // (C1-048, second review). The cost is that concurrent first-callers may
 // each issue a probe until one settles — bounded, and each is a LIMIT 1.
 func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query string, requireRows bool) bool {
-	p.mu.Lock()
-	if p.settled {
-		present := p.present
-		p.mu.Unlock()
-		return present
+	if verdict, ok := p.cached(requireRows); ok {
+		return verdict
 	}
-	if !p.retryAt.IsZero() && time.Now().Before(p.retryAt) {
-		// A recent probe got no answer; don't pile on.
-		p.mu.Unlock()
-		return false
-	}
-	p.mu.Unlock()
 
 	rows, err := r.conn.Query(ctx, query)
 	empty := false
@@ -1819,30 +1967,7 @@ func (r *ExplorerReader) probeSchema(ctx context.Context, p *schemaProbe, query 
 		}
 		_ = rows.Close()
 	}
-
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.settled {
-		// A concurrent probe already got the authoritative answer.
-		return p.present
-	}
-	switch {
-	case err == nil && !empty:
-		p.settled, p.present = true, true
-		return true
-	case isSchemaAbsent(err):
-		p.settled, p.present = true, false
-		return false
-	default:
-		retryAfter := p.retryAfter
-		if retryAfter == 0 {
-			retryAfter = schemaProbeRetryAfter
-		}
-		if retryAfter > 0 {
-			p.retryAt = time.Now().Add(retryAfter)
-		}
-		return false
-	}
+	return p.record(err, empty, requireRows)
 }
 
 // txByHashIndexed is the two-step fast path: hash → ledger_seq via the
