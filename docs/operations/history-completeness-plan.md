@@ -271,8 +271,17 @@ real (`internal/ops/chops/ch_backfill.go:36`,
 ```
 run-heavy-job.sh sdex-hist-<window> \
   stellarindex-ops ch-rebuild -config /etc/stellarindex.toml \
-    -sdex-gaps -from <lo> -to <hi> -write
+    -sources sdex -sdex -sdex-gaps -from <lo> -to <hi> -write
 ```
+
+Both extra flags are load-bearing. `-sdex-gaps` only narrows the SDEX op
+pass, which does not run at all without `-sdex`. And `-sources sdex` is
+required under `-write`: with no `-sources` the run selects the whole
+event catalogue, which `ch-rebuild -write` refuses because it contains
+decoders that are not `BackfillSafe` (the F050 gate,
+`checkCHRebuildBackfillSafe` in `internal/ops/chops/ch_rebuild.go`).
+`sdex` itself is attested, and scoping to it also skips an event pass
+this job has no use for.
 
 Two hard constraints from the record:
 

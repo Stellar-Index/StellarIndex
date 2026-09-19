@@ -201,10 +201,26 @@ touched and there was nothing to re-fold — re-run the re-derive with the
 supply source and `-write`, and let the tool reset the folds:
 
 ```sh
+# One window of <= 2,000,000 ledgers; loop FROM/TO exactly as in step 2.
 /usr/local/sbin/run-heavy-job.sh sep41-recover \
-  stellarindex-ops ch-rebuild -sep41 -write \
-    -contracts 'CBH4M45T...OCKF,CDLZFC3S...YSC,CCW67TSZ...MI75'
+  stellarindex-ops ch-rebuild \
+    -config /etc/stellarindex.toml \
+    -ch-addr 127.0.0.1:9300 \
+    -sep41 -sources sep41_supply,sep41_transfers \
+    -contracts 'CBH4M45T...OCKF,CDLZFC3S...YSC,CCW67TSZ...MI75' \
+    -from 50457424 -to 52457423 \
+    -write
 ```
+
+`-sources` is not optional here. Without it a `-write` run selects the
+whole event catalogue on top of the sep41 pair, and `ch-rebuild -write`
+refuses that: the catalogue holds decoders that are not `BackfillSafe`
+(the F050 gate, `checkCHRebuildBackfillSafe` in
+`internal/ops/chops/ch_rebuild.go`). Naming the sep41 pair keeps the run
+to the two standard-schema sources the gate admits, and
+`sep41_supply` must be one of them or the fold reset does not happen.
+`-config`, `-from` and `-to` are required by the tool, and the ≤ 2M-ledger
+window bound from step 2 applies.
 
 `-contracts` must be a SUBSET of `[supply] watched_sep41_contracts`; a
 contract outside that set is read but decodes to nothing (the tool warns).

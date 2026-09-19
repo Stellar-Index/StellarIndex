@@ -198,6 +198,17 @@ against.
   `k023evidence` build tag (`replay_backfillsafe_test.go`), now matching
   only real calls to the external gate rather than any identifier ending
   in `BackfillSafe(` (F050).
+- **tests + docs (ch-rebuild):** the second leg of ch-rebuild's
+  `BackfillSafe` gate — the one that covers a `-write` with no `-sources`,
+  the widest run there is — is now pinned at its call site; deleting the
+  call failed no test, because the existing coverage invoked the helpers
+  directly. Two runbooks prescribed `-write` commands the gate refuses:
+  `history-completeness-plan.md` §2.2 now passes `-sources sdex -sdex`
+  (it also lacked the `-sdex` its `-sdex-gaps` pass needs), and
+  `sep41-mint-recovery.md` §3 now passes
+  `-sources sep41_supply,sep41_transfers` plus the `-config`/`-from`/`-to`
+  the tool requires. A test drives both documented flag sets through both
+  gate legs and checks the runbooks' command blocks (F050).
 - **tests (storage):** `TestHistoryPointsDirectionUnion` no longer fails on
   every run between 00:00 and about 02:05 UTC. It seeds trades two hours
   back and asserted that the 1-day history series is empty because "today's
