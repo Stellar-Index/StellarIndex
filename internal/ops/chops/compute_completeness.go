@@ -687,7 +687,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		if len(detail) == 0 {
 			detail = append(detail, "complete: substrate + recognition + projection verified to tip")
 		}
-		if err := store.UpsertCompletenessSnapshot(ctx, timescale.CompletenessSnapshot{
+		pub, pubErr := publishSourceVerdict(ctx, store, timescale.CompletenessSnapshot{
 			Source: src.name, Genesis: genesis, Tip: tip,
 			Watermark: w.Ledger, CoveragePct: w.CoveragePct, Complete: w.Complete,
 			LakeComplete:           lakeComplete,
@@ -695,20 +695,13 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			ProjectionVerifiedFrom: projVerifiedFrom,
 			SubstrateOK:            substrateOK, RecognitionOK: recOK, ProjectionOK: projOK,
 			Detail: strings.Join(detail, "; "),
-		}); err != nil {
-			return fmt.Errorf("%s: upsert snapshot: %w", src.name, err)
+		}, dirtyWin, dirtyCleared)
+		if pubErr != nil {
+			return fmt.Errorf("%s: publish verdict: %w", src.name, pubErr)
 		}
-		if dirtyCleared {
-			// Bounded delete (ClearProjectionDirtyWindow's WHERE): if a
-			// concurrent replay WIDENED the window between this run's read
-			// and now, the widened row survives and the next run re-checks
-			// the new ground.
-			if cerr := store.ClearProjectionDirtyWindow(ctx, src.name, dirtyWin.From, dirtyWin.To, dirtyWin.UpdatedAt); cerr != nil {
-				return fmt.Errorf("%s: clear replay-rewind dirty window: %w", src.name, cerr)
-			}
-		}
-		fmt.Fprintf(os.Stderr, "compute-completeness: %-14s watermark=%d coverage=%.4f complete=%v lake_complete=%v (%s)\n",
-			src.name, w.Ledger, w.CoveragePct, w.Complete, lakeComplete, strings.Join(detail, "; "))
+		fmt.Fprintf(os.Stderr, "compute-completeness: %-14s watermark=%d coverage=%.4f complete=%v lake_complete=%v (%s)%s\n",
+			src.name, w.Ledger, w.CoveragePct, w.Complete, lakeComplete, strings.Join(detail, "; "),
+			verdictNotStoredNote(pub, tip, hasDirty))
 	}
 
 	// ── System recognition snapshot (gaps on contracts no source owns) ──
@@ -1363,6 +1356,47 @@ func dirtyWindowSatisfied(w timescale.ProjectionDirtyWindow, projOK bool, reconc
 		lo = genesis
 	}
 	return projOK && reconcileFloor <= lo && hi >= w.To
+}
+
+// verdictPublisher is the slice of the store [publishSourceVerdict] needs.
+type verdictPublisher interface {
+	PublishCompletenessVerdict(ctx context.Context, snap timescale.CompletenessSnapshot, clearWindow *timescale.DirtyWindowClear) (timescale.VerdictPublication, error)
+}
+
+// publishSourceVerdict stores a source's verdict and, when this run earned
+// the clear ([dirtyWindowSatisfied]), discharges the replay-rewind window
+// in the SAME transaction — and only if the verdict was actually stored
+// (finding F072).
+//
+// `earned` is a statement about what this run RECONCILED; it says nothing
+// about whether the store accepted the verdict. The CS-083 never-regress
+// guard rejects a run whose -to is below the stored tip, and the window
+// must then survive: the stored verdict is still the pre-rewind one, and
+// the window is the only thing forcing the next full-range run to
+// re-reconcile the rewritten rows rather than carry that stale claim. The
+// clear keeps [timescale.Store.ClearProjectionDirtyWindow]'s optimistic
+// predicate, so a concurrent replay's re-record also survives.
+func publishSourceVerdict(ctx context.Context, store verdictPublisher, snap timescale.CompletenessSnapshot, win timescale.ProjectionDirtyWindow, earned bool) (timescale.VerdictPublication, error) {
+	var clearWindow *timescale.DirtyWindowClear
+	if earned {
+		clearWindow = &timescale.DirtyWindowClear{From: win.From, To: win.To, UpdatedAt: win.UpdatedAt}
+	}
+	return store.PublishCompletenessVerdict(ctx, snap, clearWindow)
+}
+
+// verdictNotStoredNote is the operator-facing suffix for a verdict the
+// CS-083 guard rejected. Without it the run's log line reads exactly like a
+// stored verdict — and, with a window pending, like a discharged one.
+// Empty when the verdict was applied. Pure — unit-testable.
+func verdictNotStoredNote(pub timescale.VerdictPublication, tip uint32, windowPending bool) string {
+	if pub.Applied {
+		return ""
+	}
+	note := fmt.Sprintf(" — VERDICT NOT STORED: this run's tip %d is below the stored verdict's tip and it found no problem, so the never-regress guard kept the stored verdict", tip)
+	if windowPending {
+		note += "; the replay-rewind window stays PENDING until a run at or above the stored tip re-verifies it"
+	}
+	return note
 }
 
 // substrateClaim gates what a run is ALLOWED to publish on the LAKE

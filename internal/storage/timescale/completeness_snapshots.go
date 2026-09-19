@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"time"
 )
@@ -38,9 +39,12 @@ type CompletenessSnapshot struct {
 	ComputedAt             time.Time
 }
 
-// UpsertCompletenessSnapshot writes (or refreshes) a source's verdict.
-func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap CompletenessSnapshot) error {
-	const q = `
+// upsertCompletenessSnapshotQuery is the verdict write. Package-level so
+// [Store.UpsertCompletenessSnapshot] and [Store.PublishCompletenessVerdict]
+// run the byte-identical statement — the CS-083 guard it ends in is what
+// makes "did this write land?" a question at all, and two copies of it
+// would drift.
+const upsertCompletenessSnapshotQuery = `
         INSERT INTO completeness_snapshots (
             source, genesis_ledger, tip_ledger, watermark_ledger,
             coverage_pct, complete, lake_complete, first_problem_ledger,
@@ -70,15 +74,125 @@ func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap Completenes
         -- only grows), so a smaller tip means a stale/partial run.
         WHERE EXCLUDED.tip_ledger >= completeness_snapshots.tip_ledger
            OR EXCLUDED.first_problem_ledger > 0`
-	if _, err := s.db.ExecContext(ctx, q,
+
+// snapshotExecer is the slice of *sql.DB / *sql.Tx the verdict write
+// needs, so the same statement runs standalone or inside
+// [Store.PublishCompletenessVerdict]'s transaction.
+type snapshotExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// execCompletenessSnapshot runs the verdict write and reports whether it
+// was APPLIED. The CS-083 guard makes a regressive run match zero rows,
+// which the driver reports as success — so rows-affected is the only
+// signal that a verdict was actually stored (finding F072).
+func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap CompletenessSnapshot) (bool, error) {
+	res, err := ex.ExecContext(ctx, upsertCompletenessSnapshotQuery,
 		snap.Source, int64(snap.Genesis), int64(snap.Tip), int64(snap.Watermark),
 		snap.CoveragePct, snap.Complete, snap.LakeComplete, int64(snap.FirstProblem),
 		int64(snap.ProjectionVerifiedFrom),
 		snap.SubstrateOK, snap.RecognitionOK, snap.ProjectionOK, snap.Detail,
-	); err != nil {
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rows affected: %w", err)
+	}
+	return n > 0, nil
+}
+
+// UpsertCompletenessSnapshot writes (or refreshes) a source's verdict.
+//
+// It does NOT report whether the CS-083 guard rejected the write. A caller
+// whose next step depends on the verdict having been STORED — clearing a
+// replay-rewind dirty window is the one that exists — must use
+// [Store.PublishCompletenessVerdict] instead.
+func (s *Store) UpsertCompletenessSnapshot(ctx context.Context, snap CompletenessSnapshot) error {
+	if _, err := execCompletenessSnapshot(ctx, s.db, snap); err != nil {
 		return fmt.Errorf("timescale: UpsertCompletenessSnapshot (%s): %w", snap.Source, err)
 	}
 	return nil
+}
+
+// DirtyWindowClear identifies the replay-rewind dirty window a verdict has
+// earned the right to clear: the exact row the run read (bounds AND
+// updated_at), matching [Store.ClearProjectionDirtyWindow]'s optimistic
+// predicate.
+type DirtyWindowClear struct {
+	From, To  uint32
+	UpdatedAt time.Time
+}
+
+// VerdictPublication is what [Store.PublishCompletenessVerdict] did.
+type VerdictPublication struct {
+	// Applied is false when the CS-083 never-regress guard rejected the
+	// write (this run's tip is below the stored tip and it found no
+	// problem). The stored verdict is then UNCHANGED — whatever the run
+	// computed was not recorded.
+	Applied bool
+	// WindowCleared is true when the dirty window row was deleted. Always
+	// false when Applied is false; may also be false when Applied is true
+	// because a concurrent replay re-recorded the window (see
+	// [Store.ClearProjectionDirtyWindow]).
+	WindowCleared bool
+}
+
+// PublishCompletenessVerdict writes a source's verdict and — only if that
+// write was APPLIED — clears the replay-rewind dirty window the verdict
+// discharged, in ONE transaction (findings F072 / K013).
+//
+// The pair used to be two independent statements, and the first could not
+// report that it did nothing. A run with a `-to` below the stored tip and
+// no problem is rejected by the CS-083 guard with a nil error; the caller
+// then deleted the window on the strength of a verdict that was never
+// stored. The rewound range dropped out of every later reconcile floor
+// while the STORED verdict still carried its pre-rewind clean claim over
+// it — precisely the carried-claim invalidation the window exists to
+// prevent.
+//
+// The window is the obligation and the stored verdict is its discharge, so
+// the delete is gated on rows-affected and shares the verdict's
+// transaction: a crash or error between the two rolls BOTH back (the
+// window survives and the next run re-verifies — fail-closed), and a
+// rejected verdict never reaches the delete at all. Under READ COMMITTED a
+// verdict blocked behind a concurrent writer of the same source row
+// re-evaluates the guard against the committed row once unblocked, so
+// Applied reflects the row as it really is, not as it was when the run
+// started.
+//
+// clearWindow == nil publishes the verdict alone.
+func (s *Store) PublishCompletenessVerdict(ctx context.Context, snap CompletenessSnapshot, clearWindow *DirtyWindowClear) (VerdictPublication, error) {
+	var out VerdictPublication
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return out, fmt.Errorf("timescale: PublishCompletenessVerdict (%s): begin: %w", snap.Source, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	applied, err := execCompletenessSnapshot(ctx, tx, snap)
+	if err != nil {
+		return out, fmt.Errorf("timescale: PublishCompletenessVerdict (%s): upsert: %w", snap.Source, err)
+	}
+	var cleared bool
+	if applied && clearWindow != nil {
+		res, cerr := tx.ExecContext(ctx, clearProjectionDirtyWindowQuery,
+			snap.Source, int64(clearWindow.From), int64(clearWindow.To), clearWindow.UpdatedAt)
+		if cerr != nil {
+			return out, fmt.Errorf("timescale: PublishCompletenessVerdict (%s): clear dirty window: %w", snap.Source, cerr)
+		}
+		n, cerr := res.RowsAffected()
+		if cerr != nil {
+			return out, fmt.Errorf("timescale: PublishCompletenessVerdict (%s): clear dirty window rows: %w", snap.Source, cerr)
+		}
+		cleared = n > 0
+	}
+	if err := tx.Commit(); err != nil {
+		return out, fmt.Errorf("timescale: PublishCompletenessVerdict (%s): commit: %w", snap.Source, err)
+	}
+	out.Applied, out.WindowCleared = applied, cleared
+	return out, nil
 }
 
 // ListCompletenessSnapshots returns every source's verdict, source-sorted.

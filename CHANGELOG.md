@@ -17,6 +17,19 @@ against.
 
 ### Fixed
 
+- **completeness / replay-rewind windows:** `compute-completeness` now
+  stores a source's verdict and clears the replay-rewind dirty window that
+  verdict discharged in one transaction
+  (`Store.PublishCompletenessVerdict`), and the clear runs only if the
+  verdict was actually stored. The two used to be independent statements
+  and the verdict write could not report that the never-regress guard had
+  rejected it: a re-verify run with a `-to` below the stored tip reconciled
+  the window clean, had its verdict silently dropped, and then deleted the
+  window anyway — leaving the stored pre-rewind clean claim standing over a
+  rewritten range that no later run would be forced to re-reconcile. Such a
+  run now leaves the window pending and its log line says `VERDICT NOT
+  STORED`; a run at or above the stored tip clears it as before (F072,
+  K013).
 - **forex / `/v1/price` fiat paths:** the in-memory FX snapshot that
   `/v1/price` and `/v1/price/tip` read for fiat crosses now carries only
   rates the C2-030 sanity band accepted. The worker used to install the raw
