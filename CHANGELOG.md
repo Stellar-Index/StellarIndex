@@ -294,6 +294,28 @@ against.
   install, first-ever install, untracked prior install, the failing binary,
   and a binary the deploy never names), plus a repeated run, a single-binary
   run whose record set is empty, and a run that fails before the swap.
+- **dispatcher / Soroban state-archival eviction is now observed (Q119):**
+  `ProcessLedger`'s ledger-entry walk gained a fourth phase that dispatches every
+  key stellar-core EVICTED at ledger close as a `Removed` change. Archival is the
+  one way an entry leaves the live state without a transaction touching it, so it
+  reaches no transaction meta and the three-phase walk could never see it: the
+  decoders handled `Restored` — the other half of the same lifecycle — while an
+  archived SAC balance's last write stood as the holder's current balance
+  FOREVER, holding the served supply component permanently above the truth with
+  no path to self-correct (PHO read +157% against Horizon on 2026-07-27). The
+  eviction phase is ledger-scoped (empty `tx_hash`, `op_index` -1) and runs last,
+  so the eviction outranks any change to the same key earlier in the ledger and
+  beats the ops seed's row on ledger; it APPENDS to the ledger's numbering and so
+  does not renumber `intra_ledger_seq` or bump `EntryWalkVersion`. Keys no decoder
+  watches (the paired TTL keys, contract code) fall out at `Matches` as any
+  unmatched change does. `test/integration/sac_eviction_supply_test.go` is the
+  served-money proof on real TimescaleDB — seed a dormant holder at
+  `SeedIntraLedgerSeq`, evict, watch `SumSACBalancesAtOrBefore` fall to zero, then
+  restore and watch it return. Still outstanding and NOT covered here: the lake
+  walker (`clickhouse.extractEntryChanges`) has no eviction phase, so
+  `ledger_entries_current` and a lake-sourced SAC seed still reconstruct an
+  archived entry as live.
+
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with
   `AND o.tx_hash IN (SELECT tx_hash FROM stellar.transactions WHERE successful = 1

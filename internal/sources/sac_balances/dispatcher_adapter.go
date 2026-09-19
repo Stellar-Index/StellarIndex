@@ -144,6 +144,17 @@ func (o *Observer) Decode(ctx dispatcher.LedgerEntryChangeContext) ([]consumer.E
 // is-removal flag for any change variant. Removed-variant rows
 // derive ContractData from the LedgerKey (which carries Contract
 // + Key but no Val).
+//
+// Both halves of the Soroban state-archival lifecycle arrive here.
+// Restored is a change variant core emits when an archived entry is
+// brought back. The EVICTION half is not a change variant at all — a
+// TTL-lapsed entry leaves the live state with no transaction touching
+// it — so the dispatcher's eviction phase turns each of the ledger's
+// evicted keys into a Removed change (dispatcher.walkEvictedKeys, Q119).
+// Such a change carries an empty TxHash and OpIndex -1: it is
+// ledger-scoped, not transaction-scoped. Nothing extra is needed here —
+// an evicted balance must stop counting toward supply exactly as a
+// deleted one does, and a later Restored change reverses it.
 func contractDataFromChange(change xdr.LedgerEntryChange) (cd *xdr.ContractDataEntry, isRemoval bool, ok bool) {
 	var entry *xdr.LedgerEntry
 	switch change.Type {

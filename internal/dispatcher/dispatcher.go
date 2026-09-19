@@ -327,6 +327,13 @@ type LedgerEntryChangeDecoder interface {
 //	   post-apply fees), failed txs included — C2-023/C2-040/C2-032/R-A01-1,
 //	   audit-2026-07-23.
 //
+// The state-archival eviction phase (Q119, 2026-09-19) did NOT bump this.
+// It APPENDS its changes after every phase-1..3 change in the ledger, so
+// every position a previous binary assigned is unchanged and a stored
+// position stays comparable with a freshly computed one. Only a change that
+// RENUMBERS existing positions may bump the constant — read the repair path
+// below before you do.
+//
 // WHY THIS MATTERS, and it is not academic. intra_ledger_seq is PERSISTED
 // and COMPARED ACROSS BINARY VERSIONS by two guards:
 //
@@ -809,11 +816,11 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 	// ─── LedgerEntryChange walk (ADR-0021) ───────────────────────
 	// Runs over the WHOLE ledger — including failed txs, whose fee
 	// debits are committed on chain (C2-023/C2-040) — and in the
-	// chain's two-phase order. Skipped cheaply when no entry decoders
-	// are registered.
+	// chain's two-phase order, followed by the ledger's state-archival
+	// evictions. Skipped cheaply when no entry decoders are registered.
 	if len(d.entryDecoders) > 0 {
 		outputs = append(outputs,
-			d.walkLedgerEntryChanges(txs, ledgerSeq, parsedClosedAt)...)
+			d.walkLedgerEntryChanges(lcm, txs, ledgerSeq, parsedClosedAt)...)
 	}
 
 	for i := range txs {
@@ -1038,7 +1045,10 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 //     promise is only meetable if the two agree.
 //
 //  2. THE WALK IS THREE-PHASE, LEDGER-WIDE (C2-032, and R-A01-1 for the
-//     third phase). stellar-core commits a ledger in ledger-wide phases,
+//     third phase), plus a fourth eviction phase that is ours, not the
+//     SDK's — ingest.LedgerChangeReader has no eviction state, so a
+//     TTL-lapsed entry is invisible to anything that only mirrors it
+//     (Q119, audit-2026-09-02). stellar-core commits a ledger in ledger-wide phases,
 //     not tx by tx, and this walk follows the SDK's canonical
 //     ingest.LedgerChangeReader state machine (feeChangesState →
 //     metaChangesState → postTxApplyState) — see the phase table below.
@@ -1069,6 +1079,11 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 //	                                           into a ledger-wide phase run
 //	                                           after all txs execute; LCM V2
 //	                                           only, so empty pre-P23
+//	phase 4  the ledger's EVICTED keys, each   state archival is applied at
+//	         as a synthetic Removed change     ledger close and touches no
+//	                                           transaction, so it reaches the
+//	                                           decoders from nowhere else —
+//	                                           see [walkEvictedKeys]
 //
 // LEDGER UPGRADES (the SDK's 4th state, upgradeChangesState) are deliberately
 // NOT walked: they are not transaction-scoped, carry no TxHash, and no
@@ -1115,7 +1130,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 // dead while every table simply stopped advancing — the exact
 // "masquerading as clean ledgers" failure the sibling tx-event path was
 // taught to count in G15-06 (cold audit 2026-08-04).
-func (d *Dispatcher) walkLedgerEntryChanges(txs []ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time) []consumer.Event {
+func (d *Dispatcher) walkLedgerEntryChanges(lcm xdr.LedgerCloseMeta, txs []ingest.LedgerTransaction, ledgerSeq uint32, closedAt time.Time) []consumer.Event {
 	var seq uint32
 	dispatchFor := func(txHash string) func(int, xdr.LedgerEntryChange) []consumer.Event {
 		return func(opIdx int, change xdr.LedgerEntryChange) []consumer.Event {
@@ -1181,7 +1196,66 @@ func (d *Dispatcher) walkLedgerEntryChanges(txs []ingest.LedgerTransaction, ledg
 			outputs = append(outputs, dispatch(-1, txs[i].PostTxApplyFeeChanges[j])...)
 		}
 	}
+	// ── Phase 4: the ledger's STATE-ARCHIVAL EVICTIONS. Not
+	// transaction-scoped, so empty TxHash and OpIndex -1 like the fee
+	// blocks, and last in the walk because core evicts at ledger close,
+	// after every transaction has applied. See [walkEvictedKeys].
+	outputs = append(outputs, walkEvictedKeys(lcm, dispatchFor(""))...)
 	return outputs
+}
+
+// walkEvictedKeys dispatches one synthetic Removed change per ledger key
+// stellar-core EVICTED at this ledger's close, and is the missing half of
+// the Soroban state-archival lifecycle.
+//
+// A contract-data entry whose TTL lapses leaves the live state without any
+// transaction touching it: it appears in no transaction's meta, so none of
+// the three phases above can ever see it. Core reports it in the
+// LedgerCloseMeta's evicted-keys list instead (CAP-62; the list carries both
+// the data key and its TTL key). Left unwalked — the state at HEAD before
+// 2026-09-19 — an evicted SAC balance's last write stood as "current"
+// forever and the served supply component never came back down, drifting
+// permanently ABOVE the truth with no path to self-correct. The decoders
+// already handled the other half, Restored.
+//
+// Emitted as Removed, deliberately, rather than a new change variant: an
+// evicted entry is no longer live state, which is exactly what every
+// entry decoder's Removed arm already means (a zero-balance removal
+// observation that the read path excludes from the served sum), and a
+// later Restored change reverses it. Removal is an absorbing STATE, not a
+// delta, so re-ingesting the ledger rewrites the identical row rather than
+// double-subtracting.
+//
+// Keys of entry types no decoder watches (the paired TTL keys, contract
+// code) fall out at each decoder's Matches — same as any unmatched change.
+//
+// KNOWN DIVERGENCE FROM THE LAKE, and it is deliberate: the lake walker
+// (clickhouse.extractEntryChanges) mirrors phases 1-3 and has no eviction
+// phase, so from here the live observers see an eviction the lake does not.
+// The live path is the writer of the served supply components, so fixing it
+// first is what stops the drift; until the lake walker grows the same phase,
+// a lake-sourced re-derive or SAC seed still reconstructs an archived entry
+// as live (it lands at the entry's last-write ledger, which is BELOW the
+// eviction ledger, so it cannot displace a live eviction row on read).
+//
+// An LCM version that cannot report evictions yields none. The SDK panics
+// rather than erroring on an unknown version, and ProcessLedger has already
+// reached that panic via lcm.LedgerSequence() long before this point, so the
+// error arm here is unreachable in practice — treating it as "no evictions"
+// keeps a future SDK that starts returning it from dropping the ledger.
+func walkEvictedKeys(lcm xdr.LedgerCloseMeta, dispatch func(int, xdr.LedgerEntryChange) []consumer.Event) []consumer.Event {
+	keys, err := lcm.EvictedLedgerKeys()
+	if err != nil {
+		return nil
+	}
+	var outs []consumer.Event
+	for i := range keys {
+		outs = append(outs, dispatch(-1, xdr.LedgerEntryChange{
+			Type:    xdr.LedgerEntryChangeTypeLedgerEntryRemoved,
+			Removed: &keys[i],
+		})...)
+	}
+	return outs
 }
 
 // entryChangeTxHash is the hex tx hash used to stamp entry-change contexts.
