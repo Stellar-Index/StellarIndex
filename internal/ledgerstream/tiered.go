@@ -121,7 +121,26 @@ func (t *TieredDataStore) coldGetFile(ctx context.Context, path string) (io.Read
 	case IsNotFound(cerr):
 		t.observeCold("miss", elapsed)
 		t.bumpTotal("both_missing")
-		return nil, 0, cerr
+		// Say "both tiers" in the ERROR, not only in the counter.
+		// both_missing is the data-integrity page condition — "neither
+		// tier has the object; the reader is stalled"
+		// (obs.LedgerstreamTierReadTotal's godoc) — and this was the one
+		// path in this file that returned its error unwrapped, so what
+		// reached the operator was the cold store's bare "file does not
+		// exist": byte-identical to the routine hot miss this fallback
+		// exists to absorb, and naming only the tier that was consulted
+		// second. Upstream it is wrapped into the SDK's "ledger object
+		// containing sequence N is missing" and then, on any bounded ops
+		// walk, converted to a clean walk-complete by
+		// TolerateTrailingMissing — so unless the tier context travels
+		// WITH the error, a genuine hole in both tiers leaves nothing
+		// behind but a counter nobody reads after the fact (RLT-282).
+		//
+		// %w is load-bearing: errors.Is(err, os.ErrNotExist) must stay
+		// true. IsNotFound matches on it, and so does the SDK's own
+		// ledger_buffer, which branches on it to retry an unbounded
+		// range and to abort a bounded one.
+		return nil, 0, fmt.Errorf("tiered: %q missing in BOTH tiers (hot, then cold): %w", path, cerr)
 	default:
 		t.observeCold("error", elapsed)
 		return nil, 0, fmt.Errorf("tiered: cold GetFile %q: %w", path, cerr)

@@ -196,6 +196,20 @@ against.
   climbs. A row carrying both a poison output and a held fault is retried
   whole, so it is not a shed candidate and its quarantine budget still
   accumulates.
+- **ledgerstream / a both-tier miss was reported as an ordinary miss (RLT-282):**
+  `TieredDataStore.coldGetFile` incremented the `both_missing` counter — the
+  data-integrity page condition, "neither tier has the object" — and then
+  returned the cold store's error verbatim, the one unwrapped error path in the
+  file. What the operator saw was `file does not exist`, byte-identical to the
+  routine hot miss the cold tier exists to absorb, naming only the tier
+  consulted second. Upstream that error becomes the SDK's "ledger object
+  containing sequence N is missing" and then, on any bounded ops walk, a clean
+  walk-complete via `TolerateTrailingMissing` — so the tier context had to
+  travel with the error or nothing survived but a counter. It now reads
+  `tiered: "<path>" missing in BOTH tiers (hot, then cold): …`, wrapped with
+  `%w` so `errors.Is(err, os.ErrNotExist)` — which `IsNotFound` and the SDK's
+  own retry/abort branch key off — is unchanged.
+
 - **ops / verify-decoders had no `-bucket` and never checked what it read
   (RLT-282):** the bucket was hardcoded to `cfg.Storage.S3BucketLive`, which is
   TRIMMED, so pointing the command at a historic range read a prefix of it or
