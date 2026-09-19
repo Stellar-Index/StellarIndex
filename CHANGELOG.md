@@ -524,12 +524,32 @@ against.
   `contractIDs` hard filter (upshift, blend_emitter) by the registry-only
   extras — with an empty registry the list is byte-identical to the in-code
   one. It fails closed if a gated source has no warmed options or if the
-  catalogue's decoder type differs from the gated registry's. STILL OPEN for
-  the other three catalogue consumers, which live outside this change's
-  files: `compute-completeness` (the phantom-rows leg on `/v1/coverage`),
-  `verify-reconciliation` and `ch-reproject` still build the catalogue bare;
-  a build-tagged test (`-tags rlt430evidence`) is red on exactly those three
-  until they call the same seam (RLT-430).
+  catalogue's decoder type differs from the gated registry's. The other three
+  catalogue consumers are closed by the bullet below (RLT-430).
+
+- **ops (`compute-completeness`, `verify-reconciliation`, `ch-reproject`):**
+  the remaining three consumers of the reconciliation catalogue now warm its
+  gated decoders from `protocol_contracts` too, closing RLT-430 for the whole
+  class. `compute-completeness` is the one that reached the public API: it is
+  the EXPECTED side of `/v1/coverage`, so a contract admitted through the
+  operator seam produced real served rows that the unwarmed re-derive could
+  not account for — the source published as a projection mismatch and its
+  rows read as phantoms. `verify-reconciliation` reported the same mismatch
+  to an operator, and `ch-reproject` both dropped the contract from the
+  static `contractIDs` prefilter and rejected its events in `Matches()`, so
+  the rewritten projection lost exactly those rows. Each warm runs on the
+  freshly built catalogue and BEFORE anything reads its decoders — ahead of
+  `preseedFactoryChildren`, which seeds into the instances the warm rebuilds,
+  and ahead of the recognition owner map, which reads the widened
+  `contractIDs`. `compute-completeness` reuses the gated options it already
+  loaded for the recognition scan (the call moved above the catalogue's first
+  reader) rather than warming twice. Read-only throughout (no upsert hook).
+  The previously build-tagged evidence test is now untagged and guards the
+  class: any future consumer of `buildReconciliationCatalogue` that does not
+  warm fails it, and the per-call-site ORDER is pinned for all four. On
+  testnet / futurenet all eight gated sources are pubnet-anchored and already
+  filtered out of the catalogue (#483), so the warm has nothing to rebuild
+  there and cannot fail closed — pinned by a test.
 - **completeness (recognition, rozo + blend_backstop):** an unhandled event
   topic on a Rozo payment contract or on the Blend backstop now fails THAT
   source's `recognition_ok`. Neither catalogue entry declared `contractIDs`,

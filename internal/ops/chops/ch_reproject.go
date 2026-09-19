@@ -3,6 +3,7 @@ package chops
 import (
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -71,6 +72,17 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	cat, _, err := buildReconciliationCatalogue(cfg)
 	if err != nil {
 		return fmt.Errorf("ch-reproject: reconciliation catalogue: %w", err)
+	}
+	// Re-derive on the gate the live indexer runs with — curated set ∪
+	// protocol_contracts — not on the bare in-code seed (RLT-430): a
+	// contract an operator admitted through protocol_contracts was decoded
+	// live, so it has served rows, and an unwarmed re-derive both drops it
+	// from the static contractIDs prefilter and rejects its events in
+	// Matches() — the rewritten projection loses exactly those rows.
+	// Read-only (no upsert hook). Must precede the preseed below, which
+	// seeds into the decoders this rebuilds.
+	if cat, err = warmCatalogueGates(ctx, store, slog.Default(), cat); err != nil {
+		return fmt.Errorf("ch-reproject: %w", err)
 	}
 
 	// Factory-anchored sources (ADR-0035): seed each gate registry from

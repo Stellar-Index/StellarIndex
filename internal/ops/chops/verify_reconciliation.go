@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -72,6 +73,17 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 	// reconciled nothing (F7 fail-open).
 	if verr := validateSourceFilter(*only, catalogue); verr != nil {
 		return fmt.Errorf("verify-reconciliation: %w", verr)
+	}
+	// Re-derive on the gate the live indexer runs with — curated set ∪
+	// protocol_contracts — not on the bare in-code seed (RLT-430): a
+	// contract an operator admitted through protocol_contracts is decoded
+	// live, so its rows are in the table, while an unwarmed re-derive
+	// expects none of them and reports the source as a mismatch that is
+	// not in the data. Read-only (no upsert hook). Must precede the
+	// per-source preseed below, which seeds into the decoders this
+	// rebuilds.
+	if catalogue, err = warmCatalogueGates(ctx, store, slog.Default(), catalogue); err != nil {
+		return fmt.Errorf("verify-reconciliation: %w", err)
 	}
 	if *only == "" || *only == "soroswap" {
 		// Fail CLOSED (RLT-416): a failed or partial seed leaves the re-derive

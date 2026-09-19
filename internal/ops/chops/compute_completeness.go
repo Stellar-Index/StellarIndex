@@ -198,6 +198,35 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if verr := validateSourceFilter(*only, catalogue); verr != nil {
 		return fmt.Errorf("compute-completeness: %w", verr)
 	}
+
+	// Warm the factory-anchored gated registries (ADR-0035) so the
+	// recognition dispatcher correctly recognizes real protocol children
+	// (registered pools/vaults) and correctly flags FOREIGN emitters of
+	// the same topic as gaps. Read-only (withHook=false) — the audit must
+	// not mutate the registry. Depends on protocol_contracts being seeded
+	// (`stellarindex-ops seed-protocol-contracts`); an empty table would
+	// surface every real child shape as a false gap.
+	//
+	// Warmed HERE, ahead of every reader of the catalogue, because the
+	// same options also gate the PROJECTION side below.
+	gatedOpts, gerr := pipeline.GatedRegistryOptions(ctx, store, slog.Default(), ctx, false)
+	if gerr != nil {
+		return fmt.Errorf("gated registry warm: %w", gerr)
+	}
+	// Re-derive the EXPECTED side on the gate the live indexer runs with —
+	// curated set ∪ protocol_contracts — not on the bare in-code seed
+	// (RLT-430). buildReconciliationCatalogue takes only a config, so it
+	// can only build each gated decoder bare; a contract an operator
+	// admitted through protocol_contracts was therefore decoded live and
+	// produced served rows that no expected side could account for, which
+	// this command publishes as a projection mismatch — phantom rows on
+	// the public /v1/coverage. Must precede the ownerOf attribution below
+	// (it reads src.contractIDs) and every per-source re-derive, and the
+	// preseed inside them, which seeds INTO the decoders this rebuilds.
+	if catalogue, err = applyGatedOptions(catalogue, gatedOpts); err != nil {
+		return fmt.Errorf("compute-completeness: %w", err)
+	}
+
 	if *only == "" || *only == "soroswap" {
 		// Fail CLOSED (RLT-416), like every other pre-loop input: a failed or
 		// partial seed publishes a false projection red for soroswap. Returning
@@ -211,18 +240,6 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	// The CH lake event source for projection re-derive (ADR-0034) is built
 	// PER SOURCE inside the loop below: the wide op_args_xdr column is read
 	// only for sources whose decoder consumes events.Event.OpArgs (redstone).
-
-	// Warm the factory-anchored gated registries (ADR-0035) so the
-	// recognition dispatcher correctly recognizes real protocol children
-	// (registered pools/vaults) and correctly flags FOREIGN emitters of
-	// the same topic as gaps. Read-only (withHook=false) — the audit must
-	// not mutate the registry. Depends on protocol_contracts being seeded
-	// (`stellarindex-ops seed-protocol-contracts`); an empty table would
-	// surface every real child shape as a false gap.
-	gatedOpts, gerr := pipeline.GatedRegistryOptions(ctx, store, slog.Default(), ctx, false)
-	if gerr != nil {
-		return fmt.Errorf("gated registry warm: %w", gerr)
-	}
 
 	// ── Recognition (Claim 2a): one global scan, attributed per source ──
 	//
