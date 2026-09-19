@@ -107,6 +107,8 @@ groups:
       # Here the runbook (archive-publish.md, "Known false-positive
       # patterns") relies on it: one transient S3 503 that core retries
       # successfully bumps the counter and must NOT notify.
+      # lint-tripwire-window:sustained: archive-publish.md relies on
+      # `for: 1h` to filter one S3 503 that core retries successfully
       - alert: stellarindex_stellar_archive_publish_fail
         expr: increase(stellarindex_stellar_archive_publish_errors_total[1h]) > 0
         for: 1h

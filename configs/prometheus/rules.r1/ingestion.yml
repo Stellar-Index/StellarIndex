@@ -432,6 +432,12 @@ groups:
       # and the two stellarindex_ingestion_ch_live_sink_drops* rules below
       # ("drops are normal in rare bursts … fires when dropping is
       # continuous" — ch-live-sink-drops.md).
+      # The marker below is what scripts/ci/lint-tripwire-window.py reads;
+      # each of those rules carries its own, because a waiver covers only
+      # the rule directly beneath it.
+      # lint-tripwire-window:sustained: informational; one dropped hit is
+      # best-effort by design, the description asks for "continued doing so
+      # for 10 minutes"
       - alert: stellarindex_ingestion_discovery_drops
         expr: increase(stellarindex_discovery_dropped_hits_total[10m]) > 0
         for: 10m
@@ -515,6 +521,9 @@ groups:
       # stopped discovered_assets from growing. Now counted +
       # alertable. Informational (best-effort: the contract re-appears
       # on a later event), same posture as discovery_drops.
+      # lint-tripwire-window:sustained: best-effort write, the contract
+      # re-appears on a later event; the description asks for "kept failing
+      # for 10 minutes" (see the Q261 note above discovery_drops)
       - alert: stellarindex_ingestion_discovery_record_failures
         expr: increase(stellarindex_discovery_record_failures_total[10m]) > 0
         for: 10m
@@ -536,6 +545,10 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/discovery-drops.md
 
+      # lint-tripwire-window:sustained: ch-live-sink-drops.md: "drops are
+      # normal in rare bursts", healed by the ch-live-catchup timer; this
+      # tickets only when dropping is continuous (see the Q261 note above
+      # discovery_drops)
       - alert: stellarindex_ingestion_ch_live_sink_drops
         expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[10m]) > 0
         for: 10m
@@ -554,6 +567,9 @@ groups:
             check CH health and sink buffer pressure before the lake
             tail integrity degrades (ADR-0041).
 
+      # lint-tripwire-window:sustained: a PAGE for "dropping continuously
+      # for an hour" — the heal path losing the race, not one shed ledger,
+      # which the ticket above and ch-live-catchup already cover
       - alert: stellarindex_ingestion_ch_live_sink_drops_sustained
         expr: increase(stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}[1h]) > 0
         for: 1h

@@ -237,6 +237,36 @@ if declared:
                         f"Production cannot produce this series — WithLabelValues would panic — "
                         f"so any assertion built on it certifies behaviour that cannot occur.")
 
+# ─────────────────────────────────────────────────────────────────────
+# `for:` equal to a zero-compared event window (audit Q261).
+#
+# `increase(m[W]) > 0` with `for: W` parses, is structurally perfect, and
+# cannot fire on one isolated increment. Ten rules per tree had the shape;
+# five of them were any-increase tripwires that had never been able to
+# report the event they exist for. The check lives in its own script so it
+# can be pointed at fixture directories (lint-tripwire-window-test.sh); it
+# is run from HERE so it rides every place this lint is already wired —
+# lint-changed.sh, verify.sh and the alert-rules CI job — instead of
+# waiting on three more wiring edits to become a gate at all. `--self-test`
+# goes first: a detector that has stopped detecting must not report a
+# clean tree.
+import subprocess
+
+_tripwire = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "lint-tripwire-window.py")
+if not os.path.isfile(_tripwire):
+    err(_tripwire, "missing — lint-rule-structure runs it for the Q261 "
+                   "`for:` == event-window check; restore it or remove this call")
+else:
+    for _args in (["--self-test"], []):
+        _res = subprocess.run([sys.executable, "-B", _tripwire] + _args,
+                              capture_output=True, text=True)
+        sys.stdout.write(_res.stdout)
+        sys.stderr.write(_res.stderr)
+        if _res.returncode != 0:
+            err(_tripwire, f"exited {_res.returncode} "
+                           f"({' '.join(_args) or 'both rule trees'}) — see above")
+
 if bad:
     print(f"lint-rule-structure: {bad} problem(s) found", file=sys.stderr)
     sys.exit(1)

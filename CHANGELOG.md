@@ -2019,6 +2019,35 @@ against.
 
 ### Added
 
+- **ci (alert rules):** `scripts/ci/lint-tripwire-window.py` rejects an
+  alert whose `for:` equals the window of an event function it compares
+  `> 0` — `increase(m[W]) > 0` with `for: W`, the `rate()` twin, and
+  `irate`/`changes`/`resets`, directly or under aggregations. That shape
+  parses, passes every structural check, and cannot fire on one isolated
+  increment; ten rules per tree had it and five were any-increase tripwires
+  that had never been able to report the event they exist for (audit Q261).
+  A rule that WANTS only a continuing condition to notify says so where it
+  lives — `# lint-tripwire-window:sustained: <reason>` in the comment block
+  directly above `- alert:` — and the five sustained rules in each tree now
+  do (`discovery_drops`, `discovery_record_failures`, `ch_live_sink_drops`,
+  `ch_live_sink_drops_sustained`, `stellar_archive_publish_fail`). The
+  reason is mandatory, waivers are counted in the output, a waiver covers
+  only the rule directly beneath it, and one left on a rule without the
+  shape fails as stale. Deliberately NOT flagged: a non-zero threshold, the
+  right-hand side of an `unless` (a suppressor, not a trigger —
+  `duplicate_flood`), and a `for:` LONGER than the window, which reads as
+  "failing continuously for" and which fifteen rules per tree use; Q261 did
+  not examine those. The gate is run by `lint-rule-structure.py`, self-test
+  first, so it is live wherever that lint already is (`lint-changed.sh`,
+  `verify.sh`, the alert-rules CI job) without a wiring edit.
+  `lint-tripwire-window-test.sh` pins exit codes, vacuity (a tree with no
+  alert rule exits 2), the waiver rules, the wiring, and that each SHIPPED
+  tree goes red when `trade_buffer_drop` or `webhook_delivery_exhausted` has
+  its old `for:` put back; against the rule trees as they were before this
+  work the gate reports 10 rules per tree. Follow-up outside this change:
+  give the `-test.sh` its own line in `verify.sh` and `ci.yml`, as sibling
+  self-tests have — until then it runs from `lint-changed.sh` when touched,
+  and the in-process self-test runs on every gate.
 - **test:** `test/controlwiring` — a build-tagged (`k023evidence`)
   reproduction of audit class K023, "a control exists in the tree but
   the production path never invokes it". One test per control, each
