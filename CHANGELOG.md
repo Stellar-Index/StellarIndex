@@ -22,6 +22,22 @@ against.
   the whole linked `stellarindex-api` process. #368 closed the unrecovered-panic
   hole in two places and guarded each with an AST walk — `cmd/*/main.go`, via
   each binary's `TestBackgroundWorkersRecover` (a walk over ONE file), and
+- **test / verify-archive unit headers (RLT-265):**
+  `TestVerifyArchiveUnitHeaders_WatchdogClaimMatchesDirectives` pins a
+  mechanical rule — a unit whose comments claim it has no watchdog wiring must
+  not set `WatchdogSec=`. `deploy/systemd/verify-archive-tier-a.service`
+  breaks it: its header justifies keeping the 16h wall-clock cap by saying the
+  reference copy "has no watchdog wiring", while the same file sets
+  `Type=notify`, `NotifyAccess=main` and `WatchdogSec=1h` three dozen lines
+  below. The header is the only place the trade-off is written down and the
+  deploy/systemd copy is what an operator hand-installs, so the contradiction
+  either tells them to add wiring the file already has or tells them a run has
+  no liveness detection — in which case they keep a wall-clock cap whose
+  mid-walk expiry leaves the high-water unadvanced and makes every subsequent
+  run a full pass (the 2026-05-13 incident the same header documents). The
+  test ships RED behind `//go:build k023evidence`, because correcting the
+  header means editing a file outside this unit's set; it is the acceptance
+  check for whoever owns it.
 - **test / K023 verify-archive wiring evidence (F144):** the build-tagged
   `TestK023_VerifyArchiveCheckpointUnitsFailOnMissed` now asserts on the argv
   that reaches the **binary** — everything after `stellarindex-ops
