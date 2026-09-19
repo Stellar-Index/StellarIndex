@@ -3014,6 +3014,21 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 			"this deployment has no VWAP cache wired")
 		return
 	}
+	// Scam-issuer gate. This route reads the same aggregator VWAP keys
+	// the fallback chain's first layer does, and handlePrice dispatches
+	// to it BEFORE the price reader is consulted — so neither the
+	// reader's withholding chokepoint nor [Server.priceFallback]'s gate
+	// can see it, and `?window=300` alone re-served a directory-flagged
+	// issuer's aggregated price at 200 (RLT-350). Same posture and same
+	// problem type as every other withheld price surface; scam only, for
+	// the reason spelled out on [Server.priceFallback]. Both legs, via
+	// the package's one [scamWithheld] spelling — the alias loop below
+	// reads under alias spellings of the SAME market, so the requested
+	// pair is the right subject for the verdict.
+	if scamWithheld(r.Context(), s.scam, asset, quote, "price_read") {
+		writePriceWithheldProblem(w, r, asset, quote)
+		return
+	}
 	for _, a := range assetAliases(asset) {
 		for _, q := range assetAliases(quote) {
 			if a.Equal(q) {

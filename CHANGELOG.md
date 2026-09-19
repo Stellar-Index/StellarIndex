@@ -140,6 +140,15 @@ against.
   `scamWithheld` spelling, and the verdict propagates as `withheld` so the
   response is `errors/price-withheld` rather than `errors/price-not-found`
   (RLT-350).
+- **pricing / `/v1/price?window=`:** the windowed route now consults the same
+  scam-issuer gate. It answers straight out of the aggregator's
+  `vwap:<base>:<quote>:<window>` keys and is dispatched from `handlePrice`
+  BEFORE the price reader — so neither the reader's withholding chokepoint nor
+  the fallback-chain gate above could see it, and `?window=300` alone re-served
+  a directory-flagged issuer's aggregated price at 200. Every route that can
+  answer out of that cache (`/v1/price`, `/v1/price?window=`, `/v1/price/tip`,
+  `/v1/price/batch`, both SEP-40 passthroughs) is now pinned on one market by
+  `TestCachedVWAPSurfacesWithholdScamFlaggedMarket` (RLT-350).
 - **projector / `projector-replay`:** a replay's cursor rewind can no longer
   be reverted by the live projector's in-flight cycle. A cycle reads its
   cursor, spends up to `PerSourceTimeout` scanning and sinking, then

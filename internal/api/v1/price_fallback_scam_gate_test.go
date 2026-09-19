@@ -202,32 +202,114 @@ func TestPriceBatchFallbackWithholdsScamFlaggedBase(t *testing.T) {
 	}
 }
 
-// TestOracleLastPriceFallbackWithholdsScamFlaggedBase — the SEP-40
-// passthrough enters the SAME chain (oracle_sep40.go's ErrPriceNotFound
-// branch calls priceFallback). Its consumers are oracle integrators, so
-// it is the last surface a flagged issuer's price belongs on; it is
-// also the caller that proves the fix sits at the chain rather than in
-// the /v1/price handler.
-func TestOracleLastPriceFallbackWithholdsScamFlaggedBase(t *testing.T) {
+// TestCachedVWAPSurfacesWithholdScamFlaggedMarket is the class guard:
+// EVERY route that can answer out of the aggregator's VWAP cache must
+// reach the same verdict about the same market. The leak was never
+// about one handler — the cache is a shared primitive, and each route
+// reaches it by its own path:
+//
+//   - /v1/price — the reader misses (ErrPriceNotFound) and the handler
+//     runs priceFallback, whose layer 1 is the cache;
+//   - /v1/price?window=N — dispatched from handlePrice BEFORE the
+//     reader is consulted, straight to the per-window cache keys, so
+//     neither the reader chokepoint nor the fallback gate can see it;
+//   - /v1/price/tip — its own cache branch, gated at the top of
+//     computeTip (already correct; here so a regression there fails
+//     alongside its siblings rather than silently);
+//   - the two SEP-40 passthroughs — the same priceFallback chain, and
+//     the surface whose consumers are oracle integrators.
+//
+// /v1/price/batch is deliberately absent: its wire contract OMITS a
+// withheld row rather than 404ing the request, and it has its own test.
+func TestCachedVWAPSurfacesWithholdScamFlaggedMarket(t *testing.T) {
 	base := fallbackFlaggedBase(t)
-	gate := &fallbackScamGate{withheld: map[string]bool{base.String(): true}}
+	const cached = "0.00723"
+
+	for _, surface := range []struct {
+		name string
+		path string
+	}{
+		{"/v1/price", "/v1/price?asset=" + base.String() + "&quote=fiat:USD"},
+		{"/v1/price?window=300", "/v1/price?window=300&asset=" + base.String() + "&quote=fiat:USD"},
+		{"/v1/price?window=3600", "/v1/price?window=3600&asset=" + base.String() + "&quote=fiat:USD"},
+		{"/v1/price?window=86400", "/v1/price?window=86400&asset=" + base.String() + "&quote=fiat:USD"},
+		{"/v1/price/tip", "/v1/price/tip?asset=" + base.String() + "&quote=fiat:USD"},
+		{"/v1/oracle/lastprice", "/v1/oracle/lastprice?asset=" + base.String()},
+		{"/v1/oracle/x_last_price", "/v1/oracle/x_last_price?base=" + base.String() + "&quote=fiat:USD"},
+	} {
+		t.Run(surface.name, func(t *testing.T) {
+			gate := &fallbackScamGate{withheld: map[string]bool{base.String(): true}}
+			srv := v1.New(v1.Options{
+				Prices:       &stubPriceReader{err: v1.ErrPriceNotFound},
+				Triangulated: &cachedVWAPLooker{value: cached},
+				Scam:         gate,
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			resp := mustGet(t, ts.URL+surface.path)
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("%s status = %d, want 404 — this route served the aggregator's cached "+
+					"VWAP for a directory-flagged market (RLT-350). Body: %s",
+					surface.name, resp.StatusCode, body)
+			}
+			if strings.Contains(string(body), cached) {
+				t.Errorf("%s leaked the withheld price value: %s", surface.name, body)
+			}
+			if !strings.Contains(string(body), "errors/price-withheld") {
+				t.Errorf("%s must report the withheld verdict, not a bare not-found: %s",
+					surface.name, body)
+			}
+			if len(gate.surfaces) == 0 {
+				t.Errorf("%s never consulted the scam gate", surface.name)
+			}
+		})
+	}
+}
+
+// TestPriceWindowedWithholdsScamFlaggedQuote — both legs here too: the
+// windowed price of XLM IN a flagged issuer's asset is the flagged
+// market's own windowed price, inverted.
+func TestPriceWindowedWithholdsScamFlaggedQuote(t *testing.T) {
+	quote := fallbackFlaggedBase(t)
+	gate := &fallbackScamGate{withheld: map[string]bool{quote.String(): true}}
 	srv := v1.New(v1.Options{
 		Prices:       &stubPriceReader{err: v1.ErrPriceNotFound},
-		Triangulated: &cachedVWAPLooker{value: "0.00723"},
+		Triangulated: &cachedVWAPLooker{value: "138.4"},
 		Scam:         gate,
 	})
 	ts := startHTTPTest(t, srv.Handler())
 
-	resp := mustGet(t, ts.URL+"/v1/oracle/lastprice?asset="+base.String())
+	resp := mustGet(t, ts.URL+"/v1/price?window=3600&asset=native&quote="+quote.String())
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("SEP-40 lastprice status = %d, want 404 — the oracle passthrough re-served "+
-			"the flagged issuer's cached VWAP. Body: %s", resp.StatusCode, body)
+		t.Fatalf("/v1/price?window=3600 status = %d, want 404 for a flagged QUOTE. Body: %s",
+			resp.StatusCode, body)
 	}
-	if strings.Contains(string(body), "0.00723") {
-		t.Errorf("the withheld price value leaked into the SEP-40 body: %s", body)
+	if strings.Contains(string(body), "138.4") {
+		t.Errorf("the withheld price value leaked through the windowed route: %s", body)
 	}
-	if !strings.Contains(string(body), "errors/price-withheld") {
-		t.Errorf("SEP-40 must report the withheld verdict, not a bare not-found: %s", body)
+}
+
+// TestPriceWindowedServesUnflaggedPair is the non-regression half for
+// the windowed route.
+func TestPriceWindowedServesUnflaggedPair(t *testing.T) {
+	flagged := fallbackFlaggedBase(t)
+	gate := &fallbackScamGate{withheld: map[string]bool{flagged.String(): true}}
+	srv := v1.New(v1.Options{
+		Prices:       &stubPriceReader{err: v1.ErrPriceNotFound},
+		Triangulated: &cachedVWAPLooker{value: "0.1242"},
+		Scam:         gate,
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?window=300&asset=native&quote=fiat:USD")
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — an unflagged pair must still serve its windowed "+
+			"VWAP. Body: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), `"window_seconds":300`) {
+		t.Errorf("body missing the windowed snapshot: %s", body)
 	}
 }
