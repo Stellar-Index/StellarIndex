@@ -184,11 +184,22 @@ func TestK023_ExplorerBuildRunsPruneAndFileBudget(t *testing.T) {
 // Source-level on purpose: the assertion is "some non-test file on
 // each replay path calls the gate"; the owning fix (F050) carries the
 // behavioural test.
+//
+// Status after the F050 fix: projector-replay and ch-rebuild are GREEN
+// (they ask through external.ReplayBackfillSafe; behavioural tests in
+// internal/ops/ingest/projector_backfillsafe_test.go and
+// internal/ops/chops/ch_rebuild_backfillsafe_test.go). projected-rebuild
+// was added to this list by that fix and is RED: it is the third
+// re-derive path — the bulk sibling the projector-replay runbook sends
+// any rewind over ~1M ledgers to — it builds the same current decoder
+// over the same history, and it never asks either. Its file was outside
+// the fixing unit's scope, so this leg is the evidence, not the fix.
 func TestK023_ReplayPathsConsultBackfillSafe(t *testing.T) {
 	t.Parallel()
 	paths := map[string][]string{
-		"projector-replay": {"internal/ops/ingest/projector*.go", "internal/projector/*.go"},
-		"ch-rebuild":       {"internal/ops/chops/ch_rebuild*.go"},
+		"projector-replay":  {"internal/ops/ingest/projector*.go", "internal/projector/*.go"},
+		"ch-rebuild":        {"internal/ops/chops/ch_rebuild*.go"},
+		"projected-rebuild": {"internal/ops/chops/projected_rebuild*.go"},
 	}
 	for cmd, globs := range paths {
 		files, found := scanForCall(t, globs, "BackfillSafe(")
