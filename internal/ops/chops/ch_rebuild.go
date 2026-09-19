@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -259,6 +260,35 @@ func checkCHRebuildBackfillSafe(sources []string) error {
 		unsafeSources)
 }
 
+// chRebuildPreflightPrefix opens the single stdout line a successful
+// `ch-rebuild -write -preflight` prints. It is a CONTRACT with
+// scripts/ops/ch-rebuild-projected.sh, which selects the line by this
+// prefix and reads the `rederive=` list off its end — change the two
+// together (TestChRebuildProjectedScript_ParsesTheRealPreflightLine feeds
+// this function's output to the shipped script).
+const chRebuildPreflightPrefix = "ch-rebuild: preflight ok"
+
+// checkCHRebuildPreflightFlags refuses -preflight without -write. The
+// guards a preflight exists to run are all -write guards (a dry run writes
+// nothing and is deliberately not guarded), so a bare -preflight would run
+// none of them and still answer "ok" — a pass over nothing, handed to a
+// caller that is about to delete rows on the strength of it.
+func checkCHRebuildPreflightFlags(preflight, write bool) error {
+	if preflight && !write {
+		return fmt.Errorf("-preflight checks the guards of a -write run and a dry run has none; pass it together with -write")
+	}
+	return nil
+}
+
+// reportCHRebuildPreflight prints the preflight verdict: the range and the
+// sources this invocation would re-derive, comma-separated, in catalogue
+// order. An empty list is a legal answer (nothing named resolves to a
+// decoder under this config) and prints `rederive=` with nothing after it.
+func reportCHRebuildPreflight(w io.Writer, lo, hi uint32, rederive []string) error {
+	_, err := fmt.Fprintf(w, "%s [%d,%d] rederive=%s\n", chRebuildPreflightPrefix, lo, hi, strings.Join(rederive, ","))
+	return err
+}
+
 // chRebuild is the ADR-0034 Phase-4 write path: it re-derives a ledger range's
 // protocol output from the ClickHouse Tier-1 lake using the EXISTING decoders
 // and WRITES it to the Postgres served tier via the production sink
@@ -317,11 +347,15 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	write := fs.Bool("write", false, "actually write to Postgres (default: dry-run, count only)")
 	bulkTrades := fs.Bool("bulk-trades", false, "with -write: land trade rows through the BULK backfill writer (timescale.Store.BulkBackfillTrades) instead of the per-batch upsert. Opt-in and BACKFILL-ONLY. It proves - per source, scoped by ledger AND ts - that the target range holds no stored rows, then resolves usd_volume for the whole buffer through a worker pool and streams the rows in over parallel binary COPY connections. Rows are identical to the upsert path's (same storability gate, same intra-batch PK dedupe, same tradeUSDVolume waterfall, same derive_generation, same source_entry_counts / registry / sentinel side effects); the difference is that a latency-bound workload stops being serial. If the range is NOT empty - or a COPY hits a unique violation because something wrote underneath it - the buffer is handed to the ordinary generation-guarded upsert instead and the run says so. Worth it for a historical re-derive below the source's floor; pointless (and it will just fall back) for a recovery into populated ledgers.")
 	allowLiveOverlap := fs.Bool("allow-live-overlap", false, "DANGEROUS: bypass the live-cursor guard and -write a range the live projector's cursor for a PROJECTED source is still inside. Only pass this if you have independently verified the live projector will not process this range concurrently — see the ADR-0048 D3 one-writer contract on checkCHRebuildLiveOverlap.")
+	preflight := fs.Bool("preflight", false, "with -write: run the refusals this exact -write invocation would hit BEFORE it reads the lake — the BackfillSafe gate (both legs), the live-cursor one-writer guard, and the buffered-range ceiling — then print one line naming the sources it would re-derive (`"+chRebuildPreflightPrefix+" [from,to] rederive=a,b,c`) on stdout and exit 0 WITHOUT reading ClickHouse or writing a row. A refusal exits non-zero exactly as the real run would. It exists for a caller that must do something destructive before the re-derive (scripts/ops/ch-rebuild-projected.sh DELETEs the window first): ask here, and delete only what this prints. Runtime failures (a lake stream error, a failed write) are by nature not covered.")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
 		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
+	}
+	if err := checkCHRebuildPreflightFlags(*preflight, *write); err != nil {
+		return err
 	}
 	// -contracts scopes both passes to a contract subset; the sep41 pass pushes
 	// it into the CH read as the contract_id prefilter (narrows the scan), the
@@ -463,10 +497,10 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// A -write pass over a PROJECTED source is a second writer of a domain
 	// ADR-0031/0032 gives to the projector alone. Refuse the overlap the
 	// same way projected-rebuild does — see checkCHRebuildLiveOverlap.
+	passes := chRebuildPasses{sep41: *includeSEP41, contractCalls: *contractCalls, sdex: *includeSDEX}
 	if *write {
 		// BackfillSafe gate, second leg (F050): everything this run would
 		// decode, which with no -sources is the whole catalogue.
-		passes := chRebuildPasses{sep41: *includeSEP41, contractCalls: *contractCalls, sdex: *includeSDEX}
 		if gerr := checkCHRebuildBackfillSafe(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)); gerr != nil {
 			return gerr
 		}
@@ -536,6 +570,13 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if buffering && *to-*from > maxBufferedRange {
 		return fmt.Errorf("ch-rebuild: range [%d,%d] spans %d ledgers — the event/sep41 passes buffer in-process; window invocations to <=%d ledgers (loop externally, resume per window)",
 			*from, *to, *to-*from, maxBufferedRange)
+	}
+	// -preflight stops HERE: past the last refusal, before the first lake
+	// read. Everything above is read-only against Postgres, so a caller
+	// that deletes on the strength of this answer has deleted nothing the
+	// run below would then refuse to rewrite (RLT-381).
+	if *preflight {
+		return reportCHRebuildPreflight(os.Stdout, lo, hi, reDerivedSourcesInRun(cat, sep41Cat, passes, enabled))
 	}
 
 	fmt.Fprintf(os.Stderr, "ch-rebuild: [%d,%d] mode=%s sources=%q sdex=%v contract-calls=%v sep41=%v ch=%s\n",

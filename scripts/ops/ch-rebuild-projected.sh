@@ -64,8 +64,27 @@ w=$FROM
 while [ "$w" -le "$TO" ]; do
   hi=$((w+WIN-1)); [ "$hi" -gt "$TO" ] && hi=$TO
   if grep -qx "$w" "$STATE"; then w=$((w+WIN)); continue; fi
+  # Ask BEFORE deleting (RLT-381). ch-rebuild's refusals — BackfillSafe,
+  # the live-cursor one-writer guard, the buffered-range ceiling — used to
+  # be met only inside the -write run below, after this window's rows were
+  # already gone, so a guard doing its job left the tables empty. -preflight
+  # runs the same guards for the same range and sources and touches nothing.
+  # Anything short of an explicit verdict line is a NO: a refusal, a
+  # deployed binary that predates -preflight (flag error), or silence.
+  echo "--- window [$w,$hi] PREFLIGHT $(date -u) ---"
+  pf=$($OPS ch-rebuild -config "$CFG" -from "$w" -to "$hi" -sources "$SRC" -write -preflight) \
+    || { echo "PREFLIGHT REFUSED [$w,$hi] — nothing was deleted for this window"; exit 1; }
+  verdict=$(sed -n '/^ch-rebuild: preflight ok \[/p' <<<"$pf")
+  if [ -z "$verdict" ]; then
+    echo "PREFLIGHT gave no verdict [$w,$hi] (stdout: '$pf') — nothing was deleted for this window"; exit 1
+  fi
+  echo "$verdict"
   echo "--- window [$w,$hi] DELETE $(date -u) ---"
-  psql "$DSN" -v ON_ERROR_STOP=1 <<SQL || { echo "DELETE FAILED [$w,$hi]"; exit 1; }
+  # One transaction: psql autocommits per statement otherwise, and a failure
+  # part-way would leave the earlier tables emptied. ON_ERROR_STOP quits at
+  # the first error, before COMMIT, and the open transaction rolls back.
+  psql "$DSN" -v ON_ERROR_STOP=1 <<SQL || { echo "DELETE FAILED [$w,$hi] — one transaction, so rolled back unless the failure was the COMMIT itself"; exit 1; }
+BEGIN;
 DELETE FROM trades WHERE source IN ('aquarius','soroswap','phoenix','comet') AND ledger BETWEEN $w AND $hi;
 DELETE FROM soroswap_skim_events WHERE ledger BETWEEN $w AND $hi;
 DELETE FROM phoenix_liquidity     WHERE ledger BETWEEN $w AND $hi;
@@ -78,6 +97,7 @@ DELETE FROM blend_auctions        WHERE ledger BETWEEN $w AND $hi;
 DELETE FROM blend_positions       WHERE ledger BETWEEN $w AND $hi;
 DELETE FROM blend_emissions       WHERE ledger BETWEEN $w AND $hi;
 DELETE FROM blend_admin           WHERE ledger BETWEEN $w AND $hi;
+COMMIT;
 SQL
   echo "--- window [$w,$hi] REBUILD $(date -u) ---"
   $OPS ch-rebuild -config "$CFG" -from "$w" -to "$hi" -sources "$SRC" -write \

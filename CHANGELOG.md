@@ -42,6 +42,25 @@ against.
   run now leaves the window pending and its log line says `VERDICT NOT
   STORED`; a run at or above the stored tip clears it as before (F072,
   K013).
+- **ops / `ch-rebuild -preflight`, `scripts/ops/ch-rebuild-projected.sh`:**
+  the script DELETEd a window and only then ran `ch-rebuild -write`, whose
+  refusals — the `BackfillSafe` gate, the live-cursor one-writer guard, the
+  2M-ledger buffered-range ceiling — all fire inside that second process. A
+  guard doing its job therefore left the window's tables empty, in
+  autocommit, with nothing to rewrite them (RLT-381). `ch-rebuild` gains
+  `-preflight` (only valid with `-write`): it runs those three guards for the
+  exact range and sources, prints one line
+  (`ch-rebuild: preflight ok [from,to] rederive=a,b,c`) and exits before the
+  first lake read, writing nothing. The script now asks first, per window,
+  and treats anything short of that line as a refusal — a guard's "no", a
+  deployed binary that predates the flag, or silence — deleting nothing. The
+  DELETE batch is also one `BEGIN … COMMIT` transaction, so a failure on a
+  later table no longer leaves the earlier ones emptied. **Operator-visible:**
+  the script needs an ops binary that knows `-preflight`; against an older
+  one it stops before the first DELETE rather than running unguarded.
+  Runtime failures after the DELETE (a lake stream error, a failed write)
+  are not something a preflight can see.
+
 - **ops / `scripts/ops/ch-rebuild-projected.sh`:** the per-window trades
   DELETE named `sushiswap_v3`, which was never in the script's re-derive
   list — so every window it processed deleted that source's served trades,
