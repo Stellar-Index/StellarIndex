@@ -103,6 +103,12 @@ const coverageQuoteProxies = usdProxyQuotes + `,
 // DOWNWARD: the tripwire errs toward paging a human, never toward
 // silently suppressing a gap it cannot measure. attributed_vol_share
 // reports how much of the asset's volume the share was measured over.
+//
+// COST: widening the population costs this leg ~14s on r1 (EXPLAIN
+// ANALYZE 2026-09-19: 6.6s -> 20.7s over the same 7d scan). The rows
+// read are unchanged; the planner declines to parallelise the wider
+// aggregate. That keeps a full sweep around 70s, well inside
+// DefaultSweepTimeout (5 min) and the 10-minute cadence.
 const popularPricelessCandidatesSQL = `
 WITH vol7d AS (
   SELECT base_asset AS asset_id,
