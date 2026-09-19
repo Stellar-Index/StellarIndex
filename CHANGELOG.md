@@ -184,6 +184,19 @@ against.
   present with `run_clickhouse` false, i.e. r1's shape → they still run;
   `run_clickhouse` true with no package yet → they still run). The middle arm is
   the one that fails on a `run_clickhouse`-only "fix".
+  **This does not finish F128, and the remaining file is named rather than
+  quietly left:** `tasks/15-log-discipline.yml` — imported EARLIER than these
+  three, and outside this unit's file set — carries six more unguarded
+  ClickHouse-config tasks (`/var/lib/clickhouse/logs` chowned to the
+  `clickhouse` user, which no task in this role creates; `zzz-logpath.xml`,
+  `zz-ratesengine.xml`, `zz-merge-memory-guard.xml` and the clickhouse-client
+  drop-in, all written under `/etc/clickhouse-server` or
+  `/etc/clickhouse-client`; and a bare `clickhouse-client -q "SELECT 1"` assert
+  with `failed_when: rc != 0`). A real apply to a host with no ClickHouse still
+  aborts there. The gate fact is therefore resolved right after preflight rather
+  than beside the imports it currently guards, so closing that file is a
+  one-file change: add `when: clickhouse_config_tasks_enabled | bool` to those
+  six tasks.
 
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before
