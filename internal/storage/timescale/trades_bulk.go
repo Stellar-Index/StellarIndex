@@ -16,6 +16,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // ─── bulk historical backfill writer ─────────────────────────────────────
@@ -358,38 +359,142 @@ func (s *Store) resolveBulkUSDVolumes(ctx context.Context, rows []canonical.Trad
 	out := make([]sql.NullString, len(rows))
 	errAt := make([]error, len(rows))
 
+	// An unrecovered panic in ANY goroutine terminates the whole process, and
+	// a WaitGroup join does not change that — joined is not protected. But
+	// merely CONTAINING a panic here would be worse than the crash: the rows
+	// the dead worker never reached keep out[i]'s zero value, which is a NULL
+	// usd_volume, and errAt[i] stays nil, so the backfill would write a
+	// silently under-valued batch and report success. So the recovery and the
+	// failure record land together — a panicked resolve fails the whole call.
+	var panicked panicRecord
 	var wg sync.WaitGroup
 	next := make(chan int, workers)
-	go func() {
-		defer close(next)
-		for i := range rows {
-			next <- i
-		}
-	}()
+	go feedRowIndexes(next, len(rows), &panicked)
 	for range workers {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				rec := recover()
+				if rec == nil {
+					return
+				}
+				worker.Report(slog.Default(), bulkResolverWorkerName, rec)
+				panicked.record("usd-volume resolver", rec)
+				// A worker that dies stops receiving, which would strand
+				// the feeder on a send nobody will ever take — the feeder
+				// would then never reach close(next) and would leak for the
+				// life of the process. Drain on the way out so it finishes.
+				drainIndexes(next)
+			}()
 			for i := range next {
-				v := tradeUSDVolume(ctx, rows[i], s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
-				if err := s.reDeriveNullVolumeGuard(rows[i], v); err != nil {
-					errAt[i] = err
-					continue
-				}
-				obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, usdPopulatedLabel(v != nil)).Inc()
-				if v != nil {
-					out[i] = sql.NullString{String: *v, Valid: true}
-				}
+				s.resolveRowUSDVolume(ctx, rows, out, errAt, i)
 			}
 		}()
 	}
 	wg.Wait()
-	for i := range errAt {
-		if errAt[i] != nil {
-			return nil, errAt[i]
-		}
+	// Checked BEFORE errAt: a panic means an unknown subset of rows was never
+	// resolved at all, so no per-row verdict from this run can be trusted to
+	// be complete.
+	if err := panicked.err(); err != nil {
+		return nil, err
+	}
+	if err := firstBulkRowErr(errAt); err != nil {
+		return nil, err
 	}
 	return out, nil
+}
+
+// Stable worker names for stellarindex_worker_panics_total. The alert reads
+// this label, so it is a constant rather than a string built at the call site.
+const (
+	bulkResolverWorkerName = "timescale-bulk-backfill-usd-volume-resolver"
+	bulkFeederWorkerName   = "timescale-bulk-backfill-usd-volume-feeder"
+	bulkCopyWorkerName     = "timescale-bulk-backfill-copy-partition"
+)
+
+// resolveRowUSDVolume computes row i's `usd_volume` into out[i], or records
+// the re-derive guard's refusal in errAt[i]. Behaviour is exactly what the
+// fan-out body did inline; it is a function only so the fan-out stays inside
+// the cognitive-complexity budget.
+func (s *Store) resolveRowUSDVolume(
+	ctx context.Context, rows []canonical.Trade, out []sql.NullString, errAt []error, i int,
+) {
+	v := tradeUSDVolume(ctx, rows[i], s.usdVolumeQuoteSpec, s.usdVolumeFXResolver)
+	if err := s.reDeriveNullVolumeGuard(rows[i], v); err != nil {
+		errAt[i] = err
+		return
+	}
+	obs.TradeInsertsTotal.WithLabelValues(rows[i].Source, usdPopulatedLabel(v != nil)).Inc()
+	if v != nil {
+		out[i] = sql.NullString{String: *v, Valid: true}
+	}
+}
+
+// feedRowIndexes publishes 0..n-1 to ch and closes it. Run as a detached
+// goroutine by [Store.resolveBulkUSDVolumes].
+func feedRowIndexes(ch chan<- int, n int, panicked *panicRecord) {
+	// close(ch) stays the OUTERMOST defer: containing a panic without it
+	// would leave every worker blocked on a range over a channel that never
+	// closes, and the caller's wg.Wait would never return.
+	defer close(ch)
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(slog.Default(), bulkFeederWorkerName, rec)
+			panicked.record("usd-volume feeder", rec)
+		}
+	}()
+	for i := range n {
+		ch <- i
+	}
+}
+
+// firstBulkRowErr returns the LOWEST-index per-row failure, so the error a
+// caller sees does not depend on which goroutine lost the race.
+func firstBulkRowErr(errAt []error) error {
+	for i := range errAt {
+		if errAt[i] != nil {
+			return errAt[i]
+		}
+	}
+	return nil
+}
+
+// panicRecord is the release for the bulk writer's fan-out goroutines: it
+// contains a panic (which would otherwise kill the process) AND turns it into
+// a returned error, so a fan-out that died part-way can never be mistaken for
+// one that completed. The FIRST panic wins, so the error a caller sees does
+// not depend on which goroutine lost the race — the same determinism rule
+// [Store.resolveBulkUSDVolumes] applies to its per-row guard failures.
+type panicRecord struct {
+	mu    sync.Mutex
+	first error
+}
+
+// record takes an ALREADY-RECOVERED panic value; the caller does the
+// recover() and the [worker.Report]. It cannot do either itself: recover()
+// only fires for a function the panicking goroutine DEFERRED, so a helper the
+// deferred closure merely calls is one frame too deep and would silently
+// contain nothing — the same constraint [worker.Report] exists for.
+func (p *panicRecord) record(where string, rec any) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.first == nil {
+		p.first = fmt.Errorf("timescale: BulkBackfillTrades: %s panicked: %v", where, rec)
+	}
+}
+
+// drainIndexes consumes the rest of ch so a blocked producer can complete its
+// send and close it. Used only by the resolver fan-out's panic guard.
+func drainIndexes(ch <-chan int) {
+	for range ch {
+	}
+}
+
+func (p *panicRecord) err() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.first
 }
 
 // bulkPartitions splits n rows into at most `writers` contiguous ranges, none
@@ -428,6 +533,18 @@ func (s *Store) copyTradePartitions(ctx context.Context, rows []canonical.Trade,
 		wg.Add(1)
 		go func(i int, lo, hi int) {
 			defer wg.Done()
+			// errs[i] is this partition's release. An unrecovered panic
+			// would kill the process; a panic merely CONTAINED would leave
+			// errs[i] nil, so the loop below would count the partition as
+			// LANDED — and the caller tallies source_entry_counts off
+			// `landed`, so it would credit rows that were never copied.
+			defer func() {
+				if rec := recover(); rec != nil {
+					worker.Report(slog.Default(), bulkCopyWorkerName, rec)
+					errs[i] = fmt.Errorf(
+						"timescale: BulkBackfillTrades: copy partition %d panicked: %v", i, rec)
+				}
+			}()
 			counts[i], errs[i] = s.copyTradeRange(ctx, values[lo:hi], opts.MaxTuplesDecompressedPerDML)
 		}(i, p[0], p[1])
 	}
