@@ -31,8 +31,11 @@ type Event struct {
 	Amount      string // decimal i128
 	Destination string
 	From        *string // payment-only
-	Memo        *string // payment-only ('' is a valid tag)
-	Token       *string // flush-only
+	// Memo is payment-only ('' is a valid tag). It is already in its
+	// scval.ToText form (DecodePayment) — text-column-safe, lossless —
+	// so a sink binds it as-is and must not encode it a second time.
+	Memo  *string
+	Token *string // flush-only
 }
 
 // EventKind implements [consumer.Event].

@@ -67,6 +67,13 @@ func Classify(e *events.Event) string {
 // Field order in the ScMap is alphabetical (Soroban macro
 // behaviour); the decoder uses scval.MustMapField for explicit
 // field lookup so ordering changes don't break us.
+//
+// Payment.Memo is the memo in its scval.ToText form: the literal memo
+// when that is valid NUL-free UTF-8 (every ordinary deposit tag), and
+// `\x` + hex of its bytes otherwise. scval.FromText recovers the
+// on-chain bytes. It is the only contract-chosen free-form value in a
+// v1 event — from / destination / token are strkeys rendered by
+// scval.AsAddressStrkey and amount is a decimal i128, all ASCII.
 func DecodePayment(e *events.Event) (Payment, error) {
 	body, err := scval.Parse(e.Value)
 	if err != nil {
@@ -108,7 +115,12 @@ func DecodePayment(e *events.Event) (Payment, error) {
 	if err != nil {
 		return Payment{}, fmt.Errorf("%w: missing 'memo': %w", ErrMalformedBody, err)
 	}
-	memo, err := scval.AsString(memoSV)
+	// AsText, not AsString: the memo is the payer's bytes, not text, and
+	// it is bound to the rozo_events.memo `text` column. A NUL or an
+	// invalid UTF-8 sequence there is refused by Postgres (SQLSTATE
+	// 22021) on every attempt, so a one-stroop pay() would cost the row
+	// for good. AsText keeps every byte (see scval.ToText).
+	memo, err := scval.AsText(memoSV)
 	if err != nil {
 		return Payment{}, fmt.Errorf("rozo: payment 'memo' string: %w", err)
 	}

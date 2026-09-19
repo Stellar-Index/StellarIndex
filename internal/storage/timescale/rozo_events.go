@@ -50,8 +50,14 @@ type RozoEvent struct {
 	Amount      string // decimal i128
 	Destination string
 	From        *string // payment-only
-	Memo        *string // payment-only ('' is a valid tag)
-	Token       *string // flush-only
+	// Memo is payment-only ('' is a valid tag). The on-chain memo is
+	// payer-chosen BYTES; the rozo decoder hands it over in scval.ToText
+	// form (the literal memo when it is valid NUL-free UTF-8, else `\x` +
+	// hex), which is what the `memo` text column stores. InsertRozoEvent
+	// binds it unchanged: ToText is applied once, at decode, and is not
+	// idempotent, so re-encoding here would corrupt an encoded memo.
+	Memo  *string
+	Token *string // flush-only
 }
 
 // InsertRozoEvent appends one Rozo event row, idempotent on the

@@ -19,8 +19,11 @@ package scval
 import (
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -201,11 +204,80 @@ func EncodeString(s string) (string, error) {
 // callers can't accidentally confuse the two types — they look
 // similar on-wire but have different semantics (Symbols are
 // identifier-constrained; Strings are arbitrary bytes).
+//
+// The result is the RAW BYTES of the ScString held in a Go string. It
+// is NOT text: the Soroban host accepts any byte sequence in a String,
+// so a contract caller chooses these bytes and they may hold a NUL or
+// an invalid UTF-8 sequence. Compare it, hash it, or match it against
+// an allow-list freely — but never bind it to a Postgres `text` column
+// (the server rejects it with SQLSTATE 22021, a permanent data error).
+// A value that is persisted as text goes through [AsText] instead.
 func AsString(sv xdr.ScVal) (string, error) {
 	if sv.Type != xdr.ScValTypeScvString {
 		return "", fmt.Errorf("%w: want String, got %s", ErrScValType, sv.Type.String())
 	}
 	return string(*sv.Str), nil
+}
+
+// TextHexPrefix marks a [ToText] value that carries its bytes as hex
+// rather than literally. It is Postgres's own bytea hex-output marker,
+// so a stored value reads as what it is and decodes in SQL with
+// `decode(substr(col, 3), 'hex')`.
+const TextHexPrefix = `\x`
+
+// AsText is [AsString] for a value that will be persisted as text: it
+// returns the String of sv in its [ToText] form, which a Postgres
+// `text` column always accepts and from which [FromText] recovers the
+// exact on-chain bytes.
+func AsText(sv xdr.ScVal) (string, error) {
+	raw, err := AsString(sv)
+	if err != nil {
+		return "", err
+	}
+	return ToText(raw), nil
+}
+
+// ToText maps arbitrary contract-supplied bytes onto a string that is
+// always valid UTF-8 without a NUL — the two properties a Postgres
+// `text` value must have — without losing a byte:
+//
+//   - raw that is already valid NUL-free UTF-8 and does not begin with
+//     [TextHexPrefix] is returned UNCHANGED (every ordinary value, so
+//     re-deriving an existing row writes the same text);
+//   - anything else is returned as [TextHexPrefix] + lowercase hex of
+//     every byte of raw.
+//
+// A clean value that itself begins with the prefix takes the hex arm
+// too. That is what makes the mapping injective — no literal value can
+// collide with an encoded one, so [FromText] is unambiguous — and it is
+// why ToText must be applied exactly ONCE, at the point bytes become
+// text: applying it to its own output re-encodes it.
+//
+// Pure and total: the same bytes always yield the same text, so a
+// re-derive of the same event produces the same row. Validity is Go's
+// utf8.ValidString, which rejects what the server's UTF8 verifier
+// rejects (overlong forms, encoded surrogates, values above U+10FFFF).
+func ToText(raw string) string {
+	if utf8.ValidString(raw) && !strings.Contains(raw, "\x00") && !strings.HasPrefix(raw, TextHexPrefix) {
+		return raw
+	}
+	return TextHexPrefix + hex.EncodeToString([]byte(raw))
+}
+
+// FromText is the inverse of [ToText]: it returns the original bytes of
+// a stored text value. A value without [TextHexPrefix] is its own
+// bytes; a prefixed value whose remainder is not hex was not produced
+// by ToText and is reported as [ErrScValDecode].
+func FromText(text string) ([]byte, error) {
+	rest, ok := strings.CutPrefix(text, TextHexPrefix)
+	if !ok {
+		return []byte(text), nil
+	}
+	raw, err := hex.DecodeString(rest)
+	if err != nil {
+		return nil, fmt.Errorf("%w: text value has the hex prefix but is not hex: %w", ErrScValDecode, err)
+	}
+	return raw, nil
 }
 
 // EncodeSymbol is the non-panicking form of [MustEncodeSymbol].

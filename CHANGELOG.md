@@ -41,6 +41,24 @@ against.
   synthetic USD row — on exactly the refreshes the standby and the names
   reuse exist for. The trailing-7d history fetch had the same join and
   silently returned no bars under reused names. (F033)
+- **rozo (payment memo):** a payer can no longer make a Rozo payment
+  permanently un-ingestible by choosing its memo bytes. The memo is an
+  `ScString` — arbitrary bytes, picked by whoever calls `pay()`, for one
+  stroop — and the decoder bound it unchecked to the `rozo_events.memo`
+  `text` column. Postgres refuses a NUL or an invalid UTF-8 sequence there
+  (SQLSTATE 22021), the projector classes that as a permanent data error and
+  skips the event, and the row is gone for good. The decoder now hands the
+  memo over through the new `scval.AsText`: a memo that is valid NUL-free
+  UTF-8 is stored verbatim exactly as before, and anything else is stored as
+  `\x` + the hex of its bytes (Postgres's own bytea notation — recover the
+  bytes with `decode(substr(memo, 3), 'hex')` or `scval.FromText`). The
+  mapping loses nothing, is deterministic (a re-derive writes the same row)
+  and is injective: a clean memo that itself begins with `\x` is hex-encoded
+  too, so no literal memo can be mistaken for an encoded one. No schema
+  change; `scval.AsString` is unchanged and now documents that its result is
+  bytes, not text. New integration test drives NUL, invalid-UTF-8, overlong,
+  surrogate and out-of-range memos through decoder → sink → real Postgres
+  (audit 2026-09-02 F052).
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock
