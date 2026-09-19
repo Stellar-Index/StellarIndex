@@ -87,6 +87,28 @@ against.
   account-activity watermark's probe is re-confirmed once its lease expires
   (`TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate`) — no
   production code changed.
+- **sep1 refresh / one hostile stellar.toml no longer wedges all ~76k issuers
+  (RSEC-Z1, RLT-458):** the 1 MiB body cap bounded the INPUT, not the decoder's
+  work on it — the pinned TOML decoder is roughly quadratic in inline-table
+  nesting depth, so a 16 KB document (4,000 levels, publishable by any account
+  with 1 XLM) allocated 1.81 GiB and a full-size body admits ~260,000 levels.
+  Under the unit's `MemoryMax=2G` that is a cgroup SIGKILL, and because the
+  attempt marker was written only AFTER the parse returned, the killed row
+  stayed `sep1_resolved_at IS NULL` and came back as candidate #1 —
+  `ORDER BY … NULLS FIRST` — on every hourly run, freezing org names, logos,
+  `org_verified` and RWA admission for the whole issuer population.
+  Three changes: the parser refuses a document nested past a structural-depth
+  budget BEFORE decoding it (a string- and comment-aware scan, plus a
+  context-free bound that cannot be fooled by a lexer disagreement); the
+  refresh marks each issuer's attempt BEFORE the fetch, exactly once, so a
+  worker killed mid-decode leaves the poison row deferred by the retry ladder
+  (a success costs nothing for it — `SetIssuerSep1Payload` clears the ladder in
+  the same statement that writes the payload); and each issuer now runs on its
+  own 30s budget so no single domain can consume the run's deadline.
+  OPERATOR NOTE: the `sep1-refresh.service` template changed only in its
+  comments, which an ansible surface does not carry to r1 with a binary deploy
+  — no ansible run is required for this fix, and `MemoryMax=2G` deliberately
+  stays as the backstop.
 
 - **docs / phoenix gating:** the tree's four "the factory's creation events
   predate the lake" claims are corrected — the events run from ledger

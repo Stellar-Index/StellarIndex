@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -236,6 +237,165 @@ var ErrTOMLTooLarge = errors.New("sep1: TOML body exceeds 1 MiB limit")
 // shouldn't exceed a few KB; 1 MiB is a generous safety net.
 const maxBodyBytes = 1 << 20
 
+// ErrTOMLTooDeep is returned when a stellar.toml nests structural
+// brackets deeper than [maxTOMLNestingDepth].
+//
+// # Why a byte cap is not enough
+//
+// [maxBodyBytes] bounds the INPUT; it does not bound the WORK the
+// decoder does on that input, and the decoder's cost is superlinear in
+// nesting depth. Measured against the pinned decoder on this host:
+// 250 nested inline tables (1,005 bytes) allocate 8 MiB, 1,000 (4 KB)
+// allocate 117 MiB, 4,000 (16 KB) allocate 1.81 GiB in 0.72s — roughly
+// quadratic, and a 1 MiB body admits ~260,000 levels. The refresh unit
+// runs under MemoryMax=2G, so a 16 KB document any 1-XLM account can
+// publish from its home_domain is enough to have the whole worker
+// SIGKILLed by the cgroup. Depth is the one dimension that does this:
+// the same measurement over nested ARRAYS and over 10,000 sibling
+// [[CURRENCIES]] tables is linear (0.6 MiB in 55ms).
+//
+// So the depth is bounded BEFORE the body reaches the decoder, and a
+// document over the bound is refused the way any other unparseable
+// document is — the issuer is marked failed and the run moves on.
+var ErrTOMLTooDeep = errors.New("sep1: TOML nests structural brackets deeper than the parse budget allows")
+
+// Nesting bounds enforced by [checkTOMLNesting].
+//
+// maxTOMLNestingDepth is the real limit, measured by a scan that knows
+// where strings and comments are. 32 is far past anything SEP-1
+// describes — the deepest construct the spec has is an inline table
+// inside an array of tables, two levels — and bounds the decoder's work
+// on a full 1 MiB body to a few hundred KB of allocation.
+//
+// maxRawTOMLNestingDepth is insurance against that scan disagreeing
+// with the decoder's own lexer about where a string ends: the raw count
+// ignores strings and comments entirely, so it can only ever
+// OVER-estimate the true depth. It cannot miss a deep document, and a
+// document trips it only by carrying 256 unclosed brackets of literal
+// text. At depth 256 the decoder allocates ~8 MiB, so a divergence that
+// slips past the lexical bound still cannot reach the memory ceiling.
+const (
+	maxTOMLNestingDepth    = 32
+	maxRawTOMLNestingDepth = 256
+)
+
+// checkTOMLNesting refuses a document whose structural nesting would
+// make the decode superlinearly expensive. See [ErrTOMLTooDeep].
+func checkTOMLNesting(body []byte) error {
+	if rawBracketDepth(body) > maxRawTOMLNestingDepth ||
+		tomlNestingDepth(body) > maxTOMLNestingDepth {
+		return ErrTOMLTooDeep
+	}
+	return nil
+}
+
+// rawBracketDepth returns the greatest excess of opening over closing
+// brackets at any point in body, counting every byte — inside strings
+// and comments included. Deliberately context-free: it is the bound
+// that holds even if [tomlNestingDepth] and the decoder's lexer
+// disagree, and it over-estimates rather than under-estimates.
+func rawBracketDepth(body []byte) int {
+	depth, deepest := 0, 0
+	for _, c := range body {
+		switch c {
+		case '{', '[':
+			depth++
+			if depth > deepest {
+				deepest = depth
+			}
+		case '}', ']':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return deepest
+}
+
+// tomlNestingDepth returns the deepest structural bracket nesting in
+// body, skipping comments and every TOML string form so that brackets
+// which are DATA are not counted as structure.
+//
+// It stops counting down at zero rather than going negative: a stray
+// closing bracket in a malformed document must not let a later opening
+// run start from below zero and hide its depth.
+func tomlNestingDepth(body []byte) int {
+	depth, deepest := 0, 0
+	for i := 0; i < len(body); {
+		switch c := body[i]; c {
+		case '#':
+			i = skipTOMLComment(body, i)
+		case '"', '\'':
+			i = skipTOMLString(body, i)
+		case '{', '[':
+			depth++
+			if depth > deepest {
+				deepest = depth
+			}
+			i++
+		case '}', ']':
+			if depth > 0 {
+				depth--
+			}
+			i++
+		default:
+			i++
+		}
+	}
+	return deepest
+}
+
+// skipTOMLComment returns the index just past the newline that ends the
+// comment starting at i, or len(body) when the comment runs to EOF.
+func skipTOMLComment(body []byte, i int) int {
+	if n := bytes.IndexByte(body[i:], '\n'); n >= 0 {
+		return i + n + 1
+	}
+	return len(body)
+}
+
+// skipTOMLString returns the index just past the string literal opening
+// at body[i], which must be a quote byte. Handles all four TOML string
+// forms: the double-quoted basic and single-quoted literal forms, and
+// the triple-quoted multi-line counterpart of each. Backslash escapes
+// are honoured in the basic forms only, which is where TOML defines
+// them.
+//
+// An unterminated string ends the scan at the newline (single-line
+// forms) or at EOF (multi-line forms) — the decoder rejects such a
+// document anyway; this only has to leave the scan in the same state
+// the decoder's lexer is in.
+func skipTOMLString(body []byte, i int) int {
+	quote := body[i]
+	width := 1
+	if i+2 < len(body) && body[i+1] == quote && body[i+2] == quote {
+		width = 3
+	}
+	escaped := quote == '"'
+	for j := i + width; j < len(body); {
+		switch {
+		case escaped && body[j] == '\\':
+			j += 2
+		case width == 1 && body[j] == '\n':
+			return j
+		case body[j] == quote && closesTOMLString(body, j, quote, width):
+			return j + width
+		default:
+			j++
+		}
+	}
+	return len(body)
+}
+
+// closesTOMLString reports whether the quote run at body[j] is the
+// closing delimiter of a string opened with `width` quote bytes.
+func closesTOMLString(body []byte, j int, quote byte, width int) bool {
+	if width == 1 {
+		return true
+	}
+	return j+2 < len(body) && body[j+1] == quote && body[j+2] == quote
+}
+
 // Per-field length caps. The 1 MiB body cap bounds the whole TOML,
 // but a single field (e.g. DOCUMENTATION.ORG_NAME) can still be ~1 MiB
 // of one string — and we store + serve these values verbatim (every
@@ -344,6 +504,12 @@ func (r *Resolver) Resolve(ctx context.Context, domain string) (*SEP1, error) {
 // parseSEP1 decodes TOML bytes into a SEP1 struct. Separated from
 // the HTTP path so tests can exercise the parser directly.
 func parseSEP1(body []byte) (*SEP1, error) {
+	// Refuse a pathologically nested document BEFORE handing it to the
+	// decoder: the byte cap bounds the input, not the work the decoder
+	// does on it. See [ErrTOMLTooDeep].
+	if err := checkTOMLNesting(body); err != nil {
+		return nil, err
+	}
 	raw := map[string]any{}
 	var skipped []SkippedSection
 	if err := toml.Unmarshal(body, &raw); err != nil {

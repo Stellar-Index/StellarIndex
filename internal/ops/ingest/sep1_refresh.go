@@ -25,8 +25,10 @@ import (
 //
 // Per-issuer fetch failures are logged + counted; they don't abort
 // the run. The resolver respects its built-in 10s per-request
-// timeout + SSRF guard so a slow/malicious operator domain can't
-// stall the whole batch.
+// timeout + SSRF guard, the parser refuses a document nested past its
+// structural-depth budget before decoding it, and each issuer runs on
+// its own [sep1PerIssuerBudget] — so no single slow or malicious
+// operator domain can stall the whole batch.
 //
 // A failure also advances that issuer's retry ladder (migration 0159),
 // so a home_domain that serves nothing settles at ~1 attempt/month
@@ -97,7 +99,8 @@ func sep1RefreshCmd(args []string) error {
 		return err
 	}
 
-	ok, failedKeys := sep1RefreshLoop(ctx, store, candidates, dryRun)
+	resolver := metadata.NewResolver(metadata.Options{Timeout: 10 * time.Second})
+	ok, failedKeys := sep1RefreshLoop(ctx, store, resolver, candidates, dryRun)
 	failed := len(failedKeys)
 	fmt.Printf("\n%d succeeded, %d failed\n", ok, failed)
 	if dryRun {
@@ -109,6 +112,31 @@ func sep1RefreshCmd(args []string) error {
 	return nil
 }
 
+// sep1Store is the slice of the store the refresh loop writes. Narrowed
+// from *timescale.Store so the loop's ordering guarantees (below) can be
+// asserted without a database — the parser, the HTTP client and the
+// queue semantics under test are all the real ones either way.
+type sep1Store interface {
+	MarkIssuerSep1Failed(ctx context.Context, gStrkey string) (int, error)
+	SetIssuerSep1Payload(ctx context.Context, gStrkey string, payload []byte) error
+}
+
+// sep1Resolver is the slice of [metadata.Resolver] the refresh loop
+// uses.
+type sep1Resolver interface {
+	Resolve(ctx context.Context, domain string) (*metadata.SEP1, error)
+}
+
+// sep1PerIssuerBudget bounds one issuer's fetch + parse.
+//
+// The resolver already carries a 10s per-REQUEST timeout, which is not
+// the same thing: a domain that answers slowly but steadily, or a body
+// that takes a long time to decode, spends wall-clock that the request
+// timeout never sees. This ceiling is what makes "one issuer cannot
+// starve the other 76,000" a property of the loop rather than a
+// property of whichever timeout happened to fire first.
+const sep1PerIssuerBudget = 30 * time.Second
+
 // sep1RefreshLoop resolves each candidate in turn and returns the
 // success count plus the g_strkeys of every attempt that produced no
 // payload. The failed keys are carried out (rather than just counted) so
@@ -118,14 +146,10 @@ func sep1RefreshCmd(args []string) error {
 // Sequential on purpose — see the package docblock: the TOML parser's
 // cost is superlinear on attacker-authored input and the unit runs under
 // a 2G ceiling.
-//
-//nolint:gocognit // linear refresh loop; per-issuer fetch + marshal + write reads better inline.
 func sep1RefreshLoop(
-	ctx context.Context, store *timescale.Store,
+	ctx context.Context, store sep1Store, resolver sep1Resolver,
 	candidates []timescale.IssuerSep1Candidate, dryRun bool,
 ) (int, []string) {
-	resolver := metadata.NewResolver(metadata.Options{Timeout: 10 * time.Second})
-
 	var ok int
 	failedKeys := make([]string, 0, len(candidates))
 	for _, c := range candidates {
@@ -133,53 +157,80 @@ func sep1RefreshLoop(
 			fmt.Printf("\nAborted at %d/%d (deadline): %v\n", ok+len(failedKeys), len(candidates), err)
 			break
 		}
-		sep, err := resolver.Resolve(ctx, sep1FetchDomain(c.GStrkey, c.HomeDomain))
-		if err != nil {
-			fmt.Printf("FAIL  %s  %s  %v\n", c.GStrkey, c.HomeDomain, err)
-			// Bump sep1_resolved_at so this (usually dead) domain moves to
-			// the back of the refresh queue — otherwise NULL-resolved dead
-			// domains clog the front of `ORDER BY ... NULLS FIRST` forever
-			// and good issuers behind them never get reached. Best-effort.
-			markSep1Attempted(ctx, store, c.GStrkey, dryRun)
-			failedKeys = append(failedKeys, c.GStrkey)
+		if refreshOneSep1Issuer(ctx, store, resolver, c, dryRun) {
+			ok++
 			continue
 		}
-		// Bidirectional SEP-1 verification: the org is only "verified" if the
-		// fetched toml's [[CURRENCIES]] lists THIS issuer back — i.e. the domain
-		// owner attests to this account. Without it, anyone can set their
-		// account's home_domain to a reputable domain and inherit its ORG_NAME
-		// (spoofing). Callers MUST only merge/group issuers by org when this is
-		// true; one-directional matches are "claimed, unverified".
-		orgVerified := tomlListsIssuer(sep.Currencies, c.GStrkey)
-		payload, jerr := marshalSep1Payload(sep, orgVerified)
-		if jerr != nil {
-			fmt.Printf("FAIL  %s  marshal: %v\n", c.GStrkey, jerr)
-			// Same queue-hygiene rule as the fetch path above: a row we
-			// could not write leaves sep1_resolved_at NULL, which pins it
-			// at the head of `ORDER BY ... NULLS FIRST` forever. One
-			// issuer whose payload never marshals or never writes would
-			// otherwise starve every issuer behind it on every subsequent
-			// run — and both failure modes are reachable from
-			// attacker-authored TOML (a NUL codepoint in a string field
-			// marshals to \u0000, which Postgres jsonb rejects; an
-			// oversized payload can blow the run deadline so the write
-			// fails on an expired context). Cold audit 2026-08-03.
-			markSep1Attempted(ctx, store, c.GStrkey, dryRun)
-			failedKeys = append(failedKeys, c.GStrkey)
-			continue
-		}
-		if !dryRun {
-			if err := store.SetIssuerSep1Payload(ctx, c.GStrkey, payload); err != nil {
-				fmt.Printf("FAIL  %s  write: %v\n", c.GStrkey, err)
-				markSep1Attempted(ctx, store, c.GStrkey, dryRun)
-				failedKeys = append(failedKeys, c.GStrkey)
-				continue
-			}
-		}
-		fmt.Printf("OK    %s  %s  org=%q verified=%v\n", c.GStrkey, c.HomeDomain, sep.OrgName, orgVerified)
-		ok++
+		failedKeys = append(failedKeys, c.GStrkey)
 	}
 	return ok, failedKeys
+}
+
+// refreshOneSep1Issuer fetches, parses and stores one issuer's
+// stellar.toml, reporting whether a payload was written.
+//
+// # Why the attempt is marked FIRST
+//
+// The mark is queue hygiene: the candidate query is `ORDER BY
+// sep1_resolved_at ASC NULLS FIRST`, so a row that is never stamped
+// stays candidate #1 on every subsequent run. Marking it only on the way
+// OUT of a failure assumes the worker survives to get there — and the
+// one input class that most needs marking is the class that kills the
+// worker. An oversized or hostile document decoded under the unit's
+// MemoryMax=2G earns a cgroup SIGKILL mid-loop, nothing is written, and
+// the identical row heads the queue again an hour later, forever,
+// freezing issuer metadata for every issuer behind it. Stamping BEFORE
+// the fetch is what makes the marker survive the kill: the poison row is
+// deferred by the retry ladder and the next run reaches the rest of the
+// population.
+//
+// The pre-mark costs a healthy issuer nothing. SetIssuerSep1Payload sets
+// sep1_consecutive_failures = 0 and sep1_next_attempt_after = NULL in
+// the same statement that writes the payload, so a success erases the
+// ladder step its own pre-mark took (proved against Postgres in
+// test/integration/sep1_retry_backoff_test.go). And the mark happens
+// exactly once per issuer per run, so the systemic-outage unwind — which
+// takes back exactly one ladder step per failed key — still balances.
+func refreshOneSep1Issuer(
+	ctx context.Context, store sep1Store, resolver sep1Resolver,
+	c timescale.IssuerSep1Candidate, dryRun bool,
+) bool {
+	markSep1Attempted(ctx, store, c.GStrkey, dryRun)
+
+	// The fetch+parse runs on its own budget so a single domain cannot
+	// consume the whole run's deadline; the write below deliberately uses
+	// the run context, which outlives it.
+	fetchCtx, cancel := context.WithTimeout(ctx, sep1PerIssuerBudget)
+	defer cancel()
+	sep, err := resolver.Resolve(fetchCtx, sep1FetchDomain(c.GStrkey, c.HomeDomain))
+	if err != nil {
+		fmt.Printf("FAIL  %s  %s  %v\n", c.GStrkey, c.HomeDomain, err)
+		return false
+	}
+	// Bidirectional SEP-1 verification: the org is only "verified" if the
+	// fetched toml's [[CURRENCIES]] lists THIS issuer back — i.e. the domain
+	// owner attests to this account. Without it, anyone can set their
+	// account's home_domain to a reputable domain and inherit its ORG_NAME
+	// (spoofing). Callers MUST only merge/group issuers by org when this is
+	// true; one-directional matches are "claimed, unverified".
+	orgVerified := tomlListsIssuer(sep.Currencies, c.GStrkey)
+	payload, jerr := marshalSep1Payload(sep, orgVerified)
+	if jerr != nil {
+		// Reachable from attacker-authored TOML: a NUL codepoint in a
+		// string field marshals to an escape Postgres jsonb rejects. The
+		// pre-mark has already taken this row off the head of the queue.
+		// Cold audit 2026-08-03.
+		fmt.Printf("FAIL  %s  marshal: %v\n", c.GStrkey, jerr)
+		return false
+	}
+	if !dryRun {
+		if err := store.SetIssuerSep1Payload(ctx, c.GStrkey, payload); err != nil {
+			fmt.Printf("FAIL  %s  write: %v\n", c.GStrkey, err)
+			return false
+		}
+	}
+	fmt.Printf("OK    %s  %s  org=%q verified=%v\n", c.GStrkey, c.HomeDomain, sep.OrgName, orgVerified)
+	return true
 }
 
 // sep1Candidates picks the run's work: one named issuer, or the head of
@@ -286,22 +337,22 @@ func reportSep1Systemic(store *timescale.Store, attempts int, failedKeys []strin
 // tomlListsIssuer reports whether the fetched SEP-1 toml's [[CURRENCIES]] lists
 // the given issuer back — the bidirectional half of org verification. Without
 // this match, ORG_NAME from a self-declared home_domain is spoofable.
-// markSep1Attempted bumps sep1_resolved_at so a failed issuer moves to
-// the BACK of the refresh queue, and advances its retry ladder so a
-// domain that serves nothing stops costing an attempt a day.
+// markSep1Attempted bumps sep1_resolved_at so an issuer under attempt
+// moves to the BACK of the refresh queue, and advances its retry ladder
+// so a domain that serves nothing stops costing an attempt a day.
 //
 // The queue is `ORDER BY sep1_resolved_at ASC NULLS FIRST`, so a row
-// left NULL stays candidate #1 on every subsequent run. Every failure
-// path must call this, not just the fetch path: otherwise one issuer
-// that reliably fails to marshal or write starves the whole queue
-// behind it, and the run still exits 0 reporting "N failed" (cold
-// audit 2026-08-03). Best-effort — a failure to mark is logged, not
-// fatal.
+// left NULL stays candidate #1 on every subsequent run. It is called
+// exactly ONCE per issuer per run, BEFORE the fetch — see
+// [refreshOneSep1Issuer] for why the ordering is the whole point, and
+// why a success (which clears the ladder in the same statement that
+// writes its payload) pays nothing for it. Best-effort: a failure to
+// mark is logged, not fatal.
 //
 // The streak count is echoed so the journal shows WHY a domain went
 // quiet. Without it a reader of a later run cannot tell a domain that
 // was skipped from one that was never a candidate.
-func markSep1Attempted(ctx context.Context, store *timescale.Store, gStrkey string, dryRun bool) {
+func markSep1Attempted(ctx context.Context, store sep1Store, gStrkey string, dryRun bool) {
 	if dryRun {
 		return
 	}

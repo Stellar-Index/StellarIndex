@@ -86,8 +86,12 @@ ProtectControlGroups=true
 
 # The binary's own -timeout caps the run; give systemd a little more headroom.
 # Must stay above RUN_TIMEOUT (25m) or systemd kills a run the binary was
-# about to end cleanly — and a SIGKILL mid-loop skips the failure marking,
-# which is what keeps the queue moving.
+# about to end cleanly, losing the work it had done.
+#
+# A SIGKILL mid-loop no longer strands the row it was working on: the
+# refresh marks each issuer's attempt BEFORE fetching it, so the retry
+# ladder defers a row whose processing killed the worker instead of
+# re-serving it at the head of `ORDER BY ... NULLS FIRST` on every run.
 TimeoutStartSec=30min
 
 # Memory ceiling — this job parses ATTACKER-AUTHORED input.
@@ -96,9 +100,14 @@ TimeoutStartSec=30min
 # index, and the TOML parser's cost is superlinear in input size for
 # nested inline tables: measured against the pinned BurntSushi/toml,
 # a 38 KB file allocates 4.5 GB and a 150 KB file reaches 10.9 GB RSS
-# (cold audit 2026-08-03). The existing guards do not cover it — the
-# 1 MiB body cap is a BYTE cap, and both the HTTP timeout and the run
-# deadline elapse before the parse begins and cannot interrupt it.
+# (cold audit 2026-08-03). The body cap is a BYTE cap and does not
+# cover it; neither the HTTP timeout nor the run deadline can interrupt
+# a parse once it starts.
+#
+# The parser now refuses a document nested past its structural-depth
+# budget BEFORE decoding it (internal/metadata/sep1.go), which is the
+# actual bound. This ceiling stays as the backstop for whatever the
+# pre-scan has not thought of, and for the rest of the process.
 #
 # Unbounded, that competes for RAM with galexie's captive core,
 # Postgres and ClickHouse on this single host — the documented
