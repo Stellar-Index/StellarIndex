@@ -33,6 +33,14 @@ against.
   rate is accepted. The fiat-vs-fiat path stamps `observed_at` with the
   older leg's own timestamp, so a held rate is not presented as today's.
   (F004, F026, K032)
+- **forex (degraded refreshes):** the join between the FX rates map and the
+  currency-names map is now case-insensitive. The primary emits lower-case
+  codes, the ECB standby UPPER-case, and the reused-names path (names
+  endpoint down) re-keys by UPPER-case ticker, so any refresh that mixed the
+  two matched nothing and the in-memory snapshot collapsed to a single
+  synthetic USD row — on exactly the refreshes the standby and the names
+  reuse exist for. The trailing-7d history fetch had the same join and
+  silently returned no bars under reused names. (F033)
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock

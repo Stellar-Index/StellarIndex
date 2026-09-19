@@ -87,7 +87,15 @@ func (c *Cache) Set(s *Snapshot) {
 // `history` is the per-ticker 7d series the worker assembled — pass
 // nil if no historical backfill has run; the snapshot still
 // installs cleanly with an empty History7d map.
+//
+// The join is CASE-INSENSITIVE on the currency code (F033). The maps'
+// producers never agreed on a case — the primary client lower-cases
+// both, the ECB standby keys on the XML attribute (UPPER), and the
+// reused-names path in refreshOnce re-keys by Ticker (UPPER) — so an
+// exact-case `names[code]` matched nothing on precisely the degraded
+// refreshes, and the snapshot collapsed to the synthetic USD row below.
 func buildSnapshot(rates map[string]float64, names map[string]string, publishedAt, fetchedAt time.Time, history map[string][]HistoryPoint, circulation map[string]CirculationEntry) *Snapshot {
+	rates, names = lowerKeyed(rates), lowerKeyed(names)
 	out := make([]Currency, 0, len(rates)+1)
 	// Always-include USD as the base. Rate is 1.0 by definition;
 	// the name comes from the names map (fallback to "US Dollar").
@@ -131,6 +139,27 @@ func buildSnapshot(rates map[string]float64, names map[string]string, publishedA
 		History7d:   history,
 		Circulation: circulation,
 	}
+}
+
+// lowerKeyed returns m re-keyed by lower-case currency code — the one
+// canonical form every rates/names join in this package uses. When two
+// keys differ only by case the one that sorts first wins ("EUR" before
+// "eur"), so the result never depends on map iteration order.
+func lowerKeyed[V any](m map[string]V) map[string]V {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make(map[string]V, len(m))
+	for _, k := range keys {
+		lk := strings.ToLower(k)
+		if _, dup := out[lk]; dup {
+			continue
+		}
+		out[lk] = m[k]
+	}
+	return out
 }
 
 func isFiniteFloat(f float64) bool {

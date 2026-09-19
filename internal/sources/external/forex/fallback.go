@@ -26,7 +26,10 @@ type RateProvider interface {
 	Name() string
 	// LatestUSDRates returns units-of-ticker per 1 USD, plus the
 	// upstream's published timestamp. Same contract as
-	// [Client.LatestUSDRates].
+	// [Client.LatestUSDRates], except that the CASE of the currency-code
+	// keys is the provider's own: the primary emits lower-case, ECB emits
+	// the UPPER-case codes it publishes. The worker's joins normalise the
+	// case (see lowerKeyed), so a provider need not.
 	LatestUSDRates(ctx context.Context) (map[string]float64, time.Time, error)
 }
 

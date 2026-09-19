@@ -1034,6 +1034,11 @@ func (w *Worker) fetchHistory(ctx context.Context, names map[string]string, late
 		latest = time.Now().UTC()
 	}
 	const window = 7
+	// Same case-insensitive join as buildSnapshot (F033): the reused-names
+	// path hands this UPPER-keyed names against the client's lower-case
+	// dated rates, which used to drop every bar — and with them the
+	// evidence the heal and the confirm veto run on.
+	names = lowerKeyed(names)
 	out := map[string][]HistoryPoint{}
 	// Walk oldest → newest so out[ticker] is sorted ascending.
 	for i := window - 1; i >= 0; i-- {
@@ -1048,7 +1053,7 @@ func (w *Worker) fetchHistory(ctx context.Context, names map[string]string, late
 				"date", dateStr, "err", err)
 			continue
 		}
-		for code, rate := range rates {
+		for code, rate := range lowerKeyed(rates) {
 			if _, named := names[code]; !named {
 				continue
 			}
