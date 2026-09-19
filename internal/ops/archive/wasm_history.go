@@ -149,6 +149,23 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	fmt.Fprintf(os.Stderr, "\nwasm-history: scanned %d ledgers across %d worker(s) in %s\n",
 		totalScanned, *parallel, time.Since(startedAt).Round(time.Second))
 
+	// Say out loud when the walk was short of what was asked for
+	// (RLT-282). The per-range ToLedger below is now honest about what
+	// was observed, but the operator still needs to know the audit
+	// covers less than the range they named — TolerateTrailingMissing
+	// (always on here, by design, because -to may overshoot the live
+	// tip) turns a missing partition into a clean exit. This is a
+	// warning rather than a hard failure precisely because overshooting
+	// the tip is this subcommand's documented normal use; a bounded
+	// gate (ch-gate) fails instead.
+	if requested := uint64(*to) - uint64(*from) + 1; *to != 0 && totalScanned != requested {
+		fmt.Fprintf(os.Stderr,
+			"wasm-history: SHORT WALK — %d of %d requested ledgers in [%d, %d] were delivered from bucket %q; "+
+				"ranges below are closed at the LAST LEDGER OBSERVED, not at -to. Historical ranges need "+
+				"-bucket galexie-archive; the live bucket is trimmed.\n",
+			totalScanned, requested, *from, *to, bucketName)
+	}
+
 	// Merge worker outputs. Each worker's per-contract ranges are
 	// already in ledger-order within its chunk; concatenating in
 	// worker-order produces a globally ordered list, then we collapse
@@ -549,7 +566,15 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 	startedAt time.Time,
 	errCh chan<- error,
 ) {
-	result.upperEnd = b.To
+	// upperEnd stays 0 until the walk delivers something. It is the
+	// LAST LEDGER OBSERVED, not the requested bound: mergeWasmHistories
+	// closes every open WASM range at it, so it becomes the ToLedger
+	// the tool publishes as observed coverage. Seeding it from b.To
+	// here (RLT-282) meant a walk that stopped early — a hole inside
+	// TolerateTrailingMissing's 65,536-ledger window, or SIGINT through
+	// the shared signal context — still claimed the whole requested
+	// chunk. A worker that delivers nothing leaves it 0 and contributes
+	// no state, so no range can be closed at a ledger nobody saw.
 	workerScanned := uint64(0)
 
 	// Per-worker transition log (optional). nil → no incremental writes.
@@ -572,6 +597,7 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 	err := ledgerstream.Stream(ctx, lsCfg, b.From, b.To,
 		func(lcm sdkxdr.LedgerCloseMeta) error {
 			seq := lcm.LedgerSequence()
+			result.upperEnd = seq
 			scanLCMForWasmChanges(lcm, watch, result.state, seq, tlog)
 			if trackStorage {
 				scanLCMForStorageRotations(lcm, watch, result.storageChanges, seq)

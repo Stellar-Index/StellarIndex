@@ -196,6 +196,22 @@ against.
   climbs. A row carrying both a poison output and a held fault is retried
   whole, so it is not a shed candidate and its quarantine budget still
   accumulates.
+- **ops / wasm-history published the requested bound as observed coverage (RLT-282):**
+  `workerResult.upperEnd` is documented as "last ledger the worker actually
+  saw" and is what `mergeWasmHistories` closes every open WASM range at — so
+  it becomes the `to_ledger` of the coverage range in the tool's stdout JSON.
+  It was assigned from the requested chunk bound BEFORE the walk started and
+  never re-assigned, so a walk that stopped early asserted a contract was
+  observed on a WASM hash through a ledger it never opened. Stopping early is
+  routine, not exotic: every ops subcommand builds its ledgerstream config
+  through `opsutil.NewBoundedLedgerStreamConfig`, which always sets
+  `TolerateTrailingMissing`, and that converts a missing partition inside a
+  65,536-ledger window into a clean walk-complete. `upperEnd` is now assigned
+  from the ledger the walk callback actually receives, and the command prints
+  a loud SHORT WALK line naming delivered-of-requested and the bucket. It
+  warns rather than fails because `-to` overshooting the live tip is this
+  subcommand's documented normal use.
+
 - **ops / the archival-node role still hard-failed one import earlier (F128):**
   the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,
   `21-clickhouse-drop-guard.yml` and `22-clickhouse-exporter.yml`, but
