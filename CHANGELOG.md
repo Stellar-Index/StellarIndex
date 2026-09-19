@@ -336,6 +336,27 @@ against.
   binary over each shape by both routes the DSN arrives by (flag and env) and
   assert neither half of the password appears and the host survives (audit
   2026-09-02 F077).
+- **migrate (credential redaction):** two ways the DSN password still reached
+  `stellarindex-migrate`'s stderr that no pattern over the text could close.
+  (1) `net/url`'s REASON repeats the piece it choked on, and for a password
+  holding `/`, `?` or `#` that piece is the password up to that character,
+  reported as a port — `invalid port ":<most of the password>" after host` —
+  while with a `#` the URL it echoes is cut off before the `@`. The tool now
+  parses the DSN itself before handing it to the migration library and
+  composes the failure from the value it holds (`redact.ParseFailure`): the
+  reason keeps its words and loses its quoted fragment, and the connection
+  string is re-rendered with its user, host, database and options. (2) The
+  flag package prints its own parse errors, argument included, straight to
+  the FlagSet's output, which bypassed the redacting writer entirely: `-$DSN`
+  typed for `-dsn $DSN` printed the DSN whole. The FlagSet now writes through
+  the same scrubbing writer, which also scrubs by VALUE (`redact.Known`): the
+  process knows every string a credential arrived in (argv, the DSN
+  variable), so the `:password@` span is cut wherever it is repeated —
+  including a password with a space in unquoted text, which no pattern can
+  bound. The span keeps its delimiters so the everyday development DSN
+  (`app:app@localhost/app`) cannot arm a rewrite of `database "app" does not
+  exist`; that case is pinned. A DSN that parses behaves exactly as before
+  (audit 2026-09-02 K057).
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock

@@ -6,7 +6,7 @@
 // shares one implementation and one set of tests, so a redaction cannot
 // drift into a leak in the one copy nobody covered.
 //
-// Two functions, because there are two situations and using the wrong
+// Which function depends on what the caller knows, and using the wrong
 // one either leaks or destroys the diagnostic:
 //
 //   - [ConnString] is for text WE compose, where the whole value is
@@ -14,15 +14,25 @@
 //   - [Credentials] is for text we did NOT compose — a third-party
 //     library's error, which may embed a DSN verbatim — where the host,
 //     the database and the reason are the operator's entire diagnostic
-//     and only the secret may be cut out.
+//     and only the secret may be cut out. It works by pattern, so it
+//     can only be as good as the boundary the text offers.
+//   - [Known] is [Credentials] for a process that holds the connection
+//     strings its output might repeat, and so can cut the secret by
+//     value, whatever characters it contains.
+//   - [ParseFailure] renders the error from parsing a connection string
+//     the caller holds, whose reason repeats fragments of the input
+//     that no pattern can recognise.
 //
-// Neither is a parser. Both run on strings that are, by definition,
+// None is a parser. All run on strings that are, by definition,
 // malformed or unknown at the point they are rendered, so they assume
 // nothing about the input's shape.
 package redact
 
 import (
+	"errors"
+	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -119,4 +129,153 @@ func Credentials(s string) string {
 	s = quotedURLPasswordPattern.ReplaceAllString(s, "${1}:<redacted>@")
 	s = urlPasswordPattern.ReplaceAllString(s, "${1}:<redacted>@")
 	return keywordPasswordPattern.ReplaceAllString(s, "${1}=<redacted>")
+}
+
+// marker is what a cut secret is replaced with, delimiters included, so
+// every path below renders the same thing and a second pass finds
+// nothing left to change.
+const marker = ":<redacted>@"
+
+// Known is [Credentials] for a process that HOLDS the connection strings
+// its output might repeat — the migration tool, which is handed the DSN
+// in argv or the environment — and can therefore do what no pattern
+// can: find the secret by value instead of by shape.
+//
+// A pattern has to guess where a password ends, and unquoted text gives
+// it only whitespace to go on: `flag provided but not defined:
+// -postgres://u:pass word@host` cuts `pass` and prints `word`. A
+// process that knows the string it was given does not have to guess.
+// For each value, the `:password@` span — the first `:` of the userinfo
+// to the LAST `@` — is replaced wherever it appears, raw or as Go's %q
+// would escape it, and whatever remains goes through [Credentials].
+//
+// The span keeps its delimiters ON PURPOSE. Replacing the bare password
+// would arm a destructive rewrite on the commonest development DSN
+// there is, postgres://app:app@localhost/app, and turn `database "app"
+// does not exist` into `database "<redacted>"…`. `:app@` occurs nowhere
+// but in the echo of the DSN itself.
+//
+// Pass anything that might be a connection string; a value that is not
+// one contributes nothing.
+func Known(text string, connStrings ...string) string {
+	for _, v := range connStrings {
+		span := passwordSpan(v)
+		if span == "" || span == marker {
+			continue
+		}
+		text = strings.ReplaceAll(text, span, marker)
+		if q := strconv.Quote(span); q[1:len(q)-1] != span {
+			text = strings.ReplaceAll(text, q[1:len(q)-1], marker)
+		}
+	}
+	return Credentials(text)
+}
+
+// passwordSpan returns the `:password@` stretch of a URL-form connection
+// string, or "" if it has none. The last `@` rather than the first, for
+// the reason given on urlPasswordPattern; here it is exact rather than
+// a guess whenever the string is one connection string, because the
+// host part cannot legally contain an `@`.
+func passwordSpan(v string) string {
+	i := strings.Index(v, "://")
+	if i <= 0 {
+		return ""
+	}
+	rest := v[i+3:]
+	at := strings.LastIndex(rest, "@")
+	if at < 0 {
+		return ""
+	}
+	c := strings.Index(rest[:at], ":")
+	if c < 0 || c+1 == at {
+		return ""
+	}
+	return rest[c : at+1]
+}
+
+// goQuotedPattern matches a Go %q-quoted fragment, escapes included.
+var goQuotedPattern = regexp.MustCompile(`"(?:\\.|[^"\\])*"`)
+
+// queryPasswordPattern is the libpq query parameter when the WHOLE
+// string is known to be one URL: the value runs to the next `&` and may
+// hold a space, which keywordPasswordPattern — written for free text,
+// where a space ends the value — would stop at.
+var queryPasswordPattern = regexp.MustCompile(`(?i)([?&](?:sslpassword|password)=)[^&]*`)
+
+// ParseFailure renders the error from parsing a connection string the
+// caller holds, for a fatal message, without repeating any of it.
+//
+// It exists because scrubbing the URL out of net/url's error is not
+// enough: the REASON quotes the piece the parser choked on, and that
+// piece is cut out of the input. A password with a `/`, `?` or `#` in it
+// makes everything before that character look like a port, and the
+// error reads `invalid port ":<most of the password>" after host` — a
+// fragment no pattern can tell from an honest bad port. With a `#` the
+// URL the error echoes is truncated before the `@`, so there is no
+// userinfo left for a pattern to key on either.
+//
+// So nothing of the library's rendering of the input is passed through.
+// The reason keeps its words and loses its quoted fragments; the
+// connection string is re-rendered from the value itself, keeping the
+// user, host, database and options. The fragment withheld is sometimes
+// innocent (`invalid URL escape "%ZZ"` names three characters, which
+// may or may not sit inside the password) and it is withheld anyway:
+// the operator is told which string is wrong and what kind of wrong,
+// and can see the rest in the file they just edited.
+func ParseFailure(connString string, err error) string {
+	reason := err.Error()
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		reason = ue.Err.Error()
+	}
+	reason = goQuotedPattern.ReplaceAllString(reason, `"<withheld>"`)
+	return Known(reason, connString) + " in " + knownConnString(connString)
+}
+
+// knownConnString renders a string known to be ONE connection string,
+// keeping everything but the secret. Knowing the bounds is what lets it
+// handle a password holding whitespace or quotes, which [Credentials]
+// can only do inside a quoted string.
+func knownConnString(v string) string {
+	i := strings.Index(v, "://")
+	if i <= 0 {
+		// Keyword/value form, or nothing recognisable.
+		return Credentials(v)
+	}
+	head, rest := v[:i+3], v[i+3:]
+	if span := passwordSpan(v); span != "" {
+		rest = strings.Replace(rest, span, marker, 1)
+	} else if !strings.Contains(rest, "@") {
+		rest = cutUnterminatedPassword(rest)
+	}
+	return head + queryPasswordPattern.ReplaceAllString(rest, "${1}<redacted>")
+}
+
+// cutUnterminatedPassword handles a URL with no `@` at all. Usually that
+// is a DSN with no credentials (`host:5432/db`), and it is returned as
+// is. But `user:secret#host/db` — a `#` typed where the `@` goes, or a
+// password pasted without its tail — has the same shape, and there the
+// secret starts at the colon and nothing marks where it ends. A numeric
+// port is believed; anything else after the first colon is dropped to
+// the end of the string, host included, because a guessed boundary is
+// a partial leak.
+func cutUnterminatedPassword(rest string) string {
+	from := 0
+	if strings.HasPrefix(rest, "[") {
+		// A bracketed IPv6 host is all colons and none of them is this one.
+		from = strings.Index(rest, "]") + 1
+	}
+	c := strings.Index(rest[from:], ":")
+	if c < 0 {
+		return rest
+	}
+	c += from
+	end := c + 1
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == len(rest) || rest[end] == '/' || rest[end] == '?' {
+		return rest
+	}
+	return rest[:c] + ":<redacted>"
 }

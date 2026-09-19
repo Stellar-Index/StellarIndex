@@ -24,6 +24,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -38,6 +40,7 @@ import (
 
 func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	fs := flag.NewFlagSet("stellarindex-migrate", flag.ContinueOnError)
+	fs.SetOutput(stderr) // the flag package echoes the argument it rejects
 	dsn := fs.String("dsn", "", "Postgres DSN (overrides STELLARINDEX_POSTGRES_DSN env)")
 	dir := fs.String("migrations", "migrations", "Path to the migrations directory")
 	fs.Usage = func() { printUsage(fs) }
@@ -105,6 +108,19 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 }
 
 func newMigrator(dir, dsn string) (*migrate.Migrate, error) {
+	// Parse the DSN here, with the parser the library is about to use, so
+	// that a DSN it would reject never reaches it. Its rejection cannot be
+	// made safe after the fact: net/url's reason quotes the piece it
+	// choked on, and for a password holding `/`, `?` or `#` that piece is
+	// the password up to that character, reported as a bad port. Scrubbing
+	// at the write catches the URL; it cannot tell that fragment from an
+	// honest one. This is the only path on which the library formats the
+	// DSN — a string that parses here parses there — so composing the
+	// failure ourselves removes the fragment instead of chasing it.
+	if _, err := url.Parse(dsn); err != nil {
+		return nil, fmt.Errorf("open migrator: database URL does not parse: %s "+
+			"(if the password holds a reserved character, percent-encode it)", redact.ParseFailure(dsn, err))
+	}
 	src := "file://" + dir
 	m, err := migrate.New(src, dsn)
 	if err != nil {
@@ -208,8 +224,11 @@ func closeSilent(m *migrate.Migrate) {
 	}
 }
 
-// errf is the ONLY place this binary writes a diagnostic, and it strips
-// inline credentials on the way out.
+// errf is where this binary writes a diagnostic of its own, and it goes
+// through [stderr], which strips inline credentials on the way out. The
+// two other writers are the flag package, pointed at the same [stderr]
+// in main, and printUsage's fixed text, which interpolates nothing an
+// operator typed.
 //
 // This tool is handed the production DSN — password included — on every
 // deploy, and its stderr is captured by the deploy job, journald and
@@ -224,7 +243,37 @@ func closeSilent(m *migrate.Migrate) {
 // purpose — see internal/redact for which helper renders a value we
 // compose ourselves.
 func errf(format string, args ...any) {
-	fmt.Fprintln(os.Stderr, redact.Credentials(fmt.Sprintf(format, args...)))
+	fmt.Fprintln(stderr, fmt.Sprintf(format, args...))
+}
+
+// stderr is where every diagnostic that can repeat operator input goes:
+// errf above, and the flag package, which prints its own parse errors —
+// argument included — to the FlagSet's output and would otherwise bypass
+// errf entirely (`-$DSN` typed for `-dsn $DSN` printed the DSN whole).
+//
+// It scrubs by VALUE as well as by pattern. This process knows every
+// string a credential can have arrived in — argv and the DSN variable —
+// so it hands them to redact.Known, which cuts the password span out
+// wherever it is repeated, whatever characters it holds. The pattern
+// pass behind it covers text that re-renders the DSN rather than
+// repeating it.
+var stderr io.Writer = scrubbingWriter{
+	w:     os.Stderr,
+	known: append([]string{os.Getenv("STELLARINDEX_POSTGRES_DSN")}, os.Args[1:]...),
+}
+
+// scrubbingWriter redacts each Write as one message. fmt and flag both
+// emit a whole message per Write, so a secret cannot straddle two.
+type scrubbingWriter struct {
+	w     io.Writer
+	known []string
+}
+
+func (s scrubbingWriter) Write(p []byte) (int, error) {
+	if _, err := io.WriteString(s.w, redact.Known(string(p), s.known...)); err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 func die(format string, args ...any) {
@@ -232,6 +281,10 @@ func die(format string, args ...any) {
 	os.Exit(1)
 }
 
+// printUsage writes its fixed text to the raw os.Stderr on purpose: it
+// interpolates only the build version, and sending it through [stderr]
+// would redact its own example DSN. fs.PrintDefaults goes wherever the
+// FlagSet's output points, which main sets to [stderr].
 func printUsage(fs *flag.FlagSet) {
 	fmt.Fprintf(os.Stderr, `stellarindex-migrate %s
 

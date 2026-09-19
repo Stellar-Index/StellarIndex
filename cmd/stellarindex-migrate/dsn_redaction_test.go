@@ -224,3 +224,137 @@ func TestMigrate_PasswordShapesThePatternStoppedShortOn(t *testing.T) {
 		}
 	}
 }
+
+// Scrubbing the URL out of the library's error was never enough, because
+// the URL is not the only place net/url repeats the password. Its REASON
+// quotes the piece it choked on, and for a password holding `/`, `?` or
+// `#` — every base64 secret has a fair chance of a `/` — that piece is
+// the password up to that character, presented as a port:
+//
+//	parse "postgres://stellarindex:<redacted>@host…": invalid port ":HEAD" after host
+//
+// and with a `#` the URL it echoes is truncated BEFORE the `@`, so no
+// pattern keyed on userinfo can even see it:
+//
+//	parse "postgres://stellarindex:HEAD": invalid port ":HEAD" after host
+//
+// No pattern can tell such a fragment from an honest port. The tool now
+// parses the DSN itself first and composes the failure from what it
+// knows, withholding the quoted fragment.
+func TestMigrate_TheLibrarysReasonNeverRepeatsAPieceOfThePassword(t *testing.T) {
+	bin, migDir := buildMigrate(t)
+
+	for _, tc := range []struct {
+		name, dsn string
+		// keep is what must SURVIVE besides the verb and the reason.
+		keep string
+	}{
+		{"slash in the password", "postgres://stellarindex:" + stemHead + "/" + stemTail + "@" + redactionHost + ":5432/stellarindex", redactionHost},
+		{"question mark in the password", "postgres://stellarindex:" + stemHead + "?" + stemTail + "@" + redactionHost + ":5432/stellarindex", redactionHost},
+		{"hash in the password", "postgres://stellarindex:" + stemHead + "#" + stemTail + "@" + redactionHost + ":5432/stellarindex", redactionHost},
+		// No `@` anywhere, so nothing marks where the secret ends and the
+		// rest of the string is dropped with it — host included. The
+		// user is what is left to identify the DSN by.
+		{"hash typed where the @ goes", "postgres://stellarindex:" + stemHead + "#" + redactionHost + ":5432/stellarindex", "postgres://stellarindex:<redacted>"},
+	} {
+		for route, inv := range map[string]struct{ env, args []string }{
+			"flag": {nil, []string{"-migrations", migDir, "up", "-dsn", tc.dsn}},
+			"env":  {[]string{"STELLARINDEX_POSTGRES_DSN=" + tc.dsn}, []string{"-migrations", migDir, "up"}},
+		} {
+			t.Run(tc.name+"/"+route, func(t *testing.T) {
+				out := runMigrate(t, bin, inv.env, inv.args)
+				assertNoStem(t, out)
+				for _, keep := range []string{tc.keep, "invalid port", "stellarindex-migrate: up:"} {
+					if !strings.Contains(out, keep) {
+						t.Errorf("the %q diagnostic is gone — the operator cannot tell what failed:\n%s", keep, out)
+					}
+				}
+			})
+		}
+	}
+}
+
+// errf was documented as the only stderr writer, and it was not: the
+// flag package prints its own parse errors straight to the FlagSet's
+// output, which defaulted to the raw os.Stderr, and those errors repeat
+// the argument they rejected. A DSN that lands where a flag name goes —
+// `-dsn` dropped, or `-$DSN_VAR` typed for `-dsn $DSN_VAR` — printed
+// whole, with no redaction of any kind in front of it.
+func TestMigrate_FlagParseErrorsAreScrubbedToo(t *testing.T) {
+	bin, migDir := buildMigrate(t)
+	tail := "@" + redactionHost + ":5432/stellarindex?sslmode=disable"
+
+	for _, tc := range []struct {
+		name string
+		args []string
+		keep string
+	}{
+		{
+			"a DSN where a flag name goes",
+			[]string{"-postgres://stellarindex:" + stemHead + tail, "status"},
+			"flag provided but not defined",
+		},
+		{
+			"the same, with a space in the password — no token pattern can bound it",
+			[]string{"-postgres://stellarindex:" + stemHead + " " + stemTail + tail, "status"},
+			"flag provided but not defined",
+		},
+		{
+			"after the verb, where the second parse sees it",
+			[]string{"status", "-postgres://stellarindex:" + stemHead + " " + stemTail + tail},
+			"flag provided but not defined",
+		},
+		{
+			"bad flag syntax",
+			[]string{"-=postgres://stellarindex:" + stemHead + " " + stemTail + tail, "status"},
+			"bad flag syntax",
+		},
+		{
+			"a DSN where the subcommand goes",
+			[]string{"postgres://stellarindex:" + stemHead + " " + stemTail + tail},
+			"unknown subcommand",
+		},
+		{
+			"a DSN left over after the flags",
+			[]string{"down", "-migrations", migDir, "postgres://stellarindex:" + stemHead + " " + stemTail + tail},
+			"unexpected argument",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out := runMigrate(t, bin, nil, append([]string{"-migrations", migDir}, tc.args...))
+			assertNoStem(t, out)
+			if !strings.Contains(out, tc.keep) {
+				t.Errorf("the %q diagnostic is gone:\n%s", tc.keep, out)
+			}
+		})
+	}
+}
+
+// A lossy transform is tested WITH its trigger. The scrubber is armed by
+// the DSN the process holds, and the dangerous configuration is the
+// everyday development one: user, password and database all the same
+// word. If the scrubber cut that word wherever it appeared, the help
+// text and every message naming the database would be mangled. It cuts
+// only the `:password@` span, so the word survives everywhere else.
+func TestMigrate_ScrubbingAKnownPasswordDoesNotMangleOrdinaryOutput(t *testing.T) {
+	bin, migDir := buildMigrate(t)
+	dsn := "postgres://stellarindex:stellarindex@" + redactionHost + ":5432/stellarindex?sslmode=disable"
+
+	out := runMigrate(t, bin, []string{"STELLARINDEX_POSTGRES_DSN=" + dsn}, []string{"-migrations", migDir, "bogus-verb"})
+	for _, keep := range []string{
+		`unknown subcommand "bogus-verb"`,
+		"stellarindex-migrate [-dsn DSN] [-migrations DIR] <subcommand> [args]",
+		"Example: postgres://user:pass@host:5432/db?sslmode=disable",
+		`export STELLARINDEX_POSTGRES_DSN="postgres://stellarindex@localhost/stellarindex?sslmode=disable"`,
+		"Path to the migrations directory",
+	} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("scrubbing mangled the usage text; %q is gone:\n%s", keep, out)
+		}
+	}
+
+	out = runMigrate(t, bin, []string{"STELLARINDEX_POSTGRES_DSN=" + dsn}, []string{"-migrations", migDir, "status"})
+	if want := "stellarindex-migrate: status: open migrator: failed to open database: dial tcp: lookup " + redactionHost; !strings.Contains(out, want) {
+		t.Errorf("a parseable DSN must still reach the dial and report it verbatim; want %q in:\n%s", want, out)
+	}
+}
