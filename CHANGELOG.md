@@ -269,6 +269,25 @@ against.
     nobody takes, and `close(next)` stays the feeder's outermost defer. Every
     non-panicking path is byte-identical; the per-row resolve, batch cuts,
     written accounting and `filterStorableTrades` are untouched.
+- **money / a catalogue row outlived its issuer's scam suppression (RLT-337 F3):**
+  a catalogue-projected listing row (`type: "global"` — the row
+  `suppressCatalogueTwins` serves INSTEAD of its classic twin) carries no
+  issuer, so `fillIssuerDirectoryTags` skipped it and the scam-class
+  suppression never reached it. That mattered because the row is priced
+  independently and EARLIER: `fillCataloguePricesForPage` fills `price_usd`
+  and `market_cap_usd` from the global tier before `fillCatalogueStatsForPage`
+  runs, and `mergeTwinStats` fills only what is nil — so a directory-flagged
+  issuer's verified currency published a price and a market cap on the
+  catalogue phase of `/v1/assets`, on `/v1/assets?asset_class=…` and on
+  `/v1/external/assets`, while the classic row thrown away in its favour and
+  its own detail page both served null. `mergeTwinStats` now carries the
+  twin's ISSUER verdict — the scam reason and the directory tags/domain/name —
+  onto the catalogue row and re-applies `suppressScamIssuerPricing` there.
+  The row's wire SHAPE is unchanged: it still carries no `issuer`, which is
+  the documented discriminator for a catalogue row, so the answer is carried
+  rather than the lookup key. `TestCataloguePricesArePaidBeforeTheTwinMerge`
+  pins the order the carry depends on across every path that makes both calls.
+
 - **money / a fiat-coded SEP anchor was reported as an impersonator (K033):**
   the verified-currency catalogue's nineteen sovereign-currency entries carry
   `networks: []`, so `indexTickerOnlyEntry` filed `USD`, `EUR`, `GBP`, `JPY`, …

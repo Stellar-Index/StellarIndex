@@ -373,10 +373,13 @@ type AssetDetail struct {
 	// #unsafe, …); clients should surface `malicious`/`unsafe`/`fraud`/
 	// `scam`/`hack`/`phishing` as prominent warnings.
 	//
-	// DISPLAY-ONLY, third-party attribution — per the table's doc
-	// contract these fields are NEVER an input to verification,
-	// scam-suppression, or pricing: they do not alter price_usd, the
-	// verified status, or any gate. Distinct from IssuerScamReason,
+	// DISPLAY-ONLY, third-party attribution — with the two deliberate
+	// SCAM-CLASS exceptions registered at the top of
+	// asset_directory_tags.go (a scam-class tag withholds the row's
+	// published dollar figures via suppressScamIssuerPricing, and
+	// demotes the row in the listing rank). They never alter the
+	// verified status or the substance/decimals gates. Distinct from
+	// IssuerScamReason,
 	// which is the hand-curated in-binary scamIssuers list; this is the
 	// live synced directory and covers issuers the static list misses
 	// (e.g. the wash-inflated scam AUD, audrev-stellar.com). Omitted
@@ -4708,6 +4711,50 @@ func mergeTwinStats(dst *AssetDetail, twin AssetDetail) {
 	// with no statement of what it was used for.
 	dst.ListingReference = twin.ListingReference
 	dst.ListingValuation = twin.ListingValuation
+	carryTwinIssuerVerdict(dst, twin)
+}
+
+// carryTwinIssuerVerdict moves the twin's ISSUER verdict — the curated
+// scam reason and the third-party directory labels — onto the catalogue
+// row, then re-applies the price suppression that verdict carries
+// (RLT-337 F3).
+//
+// A catalogue row has no issuer of its own: projectCatalogueRow sets
+// none, deliberately, because `type: "global"` rows are documented as
+// issuer-less and consumers are told they may discriminate the wire
+// shape on exactly that absence. So fillIssuerDirectoryTags — which
+// keys on the issuer — skips every catalogue row, and the suppression
+// it performs never reached one. Giving the row its twin's G-address
+// would have fixed the lookup by breaking that discriminator; carrying
+// the ANSWER instead leaves the wire shape alone.
+//
+// It is not redundant with the twin's own suppression. The catalogue
+// row is priced independently, earlier, and from a different source:
+// fillCataloguePricesForPage runs before fillCatalogueStatsForPage and
+// fills price_usd (and market_cap_usd) from buildGlobalAssetView's
+// global tier, so mergeTwinStats' fill-only-what-is-nil merge leaves
+// those figures standing however thoroughly the twin was suppressed.
+// Measured shape of the defect: a flagged issuer's verified currency
+// served price_usd and market_cap_usd on the catalogue phase of
+// /v1/assets, on /v1/assets?asset_class=…, and on /v1/external/assets,
+// while the same asset's classic row — the one suppressCatalogueTwins
+// throws away in this row's favour — carried null, as did its detail
+// page.
+//
+// The labels ride WITH the suppression, never behind it:
+// suppressScamIssuerPricing's contract is that the warning fields
+// survive the nulling, and a row that goes silent without saying why
+// reads as "no data" rather than "refused".
+func carryTwinIssuerVerdict(dst *AssetDetail, twin AssetDetail) {
+	if twin.IssuerScamReason != "" {
+		dst.IssuerScamReason = twin.IssuerScamReason
+	}
+	if len(twin.IssuerDirectoryTags) > 0 {
+		dst.IssuerDirectoryTags = twin.IssuerDirectoryTags
+		dst.IssuerDirectoryDomain = twin.IssuerDirectoryDomain
+		dst.IssuerDirectoryName = twin.IssuerDirectoryName
+	}
+	suppressScamIssuerPricing(dst)
 }
 
 // filterCatalogueEntries narrows catalogue entries by the structural
