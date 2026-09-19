@@ -126,6 +126,29 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { g_strkey } = await params;
+  // The runtime-fallback shell's HTML (functions/issuers/[[path]].js)
+  // serves for ARBITRARY long-tail issuer URLs beyond the pre-rendered
+  // top-100, so its baked metadata must be generic — the literal 'shell'
+  // param would title/canonical every such page as the shell itself,
+  // consolidating every long-tail issuer onto one indexed URL (F086).
+  // IssuerPathView restamps document.title client-side once the real
+  // issuer loads. Same pattern as assets/[slug] and markets/[pair].
+  if (g_strkey === 'shell') {
+    return {
+      title: 'Issuer',
+      description:
+        'Identity, auth flags, and issued assets for a Stellar issuer.',
+      // This one document answers 200 for EVERY unmatched /issuers/*
+      // path, so indexing it files a soft-404 under whatever URL the
+      // crawler happened to try. noindex is the same posture the other
+      // long-tail shells take route-wide (/accounts, /contracts,
+      // /ledgers, /transactions, /assets, /markets); follow stays on so
+      // the crawler still walks out through the nav. No `alternates`
+      // here — a canonical would still point every long-tail issuer at
+      // this one shell URL.
+      robots: { index: false, follow: true },
+    };
+  }
   const short = `${g_strkey.slice(0, 8)}…${g_strkey.slice(-4)}`;
   const canonical = `${CURRENT_NETWORK.explorerUrl}/issuers/${g_strkey}`;
   const title = `Issuer ${short} — Stellar`;

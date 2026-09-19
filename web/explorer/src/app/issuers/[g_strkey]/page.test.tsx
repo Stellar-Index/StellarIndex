@@ -10,7 +10,8 @@ vi.mock('@/lib/buildFetch', async () => {
 });
 
 import { buildFetchData } from '@/lib/buildFetch';
-import IssuerDetailPage from './page';
+import IssuerDetailPage, { generateMetadata } from './page';
+import { CURRENT_NETWORK } from '@/lib/networks';
 
 const G = 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
@@ -100,5 +101,37 @@ describe('IssuerDetailPage issued-asset tiles', () => {
       screen.getByText('Total observations').nextElementSibling?.textContent,
     ).toBe('42');
     expect(screen.getByText('Issued assets (2)')).toBeInTheDocument();
+  });
+});
+
+// F086: functions/issuers/[[path]].js serves THIS route's baked static
+// HTML verbatim for every issuer beyond the pre-rendered top-100 (a 404
+// sub-fetches /issuers/shell/ and returns its body at 200). Whatever
+// generateMetadata bakes for g_strkey === 'shell' is therefore what every
+// long-tail issuer page declares to a crawler — it must be a generic
+// noindex shell, never the real per-issuer metadata built from the
+// literal string 'shell'.
+describe('IssuerDetailPage generateMetadata', () => {
+  it('builds real canonical/og:url metadata for a real issuer, indexable', async () => {
+    const meta = await generateMetadata({
+      params: Promise.resolve({ g_strkey: G }),
+    });
+    expect(meta.alternates?.canonical).toBe(
+      `${CURRENT_NETWORK.explorerUrl}/issuers/${G}`,
+    );
+    expect(meta.openGraph?.url).toBe(
+      `${CURRENT_NETWORK.explorerUrl}/issuers/${G}`,
+    );
+    expect(meta.robots).toBeUndefined();
+  });
+
+  it('serves generic noindex metadata for the runtime-fallback shell, never a shell-URL canonical', async () => {
+    const meta = await generateMetadata({
+      params: Promise.resolve({ g_strkey: 'shell' }),
+    });
+    expect(meta.robots).toEqual({ index: false, follow: true });
+    expect(meta.alternates?.canonical).toBeUndefined();
+    expect(meta.openGraph?.url).toBeUndefined();
+    expect(meta.title).not.toMatch(/shell/i);
   });
 });

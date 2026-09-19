@@ -97,6 +97,16 @@ against.
   it. A test now EXECUTES the shipped script against stubs for `psql` and
   the ops binary and fails if a window can delete trades for a source the
   same window does not ask `ch-rebuild` to re-derive.
+- **`/issuers/[g_strkey]` long-tail SEO (F086):** `generateMetadata` had no
+  `shell` branch, so the runtime-fallback shell that
+  `functions/issuers/[[path]].js` serves verbatim for every issuer beyond
+  the pre-rendered top-100 baked `canonical`/`og:url` from the literal
+  string `shell` and carried no `robots` directive — every long-tail
+  issuer page declared itself as `https://stellarindex.io/issuers/shell`
+  and was indexable, consolidating the entire long tail onto one URL.
+  `generateMetadata` now short-circuits on `g_strkey === 'shell'` and
+  returns generic, `noindex, follow` metadata with no canonical, matching
+  the pattern already used by `/assets/[slug]` and `/markets/[pair]`.
 
 - **forex / `/v1/price` fiat paths:** the in-memory FX snapshot that
   `/v1/price` and `/v1/price/tip` read for fiat crosses now carries only
