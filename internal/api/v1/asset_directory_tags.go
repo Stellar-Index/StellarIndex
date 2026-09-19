@@ -19,8 +19,10 @@ import (
 // tags remain third-party attribution that never affects the verified
 // status or the substance/decimals gates.
 //
-//  1. 2026-08-25 — a scam-class tag WITHHOLDS the published price +
-//     market cap, via suppressScamIssuerPricing below and the reader-seam
+//  1. 2026-08-25 — a scam-class tag WITHHOLDS every published dollar
+//     figure on the row (price, market cap, and the listing-sourced
+//     reference/valuation pair), via suppressScamIssuerPricing below and
+//     the reader-seam
 //     pricingguard.ScamGate: a scam token must not publish a
 //     price/market-cap that lends it legitimacy, even when its market
 //     clears the substance floor (RIO-GBNLJIYH… did).
@@ -109,8 +111,9 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 // suppressScamIssuerPricing withholds an asset's published PRICE claim on
 // the payload when its issuer carries a scam-class directory tag
 // (malicious/unsafe/fraud/scam/hack/phishing — pricingguard classifier):
-// price_usd, market_cap_usd, fdv_usd, the price-derived change_*, and the
-// price_history_* SERIES are nulled, while circulating_supply (a raw
+// price_usd, market_cap_usd, fdv_usd, the price-derived change_*, the
+// price_history_* SERIES and the listing-sourced listing_reference /
+// listing_valuation pair are nulled, while circulating_supply (a raw
 // chain fact) and the scam warning fields are kept. This is the
 // payload-side twin of the reader-seam pricingguard.ScamGate (which
 // withholds /v1/price and every reader-backed surface); together they
@@ -142,6 +145,28 @@ func suppressScamIssuerPricing(d *AssetDetail) {
 	// which is the legitimacy transfer this gate exists to prevent
 	// (wave-D MSP-05).
 	withholdPriceSeriesWhenUnpriced(d)
+	// The listing-sourced second opinion is the same claim in a
+	// different field name. `listing_reference.price_usd` is a dollar
+	// price and `listing_valuation.value_usd` is a dollar market cap,
+	// both drawn from the third-party listing directory, and serving
+	// either beside the price_usd and market_cap_usd this function just
+	// withheld republishes the exact figure the tag exists to refuse.
+	//
+	// The arm that fills them has its own refusal for a flagged issuer,
+	// and it is not enough on its own: it reads IssuerDirectoryTags,
+	// which only the caller of THIS function populates, so on any path
+	// where the two run in the wrong order that refusal sees an empty
+	// slice and the figure is published anyway (RLT-313, RLT-337). The
+	// ordering is now right on every path, and this makes the outcome
+	// hold whatever the order — the tag is the authority, not the
+	// sequence.
+	//
+	// The pair is cleared TOGETHER. A reference with no valuation is a
+	// dollar price on the wire with no statement of what it was used
+	// for, which is the same half-carried shape mergeTwinStats refuses
+	// to produce.
+	d.ListingReference = nil
+	d.ListingValuation = nil
 }
 
 // withholdPriceSeriesWhenUnpriced drops every derived PRICE-OVER-TIME

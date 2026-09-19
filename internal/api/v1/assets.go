@@ -1207,16 +1207,27 @@ func (s *Server) handleAssetListFromAssets(
 	// fill (so no valuation derives from it) — see
 	// fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
+	// Curated third-party issuer label (account_directory) — one batch
+	// query for the page's issuer set (no N+1). DISPLAY-ONLY except for
+	// the scam-class tags, which withhold the row's price and market cap
+	// (suppressScamIssuerPricing).
+	//
+	// BEFORE the listing-valuation arm, not after. That arm refuses a
+	// row whose issuer carries a scam-class tag — and it read the tags
+	// from a field only this call populates, so while it ran first the
+	// refusal was dead and `listing_reference.price_usd` /
+	// `listing_valuation.value_usd` published a dollar figure for a
+	// flagged issuer underneath a nulled price_usd (RLT-313, RLT-337).
+	// Every price PRODUCER still runs above this line, so the
+	// suppression cannot be undone by one of them.
+	s.fillIssuerDirectoryTags(r.Context(), out)
 	// LAST among the valuation producers. It reads the outcome of every
-	// one above it — the served cap, the gated price, the dust flag and
-	// the peg basis — to decide whether there is a hole to fill, so it
-	// can only run once all of them have finished deciding. See
-	// asset_listing_valuation.go.
+	// one above it — the served cap, the gated price, the dust flag, the
+	// peg basis and the directory's scam tags — to decide whether there
+	// is a hole to fill, so it can only run once all of them have
+	// finished deciding. See asset_listing_valuation.go.
 	s.applyListingValuations(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
-	// Curated third-party issuer label (account_directory) — one batch
-	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
-	s.fillIssuerDirectoryTags(r.Context(), out)
 	// LAST, after every price producer and both gates — the sparkline
 	// attaches only to rows that still publish a price. This path served
 	// `include=sparkline7d` as a silent no-op until #355: the parameter
@@ -3015,16 +3026,27 @@ func (s *Server) fetchClassicUnifiedRows(
 	// fill (so no valuation derives from it) — see
 	// fillDeclaredPegPricesInListing's ordering contract.
 	s.fillDeclaredPegPricesInListing(r.Context(), out)
+	// Curated third-party issuer label (account_directory) — one batch
+	// query for the page's issuer set (no N+1). DISPLAY-ONLY except for
+	// the scam-class tags, which withhold the row's price and market cap
+	// (suppressScamIssuerPricing).
+	//
+	// BEFORE the listing-valuation arm, not after. That arm refuses a
+	// row whose issuer carries a scam-class tag — and it read the tags
+	// from a field only this call populates, so while it ran first the
+	// refusal was dead and `listing_reference.price_usd` /
+	// `listing_valuation.value_usd` published a dollar figure for a
+	// flagged issuer underneath a nulled price_usd (RLT-313, RLT-337).
+	// Every price PRODUCER still runs above this line, so the
+	// suppression cannot be undone by one of them.
+	s.fillIssuerDirectoryTags(r.Context(), out)
 	// LAST among the valuation producers. It reads the outcome of every
-	// one above it — the served cap, the gated price, the dust flag and
-	// the peg basis — to decide whether there is a hole to fill, so it
-	// can only run once all of them have finished deciding. See
-	// asset_listing_valuation.go.
+	// one above it — the served cap, the gated price, the dust flag, the
+	// peg basis and the directory's scam tags — to decide whether there
+	// is a hole to fill, so it can only run once all of them have
+	// finished deciding. See asset_listing_valuation.go.
 	s.applyListingValuations(r.Context(), out)
 	s.fillImagesFromSep1(r.Context(), out)
-	// Curated third-party issuer label (account_directory) — one batch
-	// query for the page's issuer set (no N+1). DISPLAY-ONLY; additive.
-	s.fillIssuerDirectoryTags(r.Context(), out)
 	s.attachSparkline7dIfRequested(r, out)
 	nextInner := ""
 	// `hasMore` alone, NOT `hasMore && len(out) > 0`.
@@ -4511,6 +4533,15 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 		// market_cap_low_liquidity flag onto the catalogue-listing row so it
 		// matches the twin's classic row / detail page (M4).
 		s.fillMarketCapsFromSupply(statsCtx, twin, assetRowSourceCounts([]timescale.AssetRow{*twinRow}))
+		// The twin carries the G-issuer, so it is the row the directory
+		// can be keyed on at all — a catalogue row has none, and
+		// fillIssuerDirectoryTags skips it. Running it here is what gives
+		// the valuation arm below a scam tag to refuse on, and what lets
+		// the suppression reach the catalogue row through mergeTwinStats;
+		// without it this fan-out published a listing valuation for a
+		// flagged issuer that the listing spine had already refused
+		// (RLT-337 F2).
+		s.fillIssuerDirectoryTags(statsCtx, twin)
 		// On the TWIN, not on the catalogue row: the twin is the row
 		// that carries the asset_id the listing directory's addresses
 		// derive from, the price the gates ruled on, and the dust flag

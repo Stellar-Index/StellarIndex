@@ -87,6 +87,27 @@ against.
   account-activity watermark's probe is re-confirmed once its lease expires
   (`TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate`) — no
   production code changed.
+- **assets / a directory-flagged issuer can no longer publish a listing
+  valuation (RLT-313, RLT-337):** `applyListingValuations` refuses a row whose
+  issuer carries a scam-class directory tag, and reads that tag from a field
+  only `fillIssuerDirectoryTags` writes — which ran three lines LATER on both
+  unified listing phases. The refusal therefore saw an empty slice on every
+  row, and a flagged issuer served `listing_reference.price_usd` and
+  `listing_valuation.value_usd` underneath the `price_usd: null` the same tag
+  had just produced. The catalogue-twin fan-out never tagged its twin at all,
+  and `mergeTwinStats` carried the result onto the catalogue row.
+  The directory call now runs BEFORE the valuation arm on both phases and on
+  the twin fan-out (every price PRODUCER still runs above it, so the
+  suppression cannot be undone), and `suppressScamIssuerPricing` — the single
+  chokepoint — now clears the `listing_reference` / `listing_valuation` pair
+  too, so the outcome holds whatever the order. A source-level guard in
+  `rwa_pipeline_guard_test.go` holds every function in the package that makes
+  both calls to that order, and fails if it finds fewer than three.
+  Not closed: catalogue-phase rows carry no issuer at all, so
+  `fillIssuerDirectoryTags` skips them and their own price is never
+  suppressed — that needs a decision about whether a catalogue row should
+  carry its twin's G-issuer.
+
 - **issuers / a lapsed former domain can no longer hold an anchor's identity
   (RSEC-V1, RLT-470):** `issuers.home_domain` was write-once. Both of its
   writers refused a row that already held a value — the enrich job with

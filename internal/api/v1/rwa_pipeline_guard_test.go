@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -120,6 +121,88 @@ func assertRWAPipelineMatchesListing(t *testing.T, file, fn string) {
 				call, reason)
 		}
 	}
+}
+
+// TestDirectoryTagsPrecedeTheListingValuationArm — RLT-313 / RLT-337.
+//
+// applyListingValuations refuses a row whose issuer carries a scam-class
+// directory tag, and it reads that tag from AssetDetail.IssuerDirectoryTags
+// — a field nothing populates except fillIssuerDirectoryTags. So the
+// refusal is only alive where the directory call runs FIRST. It did not: on
+// both unified listing phases the valuation arm ran three lines earlier, the
+// refusal saw an empty slice on every row, and a directory-flagged issuer
+// published `listing_reference.price_usd` and `listing_valuation.value_usd`
+// underneath the `price_usd: null` that same tag had just produced.
+//
+// Source-level, like the RWA guard above and for the same reason: the defect
+// is an ORDER, which no single-function behavioural test can see — each
+// function is correct in isolation. Checked over every function in the
+// package that makes both calls, so a new listing phase inherits the rule
+// instead of re-discovering it.
+func TestDirectoryTagsPrecedeTheListingValuationArm(t *testing.T) {
+	const (
+		tags      = "fillIssuerDirectoryTags"
+		valuation = "applyListingValuations"
+	)
+	checked := 0
+	for _, file := range packageGoFiles(t) {
+		for _, fn := range funcNamesIn(t, file) {
+			calls := serverCallsIn(t, file, fn)
+			tagAt := slices.Index(calls, tags)
+			valAt := slices.Index(calls, valuation)
+			if tagAt < 0 || valAt < 0 {
+				continue
+			}
+			checked++
+			if tagAt > valAt {
+				t.Errorf("%s:%s calls %s at step %d but %s only at step %d — "+
+					"the valuation arm reads the tags that call writes, so its scam refusal is dead.\n"+
+					"calls: %v", file, fn, valuation, valAt, tags, tagAt, calls)
+			}
+		}
+	}
+	// A guard that silently matched nothing would report a clean pass over an
+	// empty set for the rest of this repository's life.
+	if checked < 3 {
+		t.Fatalf("the guard examined %d function(s) that make both calls; the two unified "+
+			"listing phases and the catalogue-twin fan-out are known to. Either a phase lost "+
+			"its directory call or this guard stopped reading the package", checked)
+	}
+}
+
+// packageGoFiles lists the non-test .go files of this package.
+func packageGoFiles(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	var out []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// funcNamesIn lists every function and method declared in one file.
+func funcNamesIn(t *testing.T, file string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	var out []string
+	for _, decl := range parsed.Decls {
+		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Body != nil {
+			out = append(out, fd.Name.Name)
+		}
+	}
+	return out
 }
 
 // serverCallsIn returns, in source order, the names of the `s.<name>(…)`
