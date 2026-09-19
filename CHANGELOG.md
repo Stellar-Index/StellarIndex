@@ -17,6 +17,22 @@ against.
 
 ### Fixed
 
+- **forex / `/v1/price` fiat paths:** the in-memory FX snapshot that
+  `/v1/price` and `/v1/price/tip` read for fiat crosses now carries only
+  rates the C2-030 sanity band accepted. The worker used to install the raw
+  upstream snapshot and run the band afterwards, inside the `fx_quotes`
+  write, so the band protected the table and not the served value: on
+  2026-08-24 it kept Massive's UZS = 1820 (true ≈ 11,800) out of `fx_quotes`
+  all day while every `quote=fiat:UZS` request was priced off 1820. The band
+  now runs first — with or without a writer attached; a cache-only worker
+  previously served every bar unbanded — and the snapshot is built from its
+  verdicts. A ticker whose new rate is refused, or that the standby feed
+  does not carry, keeps its last guarded rate with its original timestamp
+  for at most 7 days (the `fx_quotes` lookback), then drops; a ticker whose
+  baseline the history-majority heal overturns is dropped until a current
+  rate is accepted. The fiat-vs-fiat path stamps `observed_at` with the
+  older leg's own timestamp, so a held rate is not presented as today's.
+  (F004, F026, K032)
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock

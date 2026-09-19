@@ -102,7 +102,7 @@ type rateGuard struct {
 	// guard then spent the rest of the day rejecting the CORRECT 7-day
 	// history against the poisoned baseline — evidence pointing the
 	// wrong way. The flag lets the history-majority heal in
-	// [Worker.persistSnapshot] also scrub the poisoned current-day row
+	// [Worker.guardSnapshot] also scrub the poisoned current-day row
 	// from the write batch: a bootstrap row that the ticker's own
 	// history refutes was never evidence. Cleared by any within-band
 	// acceptance or a two-fetch pending confirmation (two agreeing
@@ -133,7 +133,7 @@ const stuckSameRateTolerance = 0.01
 // [historyHealAgreement] of their median, AND the baseline is a
 // still-unconfirmed bootstrap (one uncorroborated sample), the BASELINE
 // is the outlier, not the bars — ≥4 independent dated samples beat the
-// single sample the baseline came from. persistSnapshot then re-points
+// single sample the baseline came from. guardSnapshot then re-points
 // lastAccepted at the bars' median, admits the bars, and scrubs the
 // poisoned current-day row from the batch.
 //
@@ -169,16 +169,16 @@ type Worker struct {
 	circulation map[string]CirculationEntry // loaded once at startup
 
 	// guards holds the sanity-band state per ticker. Only touched from
-	// refreshOnce → persistSnapshot, which is single-goroutine (Run owns
+	// refreshOnce → guardSnapshot, which is single-goroutine (Run owns
 	// the ticker loop). Empty on process start: the first refresh has no
 	// baseline, so it accepts and establishes one.
 	guards map[string]*rateGuard
 
-	// historyVeto is method-scoped state for [Worker.persistSnapshot]:
+	// historyVeto is method-scoped state for [Worker.guardSnapshot]:
 	// the per-ticker heal-grade history-majority median (see
 	// [historyMajority]) computed from the CURRENT snapshot's
 	// trailing-7d bars BEFORE the current-rate loop runs, and cleared
-	// when persistSnapshot returns. acceptRate's pending-confirm arm
+	// when guardSnapshot returns. acceptRate's pending-confirm arm
 	// consults it (2026-08-24 Massive UZS, second act): after the
 	// restart-heal fixed the poisoned bootstrap, the still-broken
 	// current feed kept serving 1820 (true ≈ 11,800) — the deviation
@@ -192,8 +192,16 @@ type Worker struct {
 	// soon as the trailing majority stops refuting (either it follows
 	// the move within days, or the split-level window fails the
 	// mutual-agreement test and yields no veto at all).
-	// Only touched from persistSnapshot (single-goroutine, as guards).
+	// Only touched from guardSnapshot (single-goroutine, as guards).
 	historyVeto map[string]float64
+
+	// rawHistory is the trailing-7d series exactly as last fetched —
+	// every dated bar, including the ones the band refuses. It is carried
+	// from refresh to refresh HERE and never published: the heal and the
+	// confirm veto must re-see refused bars on every refresh, while the
+	// served [Snapshot.History7d] carries only the bars the band admitted
+	// (see [Worker.refreshOnce]). Only touched from refreshOnce.
+	rawHistory map[string][]HistoryPoint
 
 	// fallbacks are tried IN ORDER when the primary client cannot serve
 	// rates, so a paid-feed outage degrades coverage instead of ending
@@ -205,7 +213,7 @@ type Worker struct {
 	// stamped into fx_quotes.source and used as the `source` metric
 	// label, so `stellarindex_external_fx_last_quote_unix{source=...}`
 	// shows which feed is actually live rather than always claiming the
-	// primary. Only touched from refreshOnce -> persistSnapshot
+	// primary. Only touched from refreshOnce -> guardSnapshot
 	// (single-goroutine, as guards).
 	activeSource string
 }
@@ -378,28 +386,122 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 		}
 	}
 
-	// Carry forward the prior snapshot's history while we backfill.
-	// The first install on a fresh worker has no history yet — the
-	// per-currency page renders the sparkline panel as "—" until a
-	// later refresh fills it in. We re-fetch history once a day
-	// (cheap on the upstream's CDN — 7 dated URLs, all cached).
-	var history map[string][]HistoryPoint
-	if prev := w.cache.Latest(); prev != nil {
-		history = prev.History7d
-	}
-	if w.shouldRefreshHistory(history, publishedAt) {
-		history = w.fetchHistory(ctx, names, publishedAt)
+	// Carry forward the last fetched history while we backfill. The
+	// first refresh on a fresh worker has no history yet. We re-fetch
+	// history once a day (cheap on the upstream's CDN — 7 dated URLs,
+	// all cached).
+	//
+	// The carry-forward is the RAW series, held privately on the worker
+	// and never published: the band re-scores every dated bar on every
+	// refresh (the history-majority heal and the confirm veto both need
+	// the bars the band REFUSED, not just the ones it admitted), while
+	// the served snapshot only ever carries the admitted ones.
+	if w.shouldRefreshHistory(w.rawHistory, publishedAt) {
+		w.rawHistory = w.fetchHistory(ctx, names, publishedAt)
 	}
 
-	snap := buildSnapshot(rates, names, publishedAt, time.Now().UTC(), history, w.circulation)
+	// GUARD FIRST, INSTALL SECOND (F004 / F026 / K032). `raw` is the
+	// upstream's word and nothing else; it is scored by the C2-030 band
+	// and only what the band cleared is installed in the cache that
+	// /v1/price's fiat paths read. The previous order — cache.Set(raw)
+	// and then the band, inside the fx_quotes write — meant the band
+	// protected the table and not the served value: on 2026-08-24 it
+	// kept Massive's UZS=1820 (true ≈ 11,800) out of fx_quotes all day
+	// while every fiat:UZS request was priced off 1820 from the cache.
+	//
+	// The band runs whether or not a writer is attached. It used to sit
+	// behind persistSnapshot's nil-writer return, so a cache-only worker
+	// served every upstream bar unbanded.
+	raw := buildSnapshot(rates, names, publishedAt, time.Now().UTC(), w.rawHistory, w.circulation)
+	res := w.guardSnapshot(raw)
+	snap := servedSnapshot(raw, res, w.cache.Latest())
 	w.cache.Set(snap)
 	w.logger.Info("forex: snapshot installed",
 		"currencies", len(snap.Currencies),
+		"upstream_currencies", len(raw.Currencies),
 		"history_currencies", len(snap.History7d),
 		"published_at", publishedAt,
 	)
 
-	w.persistSnapshot(ctx, snap)
+	w.writeBatch(ctx, res.batch)
+}
+
+// maxHeldRateAge bounds how long [servedSnapshot] keeps serving a rate
+// that no refresh has re-confirmed. It mirrors the fx_quotes read path's
+// own bound (fxQuotesSnapLookback in internal/storage/timescale, the
+// "7-day forex-snap lookback" of docs/operations/runbooks/fx-feed-stale.md)
+// so the in-memory feed and the table go dark for a ticker at the same
+// age rather than the cache serving a rate the table has already given
+// up on.
+const maxHeldRateAge = 7 * 24 * time.Hour
+
+// guardResult is what one pass of the sanity band over a raw snapshot
+// yields: the rows cleared for fx_quotes, and the same verdicts in the
+// shape [servedSnapshot] needs to build the served cache entry. One pass
+// produces both so the table and the cache can never disagree about what
+// was accepted.
+type guardResult struct {
+	// batch is the fx_quotes write: accepted current rows plus accepted
+	// (and healed) dated bars, scrubbed rows already removed.
+	batch []FXQuote
+	// current is the set of tickers whose CURRENT rate the band accepted
+	// this refresh and the history-majority heal did not then scrub.
+	current map[string]bool
+	// refuted is the set of tickers whose BASELINE the heal overturned
+	// this refresh. Their previously served rate is the very sample the
+	// ticker's own history refuted, so it must not be held either.
+	refuted map[string]bool
+	// history is the dated bars the band admitted, per ticker.
+	history map[string][]HistoryPoint
+}
+
+// servedSnapshot builds the snapshot the cache installs from the raw
+// upstream snapshot and the band's verdicts on it. Per ticker:
+//
+//   - current rate ACCEPTED → served as fetched, stamped with this
+//     refresh's publication time.
+//   - current rate REFUSED (deviation, vetoed confirm, non-finite), or the
+//     ticker is ABSENT from this refresh (the ECB standby covers ~30
+//     currencies against the primary's ~110) → the last served entry is
+//     HELD, unchanged, with its ORIGINAL UpdateAt. This is what fx_quotes
+//     does — "the ticker keeps its last accepted row rather than gaining a
+//     wrong one" — so the cache and the table agree. The hold ends after
+//     [maxHeldRateAge]; past that the ticker is dropped (fail closed).
+//   - baseline REFUTED by the history-majority heal → dropped. The entry
+//     we could hold is the refuted sample itself. The ticker returns on
+//     the next refresh whose current rate the healed baseline accepts.
+//
+// A dropped ticker is a refusal at the read site: both /v1/price fiat
+// paths already return "no rate" for a ticker the snapshot lacks.
+func servedSnapshot(raw *Snapshot, res guardResult, prev *Snapshot) *Snapshot {
+	out := make([]Currency, 0, len(raw.Currencies))
+	served := make(map[string]bool, len(raw.Currencies))
+	for _, c := range raw.Currencies {
+		if res.current[c.Ticker] {
+			out = append(out, c)
+			served[c.Ticker] = true
+		}
+	}
+	if prev != nil {
+		for _, c := range prev.Currencies {
+			if served[c.Ticker] || res.refuted[c.Ticker] {
+				continue
+			}
+			if raw.FetchedAt.Sub(c.UpdateAt) > maxHeldRateAge {
+				continue
+			}
+			out = append(out, c)
+			served[c.Ticker] = true
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Ticker < out[j].Ticker })
+	return &Snapshot{
+		Currencies:  out,
+		PublishedAt: raw.PublishedAt,
+		FetchedAt:   raw.FetchedAt,
+		History7d:   res.history,
+		Circulation: raw.Circulation,
+	}
 }
 
 // persistSnapshot writes the latest rates + history to fx_quotes if
@@ -433,15 +535,40 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 //
 // Errors get logged at warn level; persistence is best-effort
 // alongside the in-memory cache, never a crash condition.
+//
+// This is the band and the write in one call: [Worker.guardSnapshot] then
+// [Worker.writeBatch]. [Worker.refreshOnce] does NOT call it — it runs the
+// same two halves itself with the cache install between them, so the
+// served snapshot is built from the band's verdicts rather than from the
+// raw upstream. This composition is what the band's own tests drive; it
+// shares every line of band and write logic with the refresh path.
 func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	if w.writer == nil || snap == nil {
 		return
 	}
+	w.writeBatch(ctx, w.guardSnapshot(snap).batch)
+}
+
+// guardSnapshot runs the sanity band over one raw snapshot and returns
+// its verdicts (see [guardResult]). It is the ONLY place the band's
+// per-ticker state advances, and it must run exactly once per refresh:
+// acceptRate is stateful (a refused rate arms the pending slot), so a
+// second pass over the same snapshot would confirm the very outlier the
+// first pass refused.
+//
+// It needs no writer. The band decides what is SERVED as well as what is
+// stored, and a cache-only worker serves.
+func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 	today := snap.PublishedAt.UTC().Truncate(24 * time.Hour)
 
 	w.computeHistoryVeto(snap)
 	defer func() { w.historyVeto = nil }()
 
+	res := guardResult{
+		current: make(map[string]bool, len(snap.Currencies)),
+		refuted: map[string]bool{},
+		history: make(map[string][]HistoryPoint, len(snap.History7d)),
+	}
 	batch := make([]FXQuote, 0, len(snap.Currencies)+len(snap.History7d)*7)
 	// currentRowIx remembers each ticker's current-day row position in
 	// the batch so the history-majority heal below can scrub a poisoned
@@ -468,6 +595,7 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 				rejected = append(rejected, p)
 				continue
 			}
+			res.history[ticker] = append(res.history[ticker], p)
 			batch = append(batch, FXQuote{
 				Bucket:     p.Date.UTC().Truncate(24 * time.Hour),
 				Ticker:     ticker,
@@ -476,7 +604,19 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 				Source:     w.sourceLabel(),
 			})
 		}
-		batch = w.healFromHistoryMajority(ticker, rejected, batch, currentRowIx)
+		var healed bool
+		batch, healed = w.healFromHistoryMajority(ticker, rejected, batch, currentRowIx)
+		if healed {
+			res.refuted[ticker] = true
+			res.history[ticker] = append(res.history[ticker], rejected...)
+			sort.Slice(res.history[ticker], func(i, j int) bool {
+				return res.history[ticker][i].Date.Before(res.history[ticker][j].Date)
+			})
+		}
+	}
+	// A current row counts as accepted only if the heal left it standing.
+	for ticker, ix := range currentRowIx {
+		res.current[ticker] = batch[ix].RateUSD > 0
 	}
 	// Drop scrubbed rows (poisoned bootstrap current-day bars).
 	clean := batch[:0]
@@ -485,8 +625,16 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 			clean = append(clean, q)
 		}
 	}
-	batch = clean
+	res.batch = clean
+	return res
+}
 
+// writeBatch persists one guarded batch to fx_quotes and stamps the
+// feed's liveness metrics. Safe to call with a nil writer (no-op).
+func (w *Worker) writeBatch(ctx context.Context, batch []FXQuote) {
+	if w.writer == nil {
+		return
+	}
 	if err := w.writer.InsertFXQuoteBatch(ctx, batch); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -534,14 +682,14 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 }
 
 // computeHistoryVeto populates [Worker.historyVeto] with the per-ticker
-// heal-grade history-majority medians for one persistSnapshot call —
+// heal-grade history-majority medians for one guardSnapshot call —
 // computed BEFORE the current-rate loop so acceptRate's pending-confirm
-// arm can consult them (the confirm veto; extracted from persistSnapshot
+// arm can consult them (the confirm veto; extracted from guardSnapshot
 // for gocognit, like healFromHistoryMajority). Computed from the FULL
 // trailing-7d series, not the rejected subset the heal uses: a healed
 // baseline accepts its history bars, and it is exactly those agreeing
 // bars that must keep refuting a still-broken current feed. The caller
-// clears the map when persistSnapshot returns.
+// clears the map when guardSnapshot returns.
 func (w *Worker) computeHistoryVeto(snap *Snapshot) {
 	w.historyVeto = make(map[string]float64, len(snap.History7d))
 	for ticker, points := range snap.History7d {
@@ -553,7 +701,7 @@ func (w *Worker) computeHistoryVeto(snap *Snapshot) {
 
 // healFromHistoryMajority applies the history-majority heal for one
 // ticker after its history bars were banded (extracted from
-// persistSnapshot for gocognit; same behavior, pinned by the
+// guardSnapshot for gocognit; same behavior, pinned by the
 // BootstrapPoisonHealed / ConfirmedBaselineIsNeverHealed /
 // SplitRejectedSeriesFailsAgreement tests).
 //
@@ -569,20 +717,22 @@ func (w *Worker) computeHistoryVeto(snap *Snapshot) {
 // On a heal: the baseline re-points at the bars' median, the bars are
 // appended to the batch, and the ticker's current-day row (the very
 // sample the majority refuted) is scrubbed via the RateUSD=0 marker the
-// caller filters before insert. Returns the (possibly grown) batch.
+// caller filters before insert. Returns the (possibly grown) batch and
+// whether a heal fired — the caller must then stop serving the ticker's
+// previously accepted rate, which is the sample the majority refuted.
 func (w *Worker) healFromHistoryMajority(
 	ticker string,
 	rejected []HistoryPoint,
 	batch []FXQuote,
 	currentRowIx map[string]int,
-) []FXQuote {
+) ([]FXQuote, bool) {
 	med, ok := historyMajority(rejected)
 	if !ok {
-		return batch
+		return batch, false
 	}
 	g := w.guards[ticker]
 	if g == nil || !g.bootstrapUnconfirmed || withinBand(med, g.lastAccepted) {
-		return batch
+		return batch, false
 	}
 	w.logger.Warn("forex: unconfirmed bootstrap baseline refuted by agreeing history majority; healing",
 		"ticker", ticker, "baseline", g.lastAccepted, "median", med,
@@ -607,7 +757,7 @@ func (w *Worker) healFromHistoryMajority(
 			Source:     w.sourceLabel(),
 		})
 	}
-	return batch
+	return batch, true
 }
 
 // acceptRate is the C2-030 sanity band. It reports whether `rate` for

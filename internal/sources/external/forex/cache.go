@@ -12,15 +12,22 @@ import (
 // and price-of-1-USD-in-this-currency. Stable across the lifetime
 // of a snapshot; the Cache replaces snapshots atomically.
 type Currency struct {
-	Ticker   string  // upper-case ISO-4217 (USD, EUR, JPY, …)
-	Name     string  // display name ("United States Dollar")
-	RateUSD  float64 // 1 USD = N units of this currency
+	Ticker  string  // upper-case ISO-4217 (USD, EUR, JPY, …)
+	Name    string  // display name ("United States Dollar")
+	RateUSD float64 // 1 USD = N units of this currency
+	// UpdateAt is the publication time of the refresh whose rate this
+	// is. It trails [Snapshot.PublishedAt] when the worker is HOLDING the
+	// ticker's last guarded rate (see servedSnapshot in worker.go).
 	UpdateAt time.Time
 }
 
 // Snapshot is the immutable rates+metadata bundle the Cache holds.
 // Replaced atomically by the worker; readers always see a
 // consistent view (no torn reads).
+//
+// The snapshot the worker installs carries only what the C2-030 sanity
+// band cleared: the band runs BEFORE the install, so a rate it refused
+// for fx_quotes is never served from here either.
 //
 // History7d is the per-ticker daily series: 7 entries (oldest →
 // newest) showing the price of 1 USD in that currency on each day.

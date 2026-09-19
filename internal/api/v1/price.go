@@ -1956,14 +1956,25 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 	// allocation — would not pay off.
 	var rateAsset, rateQuote float64
 	var foundAsset, foundQuote bool
+	// observedAt starts at the snapshot's publication time and is pulled
+	// BACK to the older leg's own UpdatedAt. The two normally coincide;
+	// they differ exactly when the forex worker is HOLDING a leg's last
+	// guarded rate because the sanity band refused the upstream's new
+	// one (or the standby feed does not carry the currency). Stamping a
+	// held rate with the fresh publication time would claim a freshness
+	// it does not have. Older-leg-wins is the rule the XLM-pivot peg
+	// cross in this file already applies to its two legs.
+	observedAt := snap.PublishedAt
 	for _, c := range snap.Currencies {
 		if c.Ticker == asset.Code {
 			rateAsset = c.RateUSD
 			foundAsset = true
+			observedAt = olderNonZero(observedAt, c.UpdatedAt)
 		}
 		if c.Ticker == quote.Code {
 			rateQuote = c.RateUSD
 			foundQuote = true
+			observedAt = olderNonZero(observedAt, c.UpdatedAt)
 		}
 		if foundAsset && foundQuote {
 			break
@@ -1999,8 +2010,17 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		Quote:      quote.String(),
 		Price:      priceStr,
 		PriceType:  "vwap",
-		ObservedAt: WireTime(snap.PublishedAt),
+		ObservedAt: WireTime(observedAt),
 	}, []string{"massive"}, true
+}
+
+// olderNonZero returns the earlier of a and b, ignoring a zero b (a
+// snapshot entry that carries no per-currency timestamp).
+func olderNonZero(a, b time.Time) time.Time {
+	if !b.IsZero() && b.Before(a) {
+		return b
+	}
+	return a
 }
 
 // formatCrossRate serialises a fiat cross-rate big.Rat to a decimal
