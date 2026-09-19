@@ -89,6 +89,28 @@ Environment=VERIFY_ARCHIVE_ROOT=/srv/history-archive
 # -archive-root points at the LOCAL history-archive mirror the anchor reads
 # the canonical header-hash from. -to is omitted intentionally (resolved
 # from the manifest at start).
+#
+# -fail-on-missed makes ADR-0017 contract 3 an exit code instead of a log
+# line, and it is the LAST argument on purpose: only argv after
+# `stellarindex-ops verify-archive` reaches the binary (r1's
+# ansible-rendered copy of this unit runs through the run-heavy-job.sh
+# singleton wrapper, whose own leading arguments are its own).
+#
+# What it can and cannot fire on, measured on r1 2026-09-19: the run
+# logged `checkpoints matched=325 missed=23`, and all 23 were above the
+# mirror's high-water 64499647 — the /srv/history-archive mirror holds
+# 1,007,807 of the 1,007,807 checkpoint files between ledger 63 and that
+# high-water, no hole anywhere. The fill job lands at 02:2x UTC and this
+# unit at 04:38 UTC, so that trailing block is present on EVERY run; the
+# binary counts it as `unmirrored`, not `missed`, so the flag reads only
+# genuine holes inside the mirror's own coverage — 0 of them today.
+#
+# On failure the run returns before the state write, so the checkpoint
+# tier's high-water FREEZES at its last certified value and every later
+# run re-walks from there. Diagnose with the journal's
+# `checkpoints matched=… missed=… unmirrored=…` line before widening the
+# mirror: a miss now means a file absent from INSIDE the span the mirror
+# itself holds.
 ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
   -config /etc/stellarindex.toml \
   -from ${VERIFY_ARCHIVE_FROM} \
@@ -99,7 +121,8 @@ ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
   -state-file ${VERIFY_ARCHIVE_STATE_FILE} \
   -from-last-verified \
   -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP} \
-  -textfile-output ${VERIFY_ARCHIVE_TEXTFILE}
+  -textfile-output ${VERIFY_ARCHIVE_TEXTFILE} \
+  -fail-on-missed
 
 User=root
 

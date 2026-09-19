@@ -74,6 +74,28 @@ Environment=VERIFY_ARCHIVE_ROOT=/srv/history-archive
 # wrapper runs as User=stellarindex (non-root) so it takes the lock then
 # `exec`s the binary in place, keeping the payload as the unit's MAIN pid
 # (Type=notify + NotifyAccess=main + WatchdogSec intact).
+#
+# -fail-on-missed makes ADR-0017 contract 3 an exit code instead of a log
+# line. It is placed AFTER `stellarindex-ops verify-archive`: a flag among
+# the wrapper's leading arguments is eaten by run-heavy-job.sh and never
+# parsed by the binary.
+#
+# What it can and cannot fire on, measured on r1 2026-09-19: the run
+# logged `checkpoints matched=325 missed=23`, and all 23 were above the
+# mirror's high-water 64499647 — the /srv/history-archive mirror holds
+# 1,007,807 of the 1,007,807 checkpoint files between ledger 63 and that
+# high-water, no hole anywhere. Since the fill job lands at 02:2x UTC and
+# this unit at 04:38 UTC, that trailing block is present on EVERY run.
+# The binary now counts it as `unmirrored`, not `missed`, so the flag
+# reads only genuine holes inside the mirror's own coverage — 0 of them
+# today. Wiring the flag before that distinction existed would have
+# failed this unit on its next fire, every night.
+#
+# On failure the run returns before the state write, so the checkpoint
+# tier's high-water FREEZES at its last certified value and every later
+# run re-walks from there (widening, not skipping). node_exporter's
+# systemd collector raises stellarindex_verify_archive_tier_b_unit_failed
+# (severity: ticket) — runbook docs/operations/runbooks/verify-archive-tier-b.md.
 ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
   /usr/local/bin/stellarindex-ops verify-archive \
   -config /etc/stellarindex.toml \
@@ -85,7 +107,8 @@ ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
   -state-file ${VERIFY_ARCHIVE_STATE_FILE} \
   -from-last-verified \
   -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP} \
-  -textfile-output ${VERIFY_ARCHIVE_TEXTFILE}
+  -textfile-output ${VERIFY_ARCHIVE_TEXTFILE} \
+  -fail-on-missed
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
 # created by 04-users.yml (CS-119). Reads the archive via S3 (network) +
