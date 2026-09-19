@@ -196,6 +196,19 @@ against.
   climbs. A row carrying both a poison output and a held fault is retried
   whole, so it is not a shed candidate and its quarantine budget still
   accumulates.
+- **ops / ch-gate measured the walk against itself (RLT-282):** the ADR-0034
+  Phase-2 gate printed both the requested ledger count and the walked one, then
+  gated on `ch.LedgerRows != walked` — so when a wrong bucket or a hole
+  tolerated by `TolerateTrailingMissing` shortened the walk, both sides shrank
+  together, the subset agreed with itself and the gate printed PASSED over a
+  range it had only partly opened. The existing zero-ledger refusal caught only
+  the loudest shape of that, and it named `*bucket` (empty unless `-bucket` was
+  passed) rather than the bucket actually read. Coverage is now asserted as
+  DELIVERED == REQUESTED by one shared rule, `walkCoverageErr`, checked before
+  any other verdict because every mismatch below it is downstream; the CH-row
+  comparison moved to the requested count; and the error names the delivered
+  and requested counts and the resolved bucket.
+
 - **ops / wasm-history published the requested bound as observed coverage (RLT-282):**
   `workerResult.upperEnd` is documented as "last ledger the worker actually
   saw" and is what `mergeWasmHistories` closes every open WASM range at — so

@@ -163,16 +163,27 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 		fmt.Printf("%-16s %14d %14d %14s  %s\n", c.name, c.census, c.stored, rowStr, verdict)
 	}
 
-	// Ledger coverage: every walked ledger must be present in CH exactly once.
-	if ch.LedgerRows != uint64(walked) {
-		fmt.Printf("ledger coverage: MISMATCH (walked %d, CH ledgers %d)\n", walked, ch.LedgerRows)
+	// Coverage, in two halves. The gate's claim is "every REQUESTED
+	// ledger was examined AND is present in CH exactly once", and the
+	// halves fail for different reasons, so they report separately.
+	// Measuring CH rows against `walked` alone let a short walk certify
+	// itself: a wrong bucket or a hole tolerated by
+	// TolerateTrailingMissing shrinks both sides together, so the gate
+	// compared a subset to itself and printed OK (RLT-282).
+	requested := uint64(*to) - uint64(*from) + 1
+	if uint64(walked) != requested {
+		fmt.Printf("walk coverage:   MISMATCH (requested %d, walked %d)\n", requested, walked)
+	}
+	if ch.LedgerRows != requested {
+		fmt.Printf("ledger coverage: MISMATCH (requested %d, walked %d, CH ledgers %d)\n",
+			requested, walked, ch.LedgerRows)
 		gateFail = true
 	}
 	if extractMismatches > 0 {
 		fmt.Printf("extractor vs census: MISMATCH on %d ledger(s)\n", extractMismatches)
 		gateFail = true
 	} else {
-		fmt.Printf("extractor vs census: OK (all %d ledgers)\n", walked)
+		fmt.Printf("extractor vs census: OK (%d of %d requested ledgers walked)\n", walked, requested)
 	}
 
 	// ─── footprint (gate 1) ──────────────────────────────────────
@@ -199,24 +210,59 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 	}
 	fmt.Printf("census-walk throughput: %.1f ledgers/s\n", walkRate)
 
+	// A walk that delivered fewer ledgers than it asked for is a BROKEN
+	// GATE, not a clean range — every check above compares census vs
+	// stored vs rows over the ledgers the walk produced, so on the part
+	// it never reached there is nothing to disagree with. This is
+	// checked before gateFail because every mismatch above is downstream
+	// of it, and it names the bucket, which is the usual cause.
+	if cerr := walkCoverageErr("ch-gate", uint32(*from), uint32(*to), walked, streamBucket); cerr != nil {
+		return cerr
+	}
 	if gateFail {
 		return fmt.Errorf("ch-gate: COMPLETENESS GATE FAILED")
 	}
-	// Zero walked ledgers is a BROKEN GATE, not a clean range. Every
-	// check here compares census vs stored vs rows, so on an empty range
-	// they are all 0 == 0 == 0 and each prints OK — certifying a range
-	// that was examined zero times. It is easy to reach: -bucket
-	// defaults to the TRIMMED live bucket, so verifying a historical
-	// backfill without -bucket galexie-archive walks nothing, and
-	// TolerateTrailingMissing converts the underlying missing-file error
-	// to nil for any range under 65,536 ledgers. Same fail-closed guard
-	// verify-hashchain already carries (cold audit 2026-08-04).
-	if walked == 0 {
-		return fmt.Errorf(
-			"ch-gate walked 0 ledgers in [%d, %d] from bucket %q — nothing was examined; "+
-				"historical ranges need -bucket galexie-archive. Refusing to pass vacuously",
-			*from, *to, *bucket)
-	}
 	fmt.Printf("\n✅ ch-gate: completeness gate PASSED\n")
 	return nil
+}
+
+// walkCoverageErr is the one rule every galexie-walking subcommand in
+// this package applies before it reports on what it saw: assert
+// DELIVERED == REQUESTED, or say so and fail. Returns nil when the walk
+// covered the whole range.
+//
+// It exists because a short walk is otherwise indistinguishable from a
+// clean one (RLT-282). Two mechanisms make short walks routine rather
+// than exotic:
+//
+//   - -bucket defaults to the TRIMMED live bucket, so verifying a
+//     historical range without -bucket galexie-archive walks a prefix
+//     of it, or none of it.
+//   - opsutil.NewBoundedLedgerStreamConfig always sets
+//     TolerateTrailingMissing, which converts the SDK's missing-object
+//     error into a clean walk-complete for any hole within 65,536
+//     ledgers of -to.
+//
+// Either way ledgerstream.Stream returns nil and the caller's tallies
+// are simply smaller. A tally compared only against itself — CH rows
+// against walked, drops against claims — then agrees perfectly over the
+// slice that was read and says nothing at all about the rest. The
+// zero-ledger case is called out separately because it is the loudest
+// shape of the same defect and the one an operator misreads as "clean".
+func walkCoverageErr(cmd string, from, to uint32, walked int, bucket string) error {
+	requested := uint64(to) - uint64(from) + 1
+	if uint64(walked) == requested {
+		return nil
+	}
+	if walked == 0 {
+		return fmt.Errorf(
+			"%s walked 0 ledgers in [%d, %d] from bucket %q — nothing was examined; "+
+				"historical ranges need -bucket galexie-archive. Refusing to pass vacuously",
+			cmd, from, to, bucket)
+	}
+	return fmt.Errorf(
+		"%s walked %d of %d requested ledgers in [%d, %d] from bucket %q — the range was only "+
+			"partially examined, so every count above describes a subset; historical ranges need "+
+			"-bucket galexie-archive. Refusing to report on a short walk as if it were complete",
+		cmd, walked, requested, from, to, bucket)
 }
