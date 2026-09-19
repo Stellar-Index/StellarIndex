@@ -396,3 +396,63 @@ func TestPlanResumedWalk_NoPriorStateWalksEverything(t *testing.T) {
 		t.Errorf("reason = %q, want the cold-start reason", reason)
 	}
 }
+
+// TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof pins the
+// corrected doc claim on ChunkProgress.LastVerifiedHash, which said it
+// was "used for the cross-run chain-continuity proof" while no code
+// read it (RLT-265). Which field is load-bearing has to be mechanical,
+// not a comment: an operator debugging a boundary failure who edits
+// the wrong field gets no signal at all.
+//
+// Poisoning LastVerifiedHash must change nothing — it is a
+// human-readable mirror. Poisoning Stitch.LastHash must break the
+// stitch, because that is the term the proof reads.
+func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+
+	// chunk 0 ends at 1000 on 0xaa; chunk 1 chains onto it cleanly.
+	chunk0 := walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa))
+	chunk1 := walkedChunk(1, chunks[1], hashByte(0xaa), hashByte(0xcc))
+	chunk2 := walkedChunk(2, chunks[2], hashByte(0xcc), hashByte(0xdd))
+	live := []chunkResult{chunk1, chunk2}
+	liveIdxs := []int{1, 2}
+
+	base := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
+	base = markChunkDoneStitch(base, "chain", 0, chunk0, now)
+
+	// Precondition: the field the old comment named is in fact written.
+	if got := base.Tiers["chain"].InProgress.Chunks[0].LastVerifiedHash; got != hashToHex(hashByte(0xaa)) {
+		t.Fatalf("precondition: chunk[0].LastVerifiedHash = %q, want the terminal hash", got)
+	}
+
+	// Poisoning the mirror must not move the verdict.
+	poisonedMirror := markChunkDoneStitch(base, "chain", 0, chunk0, now)
+	poisonedMirror.Tiers["chain"].InProgress.Chunks[0].LastVerifiedHash = hashToHex(hashByte(0xff))
+	planInput, err := fullPlanStitchInput(poisonedMirror, "chain", len(chunks), liveIdxs, live)
+	if err != nil {
+		t.Fatalf("fullPlanStitchInput with a poisoned LastVerifiedHash: %v", err)
+	}
+	if planInput[0].LastHash != hashByte(0xaa) {
+		t.Errorf("reconstructed chunk[0].LastHash = %s, want %s — the proof must read Stitch, "+
+			"not the LastVerifiedHash mirror (RLT-265)",
+			hashToHex(planInput[0].LastHash), hashToHex(hashByte(0xaa)))
+	}
+	if err := stitchChunks(planInput); err != nil {
+		t.Errorf("stitchChunks failed on an intact chain because LastVerifiedHash was poisoned: %v", err)
+	}
+
+	// Poisoning the term the proof DOES read must break it — otherwise
+	// the assertion above would hold for a stitch that reads nothing.
+	poisonedProof := markChunkDoneStitch(base, "chain", 0, chunk0, now)
+	poisonedProof.Tiers["chain"].InProgress.Chunks[0].Stitch.LastHash = hashToHex(hashByte(0xff))
+	planInput, err = fullPlanStitchInput(poisonedProof, "chain", len(chunks), liveIdxs, live)
+	if err != nil {
+		t.Fatalf("fullPlanStitchInput with a poisoned Stitch.LastHash: %v", err)
+	}
+	if err := stitchChunks(planInput); err == nil {
+		t.Fatal("stitchChunks passed with chunk[0]'s persisted boundary hash poisoned — " +
+			"Stitch.LastHash is not being read, so the proof is vacuous")
+	}
+}

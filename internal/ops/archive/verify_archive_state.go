@@ -83,8 +83,16 @@ type ChunkProgress struct {
 	To   uint32 `json:"to"`
 	Done bool   `json:"done"`
 	// LastVerifiedHash is the hex hash of the chunk's final
-	// (chunk.to) ledger, captured when Done flips true. Used for
-	// the cross-run chain-continuity proof.
+	// (chunk.to) ledger, captured when Done flips true.
+	//
+	// It is written and never read. The comment it replaces said it
+	// was "used for the cross-run chain-continuity proof", which was
+	// not true of any code path (RLT-265): one terminal hash cannot
+	// prove a boundary, which needs the RIGHT chunk's FirstPrevHash
+	// as well. Stitch carries both terms and is what the proof
+	// actually reads. Kept because an operator reading the state file
+	// by hand uses it, and dropping it would change the on-disk shape
+	// for no gain; do not mistake it for evidence.
 	LastVerifiedHash string `json:"last_verified_hash,omitempty"`
 	// Stitch is the chunk's boundary evidence, captured when Done
 	// flips true. A resumed run skips this chunk's walk, so these

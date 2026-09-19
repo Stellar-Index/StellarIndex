@@ -350,6 +350,16 @@ against.
   than a relaxed one — every ticker must still be answerable, by one index or
   the other.
 
+- **docs(ops) / verify-archive state file (RLT-265):**
+  `ChunkProgress.LastVerifiedHash`'s doc comment claimed it was "used for the
+  cross-run chain-continuity proof". No code read it, and one terminal hash
+  could not prove a boundary anyway — that needs the right-hand chunk's
+  `FirstPrevHash` too, which is what the new `stitch` record carries. The
+  comment now says what is true: a human-readable mirror, kept because it is
+  already on disk and an operator reading the state file by hand uses it, not
+  evidence. `TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof` pins it
+  mechanically — poisoning the mirror changes no verdict, poisoning
+  `stitch.last_hash` breaks the stitch.
 - **ops(verify-archive):** a resumed walk skipped the cross-chunk chain
   proof (RLT-265). `stitchChunks` was handed only the chunks the run
   actually walked, so on a resume it compared chunks that are not
