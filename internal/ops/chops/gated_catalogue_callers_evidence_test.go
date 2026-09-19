@@ -19,8 +19,9 @@ import (
 // buildReconciliationCatalogue takes only a config, so on its own it can
 // only build each gated decoder bare: a contract an operator admitted
 // through protocol_contracts is decoded LIVE and invisible to an unwarmed
-// re-derive. Its served rows then read as phantoms on /v1/coverage, and a
-// projection rewrite (`ch-rebuild -write`, `ch-reproject`) drops them.
+// re-derive. Its served rows then read as phantoms on /v1/coverage, they
+// report as a delta that is not in the data on `verify-reconciliation` and
+// `ch-reproject`, and a `ch-rebuild -write` rebuilds the table without them.
 //
 // Every non-test consumer of the catalogue must therefore warm it. This
 // test enumerates them from the source tree rather than a hand-kept list,
@@ -97,7 +98,8 @@ func TestCatalogueConsumers_WarmBeforeAnythingReadsTheDecoders(t *testing.T) {
 			fn:       "chReproject",
 			warm:     "warmCatalogueGates(ctx, store, slog.Default(), cat)",
 			firstUse: "preseedFactoryChildren(",
-			why:      "rewrites projections from the lake: same data-loss shape as `ch-rebuild -write`",
+			why: "the report that answers \"what would rebuilding Postgres from ClickHouse change?\" — " +
+				"it would show a CH-under-served delta that is not in the data, and invite a `ch-rebuild -write`",
 		},
 	}
 	for _, tc := range cases {

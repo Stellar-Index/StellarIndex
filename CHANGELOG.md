@@ -536,8 +536,11 @@ against.
   not account for — the source published as a projection mismatch and its
   rows read as phantoms. `verify-reconciliation` reported the same mismatch
   to an operator, and `ch-reproject` both dropped the contract from the
-  static `contractIDs` prefilter and rejected its events in `Matches()`, so
-  the rewritten projection lost exactly those rows. Each warm runs on the
+  static `contractIDs` prefilter and rejected its events in `Matches()` —
+  neither writes, but `ch-reproject` is the report that answers "what would
+  rebuilding Postgres from ClickHouse change?", so a CH-under-served delta
+  that is not in the data is exactly what invites the destructive
+  `ch-rebuild -write`. Each warm runs on the
   freshly built catalogue and BEFORE anything reads its decoders — ahead of
   `preseedFactoryChildren`, which seeds into the instances the warm rebuilds,
   and ahead of the recognition owner map, which reads the widened

@@ -76,9 +76,13 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	// Re-derive on the gate the live indexer runs with — curated set ∪
 	// protocol_contracts — not on the bare in-code seed (RLT-430): a
 	// contract an operator admitted through protocol_contracts was decoded
-	// live, so it has served rows, and an unwarmed re-derive both drops it
-	// from the static contractIDs prefilter and rejects its events in
-	// Matches() — the rewritten projection loses exactly those rows.
+	// live, so it HAS served rows, while an unwarmed re-derive both drops
+	// it from the static contractIDs prefilter and rejects its events in
+	// Matches(). This command writes nothing, so the damage is in what it
+	// TELLS an operator: a CH-under-served delta that is not in the data,
+	// on the one report whose whole purpose is to answer "what would
+	// rebuilding Postgres from ClickHouse change?" — and the answer it
+	// invites is the destructive `ch-rebuild -write`.
 	// Read-only (no upsert hook). Must precede the preseed below, which
 	// seeds into the decoders this rebuilds.
 	if cat, err = warmCatalogueGates(ctx, store, slog.Default(), cat); err != nil {
