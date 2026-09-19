@@ -1,0 +1,40 @@
+# There is NO default inventory for this tree. Every run must name one:
+#
+#   ansible-playbook -i inventory/<region>.yml playbooks/<play>.yml \
+#     -e secrets_file=inventory/<region>.secrets.yml
+#
+# Available: futurenet.yml, testnet.yml, r1.yml (untracked — C6-041), or one
+# of the r*.example.yml templates.
+#
+# ansible.cfg's `inventory` points at THIS file on purpose, so that a run
+# which forgets -i resolves zero hosts instead of guessing a region.
+#
+# It used to point at `./inventory` — the whole DIRECTORY — which ansible
+# merges. Every region inventory declares the same `archival_nodes` group, so
+# an -i-less run produced ONE group holding r1 (production) plus both test
+# nets plus the r*.example.yml placeholders, and pointed it at
+# playbooks/deploy-binary.yml (`hosts: all`), archival-node.yml and
+# monitoring.yml (`hosts: archival_nodes`). The merge also clobbered
+# per-region host vars by load order: si-futurenet resolved to
+# stellar_network=testnet, region_id=testnet, galexie_start_ledger=4340000
+# and postgres_replication_role=async-replica against r1-01.stellarindex.io.
+#
+# The document below is a bare, UNQUOTED YAML scalar. It is not a valid
+# inventory in any of ansible's file formats: `auto` rejects it (no root
+# `plugin` key), `yaml` rejects it (not a mapping) and `ini` rejects it (the
+# second whitespace-separated token is not key=value). Ansible names this
+# path in four warnings and every play then matches zero hosts.
+#
+# Keep it unquoted and keep it multi-word: `ini` splits with shlex, so a
+# QUOTED single-token line parses as a host NAME and the run would proceed
+# against a bogus inventory rather than against nothing. Keep it free of
+# `: ` too, or YAML reads it as a mapping and the file becomes an inventory.
+#
+# Not set here: `[inventory] unparsed_is_failed = True`, which would upgrade
+# those warnings to exit 1. ci.yml's `ansible syntax + lint` job runs
+# ansible-lint from this directory, and ansible-lint shells out to
+# `ansible-playbook --syntax-check` with no -i — measured red (exit 2) with
+# the setting, green without it. Turning it on is a joint change with that
+# workflow, not a change to this file alone.
+
+NO-DEFAULT-INVENTORY pass-an-explicit--i-inventory/<region>.yml (futurenet.yml testnet.yml r1.yml or an r*.example.yml template)

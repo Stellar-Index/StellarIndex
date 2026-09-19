@@ -320,6 +320,34 @@ against.
   the pool-state readers), so this fix does not depend on the lake half landing;
   it narrows the remaining gap to the current-state projection and to history.
 
+- **ansible / no default inventory (Q250):** `configs/ansible/ansible.cfg` set
+  `inventory = ./inventory` — the whole DIRECTORY — and ansible merges a
+  directory inventory. Every region file declares the same `archival_nodes`
+  group, so a single forgotten `-i` resolved ONE group of five hosts:
+  production r1 plus both test nets plus the `r*.example.yml` placeholders
+  (measured: `ansible-playbook --list-hosts playbooks/deploy-binary.yml`,
+  whose play is `hosts: all`, printed `hosts (5)`). The merge also rewrote
+  per-region host vars by load order — si-futurenet came out with
+  `stellar_network=testnet`, `region_id=testnet`,
+  `galexie_start_ledger=4340000` and `postgres_replication_role=async-replica`
+  pointed at `r1-01.stellarindex.io`. This is the sibling of the trap that
+  already fired here: omitting `-e secrets_file=` applied r1's secrets to a
+  test net and took it down. The default is now fail-closed rather than
+  "some region": `inventory` names
+  `inventory/no-default-inventory.yml`, a bare YAML scalar that ansible's
+  `auto`, `yaml` and `ini` inventory plugins all refuse, so a run without `-i`
+  resolves zero hosts (`hosts (0)`) behind four warnings naming that file,
+  while `-i inventory/<region>.yml` is unchanged. Every ansible invocation in
+  the tree — `ansible-drift.yml`, `deploy.yml`, ci.yml's three syntax-checks,
+  `deploy-sync-test.sh`, `ansible-clickhouse-host-gate-test.sh` and the
+  bring-up runbook — already passes an explicit inventory, so nothing moves
+  with it. `[inventory] unparsed_is_failed = True` would turn the warnings
+  into exit 1 and is deliberately NOT set: ansible-lint shells out to
+  `ansible-playbook --syntax-check` with no `-i`, and ci.yml's `ansible syntax
+  + lint` job goes red (exit 2) with it — that upgrade is a joint change with
+  the workflow. Guarded by
+  `test/controlwiring/ansible_default_inventory_test.go`, which resolves the
+  real playbook through the real ansible.
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with
   `AND o.tx_hash IN (SELECT tx_hash FROM stellar.transactions WHERE successful = 1
