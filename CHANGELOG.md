@@ -55,6 +55,32 @@ against.
   already moves `stellarindex_worker_panics_total`, which pages through
   `stellarindex_worker_panicked` with a runbook.
 
+### Changed
+
+- **ansible / `ch-live-catchup` on r1 — the filed claim is false, the real gap
+  is elsewhere (Q240):** Q240 said the ClickHouse lake's only self-healer "is
+  installed only behind `run_clickhouse`, which is false by design on the
+  production host", i.e. that r1's lake has no self-healer. The ansible half is
+  true; the conclusion is not. **Measured on r1 2026-09-19:
+  `ch-live-catchup.timer` is enabled *and* active, `clickhouse-server` is
+  active, and the last service run exited 0 at 10:34.** r1's healer was
+  hand-installed out-of-band on 2026-06-12, which is exactly the posture
+  `run_clickhouse: false` exists to preserve — no fix was warranted and none was
+  made. The measurement is now recorded beside `ch_live_catchup_enabled` in the
+  role defaults so the next audit does not re-derive it. What IS open is a
+  different and better-evidenced defect: **no inventory in this repo installs
+  the healer anywhere** (`r1.example.yml` sets no `run_clickhouse`;
+  `testnet.yml` / `futurenet.yml` set `run_clickhouse: true` but
+  `ch_live_catchup_enabled: false`), and the consequence is visible on r1 —
+  its `/usr/local/bin/ch-live-catchup.sh` is the 3421-byte copy from
+  2026-06-12, while the repo's is 6298 bytes and has since #371 F10 REFUSED to
+  run without `stellarindex_ch_live_era_from`, which r1's
+  `/etc/default/stellarindex-ops` does not carry. Three months of fixes to that
+  script have never reached the host running it. Closing that needs
+  `configs/ansible/inventory/*.yml` and/or `tasks/08-clickhouse.yml`, both
+  outside this unit's file set, and whether r1 should let the ClickHouse install
+  tasks run at all is a deploy-topology decision for the maintainer.
+
 ### Fixed
 
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`

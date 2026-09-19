@@ -87,6 +87,26 @@ run_clickhouse:          false
 # is seconds of work every 10 minutes over just the new gap. Only
 # installed where the ClickHouse tasks run at all, i.e. behind
 # run_clickhouse. Set false to opt a host out deliberately.
+#
+# Q240 asked whether that gate leaves r1 — the one host whose lake is
+# live — without a self-healer. It does NOT, and the next reader should
+# not have to re-derive it. Measured on r1 2026-09-19:
+# `ch-live-catchup.timer` is enabled AND active, clickhouse-server is
+# active, and the last service run exited 0 at 10:34. r1's healer, like
+# the rest of r1's lake, was hand-installed out-of-band — which is the
+# posture run_clickhouse: false exists to preserve.
+#
+# What IS open, and is a different (better-evidenced) defect than the
+# one Q240 filed: no inventory in this repo installs the healer at all.
+# r1.example.yml sets no run_clickhouse, and testnet.yml / futurenet.yml
+# set run_clickhouse: true but ch_live_catchup_enabled: false — so the
+# ansible path installs it nowhere, and r1's out-of-band copy is the
+# pre-#371 one (/usr/local/bin/ch-live-catchup.sh, 3421 bytes, dated
+# 2026-06-12; the repo's is 6298 bytes and since #371 F10 REFUSES to run
+# without stellarindex_ch_live_era_from, which r1's
+# /etc/default/stellarindex-ops does not carry). Closing that needs the
+# inventories and/or 08-clickhouse.yml, and whether r1 should let the
+# ClickHouse install tasks run at all is a deploy-topology decision.
 ch_live_catchup_enabled: true
 # stellarindex_ch_live_era_from — the ledger ch-live-catchup starts its
 # gap scan from: one past the ceiling of the certified bulk backfill.
