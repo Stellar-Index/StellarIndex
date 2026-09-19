@@ -78,6 +78,21 @@ against.
   and a spec missing the known routes, and confirms the positive path
   still sweeps (audit 2026-09-02 F082).
 
+- **completeness (recognition, rozo + blend_backstop):** an unhandled event
+  topic on a Rozo payment contract or on the Blend backstop now fails THAT
+  source's `recognition_ok`. Neither catalogue entry declared `contractIDs`,
+  and neither source is a gated-registry source, so nothing ever named their
+  contracts in the recognition owner map: such a gap fell into the
+  system-wide unattributed bucket and the per-source axis was structurally
+  unable to go false — the 2026-07-07 rozo blind-spot class, with the alert
+  that used to cover it gone since #465. Both entries now pin the exact set
+  their decoder already gates `Matches()` on (the four Rozo payment
+  contracts; backstop V2 + V1), so the pin is counts-identical as a
+  re-derive prefilter. Expect either source to turn red on the next
+  `compute-completeness` pass if its contracts already carry a shape no arm
+  handles — that is the axis reporting for the first time, not a regression.
+  A lockstep test holds each pin against the decoder's own identity check
+  (audit 2026-09-02 F071).
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock

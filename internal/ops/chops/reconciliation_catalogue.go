@@ -427,9 +427,24 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 		// protocols_registry.go): first event across all four Rozo
 		// contracts; rozo_events is projected to exactly here. The old
 		// 62_403_000 ingestion-config floor sat ~1.57M ledgers late.
-		{name: "rozo", genesis: 60_829_397, dec: rozo.NewDecoder(), targets: []reconTarget{
-			{"rozo_events", "", []string{"rozo.event"}},
-		}},
+		{
+			name: "rozo", genesis: 60_829_397, dec: rozo.NewDecoder(),
+			// contractIDs pins recognition attribution, exactly as cctp's
+			// does above (F071). rozo is not a gated-registry source, so
+			// the protocol_contracts fold (loadRegistryOwners) never names
+			// its contracts either: without this pin NOTHING put a Rozo
+			// contract in ownerOf, an unhandled topic on one fell into the
+			// system-wide bucket, and rozo's own recognition_ok could not
+			// go false — the 2026-07-07 blind spot's exact class. The
+			// decoder gates Matches() on this same set (rozoContracts is
+			// built from MainnetPaymentContracts), so the pin is
+			// counts-identical as a re-derive prefilter. Copied so the
+			// catalogue never aliases the package's slice.
+			contractIDs: append([]string(nil), rozo.MainnetPaymentContracts...),
+			targets: []reconTarget{
+				{"rozo_events", "", []string{"rozo.event"}},
+			},
+		},
 		{
 			// sorocredit — ADR-0035 contract-gated on a SINGLE trust-root
 			// main contract. The bare NewDecoder() hard-codes that trust
@@ -454,9 +469,20 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				}},
 			},
 		},
-		{name: blend_backstop.SourceName, genesis: blend_backstop.BackstopGenesisLedger, dec: blend_backstop.NewDecoder(), targets: []reconTarget{
-			{"blend_backstop_events", "", []string{"blend_backstop.event"}},
-		}},
+		{
+			name: blend_backstop.SourceName, genesis: blend_backstop.BackstopGenesisLedger, dec: blend_backstop.NewDecoder(),
+			// contractIDs pins recognition attribution (F071), same reason
+			// as rozo above: the backstop is not a gated-registry source,
+			// so no other path names its contracts in ownerOf. Both
+			// deployments are pinned because the decoder claims both
+			// (IsBackstopContract: the V2 singleton and the V1 it
+			// replaced); TestCatalogue_RecognitionPinsMatchDecoderIdentity
+			// holds the pin and the decoder's identity check in step.
+			contractIDs: []string{blend_backstop.MainnetBackstopV2, blend_backstop.MainnetBackstopV1},
+			targets: []reconTarget{
+				{"blend_backstop_events", "", []string{"blend_backstop.event"}},
+			},
+		},
 		{name: "defindex", genesis: 57_056_338, dec: defindex.NewDecoder(), targets: []reconTarget{
 			// ADR-0035/0040 contract-gated (curated set): the bare
 			// NewDecoder() carries the in-code evidence-verified seed
