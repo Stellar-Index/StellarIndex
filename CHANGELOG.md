@@ -22,6 +22,25 @@ against.
   the whole linked `stellarindex-api` process. #368 closed the unrecovered-panic
   hole in two places and guarded each with an AST walk — `cmd/*/main.go`, via
   each binary's `TestBackgroundWorkersRecover` (a walk over ONE file), and
+- **test / K023 verify-archive wiring evidence (F144):** the build-tagged
+  `TestK023_VerifyArchiveCheckpointUnitsFailOnMissed` now asserts on the argv
+  that reaches the **binary** — everything after `stellarindex-ops
+  verify-archive`, with the `run-heavy-job.sh` singleton wrapper's own prefix
+  stripped — instead of scanning the unit file's text. The old matcher
+  (`execStartHasFlag`) accepted the token on any non-comment line, so it would
+  have certified a `-fail-on-missed` sitting among the wrapper's leading
+  arguments, where the wrapper consumes it and the binary never parses it.
+  `TestVerifyArchiveBinaryArgs_WrapperPrefixIsNotTheBinary` pins that on
+  synthetic `ExecStart` lines (wrapper prefix, header mention, `Environment=`
+  line, backslash continuation) so the property holds without a unit file. The
+  leg itself stays RED and stays behind `//go:build k023evidence`: landing
+  `-fail-on-missed` on the Tier-B units belongs with the files that own them,
+  not here.
+- **api / goroutine-guard evidence (K012):** a build-tagged acceptance test,
+  `TestK012_EveryGoroutineInTheAPIProcessRecovers`, pins the leg of #368 that is
+  still open. An unrecovered panic in ANY goroutine terminates the whole
+  process, and #368 closed that hole in two places — `cmd/*/main.go`, via each
+  binary's `TestBackgroundWorkersRecover` (a walk over ONE file), and
   `internal/api/v1` and its subpackages, via `TestAPIDetachedGoroutinesRecover`
   (a walk rooted at its own tree). Both were green, and neither covered the rest
   of the code linked into the binary, so a PASS over a narrow slice read

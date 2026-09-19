@@ -40,6 +40,18 @@ import (
 // be wired on the units that engage the checkpoint tier: tier-b, in
 // BOTH trees (the ansible template is r1's authority; deploy/systemd
 // is the operator-facing reference copy).
+//
+// STILL RED, and deliberately so: landing the flag is unit u-F144R's
+// change, not this one. What is strengthened here is the ASSERTION.
+// It now reads the argv that reaches the BINARY rather than scanning
+// the file's text, because r1's unit runs through the run-heavy-job.sh
+// singleton wrapper and the wrapper's own argv prefix sits in front of
+// `stellarindex-ops verify-archive`. A flag placed among the wrapper's
+// leading arguments is consumed by the wrapper and never parsed by the
+// binary — yet the previous matcher (execStartHasFlag) accepted the
+// token anywhere on any non-comment line, wrapper prefix and
+// Environment= lines included. It would have certified a wiring that
+// does nothing.
 var verifyArchiveUnits = []string{
 	"configs/ansible/roles/archival-node/templates/systemd/verify-archive-tier-a.service.j2",
 	"configs/ansible/roles/archival-node/templates/systemd/verify-archive-tier-b.service.j2",
@@ -47,25 +59,22 @@ var verifyArchiveUnits = []string{
 	"deploy/systemd/verify-archive-tier-b.service",
 }
 
-var tierFlagRE = regexp.MustCompile(`(?m)^\s*-tier\s+(\S+)`)
-
 func TestK023_VerifyArchiveCheckpointUnitsFailOnMissed(t *testing.T) {
 	t.Parallel()
 	checkpointUnits := 0
 	for _, rel := range verifyArchiveUnits {
-		body := readRepoFile(t, rel)
-		m := tierFlagRE.FindStringSubmatch(body)
-		if m == nil {
-			t.Fatalf("%s: no -tier flag in ExecStart", rel)
+		args := verifyArchiveBinaryArgs(t, rel, readRepoFile(t, rel))
+		tier, ok := flagValue(args, "-tier")
+		if !ok {
+			t.Fatalf("%s: ExecStart passes no -tier to stellarindex-ops verify-archive", rel)
 		}
-		tier := m[1]
 		if tier != "checkpoint" && tier != "all" {
 			// chain / peers / archivist never reach the
 			// checkpoint-anchor decision; the flag is inert there.
 			continue
 		}
 		checkpointUnits++
-		if !execStartHasFlag(body, "-fail-on-missed") {
+		if !hasFlag(args, "-fail-on-missed") {
 			t.Errorf("%s runs `-tier %s` without -fail-on-missed: a PARTIAL cross-anchor "+
 				"checkpoint miss exits 0 and advances the verified watermark, so ADR-0017 "+
 				"X1.7's \"hard invariant\" is a soft tolerance on the deployed path (F144)", rel, tier)
@@ -76,21 +85,120 @@ func TestK023_VerifyArchiveCheckpointUnitsFailOnMissed(t *testing.T) {
 	}
 }
 
-// execStartHasFlag reports whether flag appears as its own argument on
-// a non-comment line (a mention in a unit-file comment does not count).
-func execStartHasFlag(body, flag string) bool {
+// TestVerifyArchiveBinaryArgs_WrapperPrefixIsNotTheBinary pins the
+// property the previous text-scan matcher lacked, on synthetic
+// ExecStart lines so it needs no unit file: a flag sitting among
+// run-heavy-job.sh's leading arguments, or quoted inside a comment or
+// an Environment= line, is NOT wiring — only argv after
+// `stellarindex-ops verify-archive` is.
+func TestVerifyArchiveBinaryArgs_WrapperPrefixIsNotTheBinary(t *testing.T) {
+	t.Parallel()
+	const wrapper = "/usr/local/bin/run-heavy-job.sh verify-archive /usr/local/bin/stellarindex-ops verify-archive"
+	for _, tc := range []struct {
+		name  string
+		body  string
+		wired bool
+	}{
+		{
+			name:  "after the binary is wiring",
+			body:  "ExecStart=" + wrapper + " -tier checkpoint -fail-on-missed\n",
+			wired: true,
+		},
+		{
+			name:  "eaten by the wrapper prefix is not wiring",
+			body:  "ExecStart=/usr/local/bin/run-heavy-job.sh -fail-on-missed verify-archive /usr/local/bin/stellarindex-ops verify-archive -tier checkpoint\n",
+			wired: false,
+		},
+		{
+			name:  "a mention in the header is not wiring",
+			body:  "# consider -fail-on-missed here\nExecStart=" + wrapper + " -tier checkpoint\n",
+			wired: false,
+		},
+		{
+			name:  "an Environment= line is not wiring",
+			body:  "Environment=EXTRA_ARGS=-fail-on-missed\nExecStart=" + wrapper + " -tier checkpoint\n",
+			wired: false,
+		},
+		{
+			name:  "a backslash continuation still reaches the binary",
+			body:  "ExecStart=" + wrapper + " \\\n  -tier checkpoint \\\n  -fail-on-missed\n",
+			wired: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			args := verifyArchiveBinaryArgs(t, tc.name, tc.body)
+			if got := hasFlag(args, "-fail-on-missed"); got != tc.wired {
+				t.Errorf("hasFlag(-fail-on-missed) = %v, want %v (argv reaching the binary = %v)", got, tc.wired, args)
+			}
+			if tier, ok := flagValue(args, "-tier"); !ok || tier != "checkpoint" {
+				t.Errorf("flagValue(-tier) = %q,%v, want \"checkpoint\",true (argv = %v)", tier, ok, args)
+			}
+		})
+	}
+}
+
+// verifyArchiveBinaryArgs returns the argv the systemd unit hands to
+// `stellarindex-ops verify-archive`, with any wrapper prefix
+// (run-heavy-job.sh and its job name) stripped.
+func verifyArchiveBinaryArgs(t *testing.T, rel, body string) []string {
+	t.Helper()
+	argv := execStartArgv(body)
+	for i, tok := range argv {
+		if tok != "stellarindex-ops" && !strings.HasSuffix(tok, "/stellarindex-ops") {
+			continue
+		}
+		if i+1 < len(argv) && argv[i+1] == "verify-archive" {
+			return argv[i+2:]
+		}
+	}
+	t.Fatalf("%s: ExecStart never invokes `stellarindex-ops verify-archive` (argv=%v)", rel, argv)
+	return nil
+}
+
+// execStartArgv splices a unit's ExecStart= directive — including its
+// backslash continuation lines — into one argv. Comment lines are
+// ignored, so a flag merely DISCUSSED in the unit's header does not
+// count as wired.
+func execStartArgv(body string) []string {
+	var argv []string
+	continued := false
 	for _, line := range strings.Split(body, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		for _, field := range strings.Fields(strings.TrimSuffix(trimmed, "\\")) {
-			if field == flag {
-				return true
-			}
+		switch {
+		case continued:
+		case strings.HasPrefix(trimmed, "ExecStart="):
+			trimmed = strings.TrimPrefix(trimmed, "ExecStart=")
+		default:
+			continue
+		}
+		continued = strings.HasSuffix(trimmed, "\\")
+		argv = append(argv, strings.Fields(strings.TrimSuffix(trimmed, "\\"))...)
+	}
+	return argv
+}
+
+// hasFlag reports whether flag appears as its own argv element.
+func hasFlag(argv []string, flag string) bool {
+	for _, a := range argv {
+		if a == flag {
+			return true
 		}
 	}
 	return false
+}
+
+// flagValue returns the argument following flag in argv.
+func flagValue(argv []string, flag string) (string, bool) {
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) {
+			return argv[i+1], true
+		}
+	}
+	return "", false
 }
 
 // ─── F133: no gate job may be continue-on-error ────────────────────
