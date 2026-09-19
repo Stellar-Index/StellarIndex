@@ -17,6 +17,22 @@ against.
 
 ### Added
 
+- **test / the withholding guard can now see the handler package (T669):**
+  `TestV1VWAPCacheSeamsAreGated` scans `internal/api/v1` for every function
+  that reads the aggregator's published VWAP cache and fails unless the
+  withholding decision is reached before the read. Its sibling
+  `TestPriceServingSeamsAreGated` parses `main.go` alone, so it could never
+  see a handler — `/v1/price?window=300|3600|86400` published a
+  directory-flagged issuer's aggregated price at 200 while the guard named
+  "price serving seams are gated" passed, and it still passes when that fix
+  is reverted. The new guard gives an HTTP handler no credit from its
+  callers (`handlePrice` consults the decision and still dispatched to the
+  windowed handler first), position-checks the consultation against the
+  read, and derives its subject set from `TriangulatedPriceLooker`'s method
+  list rather than a hand-written seam list. Three seams covered today:
+  `handlePriceWindowed` (asks directly), `tryRedisVWAPFallback` and
+  `resolveFrozenServe` (inherit it from every caller, one of which proves
+  the exemption by discarding the price). Guard only — no behaviour change.
 - **test / chainlink fan-out guard releases its slot (NS10):**
   `TestPollOnce_PanickingFeedReleasesItsSlotAndWaiter` pins the half of the
   K012 chainlink guard no test covered. `PollOnce` takes the concurrency

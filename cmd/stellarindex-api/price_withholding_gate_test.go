@@ -5,6 +5,8 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -45,6 +47,15 @@ import (
 //
 // Proven red: deleting the priceWithheld() call from storePriceAtReader.PriceAt
 // (i.e. restoring the pre-fix state) fails this test naming that method.
+//
+// SCOPE — stated because it was read as wider than it is. This scan parses
+// main.go and nothing else, so its subject set is the READER seams wired in
+// this binary. Every HTTP handler lives in internal/api/v1, which this scan
+// structurally cannot see: that is how `/v1/price?window=N` shipped serving
+// a directory-flagged issuer's aggregated price straight out of the VWAP
+// cache while a guard named "price serving seams are gated" passed (T669).
+// The handler package's own cache seams are covered by
+// [TestV1VWAPCacheSeamsAreGated] below.
 func TestPriceServingSeamsAreGated(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)
@@ -355,4 +366,342 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 	if priceWithheld(ctx, nil, cleanGate, sac, usd, "price_read") {
 		t.Error("a wrapped asset the directory has not flagged must keep serving")
 	}
+}
+
+// v1PackageDir is the API handler package, relative to this package's
+// directory (a `go test` binary runs with its own package dir as cwd).
+const v1PackageDir = "../../internal/api/v1"
+
+// v1LookerInterface is the handler package's declared seam onto the
+// aggregator's published VWAP cache. Its methods are derived from the
+// source rather than hand-listed: a second method added to it is a
+// second ungated cache read, and this guard covers it the day it
+// appears.
+const v1LookerInterface = "TriangulatedPriceLooker"
+
+// TestV1VWAPCacheSeamsAreGated is the missing half of the chokepoint
+// guard above: it covers internal/api/v1, where the HTTP handlers live.
+//
+// Why a second guard rather than a wider first one. The withholding
+// decision is spelled once per package because the two packages hold
+// different halves of it: cmd/stellarindex-api owns the READER
+// chokepoint (priceWithheld, consulted inside the store readers), and
+// internal/api/v1 owns the HANDLER chokepoint (scamWithheld, plus the
+// ErrPriceWithheld verdict those readers propagate). A handler that
+// answers out of the aggregator's VWAP cache passes through neither
+// reader — the production looker reads Redis unconditionally — so that
+// cache is the one price source with no gate underneath it, and the
+// handler has to ask for itself.
+//
+// Which is precisely what `?window=300|3600|86400` did not do: it read
+// vwap:<base>:<quote>:<window> and published a directory-flagged
+// issuer's aggregated price at 200, unauthenticated, while the default
+// route on the same pair 404'd (RLT-350/T669).
+//
+// The rule enforced here:
+//
+//   - every function reading the cache must consult the withholding
+//     decision BEFORE the read — position-checked, because the original
+//     bypass was a caller that consulted AFTER dispatching;
+//   - an HTTP handler must consult it itself, with no credit from its
+//     callers: handlePrice consults the decision and still dispatched to
+//     the ungated windowed handler first, so "my caller checks" is
+//     exactly the reasoning that shipped the leak;
+//   - a non-handler helper may inherit the decision from its callers,
+//     checked transitively and position-wise, or from a caller that
+//     discards the price — an existence probe serving a bool is not a
+//     price surface, the same exemption the main.go scan grants
+//     storePriceReader.RecentClosedVWAP1mExists, except PROVEN here from
+//     the call site's blank assignment instead of asserted in a list.
+//
+// What this guard does NOT prove, said plainly so it is not read as
+// wider than it is: it is a structural reachability check, not a proof
+// that the consultation it found was a verdict about THIS pair. A caller
+// that honours ErrPriceWithheld on its primary read and then falls
+// through to the cache on not-found earns credit here, so the fallback
+// chain's own entry gate is pinned behaviourally instead — see
+// TestPriceFallbackWithholdsScamFlaggedBase and
+// TestCachedVWAPSurfacesWithholdScamFlaggedMarket in the handler
+// package. What this guard owns is the class those cannot: the seam
+// nobody remembered to write a case for.
+//
+// Proven red three ways, each by reconstructing the state and running
+// this test alone: deleting the scamWithheld() call from
+// Server.handlePriceWindowed (the pre-fix state) names that handler;
+// MOVING that call below the cache read names it too; and making
+// Server.observationsHaveTriangulatedPrice keep the price it currently
+// discards names the shared helper with the whole caller chain.
+func TestV1VWAPCacheSeamsAreGated(t *testing.T) {
+	sc := loadV1Scan(t)
+	seams := sc.cacheSeams()
+	// A guard whose subject set is empty passes forever.
+	if len(seams) == 0 {
+		t.Fatalf("found no %s reads in %s — the scan is broken, not the code clean",
+			v1LookerInterface, v1PackageDir)
+	}
+	for _, fn := range seams {
+		why, ok := sc.covered(fn, fn.read, map[*v1Func]bool{})
+		if ok {
+			t.Logf("gated cache seam %s (%s): %s", fn.label, fn.file, why)
+			continue
+		}
+		t.Errorf("price-serving seam %s (%s) reads the aggregator's published VWAP "+
+			"without the withholding decision being asked first: %s. That cache is "+
+			"written with no directory consultation, so nothing upstream filters it "+
+			"— call scamWithheld(ctx, s.scam, base, quote, surface) before the read "+
+			"(or honour ErrPriceWithheld), otherwise this route publishes the price "+
+			"a flagged issuer's market had already been refused.", fn.label, fn.file, why)
+	}
+}
+
+// v1Func is one function declaration in the handler package. `name` is
+// the bare identifier an in-package call spells (`s.name(...)`); `label`
+// carries the receiver for reporting.
+type v1Func struct {
+	name  string
+	label string
+	file  string
+	decl  *ast.FuncDecl
+	read  token.Pos // earliest cache read in the body; token.NoPos if none
+}
+
+// v1Call is one in-package call site. `discard` records that the call's
+// first result — the price — was assigned to the blank identifier.
+type v1Call struct {
+	caller  *v1Func
+	pos     token.Pos
+	discard bool
+}
+
+type v1Scan struct {
+	fset  *token.FileSet
+	funcs []*v1Func
+	calls map[string][]v1Call
+	reads map[string]bool
+}
+
+// loadV1Scan parses every non-test file of the handler package.
+func loadV1Scan(t *testing.T) *v1Scan {
+	t.Helper()
+	entries, err := os.ReadDir(v1PackageDir)
+	if err != nil {
+		t.Fatalf("read %s: %v — the guard cannot see the handler package", v1PackageDir, err)
+	}
+	sc := &v1Scan{
+		fset:  token.NewFileSet(),
+		calls: map[string][]v1Call{},
+		reads: map[string]bool{},
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, perr := parser.ParseFile(sc.fset, filepath.Join(v1PackageDir, name), nil, 0)
+		if perr != nil {
+			t.Fatalf("parse %s: %v", name, perr)
+		}
+		sc.addFile(name, f)
+	}
+	if len(sc.reads) == 0 {
+		t.Fatalf("interface %s not found in %s — the scan is broken, not the code clean",
+			v1LookerInterface, v1PackageDir)
+	}
+	for _, fn := range sc.funcs {
+		sc.recordCalls(fn)
+		fn.read = sc.earliestRead(fn)
+	}
+	return sc
+}
+
+func (sc *v1Scan) addFile(file string, f *ast.File) {
+	for _, d := range f.Decls {
+		switch d := d.(type) {
+		case *ast.GenDecl:
+			sc.addLookerMethods(d)
+		case *ast.FuncDecl:
+			if d.Body == nil {
+				continue
+			}
+			sc.funcs = append(sc.funcs, &v1Func{
+				name: d.Name.Name, label: enclosingName(d), file: file, decl: d,
+			})
+		}
+	}
+}
+
+// addLookerMethods records the cache interface's method set.
+func (sc *v1Scan) addLookerMethods(d *ast.GenDecl) {
+	for _, spec := range d.Specs {
+		ts, ok := spec.(*ast.TypeSpec)
+		if !ok || ts.Name.Name != v1LookerInterface {
+			continue
+		}
+		it, ok := ts.Type.(*ast.InterfaceType)
+		if !ok {
+			continue
+		}
+		for _, m := range it.Methods.List {
+			for _, n := range m.Names {
+				sc.reads[n.Name] = true
+			}
+		}
+	}
+}
+
+// recordCalls indexes fn's in-package calls by callee name. The package
+// names its server receiver `s` throughout, so `s.helper(...)` is the
+// one spelling an intra-package method call takes.
+func (sc *v1Scan) recordCalls(fn *v1Func) {
+	discarded := map[token.Pos]bool{}
+	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Rhs) != 1 || len(as.Lhs) == 0 {
+			return true
+		}
+		if call, ok := as.Rhs[0].(*ast.CallExpr); ok && isBlankIdent(as.Lhs[0]) {
+			discarded[call.Pos()] = true
+		}
+		return true
+	})
+	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if name, ok := v1LocalCallee(call); ok {
+			sc.calls[name] = append(sc.calls[name], v1Call{
+				caller: fn, pos: call.Pos(), discard: discarded[call.Pos()],
+			})
+		}
+		return true
+	})
+}
+
+// earliestRead returns the position of fn's first cache read, or
+// token.NoPos when fn never reads the cache.
+func (sc *v1Scan) earliestRead(fn *v1Func) token.Pos {
+	first := token.NoPos
+	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || !sc.reads[sel.Sel.Name] {
+			return true
+		}
+		// A field read (s.triangulated.Lookup…), never a package
+		// function that happens to share the name.
+		if _, ok := sel.X.(*ast.SelectorExpr); !ok {
+			return true
+		}
+		if first == token.NoPos || call.Pos() < first {
+			first = call.Pos()
+		}
+		return true
+	})
+	return first
+}
+
+func (sc *v1Scan) cacheSeams() []*v1Func {
+	var out []*v1Func
+	for _, fn := range sc.funcs {
+		if fn.read != token.NoPos {
+			out = append(out, fn)
+		}
+	}
+	return out
+}
+
+// covered reports whether the withholding decision is reached before
+// `before` on every route into fn, and why.
+func (sc *v1Scan) covered(fn *v1Func, before token.Pos, seen map[*v1Func]bool) (string, bool) {
+	if pos, ok := sc.consultBefore(fn, before); ok {
+		return "consults the withholding decision at " + sc.fset.Position(pos).String(), true
+	}
+	if isHTTPHandler(fn.decl) {
+		return fn.label + " is an HTTP handler and asks nothing before " +
+			sc.fset.Position(before).String(), false
+	}
+	if seen[fn] {
+		return fn.label + " is reachable only through itself", false
+	}
+	seen[fn] = true
+	defer delete(seen, fn)
+	sites := sc.calls[fn.name]
+	if len(sites) == 0 {
+		return fn.label + " has no in-package caller to inherit the decision from", false
+	}
+	for _, site := range sites {
+		if site.discard {
+			continue // the price is thrown away: an existence probe, not a price surface
+		}
+		if why, ok := sc.covered(site.caller, site.pos, seen); !ok {
+			return site.caller.label + " calls " + fn.label + " at " +
+				sc.fset.Position(site.pos).String() + " and " + why, false
+		}
+	}
+	return "every caller reaches the decision before calling it", true
+}
+
+// consultBefore finds a withholding consultation positioned before
+// `before`. The package spells the decision two ways: scamWithheld()
+// (the handler chokepoint) and the ErrPriceWithheld verdict the store
+// readers propagate. A hand-rolled s.scam.Withheld() is neither, and the
+// handler package's own TestScamGateIsAskedThePairQuestion fails on it.
+func (sc *v1Scan) consultBefore(fn *v1Func, before token.Pos) (token.Pos, bool) {
+	found := token.NoPos
+	ast.Inspect(fn.decl.Body, func(n ast.Node) bool {
+		id, ok := n.(*ast.Ident)
+		if !ok || id.Pos() >= before {
+			return true
+		}
+		if id.Name != "scamWithheld" && id.Name != "ErrPriceWithheld" {
+			return true
+		}
+		if found == token.NoPos || id.Pos() < found {
+			found = id.Pos()
+		}
+		return true
+	})
+	return found, found != token.NoPos
+}
+
+// v1LocalCallee returns the bare name of an in-package call: a method on
+// the server receiver (s.foo) or a package-level function (foo).
+func v1LocalCallee(call *ast.CallExpr) (string, bool) {
+	switch fun := call.Fun.(type) {
+	case *ast.Ident:
+		return fun.Name, true
+	case *ast.SelectorExpr:
+		if recv, ok := fun.X.(*ast.Ident); ok && recv.Name == "s" {
+			return fun.Sel.Name, true
+		}
+	}
+	return "", false
+}
+
+func isBlankIdent(expr ast.Expr) bool {
+	id, ok := expr.(*ast.Ident)
+	return ok && id.Name == "_"
+}
+
+// isHTTPHandler reports whether fn takes an http.ResponseWriter — it can
+// write a response itself, so it is the last place the decision can be
+// made.
+func isHTTPHandler(fn *ast.FuncDecl) bool {
+	if fn.Type.Params == nil {
+		return false
+	}
+	for _, p := range fn.Type.Params.List {
+		sel, ok := p.Type.(*ast.SelectorExpr)
+		if !ok {
+			continue
+		}
+		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "http" && sel.Sel.Name == "ResponseWriter" {
+			return true
+		}
+	}
+	return false
 }
