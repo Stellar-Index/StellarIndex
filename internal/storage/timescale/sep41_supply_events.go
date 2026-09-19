@@ -826,9 +826,11 @@ type SEP41RollupAdvance struct {
 //
 // Self-contained under a row lock (audit 2026-09-02, K005/F108). The pass
 // reads its OWN input boundary (last_ledger) and floor
-// (genesis_baseline_ledger) inside the folding statement, behind
-// `SELECT … FOR UPDATE` on the rollup row, rather than in a separate
-// round trip beforehand. Both of the other writers of those two columns
+// (genesis_baseline_ledger) inside the folding statement, in a
+// transaction that ALREADY holds the rollup row's write lock
+// ([lockSEP41RollupRow], which also says why the lock is taken in a
+// statement of its own and not inside the fold), rather than in an
+// unlocked round trip beforehand. Both of the other writers of those two columns
 // — [Store.ResetSEP41SupplyRollupFold] (`ch-rebuild -sep41 -write`) and
 // [Store.UpsertSEP41GenesisBaseline] (`supply seed-sep41-genesis`, which
 // now zeroes the fold when the floor moves) — run against a LIVE
@@ -851,24 +853,19 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	// Materialise the row so the FOR UPDATE below has something to lock.
-	// DO NOTHING takes no row lock of its own, so this never contends; the
-	// column DEFAULTs give a fresh contract an empty fold (0 / 0), exactly
-	// what the previous INSERT arm produced.
-	const ensure = `
-        INSERT INTO sep41_supply_rollup (contract_id)
-        VALUES ($1)
-        ON CONFLICT (contract_id) DO NOTHING
-    `
-	if _, err := tx.ExecContext(ctx, ensure, contractID); err != nil {
-		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s ensure row: %w", contractID, err)
+	// Hold the row lock BEFORE the folding statement starts, so that
+	// statement's snapshot is taken with the lock already ours.
+	if err := lockSEP41RollupRow(ctx, tx, contractID); err != nil {
+		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
 	}
 
-	// One statement:
-	//   locked   — this pass's OWN input boundary + floor, read under the
-	//              rollup row's write lock so a concurrent reset or genesis
-	//              re-seed is either already visible here or waits for us.
-	//              MATERIALIZED: evaluate (and lock) exactly once.
+	// One statement, run under the lock taken above:
+	//   locked   — this pass's OWN input boundary + floor. The row cannot
+	//              change while we hold its lock, and this statement's
+	//              snapshot postdates the acquisition, so the boundary and
+	//              the events summed below are one consistent view. FOR
+	//              UPDATE here re-asserts a lock we already own (no wait).
+	//              MATERIALIZED: evaluate exactly once.
 	//   bound.mx — the contract's current max ledger; we fold strictly
 	//              below it so the (possibly mid-write) tip is deferred.
 	//   settled  — the sep41_supply domain's durable ingestion cursor:
@@ -939,6 +936,52 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 		ToLedger:   uint32(toLedger),
 		Advanced:   toLedger > fromLedger,
 	}, nil
+}
+
+// lockSEP41RollupRow materialises a contract's sep41_supply_rollup row and
+// takes its write lock, in STATEMENTS OF THEIR OWN, ahead of the fold.
+//
+// The lock must not be acquired inside the folding statement (audit
+// 2026-09-02, F108). Under READ COMMITTED a statement's snapshot is fixed
+// when it starts, but `SELECT … FOR UPDATE` returns the LATEST committed
+// version of the row it locks (it follows the update chain, or re-checks
+// after a wait). A fold that locked inside itself could therefore read
+// last_ledger = 0 from a reset that committed after its snapshot while
+// still summing sep41_supply_events as they stood BEFORE that snapshot —
+// i.e. without the below-checkpoint rows the reset was issued for
+// (`ch-rebuild -sep41 -write` and `projector-replay` both write first and
+// reset second). It then re-folded "from zero" over the old set and moved
+// last_ledger back above the missing rows: the stranding the reset exists
+// to prevent, reported as a clean advance. Locking first means the fold's
+// snapshot postdates the acquisition, so every reset it can see — and
+// every event write that committed before that reset — is in its view;
+// any later reset waits for this transaction and re-folds next cadence.
+//
+// The INSERT's column DEFAULTs give a fresh contract an empty fold (0 / 0).
+// ON CONFLICT DO NOTHING takes no row lock of its own and does not wait on
+// a locker-only holder, but it DOES wait out an in-progress UPDATE of the
+// conflicting row (a reset or genesis re-seed mid-flight); that wait is
+// harmless — it happens before the fold's snapshot, like the lock below.
+func lockSEP41RollupRow(ctx context.Context, tx *sql.Tx, contractID string) error {
+	const ensure = `
+        INSERT INTO sep41_supply_rollup (contract_id)
+        VALUES ($1)
+        ON CONFLICT (contract_id) DO NOTHING
+    `
+	if _, err := tx.ExecContext(ctx, ensure, contractID); err != nil {
+		return fmt.Errorf("ensure rollup row: %w", err)
+	}
+	const lock = `
+        SELECT 1
+          FROM sep41_supply_rollup
+         WHERE contract_id = $1
+           FOR UPDATE
+    `
+	var one int
+	if err := tx.QueryRowContext(ctx, lock, contractID).Scan(&one); err != nil {
+		return fmt.Errorf("lock rollup row: %w", err)
+	}
+	return nil
 }
 
 // SEP41RollupCheckpoint is the WORKER-OWNED fold state of one

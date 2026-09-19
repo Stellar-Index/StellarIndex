@@ -17,6 +17,25 @@ against.
 
 ### Fixed
 
+- **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
+  can see with a view of `sep41_supply_events` from before the rewrite that
+  reset was issued for. The 2026-09-18 fix took the rollup row's lock
+  _inside_ the folding statement; under READ COMMITTED that statement's
+  snapshot is fixed when it starts, while `SELECT … FOR UPDATE` returns the
+  latest committed row. A pass whose statement began just before
+  `ch-rebuild -sep41 -write` (or `projector-replay`) committed its last row
+  and its reset therefore read `last_ledger = 0`, summed the OLD event set
+  "from zero", and moved the checkpoint back above the re-derived rows —
+  stranding them below both the fold and the reader's live delta. On the
+  regression fixture: 1,500,001 served for a true 1,750,001, unrepaired by
+  the next cadence. The window is narrow (statement start to lock
+  acquisition) but the loss was permanent and silent. The pass now takes the
+  lock in a statement of its own, so the fold's snapshot postdates it. The
+  in-code claim that the row-materialising `INSERT … ON CONFLICT DO NOTHING`
+  "never contends" was also wrong (it waits out an in-progress reset) and is
+  corrected. New two-connection integration test pins the interleave and
+  fails if the pass parks anywhere but its locking statement (audit
+  2026-09-02 F108).
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process
