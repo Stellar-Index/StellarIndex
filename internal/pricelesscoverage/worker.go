@@ -15,6 +15,14 @@
 // pair, mirroring the volume-character rollup design
 // (feat/scam-labels-and-volume-character, PR #161): while that branch is
 // unmerged the same single-account-pair filter is computed inline here.
+//
+// The concentration is measured on EVERY venue that records a
+// counterparty, not only the order book: an AMM fill names the taker and
+// leaves the maker side to the pool, so its key is that one account (see
+// timescale.popularPricelessCandidatesSQL). Volume from a venue that
+// records no account at all (the external CEX feeds) can only dilute the
+// share, so an unmeasurable market pages an operator rather than being
+// quietly dropped — the same fail-loud direction as pricedViaClassicAlias.
 package pricelesscoverage
 
 import (
@@ -52,8 +60,9 @@ const (
 	FloorVolume7dUSD = 10_000.0
 	FloorTrades7d    = 5_000
 
-	// washConcentrationThreshold — a single unordered (maker,taker) account
-	// pair owning >= this share of an asset's 7d priced volume is the
+	// washConcentrationThreshold — a single unordered counterparty key
+	// (the (maker,taker) pair on the order book, the lone taker account on
+	// an AMM) owning >= this share of an asset's 7d priced volume is the
 	// volume-painting / ping-pong / dust signature. Matches PR #161's
 	// volumeCharacterConcentrationThreshold. A wash-concentrated asset
 	// contributes NO market-character volume, so it can never be "popular".
@@ -199,7 +208,8 @@ func (w *Worker) Sweep(ctx context.Context) {
 			"classic_asset", classic,
 			"volume_7d_usd", sig.Volume7dUSD,
 			"trades_7d", sig.Trades7d,
-			"top_account_pair_share", sig.TopAccountPairVolShare)
+			"top_account_pair_share", sig.TopAccountPairVolShare,
+			"attributed_vol_share", sig.AttributedVolShare)
 	}
 	obs.AssetsPopularPriceless.Set(float64(count))
 	obs.PricelessCoverageCheckRunsTotal.WithLabelValues("ok").Inc()
@@ -259,9 +269,16 @@ func withheldVerdict(s timescale.AssetCoverageSignals) bool {
 }
 
 // washConcentrated reports whether the asset's volume is dominated by a
-// single account pair — the market-character discriminator. A concentrated
-// asset contributes no market-character volume, so it never clears the
-// popularity floor no matter how large its RAW volume.
+// single counterparty key — the market-character discriminator. A
+// concentrated asset contributes no market-character volume, so it never
+// clears the popularity floor no matter how large its RAW volume.
+//
+// The share is measured against the asset's FULL 7d priced volume on
+// every venue that names a counterparty, so this fires for an AMM-only
+// asset (one wallet round-tripping through a pool) exactly as it does for
+// an order-book wash pair. No floor on AttributedVolShare is needed: the
+// share can only reach the threshold if the attributed population does
+// too, so a market with no recorded accounts is never suppressed by it.
 func washConcentrated(s timescale.AssetCoverageSignals) bool {
 	return s.TopAccountPairVolShare >= washConcentrationThreshold
 }

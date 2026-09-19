@@ -131,6 +131,29 @@ against.
   the broken one. Operator note: this is an **ansible-only** change. A binary
   deploy does not carry it; it reaches r1 only on the next
   `archival-node.yml` apply.
+- **pricing / the priceless-popular tripwire's wash exclusion now sees AMM
+  volume (T016):** the coverage sweep measured its concentration NUMERATOR
+  over rows with `maker IS NOT NULL AND taker IS NOT NULL` while the 7d
+  volume DENOMINATOR took every row — two different populations. Only the
+  SDEX decoder records both sides of a fill; on every Soroban AMM
+  (aquarius, soroswap, phoenix, comet, sushiswap_v3) the resting side is
+  the pool, so the row carries a taker and a NULL maker — 100% of the
+  27.8k AMM rows on r1 in 24h. The top-account-pair share of an AMM-only
+  asset was therefore 0 BY CONSTRUCTION, the wash exclusion could never
+  fire for it, and a farm painting volume on an AMM self-selected straight
+  into the coverage alert the tripwire exists to keep honest — two such
+  assets were live on r1 the same day, above the $10k popularity floor
+  with 0.95 and 0.9999 of their volume swapped by ONE account, both
+  reporting a share of 0. The counterparty key now DEGENERATES to the one
+  known account when a side is unknown (the AMM ping-pong signature: one
+  wallet round-tripping through a pool), so numerator and denominator
+  speak about the same market. Order-book keying is unchanged. Volume from
+  a venue that records no account at all (the external CEX feeds) still
+  cannot enter the numerator, so it only dilutes the share downward — an
+  unmeasurable market pages an operator rather than being silently
+  suppressed — and the new `attributed_vol_share` signal, carried into the
+  alert log line, says how much of the volume the share was measured over.
+
 - **explorer / the five `/v1/price/batch` consumers stop erasing the price
   envelope (RLT-384):** the converter, its shared rate hook, the home currency
   strip, the account positions panel and the asset-page swap widget each typed

@@ -33,11 +33,27 @@ type AssetCoverageSignals struct {
 	// withheld verdict), not a coverage gap.
 	Volume24hUSD float64
 	// TopAccountPairVolShare is the fraction of the asset's 7d priced
-	// volume that trades in the single busiest UNORDERED (maker,taker)
-	// account pair. High share == volume-painting wash (the scam-AUD
-	// signature: ~108/109 of its trades one wallet pair), which the
-	// classifier excludes so a wash farm cannot self-select into the alert.
+	// volume that trades in the single busiest UNORDERED counterparty
+	// key. High share == volume-painting wash (the scam-AUD signature:
+	// ~108/109 of its trades one wallet pair), which the classifier
+	// excludes so a wash farm cannot self-select into the alert.
+	//
+	// The key is the (maker,taker) account pair where both sides are
+	// recorded (SDEX) and the single known account where only one is
+	// (every Soroban AMM — see popularPricelessCandidatesSQL). Volume
+	// with NO account on either side (the external CEX feeds) can never
+	// enter the numerator, so it dilutes the share downward — see
+	// AttributedVolShare for how much of the volume the share speaks for.
 	TopAccountPairVolShare float64
+	// AttributedVolShare is the fraction of the asset's 7d priced volume
+	// that carried an identifiable counterparty account, i.e. the share
+	// of the market TopAccountPairVolShare could be measured over. It is
+	// diagnostic — the classifier needs no floor on it, because the
+	// concentration is already expressed against the FULL volume
+	// (TopAccountPairVolShare <= AttributedVolShare by construction) —
+	// but it tells an operator reading the alert whether a low
+	// concentration means "broad market" or "venue without accounts".
+	AttributedVolShare float64
 }
 
 // coverageQuoteProxies is the USD/XLM-proxy quote set a servable price is
@@ -61,9 +77,32 @@ const coverageQuoteProxies = usdProxyQuotes + `,
 // discount, the popularity floor and the withheld verdict are applied by
 // the pure classifier, never here — this query only measures.
 //
-// The (maker,taker) account pair is UNORDERED (LEAST/GREATEST) so a
-// round-trip A->B / B->A folds into the one concentrated pair it
-// economically is, matching the volume-character rollup design.
+// The counterparty key is UNORDERED (LEAST/GREATEST) so a round-trip
+// A->B / B->A folds into the one concentrated pair it economically is,
+// matching the volume-character rollup design.
+//
+// ONE POPULATION. Only the SDEX decoder records both sides of a fill:
+// on every Soroban AMM (aquarius, soroswap, phoenix, comet,
+// sushiswap_v3) the resting side is the POOL — a venue every trade of
+// that market shares, not an independent economic actor — so those rows
+// carry a taker and a NULL maker (r1 2026-09-19: 100% of the rows of
+// all five AMM sources, 27.8k in 24h). Requiring both columns non-NULL
+// in the numerator while the vol7d denominator took every row measured
+// the two over DIFFERENT populations: the share of an AMM-only asset
+// was 0 by construction, so the wash exclusion could never fire for it
+// and a farm painting volume on an AMM self-selected straight into the
+// alert (r1 2026-09-19: two AMM-only assets above the $10k popularity
+// floor at 0.95 / 0.9999 single-taker concentration, both reading 0).
+// The key therefore DEGENERATES to the one known account when a side is
+// unknown — for an AMM, "one wallet swapping back and forth through the
+// pool", which is the AMM-shaped ping-pong signature.
+//
+// Rows with NO account on either side (the external CEX feeds —
+// binance, coinbase, kraken, bitstamp record neither) still cannot
+// enter the numerator, so unattributed volume dilutes the share
+// DOWNWARD: the tripwire errs toward paging a human, never toward
+// silently suppressing a gap it cannot measure. attributed_vol_share
+// reports how much of the asset's volume the share was measured over.
 const popularPricelessCandidatesSQL = `
 WITH vol7d AS (
   SELECT base_asset AS asset_id,
@@ -82,18 +121,23 @@ vol24h AS (
      AND usd_volume IS NOT NULL
    GROUP BY base_asset
 ),
+actor_key AS (
+  SELECT base_asset AS asset_id,
+         LEAST(COALESCE(maker, taker), COALESCE(taker, maker))    AS actor_lo,
+         GREATEST(COALESCE(maker, taker), COALESCE(taker, maker)) AS actor_hi,
+         SUM(usd_volume) AS pv
+    FROM trades
+   WHERE ts >= now() - INTERVAL '7 days'
+     AND usd_volume IS NOT NULL
+     AND (maker IS NOT NULL OR taker IS NOT NULL)
+   GROUP BY 1, 2, 3
+),
 top_pair AS (
-  SELECT base_asset AS asset_id, MAX(pv)::double precision AS top_pair_vol
-    FROM (
-      SELECT base_asset,
-             SUM(usd_volume) AS pv
-        FROM trades
-       WHERE ts >= now() - INTERVAL '7 days'
-         AND usd_volume IS NOT NULL
-         AND maker IS NOT NULL AND taker IS NOT NULL
-       GROUP BY base_asset, LEAST(maker, taker), GREATEST(maker, taker)
-    ) p
-   GROUP BY base_asset
+  SELECT asset_id,
+         MAX(pv)::double precision AS top_pair_vol,
+         SUM(pv)::double precision AS attributed_vol
+    FROM actor_key
+   GROUP BY asset_id
 ),
 -- "Priced directly" = the catalogue's direct_usd / asset_vs_xlm reach,
 -- in BOTH stored directions of the XLM leg, PLUS the proxies themselves.
@@ -117,7 +161,10 @@ top_pair AS (
     COALESCE(v24.vol_24h, 0)                                    AS vol_24h,
     CASE WHEN v.vol_7d > 0
          THEN COALESCE(tp.top_pair_vol, 0) / v.vol_7d
-         ELSE 0 END                                             AS top_pair_share
+         ELSE 0 END                                             AS top_pair_share,
+    CASE WHEN v.vol_7d > 0
+         THEN COALESCE(tp.attributed_vol, 0) / v.vol_7d
+         ELSE 0 END                                             AS attributed_vol_share
   FROM vol7d v
   LEFT JOIN vol24h   v24 ON v24.asset_id = v.asset_id
   LEFT JOIN top_pair tp  ON tp.asset_id  = v.asset_id
@@ -146,6 +193,7 @@ func (s *Store) PopularPricelessCandidates(ctx context.Context) ([]AssetCoverage
 			&sig.Trades7d,
 			&sig.Volume24hUSD,
 			&sig.TopAccountPairVolShare,
+			&sig.AttributedVolShare,
 		); err != nil {
 			return nil, fmt.Errorf("timescale: PopularPricelessCandidates scan: %w", err)
 		}
