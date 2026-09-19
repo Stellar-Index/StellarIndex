@@ -200,6 +200,40 @@ against.
   switch working does not page an operator. A suspended account's queued
   backlog is PARKED, not destroyed (suspension is reversible via
   `AccountStore.Unsuspend`); a closed account's is terminally failed.
+- **explorer / the status page's build-time incident parser now agrees with the
+  Go corpus loader it mirrors (RLT-464):** `web/explorer/src/lib/incidents.ts`
+  hand-rolls a small YAML-frontmatter reader for `/status` and
+  `/status/incident/[slug]` (the runtime `internal/incidents` package is a
+  typed, tested `go:embed` parser the TS side re-reads at build time so the
+  static export can pre-render without a client fetch). The TS reader never
+  implemented YAML comment semantics and cast `severity`/`status` straight
+  through with `as`. `internal/incidents/data/_template.md` ships
+  `resolved_at:  # leave empty until resolved` and
+  `affected_components:  # one or more…` as documentation for a human editing
+  the frontmatter — legal YAML the Go side (via `yaml.v3`) already parses
+  correctly — but a real incident file authored by filling in only the
+  required fields left the TS reader treating the dangling comment text as
+  the *value*: `resolved_at` came back truthy with the literal comment
+  string, and `affected_components` came back a non-array string that
+  `Array.isArray` sent to `[]`. `status/page.tsx`'s
+  `resolved_at.slice(0,10) + ' ' + resolved_at.slice(11,16) + ' UTC'` then
+  rendered `# leave em ty un UTC` as the "Resolved:" timestamp of a
+  currently-open incident — an ongoing SEV-1 could publish looking resolved.
+  `parseFrontmatter` now strips a trailing `# comment` from unquoted scalars
+  (never from inside a quoted value) before it decides whether a value is
+  empty, so an empty-with-comment key still falls into the existing
+  bullet-list/blank handling. The per-file build step (`parseIncidentFile`,
+  now exported for testing) validates `severity`/`status` against the same
+  enums the Go `Severity.valid()`/`Status.valid()` use and rejects — with a
+  `console.warn`, never a silent default — a file whose severity/status is
+  missing or out of enum, matching `internal/incidents/incidents.go`'s
+  "logged + skipped, never panics the binary" policy instead of the old
+  `?? 'SEV-3'` / `?? 'resolved'` fallbacks the Go package's own doc comment
+  already named as unsafe. An unparseable non-empty `resolved_at` is likewise
+  rejected rather than silently dropped. New
+  `web/explorer/src/lib/incidents.test.ts` seeds a fixture that reproduces
+  `_template.md`'s exact frontmatter shape and pins `resolved_at === null`
+  and the bullet list still parsing under a commented key.
 
 - **explorer / the production publish path now runs the static-export guards (F085, T325):**
   the `__next.*` segment prune, `scripts/ci/explorer-file-budget.sh` and
