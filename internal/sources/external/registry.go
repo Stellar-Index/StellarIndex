@@ -210,6 +210,71 @@ func BackfillSafe(source string) bool {
 	return Lookup(source).BackfillSafe
 }
 
+// replayAuditCoveredBy maps a PROJECTED source that deliberately has no
+// Registry row of its own to the Registry entry whose WASM audit covers
+// its decoder. blend_backstop is the only one: it is a projected lending
+// surface, not a venue, so it carries no class/weight/VWAP row — but the
+// Blend Phase-2 wasm-history walk covered the backstop contract
+// explicitly (docs/operations/wasm-audits/blend.md, "Backstop historical
+// replay decision"), so its replay-safety IS `blend`'s attestation and
+// falls with it if that attestation is ever withdrawn.
+//
+// String literals, not the source packages' SourceName constants: the
+// source packages' consumers import this package, so it must not import
+// them back. The ops-layer tests pin the literals to the constants.
+var replayAuditCoveredBy = map[string]string{
+	"blend_backstop": "blend",
+}
+
+// replayStandardSchemaSources are the projected sources whose decoders
+// read an event schema fixed by a STANDARD (SEP-41 / CAP-67) across an
+// operator-curated set of arbitrary token contracts, rather than one
+// protocol's own WASM. The per-protocol "every WASM generation this
+// contract ran" audit that BackfillSafe records has no single subject
+// there. Both have sanctioned re-derive procedures this gate must not
+// strand: `projector-replay -source sep41_supply` (which resets the
+// rollup fold) and `ch-rebuild -sep41`
+// (docs/operations/sep41-mint-recovery.md).
+var replayStandardSchemaSources = map[string]struct{}{
+	"sep41_transfers": {},
+	"sep41_supply":    {},
+}
+
+// ReplayBackfillSafe is [BackfillSafe] as asked by the RE-DERIVE paths —
+// `projector-replay` and `ch-rebuild` — which run a CURRENT decoder over
+// HISTORICAL events exactly as `backfill` does and so carry the identical
+// old-WASM-generation hazard. Until this existed the gate was consulted
+// by `backfill` alone, while the documented catch-up procedure for every
+// projected source is projector-replay (finding F050).
+//
+// It differs from BackfillSafe only in the namespace it accepts: those
+// paths take PROJECTOR source names, three of which are deliberately not
+// Registry keys (see replayAuditCoveredBy and
+// replayStandardSchemaSources). Every other name — including one nobody
+// has registered — gets BackfillSafe's own answer, which is fail-closed.
+func ReplayBackfillSafe(source string) bool {
+	if _, ok := replayStandardSchemaSources[source]; ok {
+		return true
+	}
+	if coveredBy, ok := replayAuditCoveredBy[source]; ok {
+		source = coveredBy
+	}
+	return BackfillSafe(source)
+}
+
+// UnsafeReplaySources filters `sources` to those [ReplayBackfillSafe]
+// refuses, preserving order, so a re-derive command can name every
+// offender in one refusal.
+func UnsafeReplaySources(sources []string) []string {
+	var out []string
+	for _, s := range sources {
+		if !ReplayBackfillSafe(s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 // FXSources returns the registered source names whose Subclass is
 // SubclassFX, in deterministic lexicographic order. Used by the
 // X2.5 forex-snap rule (FXQuoteAtOrBefore): `massive` in the list

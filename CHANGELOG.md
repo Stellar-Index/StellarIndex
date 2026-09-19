@@ -71,6 +71,31 @@ against.
   book while the probe backlog drains again. The duplicate advance/verify
   warnings `main.go` logged on top of the cache's own are gone (audit
   2026-09-02 F162).
+- **ops (projector-replay, ch-rebuild):** both re-derive commands now
+  consult the `BackfillSafe` WASM-audit gate, which until now only
+  `stellarindex-ops backfill` asked — while projector-replay is the
+  documented catch-up procedure for every projected source and
+  `ch-rebuild -write` re-decodes history with rows that win over the
+  stored ones. `projector-replay -source X` refuses (dry-run included,
+  before any database access) when X is not attested;
+  `ch-rebuild -write` refuses when any source the run would decode is not
+  attested — named in `-sources`, or selected by the default
+  whole-catalogue run, which today means `sushiswap_v3` and `upshift`.
+  The ch-rebuild dry-run stays ungated: it writes nothing and is how an
+  unaudited decoder gets evaluated against history. **Operator-visible:**
+  a `ch-rebuild -write` with no `-sources` now refuses until those two
+  audits land; pass the audited list explicitly, as
+  `scripts/ops/ch-rebuild-projected.sh` already does. A mistyped name in
+  `-source`/`-sources` is refused too, instead of rewinding or rebuilding
+  nothing with exit 0. The question is asked through the new
+  `external.ReplayBackfillSafe`, which resolves the three projector
+  source names that deliberately have no registry row: `blend_backstop`
+  follows `blend`'s attestation (its audit covered the backstop
+  contract), and `sep41_transfers` / `sep41_supply` decode a
+  standard-fixed schema and keep their sanctioned recovery procedures.
+  No override flag, matching `backfill`: the way through is the audit
+  plus the registry flip. `projected-rebuild` is the third re-derive
+  path and is NOT gated by this change (F050).
 - **tests (storage):** `TestHistoryPointsDirectionUnion` no longer fails on
   every run between 00:00 and about 02:05 UTC. It seeds trades two hours
   back and asserted that the 1-day history series is empty because "today's

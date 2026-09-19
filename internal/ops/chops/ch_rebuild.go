@@ -21,6 +21,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/comet"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
@@ -189,6 +190,75 @@ func projectedSourcesInRun(cfg config.Config, cat, sep41Cat []reconSource, inclu
 	return out
 }
 
+// chRebuildPasses records which of ch-rebuild's opt-in passes an
+// invocation engaged (the event pass is always on).
+type chRebuildPasses struct {
+	sep41, contractCalls, sdex bool
+}
+
+// reDerivedSourcesInRun returns the name of every source this invocation
+// would DECODE — the subject of the BackfillSafe gate. It mirrors, pass
+// by pass, the selection each pass in chRebuild applies: an event source
+// needs a decoder, a ContractCall source needs -contract-calls, sdex
+// needs -sdex, the sep41 pair needs -sep41; all respect -sources.
+func reDerivedSourcesInRun(cat, sep41Cat []reconSource, passes chRebuildPasses, enabled func(string) bool) []string {
+	var out []string
+	for _, src := range cat {
+		if !enabled(src.name) {
+			continue
+		}
+		switch {
+		case src.dec != nil:
+			out = append(out, src.name)
+		case src.callDec != nil && passes.contractCalls:
+			out = append(out, src.name)
+		case src.name == sdex.SourceName && passes.sdex:
+			out = append(out, src.name)
+		}
+	}
+	if passes.sep41 {
+		for _, src := range sep41Cat {
+			if enabled(src.name) {
+				out = append(out, src.name)
+			}
+		}
+	}
+	return out
+}
+
+// checkCHRebuildBackfillSafe refuses a -write run that would decode a
+// source whose decoder has not been audited against every WASM
+// generation that ran over its history (finding F050).
+//
+// ch-rebuild runs the CURRENT decoders over a HISTORICAL lake range and
+// — because it stamps a positive derive_generation — its rows WIN over
+// what is stored. That is `backfill`'s old-WASM-generation hazard with a
+// stronger writer, yet `backfill` was the only command that asked
+// external.BackfillSafe. The question goes through
+// [external.ReplayBackfillSafe], which resolves the projector-namespace
+// names (blend_backstop, the sep41 pair) that have no registry row of
+// their own; a name nobody registered is refused, which also turns a
+// -sources typo from a silent rebuild-of-nothing into an error.
+//
+// Armed under -write only, the same deliberate divergence
+// checkCHRebuildLiveOverlap documents: the default mode writes nothing,
+// and the dry-run count/compare report is precisely how an unaudited
+// decoder gets evaluated against history. No override flag, matching
+// `backfill` — the way through is the audit plus the registry flip.
+func checkCHRebuildBackfillSafe(sources []string) error {
+	unsafeSources := external.UnsafeReplaySources(sources)
+	if len(unsafeSources) == 0 {
+		return nil
+	}
+	return fmt.Errorf("ch-rebuild: refusing to -write — sources not BackfillSafe (per-WASM-hash audit pending, or not a known source): %v. "+
+		"This pass decodes history with the CURRENT decoders and its rows overwrite the stored ones; Soroban contracts upgrade in place, "+
+		"so an unaudited old WASM generation decodes to silently wrong rows. Restrict -sources to audited sources (a run with no -sources "+
+		"selects the whole catalogue), or run stellarindex-ops wasm-history over each source's contracts, record the audit under "+
+		"docs/operations/wasm-audits/, and flip BackfillSafe=true in internal/sources/external/registry.go in the same PR. "+
+		"The default dry-run is not gated",
+		unsafeSources)
+}
+
 // chRebuild is the ADR-0034 Phase-4 write path: it re-derives a ledger range's
 // protocol output from the ClickHouse Tier-1 lake using the EXISTING decoders
 // and WRITES it to the Postgres served tier via the production sink
@@ -259,6 +329,15 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	contractsOverride := parseCSVList(*contractsCSV)
 	if *sep41SupplyOnly && !*includeSEP41 {
 		return fmt.Errorf("-sep41-supply-only requires -sep41")
+	}
+	// BackfillSafe gate, first leg (F050): sources the operator NAMED.
+	// Asked before the config load so the refusal needs no reachable
+	// database; the default-all case is asked again once the catalogue
+	// exists — see checkCHRebuildBackfillSafe.
+	if *write {
+		if gerr := checkCHRebuildBackfillSafe(parseCSVList(*only)); gerr != nil {
+			return gerr
+		}
 	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
@@ -376,6 +455,12 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	// ADR-0031/0032 gives to the projector alone. Refuse the overlap the
 	// same way projected-rebuild does — see checkCHRebuildLiveOverlap.
 	if *write {
+		// BackfillSafe gate, second leg (F050): everything this run would
+		// decode, which with no -sources is the whole catalogue.
+		passes := chRebuildPasses{sep41: *includeSEP41, contractCalls: *contractCalls, sdex: *includeSDEX}
+		if gerr := checkCHRebuildBackfillSafe(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)); gerr != nil {
+			return gerr
+		}
 		projected := projectedSourcesInRun(cfg, cat, sep41Cat, *includeSEP41, enabled)
 		if gerr := checkCHRebuildLiveOverlap(projected, hi, *allowLiveOverlap, func(source string) (uint32, bool, error) {
 			c, cerr := store.GetCursor(ctx, "projector", source)

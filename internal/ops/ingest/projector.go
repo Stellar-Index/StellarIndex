@@ -11,6 +11,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	sep41supply "github.com/Stellar-Index/StellarIndex/internal/sources/sep41_supply"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -61,6 +62,13 @@ func projectorReplay(args []string) error {
 	}
 	if *cfgPath == "" || *source == "" || *from == 0 {
 		return errors.New("-config, -source, and -from are required")
+	}
+	// Before the config load and before any store access: a refusal
+	// must not depend on a reachable database, and applies to -dry-run
+	// too (a dry run that prints a rewind plan for a source the real
+	// run would refuse is a plan nobody can execute).
+	if err := checkReplayBackfillSafe(*source, uint32(*from)); err != nil {
+		return err
 	}
 	gate.Banner()
 	dryRun := gate.DryRun()
@@ -186,6 +194,42 @@ func projectorReplay(args []string) error {
 		chunkRange{from: target, to: currentLedger},
 		replayFollowUp{refreshCAGGs: *refreshCAGGs, wait: *catchUp, waitTimeout: *catchUpTimeout},
 	)
+}
+
+// checkReplayBackfillSafe refuses a replay of a source whose decoder has
+// not been audited against every WASM generation that ran over its
+// history (finding F050).
+//
+// A rewind hands the live projector's CURRENT decoder every historical
+// event from `from` to the tip — the same "current-only decoder over
+// old-generation event bodies" hazard `backfill` refuses via
+// checkBackfillSources. Until this check the gate guarded `backfill`
+// alone, while projector-replay is the documented catch-up procedure
+// for every projected source, so the control never ran on the path
+// operators actually use. No override flag, matching `backfill`: the
+// way through is the audit plus the registry flip, in one reviewed PR.
+//
+// The question is asked through [external.ReplayBackfillSafe], which
+// resolves the three projector source names that deliberately have no
+// registry row of their own; an unknown name is refused (fail-closed) —
+// the message carries the same naming hint the cursor-lookup refusal
+// below gives, because a typo now stops here first.
+func checkReplayBackfillSafe(source string, from uint32) error {
+	if external.ReplayBackfillSafe(source) {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to replay source %q from ledger %d — it is not BackfillSafe (per-WASM-hash audit pending, or "+
+			"not a known source): a rewind re-decodes every historical event with the CURRENT decoder, and "+
+			"Soroban contracts upgrade in place, so an unaudited old WASM generation decodes to silently wrong "+
+			"rows. Run stellarindex-ops wasm-history -from %d -to <tip> -contracts <CID> for the source's "+
+			"contracts, review every emitted WASM hash against the current decoder, record it under "+
+			"docs/operations/wasm-audits/, then flip BackfillSafe=true in "+
+			"internal/sources/external/registry.go in the same PR (see docs/architecture/domain-traps.md, "+
+			"\"Soroban DeFi contracts upgrade in place\"). If the name is simply wrong: projector SOURCE names "+
+			"are underscored (blend_backstop, sep41_transfers — the gap detector's hyphenated per-table target "+
+			"names are NOT valid here); see internal/projector/registry.go",
+		source, from, from)
 }
 
 // sep41RollupResetter is the slice of the store
