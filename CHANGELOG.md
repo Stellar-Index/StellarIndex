@@ -30,6 +30,16 @@ against.
   7-decimals pairs were never affected. None of the existing listing tests
   wired the handler to the cache the way production does; the new ones do,
   and run concurrent hits under the race detector (audit F014).
+- **api (markets):** `/v1/markets` no longer serves `volume_history_24h` and
+  `first_trade_at` to requests that did not ask for them. The
+  `?include=sparkline,inception` enrichment was written onto the same shared
+  cached rows as the price correction above, and `include` is not part of
+  the cache key, so one opt-in request attached the enrichment to every
+  later plain request for that page until the entry refreshed. Closed by the
+  same change — the handler now enriches its own copy — and pinned by a
+  test of its own, alongside tests that every serving branch of the cache
+  (including stale-while-revalidate and callers parked on a cold fetch)
+  hands out rows no other caller can see (audit K038).
 - **tests (storage):** `TestHistoryPointsDirectionUnion` no longer fails on
   every run between 00:00 and about 02:05 UTC. It seeds trades two hours
   back and asserted that the 1-day history series is empty because "today's
