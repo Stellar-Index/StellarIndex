@@ -172,3 +172,87 @@ func TestIssuerGet_ScamSuppressionSurvivesAccountState(t *testing.T) {
 			env.Data.AuthRevocable)
 	}
 }
+
+// TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain — RSEC-V1 / RLT-470.
+//
+// The stored column is a COPY of the AccountEntry field, and between its
+// two writers it was write-once, so a value in it is at best an older
+// reading of the entry the handler is holding right now. The founding case
+// is an anchor that moved domain with SetOptions and let the old name
+// lapse: the row keeps the lapsed name, the hourly SEP-1 refresh keeps
+// fetching it, and whoever registers it next can publish a stellar.toml
+// listing the anchor's issuer back and inherit its verified identity. The
+// anchor's own on-chain change has to be able to correct that.
+//
+// The auth flags in the SAME function are already replaced by the same
+// entry; this pins home_domain to the same rule.
+func TestIssuerGet_LiveOnChainBeatsAStoredHomeDomain(t *testing.T) {
+	const anchor = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
+	reader := &stubIssuersReader{
+		row: timescale.IssuerRow{
+			GStrkey: anchor,
+			// What the write-once column froze: the domain the anchor
+			// used to declare and no longer does.
+			HomeDomain: "lapsed-former.example",
+		},
+	}
+	explorer := &stubExplorerReader{
+		accountState: clickhouse.AccountState{
+			Exists:     true,
+			HomeDomain: "current-anchor.example",
+		},
+	}
+	srv := v1.New(v1.Options{Issuers: reader, Explorer: explorer})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/issuers/"+anchor)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.Issuer `json:"data"`
+	}
+	body, _ := readAll(resp)
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if env.Data.HomeDomain != "current-anchor.example" {
+		t.Errorf("HomeDomain = %q, want current-anchor.example — the account's own live entry "+
+			"outranks a stored copy of an older reading of the same field",
+			env.Data.HomeDomain)
+	}
+}
+
+// TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry keeps the rule
+// above from over-reaching. An AccountEntry that resolves WITHOUT a domain
+// is not a retraction: a merged account's reading is persisted without one
+// on purpose (a dead account's self-declared identity is not persistable),
+// and the lake can simply not carry the field. Only a non-empty live value
+// replaces the stored one.
+func TestIssuerGet_StoredHomeDomainSurvivesASilentLiveEntry(t *testing.T) {
+	const anchor = "GBFXOHVAS7DXHZPMPZL4HDPPMGSSJBWDGEOXSYHMPTSJKDFHPPFXFZ2K"
+	reader := &stubIssuersReader{
+		row: timescale.IssuerRow{GStrkey: anchor, HomeDomain: "stored.example"},
+	}
+	explorer := &stubExplorerReader{
+		accountState: clickhouse.AccountState{Exists: true, HomeDomain: ""},
+	}
+	srv := v1.New(v1.Options{Issuers: reader, Explorer: explorer})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/issuers/"+anchor)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.Issuer `json:"data"`
+	}
+	body, _ := readAll(resp)
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if env.Data.HomeDomain != "stored.example" {
+		t.Errorf("HomeDomain = %q, want stored.example — an entry that declares no domain "+
+			"is not a retraction of the one we hold", env.Data.HomeDomain)
+	}
+}

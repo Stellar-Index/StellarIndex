@@ -531,6 +531,54 @@ func (s *Store) AllSep1Images(ctx context.Context) ([]Sep1Image, error) {
 	return out, nil
 }
 
+// SyncIssuerHomeDomain writes an issuer's ON-CHAIN home_domain onto its
+// row, reporting whether the row changed. An empty domain is refused:
+// the lake's lookup only returns accounts that declare one, so an empty
+// value here means "we did not read it", not "the account declares
+// none", and must never blank a row.
+//
+// # Why this overwrites
+//
+// issuers.home_domain used to be write-once — both of its writers refused
+// a row that already held a value, each citing a SEP-1 resolver whose
+// domain was "better sourced" than the AccountEntry's. That resolver does
+// not write this column; it READS it to choose which domain to fetch. So
+// the clause protected one snapshot of the AccountEntry from a newer
+// snapshot of the same AccountEntry, and the column froze at whatever it
+// was first given.
+//
+// A frozen identity column is an attack surface, not a conservatism. An
+// anchor that moves domain with SetOptions and lets the old name lapse
+// keeps the lapsed name here for good; the hourly SEP-1 refresh keeps
+// fetching that name; and whoever registers it next can serve a
+// stellar.toml listing the anchor's issuer account back, satisfy the
+// bidirectional check, and inherit the anchor's verified org identity.
+// Re-running the enrich job is the documented on-chain remediation for
+// exactly that, and while the column was write-once it was a no-op.
+//
+// The predicate keeps the write off rows that already agree, so a re-run
+// still reports only the rows it actually changed.
+func (s *Store) SyncIssuerHomeDomain(ctx context.Context, gStrkey, homeDomain string) (bool, error) {
+	if homeDomain == "" {
+		return false, nil
+	}
+	const q = `
+        UPDATE issuers
+           SET home_domain = $2
+         WHERE g_strkey = $1
+           AND home_domain IS DISTINCT FROM $2
+    `
+	res, err := s.db.ExecContext(ctx, q, gStrkey, homeDomain)
+	if err != nil {
+		return false, fmt.Errorf("timescale: SyncIssuerHomeDomain: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("timescale: SyncIssuerHomeDomain rows: %w", err)
+	}
+	return n > 0, nil
+}
+
 // SetIssuerSep1Payload writes a SEP-1 fetch result back to the
 // issuers row — sep1_payload (jsonb) + sep1_resolved_at = now() — and
 // clears the retry ladder (migration 0159).

@@ -103,18 +103,22 @@ func loadIssuerGStrkeys(ctx context.Context, store *timescale.Store) ([]string, 
 	return ids, rows.Err()
 }
 
-// updateIssuerHomeDomains writes home_domain for each issuer that has one,
-// only when the column is currently empty (never clobbers a resolver-set value).
+// updateIssuerHomeDomains writes each issuer's on-chain home_domain onto
+// its row and returns how many rows actually changed.
+//
+// It used to write only into an EMPTY column — "never clobbers a
+// resolver-set value" — which made this job unable to CORRECT anything and
+// the column write-once. See [timescale.Store.SyncIssuerHomeDomain] for why
+// that was an identity defect rather than a conservatism, and why the only
+// other writer of the column had the same clause for the same absent reason.
 func updateIssuerHomeDomains(ctx context.Context, store *timescale.Store, domains map[string]string) (int, error) {
-	const q = `UPDATE issuers SET home_domain = $1
-		WHERE g_strkey = $2 AND (home_domain IS NULL OR home_domain = '')`
 	n := 0
 	for g, domain := range domains {
-		res, err := store.DB().ExecContext(ctx, q, domain, g)
+		changed, err := store.SyncIssuerHomeDomain(ctx, g, domain)
 		if err != nil {
 			return n, err
 		}
-		if c, _ := res.RowsAffected(); c > 0 {
+		if changed {
 			n++
 		}
 	}

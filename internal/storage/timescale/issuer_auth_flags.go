@@ -183,9 +183,26 @@ func (s *Store) IssuerGStrkeysNeedingRecheck(ctx context.Context, limit int) ([]
 // issuer rows from account entries would put accounts in the issuers
 // table that never issued anything.
 //
-// home_domain is only written when we HAVE one and the row does not —
-// COALESCE keeps an existing value, because the SEP-1 resolver's domain
-// is better sourced than the AccountEntry's and must not be clobbered.
+// home_domain: a non-empty reading OVERWRITES whatever the row held; an
+// empty one leaves the row alone.
+//
+// It used to be the other way round — COALESCE kept the stored value,
+// "because the SEP-1 resolver's domain is better sourced than the
+// AccountEntry's". The SEP-1 resolver does not write this column. It READS
+// it, to choose which domain to fetch. The clause therefore protected one
+// snapshot of the AccountEntry from a newer snapshot of the same
+// AccountEntry, and between this writer and the enrich job the column was
+// write-once: an anchor that moved domain on-chain and let the old name
+// lapse could never take its identity back, because nothing would ever
+// overwrite the lapsed name the SEP-1 refresh keeps fetching. See
+// [Store.SyncIssuerHomeDomain].
+//
+// Empty still leaves the row untouched, and that is not symmetry for its
+// own sake: [IssuerAuthFlags.validate] REFUSES a
+// last_known_before_removal reading that carries a domain, so an empty
+// value arriving here means either a merged account (whose self-declared
+// identity is deliberately not persisted) or a field the lake did not
+// return — never "the account declares none".
 //
 // # PROVENANCE (#374)
 //
@@ -217,7 +234,7 @@ func (s *Store) PersistIssuerAuthFlags(ctx context.Context, flags []IssuerAuthFl
 		    auth_revocable = $3,
 		    auth_immutable = $4,
 		    auth_clawback  = $5,
-		    home_domain    = COALESCE(NULLIF(home_domain, ''), NULLIF($6, '')),
+		    home_domain    = COALESCE(NULLIF($6, ''), home_domain),
 		    auth_flags_source = CASE WHEN $7::text = ''
 		                             THEN auth_flags_source ELSE $7::text END,
 		    auth_flags_as_of_ledger = CASE WHEN $7::text = ''

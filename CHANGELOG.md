@@ -87,6 +87,32 @@ against.
   account-activity watermark's probe is re-confirmed once its lease expires
   (`TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate`) — no
   production code changed.
+- **issuers / a lapsed former domain can no longer hold an anchor's identity
+  (RSEC-V1, RLT-470):** `issuers.home_domain` was write-once. Both of its
+  writers refused a row that already held a value — the enrich job with
+  `AND (home_domain IS NULL OR home_domain = <empty>)`, the auth-flags drain
+  with a COALESCE that put the stored copy ahead of the one it had just
+  decoded — and both justified it by citing a SEP-1 resolver as the
+  better-sourced writer. That resolver never writes the column; it READS it to
+  choose which domain to fetch. So the clause protected one snapshot of the
+  AccountEntry from a newer snapshot of the same AccountEntry, and an anchor
+  that moved domain with SetOptions and let the old name lapse could never
+  take its identity back: the hourly SEP-1 refresh kept fetching the lapsed
+  name, and whoever registered it next could serve a stellar.toml listing the
+  anchor's issuer account back, satisfy the bidirectional check, and inherit
+  the anchor's verified org name and logo. Re-running `issuer-enrich` is the
+  documented on-chain remediation and was a no-op.
+  Both writers now overwrite with the on-chain value (an EMPTY reading still
+  never blanks a row — the lake only returns accounts that declare a domain,
+  and a merged account's reading is deliberately persisted without one), and
+  on the read path a live AccountEntry now OUTRANKS the stored copy, as the
+  auth flags decoded from the same entry in the same function already did.
+  Not closed by this change, and named so it is not assumed: nothing
+  automatically re-checks a filled row's domain (the drain's queue is
+  `auth_required IS NULL`), the issuer read path keeps its cost skip for rows
+  that already carry flags AND a domain, and `sep1_status: verified` still
+  does not record which domain it was verified against.
+
 - **sep1 refresh / one hostile stellar.toml no longer wedges all ~76k issuers
   (RSEC-Z1, RLT-458):** the 1 MiB body cap bounded the INPUT, not the decoder's
   work on it — the pinned TOML decoder is roughly quadratic in inline-table

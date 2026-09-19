@@ -368,7 +368,23 @@ func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey strin
 	} else {
 		out.AuthFlagsAsOfLedger = nil
 	}
-	if out.HomeDomain == "" && st.HomeDomain != "" {
+	if st.HomeDomain != "" {
+		// The live entry WINS, it does not merely fill a gap.
+		//
+		// This used to be `out.HomeDomain == "" && …`, which inverted the
+		// precedence for the one field where it matters most: the auth
+		// flags six lines up are REPLACED by the same entry, and
+		// home_domain is read from the same struct, decoded from the same
+		// AccountEntry, by the same reader. Nothing else is a better
+		// source — the persisted column is a copy of this field, and
+		// between its two writers it was write-once, so a stored value is
+		// at best an older reading of what we are holding right now.
+		//
+		// Serving the older one is what let a lapsed former domain keep
+		// standing as an anchor's identity after the anchor had already
+		// moved on-chain. An empty live value is NOT taken as a
+		// retraction: a merged account's reading is persisted without a
+		// domain on purpose, and the lake can simply not have the field.
 		out.HomeDomain = st.HomeDomain
 	}
 }
