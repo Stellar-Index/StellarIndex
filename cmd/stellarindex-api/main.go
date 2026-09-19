@@ -2355,6 +2355,23 @@ func buildDashboardGenerator(cfg config.DashboardConfig, logger *slog.Logger) *d
 	return generator
 }
 
+// buildDashboardSender picks the mail transport the dashboard auth flow
+// (and, through the bundle, the public signup flow) sends through.
+func buildDashboardSender(cfg config.DashboardConfig, logger *slog.Logger) (notify.Sender, error) {
+	apiKey := os.Getenv(cfg.ResendAPIKeyEnv)
+	if apiKey == "" {
+		logger.Warn("dashboard auth using NoopSender — magic-link emails will be dropped",
+			"reason", fmt.Sprintf("env %s is unset/empty", cfg.ResendAPIKeyEnv))
+		return &notify.NoopSender{}, nil
+	}
+	s, err := notify.NewResendSender(apiKey)
+	if err != nil {
+		return nil, fmt.Errorf("resend sender: %w", err)
+	}
+	logger.Info("dashboard auth using Resend sender", "from", cfg.EmailFrom)
+	return s, nil
+}
+
 func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.UniversalClient, logger *slog.Logger) (dashboardBundle, error) {
 	if cfg.BaseURL == "" {
 		logger.Warn("dashboard not wired (api.dashboard.base_url is empty); /v1/auth/* + /v1/dashboard/* will 404")
@@ -2370,19 +2387,9 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	tokens := postgresstore.NewTokenStore(pg)
 	keysStore := postgresstore.NewAPIKeyStore(pg)
 
-	var sender notify.Sender
-	apiKey := os.Getenv(cfg.ResendAPIKeyEnv)
-	if apiKey == "" {
-		logger.Warn("dashboard auth using NoopSender — magic-link emails will be dropped",
-			"reason", fmt.Sprintf("env %s is unset/empty", cfg.ResendAPIKeyEnv))
-		sender = &notify.NoopSender{}
-	} else {
-		s, err := notify.NewResendSender(apiKey)
-		if err != nil {
-			return dashboardBundle{}, fmt.Errorf("resend sender: %w", err)
-		}
-		sender = s
-		logger.Info("dashboard auth using Resend sender", "from", cfg.EmailFrom)
+	sender, err := buildDashboardSender(cfg, logger)
+	if err != nil {
+		return dashboardBundle{}, err
 	}
 
 	authCfg := dashboardauth.Config{
