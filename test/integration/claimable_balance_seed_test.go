@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -24,6 +25,17 @@ import (
 // Every test scopes its assertions to its OWN claimable ids, because the
 // reader is deliberately network-wide (no watched set) and the shared test
 // schema carries other suites' entry-change rows.
+//
+// What ids CANNOT scope is the walk itself: the reader steps the whole lake,
+// min(ledger_seq) to max(ledger_seq), in 250k-ledger windows, so its cost is
+// set by the highest ledger ANY test in the process left behind. One fixture
+// at ledger 4,000,000,000 made every walk here ~16,000 empty windows (53-58 s
+// each unloaded, five walks in this file) and breached the 5-minute deadline
+// under machine load (CO-22). The fixtures that seed up there now remove
+// their rows; cbsSeedsByID's window check turns any recurrence into an
+// immediate, named failure instead of a load-dependent timeout, and
+// TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures pins the two
+// known offenders in any shard layout and any order.
 
 const (
 	cbsIssuer   = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
@@ -32,6 +44,21 @@ const (
 	// measured on r1 2026-07-27) — the population this seed exists to
 	// recover.
 	cbsPreFloorLedger = uint32(33_000_000)
+
+	// cbsWalkWindowLedgers is the reader's initial window width
+	// (claimableSeedLedgerWindow, internal/storage/clickhouse).
+	cbsWalkWindowLedgers = uint64(250_000)
+	// cbsMaxWalkWindows is the most windows a seed walk over the SHARED test
+	// lake may take: 2,000 windows = a 500M-ledger span, ~8x mainnet's real
+	// tip (~60M, ~240 windows) and over twice the suite's highest legitimate
+	// fixture (217M, ~870 windows). At the ~3.5 ms an empty window costs,
+	// that is ~7 s.
+	cbsMaxWalkWindows = uint64(2_000)
+	// cbsWalkBudget is the wall-clock ceiling on ONE walk of a bounded lake:
+	// ~4x the worst walk cbsMaxWalkWindows admits, so machine load alone
+	// cannot breach it, and well under the 53 s one walk took with the
+	// 4,000,000,000-ledger fixture in the lake.
+	cbsWalkBudget = 30 * time.Second
 )
 
 func cbsID(t *testing.T, tag byte) [32]byte {
@@ -103,6 +130,10 @@ func cbsEntryXDR(t *testing.T, id [32]byte, asset xdr.Asset, amount int64, lastM
 // schema holds.
 func cbsSeedsByID(t *testing.T, ctx context.Context, addr string, assets map[string]struct{}) map[string]chstore.ClaimableBalanceSeed {
 	t.Helper()
+	if windows, culprit := cbsWalkWindows(t, ctx); windows > cbsMaxWalkWindows {
+		t.Fatalf("the shared lake spans %d seed windows (limit %d): %s. Some fixture in this process left a far-future ledger in stellar.ledger_entry_changes; this walk would take minutes and time out under load. Remove it in that test's Cleanup (purgeLakeFixtureLedgers)",
+			windows, cbsMaxWalkWindows, culprit)
+	}
 	out := map[string]chstore.ClaimableBalanceSeed{}
 	if err := chstore.StreamClaimableBalanceSeeds(ctx, addr, assets, func(s chstore.ClaimableBalanceSeed) error {
 		out[s.ClaimableID] = s
@@ -114,6 +145,31 @@ func cbsSeedsByID(t *testing.T, ctx context.Context, addr string, assets map[str
 }
 
 func cbsHex(id [32]byte) string { return xdr.Hash(id).HexString() }
+
+// cbsWalkWindows reports how many initial-width windows a seed walk over the
+// shared lake would take right now, and names the row holding the top of the
+// range so an over-long walk can be traced to the fixture that caused it.
+// Window count — not elapsed time — is the quantity asserted before a walk:
+// it is exact and independent of machine load.
+func cbsWalkWindows(t *testing.T, ctx context.Context) (uint64, string) {
+	t.Helper()
+	conn := dialClickHouse(t, ctx, "stellar")
+	var rows uint64
+	var lo, hi uint32
+	if err := conn.QueryRow(ctx, `SELECT count(), min(ledger_seq), max(ledger_seq) FROM stellar.ledger_entry_changes`).Scan(&rows, &lo, &hi); err != nil {
+		t.Fatalf("read lake ledger bounds: %v", err)
+	}
+	if rows == 0 {
+		return 0, "empty lake"
+	}
+	var entryType, txHash string
+	if err := conn.QueryRow(ctx, `SELECT toString(entry_type), tx_hash FROM stellar.ledger_entry_changes
+		WHERE ledger_seq = ? ORDER BY tx_hash LIMIT 1`, hi).Scan(&entryType, &txHash); err != nil {
+		t.Fatalf("read the lake's top row: %v", err)
+	}
+	windows := uint64(hi-lo)/cbsWalkWindowLedgers + 1
+	return windows, fmt.Sprintf("ledgers [%d, %d], top row entry_type=%s tx_hash=%q", lo, hi, entryType, txHash)
+}
 
 // TestClaimableSeed_RecoversPreFloorBalance is the headline case: a claimable
 // balance created long before the live observer existed, never claimed, is
@@ -298,4 +354,46 @@ func TestClaimableSeed_NativeAndAssetScope(t *testing.T) {
 	if got, seeded := scoped[cbsHex(usdcID)]; seeded {
 		t.Errorf("-assets scope leaked an out-of-scope asset: %+v", got)
 	}
+}
+
+// TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures is CO-22's
+// regression test. The seed reader walks the process-shared lake from
+// min(ledger_seq) to max(ledger_seq), so a fixture another test leaves at a
+// far-future ledger is paid for by every walk that follows it in the process.
+// Two tests seed up there on purpose — TestBlendPoolReserves_SameLedgerLastChangeWins
+// (ledger 4,000,000,000) and TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead
+// (3,999,900,000 and up) — and each walk after them took ~16,000 empty windows,
+// 53-58 s unloaded, against a 5-minute deadline the two-walk test above
+// breached on a loaded machine.
+//
+// Which shard and which order those tests land in is an accident of the
+// sorted test list, so this test does not depend on it: it RUNS both as
+// subtests, lets their Cleanups fire, and then asserts on the lake they left
+// behind — first the window count (exact, load-independent), then one real
+// walk against a wall-clock budget. Without the purge in either seeder the
+// window count is ~16,000 and the walk exhausts cbsWalkBudget.
+func TestClaimableSeed_WalkStaysBoundedAfterHighLedgerFixtures(t *testing.T) {
+	addr := clickhouseAddr(t)
+
+	if !t.Run("argmax-fixture", TestBlendPoolReserves_SameLedgerLastChangeWins) ||
+		!t.Run("blend504-fixture", TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead) {
+		t.Fatal("a high-ledger fixture test failed; the lake it left behind says nothing about its cleanup")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), cbsWalkBudget)
+	defer cancel()
+
+	windows, top := cbsWalkWindows(t, ctx)
+	if windows > cbsMaxWalkWindows {
+		t.Errorf("after the high-ledger fixtures finished the lake spans %d seed windows, want <= %d (%s) — a fixture outlived its test",
+			windows, cbsMaxWalkWindows, top)
+	}
+
+	start := time.Now()
+	err := chstore.StreamClaimableBalanceSeeds(ctx, addr, nil, func(chstore.ClaimableBalanceSeed) error { return nil })
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("seed walk over %d windows failed after %s (budget %s): %v", windows, elapsed.Round(time.Millisecond), cbsWalkBudget, err)
+	}
+	t.Logf("seed walk: %d windows in %s (budget %s)", windows, elapsed.Round(time.Millisecond), cbsWalkBudget)
 }

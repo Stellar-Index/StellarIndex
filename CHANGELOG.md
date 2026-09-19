@@ -55,6 +55,23 @@ against.
   census, accounts stats, creator/sponsor boards and edges, holders rollup,
   account-activity watermark); probes of a column's or table's existence
   keep their process-lifetime cache (audit F119).
+- **test-infra (integration):** the claimable-balance seed tests no longer
+  time out when the machine is loaded (CO-22). Two Blend fixtures seed the
+  process-shared ClickHouse lake at ledgers 3,999,900,000-4,000,000,000 and
+  left the rows there; the seed readers walk the lake from `min(ledger_seq)`
+  to `max(ledger_seq)` in 250k-ledger windows, so every later walk in the
+  same process stepped ~16,000 empty windows — 53-58 s each unloaded, five
+  of them in one file, and `TestClaimableSeed_NativeAndAssetScope` breached
+  its 5-minute deadline under load (reproduced on unfixed source: FAIL at
+  300.00 s, package 485 s). Both fixtures now delete their high-ledger rows
+  in `t.Cleanup` with a synchronous, partition-scoped mutation that fails
+  the test if any row survives. The claimable-seed helper checks the lake's
+  window count before each walk and names the offending row instead of
+  timing out, and a new regression test runs both fixtures and then asserts
+  the walk is <= 2,000 windows and finishes inside 30 s. Same selection
+  after the fix: 18 s, the two-walk test 4.2 s, one walk 285 windows in
+  1.3 s. The SAC full-history seed tests walk the same bounds, so they
+  shed the same windows (measured after the fix: ~1.3 s each).
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process

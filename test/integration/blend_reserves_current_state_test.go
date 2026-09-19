@@ -115,18 +115,24 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 		quietSeed    = byte(0xC4)
 		archivedSeed = byte(0xC5)
 
-		// Sits inside the 250k window below the suite's highest seeded
-		// ledger (4_000_000_000, argmax_intra_ledger_seq_readers_test.go)
-		// whichever test runs first — asserted below rather than assumed.
+		// Far above every other fixture, so this test's own top (base+churn)
+		// is the lake's max(ledger_seq) and the frozen oracle's 250k window
+		// therefore covers the fixture — in any shard and any test order.
+		// It does not lean on another test: the one other fixture up here
+		// (4_000_000_000, argmax_intra_ledger_seq_readers_test.go) is within
+		// 250k above base, so the window holds with it present too, and that
+		// test removes its rows when it finishes. Asserted below rather than
+		// assumed. This test removes its own rows the same way (see the
+		// purgeLakeFixtureLedgers call below).
 		base  = uint32(3_999_900_000)
 		churn = 3_000
 		// Far below the window: the legacy shape cannot see these two.
 		quietLedger = uint32(1_000_000)
 
 		// TTL verdicts are judged against max(ledger_seq) at compute time,
-		// which the suite shares. These two sit far either side of any
-		// plausible tip (the suite's is 4e9, and this fixture's own top is
-		// below it), so the verdicts hold whichever test seeded first.
+		// which the suite shares. These two sit far either side of any tip
+		// this test can run under (its own top, base+churn, or 4e9 while
+		// the argmax fixture is live), so the verdicts hold in any order.
 		liveUntilLive     = uint32(4_294_000_000)
 		liveUntilArchived = uint32(1_500_000_000)
 
@@ -136,6 +142,14 @@ func TestBlendPoolReserves_CurrentStateProjectionBoundsTheRead(t *testing.T) {
 		archivedBRate = uint64(4_000_000_000_000) // 4.0 — must never be served
 	)
 	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// Everything seeded at [base, base+churn] is removed again when this test
+	// finishes. Rows this high are the table's max(ledger_seq), which bounds
+	// every whole-lake walker in the process: left behind, they cost each
+	// later claimable-balance / SAC full-history seed walk ~16,000 empty
+	// 250k-ledger windows (CO-22). The quiet + archived rows at quietLedger
+	// stay — they are below any realistic tip and bound nothing.
+	purgeLakeFixtureLedgers(t, addr, base, base+churn)
 
 	pool := contractIDFromSeed(poolSeed)
 	poolStr := mustContractStrkey(t, poolSeed)

@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -105,11 +106,16 @@ func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 	defer cancel()
 	addr := clickhouseAddr(t)
 
-	// A very high ledger, kept as the suite's global max(ledger_seq): the
-	// frozen pre-#504 oracle in blend_reserves_current_state_test.go derives
-	// its `max - 250000` window from it, and that test asserts its own fixture
-	// lands inside the window rather than assuming it.
+	// A very high ledger, so the fixture sits at the lake's tip whichever
+	// tests seeded before it. It must NOT outlive this test: the lake is one
+	// process-shared container, and max(ledger_seq) over this table is the
+	// upper bound of every whole-lake walker (the claimable-balance and SAC
+	// full-history seeds step it in 250k-ledger windows). Left in place, a row
+	// here turns each of their walks into ~16,000 empty windows — 53-58 s a
+	// walk unloaded, past the 5-minute test deadline on a loaded machine
+	// (CO-22). purgeLakeFixtureLedgers removes it again, synchronously.
 	const ledger = uint32(4_000_000_000)
+	purgeLakeFixtureLedgers(t, addr, ledger, ledger)
 	closeTime := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	const poolSeed, assetValSeed, assetGoneSeed = byte(0xB1), byte(0xB2), byte(0xB3)
@@ -183,6 +189,66 @@ func TestBlendPoolReserves_SameLedgerLastChangeWins(t *testing.T) {
 	if _, present := byAsset[assetGoneStr]; present {
 		t.Errorf("reserveGone present in result; want ABSENT (its last same-ledger change was a removal — the pre-fix query resurrected it)")
 	}
+}
+
+// lakeFixturePartitionLedgers mirrors stellar.ledger_entry_changes'
+// `PARTITION BY intDiv(ledger_seq, 1000000)` (deploy/clickhouse/tier1_schema.sql).
+const lakeFixturePartitionLedgers = uint32(1_000_000)
+
+// purgeLakeFixtureLedgers registers a t.Cleanup that deletes every
+// stellar.ledger_entry_changes row in [from, to] once the calling test has
+// finished, and fails that test if any survive.
+//
+// It exists for fixtures seeded far ABOVE any realistic chain tip. The suite's
+// isolation convention is "unique keys per test, every read filters by them"
+// (clickhouse_harness_test.go), and that holds for keyed readers — but the
+// table's max(ledger_seq) is global state no key can scope. Every whole-lake
+// walker steps from min to max in fixed-width windows, so one abandoned
+// 4,000,000,000-ledger row costs each later walk ~16,000 round-trips in the
+// same process (CO-22). The range must be the caller's OWN: ledger ranges are
+// per-test here, which is what makes a range delete safe.
+//
+// The delete is a mutation scoped IN PARTITION, so it rewrites only the
+// fixture's own parts rather than every part of a table the whole suite writes
+// to, and mutations_sync = 2 makes it synchronous — when Cleanup returns the
+// rows are gone, not scheduled to go. It runs on a fresh context: the test's
+// own is already cancelled by its deferred cancel() when Cleanup fires.
+//
+// Only the append-log is purged. The rows these fixtures projected into
+// ledger_entries_current / the TTL projection stay; those tables are read by
+// key and feed no walk bound.
+func purgeLakeFixtureLedgers(t *testing.T, addr string, from, to uint32) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		conn := dialClickHouse(t, ctx, "stellar")
+
+		const countQ = `SELECT count() FROM stellar.ledger_entry_changes WHERE ledger_seq BETWEEN ? AND ?`
+		var before, after uint64
+		if err := conn.QueryRow(ctx, countQ, from, to).Scan(&before); err != nil {
+			t.Errorf("purge lake fixture [%d, %d]: count before: %v", from, to, err)
+			return
+		}
+		for part := from / lakeFixturePartitionLedgers; part <= to/lakeFixturePartitionLedgers; part++ {
+			q := fmt.Sprintf(`ALTER TABLE stellar.ledger_entry_changes DELETE IN PARTITION %d
+				WHERE ledger_seq BETWEEN %d AND %d SETTINGS mutations_sync = 2`, part, from, to)
+			if err := conn.Exec(ctx, q); err != nil {
+				t.Errorf("purge lake fixture [%d, %d] in partition %d: %v", from, to, part, err)
+				return
+			}
+		}
+		if err := conn.QueryRow(ctx, countQ, from, to).Scan(&after); err != nil {
+			t.Errorf("purge lake fixture [%d, %d]: count after: %v", from, to, err)
+			return
+		}
+		if after != 0 {
+			t.Errorf("purge lake fixture [%d, %d]: %d of %d rows survived the delete — every later whole-lake walk in this process will step to ledger %d",
+				from, to, after, before, to)
+			return
+		}
+		t.Logf("purged lake fixture [%d, %d]: %d of %d rows deleted", from, to, before-after, before)
+	})
 }
 
 // TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins proves
