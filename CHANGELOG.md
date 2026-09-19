@@ -399,6 +399,35 @@ against.
   the full plan in that case instead, and an empty walk plan is now a
   hard error rather than a silent zero-ledger success. Partial resume
   is unchanged.
+- **ops,storage / nothing re-read an issuer row once it was filled (RSEC-V1,
+  RLT-470):** making `issuers.home_domain` overwritable was necessary and not
+  sufficient. Both of the `issuer-flags` drain's queues can only ever see a row
+  once — the primary one is `auth_required IS NULL`, so a row leaves it the
+  moment it is filled, and the re-check queue covers only
+  `last_known_before_removal` rows — and `issuer-enrich`, the job whose whole
+  purpose is to sync the column, is a manual one-shot with no timer. So a
+  FILLED, live-sourced row (r1 2026-09-03: **49,002** of them) was re-read by
+  nothing on a schedule, and an anchor that moved domain with `SetOptions` and
+  let the old name lapse kept the lapsed name until an operator ran a backfill
+  by hand: the hourly SEP-1 refresh kept fetching it, and whoever registered it
+  next could serve a `stellar.toml` listing the anchor's issuer account back,
+  satisfy the bidirectional check and inherit its verified org identity. A
+  third pass, `Store.IssuersNeedingChainRecheck` + `issuerFlagsChainRecheckPass`,
+  now re-offers every filled non-merged row to the live reader each run and
+  writes back only the rows the chain has moved past — so re-reading the whole
+  set is ~98 bulk lake reads and, in the steady state, no Postgres writes at
+  all, and `written` keeps meaning "rows the chain corrected". The queue
+  EXCLUDES `last_known_before_removal` rows so the two partition the filled set
+  rather than reading ~10k of them from the lake twice a night; it is ordered
+  LAST and bounded by its own `-chain-recheck-limit` (default: every filled
+  row) so widening it cannot take budget from the primary drain; a key the live
+  reader does not answer for still changes nothing, because absence from the
+  current-state projection is what a merged account and a coverage gap both
+  look like; and an entry that declares NO domain is still not a retraction.
+  The run's counters gain a third self-accounting line (`corrected` / `agreed`
+  / `unread` of N filled rows), which is the line that shows a timeout leaving
+  the primary-key-ordered tail unexamined.
+
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before
   T424/F-1334/W6-tst-1 widened `scripts/ci/check-change-class.sh` to also

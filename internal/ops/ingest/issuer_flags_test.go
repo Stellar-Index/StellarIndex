@@ -43,13 +43,15 @@ const (
 
 // stubIssuerFlagsStore records what the drain asked for and what it wrote.
 type stubIssuerFlagsStore struct {
-	needFlags   []string
-	needRecheck []string
-	persisted   [][]timescale.IssuerAuthFlags
-	persistErr  error
+	needFlags     []string
+	needRecheck   []string
+	needChainRead []timescale.IssuerAuthFlagsOnRecord
+	persisted     [][]timescale.IssuerAuthFlags
+	persistErr    error
 
-	flagsLimit   int
-	recheckLimit int
+	flagsLimit        int
+	recheckLimit      int
+	chainRecheckLimit int
 }
 
 func (s *stubIssuerFlagsStore) IssuerGStrkeysNeedingFlags(_ context.Context, limit int) ([]string, error) {
@@ -60,6 +62,11 @@ func (s *stubIssuerFlagsStore) IssuerGStrkeysNeedingFlags(_ context.Context, lim
 func (s *stubIssuerFlagsStore) IssuerGStrkeysNeedingRecheck(_ context.Context, limit int) ([]string, error) {
 	s.recheckLimit = limit
 	return s.needRecheck, nil
+}
+
+func (s *stubIssuerFlagsStore) IssuersNeedingChainRecheck(_ context.Context, limit int) ([]timescale.IssuerAuthFlagsOnRecord, error) {
+	s.chainRecheckLimit = limit
+	return s.needChainRead, nil
 }
 
 func (s *stubIssuerFlagsStore) PersistIssuerAuthFlags(_ context.Context, flags []timescale.IssuerAuthFlags) (int, error) {

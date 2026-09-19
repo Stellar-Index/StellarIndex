@@ -780,3 +780,130 @@ func (s *Store) ListIssuerAssets(ctx context.Context, gStrkey string) ([]IssuerA
 	}
 	return out, nil
 }
+
+// IssuerAuthFlagsOnRecord is what one issuers row currently HOLDS in its
+// auth-flag columns, as the drain's chain re-check needs to see it: the
+// values, not just the key, so a reading the chain still agrees with can be
+// told apart from one the chain has moved past and left behind.
+//
+// The four flags are pointers for the same reason [IssuerRow]'s are — a NULL
+// column means "no observation yet", which is not the same claim as `false`,
+// and a re-check that read the two as equal would leave a half-filled row
+// half-filled for good.
+type IssuerAuthFlagsOnRecord struct {
+	GStrkey    string
+	Required   *bool
+	Revocable  *bool
+	Immutable  *bool
+	Clawback   *bool
+	HomeDomain string
+	// Source is the persisted provenance label, "" when the row predates
+	// migration 0153.
+	Source string
+	// AsOfLedger is the ledger the persisted reading claims to be true as
+	// of; nil when the row carries none.
+	AsOfLedger *uint32
+}
+
+// IssuersNeedingChainRecheck returns every issuer whose auth-flag columns are
+// already FILLED from a live (or pre-0153 unlabelled) reading, oldest-first by
+// primary key, together with the values currently on record.
+//
+// `limit` <= 0 returns every candidate, which is the intended setting: the
+// caller writes back only the rows the chain disagrees with, so re-offering
+// the whole filled set costs one bulk lake read per batch and, in the steady
+// state, nothing in Postgres.
+//
+// # WHY A THIRD QUEUE
+//
+// The other two queues can each only ever see a row once.
+// [Store.IssuerGStrkeysNeedingFlags] is `auth_required IS NULL`, so a row
+// leaves it the moment it is filled, and [Store.IssuerGStrkeysNeedingRecheck]
+// covers only `last_known_before_removal` rows. Between them a FILLED,
+// live-sourced row is never read again — and `issuers.home_domain` rides on
+// exactly those rows.
+//
+// That is what kept an anchor's identity unfixable from chain even after the
+// column stopped being write-once (see [Store.SyncIssuerHomeDomain]): nothing
+// scheduled ever re-read it. `issuer-enrich`, the job whose whole purpose is
+// to sync the column, is a manual one-shot with no timer; `issuer-flags` is
+// the nightly one. So an anchor that moves domain with SetOptions and lets the
+// old name lapse keeps the lapsed name on this row until an operator happens
+// to run a backfill by hand, the hourly SEP-1 refresh keeps fetching that
+// name, and whoever registers it next can serve a stellar.toml listing the
+// anchor's issuer account back and inherit its verified org identity.
+//
+// `last_known_before_removal` rows are EXCLUDED because the queue above
+// already carries them, under a rule this one must not apply to them: their
+// removal ledger is fixed, so re-writing one that is still merged is a no-op
+// UPDATE and only a LIVE hit (the account re-created at the same address)
+// changes anything. The two queues therefore PARTITION the filled rows rather
+// than overlapping on ~10k of them every night.
+func (s *Store) IssuersNeedingChainRecheck(ctx context.Context, limit int) ([]IssuerAuthFlagsOnRecord, error) {
+	q := `
+        SELECT g_strkey,
+               auth_required, auth_revocable, auth_immutable, auth_clawback,
+               COALESCE(home_domain, ''),
+               COALESCE(auth_flags_source, ''),
+               auth_flags_as_of_ledger
+          FROM issuers
+         WHERE auth_required IS NOT NULL
+           AND auth_flags_source IS DISTINCT FROM $1
+         ORDER BY g_strkey
+    `
+	args := []any{AuthFlagsSourceLastKnownBeforeRemoval}
+	if limit > 0 {
+		q += " LIMIT $2"
+		args = append(args, limit)
+	}
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: IssuersNeedingChainRecheck: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]IssuerAuthFlagsOnRecord, 0, 1024)
+	for rows.Next() {
+		rec, err := scanIssuerAuthFlagsOnRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: IssuersNeedingChainRecheck rows: %w", err)
+	}
+	return out, nil
+}
+
+// scanIssuerAuthFlagsOnRecord maps one row of the query above, keeping the
+// NULL-vs-false distinction the pointers exist for.
+func scanIssuerAuthFlagsOnRecord(rows *sql.Rows) (IssuerAuthFlagsOnRecord, error) {
+	var (
+		rec                 IssuerAuthFlagsOnRecord
+		req, rev, imm, claw sql.NullBool
+		asOf                sql.NullInt64
+	)
+	if err := rows.Scan(&rec.GStrkey, &req, &rev, &imm, &claw,
+		&rec.HomeDomain, &rec.Source, &asOf); err != nil {
+		return rec, fmt.Errorf("timescale: IssuersNeedingChainRecheck scan: %w", err)
+	}
+	rec.Required = nullBoolPtr(req)
+	rec.Revocable = nullBoolPtr(rev)
+	rec.Immutable = nullBoolPtr(imm)
+	rec.Clawback = nullBoolPtr(claw)
+	if asOf.Valid && asOf.Int64 >= 0 {
+		l := uint32(asOf.Int64) //nolint:gosec // ledger sequence, bounded by the column's integer type
+		rec.AsOfLedger = &l
+	}
+	return rec, nil
+}
+
+// nullBoolPtr keeps SQL NULL as nil rather than collapsing it to false.
+func nullBoolPtr(v sql.NullBool) *bool {
+	if !v.Valid {
+		return nil
+	}
+	b := v.Bool
+	return &b
+}
