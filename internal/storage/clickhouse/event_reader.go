@@ -223,9 +223,12 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 // other choice, tryDecodeSymbolOrString, which is why the two disagree.)
 // Filtering on topic_0_sym alone therefore silently matched NOTHING for a
 // String-topic protocol: phoenix publishes `("create","liquidity_pool")` as
-// two Strings, so the seed-protocol-contracts walk and the -ch gated
-// prefilter — both of which ask for topic_0_sym "create" — returned zero rows
-// over a lake that holds those events from ledger 51,572,026 (F048).
+// two Strings, so the -ch gated prefilter — which asks this lake for
+// topic_0_sym "create" — returned zero rows over a lake that holds those
+// events from ledger 51,572,026 (F048). seed-protocol-contracts is NOT
+// blocked here: it reads the PG landing zone, whose topic_0_sym comes from
+// tryDecodeSymbolOrString and does match Strings; that command was inert for
+// the decoder reason alone.
 //
 // Matching topics_xdr[1] against the ScvString encoding of the same name
 // closes that without touching what topic_0_sym MEANS for the ~6B rows

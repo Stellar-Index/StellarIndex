@@ -41,9 +41,12 @@ against.
   only — so it is EMPTY for every event whose topic[0] is an `ScvString`, and a
   prefilter of `topic_0_sym IN (…)` alone matched nothing for a String-topic
   protocol. Phoenix publishes `("create","liquidity_pool")` as two Strings, so
-  `seed-protocol-contracts` and the `-ch` re-derive's `gatedPrefilter` walk both
-  asked the lake for `"create"`, got zero rows over a lake holding those events
-  since ledger 51,572,026, and reported a clean walk that had admitted nothing.
+  the `-ch` re-derive's `gatedPrefilter` walk asked this lake for `"create"`,
+  got zero rows over a lake holding those events since ledger 51,572,026, and
+  reported a clean walk that had admitted nothing. (`seed-protocol-contracts`
+  reads the PG landing zone, whose `topic_0_sym` is filled by
+  `tryDecodeSymbolOrString` and does match Strings — it was inert for the
+  decoder reason below, not this one.)
   The predicate now also matches the `ScvString` encoding in `topics_xdr[1]`.
   This only WIDENS a prefilter — it can never undercount, and the decoder's
   `Matches()` remains the attribution decision — and it leaves the meaning of
