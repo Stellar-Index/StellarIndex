@@ -3,9 +3,7 @@
 import { useState, useMemo } from 'react';
 import { ArrowLeftRight } from 'lucide-react';
 
-import { formatRelative } from '@/lib/format';
-
-import { useConvertRate } from './ConvertLive';
+import { rateBasis, useConvertRate } from './ConvertLive';
 
 /**
  * ConvertPair — interactive client-side converter for the
@@ -35,12 +33,14 @@ export function ConvertPair({
 
   // Live-refresh the rate so the converter doesn't go stale. Shared
   // with the header + ladder so all three read ONE deduped query.
-  const { rate, inverse, updatedAt } = useConvertRate({
-    from,
-    to,
-    initialRate,
-    initialInverse,
-  });
+  //
+  // RLT-384: the freshness stamp below is the ROW's `observed_at`, never
+  // the instant the fetch resolved. A query that resolves to "this pair
+  // is not priced" is a SUCCESS as far as the client is concerned, so
+  // `dataUpdatedAt` used to stamp a build-baked rate "Updated 3s ago".
+  const read = useConvertRate({ from, to, initialRate, initialInverse });
+  const { rate, inverse } = read;
+  const basis = rateBasis(read);
 
   const numeric = Number(amount);
   const result = useMemo(() => {
@@ -113,10 +113,10 @@ export function ConvertPair({
               {formatRate(direction === 'forward' ? rate : inverse)}
             </span>{' '}
             {toLabel}
-            {updatedAt > 0 && (
+            {basis != null && (
               <>
                 <span className="mx-1.5">·</span>
-                Updated {formatRelative(new Date(updatedAt).toISOString())}
+                {basis}
               </>
             )}
           </>
