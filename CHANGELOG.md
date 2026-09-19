@@ -17,6 +17,15 @@ against.
 
 ### Fixed
 
+- **tests (storage):** `TestHistoryPointsDirectionUnion` no longer fails on
+  every run between 00:00 and about 02:05 UTC. It seeds trades two hours
+  back and asserted that the 1-day history series is empty because "today's
+  bucket is still open"; just after midnight the seed lands in yesterday's
+  bucket, which has closed and is correctly served. The expectation is now
+  derived from the seeded timestamps — a day bucket is expected exactly when
+  it has closed, and no open bucket may be served. The query was right; the
+  test was pinned to the clock. Found when it failed a pre-push gate at
+  00:16 UTC.
 - **auth (api keys):** listing, revoking, re-budgeting and
   email-verifying a Redis-backed API key no longer walks the whole
   credential keyspace. Four store lookups answered "which records does
