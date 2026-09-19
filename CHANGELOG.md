@@ -357,6 +357,34 @@ against.
   (`app:app@localhost/app`) cannot arm a rewrite of `database "app" does not
   exist`; that case is pinned. A DSN that parses behaves exactly as before
   (audit 2026-09-02 K057).
+- **migrate (credential redaction):** the by-value scrub above cut one thing —
+  the whole `:password@` span — and the entry describing it read as though the
+  surface were closed. It was not; each of these printed part or all of a
+  password on the built binary. (1) The flag package echoes a rejected "flag
+  name" only up to its FIRST `=`, so `-postgres://u:abc==@host` — a base64
+  password, padding and all — came back as `-postgres://u:abc`: the secret bar
+  its padding, with no `@` for the span or any pattern to key on. (2) A
+  password in the `?password=` / `sslpassword=` query spelling was left to the
+  free-text pattern, which ends a value at a space, quote or `;`, and at the
+  first `&`; the rest printed. (3) So did the libpq keyword spelling once `%q`
+  had doubled a backslash escape (`password=ab\ cd`). (4) A DSN with no `@` at
+  all (`#` typed where it goes) has no span and printed whole from every slot
+  that echoes a positional. `redact.Known` now extracts every secret a held
+  string carries, in whichever spelling, with the text it sits behind
+  (`scheme://user:`, `password=`), and cuts the longest PREFIX of it found
+  after that anchor, raw or `%q`-escaped — a truncated echo is a prefix. The
+  anchor starts at the scheme, because the echo drops a dash the argument
+  arrived with (`--postgres://…`). Held strings are taken together: the
+  environment's DSN and argv's share an anchor, and cutting for one then the
+  other let the first take only the prefix two passwords share and printed
+  the second's tail. A query password now ends at the `&` opening a parameter
+  we recognise rather than at the first `&`. Not closed, and said so on
+  `redact.Known`: a secret repeated with neither its anchor nor its span (the
+  price of never rewriting the bare word `app`), a query password containing
+  `&<recognised parameter>=`, and a credential the process was never handed as
+  a connection string. Tests run the real binary over each shape in the flag,
+  subcommand, `down N`, `force V` and leftover slots, and were red on the
+  leaked fragment itself before the change (audit 2026-09-02 F077, K057).
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock

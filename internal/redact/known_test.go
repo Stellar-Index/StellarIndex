@@ -23,7 +23,12 @@ var hostilePasswords = map[string]string{
 	"hash":         sentinel + "#" + tailStem,
 	"percent":      sentinel + "%ZZ" + tailStem,
 	"newline":      sentinel + "\n" + tailStem,
-	"everything":   sentinel + ` @'"\/?#%ZZ` + tailStem,
+	// `=` is what the flag package cuts a "flag name" at, and base64
+	// padding puts one at the END of a generated password, so the echo
+	// is the whole secret bar its padding, with no `@` after it.
+	"equals":         sentinel + "=" + tailStem,
+	"base64 padding": sentinel + tailStem + "==",
+	"everything":     sentinel + ` @'"\/?#%ZZ=` + tailStem,
 }
 
 func assertNoStems(t *testing.T, in, got string) {
@@ -43,17 +48,33 @@ func assertNoStems(t *testing.T, in, got string) {
 func TestKnownCutsThePasswordHoweverItIsRepeated(t *testing.T) {
 	for name, pw := range hostilePasswords {
 		dsn := "postgres://stellarindex:" + pw + "@db.example.invalid:5432/app?sslmode=disable"
-		for shape, text := range map[string]string{
-			"bare":      "flag provided but not defined: -" + dsn,
-			"quoted":    fmt.Sprintf("unknown subcommand %q", dsn),
-			"truncated": "flag provided but not defined: -" + dsn[:strings.LastIndex(dsn, "=")],
-			"as a flag": "bad flag syntax: -dsn==" + dsn,
+		// What the flag package echoes for `-<dsn>`: the argument up to its
+		// FIRST `=`. That lands inside the password whenever the password
+		// holds one, and in `sslmode=` otherwise.
+		truncated := dsn[:strings.Index(dsn, "=")]
+		for shape, tc := range map[string]struct{ text, held string }{
+			"bare":      {"flag provided but not defined: -" + dsn, dsn},
+			"quoted":    {fmt.Sprintf("unknown subcommand %q", dsn), dsn},
+			"truncated": {"flag provided but not defined: -" + truncated, "-" + dsn},
+			// The echo drops one of the dashes the argument arrived with,
+			// so the held value does not open the way its echo does.
+			"truncated, two dashes":               {"flag provided but not defined: -" + truncated, "--" + dsn},
+			"truncated, then quoted":              {fmt.Sprintf("no such flag %q", truncated), dsn},
+			"as a flag":                           {"bad flag syntax: -dsn==" + dsn, dsn},
+			"as a flag, held as the argv element": {"bad flag syntax: -dsn==" + dsn, "-dsn==" + dsn},
 		} {
 			t.Run(name+"/"+shape, func(t *testing.T) {
-				got := Known(text, "unrelated", "", dsn)
+				text := tc.text
+				got := Known(text, "unrelated", "", tc.held)
 				assertNoStems(t, text, got)
-				if !strings.Contains(got, "stellarindex:<redacted>@db.example.invalid:5432/app") {
-					t.Errorf("lost the user, host or database:\n  in:  %s\n  out: %s", text, got)
+				// An echo cut short inside the password has no host left
+				// to keep; every other shape must keep all three.
+				keep := "stellarindex:<redacted>@db.example.invalid:5432/app"
+				if !strings.Contains(text, "@db.example.invalid") {
+					keep = "postgres://stellarindex:<redacted>"
+				}
+				if !strings.Contains(got, keep) {
+					t.Errorf("lost the user, host or database (%q):\n  in:  %s\n  out: %s", keep, text, got)
 				}
 				if twice := Known(got, dsn); twice != got {
 					t.Errorf("second pass changed the output:\n  once:  %s\n  twice: %s", got, twice)
@@ -67,8 +88,9 @@ func TestKnownCutsThePasswordHoweverItIsRepeated(t *testing.T) {
 // held DSN, and the everyday development DSN uses one word for the
 // user, the password and the database. A scrubber that cut the bare
 // password would rewrite every message naming the database; this one
-// cuts only the `:password@` span, so text that merely contains the
-// word must come back byte-identical.
+// cuts it only inside the `:password@` span or directly after the text
+// it was held behind, so text that merely contains the word must come
+// back byte-identical.
 func TestKnownDoesNotMangleTextThatMerelyContainsThePassword(t *testing.T) {
 	dsn := "postgres://app:app@localhost:5432/app?sslmode=disable"
 	for _, in := range []string{
@@ -84,12 +106,31 @@ func TestKnownDoesNotMangleTextThatMerelyContainsThePassword(t *testing.T) {
 			t.Errorf("Known changed text that does not repeat the DSN:\n  in:   %s\n  got:  %s\n  want: %s", in, got, want)
 		}
 	}
+	// The same word again in the other spellings a secret is held in. Each
+	// arms its own anchor — `password=`, or `postgres://app:` — and none
+	// may touch text that does not repeat it.
+	for _, held := range []string{
+		"postgres://localhost:5432/app?password=app&sslmode=disable",
+		"host=localhost user=app password=app dbname=app",
+		"postgres://app:app#localhost/app", // no `@`: the secret runs to the end
+	} {
+		for _, in := range []string{
+			`pq: database "app" does not exist`,
+			`pq: password authentication failed for user "app"`,
+			"app: applied 3 migrations to postgres://localhost:5432/app",
+		} {
+			if got := Known(in, held); got != in {
+				t.Errorf("Known(%q) changed text that does not repeat it:\n  in:  %s\n  got: %s", held, in, got)
+			}
+		}
+	}
 	if got, want := Known("open "+dsn, dsn), "open postgres://app:<redacted>@localhost:5432/app?sslmode=disable"; got != want {
 		t.Errorf("Known on the DSN itself\n  got:  %s\n  want: %s", got, want)
 	}
 }
 
-// Values that are not URL-form connection strings arm nothing.
+// Values that hold no secret arm nothing, and one that does arms nothing
+// on text that does not repeat it.
 func TestKnownIgnoresValuesWithNoPasswordSpan(t *testing.T) {
 	const in = "status: current version: 412 (dirty=false) for user@host at 12:30"
 	for _, v := range []string{
@@ -97,7 +138,7 @@ func TestKnownIgnoresValuesWithNoPasswordSpan(t *testing.T) {
 		"postgres://db.example.invalid:5432/app",  // no userinfo
 		"postgres://user@db.example.invalid/app",  // no password
 		"postgres://user:@db.example.invalid/app", // empty password
-		"host=h user=u password=x",                // keyword form: the pattern pass owns it
+		"host=h user=u password=x",                // keyword form: held, but not repeated here
 	} {
 		if got := Known(in, v); got != in {
 			t.Errorf("Known(%q) armed on %q:\n  out: %s", in, v, got)
@@ -141,13 +182,144 @@ func TestParseFailureRepeatsNothingOfThePassword(t *testing.T) {
 	}
 }
 
+// The query spelling, by value. keywordPasswordPattern is written for
+// free text, where a space, a quote or a `;` is the only boundary on
+// offer, so it ended the value there and the rest printed. A raw `&` is
+// the same mistake one level up: read by the URL grammar it ends the
+// value, and what follows it is the rest of the password.
+func TestKnownCutsAQueryPasswordByValue(t *testing.T) {
+	for name, sep := range map[string]string{
+		"space": " ", "semicolon": ";", "single quote": "'", "double quote": `"`,
+		"backslash": `\`, "ampersand": "&", "newline": "\n", "equals": "=",
+	} {
+		for _, key := range []string{"password", "sslpassword", "PassWord"} {
+			dsn := "postgres://db.example.invalid:5432/app?" + key + "=" + sentinel + sep + tailStem + "&sslmode=disable"
+			for shape, text := range map[string]string{
+				"bare":   "unexpected argument " + dsn + " after the flags",
+				"quoted": fmt.Sprintf("down: N must be a positive integer (got %q)", dsn),
+			} {
+				t.Run(name+"/"+key+"/"+shape, func(t *testing.T) {
+					got := Known(text, dsn)
+					assertNoStems(t, text, got)
+					if want := "db.example.invalid:5432/app?" + key + "=<redacted>&sslmode=disable"; !strings.Contains(got, want) {
+						t.Errorf("lost the host, the database or the parameter after the password; want %q:\n  in:  %s\n  out: %s", want, text, got)
+					}
+					if twice := Known(got, dsn); twice != got {
+						t.Errorf("second pass changed the output:\n  once:  %s\n  twice: %s", got, twice)
+					}
+				})
+			}
+		}
+	}
+}
+
+// The migration tool holds TWO connection strings that normally share an
+// anchor: the environment's DSN and the one in argv, both
+// `postgres://stellarindex:`. Cut one held value at a time and the first
+// takes only the prefix the two passwords share — a rotated password, a
+// naming convention — leaving the second nothing to match; its tail then
+// prints wherever the text gives a pattern no boundary.
+func TestKnownHoldsSeveralStringsBehindOneAnchor(t *testing.T) {
+	const shared = "SHARED-PREFIX-"
+	for name, tc := range map[string]struct{ other, echoed, keep string }{
+		"userinfo": {
+			"postgres://stellarindex:" + shared + "other@prod.example.invalid/app",
+			"postgres://stellarindex:" + shared + sentinel + " " + tailStem + "@db.example.invalid/app",
+			"postgres://stellarindex:<redacted>@db.example.invalid/app",
+		},
+		"query": {
+			"postgres://prod.example.invalid/app?password=" + shared + "other",
+			"postgres://db.example.invalid/app?password=" + shared + sentinel + " " + tailStem,
+			"postgres://db.example.invalid/app?password=<redacted>",
+		},
+		"keyword": {
+			"host=prod.example.invalid password=" + shared + "other",
+			"host=db.example.invalid password=" + shared + sentinel + `\ ` + tailStem,
+			"host=db.example.invalid password=<redacted>",
+		},
+	} {
+		text := "flag provided but not defined: -" + tc.echoed
+		// Either order: the process lists the environment's first.
+		for order, held := range map[string][]string{
+			"other first": {tc.other, tc.echoed},
+			"other last":  {tc.echoed, tc.other},
+		} {
+			t.Run(name+"/"+order, func(t *testing.T) {
+				got := Known(text, held...)
+				assertNoStems(t, text, got)
+				if strings.Contains(got, shared) {
+					t.Errorf("kept the shared prefix %q:\n  out: %s", shared, got)
+				}
+				if !strings.Contains(got, tc.keep) {
+					t.Errorf("want %q:\n  in:  %s\n  out: %s", tc.keep, text, got)
+				}
+			})
+		}
+	}
+}
+
+// The keyword/value spelling, by value. libpq lets an unquoted value
+// escape a space and a quoted one escape a quote; once %q has doubled
+// the backslash, the free-text pattern reads the escape as a literal
+// backslash followed by the end of the value.
+func TestKnownCutsAKeywordPasswordByValue(t *testing.T) {
+	for name, value := range map[string]string{
+		"escaped space":         sentinel + `\ ` + tailStem + " sslmode=require",
+		"quoted, escaped quote": "'" + sentinel + `\' ` + tailStem + "' sslmode=require",
+		"quoted, never closed":  "'" + sentinel + " " + tailStem,
+	} {
+		dsn := "host=db.example.invalid user=stellarindex password=" + value
+		for shape, text := range map[string]string{
+			"bare":   "unexpected argument " + dsn,
+			"quoted": fmt.Sprintf("force: version must be a non-negative integer (got %q)", dsn),
+		} {
+			t.Run(name+"/"+shape, func(t *testing.T) {
+				got := Known(text, dsn)
+				assertNoStems(t, text, got)
+				if want := "host=db.example.invalid user=stellarindex password=<redacted>"; !strings.Contains(got, want) {
+					t.Errorf("lost the host or the user; want %q:\n  in:  %s\n  out: %s", want, text, got)
+				}
+			})
+		}
+	}
+}
+
+// A URL with no `@` has no span and gives a pattern nothing to key on,
+// so until the by-value pass learned the shape, Known printed it whole.
+func TestKnownCutsAPasswordWithNoAtSignAfterIt(t *testing.T) {
+	for name, dsn := range map[string]string{
+		"hash where the @ goes": "postgres://stellarindex:" + sentinel + " " + tailStem + "#db.example.invalid/app",
+		"pasted without a tail": "postgres://stellarindex:" + sentinel + tailStem,
+	} {
+		for shape, text := range map[string]string{
+			"quoted":    fmt.Sprintf("unknown subcommand %q", dsn),
+			"truncated": "flag provided but not defined: -" + dsn[:strings.Index(dsn, sentinel)+len(sentinel)],
+		} {
+			t.Run(name+"/"+shape, func(t *testing.T) {
+				got := Known(text, dsn)
+				assertNoStems(t, text, got)
+				if !strings.Contains(got, "postgres://stellarindex:<redacted>") {
+					t.Errorf("lost the scheme or the user:\n  in:  %s\n  out: %s", text, got)
+				}
+			})
+		}
+	}
+	// A numeric port is believed: a DSN with no credentials arms nothing.
+	const in = "dial postgres://db.example.invalid:5432/app: connection refused"
+	if got := Known(in, "postgres://db.example.invalid:5432/app"); got != in {
+		t.Errorf("a credential-free DSN armed the cut:\n  out: %s", got)
+	}
+}
+
 func TestKnownConnString(t *testing.T) {
 	for in, want := range map[string]string{
 		"postgres://u:" + sentinel + "@h:5432/db":                 "postgres://u:<redacted>@h:5432/db",
 		"postgres://u:" + sentinel + " " + tailStem + "@h/db":     "postgres://u:<redacted>@h/db",
 		"postgres://h/db?password=" + sentinel + " x&sslmode=off": "postgres://h/db?password=<redacted>&sslmode=off",
 		"postgres://h/db?sslmode=off&SSLPassword=" + sentinel:     "postgres://h/db?sslmode=off&SSLPassword=<redacted>",
-		"host=h user=u password=" + sentinel + " sslmode=require": "host=h user=u password=<redacted> sslmode=require",
+		// A raw `&` in the value: it ends at the parameter we recognise.
+		"postgres://h/db?password=" + sentinel + "&" + tailStem + "&sslmode=off": "postgres://h/db?password=<redacted>&sslmode=off",
+		"host=h user=u password=" + sentinel + " sslmode=require":                "host=h user=u password=<redacted> sslmode=require",
 		// No `@`: a numeric port is believed, anything else is a secret
 		// with no end marker and takes the rest of the string with it.
 		"postgres://h:5432/db%ZZ":                  "postgres://h:5432/db%ZZ",

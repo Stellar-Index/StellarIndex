@@ -319,6 +319,38 @@ func TestMigrate_FlagParseErrorsAreScrubbedToo(t *testing.T) {
 			[]string{"down", "-migrations", migDir, "postgres://stellarindex:" + stemHead + " " + stemTail + tail},
 			"unexpected argument",
 		},
+		// The flag package cuts a "flag name" at its FIRST `=` and echoes
+		// only what precedes it. When that `=` is inside the password the
+		// echo is `-postgres://user:<password so far>` — no `@`, so neither
+		// the `:password@` span nor any userinfo pattern has anything to
+		// match. Base64 padding is the ordinary way to get there
+		// (`openssl rand -base64 32` ends in `=`), and it printed the whole
+		// secret bar the padding.
+		{
+			"a DSN where a flag name goes, base64 padding on the password",
+			[]string{"-postgres://stellarindex:" + stemHead + "==" + tail, "status"},
+			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+		},
+		{
+			"the same, with the = in the middle of the password",
+			[]string{"-postgres://stellarindex:" + stemHead + "=" + stemTail + tail, "status"},
+			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+		},
+		{
+			"the same, after the verb, where the second parse sees it",
+			[]string{"status", "-postgres://stellarindex:" + stemHead + "==" + tail},
+			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+		},
+		{
+			"the same, typed with two dashes — the echo keeps only one",
+			[]string{"--postgres://stellarindex:" + stemHead + "=" + stemTail + tail, "status"},
+			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+		},
+		{
+			"the same, with no @ anywhere in the DSN",
+			[]string{"-postgres://stellarindex:" + stemHead + "=" + stemTail + "#" + redactionHost + "/stellarindex", "status"},
+			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := runMigrate(t, bin, nil, append([]string{"-migrations", migDir}, tc.args...))
@@ -328,6 +360,90 @@ func TestMigrate_FlagParseErrorsAreScrubbedToo(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A password can be held in three spellings, and the first redaction by
+// value covered one. The `?password=` query parameter and the libpq
+// keyword form were left to a pattern written for free text, which ends
+// a value at the first space, quote or `;` — and, for a query, at the
+// first `&`. A DSN with no `@` at all was covered by nothing: it has no
+// `:password@` span and no userinfo for a pattern to key on. Reproduced
+// against the built binary before this fix:
+//
+//	down "…?password=HEAD TAIL"    printed  `password=<redacted> TAIL`
+//	down "…?password=HEAD&TAIL&…"  printed  `password=<redacted>&TAIL&…`
+//	down "password=HEAD\ TAIL"     printed  `password=<redacted> TAIL`
+//	down "postgres://u:HEAD TAIL#host/db"   printed whole
+//
+// Each is fed through every slot that echoes a positional.
+func TestMigrate_EverySpellingOfAHeldPasswordIsCutByValue(t *testing.T) {
+	bin, migDir := buildMigrate(t)
+	queryDSN := func(pw string) string {
+		return "postgres://" + redactionHost + ":5432/stellarindex?password=" + pw + "&sslmode=disable"
+	}
+
+	for _, tc := range []struct{ name, dsn, keep string }{
+		{"query password with a space", queryDSN(stemHead + " " + stemTail), redactionHost + ":5432/stellarindex?password=<redacted>&sslmode=disable"},
+		{"query password with a semicolon", queryDSN(stemHead + ";" + stemTail), redactionHost + ":5432/stellarindex?password=<redacted>&sslmode=disable"},
+		{"query password with a single quote", queryDSN(stemHead + "'" + stemTail), redactionHost + ":5432/stellarindex?password=<redacted>&sslmode=disable"},
+		{"query password with a raw ampersand", queryDSN(stemHead + "&" + stemTail), redactionHost + ":5432/stellarindex?password=<redacted>&sslmode=disable"},
+		{
+			"query sslpassword with a space",
+			"postgres://" + redactionHost + "/stellarindex?sslmode=verify-full&sslpassword=" + stemHead + " " + stemTail,
+			redactionHost + "/stellarindex?sslmode=verify-full&sslpassword=<redacted>",
+		},
+		{
+			"keyword form, escaped space",
+			"host=" + redactionHost + " password=" + stemHead + `\ ` + stemTail + " sslmode=disable",
+			"host=" + redactionHost + " password=<redacted> sslmode=disable",
+		},
+		{
+			"keyword form, quoted with an escaped quote",
+			"host=" + redactionHost + " password='" + stemHead + `\' ` + stemTail + "' sslmode=disable",
+			"host=" + redactionHost + " password=<redacted> sslmode=disable",
+		},
+		{
+			"no @ anywhere, space in the password",
+			"postgres://stellarindex:" + stemHead + " " + stemTail + "#" + redactionHost + "/stellarindex",
+			"postgres://stellarindex:<redacted>",
+		},
+	} {
+		for slot, inv := range map[string]struct {
+			args []string
+			keep string
+		}{
+			"subcommand": {[]string{tc.dsn}, "unknown subcommand"},
+			"down N":     {[]string{"down", tc.dsn}, "N must be a positive integer"},
+			"force V":    {[]string{"force", tc.dsn}, "version must be a non-negative integer"},
+			"leftover":   {[]string{"status", "-migrations", migDir, tc.dsn}, "unexpected argument"},
+		} {
+			t.Run(tc.name+"/"+slot, func(t *testing.T) {
+				out := runMigrate(t, bin, nil, append([]string{"-migrations", migDir}, inv.args...))
+				assertNoStem(t, out)
+				// Both halves of the diagnostic: what went wrong, and
+				// everything about the string that is not the secret.
+				for _, keep := range []string{inv.keep, tc.keep} {
+					if !strings.Contains(out, keep) {
+						t.Errorf("the %q diagnostic is gone:\n%s", keep, out)
+					}
+				}
+			})
+		}
+	}
+
+	// The same query password through the path that RENDERS the DSN
+	// rather than echoing it: an unparseable URL, composed by
+	// redact.ParseFailure.
+	t.Run("query password with a raw ampersand/unparseable, via -dsn", func(t *testing.T) {
+		dsn := "postgres://" + redactionHost + "/stellarindex%ZZ?password=" + stemHead + "&" + stemTail + "&sslmode=disable"
+		out := runMigrate(t, bin, nil, []string{"-migrations", migDir, "status", "-dsn", dsn})
+		assertNoStem(t, out)
+		for _, keep := range []string{"invalid URL escape", redactionHost + "/stellarindex%ZZ?password=<redacted>&sslmode=disable"} {
+			if !strings.Contains(out, keep) {
+				t.Errorf("the %q diagnostic is gone:\n%s", keep, out)
+			}
+		}
+	})
 }
 
 // A lossy transform is tested WITH its trigger. The scrubber is armed by

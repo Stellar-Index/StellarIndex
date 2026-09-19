@@ -253,10 +253,16 @@ func errf(format string, args ...any) {
 //
 // It scrubs by VALUE as well as by pattern. This process knows every
 // string a credential can have arrived in — argv and the DSN variable —
-// so it hands them to redact.Known, which cuts the password span out
-// wherever it is repeated, whatever characters it holds. The pattern
-// pass behind it covers text that re-renders the DSN rather than
-// repeating it.
+// so it hands them to redact.Known, which cuts each password they hold,
+// whatever characters it contains and in whichever spelling it was
+// written (URL userinfo, `?password=`, libpq `password=`), where the
+// output repeats it after the text it was held behind. That includes an
+// echo that stops short: the flag package prints a rejected "flag name"
+// only up to its first `=`, which for `-postgres://u:abc==@host` is the
+// password bar its base64 padding, with no `@` left to recognise it by.
+// The pattern pass behind it covers text that re-renders the DSN rather
+// than repeating it, and is only as good as the boundary that text
+// offers. What redact.Known cannot close is listed on it.
 var stderr io.Writer = scrubbingWriter{
 	w:     os.Stderr,
 	known: append([]string{os.Getenv("STELLARINDEX_POSTGRES_DSN")}, os.Args[1:]...),
