@@ -142,24 +142,7 @@ export function AssetSidebar({
           initialPrice={priceUSD}
           initialProvenance={priceProvenance ?? null}
           initialStale={priceStale}
-          changePill={
-            change != null ? (
-              <span
-                className={`font-mono text-sm tabular-nums ${
-                  change > 0
-                    ? 'text-up'
-                    : change < 0
-                      ? 'text-down'
-                      : 'text-ink-muted'
-                }`}
-              >
-                {change > 0 ? '▲' : change < 0 ? '▼' : ''}{' '}
-                {change > 0 ? '+' : ''}
-                {change.toFixed(2)}%{' '}
-                <span className="text-ink-faint">(24h)</span>
-              </span>
-            ) : undefined
-          }
+          initialChangePct={change}
         />
         {/* Live 1h/24h/7d/30d strip + streak + low-water from the
             change-summary worker; renders nothing when the worker has

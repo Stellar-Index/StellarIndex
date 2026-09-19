@@ -100,6 +100,17 @@ against.
   checked and `$DIRTY` is probed for appendability up front: an unwritable or
   missing state directory used to lose the marker silently and DELETE the
   window anyway, leaving nothing that would ever rebuild it.
+- **explorer / asset sidebar (`LiveAssetPrice`):** the 24h change pill beside
+  the headline price was built once from the static export's build-time
+  `change_24h_pct` and handed down as a fixed React node — the price next
+  to it kept refreshing live (poll + tip stream), so a large intraday move
+  could leave the pill's arrow pointing the wrong way for as long as the
+  page stayed open. `LiveAssetPrice` now takes the raw baked percentage
+  (`initialChangePct`) and re-derives the pill from the same live
+  change-summary feed `ChangeSummaryStrip` already polls
+  (`GET /v1/changes/coin/{id}`, one shared TanStack Query cache entry — no
+  second, independently-computed 24h figure beside it), falling back to the
+  baked value only until the worker has a row (F090).
 - **projector / `projector-replay`:** a replay's cursor rewind can no longer
   be reverted by the live projector's in-flight cycle. A cycle reads its
   cursor, spends up to `PerSourceTimeout` scanning and sinking, then

@@ -1,5 +1,6 @@
 'use client';
 
+import { useChangeSummary } from '@/api/hooks';
 import {
   isFrameStale,
   useLiveClock,
@@ -9,6 +10,8 @@ import {
 } from '@/lib/live/hooks';
 import { cn } from '@/lib/cn';
 import { formatPriceSmall } from '@/lib/format';
+
+import { unwrapChangeSummary } from './ChangeSummaryStrip';
 
 export type PriceProvenance =
   | 'vwap1m'
@@ -58,18 +61,41 @@ export function LiveAssetPrice({
   initialPrice,
   initialProvenance,
   initialStale,
-  changePill,
+  initialChangePct,
 }: {
   assetID: string;
   initialPrice: number | null;
   initialProvenance: PriceProvenance;
   initialStale?: boolean;
-  /** Rendered beside the price (the 24h change pill — server-derived). */
-  changePill?: React.ReactNode;
+  /**
+   * 24h % change baked at build time (from the static export's
+   * `coin.change_24h_pct`). Rendered as the change pill until the live
+   * change-summary worker (GET /v1/changes/coin/{id} — the same feed
+   * ChangeSummaryStrip renders below) reports a fresher figure.
+   *
+   * 2026-09-18 audit F090: this pill used to be handed in as a static
+   * React node built once from the build-time percentage and never
+   * touched again, while the price beside it kept refreshing live — a
+   * large intraday move could leave the arrow pointing the wrong way
+   * for as long as the page stayed open. Taking the raw number instead
+   * lets this component re-derive the pill from the same live worker
+   * feed ChangeSummaryStrip already polls, so the two never disagree.
+   */
+  initialChangePct?: number | null;
 }) {
   // FEC audit A6-5: the 60s poll loop lives in the canonical usePricePoll;
   // this component keeps only the provenance/caption mapping.
   const poll = usePricePoll({ asset: assetID, initialPrice });
+  // Same live feed ChangeSummaryStrip renders below (identical query key,
+  // so TanStack Query serves both from one in-flight request) — never a
+  // second, independently-computed 24h figure beside it. Falls back to
+  // the build-time baked percentage until the worker has a row, and
+  // stays on it if the worker never computes one (sparse/new listing),
+  // exactly like usePricePoll falls back to `initialPrice`.
+  const changeSummary = useChangeSummary('coin', assetID);
+  const liveChangePct =
+    unwrapChangeSummary(changeSummary.data)?.h24_delta_pct ?? null;
+  const changePct = liveChangePct ?? initialChangePct ?? null;
   // Declared-peg exception to the withheld-replaces-baked rule: for a
   // peg-basis row the /v1/price withheld verdict is EXPECTED — the
   // server refuses the (dust-authored) MARKET price while the assets
@@ -136,7 +162,22 @@ export function LiveAssetPrice({
         >
           {shown != null ? `$${formatPriceSmall(shown)}` : '—'}
         </span>
-        {changePill}
+        {changePct != null && (
+          <span
+            className={`font-mono text-sm tabular-nums ${
+              changePct > 0
+                ? 'text-up'
+                : changePct < 0
+                  ? 'text-down'
+                  : 'text-ink-muted'
+            }`}
+          >
+            {changePct > 0 ? '▲' : changePct < 0 ? '▼' : ''}{' '}
+            {changePct > 0 ? '+' : ''}
+            {changePct.toFixed(2)}%{' '}
+            <span className="text-ink-faint">(24h)</span>
+          </span>
+        )}
         {tipActive && (
           <span
             className="relative flex h-2 w-2"
