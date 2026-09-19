@@ -313,8 +313,12 @@ against.
   `SeedIntraLedgerSeq`, evict, watch `SumSACBalancesAtOrBefore` fall to zero, then
   restore and watch it return. Still outstanding and NOT covered here: the lake
   walker (`clickhouse.extractEntryChanges`) has no eviction phase, so
-  `ledger_entries_current` and a lake-sourced SAC seed still reconstruct an
-  archived entry as live.
+  `stellar.ledger_entries_current` keeps an archived entry's last write as its
+  current version and any reader of that table without a liveness filter of its
+  own reads it as live. The lake readers that could reinstate a supply
+  component already carry one (`ClassifyTTLLiveness`, v0.21.4 — the SAC seed and
+  the pool-state readers), so this fix does not depend on the lake half landing;
+  it narrows the remaining gap to the current-state projection and to history.
 
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with

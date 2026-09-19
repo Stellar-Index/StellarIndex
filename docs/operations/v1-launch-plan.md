@@ -3816,7 +3816,9 @@ the spec, so the wire-freeze prerequisite is met).
 >    **Partly closed 2026-09-19 (Q119):** the live dispatcher now walks
 >    the evicted-keys list and observes each as a removal; the lake
 >    walker does not, so this line still holds for
->    `ledger_entries_current`, the SAC seed and all history (§2.4).
+>    `ledger_entries_current` and all history (§2.4). The SAC seed is no
+>    longer exposed — it drops positively-archived keys through
+>    `ClassifyTTLLiveness` (v0.21.4).
 >
 > Two tools were added to stop this class recurring:
 > `scripts/ops/route-sweep.sh` (every OpenAPI GET) and
@@ -3831,7 +3833,7 @@ the spec, so the wire-freeze prerequisite is met).
 | **Balances** | 🔴 **C2-4c live**: ~38% of sampled accounts serve a before-image. Ordinal re-derive → D3 → re-verify (§2.3.1) |
 | **Claimable** | ✅ SEED DONE — 3,694,623 rows / 30,753 assets; AQUA DB now 41,783 balances = 13.90B (Horizon 13.74B). Data gap CLOSED |
 | **Supply refresh** | 🔴 **CS-102 — 37 of 48 watched assets serve FROZEN supply. ROOT-CAUSED + FIXED in code (`e21fa3d0`), pending the v0.21.2 deploy.** The freshness anchor measured per-ASSET last activity instead of the OBSERVER watermark, so quiet assets read as stalled and every snapshot was refused. Un-latented by the claimable seed. NO operator decision needed (the earlier dormancy-horizon ask is retracted). My earlier "0% success / 966 dormancy rejections" line was two measurement errors: cumulative counters read as a rate, and `dormant` (an ACCEPTED outcome) counted as a rejection |
-| **Eviction** | 🟡 **LIVE PATH FIXED 2026-09-19 (Q119)** — the dispatcher walks the LedgerCloseMeta evicted-keys list and observes each as a removal, so an archived SAC balance leaves the served supply from the next deploy (§2.4). The LAKE walker still has no eviction phase, so `ledger_entries_current` and a lake-sourced seed still read archived contract_data as live, and history (PHO +157%) is unchanged until that lands + a re-derive. Row was: 🔴 Not ingested at all [DECIDE] |
+| **Eviction** | 🟡 **LIVE PATH FIXED 2026-09-19 (Q119)** — the dispatcher walks the LedgerCloseMeta evicted-keys list and observes each as a removal, so an archived SAC balance leaves the served supply from the next deploy (§2.4). The LAKE walker still has no eviction phase, so `ledger_entries_current` keeps archived contract_data as its current version and history (PHO +157%) is unchanged until that lands + a re-derive; the seed and pool-state readers already filter it at read time (`ClassifyTTLLiveness`, v0.21.4). Row was: 🔴 Not ingested at all [DECIDE] |
 | Deployed | **v0.21.1** (cut + deployed 2026-07-27, all 6 binaries, edge smoke 13/13, `-ch` copy done). Main is ahead with **v0.21.2 material NOT yet deployed**: sep41 projector wiring `ae7a082d`, redstone registry `9bfcf5da`, SAC seed windowing `7bede7e7`, claimable seed `120bf7c3`, **CS-102 supply-freshness `e21fa3d0`** |
 | Lake | Dedup complete; post-dedup completeness re-audit PASSED; CH ingest at tip (lag seconds) |
 | Galexie trim | Done + verified; cold reads OK. **Soak 8× PASS / 0 FAIL — evidence half MET**; now waiting only on the clock (treat as 17:00 **UTC**, see §2.5); snapshot `data/minio@pre-trim-2026-07-26` held (3.2 T) |
@@ -4305,12 +4307,21 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
     TimescaleDB.
   - 🔴 **STILL OPEN after that — the LAKE half.**
     `clickhouse.extractEntryChanges` mirrors the walk's three transaction
-    phases and has NO eviction phase, so `ledger_entries_current` still
-    serves archived entries as live and a lake-sourced SAC seed still
-    reconstructs them. It needs the same phase plus a re-derive of the
-    affected range; the live fix does not make PHO's HISTORICAL rows
-    correct, only its future ones. The [DECIDE] above therefore narrows
-    to the lake/seed side alone.
+    phases and has NO eviction phase, so `stellar.ledger_entries_current`
+    keeps an archived entry's last write as its current version and any
+    reader of that table without a liveness filter of its own reads it as
+    live. It needs the same phase plus a re-derive of the affected range;
+    the live fix does not make PHO's HISTORICAL rows correct, only its
+    future ones.
+  - ⚠️ **The [DECIDE] above is narrower than it reads: the "interim TTL
+    filter" half ALREADY SHIPPED in v0.21.4** —
+    `clickhouse.ClassifyTTLLiveness` against the slim
+    `stellar.ttl_live_until` projection, applied by BOTH SAC seed paths
+    (`emitLiveSeeds`, `sacSeedReducer.dropArchived`, fail-open: only a
+    positively-resolved lapsed TTL drops a key) and by the
+    Soroswap/Phoenix/Comet pool-state readers. So a re-seed does not
+    reinstate archived balances. What is left to decide is only whether
+    the lake grows real eviction ingest plus a re-derive of history.
 - **🔴 NEW 2026-07-27 — claimable-balance supply component is UNSEEDED
   (material classic-supply understatement).** Found running the §2.6
   AQUA honesty check. `claimable_observations` holds **997 rows total**,
