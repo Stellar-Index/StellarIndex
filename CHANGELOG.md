@@ -114,6 +114,24 @@ against.
   `stellarindex_dashboard_base_url: ""` still render an empty key, and the
   API answers 503 on login there. To check a live host without reading the
   key: `journalctl -u stellarindex-api | grep "mail transport is NOT configured"`.
+- **ops (compute-completeness, verify-reconciliation):** a soroswap pair
+  seed that is configured and fails now stops the run instead of being
+  printed and ignored. The seed is a live RPC sweep of the factory and was
+  the one input read before the per-source loop that logged and continued
+  while every sibling returned; it also returns part-way through, so a
+  failure could leave the re-derive decoder holding some pairs and not
+  others. Every event of a missing pair then failed the decoder's match,
+  the projection re-derive expected zero against real served trades, and
+  `projection_ok=false` was published over healthy data — after which the
+  next `-pass` re-floored soroswap, the first catalogue source, at genesis.
+  Both commands now return the error (no snapshot is written, the last real
+  verdict stands, the timer exits non-zero). A seed that is *disabled* is
+  not a failure and does not stop anything: with
+  `oracle.soroswap.factory_contract` empty — the documented disable, the
+  config default, and what testnet and futurenet run — the seed is skipped
+  with a one-line notice and every source is still evaluated, the same
+  split `verify-decoders` already makes. A factory that is set with no RPC
+  endpoint to sweep it from is a failure. (RLT-416, #805)
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process

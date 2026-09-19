@@ -74,8 +74,11 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 		return fmt.Errorf("verify-reconciliation: %w", verr)
 	}
 	if *only == "" || *only == "soroswap" {
+		// Fail CLOSED (RLT-416): a failed or partial seed leaves the re-derive
+		// decoder rejecting real pair events, which reads as expected=0
+		// against real served rows — a mismatch that is not in the data.
 		if err := seedSoroswapForRecon(ctx, cfg, soroswapDec); err != nil {
-			fmt.Fprintf(os.Stderr, "verify-reconciliation: soroswap seed failed (%v) — soroswap counts may undercount pre-%d pairs\n", err, lo)
+			return fmt.Errorf("verify-reconciliation: soroswap pair seed: %w", err)
 		}
 	}
 
@@ -180,25 +183,42 @@ func sumCounts(m map[uint32]int) int {
 }
 
 // seedSoroswapForRecon seeds the soroswap pair registry from the
-// factory via RPC — mirrors verify-decoders so the re-derive resolves
-// token identities for pairs created before the audited range.
+// factory via RPC so the re-derive resolves token identities for pairs
+// created before the audited range. Same contract as verify-decoders'
+// seed (internal/ops/diagnostics/verify_decoders.go):
+//
+//   - oracle.soroswap.factory_contract EMPTY is the documented way to
+//     DISABLE the seed (config.SoroswapConfig) and is the default, and
+//     the shape both test nets run. It is not a failure: returns nil with
+//     nothing seeded; the decoder still learns the pairs whose new_pair
+//     events fall inside the re-derived range.
+//   - factory SET but no RPC endpoint, or the sweep erroring, IS a
+//     failure and returns an error the caller must not swallow (RLT-416).
+//     SeedFromFactoryRPC returns mid-loop, so an error can mean a
+//     PARTIALLY seeded registry: every event of an unseeded pair fails
+//     Matches, the projection re-derive expects 0 against real served
+//     rows, and compute-completeness would publish projection_ok=false
+//     over healthy data — which projectionFloor then answers the next
+//     night with a from-genesis re-derive of the first catalogue source.
 func seedSoroswapForRecon(ctx context.Context, cfg config.Config, dec *soroswap.Decoder) error {
-	if cfg.Oracle.Soroswap.FactoryContract == "" {
-		return fmt.Errorf("oracle.soroswap.factory_contract empty")
+	factory := cfg.Oracle.Soroswap.FactoryContract
+	if factory == "" {
+		fmt.Fprintln(os.Stderr, "verify-reconciliation: soroswap pair seed disabled (oracle.soroswap.factory_contract empty)")
+		return nil
 	}
 	endpoint := cfg.Oracle.Soroswap.SeedRPCEndpoint
 	if endpoint == "" && len(cfg.Stellar.RPCEndpoints) > 0 {
 		endpoint = cfg.Stellar.RPCEndpoints[0]
 	}
 	if endpoint == "" {
-		return fmt.Errorf("no RPC endpoint (set oracle.soroswap.seed_rpc_endpoint or stellar.rpc_endpoints)")
+		return fmt.Errorf("oracle.soroswap.factory_contract is set but no RPC endpoint (set oracle.soroswap.seed_rpc_endpoint or stellar.rpc_endpoints)")
 	}
 	seedCtx, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	rpc := stellarrpc.New(endpoint, stellarrpc.WithTimeout(60*time.Second))
-	n, err := dec.SeedFromFactoryRPC(seedCtx, rpc, cfg.Oracle.Soroswap.FactoryContract)
+	n, err := dec.SeedFromFactoryRPC(seedCtx, rpc, factory)
 	if err != nil {
-		return err
+		return fmt.Errorf("after %d pair(s) seeded: %w", n, err)
 	}
 	fmt.Fprintf(os.Stderr, "verify-reconciliation: seeded %d soroswap pairs\n", n)
 	return nil

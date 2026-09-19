@@ -199,8 +199,12 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		return fmt.Errorf("compute-completeness: %w", verr)
 	}
 	if *only == "" || *only == "soroswap" {
+		// Fail CLOSED (RLT-416), like every other pre-loop input: a failed or
+		// partial seed publishes a false projection red for soroswap. Returning
+		// writes NO snapshot, so the last real verdict stands. A DISABLED seed
+		// (no factory configured) is not a failure — see seedSoroswapForRecon.
 		if serr := seedSoroswapForRecon(ctx, cfg, soroswapDec); serr != nil {
-			fmt.Fprintf(os.Stderr, "compute-completeness: soroswap seed failed (%v) — soroswap projection may undercount\n", serr)
+			return fmt.Errorf("compute-completeness: soroswap pair seed: %w", serr)
 		}
 	}
 
