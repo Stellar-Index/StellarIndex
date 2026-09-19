@@ -38,6 +38,15 @@ against.
   comment to `UpsertCursor` would be pointed at a call the projector no
   longer makes. The comment now names `AdvanceCursorFrom` and the finding
   that moved it.
+- **explorer / account-activity probe lease (test coverage):** audit finding
+  F120 ("`probeSchema` never re-validates a positive verdict") named the same
+  latch-for-process-lifetime defect as F119, seen from the
+  `accountActivityAvailable` caller side; the fix already landed under F119
+  and covers every `requireRows` probe through the shared `schemaProbe`
+  primitive, including this one. Added a regression test pinning that the
+  account-activity watermark's probe is re-confirmed once its lease expires
+  (`TestAccountActivityWatermark_PositiveLeaseRenewsAfterTruncate`) — no
+  production code changed.
 
 - **docs / phoenix gating:** the tree's four "the factory's creation events
   predate the lake" claims are corrected — the events run from ledger
