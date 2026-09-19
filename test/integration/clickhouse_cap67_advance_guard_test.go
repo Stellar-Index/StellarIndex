@@ -37,9 +37,10 @@ func TestSetCap67MovementsWatermark_OnlyAdvancesOverAProvenWindow(t *testing.T) 
 	defer cancel()
 	addr := clickhouseAddr(t)
 
-	// An isolated high ledger range: this test asserts on an absolute
-	// watermark, and nothing else in the suite writes here.
-	const base = uint32(220_000_000)
+	// An isolated ledger range nothing else in the suite writes to, below the
+	// suite's global-tip claimants — see the note in
+	// clickhouse_cap67_to_clamp_test.go.
+	const base = uint32(160_700_000)
 
 	cap67TruncateWatermark(t)
 	t.Cleanup(func() { cap67TruncateWatermark(t) })

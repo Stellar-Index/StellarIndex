@@ -66,7 +66,7 @@ func cap67SeedLedgers(t *testing.T, ctx context.Context, addr string, seqs []uin
 	t.Cleanup(func() { _ = sink.Close(ctx) })
 	for _, seq := range seqs {
 		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
-			LedgerSeq: seq, CloseTime: time.Date(2027, 10, 1, 0, 0, 0, 0, time.UTC),
+			LedgerSeq: seq, CloseTime: time.Date(2027, 2, 10, 0, 0, 0, 0, time.UTC),
 			LedgerHash: "aa03", PrevHash: "bb03", ProtocolVersion: 23, BucketListHash: "cc03",
 			TotalCoins: 1, FeePool: 1, BaseFee: 100, BaseReserve: 5_000_000,
 		}}
@@ -92,9 +92,14 @@ func TestCap67Movements_ExplicitToIsClampedToTheContiguousTip(t *testing.T) {
 	defer cancel()
 	addr := clickhouseAddr(t)
 
-	// An isolated high ledger range: this test asserts on an absolute
-	// watermark, and nothing else in the suite writes here.
-	const base = uint32(218_000_000)
+	// An isolated ledger range nothing else in the suite writes to, kept
+	// BELOW the two tests that claim the lake's global tip
+	// (TestNetworkThroughput_DedupsReingestedLedger at 200M,
+	// TestSDEXOrderBook_ConvergesAfterLakeHoleIsFilled at 217M) — and with a
+	// close_time below theirs, since NetworkThroughput anchors its day window
+	// to max(close_time) over the whole table. The assertions here need only
+	// a hole above `base`, never the global maximum.
+	const base = uint32(160_500_000)
 
 	cap67TruncateWatermark(t)
 	t.Cleanup(func() { cap67TruncateWatermark(t) })
@@ -179,7 +184,9 @@ func TestCap67Movements_RefusesToAdvanceOverUnderivedLedgers(t *testing.T) {
 	defer cancel()
 	addr := clickhouseAddr(t)
 
-	const base = uint32(219_000_000)
+	// Below the suite's global-tip claimants — see the note on the previous
+	// test's base.
+	const base = uint32(160_600_000)
 
 	cap67TruncateWatermark(t)
 	t.Cleanup(func() { cap67TruncateWatermark(t) })
