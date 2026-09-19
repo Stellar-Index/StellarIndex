@@ -37,17 +37,29 @@ exit "${STUB_PSQL_RC:-0}"
 
 const stubOps = `#!/usr/bin/env bash
 printf 'OPS %s\n' "$*" >> "$STUB_CALLS"
-from=""; to=""; srcs=""; pre=0
+from=""; to=""; srcs=""; pre=0; rec=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -from) from="$2"; shift ;;
     -to) to="$2"; shift ;;
     -sources) srcs="$2"; shift ;;
     -preflight) pre=1 ;;
+    -record-dirty-window) rec=1 ;;
   esac
   shift
 done
 echo "ch-rebuild: seeded 4821 soroswap pairs from PG" >&2
+# The record is its own mode: it reads no lake and re-derives nothing, so
+# neither the -write guards nor a re-derive's failure apply to it. Only
+# STUB_FAIL_RECORD (PG down, no binary) can make it fail.
+if [ "$rec" = 1 ]; then
+  if [ -n "${STUB_FAIL_RECORD:-}" ] && [ "$from" = "$STUB_FAIL_RECORD" ]; then
+    echo "ch-rebuild: -record-dirty-window (cctp): dial tcp 127.0.0.1:5432: connect: connection refused" >&2
+    exit 1
+  fi
+  echo "$STUB_RECORDED_PREFIX [$from,$to] sources=$srcs"
+  exit 0
+fi
 # The real guards run on EVERY -write invocation, preflight or not: a
 # stub that refused only under -preflight could not show what an
 # un-preflighted script does when the binary says no.
@@ -121,8 +133,26 @@ func (r scriptRun) writes() []scriptCall { return r.ofKind("OPS", true, false) }
 // preflights returns the binary's -write -preflight invocations.
 func (r scriptRun) preflights() []scriptCall { return r.ofKind("OPS", true, true) }
 
+// records returns the binary's -record-dirty-window invocations: the
+// projection dirty windows the script FILED, as opposed to the ones it only
+// printed a command for.
+func (r scriptRun) records() []scriptCall {
+	var out []scriptCall
+	for _, c := range r.calls {
+		if c.kind == "OPS" && c.has("-record-dirty-window") {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 // sequence renders the calls as a compact ordered trace, e.g.
-// "preflight@61000000 psql write@61000000".
+// "preflight@61000000 psql write@61000000 record@61000000".
+//
+// The three OPS modes are rendered apart because they are not
+// interchangeable: `preflight@` asks, `write@` re-derives, and `record@`
+// files an emptied window with the completeness verdict. Collapsing the
+// last two into `write@` once hid whether the script filed anything at all.
 func (r scriptRun) sequence() string {
 	var out []string
 	for _, c := range r.calls {
@@ -131,6 +161,8 @@ func (r scriptRun) sequence() string {
 			out = append(out, "psql")
 		case c.has("-preflight"):
 			out = append(out, "preflight@"+c.flag("-from"))
+		case c.has("-record-dirty-window"):
+			out = append(out, "record@"+c.flag("-from"))
 		default:
 			out = append(out, "write@"+c.flag("-from"))
 		}
@@ -185,6 +217,7 @@ func runProjectedScript(t *testing.T, dir string, env map[string]string) scriptR
 		"PATH":                      bin + ":/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
 		"STUB_CALLS":                calls,
 		"STUB_PREFLIGHT_PREFIX":     chRebuildPreflightPrefix,
+		"STUB_RECORDED_PREFIX":      chRebuildDirtyRecordedPrefix,
 		"OPS":                       filepath.Join(bin, "stellarindex-ops-ch"),
 		"CFG":                       filepath.Join(dir, "stellarindex.toml"),
 		"STATE":                     filepath.Join(dir, "state", "rebuild-done-windows.txt"),

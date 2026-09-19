@@ -39,16 +39,17 @@
 #      this box; the ADR-0033 completeness verdict cannot see it. So every
 #      state that leaves a window emptied — a failed re-derive, an ambiguous
 #      DELETE, a window still pending in $DIRTY at the start of a run —
-#      prints a TELL THE VERDICT line with the command that files the range
-#      as a projection dirty window per deleted source:
+#      FILES the range as a projection dirty window per deleted source, by
+#      running the command it also prints:
 #        ch-rebuild -from LO -to HI -sources <deleted> -record-dirty-window
 #      compute-completeness then re-reconciles that range instead of carrying
 #      its prior clean claim over it, and clears the obligation only with the
 #      verdict that discharges it (F072). Nothing here ever retracts one: this
 #      script's own re-derive is the CAUSE of the dirtiness, not evidence
 #      against it, so one re-reconcile per incident is the price of the claim.
-#      FILING IS STILL THE OPERATOR'S STEP — the script prints it, does not
-#      run it (F075; wiring the call is pending).
+#      The command is printed as well as run, because the filing can itself
+#      fail (no binary, PG down): the run then says COULD NOT FILE and the
+#      printed line is what the operator re-runs (F075).
 #
 # Done-state ($STATE) is per source: `source lo hi`. A bare window start is
 # the pre-per-source format, written by the full-SRC run, and still reads as
@@ -62,11 +63,12 @@
 # back only where the served tier is certainly wrong rather than merely
 # un-re-verified: the window is EMPTY.
 #
-# NOT covered while filing is manual: the window between the DELETE and the
-# operator reading this log. A kill -9 or power loss adds a second gap — the
-# emptied window survives in $DIRTY, which no verdict reads. After ANY
-# interrupted run, read $DIRTY and file each line before trusting
-# /v1/coverage:
+# The one gap no in-process handler can close: a kill -9 or power loss
+# between the DELETE and the filing. The emptied window survives only in
+# $DIRTY, which no verdict reads — so the NEXT run of this script files every
+# $DIRTY line before it recovers anything. Until a run happens, /v1/coverage
+# still carries its prior clean claim over that range; if the box stays down,
+# file each $DIRTY line by hand:
 #   stellarindex-ops-ch ch-rebuild -config CFG -from LO -to HI \
 #     -sources <the $DIRTY line's sources> -record-dirty-window
 #
@@ -197,13 +199,26 @@ mark_dirty() { grep -qxF "$1 $2 $3" "$DIRTY" || echo "$1 $2 $3" >> "$DIRTY"; }  
 # ADR-0033 completeness verdict cannot see it, so an emptied window needs a
 # SECOND record: a projection dirty window, which makes the next
 # compute-completeness re-reconcile the range instead of carrying its prior
-# clean claim over it. Printed rather than run: filing it is one command and
-# the operator is already reading this log because a window is emptied.
+# clean claim over it. Printed by file_dirty_window, which then runs it.
 dirty_window_note() {
   printf '%s\n' "TELL THE VERDICT [$1,$2] sources=$3 — until this is filed, /v1/coverage keeps carrying its prior clean claim over an EMPTY window. File it with:" \
     "  $OPS ch-rebuild -config $CFG -from $1 -to $2 -sources $3 -record-dirty-window" \
     "compute-completeness clears it only with the verdict that discharges it; this script never retracts one."
 }
+# file_dirty_window LO HI CSV — rule 4, carried out rather than suggested.
+# Printing the command left the obligation on an operator reading this log,
+# so between a failed re-derive and someone's attention /v1/coverage kept
+# certifying an EMPTY window complete (F075). The note still goes to the log
+# first: it is the fallback when the filing below cannot be made, and what an
+# operator greps for. Non-fatal by itself — every caller either exits
+# non-zero anyway or is on its way to the recovery that removes the hole.
+file_dirty_window() {
+  dirty_window_note "$1" "$2" "$3"
+  $OPS ch-rebuild -config "$CFG" -from "$1" -to "$2" -sources "$3" -record-dirty-window && return 0
+  echo "COULD NOT FILE the projection dirty window [$1,$2] sources=$3 — until the command above is run by hand, /v1/coverage keeps carrying its prior clean claim over this range."
+  return 1
+}
+
 clear_dirty() {
   local rc=0
   grep -vxF "$1 $2 $3" "$DIRTY" > "$DIRTY.tmp" || rc=$?
@@ -272,13 +287,13 @@ run_window() {
          # rows. So the verdict is told the range may be emptied — a
          # spurious window costs one re-reconcile, the other way round
          # costs a certified hole.
-         dirty_window_note "$lo" "$hi" "$rederive"
+         file_dirty_window "$lo" "$hi" "$rederive"
          exit 1; }
 
   echo "--- window [$lo,$hi] REBUILD sources=$rederive $(date -u) ---"
   $OPS ch-rebuild -config "$CFG" -from "$lo" -to "$hi" -sources "$rederive" -write \
     || { echo "REBUILD FAILED [$lo,$hi] — WINDOW LEFT EMPTIED for sources=$rederive. Recorded in $DIRTY. Re-run this script: it rebuilds this window first, for exactly these sources, whatever SRC/FROM/TO it is given. Do not hand-edit $STATE or $DIRTY."
-         dirty_window_note "$lo" "$hi" "$rederive"
+         file_dirty_window "$lo" "$hi" "$rederive"
          exit 1; }
 
   IFS=, read -r -a names <<<"$rederive"
@@ -314,7 +329,8 @@ if [ "${#dirty_lines[@]}" -gt 0 ]; then
     if ! { is_ledger "${dlo:-}" && is_ledger "${dhi:-}" && is_source_csv "${dsrcs:-}" && [ -z "${extra:-}" ] && [ -z "$(unknown_in "$dsrcs")" ]; }; then
       echo "REFUSED: corrupt line in $DIRTY: '$line' — an emptied window may be recorded there; repair it by hand before re-running"; exit 2
     fi
-    dirty_window_note "$dlo" "$dhi" "$dsrcs"
+    file_dirty_window "$dlo" "$dhi" "$dsrcs" \
+      || echo "recovering [$dlo,$dhi] anyway — a recovery that succeeds removes the hole itself, and one that fails files the window again"
     run_window "$dlo" "$dhi" "$dsrcs" recover
   done
 fi

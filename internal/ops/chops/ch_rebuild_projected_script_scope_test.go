@@ -248,8 +248,8 @@ func TestChRebuildProjectedScript_MidRunFailureIsRecordedAndRecoveredFirst(t *te
 	if failed.exit == 0 {
 		t.Fatalf("exit 0 although the re-derive failed\n%s", failed.log)
 	}
-	if got, want := failed.sequence(), "preflight@61000000 psql write@61000000"; got != want {
-		t.Errorf("failed run trace = %q, want %q (it must stop, not move on to the next window)", got, want)
+	if got, want := failed.sequence(), "preflight@61000000 psql write@61000000 record@61000000"; got != want {
+		t.Errorf("failed run trace = %q, want %q (it must file the emptied window and stop, not move on to the next one)", got, want)
 	}
 	if strings.TrimSpace(failed.state) != "" {
 		t.Errorf("a window whose re-derive FAILED was recorded done: %q", failed.state)
@@ -265,7 +265,8 @@ func TestChRebuildProjectedScript_MidRunFailureIsRecordedAndRecoveredFirst(t *te
 	if narrowed.exit != 0 {
 		t.Fatalf("recovery run: exit %d\n%s", narrowed.exit, narrowed.log)
 	}
-	if got, want := narrowed.sequence(), "preflight@61000000 psql write@61000000 preflight@62000000 psql write@62000000"; got != want {
+	if got, want := narrowed.sequence(),
+		"record@61000000 preflight@61000000 psql write@61000000 preflight@62000000 psql write@62000000"; got != want {
 		t.Fatalf("recovery trace = %q, want %q", got, want)
 	}
 	if got := narrowed.writes()[0].flag("-sources"); got != scriptDefaultSources {

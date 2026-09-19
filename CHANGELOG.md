@@ -116,8 +116,12 @@ against.
   `ch-rebuild -record-dirty-window`, which records one projection dirty window
   per deleted source under the catalogue names the reconcile keys on, so the
   next `compute-completeness` re-reconciles the range instead of carrying the
-  claim. The script PRINTS that command and does not run it — filing stays the
-  operator's step for now. The obligation is discharged only by the verdict
+  claim. The script RUNS that command as well as printing it: the filing used
+  to wait on an operator reading the log, so the hole stayed certified until
+  someone did. A filing that itself fails (Postgres down, no binary) says
+  `COULD NOT FILE` and leaves the printed command as the fallback. A window
+  emptied by a kill -9 before the filing is filed by the next run, before it
+  recovers anything. The obligation is discharged only by the verdict
   that covers it — nothing in the rebuild path retracts one. A SUCCESSFUL window still records
   nothing, on purpose (#408): one obligation per routine window would point
   the next nightly at ~12.9M ledgers across 8 un-prefiltered sources and time
