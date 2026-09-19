@@ -83,11 +83,60 @@ func requireSuccessfulTxRestriction(t *testing.T, name, q string) {
 	}
 }
 
+// requireSuccessfulTxJoinBeforeOuterWindow pins the SQL SHAPE all three
+// op-stream queries share, for two independent reasons.
+//
+// (1) The successful-tx set must be a grace_hash INNER JOIN over a derived
+// table, never `tx_hash IN (SELECT ...)`. IN materialises the whole window's
+// tx-hash set (CreatingSetsTransform) before the join runs, which blew the
+// 10 GiB query budget on a dense 250k-ledger window, 2026-07-11.
+//
+// (2) That join must be spelled BEFORE the outer ledger WHERE. Hoisting the
+// outer window into a derived table also removes the IN-set, but it stops
+// ClickHouse propagating the ledger window through o.ledger_seq = r.ledger_seq,
+// so stellar.operation_results -- full chain history of wide result_xdr --
+// loses primary-key pruning and full-scans, as grace_hash's spilled build side.
+// The live proof of the pruning is TestStreamOpsQueriesPruneOperationResults
+// (test/integration); this is its cheap text guard.
+//
+// Returns the byte offsets of the derived table's window clause and of the
+// outer window clause, in that order, so a caller can pin its bind order.
+func requireSuccessfulTxJoinBeforeOuterWindow(t *testing.T, name, q string) (sub, outer int) {
+	t.Helper()
+	if strings.Contains(q, "tx_hash IN (") {
+		t.Errorf("%s builds the successful-tx set with an IN-subquery — CreatingSetsTransform "+
+			"blew the 10 GiB budget on a dense 250k-ledger window, 2026-07-11:\n%s", name, q)
+	}
+	if !strings.Contains(q, "INNER JOIN (") {
+		t.Errorf("%s has no successful-tx INNER JOIN:\n%s", name, q)
+	}
+	sub = strings.Index(q, "WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?")
+	outer = strings.Index(q, "WHERE o.ledger_seq BETWEEN ? AND ?")
+	if sub < 0 || outer < 0 {
+		t.Fatalf("%s is missing a bound window clause (sub@%d outer@%d):\n%s", name, sub, outer, q)
+	}
+	if sub > outer {
+		t.Fatalf("%s spells the outer ledger window BEFORE the successful-tx join (sub@%d, outer@%d) — "+
+			"ClickHouse then cannot propagate that window into stellar.operation_results, which full-scans:\n%s",
+			name, sub, outer, q)
+	}
+	return sub, outer
+}
+
 // TestSDEXOpsQuery_Shape pins StreamSDEXOps' SQL.
 func TestSDEXOpsQuery_Shape(t *testing.T) {
 	q := sdexOpsQuery()
 
 	requireSuccessfulTxRestriction(t, "sdexOpsQuery", q)
+	requireSuccessfulTxJoinBeforeOuterWindow(t, "sdexOpsQuery", q)
+	// The derived table must DEDUPE. This reader takes no FINAL, so
+	// stellar.transactions can hand back the same tx_hash from two un-merged
+	// parts; IN had set semantics, a join does not, and a duplicate build-side
+	// row fans one op out into two rows. GROUP BY tx_hash restores it.
+	if !strings.Contains(q, "GROUP BY tx_hash") {
+		t.Errorf("sdexOpsQuery's successful-tx derived table does not dedupe (GROUP BY tx_hash) — "+
+			"an un-merged duplicate transactions part would fan each op row out:\n%s", q)
+	}
 
 	// The join memory bound. grace_hash spills join buckets to disk; without
 	// it this join is the sdex-reconcile OOM class (three OOMs, 2026-07).
@@ -128,28 +177,21 @@ func TestSDEXOpsQuery_Shape(t *testing.T) {
 }
 
 // TestSDEXOpsQuery_BindOrderMatchesClauseOrder is the args-drift assertion.
-// StreamSDEXOps binds (from, to, from, to); the query must therefore spell its
-// windows in that order — outer scan first, successful-tx subquery second.
-// If a refactor hoists the subquery above the outer WHERE (which is exactly
-// how contractCallOpsQuery is written), the same argument list now binds the
-// windows to the wrong clauses. Today both pairs are the same values, so this
-// is invisible at runtime; it stops being invisible the moment a caller
-// windows the two apart.
+// StreamSDEXOps binds (from, to, from, to) and the query now spells the
+// successful-tx derived table FIRST — the contractCallOpsQuery nesting — so the
+// FIRST pair is the derived table's window and the second is the outer scan's.
+// Moving a clause without moving the caller's argument list with it is a silent
+// wrong-window read: today both pairs carry the same values, so it is invisible
+// at runtime, and it stops being invisible the moment a caller windows the two
+// apart. requireSuccessfulTxJoinBeforeOuterWindow owns the ordering assertion
+// (the same order is also what keeps operation_results primary-key-pruned).
 func TestSDEXOpsQuery_BindOrderMatchesClauseOrder(t *testing.T) {
 	q := sdexOpsQuery()
 
-	outer := strings.Index(q, "WHERE o.ledger_seq BETWEEN ? AND ?")
-	sub := strings.Index(q, "WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?")
-	if outer < 0 {
-		t.Fatalf("sdexOpsQuery has no outer ledger-window clause:\n%s", q)
-	}
-	if sub < 0 {
-		t.Fatalf("sdexOpsQuery has no successful-tx window clause:\n%s", q)
-	}
-	if outer > sub {
-		t.Fatalf("sdexOpsQuery binds (from,to,from,to) with the outer window FIRST, "+
-			"but the successful-tx window is spelled first (outer@%d, sub@%d) — "+
-			"the args now bind to the wrong clauses:\n%s", outer, sub, q)
+	sub, outer := requireSuccessfulTxJoinBeforeOuterWindow(t, "sdexOpsQuery", q)
+	if sub >= outer {
+		t.Fatalf("sdexOpsQuery binds (from,to,from,to) with the successful-tx window FIRST, "+
+			"but it is not spelled first (sub@%d, outer@%d):\n%s", sub, outer, q)
 	}
 	// Exactly four placeholders, matching the four bound arguments.
 	if got := strings.Count(q, "?"); got != 4 {
@@ -165,6 +207,11 @@ func TestClassicOpsQuery_Shape(t *testing.T) {
 	q := classicOpsQuery(opTypes)
 
 	requireSuccessfulTxRestriction(t, "classicOpsQuery", q)
+	requireSuccessfulTxJoinBeforeOuterWindow(t, "classicOpsQuery", q)
+	if !strings.Contains(q, "GROUP BY tx_hash") {
+		t.Errorf("classicOpsQuery's successful-tx derived table does not dedupe (GROUP BY tx_hash) — "+
+			"an un-merged duplicate transactions part would fan each op row out:\n%s", q)
+	}
 	for _, s := range []string{
 		"SETTINGS join_algorithm = 'grace_hash'",
 		"grace_hash_join_initial_buckets = 32",
@@ -186,13 +233,6 @@ func TestClassicOpsQuery_Shape(t *testing.T) {
 	// op types the caller did not ask for.
 	if got := strings.Count(q, "OperationType"); got != len(opTypes) {
 		t.Errorf("classicOpsQuery names %d op types, want exactly the caller's %d", got, len(opTypes))
-	}
-	// Same bind order as sdexOpsQuery: outer window, then subquery window.
-	outer := strings.Index(q, "WHERE o.ledger_seq BETWEEN ? AND ?")
-	sub := strings.Index(q, "WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?")
-	if outer < 0 || sub < 0 || outer > sub {
-		t.Fatalf("classicOpsQuery clause order does not match its (from,to,from,to) bind order "+
-			"(outer@%d, sub@%d):\n%s", outer, sub, q)
 	}
 	if got := strings.Count(q, "?"); got != 4 {
 		t.Fatalf("classicOpsQuery has %d placeholders, but StreamClassicOps binds 4:\n%s", got, q)
@@ -252,15 +292,9 @@ func TestContractCallOpsQuery_Shape(t *testing.T) {
 			t.Errorf("contractCallOpsQuery missing bounded setting %q:\n%s", s, q)
 		}
 	}
-	// The successful-tx set MUST be a join, not an IN-subquery — that is the
-	// whole fix. `IN (` reappearing here is the regression.
-	if strings.Contains(q, "tx_hash IN (") {
-		t.Errorf("contractCallOpsQuery reverted to an IN-subquery for the successful-tx set "+
-			"(CreatingSetsTransform blew the 10 GiB budget, 2026-07-11):\n%s", q)
-	}
-	if !strings.Contains(q, "INNER JOIN (") {
-		t.Errorf("contractCallOpsQuery lost its grace_hash INNER JOIN:\n%s", q)
-	}
+	// The successful-tx set MUST be a join spelled before the outer window —
+	// the shape all three op-stream queries now share. Asserted with the bind
+	// order below, by requireSuccessfulTxJoinBeforeOuterWindow.
 
 	// The contract match: the raw 32-byte id as a substring of the DECODED
 	// body. stellar.operations carries no contract_id column, so this is the
@@ -277,13 +311,12 @@ func TestContractCallOpsQuery_Shape(t *testing.T) {
 
 	// Bind order: subquery window FIRST (it is nested above the outer WHERE),
 	// then the outer window, then the contract hex LAST.
-	sub := strings.Index(q, "WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?")
-	outer := strings.Index(q, "WHERE o.ledger_seq BETWEEN ? AND ?")
+	sub, outer := requireSuccessfulTxJoinBeforeOuterWindow(t, "contractCallOpsQuery", q)
 	hex := strings.Index(q, "unhex(?)")
-	if sub < 0 || outer < 0 || hex < 0 {
-		t.Fatalf("contractCallOpsQuery missing a bound clause (sub@%d outer@%d hex@%d):\n%s", sub, outer, hex, q)
+	if hex < 0 {
+		t.Fatalf("contractCallOpsQuery missing its bound contract-hex clause:\n%s", q)
 	}
-	if !(sub < outer && outer < hex) {
+	if sub >= outer || outer >= hex {
 		t.Fatalf("contractCallOpsQuery clause order (sub@%d, outer@%d, hex@%d) does not match its "+
 			"(from,to,from,to,contractHex) bind order:\n%s", sub, outer, hex, q)
 	}

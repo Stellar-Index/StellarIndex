@@ -76,6 +76,8 @@ func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes
 	}
 	defer func() { _ = conn.Close() }()
 
+	// (from, to) twice: the successful-tx derived table's window FIRST (it is
+	// spelled first), then the outer scan's. See classicOpsQuery's bind-order note.
 	rows, err := conn.Query(ctx, classicOpsQuery(opTypes), from, to, from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query classic ops [%d,%d]: %w", from, to, err)
@@ -88,22 +90,31 @@ func StreamClassicOps(ctx context.Context, addr string, from, to uint32, opTypes
 // its text stays independently assertable (StreamClassicOps dials its own
 // connection via openRead — see sdexOpsQuery's note on the same seam).
 //
-// The FOUR bind parameters are, in order: the outer ledger window's from + to,
-// then the successful-tx subquery's from + to. opTypes is INTERPOLATED — see
-// classicOpTypeInList's compile-time-constants-only contract.
+// Shape and rationale are sdexOpsQuery's, clause for clause: the successful-tx
+// restriction is a grace_hash INNER JOIN over a `GROUP BY tx_hash` derived
+// table (never an IN-subquery — the set-build blew the 10 GiB budget on a dense
+// 250k-ledger window, 2026-07-11), and that join is spelled BEFORE the outer
+// WHERE so ClickHouse still propagates the ledger window through
+// o.ledger_seq = r.ledger_seq and primary-key-prunes stellar.operation_results.
+//
+// The FOUR bind parameters are, in order: the successful-tx derived table's
+// from + to (it is written FIRST), then the outer ledger window's from + to.
+// opTypes is INTERPOLATED — see classicOpTypeInList's
+// compile-time-constants-only contract.
 func classicOpsQuery(opTypes []string) string {
 	return fmt.Sprintf(`
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
 		       o.body_xdr, r.result_xdr
 		FROM stellar.operations AS o
+		INNER JOIN (
+		    SELECT tx_hash FROM stellar.transactions
+		    WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?
+		    GROUP BY tx_hash
+		) AS t ON o.tx_hash = t.tx_hash
 		INNER JOIN stellar.operation_results AS r
 		  ON o.ledger_seq = r.ledger_seq AND o.tx_hash = r.tx_hash AND o.op_index = r.op_index
 		WHERE o.ledger_seq BETWEEN ? AND ?
 		  AND o.op_type IN (%s)
-		  AND o.tx_hash IN (
-		      SELECT tx_hash FROM stellar.transactions
-		      WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?
-		  )
 		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, classicOpTypeInList(opTypes))
 }

@@ -73,10 +73,13 @@ type SDEXOp struct {
 // help: the merge isn't a sort spill). Duplicate rows from un-merged
 // parts are HARMLESS to every caller by construction: the census
 // consumer PK-dedups via its `seen` map and ch-rebuild's InsertTrade
-// is ON CONFLICT DO NOTHING. join_algorithm=full_sorting_merge keeps
-// the operations⋈operation_results join memory-bounded. Callers
-// re-deriving all history should window [from,to] so the result set
-// + the successful-tx IN-set stay bounded.
+// is ON CONFLICT DO NOTHING. join_algorithm=grace_hash keeps the
+// operations⋈operation_results join memory-bounded by spilling its
+// buckets to disk, and the successful-tx restriction is a JOIN over a
+// deduplicated derived table rather than an IN-subquery (the set-build
+// was the 10 GiB blowout of 2026-07-11 — see sdexOpsQuery). Callers
+// re-deriving all history should still window [from,to] so the result
+// set stays bounded.
 func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SDEXOp) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -84,6 +87,8 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 	}
 	defer func() { _ = conn.Close() }()
 
+	// (from, to) twice: the successful-tx derived table's window FIRST (it is
+	// spelled first), then the outer scan's. See sdexOpsQuery's bind-order note.
 	rows, err := conn.Query(ctx, sdexOpsQuery(), from, to, from, to)
 	if err != nil {
 		return fmt.Errorf("clickhouse: query sdex ops [%d,%d]: %w", from, to, err)
@@ -97,10 +102,26 @@ func StreamSDEXOps(ctx context.Context, addr string, from, to uint32, fn func(SD
 // via openRead, so it cannot be driven end-to-end by this package's stubConn
 // harness — the same seam, for the same reason, as txHashIndexBackfillQuery.
 //
-// The FOUR bind parameters are, in order: the outer ledger window's from + to,
-// then the successful-tx subquery's from + to. A clause reorder that does not
-// move the caller's argument list with it is a silent wrong-window read, which
-// is why the order is pinned by test rather than left to review.
+// The successful-tx restriction is a grace_hash INNER JOIN over a derived
+// table, not an IN-subquery: IN materialises the whole window's tx-hash set in
+// memory first (CreatingSetsTransform blew the 10 GiB query budget on a dense
+// 250k-ledger window, 2026-07-11 — the sibling contractCallOpsQuery was fixed
+// then, these two were not). GROUP BY tx_hash gives the derived table the SET
+// semantics IN had, so an un-merged duplicate transactions part cannot fan one
+// op row out into two — this reader takes NO FINAL, deliberately.
+//
+// The join is spelled BEFORE the outer WHERE, exactly as contractCallOpsQuery
+// does, and that placement is load-bearing: wrapping the outer ledger window in
+// a derived table instead stops ClickHouse propagating it through
+// o.ledger_seq = r.ledger_seq, and stellar.operation_results (full chain history
+// of wide result_xdr) loses primary-key pruning entirely — an unbounded scan,
+// which under grace_hash becomes the join's spilled build side.
+//
+// The FOUR bind parameters are, in order: the successful-tx derived table's
+// from + to (it is written FIRST), then the outer ledger window's from + to. A
+// clause reorder that does not move the caller's argument list with it is a
+// silent wrong-window read, which is why the order is pinned by test rather
+// than left to review.
 //
 // The op-type filter is INTERPOLATED, not bound — see tradeOpTypeInList for
 // why that carries no injection risk (compile-time constants only).
@@ -109,14 +130,15 @@ func sdexOpsQuery() string {
 		SELECT o.ledger_seq, o.close_time, o.tx_hash, o.op_index, o.source_account,
 		       o.body_xdr, r.result_xdr
 		FROM stellar.operations AS o
+		INNER JOIN (
+		    SELECT tx_hash FROM stellar.transactions
+		    WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?
+		    GROUP BY tx_hash
+		) AS t ON o.tx_hash = t.tx_hash
 		INNER JOIN stellar.operation_results AS r
 		  ON o.ledger_seq = r.ledger_seq AND o.tx_hash = r.tx_hash AND o.op_index = r.op_index
 		WHERE o.ledger_seq BETWEEN ? AND ?
 		  AND o.op_type IN (%s)
-		  AND o.tx_hash IN (
-		      SELECT tx_hash FROM stellar.transactions
-		      WHERE successful = 1 AND ledger_seq BETWEEN ? AND ?
-		  )
 		ORDER BY o.ledger_seq, o.tx_hash, o.op_index
 		SETTINGS join_algorithm = 'grace_hash', grace_hash_join_initial_buckets = 32`, tradeOpTypeInList())
 }
