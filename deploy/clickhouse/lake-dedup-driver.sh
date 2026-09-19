@@ -48,11 +48,26 @@ set -uo pipefail
 T="${1:?usage: lake-dedup-driver.sh <table> [max_partitions]}"
 MAXP="${2:-9999}"
 DRY_RUN="${DRY_RUN:-0}"
-CH="clickhouse-client --port 9300"
-OUT="/var/log/lake-dedup-${T}.log"
-STOP=/tmp/lake-dedup.stop
+CH="${CH:-clickhouse-client --port 9300}"
+OUT="${OUT:-/var/log/lake-dedup-${T}.log}"
+STOP="${STOP:-/tmp/lake-dedup.stop}"
 
 log() { echo "$(date -Iseconds) $*" | tee -a "$OUT"; }
+
+# require_number <label> <value> — fail CLOSED unless $2 is a plain
+# non-negative integer. A clickhouse-client failure (auth, OOM, server
+# down) and unparseable tool output (e.g. a df mount surprise) both land
+# here as the same shape — something other than digits — so this is the
+# one check standing between either failure mode and an unguarded
+# OPTIMIZE. `${p:+ partition=$p}` is set-u-safe even before $p exists.
+require_number() {
+  case "$2" in
+    ''|*[!0-9]*)
+      log "ABORT${p:+ partition=$p}: $1='$2' is not a number — refusing to guess"
+      exit 1
+      ;;
+  esac
+}
 
 log "=== lake-dedup start table=$T max_partitions=$MAXP dry_run=$DRY_RUN ==="
 
@@ -66,7 +81,15 @@ PARTS=$($CH -q "
     SELECT _partition_id AS partition, uniqExact(toYYYYMM(ingested_at)) AS months
     FROM stellar.${T} GROUP BY partition
   ) WHERE months > 1 ORDER BY toUInt32OrZero(partition) ASC" < /dev/null)
+enum_rc=$?
+if [ "$enum_rc" -ne 0 ]; then
+  log "ABORT: partition-enumeration query FAILED rc=$enum_rc — NOT reporting success on an unknown partition list"
+  exit 1
+fi
 
+# A legitimate zero (the query succeeded and found no dup candidates) is
+# logged here, distinct from the ABORT line above that a failed query now
+# takes instead — the two are never both reachable for the same run.
 total=$(echo "$PARTS" | grep -c . || true)
 log "dup-candidate partitions: $total"
 
@@ -75,12 +98,25 @@ for p in $PARTS; do
   [ -f "$STOP" ] && { log "STOP file present — exiting cleanly after $n partitions"; break; }
   n=$((n+1)); [ "$n" -gt "$MAXP" ] && { n=$((n-1)); log "max_partitions reached"; break; }
 
-  read -r rows_before bytes_before <<<"$($CH -q "
+  stats=$($CH -q "
     SELECT sum(rows), sum(bytes_on_disk) FROM system.parts
-    WHERE database='stellar' AND table='${T}' AND active AND partition='${p}'" < /dev/null)"
+    WHERE database='stellar' AND table='${T}' AND active AND partition='${p}'" < /dev/null)
+  stats_rc=$?
+  if [ "$stats_rc" -ne 0 ]; then
+    log "ABORT partition=$p: partition-stats query FAILED rc=$stats_rc"
+    exit 1
+  fi
+  read -r rows_before bytes_before <<<"$stats"
+  require_number "rows_before" "$rows_before"
+  require_number "bytes_before" "$bytes_before"
 
-  # Scratch guard: require 3x the partition's on-disk size free.
+  # Scratch guard: require 3x the partition's on-disk size free. Both
+  # operands are validated numeric above/below BEFORE this comparison —
+  # an unparseable df line used to make `[ … -lt … ]` error (exit 2),
+  # which `if` reads as false, skipping the ABORT and falling through to
+  # an unguarded OPTIMIZE.
   free_bytes=$(df --output=avail -B1 /var/lib/clickhouse | tail -1 | tr -d ' ')
+  require_number "free_bytes" "$free_bytes"
   if [ "$free_bytes" -lt $((bytes_before * 3)) ]; then
     log "ABORT partition=$p: free=$free_bytes < 3x partition=$bytes_before — pool too tight"
     exit 1
@@ -94,9 +130,19 @@ for p in $PARTS; do
   t0=$(date +%s)
   $CH --receive_timeout 7200 -q "OPTIMIZE TABLE stellar.${T} PARTITION '${p}' FINAL" < /dev/null 2>>"$OUT"
   rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log "ABORT partition=$p: OPTIMIZE FAILED rc=$rc — see $OUT for clickhouse-client's stderr"
+    exit 1
+  fi
   rows_after=$($CH -q "
     SELECT sum(rows) FROM system.parts
     WHERE database='stellar' AND table='${T}' AND active AND partition='${p}'" < /dev/null)
+  rows_after_rc=$?
+  if [ "$rows_after_rc" -ne 0 ]; then
+    log "ABORT partition=$p: post-OPTIMIZE row-count query FAILED rc=$rows_after_rc"
+    exit 1
+  fi
+  require_number "rows_after" "$rows_after"
   log "partition=$p rc=$rc rows_before=$rows_before rows_after=$rows_after dup_removed=$((rows_before - rows_after)) elapsed=$(( $(date +%s) - t0 ))s"
 done
 

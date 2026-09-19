@@ -154,6 +154,24 @@ against.
   suppressed — and the new `attributed_vol_share` signal, carried into the
   alert log line, says how much of the volume the share was measured over.
 
+- **ops / lake-dedup-driver.sh stops reporting success on a failed query
+  (T429):** `PARTS=$($CH -q …)` never checked clickhouse-client's exit
+  code, so an enumeration failure (auth, OOM, server down) left `PARTS`
+  empty, `total=0`, the per-partition loop never ran, and the driver's
+  last line was still `=== done: 0 partitions processed ===` — exit 0,
+  indistinguishable from a genuinely quiet run. The per-partition
+  scratch guard had the same shape from the other direction: an
+  unparseable `df` line made `[ "$free_bytes" -lt … ]` error (exit 2),
+  which `if` reads as false, skipping the ABORT and falling straight
+  through to an unguarded `OPTIMIZE … FINAL`, and `OPTIMIZE`'s own exit
+  code was captured but never acted on. The driver now checks every
+  `$CH` call's exit status and aborts loudly on failure, validates
+  `rows_before`/`bytes_before`/`free_bytes`/`rows_after` as plain digits
+  before any arithmetic or comparison uses them, and aborts on a
+  nonzero `OPTIMIZE` rc instead of logging it inline as just another
+  partition. A legitimate zero-candidate run still exits 0 and logs the
+  zero, now distinguishable in the log from a failed enumeration because
+  the failure path never reaches the `done` line at all.
 - **explorer / the five `/v1/price/batch` consumers stop erasing the price
   envelope (RLT-384):** the converter, its shared rate hook, the home currency
   strip, the account positions panel and the asset-page swap widget each typed
