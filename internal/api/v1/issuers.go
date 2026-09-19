@@ -282,7 +282,9 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 		// enrichIssuerFromAccountState below: a `last_known_before_removal`
 		// row must always be re-offered to the live reader, because it stops
 		// being true the moment the account is re-created and the drain's
-		// primary queue (`auth_required IS NULL`) will never revisit it.
+		// primary queue (`auth_required IS NULL`) will never revisit it. The
+		// drain's own re-check passes cover that row nightly; this covers it
+		// per request.
 		AuthFlagsSource:     row.AuthFlagsSource,
 		AuthFlagsAsOfLedger: row.AuthFlagsAsOfLedger,
 		SEP1ResolvedAt:      row.SEP1ResolvedAt,
@@ -335,13 +337,36 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 // the drain, which reads an actual `removed` row and its removal ledger, may
 // write `last_known_before_removal`.
 func (s *Server) enrichIssuerFromAccountState(ctx context.Context, gStrkey string, out *Issuer) {
-	// The skip is a cost guard, not a correctness one, so it must not
-	// cover the one reading that goes stale: a last-known-before-removal
-	// row can never re-resolve on its own (the drain's queue is
-	// `auth_required IS NULL`, so it never revisits a row it has filled),
-	// and it stops being true the moment the account is re-created.
-	// A row with no provenance predates migration 0153, whose backfill
-	// records why those are known to be live-sourced.
+	// The skip is a cost guard, not a correctness one, and it is exempt for
+	// a last-known-before-removal row, which stops being true the moment the
+	// account is re-created. A row with no provenance predates migration
+	// 0153, whose backfill records why those are known to be live-sourced.
+	//
+	// WHAT THE SKIP COSTS, AND WHAT IT STILL LEAVES STALE (RSEC-V1 / RLT-470).
+	// It covers the 44,247 of 49,002 resolved r1 rows that carry both flags
+	// and a home_domain, which is exactly the population that can hold a
+	// LAPSED domain — so an anchor's on-chain correction does not reach this
+	// response until the drain's nightly chain re-check writes it to the row
+	// (see ingest.issuerFlagsChainRecheckPass, which is what bounds that
+	// staleness to one run rather than to "until an operator notices").
+	//
+	// Arming it here would cost a measured +0.47s per cold issuer detail
+	// (api.stellarindex.io 2026-09-19: /v1/issuers/{g} 0.20s, the same
+	// account's state read 0.67s cold and 0.20s warm behind the 30s TTL), a
+	// 3.4x regression on a long-tail page most views arrive cold at. That
+	// price buys nothing on its own either: the identity surface the finding
+	// turns on — org name, logo, the verified badge — comes from sep1_payload,
+	// which the hourly refresh fetches against the STORED column, so a
+	// read-path override would serve the chain's domain beside the lapsed
+	// domain's org identity.
+	//
+	// The cost is an artefact of the seam, not of the read: AccountStateCached
+	// fans out to trustlines and offers, none of which this needs. The narrow
+	// reader the drain already uses (clickhouse BulkAccountAuthFlags, a
+	// key_xdr point lookup measured at 0.028s) returns exactly the four flags,
+	// the home_domain and the as-of ledger. Putting THAT on the ExplorerReader
+	// seam is what lets the skip go entirely; the acceptance test for it ships
+	// red behind `//go:build rsecv1evidence`.
 	if out.AuthFlagsSource != string(clickhouse.AuthFlagsSourceLastKnownBeforeRemoval) &&
 		out.AuthRequired != nil && out.HomeDomain != "" {
 		return

@@ -428,6 +428,33 @@ against.
   / `unread` of N filled rows), which is the line that shows a timeout leaving
   the primary-key-ordered tail unexamined.
 
+- **api / the issuer read path is still inert for a drained row (RSEC-V1,
+  RLT-470 — evidence, not yet fixed):** `enrichIssuerFromAccountState`'s cost
+  guard (`source != last_known && AuthRequired != nil && HomeDomain != ""`)
+  covers **44,247 of the 49,002** resolved r1 rows, which is exactly the
+  population that can hold a LAPSED domain — so the live-beats-stored
+  precedence the writers now implement never fires for the rows it exists for.
+  The staleness is bounded to one drain cycle by the chain re-check above, and
+  the guard is left standing on a measured cost:
+  arming it with the seam as it stands costs **+0.47 s per cold issuer detail**
+  (api.stellarindex.io 2026-09-19 — `/v1/issuers/{g}` 0.20 s, the same
+  account's state read 0.67 s cold and 0.20 s warm behind the 30 s TTL), a
+  3.4× regression on a long-tail page most views arrive cold at, and it buys
+  nothing on its own: the identity surface the finding turns on (org name,
+  logo, verified badge) comes from `sep1_payload`, which the hourly refresh
+  fetches against the STORED column. The cost is an artefact of the seam, not
+  of the read — `AccountStateCached` fans out to trustlines and offers, none of
+  which this path wants, while the narrow reader the drain already uses
+  (`BulkAccountAuthFlags`, a `key_xdr` point lookup measured at 0.028 s)
+  returns exactly the four flags, the `home_domain` and the as-of ledger. The
+  acceptance test for putting that reader on the `ExplorerReader` seam ships
+  RED behind `//go:build rsecv1evidence`
+  (`go test -tags rsecv1evidence ./internal/api/v1/ -run TestRSECV1 -v`),
+  together with the over-reach guard it must not break. The follow-up needs
+  `internal/api/v1/server.go` and
+  `internal/api/v1/issuers_persisted_provenance_test.go`, neither of which is
+  in this unit's file set.
+
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before
   T424/F-1334/W6-tst-1 widened `scripts/ci/check-change-class.sh` to also
