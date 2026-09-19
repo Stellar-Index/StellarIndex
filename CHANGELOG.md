@@ -123,7 +123,13 @@ against.
   `__next._tree.txt` — the only segment file the client router prefetches, whose
   deletion produced the 2026-08-27 console-error report — and runs BEFORE the
   budget count, since the count is of what ships. Each guard fails the build
-  loudly on a missing `out/` rather than passing over nothing.
+  loudly on a missing `out/` rather than passing over nothing. The three steps
+  are gone from `explorer-deploy.yml` — its Build step is `pnpm build`, so it
+  gets them from the shared chain and a second copy could only drift — and the
+  rationale each step's comment carried (why the prune exists, why the tree
+  files survive it, what the budget defends) now lives under **Build-time
+  guards** in `docs/operations/explorer-deployment.md`, next to the build
+  command an operator reads.
 
 - **ops / the archival-node role still hard-failed one import earlier (F128):**
   the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,

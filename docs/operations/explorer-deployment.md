@@ -103,11 +103,54 @@ sufficient, Git-driven deploys.
 PR merge into main
   → GitHub Actions runs `web/explorer` job (build + lint)
   → Cloudflare Pages webhook fires, runs build
+      (`pnpm build` → the post-build guards below)
   → New version deploys to stellarindex.io within ~2 min
 ```
 
 Rolling back is a single click in the CF dashboard — Pages keeps
 every previous build available as a preview URL.
+
+## Build-time guards
+
+`pnpm build` is not just `next build`: package.json's `postbuild`
+chain runs four guards over the emitted `web/explorer/out/`, and any
+one of them fails the build. They live there, rather than in a
+workflow, because every publisher invokes `pnpm build` and none of
+them may skip a guard — the Cloudflare Pages build above, the
+`explorer-deploy.yml` fallback, the `web-explorer` CI job and a
+laptop all get the same checks (F085/T325; they used to be steps of
+the `workflow_dispatch`-only workflow, so the path that actually
+deploys ran none of them).
+
+| Script | What it defends |
+| --- | --- |
+| `postbuild:pages` | Every emitted page keeps a correct heading outline (WCAG 1.3.1) and every nav-linked route exports a real frame, not an empty shell. |
+| `postbuild:prune` | Deletes the Next 16 `__next.*` segment-cache prefetch files, **keeping `__next._tree.txt`**. |
+| `postbuild:budget` | `scripts/ci/explorer-file-budget.sh` — fails at 18,500 files, below Cloudflare Pages' hard 20,000-file-per-deployment cap. |
+| `postbuild:seo` | `scripts/ci/explorer-seo-lint.sh` — every indexable page has a title, a meta description and a canonical link. |
+
+The prune runs **before** the budget count, because the count is of
+what ships. Why both exist (site-audit S-024, 2026-07-03): Next 16
+emits ~8 per-segment RSC prefetch files per page for its client
+segment cache — ~36k files at our page count, past the 20,000 cap.
+Every deploy after the Next 15 → 16 bump failed there silently and
+the site froze on a June-24 build for nine days. The segment files
+are prefetch-only: the client treats a missing one as a cache miss
+and falls back to the standard `index.txt` RSC fetch.
+
+`__next._tree.txt` is the exception and must survive the prune: it is
+the ONLY segment file the router actually prefetches (on `<Link>`
+hover/viewport), and deleting it 404s every prefetch on routes with
+no `functions/*/[[path]].js` shell fallback — the "tons of console
+errors" report of 2026-08-27. Keeping ~1 tree file per route adds
+~2.3k files, still far under the ceiling. ADR-0044 (edge SSR)
+remains the real fix; the prune holds the static export under the cap
+until then.
+
+The wiring itself is guarded by
+`test/controlwiring/explorer_build_guards_test.go`, which asserts the
+`pnpm build` chain reaches all three scripts and runs the prune
+against a synthetic export to pin that the tree files survive it.
 
 ## Test nets (Testnet / Futurenet)
 
