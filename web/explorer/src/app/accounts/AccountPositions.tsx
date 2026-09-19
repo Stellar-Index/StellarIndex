@@ -18,8 +18,9 @@ import {
   TR,
 } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
+import type { components } from '@/api/types';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { formatCompact, formatPriceSmall } from '@/lib/format';
+import { formatCompact, formatPriceSmall, formatRelative } from '@/lib/format';
 import { scaledUnits } from '../explorer-shared';
 
 // Mirror of the slice of AccountStateResp we need (kept local so this
@@ -32,15 +33,35 @@ interface AccountStateResp {
   trustlines?: { asset: string; balance: string }[];
 }
 
-interface BatchPrice {
-  asset_id: string;
-  price: string | null;
+type PriceBatchEnvelope = components['schemas']['PriceBatchEnvelope'];
+type PriceType = components['schemas']['Price']['price_type'];
+
+/**
+ * What the batch actually said about one holding's price. RLT-384: this
+ * used to be a bare `number`, which threw away the declared basis and
+ * the observation time — so a `peg` (the operator's standing 1:1
+ * declaration) valued a portfolio under a panel captioned "valued at the
+ * live VWAP", and a rate the API stamped hours ago read as current.
+ */
+interface PricedAt {
+  price: number;
+  priceType: PriceType | null;
+  observedAt: string | null;
+}
+
+interface PriceBatch {
+  byAsset: Record<string, PricedAt>;
+  /** `flags.stale` — the OR over the rows the batch returned. */
+  stale: boolean;
+  /** Oldest `observed_at` among the rows priced here. */
+  observedAt: string | null;
 }
 
 interface Holding {
   asset: string;
   amount: number; // display units (stroops → ÷1e7)
   priceUSD: number | null;
+  priceType: PriceType | null;
   valueUSD: number | null;
 }
 
@@ -84,7 +105,7 @@ export function AccountPositions({ id }: { id: string }) {
     }
   }
 
-  const pricesQ = useQuery<Record<string, number>>({
+  const pricesQ = useQuery<PriceBatch>({
     queryKey: ['/v1/price/batch', 'positions', assetIds.join(',')],
     // No aggregator on the lean test nets → /v1/price/batch is empty; skip the
     // portfolio valuation there (the USD tiles/columns null-degrade to "—").
@@ -92,21 +113,35 @@ export function AccountPositions({ id }: { id: string }) {
     retry: false,
     staleTime: 30_000,
     queryFn: async () => {
-      const env = await apiGet<{ data: BatchPrice[] }>('/v1/price/batch', {
+      const env = await apiGet<PriceBatchEnvelope>('/v1/price/batch', {
         asset_ids: assetIds.join(','),
         quote: 'fiat:USD',
       });
-      const m: Record<string, number> = {};
+      const byAsset: Record<string, PricedAt> = {};
+      // Instants, not strings: RFC 3339 stamps carry variable fractional
+      // precision and lexicographic order gets "…00Z" vs "…00.5Z" wrong.
+      let observedAt: string | null = null;
+      let oldestMs = Number.POSITIVE_INFINITY;
       for (const row of env.data ?? []) {
         const p = row.price ? Number(row.price) : NaN;
         if (!(Number.isFinite(p) && p > 0)) continue;
-        m[row.asset_id] = p;
+        const at: PricedAt = {
+          price: p,
+          priceType: row.price_type ?? null,
+          observedAt: row.observed_at ?? null,
+        };
+        byAsset[row.asset_id] = at;
         // /v1/price/batch echoes native XLM as `crypto:XLM`; alias both
         // forms so a `native` holding resolves its price.
-        if (row.asset_id === 'crypto:XLM') m.native = p;
-        if (row.asset_id === 'native') m['crypto:XLM'] = p;
+        if (row.asset_id === 'crypto:XLM') byAsset.native = at;
+        if (row.asset_id === 'native') byAsset['crypto:XLM'] = at;
+        const ms = at.observedAt != null ? Date.parse(at.observedAt) : NaN;
+        if (Number.isFinite(ms) && ms < oldestMs) {
+          oldestMs = ms;
+          observedAt = at.observedAt;
+        }
       }
-      return m;
+      return { byAsset, stale: Boolean(env.flags?.stale), observedAt };
     },
   });
 
@@ -123,7 +158,7 @@ export function AccountPositions({ id }: { id: string }) {
     return null;
   }
 
-  const priceMap = pricesQ.data ?? {};
+  const priceMap = pricesQ.data?.byAsset ?? {};
   const holdings: Holding[] = assetIds.map((asset) => {
     const raw =
       asset === 'native'
@@ -134,10 +169,17 @@ export function AccountPositions({ id }: { id: string }) {
     // string-split path so a >9e8-XLM holding doesn't lose low digits to
     // Number() before it feeds the USD total / allocation split.
     const amount = scaledUnits(raw, 7);
-    const priceUSD = priceMap[asset] ?? null;
+    const priced = priceMap[asset] ?? null;
+    const priceUSD = priced?.price ?? null;
     const valueUSD =
       priceUSD != null && Number.isFinite(amount) ? amount * priceUSD : null;
-    return { asset, amount, priceUSD, valueUSD };
+    return {
+      asset,
+      amount,
+      priceUSD,
+      priceType: priced?.priceType ?? null,
+      valueUSD,
+    };
   });
   holdings.sort((a, b) => (b.valueUSD ?? -1) - (a.valueUSD ?? -1));
 
@@ -169,7 +211,7 @@ export function AccountPositions({ id }: { id: string }) {
   return (
     <Panel
       title="Positions"
-      hint="Native XLM + trustline balances, valued at the live VWAP. Holdings we can't price are listed without a USD value."
+      hint="Native XLM + trustline balances, valued at the USD price the pricing API serves for each one. A price it declares as something other than an observed market rate is labelled in the Price column. Holdings it won't price are listed without a USD value."
       source={asExample(`/v1/accounts/${id}`)}
       bodyClassName="space-y-4"
     >
@@ -199,6 +241,16 @@ export function AccountPositions({ id }: { id: string }) {
           />
         </StatCell>
       </StatGrid>
+
+      {/* The valuation is only as fresh as the prices behind it, and the
+          API says how fresh that is — the panel used to claim a "live
+          VWAP" and show nothing at all (RLT-384). */}
+      {pricesQ.data?.observedAt != null && (
+        <p className="text-ink-muted text-xs">
+          Prices observed {formatRelative(pricesQ.data.observedAt)}
+          {pricesQ.data.stale && ' · flagged stale by the pricing API'}
+        </p>
+      )}
 
       {slices.length > 1 && total > 0 && (
         <DonutChart
@@ -233,6 +285,14 @@ export function AccountPositions({ id }: { id: string }) {
                   {h.priceUSD != null
                     ? `$${formatPriceSmall(h.priceUSD)}`
                     : '—'}
+                  {h.priceType === 'peg' && (
+                    <span
+                      className="text-ink-muted ml-1.5 text-[10px] tracking-wider uppercase"
+                      title="Declared 1:1 peg — not an observed market price"
+                    >
+                      peg
+                    </span>
+                  )}
                 </Td>
                 <Td align="right" className="font-mono">
                   {h.valueUSD != null ? usdFmt.format(h.valueUSD) : '—'}

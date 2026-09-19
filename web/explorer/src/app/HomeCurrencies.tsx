@@ -5,13 +5,34 @@ import { ArrowRight } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 
 import { apiGet } from '@/api/client';
+import type { components } from '@/api/types';
 import { assetHrefFor } from '@/lib/fiat-slugs';
+import { formatRelative } from '@/lib/format';
+
+type PriceBatchEnvelope = components['schemas']['PriceBatchEnvelope'];
+type PriceType = components['schemas']['Price']['price_type'];
 
 interface CurrencyRow {
   ticker: string;
   name: string;
   rate_usd: number;
   change_24h_pct?: number;
+  /** How the API says this rate was derived — `peg` is a declaration. */
+  price_type: PriceType | null;
+  /** When the rate was OBSERVED (RFC 3339), off the row itself. */
+  observed_at: string | null;
+}
+
+interface CurrencyStrip {
+  rows: Record<string, CurrencyRow>;
+  /**
+   * The OLDEST `observed_at` across the rates on screen: a set of rates
+   * is only as fresh as its stalest member, and the strip stamps them
+   * all with one line.
+   */
+  observed_at: string | null;
+  /** The envelope's `flags.stale` — the OR over the returned rows. */
+  stale: boolean;
 }
 
 // Names hardcoded — fiat ISO 4217 ticker → English name is stable
@@ -36,22 +57,35 @@ const FEATURED: Array<{ ticker: string; name: string }> = [
  * /v1/coins + /v1/currencies → /v1/assets consolidation. The
  * home strip now uses /v1/price/batch to get the 6 featured rates
  * in one round-trip against fiat:USD; names are hardcoded above.
- * change_24h_pct is intentionally dropped from the home strip —
- * the per-currency detail page (/v1/assets/{slug}) carries it
- * when consumers want it.
+ *
+ * RLT-384 (audit-2026-09-18): this read used to type the response as
+ * `{data: Array<{asset_id, price}>}`, discarding `price_type`,
+ * `observed_at` and `flags` — so the strip called itself "Live" over
+ * rates the API had flagged stale (measured 2026-09-19: the FX rows
+ * carried `observed_at` ~36h old with `flags.stale: true`) and would
+ * have shown a declared peg as an observed rate. The envelope is now
+ * carried through: the strip stamps itself with the oldest `observed_at`
+ * it is showing, repeats the API's stale flag, and names a non-market
+ * basis on the tile that has one. `change_24h_pct` rides the same rows
+ * and now feeds the tile's change chip, which previously had no
+ * producer at all; the batch only emits it for a fiat:USD quote and not
+ * for every asset, so a tile without one simply shows no chip.
  */
 export function HomeCurrencies() {
-  const q = useQuery<Record<string, CurrencyRow>>({
+  const q = useQuery<CurrencyStrip>({
     queryKey: ['/v1/price/batch', 'home-currencies'],
     queryFn: async () => {
       const assetIds = FEATURED.map((f) => `fiat:${f.ticker}`).join(',');
-      const env = await apiGet<{
-        data: Array<{ asset_id: string; price: string | null }>;
-      }>(
+      const env = await apiGet<PriceBatchEnvelope>(
         `/v1/price/batch?asset_ids=${encodeURIComponent(assetIds)}&quote=fiat:USD`,
         {},
       );
-      const map: Record<string, CurrencyRow> = {};
+      const rows: Record<string, CurrencyRow> = {};
+      // Compared as instants, never as strings: RFC 3339 stamps come back
+      // with variable fractional precision ("…00Z" vs "…00.5Z"), and
+      // lexicographic order gets that pair backwards.
+      let oldest: string | null = null;
+      let oldestMs = Number.POSITIVE_INFINITY;
       // /v1/price/batch returns "price of asset in quote", i.e.
       // 1 EUR = X USD. That's exactly the rate_usd field shape
       // the home strip already displays — no inversion needed.
@@ -61,16 +95,27 @@ export function HomeCurrencies() {
         if (!featured || !row.price) continue;
         const rate = Number(row.price);
         if (!(rate > 0)) continue;
-        map[ticker] = {
+        const change =
+          row.change_24h_pct != null ? Number(row.change_24h_pct) : NaN;
+        rows[ticker] = {
           ticker,
           name: featured.name,
           rate_usd: rate,
+          ...(Number.isFinite(change) ? { change_24h_pct: change } : {}),
+          price_type: row.price_type ?? null,
+          observed_at: row.observed_at ?? null,
         };
+        const ms = row.observed_at != null ? Date.parse(row.observed_at) : NaN;
+        if (Number.isFinite(ms) && ms < oldestMs) {
+          oldestMs = ms;
+          oldest = row.observed_at;
+        }
       }
-      return map;
+      return { rows, observed_at: oldest, stale: Boolean(env.flags?.stale) };
     },
     refetchInterval: 5 * 60_000,
   });
+  const strip = q.data;
 
   return (
     <section className="space-y-3">
@@ -80,8 +125,8 @@ export function HomeCurrencies() {
             World currencies
           </h2>
           <p className="text-ink-body text-sm">
-            Live USD-base rates for the major fiat currencies — the full
-            reference set (19 fiat plus 15 reference coins) at{' '}
+            USD-base rates for the major fiat currencies — the full reference
+            set (19 fiat plus 15 reference coins) at{' '}
             <Link
               href="/external/assets"
               className="text-brand-600 hover:underline"
@@ -90,6 +135,15 @@ export function HomeCurrencies() {
             </Link>
             .
           </p>
+          {/* One honest freshness line for the whole strip, off the
+              oldest row's own observed_at — never a render or fetch
+              clock (RLT-384). */}
+          {strip?.observed_at != null && (
+            <p className="text-ink-muted text-xs">
+              Rates observed {formatRelative(strip.observed_at)}
+              {strip.stale && ' · flagged stale by the pricing API'}
+            </p>
+          )}
         </div>
         <Link
           href="/assets"
@@ -118,7 +172,7 @@ export function HomeCurrencies() {
       )}
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
         {FEATURED.map(({ ticker: t }) => {
-          const row = q.data?.[t];
+          const row = strip?.rows[t];
           return (
             <Link
               key={t}
@@ -134,6 +188,17 @@ export function HomeCurrencies() {
               <div className="text-ink mt-2 font-mono text-lg tabular-nums">
                 {row && row.rate_usd > 0 ? formatRate(row.rate_usd) : '—'}
               </div>
+              {/* A declared peg is the operator's 1:1 statement, not a
+                  rate anyone observed — say so on the tile rather than
+                  letting it read as an FX quote (RLT-384). */}
+              {row?.price_type === 'peg' && (
+                <div
+                  className="text-ink-muted text-[10px] tracking-wider uppercase"
+                  title="Declared 1:1 peg — not an observed market rate"
+                >
+                  declared peg
+                </div>
+              )}
               {row && (
                 <div className="flex items-baseline justify-between gap-2">
                   <span
@@ -152,7 +217,7 @@ export function HomeCurrencies() {
                               ? 'text-down'
                               : 'text-ink-muted'
                         }`}
-                        title="24h % change in USD value (daily-grain feed)"
+                        title="Trailing-24h % change in USD value, as served beside the rate"
                       >
                         {row.change_24h_pct > 0 ? '+' : ''}
                         {row.change_24h_pct.toFixed(2)}%

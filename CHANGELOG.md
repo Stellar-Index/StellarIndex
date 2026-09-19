@@ -106,6 +106,37 @@ against.
 
 ### Fixed
 
+- **explorer / the five `/v1/price/batch` consumers stop erasing the price
+  envelope (RLT-384):** the converter, its shared rate hook, the home currency
+  strip, the account positions panel and the asset-page swap widget each typed
+  the batch response as `{data: Array<{asset_id, price}>}`, so `price_type`,
+  `observed_at` and `flags` were thrown away at every one of them. Three
+  user-visible falsehoods over money followed. (1) `/convert/[from]/[to]` is a
+  static export — `initialRate` is baked at BUILD time — and the widget stamped
+  freshness from React Query's `dataUpdatedAt`, the instant the FETCH resolved,
+  so any number on screen read "Updated 3s ago". Measured against the live API
+  on 2026-09-19, `fiat:EUR`/`fiat:USD` answered `observed_at:
+  2026-09-18T00:00:00Z` with `flags.stale: true` — 36h old. (2) The batch OMITS
+  a pair it will not price (withheld, or never observed); that resolves as a
+  success with no row, the live rate came back `null`, and the baked rate
+  silently took its place dressed as the current one. (3) A `price_type: peg`
+  row — the operator's standing 1:1 declaration, not an observation — rendered
+  identically to an observed VWAP, including inside a positions panel captioned
+  "valued at the live VWAP". All five now read the generated
+  `PriceBatchEnvelope` type. `useConvertRate` returns a discriminated read
+  rather than a nullable number, since "priced" and "omitted" are different
+  money facts that a bare `null` collapsed; freshness comes from the row's own
+  `observed_at` (a row with no stamp claims none), the declared basis is named,
+  `flags.stale` is repeated, and an omitted row renders "rate unavailable —
+  showing the last published rate" instead of passing the baked figure off as
+  current. The strip and the positions panel stamp themselves with the OLDEST
+  `observed_at` they are showing (compared as instants: RFC 3339 stamps carry
+  variable fractional precision and lexicographic order gets `…00Z` vs `…00.5Z`
+  backwards), mark a declared peg where one values a holding, and the strip's
+  24h chip — which had no producer at all — now comes from the row's
+  `change_24h_pct`. Twelve tests, seven of them proven red against the unfixed
+  consumers.
+
 - **explorer / the production publish path now runs the static-export guards (F085, T325):**
   the `__next.*` segment prune, `scripts/ci/explorer-file-budget.sh` and
   `scripts/ci/explorer-seo-lint.sh` existed only as steps of

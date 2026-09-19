@@ -6,9 +6,10 @@ import { ArrowDownUp, ChevronDown, Search, X } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
 import { apiGet, asExample } from '@/api/client';
+import type { components } from '@/api/types';
 import { useCoins, coinSlug } from '@/api/hooks';
 import { CURRENT_NETWORK } from '@/lib/networks';
-import { formatSubunitPrice } from '@/lib/format';
+import { formatRelative, formatSubunitPrice } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import { isSafePublicImageUrl } from '@/lib/safe-domain';
 
@@ -24,11 +25,19 @@ import { isSafePublicImageUrl } from '@/lib/safe-domain';
  * amount(out) = amount(in) × usdPrice(in) / usdPrice(out). The page asset's
  * price is the LIVE prop (refreshes with the parent); every other token
  * carries its snapshot USD price from the catalogue / forex batch, which is
- * exactly the freshness the old converter used.
+ * exactly the freshness the old converter used. A forex-batch leg says so:
+ * the batch's `price_type` and `observed_at` ride with the rate and are
+ * named under the fields, because that snapshot can be hours old and a
+ * declared peg is not a market rate at all (RLT-384). Catalogue-priced legs
+ * carry no basis and are left unannotated rather than described with a
+ * guess.
  *
  * Pricing-only — the call site hides it on the lean test nets (no aggregator),
  * where every asset is $0.
  */
+
+type PriceBatchEnvelope = components['schemas']['PriceBatchEnvelope'];
+type PriceType = components['schemas']['Price']['price_type'];
 
 export interface SwapToken {
   /** Stable identity: canonical asset_id ("native", "USDC-G…") or "fiat:USD". */
@@ -38,6 +47,16 @@ export interface SwapToken {
   image?: string | null;
   /** USD per 1 unit. null while unresolved. */
   usdPrice: number | null;
+  /**
+   * How the pricing API says `usdPrice` was derived, where it told us —
+   * `peg` is the operator's standing 1:1 declaration rather than an
+   * observed market rate, and a converter must not present the two
+   * alike (RLT-384). Undefined for legs priced off the asset catalogue,
+   * which does not carry the basis.
+   */
+  basis?: PriceType | null;
+  /** When `usdPrice` was OBSERVED (RFC 3339), where the API said. */
+  observedAt?: string | null;
   kind: 'crypto' | 'fiat';
 }
 
@@ -193,6 +212,30 @@ function fiatName(ticker: string): string {
   }
 }
 
+/**
+ * swapBasisNote — one line naming what a leg's USD price IS, for every
+ * leg the pricing API described. The converter's output is a money
+ * amount, so a leg carried by the operator's 1:1 peg declaration, or by
+ * an FX print taken hours ago, must say so rather than looking exactly
+ * like a fresh observed quote (RLT-384). Legs priced off the asset
+ * catalogue carry no basis and are left unannotated rather than
+ * described with a guess.
+ */
+function swapBasisNote(tokens: SwapToken[]): string | null {
+  const parts: string[] = [];
+  for (const t of tokens) {
+    if (t.usdPrice == null) continue;
+    const bits: string[] = [];
+    if (t.basis === 'peg') {
+      bits.push('declared 1:1 peg, not an observed market rate');
+    }
+    if (t.observedAt != null)
+      bits.push(`observed ${formatRelative(t.observedAt)}`);
+    if (bits.length > 0) parts.push(`${t.symbol} price: ${bits.join(' · ')}`);
+  }
+  return parts.length > 0 ? parts.join(' — ') : null;
+}
+
 const USD_TOKEN: SwapToken = {
   key: 'fiat:USD',
   symbol: 'USD',
@@ -244,6 +287,9 @@ export function AssetSwap({
   const pFrom = livePrice(fromToken);
   const pTo = livePrice(toToken);
   const priceable = pFrom != null && pFrom > 0 && pTo != null && pTo > 0;
+  // What the legs' USD prices actually are, for the legs whose price
+  // came with a declared basis and an observation time (RLT-384).
+  const basisNote = swapBasisNote([fromToken, toToken]);
 
   const numeric = Number(amount.replace(/,/g, ''));
   const validInput = Number.isFinite(numeric) && numeric >= 0;
@@ -340,6 +386,9 @@ export function AssetSwap({
           />
         )}
       </div>
+      {basisNote != null && (
+        <p className="text-ink-muted mt-3 text-xs">{basisNote}</p>
+      )}
     </Panel>
   );
 
@@ -648,6 +697,14 @@ function TokenPicker({
             </span>
             <span className="text-ink-muted shrink-0 font-mono text-xs tabular-nums">
               {t.usdPrice != null ? fmtUsd(t.usdPrice) : '—'}
+              {t.basis === 'peg' && (
+                <span
+                  className="ml-1 text-[10px] tracking-wider uppercase"
+                  title="Declared 1:1 peg — not an observed market price"
+                >
+                  peg
+                </span>
+              )}
             </span>
           </button>
         ))}
@@ -677,9 +734,7 @@ function useFiatTokens(): SwapToken[] {
       const settled = await Promise.allSettled(
         chunks.map((chunk) => {
           const ids = chunk.map((t) => `fiat:${t}`).join(',');
-          return apiGet<{
-            data: Array<{ asset_id: string; price: string | null }>;
-          }>(
+          return apiGet<PriceBatchEnvelope>(
             `/v1/price/batch?asset_ids=${encodeURIComponent(ids)}&quote=fiat:USD`,
             {},
           );
@@ -697,6 +752,12 @@ function useFiatTokens(): SwapToken[] {
             symbol: ticker,
             name: fiatName(ticker),
             usdPrice: price,
+            // RLT-384: the basis and the observation time ride with the
+            // rate. Dropping them made a declared peg and an hours-old
+            // FX print indistinguishable from a fresh market quote in a
+            // widget whose whole output is a money amount.
+            basis: row.price_type ?? null,
+            observedAt: row.observed_at ?? null,
             kind: 'fiat',
           });
         }
