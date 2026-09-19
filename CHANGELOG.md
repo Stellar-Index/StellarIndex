@@ -204,7 +204,10 @@ against.
   been introduced on one of our own amount paths, so every amount that path
   touched is suspect. It now gets its own `outcome="sink_i128_overflow"` (the
   outcomes still partition — no row is counted twice) and
-  `stellarindex_projector_i128_overflow` pages on it.
+  `stellarindex_projector_i128_overflow` pages on it. The metrics reference
+  enumerates the new outcome and says what `sink_permanent` actually counts
+  (the sink's rejection, re-counted every cycle a held row is re-read — not
+  the moment the cursor passes it).
 
 - **projector / a permanent sink verdict now needs the same sink-health proof
   a quarantine does (RLT-131):** `permanentSkipCandidate` takes

@@ -240,11 +240,23 @@ Number of consumer.Events the projector emitted to its sink.
 Outcomes: `ok` (decode succeeded), `decode_error` (Reconstruct or
 Decoder.Decode returned non-nil, or a decoder panic was recovered; row
 skipped, cursor still advances), plus the sink dispositions
-`sink_retry` / `sink_permanent` / `sink_quarantined`. A sustained
-per-source `decode_error` rate drives the
-`stellarindex_projector_decode_error_rate_high` alert (DATA-6 / NS-2) —
-that pattern is a decoder regression draining a whole class of events,
-not the odd poison row.
+`sink_retry` / `sink_permanent` / `sink_i128_overflow` /
+`sink_quarantined`. The outcomes PARTITION — a row is counted under
+exactly one — so an expression may sum the metric across them.
+
+`sink_permanent` is the sink's REJECTION of a row's output, not the
+moment the cursor passes it: it increments on every cycle that re-reads
+a row the per-cycle shed cap is still holding, which is what lets
+`stellarindex_projector_row_dropped_permanent` (ticket) fire while the
+projector is only stalling. `sink_i128_overflow` is split out of it
+because `canonical.ErrI128Overflow` is not a verdict about chain data —
+ADR-0003 fixes i128 as the width of every amount here, so it is proof
+that an int64 reached one of our own amount paths and every value that
+path touched is suspect; it drives `stellarindex_projector_i128_overflow`
+(page, ADR-0003's SEV-1). A sustained per-source `decode_error` rate
+drives the `stellarindex_projector_decode_error_rate_high` alert
+(DATA-6 / NS-2) — that pattern is a decoder regression draining a whole
+class of events, not the odd poison row.
 
 ### `stellarindex_projector_cycle_duration_seconds`
 
