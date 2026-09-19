@@ -744,10 +744,13 @@ func dedupeSEP41SupplyRows(rows []SEP41SupplyEvent) []SEP41SupplyEvent {
 
 // sep41SupplyCursorSource / sep41SupplyCursorSub name the ingestion_cursors
 // row that records how far the sep41_supply domain is DURABLY written: the
-// projector's per-source cursor, upserted as
-// `UpsertCursor(ctx, "projector", src.Name, commitTo)` by
-// internal/projector once a cycle's sink writes have all committed
-// (src.Name is internal/sources/sep41_supply.SourceName). Spelled as
+// projector's per-source cursor, advanced by compare-and-swap via
+// `AdvanceCursorFrom(ctx, "projector", src.Name, read, commitTo)` at
+// internal/projector's commitCursor once a cycle's sink writes have all
+// committed (src.Name is internal/sources/sep41_supply.SourceName; since
+// finding F159, AdvanceCursorFrom is the projector's only cursor write —
+// UpsertCursor's monotonic-forward guard let an in-flight cycle's commit
+// overwrite a projector-replay rewind landing in the same gap). Spelled as
 // literals rather than imported so the storage layer keeps no dependency
 // on the source packages; the pairing is pinned end-to-end by
 // TestSEP41SupplyRollup_SettledBoundIsTheDurableCursor, which seeds the

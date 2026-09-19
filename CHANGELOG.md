@@ -29,6 +29,16 @@ against.
   the doc against the classifier's regex so the two cannot drift apart
   silently again.
 
+- **docs / sep41 rollup cursor-write comment (F159 follow-up):** the
+  `sep41SupplyCursorSource` / `sep41SupplyCursorSub` doc comment in
+  `internal/storage/timescale/sep41_supply_events.go` still described the
+  projector's cursor commit as `UpsertCursor(ctx, "projector", src.Name,
+  commitTo)`. F159 (`7f2a32655`) moved that write to a compare-and-swap —
+  `AdvanceCursorFrom` at `commitCursor` — so a reader following the old
+  comment to `UpsertCursor` would be pointed at a call the projector no
+  longer makes. The comment now names `AdvanceCursorFrom` and the finding
+  that moved it.
+
 - **docs / phoenix gating:** the tree's four "the factory's creation events
   predate the lake" claims are corrected — the events run from ledger
   51,572,026 — and the docs now describe the gate that shipped rather than the
