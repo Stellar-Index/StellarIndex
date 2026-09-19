@@ -853,6 +853,12 @@ const drainTimeout = ShutdownDeadline - drainFinalPassBudget - drainReportMargin
 // either double-write or ride the block-and-retry trade path), so every
 // caller compiles against the one signature.
 //
+// A trade the store permanently rejects is returned as a
+// *[TradeDroppedError] (RLT-132), not nil: nil means the row landed, and
+// nothing else. `stellarindex-ops projected-rebuild` therefore counts such a
+// trade as an insert error and leaves its window un-checkpointed, exactly as
+// it already does for a lost non-trade row (COR-09).
+//
 // A recovered panic is returned as a generic (non-classified) error: the
 // projector treats it as transient (retry-and-alert) per its safe-side
 // default. This is acceptable because the sole-writer sep41 insert path
@@ -905,7 +911,8 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	// Every arm RETURNS its persist result so the projector can gate its
 	// cursor on a sink failure (audit-2026-07-16 C2-1). Trade-shaped events
 	// go through persistTrade's ADR-0041 block-and-retry (infra faults BLOCK
-	// the caller, data faults drop) and — since audit 2026-08-03 — RETURN
+	// the caller, data faults drop and return a *TradeDroppedError — RLT-132)
+	// and — since audit 2026-08-03 — RETURN
 	// its abandon error like every other arm, so a bounded-ctx caller (the
 	// projector's per-source cycle) cursor-gates trades too. Previously these
 	// arms swallowed the error (return nil), which let the projector advance
@@ -1203,7 +1210,12 @@ func eventSource(ev consumer.Event) string {
 // blocked and the cursor is not advancing. Genuine drops stay
 // distinguishable on SourceInsertErrorsTotal{kind="dropped"}.
 //
-// Return contract (#368 M3, mirroring [persistTrade]):
+// Return contract (#368 M3). The ctx-error half mirrors [persistTrade]; the
+// permanent-fault half deliberately does NOT since RLT-132 — persistTrade now
+// reports a drop as a *[TradeDroppedError] because the projector labels
+// outcomes off its return, whereas this function's only callers are the
+// dispatcher drain's carry-or-report arms, which read ANY non-nil return as a
+// shutdown abandon (a drop returned here would be double-reported as one):
 //   - nil           — the write landed, OR it hit a permanent data fault
 //     (deterministically bad row: counted + logged HERE and dropped,
 //     because holding a poison row would wedge the pipeline).
@@ -1267,6 +1279,48 @@ func storeEventPersister(logger *slog.Logger, store *timescale.Store) eventPersi
 	}
 }
 
+// TradeDroppedError reports that a trade was PERMANENTLY dropped: the store
+// rejected it as a deterministic data fault ([isPermanentDataFault] — SQLSTATE
+// class 22/23 or a canonical validation sentinel), so it was counted, logged
+// and skipped rather than retried. The row is NOT in the served tier.
+//
+// It exists so "landed" and "dropped" stop sharing a return value (RLT-132).
+// [persistTrade] used to return nil for both, and the projector — which binds
+// [HandleEvent] as its per-event sink and counts every nil as a durable commit
+// — published the dropped trade under
+// stellarindex_projector_events_decoded_total{outcome="ok"}, the one label
+// that promises it was written.
+//
+// Unwrap exposes the store's error, and that is load-bearing in both
+// directions: the projector classifies with timescale.IsPermanentDataError /
+// the canonical sentinels and SKIPS (outcome="sink_permanent", cursor
+// advances — an opaque error would read as unclassified and HOLD a sole-writer
+// cursor on a row that can never land), and this package's own
+// [classifyFault] keeps reading it as [faultData] (an opaque error would
+// block-and-retry forever inside [persistEventResilient]).
+type TradeDroppedError struct {
+	Source  string
+	Ledger  uint32
+	TxHash  string
+	OpIndex uint32
+	// Cause is the store's permanent-fault error, verbatim.
+	Cause error
+}
+
+func (e *TradeDroppedError) Error() string {
+	return fmt.Sprintf("pipeline: trade permanently dropped (%s ledger %d tx %s op %d): %v",
+		e.Source, e.Ledger, e.TxHash, e.OpIndex, e.Cause)
+}
+
+// Unwrap returns the store's permanent-fault error so errors.Is / errors.As
+// classification sees through the wrapper.
+func (e *TradeDroppedError) Unwrap() error { return e.Cause }
+
+// newTradeDroppedError wraps cause with the dropped trade's identity.
+func newTradeDroppedError(t canonical.Trade, cause error) *TradeDroppedError {
+	return &TradeDroppedError{Source: t.Source, Ledger: t.Ledger, TxHash: t.TxHash, OpIndex: t.OpIndex, Cause: cause}
+}
+
 // persistTrade writes one trade with infrastructure-resilience
 // (ADR-0041 / 2026-07-06 Postgres-outage fix). An infra fault
 // (connection refused/reset, PG restarting) is RETRIED with
@@ -1291,9 +1345,18 @@ func storeEventPersister(logger *slog.Logger, store *timescale.Store) eventPersi
 // (infra faults block, data faults drop) and RETURNS its abandon error so
 // a BOUNDED-ctx caller can cursor-gate on it.
 //
-// Return contract (audit 2026-08-03):
-//   - nil on success OR on a permanent data fault (the row is deterministically
-//     bad → dropped + counted; a held poison would loop a retrying caller).
+// Return contract (audit 2026-08-03, RLT-132):
+//   - nil ONLY when the trade landed.
+//   - a *[TradeDroppedError] on a permanent data fault: the row is
+//     deterministically bad, so it is dropped + counted HERE and never
+//     retried — but the drop is REPORTED, not folded into nil. nil used to
+//     cover both, so the projector (which counts every nil sink return as a
+//     durable commit) published a dropped trade as outcome="ok". The wrapper
+//     unwraps to the store's error, which the projector classifies as a
+//     permanent fault and SKIPS — the cursor still advances, so a poison row
+//     cannot loop it; only the label changes (ok → sink_permanent). Callers
+//     that key on [isCtxErr] (the batch path below) are unaffected: a drop is
+//     never a ctx error.
 //   - the ctx error when the retry is abandoned because ctx was cancelled
 //     (shutdown, or the projector's per-source 60s cycle timeout). Returning
 //     it lets the projector HOLD the cursor and re-derive next cycle — trades
@@ -1320,8 +1383,10 @@ func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t can
 				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
 			return err
 		}
-		// Permanent data fault — deterministic for this row, so DROP it
-		// (return nil, do not gate): a held poison would loop the projector.
+		// Permanent data fault — deterministic for this row, so DROP it (no
+		// retry) and REPORT the drop. The typed error unwraps to a permanent
+		// fault, which the projector skips rather than holds, so a poison row
+		// still cannot loop it (RLT-132: nil here read as "landed").
 		logger.Error("insert trade failed (permanent data fault — row skipped)",
 			"source", t.Source,
 			"ledger", t.Ledger,
@@ -1329,7 +1394,7 @@ func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t can
 			"op_index", t.OpIndex,
 			"err", err,
 		)
-		return nil
+		return newTradeDroppedError(t, err)
 	}
 	logger.Debug("trade ingested",
 		"source", t.Source,

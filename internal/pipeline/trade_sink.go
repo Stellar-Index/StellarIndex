@@ -362,8 +362,11 @@ func reportAbandonedTrades(logger *slog.Logger, phase string, abandoned []canoni
 //
 // Returns persistTrade's abandon error (ctx cancelled mid-retry) for a
 // trade that block-retried, so [flushTradeBatch] can hand the un-landed
-// row back to its caller; nil when the trade landed, was permanently
-// dropped, or was handed to the external retry buffer (not lost).
+// row back to its caller; a *[TradeDroppedError] when the trade was
+// permanently dropped on EITHER arm (RLT-132 — the same contract as
+// [persistTrade], so nil never means "dropped"); nil when the trade landed
+// or was handed to the external retry buffer (not lost). The batch-path
+// callers carry a row only on [isCtxErr], which a drop never satisfies.
 func persistTradeRouted(ctx context.Context, logger *slog.Logger, w tradeWriter, extBuf *externalRetryBuffer, t canonical.Trade) error {
 	if extBuf == nil || external.IsOnChain(t.Source) {
 		return persistTrade(ctx, logger, w, t)
@@ -377,7 +380,7 @@ func persistTradeRouted(ctx context.Context, logger *slog.Logger, w tradeWriter,
 		logger.Error("insert external trade failed (permanent data fault) — row skipped",
 			"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash,
 			"op_index", t.OpIndex, "err", err)
-		return nil
+		return newTradeDroppedError(t, err)
 	}
 	extBuf.enqueue(t) // bounded async retry, drop-oldest on overflow
 	return nil

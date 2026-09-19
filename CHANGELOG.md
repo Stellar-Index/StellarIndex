@@ -303,6 +303,24 @@ against.
   `continue-on-error`, so read its result), and the multi-host
   `deploy/monitoring/rules/` tree is shipped by the ansible `prometheus`
   role (`tasks/03-prometheus-configure.yml`) (audit Q261).
+- **projector (trades):** a trade the store permanently rejects is no longer
+  reported as projected. `persistTrade` returned nil both when a trade
+  landed and when it was dropped as a permanent data fault, and the
+  projector counts every nil sink return as a durable commit — so a dropped
+  trade was published under
+  `stellarindex_projector_events_decoded_total{outcome="ok"}`, the one label
+  that promises the row was written, and appeared in no projector loss
+  counter. `persistTrade` (and `persistTradeRouted`'s external arm, which
+  carried its own copy of the contract) now return a `*TradeDroppedError`
+  that unwraps to the store's error: the projector classifies it as a
+  permanent fault, counts it `outcome="sink_permanent"` and still advances
+  the cursor, so a poison row cannot wedge a sole-writer source. Which
+  trades are storable is unchanged, and so is the dispatcher batch path,
+  which carries a row only on a context error. One operator-visible
+  consequence: `stellarindex-ops projected-rebuild -write` now counts such
+  a trade as an insert error and leaves its window un-checkpointed, as it
+  already did for a lost non-trade row — before this it checkpointed over
+  the hole (audit RLT-132).
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process
