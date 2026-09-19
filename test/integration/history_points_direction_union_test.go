@@ -140,8 +140,13 @@ func TestHistoryPointsDirectionUnion(t *testing.T) {
 	}
 
 	// ── Closed-bucket guard, in its rewritten sargable spelling ─────
-	// The 1-day bucket holding these trades is still IN PROGRESS, so the
-	// series must be empty even though the CAGG row exists.
+	// A 1-day bucket is served only once it has CLOSED (ADR-0015:
+	// `bucket <= now() - INTERVAL '1 day'`). The seed sits ~2h back, so
+	// which side of that line it falls on depends on the clock: for the
+	// first ~2h of a UTC day the trades land in YESTERDAY's bucket, which
+	// is closed and must be served; for the rest of the day they land in
+	// today's, which is open and must not be. Assert whichever is true —
+	// a fixed "want 0" fails every run between 00:00 and ~02:05 UTC.
 	var dayRows int
 	if err := store.DB().QueryRowContext(ctx,
 		`SELECT count(*) FROM prices_1d
@@ -155,14 +160,34 @@ func TestHistoryPointsDirectionUnion(t *testing.T) {
 		t.Fatal("prices_1d holds no row for the seeded pair — the closed-bucket " +
 			"assertion below would pass vacuously")
 	}
+	closedDays := func(now time.Time) map[time.Time]bool {
+		out := map[time.Time]bool{}
+		for _, tr := range trades {
+			day := tr.Timestamp.UTC().Truncate(24 * time.Hour)
+			if !day.Add(24 * time.Hour).After(now) {
+				out[day] = true
+			}
+		}
+		return out
+	}
+	closedBefore := closedDays(time.Now().UTC())
 	dayPts, err := store.HistoryPoints(ctx, xlmUSDC, timescale.Granularity1d, 0)
 	if err != nil {
 		t.Fatalf("HistoryPoints(1d): %v", err)
 	}
-	if len(dayPts) != 0 {
-		t.Errorf("HistoryPoints(1d) returned %d buckets, want 0 — today's bucket is "+
-			"still open and ADR-0015 excludes it (`bucket <= now() - INTERVAL '1 day'`): %+v",
-			len(dayPts), dayPts)
+	// Read the clock on both sides of the query: a run that straddles
+	// midnight may legitimately see either answer.
+	closedAfter := closedDays(time.Now().UTC())
+	if len(dayPts) != len(closedBefore) && len(dayPts) != len(closedAfter) {
+		t.Errorf("HistoryPoints(1d) returned %d buckets, want %d — only a CLOSED day "+
+			"bucket is served (ADR-0015, `bucket <= now() - INTERVAL '1 day'`): %+v",
+			len(dayPts), len(closedAfter), dayPts)
+	}
+	for _, p := range dayPts {
+		if !closedAfter[p.Bucket.UTC()] {
+			t.Errorf("HistoryPoints(1d) served %s, a day bucket that is still open",
+				p.Bucket.UTC().Format(time.RFC3339))
+		}
 	}
 
 	// ── HistoryPointsInRange: /v1/chart's windowed read ─────────────
