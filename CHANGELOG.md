@@ -177,6 +177,25 @@ against.
   out of a scan that never ran. The basis now carries the same NOT MEASURED
   correction the other two arms have had since they were added.
 
+- **projector / a global class-22/23 fault no longer sheds the whole backlog on
+  cycle one (RLT-131):** `classifySinkFault` returns `dispositionSkip` for ANY
+  SQLSTATE class 22/23, and those classes are not always row-local — a
+  migration that adds a NOT NULL or a CHECK the live rows violate rejects every
+  row of the window at once. The skip arm dropped each of them inline, on the
+  first cycle, with no cap and nothing holding the cursor, so one bad deploy
+  advanced a source's cursor past its entire backlog in a single pass; the raw
+  events survive in the lake, but the only counter it bumped
+  (`events_decoded{outcome="sink_permanent"}`) has no alert rule and does not
+  say how much was in flight. The arm now takes the rail its sibling
+  `quarantineCandidate` already had: at most `PermanentSkipPerCycle` (1) poison
+  row shed per cycle, lowest ledger first, with every row it did not shed
+  HOLDING the cursor and the cycle reported `runs_total{outcome="sink_retry"}`
+  rather than `ok`. A scattered poison row still costs one cycle (COR-11 is
+  unchanged: the source drains and never wedges); a global fault becomes a
+  visible stall that bleeds one loudly-logged row per cycle while the lag alert
+  climbs. A row carrying both a poison output and a held fault is retried
+  whole, so it is not a shed candidate and its quarantine budget still
+  accumulates.
 - **ops / the archival-node role still hard-failed one import earlier (F128):**
   the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,
   `21-clickhouse-drop-guard.yml` and `22-clickhouse-exporter.yml`, but

@@ -34,6 +34,28 @@ const QuarantineAfterCycles = 20
 // (poison) event therefore still self-heal — just slowly, and loudly.
 const QuarantineAfterCyclesNoProgress = 720
 
+// PermanentSkipPerCycle is the most rows ONE cycle may shed on a
+// [dispositionSkip] verdict — a SQLSTATE class 22/23 rejection or a canonical
+// value-shape rejection raised before the statement ran.
+//
+// The verdict is positively identified and deterministic, so a shed row needs
+// no retry budget: what it needs is a RATE limit. IsPermanentDataError is true
+// for ANY class 22/23 error, and those classes are not always row-local — a
+// migration that adds a NOT NULL or a CHECK the live rows violate makes every
+// row of the window "poison" at once. Shedding them all on the first cycle
+// (what this arm did before RLT-131) turns a global, fixable fault into an
+// immediate unbounded loss: the cursor sails past the whole backlog, and the
+// raw events stay in the lake but nothing in the served tier says which rows
+// went missing.
+//
+// So the skip arm borrows the quarantine arm's rail: at most ONE row per
+// cycle, lowest ledger first ([shedCandidate]), and every row it did not shed
+// HOLDS the cursor exactly like a retryable fault. A genuine scattered poison
+// row still costs one cycle; a global fault turns into a visible stall that
+// bleeds at 1 row per [Interval] with a rising lag and one loud ERROR per row,
+// instead of a silent backlog-wide drop.
+const PermanentSkipPerCycle = 1
+
 // sinkDisposition is the projector's durability verdict for ONE sink write
 // failure. It answers exactly one question: may the cursor advance past this
 // row?
@@ -56,7 +78,10 @@ const (
 	// fault: the database rejected the row's VALUES (SQLSTATE class 22/23) or
 	// the row failed a canonical value-shape check before it ever reached SQL.
 	// Retrying can never succeed, so the row is counted, logged loudly and
-	// skipped, and the cursor advances past it on the FIRST cycle.
+	// skipped — on the FIRST cycle, but at most [PermanentSkipPerCycle] rows
+	// of one cycle, because the same SQLSTATE classes also arrive globally
+	// (RLT-131). A row over that cap holds the cursor and is shed by a later
+	// cycle.
 	dispositionSkip sinkDisposition = iota
 
 	// dispositionRetry — a POSITIVELY-identified infrastructure / shutdown

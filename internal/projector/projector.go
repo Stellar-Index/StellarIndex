@@ -120,7 +120,10 @@ const ReplayWindowRefreshInterval = 30 * time.Second
 //     corrective.
 //   - a PERMANENT data fault ([dispositionSkip]) is logged loudly,
 //     counted, and SKIPPED (the cursor advances past it) — blocking
-//     forever on a poison row is a worse outage than dropping it.
+//     forever on a poison row is a worse outage than dropping it — but no
+//     faster than [PermanentSkipPerCycle] rows per cycle, so the same
+//     SQLSTATE arriving globally stalls instead of draining the backlog
+//     (RLT-131).
 //   - an UNCLASSIFIED failure ([dispositionUnclassified]) is retried like
 //     a transient one but under a budget, then quarantined; see
 //     [QuarantineAfterCycles].
@@ -681,14 +684,41 @@ func quarantineCandidate(held []heldRow, madeProgress bool) int {
 	if madeProgress {
 		budget = QuarantineAfterCycles
 	}
+	return shedCandidate(held, dispositionUnclassified, budget)
+}
+
+// permanentSkipCandidate returns the index of the next poison row this cycle
+// may shed — let the cursor advance past a [dispositionSkip] verdict — or -1
+// when there is none.
+//
+// The verdict is positively identified, so there is no waiting budget: every
+// candidate qualifies on the cycle it failed (hence a budget of 1). The
+// protection is the CAP on how often the caller may ask
+// ([PermanentSkipPerCycle]) together with the fact that the caller HOLDS every
+// poison row it did not shed. That is what makes a class-22/23 fault which is
+// global rather than row-local — a migration adding a NOT NULL or CHECK the
+// window's rows all violate — stall visibly and bleed one loudly-logged row
+// per cycle, instead of shedding the whole backlog on cycle one (RLT-131).
+//
+// Lowest ledger first, like [quarantineCandidate], so the cursor advances in
+// ledger order and the watermark stays monotonic.
+func permanentSkipCandidate(poisoned []heldRow) int {
+	return shedCandidate(poisoned, dispositionSkip, 1)
+}
+
+// shedCandidate returns the index of the lowest-ledger row of `rows` whose
+// disposition is `want` and which has failed at least `budget` consecutive
+// cycles, or -1 when none qualifies. One row per call is the whole point: both
+// give-up arms shed at a bounded, loud rate rather than draining a backlog.
+func shedCandidate(rows []heldRow, want sinkDisposition, budget int) int {
 	best := -1
 	var bestLedger uint32
-	for i := range held {
-		if held[i].disposition != dispositionUnclassified || held[i].fails < budget {
+	for i := range rows {
+		if rows[i].disposition != want || rows[i].fails < budget {
 			continue
 		}
-		if best < 0 || held[i].id.ledger < bestLedger {
-			best, bestLedger = i, held[i].id.ledger
+		if best < 0 || rows[i].id.ledger < bestLedger {
+			best, bestLedger = i, rows[i].id.ledger
 		}
 	}
 	return best
@@ -760,7 +790,11 @@ func (p *Projector) commitCursor(ctx context.Context, source string, read timesc
 //     cycle now actually implements (the SinkFunc godoc's old claim).
 //   - PERMANENT sink data faults (SQLSTATE 22/23, or a canonical value-shape
 //     rejection raised before the statement ran) → log LOUD + count + SKIP,
-//     because a poison row must not wedge the source forever.
+//     because a poison row must not wedge the source forever — but at most
+//     [PermanentSkipPerCycle] rows per cycle, with the rest holding the cursor
+//     (RLT-131). Those SQLSTATE classes also arrive GLOBALLY (a migration whose
+//     NOT NULL / CHECK the live rows violate), and shedding the window's whole
+//     backlog on cycle one made that an instant, unbounded, near-silent loss.
 //   - UNCLASSIFIED sink failures → held like a transient one, but only for a
 //     bounded number of consecutive cycles; then quarantined (COR-11 /
 //     COR-01, audit-2026-07-23). Under INV-4 each Soroban-derived domain has
@@ -859,11 +893,15 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// permanently lost for a sole-writer (sep41) domain. `held` collects
 		// those failures with their row identity; the cursor is then capped
 		// at (lowest held ledger - 1) so the next cycle re-reads and retries
-		// from there. A PERMANENT data fault (poison row) does NOT hold the
-		// cursor — it is counted + skipped so it can't wedge the source
-		// forever — and an UNCLASSIFIED failure stops holding once its retry
-		// budget is exhausted (COR-11 / COR-01).
+		// from there. A PERMANENT data fault (poison row) lands in `poisoned`
+		// instead: it holds the cursor too, but only until this cycle's shed
+		// cap releases it ([PermanentSkipPerCycle], RLT-131) — bounded so a
+		// poison row can't wedge the source forever (COR-11) and rate-limited
+		// so a GLOBAL class-22/23 fault can't shed a whole backlog at once.
+		// An UNCLASSIFIED failure stops holding once its retry budget is
+		// exhausted (COR-11 / COR-01).
 		held               []heldRow
+		poisoned           []heldRow
 		failedThisCycle    = make(map[rowIdentity]bool)
 		sinkPermanentFails int
 		sinkQuarantined    int
@@ -916,32 +954,50 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		}
 		// `id` was computed at closure entry for the duplicate guard.
 		faults := rowFaultsOf(sinkErr)
-		// Poison OUTPUTS: retrying can never succeed, so skipping (letting the
-		// cursor advance past them) is safer than stalling the source forever.
-		// Log LOUD + count EACH one so it surfaces as an alert — the row's
-		// other outputs were still offered to the sink (RLT-132).
+		// One failing cycle per ROW, charged once: a row's poison outputs and
+		// its held fault share one identity, and both arms below read the
+		// count, so charging it twice would halve every budget.
+		failedThisCycle[id] = true
+		fails := tracker.fail(id)
+		// Poison OUTPUTS: retrying can never succeed, so they are logged LOUD
+		// and counted EACH — the row's other outputs were still offered to the
+		// sink (RLT-132).
 		for _, dropErr := range faults.dropped {
 			sinkPermanentFails++
-			p.logger.Error("projector: PERMANENT sink failure — skipping poison output (cursor advances past it)",
+			p.logger.Error("projector: PERMANENT sink failure — poison output (the cursor advances past its row only under this cycle's shed cap)",
 				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
 				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "err", dropErr)
 		}
-		if faults.held == nil {
-			tracker.forget(id)
+		if faults.held != nil {
+			sinkErr = faults.held
+			disposition := classifySinkFault(sinkErr)
+			// Transient (DB down / restarting / ctx) or unclassified (deadlock,
+			// statement-timeout, a store validation error, anything new): hold
+			// the cursor below this ledger so the next cycle re-reads and
+			// retries. The whole ROW is retried, poison outputs included, so it
+			// is not also a shed candidate — the cursor is already held for it,
+			// and shedding would drop the retry budget this row is counting.
+			held = append(held, heldRow{id: id, disposition: disposition, fails: fails, err: sinkErr})
+			p.logger.Warn("projector: sink failure — holding cursor for retry (NOT advancing past this ledger)",
+				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
+				"op_index", ev.OperationIndex, "event_index", ev.EventIndex,
+				"disposition", disposition.String(), "consecutive_cycles", fails, "err", sinkErr)
 			return
 		}
-		sinkErr = faults.held
-		disposition := classifySinkFault(sinkErr)
-		// Transient (DB down / restarting / ctx) or unclassified (deadlock,
-		// statement-timeout, a store validation error, anything new): hold the
-		// cursor below this ledger so the next cycle re-reads and retries.
-		failedThisCycle[id] = true
-		fails := tracker.fail(id)
-		held = append(held, heldRow{id: id, disposition: disposition, fails: fails, err: sinkErr})
-		p.logger.Warn("projector: sink failure — holding cursor for retry (NOT advancing past this ledger)",
-			"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
-			"op_index", ev.OperationIndex, "event_index", ev.EventIndex,
-			"disposition", disposition.String(), "consecutive_cycles", fails, "err", sinkErr)
+		// Every fault of this row is permanent, so the cursor MAY advance past
+		// it — but not unconditionally, and not with the rest of the window in
+		// the same pass. A class-22/23 verdict is row-local only when the sink
+		// is otherwise working, and this arm cannot tell that apart from a
+		// migration that rejects every row it reads. So the row becomes a shed
+		// CANDIDATE and [permanentSkipCandidate] releases at most
+		// [PermanentSkipPerCycle] of them once the scan is done; the rest hold
+		// the cursor (RLT-131).
+		if len(faults.dropped) > 0 {
+			poisoned = append(poisoned, heldRow{
+				id: id, disposition: dispositionSkip, fails: fails,
+				err: errors.Join(faults.dropped...),
+			})
+		}
 	}
 
 	if p.chAddr != "" {
@@ -1012,6 +1068,31 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// longer covers) starts from zero.
 	tracker.retain(failedThisCycle)
 
+	// Poison-row shed cap (RLT-131): release at most [PermanentSkipPerCycle]
+	// of the rows the sink PERMANENTLY rejected, lowest ledger first, and keep
+	// holding the rest. Before this the arm shed every poison row of the
+	// window inline, on cycle one — which is correct for a scattered bad row
+	// and catastrophic for the same SQLSTATE arriving globally (a migration
+	// whose NOT NULL / CHECK every row violates): the cursor advanced past the
+	// entire backlog in one pass and the only counter it bumped
+	// (outcome="sink_permanent") says nothing about how much was in flight.
+	// Capped, the same fault is a visible stall that bleeds one logged row per
+	// cycle while the lag alert climbs.
+	for shed := 0; shed < PermanentSkipPerCycle; shed++ {
+		i := permanentSkipCandidate(poisoned)
+		if i < 0 {
+			break
+		}
+		r := poisoned[i]
+		tracker.forget(r.id)
+		poisoned = append(poisoned[:i], poisoned[i+1:]...)
+		p.logger.Error("projector: SKIPPING poison row — cursor advances past it; re-drive with `stellarindex-ops projector-replay` once the underlying defect is fixed",
+			"source", src.Name, "ledger", r.id.ledger, "tx", r.id.txHash,
+			"op_index", r.id.opIndex, "event_index", r.id.eventIndex,
+			"poison_rows_still_held", len(poisoned), "err", r.err)
+	}
+	sinkPoisonHeld := len(poisoned)
+
 	// Poison-row escape hatch (COR-11 / COR-01, audit-2026-07-23): give up on
 	// at most ONE held row whose retry budget is exhausted, so a deterministic
 	// failure nobody classified cannot hold a sole-writer domain's cursor
@@ -1058,6 +1139,14 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// downstream Insert* absorbs the repeats. lastSeenLedger is only logged.
 	commitTo := toLedger
 	firstHeldLedger, holding := lowestHeldLedger(held)
+	// A poison row the shed cap did not release holds the cursor exactly like
+	// a retryable fault: until this source's next cycles have bled it off one
+	// at a time, advancing past it would be the unbounded silent loss the cap
+	// exists to stop (RLT-131).
+	if poisonLedger, poisonHolding := lowestHeldLedger(poisoned); poisonHolding &&
+		(!holding || poisonLedger < firstHeldLedger) {
+		firstHeldLedger, holding = poisonLedger, true
+	}
 	if holding && firstHeldLedger <= fromLedger {
 		// The window's FIRST ledger is still held — nothing new is durably
 		// committed, so DON'T move the cursor; the next cycle retries the
@@ -1076,7 +1165,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"source", src.Name, "from", fromLedger, "to", toLedger,
 			"first_held_ledger", firstHeldLedger,
 			"transient_fails", sinkTransientFails, "permanent_fails", sinkPermanentFails,
-			"quarantined", sinkQuarantined)
+			"poison_rows_held", sinkPoisonHeld, "quarantined", sinkQuarantined)
 		// Wedge detection, sink side: the same terminal stall reached via the
 		// sink-budget path (the 2026-08-01 aquarius-reserves incident) — the CH
 		// scan finished but the per-event writes spent PerSourceTimeout, the
@@ -1143,9 +1232,15 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// separates a sustained spike (a regression) from scattered poison rows and
 	// pages. sink_retry keeps precedence: it means the cursor HELD (an
 	// auto-recovering visible stall) and already alerts on its own.
+	//
+	// A poison row the shed cap held back counts the same way: the cursor was
+	// capped below it and the next cycle re-reads it, which is exactly what
+	// "sink_retry" already means at the run level — an auto-recovering visible
+	// stall. Reporting that cycle "ok" would hide the one signal a global
+	// class-22/23 fault produces before its rows start bleeding off (RLT-131).
 	runOutcome := "ok"
 	switch {
-	case sinkTransientFails > 0:
+	case sinkTransientFails > 0 || sinkPoisonHeld > 0:
 		runOutcome = "sink_retry"
 	case decodeErrors > 0:
 		runOutcome = "decode_degraded"
@@ -1153,7 +1248,8 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	obs.ProjectorRunsTotal.WithLabelValues(src.Name, runOutcome).Inc()
 	obs.ProjectorCycleDurationSeconds.WithLabelValues(src.Name).Observe(time.Since(start).Seconds())
 
-	if eventsEmitted > 0 || decodeErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 || sinkQuarantined > 0 {
+	if eventsEmitted > 0 || decodeErrors > 0 || sinkTransientFails > 0 || sinkPermanentFails > 0 ||
+		sinkPoisonHeld > 0 || sinkQuarantined > 0 {
 		p.logger.Info("projector cycle",
 			"source", src.Name,
 			"from", fromLedger, "to", toLedger, "committed_to", commitTo,
@@ -1162,6 +1258,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"decode_errors", decodeErrors,
 			"sink_transient_fails", sinkTransientFails,
 			"sink_permanent_fails", sinkPermanentFails,
+			"sink_poison_rows_held", sinkPoisonHeld,
 			"sink_quarantined", sinkQuarantined,
 			"lag_ledgers", tip-commitTo,
 			"elapsed", time.Since(start).Round(time.Millisecond),
