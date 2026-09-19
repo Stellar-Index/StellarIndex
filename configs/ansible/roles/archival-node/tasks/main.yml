@@ -183,18 +183,54 @@
   ansible.builtin.import_tasks: 15-log-discipline.yml
   tags: [log-discipline, logrotate, journald]
 
+# ── DOES THIS HOST HAVE A CLICKHOUSE TO CONFIGURE? ───────────────────
+# The three CH-CONFIG files below (20-serving-profile, 21-drop-guard,
+# 22-exporter) are not installers — they drop XML into
+# /etc/clickhouse-server/{config.d,users.d} and shell out to
+# clickhouse-client. They were imported UNCONDITIONALLY because the one
+# host that needed them (r1) has run_clickhouse FALSE by design: 08-
+# clickhouse.yml must never rebuild r1's hand-tended lake. The cost was
+# that any host WITHOUT ClickHouse — the DR bring-up, a fresh r2/r3, a
+# no-lake test box — hard-failed the whole role on the first of them
+# (the serving-profile vault assert), aborting every task after it.
+#
+# `run_clickhouse` alone is therefore the WRONG gate: it would take the
+# guard, the profile and the metrics endpoint away from r1. Gate on the
+# fact instead — the server's own config directory, which the
+# clickhouse-server package creates — OR'd with run_clickhouse so a
+# fresh host that is about to install ClickHouse (08-clickhouse.yml,
+# earlier in this file) still gets configured on the same run.
+#
+# Tagged `always` so a targeted apply (`--tags clickhouse-drop-guard`)
+# still resolves the fact the imports below are gated on.
+- name: "Detect an installed ClickHouse server (gates the CH-config tasks below)"
+  ansible.builtin.stat:
+    path: "{{ clickhouse_server_config_dir }}"
+  register: clickhouse_server_config
+  tags: [always]
+
+- name: "Do the ClickHouse config tasks have a server to configure?"
+  ansible.builtin.set_fact:
+    clickhouse_config_tasks_enabled: >-
+      {{ (run_clickhouse | default(false) | bool)
+         or (clickhouse_server_config.stat.isdir | default(false) | bool) }}
+  tags: [always]
+
 - name: "ClickHouse serving-query isolation (ADR-0048 D4)"
   ansible.builtin.import_tasks: 20-clickhouse-serving-profile.yml
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, clickhouse-serving-profile]
 
 - name: "ClickHouse destructive-DDL size guard (2026-08-29 r1 audit)"
   ansible.builtin.import_tasks: 21-clickhouse-drop-guard.yml
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, clickhouse-drop-guard]
 
 - name: "ClickHouse Prometheus endpoint (2026-09-03 r1 observability gap)"
-  # Unconditional like the two above: run_clickhouse is false on r1, and
-  # r1 is the host whose lake exports no metrics at all.
+  # Same gate as the two above: reaches r1 (which has ClickHouse but
+  # run_clickhouse false) and skips a host that has no lake at all.
   ansible.builtin.import_tasks: 22-clickhouse-exporter.yml
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, clickhouse-exporter, observability]
 
 - name: "Local single-host Prometheus (ASH-8 — the /v1/status scrape layer)"

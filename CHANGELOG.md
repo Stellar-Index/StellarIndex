@@ -89,6 +89,39 @@ against.
   hoisted-window, and join-without-`GROUP BY` — are frozen in that test as
   oracles and each is asserted to still exhibit its own pathology, so no
   assertion can pass vacuously.
+- **ansible / the archival-node role hard-failed on any host without ClickHouse
+  (F128):** `tasks/main.yml` imported three CH-CONFIG task files —
+  `20-clickhouse-serving-profile.yml`, `21-clickhouse-drop-guard.yml`,
+  `22-clickhouse-exporter.yml` — with no `when:`, and all three of their own
+  enable flags default TRUE. Those files are not installers: they drop XML into
+  `/etc/clickhouse-server/{config.d,users.d}` and shell out to
+  `clickhouse-client --port 9300`. So on a host that has no ClickHouse — the DR
+  bring-up, a fresh r2/r3, a no-lake box — the FIRST of them aborted the role on
+  its vault-password assert, and because a failed task ends the play, every task
+  after it (firewall, hardening, healthcheck, the stellarindex services, Caddy,
+  log discipline) never ran. The imports were unconditional on purpose, and that
+  purpose is why `run_clickhouse` is the WRONG gate: it is false on r1 by design
+  (so `08-clickhouse.yml` never rebuilds r1's hand-tended lake) and r1 is exactly
+  the host those three files were written for — gating on it would have silently
+  stripped the destructive-DDL drop guard, the `api_serving` profile and the
+  metrics endpoint from the one production lake. They are now gated on
+  `clickhouse_config_tasks_enabled`, set from a `stat` of
+  `clickhouse_server_config_dir` (`/etc/clickhouse-server`, created by the
+  clickhouse-server package) OR'd with `run_clickhouse` so a fresh host
+  installing ClickHouse on the same run is still configured. r1's behaviour is
+  unchanged: the directory is there, with `si-drop-guard.xml`,
+  `si-prometheus.xml` and `api-serving.xml` already in it. The serving-profile
+  assert stays fail-closed and now names the other way out
+  (`clickhouse_serving_profile_enabled: false`) for a bring-up that has not
+  minted the credential yet. **Operator note: this is an ANSIBLE-only change —
+  it does not reach r1 through a binary deploy.** It lands on the next
+  `ansible-playbook … archival-node.yml` run, and changes nothing there when it
+  does. Pinned by `scripts/ci/ansible-clickhouse-host-gate-test.sh`, which runs
+  the role's own `tasks/main.yml` under `ansible-playbook -c local` against three
+  host shapes (no ClickHouse → completes, all three files skipped; ClickHouse
+  present with `run_clickhouse` false, i.e. r1's shape → they still run;
+  `run_clickhouse` true with no package yet → they still run). The middle arm is
+  the one that fails on a `run_clickhouse`-only "fix".
 
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before

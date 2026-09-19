@@ -19,9 +19,11 @@
 # below proves that on the host rather than assuming it. Applying this
 # tag never bounces the lake.
 #
-# Like 20-clickhouse-serving-profile.yml this is imported UNCONDITIONALLY
-# (not behind run_clickhouse, which is false on r1 by design) so r1 —
-# the host that had the hole — gets it via:
+# Like 20-clickhouse-serving-profile.yml this is imported whenever the
+# host HAS a ClickHouse (tasks/main.yml's clickhouse_config_tasks_enabled:
+# clickhouse_server_config_dir exists, OR run_clickhouse) rather than
+# behind run_clickhouse alone, which is false on r1 by design — so r1,
+# the host that had the hole, still gets it via:
 #
 #   ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
 #     --tags clickhouse-drop-guard --check --diff

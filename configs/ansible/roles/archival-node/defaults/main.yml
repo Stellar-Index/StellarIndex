@@ -107,6 +107,19 @@ ch_live_catchup_enabled: true
 # stellarindex_systemd_unit_failed instead of degrading quietly.
 clickhouse_apply_schema: false
 clickhouse_tcp_port:     9300   # 9000 is MinIO's
+# The directory clickhouse-server's Debian package creates and reads its
+# drop-ins from. Its presence is how tasks/main.yml decides whether the
+# three CH-CONFIG task files (20-serving-profile / 21-drop-guard /
+# 22-exporter) have a server to configure at all — they write into
+# config.d/ + users.d/ under here and shell out to clickhouse-client, so
+# on a host with no ClickHouse they are not "skippable extras", they
+# hard-fail the whole role. Those three are deliberately NOT gated on
+# run_clickhouse alone: run_clickhouse is false on r1 (so 08-clickhouse
+# never touches its hand-tended lake) and r1 is exactly the host whose
+# lake must keep receiving them. A variable rather than a literal so
+# scripts/ci/ansible-clickhouse-host-gate-test.sh can exercise both the
+# present and the absent host without a ClickHouse install.
+clickhouse_server_config_dir: "/etc/clickhouse-server"
 
 # ───── ZFS ───────────────────────────────────────────────────────────
 # The DEFAULT is raidz2 ON PURPOSE: a fresh archival node should get

@@ -41,7 +41,11 @@
       vault_stellarindex_reader_secret_key's pattern — see
       defaults/main.yml's clickhouse_serving_password for the wiring),
       then re-run with --tags clickhouse-serving-profile. Never commit
-      the plaintext password.
+      the plaintext password. A host that is bringing ClickHouse up
+      WITHOUT the serving profile (a DR rebuild that has not minted the
+      credential yet) sets clickhouse_serving_profile_enabled: false in
+      its inventory instead — the assert is fail-closed on purpose, so
+      the API is never pointed at a user that was never provisioned.
   when: clickhouse_serving_profile_enabled | bool
   tags: [clickhouse, clickhouse-serving-profile]
 
