@@ -271,11 +271,17 @@ against.
   first/untracked install from having the synthetic `untracked-<timestamp>`
   tag written into its `deployed-versions` sidecar as if it were a released
   version — the marker is removed, which is the pre-deploy truth.
+  The per-binary rescue carried the same shape and is gated the same way: it
+  parked the live binary at `.failed-<version>` unconditionally, so a deploy
+  that failed *before* the atomic rename — a backup `mv` erroring on a
+  hand-written sidecar, a full filesystem — moved the working build the run
+  had not yet replaced out of the way and then had nothing to restore. Only
+  a path this run actually wrote is treated as the bad binary now.
   `scripts/ci/deploy-rollback-test.sh` pins it by running the real task file
   against a throwaway container over a five-binary matrix (tracked prior
   install, first-ever install, untracked prior install, the failing binary,
-  and a binary the deploy never names), plus a repeated run and a
-  single-binary run whose record set is empty.
+  and a binary the deploy never names), plus a repeated run, a single-binary
+  run whose record set is empty, and a run that fails before the swap.
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with
   `AND o.tx_hash IN (SELECT tx_hash FROM stellar.transactions WHERE successful = 1

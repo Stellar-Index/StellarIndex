@@ -40,7 +40,10 @@
 #   h. the play fails and its message NAMES what could not be rolled back
 #      instead of claiming a clean rollback;
 #   i. repeated rollback is convergent, not cumulative: a second identical
-#      failing run loses no binary and changes no restored content.
+#      failing run loses no binary and changes no restored content;
+#   k. a deploy that fails BEFORE the new build reaches the live path
+#      leaves the build already installed there untouched — only what this
+#      run actually installed is ever moved aside.
 #
 # The target is a container because the task file writes the real
 # /var/lib/stellarindex/deployed-versions path and expects a root-ish,
@@ -331,6 +334,40 @@ else
 fi
 if [ "$(listing)" = "$before3" ]; then ok "j. no other install path changed"
 else bad "j. install dir changed:"$'\n'"$(listing)"$'\n'"was:"$'\n'"$before3"; fi
+
+# ── run 4 — the deploy fails BEFORE the new build reaches the live path ─
+# The backup `mv` is the first thing the guarded block does, and it errors
+# on a sidecar that is not a single word (these are written by hand during
+# a manual rollback — see docs/operations/rollback.md). The live path then
+# still holds the working build this run never replaced, and the rescue
+# must leave it alone rather than park it as "the bad binary".
+t_exec "printf 'foxtrot-old\n' > '$BIN/si-foxtrot' && chmod 0755 '$BIN/si-foxtrot' \
+  && printf 'v0.0.1 stray' > '$SIDECARS/si-foxtrot'" >/dev/null
+mk_art si-foxtrot foxtrot-new big
+cat > "$CT/fixture-early.yml" <<YML
+- hosts: all
+  gather_facts: false
+  become: false
+  vars:
+    version: $VERSION
+    local_dist_dir: $CT/dist
+    install_dir: $BIN
+    api_port: 3000
+    api_health_path: /v1/healthz
+    health_grace_seconds: 0
+    cli_binaries: [si-alpha, si-bravo, si-charlie, si-delta, si-echo, si-foxtrot]
+  tasks:
+    - ansible.builtin.include_tasks: $TASKFILE_ABS
+      loop: [si-foxtrot]
+      loop_control:
+        loop_var: binary
+YML
+out="$(cd "$CT" && ANSIBLE_LOCALHOST_WARNING=false ANSIBLE_INVENTORY_UNPARSED_WARNING=false \
+       ansible-playbook -i "$CNAME," -c community.docker.docker fixture-early.yml 2>&1)"; rc=$?
+if [ "$rc" -ne 0 ]; then ok "k. a pre-swap failure fails the play (rc=$rc)"
+else bad "k. a pre-swap failure exited 0: $out"; fi
+want_head "k. the build this run never replaced is still installed" "$BIN/si-foxtrot" "foxtrot-old"
+want_exact "k. it was not parked as the bad binary" "$BIN/si-foxtrot.failed-$VERSION" "<absent>"
 
 echo "deploy-rollback-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

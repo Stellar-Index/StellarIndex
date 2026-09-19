@@ -29,10 +29,12 @@
 #      see docs/operations/deploy-workflow.md).
 #      Every rollback — this binary's and the whole-deploy one below —
 #      acts on the record the forward path wrote BEFORE it touched the
-#      path (`rollback_record`), and moves nothing aside it cannot show
-#      it can put back. A binary this run installed for the first time
-#      has no backup: it is left installed, its service stopped, and it
-#      is NAMED in the failure rather than deleted (K078).
+#      path (`rollback_record`), and moves aside only what this run can
+#      show it installed: nothing before the atomic rename, and nothing
+#      it cannot put a recorded backup back into. A binary this run
+#      installed for the first time has no backup: it is left installed,
+#      its service stopped, and NAMED in the failure — not deleted
+#      (K078).
 #   9. Prune backups beyond the latest 5 to bound disk use.
 
 - name: "[{{ binary }}] Confirm new artefact exists on controller"
@@ -99,6 +101,10 @@
       # never be written back into the sidecar as if it were one.
       prev_version: >-
         {{ backup_tag if (sidecar is succeeded and sidecar.content is defined) else '' }}
+    # Flipped by the atomic rename below. Until then the live path holds
+    # the build that was already installed, which this run must not treat
+    # as "the bad binary" and move aside (K078).
+    rollback_swapped: false
 
 - name: "[{{ binary }}] Stage new binary as .new alongside live path"
   ansible.builtin.copy:
@@ -133,6 +139,10 @@
       ansible.builtin.command:
         cmd: "mv {{ install_dir }}/{{ binary }}.new {{ install_dir }}/{{ binary }}"
         creates: "{{ install_dir }}/{{ binary }}"
+
+    - name: "[{{ binary }}] Mark the live path as holding this run's build"
+      ansible.builtin.set_fact:
+        rollback_swapped: true
 
     - name: "[{{ binary }}] Write sidecar version marker"
       ansible.builtin.copy:
@@ -227,21 +237,45 @@
         state: stopped
       ignore_errors: true
 
+    # Only the build THIS run put at the live path is "the bad binary".
+    # When the block failed before the atomic rename — a backup `mv` that
+    # errored on a hand-written sidecar, a full filesystem — the live path
+    # still holds the previously installed, working build, and moving it
+    # to .failed-<version> deletes a binary this run never installed
+    # (K078). `removes:` also makes a repeated rescue a no-op instead of
+    # clobbering the forensic copy.
     - name: "[{{ binary }}] Move bad binary out of the way"
+      when: rollback_swapped | bool
       ansible.builtin.command:
-        cmd: "mv {{ install_dir }}/{{ binary }} {{ install_dir }}/{{ binary }}.failed-{{ version }}"
+        cmd: "mv {{ rollback_record.live_path }} {{ rollback_record.live_path }}.failed-{{ version }}"
+        removes: "{{ rollback_record.live_path }}"
       ignore_errors: true
 
-    # Gated on the record (K078): with no prior install there is no backup
-    # to move back, and the un-gated `mv` only ever failed into
-    # ignore_errors. `removes:` makes the restore a no-op if the recorded
-    # backup is gone (pruned, or a rollback that already ran) rather than
-    # a silent failure.
-    - name: "[{{ binary }}] Restore backup binary"
+    # Restore from the recorded backup, and only if that exact file is on
+    # disk now: with no prior install there is nothing to move back, and
+    # the un-gated `mv` only ever failed into ignore_errors (K078).
+    # `creates:` keeps it from clobbering a live path that is still
+    # occupied — if the move-aside above did not run, what is there is
+    # already the build we want.
+    - name: "[{{ binary }}] Check the recorded backup is still on disk"
+      ansible.builtin.stat:
+        path: "{{ rollback_record.prev_path }}"
       when: rollback_record.prev_path | length > 0
+      register: rollback_self_prev
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Restore backup binary"
+      when: rollback_self_prev.stat.exists | default(false)
       ansible.builtin.command:
         cmd: "mv {{ rollback_record.prev_path }} {{ rollback_record.live_path }}"
         removes: "{{ rollback_record.prev_path }}"
+        creates: "{{ rollback_record.live_path }}"
+      ignore_errors: true
+
+    - name: "[{{ binary }}] Confirm the install path is occupied after the rollback"
+      ansible.builtin.stat:
+        path: "{{ rollback_record.live_path }}"
+      register: rollback_self_after
       ignore_errors: true
 
     - name: "[{{ binary }}] Restore sidecar version marker"
@@ -267,10 +301,13 @@
         state: absent
       ignore_errors: true
 
+    # Whatever is at the live path now is a build that predates this run —
+    # the restored backup, or the one the deploy never got to replace. If
+    # the path is empty there is nothing to start and the failure says so.
     - name: "[{{ binary }}] Restart with old binary"
       when:
         - binary not in cli_binaries
-        - rollback_record.prev_path | length > 0
+        - rollback_self_after.stat.exists | default(false)
       ansible.builtin.systemd:
         name: "{{ binary }}.service"
         state: restarted
@@ -414,15 +451,20 @@
     - name: "[{{ binary }}] FAIL the play"
       ansible.builtin.fail:
         msg: >-
-          {{ binary }} health probe failed.
-          {% if rollback_record.prev_path | length > 0 %}
-          Rolled back to {{ backup_tag }}.
+          {{ binary }} deploy failed.
+          {% if not (rollback_swapped | bool) %}
+          It failed BEFORE the new build reached {{ rollback_record.live_path }},
+          so the binary already installed there was left exactly where it was.
+          {% elif rollback_self_after.stat.exists | default(false) %}
+          Rolled back to {{ backup_tag }}. Bad binary preserved at
+          {{ rollback_record.live_path }}.failed-{{ version }} for forensics.
           {% else %}
-          NOT rolled back: this run was its first install, there is no previous
-          binary, so {{ rollback_record.live_path }} is now unoccupied.
-          {% endif %}
-          Bad binary preserved at {{ install_dir }}/{{ binary }}.failed-{{ version }}
+          NOT rolled back — nothing to restore ({% if rollback_record.prev_path | length > 0 %}the
+          recorded backup {{ rollback_record.prev_path }} is gone{% else %}this run was its
+          first install{% endif %}), so {{ rollback_record.live_path }} is now unoccupied.
+          Bad binary preserved at {{ rollback_record.live_path }}.failed-{{ version }}
           for forensics.
+          {% endif %}
           {% if rollback_restorable | length > 0 %}
           Also rolled back these earlier-in-this-run binaries to keep the
           host on one consistent version set: {{ rollback_restorable | join(', ') }}.
