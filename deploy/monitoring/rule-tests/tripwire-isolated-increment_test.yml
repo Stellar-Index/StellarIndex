@@ -1,0 +1,383 @@
+---
+# promtool unit tests for the "any nonzero increase" TRIPWIRE class
+# (audit Q261). Run via:
+#
+#   promtool test rules deploy/monitoring/rule-tests/tripwire-isolated-increment_test.yml
+#
+# WHAT THIS PINS. A tripwire is an alert whose own text promises that ANY
+# increment needs eyes ("Sensitive — any nonzero increase", "any rate").
+# Four of them were written as
+#
+#     expr: increase(m[W]) > 0
+#     for:  W
+#
+# and that shape cannot fire on the one case a tripwire exists for — a single
+# isolated increment. After an increment at t the expression is true only for
+# evaluations in (t, t+W]; the alert goes pending at the first of those and
+# needs the expression to STAY true for a further W, so the last true
+# evaluation always arrives strictly before the `for:` elapses. It fired only
+# when increments kept arriving, i.e. it was a sustained-rate alert wearing a
+# tripwire's description. Every pre-existing case for these rules fed a ramp
+# (`0+1x40`), which is a positive control for the sustained case and never
+# exercised the isolated one.
+#
+# There is a second, independent way three of the four were mute. They
+# watch a CounterVec child that is NOT pre-seeded
+# (stellarindex_source_insert_errors_total{source,kind} and
+# stellarindex_projector_events_decoded_total{source,outcome}): the child is
+# born at 1 by the very increment the alert is for, and increase() over a
+# series with no earlier sample reads 0. Counters reset on every deploy, so
+# "the first drop of this process life" is the common case, not a corner. The
+# rules now carry the born-inside-the-window arm divergence.yml and
+# ingestion.yml's oracle-symbol rules already use:
+#
+#     or ( m > 0 unless m offset W )
+#
+# Each tripwire therefore gets four cases:
+#   1. ISOLATED increment on an existing series      → fires, then resolves
+#   2. series BORN non-zero (unseeded children only) → fires, then resolves
+#   3. flat non-zero series older than the window    → silent (the born-arm
+#      must not re-fire on an old count)
+#   4. flat zero                                     → silent
+#
+# THE FIVE RULES DELIBERATELY LEFT ALONE. discovery_drops,
+# discovery_record_failures, ch_live_sink_drops, ch_live_sink_drops_sustained
+# and stellar archive_publish_fail share the `for: W` / `[W]` shape but
+# describe themselves as SUSTAINED signals ("and continued doing so for 10
+# minutes"; ch-live-sink-drops.md: "drops are normal in rare bursts … this
+# alert fires when dropping is continuous"; archive-publish.md: "the alert's
+# `for: 1h` threshold filters" a retried transient). Staying silent on an
+# isolated event is their design, so the
+# last block below pins exactly that, to keep the distinction a decision
+# rather than an accident.
+#
+# The r1 overlay's copies are exercised by
+# tripwire-isolated-increment-r1_test.yml (same cases, other tree).
+#
+# LABEL SHAPES ARE POST-SCRAPE (see ops-job_test.yml's header).
+
+rule_files:
+  - ../rules/ingestion.yml
+  - ../rules/projector.yml
+  - ../rules/ledgerstream-tier.yml
+  - ../rules/stellar.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ══ stellarindex_ingestion_persist_drop ═══════════════════════════
+  - interval: 1m
+    name: persist_drop — one isolated drop on an existing series tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="defindex",kind="defindex_flow_vault"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: &persist_drop_alert
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: defindex
+              kind: defindex_flow_vault
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md"
+              summary: "Persist drops on defindex/defindex_flow_vault (any rate)"
+              description: |
+                A soroswap-router or defindex persist write failed for
+                defindex/defindex_flow_vault in the last 15 minutes.
+                These are DEX-swap / vault-flow rows — even a low-rate drop
+                matters, and this path was previously counter-less (the drop
+                was log-only and invisible). If the write went through the
+                projector it is retried (watch stellarindex_projector_events_
+                decoded_total{outcome="sink_retry"}); if it went through the
+                dispatcher drain the row was dropped. Check Timescale health
+                and the poison-row logs.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: *persist_drop_alert
+      # The increment has left the 15m window: a tripwire reports an event,
+      # it does not latch.
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: persist_drop — a child BORN at 1 (first drop of the process life) tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="defindex",kind="defindex_flow_vault"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: *persist_drop_alert
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: *persist_drop_alert
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: persist_drop — an old flat count does not re-fire the born-arm
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="defindex",kind="defindex_flow_vault"}'
+        values: '7x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: persist_drop — a born non-money-flow kind stays out of the tripwire
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",kind="trade"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts: []
+
+  # ══ stellarindex_ingestion_trade_buffer_drop ══════════════════════
+  - interval: 1m
+    name: trade_buffer_drop — one isolated permanent drop tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="binance",kind="dropped"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_trade_buffer_drop
+        exp_alerts: &trade_buffer_drop_alert
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: binance
+              kind: dropped
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md"
+              summary: "External trade(s) permanently dropped on binance — buffer overflow or data fault during backpressure"
+              description: |
+                stellarindex_source_insert_errors_total{source="binance",kind="dropped"}
+                incremented: at least one external (CEX/FX) trade was
+                permanently dropped — either the bounded retry buffer
+                overflowed while Postgres was unreachable (see
+                stellarindex_ingestion_trade_insert_backpressure) or a
+                permanent data fault surfaced during per-row isolation. This
+                IS genuine, unrecoverable loss for that trade (vendor-
+                refillable, not lake-refillable). Any nonzero rate needs eyes —
+                the coarse stellarindex_ingestion_insert_errors alert only
+                trips above 0.1/s fleet-wide and can miss a slow trickle.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/trade-insert-backpressure.md
+      - eval_time: 15m
+        alertname: stellarindex_ingestion_trade_buffer_drop
+        exp_alerts: *trade_buffer_drop_alert
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_trade_buffer_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: trade_buffer_drop — a child BORN at 1 tickets
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="binance",kind="dropped"}'
+        values: '_x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_trade_buffer_drop
+        exp_alerts: *trade_buffer_drop_alert
+      - eval_time: 25m
+        alertname: stellarindex_ingestion_trade_buffer_drop
+        exp_alerts: []
+
+  - interval: 1m
+    name: trade_buffer_drop — an old flat count and a flat zero stay silent
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="binance",kind="dropped"}'
+        values: '4x60'
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="kraken",kind="dropped"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ingestion_trade_buffer_drop
+        exp_alerts: []
+
+  # ══ stellarindex_projector_row_quarantined ════════════════════════
+  - interval: 1m
+    name: row_quarantined — one isolated quarantine tickets
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="sink_quarantined"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_projector_row_quarantined
+        exp_alerts: &row_quarantined_alert
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: sep41_transfers
+              outcome: sink_quarantined
+              severity: ticket
+              team: stellarindex
+              component: projector
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/projector-row-quarantined.md"
+              summary: "Projector quarantined a row on sep41_transfers — poison-row escape hatch fired"
+              description: |
+                stellarindex_projector_events_decoded_total{source="sep41_transfers",outcome="sink_quarantined"}
+                incremented: the projector gave up on ONE un-processable row
+                after exhausting its retry budget and advanced the cursor past
+                it. The row is durably skipped from the served tier — not
+                lost (the raw event is still in the lake) — until it is
+                re-driven with `stellarindex-ops projector-replay -source
+                sep41_transfers` after the underlying defect is fixed.
+                Any nonzero rate needs eyes.
+
+                Runbook: docs/operations/runbooks/projector-row-quarantined.md
+      - eval_time: 15m
+        alertname: stellarindex_projector_row_quarantined
+        exp_alerts: *row_quarantined_alert
+      - eval_time: 25m
+        alertname: stellarindex_projector_row_quarantined
+        exp_alerts: []
+
+  - interval: 1m
+    name: row_quarantined — a child BORN at 1 (the realistic shape — the outcome is unseeded) tickets
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="sink_quarantined"}'
+        values: '_x3 1x60'
+      # A busy healthy outcome on the same source must not leak in.
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="ok"}'
+        values: '0+50x63'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_projector_row_quarantined
+        exp_alerts: *row_quarantined_alert
+      - eval_time: 25m
+        alertname: stellarindex_projector_row_quarantined
+        exp_alerts: []
+
+  - interval: 1m
+    name: row_quarantined — an old flat count stays silent
+    input_series:
+      - series: 'stellarindex_projector_events_decoded_total{job="stellarindex_indexer",instance="r1:9100",source="sep41_transfers",outcome="sink_quarantined"}'
+        values: '2x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_projector_row_quarantined
+        exp_alerts: []
+
+  # ══ stellarindex_ledgerstream_tier_both_missing ═══════════════════
+  # Seeded at 0 by obs.seedLedgerstreamTierSeries, so the existing-series
+  # shape is the production one and no born-arm is needed.
+  - interval: 1m
+    name: tier_both_missing — one isolated both-tiers miss pages (a one-shot backfill dies on a single miss)
+    input_series:
+      - series: 'stellarindex_ledgerstream_tier_read_total{job="stellarindex_indexer",instance="r1:9100",outcome="both_missing"}'
+        values: '0x3 1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ledgerstream_tier_both_missing
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              outcome: both_missing
+              severity: page
+              team: stellarindex
+              component: ledgerstream
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ledgerstream-tier-both-missing.md"
+              summary: "LCM read missed BOTH tiers in the last 5 min — indexer cannot progress"
+              description: |
+                The TieredDataStore tried to read at least one
+                LedgerCloseMeta object that returned "not found" from
+                BOTH the local galexie-archive (hot) AND the
+                aws-public-blockchain bucket (cold). The indexer or
+                backfill consumer that hit this is now stalled.
+
+                Most likely causes (runbook walks them):
+                  1. The hot range has been trimmed and the
+                     corresponding cold object is missing or
+                     inaccessible — AWS Open Data partition is in a
+                     transient miss state, or the partition naming
+                     drifted, or the AWS sponsorship has lapsed.
+                  2. A local trim ran too aggressively (the live
+                     cursor moved backwards onto a trimmed range).
+                  3. The MinIO endpoint, the AWS endpoint, or both,
+                     are mis-configured for this binary.
+      - eval_time: 12m
+        alertname: stellarindex_ledgerstream_tier_both_missing
+        exp_alerts: []
+
+  # ══ the SUSTAINED five — silent on an isolated event BY DESIGN ════
+  - interval: 1m
+    name: sustained-by-design rules stay silent on one isolated increment
+    input_series:
+      - series: 'stellarindex_discovery_dropped_hits_total{job="stellarindex_indexer",instance="r1:9100"}'
+        values: '0x3 1x120'
+      - series: 'stellarindex_discovery_record_failures_total{job="stellarindex_indexer",instance="r1:9100"}'
+        values: '0x3 1x120'
+      - series: 'stellarindex_ch_live_sink_ledgers_total{job="stellarindex_indexer",instance="r1:9100",outcome="dropped"}'
+        values: '0x3 5x120'
+      # archive-publish.md: "S3 returns a 503, core retries, successfully
+      # publishes on retry. Counter still went up. The alert's `for: 1h`
+      # threshold filters these."
+      - series: 'stellarindex_stellar_archive_publish_errors_total{job="stellar_core",instance="r1:11626"}'
+        values: '0x3 1x120'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_stellar_archive_publish_fail
+        exp_alerts: []
+      - eval_time: 62m
+        alertname: stellarindex_stellar_archive_publish_fail
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_discovery_drops
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_ch_live_sink_drops
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_discovery_drops
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_discovery_record_failures
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: stellarindex_ingestion_ch_live_sink_drops
+        exp_alerts: []
+      - eval_time: 62m
+        alertname: stellarindex_ingestion_ch_live_sink_drops_sustained
+        exp_alerts: []
+
+  # Positive control for the sustained shape, on the one rule of the five
+  # with no other promtool case: errors that KEEP arriving do notify.
+  - interval: 1m
+    name: archive_publish_fail — publish errors sustained past 1h notify
+    input_series:
+      - series: 'stellarindex_stellar_archive_publish_errors_total{job="stellar_core",instance="r1:11626"}'
+        values: '0+1x150'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_stellar_archive_publish_fail
+        exp_alerts:
+          - exp_labels:
+              job: stellar_core
+              instance: r1:11626
+              severity: informational
+              team: stellarindex
+              component: stellar
+            exp_annotations:
+              runbook_url: "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/archive-publish.md"
+              summary: "Archive-publish errors in the last hour"
+              description: |
+                stellar-core failed to publish a checkpoint to our history archive.
+                Not customer-visible but affects Tier-1 posture if sustained.

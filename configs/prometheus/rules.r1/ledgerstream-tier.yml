@@ -14,9 +14,16 @@ groups:
     interval: 60s
     rules:
 
+      # Q261: `for: 0m`. `for: 5m` over a 5m increase window could not
+      # fire on ONE both-tiers miss (true for 5m after the increment, pending
+      # needs a further 5m) — and one miss is the whole event for a one-shot
+      # backfill, which dies on it rather than retrying. It paged only when a
+      # retrying consumer kept missing. The both_missing child is pre-seeded
+      # (obs.seedLedgerstreamTierSeries), so increase() sees the first miss
+      # and no born-inside-the-window arm is needed here.
       - alert: stellarindex_ledgerstream_tier_both_missing
         expr: increase(stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}[5m]) > 0
-        for: 5m
+        for: 0m
         labels:
           severity: page
           team: stellarindex

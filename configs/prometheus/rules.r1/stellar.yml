@@ -96,6 +96,17 @@ groups:
             captive-core may be catching up. Indexer continues reading from
             it but with increasing freshness debt.
 
+      # Q261 note — `for:` equal to the increase window is DELIBERATE on this
+      # rule. That shape cannot fire on one isolated increment (true for W
+      # after it, pending needs a further W); it fires only while increments
+      # keep arriving, which is exactly what this rule's own description
+      # asks for. The any-increase TRIPWIRES that shared the shape by accident
+      # (persist_drop, trade_buffer_drop, projector row_quarantined,
+      # ledgerstream tier_both_missing) are `for: 0m`. Pinned both ways in
+      # deploy/monitoring/rule-tests/tripwire-isolated-increment*_test.yml.
+      # Here the runbook (archive-publish.md, "Known false-positive
+      # patterns") relies on it: one transient S3 503 that core retries
+      # successfully bumps the counter and must NOT notify.
       - alert: stellarindex_stellar_archive_publish_fail
         expr: increase(stellarindex_stellar_archive_publish_errors_total[1h]) > 0
         for: 1h

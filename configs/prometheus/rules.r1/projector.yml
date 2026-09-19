@@ -111,9 +111,23 @@ groups:
       # re-driveable via `stellarindex-ops projector-replay`, but a
       # quarantine is otherwise SILENT data-completeness debt. Sensitive
       # (any nonzero increase over the window fires).
+      # Q261: `for: 0m` plus a born-inside-the-window arm. `for: 15m` over
+      # a 15m increase window cannot fire on ONE quarantine — the expression
+      # is true for only 15m after the increment and the pending period
+      # needs a further 15m — and a quarantine is one row by construction
+      # (quarantineCandidate gives up on at most one row per cycle). The
+      # {source,outcome="sink_quarantined"} child is also unseeded, so it is
+      # born at 1 and increase() alone reads 0; `unless … offset 15m` reads
+      # "exists now, did not exist one window ago" (same idiom as
+      # ingestion.yml's stellarindex_ingestion_persist_drop).
       - alert: stellarindex_projector_row_quarantined
-        expr: increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m]) > 0
-        for: 15m
+        expr: |
+          increase(stellarindex_projector_events_decoded_total{outcome="sink_quarantined"}[15m]) > 0
+          or (
+            stellarindex_projector_events_decoded_total{outcome="sink_quarantined"} > 0
+            unless stellarindex_projector_events_decoded_total{outcome="sink_quarantined"} offset 15m
+          )
+        for: 0m
         labels:
           severity: ticket
           team: stellarindex

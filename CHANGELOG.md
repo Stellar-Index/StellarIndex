@@ -230,6 +230,45 @@ against.
   with a one-line notice and every source is still evaluated, the same
   split `verify-decoders` already makes. A factory that is set with no RPC
   endpoint to sweep it from is a failure. (RLT-416, #805)
+- **alerts (data-loss tripwires):** four "any nonzero increase" alerts can
+  now fire on the event they exist for.
+  `stellarindex_ingestion_persist_drop`,
+  `stellarindex_ingestion_trade_buffer_drop`,
+  `stellarindex_projector_row_quarantined` and
+  `stellarindex_ledgerstream_tier_both_missing` (page) were all written as
+  `increase(m[W]) > 0` with `for: W`. After a single increment that
+  expression is true for W and the pending period needs it true for a
+  further W, so one isolated drop could never fire them — they alerted only
+  while increments kept arriving, which is a sustained-rate alert carrying a
+  tripwire's description ("Sensitive — any nonzero increase"). They are now
+  `for: 0m`; a `for:` shorter than the window would only have delayed the
+  notification, since the expression cannot go false sooner than W after
+  the event. The first three were mute a second way: they watch an
+  unseeded counter child that is born at 1 by the very increment in
+  question, and `increase()` over a series with no earlier sample reads 0 —
+  the normal case after every deploy, because counters reset. They gain the
+  `or (m > 0 unless m offset W)` arm the oracle-symbol rules already use.
+  Both rule trees change together, and new promtool cases in
+  `deploy/monitoring/rule-tests/tripwire-isolated-increment{,-r1}_test.yml`
+  feed each rule ONE increment (existing series, and born-non-zero) against
+  each tree; every earlier case for these rules fed a continuous ramp, the
+  one shape that did fire. Left alone on purpose, and pinned as such:
+  `discovery_drops`, `discovery_record_failures`, `ch_live_sink_drops`,
+  `ch_live_sink_drops_sustained` and `stellar_archive_publish_fail` share
+  the shape but describe themselves, and are documented in their runbooks,
+  as sustained signals (archive-publish.md relies on `for: 1h` to filter a
+  retried transient). **Operator
+  note:** these alerts go from never firing to firing at once, so expect
+  tickets that were previously silent — before the rules land, read
+  `increase(stellarindex_ledgerstream_tier_read_total{outcome="both_missing"}[30d])`
+  on r1, since that one is a page. Codified is not applied: the r1 overlay
+  (`configs/prometheus/rules.r1/`) reaches r1 through `deploy.yml`'s
+  rule-reconcile step on the next r1 deploy (that step is
+  `continue-on-error`, so read its result), and the multi-host tree
+  (`deploy/monitoring/rules/`) reaches a host only through the ansible
+  `prometheus` role. `docs/operations/alerts-catalog.md` (four rows) and
+  `projector-row-quarantined.md`'s "Detected by" row still quote the old
+  `for:` and are a follow-up (audit Q261).
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process
