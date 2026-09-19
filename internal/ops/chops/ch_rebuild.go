@@ -332,6 +332,71 @@ func chRebuildRecordDirtySources(cat []reconSource, named []string) ([]string, e
 	return named, nil
 }
 
+// chRebuildSourceUniverse returns every source name this binary knows as
+// a ch-rebuild source, in catalogue order: the reconciliation catalogue
+// (which carries the event, ContractCall and sdex entries) plus the two
+// SEP-41 sources, which buildReconciliationCatalogue only promotes when a
+// watched set is configured but which -sources may legitimately name
+// either way.
+func chRebuildSourceUniverse(cat []reconSource) []string {
+	out := make([]string, 0, len(cat)+2)
+	seen := map[string]bool{}
+	for _, src := range cat {
+		if !seen[src.name] {
+			seen[src.name] = true
+			out = append(out, src.name)
+		}
+	}
+	for _, name := range []string{sep41transfers.SourceName, sep41supply.SourceName} {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// checkCHRebuildSources refuses a -sources value naming something this
+// binary does not know as a ch-rebuild source (K015).
+//
+// srcFilter is a bare split of the flag and enabled() is a membership test
+// against it, so a name nobody recognises — `-sources sdx` for `sdex` —
+// makes enabled() false for EVERY real source: the run streams the range,
+// decodes nothing, prints its DRY-RUN banner and its count report, and
+// exits 0 having re-derived nothing. That is the DO-NOTHING half of the
+// trap the write gate's own doc names, reported as success, and it is the
+// mode operators run FIRST: -write already refuses an unregistered name
+// through checkCHRebuildBackfillSafe, the default dry run did not.
+//
+// Only UNKNOWN names are refused, never known-but-inert ones. A named
+// source whose pass this invocation did not request (-sdex / -sep41 /
+// -contract-calls), or whose decoder this config does not build, still
+// narrows legitimately — and scripts/ops/ch-rebuild-projected.sh DEPENDS
+// on that narrowing: it asks -preflight for its whole source set and
+// deletes only the subset the verdict names back.
+func checkCHRebuildSources(cat []reconSource, named []string) error {
+	if len(named) == 0 {
+		return nil
+	}
+	known := chRebuildSourceUniverse(cat)
+	inUniverse := make(map[string]bool, len(known))
+	for _, name := range known {
+		inUniverse[name] = true
+	}
+	var unknown []string
+	for _, name := range named {
+		if !inUniverse[name] {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	return fmt.Errorf("ch-rebuild: -sources names %v, which this binary does not know as a re-derivable source — "+
+		"the filter is a plain name match, so the run would re-derive NOTHING and still exit 0. Known sources: %s",
+		unknown, strings.Join(known, ", "))
+}
+
 // projectionDirtyWindowRecorder is the slice of timescale.Store
 // [recordCHRebuildDirtyWindows] needs.
 type projectionDirtyWindowRecorder interface {
@@ -533,6 +598,12 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			return rerr
 		}
 		return recordCHRebuildDirtyWindows(ctx, store, os.Stdout, lo, hi, named)
+	}
+	// A -sources name nobody recognises selects nothing and exits 0 —
+	// refuse it here, as early as the catalogue exists and before the
+	// gate warm-up reads Postgres (K015).
+	if serr := checkCHRebuildSources(cat, parseCSVList(*only)); serr != nil {
+		return serr
 	}
 	// Re-derive on the gate the live indexer runs with — curated set ∪
 	// protocol_contracts — not on the bare in-code seed (RLT-430): a

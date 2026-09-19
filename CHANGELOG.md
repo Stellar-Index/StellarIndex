@@ -187,6 +187,24 @@ against.
   — the textfile exporter writes the mismatch counter and the last-success gauge alone —
   so a miss is observable as a unit failure rather than as a number
   (`verify_archive_textfile.go`, untouched here).
+- **ops / `ch-rebuild -sources` accepts a name nobody knows (K015):** the source
+  filter was a bare `strings.Split` of the flag and `enabled()` a membership test
+  against it, so `-sources sdx` (a typo for `sdex`) made `enabled()` false for
+  EVERY real source: the run streamed its range, decoded nothing, printed its
+  DRY-RUN banner and its count report, and exited 0 having re-derived nothing —
+  the DO-NOTHING half of the trap the write gate's own doc names, reported as
+  success. `-write` already refused an unregistered name through
+  `checkCHRebuildBackfillSafe`; the default dry run, which is the mode an
+  operator runs FIRST and reads the counts off, did not. `chRebuild` now
+  validates `-sources` against the catalogue (plus the SEP-41 pair, which
+  `buildReconciliationCatalogue` only promotes when a watched set is configured)
+  as soon as the catalogue exists and before the gate warm-up, and refuses an
+  unknown name listing the ones it knows. Only UNKNOWN names are refused, never
+  known-but-inert ones: a source whose pass this invocation did not request
+  (`-sdex` / `-sep41` / `-contract-calls`) still narrows legitimately, and
+  `scripts/ops/ch-rebuild-projected.sh` depends on that narrowing — it asks
+  `-preflight` for its whole source set and deletes only the subset the verdict
+  names back.
 
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with
