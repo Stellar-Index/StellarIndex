@@ -263,7 +263,7 @@ without ever reporting a `skipped` job conclusion itself:
 
 | diff touches | jobs that do real work |
 |---|---|
-| `internal/storage/**`, `internal/pipeline/**`, `internal/sources/**`, `internal/api/**`, `migrations/**`, `test/integration/**`, `go.mod` | `integration-test-shard` (Docker) |
+| `internal/storage/**`, `internal/pipeline/**`, `internal/sources/**`, `internal/api/**`, `internal/ops/archive/**`, `cmd/stellarindex-ops/**`, `migrations/**`, `scripts/ops/**`, `test/integration/**`, `test/harness/**`, `go.mod` | `integration-test-shard` (Docker) |
 | any `*.go`, `go.mod`, `go.sum` | `lint`, `test`, `build`, `vuln`'s `govulncheck` step, `fuzz-smoke` |
 | `web/**`, `openapi/**` | `web-explorer`, `web-status` |
 | `configs/ansible/**` | `ansible-check` |

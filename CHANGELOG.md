@@ -17,6 +17,18 @@ against.
 
 ### Fixed
 
+- **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
+  path-filter table listed the `integration` change class as it stood before
+  T424/F-1334/W6-tst-1 widened `scripts/ci/check-change-class.sh` to also
+  cover `internal/ops/archive/**`, `cmd/stellarindex-ops/**`,
+  `scripts/ops/**` and `test/harness/**` — so a contributor reading only the
+  doc would not expect a change confined to one of those four directories to
+  trigger the Docker `integration-test-shard` job, though it does. The table
+  now names all ten directories (plus `go.mod`) the shell classifier does.
+  `test/controlwiring/local_verification_doc_integration_class_test.go` pins
+  the doc against the classifier's regex so the two cannot drift apart
+  silently again.
+
 - **docs / phoenix gating:** the tree's four "the factory's creation events
   predate the lake" claims are corrected — the events run from ledger
   51,572,026 — and the docs now describe the gate that shipped rather than the
