@@ -79,21 +79,21 @@ func TestMigrate_FatalOutputNeverCarriesTheDSNPassword(t *testing.T) {
 		env  []string
 		args []string
 		// keep is the diagnostic that must SURVIVE. Without it a fix
-		// that prints nothing at all, or that redacts the whole
-		// message, would pass — and leave the operator unable to see
-		// which database the failed migration was aimed at.
+		// that prints nothing at all would pass — and leave the
+		// operator unable to see what failed, or which of the two
+		// places a DSN comes from held the value that was wrong.
 		keep []string
 	}{
 		{
 			name: "unparseable DSN passed as a flag",
 			args: []string{"status", "-dsn", dsn},
-			keep: []string{host, "invalid URL escape"},
+			keep: []string{"does not parse", "invalid URL escape", "from -dsn"},
 		},
 		{
 			name: "unparseable DSN taken from the environment",
 			env:  []string{"STELLARINDEX_POSTGRES_DSN=" + dsn},
 			args: []string{"status"},
-			keep: []string{host, "invalid URL escape"},
+			keep: []string{"does not parse", "invalid URL escape", "from $STELLARINDEX_POSTGRES_DSN"},
 		},
 		{
 			name: "DSN pasted into the slot where the step count goes",
@@ -182,6 +182,29 @@ func assertNoStem(t *testing.T, out string) {
 	}
 }
 
+// assertWithheld is the stronger property, and the one two rejected
+// attempts at this fix did not have: the tool must not echo the argument
+// AT ALL, scrubbed or otherwise.
+//
+// Both earlier attempts printed operator-typed text and scrubbed the
+// secret back out of it, and each round the next reviewer found one more
+// shape the scrubber mis-parsed — because a malformed DSN is by
+// definition not parseable and every rule for "where the password ends"
+// in one has a counter-example. So the harmless parts are the canary
+// here: if the host or a `password=` key reached the output, the tool
+// echoed the argument and only a heuristic stood between the credential
+// and the deploy log.
+func assertWithheld(t *testing.T, out, arg string) {
+	t.Helper()
+	assertNoStem(t, out)
+	for _, piece := range []string{redactionHost, "password="} {
+		if strings.Contains(arg, piece) && strings.Contains(out, piece) {
+			t.Errorf("the tool echoed %q out of an argument it was handed — "+
+				"a scrubber is all that stands between the password and the log:\n%s", piece, out)
+		}
+	}
+}
+
 // The first redaction was proven on a password with an unescaped `%` and
 // declared closed. It was a pattern over the URL's TEXT, and the pattern
 // ended the password at the FIRST `@` and refused to cross a space or a
@@ -195,6 +218,14 @@ func assertNoStem(t *testing.T, out string) {
 // An unescaped `@` is named in the original finding as a trigger, and
 // every one of these is an ordinary character in a generated password.
 // Each shape is fed through BOTH routes the DSN arrives by.
+//
+// None of them is now rendered at all: a DSN that does not parse has no
+// structure to report, so the tool names the ROUTE the value came by and
+// the KIND of syntax error and says nothing of the value. The host is
+// part of what is withheld, which is the deliberate trade — the operator
+// is holding the string in the file they just edited, and two rounds of
+// keeping the host by reading a malformed DSN with a heuristic each
+// printed part of a password out of a shape the heuristic read wrong.
 func TestMigrate_PasswordShapesThePatternStoppedShortOn(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 
@@ -207,18 +238,29 @@ func TestMigrate_PasswordShapesThePatternStoppedShortOn(t *testing.T) {
 		{"backslash then double quote", stemHead + `\"` + stemTail + "%ZZ"},
 	} {
 		dsn := "postgres://stellarindex:" + tc.pw + "@" + redactionHost + ":5432/stellarindex?sslmode=disable"
-		for route, inv := range map[string]struct{ env, args []string }{
-			"flag": {nil, []string{"-migrations", migDir, "status", "-dsn", dsn}},
-			"env":  {[]string{"STELLARINDEX_POSTGRES_DSN=" + dsn}, []string{"-migrations", migDir, "status"}},
+		for route, inv := range map[string]struct {
+			env, args []string
+			named     string
+		}{
+			"flag": {nil, []string{"-migrations", migDir, "status", "-dsn", dsn}, "from -dsn"},
+			"env": {
+				[]string{"STELLARINDEX_POSTGRES_DSN=" + dsn},
+				[]string{"-migrations", migDir, "status"},
+				"from $STELLARINDEX_POSTGRES_DSN",
+			},
 		} {
 			t.Run(tc.name+"/"+route, func(t *testing.T) {
 				out := runMigrate(t, bin, inv.env, inv.args)
-				assertNoStem(t, out)
+				assertWithheld(t, out, dsn)
 				// The half that keeps the fix honest: a redactor that
 				// blanks the message passes the check above and leaves
-				// the operator unable to see which database it was.
-				if !strings.Contains(out, redactionHost) {
-					t.Errorf("redaction ate the host — the operator cannot tell what was dialled:\n%s", out)
+				// the operator with nothing to act on. What replaces the
+				// value is which of the two places it came from, and
+				// what kind of thing is wrong with it.
+				for _, keep := range []string{inv.named, "does not parse"} {
+					if !strings.Contains(out, keep) {
+						t.Errorf("the %q diagnostic is gone — the operator cannot tell what failed:\n%s", keep, out)
+					}
 				}
 			})
 		}
@@ -238,24 +280,20 @@ func TestMigrate_PasswordShapesThePatternStoppedShortOn(t *testing.T) {
 //
 //	parse "postgres://stellarindex:HEAD": invalid port ":HEAD" after host
 //
-// No pattern can tell such a fragment from an honest port. The tool now
-// parses the DSN itself first and composes the failure from what it
-// knows, withholding the quoted fragment.
+// No pattern can tell such a fragment from an honest port, and no
+// rendering of the input can be trusted either, so the tool parses the
+// DSN itself first and reports the KIND of failure in its own words —
+// the library's text, fragment and all, never reaches the writer.
 func TestMigrate_TheLibrarysReasonNeverRepeatsAPieceOfThePassword(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 
-	for _, tc := range []struct {
-		name, dsn string
-		// keep is what must SURVIVE besides the verb and the reason.
-		keep string
-	}{
-		{"slash in the password", "postgres://stellarindex:" + stemHead + "/" + stemTail + "@" + redactionHost + ":5432/stellarindex", redactionHost},
-		{"question mark in the password", "postgres://stellarindex:" + stemHead + "?" + stemTail + "@" + redactionHost + ":5432/stellarindex", redactionHost},
-		{"hash in the password", "postgres://stellarindex:" + stemHead + "#" + stemTail + "@" + redactionHost + ":5432/stellarindex", redactionHost},
-		// No `@` anywhere, so nothing marks where the secret ends and the
-		// rest of the string is dropped with it — host included. The
-		// user is what is left to identify the DSN by.
-		{"hash typed where the @ goes", "postgres://stellarindex:" + stemHead + "#" + redactionHost + ":5432/stellarindex", "postgres://stellarindex:<redacted>"},
+	for _, tc := range []struct{ name, dsn string }{
+		{"slash in the password", "postgres://stellarindex:" + stemHead + "/" + stemTail + "@" + redactionHost + ":5432/stellarindex"},
+		{"question mark in the password", "postgres://stellarindex:" + stemHead + "?" + stemTail + "@" + redactionHost + ":5432/stellarindex"},
+		{"hash in the password", "postgres://stellarindex:" + stemHead + "#" + stemTail + "@" + redactionHost + ":5432/stellarindex"},
+		// No `@` anywhere: nothing marks where the secret ends, which is
+		// the shape every heuristic reading of this string got wrong.
+		{"hash typed where the @ goes", "postgres://stellarindex:" + stemHead + "#" + redactionHost + ":5432/stellarindex"},
 	} {
 		for route, inv := range map[string]struct{ env, args []string }{
 			"flag": {nil, []string{"-migrations", migDir, "up", "-dsn", tc.dsn}},
@@ -263,8 +301,11 @@ func TestMigrate_TheLibrarysReasonNeverRepeatsAPieceOfThePassword(t *testing.T) 
 		} {
 			t.Run(tc.name+"/"+route, func(t *testing.T) {
 				out := runMigrate(t, bin, inv.env, inv.args)
-				assertNoStem(t, out)
-				for _, keep := range []string{tc.keep, "invalid port", "stellarindex-migrate: up:"} {
+				assertWithheld(t, out, tc.dsn)
+				// The reason still says what kind of thing is wrong —
+				// here a fragment that reads as a port — in this
+				// project's words rather than the library's.
+				for _, keep := range []string{"invalid port", "stellarindex-migrate: up:", "does not parse"} {
 					if !strings.Contains(out, keep) {
 						t.Errorf("the %q diagnostic is gone — the operator cannot tell what failed:\n%s", keep, out)
 					}
@@ -280,7 +321,15 @@ func TestMigrate_TheLibrarysReasonNeverRepeatsAPieceOfThePassword(t *testing.T) 
 // the argument they rejected. A DSN that lands where a flag name goes —
 // `-dsn` dropped, or `-$DSN_VAR` typed for `-dsn $DSN_VAR` — printed
 // whole, with no redaction of any kind in front of it.
-func TestMigrate_FlagParseErrorsAreScrubbedToo(t *testing.T) {
+//
+// Pointing that output at a scrubbing writer was the SECOND attempt at
+// this, and it was rejected: the flag package cuts a rejected "flag
+// name" at its first `=`, so base64 padding on a password produced an
+// echo with no `@` in it for the scrubber to key on, and every fix for
+// one such shape left another. The output is discarded now and the tool
+// composes its own message, which names the argument's POSITION and
+// never its text.
+func TestMigrate_FlagParseErrorsDoNotEchoTheArgument(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 	tail := "@" + redactionHost + ":5432/stellarindex?sslmode=disable"
 
@@ -292,22 +341,22 @@ func TestMigrate_FlagParseErrorsAreScrubbedToo(t *testing.T) {
 		{
 			"a DSN where a flag name goes",
 			[]string{"-postgres://stellarindex:" + stemHead + tail, "status"},
-			"flag provided but not defined",
+			"argument 3 is not a flag this tool defines",
 		},
 		{
 			"the same, with a space in the password — no token pattern can bound it",
 			[]string{"-postgres://stellarindex:" + stemHead + " " + stemTail + tail, "status"},
-			"flag provided but not defined",
+			"argument 3 is not a flag this tool defines",
 		},
 		{
 			"after the verb, where the second parse sees it",
 			[]string{"status", "-postgres://stellarindex:" + stemHead + " " + stemTail + tail},
-			"flag provided but not defined",
+			"argument 4 is not a flag this tool defines",
 		},
 		{
 			"bad flag syntax",
 			[]string{"-=postgres://stellarindex:" + stemHead + " " + stemTail + tail, "status"},
-			"bad flag syntax",
+			"argument 3 is not a flag this tool defines (an empty flag name)",
 		},
 		{
 			"a DSN where the subcommand goes",
@@ -329,32 +378,34 @@ func TestMigrate_FlagParseErrorsAreScrubbedToo(t *testing.T) {
 		{
 			"a DSN where a flag name goes, base64 padding on the password",
 			[]string{"-postgres://stellarindex:" + stemHead + "==" + tail, "status"},
-			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+			"argument 3 is not a flag this tool defines (<withheld",
 		},
 		{
 			"the same, with the = in the middle of the password",
 			[]string{"-postgres://stellarindex:" + stemHead + "=" + stemTail + tail, "status"},
-			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+			"argument 3 is not a flag this tool defines (<withheld",
 		},
 		{
 			"the same, after the verb, where the second parse sees it",
 			[]string{"status", "-postgres://stellarindex:" + stemHead + "==" + tail},
-			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+			"argument 4 is not a flag this tool defines (<withheld",
 		},
 		{
 			"the same, typed with two dashes — the echo keeps only one",
 			[]string{"--postgres://stellarindex:" + stemHead + "=" + stemTail + tail, "status"},
-			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+			"argument 3 is not a flag this tool defines (<withheld",
 		},
 		{
 			"the same, with no @ anywhere in the DSN",
 			[]string{"-postgres://stellarindex:" + stemHead + "=" + stemTail + "#" + redactionHost + "/stellarindex", "status"},
-			"flag provided but not defined: -postgres://stellarindex:<redacted>",
+			"argument 3 is not a flag this tool defines (<withheld",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := runMigrate(t, bin, nil, append([]string{"-migrations", migDir}, tc.args...))
-			assertNoStem(t, out)
+			for _, arg := range tc.args {
+				assertWithheld(t, out, arg)
+			}
 			if !strings.Contains(out, tc.keep) {
 				t.Errorf("the %q diagnostic is gone:\n%s", tc.keep, out)
 			}
@@ -375,37 +426,60 @@ func TestMigrate_FlagParseErrorsAreScrubbedToo(t *testing.T) {
 //	down "password=HEAD\ TAIL"     printed  `password=<redacted> TAIL`
 //	down "postgres://u:HEAD TAIL#host/db"   printed whole
 //
-// Each is fed through every slot that echoes a positional.
-func TestMigrate_EverySpellingOfAHeldPasswordIsCutByValue(t *testing.T) {
+// Each is fed through every slot that echoed a positional. None of them
+// echoes one now: a positional the tool cannot use is reported by its
+// POSITION and its kind, and its text is never interpolated. The
+// by-value scrubber is still armed behind that — these assertions hold
+// whichever of the two stops the leak, and both have to.
+func TestMigrate_NoSlotEchoesAConnectionStringItWasHanded(t *testing.T) {
 	bin, migDir := buildMigrate(t)
 	queryDSN := func(pw string) string {
 		return "postgres://" + redactionHost + ":5432/stellarindex?password=" + pw + "&sslmode=disable"
 	}
 
-	for _, tc := range []struct{ name, dsn, keep string }{
-		{"query password with a space", queryDSN(stemHead + " " + stemTail), redactionHost + ":5432/stellarindex?password=<redacted>&sslmode=disable"},
-		{"query password with a semicolon", queryDSN(stemHead + ";" + stemTail), redactionHost + ":5432/stellarindex?password=<redacted>&sslmode=disable"},
-		{"query password with a single quote", queryDSN(stemHead + "'" + stemTail), redactionHost + ":5432/stellarindex?password=<redacted>&sslmode=disable"},
-		{"query password with a raw ampersand", queryDSN(stemHead + "&" + stemTail), redactionHost + ":5432/stellarindex?password=<redacted>&sslmode=disable"},
+	for _, tc := range []struct{ name, dsn string }{
+		{"query password with a space", queryDSN(stemHead + " " + stemTail)},
+		{"query password with a semicolon", queryDSN(stemHead + ";" + stemTail)},
+		{"query password with a single quote", queryDSN(stemHead + "'" + stemTail)},
+		{"query password with a raw ampersand", queryDSN(stemHead + "&" + stemTail)},
+		// The shape the second attempt was rejected on. Any `:` before the
+		// `@` — a host:port is enough — makes the userinfo reading of this
+		// string run to the `@` INSIDE the query password, so the scrubber
+		// cut as far as the head and printed `@` and the tail.
+		{"query password with an unescaped @", queryDSN(stemHead + "@" + stemTail)},
+		{"query password with two unescaped @", queryDSN(stemHead + "@x@" + stemTail)},
+		{"query password with an @, no other parameter", "postgres://" + redactionHost + ":5432/stellarindex?password=" + stemHead + "@" + stemTail},
+		{"query password with an @, IPv6 host", "postgres://[::1]:5432/stellarindex?password=" + stemHead + "@" + stemTail},
+		{
+			// Both spellings at once: cutting either one must not consume
+			// the text the other is recognised by.
+			"userinfo password and a query password holding an @",
+			"postgres://stellarindex:HEADLESS-" + stemHead + "@" + redactionHost + ":5432/db?password=" + stemHead + "@" + stemTail,
+		},
 		{
 			"query sslpassword with a space",
 			"postgres://" + redactionHost + "/stellarindex?sslmode=verify-full&sslpassword=" + stemHead + " " + stemTail,
-			redactionHost + "/stellarindex?sslmode=verify-full&sslpassword=<redacted>",
+		},
+		{
+			"query sslpassword with an @",
+			"postgres://" + redactionHost + ":5432/stellarindex?sslpassword=" + stemHead + "@" + stemTail,
 		},
 		{
 			"keyword form, escaped space",
 			"host=" + redactionHost + " password=" + stemHead + `\ ` + stemTail + " sslmode=disable",
-			"host=" + redactionHost + " password=<redacted> sslmode=disable",
 		},
 		{
 			"keyword form, quoted with an escaped quote",
 			"host=" + redactionHost + " password='" + stemHead + `\' ` + stemTail + "' sslmode=disable",
-			"host=" + redactionHost + " password=<redacted> sslmode=disable",
 		},
 		{
 			"no @ anywhere, space in the password",
 			"postgres://stellarindex:" + stemHead + " " + stemTail + "#" + redactionHost + "/stellarindex",
-			"postgres://stellarindex:<redacted>",
+		},
+		{
+			// A password that opens with the marker the scrubber writes.
+			"password beginning with the redaction marker",
+			"postgres://stellarindex:<redacted>" + stemHead + "@" + redactionHost + "/stellarindex",
 		},
 	} {
 		for slot, inv := range map[string]struct {
@@ -419,10 +493,10 @@ func TestMigrate_EverySpellingOfAHeldPasswordIsCutByValue(t *testing.T) {
 		} {
 			t.Run(tc.name+"/"+slot, func(t *testing.T) {
 				out := runMigrate(t, bin, nil, append([]string{"-migrations", migDir}, inv.args...))
-				assertNoStem(t, out)
-				// Both halves of the diagnostic: what went wrong, and
-				// everything about the string that is not the secret.
-				for _, keep := range []string{inv.keep, tc.keep} {
+				assertWithheld(t, out, tc.dsn)
+				// The other half of the diagnostic: what went wrong, and
+				// where. Without it a tool that prints nothing passes.
+				for _, keep := range []string{inv.keep, "stellarindex-migrate"} {
 					if !strings.Contains(out, keep) {
 						t.Errorf("the %q diagnostic is gone:\n%s", keep, out)
 					}
@@ -431,19 +505,43 @@ func TestMigrate_EverySpellingOfAHeldPasswordIsCutByValue(t *testing.T) {
 		}
 	}
 
-	// The same query password through the path that RENDERS the DSN
-	// rather than echoing it: an unparseable URL, composed by
-	// redact.ParseFailure.
-	t.Run("query password with a raw ampersand/unparseable, via -dsn", func(t *testing.T) {
-		dsn := "postgres://" + redactionHost + "/stellarindex%ZZ?password=" + stemHead + "&" + stemTail + "&sslmode=disable"
-		out := runMigrate(t, bin, nil, []string{"-migrations", migDir, "status", "-dsn", dsn})
-		assertNoStem(t, out)
-		for _, keep := range []string{"invalid URL escape", redactionHost + "/stellarindex%ZZ?password=<redacted>&sslmode=disable"} {
-			if !strings.Contains(out, keep) {
+	// The remaining two routes an unusable DSN reaches the output by: the
+	// unparseable-DSN path, which the tool renders itself, by BOTH ways
+	// the value arrives; and the flag-name slot, which the flag package
+	// used to echo. Both carry the query-password-with-@ shape.
+	for name, dsn := range map[string]string{
+		"query password with a raw ampersand": "postgres://" + redactionHost + "/stellarindex%ZZ?password=" + stemHead + "&" + stemTail + "&sslmode=disable",
+		"query password with an @":            "postgres://" + redactionHost + ":5432/db%ZZ?password=" + stemHead + "@" + stemTail,
+	} {
+		for route, inv := range map[string]struct {
+			env, args []string
+			named     string
+		}{
+			"unparseable, via -dsn": {nil, []string{"status", "-dsn", dsn}, "from -dsn"},
+			"unparseable, via the environment": {
+				[]string{"STELLARINDEX_POSTGRES_DSN=" + dsn},
+				[]string{"status"},
+				"from $STELLARINDEX_POSTGRES_DSN",
+			},
+		} {
+			t.Run(name+"/"+route, func(t *testing.T) {
+				out := runMigrate(t, bin, inv.env, append([]string{"-migrations", migDir}, inv.args...))
+				assertWithheld(t, out, dsn)
+				for _, keep := range []string{"invalid URL escape", inv.named} {
+					if !strings.Contains(out, keep) {
+						t.Errorf("the %q diagnostic is gone:\n%s", keep, out)
+					}
+				}
+			})
+		}
+		t.Run(name+"/flag-name slot", func(t *testing.T) {
+			out := runMigrate(t, bin, nil, []string{"-migrations", migDir, "-" + dsn, "status"})
+			assertWithheld(t, out, dsn)
+			if keep := "argument 3 is not a flag this tool defines"; !strings.Contains(out, keep) {
 				t.Errorf("the %q diagnostic is gone:\n%s", keep, out)
 			}
-		}
-	})
+		})
+	}
 }
 
 // A lossy transform is tested WITH its trigger. The scrubber is armed by

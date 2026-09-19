@@ -19,9 +19,11 @@
 //   - [Known] is [Credentials] for a process that holds the connection
 //     strings its output might repeat, and so can cut the secret by
 //     value, whatever characters it contains.
-//   - [ParseFailure] renders the error from parsing a connection string
-//     the caller holds, whose reason repeats fragments of the input
-//     that no pattern can recognise.
+//   - [ParseFailure] renders the failure to parse a connection string
+//     the caller holds. It repeats NOTHING of the string unless the
+//     string parses, because a string that does not parse has no
+//     structure to render and every heuristic for "where the password
+//     ends" in one has a counter-example.
 //
 // None is a parser. All run on strings that are, by definition,
 // malformed or unknown at the point they are rendered, so they assume
@@ -192,6 +194,11 @@ const (
 //     PGPASSWORD, a passfile, a service file. It is not held, so it is
 //     not cut.
 //
+// Which is why this is the SECOND line of defence and not the first: a
+// caller that can avoid echoing operator-typed text at all should do
+// that instead, and use this for the text it does not compose (see
+// cmd/stellarindex-migrate).
+//
 // Pass anything that might be a connection string; a value that is not
 // one contributes nothing.
 func Known(text string, connStrings ...string) string {
@@ -200,14 +207,15 @@ func Known(text string, connStrings ...string) string {
 		spans []string
 	)
 	for _, v := range connStrings {
-		for _, s := range heldSecrets(v) {
+		secrets := heldSecrets(v)
+		for _, s := range secrets {
 			s.escaped = goEscape(s.secret)
 			held = append(held, s)
 			if qa := goEscape(s.anchor); qa != s.anchor {
 				held = append(held, heldSecret{anchor: qa, secret: s.secret, escaped: s.escaped})
 			}
 		}
-		if span := passwordSpan(v); span != "" && span != marker {
+		if span := passwordSpan(v, secrets); span != "" && span != marker {
 			spans = append(spans, span)
 		}
 	}
@@ -236,7 +244,15 @@ func goEscape(s string) string {
 // the reason given on urlPasswordPattern; here it is exact rather than
 // a guess whenever the string is one connection string, because the
 // host part cannot legally contain an `@`.
-func passwordSpan(v string) string {
+//
+// It returns "" when the stretch it found COVERS the anchor of another
+// secret the same string holds, because then the userinfo reading is the
+// wrong one: the `@` it ran to belongs to a query password, not to a
+// userinfo, and `postgres://host:5432/db?password=HEAD@TAIL` would be
+// replaced as far as `HEAD@` and print `TAIL` — the leak this guard
+// exists for. The query secret's own anchor (`password=`) cuts that
+// text in [cutHeld], which is the reading that is actually right.
+func passwordSpan(v string, held []heldSecret) string {
 	i := strings.Index(v, "://")
 	if i <= 0 {
 		return ""
@@ -250,7 +266,13 @@ func passwordSpan(v string) string {
 	if c < 0 || c+1 == at {
 		return ""
 	}
-	return rest[c : at+1]
+	span := rest[c : at+1]
+	for _, s := range held {
+		if s.anchor != "" && strings.Contains(span, s.anchor) {
+			return ""
+		}
+	}
+	return span
 }
 
 // heldSecret is one secret a held connection string carries, with the
@@ -425,17 +447,20 @@ func keywordSecrets(v string) []heldSecret {
 // it is safe for the reason the anchor exists: text that follows
 // `scheme://user:` or `password=` is a credential or the start of one,
 // and the pattern pass would cut it anyway wherever it can see its end.
+//
+// Nothing is skipped because it already reads `<redacted>`. That guard
+// was here for idempotence, which [heldPrefixLen] gives anyway — no
+// secret starts with the marker — and it inverted into a leak for one
+// that does: a password beginning with the literal `<redacted>` had its
+// first ten characters treated as a previous cut and its remainder
+// printed.
 func cutHeld(text string, held []heldSecret) string {
 	if len(held) == 0 {
 		return text
 	}
 	var b strings.Builder
 	for i := 0; i < len(text); {
-		n := 0
-		// Already cut: a second pass must change nothing.
-		if !strings.HasPrefix(text[i:], redacted) {
-			n = heldPrefixLen(text, i, held)
-		}
+		n := extendPastNested(text, i, heldPrefixLen(text, i, held), held)
 		if n == 0 {
 			b.WriteByte(text[i])
 			i++
@@ -445,6 +470,30 @@ func cutHeld(text string, held []heldSecret) string {
 		i += n
 	}
 	return b.String()
+}
+
+// extendPastNested grows a cut that starts at i and runs n bytes so that
+// it cannot end inside — or immediately before — a SECOND secret whose
+// anchor it swallows.
+//
+// One held string can carry two readings of itself, and the wider one
+// eats the text the narrower one is recognised by. For
+// `postgres://host:5432/db?password=HEAD@TAIL` the userinfo reading runs
+// from the `:` of `host:` to the last `@`, so cutting it consumes the
+// `password=` anchor and leaves `@TAIL` — a password's tail, printed,
+// which is the shape F077 names. Extending through every anchor the cut
+// covers removes the whole of both.
+func extendPastNested(text string, i, n int, held []heldSecret) int {
+	for grew := n > 0; grew; {
+		grew = false
+		for j := i + 1; j <= i+n && j < len(text); j++ {
+			if m := heldPrefixLen(text, j, held); j+m > i+n {
+				n = j + m - i
+				grew = true
+			}
+		}
+	}
+	return n
 }
 
 // heldPrefixLen is how much of text, from i, repeats the start of a
@@ -467,11 +516,8 @@ func commonPrefixLen(a, b string) int {
 	return n
 }
 
-// goQuotedPattern matches a Go %q-quoted fragment, escapes included.
-var goQuotedPattern = regexp.MustCompile(`"(?:\\.|[^"\\])*"`)
-
-// ParseFailure renders the error from parsing a connection string the
-// caller holds, for a fatal message, without repeating any of it.
+// ParseFailure says WHY a connection string the caller holds could not
+// be used, without repeating any of it.
 //
 // It exists because scrubbing the URL out of net/url's error is not
 // enough: the REASON quotes the piece the parser choked on, and that
@@ -482,29 +528,82 @@ var goQuotedPattern = regexp.MustCompile(`"(?:\\.|[^"\\])*"`)
 // URL the error echoes is truncated before the `@`, so there is no
 // userinfo left for a pattern to key on either.
 //
-// So nothing of the library's rendering of the input is passed through.
-// The reason keeps its words and loses its quoted fragments; the
-// connection string is re-rendered from the value itself, keeping the
-// user, host, database and options. The fragment withheld is sometimes
-// innocent (`invalid URL escape "%ZZ"` names three characters, which
-// may or may not sit inside the password) and it is withheld anyway:
-// the operator is told which string is wrong and what kind of wrong,
-// and can see the rest in the file they just edited.
+// So none of the library's text reaches the output. The failure is
+// classified by TYPE (see [parseErrorKind]) and rendered from this
+// package's own words, and the string itself is described only when it
+// PARSES — when there is a structure to render rather than a guess to
+// make about where the password ends. An unparseable connection string
+// yields the kind and nothing else: three rounds of this fix have shown
+// that every heuristic for reading a malformed DSN has a shape that
+// leaves a fragment of the secret behind, and the operator is holding
+// the value in the file they just edited.
 func ParseFailure(connString string, err error) string {
-	reason := err.Error()
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		reason = ue.Err.Error()
+	kind := parseErrorKind(err)
+	u, perr := url.Parse(connString)
+	if perr != nil {
+		return kind
 	}
-	reason = goQuotedPattern.ReplaceAllString(reason, `"<withheld>"`)
-	return Known(reason, connString) + " in " + knownConnString(connString)
+	return kind + " in " + safeURL(u)
 }
 
-// knownConnString renders a string known to be ONE connection string,
-// keeping everything but the secret. It is [Known] applied to the value
-// itself, so the rendering of a DSN and the scrubbing of an echo of it
-// cannot come to disagree about where a secret ends.
-func knownConnString(v string) string { return Known(v, v) }
+// parseErrorKind names what is wrong with a connection string using only
+// this package's own words. The error's own text is READ — to tell an
+// escape from a port from a userinfo — and never passed through, because
+// net/url quotes the input fragment it choked on into every one of them.
+func parseErrorKind(err error) string {
+	var (
+		ue *url.Error
+		ee url.EscapeError
+		he url.InvalidHostError
+	)
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	switch msg := err.Error(); {
+	case errors.As(err, &ee):
+		return "invalid URL escape (a literal % must be written %25)"
+	case errors.As(err, &he):
+		return "an invalid character in the host"
+	case strings.Contains(msg, "invalid port"):
+		return "invalid port after the host (a reserved character in the password reads as one)"
+	case strings.Contains(msg, "invalid userinfo"):
+		return "an invalid character in the user:password part"
+	case strings.Contains(msg, "missing protocol scheme"):
+		return `no scheme before the "://"`
+	case strings.Contains(msg, "first path segment in URL cannot contain colon"):
+		return "a colon in the first path segment (the scheme is missing)"
+	case strings.Contains(msg, "control character"):
+		return "a control character"
+	default:
+		return "a syntax error"
+	}
+}
+
+// safeURL renders a URL that PARSED, keeping everything an operator
+// needs — scheme, user, host, database, options — and dropping the
+// password. It is structural, not textual: every part comes from the
+// parser rather than from an index into the string, so there is no
+// boundary left to guess wrong.
+func safeURL(u *url.URL) string {
+	out := *u
+	if out.User != nil {
+		out.User = url.User(out.User.Username())
+	}
+	if out.RawQuery != "" {
+		q := out.Query()
+		for key := range q {
+			if k := strings.ToLower(key); k == "password" || k == "sslpassword" {
+				q.Set(key, redacted)
+			}
+		}
+		// Re-encoded from the parsed values, not copied from the text, so
+		// a parameter the parser could not read is dropped rather than
+		// echoed. Encode() escapes the marker's angle brackets; undo that
+		// one substitution so the message reads.
+		out.RawQuery = strings.ReplaceAll(q.Encode(), url.QueryEscape(redacted), redacted)
+	}
+	return out.String()
+}
 
 // unterminatedColon handles a URL with no `@` at all, returning the
 // index of the colon a secret starts at, or -1. Usually such a URL is a

@@ -320,71 +320,58 @@ against.
   handles — that is the axis reporting for the first time, not a regression.
   A lockstep test holds each pin against the decoder's own identity check
   (audit 2026-09-02 F071).
-- **migrate (credential redaction):** a Postgres password containing an
-  unescaped `@`, a space or a quote no longer reaches the migration tool's
-  stderr. The redaction landed for `stellarindex-migrate` was a pattern over
-  the error text that ended the password at the FIRST `@` and would not cross
-  whitespace or a quote, and it was proven only on a password with a bad `%`.
-  Reproduced on the built binary: `…:head%ZZ@tail@host…` printed
-  `<redacted>@tail@host` (the tail of the password), and a password holding a
-  space, `'` or `"` did not match at all and printed the DSN whole — into the
-  deploy log, journald and Loki. `internal/redact` now cuts to the LAST `@`
-  of the token, and handles a URL inside a Go-quoted string (how `net/url`
-  renders the DSN it rejects) by its real boundary, the closing quote, so the
-  password may contain anything. The cost is stated in the code: a URL whose
-  query holds an `@` loses its host to the redaction. New tests run the real
-  binary over each shape by both routes the DSN arrives by (flag and env) and
-  assert neither half of the password appears and the host survives (audit
-  2026-09-02 F077).
-- **migrate (credential redaction):** two ways the DSN password still reached
-  `stellarindex-migrate`'s stderr that no pattern over the text could close.
-  (1) `net/url`'s REASON repeats the piece it choked on, and for a password
-  holding `/`, `?` or `#` that piece is the password up to that character,
-  reported as a port — `invalid port ":<most of the password>" after host` —
-  while with a `#` the URL it echoes is cut off before the `@`. The tool now
-  parses the DSN itself before handing it to the migration library and
-  composes the failure from the value it holds (`redact.ParseFailure`): the
-  reason keeps its words and loses its quoted fragment, and the connection
-  string is re-rendered with its user, host, database and options. (2) The
-  flag package prints its own parse errors, argument included, straight to
-  the FlagSet's output, which bypassed the redacting writer entirely: `-$DSN`
-  typed for `-dsn $DSN` printed the DSN whole. The FlagSet now writes through
-  the same scrubbing writer, which also scrubs by VALUE (`redact.Known`): the
-  process knows every string a credential arrived in (argv, the DSN
-  variable), so the `:password@` span is cut wherever it is repeated —
-  including a password with a space in unquoted text, which no pattern can
-  bound. The span keeps its delimiters so the everyday development DSN
-  (`app:app@localhost/app`) cannot arm a rewrite of `database "app" does not
-  exist`; that case is pinned. A DSN that parses behaves exactly as before
-  (audit 2026-09-02 K057).
-- **migrate (credential redaction):** the by-value scrub above cut one thing —
-  the whole `:password@` span — and the entry describing it read as though the
-  surface were closed. It was not; each of these printed part or all of a
-  password on the built binary. (1) The flag package echoes a rejected "flag
-  name" only up to its FIRST `=`, so `-postgres://u:abc==@host` — a base64
-  password, padding and all — came back as `-postgres://u:abc`: the secret bar
-  its padding, with no `@` for the span or any pattern to key on. (2) A
-  password in the `?password=` / `sslpassword=` query spelling was left to the
-  free-text pattern, which ends a value at a space, quote or `;`, and at the
-  first `&`; the rest printed. (3) So did the libpq keyword spelling once `%q`
-  had doubled a backslash escape (`password=ab\ cd`). (4) A DSN with no `@` at
-  all (`#` typed where it goes) has no span and printed whole from every slot
-  that echoes a positional. `redact.Known` now extracts every secret a held
-  string carries, in whichever spelling, with the text it sits behind
-  (`scheme://user:`, `password=`), and cuts the longest PREFIX of it found
-  after that anchor, raw or `%q`-escaped — a truncated echo is a prefix. The
-  anchor starts at the scheme, because the echo drops a dash the argument
-  arrived with (`--postgres://…`). Held strings are taken together: the
-  environment's DSN and argv's share an anchor, and cutting for one then the
-  other let the first take only the prefix two passwords share and printed
-  the second's tail. A query password now ends at the `&` opening a parameter
-  we recognise rather than at the first `&`. Not closed, and said so on
-  `redact.Known`: a secret repeated with neither its anchor nor its span (the
-  price of never rewriting the bare word `app`), a query password containing
-  `&<recognised parameter>=`, and a credential the process was never handed as
-  a connection string. Tests run the real binary over each shape in the flag,
-  subcommand, `down N`, `force V` and leftover slots, and were red on the
-  leaked fragment itself before the change (audit 2026-09-02 F077, K057).
+- **migrate (credential redaction):** `stellarindex-migrate` no longer echoes
+  the text it was handed on any path that can carry the Postgres DSN, and the
+  scrubber that used to be the only thing between that echo and the log is now
+  the backstop rather than the control (audit 2026-09-02 F077, K057). The tool
+  is given the production DSN — password inline — on every deploy, and its
+  stderr is captured by the deploy job, journald and Loki, so a malformed
+  value printed there is a compromised credential on the run where an operator
+  is most likely to paste the output into a ticket. Two earlier attempts
+  scrubbed the secret back out of the echo by pattern and then by value, and
+  each was rejected on one more shape the scrubber read differently from the
+  way the operator meant it: a password with an unescaped `@`, then one with a
+  space or a quote, then `net/url`'s own reason quoting the password as a bad
+  port, then the flag package cutting a rejected "flag name" at the first `=`
+  of a base64 password, then a `?password=` value holding an `@` behind any
+  `host:port`. A malformed DSN is by definition not parseable, so every rule
+  for where the password ends in one has a counter-example — which is why the
+  fix is to stop echoing rather than to scrub better. **The four sites that
+  repeated operator text now do not.** The flag package's output goes to
+  `io.Discard` and the tool composes its own message, naming the argument's
+  POSITION and never its text; `unknown subcommand`, `down N`, `force V` and
+  the leftover-positional error quote an argument only when it is a plain word
+  (`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$` — a mistyped verb or a step count) and
+  otherwise withhold it; and `redact.ParseFailure` classifies the parse failure
+  by TYPE and reports it in this project's own words, rendering the string only
+  when it PARSES, structurally, from the parse tree. **What replaces the
+  value** is which of the two routes it arrived by (`-dsn` or
+  `$STELLARINDEX_POSTGRES_DSN`), what kind of thing is wrong with it (`invalid
+  URL escape`, `invalid port after the host`, …) and, for an argument, its
+  position on the command line. A DSN that parses is untouched: it still
+  reaches the dial and still reports the host it could not reach.
+  **Operator-visible:** an UNPARSEABLE DSN no longer has its host echoed back —
+  that is the trade, and the value is in the file the operator just edited.
+  `redact.Known` stays armed behind all of this for the one class the binary
+  does not write itself, a dependency's error embedding the URL it was handed,
+  and two leaks in it are closed with it: the greedy userinfo reading of
+  `postgres://host:5432/db?password=HEAD@TAIL` used to consume the `password=`
+  that the query reading is recognised by and print `@TAIL`, so a cut may no
+  longer end inside a second secret whose anchor it swallowed and a `:pw@` span
+  that covers another anchor is not used at all; and a password beginning with
+  the literal `<redacted>` used to be mistaken for an already-cut region and
+  print its remainder. **Not closed, and listed on `redact.Known` rather than
+  implied away:** a secret repeated with neither its anchor nor its span (the
+  price of never rewriting the bare word `app`), a query password that itself
+  contains `&<recognised parameter>=`, and a credential the process was never
+  handed as a connection string (`PGPASSWORD`, a passfile). Tests build and run
+  the real binary over every shape in the flag-name, subcommand, `down N`,
+  `force V` and leftover slots and through both routes the DSN arrives by, and
+  assert that neither half of a stand-in password NOR the harmless parts of the
+  argument (the host, a `password=` key) reach the output — the harmless parts
+  being the canary that the tool echoed at all. Red before the change: 26
+  credential-leak assertions on the previous attempt's binary, 94 on the
+  branch base.
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock

@@ -149,29 +149,35 @@ func TestKnownIgnoresValuesWithNoPasswordSpan(t *testing.T) {
 // ParseFailure runs the real parser over each hostile DSN and renders
 // what it returned. The reason's quoted fragment is the leak this exists
 // for: `invalid port ":<password up to the slash>" after host`.
-func TestParseFailureRepeatsNothingOfThePassword(t *testing.T) {
+//
+// A string that does not parse has no structure, so NOTHING of it is
+// rendered — not the fragment, not the host, not the scheme. Two rounds
+// of this fix tried to keep the host by reading the malformed string
+// with a heuristic, and each round a shape turned up that the heuristic
+// read wrong and printed part of the secret out of. The kind of failure
+// and the source of the value (the caller's to add) are the diagnostic.
+func TestParseFailureRepeatsNothingOfTheUnparseableString(t *testing.T) {
 	failed := 0
 	for name, pw := range hostilePasswords {
 		dsn := "postgres://stellarindex:" + pw + "@db.example.invalid:5432/app?sslmode=disable"
 		_, err := url.Parse(dsn)
 		if err == nil {
-			continue // parseable: the migration tool never renders it
+			continue // parseable: rendered structurally, see the test below
 		}
 		failed++
 		t.Run(name, func(t *testing.T) {
 			got := ParseFailure(dsn, err)
 			assertNoStems(t, err.Error(), got)
-			if want := "postgres://stellarindex:<redacted>@db.example.invalid:5432/app?sslmode=disable"; !strings.Contains(got, want) {
-				t.Errorf("lost the connection string's diagnostic half %q:\n  out: %s", want, got)
+			// Not one piece of the input, however innocent it looks: the
+			// only way to be sure no fragment of the password is in there
+			// is for no fragment of the string to be in there.
+			for _, piece := range []string{"postgres://", "stellarindex", "db.example.invalid", "5432", "sslmode"} {
+				if strings.Contains(got, piece) {
+					t.Errorf("repeated %q out of a string that does not parse:\n  err: %s\n  out: %s", piece, err, got)
+				}
 			}
-			// The reason's words survive; only its quoted echo is withheld.
-			var ue *url.Error
-			if !errors.As(err, &ue) {
-				t.Fatalf("expected a *url.Error, got %T", err)
-			}
-			words, _, _ := strings.Cut(ue.Err.Error(), `"`)
-			if !strings.HasPrefix(got, words) {
-				t.Errorf("lost the reason %q:\n  out: %s", words, got)
+			if got == "" || got == "a syntax error" {
+				t.Errorf("the operator is told nothing about what is wrong:\n  err: %s\n  out: %s", err, got)
 			}
 		})
 	}
@@ -179,6 +185,46 @@ func TestParseFailureRepeatsNothingOfThePassword(t *testing.T) {
 	// above passes over nothing and says so here instead of going green.
 	if failed < 6 {
 		t.Fatalf("only %d of %d hostile DSNs failed to parse — this test is no longer exercising the renderer", failed, len(hostilePasswords))
+	}
+}
+
+// The other half: a string that DOES parse — refused by some parser
+// further down, the driver's own, say — is rendered from the parse tree,
+// so the operator gets the user, host, database and options and the tool
+// stays diagnosable. Every part comes from the parser, so there is no
+// boundary left to read wrong, and the refusing error's own text (which
+// here embeds the whole DSN, as a driver's does) is classified and
+// discarded rather than passed through.
+func TestParseFailureRendersAParseableStringStructurally(t *testing.T) {
+	for name, tc := range map[string]struct{ in, want string }{
+		"userinfo password": {
+			"postgres://stellarindex:" + sentinel + "@db.example.invalid:5432/app?sslmode=disable",
+			"postgres://stellarindex@db.example.invalid:5432/app?sslmode=disable",
+		},
+		"query password": {
+			"postgres://db.example.invalid/app?password=" + sentinel + "&sslmode=disable",
+			"postgres://db.example.invalid/app?password=<redacted>&sslmode=disable",
+		},
+		"query sslpassword, mixed case": {
+			"postgres://db.example.invalid/app?SSLPassword=" + sentinel,
+			"postgres://db.example.invalid/app?SSLPassword=<redacted>",
+		},
+		"both spellings at once": {
+			"postgres://u:" + sentinel + "@db.example.invalid/app?password=" + tailStem + "&sslmode=require",
+			"postgres://u@db.example.invalid/app?password=<redacted>&sslmode=require",
+		},
+		"no credential at all": {
+			"postgres://db.example.invalid:5432/app",
+			"postgres://db.example.invalid:5432/app",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := ParseFailure(tc.in, errors.New("cannot parse `"+tc.in+"`: failed to parse as DSN"))
+			assertNoStems(t, tc.in, got)
+			if want := "a syntax error in " + tc.want; got != want {
+				t.Errorf("ParseFailure(%q)\n  got:  %s\n  want: %s", tc.in, got, want)
+			}
+		})
 	}
 }
 
@@ -311,7 +357,64 @@ func TestKnownCutsAPasswordWithNoAtSignAfterIt(t *testing.T) {
 	}
 }
 
-func TestKnownConnString(t *testing.T) {
+// A query password holding an unescaped `@` — the character F077 names,
+// in the spelling attempt two did not cover. Nothing in a malformed DSN
+// tells the `@` that ends a userinfo from one inside a secret, so the
+// userinfo reading runs to the LAST `@` and swallows the `password=`
+// that the query reading is recognised by: the cut ended at `HEAD` and
+// printed `@TAIL`. The fix is not a better guess — both readings are
+// held, and a cut may not stop inside a second secret whose anchor it
+// consumed.
+func TestKnownCutsAQueryPasswordThatHoldsAnAtSign(t *testing.T) {
+	for name, dsn := range map[string]string{
+		"host and port before the query": "postgres://db.example.invalid:5432/app?password=" + sentinel + "@" + tailStem + "&sslmode=disable",
+		"no other parameter":             "postgres://db.example.invalid:5432/app?password=" + sentinel + "@" + tailStem,
+		"bracketed IPv6 host":            "postgres://[::1]:5432/app?password=" + sentinel + "@" + tailStem,
+		"sslpassword spelling":           "postgres://db.example.invalid:5432/app?sslpassword=" + sentinel + "@" + tailStem,
+		"two at signs":                   "postgres://db.example.invalid:5432/app?password=" + sentinel + "@x@" + tailStem,
+		"userinfo password as well":      "postgres://u:HEADLESS-" + sentinel + "@db.example.invalid:5432/app?password=" + sentinel + "@" + tailStem,
+		"percent escape too":             "postgres://db.example.invalid:5432/app%ZZ?password=" + sentinel + "@" + tailStem,
+	} {
+		for shape, render := range map[string]func(string) string{
+			"bare":      func(s string) string { return "unexpected argument " + s + " after the flags" },
+			"quoted":    func(s string) string { return fmt.Sprintf("unknown subcommand %q", s) },
+			"truncated": func(s string) string { return "flag provided but not defined: -" + s[:strings.Index(s, "@")] },
+		} {
+			t.Run(name+"/"+shape, func(t *testing.T) {
+				text := render(dsn)
+				got := Known(text, dsn)
+				assertNoStems(t, text, got)
+				if twice := Known(got, dsn); twice != got {
+					t.Errorf("second pass changed the output:\n  once:  %s\n  twice: %s", got, twice)
+				}
+			})
+		}
+	}
+}
+
+// A password that opens with the marker itself. cutHeld used to skip any
+// position already reading `<redacted>`, for idempotence, and that skip
+// read the start of this secret as a cut that had already happened and
+// printed the rest of it.
+func TestKnownCutsAPasswordThatStartsWithTheMarker(t *testing.T) {
+	pw := "<redacted>" + sentinel + tailStem
+	for name, dsn := range map[string]string{
+		"userinfo": "postgres://u:" + pw + "@db.example.invalid/app",
+		"query":    "postgres://db.example.invalid/app?password=" + pw,
+		"keyword":  "host=db.example.invalid password=" + pw,
+	} {
+		t.Run(name, func(t *testing.T) {
+			text := "unexpected argument " + dsn
+			got := Known(text, dsn)
+			assertNoStems(t, text, got)
+		})
+	}
+}
+
+// Known applied to a string it holds is how a caller renders that string
+// itself. Every shape of secret has to come out, and a value with no
+// secret has to come back unchanged.
+func TestKnownAppliedToTheStringItHolds(t *testing.T) {
 	for in, want := range map[string]string{
 		"postgres://u:" + sentinel + "@h:5432/db":                 "postgres://u:<redacted>@h:5432/db",
 		"postgres://u:" + sentinel + " " + tailStem + "@h/db":     "postgres://u:<redacted>@h/db",
@@ -329,9 +432,15 @@ func TestKnownConnString(t *testing.T) {
 		"postgres://u:" + sentinel + "/x#h:5432":   "postgres://u:<redacted>",
 		"postgres://u:12345#" + sentinel + "/db":   "postgres://u:<redacted>",
 		"postgres://user@db.example.invalid/db%ZZ": "postgres://user@db.example.invalid/db%ZZ",
+		// A query password with an `@` in it: the userinfo reading runs to
+		// that `@` and eats the `password=` the query reading needs, so the
+		// cut has to run through both. The host goes with it — the cost of
+		// holding two readings of one ambiguous string, paid in diagnostic
+		// rather than in credential.
+		"postgres://h:5432/db?password=" + sentinel + "@" + tailStem: "postgres://h:<redacted>",
 	} {
-		if got := knownConnString(in); got != want {
-			t.Errorf("knownConnString(%q)\n  got:  %s\n  want: %s", in, got, want)
+		if got := Known(in, in); got != want {
+			t.Errorf("Known(%q, itself)\n  got:  %s\n  want: %s", in, got, want)
 		}
 	}
 }

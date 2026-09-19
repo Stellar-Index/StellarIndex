@@ -27,6 +27,7 @@ import (
 	"io"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -40,7 +41,11 @@ import (
 
 func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
 	fs := flag.NewFlagSet("stellarindex-migrate", flag.ContinueOnError)
-	fs.SetOutput(stderr) // the flag package echoes the argument it rejects
+	// The flag package prints its own parse errors — the rejected
+	// argument included, verbatim — to the FlagSet's output before it
+	// returns them. Nothing this tool is given may be echoed, so it is
+	// discarded and [parseArgv] composes the diagnostic instead.
+	fs.SetOutput(io.Discard)
 	dsn := fs.String("dsn", "", "Postgres DSN (overrides STELLARINDEX_POSTGRES_DSN env)")
 	dir := fs.String("migrations", "migrations", "Path to the migrations directory")
 	fs.Usage = func() { printUsage(fs) }
@@ -49,7 +54,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 
 	resolvedDSN := *dsn
 	if resolvedDSN == "" {
-		resolvedDSN = os.Getenv("STELLARINDEX_POSTGRES_DSN")
+		resolvedDSN, dsnSource = os.Getenv("STELLARINDEX_POSTGRES_DSN"), "$STELLARINDEX_POSTGRES_DSN"
 	}
 
 	switch args[0] {
@@ -65,7 +70,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 		if len(args) > 1 {
 			parsed, err := strconv.Atoi(args[1])
 			if err != nil || parsed < 1 {
-				die("down: N must be a positive integer (got %q)", args[1])
+				die("down: N must be a positive integer (got %s)", describeArg(args[1]))
 			}
 			n = parsed
 		}
@@ -88,7 +93,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 		}
 		v, err := strconv.Atoi(args[1])
 		if err != nil || v < 0 {
-			die("force: version must be a non-negative integer (got %q)", args[1])
+			die("force: version must be a non-negative integer (got %s)", describeArg(args[1]))
 		}
 		if resolvedDSN == "" {
 			die("no DSN: set STELLARINDEX_POSTGRES_DSN or pass -dsn")
@@ -101,7 +106,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 	case "help", "--help", "-h":
 		printUsage(fs)
 	default:
-		errf("unknown subcommand %q", args[0])
+		errf("unknown subcommand %s", describeArg(args[0]))
 		printUsage(fs)
 		os.Exit(2)
 	}
@@ -118,8 +123,10 @@ func newMigrator(dir, dsn string) (*migrate.Migrate, error) {
 	// DSN — a string that parses here parses there — so composing the
 	// failure ourselves removes the fragment instead of chasing it.
 	if _, err := url.Parse(dsn); err != nil {
-		return nil, fmt.Errorf("open migrator: database URL does not parse: %s "+
-			"(if the password holds a reserved character, percent-encode it)", redact.ParseFailure(dsn, err))
+		return nil, fmt.Errorf("the Postgres DSN from %s does not parse: %s. "+
+			"None of the value is shown — it carries the password; percent-encode "+
+			"every reserved character in it (%% as %%25, @ as %%40)",
+			dsnSource, redact.ParseFailure(dsn, err))
 	}
 	src := "file://" + dir
 	m, err := migrate.New(src, dsn)
@@ -246,26 +253,58 @@ func errf(format string, args ...any) {
 	fmt.Fprintln(stderr, fmt.Sprintf(format, args...))
 }
 
-// stderr is where every diagnostic that can repeat operator input goes:
-// errf above, and the flag package, which prints its own parse errors —
-// argument included — to the FlagSet's output and would otherwise bypass
-// errf entirely (`-$DSN` typed for `-dsn $DSN` printed the DSN whole).
+// stderr is the SECOND line of defence, and only the second. The first
+// is that no message above interpolates text this tool was given (see
+// [describeArg] and [parseArgv]); this catches what a dependency
+// formats, which is the one class this binary does not write itself —
+// the driver embedding the URL it was handed into its own error.
+//
+// Two rounds of this fix tried to make echo-and-scrub the primary
+// control, and each round a shape turned up that the scrubber parsed
+// differently from the way the operator meant it: a malformed DSN is by
+// definition not parseable, so every rule for "where the password ends"
+// in one has a counter-example. Scrubbing is kept because a library's
+// text cannot be audited in advance, not because it is sufficient.
 //
 // It scrubs by VALUE as well as by pattern. This process knows every
 // string a credential can have arrived in — argv and the DSN variable —
 // so it hands them to redact.Known, which cuts each password they hold,
 // whatever characters it contains and in whichever spelling it was
 // written (URL userinfo, `?password=`, libpq `password=`), where the
-// output repeats it after the text it was held behind. That includes an
-// echo that stops short: the flag package prints a rejected "flag name"
-// only up to its first `=`, which for `-postgres://u:abc==@host` is the
-// password bar its base64 padding, with no `@` left to recognise it by.
-// The pattern pass behind it covers text that re-renders the DSN rather
-// than repeating it, and is only as good as the boundary that text
-// offers. What redact.Known cannot close is listed on it.
+// output repeats it after the text it was held behind. The pattern pass
+// behind it covers text that re-renders the DSN rather than repeating
+// it, and is only as good as the boundary that text offers. What
+// redact.Known cannot close is listed on it.
 var stderr io.Writer = scrubbingWriter{
 	w:     os.Stderr,
 	known: append([]string{os.Getenv("STELLARINDEX_POSTGRES_DSN")}, os.Args[1:]...),
+}
+
+// dsnSource names where the resolved DSN came from. It is the diagnostic
+// that replaces echoing the value: an operator told the string they set
+// in /etc/default is the one that does not parse can go and look at it,
+// and nothing about it has been written to a log to get there.
+var dsnSource = "-dsn"
+
+// describeArg renders an argument the operator typed, for a message that
+// names it. Text that could be a connection string is NOT echoed, at
+// all, in any scrubbed form: this is the control, and the scrubber
+// behind it is the backstop.
+//
+// The test is an allowlist rather than a denylist, because the denylist
+// is the thing that failed twice. A token of plain word characters is a
+// mistyped subcommand or a step count and is worth quoting back; an
+// argument holding anything else may be a DSN — or a bare password
+// pasted into the slot where N goes — and is described by its position
+// instead. Over-withholding costs a word of diagnostic; under-
+// withholding costs the production credential.
+var plainArg = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
+
+func describeArg(v string) string {
+	if plainArg.MatchString(v) {
+		return strconv.Quote(v)
+	}
+	return "<withheld — it may carry a credential>"
 }
 
 // scrubbingWriter redacts each Write as one message. fmt and flag both
@@ -289,9 +328,14 @@ func die(format string, args ...any) {
 
 // printUsage writes its fixed text to the raw os.Stderr on purpose: it
 // interpolates only the build version, and sending it through [stderr]
-// would redact its own example DSN. fs.PrintDefaults goes wherever the
-// FlagSet's output points, which main sets to [stderr].
+// would redact its own example DSN.
+//
+// fs.PrintDefaults goes wherever the FlagSet's output points, which main
+// sets to io.Discard so that the flag package's own parse errors — which
+// echo the rejected argument — cannot reach a log. It is pointed at
+// stderr for this one write and put back.
 func printUsage(fs *flag.FlagSet) {
+	defer fs.SetOutput(io.Discard)
 	fmt.Fprintf(os.Stderr, `stellarindex-migrate %s
 
 Apply + manage TimescaleDB schema migrations.
@@ -311,6 +355,7 @@ Subcommands:
 
 Flags:
 `, version.String())
+	fs.SetOutput(os.Stderr)
 	fs.PrintDefaults()
 	fmt.Fprintf(os.Stderr, `
 Environment:
@@ -336,7 +381,7 @@ Examples:
 // decision now happens here.
 func parseArgv(fs *flag.FlagSet, argv []string) []string {
 	if err := fs.Parse(argv); err != nil {
-		os.Exit(2)
+		reportFlagFailure(fs, argv, 1)
 	}
 
 	args := fs.Args()
@@ -387,12 +432,87 @@ func parseArgv(fs *flag.FlagSet, argv []string) []string {
 	}
 	positionals := rest[:nPos]
 	if err := fs.Parse(rest[nPos:]); err != nil {
-		os.Exit(2)
+		reportFlagFailure(fs, rest[nPos:], len(argv)-len(rest)+nPos+1)
 	}
 	if leftover := fs.Args(); len(leftover) > 0 {
-		die("unexpected argument %q after the flags for %q — put every positional "+
-			"immediately after the subcommand (stellarindex-migrate %s %s -flag value)",
-			leftover[0], args[0], args[0], strings.Join(positionals, " "))
+		die("unexpected argument at position %d after the flags for %s — put every positional "+
+			"immediately after the subcommand "+
+			"(stellarindex-migrate <subcommand> <positionals> -flag value)",
+			len(argv)-len(leftover)+1, describeArg(args[0]))
 	}
 	return append([]string{args[0]}, positionals...)
+}
+
+// reportFlagFailure says why the command line was refused and exits. It
+// never repeats the argument that caused the refusal.
+//
+// The flag package's own message does: `flag provided but not defined:
+// -postgres://user:SECRET@host/db` is what it writes when a DSN lands
+// where a flag name goes — a `-dsn` dropped, a shell variable that
+// expanded into the flag slot — and it writes it before Parse returns,
+// which is why main points the FlagSet at io.Discard. The position of
+// the argument is the part of that message an operator actually needs,
+// and the position discloses nothing.
+//
+// offset is the 1-based position of argv[0] on the whole command line,
+// so a failure in the flags AFTER the verb still names the right one.
+func reportFlagFailure(fs *flag.FlagSet, argv []string, offset int) {
+	i, name, defined := unknownFlag(fs, argv)
+	switch {
+	case i < 0:
+		errf("stellarindex-migrate: the command line could not be parsed — " +
+			"run 'stellarindex-migrate help' for the flags this tool defines")
+	case defined:
+		errf("stellarindex-migrate: the %s flag (argument %d) needs a value", describeFlagName(name), offset+i)
+	default:
+		errf("stellarindex-migrate: argument %d is not a flag this tool defines (%s) — "+
+			"only -dsn and -migrations are", offset+i, describeFlagName(name))
+	}
+	os.Exit(2)
+}
+
+// unknownFlag walks argv the way the flag package does and returns the
+// index of the first token that package cannot accept, that token's flag
+// name, and whether the name IS one this tool defines — in which case
+// what is missing is its value, at the end of the line.
+func unknownFlag(fs *flag.FlagSet, argv []string) (idx int, name string, defined bool) {
+	for i := 0; i < len(argv); i++ {
+		a := argv[i]
+		if len(a) < 2 || a[0] != '-' || a == "--" {
+			return -1, "", false // the flag package stops at the first non-flag
+		}
+		n, hasValue := cutFlagName(a)
+		if fs.Lookup(n) == nil {
+			return i, n, false
+		}
+		if !hasValue {
+			if i+1 >= len(argv) {
+				return i, n, true
+			}
+			i++ // the next token is this flag's value, not a flag
+		}
+	}
+	return -1, "", false
+}
+
+// cutFlagName strips the leading dashes and any `=value` from a flag
+// argument, the way the flag package does.
+func cutFlagName(a string) (name string, hasValue bool) {
+	name = strings.TrimLeft(a, "-")
+	name, _, hasValue = strings.Cut(name, "=")
+	return name, hasValue
+}
+
+// describeFlagName renders a rejected flag NAME on the same terms as
+// [describeArg]: a plain word is the operator's typo and worth showing,
+// anything else may be the DSN they meant to pass to -dsn.
+func describeFlagName(name string) string {
+	switch {
+	case name == "":
+		return "an empty flag name"
+	case plainArg.MatchString(name):
+		return "-" + name
+	default:
+		return "<withheld — it may carry a credential>"
+	}
 }
