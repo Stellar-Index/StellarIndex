@@ -25,6 +25,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/projector"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -98,6 +99,13 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	}
 	if *cfgPath == "" || *sourceName == "" || *from == 0 {
 		return fmt.Errorf("-config, -source, and -from are required")
+	}
+	// BackfillSafe gate (F050), before the config load and long before the
+	// decoder is built: a refusal must not need a reachable database, and
+	// it applies to the default dry-run too — see
+	// checkProjectedRebuildBackfillSafe.
+	if gerr := checkProjectedRebuildBackfillSafe(*sourceName, uint32(*from)); gerr != nil { //nolint:gosec // ledger sequences fit uint32 in real usage.
+		return gerr
 	}
 
 	windowSize := uint32(*window) //nolint:gosec // operator-supplied window size; zero guarded below.
@@ -287,6 +295,50 @@ const (
 	// progress-log cadence.
 	projectedRebuildProgressInterval = 15 * time.Second
 )
+
+// checkProjectedRebuildBackfillSafe refuses a rebuild of a source whose
+// decoder has not been audited against every WASM generation that ran
+// over its history (finding F050).
+//
+// projected-rebuild is the third re-derive path: it builds the live
+// projector's CURRENT decoder (projector.BuildRegistry) and runs it over
+// a HISTORICAL lake range, and — because it stamps a positive
+// derive_generation — its rows WIN over what is stored. That is the
+// old-WASM-generation hazard `backfill`, `projector-replay` and
+// `ch-rebuild -write` already refuse, on the very path the
+// projector-replay runbook sends any rewind over ~1M ledgers to; until
+// this check it never asked. The question goes through
+// [external.ReplayBackfillSafe], which resolves the projector source
+// names that deliberately have no registry row of their own
+// (blend_backstop follows blend's attestation; the sep41 pair read a
+// standard-fixed schema), so the sanctioned rebuilds are not stranded. A
+// name nobody registered is refused, fail-closed.
+//
+// NOT armed under -write only, unlike ch-rebuild: this command's dry-run
+// is a faithful preview of the -write run (the live-cursor guard below
+// already applies to both), and a multi-hour preview of a run that would
+// be refused is a plan nobody can execute — the same call
+// projector-replay makes for -dry-run. Evaluating an unaudited decoder
+// against history stays available through ch-rebuild's ungated default
+// dry-run. No override flag, matching `backfill`: the way through is the
+// audit plus the registry flip, in one reviewed PR.
+func checkProjectedRebuildBackfillSafe(source string, from uint32) error {
+	if external.ReplayBackfillSafe(source) {
+		return nil
+	}
+	return fmt.Errorf(
+		"projected-rebuild: refusing to rebuild source %q from ledger %d — it is not BackfillSafe (per-WASM-hash audit "+
+			"pending, or not a known source): this tool decodes history with the CURRENT decoder and its rows overwrite "+
+			"the stored ones, and Soroban contracts upgrade in place, so an unaudited old WASM generation decodes to "+
+			"silently wrong rows. Run stellarindex-ops wasm-history -from %d -to <tip> -contracts <CID> for the source's "+
+			"contracts, review every emitted WASM hash against the current decoder, record it under "+
+			"docs/operations/wasm-audits/, then flip BackfillSafe=true in internal/sources/external/registry.go in the "+
+			"same PR (see docs/architecture/domain-traps.md, \"Soroban DeFi contracts upgrade in place\"). The dry-run is "+
+			"gated too; to evaluate an unaudited decoder against history use ch-rebuild's default dry-run. If the name "+
+			"is simply wrong: projector SOURCE names are underscored (blend_backstop, sep41_transfers); see "+
+			"internal/projector/registry.go",
+		source, from, from)
+}
 
 // liveCursorCovers is the ADR-0048 D3 one-writer predicate itself: the
 // live projector has already walked the whole requested range, so a bulk

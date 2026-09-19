@@ -22,14 +22,16 @@ import (
 // never invokes it. One test per control; each asserts the DEPLOYED
 // path references the control, not merely that the control exists.
 //
-// Build-tagged because, as of the commit that added it, every leg is
+// Build-tagged because, as of the commit that added it, every leg was
 // RED and each leg's fix lives in files owned by a different unit
 // (F048, F050, F085, F133, F144). Print the live status with:
 //
 //	go test -tags k023evidence ./test/controlwiring/ -run TestK023 -v
 //
-// When all five are green, drop the build tag: this file is then the
-// class's regression guard.
+// A leg whose fix has landed GRADUATES: it moves to an untagged file in
+// this package so it guards the default suite (F050 has — see
+// replay_backfillsafe_test.go). When the remaining four are green, drop
+// the build tag: this file is then the class's regression guard.
 
 // ─── F144: -fail-on-missed on the units where it can fire ──────────
 //
@@ -177,67 +179,11 @@ func TestK023_ExplorerBuildRunsPruneAndFileBudget(t *testing.T) {
 
 // ─── F050: the replay paths must consult BackfillSafe ──────────────
 //
-// external.BackfillSafe is the per-source "this decoder is safe
-// against every historical WASM generation" gate. Its only caller is
-// `stellarindex-ops backfill`. The commands operators actually use to
-// re-decode history — projector-replay and ch-rebuild — never ask.
-// Source-level on purpose: the assertion is "some non-test file on
-// each replay path calls the gate"; the owning fix (F050) carries the
-// behavioural test.
-//
-// Status after the F050 fix: projector-replay and ch-rebuild are GREEN
-// (they ask through external.ReplayBackfillSafe; behavioural tests in
-// internal/ops/ingest/projector_backfillsafe_test.go and
-// internal/ops/chops/ch_rebuild_backfillsafe_test.go). projected-rebuild
-// was added to this list by that fix and is RED: it is the third
-// re-derive path — the bulk sibling the projector-replay runbook sends
-// any rewind over ~1M ledgers to — it builds the same current decoder
-// over the same history, and it never asks either. Its file was outside
-// the fixing unit's scope, so this leg is the evidence, not the fix.
-func TestK023_ReplayPathsConsultBackfillSafe(t *testing.T) {
-	t.Parallel()
-	paths := map[string][]string{
-		"projector-replay":  {"internal/ops/ingest/projector*.go", "internal/projector/*.go"},
-		"ch-rebuild":        {"internal/ops/chops/ch_rebuild*.go"},
-		"projected-rebuild": {"internal/ops/chops/projected_rebuild*.go"},
-	}
-	for cmd, globs := range paths {
-		files, found := scanForCall(t, globs, "BackfillSafe(")
-		if files == 0 {
-			t.Fatalf("%s: globs %v matched no files — this test is asserting nothing", cmd, globs)
-		}
-		if !found {
-			t.Errorf("%s never calls external.BackfillSafe (searched %d files under %v): the "+
-				"per-source historical-WASM gate is consulted only by `backfill` (F050)", cmd, files, globs)
-		}
-	}
-}
-
-// scanForCall reports how many non-test Go files the globs matched and
-// whether any of them contains needle.
-func scanForCall(t *testing.T, globs []string, needle string) (files int, found bool) {
-	t.Helper()
-	for _, g := range globs {
-		matches, err := filepath.Glob(filepath.Join(repoRoot(t), g))
-		if err != nil {
-			t.Fatalf("glob %s: %v", g, err)
-		}
-		for _, f := range matches {
-			if strings.HasSuffix(f, "_test.go") {
-				continue
-			}
-			files++
-			b, err := os.ReadFile(f) //nolint:gosec // repo-relative, test-only
-			if err != nil {
-				t.Fatalf("read %s: %v", f, err)
-			}
-			if strings.Contains(string(b), needle) {
-				found = true
-			}
-		}
-	}
-	return files, found
-}
+// GRADUATED. All three re-derive paths (projector-replay, ch-rebuild,
+// projected-rebuild) now ask external.ReplayBackfillSafe, so this leg
+// left the build tag: TestK023_ReplayPathsConsultBackfillSafe lives in
+// replay_backfillsafe_test.go and runs in the default suite. It still
+// shows up in the tagged run above, because that file has no tag.
 
 // ─── F048: phoenix's factory anchor must be able to admit a pool ───
 //
@@ -280,18 +226,8 @@ func TestK023_PhoenixFactoryCreateEventIsAdmissible(t *testing.T) {
 	}
 }
 
-func repoRoot(t *testing.T) string {
-	t.Helper()
-	// test/controlwiring -> repo root
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("repo root %s has no go.mod: %v", root, err)
-	}
-	return root
-}
+// repoRoot lives in replay_backfillsafe_test.go (untagged), which both
+// builds compile.
 
 func readRepoFile(t *testing.T, rel string) string {
 	t.Helper()

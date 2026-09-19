@@ -179,6 +179,25 @@ against.
   No override flag, matching `backfill`: the way through is the audit
   plus the registry flip. `projected-rebuild` is the third re-derive
   path and is NOT gated by this change (F050).
+- **ops (projected-rebuild):** the third re-derive path now consults the
+  `BackfillSafe` WASM-audit gate too. `projected-rebuild` builds the live
+  projector's current decoder and runs it over a historical lake range
+  with a winning `derive_generation` — and it is where the
+  projector-replay runbook sends any rewind over ~1M ledgers — yet it
+  never asked, so the bulk path could do exactly what the two gated
+  commands refuse. `projected-rebuild -source X` now refuses when X is not
+  attested or not a known source, before the config load and any database
+  access, through the same `external.ReplayBackfillSafe` (so
+  `blend_backstop`, `sep41_transfers` and `sep41_supply` keep working).
+  **Operator-visible:** the refusal covers the default dry-run as well as
+  `-write`, unlike ch-rebuild — this command's dry-run is a preview of the
+  write run (its live-cursor guard already applies to both), and
+  ch-rebuild's ungated dry-run remains the way to evaluate an unaudited
+  decoder against history. No override flag. The `test/controlwiring` leg
+  for this control is green on all three paths and has left the
+  `k023evidence` build tag (`replay_backfillsafe_test.go`), now matching
+  only real calls to the external gate rather than any identifier ending
+  in `BackfillSafe(` (F050).
 - **tests (storage):** `TestHistoryPointsDirectionUnion` no longer fails on
   every run between 00:00 and about 02:05 UTC. It seeds trades two hours
   back and asserted that the 1-day history series is empty because "today's
