@@ -15,7 +15,9 @@
 #   setup                     Step 0 (ADD COLUMN) + Step 1 (v2 table + MV);
 #                             records the MV-creation tip in the state dir
 #   reproject <from> <to>     Step 2: windowed INSERT of [from,to) into v2;
-#                             resumable, overlapping re-runs are safe (RMT)
+#                             resumable, overlapping re-runs are safe (RMT).
+#                             Resume state is keyed by <from>, so a second
+#                             window never reads the first one's progress
 #   verify                    Step 3: v1-vs-v2 divergence sample + coverage
 #   cutover                   Step 4: REFUSES unless v2 covers v1 (count,
 #                             min/max ledger_seq) — D3_FORCE_CUTOVER=yes to
@@ -142,10 +144,35 @@ setup)
 
 reproject)
   FROM="${2:?reproject from-ledger}"; TO="${3:?reproject to-ledger (exclusive)}"
-  PROG="$STATE_DIR/reproject-progress"
-  [ -f "$PROG" ] && FROM_RESUME=$(cat "$PROG") || FROM_RESUME=$FROM
-  if [ "$FROM_RESUME" -gt "$FROM" ]; then
-    log "resuming at $FROM_RESUME (state file)"; FROM=$FROM_RESUME
+  num "$FROM" "reproject from-ledger"; num "$TO" "reproject to-ledger"
+  if [ "$FROM" -ge "$TO" ]; then
+    log "refusing: [$FROM,$TO) is an empty window — from must be below to"; exit 1
+  fi
+  REQ_FROM=$FROM
+  # Progress is keyed by the window's FROM, and a mark means "[FROM,mark) is
+  # inserted". One shared, unkeyed file named no window at all, so a run over
+  # a LOWER window adopted a HIGHER window's mark, iterated zero chunks and
+  # still logged "complete" — and a lower range after a higher one is the
+  # normal order here, not a corner case: phaseD-backfill.sh walks
+  # [54000000,63050000] and only then [2,38000000]. TO is deliberately NOT
+  # part of the key — the runbook invokes `reproject 38000000 <tip>` with a
+  # tip that moves between runs, and a TO-keyed file would restart the whole
+  # window every time the tip advanced.
+  PROG="$STATE_DIR/reproject-progress.from-$FROM"
+  LEGACY="$STATE_DIR/reproject-progress"
+  if [ ! -f "$PROG" ] && [ -f "$LEGACY" ]; then
+    log "ignoring unkeyed legacy progress file $LEGACY (=$(cat "$LEGACY")): it names no window, so it cannot be read as progress through [$FROM,$TO). Re-inserting an already-covered chunk is idempotent under the RMT; the cost is time, not correctness."
+  fi
+  if [ -f "$PROG" ]; then
+    FROM_RESUME=$(cat "$PROG")
+    num "$FROM_RESUME" "progress mark in $PROG"
+    if [ "$FROM_RESUME" -lt "$FROM" ]; then
+      log "refusing: progress mark $FROM_RESUME in $PROG is below that file's own window start $FROM — the state is corrupt; delete the file to redo the window"; exit 1
+    fi
+    if [ "$FROM_RESUME" -ge "$TO" ]; then
+      log "nothing to do: [$REQ_FROM,$TO) is already covered (mark=$FROM_RESUME in $PROG)"; exit 0
+    fi
+    log "resuming at $FROM_RESUME (state file $PROG)"; FROM=$FROM_RESUME
   fi
   for (( CLO=FROM; CLO<TO; CLO+=CHUNK )); do
     CHI=$(( CLO + CHUNK )); [ "$CHI" -gt "$TO" ] && CHI=$TO
@@ -156,7 +183,7 @@ reproject)
     echo "$CHI" > "$PROG"
     log "  window [$CLO,$CHI) inserted"
   done
-  log "reproject [$FROM,$TO) complete"
+  log "reproject [$REQ_FROM,$TO) complete (this run inserted [$FROM,$TO))"
   ;;
 
 verify)

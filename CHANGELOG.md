@@ -137,6 +137,26 @@ against.
   `change_24h_pct`. Twelve tests, seven of them proven red against the unfixed
   consumers.
 
+- **ops / the D3 reproject keeps progress per window instead of one shared file (RLT-399):**
+  `scripts/ops/d3-lecur-v2-rebuild.sh reproject <from> <to>` resumed from a
+  single `$D3_STATE/reproject-progress` path that named no window, and adopted
+  whatever number it held whenever that number was above the requested `from`.
+  Running a LOWER range after a higher one is the normal order in this backfill —
+  `scripts/ops/phaseD-backfill.sh` walks `[54000000,63050000]` and only then
+  `[2,38000000]` — so `reproject 2 38000000` after a `[54000000,63050000)` run
+  read the mark 63050000, entered `for ((CLO=63050000; CLO<38000000; …))`, made
+  zero iterations, inserted nothing and logged `reproject [63050000,38000000)
+  complete`. The early era would then have been missing from v2 with the phase
+  reporting success. Progress is now keyed by the window's `from`
+  (`reproject-progress.from-<from>`), which is the key the mark's own meaning
+  implies — "[from,mark) is inserted" — and leaves the runbook's
+  `reproject 38000000 <tip>` resumable across a moving tip, which a `(from,to)`
+  key would not. A legacy unkeyed file is ignored with a logged notice rather
+  than guessed at: re-inserting a covered chunk is idempotent under the
+  ReplacingMergeTree, so the cost is time, not correctness. The phase also now
+  refuses a non-numeric bound, an empty window, and a mark that sits below its
+  own file's window start, and its completion line names the window that was
+  requested rather than the one it resumed into.
 - **ops / the D3 cutover refuses to swap an incomplete v2 over a complete v1 (RLT-399):**
   `scripts/ops/d3-lecur-v2-rebuild.sh cutover` went straight from the
   pre-cutover-tip read to `DROP` both MVs and `RENAME` `ledger_entries_current_v2`

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# d3-lecur-v2-rebuild-test.sh — fixture tests for the IRREVERSIBLE cutover
-# in scripts/ops/d3-lecur-v2-rebuild.sh (audit RLT-399).
+# d3-lecur-v2-rebuild-test.sh — fixture tests for the two IRREVERSIBLE
+# decisions in scripts/ops/d3-lecur-v2-rebuild.sh (audit RLT-399).
 #
 # clickhouse-client is STUBBED, so this runs anywhere in about a second and
 # never reaches a lake. The stub RECORDS every statement it is handed and
@@ -23,6 +23,15 @@
 #      acknowledgement finalize / rollback-precutover already require.
 #   5. a v2 that covers v1 still cuts over, and the coverage reads happen
 #      BEFORE the first DROP (a gate that runs after the DDL is not a gate).
+#   6. reproject progress is keyed by the window: a mark left by
+#      [54000000,63050000] must not be adopted by a later [2,38000000].
+#      Unkeyed, that run inserted NOTHING and logged "complete" — and that
+#      ordering is the normal one (phaseD-backfill.sh walks the high range
+#      first). The pre-fix shape is reproduced here by planting the legacy
+#      unkeyed state file.
+#   7. a same-window mark IS still honoured (resume must keep working), a
+#      mark below its own window start is refused as corrupt, and an empty
+#      window is refused outright.
 #
 # Run: bash scripts/ops/d3-lecur-v2-rebuild-test.sh
 set -uo pipefail
@@ -99,7 +108,7 @@ no_ddl() {
   fi
 }
 
-echo "d3-lecur-v2-rebuild-test: cutover coverage gate"
+echo "d3-lecur-v2-rebuild-test: cutover coverage gate + per-window reproject state"
 
 # ─── 1. cutover refuses a raised coverage floor ─────────────────────
 #
@@ -178,6 +187,82 @@ else
   bad "coverage reads did not precede the DDL (gate line $last_gate, first DDL line $first_ddl)"
   sed 's/^/       /' "$TMP/ch.good.log"
 fi
+
+# ─── 5. reproject state is per-window ───────────────────────────────
+#
+# The pre-fix shape, planted: a run over the HIGH range left an unkeyed
+# mark at 63050000. The next range is the LOW one — phaseD-backfill.sh's
+# real order — and it must insert, not report itself complete.
+mkdir -p "$TMP/state.lowwindow"
+printf '63050000\n' > "$TMP/state.lowwindow/reproject-progress"
+d3 lowwindow D3_CHUNK=10000000 -- reproject 2 38000000
+inserts="$(grep -c 'INSERT INTO stellar.ledger_entries_current_v2' "$TMP/ch.lowwindow.log")"
+if [ "$RC" -eq 0 ] && [ "$inserts" -gt 0 ]; then
+  ok "[2,38000000) after a [54000000,63050000) mark ⇒ $inserts INSERT(s) issued"
+else
+  bad "[2,38000000) after a higher window's mark ⇒ issued $inserts INSERTs (rc=$RC): the window was skipped"
+  sed 's/^/       /' "$OUT"
+fi
+if grep -q 'WHERE ledger_seq >= 2 AND ledger_seq < 10000002' "$TMP/ch.lowwindow.log"; then
+  ok "the low window starts at its own FROM (2), not at the other window's mark"
+else
+  bad "the first INSERT does not start at ledger 2"
+  sed 's/^/       /' "$TMP/ch.lowwindow.log"
+fi
+if grep -q 'reproject \[2,38000000) complete' "$OUT"; then
+  ok "completion is reported for the window that was actually requested"
+else
+  bad "completion line does not name [2,38000000)"
+  sed 's/^/       /' "$OUT"
+fi
+
+# ─── 6. resume within the SAME window still works ───────────────────
+mkdir -p "$TMP/state.resume"
+printf '38500000\n' > "$TMP/state.resume/reproject-progress.from-38000000"
+d3 resume D3_CHUNK=100000 -- reproject 38000000 38700000
+ins_bounds="$(grep -o 'ledger_seq >= [0-9]* AND ledger_seq < [0-9]*' "$TMP/ch.resume.log")"
+first_ins="${ins_bounds%%$'\n'*}"
+if [ "$first_ins" = 'ledger_seq >= 38500000 AND ledger_seq < 38600000' ]; then
+  ok "a mark for this window is still honoured (first INSERT resumes at 38500000)"
+else
+  bad "same-window resume broke — first INSERT was '$first_ins', expected it at 38500000"
+  sed 's/^/       /' "$TMP/ch.resume.log"
+fi
+if grep -q 'WHERE ledger_seq >= 38000000 ' "$TMP/ch.resume.log"; then
+  bad "resume re-inserted a chunk below the mark"
+else
+  ok "resume did not redo the covered part of its own window"
+fi
+
+# ─── 7. corrupt / impossible windows are refused, not guessed ───────
+mkdir -p "$TMP/state.corrupt"
+printf '100\n' > "$TMP/state.corrupt/reproject-progress.from-38000000"
+d3 corrupt -- reproject 38000000 38700000
+if [ "$RC" -ne 0 ] && grep -q 'is below that file' "$OUT"; then
+  ok "a mark below its own window start ⇒ refused as corrupt"
+else
+  bad "a mark of 100 in the from-38000000 file was accepted (rc=$RC)"
+  sed 's/^/       /' "$OUT"
+fi
+no_ddl corrupt "corrupt mark"
+
+d3 emptywin -- reproject 38000000 38000000
+if [ "$RC" -ne 0 ] && grep -q 'empty window' "$OUT"; then
+  ok "an empty window [38000000,38000000) ⇒ refused"
+else
+  bad "an empty window was accepted (rc=$RC)"
+  sed 's/^/       /' "$OUT"
+fi
+no_ddl emptywin "empty window"
+
+d3 nonnum -- reproject 38000000 '38000000; DROP'
+if [ "$RC" -ne 0 ] && grep -q 'not a non-negative integer' "$OUT"; then
+  ok "a non-numeric to-ledger ⇒ refused before any statement is built"
+else
+  bad "a non-numeric to-ledger was interpolated (rc=$RC)"
+  sed 's/^/       /' "$OUT"
+fi
+no_ddl nonnum "non-numeric to-ledger"
 
 echo "d3-lecur-v2-rebuild-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
