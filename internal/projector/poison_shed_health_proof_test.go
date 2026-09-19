@@ -39,11 +39,25 @@ func TestCycle_PoisonRowWithNoSinkHealthProofHoldsUntilTheNoProgressBudget(t *te
 		return notNullViolation()
 	})
 
+	permBefore := decodedCount(t, source, "sink_permanent")
+
 	for i := 1; i < QuarantineAfterCyclesNoProgress; i++ {
 		h.cycle()
 		if got := h.store.cursor(); got != 100 {
 			t.Fatalf("cycle %d: cursor = %d, want 100 — with no proof the sink is healthy, a class-23502 verdict must stall visibly instead of shedding the row", i, got)
 		}
+	}
+
+	// The stall is not silence. outcome="sink_permanent" counts the sink's
+	// REJECTION, on every cycle that re-reads the row, so it climbs through
+	// the whole hold — which is what gives
+	// stellarindex_projector_row_dropped_permanent something to fire on an
+	// hour BEFORE the budget lets anything leave the served tier. A counter
+	// that only moved on the shed would make the operator's warning window
+	// and the alert's first sample the same instant.
+	if got := decodedCount(t, source, "sink_permanent") - permBefore; got != float64(QuarantineAfterCyclesNoProgress-1) {
+		t.Errorf("sink_permanent delta over the hold = %v, want %d — the rejection must be counted every cycle, not only when the row is finally shed",
+			got, QuarantineAfterCyclesNoProgress-1)
 	}
 
 	// Budget spent: the source self-heals rather than wedging, one row per

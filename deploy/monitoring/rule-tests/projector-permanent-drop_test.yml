@@ -73,19 +73,25 @@ tests:
               summary: "Projector permanently dropped a row on sep41_transfers — the sink rejected its VALUES"
               description: |
                 stellarindex_projector_events_decoded_total{source="sep41_transfers",outcome="sink_permanent"}
-                incremented: the sink rejected the row's VALUES (SQLSTATE class
-                22/23, or a canonical value-shape check before the statement ran)
-                and the cursor advanced past it. The raw event is still in the
-                lake; the served tier is missing the row until it is re-driven
-                with `stellarindex-ops projector-replay -source
-                sep41_transfers` after the defect is fixed.
+                incremented: the sink PERMANENTLY rejected one of a row's outputs
+                — SQLSTATE class 22/23, or a canonical value-shape check before
+                the statement ran. Retrying can never make that output land, so
+                the served tier is missing it; the raw event survives in the lake
+                and is recovered with `stellarindex-ops projector-replay -source
+                sep41_transfers` once the defect is fixed.
+
+                THE COUNTER IS THE REJECTION, NOT THE SHED. It increments on every
+                cycle that re-reads the row, so a row the per-cycle shed cap is
+                still HOLDING keeps counting. That is deliberate: it is what makes
+                the fault visible while the projector is only stalling the cursor,
+                about an hour before the no-progress budget lets anything leave.
 
                 READ THE RATE, NOT JUST THE EVENT. One row is a poison value. A
                 burst across many ledgers of one source is the GLOBAL form of the
                 same SQLSTATE — usually a migration whose NOT NULL / CHECK the
                 live rows violate — and the projector will be stalling
-                (runs_total{outcome="sink_retry"}, rising lag) while it bleeds one
-                row per cycle. Fix the schema before the backlog drains.
+                (runs_total{outcome="sink_retry"}, rising lag) while it holds the
+                window. Fix the schema before that budget expires.
 
                 Runbook: docs/operations/runbooks/projector-row-quarantined.md
       - eval_time: 15m
