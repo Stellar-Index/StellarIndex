@@ -223,6 +223,12 @@ const (
 	// into StakeChange / phoenix_stake_events same as bond/unbond.
 	actionWithdrawRewards
 	actionDistributeRewards
+	// actionCreatePool is the FACTORY's ("create","liquidity_pool")
+	// pool announcement — the only action in this enum emitted by the
+	// factory rather than a pool or stake contract. It projects no row;
+	// its whole job is to admit the announced pool into the identity
+	// gate (dispatcher_adapter.go, ADR-0040 §1 mechanism 1).
+	actionCreatePool
 )
 
 // classifyAny is the union of classify + liquidity / stake topic
@@ -267,8 +273,48 @@ func classifyAny(e *events.Event) (action, string) {
 		return actionAdmin, e.Topic[1]
 	case TopicSymbolInitialize:
 		return actionInitialize, e.Topic[1]
+	case TopicSymbolCreate:
+		// Narrowest trigger that carries the hazard: ONLY the factory's
+		// single documented announcement pair classifies. Upstream has no
+		// other ("create", …) publish, so a ("create", something-else)
+		// is a shape nobody has audited — it stays actionUnknown and
+		// fail-closes into a visible ADR-0033 recognition gap rather than
+		// reaching the admission path. The emitter is checked separately
+		// (Matches → reg.IsFactory): topics alone are forgeable.
+		if e.Topic[1] != TopicCreateLiquidityPool {
+			return actionUnknown, ""
+		}
+		return actionCreatePool, e.Topic[1]
 	}
 	return actionUnknown, ""
+}
+
+// decodeAnnouncedPool extracts the pool address the FACTORY's
+// ("create","liquidity_pool") event announces — the ADR-0035/0040
+// fan-out seam, mirroring aquarius's add_pool decode.
+//
+// The body is a single ScvAddress (verified on every real capture under
+// test/fixtures/phoenix/factory-create, 2024 and 2026 alike). Upstream it
+// is the RETURN VALUE of
+// `env.deployer().with_current_contract(salt).deploy_v2(<lp wasm hash
+// from factory config>, …)` — create_liquidity_pool takes no pool-address
+// parameter, so the announced address cannot be caller-supplied (this is
+// what made defindex's self-registration unsafe and makes phoenix's safe;
+// see docs/operations/wasm-audits/phoenix.md). The announced address must
+// be a contract (C-strkey); anything else is malformed.
+func decodeAnnouncedPool(e *events.Event) (string, error) {
+	body, err := scval.Parse(e.Value)
+	if err != nil {
+		return "", fmt.Errorf("%w: create body: %w", ErrMalformedPayload, err)
+	}
+	pool, err := scval.AsAddressStrkey(body)
+	if err != nil {
+		return "", fmt.Errorf("%w: create announced pool address: %w", ErrMalformedPayload, err)
+	}
+	if len(pool) == 0 || pool[0] != 'C' {
+		return "", fmt.Errorf("%w: create announced a non-contract address %q", ErrMalformedPayload, pool)
+	}
+	return pool, nil
 }
 
 // decodeSwap finalises a complete RawSwap into a canonical.Trade.

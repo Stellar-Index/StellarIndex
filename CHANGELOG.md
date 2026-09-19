@@ -17,6 +17,31 @@ against.
 
 ### Fixed
 
+- **phoenix / contract-identity gate:** the factory anchor can finally admit a
+  pool. `pipeline.GatedMeta` declared phoenix's factory and a `"create"`
+  creation symbol, and `seed-protocol-contracts` walked exactly those events —
+  but the walk only decodes what the decoder `Matches()`, and `classifyAny` had
+  no create action, so every `("create","liquidity_pool")` event was rejected
+  and `Registry.Seed` was never called: the anchor, the walk and the live-upsert
+  hook were all provably inert, and a pool the factory deployed stayed
+  fail-closed until someone hand-edited `MainnetPools`. The decoder now
+  classifies the announcement, gates it on `reg.IsFactory` (never `reg.Has` — a
+  curated pool republishing the same topics must not be able to inject a
+  child), decodes the single-`Address` body and seeds the pool it names. The
+  announced address is safe to trust because upstream `create_liquidity_pool`
+  requires the sender's auth AND membership of the factory's
+  `whitelisted_accounts`, and publishes the address the factory itself
+  deployed — the function takes no pool-address parameter — unlike defindex,
+  whose caller-influenced announcement cost it self-registration on 2026-08-25.
+  The trust this does extend is the phoenix factory ADMIN's: the factory is
+  admin-upgradeable, so a malicious WASM upgrade could publish an arbitrary
+  address. That is the same trust the curated seed extended by hand, now
+  automatic, and it is contract-identity trust, not price trust (tokens are
+  creator-chosen; the pricing guards are downstream). The curated seed and the
+  `protocol_contracts` warm remain the operator override. STAKE contracts are
+  not announced by the factory — the pool deploys them — so they stay seeded,
+  not self-registered (F048).
+
 - **projector / `projector-replay`:** a replay's cursor rewind can no longer
   be reverted by the live projector's in-flight cycle. A cycle reads its
   cursor, spends up to `PerSourceTimeout` scanning and sinking, then

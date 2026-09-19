@@ -92,6 +92,17 @@ const (
 	// Emitted once per pool deploy. Same classification-only intent.
 	EventActionInitialize = "initialize"
 
+	// EventActionCreate / FieldCreateLiquidityPool are the FACTORY's
+	// pool announcement: ("create","liquidity_pool") with a body of one
+	// Address — the pool the factory just deployed. Unlike every other
+	// action here, this one is emitted by the factory, not by a pool, and
+	// it is the decoder's live admission seam (ADR-0040 §1 mechanism 1).
+	// Upstream (contracts/factory/src/contract.rs, identical at v1.0.0,
+	// v1.1.0, v2.0.0 and main) it is the ONLY ("create", …) publish in
+	// the factory, so the pair below is exhaustive for the action.
+	EventActionCreate        = "create"
+	FieldCreateLiquidityPool = "liquidity_pool"
+
 	// AdminAction* are the stored slugs for the four admin-rotation
 	// topic[1] phrases (phoenix_admin_events.admin_action, migration 0132).
 	AdminActionReplaceRequested = "replace_requested"
@@ -195,13 +206,14 @@ const (
 // docs/protocols/phoenix.md (last verified 2026-06-12). The factory's
 // `("create","liquidity_pool")` events ARE in the lake, from ledger
 // 51,572,026 (real captures: test/fixtures/phoenix/factory-create; this
-// comment used to say they predate it, which was false). The decoder
-// still does not self-register from them — the event body has not been
-// shown to be factory-deployed rather than caller-supplied (audit
-// finding F048, docs/operations/wasm-audits/phoenix.md) — so this
-// in-code seed is load-bearing, not a warm-start optimisation. A
-// pool missing from this list fail-closes and surfaces as an
-// ADR-0033 recognition gap (visible, never silently mis-attributed).
+// comment used to say they predate it, which was false), and since F048
+// the decoder DOES self-register from them — so this list is now a
+// cold-start warm root, the same role blend's and sushiswap_v3's curated
+// tables play, not the sole trust root it was. It still matters: it
+// covers the pools whose creation event is outside any window being
+// streamed. A pool missing from BOTH this list and the factory's
+// in-window announcement fail-closes and surfaces as an ADR-0033
+// recognition gap (visible, never silently mis-attributed).
 var MainnetPools = []string{
 	"CBHCRSVX3ZZ7EGTSYMKPEFGZNWRVCSESQR3UABET4MIW52N4EVU6BIZX",
 	"CBCZGGNOEUZG4CAAE7TGTQQHETZMKUT4OIPFHHPKEUX46U4KXBBZ3GLH",
@@ -348,6 +360,17 @@ var (
 	TopicSymbolUnbond            = scval.MustEncodeString(EventActionUnbond)            // topic[0]
 	TopicSymbolAdmin             = scval.MustEncodeString(EventActionAdmin)             // topic[0] for the 4 admin variants
 	TopicSymbolInitialize        = scval.MustEncodeString(EventActionInitialize)        // topic[0] for the 2 init variants
+
+	// Factory pool announcement — ("create","liquidity_pool"), both
+	// ScvString. Confirmed against the real lake captures under
+	// test/fixtures/phoenix/factory-create (2024-05-07 and 2026-07-02
+	// alike). Because they are Strings and not Symbols, the lake's
+	// convenience column topic_0_sym is EMPTY for these rows — a lake
+	// walk keyed on it matches nothing, which is why the re-derive
+	// prefilter matches topics_xdr (internal/storage/clickhouse/
+	// event_reader.go).
+	TopicSymbolCreate        = scval.MustEncodeString(EventActionCreate)        // topic[0]
+	TopicCreateLiquidityPool = scval.MustEncodeString(FieldCreateLiquidityPool) // topic[1]
 
 	// initialize topic[1] variants — the pool announces its two tokens
 	// as ("initialize", "XYK LP token_a" | "XYK LP token_b").

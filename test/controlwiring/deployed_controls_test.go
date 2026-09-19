@@ -11,9 +11,6 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/Stellar-Index/StellarIndex/internal/contractid"
-	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 )
 
 // Class K023 — a control exists in the tree but the production path
@@ -27,9 +24,10 @@ import (
 //	go test -tags k023evidence ./test/controlwiring/ -run TestK023 -v
 //
 // A leg whose fix has landed GRADUATES: it moves to an untagged file in
-// this package so it guards the default suite (F050 has — see
-// replay_backfillsafe_test.go). When the remaining four are green, drop
-// the build tag: this file is then the class's regression guard.
+// this package so it guards the default suite (F050 and F048 have — see
+// replay_backfillsafe_test.go and phoenix_factory_admission_test.go).
+// When the remaining three are green, drop the build tag: this file is
+// then the class's regression guard.
 
 // ─── F144: -fail-on-missed on the units where it can fire ──────────
 //
@@ -185,96 +183,15 @@ func TestK023_ExplorerBuildRunsPruneAndFileBudget(t *testing.T) {
 
 // ─── F048: phoenix's factory anchor must be able to admit a pool ───
 //
-// pipeline.GatedMeta declares phoenix Factories + CreationSym
-// "create", and seed-protocol-contracts walks exactly those events —
-// but it only calls Decode on events the decoder Matches. Phoenix's
-// Matches rejects every factory event (classifyAny has no "create"
-// action and reg.Has excludes the factory), so the walk and the
-// live-upsert hook are provably inert: a pool the factory creates
-// tomorrow is fail-closed until someone edits MainnetPools by hand.
-//
-// Driven by the REAL lake captures under test/fixtures/phoenix/
-// factory-create (loader + shape pins: phoenix_factory_create_fixture_
-// test.go, untagged). The assertion is ADMISSION, not recognition: every
-// announced pool is already in the curated seed, so reg.Has proves
-// nothing, but contractid.Registry.Seed fires its hook on every call —
-// so the hook receiving (announced pool, factory, creation ledger) is
-// the one observation that only a decoder which really seeds from the
-// event can produce. A patch that makes Matches accept the event and
-// then drops it on the floor leaves this RED, as it should: the control
-// would still be inert, and ch-recognition (one exemplar per
-// (contract, topic_0_sym) shape, run through Matches) could then report
-// the factory as recognised while nothing is admitted.
-//
-// STILL RED, deliberately (2026-09-19). Auto-admission is blocked on a
-// security property nobody has established: that create_liquidity_pool
-// is allow-listed AND that the published address is the one the factory
-// deployed, not a caller-supplied argument — for the factory WASM
-// installed NOW (the in-repo WASM walk ends at ledger 57,856,963; the
-// factory is admin-upgradeable). defindex's self-registration was
-// removed on 2026-08-25 for that exact poisoning vector. See
-// docs/operations/wasm-audits/phoenix.md, "Factory create event".
-func TestK023_PhoenixFactoryCreateEventIsAdmissible(t *testing.T) {
-	t.Parallel()
-	type seeded struct {
-		child, factory string
-		ledger         uint32
-	}
-	var got []seeded
-	dec := phoenix.NewDecoder(contractid.WithHook(func(child, factory string, ledger uint32) {
-		got = append(got, seeded{child, factory, ledger})
-	}))
-
-	rows := phoenixCreateRows(t)
-	var want []seeded
-	for _, r := range rows {
-		ev := r.event()
-		announcedPool := phoenixAnnouncedPool(t, r)
-		want = append(want, seeded{announcedPool, phoenix.MainnetFactory, r.LedgerSeq})
-		if !dec.Matches(ev) {
-			t.Errorf("ledger %d: phoenix.Decoder.Matches rejects the factory's real "+
-				"(\"create\",\"liquidity_pool\") event announcing %s", r.LedgerSeq, announcedPool)
-			continue
-		}
-		if _, err := dec.Decode(ev); err != nil {
-			t.Errorf("ledger %d: decode factory create: %v", r.LedgerSeq, err)
-		}
-	}
-	if len(got) != len(want) {
-		t.Fatalf("live-upsert hook fired %d times over %d real factory create events: "+
-			"seed-protocol-contracts and the indexer can never admit a factory-created pool (F048)",
-			len(got), len(want))
-	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("hook call %d = %+v, want %+v", i, got[i], want[i])
-		}
-	}
-}
-
-// TestK023_PhoenixFactoryCreateFromForeignEmitterIsNotAdmitted is the
-// property any F048 fix must keep: topic shape is forgeable, so the same
-// real event republished by a contract that is NOT the factory must
-// neither match nor seed. Green today (nothing matches); it is here so
-// the fix that turns the test above green cannot do it by trusting the
-// topic alone.
-func TestK023_PhoenixFactoryCreateFromForeignEmitterIsNotAdmitted(t *testing.T) {
-	t.Parallel()
-	hooked := 0
-	dec := phoenix.NewDecoder(contractid.WithHook(func(string, string, uint32) { hooked++ }))
-	for _, r := range phoenixCreateRows(t) {
-		ev := r.event()
-		// A curated POOL is the strongest forger: it already passes reg.Has.
-		ev.ContractID = phoenix.MainnetPools[0]
-		if dec.Matches(ev) {
-			t.Errorf("ledger %d: a non-factory emitter of (\"create\",\"liquidity_pool\") matches", r.LedgerSeq)
-			_, _ = dec.Decode(ev)
-		}
-	}
-	if hooked != 0 {
-		t.Errorf("a non-factory emitter seeded the registry %d time(s)", hooked)
-	}
-}
+// GRADUATED. The phoenix decoder now classifies the factory's
+// ("create","liquidity_pool") announcement and Seeds the pool it names,
+// gated on reg.IsFactory, so the configured factory anchor and the
+// seed-protocol-contracts walk can finally admit a pool. Both legs left
+// the build tag: TestK023_PhoenixFactoryCreateEventIsAdmissible and
+// TestK023_PhoenixFactoryCreateFromForeignEmitterIsNotAdmitted live in
+// phoenix_factory_admission_test.go and run in the default suite, on the
+// real lake captures. They still show up in the tagged run above,
+// because that file has no tag.
 
 // repoRoot lives in replay_backfillsafe_test.go (untagged), which both
 // builds compile.

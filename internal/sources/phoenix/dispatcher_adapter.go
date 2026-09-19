@@ -39,22 +39,36 @@ type Decoder struct {
 	reg *contractid.Registry
 }
 
-// NewDecoder constructs a Phoenix Decoder with a fresh buffer.
-// NewDecoder constructs a phoenix Decoder. Contract-identity gating
-// (ADR-0035/0040): the curated mainnet set (pools + stake contracts,
-// docs/protocols/phoenix.md) is ALWAYS seeded, and unlike blend the
-// in-code seed is the trust root, not a warm-start: this decoder does
-// NOT self-register pools. The factory's ("create","liquidity_pool")
-// events are in the lake (from ledger 51,572,026 — real captures under
-// test/fixtures/phoenix/factory-create; an earlier version of this
-// comment said they predate it, which was false), but classifyAny has
-// no create action, so Matches rejects them and reg.Seed is never
-// called. That is deliberate until the event body is shown to be
-// trustworthy — docs/operations/wasm-audits/phoenix.md, "Factory create
-// event" (audit finding F048, still open). Caller opts layer the
-// protocol_contracts DB warm on top, which is the operator seam for
-// admitting a verified pool or stake without a redeploy; the
-// live-upsert hook they also pass is inert here for the reason above.
+// NewDecoder constructs a phoenix Decoder with a fresh buffer.
+//
+// Contract-identity gating (ADR-0035/0040), factory-anchored since F048:
+// the curated mainnet set (pools + stake contracts,
+// docs/protocols/phoenix.md) is ALWAYS seeded as the cold-start warm
+// root, and the factory's ("create","liquidity_pool") events — in the
+// lake from ledger 51,572,026, real captures under
+// test/fixtures/phoenix/factory-create — now self-register the pools
+// they announce, blend/aquarius style. Before this, classifyAny had no
+// create action, so a pool created after the last hand-edit of
+// MainnetPools was fail-closed until someone noticed.
+//
+// The trust this extends is stated deliberately: admission is on
+// contract IDENTITY (upstream, create_liquidity_pool requires the
+// sender's auth AND membership of the factory's whitelisted_accounts,
+// and publishes the address the FACTORY deployed, never a caller
+// argument), but the factory is admin-upgradeable, so an admitted pool
+// ultimately trusts the phoenix factory admin — the same trust the
+// curated seed already extended by hand, now automatic. Tokens are
+// creator-chosen, so this is not price trust; the pricing guards
+// downstream are. See docs/operations/wasm-audits/phoenix.md, "Factory
+// create event".
+//
+// STAKE contracts are NOT announced by the factory (the POOL deploys
+// its stake contract), so they are admitted only by the curated seed or
+// the protocol_contracts warm — see MainnetStakeContracts.
+//
+// Caller opts layer the protocol_contracts DB warm and the live-upsert
+// hook on top; the warm remains the operator seam for admitting a
+// contract without a redeploy, and stays the override.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetFactory}),
@@ -67,10 +81,10 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 func (*Decoder) Name() string { return SourceName }
 
 // GatedContractSet returns the decoder's gate — the factory trust root ∪
-// every registered pool/stake contract (the curated seed plus any
-// protocol_contracts warm; the decoder never seeds from the factory's create
-// events — see NewDecoder — so the set is static after construction). It is
-// the contract-id prefilter the -ch completeness
+// every registered pool/stake contract (the curated seed, any
+// protocol_contracts warm, and every pool self-registered from a factory
+// create event seen so far — see NewDecoder, so the set GROWS in-stream).
+// It is the contract-id prefilter the -ch completeness
 // re-derive scopes its lake read to: Matches() gates purely on contract
 // identity (reg.Has), so streaming just these contracts yields byte-identical
 // counts to a whole-lake stream. The intra-tx correlation buffer only ever
@@ -97,9 +111,17 @@ func (d *Decoder) Matches(ev events.Event) bool {
 	if a == actionUnknown {
 		return false
 	}
+	if a == actionCreatePool {
+		// The factory's pool announcement is gated on the FACTORY trust
+		// root, never on reg.Has: only a genuine factory may admit a
+		// child. A curated pool republishing the identical topics — the
+		// strongest forger available, since it already passes reg.Has —
+		// must not be able to inject one (aquarius add_pool, same shape).
+		return d.reg.IsFactory(ev.ContractID)
+	}
 	// ADR-0035/0040 (CS-026): topic shape alone is forgeable — any
 	// pubnet contract can publish ("swap","sender") string tuples.
-	// Only the curated phoenix set (pools + stake contracts) is
+	// Only the registered phoenix set (pools + stake contracts) is
 	// attributed; a foreign emitter of the same shape is left for
 	// the recognition audit to surface.
 	return d.reg.Has(ev.ContractID)
@@ -116,6 +138,13 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	if a == actionUnknown {
 		// Matches() already vetted this; defensive skip.
 		return nil, nil
+	}
+	if a == actionCreatePool {
+		// Handled before the lock: the announcement needs neither the
+		// close time nor the correlation buffer, and Seed fires the
+		// durable live-upsert hook — which should not run under d.mu
+		// (aquarius does the same for add_pool).
+		return nil, d.seedAnnouncedPool(&ev)
 	}
 
 	closedAt, err := ev.EventClosedAt()
@@ -147,6 +176,10 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return decodeInitializeEvent(&ev, fieldTopic, closedAt)
 	case actionAdmin:
 		return decodeAdminEvent(&ev, fieldTopic, closedAt)
+	case actionCreatePool:
+		// Handled above, before the lock. Enumerated so `exhaustive`
+		// keeps covering the action enum.
+		return nil, nil
 	case actionUnknown:
 		// Unrecognised Phoenix action — recognised at the topic[0] level
 		// so the dispatcher doesn't file it as unmatched, but nothing to
@@ -156,6 +189,24 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 		return nil, nil
 	}
 	return nil, nil
+}
+
+// seedAnnouncedPool admits the pool the factory's
+// ("create","liquidity_pool") event announces into the identity gate
+// and fires the durable live-upsert hook, so the mapping survives a
+// restart (ADR-0040 §1 mechanism 1). Emits no consumer.Event: the
+// announcement projects no row, it only moves the gate.
+//
+// Matches() has already established that ev.ContractID is a factory
+// trust root, so the announced address is a genuine phoenix pool;
+// ev.ContractID is recorded as its provenance.
+func (d *Decoder) seedAnnouncedPool(ev *events.Event) error {
+	pool, err := decodeAnnouncedPool(ev)
+	if err != nil {
+		return err
+	}
+	d.reg.Seed(pool, ev.ContractID, ev.Ledger)
+	return nil
 }
 
 // decodeSwapMapEvent handles the NEWER single-event Map-body swap
