@@ -42,12 +42,19 @@ type Decoder struct {
 // NewDecoder constructs a Phoenix Decoder with a fresh buffer.
 // NewDecoder constructs a phoenix Decoder. Contract-identity gating
 // (ADR-0035/0040): the curated mainnet set (pools + stake contracts,
-// docs/protocols/phoenix.md) is ALWAYS seeded — the factory's
-// creation events predate the lake, so unlike blend the in-code seed
-// is the trust root, not a warm-start. Caller opts layer the
-// protocol_contracts DB warm + live-upsert hook on top (harmless
-// no-ops today; load-bearing if the factory ever emits a creation
-// event we can decode).
+// docs/protocols/phoenix.md) is ALWAYS seeded, and unlike blend the
+// in-code seed is the trust root, not a warm-start: this decoder does
+// NOT self-register pools. The factory's ("create","liquidity_pool")
+// events are in the lake (from ledger 51,572,026 — real captures under
+// test/fixtures/phoenix/factory-create; an earlier version of this
+// comment said they predate it, which was false), but classifyAny has
+// no create action, so Matches rejects them and reg.Seed is never
+// called. That is deliberate until the event body is shown to be
+// trustworthy — docs/operations/wasm-audits/phoenix.md, "Factory create
+// event" (audit finding F048, still open). Caller opts layer the
+// protocol_contracts DB warm on top, which is the operator seam for
+// admitting a verified pool or stake without a redeploy; the
+// live-upsert hook they also pass is inert here for the reason above.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{
 		contractid.WithFactories([]string{MainnetFactory}),
@@ -60,9 +67,10 @@ func NewDecoder(opts ...contractid.Option) *Decoder {
 func (*Decoder) Name() string { return SourceName }
 
 // GatedContractSet returns the decoder's gate — the factory trust root ∪
-// every registered pool/stake contract (the curated seed; Phoenix's factory
-// creation events predate the lake, so the set is static after
-// construction). It is the contract-id prefilter the -ch completeness
+// every registered pool/stake contract (the curated seed plus any
+// protocol_contracts warm; the decoder never seeds from the factory's create
+// events — see NewDecoder — so the set is static after construction). It is
+// the contract-id prefilter the -ch completeness
 // re-derive scopes its lake read to: Matches() gates purely on contract
 // identity (reg.Has), so streaming just these contracts yields byte-identical
 // counts to a whole-lake stream. The intra-tx correlation buffer only ever

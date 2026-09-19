@@ -193,8 +193,12 @@ const (
 // 2 — curated-set registry). Source: the factory's `query_pools()`
 // RPC view cross-checked against lake event activity, recorded in
 // docs/protocols/phoenix.md (last verified 2026-06-12). The factory's
-// `("create","liquidity_pool")` events PREDATE the lake's earliest
-// ledger, so live self-registration can never seed these — this
+// `("create","liquidity_pool")` events ARE in the lake, from ledger
+// 51,572,026 (real captures: test/fixtures/phoenix/factory-create; this
+// comment used to say they predate it, which was false). The decoder
+// still does not self-register from them — the event body has not been
+// shown to be factory-deployed rather than caller-supplied (audit
+// finding F048, docs/operations/wasm-audits/phoenix.md) — so this
 // in-code seed is load-bearing, not a warm-start optimisation. A
 // pool missing from this list fail-closes and surfaces as an
 // ADR-0033 recognition gap (visible, never silently mis-attributed).

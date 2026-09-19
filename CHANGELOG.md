@@ -2238,6 +2238,23 @@ against.
 
 ### Added
 
+- **phoenix (factory create event — evidence, F048 STILL OPEN):** real lake
+  captures of the factory's `("create","liquidity_pool")` events now live
+  under `test/fixtures/phoenix/factory-create/`, pinned in the default suite
+  by `test/controlwiring/phoenix_factory_create_fixture_test.go`. They prove
+  the events are in the lake from ledger 51,572,026 (the decoder comments
+  claiming they "predate the lake" were false and are corrected), that both
+  topics are `ScvString` — so the lake's `topic_0_sym` is empty for them and
+  a ClickHouse walk keyed on it matches nothing — and that the body is one
+  pool `Address` with the stake contract never announced. The decoder still
+  does **not** self-register pools: nobody has yet shown, for the factory
+  WASM installed today, that `create_liquidity_pool` is allow-listed and
+  publishes the address it deployed rather than a caller-supplied one (the
+  vector that removed defindex's self-registration). The red target test
+  `TestK023_PhoenixFactoryCreateEventIsAdmissible` (`-tags k023evidence`)
+  now runs on the real captures and asserts admission, not recognition; the
+  open verification steps are in `docs/operations/wasm-audits/phoenix.md`.
+  (F048)
 - **ci (alert rules):** `scripts/ci/lint-tripwire-window.py` rejects an
   alert whose `for:` equals the window of an event function it compares
   `> 0` — `increase(m[W]) > 0` with `for: W`, the `rate()` twin, and
