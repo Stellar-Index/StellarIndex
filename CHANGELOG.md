@@ -55,6 +55,14 @@ against.
   census, accounts stats, creator/sponsor boards and edges, holders rollup,
   account-activity watermark); probes of a column's or table's existence
   keep their process-lifetime cache (audit F119).
+- **ops (runbook):** `customer-webhook-delivery-failing.md` no longer tells
+  the operator that a healthy-Postgres `_mark_errors` loop is the outcome
+  write sharing the per-attempt HTTP deadline ("#368 M6, code half
+  outstanding"). That stopped being true when `Worker.mark` moved every
+  outcome write onto `context.WithoutCancel` bounded by its own 1s
+  `markWriteTimeout`. The section now describes the shipped behaviour and
+  points at what can still cause it: a single-row UPDATE that cannot land
+  inside that second (CO-22 carry-over).
 - **test-infra (integration):** the claimable-balance seed tests no longer
   time out when the machine is loaded (CO-22). Two Blend fixtures seed the
   process-shared ClickHouse lake at ledgers 3,999,900,000-4,000,000,000 and

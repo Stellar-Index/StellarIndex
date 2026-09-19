@@ -143,11 +143,18 @@ ssh r1 'journalctl -u stellarindex-api --since -2h | grep -i "customer-webhook.*
 
 Almost always this is Postgres: unreachable, in recovery, or the
 statement is being cancelled. Restore the database and the next
-lease writes the outcome and the loop ends by itself. If Postgres
-is healthy, the write is being cancelled by its own context — the
-worker shares the per-attempt HTTP deadline with the store write
-(#368 M6, code half outstanding), so a POST that consumes the whole
-attempt budget leaves no time for the mark.
+lease writes the outcome and the loop ends by itself.
+
+The attempt's own deadline is NOT a cause. The outcome write does
+not share the per-attempt HTTP deadline or the worker's shutdown
+signal: `Worker.mark` runs it on `context.WithoutCancel(ctx)` bounded
+by its own `markWriteTimeout` (1s), so a POST that consumes the whole
+attempt budget still gets a full second to record its result (#368
+M6). If Postgres is healthy and the counter still advances, the
+single-row UPDATE is not landing inside that second — look for lock
+contention or a slow statement on `webhook_deliveries`
+(`pg_stat_activity`, `pg_locks`). Such a row keeps its claim lease
+and is retried when the lease expires, with a fresh budget.
 
 ## Related
 
