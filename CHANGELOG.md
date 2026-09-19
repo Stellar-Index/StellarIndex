@@ -106,6 +106,31 @@ against.
 
 ### Fixed
 
+- **ansible / the archival-node WAL-headroom guard stops crediting a walked-up
+  ancestor as WAL (RWC-529, #529):** the guard refuses a `max_wal_size` that
+  does not fit the filesystem `pg_wal` is really on — the substitution that
+  took r1 down on 2026-09-16. It resolved the symlink for `df`, then walked up
+  to the nearest EXISTING ancestor so `df` still named a real volume on a fresh
+  host, and `du -sm` ran on that ancestor. Its result reached the assert as
+  "MB already occupied by WAL", which is ADDED to free space. On a `pg_wal`
+  symlink whose target is not there the walk can reach `/`, so `avail + used`
+  approaches the volume's total SIZE and the assert cleared exactly the
+  configuration it exists to refuse: measured against a stub tree, a dangling
+  `pg_wal` admitted `max_wal_size=16GB` on a volume reporting 100000MB free by
+  crediting 12MB of unrelated ancestor data, and the absent-`pg_wal` shape
+  credited the cluster directory's own contents. The probe now captures the
+  `readlink -f` result BEFORE the walk and runs `du -sm` only when that
+  original path is itself a directory, emitting 0 otherwise; `df` keeps its
+  ancestor fallback. It also emits an explicit `dir` / `absent` / `dangling`
+  state, and a new assert refuses a `pg_wal` symlink that resolves to nothing —
+  fail-closed, because no ancestor's `df` describes the capacity WAL will get
+  once the missing mount appears. Probed read-only against r1 the same day:
+  `pg_wal -> /pgwal/15-main/pg_wal` on `/dev/md1` (the 49G root) resolves to a
+  real directory today, and the old and new probes agree there (14086MB free,
+  2049MB used) — the change is a no-op on the healthy live shape and only bites
+  the broken one. Operator note: this is an **ansible-only** change. A binary
+  deploy does not carry it; it reaches r1 only on the next
+  `archival-node.yml` apply.
 - **explorer / the five `/v1/price/batch` consumers stop erasing the price
   envelope (RLT-384):** the converter, its shared rate hook, the home currency
   strip, the account positions panel and the asset-page swap widget each typed

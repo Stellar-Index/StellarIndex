@@ -56,18 +56,58 @@
 - name: Resolve the filesystem pg_wal is really on
   ansible.builtin.shell: |
     set -eu
-    d=$(readlink -f "/var/lib/postgresql/{{ postgres_version }}/main/pg_wal" 2>/dev/null \
-        || echo "/var/lib/postgresql/{{ postgres_version }}/main/pg_wal")
+    wal="/var/lib/postgresql/{{ postgres_version }}/main/pg_wal"
+    # Resolve the symlink FIRST and keep the resolved path. df may fall
+    # back to an ancestor (below); du may NOT. Measuring a walked-up
+    # ancestor and reporting it as "already WAL" credits unrelated data
+    # as capacity available to WAL, and on a dangling symlink the walk
+    # reaches / — so avail+used approaches the volume's SIZE and the
+    # guard passes the very shape it exists to refuse.
+    target=$(readlink -f "$wal" 2>/dev/null) || target=""
+    [ -n "$target" ] || target="$wal"
+    if [ -d "$target" ]; then
+      state=dir
+      used=$(du -sm "$target" 2>/dev/null | awk '{print $1}' | tr -dc 0-9)
+      [ -n "$used" ] || used=0
+    elif [ -L "$wal" ]; then
+      # pg_wal names a volume that is not there. That is not a fresh
+      # host, it is the 2026-09-16 substitution itself: no ancestor's df
+      # describes the capacity WAL would get once the mount appears.
+      state=dangling
+      used=0
+    else
+      state=absent
+      used=0
+    fi
     # The directory may not exist yet on a fresh host; fall back to the
     # nearest existing ancestor so df still describes the right volume.
+    d="$target"
     while [ ! -d "$d" ] && [ "$d" != "/" ]; do d=$(dirname "$d"); done
-    printf '%s %s %s %s\n' "$d" \
+    printf '%s %s %s %s %s\n' "$d" \
       "$(df -P -BM "$d" | tail -1 | awk '{print $4}' | tr -dc 0-9)" \
       "$(df -P "$d" | tail -1 | awk '{print $1}')" \
-      "$(du -sm "$d" 2>/dev/null | awk '{print $1}' | tr -dc 0-9 || echo 0)"
+      "$used" "$state"
   register: pg_wal_fs
   changed_when: false
   check_mode: false
+
+- name: Refuse a pg_wal symlink that resolves to nothing
+  vars:
+    _wal_path: "{{ pg_wal_fs.stdout.split()[0] }}"
+    _wal_state: "{{ pg_wal_fs.stdout.split()[4] }}"
+  ansible.builtin.assert:
+    that:
+      - _wal_state != 'dangling'
+    fail_msg: >-
+      /var/lib/postgresql/{{ postgres_version }}/main/pg_wal is a symlink
+      that does not resolve to an existing directory. Nothing here can
+      size max_wal_size: the only filesystem left to measure is
+      {{ _wal_path }}, an ancestor of the missing target, which is not
+      the volume WAL will land on once the mount appears. Create or mount
+      the target first, then re-run — a pg_wal pointing at a volume that
+      is not there is the 2026-09-16 failure shape, not a fresh host.
+    success_msg: >-
+      pg_wal resolves to an existing directory ({{ _wal_path }}).
 
 - name: Refuse a max_wal_size that does not fit the pg_wal filesystem
   vars:
@@ -78,6 +118,11 @@
     # counts toward the budget: a directory already holding 2GB of
     # segments is not 2GB short, it is 2GB spent on the thing being
     # sized. Without this the check would fail every healthy host.
+    #
+    # This is du of pg_wal ITSELF and of nothing else — the probe emits
+    # 0 when pg_wal is absent or dangling. Anything wider (the cluster
+    # directory, a walked-up ancestor, /) is not WAL and must never be
+    # added to free space.
     _wal_used_mb: "{{ pg_wal_fs.stdout.split()[3] | default(0) | int }}"
     # Accepts the GB/MB spellings this template uses. A unitless value
     # is megabytes, matching Postgres' own default unit for this GUC.
