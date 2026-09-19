@@ -186,6 +186,12 @@
 	# Disengage:
 	#   sudo rm /etc/caddy/MAINTENANCE_MODE
 	# No reload needed either way — `file` is evaluated per-request.
+	# Engaging it stops every NEW request, the stream routes included
+	# (measured against caddy 2.11.4: 503 on all four /v1/*/stream
+	# routes). It does NOT cut an SSE connection that is already open —
+	# the matcher is evaluated per request and the stream handlers have
+	# no duration cap, so an established consumer keeps receiving until
+	# it reconnects. `systemctl restart caddy` is what ends those.
 	# `root` below only scopes the file-existence check; it does not
 	# enable static file serving (no file_server directive is present).
 	root * /etc/caddy
