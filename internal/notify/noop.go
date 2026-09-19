@@ -6,14 +6,16 @@ import (
 )
 
 // NoopSender records every Send call without dispatching to a
-// real provider. Used by:
+// real provider, and reports SUCCESS. It is a test double: for
+// tests that want to assert "an email was sent" (and read it back
+// through Sent / Last) without pretending to be Resend.
 //
-//   - Tests that want to assert "an email was sent" without
-//     pretending to be Resend
-//   - Dev environments before the operator has configured
-//     STELLARINDEX_RESEND_API_KEY (lets the auth flow run end-
-//     to-end with magic-link tokens viewable via the in-memory
-//     Sent slice)
+// It must never be what a running binary falls back to when the
+// provider credential is missing. Nothing outside the process can
+// read the Sent slice, so there the mail is simply lost — while the
+// nil return is counted as result="sent" and reported to the caller
+// as delivered (RLT-321). A deployment with no credential wires
+// [UnconfiguredSender], whose Send is an error.
 //
 // Validation still runs — a NoopSender that accepts a
 // missing-Subject Message would let test harnesses ship broken

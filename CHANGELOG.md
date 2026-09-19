@@ -80,6 +80,40 @@ against.
   after the fix: 18 s, the two-walk test 4.2 s, one walk 285 windows in
   1.3 s. The SAC full-history seed tests walk the same bounds, so they
   shed the same windows (measured after the fix: ~1.3 s each).
+- **api (dashboard sign-in), ops:** an empty Resend key no longer reports
+  sign-in mail as sent. With `STELLARINDEX_RESEND_API_KEY` unset or empty the
+  API wired a recording stub whose send returns success, so
+  `POST /v1/auth/login` answered `200 {"status":"sent"}`, minted a live
+  magic-link row nobody could receive, and counted
+  `stellarindex_notify_sends_total{result="sent"}` — the
+  `notify_send_failure_ratio_high` alert read 0 on a deployment where nobody
+  could sign in by email. The signup path already guarded this state; login
+  did not. Now an unset, empty or blank-only key wires a transport whose every
+  send is an error (`notify: mail transport is not configured`), the login
+  handler refuses up front with `503` — before the throttle and before any
+  token row or login-intent cookie, identically for every address, so it is
+  neither an enumeration nor a throttle oracle — and the refusal is counted
+  as `result="failed"`, which is what the alert reads. Signup keeps reporting
+  `email_verification_sent: false`. The API still boots (a missing mail key
+  must not take price serving down with it); passkey sign-in and existing
+  sessions are unaffected. A Resend sender built without a key fails before
+  the wire instead of posting a blank bearer, and the key is whitespace-trimmed.
+  Only the env var's name is ever logged, never the key or part of it
+  (RLT-321, #734).
+  **Operator note:** the behaviour above ships in the binary and is safe on
+  its own. Separately, the ansible env template
+  (`stellarindex.env.j2`) no longer falls back to an empty key on a
+  production host that serves the dashboard — the render is refused instead.
+  That template change does **not** reach a host through a binary deploy; it
+  takes effect only on the next role apply, and until then a host's
+  `/etc/default/stellarindex` is whatever was last rendered. Because the
+  template task is `no_log`, ansible censors the refusal text: a censored
+  failure of the `/etc/default/stellarindex` render means
+  `vault_resend_api_key` is missing from that region's secrets vault. The
+  test nets (`region_deployment` other than `production`) and hosts with
+  `stellarindex_dashboard_base_url: ""` still render an empty key, and the
+  API answers 503 on login there. To check a live host without reading the
+  key: `journalctl -u stellarindex-api | grep "mail transport is NOT configured"`.
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process

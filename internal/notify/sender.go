@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // Message is the transactional-email envelope every Sender
@@ -48,6 +49,55 @@ var ErrProviderRejected = errors.New("notify: provider rejected")
 // ErrTransient indicates a 5xx / network error from the
 // provider. Caller may retry.
 var ErrTransient = errors.New("notify: transient provider failure")
+
+// ErrNotConfigured is returned by a transport that holds no provider
+// credential and therefore cannot deliver anything. It is a FAILURE,
+// never a success: a caller that counts sends must count it as
+// failed, and a caller that reports delivery must not report "sent"
+// (RLT-321 — an empty Resend key used to resolve to a transport whose
+// Send returned nil, so undeliverable sign-in mail was counted and
+// reported as sent and the failure-ratio alert read 0).
+var ErrNotConfigured = errors.New("notify: mail transport is not configured")
+
+// UnconfiguredSender is the transport a deployment gets when it has
+// no provider credential. Every Send fails with ErrNotConfigured, so
+// the absence of mail is an error at every call site rather than a
+// silent drop. Wire this — not [NoopSender], which records and
+// reports success — whenever production config lacks the credential.
+type UnconfiguredSender struct {
+	// Reason names WHAT is missing, for the operator (e.g. the env
+	// var that is unset). It is appended to the error, so it must
+	// never carry a credential value or any part of one.
+	Reason string
+}
+
+// Send always fails with ErrNotConfigured.
+func (u UnconfiguredSender) Send(context.Context, Message) error {
+	if u.Reason == "" {
+		return ErrNotConfigured
+	}
+	return fmt.Errorf("%w: %s", ErrNotConfigured, u.Reason)
+}
+
+// MailConfigured reports false: there is no credential to send with.
+func (UnconfiguredSender) MailConfigured() bool { return false }
+
+// IsUnconfigured reports whether s is known, before any Send, to be
+// unable to deliver: nil, or a transport that declares (through an
+// optional `MailConfigured() bool` method) that it holds no
+// credential. Call sites use it to refuse up front — before minting
+// a token or promising an email — instead of discovering the failure
+// after the side effects. A Sender without the method is taken at its
+// word; its Send error is the signal.
+func IsUnconfigured(s Sender) bool {
+	if s == nil {
+		return true
+	}
+	if r, ok := s.(interface{ MailConfigured() bool }); ok {
+		return !r.MailConfigured()
+	}
+	return false
+}
 
 // validate runs the common checks every concrete Sender does
 // before hitting the wire. Centralised so the four error

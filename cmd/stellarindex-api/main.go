@@ -2145,12 +2145,14 @@ type dashboardBundle struct {
 // /v1/dashboard/* routes simply aren't mounted.
 //
 // When BaseURL is configured but the Resend env var is unset or
-// empty, the sender falls back to a NoopSender. The flow still
-// works end-to-end: a CreateMagicLinkToken row lands in Postgres,
-// the rendered email is silently dropped, and the operator can
-// look up the plaintext from the API's structured logs to test
-// the callback path. This is the expected dev/local default;
-// production sets the env var.
+// empty, the sender is a notify.UnconfiguredSender (see
+// buildDashboardSender): magic-link login answers 503 and counts a
+// failed send instead of claiming an email it cannot deliver.
+// (This comment used to promise that the plaintext could be read
+// back from the API's structured logs. Nothing ever logged it — only
+// the token HASH is stored — so an emailed sign-in was simply
+// impossible while the API reported "sent". RLT-321.)
+
 // buildWebhookHandlers constructs the dashboard webhook CRUD handlers
 // (F-1270) atop a fresh WebhookStore over the same Postgres the
 // delivery worker (a goroutine in main()) drains. Returns the store so
@@ -2357,12 +2359,30 @@ func buildDashboardGenerator(cfg config.DashboardConfig, logger *slog.Logger) *d
 
 // buildDashboardSender picks the mail transport the dashboard auth flow
 // (and, through the bundle, the public signup flow) sends through.
+//
+// An unset / empty / blank-only Resend credential wires
+// notify.UnconfiguredSender, whose every Send is an error (RLT-321). It
+// used to wire a NoopSender, whose Send returns nil: /v1/auth/login
+// answered 200 "sent", counted result="sent" and minted a live magic-link
+// row for mail that could never be delivered, so the notify failure-ratio
+// alert read 0 on a deployment where nobody could sign in. With the
+// UnconfiguredSender the login handler refuses with 503 and a counted
+// failure, and signup reports email_verification_sent:false.
+//
+// This deliberately does NOT refuse to boot: the dashboard is one surface
+// of the API, and a missing mail credential must not take down price
+// serving with it. Passkey sign-in and existing sessions keep working.
+//
+// Only the NAME of the env var is ever logged — never the value, nor any
+// part of it.
 func buildDashboardSender(cfg config.DashboardConfig, logger *slog.Logger) (notify.Sender, error) {
-	apiKey := os.Getenv(cfg.ResendAPIKeyEnv)
+	apiKey := strings.TrimSpace(os.Getenv(cfg.ResendAPIKeyEnv))
 	if apiKey == "" {
-		logger.Warn("dashboard auth using NoopSender — magic-link emails will be dropped",
-			"reason", fmt.Sprintf("env %s is unset/empty", cfg.ResendAPIKeyEnv))
-		return &notify.NoopSender{}, nil
+		reason := fmt.Sprintf("env %s is unset/empty", cfg.ResendAPIKeyEnv)
+		logger.Error("dashboard mail transport is NOT configured — no sign-in or signup-verification "+
+			"email can be delivered; POST /v1/auth/login will answer 503 until the credential is set",
+			"reason", reason)
+		return notify.UnconfiguredSender{Reason: reason}, nil
 	}
 	s, err := notify.NewResendSender(apiKey)
 	if err != nil {
@@ -4803,6 +4823,13 @@ func requireEmailVerifiedOrNil(enabled bool) middleware.Middleware {
 // reports `email_verification_sent: false` on the wire.
 func signupVerifyEmailerOrNil(sender notify.Sender, from string) v1.SignupVerifyEmailer {
 	if sender == nil || from == "" {
+		return nil
+	}
+	if notify.IsUnconfigured(sender) {
+		// No provider credential (what an empty Resend key wires since
+		// RLT-321): every Send would fail. Skip the attempt so the wire
+		// shape says `email_verification_sent: false`, as it always has
+		// for this deployment state.
 		return nil
 	}
 	if _, isNoop := sender.(*notify.NoopSender); isNoop {

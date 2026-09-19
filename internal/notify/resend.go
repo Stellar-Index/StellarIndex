@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -16,9 +17,10 @@ import (
 //
 // Configured via the Resend API token (resend_api_key).
 // Production deployments populate it from
-// `STELLARINDEX_RESEND_API_KEY`; nil token → constructor returns
-// an error so deployments missing the key fail loud rather
-// than silently dropping mail.
+// `STELLARINDEX_RESEND_API_KEY`; an empty token → the constructor
+// returns ErrNotConfigured, and the API binary wires
+// [UnconfiguredSender] in its place, so a deployment missing the
+// key fails every send loudly rather than silently dropping mail.
 type ResendSender struct {
 	APIKey  string
 	Client  *http.Client
@@ -28,15 +30,26 @@ type ResendSender struct {
 // NewResendSender constructs a sender. Validates the API key
 // is non-empty so misconfigured deployments fail at boot
 // rather than at the first /v1/auth/login call.
+//
+// The key is whitespace-trimmed: a blank-only value is no key at
+// all, and a stray trailing newline (a hand-edited env file) would
+// otherwise corrupt the Authorization header on every send.
 func NewResendSender(apiKey string) (*ResendSender, error) {
+	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
-		return nil, errors.New("notify: Resend API key is required")
+		return nil, fmt.Errorf("%w: Resend API key is required", ErrNotConfigured)
 	}
 	return &ResendSender{
 		APIKey:  apiKey,
 		Client:  &http.Client{Timeout: 10 * time.Second},
 		BaseURL: "https://api.resend.com",
 	}, nil
+}
+
+// MailConfigured reports whether the sender holds a key to send
+// with. See [IsUnconfigured]. Safe on a nil receiver.
+func (r *ResendSender) MailConfigured() bool {
+	return r != nil && strings.TrimSpace(r.APIKey) != ""
 }
 
 // resendRequest mirrors the JSON body Resend accepts. Tags use
@@ -66,7 +79,15 @@ type resendErrorResp struct {
 // Send POSTs to /emails. Validates first so misconfigured
 // callers get a structured error before we burn a Resend API
 // call; maps 4xx → ErrProviderRejected, 5xx + network → ErrTransient.
+//
+// A sender with no key (a struct literal that bypassed
+// NewResendSender) fails with ErrNotConfigured before the wire: a
+// blank bearer can only ever be rejected, and the honest name for
+// that state is "not configured", not "provider rejected".
 func (r *ResendSender) Send(ctx context.Context, msg Message) error {
+	if !r.MailConfigured() {
+		return ErrNotConfigured
+	}
 	if err := validate(msg); err != nil {
 		return err
 	}

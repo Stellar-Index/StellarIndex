@@ -333,10 +333,46 @@ type loginResponse struct {
 	Status string `json:"status"`
 }
 
-// HandleLogin issues a magic-link email. Always returns 200
-// with `{status: "sent"}` regardless of whether the email
-// matches an existing user — leaking that information would
-// let attackers enumerate valid emails. Real signup happens
+// refuseLoginWithoutMail answers 503 — and reports true — when the
+// deployment's mail transport holds no provider credential
+// ([notify.IsUnconfigured]), so no sign-in email can be delivered
+// (RLT-321). The sibling signup flow already guarded this state
+// (signupVerifyEmailerOrNil → `email_verification_sent: false`);
+// login did not, and answered 200 "sent" for mail that never left.
+//
+// It runs BEFORE the throttle and BEFORE any side effect, on purpose:
+//
+//   - no magic-link row and no login-intent cookie are minted for a
+//     link nobody can receive;
+//   - every well-formed request gets the same 503, whatever the
+//     address and whether or not a throttle would have fired — so the
+//     refusal is neither an account-enumeration oracle nor a throttle
+//     oracle (the throttled branch answers a decoy 200, which would
+//     otherwise stand out against the 503).
+//
+// The refusal is counted as a failed magic-link send: that counter is
+// what the notify failure-ratio alert reads, and a request for mail
+// that cannot be delivered is exactly the outage it exists to catch.
+// 503 is already a declared response of POST /auth/login ("the
+// deployment hasn't configured the dashboard auth flow").
+func (h *Handlers) refuseLoginWithoutMail(w http.ResponseWriter) bool {
+	if !notify.IsUnconfigured(h.cfg.Sender) {
+		return false
+	}
+	obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultFailed).Inc()
+	h.cfg.Logger.Error("magic-link login refused: mail transport is not configured",
+		"err", notify.ErrNotConfigured)
+	writeProblem(w, http.StatusServiceUnavailable,
+		"email sign-in is not available on this deployment", "/v1/auth/login")
+	return true
+}
+
+// HandleLogin issues a magic-link email. Returns 200 with
+// `{status: "sent"}` regardless of whether the email matches an
+// existing user — leaking that information would let attackers
+// enumerate valid emails. The one exception is address-independent:
+// a deployment whose mail transport has no credential answers 503
+// to every request (see refuseLoginWithoutMail). Real signup happens
 // on consumption: if the user doesn't exist when they click
 // the link, the callback handler creates the account.
 func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
@@ -357,6 +393,10 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	email := strings.TrimSpace(strings.ToLower(req.Email))
 	if !looksLikeEmail(email) {
 		writeProblem(w, http.StatusBadRequest, "invalid email", "/v1/auth/login")
+		return
+	}
+
+	if h.refuseLoginWithoutMail(w) {
 		return
 	}
 
