@@ -233,6 +233,23 @@
     group: root
     mode: "0644"
 
+# ─── ClickHouse-dependent tasks in this file (F128) ──────────────────
+# Everything below that writes into /etc/clickhouse-{server,client},
+# chowns to the `clickhouse` user or runs clickhouse-client CONFIGURES a
+# ClickHouse this host is assumed to already have — none of it installs
+# one. This file is imported unconditionally (it also carries the
+# rsyslog/journald/logrotate/Redis guards, which every host needs), and
+# it is imported BEFORE 20/21/22, so on a host with no ClickHouse the
+# first of these tasks aborted the whole role — the same defect those
+# three files were gated for, one import earlier.
+#
+# Each carries the role-wide fact instead: clickhouse_config_tasks_enabled
+# (tasks/main.yml, resolved right after preflight) = the server's config
+# dir exists OR run_clickhouse. `run_clickhouse` alone would be the WRONG
+# gate — it is false on r1 by design, and r1 is the host these were
+# written for. `| default(false)` keeps a standalone import fail-closed.
+# There are EIGHT of them; scripts/ci/ansible-clickhouse-host-gate-test.sh
+# re-derives the set from this file, so a ninth cannot be added ungated.
 - name: Ensure ClickHouse log directory exists on the ZFS pool
   # 2026-06-11 incident. CH's <log> defaulted to /var/log/clickhouse-server
   # on the 49 GB root (1000M x 10 rotation). On a full root the rotation
@@ -247,6 +264,7 @@
     owner: clickhouse
     group: clickhouse
     mode: "0750"
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [log-discipline, clickhouse]
 
 - name: Move ClickHouse server logs off root onto the ZFS pool
@@ -268,6 +286,7 @@
       </clickhouse>
   notify:
     - Restart clickhouse-server
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [log-discipline, clickhouse]
 
 # ─── Redis memory cap (2026-06-16 incident-sweep fix, codified
@@ -387,6 +406,7 @@
       </clickhouse>
   # No automatic restart: CH restarts are operator-coordinated (the
   # lake sink tolerates them, but merges/queries in flight die).
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, log-discipline]
 
 - name: ClickHouse CLIENT port drop-in (must match the server tcp_port above)
@@ -420,6 +440,7 @@
     mode: "0644"
     content: |
       <config><port>9300</port></config>
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, log-discipline]
 
 - name: Assert a bare clickhouse-client can actually reach the server
@@ -433,6 +454,7 @@
   changed_when: false
   failed_when: ch_client_probe.rc != 0 or ch_client_probe.stdout.strip() != "1"
   timeout: 30
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, log-discipline]
 
 - name: ClickHouse merge-memory guard drop-in
@@ -458,6 +480,7 @@
           <merges_mutations_memory_usage_soft_limit>10737418240</merges_mutations_memory_usage_soft_limit>
       </clickhouse>
   # No automatic restart — same operator-coordinated policy as above.
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, log-discipline]
 
 - name: ClickHouse default-profile max_query_size raise (users.d drop-in)
@@ -494,6 +517,7 @@
               </default>
           </profiles>
       </clickhouse>
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, log-discipline]
 
 - name: ClickHouse system-log TTL drop-in
@@ -527,6 +551,7 @@
           <asynchronous_metric_log><ttl>event_date + INTERVAL 14 DAY DELETE</ttl></asynchronous_metric_log>
       </clickhouse>
   # No automatic restart — same operator-coordinated policy as above.
+  when: clickhouse_config_tasks_enabled | default(false) | bool
   tags: [clickhouse, log-discipline]
 
 - name: Stop rsyslog duplicating stellarindex unit logs into /var/log/syslog

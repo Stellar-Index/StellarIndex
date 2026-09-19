@@ -32,11 +32,37 @@
 #   C. no config dir but run_clickhouse true (a fresh host installing
 #      ClickHouse on this same run) → the tasks RUN, same evidence.
 #
+# AND THE FILE ONE IMPORT EARLIER. 15-log-discipline.yml is imported by
+# main.yml BEFORE all three, and carries eight CH-CONFIG tasks of its own
+# (it cannot itself be gated — it also holds the rsyslog/journald/
+# logrotate/Redis guards every host needs). Ungated, its very first CH
+# task aborted the role before arm A's gate was ever reached. Two more
+# arms cover it, plus a structural check that RE-DERIVES the set of
+# CH-dependent tasks from the file rather than trusting a count (six,
+# seven and eight have all been asserted in writing; the file says
+# eight — the `clickhouse-client -q "SELECT 1"` assert carries
+# `failed_when`, not `when`, which is what the lower counts missed):
+#
+#   D. no ClickHouse, run_clickhouse false → every one of those eight
+#      tasks reports "skipping" (RED before the fix: the first reports
+#      "changed" and the role dies two tasks later);
+#   E. the r1 shape → they run, proving the gate opens where it must.
+#
 # Nothing is written outside a temp dir: arm B/C abort on the assert,
-# which is the first task in the first file.
+# which is the first task in the first file, and arms D/E run under
+# --check, so the pre-fix replay that proves D red cannot touch
+# /var/lib/clickhouse or /etc/clickhouse-server either.
 #
 # ROLE_TASKS overrides the tasks directory so the pre-fix tree can be
 # replayed (the red proof); ROLE_DEFAULTS does the same for defaults.
+# A replay copy MUST keep the same depth below a configs/ansible root —
+# mirror the whole configs/ansible directory, do not copy tasks/ alone.
+# 14-stellarindex-services.yml statically imports
+# ../../../tasks/sync-migrations.yml, and a static import is resolved at
+# parse time whatever the tags say, so a flat copy in /tmp aborts the
+# whole play on a missing file and every arm goes red for the wrong
+# reason. (The structural checks above need no ansible at all and are red
+# on the pre-fix file however it is placed.)
 #
 # Needs ansible-playbook (the ci.yml ansible-check job installs it).
 # Run: bash scripts/ci/ansible-clickhouse-host-gate-test.sh
@@ -53,7 +79,8 @@ fail=0
 ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf '  FAIL %s\n' "$1"; fail=$((fail + 1)); }
 
-for f in "$ROLE_TASKS/main.yml" "$ROLE_TASKS/20-clickhouse-serving-profile.yml" \
+for f in "$ROLE_TASKS/main.yml" "$ROLE_TASKS/15-log-discipline.yml" \
+         "$ROLE_TASKS/20-clickhouse-serving-profile.yml" \
          "$ROLE_TASKS/21-clickhouse-drop-guard.yml" \
          "$ROLE_TASKS/22-clickhouse-exporter.yml" "$ROLE_DEFAULTS"; do
   [ -r "$f" ] || { echo "ansible-clickhouse-host-gate-test: missing $f" >&2; exit 2; }
@@ -91,6 +118,46 @@ for f in 20-clickhouse-serving-profile.yml 21-clickhouse-drop-guard.yml \
   fi
 done
 
+# 15-log-discipline.yml is imported unconditionally BY DESIGN (its
+# rsyslog/journald/logrotate/Redis guards are host-agnostic), so the gate
+# has to sit on its individual CH-config tasks. DERIVE that set from the
+# file — a task is CH-dependent if it writes a clickhouse path, chowns to
+# the clickhouse user, or runs clickhouse-client — and require the fact on
+# every one. This is what stops a ninth from being added ungated, and what
+# settles a count that has been written down three different ways.
+ch_task_gates() {
+  awk '
+    function flush() {
+      if (name != "" && ch) { printf "%s\t%s\n", (gated ? "gated" : "UNGATED"), name }
+    }
+    /^- name: / { flush(); name = substr($0, 9); ch = 0; gated = 0; next }
+    /^[[:space:]]*#/ { next }
+    /^[[:space:]]+(dest|path|src|cmd):[[:space:]]*.*clickhouse/ { ch = 1 }
+    /^[[:space:]]+(owner|group):[[:space:]]*clickhouse[[:space:]]*$/ { ch = 1 }
+    /^[[:space:]]+when:.*clickhouse_config_tasks_enabled/ { gated = 1 }
+    END { flush() }
+  ' "$1"
+}
+
+derived="$(ch_task_gates "$ROLE_TASKS/15-log-discipline.yml")"
+derived_n="$(grep -c . <<<"$derived")"
+[ -n "$derived" ] || derived_n=0
+if [ "$derived_n" -gt 0 ]; then
+  ok "15-log-discipline.yml: derived $derived_n ClickHouse-dependent tasks from the file"
+else
+  bad "15-log-discipline.yml: derived NO ClickHouse-dependent tasks — the derivation" \
+      "is broken, so this check would pass vacuously"
+fi
+while IFS=$'\t' read -r verdict task; do
+  [ -n "$verdict" ] || continue
+  if [ "$verdict" = "gated" ]; then
+    ok "15-log-discipline.yml: '$task' carries clickhouse_config_tasks_enabled"
+  else
+    bad "15-log-discipline.yml: '$task' has NO ClickHouse gate — it configures a" \
+        "ClickHouse this host may not have, and it runs before 20/21/22"
+  fi
+done <<<"$derived"
+
 # ─── behavioural: run the role's own main.yml, three host shapes ──────
 cat > "$TMP/inventory" <<'INV'
 localhost ansible_connection=local
@@ -106,6 +173,14 @@ cat > "$TMP/play.yml" <<PLAY
   tasks:
     - name: the role's real orchestration file
       ansible.builtin.import_tasks: $ROLE_TASKS/main.yml
+  handlers:
+    # Harness stub, not a mock of anything under test. The play imports
+    # the role's tasks without its handlers, so a notify would abort with
+    # "handler not found"; the real handler restarts a systemd unit, which
+    # this test must never do. Only arm E reaches a notifying task.
+    - name: Restart clickhouse-server
+      ansible.builtin.debug:
+        msg: "stub handler — no service is touched by this test"
 PLAY
 
 # task_status <logfile> <task-name-substring> — the status ansible printed
@@ -188,6 +263,81 @@ if [ "$st" = "fatal" ] || [ "$st" = "failed" ]; then
   ok "C: run_clickhouse true — CH-config tasks run even before the package lands"
 else
   bad "C: run_clickhouse true — serving-profile assert reported '${st:-<never ran>}'"
+fi
+
+# ── D/E. the file imported one step EARLIER: 15-log-discipline.yml ────
+# Same real main.yml, but tag-selected on `clickhouse` so the CH-config
+# tasks inside 15-log-discipline are reached too, and run under --check so
+# nothing can be written even when replaying the pre-fix tree. The
+# clickhouse-install tag is skipped belt-and-braces: arm E must never be
+# able to install a package.
+run_play_ch() {
+  local log="$1"; shift
+  ansible-playbook -i "$TMP/inventory" "$TMP/play.yml" --check \
+    --tags clickhouse --skip-tags preflight,clickhouse-install \
+    "$@" > "$log" 2>&1
+}
+
+# The CH-dependent tasks of 15-log-discipline.yml, by the names ansible
+# prints. Kept in step with the derivation above by the count assert that
+# follows — a task added to the file and not to this list is caught there.
+LOG_DISCIPLINE_CH_TASKS=(
+  "Ensure ClickHouse log directory exists on the ZFS pool"
+  "Move ClickHouse server logs off root onto the ZFS pool"
+  "ClickHouse server tuning drop-in"
+  "ClickHouse CLIENT port drop-in"
+  "Assert a bare clickhouse-client can actually reach the server"
+  "ClickHouse merge-memory guard drop-in"
+  "ClickHouse default-profile max_query_size raise"
+  "ClickHouse system-log TTL drop-in"
+)
+
+if [ "${#LOG_DISCIPLINE_CH_TASKS[@]}" -eq "$derived_n" ]; then
+  ok "D: the behavioural list covers all $derived_n derived CH tasks"
+else
+  bad "D: ${#LOG_DISCIPLINE_CH_TASKS[@]} task names listed but $derived_n derived from" \
+      "the file — the arms below would leave the difference untested"
+fi
+
+run_play_ch "$TMP/d.log" -e "clickhouse_server_config_dir=$ABSENT" -e run_clickhouse=false
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  ok "D: host without ClickHouse — log-discipline completes (rc 0)"
+else
+  bad "D: host without ClickHouse — role FAILED (rc $rc); see below"
+  sed -n '1,40p' "$TMP/d.log" | sed 's/^/       /'
+fi
+# One of these eight is behaviourally blind here and deliberately left
+# so: the `clickhouse-client -q "SELECT 1"` assert is a command module,
+# which ansible skips under --check whatever its `when:` says, so it
+# reports "skipping" gated or not. Do NOT give it `check_mode: false` to
+# sharpen this arm — that would make a real operator --check run execute
+# it. Its gate is proved by the file-derived structural check above,
+# which is red on the ungated task.
+for task in "${LOG_DISCIPLINE_CH_TASKS[@]}"; do
+  st="$(task_status "$TMP/d.log" "$task")"
+  if [ "$st" = "skipping" ]; then
+    ok "D: '$task' skipped, not executed"
+  else
+    bad "D: '$task' reported '${st:-<never ran>}', expected 'skipping' — it" \
+        "configures a ClickHouse this host does not have"
+  fi
+done
+
+# ── E. r1's shape again: the gate must OPEN for 15-log-discipline too ──
+run_play_ch "$TMP/e.log" -e "clickhouse_server_config_dir=$PRESENT" -e run_clickhouse=false
+st="$(task_status "$TMP/e.log" "Ensure ClickHouse log directory exists on the ZFS pool")"
+if [ -n "$st" ] && [ "$st" != "skipping" ]; then
+  ok "E: ClickHouse present + run_clickhouse false (r1) — log-discipline CH tasks still run"
+else
+  bad "E: ClickHouse present + run_clickhouse false (r1) — CH log dir reported" \
+      "'${st:-<never ran>}'; r1 would lose its ZFS log path and tuning drop-ins"
+fi
+st="$(task_status "$TMP/e.log" "ClickHouse server tuning drop-in")"
+if [ -n "$st" ] && [ "$st" != "skipping" ]; then
+  ok "E: the tuning drop-in (tcp_port 9300, memory cap) still reaches r1"
+else
+  bad "E: the tuning drop-in reported '${st:-<never ran>}' on the r1 shape"
 fi
 
 echo

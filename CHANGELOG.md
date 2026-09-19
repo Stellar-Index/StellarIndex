@@ -94,6 +94,39 @@ against.
 
 ### Fixed
 
+- **ops / the archival-node role still hard-failed one import earlier (F128):**
+  the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,
+  `21-clickhouse-drop-guard.yml` and `22-clickhouse-exporter.yml`, but
+  `tasks/15-log-discipline.yml` is imported BEFORE all three (main.yml 227
+  against 235) and carried ClickHouse-config tasks of its own, so a host with
+  no ClickHouse aborted there instead — on `/var/lib/clickhouse/logs`, chowned
+  to a `clickhouse` user no task in this role creates, with every later task in
+  the role (including the three now-gated files) never running. The file itself
+  cannot be gated: it also carries the rsyslog suppression, the journald cap,
+  the logrotate caps and the Redis memory cap, which every host needs. Each of
+  its ClickHouse tasks now carries the same
+  `clickhouse_config_tasks_enabled | default(false) | bool` the three files use
+  — the fact was already resolved right after preflight for exactly this, so
+  nothing moved to make room for it.
+  **There are EIGHT of them, derived from the file:** the
+  `/var/lib/clickhouse/logs` directory, `zzz-logpath.xml`, `zz-ratesengine.xml`,
+  the `/etc/clickhouse-client` port drop-in, `zz-merge-memory-guard.xml`,
+  `zz-max-query-size.xml`, `zz-system-log-ttl.xml` — and the bare
+  `clickhouse-client -q "SELECT 1"` assert, which the earlier counts of six and
+  seven missed because it carries `failed_when`, not `when`. So that the count
+  can never be re-litigated, `scripts/ci/ansible-clickhouse-host-gate-test.sh`
+  now RE-DERIVES the set from the file (a task that writes a clickhouse path,
+  chowns to the clickhouse user, or runs clickhouse-client) and requires the
+  fact on every member — a ninth cannot be added ungated. Two behavioural arms
+  back it, both running the role's own `tasks/main.yml` under `--check` so the
+  pre-fix replay cannot touch `/var/lib/clickhouse` either: a host with no
+  ClickHouse must report `skipping` for all eight, and r1's shape (config dir
+  present, `run_clickhouse` false) must still run them. r1 is unchanged — it has
+  the directory, so every one of these tasks still applies there.
+  **Operator note: this is an ANSIBLE-only change — it does not reach r1
+  through a binary deploy.** It lands on the next `ansible-playbook …
+  archival-node.yml` run, and changes nothing on r1 when it does.
+
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with
   `AND o.tx_hash IN (SELECT tx_hash FROM stellar.transactions WHERE successful = 1
@@ -198,21 +231,13 @@ against.
   present with `run_clickhouse` false, i.e. r1's shape → they still run;
   `run_clickhouse` true with no package yet → they still run). The middle arm is
   the one that fails on a `run_clickhouse`-only "fix".
-  **This does not finish F128, and the remaining file is named rather than
-  quietly left:** `tasks/15-log-discipline.yml` — imported EARLIER than these
-  three, and outside this unit's file set — carries SEVEN more unguarded
-  ClickHouse-config tasks (counted from the file, not from this list: an
-  earlier draft of this entry said six and a verifier counted eight; whoever
-  closes it must re-derive the set rather than trust any of the three numbers) (`/var/lib/clickhouse/logs` chowned to the
-  `clickhouse` user, which no task in this role creates; `zzz-logpath.xml`,
-  `zz-ratesengine.xml`, `zz-merge-memory-guard.xml` and the clickhouse-client
-  drop-in, all written under `/etc/clickhouse-server` or
-  `/etc/clickhouse-client`; and a bare `clickhouse-client -q "SELECT 1"` assert
-  with `failed_when: rc != 0`). A real apply to a host with no ClickHouse still
-  aborts there. The gate fact is therefore resolved right after preflight rather
-  than beside the imports it currently guards, so closing that file is a
-  one-file change: add `when: clickhouse_config_tasks_enabled | bool` to those
-  six tasks.
+  **The remaining file is named rather than quietly left:**
+  `tasks/15-log-discipline.yml` — imported EARLIER than these three, and
+  outside this unit's file set — carries more unguarded ClickHouse-config
+  tasks, so a real apply to a host with no ClickHouse still aborts there.
+  The gate fact is therefore resolved right after preflight rather than beside
+  the imports it guards, so closing that file is a one-file change. (Closed
+  below in the same release.)
 
 - **ops / the serving kill-switch never stopped the SSE streams (F137, Q239):**
   `sudo touch /etc/caddy/MAINTENANCE_MODE` — the documented way to stop serving

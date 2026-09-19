@@ -64,16 +64,21 @@
 # run_clickhouse so a fresh host that installs ClickHouse later in this
 # same run (08-clickhouse.yml) still gets configured.
 #
-# Resolved HERE, right after preflight, rather than beside the imports
-# it currently guards: 15-log-discipline.yml carries SEVEN more
-# unguarded ClickHouse-config tasks (the /var/lib/clickhouse/logs dir,
-# zzz-logpath.xml, zz-ratesengine.xml, the clickhouse-client port drop-in,
-# zz-merge-memory-guard.xml, zz-max-query-size.xml and zz-system-log-ttl.xml)
-# and is imported EARLIER, so it is the next thing to gate on.
-# COUNT THE SET FROM THE FILE, not from this list: an earlier note said six,
-# a verifier counted eight, and deriving it gives seven. A follow-up that
-# trusts a wrong count leaves tasks ungated and the role still hard-fails.
-# this same fact — and it can only do so if the fact already exists.
+# Resolved HERE, right after preflight, rather than beside the three
+# imports below: 15-log-discipline.yml is imported EARLIER (it also
+# carries the rsyslog/journald/logrotate/Redis guards every host needs,
+# so it cannot itself be gated) and its EIGHT ClickHouse-config tasks
+# now carry this same fact — which they can only do if the fact already
+# exists by then.
+#
+# EIGHT, derived from that file and not from any prose: the
+# /var/lib/clickhouse/logs dir, zzz-logpath.xml, zz-ratesengine.xml, the
+# clickhouse-client port drop-in, zz-merge-memory-guard.xml,
+# zz-max-query-size.xml, zz-system-log-ttl.xml — and the
+# `clickhouse-client -q "SELECT 1"` assert, which earlier counts of six
+# and seven missed because it carries `failed_when`, not `when`.
+# scripts/ci/ansible-clickhouse-host-gate-test.sh re-derives the set from
+# the file on every run, so a ninth cannot be added ungated.
 #
 # Tagged `always` so a targeted apply (`--tags clickhouse-drop-guard`)
 # still resolves it.
