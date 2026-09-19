@@ -188,6 +188,21 @@ against.
   partition. A legitimate zero-candidate run still exits 0 and logs the
   zero, now distinguishable in the log from a failed enumeration because
   the failure path never reaches the `done` line at all.
+- **projector / a permanent sink verdict now needs the same sink-health proof
+  a quarantine does (RLT-131):** `permanentSkipCandidate` takes
+  `madeProgress` exactly as `quarantineCandidate` already did. A SQLSTATE
+  class-22/23 rejection is only ROW-LOCAL while the sink is otherwise
+  accepting writes; the identical SQLSTATE arrives GLOBALLY when a migration
+  adds a NOT NULL or a CHECK the live rows violate, and from inside the skip
+  arm the two are indistinguishable. The per-cycle shed cap bounded how FAST
+  such a fault drained the backlog but still let the first row leave the
+  served tier on cycle one — about an hour before the lag and `sink_retry`
+  signals it produces can reach anyone. Without a durably-committed event in
+  the same cycle the verdict now waits out `QuarantineAfterCyclesNoProgress`
+  (~1 h) and the cursor holds, so a bad migration is a visible stall rather
+  than a silent, unbounded drop; a scattered poison row sits beside rows that
+  commit, so it still costs exactly one cycle.
+
 - **explorer / the five `/v1/price/batch` consumers stop erasing the price
   envelope (RLT-384):** the converter, its shared rate hook, the home currency
   strip, the account positions panel and the asset-page swap widget each typed

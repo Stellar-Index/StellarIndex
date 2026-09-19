@@ -29,14 +29,21 @@ func notNullViolation() error {
 // TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle is the RLT-131
 // regression. A bad migration makes the sink reject EVERY row of the window
 // with a class-23 error. The projector must not answer that by dropping the
-// whole backlog: it sheds at most one row per cycle, holds the rest below the
-// cursor (a visible stall — rising lag, runs_total{outcome="sink_retry"}), and
+// whole backlog: it holds every row below the cursor (a visible stall — rising
+// lag, runs_total{outcome="sink_retry"}) for as long as the cycle cannot prove
+// the sink is otherwise healthy, then bleeds at most one row per cycle, and
 // still drains rather than wedging (COR-11).
 //
 // Before the fix the skip arm ran inline per row with no cap: the first cycle
 // counted all five, forgot them and let the cursor advance to the window's end
 // (110), so an operator's next look showed a caught-up source with five rows
 // missing from the served tier and nothing but an ERROR log to say so.
+//
+// The cap alone (rail 1) still shed the first row on cycle ONE, ~1 hour before
+// anything could page. This case now pins BOTH rails: no row leaves the served
+// tier until the no-progress budget is spent, because a window in which
+// nothing at all committed is the global-fault shape by construction. See
+// poison_shed_health_proof_test.go for the single-row form.
 func TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle(t *testing.T) {
 	const source = "rlt131-global-not-null"
 	rows := []sorobanevents.Row{
@@ -51,20 +58,29 @@ func TestCycle_GlobalPermanentFaultShedsAtMostOneRowPerCycle(t *testing.T) {
 
 	h.cycle()
 
-	if got := h.store.cursor(); got != 101 {
-		t.Fatalf("cycle 1: cursor = %d, want 101 — a class-23502 fault rejecting EVERY row of the window must shed ONE row and hold the other four; advancing to the window's end (110) drops the whole backlog from the served tier in a single pass", got)
+	if got := h.store.cursor(); got != 100 {
+		t.Fatalf("cycle 1: cursor = %d, want 100 — a class-23502 fault rejecting EVERY row of the window has no sink-health proof, so NOTHING may be shed yet; 101 sheds a row an hour before an operator can see the fault, 110 drops the whole backlog in a single pass", got)
 	}
 	if got := runsCount(t, source, "sink_retry") - retryRunsBefore; got != 1 {
 		t.Errorf("runs_total{outcome=sink_retry} delta = %v, want 1 — a cycle that held rows back must not be reported as a clean run", got)
 	}
 	if got := runsCount(t, source, "ok") - okRunsBefore; got != 0 {
-		t.Errorf("runs_total{outcome=ok} delta = %v, want 0 — four rows are still held", got)
+		t.Errorf("runs_total{outcome=ok} delta = %v, want 0 — all five rows are still held", got)
 	}
 
-	// The held rows are re-read and bled off one per cycle — bounded and loud,
-	// never a permanent stall (COR-11: a poison row must not wedge a
-	// sole-writer domain).
-	for _, want := range []uint32{102, 103, 104} {
+	// The stall lasts the whole no-progress budget: the operator's window to
+	// fix the migration before any row leaves the served tier.
+	for i := 2; i < QuarantineAfterCyclesNoProgress; i++ {
+		h.cycle()
+		if got := h.store.cursor(); got != 100 {
+			t.Fatalf("cycle %d: cursor = %d, want 100 — the stall must last the whole no-progress budget", i, got)
+		}
+	}
+
+	// Budget spent: the held rows are re-read and bled off one per cycle —
+	// bounded and loud, never a permanent stall (COR-11: a poison row must not
+	// wedge a sole-writer domain).
+	for _, want := range []uint32{101, 102, 103, 104} {
 		h.cycle()
 		if got := h.store.cursor(); got != want {
 			t.Fatalf("cursor = %d, want %d — the backlog must drain at exactly one poison row per cycle", got, want)

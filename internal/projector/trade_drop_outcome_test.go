@@ -37,9 +37,18 @@ func (*invalidTradeDecoder) Decode(ev events.Event) ([]consumer.Event, error) {
 // promises "only events that DURABLY committed". The row is in neither the
 // served tier nor any loss counter the projector owns.
 //
-// Corrected: the drop is labelled sink_permanent, never ok — and the cursor
-// STILL advances, because a deterministic fault must not wedge a sole-writer
+// Corrected: the drop is labelled sink_permanent, never ok — and the source
+// STILL self-heals, because a deterministic fault must not wedge a sole-writer
 // source (COR-11).
+//
+// RLT-131 moved WHEN the cursor advances, not WHETHER. This row is the only
+// one in its window, so its cycle commits nothing else and cannot tell "this
+// trade is malformed" from "the sink rejects every trade right now" — the
+// shape a bad migration has. Advancing on cycle one is exactly the unbounded
+// shed that finding exists to stop, so the cursor now HOLDS for
+// QuarantineAfterCyclesNoProgress cycles first (a visible stall: rising lag,
+// runs_total{outcome="sink_retry"}) and only then sheds. Both halves are
+// asserted below; the anti-wedge property is the second one.
 func TestCycle_DroppedTradeIsNotReportedOK(t *testing.T) {
 	const source = "rlt132-dropped-trade"
 	rows := []sorobanevents.Row{lakeRow(101, 1)}
@@ -62,9 +71,22 @@ func TestCycle_DroppedTradeIsNotReportedOK(t *testing.T) {
 		t.Errorf("outcome=sink_permanent delta = %v, want 1 — the dropped trade must be counted as a permanent sink fault", got)
 	}
 	if got := decodedCount(t, source, "sink_retry") - retryBefore; got != 0 {
-		t.Errorf("outcome=sink_retry delta = %v, want 0 — a deterministic drop must be skipped, not held for retry", got)
+		t.Errorf("outcome=sink_retry delta = %v, want 0 — a permanent verdict is never counted as a transient hold", got)
 	}
+	if got := h.store.cursor(); got != 100 {
+		t.Fatalf("cycle 1: cursor = %d, want 100 — with nothing else committed this cycle, a permanent verdict must stall visibly before anything is shed (RLT-131)", got)
+	}
+
+	// …and the source still self-heals: RLT-132's anti-wedge property is
+	// preserved, just deferred behind the no-progress budget.
+	for i := 2; i < QuarantineAfterCyclesNoProgress; i++ {
+		h.cycle()
+		if got := h.store.cursor(); got != 100 {
+			t.Fatalf("cycle %d: cursor = %d, want 100 (the stall lasts the whole no-progress budget)", i, got)
+		}
+	}
+	h.cycle()
 	if got := h.store.cursor(); got != 105 {
-		t.Fatalf("cursor = %d, want 105 — reporting the drop must not wedge the source on a row that can never land", got)
+		t.Fatalf("cursor = %d after %d cycles, want 105 — a trade that can never land must not wedge a sole-writer source forever", got, QuarantineAfterCyclesNoProgress)
 	}
 }

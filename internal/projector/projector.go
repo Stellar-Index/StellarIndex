@@ -120,10 +120,11 @@ const ReplayWindowRefreshInterval = 30 * time.Second
 //     corrective.
 //   - a PERMANENT data fault ([dispositionSkip]) is logged loudly,
 //     counted, and SKIPPED (the cursor advances past it) — blocking
-//     forever on a poison row is a worse outage than dropping it — but no
-//     faster than [PermanentSkipPerCycle] rows per cycle, so the same
-//     SQLSTATE arriving globally stalls instead of draining the backlog
-//     (RLT-131).
+//     forever on a poison row is a worse outage than dropping it — but only
+//     once the cycle has PROVED the sink is otherwise healthy (another event
+//     committed), and no faster than [PermanentSkipPerCycle] rows per cycle,
+//     so the same SQLSTATE arriving globally stalls instead of draining the
+//     backlog (RLT-131).
 //   - an UNCLASSIFIED failure ([dispositionUnclassified]) is retried like
 //     a transient one but under a budget, then quarantined; see
 //     [QuarantineAfterCycles].
@@ -691,19 +692,32 @@ func quarantineCandidate(held []heldRow, madeProgress bool) int {
 // may shed — let the cursor advance past a [dispositionSkip] verdict — or -1
 // when there is none.
 //
-// The verdict is positively identified, so there is no waiting budget: every
-// candidate qualifies on the cycle it failed (hence a budget of 1). The
-// protection is the CAP on how often the caller may ask
-// ([PermanentSkipPerCycle]) together with the fact that the caller HOLDS every
-// poison row it did not shed. That is what makes a class-22/23 fault which is
-// global rather than row-local — a migration adding a NOT NULL or CHECK the
-// window's rows all violate — stall visibly and bleed one loudly-logged row
-// per cycle, instead of shedding the whole backlog on cycle one (RLT-131).
+// `madeProgress` (some other event of this cycle durably committed) is the
+// same sink-health proof [quarantineCandidate] takes, and it is what the
+// verdict on its own cannot supply. A class-22/23 rejection is only ROW-LOCAL
+// while the sink is otherwise accepting writes; the identical SQLSTATE arrives
+// GLOBALLY when a migration adds a NOT NULL or a CHECK the live rows all
+// violate, and from inside this arm the two are indistinguishable. With the
+// proof the verdict stands on the cycle it was returned (budget 1 — a poison
+// row costs one cycle). Without it the budget is
+// [QuarantineAfterCyclesNoProgress], so the same fault is a ~1 hour visible
+// stall — far longer than the lag / sink_retry alerts take to fire — before
+// anything is shed (RLT-131).
+//
+// The cap on how often the caller may ask ([PermanentSkipPerCycle]) and the
+// fact that the caller HOLDS every poison row it did not shed bound the RATE;
+// this bounds the FACT. Sparse sources whose window holds a single poison
+// event still self-heal, just slowly and loudly, exactly as the unclassified
+// arm does.
 //
 // Lowest ledger first, like [quarantineCandidate], so the cursor advances in
 // ledger order and the watermark stays monotonic.
-func permanentSkipCandidate(poisoned []heldRow) int {
-	return shedCandidate(poisoned, dispositionSkip, 1)
+func permanentSkipCandidate(poisoned []heldRow, madeProgress bool) int {
+	budget := QuarantineAfterCyclesNoProgress
+	if madeProgress {
+		budget = 1
+	}
+	return shedCandidate(poisoned, dispositionSkip, budget)
 }
 
 // shedCandidate returns the index of the lowest-ledger row of `rows` whose
@@ -791,10 +805,12 @@ func (p *Projector) commitCursor(ctx context.Context, source string, read timesc
 //   - PERMANENT sink data faults (SQLSTATE 22/23, or a canonical value-shape
 //     rejection raised before the statement ran) → log LOUD + count + SKIP,
 //     because a poison row must not wedge the source forever — but at most
-//     [PermanentSkipPerCycle] rows per cycle, with the rest holding the cursor
-//     (RLT-131). Those SQLSTATE classes also arrive GLOBALLY (a migration whose
-//     NOT NULL / CHECK the live rows violate), and shedding the window's whole
-//     backlog on cycle one made that an instant, unbounded, near-silent loss.
+//     [PermanentSkipPerCycle] rows per cycle, only once the cycle has proved
+//     the sink otherwise healthy (else [QuarantineAfterCyclesNoProgress]
+//     first), with the rest holding the cursor (RLT-131). Those SQLSTATE
+//     classes also arrive GLOBALLY (a migration whose NOT NULL / CHECK the
+//     live rows violate), and shedding the window's whole backlog on cycle one
+//     made that an instant, unbounded, near-silent loss.
 //   - UNCLASSIFIED sink failures → held like a transient one, but only for a
 //     bounded number of consecutive cycles; then quarantined (COR-11 /
 //     COR-01, audit-2026-07-23). Under INV-4 each Soroban-derived domain has
@@ -1078,8 +1094,14 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// (outcome="sink_permanent") says nothing about how much was in flight.
 	// Capped, the same fault is a visible stall that bleeds one logged row per
 	// cycle while the lag alert climbs.
+	//
+	// The cap bounds the RATE; `eventsEmitted > 0` — the same sink-health
+	// proof the quarantine arm below takes — bounds the FACT. With no other
+	// event of this cycle durably committed there is no evidence the sink is
+	// healthy, so the verdict waits out [QuarantineAfterCyclesNoProgress]
+	// before anything is shed.
 	for shed := 0; shed < PermanentSkipPerCycle; shed++ {
-		i := permanentSkipCandidate(poisoned)
+		i := permanentSkipCandidate(poisoned, eventsEmitted > 0)
 		if i < 0 {
 			break
 		}
@@ -1089,7 +1111,8 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		p.logger.Error("projector: SKIPPING poison row — cursor advances past it; re-drive with `stellarindex-ops projector-replay` once the underlying defect is fixed",
 			"source", src.Name, "ledger", r.id.ledger, "tx", r.id.txHash,
 			"op_index", r.id.opIndex, "event_index", r.id.eventIndex,
-			"poison_rows_still_held", len(poisoned), "err", r.err)
+			"poison_rows_still_held", len(poisoned), "consecutive_cycles", r.fails,
+			"sink_healthy_this_cycle", eventsEmitted > 0, "err", r.err)
 	}
 	sinkPoisonHeld := len(poisoned)
 

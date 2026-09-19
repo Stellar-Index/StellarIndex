@@ -268,11 +268,24 @@ func TestCycle_ValidationErrorDoesNotWedge(t *testing.T) {
 // TestCycle_ValidationErrorStillAdvancesAcrossCycles is the "stays unwedged"
 // half: a second cycle over a still-poisoned range keeps making progress
 // rather than re-stalling.
+//
+// RLT-131 moved what this case has to supply, not what it asserts. The skip
+// arm now takes the same sink-health proof the quarantine arm does, so the
+// poison row is accompanied by one that COMMITS — which is the shape a
+// scattered poison row actually has in production, and the shape this case
+// always meant ("a still-poisoned RANGE keeps making progress"). A lone poison
+// row with nothing else committing is the GLOBAL-fault shape instead, and
+// pinning a cycle-one advance for it is what let a bad migration shed a whole
+// backlog in one pass; that case is pinned, holding, in
+// poison_shed_health_proof_test.go.
 func TestCycle_ValidationErrorStillAdvancesAcrossCycles(t *testing.T) {
 	const source = "cor11-validation-repeat"
-	rows := []sorobanevents.Row{lakeRow(101, 1)}
-	h := newWedgeHarness(t, source, rows, 105, func(consumer.Event) error {
-		return fmt.Errorf("%w: tx_hash %q is not 64 hex chars", canonical.ErrInvalidOracle, "deadbeef")
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	h := newWedgeHarness(t, source, rows, 105, func(ev consumer.Event) error {
+		if ev.(ledgerEvent).ledger == 101 {
+			return fmt.Errorf("%w: tx_hash %q is not 64 hex chars", canonical.ErrInvalidOracle, "deadbeef")
+		}
+		return nil // ledger 102 commits: the cycle's proof the sink is healthy
 	})
 
 	h.cycle()

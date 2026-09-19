@@ -48,12 +48,22 @@ const QuarantineAfterCyclesNoProgress = 720
 // raw events stay in the lake but nothing in the served tier says which rows
 // went missing.
 //
-// So the skip arm borrows the quarantine arm's rail: at most ONE row per
-// cycle, lowest ledger first ([shedCandidate]), and every row it did not shed
-// HOLDS the cursor exactly like a retryable fault. A genuine scattered poison
-// row still costs one cycle; a global fault turns into a visible stall that
-// bleeds at 1 row per [Interval] with a rising lag and one loud ERROR per row,
-// instead of a silent backlog-wide drop.
+// So the skip arm borrows BOTH halves of the quarantine arm's rail:
+//
+//   - the RATE limit — at most ONE row per cycle, lowest ledger first
+//     ([shedCandidate]) — and every row it did not shed HOLDS the cursor
+//     exactly like a retryable fault;
+//   - the sink-health PROOF — [permanentSkipCandidate] takes the same
+//     `madeProgress` argument [quarantineCandidate] does, so a verdict
+//     returned by a cycle that committed nothing else waits out
+//     [QuarantineAfterCyclesNoProgress] first.
+//
+// A genuine scattered poison row sits beside healthy rows, so the proof is
+// there and it still costs one cycle. A global fault has no proof by
+// construction, so it turns into a ~1 hour visible stall — lag climbing,
+// runs_total{outcome="sink_retry"} ticking — and only then bleeds at 1 row per
+// [Interval] with one loud ERROR per row, instead of a silent backlog-wide
+// drop.
 const PermanentSkipPerCycle = 1
 
 // sinkDisposition is the projector's durability verdict for ONE sink write
@@ -78,10 +88,12 @@ const (
 	// fault: the database rejected the row's VALUES (SQLSTATE class 22/23) or
 	// the row failed a canonical value-shape check before it ever reached SQL.
 	// Retrying can never succeed, so the row is counted, logged loudly and
-	// skipped — on the FIRST cycle, but at most [PermanentSkipPerCycle] rows
-	// of one cycle, because the same SQLSTATE classes also arrive globally
-	// (RLT-131). A row over that cap holds the cursor and is shed by a later
-	// cycle.
+	// skipped — on the FIRST cycle when the cycle also PROVED the sink is
+	// otherwise healthy, and at most [PermanentSkipPerCycle] rows of one
+	// cycle, because the same SQLSTATE classes also arrive globally
+	// (RLT-131). Without that proof the wait is
+	// [QuarantineAfterCyclesNoProgress]. A row over the cap, or short of the
+	// budget, holds the cursor and is shed by a later cycle.
 	dispositionSkip sinkDisposition = iota
 
 	// dispositionRetry — a POSITIVELY-identified infrastructure / shutdown
