@@ -287,6 +287,43 @@ SQL
 catches "the same inline comment on a terminated statement is also caught" \
   "$sql_comment_terminated" stellar.transactions
 
+# ── the SAME bypass survives inside a header recipe's comment RUN ────
+# sql_line()'s comment-run branch (the one that reads a header recipe
+# like verify_bad above) stripped only the LEADING `--` that starts the
+# comment line and then appended the rest of that line verbatim — so an
+# embedded second `--` marker on the SAME prose line, naming a clause
+# the recipe is not actually using, was read as a real clause. A flat
+# header recipe (unlike a multi-statement file) has no `)` or run
+# boundary to end the read before the prose, so this is the common
+# shape, not an edge case: deploy/clickhouse/ops_by_source.sql:102
+# carries exactly this trailing-comment style on a live header recipe.
+header_comment_bypass_groupby="$(mk header_comment_bypass_groupby)"
+cat > "$header_comment_bypass_groupby/$SQLDIR/header_bypass_groupby.sql" <<'SQL'
+-- Step 3 - count transactions:
+--   SELECT count() AS n FROM stellar.transactions WHERE ledger_seq > 1 -- GROUP BY ledger_seq, tx_index
+SQL
+catches "a header recipe's own trailing comment naming GROUP BY does not collapse the read it documents" \
+  "$header_comment_bypass_groupby" stellar.transactions
+
+header_comment_bypass_uniq="$(mk header_comment_bypass_uniq)"
+cat > "$header_comment_bypass_uniq/$SQLDIR/header_bypass_uniq.sql" <<'SQL'
+-- Step 4 - count transactions:
+--   SELECT count() AS n FROM stellar.transactions WHERE ledger_seq > 1 -- uniqExact(ledger_seq, tx_index)
+SQL
+catches "a header recipe's own trailing comment naming uniqExact does not collapse the read it documents" \
+  "$header_comment_bypass_uniq" stellar.transactions
+
+# The un-terminated CODE-line sibling (no leading `--`, i.e. the
+# comment-run branch never engages) must still be caught by the
+# code-line fix landed earlier — regression guard that the two branches
+# stay in lockstep.
+header_comment_bypass_codeline="$(mk header_comment_bypass_codeline)"
+cat > "$header_comment_bypass_codeline/$SQLDIR/header_bypass_codeline.sql" <<'SQL'
+SELECT count() AS n FROM stellar.transactions WHERE ledger_seq > 1 -- GROUP BY ledger_seq, tx_index
+SQL
+catches "the code-line sibling of the same bypass stays caught" \
+  "$header_comment_bypass_codeline" stellar.transactions
+
 # ── the strip must be MARKER-aware, not a bare `index("--")` ─────────
 # A prior attempt at this fix cut at the first `--` ANYWHERE in the
 # line, which erases a `--` that is content rather than a comment

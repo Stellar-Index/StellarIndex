@@ -262,6 +262,24 @@ against.
   regression guards proving a marker-unaware strip would erase a real
   violation, and a blinded-classifier case that dies on its own canary
   instead of passing a tree that aggregates nothing.
+- **ci / the RLT-050 comment bypass survived on a third path — the header-recipe
+  COMMENT RUN, not just the code line (RLT-050 follow-up):** the marker-aware
+  cut above landed on `go_line()` and on `sql_line()`'s CODE-line branch, but
+  `sql_line()`'s COMMENT-run branch — the one every `.sql` header recipe is
+  analysed through, deliberately, so operator verification recipes are in
+  scope — still appended its comment body verbatim. A header recipe whose
+  own prose carries a second `--` marker documenting a clause it is NOT
+  using (`-- GROUP BY ledger_seq, tx_index`, `-- uniqExact(ledger_seq,
+  tx_index)`) read that prose as a real clause and greened the uncollapsed
+  `count()` above it — the same defect this gate exists to close, now on the
+  shape that has no `)` or run boundary to end the read before the prose.
+  The comment-run branch now applies the identical marker cut to its own
+  body, after the existing run-boundary/indentation checks, before deciding
+  whether there is anything left to add. `lint-lake-dedup-test.sh` gained
+  three more cases: the `GROUP BY` and `uniqExact` header-recipe bypasses,
+  proven RED against the prior fix, and their code-line sibling as a
+  lockstep regression guard. The real tree is unchanged: 58 lake-table
+  read(s) across 60 file(s), 1 of them aggregating.
 
 - **explorer / the production publish path now runs the static-export guards (F085, T325):**
   the `__next.*` segment prune, `scripts/ci/explorer-file-budget.sh` and

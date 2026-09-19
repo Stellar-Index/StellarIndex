@@ -355,7 +355,18 @@ violations="$(
         sub(/^[ \t]*--/, "", l)
         body = l
         if (body ~ /^[ \t]*$/ || body !~ /^[ \t]/) flush()
-        if (body !~ /^[ \t]*$/) { in_comment = 1; add(body) }
+        if (body !~ /^[ \t]*$/) {
+          in_comment = 1
+          # The prose of a header recipe can carry a second "--" marker
+          # documenting a clause it is NOT using ("-- GROUP BY
+          # ledger_seq, tx_index" or "-- countDistinct, NOT count():
+          # ..."). Cut there too, exactly like the code-line branch
+          # below, so that prose is never read as a real clause -- a
+          # flat header recipe has no run-boundary or ")" to end the
+          # read before it, unlike a multi-statement file.
+          if (match(body, /--([ \t]|$)/) > 0) body = substr(body, 1, RSTART - 1)
+          if (body !~ /^[ \t]*$/) add(body)
+        }
         return
       }
       if (in_comment) { flush(); in_comment = 0 }
