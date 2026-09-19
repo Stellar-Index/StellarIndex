@@ -42,6 +42,16 @@ against.
   run now leaves the window pending and its log line says `VERDICT NOT
   STORED`; a run at or above the stored tip clears it as before (F072,
   K013).
+- **ops / `scripts/ops/ch-rebuild-projected.sh`:** the per-window trades
+  DELETE named `sushiswap_v3`, which was never in the script's re-derive
+  list — so every window it processed deleted that source's served trades,
+  rewrote none of them, and was then marked done (RLT-380). Adding it to the
+  re-derive is not available: `ch-rebuild -write` refuses a source that is
+  not `BackfillSafe`, and `sushiswap_v3` is not. The script no longer deletes
+  it. A test now EXECUTES the shipped script against stubs for `psql` and
+  the ops binary and fails if a window can delete trades for a source the
+  same window does not ask `ch-rebuild` to re-derive.
+
 - **forex / `/v1/price` fiat paths:** the in-memory FX snapshot that
   `/v1/price` and `/v1/price/tip` read for fiat crosses now carries only
   rates the C2-030 sanity band accepted. The worker used to install the raw
