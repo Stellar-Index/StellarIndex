@@ -234,6 +234,34 @@ against.
   `web/explorer/src/lib/incidents.test.ts` seeds a fixture that reproduces
   `_template.md`'s exact frontmatter shape and pins `resolved_at === null`
   and the bullet list still parsing under a commented key.
+- **ci / a `--` comment could fake a lake-dedup collapse, and the gate's own
+  aggregate classifier had no floor (RLT-050):** `lint-lake-dedup.sh`'s
+  `sql_line()` only stripped a `--` comment whose LINE started with it, so an
+  inline trailing comment on an unterminated `.sql` statement was appended to
+  the statement buffer verbatim — a comment that happened to name `GROUP BY`
+  over the table's own identity read as a real clause and greened an
+  uncollapsed `count()`. `go_line()` had no `--` handling at all inside a Go
+  raw string, so the identical bypass exists on every raw-string SQL literal
+  via a full-line `--` documentation comment of the kind `explorer_reader.go`
+  and `protocol_reader.go` already write. Both extractors now cut at an
+  actual comment MARKER (`--` followed by whitespace or end of line) rather
+  than at the first `--` anywhere in the text — a bare `index()` strip was
+  tried and rejected, because it also truncates a `--` that is content (a
+  CLI flag glued into a raw string, a quoted `'--'` literal), erasing the
+  table name and the aggregate along with it and silently swallowing a real
+  violation. Separately, `examined == 0` already proved the FROM/JOIN
+  extraction was alive, but nothing proved the AGGREGATE half — a
+  `mult_agg()` regression that stopped every real read from registering as
+  aggregating reported a clean "0 aggregating" run, indistinguishable from a
+  tree that legitimately aggregates nothing. Every run now feeds one
+  synthetic, guaranteed-uncollapsed `count()` over `stellar.transactions`
+  through the same analyser and requires it come back flagged, with its own
+  contribution subtracted back out of the reported counts.
+  `lint-lake-dedup-test.sh` gained six cases: both comment-bypass shapes
+  (`.sql` and Go raw-string), their already-safe `;`-terminated sibling, two
+  regression guards proving a marker-unaware strip would erase a real
+  violation, and a blinded-classifier case that dies on its own canary
+  instead of passing a tree that aggregates nothing.
 
 - **explorer / the production publish path now runs the static-export guards (F085, T325):**
   the `__next.*` segment prune, `scripts/ci/explorer-file-budget.sh` and
