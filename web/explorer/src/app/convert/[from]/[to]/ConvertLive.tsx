@@ -166,9 +166,10 @@ export function useConvertRate({
 /**
  * rateBasis — the one line that says what the displayed number actually
  * is: when it was observed, how it was derived, and whether it is a live
- * rate at all. Null when the read has not settled, in which case nothing
- * is claimed. Shared by the header caption and the widget so the two can
- * never disagree about the same number.
+ * rate at all. Null when the read has told us none of those things, in
+ * which case the number is shown with nothing claimed about it. Shared
+ * by the header caption and the widget so the two can never disagree
+ * about the same number.
  */
 export function rateBasis(r: ConvertRate): string | null {
   if (r.showingLastPublished)
@@ -191,8 +192,12 @@ function basisLabel(t: PriceType): string {
       return 'last trade';
     case 'twap':
       return 'TWAP';
-    default:
+    case 'vwap':
       return 'mid-market VWAP';
+    default:
+      // A basis this build does not know is printed as the API named it,
+      // never folded into "VWAP" — that would be inventing a derivation.
+      return String(t);
   }
 }
 
