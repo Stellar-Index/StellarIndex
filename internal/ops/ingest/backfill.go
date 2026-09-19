@@ -559,21 +559,31 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	// bug (wrong --bucket flag, wrong endpoint, wrong region) and
 	// the silent success was misleading enough to ship a
 	// false-positive "gap filled" signal in production.
-	chunkSize := chunk.to - chunk.from + 1
+	//
+	// RLT-266: a PARTIAL walk fails too — see backfillChunkCoverage.
+	// The check sits BEFORE the CAGG refresh and the completing
+	// checkpoint so a short chunk is never refreshed-and-recorded as
+	// done; the rows that did drain are checkpointed exactly as the
+	// stream-abort branch above does, so a -resume continues from the
+	// truncation point (and fails again, loudly, while the objects are
+	// still absent).
+	if cerr := backfillChunkCoverage(chunk, startFrom, walked, opts.bucket); cerr != nil {
+		logger.Error("chunk INCOMPLETE",
+			"from", chunk.from,
+			"to", chunk.to,
+			"start_from", startFrom,
+			"ledgers_walked", walked,
+			"last_fully_enqueued", lastFullyEnqueued,
+		)
+		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+		return cerr
+	}
 	logger.Info("chunk complete",
 		"from", chunk.from,
 		"to", chunk.to,
-		"chunk_size_ledgers", chunkSize,
+		"chunk_size_ledgers", chunk.to-chunk.from+1,
 		"ledgers_walked", walked,
 	)
-	if chunkSize > 0 && walked == 0 {
-		return fmt.Errorf(
-			"backfill walked 0 of %d ledgers in range [%d,%d] from bucket %q — "+
-				"bucket likely has no files in this range; check --bucket and the "+
-				"galexie-archive/-live mirror for the target range",
-			chunkSize, chunk.from, chunk.to, opts.bucket,
-		)
-	}
 
 	// CAGG refresh path: skipped for the soroban-events pseudo-source
 	// (the soroban_events hypertable has no CAGGs built on top of it
@@ -619,6 +629,60 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 	}
 
 	checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+	return nil
+}
+
+// backfillChunkCoverage turns a chunk walk that did not cover its range
+// into a hard error, naming the bucket it read (RLT-266).
+//
+// `backfill` was the third copy of the "vacuous success on a tolerated
+// trailing miss" class and the only one that still failed open: it
+// errored on walked == 0 alone (F-0159), while chops.backfillCoverage and
+// censusCoverage both fail a PARTIAL walk. pipeline.LedgerstreamConfig
+// opts every walk into TolerateTrailingMissing, and ledgerstream measures
+// that tolerance window against the walk's own `to` — the CHUNK's top,
+// not the network tip — so for any chunk (or any request under 65,536
+// ledgers) "trailing edge" degrades to "anywhere in the range": a missing
+// object ends the walk WITHOUT an error. The SDK also drops its prefetch
+// buffer on the miss, so the walk stops up to a buffer short of the hole.
+// The chunk then logged "chunk complete", refreshed the CAGGs over what
+// it got and exited 0 — a trade hole whose only evidence was a success.
+//
+// The bar is the command's contract: "[from,to] has been walked". The
+// default bucket is the archive, an hourly MIRROR of live, so a `-to`
+// near the tip legitimately comes up short — and that is an incomplete
+// backfill too, not a success. Failing closed costs a `-resume` re-run
+// (writes are idempotent; the drained prefix is checkpointed); failing
+// open costs a hole nobody looks for.
+//
+// `startFrom` is the ledger this run actually started at (post-resume),
+// not chunk.from: ledgers banked by an earlier run are that run's
+// business, and re-charging them here would fail every resumed chunk —
+// the same rule censusCoverage states.
+func backfillChunkCoverage(chunk chunkRange, startFrom uint32, walked uint64, bucket string) error {
+	if startFrom > chunk.to {
+		return nil // nothing was requested of this run
+	}
+	want := uint64(chunk.to) - uint64(startFrom) + 1
+	switch {
+	case walked == 0:
+		return fmt.Errorf(
+			"backfill walked 0 of %d ledgers in range [%d,%d] from bucket %q — "+
+				"bucket likely has no files in this range; check --bucket and the "+
+				"galexie-archive/-live mirror for the target range",
+			want, startFrom, chunk.to, bucket,
+		)
+	case walked < want:
+		return fmt.Errorf(
+			"backfill walked only %d of %d ledgers in range [%d,%d] from bucket %q — %d ledgers were NOT walked: "+
+				"an object is missing from the bucket and the trailing-missing tolerance ended the walk early (see the "+
+				"ledgerstream WARN above for the missing sequence; the archive bucket mirrors live hourly, so a -to near "+
+				"the tip comes up short until the mirror catches up). The range is NOT complete: no CAGG refresh was run "+
+				"and the chunk is not recorded as done; the walked prefix is checkpointed, so re-run with -resume once "+
+				"the objects exist",
+			walked, want, startFrom, chunk.to, bucket, want-walked,
+		)
+	}
 	return nil
 }
 
@@ -874,6 +938,13 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 			SorobanEventsPseudoSource, sources)
 	}
 
+	// Deliberately NOT opsutil.ResolveStreamBucket (RLT-266): that
+	// policy's no-seam default is the LIVE bucket, kept for
+	// ch-live-catchup.sh, and live cannot hold the historic ranges this
+	// command exists to walk. The archive is the full history plus an
+	// hourly mirror of live, so it is the right default on both sides of
+	// a seam; its one weakness — the mirror lagging a -to near the tip —
+	// now fails the chunk in backfillChunkCoverage instead of exiting 0.
 	bucket := cfg.Storage.S3BucketArchive
 	if *bucketOverride != "" {
 		bucket = *bucketOverride

@@ -167,12 +167,19 @@ type Config struct {
 	// strict bounded semantics: any missing file is an error,
 	// matching pre-2026-05-26 behaviour.
 	//
-	// Mid-range gaps still error regardless of this flag — the
-	// window check guards against masking real corruption. The
-	// 2026-05-26 audit walks against the same archive confirmed
-	// the chain is intact up to the live tip; the failure mode
-	// this targets is exclusively the trailing 1-2 partitions
-	// that Galexie hasn't finished uploading yet.
+	// A gap farther than TrailingMissingWindow below To still errors
+	// regardless of this flag. NOTE what that does and does not
+	// promise: the window is measured against THIS walk's To, not the
+	// network tip. When To is the tip, "within the window" means the
+	// trailing 1-2 partitions Galexie hasn't finished uploading — the
+	// failure mode this targets. When To is a chunk boundary, or the
+	// whole request is shorter than the window, EVERY ledger of the
+	// walk is within the window, so a genuine mid-history hole is
+	// tolerated too and the walk returns nil short. A caller that
+	// sets this flag on a bounded range therefore owns the coverage
+	// check — count the delivered ledgers and fail a short walk, as
+	// chops.backfillCoverage, ingest.censusCoverage and
+	// ingest.backfillChunkCoverage do (RLT-266).
 	//
 	// Delivery caveat: when the SDK's BufferedStorageBackend hits a
 	// missing file it cancels its internal context, dropping any

@@ -71,6 +71,26 @@ against.
   book while the probe backlog drains again. The duplicate advance/verify
   warnings `main.go` logged on top of the cache's own are gone (audit
   2026-09-02 F162).
+- **ops (backfill):** a chunk that walks only PART of its range now fails
+  instead of exiting 0. `stellarindex-ops backfill` errored only when it
+  walked zero ledgers, while `ch-backfill` and `census-backfill` both
+  fail any short walk. Every walk opts into the trailing-missing
+  tolerance, and that window is measured against the walk's own `-to`
+  (the chunk top), not the network tip — so for a chunk, or any request
+  under 65,536 ledgers, a missing object anywhere ends the walk without
+  an error. The chunk then logged `chunk complete`, refreshed the CAGGs
+  over what it had and recorded itself done: `-from 62800000 -to
+  62900000` against the hourly-mirrored archive walked 99,280 of 100,001
+  ledgers and the 721-ledger trade hole's only evidence was a success.
+  The coverage check now runs before the CAGG refresh and the completing
+  checkpoint, charges a resumed chunk only for the ledgers above its
+  prior cursor, and checkpoints the walked prefix so `-resume` continues
+  from the truncation point. **Operator-visible:** a `-to` at or near the
+  tip now exits non-zero until the archive mirror holds the range; clamp
+  `-to` or re-run with `-resume`. The archive stays the default bucket —
+  `opsutil.ResolveStreamBucket`'s no-seam default is the live bucket,
+  which cannot hold a historic range. The `TolerateTrailingMissing`
+  godoc no longer claims mid-range gaps always error (RLT-266, #695).
 - **ops (projector-replay, ch-rebuild):** both re-derive commands now
   consult the `BackfillSafe` WASM-audit gate, which until now only
   `stellarindex-ops backfill` asked — while projector-replay is the
