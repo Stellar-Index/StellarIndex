@@ -1204,8 +1204,10 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// (work-shape-bounded FINAL scan — see
 	// clickhouse/sdex_offer_book_reader.go for the trade-off note);
 	// afterwards a 60s ticker applies partition-pruned incremental
-	// change reads. The endpoint serves an honest 503 problem until
-	// the initial load completes.
+	// change reads, bounded by the lake's contiguous tip so the cursor
+	// never crosses a dropped ledger, and rebuilds the book wholesale
+	// once a day as the self-heal. The endpoint serves an honest 503
+	// problem until the initial load completes.
 	var sdexOrderBook *v1.SDEXOrderBookCache
 	if sdexOfferBook != nil {
 		sdexOrderBook = v1.NewSDEXOrderBookCache(sdexOfferBook, logger.With("component", "sdex-orderbook"))
@@ -1213,15 +1215,12 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		go func() {
 			defer bgWG.Done()
 			defer recoverBackgroundWorker(logger, "sdex-orderbook-cache")
-			// The initial full-slice load is minutes of streaming IO on a
-			// populated lake; 30 min is a hard stop against a wedged scan,
-			// not an expectation. Retry on the advance ticker if it fails
-			// (Load is idempotent and Advance no-ops until a Load lands).
-			const initialLoadTimeout = 30 * time.Minute
-			const advanceTimeout = 2 * time.Minute
-			loadCtx, loadCancel := context.WithTimeout(rootCtx, initialLoadTimeout)
-			loaded := sdexOrderBook.Load(loadCtx) == nil
-			loadCancel()
+			// MaintainTick owns the whole policy — initial load and its
+			// per-tick retry, advance, the version-tie quarantine drain
+			// (the 2026-07-31 crossed-book zombie class), the periodic
+			// re-load, and every step's timeout and failure log — so it
+			// is exercised by the package's tests rather than only here.
+			sdexOrderBook.MaintainTick(rootCtx)
 			tick := time.NewTicker(v1.SDEXOrderBookAdvanceInterval)
 			defer tick.Stop()
 			for {
@@ -1229,24 +1228,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				case <-rootCtx.Done():
 					return
 				case <-tick.C:
-					ctx, cancel := context.WithTimeout(rootCtx, advanceTimeout)
-					if !loaded {
-						loadRetryCtx, retryCancel := context.WithTimeout(rootCtx, initialLoadTimeout)
-						loaded = sdexOrderBook.Load(loadRetryCtx) == nil
-						retryCancel()
-					} else {
-						if err := sdexOrderBook.Advance(ctx); err != nil {
-							logger.Warn("sdex order book advance", "err", err)
-						}
-						// Drain a bounded batch of the version-tie quarantine:
-						// suspect offers stay unserved until the lake's change
-						// stream proves no removal exists at their own ledger
-						// (the 2026-07-31 crossed-book zombie class).
-						if err := sdexOrderBook.VerifyPending(ctx, v1.SDEXOrderBookVerifyBatch); err != nil {
-							logger.Warn("sdex order book verify", "err", err)
-						}
-					}
-					cancel()
+					sdexOrderBook.MaintainTick(rootCtx)
 				}
 			}
 		}()

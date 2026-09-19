@@ -56,6 +56,21 @@ against.
   hole; a book loaded off an empty lake starts at the lake's first ledger
   instead of stalling on the never-exported ledger 1 (audit 2026-09-02
   F162).
+- **sdex order book:** the book is now rebuilt from the lake once a day.
+  `Load` was documented as the self-heal "if Advance ever falls
+  persistently behind", but the API's maintainer loop called it once per
+  process and never again, so anything that went wrong below the cursor
+  stayed wrong until a restart. The loop's policy moved out of `main.go`
+  into `SDEXOrderBookCache.MaintainTick`, where it is tested: initial load
+  retried every tick until it lands, then advance plus the quarantine
+  drain, plus a full re-load every 24 h. A failed re-load leaves the
+  previous book serving and is retried after an hour, not every tick. A
+  re-load keeps verification verdicts already earned — a version-tie
+  suspect still served at the identical version is not re-quarantined — so
+  the daily rebuild does not pull long-resting offers out of the served
+  book while the probe backlog drains again. The duplicate advance/verify
+  warnings `main.go` logged on top of the cache's own are gone (audit
+  2026-09-02 F162).
 - **tests (storage):** `TestHistoryPointsDirectionUnion` no longer fails on
   every run between 00:00 and about 02:05 UTC. It seeds trades two hours
   back and asserted that the 1-day history series is empty because "today's

@@ -50,6 +50,37 @@ const (
 // verification only widens it back out with proven-live offers.
 const SDEXOrderBookVerifyBatch = 2500
 
+// Order-book maintenance budgets and the self-heal cadence, applied by
+// [SDEXOrderBookCache.MaintainTick].
+const (
+	// SDEXOrderBookLoadTimeout caps one full-slice load — minutes of
+	// streaming IO on a populated lake; 30 min is a hard stop against a
+	// wedged scan, not an expectation.
+	SDEXOrderBookLoadTimeout = 30 * time.Minute
+	// SDEXOrderBookAdvanceTimeout caps one tick's Advance + VerifyPending.
+	SDEXOrderBookAdvanceTimeout = 2 * time.Minute
+	// SDEXOrderBookReloadInterval is how often the book is rebuilt
+	// wholesale from the lake's current-state projection. Advance is only
+	// as good as the change stream above its cursor: a change that lands
+	// BELOW the cursor (a hole older than the load's lookback that is
+	// healed later, a re-backfilled range) or that Advance could not apply
+	// (an undecodable entry) is otherwise wrong until the process
+	// restarts. Daily bounds that to a day for about the cost of one
+	// deploy's restart — the same scan, under the same work-shape bound.
+	//
+	// Periodic rather than triggered by the crossed-pairs gauge: that
+	// count uses >=, so two PASSIVE offers resting at one price — legal on
+	// the DEX — hold it non-zero and would re-fire a multi-minute scan
+	// for as long as they rest.
+	SDEXOrderBookReloadInterval = 24 * time.Hour
+	// SDEXOrderBookReloadRetry spaces re-load attempts after a FAILED
+	// re-load. The book keeps serving and advancing meanwhile, so there is
+	// no reason to point a 30-minute scan at a struggling ClickHouse every
+	// tick. (The INITIAL load still retries every tick: until it lands
+	// the endpoint is a 503.)
+	SDEXOrderBookReloadRetry = time.Hour
+)
+
 // SDEXOfferBookReader is the lake seam the order-book cache maintains
 // itself from. Production wiring is *clickhouse.ExplorerReader.
 type SDEXOfferBookReader interface {
@@ -62,8 +93,9 @@ type SDEXOfferBookReader interface {
 }
 
 // SDEXOrderBookCache is the in-process live offer book: a map of every
-// live classic offer, loaded once ([Load]) and advanced incrementally
-// ([Advance]) by a background goroutine. Handlers aggregate per-pair
+// live classic offer, loaded at process start and rebuilt daily ([Load]),
+// and advanced incrementally in between ([Advance]) — all by one
+// background goroutine ([MaintainTick]). Handlers aggregate per-pair
 // depth from the map under an RLock (tens of thousands of offers —
 // microseconds). Before the first Load completes the handler serves an
 // honest 503 "snapshot loading" problem, never fabricated emptiness.
@@ -88,14 +120,64 @@ type SDEXOrderBookCache struct {
 	offers   map[string]clickhouse.LiveOffer // served book; key = LedgerKey XDR
 	pending  map[string]clickhouse.LiveOffer // quarantined suspects awaiting verification
 	crossed  int                             // last computed crossed-pair count (for change-only logging)
-	cursor   uint32                          // ledger_entry_changes high-water applied
+	cursor   uint32                          // contiguous lake ledger the book has applied through
 	updated  time.Time
 	loadedOK bool
+	loadedAt time.Time // last SUCCESSFUL Load — the re-load clock
+	loadTry  time.Time // last Load attempt, either outcome — the re-load retry clock
+
+	now func() time.Time // time.Now outside tests
 }
 
 // NewSDEXOrderBookCache constructs an empty (not-ready) cache.
 func NewSDEXOrderBookCache(reader SDEXOfferBookReader, logger Logger) *SDEXOrderBookCache {
-	return &SDEXOrderBookCache{reader: reader, logger: logger}
+	return &SDEXOrderBookCache{reader: reader, logger: logger, now: time.Now}
+}
+
+// MaintainTick is one pass of the background maintainer
+// (cmd/stellarindex-api/main.go calls it once at start and then every
+// [SDEXOrderBookAdvanceInterval]); ctx is the process lifetime, each
+// step takes its own budget from it. Until a load has landed it only
+// retries the load — Advance no-ops without one. After that it applies
+// the change stream, drains a bounded batch of the version-tie
+// quarantine, and rebuilds the book when [ReloadDue] says the periodic
+// self-heal is owed. Every step logs and meters its own failure; a failed
+// step never takes the served book down.
+func (c *SDEXOrderBookCache) MaintainTick(ctx context.Context) {
+	c.mu.RLock()
+	ready := c.loadedOK
+	c.mu.RUnlock()
+	if !ready {
+		c.loadWithin(ctx)
+		return
+	}
+	tickCtx, cancel := context.WithTimeout(ctx, SDEXOrderBookAdvanceTimeout)
+	_ = c.Advance(tickCtx)
+	_ = c.VerifyPending(tickCtx, SDEXOrderBookVerifyBatch)
+	cancel()
+	if c.ReloadDue(c.now()) {
+		c.loadWithin(ctx)
+	}
+}
+
+// loadWithin runs one Load under [SDEXOrderBookLoadTimeout].
+func (c *SDEXOrderBookCache) loadWithin(ctx context.Context) {
+	loadCtx, cancel := context.WithTimeout(ctx, SDEXOrderBookLoadTimeout)
+	defer cancel()
+	_ = c.Load(loadCtx)
+}
+
+// ReloadDue reports whether the periodic self-heal re-load is owed at
+// now: the book is loaded, its last successful load is at least
+// [SDEXOrderBookReloadInterval] old, and the last attempt — a failed
+// re-load leaves the old book serving — is at least
+// [SDEXOrderBookReloadRetry] old.
+func (c *SDEXOrderBookCache) ReloadDue(now time.Time) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.loadedOK &&
+		now.Sub(c.loadedAt) >= SDEXOrderBookReloadInterval &&
+		now.Sub(c.loadTry) >= SDEXOrderBookReloadRetry
 }
 
 // observeMaintain records one Load/Advance/VerifyPending attempt
@@ -111,12 +193,26 @@ func observeMaintain(op string, start time.Time, err error) {
 	obs.SDEXOrderBookMaintainDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 }
 
-// Load performs the initial full-book load. Idempotent — a re-Load
-// replaces the book wholesale (used as a self-heal if Advance ever
-// falls persistently behind).
+// Load performs a full-book load: the initial one, and the periodic
+// self-heal [MaintainTick] runs every [SDEXOrderBookReloadInterval].
+// Idempotent — a re-Load replaces the book wholesale and rewinds the
+// cursor to the lake's contiguous tip as of the scan's start; Advance
+// re-applies everything above it by version. A failed re-Load leaves the
+// previous book serving.
+//
+// A re-Load keeps the verification verdicts already earned: a
+// version-tie suspect (intra_ledger_seq == 0) that is ALREADY served at
+// the identical version was either proven live by [VerifyPending] or
+// applied from the ordered change stream, and neither proof is weakened
+// by reading the same row again. Re-quarantining it would pull every
+// long-resting pre-intra-era offer out of the served book for the hours
+// the probe backlog takes to drain — once a day.
 func (c *SDEXOrderBookCache) Load(ctx context.Context) (err error) {
 	start := time.Now()
 	defer func() { observeMaintain("load", start, err) }()
+	c.mu.Lock()
+	c.loadTry = c.now()
+	c.mu.Unlock()
 	offers, cursor, err := c.reader.LoadLiveOffers(ctx)
 	if err != nil {
 		if c.logger != nil {
@@ -134,27 +230,37 @@ func (c *SDEXOrderBookCache) Load(ctx context.Context) (err error) {
 		}
 		book[o.KeyXDR] = o
 	}
-	// Partition winners into the served book and the version-tie
-	// quarantine (intra_ledger_seq == 0 — see the type comment).
-	// Seed-snapshot rows carry intra 0xFFFFFFFF and stay trusted.
-	served := make(map[string]clickhouse.LiveOffer, len(book))
-	pending := make(map[string]clickhouse.LiveOffer)
-	for k, o := range book {
-		if o.Version&0xFFFFFFFF == 0 {
-			pending[k] = o
-			continue
-		}
-		served[k] = o
-	}
 	c.mu.Lock()
-	c.offers = served
-	c.pending = pending
+	c.offers, c.pending = partitionLoadedBook(book, c.offers)
 	c.cursor = cursor
 	c.updated = time.Now().UTC()
 	c.loadedOK = true
+	c.loadedAt = c.now()
 	c.updateHealthGaugesLocked()
 	c.mu.Unlock()
 	return nil
+}
+
+// partitionLoadedBook splits a freshly loaded book into the served book
+// and the version-tie quarantine (intra_ledger_seq == 0 — see the type
+// comment). Seed-snapshot rows carry intra 0xFFFFFFFF and stay trusted.
+// trusted is the book being replaced (nil on the first load): a suspect
+// it already serves at the SAME version keeps its verdict.
+func partitionLoadedBook(book, trusted map[string]clickhouse.LiveOffer) (served, pending map[string]clickhouse.LiveOffer) {
+	served = make(map[string]clickhouse.LiveOffer, len(book))
+	pending = make(map[string]clickhouse.LiveOffer)
+	for k, o := range book {
+		if o.Version&0xFFFFFFFF != 0 {
+			served[k] = o
+			continue
+		}
+		if prev, ok := trusted[k]; ok && prev.Version == o.Version {
+			served[k] = o
+			continue
+		}
+		pending[k] = o
+	}
+	return served, pending
 }
 
 // VerifyPending drains up to limit quarantined offers by probing the
