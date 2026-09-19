@@ -233,9 +233,13 @@ func closeSilent(m *migrate.Migrate) {
 
 // errf is where this binary writes a diagnostic of its own, and it goes
 // through [stderr], which strips inline credentials on the way out. The
-// two other writers are the flag package, pointed at the same [stderr]
-// in main, and printUsage's fixed text, which interpolates nothing an
-// operator typed.
+// only other writer is printUsage's fixed text, which interpolates
+// nothing an operator typed; the flag package's own output is pointed at
+// io.Discard in main, because it echoes the argument it rejects.
+//
+// What errf is handed must already be safe to print. Every message above
+// that names an argument does so through [describeArg] or by position,
+// and the redaction below is for the text this binary did not compose.
 //
 // This tool is handed the production DSN — password included — on every
 // deploy, and its stderr is captured by the deploy job, journald and
