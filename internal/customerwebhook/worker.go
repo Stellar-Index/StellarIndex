@@ -69,11 +69,38 @@ import (
 //     and every other error as transient/retryable, so an implementation
 //     that flattens transport failures into ErrNotFound would silently
 //     discard deliveries (NTF-13).
+//
+// It must ALSO implement [AccountStatusReader]; see that type for why
+// the requirement is enforced in [New] rather than listed here.
 type DeliveryStore interface {
 	ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error)
 	GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error)
 	MarkDelivered(ctx context.Context, id uuid.UUID, responseStatus int) error
 	MarkAttemptFailed(ctx context.Context, id uuid.UUID, errMsg string, responseStatus int, nextAttemptAt time.Time) error
+}
+
+// AccountStatusReader is the account-level kill switch on the OUTBOUND
+// side (SEC-06 / RLT-420). WebhookAccountStatus returns the lifecycle
+// status of the account that owns the webhook, or [platform.ErrNotFound]
+// when the webhook is gone.
+//
+// C3-010 wired the kill switch into the auth validator, so a suspended
+// account's API keys stop authenticating — but nothing in this delivery
+// path ever read account status, so a suspended or closed customer kept
+// RECEIVING their data at the endpoints they had registered. The
+// suspension was inbound-only. The worker now re-reads the status
+// immediately before it signs and POSTs.
+//
+// It is required, not optional: [New] refuses a store that cannot answer
+// it, because a delivery path that silently skips the kill switch when
+// the capability is missing is the bug this type exists to remove. The
+// requirement is asserted at construction rather than added to
+// [DeliveryStore] because the production wiring (cmd/stellarindex-api)
+// passes a [platform.WebhookStore] interface value; promoting
+// WebhookAccountStatus onto that shared interface — and so getting the
+// check at compile time — is a follow-up in internal/platform/webhook.go.
+type AccountStatusReader interface {
+	WebhookAccountStatus(ctx context.Context, webhookID uuid.UUID) (platform.AccountStatus, error)
 }
 
 // Worker tuning defaults and the safety invariant that binds them.
@@ -177,18 +204,28 @@ type Options struct {
 
 // Worker drains the pending-delivery queue.
 type Worker struct {
-	store  DeliveryStore
-	opts   Options
-	stopCh chan struct{}
-	doneCh chan struct{}
-	signFn func(secret []byte, ts int64, payload []byte) string
+	store    DeliveryStore
+	accounts AccountStatusReader
+	opts     Options
+	stopCh   chan struct{}
+	doneCh   chan struct{}
+	signFn   func(secret []byte, ts int64, payload []byte) string
 }
 
-// New constructs a Worker. store must be non-nil; opts gets
-// production defaults applied to every zero field.
+// New constructs a Worker. store must be non-nil and must implement
+// [AccountStatusReader]; opts gets production defaults applied to every
+// zero field.
 func New(store DeliveryStore, opts Options) *Worker {
 	if store == nil {
 		panic("customerwebhook: New: store must not be nil")
+	}
+	accounts, ok := store.(AccountStatusReader)
+	if !ok {
+		// Fail closed at the earliest possible point. The alternative —
+		// skipping the account check when the store cannot answer it —
+		// silently restores the inbound-only kill switch this worker was
+		// changed to close (SEC-06 / RLT-420).
+		panic("customerwebhook: New: store must implement AccountStatusReader (the account kill switch must not be bypassable)")
 	}
 	if opts.PollInterval <= 0 {
 		opts.PollInterval = 5 * time.Second
@@ -223,11 +260,12 @@ func New(store DeliveryStore, opts Options) *Worker {
 		opts.Clock = time.Now
 	}
 	return &Worker{
-		store:  store,
-		opts:   opts,
-		stopCh: make(chan struct{}),
-		doneCh: make(chan struct{}),
-		signFn: signHMACSHA256,
+		store:    store,
+		accounts: accounts,
+		opts:     opts,
+		stopCh:   make(chan struct{}),
+		doneCh:   make(chan struct{}),
+		signFn:   signHMACSHA256,
 	}
 }
 
@@ -338,6 +376,13 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		w.markTerminal(ctx, d, "webhook disabled", "disabled")
 		return
 	}
+	if !w.accountGateOpen(ctx, d) {
+		// Account-level kill switch (SEC-06 / RLT-420). The per-webhook
+		// `Enabled` flag above is the CUSTOMER's switch; this is the
+		// OPERATOR's, and until this check existed only the customer had
+		// one. accountGateOpen has already recorded or parked the row.
+		return
+	}
 	if len(wh.SecretHash) == 0 {
 		// Defence-in-depth: a zero-length signing key yields a FORGEABLE
 		// HMAC (anyone can compute HMAC("", body) for any payload). This is
@@ -394,6 +439,65 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	elapsed := time.Since(start).Seconds()
 
 	w.classifyResponse(ctx, d, resp.StatusCode, elapsed)
+}
+
+// accountGateOpen reports whether the account that owns this delivery's
+// webhook permits it to be sent. False means DO NOT POST — the row has
+// already been recorded or parked here, and deliverOne must return.
+//
+// This is the last line of defence, not the only one: the store's claim
+// query already withholds a non-active account's rows
+// (ListPendingDeliveries in internal/platform/postgresstore). It still
+// has real work to do, because a batch is claimed once and drained
+// serially — an account suspended mid-batch has rows already in hand.
+//
+// The outcomes, and why each:
+//
+//   - not found: the webhook vanished between the lookup above and here.
+//     Terminal, same as deliverOne's not-found branch.
+//   - status unreadable: fail CLOSED. An unresolved status is not
+//     evidence of an active account. Leave the row for lease expiry —
+//     the same recovery a transient GetWebhook failure takes — so a
+//     Postgres blip delays deliveries rather than either dropping them
+//     or POSTing to a customer we may have just suspended.
+//   - closed: terminal. A closed account is not coming back and we
+//     should not be holding its events, let alone delivering them.
+//   - anything else non-active (suspended, or a value this build does
+//     not know): park for lease expiry. Suspension is reversible
+//     (AccountStore.Unsuspend), so destroying the backlog would lose
+//     events a reinstated customer is entitled to.
+func (w *Worker) accountGateOpen(ctx context.Context, d platform.WebhookDelivery) bool {
+	status, err := w.accounts.WebhookAccountStatus(ctx, d.WebhookID)
+	switch {
+	case errors.Is(err, platform.ErrNotFound):
+		w.opts.Logger.Warn("customer-webhook: webhook gone at account check; permanently failing delivery",
+			"delivery_id", d.ID, "webhook_id", d.WebhookID)
+		w.markTerminal(ctx, d, "webhook lookup: account status: not found", "webhook_missing")
+		return false
+	case err != nil:
+		w.opts.Logger.Warn("customer-webhook: account status unreadable; withholding delivery for lease expiry",
+			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
+		obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("lookup_error").Inc()
+		return false
+	}
+	switch status {
+	case platform.AccountActive:
+		return true
+	case platform.AccountClosed:
+		w.opts.Logger.Warn("customer-webhook: owning account is closed; permanently failing delivery",
+			"delivery_id", d.ID, "webhook_id", d.WebhookID, "account_status", string(status))
+		// "disabled" is the existing terminal-by-policy outcome label;
+		// the label set is a lockstep bounded registry in internal/obs
+		// (seedBoundedLabelSeries + metrics_seed_test.go), so splitting
+		// out an account_inactive label is a follow-up there. The row's
+		// last_error carries the specific reason either way.
+		w.markTerminal(ctx, d, "owning account is closed", "disabled")
+		return false
+	default:
+		w.opts.Logger.Warn("customer-webhook: owning account is not active; withholding delivery",
+			"delivery_id", d.ID, "webhook_id", d.WebhookID, "account_status", string(status))
+		return false
+	}
 }
 
 // classifyResponse routes a delivery's HTTP status into the delivered /

@@ -183,6 +183,24 @@ against.
   2026-07-29 cutover completed and there is no `ledger_entries_current_v2` at
   all: unfixed, a re-run of the phase DROPped the live
   `ledger_entries_current_mv` before failing on the RENAME.
+- **webhooks / the account kill switch reaches the outbound path (SEC-06, RLT-420):**
+  suspending or closing an account stopped its API keys authenticating (C3-010,
+  `internal/auth`) but nothing in the customer-webhook path read account status,
+  so a suspended or closed customer kept accruing queued deliveries AND kept
+  receiving our data at the endpoints they had registered. The suspension was
+  inbound-only. All four writers/readers are now gated on `accounts.status =
+  'active'`: the resolver (`ListWebhooksSubscribedTo`), both enqueue writers
+  (`EnqueueDelivery`, `AppendDelivery` — the shared choke point, so the
+  price-alert producer is covered too) and the claim query
+  (`ListPendingDeliveries`), plus a re-check in the delivery worker immediately
+  before it signs and POSTs, for the batch claimed just before a suspension
+  landed. Fail-closed throughout: an unreadable status withholds the delivery
+  rather than sending it, and an enqueue refusal is reported as
+  `PublishResult.Suppressed` — deliberately NOT as a lost event, so the kill
+  switch working does not page an operator. A suspended account's queued
+  backlog is PARKED, not destroyed (suspension is reversible via
+  `AccountStore.Unsuspend`); a closed account's is terminally failed.
+
 - **explorer / the production publish path now runs the static-export guards (F085, T325):**
   the `__next.*` segment prune, `scripts/ci/explorer-file-budget.sh` and
   `scripts/ci/explorer-seo-lint.sh` existed only as steps of

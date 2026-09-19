@@ -140,11 +140,21 @@ func (c *WebhookStore) ListWebhooksForAccount(ctx context.Context, accountID uui
 	return out, nil
 }
 
-// ListWebhooksSubscribedTo returns every enabled webhook subscribed
-// to `eventType` across all accounts. The fan-out service iterates
-// the result and calls EnqueueDelivery for each. The events column
-// is a text[] in Postgres; ANY($1) is the membership predicate.
+// ListWebhooksSubscribedTo returns every enabled webhook subscribed to
+// `eventType` whose owning account is ACTIVE. The fan-out service
+// iterates the result and calls EnqueueDelivery for each. The events
+// column is a text[] in Postgres; ANY($1) is the membership predicate.
 // F-1249 (codex audit-2026-05-12).
+//
+// SEC-06 / RLT-420: the account kill switch used to be inbound-only.
+// Suspending or closing an account stopped its API keys authenticating
+// (internal/auth/apikey_redis.go) but nothing on the OUTBOUND side read
+// account status, so this resolver kept handing the fan-out a suspended
+// customer's endpoints and we kept POSTing their data to them. The
+// EXISTS is the resolver-side gate: a webhook whose account is anything
+// other than `active` — and a webhook whose account row is missing
+// altogether — is not a subscriber. Fail-closed, matching the inbound
+// side's "active authenticates, everything else does not".
 func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType platform.WebhookEventType) ([]platform.CustomerWebhook, error) {
 	const q = `
 		SELECT id, account_id, name, url, secret_hash, events, enabled,
@@ -152,6 +162,10 @@ func (c *WebhookStore) ListWebhooksSubscribedTo(ctx context.Context, eventType p
 		  FROM customer_webhooks
 		 WHERE enabled = TRUE
 		   AND $1 = ANY(events)
+		   AND EXISTS (SELECT 1
+		                 FROM accounts a
+		                WHERE a.id = customer_webhooks.account_id
+		                  AND a.status = 'active')
 	`
 	rows, err := c.s.db.QueryContext(ctx, q, string(eventType))
 	if err != nil {
@@ -230,7 +244,18 @@ func (c *WebhookStore) DeleteWebhook(ctx context.Context, id uuid.UUID) error {
 	return nil
 }
 
-// EnqueueDelivery inserts one pending delivery row.
+// EnqueueDelivery inserts one pending delivery row, conditional on the
+// owning account being ACTIVE.
+//
+// SEC-06 / RLT-420: this is the choke point EVERY producer shares.
+// ListWebhooksSubscribedTo already withholds a suspended account's
+// endpoints from the fan-out, but internal/pricealerts/worker.go
+// resolves its targets with ListWebhooksForAccount — the customer's own
+// dashboard listing, deliberately unfiltered — so without the gate here
+// a suspended account still accrued queued deliveries. Returns an error
+// wrapping [ErrWebhookAccountInactive] when the account is not active,
+// and [platform.ErrNotFound] when the webhook itself is gone (the
+// pre-gate behaviour a foreign-key violation produced).
 func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDelivery) error {
 	if d.WebhookID == uuid.Nil {
 		return errors.New("postgresstore: EnqueueDelivery: WebhookID is empty")
@@ -245,14 +270,98 @@ func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDe
 	const q = `
 		INSERT INTO webhook_deliveries
 		    (webhook_id, event_type, payload, attempt_count, next_attempt_at)
-		VALUES ($1, $2, $3, 0, COALESCE(NULLIF($4, '0001-01-01 00:00:00+00'::timestamptz), now()))
+		SELECT cw.id, $2, $3, 0,
+		       COALESCE(NULLIF($4, '0001-01-01 00:00:00+00'::timestamptz), now())
+		  FROM customer_webhooks cw
+		 WHERE cw.id = $1
+		   AND EXISTS (SELECT 1
+		                 FROM accounts a
+		                WHERE a.id = cw.account_id
+		                  AND a.status = 'active')
 	`
-	if _, err := c.s.db.ExecContext(ctx, q,
+	res, err := c.s.db.ExecContext(ctx, q,
 		d.WebhookID, string(d.EventType), payload, d.NextAttemptAt,
-	); err != nil {
+	)
+	if err != nil {
 		return fmt.Errorf("postgresstore: EnqueueDelivery: %w", err)
 	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("postgresstore: EnqueueDelivery rows affected: %w", err)
+	}
+	if n == 0 {
+		return c.refuseEnqueue(ctx, "EnqueueDelivery", d.WebhookID)
+	}
 	return nil
+}
+
+// ErrWebhookAccountInactive is the sentinel the enqueue paths wrap when
+// they refuse to queue a delivery because the webhook's owning account
+// is suspended or closed. It is a POLICY refusal, not a lost event: the
+// returned error also answers WebhookSuppressed() true, so a fan-out can
+// count it apart from a genuine enqueue failure — and stay off the
+// lost-event alert — without importing this package.
+var ErrWebhookAccountInactive = errors.New("postgresstore: webhook account is not active")
+
+// accountInactiveError reports an enqueue refused by the account kill
+// switch. It carries the observed status so the caller's log line names
+// WHY, and implements the WebhookSuppressed() behavioural contract
+// customerwebhook.Fanout matches on.
+type accountInactiveError struct {
+	op        string
+	webhookID uuid.UUID
+	status    platform.AccountStatus
+}
+
+func (e accountInactiveError) Error() string {
+	return fmt.Sprintf("postgresstore: %s: webhook %s: account is %s, not active",
+		e.op, e.webhookID, e.status)
+}
+
+// Unwrap exposes [ErrWebhookAccountInactive] to errors.Is.
+func (e accountInactiveError) Unwrap() error { return ErrWebhookAccountInactive }
+
+// WebhookSuppressed marks this as a delivery withheld by policy rather
+// than one lost to a failure (the net.Error.Timeout contract shape).
+func (e accountInactiveError) WebhookSuppressed() bool { return true }
+
+// refuseEnqueue turns an enqueue that matched no row into the specific
+// reason it matched none: the webhook is gone, the account is not
+// active, or the reason lookup itself failed — which is surfaced as an
+// error, never flattened into a suppression.
+func (c *WebhookStore) refuseEnqueue(ctx context.Context, op string, webhookID uuid.UUID) error {
+	status, err := c.WebhookAccountStatus(ctx, webhookID)
+	switch {
+	case errors.Is(err, platform.ErrNotFound):
+		return fmt.Errorf("postgresstore: %s: webhook %s: %w", op, webhookID, platform.ErrNotFound)
+	case err != nil:
+		return fmt.Errorf("postgresstore: %s: webhook %s: queued nothing and the account status is unreadable: %w",
+			op, webhookID, err)
+	}
+	return accountInactiveError{op: op, webhookID: webhookID, status: status}
+}
+
+// WebhookAccountStatus returns the lifecycle status of the account that
+// OWNS webhookID, or [platform.ErrNotFound] when the webhook (or the
+// account it hangs off) is absent. It is the delivery worker's leg of
+// the account kill switch: the worker re-reads it immediately before
+// signing and POSTing, so an account suspended AFTER its deliveries were
+// claimed is still caught (SEC-06 / RLT-420).
+func (c *WebhookStore) WebhookAccountStatus(ctx context.Context, webhookID uuid.UUID) (platform.AccountStatus, error) {
+	const q = `
+		SELECT a.status
+		  FROM customer_webhooks cw
+		  JOIN accounts a ON a.id = cw.account_id
+		 WHERE cw.id = $1
+	`
+	var status string
+	if err := c.s.db.QueryRowContext(ctx, q, webhookID).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", platform.ErrNotFound
+		}
+		return "", fmt.Errorf("postgresstore: WebhookAccountStatus %s: %w", webhookID, err)
+	}
+	return platform.AccountStatus(status), nil
 }
 
 // ListPendingDeliveries atomically claims up to `limit` due
@@ -276,6 +385,16 @@ func (c *WebhookStore) EnqueueDelivery(ctx context.Context, d platform.WebhookDe
 //
 // FIFO ordering is preserved via the `ORDER BY next_attempt_at ASC`
 // inside the SELECT subquery.
+//
+// SEC-06 / RLT-420: the claim also skips any delivery whose owning
+// account is not ACTIVE. Rows queued before a suspension are therefore
+// PARKED, not destroyed — suspension is reversible (AccountStore has
+// Unsuspend), so the conservation-correct behaviour is to withhold the
+// POST and let the backlog resume if the account is reinstated. The
+// EXISTS deliberately does not join `accounts` into the FROM list: a
+// join would put the `FOR UPDATE … SKIP LOCKED` row lock on the accounts
+// and customer_webhooks rows too, so an admin PATCH holding an account
+// row would make the worker silently skip that customer's queue.
 func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]platform.WebhookDelivery, error) {
 	if limit <= 0 {
 		limit = 100
@@ -290,6 +409,11 @@ func (c *WebhookStore) ListPendingDeliveries(ctx context.Context, limit int) ([]
 		     WHERE delivered_at IS NULL
 		       AND next_attempt_at IS NOT NULL
 		       AND next_attempt_at <= now()
+		       AND EXISTS (SELECT 1
+		                     FROM customer_webhooks cw
+		                     JOIN accounts a ON a.id = cw.account_id
+		                    WHERE cw.id = webhook_deliveries.webhook_id
+		                      AND a.status = 'active')
 		     ORDER BY next_attempt_at ASC
 		     LIMIT $1
 		     FOR UPDATE SKIP LOCKED
@@ -455,6 +579,11 @@ func (c *WebhookStore) RotateWebhookSecret(ctx context.Context, id uuid.UUID) (s
 // inserted row with `ID` + `CreatedAt` populated. Used by the
 // dashboard-flow path where the caller has the full attempt state
 // already (vs EnqueueDelivery which seeds a fresh queue row).
+//
+// SEC-06 / RLT-420: gated on the owning account being ACTIVE, exactly as
+// [WebhookStore.EnqueueDelivery] is — it is the second way a row reaches
+// webhook_deliveries, and a kill switch honoured by only one of two
+// writers is not a kill switch.
 func (c *WebhookStore) AppendDelivery(ctx context.Context, d platform.WebhookDelivery) (platform.WebhookDelivery, error) {
 	if d.WebhookID == uuid.Nil {
 		return platform.WebhookDelivery{}, errors.New("postgresstore: AppendDelivery: WebhookID is empty")
@@ -486,7 +615,13 @@ func (c *WebhookStore) AppendDelivery(ctx context.Context, d platform.WebhookDel
 		    (webhook_id, event_type, payload,
 		     attempt_count, next_attempt_at, delivered_at,
 		     last_error, last_response_status)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		SELECT cw.id, $2, $3, $4, $5, $6, $7, $8
+		  FROM customer_webhooks cw
+		 WHERE cw.id = $1
+		   AND EXISTS (SELECT 1
+		                 FROM accounts a
+		                WHERE a.id = cw.account_id
+		                  AND a.status = 'active')
 		RETURNING id, created_at
 	`
 	row := c.s.db.QueryRowContext(ctx, q,
@@ -495,6 +630,9 @@ func (c *WebhookStore) AppendDelivery(ctx context.Context, d platform.WebhookDel
 		lastError, responseStatus,
 	)
 	if err := row.Scan(&d.ID, &d.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return platform.WebhookDelivery{}, c.refuseEnqueue(ctx, "AppendDelivery", d.WebhookID)
+		}
 		return platform.WebhookDelivery{}, fmt.Errorf("postgresstore: AppendDelivery: %w", err)
 	}
 	return d, nil
