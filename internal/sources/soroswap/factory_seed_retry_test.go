@@ -23,10 +23,12 @@ import (
 
 // seedFault is one scripted failure the fake RPC serves INSTEAD of an answer.
 type seedFault struct {
-	status  int    // non-zero: reply with this HTTP status and a non-JSON body
-	body    string // body for status; a generic HTML stub when empty
+	status  int    // non-zero: reply with this HTTP status (and, alone, a non-JSON body)
+	body    string // body for status; a generic HTML stub when empty, unless exact
+	exact   bool   // write status and body VERBATIM — an empty body stays empty, JSON stays JSON
 	simErr  string // non-empty: a SUCCESSFUL round-trip whose result carries a contract error
-	rpcCode int    // non-zero: reply 200 with a JSON-RPC error envelope
+	result  string // non-empty: a 200 envelope whose "result" is this raw JSON (wrong shape)
+	rpcCode int    // non-zero: reply with a JSON-RPC error envelope, under status (200 when zero)
 	rpcMsg  string // message for rpcCode
 	drop    bool   // hijack the connection and close it mid-request
 }
@@ -105,7 +107,20 @@ func (f *flakySorobanRPC) serve(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			_ = conn.Close()
 		}
+	case fault.exact:
+		// http.Error always writes a non-empty text body, which is the one
+		// shape a real rate limiter or proxy is least likely to send. This
+		// arm serves what they do send: nothing at all, or JSON.
+		w.WriteHeader(fault.status)
+		_, _ = w.Write([]byte(fault.body))
+	case fault.result != "":
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jsonrpc": "2.0", "id": req.ID, "result": json.RawMessage(fault.result),
+		})
 	case fault.rpcCode != 0:
+		if fault.status != 0 {
+			w.WriteHeader(fault.status)
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"jsonrpc": "2.0", "id": req.ID,
 			"error": map[string]any{"code": fault.rpcCode, "message": fault.rpcMsg},

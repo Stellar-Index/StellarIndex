@@ -16,8 +16,9 @@ import (
 // factory_seed_retry_test.go for the fake RPC and the black-box half). These
 // substitute seedSleep with a recorder, so they run instantly and can assert
 // the exact backoff schedule. Every case still goes through the exported seed
-// and a REAL stellarrpc.Client: the HTTP-status classification reads the
-// client's error text, and only the real client can prove that still matches.
+// and a REAL stellarrpc.Client: the classification reads the typed errors the
+// client returns, and only the real client can prove which response shape
+// produces which of them.
 
 // recordSeedSleeps replaces seedSleep with a recorder for the test's lifetime.
 // onWait, when non-nil, runs before each recorded wait returns (used to cancel
@@ -119,6 +120,80 @@ func TestSeedFromFactoryRPC_SpentBudgetFailsClosedWithTheCause(t *testing.T) {
 	}
 }
 
+// Every shape a rate limiter, a proxy or an unwell node actually answers with
+// must cost one re-issue, not the nightly pass. The first attempt at this retry
+// covered only a non-2xx with a non-empty NON-JSON body (what http.Error
+// writes); through the real client the seed still failed closed after exactly
+// one HTTP hit for every other shape below, because the client dropped the
+// status whenever the body was empty or carried an error envelope. Each case is
+// ONE bad first response to all_pairs_length on an otherwise clean sweep.
+func TestSeedFromFactoryRPC_EveryTransientResponseShapeIsRetried(t *testing.T) {
+	factory := makeContractStrkey(t, 0x01)
+	pair, tok0, tok1 := makeContractStrkey(t, 0x02), makeContractStrkey(t, 0x03), makeContractStrkey(t, 0x04)
+	cases := []struct {
+		name  string
+		fault seedFault
+	}{
+		// (a) a 429 or 5xx with an EMPTY body.
+		{"HTTP 503, empty body", seedFault{exact: true, status: http.StatusServiceUnavailable}},
+		{"HTTP 429, empty body", seedFault{exact: true, status: http.StatusTooManyRequests}},
+		{"HTTP 502, empty body", seedFault{exact: true, status: http.StatusBadGateway}},
+		{"HTTP 408, empty body", seedFault{exact: true, status: http.StatusRequestTimeout}},
+		// (b) a 429 or 5xx whose body is a JSON-RPC error envelope with a
+		// code other than -32603.
+		{"HTTP 429, envelope code 429", seedFault{status: http.StatusTooManyRequests, rpcCode: 429, rpcMsg: "too many requests"}},
+		{"HTTP 429, envelope code -32005", seedFault{status: http.StatusTooManyRequests, rpcCode: -32005, rpcMsg: "rate limit exceeded"}},
+		{"HTTP 503, envelope code -32000", seedFault{status: http.StatusServiceUnavailable, rpcCode: -32000, rpcMsg: "upstream unavailable"}},
+		// The status decides, even under a code that is deterministic on a 200.
+		{"HTTP 503, envelope code -32602", seedFault{status: http.StatusServiceUnavailable, rpcCode: -32602, rpcMsg: "invalid params"}},
+		// (c) a 429 or 5xx with a JSON body that is not an envelope.
+		{"HTTP 429, non-envelope JSON", seedFault{exact: true, status: http.StatusTooManyRequests, body: `{"error":"rate limited"}`}},
+		{"HTTP 500, non-envelope JSON", seedFault{exact: true, status: http.StatusInternalServerError, body: `{"message":"Internal server error"}`}},
+		{"HTTP 503, truncated JSON", seedFault{exact: true, status: http.StatusServiceUnavailable, body: `{"jsonrpc":"2.0","err`}},
+		// A 200 whose body is not an envelope: a proxy interstitial, or nothing.
+		{"HTTP 200, HTML interstitial", seedFault{exact: true, status: http.StatusOK, body: "<html>checking your browser</html>"}},
+		{"HTTP 200, empty body", seedFault{exact: true, status: http.StatusOK}},
+		// A 200 envelope in the implementation-defined server-error range, or
+		// with the HTTP-style code a provider puts there instead of a status.
+		{"HTTP 200, envelope code -32005", seedFault{rpcCode: -32005, rpcMsg: "rate limit exceeded"}},
+		{"HTTP 200, envelope code -32000", seedFault{rpcCode: -32000, rpcMsg: "server busy"}},
+		{"HTTP 200, envelope code -32099", seedFault{rpcCode: -32099, rpcMsg: "server error"}},
+		{"HTTP 200, envelope code 429", seedFault{rpcCode: 429, rpcMsg: "too many requests"}},
+		{"HTTP 200, envelope code 503", seedFault{rpcCode: 503, rpcMsg: "service unavailable"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			waits := recordSeedSleeps(t, nil)
+			rpc := &flakySorobanRPC{
+				answers: onePairAnswers(t, pair, tok0, tok1),
+				faults:  map[int][]seedFault{0: {tc.fault}},
+			}
+			srv := newFlakySorobanRPC(t, rpc)
+
+			dec := NewDecoder()
+			n, err := dec.SeedFromFactoryRPC(context.Background(), stellarrpc.New(srv.URL), factory)
+			if err != nil {
+				t.Fatalf("seed failed closed on ONE transient response after %d HTTP hit(s): %v", rpc.hitsFor(0), err)
+			}
+			if n != 1 {
+				t.Fatalf("seeded %d pair(s); want 1", n)
+			}
+			if got, ok := dec.pairTokensFor(pair); !ok || got.Token0.ContractID != tok0 || got.Token1.ContractID != tok1 {
+				t.Errorf("registry holds (%+v, %v); want (%s, %s)", got, ok, tok0, tok1)
+			}
+			if h := rpc.hitsFor(0); h != 2 {
+				t.Errorf("all_pairs_length was issued %d time(s); want 2 (the fault and one re-issue)", h)
+			}
+			if total := rpc.totalHits(); total != 5 {
+				t.Errorf("RPC saw %d request(s); want 5 (4 calls + 1 retry) — the sweep must not restart", total)
+			}
+			if got, want := backoffsOf(*waits), []time.Duration{time.Second}; !equalDurations(got, want) {
+				t.Errorf("backoff schedule %v; want %v", got, want)
+			}
+		})
+	}
+}
+
 // The budget belongs to each CALL. Two calls that each need the full budget
 // both recover; a sweep-wide budget would have failed the second.
 func TestSeedFromFactoryRPC_BudgetIsPerCallNotPerSweep(t *testing.T) {
@@ -178,6 +253,22 @@ func TestSeedFromFactoryRPC_DeterministicFailuresAreNeverRetried(t *testing.T) {
 		{"HTTP 400 quoting a 503", seedFault{status: http.StatusBadRequest, body: "upstream said HTTP 503"}, "HTTP 400"},
 		{"JSON-RPC invalid params", seedFault{rpcCode: -32602, rpcMsg: "invalid params"}, "invalid params"},
 		{"JSON-RPC method not found", seedFault{rpcCode: -32601, rpcMsg: "method not found"}, "method not found"},
+		{"JSON-RPC invalid request", seedFault{rpcCode: -32600, rpcMsg: "invalid request"}, "invalid request"},
+		{"JSON-RPC parse error", seedFault{rpcCode: -32700, rpcMsg: "parse error"}, "parse error"},
+		// Just outside the server-error range on either side, and an
+		// HTTP-style envelope code that is not a transient one.
+		{"JSON-RPC code -32100", seedFault{rpcCode: -32100, rpcMsg: "application error"}, "application error"},
+		{"JSON-RPC code -31999", seedFault{rpcCode: -31999, rpcMsg: "application error"}, "application error"},
+		{"JSON-RPC code 400", seedFault{rpcCode: 400, rpcMsg: "bad request"}, "bad request"},
+		// The HTTP status outranks the envelope: a 4xx that is not 408/429
+		// stays deterministic even under a code that is retried on a 200.
+		{"HTTP 400, envelope code -32603", seedFault{status: http.StatusBadRequest, rpcCode: -32603, rpcMsg: "internal"}, "HTTP 400"},
+		{"HTTP 401, envelope code -32000", seedFault{status: http.StatusUnauthorized, rpcCode: -32000, rpcMsg: "unauthorized"}, "HTTP 401"},
+		{"HTTP 403, empty body", seedFault{exact: true, status: http.StatusForbidden}, "HTTP 403"},
+		{"HTTP 400, non-envelope JSON", seedFault{exact: true, status: http.StatusBadRequest, body: `{"error":"HTTP 503"}`}, "HTTP 400"},
+		// An envelope that decoded but whose result is the wrong shape:
+		// re-asking returns the same shape.
+		{"result of the wrong shape", seedFault{result: `"not an object"`}, "decode result"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

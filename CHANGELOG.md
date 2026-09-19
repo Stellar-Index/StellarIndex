@@ -454,11 +454,21 @@ against.
   sequential `simulateTransaction` calls (about 640 on pubnet) with no
   retry anywhere under it — so a single 429, 5xx or dropped connection
   stopped the run for every source. Each call is now retried on a
-  *transient* failure only — transport error or truncated body, HTTP 429 or
-  5xx, JSON-RPC `-32603` internal error — up to 5 attempts with 1s/2s/4s/8s
-  backoff that honours the context. A contract that rejects the call, any
-  other 4xx and any other JSON-RPC error are deterministic and still fail
-  at once; an endpoint that stays down for a whole budget still fails the
+  *transient* failure only, up to 5 attempts with 1s/2s/4s/8s backoff that
+  honours the context. Transient means: a transport error or a body cut
+  short; an HTTP 408, 429 or 5xx **whatever its body** (empty, HTML, JSON
+  that is not an envelope, or a JSON-RPC error envelope with any code — the
+  status decides); on a status below 400, a JSON-RPC `-32603` internal
+  error, a code in the implementation-defined server range
+  `-32000..-32099` (where hosted providers put `rate limit exceeded`), or an
+  HTTP-style 408/429/5xx code in the envelope; and a body that does not
+  decode as an envelope (a proxy interstitial served with a 200, or nothing),
+  which costs at most the bounded budget if it turns out to be permanent. A
+  contract that rejects the call, any other 4xx (even over a retryable
+  envelope code), `-32600`/`-32601`/`-32602`/`-32700` and every other
+  JSON-RPC code, and a result of the wrong shape are deterministic and
+  still fail at once; an endpoint that stays down for a whole budget still
+  fails the
   run closed, and the error carries the attempt count and wraps the cause.
   Each retry is logged at WARN. The retry re-issues the one failed call; it
   never restarts the sweep. Worst-case added wall time is 15s of backoff

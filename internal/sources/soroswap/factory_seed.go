@@ -7,8 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
-	"regexp"
-	"strconv"
+	"net/http"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -101,10 +100,12 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // factoryContract is the C-strkey of the Soroswap factory. For
 // mainnet that's CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2.
 //
-// Transient RPC failures (transport, HTTP 429/5xx, JSON-RPC internal
-// error) are retried per call within a bounded budget — see
-// seedMaxAttempts and [retryableSimulateErr]. Once a call's budget is
-// spent, or on any deterministic failure, the sweep stops.
+// Transient RPC failures (transport, an HTTP 408/429/5xx with any body,
+// a JSON-RPC internal or server-range error, an undecodable response
+// body) are retried per call within a bounded budget — see
+// seedMaxAttempts and [retryableSimulateErr] for the exact classes.
+// Once a call's budget is spent, or on any deterministic failure, the
+// sweep stops.
 //
 // Returns the number of pairs seeded and a non-nil error on any
 // failure — the caller decides whether to fail-closed (refuse to
@@ -236,46 +237,70 @@ func simulateWithRetry(ctx context.Context, rpc *stellarrpc.Client, b64 string) 
 	}
 }
 
-// jsonRPCInternalError is the JSON-RPC 2.0 reserved "Internal error" code.
-const jsonRPCInternalError = -32603
-
-// simulateHTTPStatus extracts the status from the stellarrpc client's
-// HTTP-failure errors ("stellarrpc: <method>: HTTP <code>…"). The client
-// does not expose the status as a typed error, so the text is the only
-// carrier. The match is anchored to the client's own prefix so a status
-// quoted inside an upstream body cannot be mistaken for it, and the
-// retry tests drive the REAL client, so a change to that format turns
-// them red instead of silently disabling the retry.
-var simulateHTTPStatus = regexp.MustCompile(`^stellarrpc: [A-Za-z]+: HTTP (\d{3})\b`)
+// JSON-RPC 2.0 error codes the classification names. -32603 is the
+// reserved "Internal error"; -32000..-32099 is the range the spec
+// reserves for implementation-defined SERVER errors, which is where a
+// hosted provider puts "rate limit exceeded" (-32005 is the usual one)
+// and "upstream unavailable". The other reserved codes (-32700 parse
+// error, -32600 invalid request, -32601 method not found, -32602
+// invalid params) describe the REQUEST and are deterministic.
+const (
+	jsonRPCInternalError  = -32603
+	jsonRPCServerErrorMin = -32099
+	jsonRPCServerErrorMax = -32000
+)
 
 // retryableSimulateErr reports whether a failed simulateTransaction
-// round-trip is worth re-issuing. Only three classes are:
+// round-trip is worth re-issuing. It classifies on the TYPED errors the
+// stellarrpc client returns, never on message text. In order:
 //
-//   - transport: the request never completed (dial / reset / TLS /
+//  1. Any response with an HTTP status >= 400 is decided by the status
+//     alone, whatever its body was (empty, HTML, JSON that is not an
+//     envelope, or a JSON-RPC error envelope with any code): 408, 429
+//     and every 5xx are retried; every other 4xx (bad request, auth,
+//     not found) fails at once. The status outranks an envelope code
+//     because it is the proxy or rate limiter speaking, and a 401 whose
+//     body says -32000 is still a 401.
+//  2. A JSON-RPC error envelope on a status below 400 is retried for
+//     -32603 internal error, for the implementation-defined server
+//     range -32000..-32099, and for a provider that puts the HTTP-style
+//     code in the envelope (408, 429, 5xx). Every other code — notably
+//     -32600, -32601, -32602 and -32700 — fails at once.
+//  3. A body that does not decode as an envelope on a status below 400
+//     (empty, cut short, a proxy's HTML interstitial served with a 200)
+//     is retried: it is a property of that one response, and a
+//     genuinely deterministic one costs only the bounded budget.
+//  4. Transport: the request never completed (dial / reset / TLS /
 //     timeout — what http.Client.Do returns is always a net.Error) or
-//     the body was cut short;
-//   - HTTP 429 and 5xx from the endpoint or a proxy in front of it;
-//   - JSON-RPC -32603 "internal error" — the envelope-level analogue of
-//     a 5xx, and what the client returns INSTEAD of the HTTP status
-//     when a 5xx carries a JSON error body.
+//     the body was cut short while being read.
 //
-// Everything else is treated as deterministic and fails at once: any
-// other JSON-RPC error (invalid params / request, method not found),
-// any other 4xx (auth, bad request, not found), an undecodable 2xx
-// body. Contract-level rejections never reach here — they arrive as a
-// successful round-trip with SimulationResponse.Error set.
+// Anything else fails at once: a result that decoded as an envelope but
+// does not fit the response type, a response over the size cap, a
+// request that could not be built. Contract-level rejections never
+// reach here — they arrive as a successful round-trip with
+// SimulationResponse.Error set.
 func retryableSimulateErr(err error) bool {
+	var statusErr *stellarrpc.HTTPStatusError
+	if errors.As(err, &statusErr) {
+		return retryableStatusCode(statusErr.StatusCode)
+	}
 	var rpcErr *stellarrpc.JSONRPCError
 	if errors.As(err, &rpcErr) {
-		return rpcErr.Code == jsonRPCInternalError
+		return rpcErr.Code == jsonRPCInternalError ||
+			(rpcErr.Code >= jsonRPCServerErrorMin && rpcErr.Code <= jsonRPCServerErrorMax) ||
+			retryableStatusCode(rpcErr.Code)
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF) {
+	var decodeErr *stellarrpc.ResponseDecodeError
+	if errors.As(err, &decodeErr) {
 		return true
 	}
-	if m := simulateHTTPStatus.FindStringSubmatch(err.Error()); m != nil {
-		code, _ := strconv.Atoi(m[1])
-		return code == 429 || code >= 500
-	}
-	return false
+	var netErr net.Error
+	return errors.As(err, &netErr) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// retryableStatusCode reports whether an HTTP status (or a JSON-RPC code
+// a provider borrowed from HTTP) names a transient condition: request
+// timeout, rate limit, or any server-side failure.
+func retryableStatusCode(code int) bool {
+	return code == http.StatusRequestTimeout || code == http.StatusTooManyRequests || (code >= 500 && code <= 599)
 }

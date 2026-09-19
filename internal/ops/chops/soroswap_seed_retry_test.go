@@ -39,9 +39,36 @@ func captureStderr(t *testing.T, fn func()) string {
 	return string(out)
 }
 
-// One HTTP 503 on the very first call of an otherwise clean one-pair sweep.
-// Real backoff, so this test takes ~2s (1s retry wait + three 300ms throttles).
+// One transient response on the very first call of an otherwise clean one-pair
+// sweep. Real backoff, so each shape takes ~2s (1s retry wait + three 300ms
+// throttles). The shapes are the two ends of what a hosted endpoint sends: a
+// proxy's HTML 503, and a rate limit as providers usually word it — HTTP 429
+// over a JSON-RPC error envelope with a server-range code. The second one
+// still failed the seed closed after a single request when the retry read the
+// status out of the client's error text, because the client returned the bare
+// envelope error and the status never reached the classification.
 func TestSeedSoroswapForRecon_TransientRPCFailureDoesNotFailTheSeed(t *testing.T) {
+	shapes := map[string]func(w http.ResponseWriter, id int){
+		"HTTP 503, HTML body": func(w http.ResponseWriter, _ int) {
+			http.Error(w, "<html>503 upstream unavailable</html>", http.StatusServiceUnavailable)
+		},
+		"HTTP 429, envelope code -32005": func(w http.ResponseWriter, id int) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0", "id": id,
+				"error": map[string]any{"code": -32005, "message": "rate limit exceeded"},
+			})
+		},
+	}
+	for name, transient := range shapes {
+		t.Run(name, func(t *testing.T) {
+			assertSeedSurvivesOneTransient(t, transient)
+		})
+	}
+}
+
+func assertSeedSurvivesOneTransient(t *testing.T, transient func(w http.ResponseWriter, id int)) {
+	t.Helper()
 	factory, pair := seedFixtureStrkey(t, 0x01), seedFixtureStrkey(t, 0x02)
 	answers := []string{
 		seedFixtureU32(t, 1),
@@ -56,7 +83,7 @@ func TestSeedSoroswapForRecon_TransientRPCFailureDoesNotFailTheSeed(t *testing.T
 		}
 		_ = json.NewDecoder(r.Body).Decode(&req)
 		if hits.Add(1) == 1 {
-			http.Error(w, "<html>503 upstream unavailable</html>", http.StatusServiceUnavailable)
+			transient(w, req.ID)
 			return
 		}
 		i := int(answered.Add(1)) - 1
@@ -73,8 +100,8 @@ func TestSeedSoroswapForRecon_TransientRPCFailureDoesNotFailTheSeed(t *testing.T
 		err = seedSoroswapForRecon(context.Background(), seedFixtureConfig(factory, srv.URL), dec)
 	})
 	if err != nil {
-		t.Fatalf("seed returned %q after ONE transient HTTP 503; want nil — both commands abort every "+
-			"source's verdict on this error, so a single blip must be retried, not returned", err)
+		t.Fatalf("seed returned %q after ONE transient response (%d request(s) made); want nil — both commands "+
+			"abort every source's verdict on this error, so a single blip must be retried, not returned", err, hits.Load())
 	}
 	if n := hits.Load(); n != 5 {
 		t.Errorf("RPC saw %d request(s); want 5 (4 calls + 1 retry of the first)", n)
