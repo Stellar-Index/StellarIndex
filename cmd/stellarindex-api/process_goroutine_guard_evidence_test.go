@@ -35,7 +35,7 @@ import (
 // chose.
 //
 // Census at the time of writing: 91 `go` statements across the 76 in-module
-// packages the API binary links; 14 of them register no recovery. Grouped by
+// packages the API binary links; 13 of them register no recovery. Grouped by
 // what a panic costs:
 //
 //   - internal/storage/clickhouse/ttl_liveness_cache.go:185 — the worst.
