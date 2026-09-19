@@ -3,11 +3,6 @@
 package controlwiring
 
 import (
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -24,10 +19,12 @@ import (
 //	go test -tags k023evidence ./test/controlwiring/ -run TestK023 -v
 //
 // A leg whose fix has landed GRADUATES: it moves to an untagged file in
-// this package so it guards the default suite (F050 and F048 have — see
-// replay_backfillsafe_test.go and phoenix_factory_admission_test.go).
-// When the remaining three are green, drop the build tag: this file is
-// then the class's regression guard.
+// this package so it guards the default suite — F144, F050, F048 and
+// F085 have (verify_archive_fail_on_missed_test.go,
+// replay_backfillsafe_test.go, phoenix_factory_admission_test.go,
+// explorer_build_guards_test.go), leaving F133 below as the one leg that
+// is still red. When it is settled, every leg is guarded from an untagged
+// file and this one goes away with its tag.
 
 // ─── F144: -fail-on-missed on the units where it can fire ──────────
 //
@@ -74,53 +71,17 @@ func TestK023_NoContinueOnErrorJobsInCI(t *testing.T) {
 	}
 }
 
-// scriptRefRE finds repo-script paths named inside a package.json script.
-var scriptRefRE = regexp.MustCompile(`[\w./-]+\.(?:sh|mjs|js|ts)`)
-
-// ─── F085: the Cloudflare git build must run the prune + budget ────
+// ─── F085: the Cloudflare build must run the export guards ─────
 //
-// Production publishes through Cloudflare Pages' git integration,
-// whose build command is `pnpm build` in web/explorer
-// (docs/operations/explorer-deployment.md). The `__next.*` segment
-// prune and scripts/ci/explorer-file-budget.sh live only in
-// explorer-deploy.yml, which is workflow_dispatch-only. The one hook
-// every invoker of `pnpm build` shares is package.json's
-// prebuild/build/postbuild chain, so that is where the control must
-// be referenced.
-func TestK023_ExplorerBuildRunsPruneAndFileBudget(t *testing.T) {
-	t.Parallel()
-	var pkg struct {
-		Scripts map[string]string `json:"scripts"`
-	}
-	if err := json.Unmarshal([]byte(readRepoFile(t, "web/explorer/package.json")), &pkg); err != nil {
-		t.Fatalf("parse web/explorer/package.json: %v", err)
-	}
-	chain := pkg.Scripts["prebuild"] + "\n" + pkg.Scripts["build"] + "\n" + pkg.Scripts["postbuild"]
-	if strings.TrimSpace(chain) == "" {
-		t.Fatal("web/explorer/package.json has no build scripts — this test is asserting nothing")
-	}
-	// A script the chain delegates to counts: follow one hop into any
-	// repo script the chain names.
-	reach := chain
-	for _, ref := range scriptRefRE.FindAllString(chain, -1) {
-		for _, base := range []string{"web/explorer", "."} {
-			b, err := os.ReadFile(filepath.Join(repoRoot(t), base, ref)) //nolint:gosec // repo-relative, test-only
-			if err == nil {
-				reach += "\n" + string(b)
-			}
-		}
-	}
-	if !strings.Contains(reach, "explorer-file-budget") {
-		t.Errorf("`pnpm build` (the Cloudflare git-integration build command) never reaches " +
-			"scripts/ci/explorer-file-budget.sh — the 20,000-file guard runs only in the " +
-			"workflow_dispatch explorer-deploy.yml (F085)")
-	}
-	if !strings.Contains(reach, "__next.") {
-		t.Errorf("`pnpm build` never prunes the Next 16 `__next.*` segment files — the prune " +
-			"runs only in the workflow_dispatch explorer-deploy.yml, so the git-integration " +
-			"build ships the unpruned export (F085)")
-	}
-}
+// GRADUATED. web/explorer/package.json's postbuild chain now runs the
+// `__next.*` segment prune (keeping `__next._tree.txt`),
+// scripts/ci/explorer-file-budget.sh and scripts/ci/explorer-seo-lint.sh,
+// so every invoker of `pnpm build` runs them — including the Cloudflare
+// Pages repository integration, the production publisher, which ran none
+// of them. TestK023_ExplorerBuildRunsExportGuards and
+// TestK023_ExplorerPruneKeepsTreeSegmentFiles live in
+// explorer_build_guards_test.go and run in the default suite. They still
+// show up in the tagged run above, because that file has no tag.
 
 // ─── F050: the replay paths must consult BackfillSafe ──────────────
 //
@@ -142,6 +103,6 @@ func TestK023_ExplorerBuildRunsPruneAndFileBudget(t *testing.T) {
 // real lake captures. They still show up in the tagged run above,
 // because that file has no tag.
 
-// repoRoot lives in replay_backfillsafe_test.go and readRepoFile in
-// verify_archive_fail_on_missed_test.go — both untagged, so both
+// readRepoFile lives in verify_archive_fail_on_missed_test.go and
+// repoRoot in replay_backfillsafe_test.go — both untagged, so both
 // builds compile them.

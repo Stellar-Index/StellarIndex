@@ -106,6 +106,25 @@ against.
 
 ### Fixed
 
+- **explorer / the production publish path now runs the static-export guards (F085, T325):**
+  the `__next.*` segment prune, `scripts/ci/explorer-file-budget.sh` and
+  `scripts/ci/explorer-seo-lint.sh` existed only as steps of
+  `.github/workflows/explorer-deploy.yml`, which is `workflow_dispatch`-only and
+  documents itself as the hotfix/break-glass path. Production publishes through
+  Cloudflare Pages' repository integration, whose build command is
+  `cd web/explorer && pnpm install --frozen-lockfile && pnpm build` — so the path
+  that actually deploys pruned nothing, measured nothing against Cloudflare's
+  20,000-file-per-deployment cap and lint-checked no page metadata. That is the
+  exact shape of the Next 15 -> 16 segment-file explosion that silently failed
+  every deploy for nine days and froze the site on a June-24 build. All three
+  guards moved into `web/explorer/package.json`'s `postbuild` chain, which pnpm
+  runs after any `pnpm build`, so every invoker shares them: the Pages build, the
+  dispatch workflow, the `web-explorer` CI job and a laptop. The prune keeps
+  `__next._tree.txt` — the only segment file the client router prefetches, whose
+  deletion produced the 2026-08-27 console-error report — and runs BEFORE the
+  budget count, since the count is of what ships. Each guard fails the build
+  loudly on a missing `out/` rather than passing over nothing.
+
 - **ops / the archival-node role still hard-failed one import earlier (F128):**
   the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,
   `21-clickhouse-drop-guard.yml` and `22-clickhouse-exporter.yml`, but
