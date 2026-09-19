@@ -11,11 +11,43 @@
 #
 # Scoped to <=62.894M (the CH backfill tip) so the live tail the indexer is
 # still writing stays untouched; the delete/rebuild range never overlaps the
-# indexer's current writes, so ingestion keeps running. Resumable (per-window
-# marker), append-logged, ON_ERROR_STOP-guarded.
+# indexer's current writes, so ingestion keeps running. Append-logged.
+#
+# The DELETE is destructive, so three rules bound it (F075, RLT-380, RLT-381):
+#
+#   1. Ask first. Each window runs `ch-rebuild -write -preflight` BEFORE its
+#      DELETE: the same BackfillSafe / live-cursor / buffered-range refusals
+#      the real run would hit, for the same range and sources. Anything short
+#      of the verdict line — a refusal, a binary that predates -preflight,
+#      silence — deletes nothing.
+#   2. Delete only what that verdict says will be re-derived. The DELETE is
+#      built per source from the verdict's `rederive=` list (see
+#      window_delete_sql), in ONE transaction, and the SAME list is what
+#      -write is then given. SRC narrows the run and the DELETE with it. A
+#      source this script has no DELETE map for is refused outright: it can
+#      only be upserted additively, which is `ch-rebuild` run directly, not
+#      this script. sushiswap_v3 is not here because it is not BackfillSafe:
+#      the gate refuses to rewrite it, so it must never be deleted.
+#   3. Never forget an emptied window. $DIRTY gets `lo hi sources` before the
+#      DELETE and loses it only after the re-derive succeeds. If the re-derive
+#      dies in between, the window IS emptied until this script runs again:
+#      the next run — whatever its SRC/FROM/TO — rebuilds every dirty window
+#      first, for exactly the sources that were deleted, and refuses to go on
+#      if it cannot.
+#
+# Done-state ($STATE) is per source: `source lo hi`. A bare window start is
+# the pre-per-source format, written by the full-SRC run, and still reads as
+# "done for every source" — skipping is the non-destructive reading of it.
+#
+# NOT covered: the ADR-0033 completeness verdict does not learn that a window
+# is (or was) emptied. ch-rebuild deliberately records no projection dirty
+# window (see the comment at its -write warning, and #408), so between a
+# failed re-derive and the recovery run /v1/coverage carries its prior clean
+# claim over a range that is empty. Note the window on the change record.
 #
 # NOT in scope: sdex (op-derived, correctly keyed), external/band (not
-# CH-event-derived). reflector/redstone are exact (no collision) — harmless.
+# CH-event-derived), reflector/redstone (exact, no collision — nothing to
+# clean-slate; re-derive them with ch-rebuild directly if ever needed).
 #
 # This is the ONE sanctioned ch-rebuild over projected domains (the replay
 # decision rule in docs/architecture/ingest-pipeline.md points here):
@@ -26,6 +58,10 @@
 # projector cursor is lagging behind TO (e.g. a held blend_backstop catch-up).
 # Fix the lag (projector-replay / projected-rebuild) rather than reaching for
 # -allow-live-overlap.
+#
+# Exit: 0 complete · 1 a window was refused or failed (read the log) ·
+# 2 bad SRC/FROM/TO/WIN (nothing touched), or a corrupt line in $DIRTY
+# (dirty windows listed before it may already have been recovered).
 #
 # Run on r1: nohup setsid bash scripts/ops/ch-rebuild-projected.sh >/dev/null 2>&1 &
 set -uo pipefail
@@ -56,54 +92,181 @@ DSN="$STELLARINDEX_POSTGRES_DSN"
 SRC=${SRC:-"aquarius,soroswap,phoenix,comet,blend,cctp,rozo,defindex"}
 FROM=${FROM:-50000000}; TO=${TO:-62894000}; WIN=${WIN:-1000000}
 STATE=${STATE:-/var/lib/ch-backfill/rebuild-done-windows.txt}
+DIRTY=${DIRTY:-"$STATE.dirty"}
 LOG=${LOG:-/var/log/ch-rebuild-projected.log}
-mkdir -p "$(dirname "$STATE")"; touch "$STATE"
+mkdir -p "$(dirname "$STATE")"; touch "$STATE" "$DIRTY"
 exec >>"$LOG" 2>&1
+
+# The sources window_delete_sql has a DELETE map for. Pinned against the
+# reconciliation catalogue's table ownership by
+# internal/ops/chops/ch_rebuild_projected_script_scope_test.go.
+KNOWN_SOURCES="aquarius soroswap phoenix comet blend cctp rozo defindex"
+TRADE_SOURCES="aquarius soroswap phoenix comet"
+
+refuse() { echo "REFUSED: $* — nothing was touched"; exit 2; }
+# A positive decimal with no leading zero: these reach SQL and $(( )).
+is_ledger() { case "$1" in ''|0*|*[!0-9]*) return 1 ;; esac; return 0; }
+in_words() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }  # NAME "a b c"
+in_csv() { case ",$2," in *",$1,"*) return 0 ;; esac; return 1; }    # NAME "a,b,c"
+is_source_csv() { case "$1" in ''|*[!a-z0-9_,-]*|,*|*,|*,,*) return 1 ;; esac; return 0; }
+
+# unknown_in CSV → prints the first name with no DELETE map, if any.
+unknown_in() {
+  local s names
+  IFS=, read -r -a names <<<"$1"
+  for s in "${names[@]}"; do
+    in_words "$s" "$KNOWN_SOURCES" || { printf '%s' "$s"; return 0; }
+  done
+}
+
+# window_delete_sql CSV LO HI → the DELETE batch for exactly those sources.
+# Every argument has been validated (is_source_csv + KNOWN_SOURCES, is_ledger)
+# before it gets here. The trades IN list is the ceiling of what this script
+# may ever delete from trades; the ANY list narrows it to this run.
+window_delete_sql() {
+  local csv="$1" lo="$2" hi="$3" s names trade_csv=""
+  IFS=, read -r -a names <<<"$csv"
+  for s in "${names[@]}"; do
+    in_words "$s" "$TRADE_SOURCES" && trade_csv="${trade_csv:+$trade_csv,}$s"
+  done
+  echo "BEGIN;"
+  if [ -n "$trade_csv" ]; then
+    echo "DELETE FROM trades WHERE source IN ('aquarius','soroswap','phoenix','comet') AND source = ANY (string_to_array('$trade_csv', ',')) AND ledger BETWEEN $lo AND $hi;"
+  fi
+  for s in "${names[@]}"; do
+    case "$s" in
+      aquarius) ;; # trades only
+      soroswap) echo "DELETE FROM soroswap_skim_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+      phoenix)
+        echo "DELETE FROM phoenix_liquidity WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM phoenix_stake_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+      comet) echo "DELETE FROM comet_liquidity WHERE ledger BETWEEN $lo AND $hi;" ;;
+      cctp) echo "DELETE FROM cctp_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+      rozo) echo "DELETE FROM rozo_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+      defindex) echo "DELETE FROM defindex_flows WHERE ledger BETWEEN $lo AND $hi;" ;;
+      blend)
+        echo "DELETE FROM blend_auctions WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM blend_positions WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM blend_emissions WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM blend_admin WHERE ledger BETWEEN $lo AND $hi;" ;;
+    esac
+  done
+  echo "COMMIT;"
+}
+
+source_done() { grep -qx "$2" "$STATE" || grep -qxF "$1 $2 $3" "$STATE"; }  # SRC LO HI
+
+# pending_sources LO HI → the $SRC sources not yet done for this window.
+pending_sources() {
+  local s names out=""
+  IFS=, read -r -a names <<<"$SRC"
+  for s in "${names[@]}"; do
+    source_done "$s" "$1" "$2" || out="${out:+$out,}$s"
+  done
+  printf '%s' "$out"
+}
+
+mark_dirty() { grep -qxF "$1 $2 $3" "$DIRTY" || echo "$1 $2 $3" >> "$DIRTY"; }  # LO HI CSV
+clear_dirty() {
+  local rc=0
+  grep -vxF "$1 $2 $3" "$DIRTY" > "$DIRTY.tmp" || rc=$?
+  # grep -v exits 1 when nothing is left, which is the usual case.
+  if [ "$rc" -gt 1 ]; then echo "cannot rewrite $DIRTY (grep rc=$rc) — the window will be redone next run"; exit 1; fi
+  mv "$DIRTY.tmp" "$DIRTY"
+}
+
+# run_window LO HI CSV MODE — MODE is `normal` or `recover`. In recover mode
+# CSV is what an earlier run DELETED, so all of it must be re-derivable now.
+run_window() {
+  local lo="$1" hi="$2" want="$3" mode="$4" pf verdict rederive s names bad skipped="" sql
+  echo "--- window [$lo,$hi] PREFLIGHT sources=$want $(date -u) ---"
+  pf=$($OPS ch-rebuild -config "$CFG" -from "$lo" -to "$hi" -sources "$want" -write -preflight) \
+    || { echo "PREFLIGHT REFUSED [$lo,$hi] — nothing was deleted for this window"; exit 1; }
+  verdict=$(sed -n '/^ch-rebuild: preflight ok \[/p' <<<"$pf")
+  case "$verdict" in
+    ''|*$'\n'*) echo "PREFLIGHT gave no single verdict [$lo,$hi] (stdout: '$pf') — nothing was deleted for this window"; exit 1 ;;
+  esac
+  echo "$verdict"
+  rederive=${verdict##* rederive=}
+
+  # The verdict is the DELETE set, so it is held to the same rules as SRC —
+  # and it may only ever be NARROWER than what was asked.
+  if [ -n "$rederive" ]; then
+    is_source_csv "$rederive" || { echo "PREFLIGHT verdict carries a malformed rederive list '$rederive' — nothing was deleted"; exit 1; }
+    bad=$(unknown_in "$rederive")
+    [ -z "$bad" ] || { echo "PREFLIGHT says '$bad' would be re-derived and this script has no DELETE map for it — nothing was deleted"; exit 1; }
+    IFS=, read -r -a names <<<"$rederive"
+    for s in "${names[@]}"; do
+      in_csv "$s" "$want" || { echo "PREFLIGHT says '$s' would be re-derived but only '$want' was asked for — nothing was deleted"; exit 1; }
+    done
+  fi
+  IFS=, read -r -a names <<<"$want"
+  for s in "${names[@]}"; do
+    in_csv "$s" "$rederive" || skipped="${skipped:+$skipped,}$s"
+  done
+  if [ -n "$skipped" ]; then
+    if [ "$mode" = recover ]; then
+      echo "CANNOT RECOVER [$lo,$hi]: '$skipped' was DELETED by an earlier run and ch-rebuild no longer re-derives it under this config. The window stays recorded in $DIRTY; nothing was done. Fix the config/binary and re-run."
+      exit 1
+    fi
+    echo "window [$lo,$hi] SKIPPED sources=$skipped — ch-rebuild would not re-derive them under this config, so they were NOT deleted and are NOT marked done"
+  fi
+  if [ -z "$rederive" ]; then
+    echo "window [$lo,$hi] nothing to re-derive — nothing deleted"
+    return 0
+  fi
+
+  mark_dirty "$lo" "$hi" "$rederive"
+  sql=$(window_delete_sql "$rederive" "$lo" "$hi")
+  echo "--- window [$lo,$hi] DELETE sources=$rederive $(date -u) ---"
+  echo "$sql"
+  # One transaction: psql autocommits per statement otherwise, and a failure
+  # part-way would leave the earlier tables emptied. ON_ERROR_STOP quits at
+  # the first error, before COMMIT, and the open transaction rolls back. The
+  # dirty marker stays regardless: a failure ON the COMMIT is ambiguous, and
+  # redoing a window that turned out intact costs only time.
+  psql "$DSN" -v ON_ERROR_STOP=1 <<<"$sql" \
+    || { echo "DELETE FAILED [$lo,$hi] — one transaction, so rolled back unless the failure was the COMMIT itself. Recorded in $DIRTY; the next run redoes this window first."; exit 1; }
+
+  echo "--- window [$lo,$hi] REBUILD sources=$rederive $(date -u) ---"
+  $OPS ch-rebuild -config "$CFG" -from "$lo" -to "$hi" -sources "$rederive" -write \
+    || { echo "REBUILD FAILED [$lo,$hi] — WINDOW LEFT EMPTIED for sources=$rederive. Recorded in $DIRTY. Re-run this script: it rebuilds this window first, for exactly these sources, whatever SRC/FROM/TO it is given. Do not hand-edit $STATE or $DIRTY."; exit 1; }
+
+  IFS=, read -r -a names <<<"$rederive"
+  for s in "${names[@]}"; do echo "$s $lo $hi" >> "$STATE"; done
+  clear_dirty "$lo" "$hi" "$rederive"
+  echo "window [$lo,$hi] DONE sources=$rederive $(date -u)"
+}
+
 echo "=== ch-rebuild-projected START $(date -u) [$FROM,$TO] sources=$SRC ==="
+if ! { is_ledger "$FROM" && is_ledger "$TO" && is_ledger "$WIN"; }; then
+  refuse "FROM/TO/WIN must be positive integers (got FROM='$FROM' TO='$TO' WIN='$WIN')"
+fi
+is_source_csv "$SRC" || refuse "SRC is not a comma-separated source list: '$SRC'"
+bad=$(unknown_in "$SRC")
+[ -z "$bad" ] || refuse "SRC names '$bad', which this script has no DELETE map for (it knows: $KNOWN_SOURCES). It would be upserted additively with nothing deleted — run ch-rebuild directly for that"
+
+# ── recovery first: windows an earlier run emptied and did not rebuild ──
+dirty_lines=()
+while IFS= read -r line || [ -n "$line" ]; do
+  [ -n "$line" ] && dirty_lines+=("$line")
+done < "$DIRTY"
+if [ "${#dirty_lines[@]}" -gt 0 ]; then
+  echo "=== RECOVERY: ${#dirty_lines[@]} window(s) were emptied by an earlier run and not rebuilt ==="
+  for line in "${dirty_lines[@]}"; do
+    read -r dlo dhi dsrcs extra <<<"$line"
+    if ! { is_ledger "${dlo:-}" && is_ledger "${dhi:-}" && is_source_csv "${dsrcs:-}" && [ -z "${extra:-}" ] && [ -z "$(unknown_in "$dsrcs")" ]; }; then
+      echo "REFUSED: corrupt line in $DIRTY: '$line' — an emptied window may be recorded there; repair it by hand before re-running"; exit 2
+    fi
+    run_window "$dlo" "$dhi" "$dsrcs" recover
+  done
+fi
+
 w=$FROM
 while [ "$w" -le "$TO" ]; do
   hi=$((w+WIN-1)); [ "$hi" -gt "$TO" ] && hi=$TO
-  if grep -qx "$w" "$STATE"; then w=$((w+WIN)); continue; fi
-  # Ask BEFORE deleting (RLT-381). ch-rebuild's refusals — BackfillSafe,
-  # the live-cursor one-writer guard, the buffered-range ceiling — used to
-  # be met only inside the -write run below, after this window's rows were
-  # already gone, so a guard doing its job left the tables empty. -preflight
-  # runs the same guards for the same range and sources and touches nothing.
-  # Anything short of an explicit verdict line is a NO: a refusal, a
-  # deployed binary that predates -preflight (flag error), or silence.
-  echo "--- window [$w,$hi] PREFLIGHT $(date -u) ---"
-  pf=$($OPS ch-rebuild -config "$CFG" -from "$w" -to "$hi" -sources "$SRC" -write -preflight) \
-    || { echo "PREFLIGHT REFUSED [$w,$hi] — nothing was deleted for this window"; exit 1; }
-  verdict=$(sed -n '/^ch-rebuild: preflight ok \[/p' <<<"$pf")
-  if [ -z "$verdict" ]; then
-    echo "PREFLIGHT gave no verdict [$w,$hi] (stdout: '$pf') — nothing was deleted for this window"; exit 1
-  fi
-  echo "$verdict"
-  echo "--- window [$w,$hi] DELETE $(date -u) ---"
-  # One transaction: psql autocommits per statement otherwise, and a failure
-  # part-way would leave the earlier tables emptied. ON_ERROR_STOP quits at
-  # the first error, before COMMIT, and the open transaction rolls back.
-  psql "$DSN" -v ON_ERROR_STOP=1 <<SQL || { echo "DELETE FAILED [$w,$hi] — one transaction, so rolled back unless the failure was the COMMIT itself"; exit 1; }
-BEGIN;
-DELETE FROM trades WHERE source IN ('aquarius','soroswap','phoenix','comet') AND ledger BETWEEN $w AND $hi;
-DELETE FROM soroswap_skim_events WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM phoenix_liquidity     WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM phoenix_stake_events  WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM comet_liquidity       WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM cctp_events           WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM rozo_events           WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM defindex_flows        WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM blend_auctions        WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM blend_positions       WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM blend_emissions       WHERE ledger BETWEEN $w AND $hi;
-DELETE FROM blend_admin           WHERE ledger BETWEEN $w AND $hi;
-COMMIT;
-SQL
-  echo "--- window [$w,$hi] REBUILD $(date -u) ---"
-  $OPS ch-rebuild -config "$CFG" -from "$w" -to "$hi" -sources "$SRC" -write \
-    || { echo "REBUILD FAILED [$w,$hi]"; exit 1; }
-  echo "$w" >> "$STATE"
-  echo "window [$w,$hi] DONE $(date -u)"
+  todo=$(pending_sources "$w" "$hi")
+  [ -z "$todo" ] || run_window "$w" "$hi" "$todo" normal
   w=$((w+WIN))
 done
 echo "=== ch-rebuild-projected COMPLETE $(date -u) ==="

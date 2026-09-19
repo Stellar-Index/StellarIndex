@@ -16,6 +16,7 @@ package chops
 // stdout, and the final report on stdout.
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 )
 
 const projectedScriptPath = "../../../scripts/ops/ch-rebuild-projected.sh"
@@ -105,7 +107,8 @@ type scriptRun struct {
 	exit  int
 	calls []scriptCall
 	log   string
-	state string
+	state string // the done-state file after the run
+	dirty string // the dirty-marker file after the run
 	dir   string
 }
 
@@ -194,12 +197,19 @@ func runProjectedScript(t *testing.T, dir string, env map[string]string) scriptR
 	for k, v := range env {
 		vars[k] = v
 	}
-	cmd := exec.Command(bash, script) //nolint:gosec // fixed script path, test-controlled env
+	// Bounded: a script that never terminates (WIN=0 used to spin forever)
+	// must read as a failure here, not as a stuck suite.
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bash, script) //nolint:gosec // fixed script path, test-controlled env
 	for k, v := range vars {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 	out, runErr := cmd.CombinedOutput()
 	run := scriptRun{dir: dir}
+	if ctx.Err() != nil {
+		t.Fatalf("the script did not terminate within 60s (env %v)", env)
+	}
 	if runErr != nil {
 		ee, ok := runErr.(*exec.ExitError) //nolint:errorlint // exec returns the concrete type
 		if !ok {
@@ -210,6 +220,7 @@ func runProjectedScript(t *testing.T, dir string, env map[string]string) scriptR
 	run.calls = parseScriptCalls(t, calls)
 	run.log = readIfExists(t, vars["LOG"]) + string(out)
 	run.state = readIfExists(t, vars["STATE"])
+	run.dirty = readIfExists(t, vars["STATE"]+".dirty")
 	return run
 }
 

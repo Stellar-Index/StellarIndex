@@ -42,6 +42,33 @@ against.
   run now leaves the window pending and its log line says `VERDICT NOT
   STORED`; a run at or above the stored tip clears it as before (F072,
   K013).
+- **ops / `scripts/ops/ch-rebuild-projected.sh`:** the per-window DELETE was
+  a hard-coded twelve-table batch that never read `SRC`, so
+  `SRC=soroswap bash ch-rebuild-projected.sh` emptied every other source's
+  tables for each window, re-derived only soroswap, and — done-state being
+  keyed by window alone — marked the window done for all of them; a later
+  full run skipped it. A re-derive that died after the DELETE left the window
+  emptied with no record, and a narrowed re-run then certified it (F075).
+  The DELETE is now built per source from the list `ch-rebuild -preflight`
+  says the run will re-derive, and that same list is what `-write` is given,
+  so a table is only ever emptied for a source the same window rewrites. A
+  test pins each source's DELETE against the reconciliation catalogue's
+  table ownership. Done-state is per source (`source lo hi`); a bare window
+  start written by earlier runs still reads as done for every source. Before
+  each DELETE the window is recorded in `$STATE.dirty`, and removed only
+  after its re-derive succeeds: the next run — whatever `SRC`/`FROM`/`TO` it
+  is given — rebuilds every recorded window first, for exactly the sources
+  that were deleted, and stops if it cannot. `SRC`, `FROM`, `TO`, `WIN` and
+  the preflight's list are validated before they reach SQL (`WIN=0` used to
+  spin forever). **Operator-visible:** a source the script has no DELETE map
+  for (anything outside its eight defaults, e.g. `reflector-dex`) is now
+  refused instead of being upserted additively with nothing deleted — run
+  `ch-rebuild` directly for those. **Not fixed here:** the ADR-0033
+  completeness verdict still does not learn that a window is emptied between
+  a failed re-derive and its recovery; `ch-rebuild` records no projection
+  dirty window by design (#408), and changing that needs a bounded
+  per-window re-reconcile in `compute-completeness` first.
+
 - **ops / `ch-rebuild -preflight`, `scripts/ops/ch-rebuild-projected.sh`:**
   the script DELETEd a window and only then ran `ch-rebuild -write`, whose
   refusals — the `BackfillSafe` gate, the live-cursor one-writer guard, the
