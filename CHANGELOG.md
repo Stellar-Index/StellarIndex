@@ -159,6 +159,25 @@ against.
   through, as tier 1 does. The scam half only: the substance floor is measured
   on the pair's literal alias union, which is empty by construction on this
   tier (RLT-350).
+- **ci / integration-suite trigger:** a change confined to `scripts/ops/**`,
+  `cmd/stellarindex-ops/**`, `internal/ops/archive/**` or (in CI)
+  `test/harness/**` now runs the Docker-backed integration suite. Those
+  directories are in the Makefile's `INT_TEST_PKGS`, so the suite builds and
+  runs their `//go:build integration` tests — but neither classifier that
+  decides whether the suite runs at all named them: not ci.yml's preflight
+  `integration` path filter (which gates the shard matrix' work steps), its
+  offline mirror `scripts/ci/check-change-class.sh`, nor
+  `scripts/ci/prepush-integration-required.sh`. So for such a diff the tests
+  compiled in the unconditional compile gate and were executed by nothing —
+  including `scripts/ops/fx-history-backfill/generation_test.go`, which pins
+  the INV-3 money invariant that an operator `fx_quotes` correction is
+  stamped with a positive derive generation (without it the next gen-0 worker
+  refresh silently reverts the correction). All three classifiers were widened
+  in lockstep and
+  `test/controlwiring/integration_pkgs_trigger_evidence_test.go` — previously
+  build-tagged red evidence — now runs untagged and fails if any
+  `INT_TEST_PKGS` directory is missing from any of them, or if one is widened
+  so far it fires for a docs-only diff (T424, T449).
 - **projector / `projector-replay`:** a replay's cursor rewind can no longer
   be reverted by the live projector's in-flight cycle. A cycle reads its
   cursor, spends up to `PerSourceTimeout` scanning and sinking, then
