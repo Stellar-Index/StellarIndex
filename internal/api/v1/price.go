@@ -1100,7 +1100,48 @@ func (s *Server) normalizeRawRatioString(value string, base, quote canonical.Ass
 // Returns ok=false when every layer misses; the caller turns that
 // into a 404. Extracted from handlePrice to keep that handler
 // under the gocognit cap.
+//
+// The chain is entered on ErrPriceNotFound, and the reader's
+// not-found exits are UNGATED by construction: cmd/stellarindex-api's
+// priceWithheld chokepoint can only run on the arms of LatestPrice
+// that produced a value, while the synthetic-fiat fast path (a fiat:
+// or crypto: quote never has a literal prices_1m row) and the
+// zero-trades exit return before it. That is why the withholding
+// decision is asked HERE, at the chain's entry — see the scam gate
+// below (RLT-350).
 func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, bool, bool) {
+	// Scam-issuer gate, before layer 1. The cached VWAP that layer
+	// serves is the aggregator's own aggregated claim about this pair,
+	// and the aggregator writes it with no directory consultation
+	// (its ScamGate is built for the price-alert evaluator alone), so
+	// the cache is not a laundered-clean source: for a flagged issuer
+	// whose only market is against a stablecoin, /v1/price answered 200
+	// with the flagged market's price — the number the reader gate
+	// withholds the moment a prices_1m row exists (RLT-350). Layers 2-4
+	// read through the GATED LatestPrice on the proxy pair and already
+	// propagate `withheld`; layer 1 does not, and asking once at the
+	// entry covers every layer and every caller of this chain
+	// (/v1/price, /v1/price/batch, the SEP-40 lastprice paths) instead
+	// of one per layer.
+	//
+	// SCAM ONLY, deliberately not the substance gate — the same split
+	// /v1/twap and /v1/vwap make, for the same reason. The substance
+	// floor is measured on the pair's alias union, and a triangulated
+	// pair has zero rows in its literal form BY CONSTRUCTION (that is
+	// precisely why this chain exists), so asking it here would withhold
+	// the whole triangulated long tail for absence-of-a-literal-market
+	// rather than for a thin one. The substance question about the REAL
+	// underlying market is asked where it can be answered: inside
+	// LatestPrice, on the proxy pair layers 2-4 read through.
+	//
+	// Asked about BOTH legs via [scamWithheld] — the market is the
+	// subject of the decision, not whichever leg the client named first
+	// (F002/F019). Surface label stays "price_read": this is the same
+	// request-driven /v1/price + batch + oracle family the reader seam
+	// counts under, not a new serving path.
+	if scamWithheld(ctx, s.scam, asset, quote, "price_read") {
+		return PriceSnapshot{}, nil, false, false, true
+	}
 	if snap, srcs, triangulated, ok := s.tryRedisVWAPFallback(ctx, asset, quote); ok {
 		return snap, srcs, triangulated, true, false
 	}

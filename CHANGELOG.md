@@ -125,6 +125,21 @@ against.
   pins equal to the Go `DirectoryScamFlagTags`, and its test enumerates
   the warning from that exported list so a private subset cannot come
   back (F091).
+- **pricing / `/v1/price` fallback chain:** the scam-issuer gate is now
+  consulted at the ENTRY to `priceFallback`, so the aggregator's cached VWAP
+  can no longer re-serve a directory-flagged issuer's aggregated price
+  through the side door. The reader's withholding chokepoint only runs on the
+  arms of `LatestPrice` that produced a value; the synthetic-fiat fast path (a
+  `fiat:`/`crypto:` quote never has a literal `prices_1m` row) and the
+  zero-trades exit return `ErrPriceNotFound` before it, and that 404 is what
+  routes the handler into the fallback chain — whose first layer, the Redis
+  VWAP cache, had no gate reference at all. For a flagged issuer's
+  triangulated pair, `/v1/price`, `/v1/price/batch` and the SEP-40
+  `lastprice`/`x_last_price` passthroughs all answered 200 with the flagged
+  market's own price. Both legs are asked, via the package's single
+  `scamWithheld` spelling, and the verdict propagates as `withheld` so the
+  response is `errors/price-withheld` rather than `errors/price-not-found`
+  (RLT-350).
 - **projector / `projector-replay`:** a replay's cursor rewind can no longer
   be reverted by the live projector's in-flight cycle. A cycle reads its
   cursor, spends up to `PerSourceTimeout` scanning and sinking, then
