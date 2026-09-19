@@ -13,7 +13,7 @@
 # still writing stays untouched; the delete/rebuild range never overlaps the
 # indexer's current writes, so ingestion keeps running. Append-logged.
 #
-# The DELETE is destructive, so three rules bound it (F075, RLT-380, RLT-381):
+# The DELETE is destructive, so four rules bound it (F075, RLT-380, RLT-381):
 #
 #   1. Ask first. Each window runs `ch-rebuild -write -preflight` BEFORE its
 #      DELETE: the same BackfillSafe / live-cursor / buffered-range refusals
