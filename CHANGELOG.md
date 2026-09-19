@@ -17,6 +17,18 @@ against.
 
 ### Added
 
+- **test / chainlink fan-out guard releases its slot (NS10):**
+  `TestPollOnce_PanickingFeedReleasesItsSlotAndWaiter` pins the half of the
+  K012 chainlink guard no test covered. `PollOnce` takes the concurrency
+  semaphore in the CALLER's frame, so a recover that contains the panic
+  without first running the `<-sem` and `wg.Done` defers turns a
+  whole-process crash into a permanent hang of the poll tick — worse than
+  the crash it replaces, and invisible to the existing single-feed test,
+  which never re-acquires a slot. The new test runs four panicking feeds
+  through one slot and asserts the tick returns, reports the failure, emits
+  no updates, and moves `stellarindex_worker_panics_total` once per feed.
+  Re-derivation of NS10 found both fan-out sites already guarded; this is
+  the regression fence, not a behaviour change.
 - **api / process-wide goroutine-guard (K012):** `TestK012_EveryGoroutineInTheAPIProcessRecovers`
   is now an unconditional test (the `k012evidence` build tag is gone) and guards
   the whole linked `stellarindex-api` process. #368 closed the unrecovered-panic
