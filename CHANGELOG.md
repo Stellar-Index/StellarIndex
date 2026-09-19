@@ -78,6 +78,28 @@ against.
   and a spec missing the known routes, and confirms the positive path
   still sweeps (audit 2026-09-02 F082).
 
+- **ops (`ch-rebuild`, contract-gated sources):** `ch-rebuild` now re-derives
+  on the gate the live indexer runs with — each gated source's in-code
+  curated set UNION the children in `protocol_contracts` — instead of the
+  bare in-code seed. The re-derive catalogue takes only a config, so it built
+  all eight gated decoders (comet, blend_emitter, phoenix, blend, aquarius,
+  sushiswap_v3, upshift, defindex) with no registry warm. A pool or vault an
+  operator admitted through `protocol_contracts` (the documented no-redeploy
+  seam) was decoded live and then invisible to the rebuild, so a truncate +
+  `ch-rebuild -write` rebuilt its table WITHOUT those rows.
+  `preseedFactoryChildren` never covered it: it walks creation events, which
+  such a contract does not have, and it is a no-op for the five sources that
+  declare no factory. The warm is read-only (no upsert hook), rebuilds the
+  `-ch` prefilter throwaway with the same options, and widens the static
+  `contractIDs` hard filter (upshift, blend_emitter) by the registry-only
+  extras — with an empty registry the list is byte-identical to the in-code
+  one. It fails closed if a gated source has no warmed options or if the
+  catalogue's decoder type differs from the gated registry's. STILL OPEN for
+  the other three catalogue consumers, which live outside this change's
+  files: `compute-completeness` (the phantom-rows leg on `/v1/coverage`),
+  `verify-reconciliation` and `ch-reproject` still build the catalogue bare;
+  a build-tagged test (`-tags rlt430evidence`) is red on exactly those three
+  until they call the same seam (RLT-430).
 - **completeness (recognition, rozo + blend_backstop):** an unhandled event
   topic on a Rozo payment contract or on the Blend backstop now fails THAT
   source's `recognition_ok`. Neither catalogue entry declared `contractIDs`,

@@ -385,6 +385,15 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 	if cerr != nil {
 		return fmt.Errorf("ch-rebuild: reconciliation catalogue: %w", cerr)
 	}
+	// Re-derive on the gate the live indexer runs with — curated set ∪
+	// protocol_contracts — not on the bare in-code seed (RLT-430): a
+	// contract an operator admitted through protocol_contracts was decoded
+	// live, and `-write` after a truncate rebuilt its table without it.
+	// Read-only (no upsert hook). Must precede the preseed below, which
+	// seeds into the decoders this rebuilds.
+	if cat, cerr = warmCatalogueGates(ctx, store, logger, cat); cerr != nil {
+		return fmt.Errorf("ch-rebuild: %w", cerr)
+	}
 
 	// Factory-anchored sources (ADR-0035): seed each gate registry from
 	// the factory's creation events in [genesis, lo) BEFORE the

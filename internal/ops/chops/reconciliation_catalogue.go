@@ -1,8 +1,11 @@
 package chops
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 
@@ -10,7 +13,9 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sourcenet"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
@@ -31,6 +36,7 @@ import (
 	soroswap_router "github.com/Stellar-Index/StellarIndex/internal/sources/soroswap_router"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // reconTarget is one protocol table a source writes, plus the
@@ -653,6 +659,132 @@ func filterCatalogueByNetwork(cat []reconSource, network string) (kept []reconSo
 		kept = append(kept, src)
 	}
 	return kept, dropped
+}
+
+// warmCatalogueGates gives every contract-gated catalogue source the SAME
+// gate the live indexer runs with: the source's in-code curated set UNION
+// the children recorded in protocol_contracts (RLT-430).
+//
+// buildReconciliationCatalogue takes only a config, so it can only build
+// each gated decoder bare — in-code seed and nothing else. The live
+// indexer's decoders are built from pipeline.GatedRegistryOptions, which
+// also warms them from protocol_contracts: the documented operator seam
+// for admitting a pool or vault without a redeploy. A contract admitted
+// through that seam was therefore decoded live and then invisible to every
+// re-derive: its served rows read as phantoms against an expected side that
+// could not produce them, and a truncate + `ch-rebuild -write` rebuilt the
+// table WITHOUT them. preseedFactoryChildren does not cover it — it walks
+// creation events, and the seam exists precisely for contracts that have
+// none (and it is a no-op for every source that declares no factories).
+//
+// Read-only by construction: withHook=false, so nothing here can write to
+// protocol_contracts. A re-derive that registered contracts while
+// re-deriving them would be manufacturing its own evidence.
+//
+// Call it on the freshly built catalogue, BEFORE preseedFactoryChildren or
+// any stream touches src.dec: the gated decoders are rebuilt, so anything
+// seeded into the old instances would be lost.
+func warmCatalogueGates(ctx context.Context, store *timescale.Store, logger *slog.Logger, cat []reconSource) ([]reconSource, error) {
+	gated, err := pipeline.GatedRegistryOptions(ctx, store, logger, ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("gated registry warm: %w", err)
+	}
+	return applyGatedOptions(cat, gated)
+}
+
+// applyGatedOptions is the pure half of [warmCatalogueGates]: it rebuilds
+// each gated source's decoder (and its throwaway newGatedDec, and its
+// static contractIDs filter) with gated[source] applied, and returns a new
+// catalogue. Non-gated sources pass through untouched.
+//
+// Constructors come from pipeline.GatedMetaFor — the one registry the
+// indexer's BuildDispatcher / BuildRegistry also construct from — so the
+// re-derive cannot drift onto a different decoder than the one it audits.
+// That is asserted, not assumed: a catalogue entry whose decoder type
+// differs from the registry's fails closed here.
+//
+// FAIL CLOSED on a gated source with no entry in `gated`:
+// GatedRegistryOptions returns one for every gated source, so a missing
+// key is a wiring bug, and quietly keeping the bare decoder would restore
+// exactly the defect this exists to remove.
+func applyGatedOptions(cat []reconSource, gated map[string][]contractid.Option) ([]reconSource, error) {
+	out := make([]reconSource, len(cat))
+	copy(out, cat)
+	for i := range out {
+		src := &out[i]
+		meta, ok := pipeline.GatedMetaFor(src.name)
+		if !ok {
+			continue
+		}
+		opts, have := gated[src.name]
+		if !have {
+			return nil, fmt.Errorf("gated catalogue source %q has no warmed registry options — "+
+				"refusing to re-derive it on the bare in-code seed", src.name)
+		}
+		if err := regateSource(src, meta, opts); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// regateSource rebuilds one gated catalogue source in place with opts.
+func regateSource(src *reconSource, meta pipeline.GatedMeta, opts []contractid.Option) error {
+	dec := meta.NewDecoder(opts...)
+	if src.dec != nil && reflect.TypeOf(src.dec) != reflect.TypeOf(dec) {
+		return fmt.Errorf("gated catalogue source %q decodes with %T but the gated registry builds %T — "+
+			"the re-derive would audit a different decoder than the indexer runs", src.name, src.dec, dec)
+	}
+	src.dec = dec
+
+	if src.newGatedDec != nil {
+		if _, ok := dec.(gatedDecoder); !ok {
+			return fmt.Errorf("gated catalogue source %q opts into the gated prefilter but %T cannot enumerate its gate", src.name, dec)
+		}
+		newDecoder := meta.NewDecoder
+		src.newGatedDec = func() gatedDecoder {
+			// Same constructor, same options as the instance asserted
+			// just above, so the concrete type — and the assertion's
+			// outcome — is the same.
+			g, _ := newDecoder(opts...).(gatedDecoder)
+			return g
+		}
+	}
+
+	// A static contractIDs list is a HARD per-event filter in ch-rebuild /
+	// ch-reproject and the lake prefilter of the re-derive, so a decoder
+	// that admits a registry-only contract is not enough on its own: the
+	// filter has to admit it too. The curated order is kept as-is and the
+	// registry-only extras are appended sorted, so an empty registry leaves
+	// the list byte-identical to the in-code one.
+	if len(src.contractIDs) > 0 {
+		src.contractIDs = unionContractIDs(src.contractIDs, contractid.New(opts...).Children())
+	}
+	return nil
+}
+
+// unionContractIDs returns base followed by the members of extra that base
+// does not already hold, those extras sorted. Never aliases base.
+func unionContractIDs(base, extra []string) []string {
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	out := make([]string, 0, len(base)+len(extra))
+	for _, c := range base {
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		out = append(out, c)
+	}
+	added := make([]string, 0, len(extra))
+	for _, c := range extra {
+		if _, dup := seen[c]; dup {
+			continue
+		}
+		seen[c] = struct{}{}
+		added = append(added, c)
+	}
+	sort.Strings(added)
+	return append(out, added...)
 }
 
 // validateSourceFilter fails CLOSED when a -source filter names no source in
