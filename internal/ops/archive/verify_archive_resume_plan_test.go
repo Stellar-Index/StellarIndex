@@ -1,6 +1,8 @@
 package archive
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -268,6 +270,77 @@ func TestFullPlanStitchInput_RefusesAHoleInThePlan(t *testing.T) {
 	}
 	if _, err := fullPlanStitchInput(st, "chain", len(chunks), []int{1, 2}, live); err == nil {
 		t.Fatal("fullPlanStitchInput accepted a plan with an unreconstructable chunk; want an error")
+	}
+}
+
+// TestVerifyArchiveState_StitchSurvivesTheStateFile writes and reads
+// the real state file. The boundary evidence is only useful if it
+// survives the process boundary it exists to cross — the writer and
+// the reader are the two halves of one loop, and neither half proves
+// the other.
+//
+// It also pins backward compatibility in both directions: a state file
+// written before the field existed must read back with Stitch nil (the
+// shape planResumedWalk re-walks), not as a zero-valued record that
+// would be treated as evidence.
+func TestVerifyArchiveState_StitchSurvivesTheStateFile(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 19, 4, 37, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
+	st = markChunkDoneStitch(st, "chain", 0, walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xaa)), now)
+
+	path := filepath.Join(t.TempDir(), "verify-archive-state.json")
+	if err := writeVerifyArchiveState(path, st); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+	got, err := readVerifyArchiveState(path)
+	if err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	rp := got.Tiers["chain"].InProgress
+	if rp == nil || len(rp.Chunks) != 3 {
+		t.Fatalf("in-progress lost across the state file: %+v", rp)
+	}
+	s := rp.Chunks[0].Stitch
+	if s == nil {
+		t.Fatal("chunk[0].Stitch did not survive the state file — a resumed run would have no " +
+			"boundary evidence and would re-walk every night (RLT-265)")
+	}
+	if s.FirstSeq != 2 || s.LastSeq != 1000 || s.Verified != 999 {
+		t.Errorf("stitch record = %+v, want first_seq 2 / last_seq 1000 / verified 999", *s)
+	}
+	if s.FirstPrevHash != hashToHex(hashByte(0x01)) || s.LastHash != hashToHex(hashByte(0xaa)) {
+		t.Errorf("stitch hashes = %s / %s, want %s / %s",
+			s.FirstPrevHash, s.LastHash, hashToHex(hashByte(0x01)), hashToHex(hashByte(0xaa)))
+	}
+	// Round-trips through fullPlanStitchInput, which is what actually
+	// consumes it — a writer proved only against itself proves little.
+	planInput, err := fullPlanStitchInput(got, "chain", 3, []int{1, 2}, []chunkResult{
+		walkedChunk(1, chunks[1], hashByte(0xaa), hashByte(0xbb)),
+		walkedChunk(2, chunks[2], hashByte(0xbb), hashByte(0xcc)),
+	})
+	if err != nil {
+		t.Fatalf("fullPlanStitchInput over the re-read state: %v", err)
+	}
+	if err := stitchChunks(planInput); err != nil {
+		t.Fatalf("stitch over the re-read state failed on an intact chain: %v", err)
+	}
+
+	// A pre-RLT-265 state file has no "stitch" key at all.
+	legacy := `{"tiers":{"chain":{"last_verified_ledger":1000,"in_progress":` +
+		`{"from":2,"to":3000,"workers":3,"chunks":[{"idx":0,"from":2,"to":1000,"done":true,` +
+		`"last_verified_hash":"` + hashToHex(hashByte(0xaa)) + `"}]}}}}`
+	legacyPath := filepath.Join(t.TempDir(), "legacy.json")
+	if err := os.WriteFile(legacyPath, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("write legacy state: %v", err)
+	}
+	legacyState, err := readVerifyArchiveState(legacyPath)
+	if err != nil {
+		t.Fatalf("read legacy state: %v", err)
+	}
+	if got := legacyState.Tiers["chain"].InProgress.Chunks[0].Stitch; got != nil {
+		t.Errorf("legacy chunk read back with Stitch = %+v, want nil so planResumedWalk re-walks it", *got)
 	}
 }
 
