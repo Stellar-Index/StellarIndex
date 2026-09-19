@@ -2253,11 +2253,13 @@ var frozenHeldWindows = []time.Duration{5 * time.Minute, time.Hour, 24 * time.Ho
 // machinery selected, which the raw bucket never is.
 //
 // `served` is the alias whose market the closed-bucket read came from
-// (zero when the read missed). It is checked first: the marker is keyed
-// on the literal pair the aggregator prices, so a `native` request
-// answered from crypto:XLM's bucket is governed by crypto:XLM's freeze.
-// The held value is read for the pair whose marker fired — one venue
-// population's held value is never substituted for another's.
+// (zero when the read missed). Its marker alone governs a bucket that
+// was read: the marker is keyed on the literal pair the aggregator
+// prices, so a `native` request answered from crypto:XLM's bucket is
+// governed by crypto:XLM's freeze — and by no other spelling's (see
+// [Server.frozenPairBase]). The held value is read for the pair whose
+// marker fired — one venue population's held value is never substituted
+// for another's.
 //
 // No readable held value (first-bucket freeze, an expired key, a cache
 // read error) is frozenServeNothingHeld, and the caller refuses. That
@@ -2304,16 +2306,30 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 	return frozenResolution{outcome: frozenServeNothingHeld}
 }
 
-// frozenPairBase reports which spelling of the pair carries a live
-// freeze marker: the alias the closed-bucket read was served from
-// first, then the requested literal. One marker read in the common case
-// (served == requested), two at most.
+// frozenPairBase reports which spelling of the pair carries the freeze
+// marker that GOVERNS this response. Exactly one marker read.
+//
+// When a closed bucket was read, that is the marker of the alias it was
+// read from, and nothing else: an unfrozen served pair is served as
+// read even if the requested literal carries a marker of its own. The
+// literal's marker is a verdict on a DIFFERENT venue population
+// (`native/fiat:GBP` is not the market `crypto:XLM/fiat:GBP` is), so it
+// has nothing to say about the healthy bucket in hand — and letting it
+// fire discarded that bucket for the literal's held value, or for a 503
+// whose "refused bucket" did not exist, while the alias spelling of the
+// same request served 200. A healthy alias wins, the same rule
+// [Server.readPriceWithAliasesServed] applies to a withheld alias.
+//
+// Only when no bucket was read (`served` is zero — the fallback chain
+// answered) is the requested literal's marker consulted: it is the only
+// pair there is to ask about.
 func (s *Server) frozenPairBase(r *http.Request, requested, served, quote canonical.Asset) (canonical.Asset, bool) {
-	if !served.IsZero() && s.lookupFrozen(r, served, quote) {
-		return served, true
+	governing := served
+	if governing.IsZero() {
+		governing = requested
 	}
-	if !served.Equal(requested) && s.lookupFrozen(r, requested, quote) {
-		return requested, true
+	if s.lookupFrozen(r, governing, quote) {
+		return governing, true
 	}
 	return canonical.Asset{}, false
 }

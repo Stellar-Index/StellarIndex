@@ -255,3 +255,190 @@ func TestPriceBatch_FrozenRowCarriesLastKnownGood(t *testing.T) {
 		}
 	})
 }
+
+// F013 residual: the freeze that governs a response is the freeze on the
+// pair whose bucket is being SERVED. A `native` request answered from
+// crypto:XLM's closed bucket is governed by crypto:XLM's marker alone; a
+// marker that exists only on the requested literal (`native/fiat:GBP`)
+// says nothing about the healthy bucket in hand. Before the bound, that
+// literal marker discarded the healthy alias bucket anyway: with nothing
+// held for `native` the request 503'd under a detail claiming a "refused
+// bucket" that did not exist, the batch row vanished, and with a 24h
+// value held for `native` that value replaced the healthy bucket —
+// while asset=crypto:XLM served 200 / the bucket throughout.
+
+const (
+	healthyAliasBucket = "0.2500"
+	literalHeld24h     = "0.2300"
+	nativeGBP          = "native/fiat:GBP"
+)
+
+// healthyAliasReader has rows only under crypto:XLM/fiat:GBP — three
+// venues, fresh — so every `native` request is served from that alias.
+func healthyAliasReader() *stubPriceReader {
+	return &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			xlmGBP: {AssetID: "crypto:XLM", Quote: "fiat:GBP", Price: healthyAliasBucket, PriceType: "vwap", WindowSeconds: 60},
+		},
+		sources: map[string][]string{xlmGBP: {"kraken", "coinbase", "bitstamp"}},
+	}
+}
+
+// literalOnlyFreezeShapes are the two states the requested-literal marker
+// can be in while the SERVED alias is unfrozen. Both must serve the
+// healthy alias bucket exactly as read.
+func literalOnlyFreezeShapes() map[string]lkgPairs {
+	return map[string]lkgPairs{
+		"nothing held for the literal": {},
+		"24h held for the literal":     {nativeGBP + "/86400": literalHeld24h},
+	}
+}
+
+func TestPrice_FreezeOnRequestedLiteralOnlyDoesNotDiscardTheHealthyAliasBucket(t *testing.T) {
+	for name, cache := range literalOnlyFreezeShapes() {
+		t.Run(name, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices:       healthyAliasReader(),
+				Freeze:       frozenPairs{nativeGBP: true}, // crypto:XLM/fiat:GBP is NOT frozen
+				Triangulated: cache,
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			status, body := getBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:GBP")
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200 with the healthy alias bucket: %s", status, body)
+			}
+			if strings.Contains(body, literalHeld24h) {
+				t.Fatalf("the literal's held value replaced the healthy alias bucket: %s", body)
+			}
+			for _, want := range []string{
+				`"asset_id":"native"`,
+				`"price":"` + healthyAliasBucket + `"`,
+				`"window_seconds":60`,
+				`"sources":["kraken","coinbase","bitstamp"]`,
+				`"stale":false`,
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %s: %s", want, body)
+				}
+			}
+			// The served pair is not frozen; the flag describes the value
+			// in the response, so it must not claim otherwise. (Both flags
+			// are omitted from the wire when false.)
+			if strings.Contains(body, `"frozen":true`) || strings.Contains(body, `"single_source":true`) {
+				t.Errorf("an unfrozen three-venue bucket must not be flagged frozen/single_source: %s", body)
+			}
+
+			// Both spellings are the same market and must agree.
+			_, direct := getBody(t, ts.URL+"/v1/price?asset=crypto:XLM&quote=fiat:GBP")
+			if !strings.Contains(direct, `"price":"`+healthyAliasBucket+`"`) {
+				t.Fatalf("control: crypto:XLM spelling should serve the bucket: %s", direct)
+			}
+		})
+	}
+}
+
+func TestPriceBatch_FreezeOnRequestedLiteralOnlyKeepsTheHealthyAliasRow(t *testing.T) {
+	for name, cache := range literalOnlyFreezeShapes() {
+		t.Run(name, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Prices:       healthyAliasReader(),
+				Freeze:       frozenPairs{nativeGBP: true},
+				Triangulated: cache,
+			})
+			ts := startHTTPTest(t, srv.Handler())
+
+			status, body := getBody(t, ts.URL+"/v1/price/batch?asset_ids=native&quote=fiat:GBP")
+			if status != http.StatusOK {
+				t.Fatalf("status = %d, want 200: %s", status, body)
+			}
+			if strings.Contains(body, literalHeld24h) {
+				t.Fatalf("the literal's held value replaced the healthy alias bucket: %s", body)
+			}
+			for _, want := range []string{
+				`"asset_id":"native"`, // the row must not be omitted
+				`"price":"` + healthyAliasBucket + `"`,
+				`"window_seconds":60`,
+				`"stale":false`,
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("body missing %s: %s", want, body)
+				}
+			}
+			if strings.Contains(body, `"frozen":true`) {
+				t.Errorf("an unfrozen served row must not flag the batch frozen: %s", body)
+			}
+		})
+	}
+}
+
+// The bound must not weaken the main fix. When the SERVED alias is
+// frozen, a second marker on the requested literal changes nothing: the
+// served pair's held value is what goes out, never the refused bucket
+// and never the literal's held value.
+func TestPrice_FrozenServedAliasStillHoldsWhenTheLiteralIsAlsoFrozen(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Prices: movedBucketReader(),
+		Freeze: frozenPairs{xlmGBP: true, nativeGBP: true},
+		Triangulated: lkgPairs{
+			xlmGBP + "/300":      heldLKG,
+			nativeGBP + "/86400": literalHeld24h,
+		},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:GBP")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", status, body)
+	}
+	if strings.Contains(body, movedBucket) || strings.Contains(body, literalHeld24h) {
+		t.Fatalf("want the served pair's held value only: %s", body)
+	}
+	for _, want := range []string{`"price":"` + heldLKG + `"`, `"frozen":true`, `"stale":true`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %s: %s", want, body)
+		}
+	}
+}
+
+// ...and a frozen served alias with nothing held still refuses, even
+// though the literal holds a value: one venue population's held value is
+// never substituted for another's.
+func TestPrice_FrozenServedAliasWithNothingHeldStillRefuses(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Prices:       movedBucketReader(),
+		Freeze:       frozenPairs{xlmGBP: true, nativeGBP: true},
+		Triangulated: lkgPairs{nativeGBP + "/86400": literalHeld24h},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:GBP")
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", status, body)
+	}
+	if strings.Contains(body, movedBucket) || strings.Contains(body, literalHeld24h) {
+		t.Fatalf("refusal leaked a value: %s", body)
+	}
+}
+
+// No closed-bucket read served the response (served alias is zero): the
+// requested literal's marker is the only one there is, and it still
+// governs — the bound applies only when a bucket was actually read.
+func TestPrice_FreezeOnLiteralStillGovernsWhenNoBucketWasServed(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Prices:       &stubPriceReader{}, // every alias misses -> fallback chain
+		Freeze:       frozenPairs{nativeGBP: true},
+		Triangulated: lkgPairs{nativeGBP + "/300": literalHeld24h},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:GBP")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", status, body)
+	}
+	for _, want := range []string{`"price":"` + literalHeld24h + `"`, `"frozen":true`, `"single_source":true`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %s: %s", want, body)
+		}
+	}
+}

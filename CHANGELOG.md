@@ -124,6 +124,26 @@ against.
   (SEP-40), the `/v1/assets` price columns, and the USD leg of the
   derived-fiat cross — none of them carries `flags.frozen`, so none of
   them makes the false claim, but none of them is protected either.
+- **price:** a freeze marker on the requested spelling no longer
+  discards a healthy bucket read from an unfrozen alias (F013 residual).
+  The freeze check above looked at the served alias first and then at
+  the requested literal, so `asset=native&quote=fiat:GBP` answered from
+  an unfrozen `crypto:XLM/fiat:GBP` bucket (three venues) was still
+  overridden by a marker that existed only on `native/fiat:GBP`: with
+  nothing held for `native` it returned `503` — under a detail naming a
+  "refused bucket" that did not exist — and the batch row vanished,
+  while `asset=crypto:XLM` served `200` for the same market; with a 24h
+  value held for `native`, that value replaced the healthy bucket. The
+  marker that governs a response is now the marker of the pair whose
+  bucket is served, and only that one: an unfrozen served pair is
+  served exactly as read (`window_seconds: 60`, its sources, not stale)
+  and is NOT flagged `frozen`, because the flag describes the value in
+  the response and that value is not a held one. A healthy alias wins,
+  the same rule the alias walk already applies to a withheld alias. The
+  main fix is untouched: a frozen SERVED pair still serves its own held
+  value or refuses, even when the literal holds a value of its own. The
+  requested literal's marker is consulted only when no bucket was read
+  at all (the fallback chain answered).
 
 - **assets listing:** the listing `market_cap_usd` of a confirmed
   non-7-decimals token divides supply by the token's confirmed decimals,
