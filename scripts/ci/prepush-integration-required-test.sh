@@ -64,4 +64,53 @@ harness="$(git -C "$tmp" rev-parse HEAD)"
 # regress without any pre-push path compiling it.
 (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$migration" "$harness")
 
+# The remaining INT_TEST_PKGS directories (Makefile:INT_TEST_PKGS). The suite
+# BUILDS AND RUNS these packages, so a change confined to one can break an
+# integration-tagged test — and until T424/T449 neither this classifier nor
+# ci.yml's preflight filter named them, so such a diff ran the suite in NO
+# lane. scripts/ops/fx-history-backfill/generation_test.go is the case that
+# matters: it pins an INV-3 money invariant (an operator fx_quotes correction
+# must be stamped with a positive derive generation, or the next gen-0 worker
+# refresh silently reverts it).
+prev="$harness"
+for dir in scripts/ops/fx-history-backfill cmd/stellarindex-ops internal/ops/archive; do
+  mkdir -p "$tmp/$dir"
+  printf 'ops\n' > "$tmp/$dir/main.go"
+  git -C "$tmp" add "$dir/main.go"
+  git -C "$tmp" commit -q -m "$dir"
+  head="$(git -C "$tmp" rev-parse HEAD)"
+  if ! (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$prev" "$head"); then
+    echo "prepush integration policy: a diff confined to $dir did not require integration" >&2
+    exit 1
+  fi
+  prev="$head"
+done
+
+# Precision, in the direction that actually costs: widening must NOT have
+# swallowed the neighbouring trees. scripts/ci and internal/ops outside
+# archive/ are edited constantly and get nothing from a Docker round-trip —
+# and a classifier that requires integration for everything is indistinguishable
+# from no classifier at all.
+mkdir -p "$tmp/scripts/ci" "$tmp/internal/ops"
+printf 'ci\n' > "$tmp/scripts/ci/helper.sh"
+printf 'runbook\n' > "$tmp/internal/ops/runbook.go"
+git -C "$tmp" add scripts/ci/helper.sh internal/ops/runbook.go
+git -C "$tmp" commit -q -m neighbours
+neighbours="$(git -C "$tmp" rev-parse HEAD)"
+if (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$prev" "$neighbours"); then
+  echo "prepush integration policy: scripts/ci + internal/ops (outside archive/) incorrectly required integration" >&2
+  exit 1
+fi
+
+# And the original skip direction still holds after the widening: a docs-only
+# range must still not drag the Docker suite in.
+printf 'more docs\n' > "$tmp/docs/second.md"
+git -C "$tmp" add docs/second.md
+git -C "$tmp" commit -q -m docs2
+docs2="$(git -C "$tmp" rev-parse HEAD)"
+if (cd "$tmp" && "$root/scripts/ci/prepush-integration-required.sh" "$neighbours" "$docs2"); then
+  echo "prepush integration policy: docs-only range incorrectly required integration after widening" >&2
+  exit 1
+fi
+
 echo "prepush integration policy self-test: PASS"

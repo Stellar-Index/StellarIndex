@@ -264,13 +264,27 @@ jobs:
         with:
           base: ${{ steps.base.outputs.resolved }}
           filters: |
+            # Must stay a superset of the Makefile's INT_TEST_PKGS
+            # directories: that list says which packages the Docker suite
+            # BUILDS, this one says whether it RUNS at all. A package in
+            # the first and absent from this one has its
+            # `//go:build integration` tests compiled by the unconditional
+            # compile gate and executed by nothing (T424/T449 — the
+            # scripts/ops/fx-history-backfill INV-3 money invariant).
+            # Guarded by test/controlwiring/
+            # integration_pkgs_trigger_evidence_test.go and mirrored in
+            # scripts/ci/check-change-class.sh (cross-checked below).
             integration:
               - 'internal/storage/**'
               - 'internal/pipeline/**'
               - 'internal/sources/**'
               - 'internal/api/**'
+              - 'internal/ops/archive/**'
+              - 'cmd/stellarindex-ops/**'
               - 'migrations/**'
+              - 'scripts/ops/**'
               - 'test/integration/**'
+              - 'test/harness/**'
               - 'go.mod'
             go:
               - '**/*.go'
@@ -506,11 +520,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: [preflight]
-    # §B: only when the diff touches internal/storage|pipeline|sources|
-    # api, migrations/, test/integration/ or go.mod — the 2026-07-01
-    # sponsors/markets/blend regressions this shard matrix exists to
-    # catch all lived in those paths, and a docs/scripts/web-only PR
-    # gets zero additional signal from a 20-minute Docker round-trip.
+    # §B: only when the diff touches the preflight `integration` class —
+    # internal/storage|pipeline|sources|api, internal/ops/archive,
+    # cmd/stellarindex-ops, migrations/, scripts/ops/, test/integration/,
+    # test/harness/ or go.mod. The 2026-07-01 sponsors/markets/blend
+    # regressions this shard matrix exists to catch all lived in the first
+    # group; the rest are the other INT_TEST_PKGS directories, whose
+    # integration-tagged tests are otherwise compiled but never executed
+    # for a change confined to them. A docs/web-only PR still gets zero
+    # additional signal from a 20-minute Docker round-trip.
     #
     # Gated with a STEP-level `if:` on "integration shard N of 4" below,
     # NOT a job-level one: this job's comment two lines down already
@@ -574,7 +592,7 @@ jobs:
       - name: no in-scope change (path filter) — nothing to run
         if: needs.preflight.outputs.integration != 'true'
         run: |
-          echo "integration-test-shard: no internal/storage, internal/pipeline, internal/sources, internal/api, migrations/, test/integration/ or go.mod change in this diff -- shard skipped its Docker suite, reporting success."
+          echo "integration-test-shard: this diff touches none of the preflight integration class (internal/storage, internal/pipeline, internal/sources, internal/api, internal/ops/archive, cmd/stellarindex-ops, migrations/, scripts/ops/, test/integration/, test/harness/, go.mod) -- shard skipped its Docker suite, reporting success."
 
   integration-test:
     # Aggregate of the shard matrix. This is the job whose NAME branch

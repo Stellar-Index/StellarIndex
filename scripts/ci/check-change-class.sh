@@ -23,11 +23,28 @@
 # round-trip for zero additional signal — the problem this filter exists
 # to remove per the plan's measured numbers.
 #
+# WHY THE integration CLASS IS A SUPERSET OF INT_TEST_PKGS. The Makefile's
+# INT_TEST_PKGS is the list of packages the Docker suite BUILDS AND RUNS;
+# this class decides whether that suite runs AT ALL for a given diff. If a
+# package is in the first list but its directory is in neither classifier,
+# its `//go:build integration` tests compile in the unconditional compile
+# gate and are EXECUTED BY NOTHING for a change confined to that package —
+# which is how scripts/ops/fx-history-backfill's INV-3 money-invariant
+# regression (operator fx_quotes corrections must carry a positive derive
+# generation) sat in no executing gate (T424/T449), and cmd/stellarindex-ops
+# (F-1334) and internal/ops/archive (W6-tst-1) the same. So every
+# INT_TEST_PKGS directory belongs here, and
+# test/controlwiring/integration_pkgs_trigger_evidence_test.go fails if one
+# is missing from this regex, from ci.yml's filter, or from
+# prepush-integration-required.sh.
+#
 # Classes (must stay identical in substance to the `filters:` block in
 # .github/workflows/ci.yml's preflight job):
 #   integration  — internal/storage/**, internal/pipeline/**,
-#                  internal/sources/**, internal/api/**, migrations/**,
-#                  test/integration/**, go.mod
+#                  internal/sources/**, internal/api/**,
+#                  internal/ops/archive/**, cmd/stellarindex-ops/**,
+#                  migrations/**, scripts/ops/**, test/integration/**,
+#                  test/harness/**, go.mod
 #   go           — any *.go file, go.mod, go.sum
 #   web          — web/**, openapi/**
 #   ansible      — configs/ansible/**
@@ -44,7 +61,7 @@
 set -euo pipefail
 
 class_integration() {
-  grep -E '^(internal/(storage|pipeline|sources|api)/|migrations/|test/integration/)|^go\.mod$'
+  grep -E '^(internal/(storage|pipeline|sources|api|ops/archive)/|cmd/stellarindex-ops/|migrations/|scripts/ops/|test/(integration|harness)/)|^go\.mod$'
 }
 
 class_go() {

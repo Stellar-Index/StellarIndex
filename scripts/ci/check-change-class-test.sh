@@ -75,6 +75,35 @@ expect "test/integration/** triggers integration" 0
 run integration "go.mod"
 expect "go.mod triggers integration" 0
 
+# The other INT_TEST_PKGS directories. A package the Docker suite BUILDS but
+# whose directory no classifier names has its `//go:build integration` tests
+# compiled by the unconditional compile gate and executed by nothing for a
+# diff confined to it — T424/T449 (the scripts/ops/fx-history-backfill INV-3
+# money invariant), F-1334 (cmd/stellarindex-ops) and W6-tst-1
+# (internal/ops/archive) were that same hole, found one package at a time.
+
+run integration "scripts/ops/fx-history-backfill/main.go"
+expect "scripts/ops/** triggers integration (INT_TEST_PKGS member)" 0
+
+run integration "cmd/stellarindex-ops/main.go"
+expect "cmd/stellarindex-ops/** triggers integration (INT_TEST_PKGS member)" 0
+
+run integration "internal/ops/archive/reader.go"
+expect "internal/ops/archive/** triggers integration (INT_TEST_PKGS member)" 0
+
+run integration "test/harness/timescale.go"
+expect "test/harness/** triggers integration (INT_TEST_PKGS member)" 0
+
+# Precision on the widened prefixes: internal/ops OUTSIDE archive/, and
+# scripts/ OUTSIDE ops/, must stay out of the class — widening to the parent
+# would pay the Docker round-trip for every CI-script edit.
+
+run integration "internal/ops/runbook.go"
+expect "internal/ops outside archive/ does NOT trigger integration" 1
+
+run integration "scripts/ci/check-change-class.sh"
+expect "scripts/ci (not scripts/ops) does NOT trigger integration" 1
+
 # ── Precision: a .go file OUTSIDE the named integration subtrees must
 # still run the go class but must NOT trip the integration class — a
 # too-broad rule pays the Docker round-trip for changes the shard
@@ -133,7 +162,7 @@ expect "empty diff (zero files) → usage error, never read as 'nothing changed,
 
 echo
 echo "check-change-class-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
-if [ "$asserts" -lt 20 ]; then
+if [ "$asserts" -lt 29 ]; then
   echo "check-change-class-test: FAIL — only ${asserts} assertions ran; cases have been lost" >&2
   exit 1
 fi
