@@ -131,6 +131,26 @@ against.
   guards** in `docs/operations/explorer-deployment.md`, next to the build
   command an operator reads.
 
+- **api / the lake watermark no longer serialises requests behind one
+  ClickHouse read (RLT-095):** `lakeWatermark` held the process-global
+  `lakeWMMu` across `LakeWatermarkReader.LakeWatermark(ctx)` — a ClickHouse
+  round-trip whose only bound is the connection's 30s
+  `max_execution_time`/`ReadTimeout` — so once a TTL window lapsed, one slow
+  read put every concurrent request on every lake-backed route
+  (`/v1/pools/reserves`, the three `/v1/assets/*/supply` arms, both
+  `/v1/liquidity-pools` paths, `/v1/lending/reserves` and the three explorer
+  account-state reads) onto a non-context-aware mutex, where they burned
+  their own deadlines waiting for a freshness annotation. The failure arm
+  made it worse: it did not stamp the fetch time, so a wedged lake was
+  re-read once per request, back to back. Now it is the same stale-serve
+  posture as the native liquidity-pool listing (#332 F4) — an existing entry
+  is returned immediately and a lapsed one kicks ONE detached, 10s-bounded
+  read coalesced through `singleflight`; only a process that has never read
+  a watermark waits, and then only for the shorter of its own deadline and
+  the 2s cold-wait cap. A failed read stamps a 5s retry gap, so a wedged
+  lake is retried at most once per gap instead of once per request, and the
+  last-good watermark keeps being served (its ageing close time still drives
+  `flags.stale` correctly). No response shape changes.
 - **ops / the archival-node role still hard-failed one import earlier (F128):**
   the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,
   `21-clickhouse-drop-guard.yml` and `22-clickhouse-exporter.yml`, but

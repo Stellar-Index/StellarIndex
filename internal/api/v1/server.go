@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
@@ -183,10 +185,20 @@ type Server struct {
 	lakeWatermarkReader LakeWatermarkReader
 	// Cached lake watermark (ADR-0041 D4) — see lakeWatermark() in
 	// lake_watermark.go. Refreshed at most every lakeWatermarkTTL.
+	// lakeWMMu guards the cached entry ONLY and is never held across the
+	// lake read (RLT-095, 2026-09-19 — it used to be, so every caller on
+	// every lake-backed route queued behind one ClickHouse round-trip on a
+	// non-context-aware mutex and burned its own deadline). lakeWMFlight
+	// coalesces concurrent refreshes onto one detached read;
+	// lakeWMNextTry is the negative cache — the earliest a new read may
+	// start after a failed one, so a wedged lake is retried once per
+	// lakeWatermarkRetryGap instead of once per request.
 	lakeWMMu       sync.Mutex
 	lakeWMLedger   uint32
 	lakeWMClosedAt time.Time
 	lakeWMFetched  time.Time
+	lakeWMNextTry  time.Time
+	lakeWMFlight   singleflight.Group
 	// Cached top-N native (CAP-38) liquidity-pool listing — a
 	// whole-`liquidity_pool`-prefix lake scan (~40k pools) ranked in
 	// Go; cached so the listing endpoint doesn't re-scan per request
