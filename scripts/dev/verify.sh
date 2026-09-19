@@ -304,6 +304,11 @@ echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== ClickHouse Prometheus endpoint self-test ===" && ./scripts/ci/clickhouse-exporter-test.sh
+# F128 (audit-2026-09-02): the archival-node role configures ClickHouse in
+# four task files and installs it in a fifth, so a host without ClickHouse
+# used to hard-fail the whole role. Runs the role's own main.yml locally
+# (~12s, --check for the log-discipline arms) — no hosts, no ClickHouse.
+echo "=== Ansible ClickHouse host-gate self-test ===" && ./scripts/ci/ansible-clickhouse-host-gate-test.sh
 echo "=== Alertmanager apply-path parity ===" && ./scripts/ci/check-alertmanager-parity.sh
 echo "=== Alertmanager apply-path parity self-test ===" && ./scripts/ci/check-alertmanager-parity-test.sh
 echo "=== pgBackRest backup wrapper self-test ===" && ./scripts/ci/pgbackrest-backup-test.sh
@@ -530,6 +535,11 @@ lane_d() { # everything else
     echo "=== Public-dataset drift-verdict self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Fleet release-drift verdict self-test ===" && ./scripts/ci/check-fleet-release-drift-test.sh
     echo "=== zfs-snapshot job self-test ===" && ./scripts/ci/zfs-snapshot-test.sh
+    # The behavioural twin above pins HOW the job snapshots; this pins WHICH
+    # datasets it is given (NS03 — the Galexie LCM archive the other two
+    # tiers are derived from had none). Renders the role template, so the
+    # render arms skip without a jinja2 python locally; CI fails closed.
+    echo "=== zfs-snapshot dataset coverage ===" && ./scripts/ci/zfs-snapshot-coverage-test.sh
     # Migrations-sync self-test: structural half needs only python; the
     # behavioural half runs the task file with ansible and needs GNU tar on the
     # target (unarchive --diff). macOS ships bsdtar — point it at a container

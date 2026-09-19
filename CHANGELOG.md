@@ -127,6 +127,22 @@ against.
   through a binary deploy.** It lands on the next `ansible-playbook …
   archival-node.yml` run, and changes nothing on r1 when it does.
 
+- **ci / two ansible regression gates ran in no gate (F128):**
+  `scripts/ci/ansible-clickhouse-host-gate-test.sh` and
+  `scripts/ci/zfs-snapshot-coverage-test.sh` were wired into neither
+  `scripts/dev/verify.sh` nor `.github/workflows/ci.yml`, so the evidence they
+  carry — that the role survives a host without ClickHouse, and that the
+  rolling snapshots cover the Galexie LCM archive and not just the two tiers
+  derived from it — only ran when someone edited the scripts themselves. Both
+  now run in `verify.sh` (so in `make prepush`) beside their peers, and in
+  CI's `ansible-check` job. That job rather than `import-checks` because both
+  need a python with jinja2 + PyYAML, which only `ansible-check` installs;
+  the consequence is that CI triggers them on the `ansible` change class, while
+  a change to `scripts/ops/zfs-snapshot.sh` alone is caught by the prepush
+  gate. Nothing else about either gate changed: `check-verify-parity` still
+  passes over all 87 CI gate scripts, and the change-class, prepush-integration
+  and integration-shard self-tests are unaffected.
+
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with
   `AND o.tx_hash IN (SELECT tx_hash FROM stellar.transactions WHERE successful = 1

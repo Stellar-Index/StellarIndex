@@ -2020,6 +2020,34 @@ jobs:
         # ClickHouse, no ansible run.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/clickhouse-exporter-test.sh
+      - name: ansible ClickHouse host-gate self-test
+        # F128 (audit-2026-09-02): the role CONFIGURES ClickHouse in four
+        # task files (15-log-discipline plus 20/21/22) and INSTALLS it in a
+        # fifth, and the config ones ran unconditionally — so the DR
+        # bring-up, a fresh r2/r3 or any no-lake box hard-failed the whole
+        # role on the first of them. Gating them on run_clickhouse would be
+        # the wrong fix (it is false on r1 BY DESIGN, and r1 is the host
+        # they exist for); arm B here fails on exactly that mistake. Runs
+        # the role's own tasks/main.yml with -c local against three host
+        # shapes, the log-discipline arms under --check. No hosts, no
+        # ClickHouse, no writes outside a temp dir.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-clickhouse-host-gate-test.sh
+      - name: zfs-snapshot dataset coverage
+        # NS03 (audit-2026-09-02): the rolling-snapshot job covered
+        # data/clickhouse and data/postgres — both DERIVED — while the
+        # Galexie LCM archive they are derived from (data/minio, 2.64 TB)
+        # had no snapshot and no off-host copy. Renders the role's real
+        # zfs-snapshot.env.j2 and cross-checks it against the script's
+        # built-in default and the role's own zfs_datasets.
+        #
+        # Here rather than in import-checks: it needs a python with
+        # jinja2 + PyYAML, which only this job installs (via ansible).
+        # That ties the CI trigger to the `ansible` change class; a change
+        # to scripts/ops/zfs-snapshot.sh alone is caught by verify.sh,
+        # which runs this on every prepush.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/zfs-snapshot-coverage-test.sh
       - name: galexie restart-wiring test (structural + local ansible run)
         # 2026-08-28 audit (deploy-ansible-handlers-7 / -drift-3): pins
         # that galexie-input renders restart only on EFFECTIVE change
