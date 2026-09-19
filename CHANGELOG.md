@@ -196,6 +196,16 @@ against.
   climbs. A row carrying both a poison output and a held fault is retried
   whole, so it is not a shed candidate and its quarantine budget still
   accumulates.
+- **ops / wasm-history exits non-zero on a short walk (RLT-282):** the
+  companion to closing its ranges at the last ledger observed. The stdout JSON
+  is copied into `docs/operations/wasm-audits/*` and is what a `BackfillSafe`
+  determination rests on, and the runbook redirects stdout to a file — so a
+  stderr warning is easy to miss. The JSON is still written (its ranges are
+  honest about what was observed, and a partial audit is worth having) and the
+  command then returns `wasmWalkCoverage`, which names delivered, requested and
+  the bucket. An unbounded walk (`-to 0`, the live tail) has no requested count
+  and stays exempt.
+
 - **ledgerstream / a both-tier miss was reported as an ordinary miss (RLT-282):**
   `TieredDataStore.coldGetFile` incremented the `both_missing` counter — the
   data-integrity page condition, "neither tier has the object" — and then

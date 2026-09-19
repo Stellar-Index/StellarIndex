@@ -149,23 +149,6 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 	fmt.Fprintf(os.Stderr, "\nwasm-history: scanned %d ledgers across %d worker(s) in %s\n",
 		totalScanned, *parallel, time.Since(startedAt).Round(time.Second))
 
-	// Say out loud when the walk was short of what was asked for
-	// (RLT-282). The per-range ToLedger below is now honest about what
-	// was observed, but the operator still needs to know the audit
-	// covers less than the range they named — TolerateTrailingMissing
-	// (always on here, by design, because -to may overshoot the live
-	// tip) turns a missing partition into a clean exit. This is a
-	// warning rather than a hard failure precisely because overshooting
-	// the tip is this subcommand's documented normal use; a bounded
-	// gate (ch-gate) fails instead.
-	if requested := uint64(*to) - uint64(*from) + 1; *to != 0 && totalScanned != requested {
-		fmt.Fprintf(os.Stderr,
-			"wasm-history: SHORT WALK — %d of %d requested ledgers in [%d, %d] were delivered from bucket %q; "+
-				"ranges below are closed at the LAST LEDGER OBSERVED, not at -to. Historical ranges need "+
-				"-bucket galexie-archive; the live bucket is trimmed.\n",
-			totalScanned, requested, *from, *to, bucketName)
-	}
-
 	// Merge worker outputs. Each worker's per-contract ranges are
 	// already in ledger-order within its chunk; concatenating in
 	// worker-order produces a globally ordered list, then we collapse
@@ -206,7 +189,54 @@ func wasmHistory(args []string) error { //nolint:funlen,gocognit,gocyclo // line
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(out)
+	if err := enc.Encode(out); err != nil {
+		return err
+	}
+
+	// Coverage last, so the operator still gets the JSON (its ranges are
+	// honest about what was observed) but the exit code is not. This
+	// output is copied into docs/operations/wasm-audits/* and is what a
+	// BackfillSafe determination rests on, so "the walk covered less of
+	// the range than you asked for" has to be impossible to miss — and
+	// stderr alone is easy to miss when stdout is redirected to a file,
+	// which is exactly how the runbook invokes this.
+	return wasmWalkCoverage(uint32(*from), uint32(*to), totalScanned, bucketName)
+}
+
+// wasmWalkCoverage turns a wasm-history walk that did not deliver its
+// whole range into a hard error, naming the bucket it read. An
+// unbounded walk (-to 0, the live tail) has no requested count and is
+// exempt.
+//
+// Same defect class as chops.walkCoverage / chops.backfillCoverage /
+// ingest.censusCoverage. opsutil.NewBoundedLedgerStreamConfig always
+// sets TolerateTrailingMissing — deliberately, because -to here may sit
+// at the live tip — so a missing partition within 65,536 ledgers of -to
+// comes back as a clean walk-complete and the JSON is simply computed
+// over fewer ledgers. The per-contract ranges now close at the last
+// ledger actually observed rather than at -to, so the artifact no
+// longer overstates its coverage; this makes the shortfall itself
+// unmissable.
+func wasmWalkCoverage(from, to uint32, scanned uint64, bucket string) error {
+	if to == 0 {
+		return nil
+	}
+	requested := uint64(to) - uint64(from) + 1
+	if scanned == requested {
+		return nil
+	}
+	if scanned == 0 {
+		return fmt.Errorf(
+			"wasm-history scanned 0 ledgers in [%d, %d] from bucket %q — nothing was examined, so "+
+				"every watched contract is reported as having no transitions; historical ranges need "+
+				"-bucket galexie-archive. Refusing to pass vacuously",
+			from, to, bucket)
+	}
+	return fmt.Errorf(
+		"wasm-history scanned %d of %d requested ledgers in [%d, %d] from bucket %q — the ranges above "+
+			"close at the LAST LEDGER OBSERVED, not at -to, so this audit covers less than the range you "+
+			"named; historical ranges need -bucket galexie-archive",
+		scanned, requested, from, to, bucket)
 }
 
 // writeStorageRotationsOutput merges per-worker storage-change
