@@ -77,8 +77,10 @@ var ErrCap67MovementsHole = errors.New("clickhouse: cap67 movements window is no
 var ErrCap67MovementsSkippedPrefix = errors.New("clickhouse: cap67 movements window skips ledgers below it")
 
 // SetCap67MovementsWatermark records completion through `thru` for the
-// derive window [from, thru] — and ONLY if the lake provably holds every
-// ledger in that window.
+// derive window [from, thru] — and ONLY if that advance is proven: the lake
+// holds every ledger in the window AND the window continues the derived
+// prefix rather than jumping over part of it (see cap67AdvanceProven for
+// both refusals and for the re-derive case, which records nothing).
 //
 // WHY the proof is required at the WRITE: the watermark is read back as
 // max(thru_ledger) and the derive resumes at watermark+1 with no trailing
