@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // AccountsWealthCacheTTL is how long a wealth ranking stays servable.
@@ -252,6 +253,11 @@ func (r *ExplorerReader) refreshAccountsWealth(assets []string, prices []float64
 	// outlive the request that noticed the miss.
 	go func() {
 		defer r.wealthCache.endFlight(ch)
+		// An unrecovered panic in ANY goroutine kills the whole API process.
+		// Registered last so it unwinds FIRST and endFlight above still runs,
+		// which is what keeps a contained panic from wedging /v1/accounts on
+		// a flight that never ends.
+		defer worker.Recover(nil, "explorer-accounts-wealth-refresh")
 		start := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), AccountsWealthRefreshTimeout)
 		defer cancel()

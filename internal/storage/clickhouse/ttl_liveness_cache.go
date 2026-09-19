@@ -2,10 +2,12 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // TTLVerdictCacheTTL bounds how old a served archived-pair verdict set may
@@ -65,6 +67,29 @@ type ttlLivenessCache struct {
 type ttlFlight struct {
 	done chan struct{}
 	err  error
+}
+
+// errTTLRefreshPanicked is the outcome every waiter on a flight whose
+// detached recompute panicked receives. It is a real error rather than nil
+// so a panicked refresh reads as a failed one (the snapshot is left
+// untouched, the caller retries) instead of as a silent success that served
+// an empty verdict set. Mirrors the explorer handlers' errRefreshPanicked.
+var errTTLRefreshPanicked = errors.New(
+	"clickhouse: ttl-liveness detached refresh panicked; verdict snapshot unchanged")
+
+// endFlight clears the in-flight marker and publishes `err` to every waiter.
+//
+// This runs from a DEFER in the refresh goroutine, never as a trailing
+// statement: containing a panic without releasing here is strictly worse
+// than the crash it replaces — coldFill's waiters would block forever on a
+// done channel nobody closes, and kickRefresh would keep handing out the
+// same dead flight for the life of the process.
+func (c *ttlLivenessCache) endFlight(fl *ttlFlight, err error) {
+	c.mu.Lock()
+	c.flight = nil
+	c.mu.Unlock()
+	fl.err = err
+	close(fl.done)
 }
 
 func newTTLLivenessCache(compute func(ctx context.Context, keys []string) (map[string]TTLLiveness, error)) *ttlLivenessCache {
@@ -183,10 +208,27 @@ func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 	}
 	c.mu.Unlock()
 	go func() {
+		var err error
+		// End the flight from a defer so neither a panic in compute nor one
+		// in onErr can wedge this cache forever — see endFlight. An
+		// unrecovered panic in ANY goroutine also kills the whole API
+		// process, so the recovery and the release land together: either
+		// without the other is a worse failure than the one it replaces.
+		defer func() {
+			if rec := recover(); rec != nil {
+				// nil logger → worker.Report falls back to slog.Default();
+				// this cache carries no logger of its own, and the metric
+				// (which is the page signal) does not depend on one.
+				worker.Report(nil, "explorer-ttl-liveness-refresh", rec)
+				err = errTTLRefreshPanicked
+			}
+			c.endFlight(fl, err)
+		}()
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), ttlVerdictRefreshTimeout)
 		defer cancel()
-		verdicts, err := c.compute(rctx, snapshot)
+		var verdicts map[string]TTLLiveness
+		verdicts, err = c.compute(rctx, snapshot)
 		obs.ObserveExplorerSWRRefresh("ttl_liveness", start, err)
 		if err == nil {
 			c.store(verdicts)
@@ -195,11 +237,6 @@ func (c *ttlLivenessCache) kickRefresh(keys []string) *ttlFlight {
 			// none (and beat fail-open serving of possibly-archived pairs).
 			c.onErr(err)
 		}
-		c.mu.Lock()
-		c.flight = nil
-		c.mu.Unlock()
-		fl.err = err
-		close(fl.done)
 	}()
 	return fl
 }

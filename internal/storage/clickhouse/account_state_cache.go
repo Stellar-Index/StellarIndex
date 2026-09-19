@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // AccountStateCacheTTL bounds how long a cached account state is served.
@@ -180,6 +182,11 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 	go func() {
 		defer r.refreshGate.ReleaseClass("account_state")
 		defer r.stateFlight.end(account, fl)
+		// An unrecovered panic in ANY goroutine kills the whole API process;
+		// the account is attacker-chosen, so this scan is reachable with
+		// arbitrary input. Registered last so it unwinds FIRST and the two
+		// releases above then run on a non-panicking stack.
+		defer worker.Recover(nil, "explorer-account-state-refresh")
 		rctx, cancel := context.WithTimeout(context.Background(), accountStateRefreshTimeout)
 		defer cancel()
 		st, err := r.AccountState(rctx, account)

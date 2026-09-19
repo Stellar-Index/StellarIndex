@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // LiveSinkOptions configures a [NewLiveSink].
@@ -134,6 +136,11 @@ func (l *LiveSink) PushLedger(ext LedgerExtract) {
 
 func (l *LiveSink) run() {
 	defer close(l.done)
+	// An unrecovered panic in ANY goroutine kills the whole process this sink
+	// is linked into. Registered after close(l.done) so it unwinds first and
+	// done still closes: a contained panic must not leave Stop() blocked
+	// forever on a worker that is already gone.
+	defer worker.Recover(l.logger, "clickhouse-live-sink-drain")
 	ticker := time.NewTicker(l.flush)
 	defer ticker.Stop()
 	for {
