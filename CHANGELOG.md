@@ -142,6 +142,51 @@ against.
   gate. Nothing else about either gate changed: `check-verify-parity` still
   passes over all 87 CI gate scripts, and the change-class, prepush-integration
   and integration-shard self-tests are unaffected.
+- **ops / cross-anchor checkpoint verification (F144):** a checkpoint with no file in
+  `/srv/history-archive` is now attributed before it is judged, and the tier-B units
+  enforce ADR-0017 contract 3 with an exit code. The anchor walk runs to the galexie
+  bucket's live tip while the mirror is filled by its own daily job, so the newest
+  checkpoints it reaches have no mirror file yet and never did — and every one of them
+  was counted as missing archive data. **Measured on r1 2026-09-19:** the nightly run
+  logged `checkpoints matched=325 missed=23`, then `checkpoint anchor OK`, then
+  `Result=success, ExecMainStatus=0` (the fire before it, `matched=324 missed=24`). All
+  23 sat in a contiguous block ABOVE the mirror's high-water 64,499,647, and the mirror
+  holds **1,007,807 of the 1,007,807** checkpoint files between ledger 63 and that
+  high-water — not one hole. The fill lands at ~02:2x UTC and the unit at 04:38 UTC, so
+  the block is about two hours of ledgers and recurs on every run. The run then advanced
+  the checkpoint tier's `last_verified_ledger` to 64,501,171, certifying 23 checkpoints
+  the anchor had never been asked about, which `-from-last-verified` would have started
+  the next run above. The mirror's coverage span is now measured from the mirror itself
+  before the walk: an absence inside it stays `missed` (a hole — what contract 3
+  forbids), an absence beyond it is `unmirrored` and is counted, logged and tolerated
+  (`matched=… missed=… unmirrored=…`); an unreadable `-archive-root` measures no span and
+  every absence stays `missed`. The checkpoint tier's high-water is clamped to the
+  mirror's, so the trailing span waits for the run that can prove it — `updateTierState`
+  only moves forward, so no persisted watermark rewinds. DAT-09 is restated for the new
+  taxonomy: a run that matched NOTHING is inconclusive whether the absences were holes or
+  merely unmirrored.
+
+- **ops / tier-B `-fail-on-missed` (F144):** both tier-B units
+  (`configs/ansible/…/verify-archive-tier-b.service.j2` and
+  `deploy/systemd/verify-archive-tier-b.service`) now pass `-fail-on-missed`, as the last
+  argument AFTER `stellarindex-ops verify-archive` — r1 runs the unit through the
+  `run-heavy-job.sh` singleton wrapper, and a flag among the wrapper's leading arguments
+  is eaten by the wrapper and never parsed by the binary. Wiring it against the previous
+  build would have failed the unit on its next fire, for the trailing block above; with
+  the attribution fix the flag reads 0 misses on the measured r1 state. The flag's **code
+  default is unchanged** — the earlier deliberate decision ("flipping the code default is
+  a separate decision, deliberately not taken here") is respected, and only the units
+  change. **On failure the run returns before the state write**, so the checkpoint tier's
+  high-water freezes at its last certified value and later runs re-walk from there;
+  `node_exporter` raises `stellarindex_verify_archive_tier_b_unit_failed` (ticket).
+  **Operator note:** the ansible template does NOT reach r1 through a binary deploy — the
+  new flag arrives only when the archival-node role is applied, so until then r1 keeps
+  running the unit as currently installed (the binary-side attribution and watermark clamp
+  ship with the binary and take effect on the next release). The checkpoint counters still
+  reach Prometheus only through the opt-in `-metrics-listen` endpoint that nothing scrapes
+  — the textfile exporter writes the mismatch counter and the last-success gauge alone —
+  so a miss is observable as a unit failure rather than as a number
+  (`verify_archive_textfile.go`, untouched here).
 
 - **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
   and `StreamClassicOps` still restricted to successful transactions with

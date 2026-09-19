@@ -17,6 +17,78 @@ superseded_by: null
 > original contract set. The decision below is preserved as the
 > original record per the immutability rule.
 
+> **Amendment (2026-09-19, F144) — contract 3 is bounded by the
+> mirror's own coverage, and the checkpoint watermark stops there.**
+>
+> Contract 3 below is written against `network_head`: "for every
+> checkpoint `seq <= network_head` the file exists". No steady state
+> can satisfy that. `/srv/history-archive` is filled by its own
+> periodic job while `verify-archive -tier checkpoint` walks to the
+> galexie bucket's live tip, so the newest checkpoints the walk reaches
+> have no mirror file yet and never did.
+>
+> **Measured on r1 2026-09-19.** The nightly `verify-archive-tier-b`
+> run logged `checkpoints matched=325 missed=23`, then
+> `checkpoint anchor OK`, then `Result=success, ExecMainStatus=0` (the
+> run before it: `matched=324 missed=24`). All 23 were a contiguous
+> block ABOVE the mirror's high-water **64,499,647**; the mirror holds
+> **1,007,807 of the 1,007,807** checkpoint files between ledger 63 and
+> that high-water — no hole anywhere. The fill job lands at ~02:2x UTC
+> and the unit at 04:38 UTC, so the block is roughly two hours of
+> ledgers and is present on **every** run. The run then advanced the
+> checkpoint tier's `last_verified_ledger` to **64,501,171**, past
+> everything the anchor had been asked about.
+>
+> So "the mirror is incomplete" was never the finding. Two things were
+> wrong, and both are now fixed in `internal/ops/archive`:
+>
+> 1. **A checkpoint absence is attributed.** The mirror's coverage span
+>    is measured from the mirror itself before the walk. An absence
+>    INSIDE it is `missed` — a hole, what contract 3 forbids. An
+>    absence beyond it is `unmirrored` — a delivery lag, counted and
+>    logged separately (`matched=… missed=… unmirrored=…`), never
+>    fatal. An unreadable `-archive-root` measures no span and every
+>    absence stays `missed`.
+> 2. **The checkpoint tier certifies only what it anchored.** Its
+>    high-water is clamped to the mirror's high-water, so the trailing
+>    span is left for the run that can prove it. `updateTierState` only
+>    moves a tier forward, so this never rewinds a persisted watermark;
+>    the r1 value stays at 64,501,171 until the mirror passes it.
+>
+> DAT-09 is restated for that taxonomy: a run that MATCHED nothing is
+> inconclusive whether the absences were holes or merely unmirrored, so
+> splitting the trailing edge out cannot let a walk that ran entirely
+> above the mirror exit 0.
+>
+> **`-fail-on-missed` is now wired on both tier-B units** (ansible
+> template + `deploy/systemd` copy), which is what makes the "any of
+> these failing aborts with non-zero exit" sentence below true of the
+> deployed path for the first time. It could not be wired before: it
+> would have failed the unit on its next fire for the trailing block.
+> The flag's **code default stays `false`** — the 2026-08 decision
+> recorded in CHANGELOG ("flipping the code default is a separate
+> decision, deliberately not taken here") is respected, not superseded;
+> this amendment changes the units, not the default.
+>
+> **What a failure costs, stated rather than assumed:** the run returns
+> before the state write, so the checkpoint tier's high-water FREEZES
+> at its last certified value and every later run re-walks from there
+> (widening, never skipping). `node_exporter`'s systemd collector
+> raises `stellarindex_verify_archive_tier_b_unit_failed`
+> (severity: ticket).
+>
+> **Still not covered.** The checkpoint counters
+> (`stellarindex_verify_archive_checkpoints_total{outcome=matched|
+> missed|unmirrored}`) reach Prometheus only through the opt-in
+> `-metrics-listen` endpoint, which nothing scrapes; the textfile
+> exporter the units do use writes the mismatch counter and the
+> last-success gauge alone. A miss is therefore observable as a unit
+> failure, not as a number, and a mirror whose fill job STOPS is
+> observable only as a `warn:` line in the journal plus a checkpoint
+> watermark that stops advancing. Both belong to
+> `verify_archive_textfile.go` and the alert rules, which this change
+> did not touch.
+
 ## Context
 
 Two physical archives back the indexer + the verifier. They serve
