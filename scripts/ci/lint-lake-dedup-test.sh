@@ -252,6 +252,66 @@ SQL
 catches "an executable .sql statement is checked, not only header prose" \
   "$stmt" stellar.transactions
 
+# ── a comment naming GROUP BY does not collapse anything (RLT-050) ───
+# sql_line() and go_line() only stripped a `--` comment whose LINE
+# started with it. An inline trailing comment on an unterminated .sql
+# statement, or a full-line `--` doc comment inside a Go raw string, was
+# appended to the statement buffer verbatim — so prose mentioning the
+# identity's own column names read as a real GROUP BY and greened a
+# bare count().
+sql_comment_bypass="$(mk sql_comment_bypass)"
+cat > "$sql_comment_bypass/$SQLDIR/comment_bypass.sql" <<'SQL'
+SELECT count() AS n FROM stellar.transactions WHERE ledger_seq > 1 -- GROUP BY ledger_seq, tx_index
+SQL
+catches "an inline .sql trailing comment naming GROUP BY does not collapse an unterminated read" \
+  "$sql_comment_bypass" stellar.transactions
+
+go_comment_bypass="$(mk go_comment_bypass)"
+cat > "$go_comment_bypass/$GODIR/comment_bypass.go" <<'GO'
+package clickhouse
+
+const commentBypassQuery = `SELECT count() AS n
+		FROM stellar.transactions
+		-- GROUP BY ledger_seq, tx_index
+		WHERE ledger_seq > 1`
+GO
+catches "a full-line -- doc comment inside a Go raw string naming GROUP BY does not collapse the read" \
+  "$go_comment_bypass" stellar.transactions
+
+# The `;`-terminated sibling must keep passing (FAIL, correctly) too —
+# the fix must not depend on whether the statement ever terminates.
+sql_comment_terminated="$(mk sql_comment_terminated)"
+cat > "$sql_comment_terminated/$SQLDIR/comment_terminated.sql" <<'SQL'
+SELECT count() AS n FROM stellar.transactions WHERE ledger_seq > 1; -- GROUP BY ledger_seq, tx_index
+SQL
+catches "the same inline comment on a terminated statement is also caught" \
+  "$sql_comment_terminated" stellar.transactions
+
+# ── the strip must be MARKER-aware, not a bare `index("--")` ─────────
+# A prior attempt at this fix cut at the first `--` ANYWHERE in the
+# line, which erases a `--` that is content rather than a comment
+# marker — a CLI flag glued into a Go raw string, or a quoted literal
+# in a .sql statement — taking the table name and the aggregate with
+# it and silently swallowing the violation. Both shapes below carry a
+# real, uncollapsed count() over a lake table that a marker-unaware
+# strip erases; each tree also carries the ordinary compliant detail
+# reader from mk(), so the examined==0 floor cannot mask the loss.
+go_marker_content="$(mk go_marker_content)"
+cat > "$go_marker_content/$GODIR/marker_content.go" <<'GO'
+package clickhouse
+
+const opsCountCLI = `clickhouse-client --port 9300 -q "SELECT count() FROM stellar.operations WHERE ledger_seq > 1"`
+GO
+catches "a CLI flag's -- inside a Go raw string does not erase the read it precedes" \
+  "$go_marker_content" stellar.operations
+
+sql_marker_content="$(mk sql_marker_content)"
+cat > "$sql_marker_content/$SQLDIR/marker_content.sql" <<'SQL'
+SELECT count() AS n, '--' AS marker FROM stellar.operations WHERE ledger_seq > 1;
+SQL
+catches "a quoted '--' literal in a .sql statement does not erase the read that follows it" \
+  "$sql_marker_content" stellar.operations
+
 # ── shapes the gate must stay quiet on ───────────────────────────────
 maxonly="$(mk maxonly)"
 cat > "$maxonly/$SQLDIR/account_activity.sql" <<'SQL'

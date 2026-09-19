@@ -298,6 +298,16 @@ violations="$(
       for (i = 1; i <= n; i++) {
         part = p[i]
         if (inside) {
+          # A `--` comment inside a raw SQL string is prose, not a
+          # clause — explorer_reader.go and protocol_reader.go both
+          # write documentation lines like `-- FINAL: ...` inside their
+          # query literals. Cut only at an actual comment MARKER (`--`
+          # followed by whitespace or end of line), never at the first
+          # `--` anywhere in the string: a CLI flag (`--port`) or a
+          # quoted literal (`'--'`) is content, not a comment, and
+          # truncating there would erase the table name or the clause
+          # that makes the read a violation.
+          if (match(part, /--([ \t]|$)/) > 0) part = substr(part, 1, RSTART - 1)
           add(part)
         } else {
           glue = glue part
@@ -333,6 +343,15 @@ violations="$(
       }
       if (in_comment) { flush(); in_comment = 0 }
       rest = l
+      # An inline trailing `--` comment on a CODE line is prose, not
+      # SQL, whether or not the statement ever reaches a terminating
+      # `;` on this line — but only when `--` is an actual comment
+      # MARKER (followed by whitespace or end of line). A bare `index`
+      # would also cut a `--` that is content: a quoted literal
+      # (`'--'`) or a CLI flag glued into the same statement text. Cut
+      # at the marker, before the `;` scan, so a fake `;` hiding inside
+      # the comment cannot end a statement early either.
+      if (match(rest, /--([ \t]|$)/) > 0) rest = substr(rest, 1, RSTART - 1)
       while ((p = index(rest, ";")) > 0) {
         add(substr(rest, 1, p))
         flush()
