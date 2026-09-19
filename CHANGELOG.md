@@ -15,6 +15,46 @@ against.
 
 ## [Unreleased]
 
+### Added
+
+- **api / goroutine-guard evidence (K012):** a build-tagged acceptance test,
+  `TestK012_EveryGoroutineInTheAPIProcessRecovers`, pins the leg of #368 that is
+  still open. An unrecovered panic in ANY goroutine terminates the whole
+  process, and #368 closed that hole in two places — `cmd/*/main.go`, via each
+  binary's `TestBackgroundWorkersRecover` (a walk over ONE file), and
+  `internal/api/v1` and its subpackages, via `TestAPIDetachedGoroutinesRecover`
+  (a walk rooted at its own tree). Both are green, and neither covers the rest
+  of the code linked into `stellarindex-api`, so a PASS over a narrow slice read
+  identical to a PASS over everything. The new walk takes its package set from
+  the linker's answer (`go list -deps .`) instead of a chosen root: **91 `go`
+  statements across the 76 in-module packages the API binary links, of which 13
+  register no recovery** (the HTTP listener is the one content-checked
+  exemption, on main.go's own crash-by-design argument). The sharpest is
+  `internal/storage/clickhouse/ttl_liveness_cache.go:185`, which is a
+  process-kill AND a wedge: it clears `c.flight` and closes `fl.done` as
+  trailing statements rather than from a `defer`, so the moment the panic is
+  merely CONTAINED, `coldFill`'s waiters block on a channel that never closes
+  and `kickRefresh` hands out the same dead flight for the life of the process —
+  the same shape as the seventeen flight-owning sites #368 had to release from a
+  `defer`. `account_state_cache.go:180` and `accounts_wealth_cache.go:253` are
+  the same explorer SWR refreshers reached from request paths on
+  attacker-chosen keys, but already release from a `defer`, so they need the
+  guard only; the rest are sinks, pollers and fan-outs in
+  `internal/storage/clickhouse`, `internal/canonical/discovery`,
+  `internal/sources/{sorobanevents,external/chainlink}`, `internal/divergence`
+  and `internal/storage/timescale`. None of those files is in this unit's file
+  set, so the test ships RED behind `//go:build k012evidence`
+  (`go test -tags k012evidence ./cmd/stellarindex-api/ -run TestK012 -v`) as
+  evidence and as the acceptance test for the follow-up; when it is green the
+  tag comes off and it becomes the class guard for the whole process, covering a
+  newly linked package the day it lands rather than the day someone widens a
+  root. Nothing in the three explorer files or `internal/worker/recover.go`
+  changed: they were re-derived at HEAD and are correct — every one of the
+  indexer's 13 `go` sites carries either a `worker.Recover`/`worker.Report`
+  guard or a documented, content-checked CRASH exemption, and a recovered panic
+  already moves `stellarindex_worker_panics_total`, which pages through
+  `stellarindex_worker_panicked` with a runbook.
+
 ### Fixed
 
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
