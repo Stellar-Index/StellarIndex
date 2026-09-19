@@ -3,13 +3,13 @@ package ingest
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"sync/atomic"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -46,8 +46,12 @@ import (
 //   - UpsertSoroswapPair is ON CONFLICT (pair_strkey) DO UPDATE.
 //   - Re-running after the indexer has already learned new pairs is
 //     safe (every row is rewritten with the same data).
+//
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
+// walks the factory and reports the pairs it WOULD upsert, writing none
+// of them. -write applies.
 func seedSoroswapPairs(args []string) error {
-	fs := flag.NewFlagSet("seed-soroswap-pairs", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("seed-soroswap-pairs")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	rpcOverride := fs.String("rpc", "", "stellar-rpc endpoint URL (overrides config)")
 	timeout := fs.Duration("timeout", 15*time.Minute, "wall-clock budget for the sweep")
@@ -57,6 +61,7 @@ func seedSoroswapPairs(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config required")
 	}
+	write := gate.Banner()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -104,10 +109,12 @@ func seedSoroswapPairs(args []string) error {
 			failed.Add(1)
 			return
 		}
-		if err := store.UpsertSoroswapPair(ctx, pair, t0, t1); err != nil {
-			fmt.Fprintf(os.Stderr, "  upsert pair %s: %v\n", pair, err)
-			failed.Add(1)
-			return
+		if write {
+			if err := store.UpsertSoroswapPair(ctx, pair, t0, t1); err != nil {
+				fmt.Fprintf(os.Stderr, "  upsert pair %s: %v\n", pair, err)
+				failed.Add(1)
+				return
+			}
 		}
 		upserts.Add(1)
 	}))
@@ -119,9 +126,10 @@ func seedSoroswapPairs(args []string) error {
 			err, count, upserts.Load(), failed.Load())
 	}
 
-	fmt.Fprintf(os.Stderr,
-		"seed-soroswap-pairs: %d pairs persisted to soroswap_pairs (%d failed)\n",
-		upserts.Load(), failed.Load())
+	fmt.Fprintf(os.Stderr, "seed-soroswap-pairs: %d pairs %s (%d failed)\n",
+		upserts.Load(),
+		writeModeVerb(write, "persisted to soroswap_pairs", "WOULD be persisted to soroswap_pairs (pass -write to apply)"),
+		failed.Load())
 	if failed.Load() > 0 {
 		return fmt.Errorf("%d upserts failed — check logs above", failed.Load())
 	}

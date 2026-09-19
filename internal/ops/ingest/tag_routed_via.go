@@ -2,7 +2,6 @@ package ingest
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -42,8 +41,12 @@ import (
 // sub_source='soroswap-router') after each completed window.
 // Re-running resumes past the last completed window; -resume=false
 // re-sweeps from the start (harmless, just slower).
+//
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
+// reports the windows holding router swaps it WOULD tag, writing neither
+// the tags nor a checkpoint. -write applies.
 func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window UPDATE + checkpoint
-	fs := flag.NewFlagSet("tag-routed-via", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("tag-routed-via")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger (inclusive). Default: min(ledger) in soroswap_router_swaps.")
 	to := fs.Uint("to", 0, "Last ledger (inclusive). Default: max(ledger) in soroswap_router_swaps.")
@@ -58,6 +61,7 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 	if *window == 0 {
 		return errors.New("-window must be > 0")
 	}
+	write := gate.Banner()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -120,7 +124,7 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 	fmt.Fprintf(os.Stderr, "tag-routed-via: ledgers %d..%d, window %d, router=%s scope=%s\n",
 		start, toLedger, *window, soroswap_router.SourceName, soroswap.SourceName)
 
-	var totalTagged int64
+	var totalTagged, windowsPending int64
 	for lo := start; lo <= toLedger; {
 		hi := lo + uint32(*window) - 1
 		if hi > toLedger || hi < lo { // hi<lo guards uint32 overflow
@@ -134,7 +138,8 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 		if berr != nil {
 			return berr
 		}
-		if ok {
+		switch {
+		case ok && write:
 			// [minTS, maxTS+1s): TagTradesRoutedVia's range is
 			// half-open; +1s makes the inclusive max representable.
 			tagged, terr := store.TagTradesRoutedVia(ctx,
@@ -146,10 +151,22 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 			totalTagged += tagged
 			fmt.Fprintf(os.Stderr, "tag-routed-via: window %d..%d tagged %d trades (total %d)\n",
 				lo, hi, tagged, totalTagged)
+		case ok:
+			// Preview: the UPDATE's own predicate decides the row count,
+			// and asking for it without running it means a second scan of
+			// the very chunks the windowing exists to keep compressed. So
+			// the preview reports the WINDOW it would tag, not an estimate.
+			windowsPending++
+			fmt.Fprintf(os.Stderr, "tag-routed-via: window %d..%d WOULD tag soroswap trades in [%s, %s) (pass -write to apply)\n",
+				lo, hi, minTS.UTC().Format(time.RFC3339), maxTS.Add(time.Second).UTC().Format(time.RFC3339))
 		}
 
-		if cerr := store.UpsertCursor(ctx, cursorSrc, cursorSub, hi); cerr != nil {
-			return fmt.Errorf("checkpoint at ledger %d: %w", hi, cerr)
+		// A preview must not advance the resume checkpoint: the next run
+		// would skip the windows it only LOOKED at.
+		if write {
+			if cerr := store.UpsertCursor(ctx, cursorSrc, cursorSub, hi); cerr != nil {
+				return fmt.Errorf("checkpoint at ledger %d: %w", hi, cerr)
+			}
 		}
 		if hi == toLedger {
 			break
@@ -157,6 +174,11 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 		lo = hi + 1
 	}
 
+	if !write {
+		fmt.Fprintf(os.Stderr, "tag-routed-via: done. %d window(s) across ledgers %d..%d hold router swaps and WOULD be tagged — pass -write to apply\n",
+			windowsPending, start, toLedger)
+		return nil
+	}
 	fmt.Fprintf(os.Stderr, "tag-routed-via: done. %d trades tagged across ledgers %d..%d\n",
 		totalTagged, start, toLedger)
 	return nil

@@ -1,8 +1,8 @@
 package ingest
 
 import (
+	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -38,8 +38,12 @@ import (
 // (source='backfill-router', sub_source='<from>-<to>',
 // last_ledger=<latest processed>). Re-running the same -from/-to
 // resumes from the saved cursor. Restart-safe.
+//
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
+// walks and decodes the range and reports the rows it WOULD insert,
+// writing neither them nor a checkpoint. -write applies.
 func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // linear pipeline, splitting reduces readability
-	fs := flag.NewFlagSet("backfill-router", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("backfill-router")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
@@ -51,6 +55,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
 		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
 	}
+	write := gate.Banner()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -150,7 +155,7 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 		if !ev.Swap.DeadlineTs.IsZero() {
 			row.DeadlineTS = &ev.Swap.DeadlineTs
 		}
-		if ierr := store.InsertSoroswapRouterSwap(ctx, row); ierr != nil {
+		if ierr := insertRouterSwap(ctx, store, write, row); ierr != nil {
 			insertFailures++
 			if insertFailures < 10 {
 				fmt.Fprintf(os.Stderr, "backfill-router: insert ledger=%d tx=%s: %v\n",
@@ -166,6 +171,12 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	var lastWalked uint32
 
 	checkpoint := func(ledger uint32, force bool) {
+		// A preview must not advance the resume checkpoint: -resume
+		// defaults to true, so the next run would skip the ledgers this
+		// one only decoded and never insert their rows.
+		if !write {
+			return
+		}
 		// Never advance the cursor past a ledger whose rows failed to
 		// insert. -resume defaults to true and SKIPS checkpointed
 		// ledgers, so advancing here loses those rows permanently with
@@ -259,10 +270,21 @@ func backfillRouter(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 			uint32(*to)-startLedger+1, startLedger, uint32(*to), streamBucket)
 	}
 
-	fmt.Fprintf(os.Stderr, "backfill-router: done. %d ledgers, %d rows inserted (%d insert failures)\n",
-		totalLedgers, totalRows, insertFailures)
+	fmt.Fprintf(os.Stderr, "backfill-router: done. %d ledgers, %d rows %s (%d insert failures)\n",
+		totalLedgers, totalRows, writeModeVerb(write, "inserted", "WOULD be inserted (pass -write to apply)"), insertFailures)
 	if insertFailures > 0 {
 		return fmt.Errorf("%d insert failures — see stderr above", insertFailures)
 	}
 	return nil
+}
+
+// insertRouterSwap writes one reconstructed router swap, or — in the
+// default fail-closed preview — reports success without touching
+// soroswap_router_swaps, so the walk still exercises the decoder and the
+// zero-ledger bucket guard while writing nothing.
+func insertRouterSwap(ctx context.Context, store *timescale.Store, write bool, row timescale.SoroswapRouterSwap) error {
+	if !write {
+		return nil
+	}
+	return store.InsertSoroswapRouterSwap(ctx, row)
 }

@@ -1,8 +1,8 @@
 package ingest
 
 import (
+	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -25,8 +25,12 @@ import (
 // drift. Idempotent + resumable: already-tagged rows never match
 // (signer IS NULL), and progress checkpoints into ingestion_cursors as
 // (source='tag-signer', sub_source='signer') after each completed window.
+//
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
+// reads each window and reports how many trades it WOULD tag, writing
+// neither the tags nor a checkpoint. -write applies.
 func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear windowed pass: flags → bounds → per-window read+tag + checkpoint (mirrors tagRoutedVia)
-	fs := flag.NewFlagSet("tag-signer", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("tag-signer")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger (inclusive) — required (the gap start)")
 	to := fs.Uint("to", 0, "Last ledger (inclusive) — required (the gap end)")
@@ -48,6 +52,7 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 	if *window == 0 {
 		return errors.New("-window must be > 0")
 	}
+	write := gate.Banner()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -132,17 +137,21 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 			// ts bound = the window's chunk span so the UPDATE prunes to it
 			// (and decompresses only that window's compressed segments, the
 			// same reason tag-routed-via runs windowed).
-			tagged, terr := store.TagTradesSigner(ctx, tsFrom, tsTo.Add(time.Second), tags)
+			tagged, terr := tagSignerWindow(ctx, store, write, tsFrom, tsTo.Add(time.Second), tags)
 			if terr != nil {
 				return fmt.Errorf("window %d..%d tag: %w", lo, hi, terr)
 			}
 			totalTagged += tagged
-			fmt.Fprintf(os.Stderr, "tag-signer: window %d..%d tagged %d trades (total %d)\n",
-				lo, hi, tagged, totalTagged)
+			fmt.Fprintf(os.Stderr, "tag-signer: window %d..%d %s %d trades (total %d)\n",
+				lo, hi, writeModeVerb(write, "tagged", "WOULD tag (upper bound)"), tagged, totalTagged)
 		}
 
-		if cerr := store.UpsertCursor(ctx, cursorSrc, cursorSub, hi); cerr != nil {
-			return fmt.Errorf("checkpoint at ledger %d: %w", hi, cerr)
+		// A preview must not advance the resume checkpoint: the next run
+		// would skip the windows it only LOOKED at.
+		if write {
+			if cerr := store.UpsertCursor(ctx, cursorSrc, cursorSub, hi); cerr != nil {
+				return fmt.Errorf("checkpoint at ledger %d: %w", hi, cerr)
+			}
 		}
 		if hi == toLedger {
 			break
@@ -150,7 +159,36 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 		lo = hi + 1
 	}
 
-	fmt.Fprintf(os.Stderr, "tag-signer: done. %d trades tagged across ledgers %d..%d\n",
-		totalTagged, start, toLedger)
+	fmt.Fprintf(os.Stderr, "tag-signer: done. %d trades %s across ledgers %d..%d\n",
+		totalTagged, writeModeVerb(write, "tagged", "WOULD tag (upper bound)"), start, toLedger)
 	return nil
+}
+
+// writeModeVerb renders a count's verb for the run's mode, so a preview's
+// numbers can never be read as applied ones. Shared by the ingest
+// subcommands the fail-closed gate covers.
+func writeModeVerb(write bool, applied, preview string) string {
+	if write {
+		return applied
+	}
+	return preview
+}
+
+// tagSignerWindow applies one window's signer tags, or — in the default
+// fail-closed preview — reports how many it WOULD apply without touching
+// the trades table.
+//
+// The preview count is an UPPER BOUND, not a prediction: it is the number
+// of tx signers the lake returned for the window, and TagTradesSigner is
+// first-wins over rows whose signer IS NULL, so the real number is the
+// subset of those txs that have an untagged trade. Counting the subset
+// exactly would need a second query over the same compressed chunks the
+// windowing exists to avoid decompressing.
+func tagSignerWindow(ctx context.Context, store *timescale.Store, write bool,
+	tsFrom, tsTo time.Time, tags []timescale.SignerTag,
+) (int64, error) {
+	if !write {
+		return int64(len(tags)), nil
+	}
+	return store.TagTradesSigner(ctx, tsFrom, tsTo, tags)
 }

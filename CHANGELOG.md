@@ -187,6 +187,32 @@ against.
   — the textfile exporter writes the mismatch counter and the last-success gauge alone —
   so a miss is observable as a unit failure rather than as a number
   (`verify_archive_textfile.go`, untouched here).
+- **ops / six mutating subcommands had no write gate at all (K015):**
+  `census-backfill`, `backfill-router`, `tag-routed-via`, `tag-signer`,
+  `seed-soroswap-pairs` and `seed-protocol-contracts` declared neither `-write`
+  nor `-dry-run` and wrote unconditionally — an UPDATE over `trades`, a
+  substrate row per ledger, a router-swap row per decoded op, a registry
+  upsert per pair/child — so a mistyped range was applied on its first run with
+  no preview to catch it. The shared fail-closed gate
+  (`opsutil.RegisterWriteGate`, "preview by DEFAULT, `-write` applies") existed
+  but was an opt-in helper, and a convention a subcommand may decline is not a
+  safety property. All six now take `opsutil.NewMutatingFlagSet`, which builds
+  the FlagSet and arms the gate in ONE call, print the mode banner before any
+  slow work, and — in the default preview — write neither their rows nor their
+  resume checkpoint (advancing a cursor over ledgers a run only LOOKED at is
+  the C2-14 stride-past hole with the write never having happened at all).
+  `TestMutatingSubcommandsRegisterTheSharedWriteGate` drives every mutating
+  ingest subcommand through the real dispatch entry point with `-h` and reads
+  the gate off its own usage, so the next one cannot be added without it, and
+  `TestPreviewPathsNeverReachTheStore` hands each preview path a nil store so a
+  branch that quietly still writes panics instead of passing. Two mutating
+  subcommands are deliberately still ungated and named in that test's doc:
+  `backfill` and `ch-backfill` default to WRITE with a `-dry-run` opt-out, and
+  flipping them silently converts every unflagged caller
+  (`scripts/ops/ch-live-catchup.sh`, `ch-full-backfill.sh`, `phaseD-*.sh`,
+  `ordinal-rederive-chunks.sh`, `restore-drill.sh`) into a preview, so that
+  flip lands with its callers.
+
 - **ops / `ch-rebuild -sources` accepts a name nobody knows (K015):** the source
   filter was a bare `strings.Split` of the flag and `enabled()` a membership test
   against it, so `-sources sdx` (a typo for `sdex`) made `enabled()` false for

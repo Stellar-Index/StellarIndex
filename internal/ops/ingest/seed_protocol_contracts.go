@@ -3,7 +3,6 @@ package ingest
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -49,8 +49,11 @@ import (
 //	-to LEDGER     last ledger to walk (inclusive); 0 = the soroban_events
 //	               max ledger.
 //	-timeout DUR   wall-clock budget. Default 15m.
+//	-write         apply. WITHOUT it the run is a fail-closed DRY RUN
+//	               (opsutil.WriteGate) that walks the creation events and
+//	               reports the children it WOULD upsert, writing none.
 func seedProtocolContracts(args []string) error {
-	fs := flag.NewFlagSet("seed-protocol-contracts", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("seed-protocol-contracts")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	source := fs.String("source", "", "gated source to seed (blend, … or 'all') (required)")
 	to := fs.Uint("to", 0, "last ledger (inclusive); 0 = soroban_events max ledger")
@@ -64,6 +67,7 @@ func seedProtocolContracts(args []string) error {
 	if *source == "" {
 		return fmt.Errorf("-source required (one of: %s, or 'all')", strings.Join(sortedGatedNames(), ", "))
 	}
+	write := gate.Banner()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -98,13 +102,14 @@ func seedProtocolContracts(args []string) error {
 		sources = []string{strings.ToLower(*source)}
 	}
 
+	verb := writeModeVerb(write, "upserted", "WOULD upsert")
 	for _, src := range sources {
-		n, serr := seedOneGatedSource(ctx, store, src, hi)
+		n, serr := seedOneGatedSource(ctx, store, write, src, hi)
 		if serr != nil {
 			return serr
 		}
-		fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s — upserted %d child contract(s) into protocol_contracts (walked [%d, %d])\n",
-			src, n, 0, hi)
+		fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s — %s %d child contract(s) into protocol_contracts (walked [%d, %d])\n",
+			src, verb, n, 0, hi)
 	}
 	return nil
 }
@@ -118,13 +123,25 @@ func seedProtocolContracts(args []string) error {
 // factory_id = pipeline.CuratedFactoryID. The indexer now reconciles
 // that same set at warm time, so running this for a curated source is a
 // repair/verification step rather than a deploy precondition.
-func seedOneGatedSource(ctx context.Context, store *timescale.Store, source string, hi uint32) (int, error) {
+func seedOneGatedSource(ctx context.Context, store *timescale.Store, write bool, source string, hi uint32) (int, error) {
 	meta, ok := pipeline.GatedMetaFor(source)
 	if !ok {
 		return 0, fmt.Errorf("%q is not a factory-anchored gated source (one of: %s)", source, strings.Join(sortedGatedNames(), ", "))
 	}
 
 	if len(meta.Factories) == 0 {
+		if !write {
+			// Preview of the curated path. It mirrors
+			// SeedCuratedContracts' own refusal rather than reporting a
+			// clean zero: a curated-only source with an empty CuratedSet
+			// declares a gate with no trust root, and a preview that
+			// prints "0 contracts" for it reads as "nothing to do".
+			if len(meta.CuratedSet) == 0 {
+				return 0, fmt.Errorf("seed curated contracts %s: GatedMeta.CuratedSet is empty — "+
+					"a curated-set source (ADR-0040 §1 mechanism 3) must declare its in-code trust root", source)
+			}
+			return len(meta.CuratedSet), nil
+		}
 		// One writer for curated rows (pipeline.SeedCuratedContracts), so
 		// this walk and the indexer's warm-time reconcile cannot drift
 		// into different provenance or first_ledger. have=nil: the CLI's
@@ -140,9 +157,11 @@ func seedOneGatedSource(ctx context.Context, store *timescale.Store, source stri
 	// the decoder (a protocol can have several factories).
 	seeded := 0
 	hook := func(childID, factoryID string, firstLedger uint32) {
-		if err := store.UpsertProtocolContract(ctx, source, childID, factoryID, firstLedger); err != nil {
-			fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s upsert %s failed: %v\n", source, childID, err)
-			return
+		if write {
+			if err := store.UpsertProtocolContract(ctx, source, childID, factoryID, firstLedger); err != nil {
+				fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s upsert %s failed: %v\n", source, childID, err)
+				return
+			}
 		}
 		seeded++
 	}

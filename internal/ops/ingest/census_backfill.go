@@ -3,7 +3,6 @@ package ingest
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -31,8 +30,13 @@ import (
 // Resume: checkpoints into ingestion_cursors as
 // (source='census-backfill', sub_source='<from>-<to>'). Re-running the
 // same -from/-to resumes from the last processed ledger. Restart-safe.
+//
+// Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
+// walks and censuses the range — coverage check included, so a wrong
+// bucket still fails loudly — and reports the substrate rows it WOULD
+// write, persisting neither them nor a checkpoint. -write applies.
 func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // linear walk + checkpoint loop; splitting reduces clarity (same as backfillRouter).
-	fs := flag.NewFlagSet("census-backfill", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("census-backfill")
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
@@ -44,6 +48,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	if *cfgPath == "" || *from == 0 || *to == 0 || *to < *from {
 		return fmt.Errorf("-config, -from, -to are required; -to must be >= -from")
 	}
+	write := gate.Banner()
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -115,7 +120,14 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	)
 	const checkpointInterval = 30 * time.Second
 
+	// A preview must not advance the resume checkpoint: the next run
+	// would skip the ledgers it only LOOKED at and leave a substrate hole
+	// behind a cursor that claims they are done (the C2-14 stride-past
+	// failure, with the write never having happened at all).
 	checkpoint := func(seq uint32) {
+		if !write {
+			return
+		}
 		if err := store.UpsertCursor(ctx, cursorSrc, cursorSub, seq); err != nil {
 			fmt.Fprintf(os.Stderr, "census-backfill: checkpoint at %d failed: %v\n", seq, err)
 		}
@@ -155,7 +167,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 				SorobanEventCount:       census.SorobanEventCount,
 				ClassicTradeEffectCount: census.ClassicTradeEffectCount,
 			}
-			if ierr := store.UpsertLedgerIngestLog(ctx, row); ierr != nil {
+			if ierr := upsertCensusRow(ctx, store, write, row); ierr != nil {
 				// Row not durably written — freeze the checkpoint here too,
 				// otherwise the next successful ledger would checkpoint past
 				// this un-persisted one (same stride-past class as a skip).
@@ -183,7 +195,7 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	// context: on a graceful SIGINT the parent ctx is already canceled by
 	// the time Stream returns, and checkpointing with it would fail
 	// instantly and drop the final resume watermark (F-1318 pattern).
-	if wm.seq > 0 {
+	if wm.seq > 0 && write {
 		fctx, fcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := store.UpsertCursor(fctx, cursorSrc, cursorSub, wm.seq); err != nil {
 			fmt.Fprintf(os.Stderr, "census-backfill: final checkpoint at %d failed: %v\n", wm.seq, err)
@@ -194,12 +206,17 @@ func censusBackfill(args []string) error { //nolint:gocognit,gocyclo,funlen // l
 	if walkErr != nil && !errors.Is(walkErr, context.Canceled) {
 		return fmt.Errorf("census-backfill stream (last processed %d): %w", lastProcessed, walkErr)
 	}
-	fmt.Fprintf(os.Stderr, "census-backfill: %d ledgers streamed, %d persisted, %d skipped, last %d\n",
-		total, persisted, skipped, lastProcessed)
+	fmt.Fprintf(os.Stderr, "census-backfill: %d ledgers streamed, %d %s, %d skipped, last %d\n",
+		total, persisted, writeModeVerb(write, "persisted", "WOULD be persisted"), skipped, lastProcessed)
 	// A run that did not persist its whole range must NOT exit 0 — see
 	// censusCoverage.
 	if cerr := censusCoverage(startLedger, uint32(*to), persisted, skipped, streamBucket, ctx.Err() != nil); cerr != nil {
 		return fmt.Errorf("census-backfill: %w", cerr)
+	}
+	if !write {
+		fmt.Fprintf(os.Stderr, "census-backfill: done — [%d,%d] censused from %q (DRY RUN, nothing written; pass -write to apply)\n",
+			startLedger, *to, streamBucket)
+		return nil
 	}
 	fmt.Fprintf(os.Stderr, "census-backfill: done — [%d,%d] complete from %q\n", startLedger, *to, streamBucket)
 	return nil
@@ -296,4 +313,15 @@ func (w *contiguousWatermark) persisted(seq uint32) {
 
 func (w *contiguousWatermark) gap() {
 	w.frozen = true
+}
+
+// upsertCensusRow writes one ledger's substrate row, or — in the default
+// fail-closed preview — reports success without touching
+// ledger_ingest_log, so the walk still exercises the read + census path
+// (and the coverage check at the end) while writing nothing.
+func upsertCensusRow(ctx context.Context, store *timescale.Store, write bool, row timescale.LedgerIngestRow) error {
+	if !write {
+		return nil
+	}
+	return store.UpsertLedgerIngestLog(ctx, row)
 }

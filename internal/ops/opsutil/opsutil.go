@@ -102,6 +102,29 @@ func RegisterWriteGate(fs *flag.FlagSet) *WriteGate {
 	}
 }
 
+// NewMutatingFlagSet builds the flag.FlagSet a MUTATING stellarindex-ops
+// subcommand parses its arguments with, and arms the shared [WriteGate]
+// on it in the same call. Read-only subcommands keep using
+// flag.NewFlagSet directly.
+//
+// It exists because [RegisterWriteGate] is a convention a subcommand may
+// simply decline, and a convention that can be declined is not a safety
+// property (K015). Six mutating ingest subcommands — census-backfill,
+// backfill-router, tag-routed-via, tag-signer, seed-soroswap-pairs,
+// seed-protocol-contracts — declared neither -write nor -dry-run and
+// wrote unconditionally: there was no preview to catch a mistyped range
+// before the UPDATE ran. Getting the FlagSet and getting the gate is now
+// one call, so the next mutating subcommand cannot acquire one without
+// the other.
+//
+// flag.ContinueOnError matches every ops subcommand: the handler returns
+// the parse error rather than calling os.Exit, so realMain's fd-2 filter
+// still drains (see [ErrExitSilently]).
+func NewMutatingFlagSet(name string) (*flag.FlagSet, *WriteGate) {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	return fs, RegisterWriteGate(fs)
+}
+
 // Enabled reports whether the operator opted into writing (passed -write).
 func (g *WriteGate) Enabled() bool { return *g.write }
 
