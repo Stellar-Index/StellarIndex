@@ -137,6 +137,29 @@ against.
   `change_24h_pct`. Twelve tests, seven of them proven red against the unfixed
   consumers.
 
+- **ops / the D3 cutover refuses to swap an incomplete v2 over a complete v1 (RLT-399):**
+  `scripts/ops/d3-lecur-v2-rebuild.sh cutover` went straight from the
+  pre-cutover-tip read to `DROP` both MVs and `RENAME` `ledger_entries_current_v2`
+  into the served name, without ever asking what was in v2. The RENAME is the
+  point where `rollback-precutover` stops applying, and the reproject window is
+  an operator argument: the launch plan's `reproject 38000000 <tip>` against a v1
+  whose `min(ledger_seq)` reaches lower silently RAISES the current-state coverage
+  floor — the one thing Step 2 of
+  `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql` says the window
+  choice must preserve — and the phase reported `cutover DONE`. The phase now
+  reads `count(), min(ledger_seq), max(ledger_seq)` from both tables BEFORE any
+  DDL and refuses on an empty v2, on a v2 holding fewer rows than v1, on a raised
+  floor, or on a v2 whose max lags v1's (a v2 MV that stopped capturing live
+  ingest); every violation is printed with both numbers. `D3_FORCE_CUTOVER=yes` is
+  the single explicit acknowledgement that proceeds anyway — the same idiom
+  `finalize` (`D3_FORCE_DROP_OLD`) and `rollback-precutover` (`D3_FORCE_DROP_V2`)
+  already require, and it exists because two ReplacingMergeTrees can differ in raw
+  count on merge state alone. Non-numeric aggregates (a failed query returns text,
+  or nothing) fail closed rather than being compared or interpolated.
+  `scripts/ops/d3-lecur-v2-rebuild-test.sh` drives the phase against a recording
+  clickhouse-client stub and asserts the refusals issue no `DROP`, no `RENAME` and
+  no `INSERT`, that a covering v2 still cuts over, and that both coverage reads
+  precede the first DDL.
 - **explorer / the production publish path now runs the static-export guards (F085, T325):**
   the `__next.*` segment prune, `scripts/ci/explorer-file-budget.sh` and
   `scripts/ci/explorer-seo-lint.sh` existed only as steps of

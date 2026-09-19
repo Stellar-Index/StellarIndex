@@ -17,8 +17,10 @@
 #   reproject <from> <to>     Step 2: windowed INSERT of [from,to) into v2;
 #                             resumable, overlapping re-runs are safe (RMT)
 #   verify                    Step 3: v1-vs-v2 divergence sample + coverage
-#   cutover                   Step 4: drop MVs, double-RENAME, recreate MV,
-#                             catch-up window from the recorded pre-cutover tip
+#   cutover                   Step 4: REFUSES unless v2 covers v1 (count,
+#                             min/max ledger_seq) — D3_FORCE_CUTOVER=yes to
+#                             override; then drop MVs, double-RENAME,
+#                             recreate MV, catch-up from the pre-cutover tip
 #   finalize                  Step 5: DROP _old (requires D3_FORCE_DROP_OLD=yes)
 #   rollback-precutover       drop v2 + its MV (v1 never stopped serving)
 #
@@ -66,6 +68,25 @@ guarded_ddl() {
   local rc=0; q "$1" || rc=$?
   rm -f "$CH_FLAGS_DIR/force_drop_table"
   return $rc
+}
+
+# num <value> <what> — fail closed on anything that is not a plain
+# non-negative integer. clickhouse-client reports an error as TEXT and a
+# failed query yields an EMPTY capture, so an unchecked $(…) fed to
+# `[ -gt ]` would abort a phase with a raw shell error (or, worse, be
+# interpolated into the next statement) instead of a stated refusal.
+num() {
+  case "$1" in
+    ''|*[!0-9]*) log "refusing: $2 is not a non-negative integer ('$1')"; exit 1 ;;
+  esac
+}
+
+# coverage_of <table> — one TSV row "count min max" over ledger_seq. Raw
+# rows, not FINAL: the cutover gate only needs the aggregates the `verify`
+# phase already prints, and a FINAL scan of both tables is the expensive
+# part of `verify`, not of a few ms of DDL.
+coverage_of() {
+  q "SELECT count(), min(ledger_seq), max(ledger_seq) FROM stellar.$1 FORMAT TSV"
 }
 
 BASE_COLS="entry_type, key_xdr, account_id, asset, balance, change_type, ledger_seq, close_time, entry_xdr, intra_ledger_seq"
@@ -153,6 +174,48 @@ verify)
   ;;
 
 cutover)
+  # ── Coverage gate (runs BEFORE anything is dropped or renamed) ──────
+  # The RENAME below is the moment rollback-precutover stops applying: an
+  # incomplete v2 swapped over a complete v1 is a data loss no later phase
+  # can undo. The floor rule is the migration artifact's own — Step 2 of
+  # deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql: "the
+  # min(ledger_seq) currently in stellar.ledger_entries_current preserves
+  # today's coverage floor; going lower additionally closes that floor".
+  # The launch plan's `reproject 38000000 <tip>` therefore RAISES the floor
+  # whenever v1 already reaches below 38,000,000, and nothing here would
+  # have noticed. Refusal is the default; D3_FORCE_CUTOVER=yes is the same
+  # explicit acknowledgement finalize and rollback-precutover demand.
+  read -r V1C V1MIN V1MAX <<< "$(coverage_of ledger_entries_current)"
+  read -r V2C V2MIN V2MAX <<< "$(coverage_of ledger_entries_current_v2)"
+  num "$V1C"   "v1 count()";          num "$V2C"   "v2 count()"
+  num "$V1MIN" "v1 min(ledger_seq)";  num "$V2MIN" "v2 min(ledger_seq)"
+  num "$V1MAX" "v1 max(ledger_seq)";  num "$V2MAX" "v2 max(ledger_seq)"
+  log "v1 coverage: count=$V1C min=$V1MIN max=$V1MAX"
+  log "v2 coverage: count=$V2C min=$V2MIN max=$V2MAX"
+  NVIOL=0
+  viol() { log "  cutover check FAILED: $1"; NVIOL=$(( NVIOL + 1 )); }
+  if [ "$V2C" -eq 0 ]; then
+    viol "v2 is EMPTY — the reproject never ran against this table"
+  elif [ "$V2C" -lt "$V1C" ]; then
+    # Both are ReplacingMergeTrees over the same ORDER BY, so at full merge
+    # the two counts converge; a freshly built v2 normally holds MORE rows
+    # (unmerged parts), never fewer. A small deficit CAN be nothing but
+    # merge state — that case is what the override exists for.
+    viol "v2 holds fewer rows than v1 ($V2C < $V1C)"
+  fi
+  if [ "$V2MIN" -gt "$V1MIN" ]; then
+    viol "coverage floor would REGRESS: v2 min(ledger_seq)=$V2MIN is above v1's $V1MIN — reproject down to $V1MIN first"
+  fi
+  if [ "$V2MAX" -lt "$V1MAX" ]; then
+    viol "v2 lags the tip: v2 max(ledger_seq)=$V2MAX is below v1's $V1MAX — the v2 MV is not capturing live ingest"
+  fi
+  if [ "$NVIOL" -gt 0 ]; then
+    if [ "${D3_FORCE_CUTOVER:-}" != "yes" ]; then
+      log "refusing cutover: $NVIOL coverage check(s) failed. Nothing was dropped or renamed and v1 is still serving. Close the gap (reproject the missing window), or re-run with D3_FORCE_CUTOVER=yes once \`verify\` explains the difference."
+      exit 1
+    fi
+    log "D3_FORCE_CUTOVER=yes — proceeding over $NVIOL coverage violation(s)"
+  fi
   # Capture the pre-cutover tip BEFORE dropping the MVs (the DDL gap loses MV
   # inserts; the catch-up below re-covers from this ledger).
   q "SELECT max(ledger_seq) FROM stellar.ledger_entry_changes" > "$STATE_DIR/pre-cutover-tip"
