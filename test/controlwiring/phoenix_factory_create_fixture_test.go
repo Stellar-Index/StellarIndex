@@ -212,7 +212,8 @@ func TestPhoenixFactoryCreateFixture_Shape(t *testing.T) {
 
 // TestPhoenixFactoryCreateFixture_UpdatedConfigIsNotACreate guards the
 // one non-creation row in the 2026 capture: ("Factory","Updated Config")
-// with body `true`. Anything that later classifies factory events must
+// with a Void body (data_xdr AAAAAQ== is SCV type 1, not a Bool).
+// Anything that later classifies factory events must
 // not read it as a pool announcement.
 func TestPhoenixFactoryCreateFixture_UpdatedConfigIsNotACreate(t *testing.T) {
 	t.Parallel()
@@ -229,8 +230,8 @@ func TestPhoenixFactoryCreateFixture_UpdatedConfigIsNotACreate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("updated-config body: %v", err)
 	}
-	if body.Type == xdr.ScValTypeScvAddress {
-		t.Errorf("the Updated Config body is an Address; it must not be mistakable for a pool announcement")
+	if body.Type != xdr.ScValTypeScvVoid {
+		t.Errorf("the Updated Config body is %s, want ScvVoid; it must not be mistakable for a pool announcement", body.Type)
 	}
 	if dec := phoenix.NewDecoder(); dec.Matches(other[0].event()) {
 		t.Errorf("phoenix.Decoder matches the factory's (\"Factory\",\"Updated Config\") event")

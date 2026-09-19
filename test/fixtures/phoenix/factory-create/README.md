@@ -10,7 +10,7 @@ that produced them are alongside (`capture_2024.sql`,
 | file | rows |
 | --- | --- |
 | `create_2024-05-07_ledgers_51572026-51572101.jsonl` | three `("create","liquidity_pool")` events |
-| `factory_2026-07-02_ledgers_63293663-63293708.jsonl` | one `("Factory","Updated Config")` event (body `true`), then one `("create","liquidity_pool")` event emitted after the Map-schema pool WASM |
+| `factory_2026-07-02_ledgers_63293663-63293708.jsonl` | one `("Factory","Updated Config")` event (body ScvVoid: `data_xdr` `AAAAAQ==` is SCV type 1), then one `("create","liquidity_pool")` event emitted after the Map-schema pool WASM |
 
 ## What they settle
 
