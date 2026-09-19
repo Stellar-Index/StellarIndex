@@ -1,5 +1,3 @@
-//go:build k012evidence
-
 package main
 
 import (
@@ -12,7 +10,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
-// K012 — the legs that are still open.
+// K012 — every goroutine in the stellarindex-api process recovers.
 //
 // An unrecovered panic in ANY goroutine terminates the whole Go process; it
 // is not confined to the goroutine that panicked. #368 closed that hole in
@@ -24,59 +22,44 @@ import (
 //     TestAPIDetachedGoroutinesRecover, whose walk is rooted at "." and so
 //     reaches exactly its own package tree.
 //
-// Both are green. Neither covers the rest of the code that is LINKED INTO
-// the stellarindex-api process, and that is where the finding survives: the
-// explorer's ClickHouse-side stale-while-revalidate refreshers are spelled
-// exactly like the internal/api/v1 ones that were fixed, run in the same
-// process, are kicked from request paths on attacker-chosen keys — and
-// recover nothing. A PASS over a narrow slice reads identical to a PASS over
-// everything, which is why this walk derives its package set from the
-// linker's answer (`go list -deps .`) rather than from a tree root someone
-// chose.
+// Both are narrow BY CONSTRUCTION, and a PASS over a narrow slice reads
+// identical to a PASS over everything: thirteen goroutines elsewhere in the
+// linked binary — the explorer's ClickHouse-side stale-while-revalidate
+// refreshers, the lake and discovery sinks, the Chainlink poller's fan-out,
+// the divergence reference fan-out and the SDEX bulk writer's two
+// WaitGroup-joined pools — recovered nothing at all. So this walk derives
+// its package set from the LINKER's answer (`go list -deps .`) rather than
+// from a tree root someone chose, and a package newly linked into the API is
+// covered the day it lands rather than the day someone remembers to widen a
+// root. It subsumes the two narrower walks without replacing them.
 //
-// Census at the time of writing: 91 `go` statements across the 76 in-module
-// packages the API binary links; 13 of them register no recovery. Grouped by
-// what a panic costs:
+// It does not merely require that a panic be CONTAINED. Containment without
+// release is worse than the crash it replaces — the crash at least ends with
+// a fresh process — so each of those sites pairs its recovery with the
+// release it owns, and each has its own behavioural test next to the code:
 //
-//   - internal/storage/clickhouse/ttl_liveness_cache.go:185 — the worst.
-//     It is a process-kill AND a wedge: the body sets c.flight = nil and
-//     close(fl.done) as ordinary trailing statements, not from a defer, so
-//     the moment the panic is merely CONTAINED (which is what a bare
-//     worker.Recover would do) coldFill's waiters block on a done channel
-//     that will never close and kickRefresh keeps handing out the same dead
-//     flight for the life of the process. The fix has to release from a
-//     defer in the same change, exactly as #368's seventeen flight-owning
-//     sites did.
-//   - internal/storage/clickhouse/account_state_cache.go:180 and
-//     accounts_wealth_cache.go:253 — SWR refreshers reached from
-//     /v1/explorer account reads; both already release from a defer, so
-//     they need the guard only.
-//   - internal/storage/clickhouse/live_sink.go:122,
-//     internal/canonical/discovery/sink.go:118,
-//     internal/sources/sorobanevents/dispatcher_adapter.go:196 and :439,
-//     internal/sources/external/chainlink/poller.go:137 and :166,
-//     internal/divergence/compare.go:166 — long-running sinks, pollers and
-//     fan-outs in the same process.
-//   - internal/storage/timescale/trades_bulk.go:363, :371 and :429 — a
-//     bounded fan-out whose members are joined by a WaitGroup. Joined is not
-//     protected: the panic still takes the process down, and the waiter is
-//     never released. This file is a protected path, so whoever fixes it
-//     owns that review.
+//   - a flight or single-flight marker is ended from a DEFER, or the waiters
+//     block on a channel nobody closes and the cache hands out the same dead
+//     flight for the life of the process
+//     (internal/storage/clickhouse/detached_refresh_panic_test.go);
+//   - a drain worker keeps close(done) as its outermost defer, or Stop()
+//     never returns;
+//   - a fan-out member records its failure in the slot its joiner reads, or
+//     a panicked partition reads as one that landed
+//     (internal/storage/timescale/trades_bulk_panic_guard_test.go).
+//
+// The guards below are the shared internal/worker helpers, so every recovered
+// panic moves stellarindex_worker_panics_total — the series
+// stellarindex_worker_panicked pages on. A bare recover() is deliberately NOT
+// accepted: swallowing a panic without moving that counter turns a loud crash
+// into a silent dead worker, which is the failure this guard exists to
+// prevent.
 //
 // The HTTP listener in this binary is the one deliberate exemption and is
 // excluded BY ITS CONTENT, on the same argument main.go's own guard makes:
-// recovering the accept loop leaves a live process serving nothing.
-//
-// Build-tagged because it is RED until those sites land — none of them is in
-// the file set this unit was fenced to, so it is committed as evidence and
-// as the acceptance test for the follow-up:
-//
-//	go test -tags k012evidence ./cmd/stellarindex-api/ -run TestK012 -v
-//
-// When it is green, drop the tag and delete this note: it is then the class
-// guard for the whole process, and it subsumes — without replacing — the
-// two narrower walks, because a new package linked into the API is covered
-// the day it lands rather than the day someone remembers to widen a root.
+// recovering the accept loop leaves a live process serving nothing. If
+// another site should be fatal, argue it here in content the same way — do
+// not add a name to a list.
 func TestK012_EveryGoroutineInTheAPIProcessRecovers(t *testing.T) {
 	// The guards any body in this process may register. A bare recover()
 	// is deliberately not among them: swallowing a panic without moving

@@ -17,43 +17,19 @@ against.
 
 ### Added
 
-- **api / goroutine-guard evidence (K012):** a build-tagged acceptance test,
-  `TestK012_EveryGoroutineInTheAPIProcessRecovers`, pins the leg of #368 that is
-  still open. An unrecovered panic in ANY goroutine terminates the whole
-  process, and #368 closed that hole in two places — `cmd/*/main.go`, via each
-  binary's `TestBackgroundWorkersRecover` (a walk over ONE file), and
+- **api / process-wide goroutine-guard (K012):** `TestK012_EveryGoroutineInTheAPIProcessRecovers`
+  is now an unconditional test (the `k012evidence` build tag is gone) and guards
+  the whole linked `stellarindex-api` process. #368 closed the unrecovered-panic
+  hole in two places and guarded each with an AST walk — `cmd/*/main.go`, via
+  each binary's `TestBackgroundWorkersRecover` (a walk over ONE file), and
   `internal/api/v1` and its subpackages, via `TestAPIDetachedGoroutinesRecover`
-  (a walk rooted at its own tree). Both are green, and neither covers the rest
-  of the code linked into `stellarindex-api`, so a PASS over a narrow slice read
-  identical to a PASS over everything. The new walk takes its package set from
-  the linker's answer (`go list -deps .`) instead of a chosen root: **91 `go`
-  statements across the 76 in-module packages the API binary links, of which 13
-  register no recovery** (the HTTP listener is the one content-checked
-  exemption, on main.go's own crash-by-design argument). The sharpest is
-  `internal/storage/clickhouse/ttl_liveness_cache.go:185`, which is a
-  process-kill AND a wedge: it clears `c.flight` and closes `fl.done` as
-  trailing statements rather than from a `defer`, so the moment the panic is
-  merely CONTAINED, `coldFill`'s waiters block on a channel that never closes
-  and `kickRefresh` hands out the same dead flight for the life of the process —
-  the same shape as the seventeen flight-owning sites #368 had to release from a
-  `defer`. `account_state_cache.go:180` and `accounts_wealth_cache.go:253` are
-  the same explorer SWR refreshers reached from request paths on
-  attacker-chosen keys, but already release from a `defer`, so they need the
-  guard only; the rest are sinks, pollers and fan-outs in
-  `internal/storage/clickhouse`, `internal/canonical/discovery`,
-  `internal/sources/{sorobanevents,external/chainlink}`, `internal/divergence`
-  and `internal/storage/timescale`. None of those files is in this unit's file
-  set, so the test ships RED behind `//go:build k012evidence`
-  (`go test -tags k012evidence ./cmd/stellarindex-api/ -run TestK012 -v`) as
-  evidence and as the acceptance test for the follow-up; when it is green the
-  tag comes off and it becomes the class guard for the whole process, covering a
-  newly linked package the day it lands rather than the day someone widens a
-  root. Nothing in the three explorer files or `internal/worker/recover.go`
-  changed: they were re-derived at HEAD and are correct — every one of the
-  indexer's 13 `go` sites carries either a `worker.Recover`/`worker.Report`
-  guard or a documented, content-checked CRASH exemption, and a recovered panic
-  already moves `stellarindex_worker_panics_total`, which pages through
-  `stellarindex_worker_panicked` with a runbook.
+  (a walk rooted at its own tree). Both were green, and neither covered the rest
+  of the code linked into the binary, so a PASS over a narrow slice read
+  identical to a PASS over everything. This walk takes its package set from the
+  linker's answer (`go list -deps .`) instead of a chosen root, so a package
+  newly linked into the API is covered the day it lands; it subsumes the two
+  narrower walks without replacing them. The HTTP listener stays the one
+  exemption, checked BY CONTENT on main.go's own crash-by-design argument.
 
 ### Changed
 
@@ -245,6 +221,54 @@ against.
   task and runs the block verbatim against a stubbed `stellarindex-ops`,
   so a regression back to the old argument order fails on the actual
   exec-not-found error rather than a hand-copied twin.
+- **api, lake, pg / thirteen goroutines could kill the whole process (K012):**
+  an unrecovered panic in ANY goroutine terminates the entire Go process, and
+  thirteen detached goroutines linked into `stellarindex-api` recovered nothing.
+  Every one now carries the shared `internal/worker` guard, so a recovered panic
+  moves `stellarindex_worker_panics_total` and pages through
+  `stellarindex_worker_panicked`. Containment alone was not the fix — on most of
+  these sites it would have traded a crash for something worse — so each guard
+  lands with the release its goroutine owns:
+  - `internal/storage/clickhouse/ttl_liveness_cache.go` cleared `c.flight` and
+    closed `fl.done` as trailing statements. Those move into a new `endFlight`
+    called from a `defer`; without it a contained panic would leave `coldFill`'s
+    waiters on a channel that never closes while `kickRefresh` handed out the
+    same dead flight for the life of the process. Waiters now get
+    `errTTLRefreshPanicked` rather than an authoritative empty verdict set,
+    which would have re-opened the fail-open `TTLUnknown` path for the whole
+    pair registry.
+  - `account_state_cache.go`, `accounts_wealth_cache.go` (explorer SWR
+    refreshers on attacker-chosen keys), `live_sink.go` and
+    `internal/canonical/discovery/sink.go` and
+    `internal/sources/sorobanevents/dispatcher_adapter.go` drain workers: the
+    guard is registered so the existing `defer` release — the flight end, the
+    gate slot, `close(done)` — still runs, so `Stop()` cannot block on a worker
+    that is already gone.
+  - `internal/sources/external/chainlink/poller.go`: the join goroutine closes
+    `results` from a `defer` (a contained panic would otherwise leave the fan-in
+    ranging forever), and a panicking feed is reported as that feed's FAILURE.
+    Merely containing it made the feed vanish from the tick, which the poller
+    classifies as a healthy skip — so the runner would have bumped
+    `ExternalPollerLastSuccessUnix` and held the staleness gauge green over a
+    poller that reported nothing.
+  - `internal/divergence/compare.go` already recovered, but only into one
+    `Result`'s `Failures` map; the panic now also goes through `worker.Report`
+    so the page rule can see it. The operator-facing `panicked: …` label is
+    unchanged.
+  - `internal/storage/timescale/trades_bulk.go` (the SDEX bulk trade writer):
+    both WaitGroup-joined pools were unguarded, and joined is not protected.
+    Both communicate success by the ABSENCE of a value, so a contained panic
+    would have been silent corruption: the `usd_volume` fan-out leaves
+    `out[i]`'s zero value, i.e. a NULL volume, with `errAt[i]` still nil, so the
+    backfill would COPY a silently under-valued batch and report it landed; and
+    `copyTradePartitions` decides which ranges COMMITTED from `errs[i] == nil`,
+    so a panicked partition would have credited `source_entry_counts` for rows
+    that were never written. A panic now fails the call and marks the partition.
+    Two hazards the guards introduce are closed in the same change: a dead
+    resolver drains on its way out so the index feeder is not stranded on a send
+    nobody takes, and `close(next)` stays the feeder's outermost defer. Every
+    non-panicking path is byte-identical; the per-row resolve, batch cuts,
+    written accounting and `filterStorableTrades` are untouched.
 
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before
