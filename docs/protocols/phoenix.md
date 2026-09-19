@@ -21,14 +21,23 @@ status: current
 > - **Last verified:** 2026-08-18 (r1 lake event activity; the original
 >   pool list was the 2026-05-01 WASM-history walk — see the 2026-08-18
 >   completeness-gap update below).
-> - **Gate status:** ✅ Gated code-side (2026-07-02, ADR-0040 §1 mechanism 2
->   — curated-set registry: the **12 String-schema pools + 1 Map-schema
->   pool + 16 stake contracts** below are the in-code seed
->   `phoenix.MainnetGatedSet`; factory creation events
->   predate the lake so the seed is the trust root). Operator rollout
->   remaining per ADR-0040 §2: deploy, lake re-derive, one green verdict
->   cycle. An unlisted pool/stake contract fail-closes into a recognition
->   gap.
+> - **Gate status:** ✅ Gated code-side. Since 2026-09-19 this is
+>   ADR-0040 §1 **mechanism 1** (factory-anchored) for POOLS: the factory's
+>   `("create","liquidity_pool")` events are in the lake from ledger
+>   51,572,026 — the earlier claim that they predate it was false — and the
+>   decoder admits the pool each one announces, gated on
+>   `reg.IsFactory(emitter)`. **Stake contracts stay mechanism 2**
+>   (curated set): the factory does not announce them, the POOL deploys
+>   them. The **12 String-schema pools + 1 Map-schema pool + 16 stake
+>   contracts** below remain the in-code seed `phoenix.MainnetGatedSet`,
+>   now as the cold-start warm root and the operator override rather than
+>   the sole trust root. Trust extended, stated in
+>   `docs/operations/wasm-audits/phoenix.md`: the factory is
+>   admin-upgradeable, so an admitted pool trusts the Phoenix factory
+>   admin. Operator rollout remaining per ADR-0040 §2: deploy, lake
+>   re-derive, one green verdict cycle. A pool on neither the list nor a
+>   factory announcement, and any unlisted stake contract, fail-closes
+>   into a recognition gap.
 >
 > **2026-08-18 completeness-gap update:** a `-ch` projection reconcile
 > found the 2026-05-01 snapshot was INCOMPLETE — 1 pool
@@ -113,17 +122,27 @@ bond/unbond yet. **Please send the complete pool → stake-contract mapping.**
 
 **Note on completeness:** the `swap` topic is emitted by 49 distinct
 contracts in our lake (most are other AMMs), and `withdraw_liquidity` by
-75 — so we **cannot** reverse-derive or verify the complete Phoenix pool
-set from event topics. The ORIGINAL pools' creation events predate our
-lake, so the earliest pools carry no on-chain provenance we can read;
-later pools do (factory `create` from 51,572,026 on, used for the
-2026-08-18 verification). The pool list above is the factory's
-`query_pools()` snapshot (2026-05-01) plus that lake walk; a gate built
-on it would
-**silently drop** any pool or stake contract not on the list. This is why
-we need the team to confirm completeness (or a `query_pools()` we can
-re-poll) **before** enforcing the gate. **If Phoenix has deployed pools or
-stake contracts since 2026-05-01, please send the additions.**
+75 — so we **cannot** reverse-derive the Phoenix set from event topics
+alone. What we CAN read is the factory's own announcements: `create`
+events run from ledger 51,572,026 (they were used for the 2026-08-18
+verification), and since 2026-09-19 the decoder admits the pool each one
+names, so a pool created from here on registers itself and does not
+depend on this page being edited.
+
+Two gaps remain, and they are different in kind:
+
+- **Pools created before 51,572,026** carry no on-chain provenance we can
+  read. For those the list above — the factory's `query_pools()` snapshot
+  (2026-05-01) plus the lake walk — is still the only source, and a pool
+  missing from it fail-closes into a recognition gap (visible, never
+  silently mis-attributed).
+- **Stake contracts at any ledger.** The factory announces pools only;
+  the POOL deploys its stake contract. Every stake contract is still
+  admitted by this list or the `protocol_contracts` warm.
+
+**If Phoenix has deployed pools before 51,572,026, or any stake
+contracts, that are not listed above, please send the additions** — and
+a `query_pools()` we can re-poll is still the cleanest confirmation.
 
 ## Events decoded
 

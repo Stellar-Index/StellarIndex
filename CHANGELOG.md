@@ -17,6 +17,24 @@ against.
 
 ### Fixed
 
+- **docs / phoenix gating:** the tree's four "the factory's creation events
+  predate the lake" claims are corrected — the events run from ledger
+  51,572,026 — and the docs now describe the gate that shipped rather than the
+  one that was planned. `docs/operations/wasm-audits/phoenix.md` records the
+  upstream source review that cleared the blocker (allow-listed creators; the
+  published address is the deployer's return value, not a parameter; one
+  `("create", …)` publish), the trust it extends (the factory is
+  admin-upgradeable, so admission trusts the Phoenix factory admin — identity
+  trust, not price trust), and the residual it does NOT close (the installed
+  WASM was not hashed, and two disassembled variants export a
+  `create_liquidity_pool_v2` that exists in no upstream version read).
+  `docs/protocols/phoenix.md` moves POOLS to ADR-0040 §1 mechanism 1 and is
+  explicit that stake contracts stay curated because the factory never
+  announces them. ADR-0040's taxonomy carries a dated correction rather than a
+  quiet edit. `extract.go` documents at its source that `topic_0_sym` is
+  Symbol-only and that filtering on a topic name must accept both encodings
+  (F048).
+
 - **clickhouse / topic[0] prefilter:** `StreamContractEventsFiltered` now matches
   a requested creation symbol in BOTH on-wire encodings. `extract.go` fills the
   lake's `topic_0_sym` convenience column from `Topics[0].GetSym()` — Symbol

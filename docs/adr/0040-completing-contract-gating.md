@@ -84,15 +84,27 @@ enumeration procedure for aquarius, (3) a new gate *mechanism* for comet.
    hard-coded factory IDs; live `deploy`/`create` events self-register
    new children via the registry hook.
 2. **Curated-set registry** (new use of existing machinery): for
-   protocols whose creation events PRECEDE the lake's earliest ledger
-   (phoenix — factory `create` events are pre-50.46M so live
-   self-registration never fires), the same `childgate.Registry` is
-   used with `WithSeed(curatedPools)` + `WithFactories(factory)` so a
+   contracts a factory never announces, the same `childgate.Registry` is
+   used with `WithSeed(curatedSet)` + `WithFactories(factory)` so a
    *future* creation event still registers. The curated set is the
    protocol page's enumerated list, seeded via
-   `seed-protocol-contracts`. Fail-closed: an unlisted pool's events
+   `seed-protocol-contracts`. Fail-closed: an unlisted contract's events
    are not attributed — and become **recognition gaps** (ADR-0033
-   Claim 2a), so a missing pool is *visible*, not silent.
+   Claim 2a), so a missing one is *visible*, not silent.
+
+   > **Correction (2026-09-19, audit F048).** Phoenix was placed here on
+   > the premise that its factory `create` events "are pre-50.46M so live
+   > self-registration never fires". That premise was false — the events
+   > are in the lake from ledger 51,572,026 — and because the decoder had
+   > no `create` action, `Matches()` rejected them, so the
+   > `WithFactories` anchor, the `seed-protocol-contracts` walk and the
+   > live-upsert hook were all inert rather than merely dormant. Phoenix
+   > POOLS are now mechanism 1. Its stake contracts stay here, for the
+   > sound version of this reason: the factory genuinely does not
+   > announce them (the pool deploys them), so no creation event exists
+   > to anchor on. The general lesson: "the creation events predate the
+   > lake" is a claim about data, and belongs in this taxonomy only with
+   > a ledger number and a query behind it.
 3. **WASM-code-hash gate** (new; comet): where no factory namespace
    exists, gate on the contract's *code identity*: `Matches()` accepts
    a contract only if its wasm hash is in the audited set. Resolution

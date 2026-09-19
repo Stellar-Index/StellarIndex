@@ -467,6 +467,18 @@ func eventRow(ce xdr.ContractEvent, seq uint32, closeTime time.Time, txHash stri
 	if derr != nil {
 		return ContractEventRow{}, false
 	}
+	// topic_0_sym is a SYMBOL-ONLY convenience column: GetSym succeeds for
+	// ScvSymbol and nothing else, so it stays EMPTY for an ScvString
+	// topic[0] (phoenix publishes ("create","liquidity_pool") as two
+	// Strings; so do its swap/liquidity actions). This is deliberate — the
+	// column exists as a cheap Symbol fast-path, and topics_xdr carries the
+	// unabridged truth — but it differs from the PG landing zone, which
+	// fills the same-named column via tryDecodeSymbolOrString. Anything
+	// FILTERING on a topic[0] name must therefore accept both encodings or
+	// it silently matches zero String-topic rows: that cost phoenix its
+	// entire factory-creation walk (F048). Use topic0Predicate in
+	// event_reader.go rather than writing `topic_0_sym IN (…)` by hand.
+	// Widening this column would mean re-extracting the whole lake.
 	var topic0Sym string
 	if sym, sok := v0.Topics[0].GetSym(); sok {
 		topic0Sym = string(sym)

@@ -332,13 +332,15 @@ trade re-derive** to fix pre-fix rows.
 
 ## 2026-09-19 addendum — Factory create event (audit finding F048)
 
-**Status: the decoder does NOT admit pools from the factory's create
-event, and must not until the two properties below are established.**
-Admission stays on the operator seed (`phoenix.MainnetPools` /
-`MainnetMapPools` / `MainnetStakeContracts`, plus the
-`protocol_contracts` warm). A pool the factory creates tomorrow
-fail-closes into a recognition gap until an operator adds it. F048 is
-therefore still open; this section records why, and what closes it.
+**Status (2026-09-19): the decoder DOES admit pools from the factory's
+create event**, gated on `reg.IsFactory(emitter)` plus both `ScvString`
+topics plus an `Address` body. The blocker below was cleared by reading
+the upstream factory source; what that does and does NOT buy is spelled
+out in "The trust this extends". The operator seed
+(`phoenix.MainnetPools` / `MainnetMapPools` / `MainnetStakeContracts`,
+plus the `protocol_contracts` warm) remains, as the cold-start warm root
+and as the override. **Pools only:** the factory does not announce stake
+contracts, so those are still admitted by the seed or the warm alone.
 
 ### What real lake captures settle
 
@@ -351,19 +353,23 @@ Fixtures: `test/fixtures/phoenix/factory-create/` (four create events,
   is false (the 2026-07-07 addendum above already walked them).
 - `topic[0]`/`topic[1]` are `ScvString` `("create","liquidity_pool")`,
   so the lake's `topic_0_sym` is **empty** for these rows while the
-  Postgres landing zone fills it. A ClickHouse creation walk keyed on
-  `topic_0_sym` (`gatedPrefilter`, `compute_completeness.go`) would match
-  nothing for phoenix; it has to match `topics_xdr[1]`.
+  Postgres landing zone fills it (`extract.go` uses `GetSym`, the landing
+  zone `tryDecodeSymbolOrString`). A ClickHouse creation walk keyed on
+  `topic_0_sym` (`gatedPrefilter`, `compute_completeness.go`) matched
+  nothing for phoenix. FIXED 2026-09-19: `topic0Predicate`
+  (`internal/storage/clickhouse/event_reader.go`) matches the requested
+  name in EITHER encoding — the column, or the `ScvString` blob in
+  `topics_xdr[1]` — which widens a prefilter without changing what
+  `topic_0_sym` means for rows already written (no re-extract implied).
 - The body is **one contract `Address`, the pool**. The stake contract
   is never announced, so this event can admit pools and never stakes.
   Stakes stay operator-seeded whatever happens to pools.
 - Shape identical in 2024 and 2026. The four announced addresses are
   pools the curated seed already lists, at the ledgers its comments cite.
 
-### What is NOT established (the blocker)
+### The security properties, and how they were established
 
-Auto-admission trusts the event body. That is only sound if, for the
-factory WASM **installed now**:
+Auto-admission trusts the event body. That is only sound if:
 
 1. `create_liquidity_pool` is restricted to an allow-list, and the
    restriction is enforced in that function, not merely stored; and
@@ -374,9 +380,65 @@ factory WASM **installed now**:
 create body carried caller-supplied addresses — a permissionless
 registry-poisoning vector. Honest history proves nothing here: four
 well-formed past events say nothing about what a hostile caller can
-make the factory publish.
+make the factory publish. So the properties were read off the source,
+not inferred from the captures.
 
-Evidence gathered from the in-repo walk
+**Verified 2026-09-19 from the public upstream source**
+(`Phoenix-Protocol-Group/phoenix-contracts`,
+`contracts/factory/src/contract.rs` + `utils.rs`), fetched raw and read
+directly at `main`, `v2.0.0`, `v1.1.0` and `v1.0.0`. All four agree:
+
+1. **Allow-listed creators only.** `create_liquidity_pool` opens with
+   `sender.require_auth()`, then
+   `if !get_config(&env).whitelisted_accounts.contains(sender) {
+   panic_with_error!(.., NotAuthorized) }`. The allow-list itself changes
+   only under the admin's auth.
+2. **The address is factory-DEPLOYED, never caller-supplied.**
+   `lp_contract_address` is the RETURN of
+   `env.deployer().with_current_contract(salt).deploy_v2(<wasm hash from
+   the factory's own config>, init_args)` (v1.x: `deploy_lp_contract` →
+   `…with_current_contract(salt).deploy(lp_wasm_hash)`), with
+   `salt = sha256(token_a ‖ token_b)` (Blend pools prefix a type byte).
+   **The function takes no pool-address parameter at all** — this is
+   precisely what `defindex`'s announcement could not promise.
+3. **The event publishes exactly that address**, and
+   `("create", "liquidity_pool")` is the ONLY `("create", …)` publish in
+   the factory. Emitted from inside the factory, so the event's emitting
+   contract id IS the factory — which is why gating on
+   `reg.IsFactory(emitter)` cannot be satisfied by a foreign emitter.
+4. **The stake contract is not announced by the factory.** The factory
+   passes `stake_wasm_hash` into the pool's init args and the POOL
+   deploys its stake contract.
+5. **There is no `create_liquidity_pool_v2`** at any of the four
+   versions — see the residual below, which contradicts the in-repo
+   disassembly.
+
+### The trust this extends
+
+Say it plainly, because auto-admission makes it automatic rather than
+deliberate:
+
+- **The source is not the installed WASM.** The factory is
+  admin-upgradeable (`update_current_contract_wasm` under
+  `admin.require_auth()`), and the currently installed bytes were not
+  hashed against a build (see the residual below). Admission therefore
+  trusts **the Phoenix factory admin**: a malicious upgrade could
+  publish an arbitrary address. This is the same trust the curated seed
+  already extended to Phoenix pools by hand — it is now automatic, and
+  it is the reason the operator seed stays the override.
+- **It is identity trust, not price trust.** A whitelisted creator picks
+  `token_a` / `token_b`, so an admitted pool may trade a worthless
+  asset. Admission decides whose events are *attributed to Phoenix*;
+  what reaches a served price is the downstream pricing guards' problem.
+- **Pools only.** Stake contracts are out of this event's reach
+  whatever happens to pools (point 4), so they remain operator-seeded.
+
+Worth having, not done here: an alert on a factory WASM upgrade.
+
+### Residual: the installed bytes were not hashed
+
+The source review above did not identify WHICH build is installed at
+`CB4SVAWJ…CKMI`. Evidence from the in-repo walk
 (`evidence/r1-walk-2026-05-01/disasm/*.json`, all five factory
 variants), and its limits:
 
@@ -388,48 +450,73 @@ variants), and its limits:
 | `721badb85470a81d` | 54,517,364 – 54,897,147 | same, plus `create_liquidity_pool_v2`, `remove_pool` |
 | `c54ba54bd9e37503` | 57,406,830 – 57,856,963 | **no** `update_whitelisted_accounts`; `whitelisted_to_add` / `whitelisted_to_remove` under `update_config`; `__constructor`, `propose_admin` |
 
-- This shows an allow-list **exists as state** in every known variant.
-  It does **not** show the list is checked inside
-  `create_liquidity_pool`: an export table and a string table cannot.
-- Every variant imports ledger-module host functions, consistent with
-  the factory deploying contracts. Which value reaches the event body
-  was **not traced**: no authoritative host-function table was available
-  offline to resolve the import codes, and the 2026-09-19 pass had no
-  network access to read the upstream source.
-- **The walk is stale for this question.** Its last observed factory
-  range ends at ledger 57,856,963; the newest captured create is at
-  63,293,708, preceded by a `("Factory","Updated Config")` at
-  63,293,663. Every variant exports `update`, so the factory is
-  admin-upgradeable and may be running a sixth WASM this walk never saw.
-  The observed ranges also have holes (51,937,331 → 53,134,143,
+- This shows an allow-list **exists as state** in every known variant,
+  consistent with the source. An export table and a string table still
+  cannot show the list is *checked* inside `create_liquidity_pool` —
+  that comes from the source, above, not from here.
+- **The walk is stale.** Its last observed factory range ends at ledger
+  57,856,963; the newest captured create is at 63,293,708, preceded by a
+  `("Factory","Updated Config")` at 63,293,663. Every variant exports
+  `update`, so the factory may be running a sixth WASM this walk never
+  saw. The observed ranges also have holes (51,937,331 → 53,134,143,
   53,417,239 → 53,649,587 and 54,897,147 → 57,406,830).
+- **One disagreement worth naming.** Two disassembled variants
+  (`2bbb91c5…`, `721badb8…`, ledgers 54,517,225 – 54,897,147) export
+  `create_liquidity_pool_v2`, which exists in NONE of the four upstream
+  versions read. Either those builds pre-date a rename, or they are off
+  the tags that were checked. The admission gate does not depend on
+  which: it keys on the emitter being the factory and on the topic pair,
+  and `("create","liquidity_pool")` is the only `("create", …)` publish
+  in every source version seen. But a `_v2` entry point that publishes
+  the same topics from a build nobody has read is exactly the shape this
+  residual covers, and it is the reason the follow-up below is worth
+  doing rather than optional.
 
-### To close F048
+### What shipped, and what is still owed
+
+Shipped (2026-09-19):
+
+- `internal/sources/phoenix`: `classifyAny` gained `actionCreatePool`
+  for the exact pair `("create","liquidity_pool")` — any other
+  `("create", …)` stays `actionUnknown` and fail-closes into a
+  recognition gap. `Matches` gates that action on `reg.IsFactory`, never
+  `reg.Has` (a curated pool already passes `reg.Has` and would otherwise
+  be the strongest forger). `Decode` seeds the announced pool with the
+  factory as provenance, before taking the correlation-buffer lock.
+- `internal/storage/clickhouse`: the topic[0] prefilter matches both
+  on-wire encodings, so the lake walk keyed on `"create"` returns rows
+  (see the note on `topic_0_sym` above). Phoenix's reconcile-catalogue
+  entry now sets `factories` + `creationSym` so `gatedPrefilter` runs.
+- Tests: `TestK023_PhoenixFactoryCreateEventIsAdmissible` and
+  `…FromForeignEmitterIsNotAdmitted` GRADUATED out of `-tags
+  k023evidence` into the default suite
+  (`test/controlwiring/phoenix_factory_admission_test.go`), and
+  `test/integration/contract_events_string_topic_prefilter_test.go`
+  proves the lake → prefilter → decoder → gate loop against a real
+  ClickHouse.
+
+Still owed, and not done here:
 
 1. `stellar contract fetch --id CB4SVAWJ…` against mainnet, sha256, and
-   record the currently installed factory hash here.
-2. From the upstream source at the matching release (or the WASM), show
-   properties 1 and 2 above for `create_liquidity_pool` **and**
-   `create_liquidity_pool_v2`. Record file, line and commit.
-3. Only then let the decoder seed from the event, gated on
-   `reg.IsFactory(emitter)`. The target test is
-   `TestK023_PhoenixFactoryCreateEventIsAdmissible`
-   (`-tags k023evidence`); it asserts the registry hook receives
-   (announced pool, factory, ledger), so a change that merely *matches*
-   the event without seeding leaves it red. Its sibling
-   `…FromForeignEmitterIsNotAdmitted` must stay green.
-4. Do not "recognise without admitting" as a stop-gap. `ch-recognition`
-   tests ONE exemplar per `(contract_id, topic_0_sym)` shape through the
-   decoder chain's `Matches`, and the factory's String-topic events all
-   share the empty `topic_0_sym`, so they are a single shape. Whenever
-   its exemplar is a create event, a decoder that matched it and dropped
-   it would report the factory as recognised while admitting nothing —
-   muting the one audit that can surface a new pool today, with the
-   control still inert.
+   record the currently installed factory hash here — closing the
+   residual above. An admin upgrade can invalidate either property
+   later, so this verification is per installed hash, the same standing
+   caveat as the pool WASMs above. An alert on a factory WASM upgrade is
+   the durable form of it.
+2. Re-derive the history this unblocks. Pools announced since ledger
+   51,572,026 that the curated seed never got have lake events that were
+   never attributed. `seed-protocol-contracts` for phoenix ENUMERATES
+   them (it was inert before this change); `projected-rebuild -source
+   phoenix … -write` re-derives them. Phoenix is `BackfillSafe: true`.
 
-An admin upgrade can change either property later, so the verification
-is per installed hash — the same standing caveat as the pool WASMs
-above.
+One thing NOT to do, recorded because it was considered and rejected:
+"recognise without admitting" is not a stop-gap. `ch-recognition` tests
+ONE exemplar per `(contract_id, topic_0_sym)` shape through the decoder
+chain's `Matches`, and the factory's String-topic events all share the
+empty `topic_0_sym`, so they are a single shape. Whenever its exemplar
+is a create event, a decoder that matched it and dropped it would report
+the factory as recognised while admitting nothing — muting the one audit
+that can surface a new pool today, with the control still inert.
 
 ## Decision
 
