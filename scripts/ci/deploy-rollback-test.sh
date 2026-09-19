@@ -368,6 +368,14 @@ if [ "$rc" -ne 0 ]; then ok "k. a pre-swap failure fails the play (rc=$rc)"
 else bad "k. a pre-swap failure exited 0: $out"; fi
 want_head "k. the build this run never replaced is still installed" "$BIN/si-foxtrot" "foxtrot-old"
 want_exact "k. it was not parked as the bad binary" "$BIN/si-foxtrot.failed-$VERSION" "<absent>"
+# Nothing in the run may narrate a rollback target it does not have: the
+# sidecar tag is "v0.0.1 stray" and there is no si-foxtrot.prev-* at all.
+if ! grep -q "rolling back si-foxtrot to" <<<"$out" \
+   && ! grep -q "will be rolled back to v0.0.1 stray" <<<"$out"; then
+  ok "k. the run does not narrate a rollback target it does not have"
+else
+  bad "k. the run claims si-foxtrot was rolled back to a backup that was never created"
+fi
 
 echo "deploy-rollback-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

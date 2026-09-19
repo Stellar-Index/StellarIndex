@@ -222,13 +222,21 @@
         swapped_binaries: "{{ (swapped_binaries | default({})) | combine({binary: rollback_record}) }}"
 
   rescue:
+    # Neither of these narrate an OUTCOME: at this point the rescue has
+    # not run, and whether there is anything to roll back to depends on
+    # the record (K078). The "FAIL the play" task at the end of the rescue
+    # is the one that reports what actually happened.
     - name: "[{{ binary }}] FAILURE — rolling back"
       ansible.builtin.debug:
-        msg: "Health probe failed; rolling back {{ binary }} to {{ backup_tag }}"
+        msg: >-
+          {{ binary }} failed its deploy; running its rollback now
+          {{ ('(previous binary: ' ~ rollback_record.prev_path ~ ')')
+             if rollback_record.prev_path | length > 0
+             else '(no previous binary recorded — nothing to roll back to)' }}
 
     - name: "[{{ binary }}] NOTE — binary rolled back, DB schema is not"
       ansible.builtin.debug:
-        msg: "{{ binary }} will be rolled back to {{ backup_tag }}; DB schema remains at the new version — this is SAFE per the additive-migrations policy (every migration must stay backward-compatible with the previous released binary; see docs/operations/deploy-workflow.md and migrations/README.md rule 9). Migrations are never auto-rolled-back on a binary rollback."
+        msg: "{{ binary }} is being rolled back to the binary that preceded this run, where one exists; DB schema remains at the new version — this is SAFE per the additive-migrations policy (every migration must stay backward-compatible with the previous released binary; see docs/operations/deploy-workflow.md and migrations/README.md rule 9). Migrations are never auto-rolled-back on a binary rollback."
 
     - name: "[{{ binary }}] Stop failing service"
       when: binary not in cli_binaries
