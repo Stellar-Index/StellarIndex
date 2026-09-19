@@ -59,6 +59,25 @@ against.
   bytes, not text. New integration test drives NUL, invalid-UTF-8, overlong,
   surrogate and out-of-range memos through decoder → sink → real Postgres
   (audit 2026-09-02 F052).
+- **ops (route-sweep.sh):** the deploy-time route sweep no longer exits 0
+  when its OpenAPI spec parser fails or produces an empty/too-short route
+  list. Previously `python3 … <<PY … PY > /tmp/route-sweep-paths.txt` had
+  no exit-status check and the redirect always created the file, so a box
+  without PyYAML (or any generator failure) left an empty file, the
+  while-read loop over it ran zero iterations, and the script printed
+  `ok=0 client_4xx=0 server_5xx=0 unreachable=0 skipped=0` and exited 0 —
+  a tooling failure indistinguishable from "every route healthy",
+  reproducing the invisibility of the 2026-07-27 outage (21 of 94 GETs
+  503ing under an all-green board) one layer further down. The generator
+  is now checked for a non-zero exit, the resulting list must clear a
+  floor (`ROUTE_SWEEP_MIN_ROUTES`, default 50) and must contain the exact
+  routes dark during that outage (`/ledgers`, `/contracts`,
+  `/accounts/{g_strkey}`); any of those failing refuses with exit 2
+  before a single curl is issued. New `scripts/ops/route-sweep-test.sh`
+  pins the refusal on an unreadable spec, a spec parsing to zero routes,
+  and a spec missing the known routes, and confirms the positive path
+  still sweeps (audit 2026-09-02 F082).
+
 - **supply (SEP-41 rollup):** a fold pass can no longer pair a fold reset it
   can see with a view of `sep41_supply_events` from before the rewrite that
   reset was issued for. The 2026-09-18 fix took the rollup row's lock

@@ -64,13 +64,53 @@ fixture_for() {
   esac
 }
 
-python3 - "$SPEC" > /tmp/route-sweep-paths.txt <<'PY'
+# A tooling failure here (missing PyYAML, an unreadable/malformed spec,
+# a generator that silently matches nothing) must never read as "every
+# route healthy" — that is exactly the shape of the 2026-07-27 incident
+# this script exists to catch, just moved one layer down into the tool
+# itself. So the generator's own exit status is checked (a heredoc's
+# exit code IS the interpreter's, since there is no pipe in front of
+# it), and the resulting list is required to clear a floor AND contain
+# routes from the exact 2026-07-27 outage (/ledgers, /contracts,
+# /accounts/{g_strkey}) before a single curl is issued. Any of these
+# failing is a REFUSAL (exit 2), not a zero-route clean sweep.
+ROUTE_SWEEP_MIN_ROUTES="${ROUTE_SWEEP_MIN_ROUTES:-50}"
+ROUTE_SWEEP_KNOWN_ROUTES=(/ledgers /contracts "/accounts/{g_strkey}")
+
+# generate_route_list SPEC OUT — writes every GET path from SPEC into
+# OUT, one per line. Returns non-zero (and leaves a message on stderr)
+# if the parser failed, or if the result doesn't look like a real spec.
+generate_route_list() {
+  local spec="$1" out="$2" n known
+  if ! python3 - "$spec" > "$out" <<'PY'
 import sys, yaml
 spec = yaml.safe_load(open(sys.argv[1]))
 for p, ops in spec.get('paths', {}).items():
     if 'get' in ops:
         print(p)
 PY
+  then
+    echo "route-sweep: spec parser failed on '$spec' (python3 exited non-zero — see its stderr above); refusing to report a clean sweep" >&2
+    return 1
+  fi
+  n=$(wc -l < "$out" | tr -d ' ')
+  if [ -z "$n" ] || [ "$n" -lt "$ROUTE_SWEEP_MIN_ROUTES" ]; then
+    echo "route-sweep: parser produced ${n:-0} route(s) from '$spec', below the floor of $ROUTE_SWEEP_MIN_ROUTES (set ROUTE_SWEEP_MIN_ROUTES to override) — this is a tooling failure, not a clean sweep" >&2
+    return 1
+  fi
+  for known in "${ROUTE_SWEEP_KNOWN_ROUTES[@]}"; do
+    if ! grep -qxF "$known" "$out"; then
+      echo "route-sweep: expected route '$known' (present the day of the 2026-07-27 outage) is missing from the parsed spec — this is a tooling failure, not a clean sweep" >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
+route_sweep_main() {
+if ! generate_route_list "$SPEC" /tmp/route-sweep-paths.txt; then
+  exit 2
+fi
 
 printf '# route sweep — %s\n# api=%s\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$API"
 printf '%-6s %-8s %s\n' STATUS VERDICT ROUTE
@@ -118,3 +158,10 @@ echo "ok=${ok} client_4xx=${clienterr} server_5xx=${fivexx} unreachable=${unreac
 failures=$((fivexx + unreach))
 [ "$failures" -gt 255 ] && failures=255
 exit "$failures"
+}
+
+# Sourced by route-sweep-test.sh to exercise generate_route_list without
+# running the network sweep; only runs the sweep when executed directly.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  route_sweep_main
+fi
