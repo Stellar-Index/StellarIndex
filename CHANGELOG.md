@@ -179,7 +179,10 @@ against.
   `scripts/ops/d3-lecur-v2-rebuild-test.sh` drives the phase against a recording
   clickhouse-client stub and asserts the refusals issue no `DROP`, no `RENAME` and
   no `INSERT`, that a covering v2 still cuts over, and that both coverage reads
-  precede the first DDL.
+  precede the first DDL — including the case r1 is in today, where the
+  2026-07-29 cutover completed and there is no `ledger_entries_current_v2` at
+  all: unfixed, a re-run of the phase DROPped the live
+  `ledger_entries_current_mv` before failing on the RENAME.
 - **explorer / the production publish path now runs the static-export guards (F085, T325):**
   the `__next.*` segment prune, `scripts/ci/explorer-file-budget.sh` and
   `scripts/ci/explorer-seo-lint.sh` existed only as steps of

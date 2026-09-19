@@ -16,8 +16,11 @@
 #      current min "preserves today's coverage floor"), and the runbook's
 #      `reproject 38000000 <tip>` raises the floor on any v1 reaching below
 #      38,000,000. The RENAME is where rollback-precutover stops applying.
-#   2. cutover REFUSES on an empty v2, and on a v2 whose max lags v1's (a v2
-#      MV that is not capturing live ingest).
+#   2. cutover REFUSES on an empty v2, on a v2 whose max lags v1's (a v2 MV
+#      that is not capturing live ingest), and on a coverage query that did
+#      not come back at all — r1's state today, where the 2026-07-29 cutover
+#      completed and there is no longer a ledger_entries_current_v2. Unfixed,
+#      that case DROPPED the live ledger_entries_current_mv before failing.
 #   3. a refusal issues NO DROP, NO RENAME and NO INSERT — v1 keeps serving.
 #   4. D3_FORCE_CUTOVER=yes, and only that, overrides — the same explicit
 #      acknowledgement finalize / rollback-precutover already require.
@@ -71,7 +74,12 @@ done
 # record's OWN terminator — the ordering assertion counts log lines.
 printf '%s\n' "$(printf '%s' "$sql" | tr '\n\t' '  ' | tr -s ' ')" >> "$CH_LOG"
 case "$sql" in
-  *"count()"*ledger_entries_current_v2*) printf '%b\n' "$V2_COV" ;;
+  *"count()"*ledger_entries_current_v2*)
+    # CH_FAIL_V2 models a table that does not exist: clickhouse-client
+    # prints its error on stderr and exits non-zero, so the caller's
+    # capture is EMPTY.
+    [ -n "${CH_FAIL_V2:-}" ] && { echo "Code: 60. DB::Exception: Table stellar.ledger_entries_current_v2 does not exist." >&2; exit 1; }
+    printf '%b\n' "$V2_COV" ;;
   *"count()"*ledger_entries_current*)    printf '%b\n' "$V1_COV" ;;
   *"max(ledger_seq) FROM stellar.ledger_entry_changes"*) printf '%s\n' "$TIP" ;;
 esac
@@ -88,7 +96,7 @@ d3() {
   shift   # the --
   CH_LOG="$TMP/ch.$name.log"; : > "$CH_LOG"
   OUT="$TMP/out.$name"
-  env -u D3_FORCE_CUTOVER \
+  env -u D3_FORCE_CUTOVER -u CH_FAIL_V2 \
       CH_LOG="$CH_LOG" CH="$TMP/bin/fake-ch" \
       D3_STATE="$TMP/state.$name" CH_FLAGS_DIR="$TMP/flags" \
       V1_COV="0\t0\t0" V2_COV="0\t0\t0" TIP=63700000 \
@@ -149,6 +157,22 @@ else
   sed 's/^/       /' "$OUT"
 fi
 no_ddl lag "v2 behind the tip"
+
+# r1's state TODAY (measured 2026-09-19): the 2026-07-29 cutover completed and
+# finalize dropped _old, so ledger_entries_current is already the
+# ReplacingMergeTree(version) shape and there is NO ledger_entries_current_v2.
+# A cutover re-run therefore gets a FAILED query, not a number — and a failed
+# clickhouse-client query yields an empty capture, which must refuse rather
+# than be compared or interpolated. CH_FAIL_V2 makes the stub exit non-zero on
+# the v2 aggregate, exactly as a missing table does.
+d3 missing CH_FAIL_V2=1 V1_COV='900000000\t2\t63700000' -- cutover
+if [ "$RC" -ne 0 ] && grep -q 'not a non-negative integer' "$OUT"; then
+  ok "a v2 aggregate that did not come back ⇒ refused, not compared"
+else
+  bad "a failed v2 coverage query did not refuse (rc=$RC)"
+  sed 's/^/       /' "$OUT"
+fi
+no_ddl missing "missing v2 table"
 
 # ─── 3. only the explicit acknowledgement overrides ─────────────────
 d3 force-wrong D3_FORCE_CUTOVER=1 V1_COV='900000000\t2\t63700000' V2_COV='900000001\t38000000\t63700000' -- cutover
