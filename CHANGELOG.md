@@ -231,6 +231,21 @@ against.
   `/etc/caddy/Caddyfile`, `caddy validate`s it and reloads) — so until that runs
   r1 keeps the old ordering and the kill-switch stays partial there. Verify
   after the reload with the file engaged: every `/v1/*/stream` must answer 503.
+- **docs / supply-cross-check-divergence runbook heavy-job command (F155):**
+  the mandatory re-seed step's `run-heavy-job.sh` invocation passed
+  `stellarindex-ops` as the wrapper's `<name>` job-label argument instead of
+  a label, so `NAME=stellarindex-ops` and the wrapper tried to `exec`
+  `supply` (the ops binary's first subcommand word) as if it were a binary —
+  `run-heavy-job: exec: supply: not found` (exit 127) on every paste. Both
+  commands now pass a `supply-seed-sac-balances` job label ahead of the
+  `stellarindex-ops supply seed-sac-balances` payload, matching every
+  sibling runbook's `run-heavy-job.sh <name> <command...>` usage.
+  `scripts/ci/supply-cross-check-divergence-runbook-test.sh` extracts the
+  runbook's own `sh` code block and the shipped wrapper from the ansible
+  task and runs the block verbatim against a stubbed `stellarindex-ops`,
+  so a regression back to the old argument order fails on the actual
+  exec-not-found error rather than a hand-copied twin.
+
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before
   T424/F-1334/W6-tst-1 widened `scripts/ci/check-change-class.sh` to also

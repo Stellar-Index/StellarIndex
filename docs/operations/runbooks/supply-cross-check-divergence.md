@@ -250,9 +250,11 @@ below is the generic path.
       the floor-limited current-state projection, so it is heavy and
       **must** run under the heavy-job wrapper:
       ```sh
-      run-heavy-job.sh stellarindex-ops supply seed-sac-balances \
+      run-heavy-job.sh supply-seed-sac-balances \
+        stellarindex-ops supply seed-sac-balances \
         -config /etc/stellarindex.toml -full-history -dry-run
-      run-heavy-job.sh stellarindex-ops supply seed-sac-balances \
+      run-heavy-job.sh supply-seed-sac-balances \
+        stellarindex-ops supply seed-sac-balances \
         -config /etc/stellarindex.toml -full-history -write
       ```
       The printed `sum=<stroops>` per contract should rise by the
