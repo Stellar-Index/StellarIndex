@@ -198,6 +198,39 @@ against.
   one-file change: add `when: clickhouse_config_tasks_enabled | bool` to those
   six tasks.
 
+- **ops / the serving kill-switch never stopped the SSE streams (F137, Q239):**
+  `sudo touch /etc/caddy/MAINTENANCE_MODE` — the documented way to stop serving
+  during a live data-integrity incident — answered 503 on `/v1/price` while
+  `/v1/price/stream`, `/v1/price/tip/stream`, `/v1/observations/stream` and
+  `/v1/ledger/stream` kept pushing the very values the operator had just
+  stopped serving, accepting new connections, with no signal the switch was
+  partial. The cause is invisible in the file's source order: OUTSIDE a `route`
+  block Caddy sorts a site's directives by its own fixed directive order, in
+  which `handle` ranks **above** `respond`, so the stream proxy's
+  `handle @sse { … }` block compiled ahead of the maintenance responder —
+  `caddy adapt` on the pre-fix file yields
+  `[vars+headers, encode, sse-handle, maintenance-503, /metrics, proxy]`, and
+  caddy 2.11.4 in front of a stub SSE upstream served 200 + event data on all
+  four stream routes with the file present. The kill-switch and the stream
+  proxy now sit in one `route` block — the only construct that makes source
+  order authoritative — with the 503 first and the proxy second as
+  `reverse_proxy @sse`, keeping `flush_interval -1` so a stream still streams
+  the moment the switch is disengaged (re-measured live: 503 on all four stream
+  routes with the file present, event data within milliseconds once it is
+  removed, and `/v1/healthz`, `/metrics` and the ordinary JSON routes byte-for-
+  byte unchanged in both states). Both spellings moved together —
+  `configs/caddy/Caddyfile.api` and the ansible template
+  `configs/ansible/roles/archival-node/templates/Caddyfile.j2`.
+  `internal/config/caddy_maintenance_mode_test.go` pins the ordering in both
+  copies twice: structurally on the text (no `handle` block in the site; the
+  maintenance `respond` inside the route and ahead of the stream proxy) and,
+  where the binary is on PATH, on the config `caddy adapt` actually compiles.
+  **Operator note:** a binary deploy does not carry this. The template only
+  reaches r1 through the caddy role —
+  `ansible-playbook … --tags caddy` (`19-caddy.yml` templates
+  `/etc/caddy/Caddyfile`, `caddy validate`s it and reloads) — so until that runs
+  r1 keeps the old ordering and the kill-switch stays partial there. Verify
+  after the reload with the file engaged: every `/v1/*/stream` must answer 503.
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before
   T424/F-1334/W6-tst-1 widened `scripts/ci/check-change-class.sh` to also
