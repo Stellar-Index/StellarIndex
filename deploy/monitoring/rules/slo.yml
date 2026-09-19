@@ -102,15 +102,39 @@ groups:
         labels:
           slo: api_latency_p95_under_200ms
 
-      # Request rate over the SLO-scoped routes — feeds the min-traffic guard
-      # on the burn alerts below. At near-zero real traffic the ratio is
-      # dominated by a handful of synthetic (smoke + prewarm) requests, so a
-      # few cold-cache outliers can trip the 0.1% budget. The guard suppresses
-      # the burn alerts until real traffic clears the synthetic baseline;
-      # floor set to 5 req/s (~2× the measured synthetic baseline).
-      - record: stellarindex:api_latency_slo_request_rate:1h
+      # Minimum-signal guard — absolute COUNT of non-fast (slow or
+      # error) requests over the trailing hour, not a floor on total
+      # traffic. (RLT-329, #739): the original guard compared TOTAL
+      # request rate against a 5 req/s floor sized off a ~2.4 req/s
+      # synthetic-monitoring baseline (80e377982, 2026-07-02). Once
+      # fb70b8408 (2026-09-16) excluded synthetic UAs from
+      # http_request_duration_seconds entirely (see
+      # internal/obs/http_middleware.go's IsSyntheticUA check, which
+      # returns before any Observe/Inc call), that denominator held
+      # real traffic only — and pre-launch real traffic never clears
+      # 5 req/s, so the guard silently suppressed every latency burn
+      # alert regardless of how badly the SLO was burning.
+      #
+      # An absolute count of BAD (slow-or-error) requests is the
+      # right significance guard independent of total traffic mix: a
+      # handful of genuinely slow real requests is real signal no
+      # matter how few total requests came with them, while a single
+      # stray sample in a near-empty window still can't trip it.
+      #
+      # NOTE (do not pin this series' value in a test): `increase()`
+      # extrapolates to the full range, and how much it extrapolates
+      # depends on the Prometheus version — 2.x range selectors are
+      # left-CLOSED, 3.x left-OPEN, so the same fixture yields a
+      # different sample count and a different extrapolation factor.
+      # r1 and the verify container both run 2.55.1; a developer's
+      # promtool on PATH may be 3.x. Assert the ALERT's firing
+      # behaviour with margin either side of the `> 5` threshold
+      # rather than this series' decimals — see slo_test.yml.
+      - record: stellarindex:api_slow_request_count:1h
         expr: |
-          sum(rate(http_request_duration_seconds_count{job="stellarindex_api",route=~"/v1/price|/v1/price/batch|/v1/oracle/latest|/v1/oracle/lastprice|/v1/oracle/prices|/v1/oracle/x_last_price"}[1h]))
+          sum(increase(http_request_duration_seconds_count{job="stellarindex_api",route=~"/v1/price|/v1/price/batch|/v1/oracle/latest|/v1/oracle/lastprice|/v1/oracle/prices|/v1/oracle/x_last_price"}[1h]))
+          -
+          sum(increase(http_request_success_duration_seconds_bucket{job="stellarindex_api",route=~"/v1/price|/v1/price/batch|/v1/oracle/latest|/v1/oracle/lastprice|/v1/oracle/prices|/v1/oracle/x_last_price",le="0.2"}[1h]))
         labels:
           slo: api_latency_p95_under_200ms
 
@@ -129,9 +153,11 @@ groups:
           (1 - stellarindex:api_slow_request_ratio:5m{slo="api_latency_p95_under_200ms"}) > (14.4 * 0.001)
           and
           (1 - stellarindex:api_slow_request_ratio:1h{slo="api_latency_p95_under_200ms"}) > (14.4 * 0.001)
-          # min-traffic guard — don't burn on synthetic-only traffic
+          # min-signal guard — at least 5 bad (slow/error) requests in
+          # the trailing hour, so a lone cold-cache outlier can't trip
+          # the budget; see stellarindex:api_slow_request_count:1h above
           and on(slo)
-          (stellarindex:api_latency_slo_request_rate:1h{slo="api_latency_p95_under_200ms"} > 5)
+          (stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > 5)
         for: 2m
         labels:
           severity: page
@@ -153,9 +179,11 @@ groups:
           (1 - stellarindex:api_slow_request_ratio:30m{slo="api_latency_p95_under_200ms"}) > (6 * 0.001)
           and
           (1 - stellarindex:api_slow_request_ratio:6h{slo="api_latency_p95_under_200ms"}) > (6 * 0.001)
-          # min-traffic guard — don't burn on synthetic-only traffic
+          # min-signal guard — at least 5 bad (slow/error) requests in
+          # the trailing hour, so a lone cold-cache outlier can't trip
+          # the budget; see stellarindex:api_slow_request_count:1h above
           and on(slo)
-          (stellarindex:api_latency_slo_request_rate:1h{slo="api_latency_p95_under_200ms"} > 5)
+          (stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > 5)
         for: 5m
         labels:
           severity: page
@@ -175,9 +203,11 @@ groups:
           (1 - stellarindex:api_slow_request_ratio:6h{slo="api_latency_p95_under_200ms"}) > (1 * 0.001)
           and
           (1 - stellarindex:api_slow_request_ratio:24h{slo="api_latency_p95_under_200ms"}) > (1 * 0.001)
-          # min-traffic guard — don't burn on synthetic-only traffic
+          # min-signal guard — at least 5 bad (slow/error) requests in
+          # the trailing hour, so a lone cold-cache outlier can't trip
+          # the budget; see stellarindex:api_slow_request_count:1h above
           and on(slo)
-          (stellarindex:api_latency_slo_request_rate:1h{slo="api_latency_p95_under_200ms"} > 5)
+          (stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > 5)
         for: 30m
         labels:
           severity: ticket

@@ -1,6 +1,6 @@
 ---
 title: Runbook — api-latency
-last_verified: 2026-08-29
+last_verified: 2026-09-19
 status: current
 severity: P2 (direct-threshold) / P1 (SLO burn-rate fast)
 ---
@@ -13,7 +13,7 @@ severity: P2 (direct-threshold) / P1 (SLO burn-rate fast)
 | ----- | ----- |
 | Direct-threshold alerts | `stellarindex_api_latency_p95_high` (> 500 ms), `stellarindex_api_latency_p99_high` (> 2 s) — `configs/prometheus/rules.r1/api.yml` (group `stellarindex.api`) is the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/api.yml`. Both alerts `severity: ticket`, `for: 10m` in both trees. |
 | SLO burn-rate alerts | `stellarindex_slo_latency_burn_{fast,medium,slow}` (per ADR-0009 multi-window pattern) — `configs/prometheus/rules.r1/slo.yml` (group `stellarindex.slo.latency`); multi-host twin in `deploy/monitoring/rules/slo.yml`. |
-| Severity | Direct-threshold: `severity: ticket` (both). Burn tiers by label: fast = `severity: page` (`for: 2m`), medium = `severity: page` (`for: 5m`), slow = `severity: ticket` (`for: 30m`). Every burn tier also carries a min-traffic guard — `stellarindex:api_latency_slo_request_rate:1h > 5` — so on quiet traffic (synthetic-only load) the burn alerts deliberately CANNOT fire. |
+| Severity | Direct-threshold: `severity: ticket` (both). Burn tiers by label: fast = `severity: page` (`for: 2m`), medium = `severity: page` (`for: 5m`), slow = `severity: ticket` (`for: 30m`). Every burn tier also carries a min-signal guard — `stellarindex:api_slow_request_count:1h > 5` — an absolute count of bad (slow-or-error) requests over the trailing hour, so a single cold-cache outlier in a near-empty window can't trip the budget; unlike the old rate-based floor, this guard does NOT depend on total traffic volume and fires on genuinely bad real traffic no matter how sparse (RLT-329, #739). |
 | Typical MTTR | 15–60 min |
 | Impact | Requests complete but slowly. Wallet clients feel sluggish; clients with tight timeouts may give up and retry. Not an outage, but breaches our SLA (p95 ≤ 200 ms, p99 ≤ 500 ms). |
 
@@ -169,6 +169,16 @@ ssh root@136.243.90.96 'runuser -u postgres -- psql -d stellarindex -c "
 
 ## Changelog
 
+- 2026-09-19 — re-armed the min-signal guard (RLT-329, #739). The
+  `> 5 req/s` TOTAL-traffic floor from 2026-07-02 was sized off a
+  ~2.4 req/s synthetic-monitoring baseline; once the smoke/prewarm/probe
+  User-Agent filter (2026-09-16) excluded that traffic from
+  `http_request_duration_seconds` entirely, real pre-launch traffic never
+  cleared 5 req/s and every burn tier was disarmed regardless of burn
+  severity. Replaced with `stellarindex:api_slow_request_count:1h > 5`, an
+  absolute count of bad (slow-or-error) requests, independent of total
+  traffic volume. Table row above corrected from "deliberately CANNOT
+  fire" to the count-based guard's actual behavior.
 - 2026-08-29 — re-verified against HEAD (Wave I). Both `for:`
   mentions corrected 2m → 10m (both trees carry an explicit
   "10m (not 2m)" comment); severity table now quotes the real

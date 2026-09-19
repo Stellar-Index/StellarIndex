@@ -553,6 +553,34 @@ against.
   hole in `test/integration/clickhouse_cap67_to_clamp_test.go`, the write-side
   guard in `clickhouse_cap67_advance_guard_test.go`. Still open, outside this
   change's files: the watermark has no staleness alert.
+- **observability / latency burn alerts re-armed against real traffic (RLT-329):**
+  the min-traffic guard on all three `stellarindex_slo_latency_burn_*` alerts
+  compared TOTAL request rate against a 5 req/s floor sized off a ~2.4 req/s
+  synthetic-monitoring baseline. Once the smoke/probe/prewarm User-Agent
+  filter excluded that traffic from `http_request_duration_seconds`
+  entirely, the floor read real traffic alone — which never clears 5 req/s
+  pre-launch — so the guard silently suppressed every latency burn alert
+  regardless of how badly the SLO was burning. Replaced the rate floor with
+  `stellarindex:api_slow_request_count:1h`, an absolute count of bad
+  (slow-or-error) requests: a significance guard that scales with the
+  quantity that actually matters (bad requests) instead of total traffic
+  volume. Both `configs/prometheus/rules.r1/slo.yml` and
+  `deploy/monitoring/rules/slo.yml` change together so r1 does not drift
+  from the deploy mirror. The promtool cases in
+  `deploy/monitoring/rule-tests/slo_test.yml` run one request a minute —
+  0.0167 req/s, two orders of magnitude under the old floor — and differ
+  only in how many of those requests were slow: three stays silent, twelve
+  pages. Both are proven load-bearing: the firing case stays silent under
+  the old rate-based guard (reproducing the #739 disarm) and the silent
+  case fires if the guard is neutered. Every assertion is a `> bool`
+  comparison yielding exactly 1 or 0, because `increase()`/`rate()`
+  extrapolation and range-selector boundaries differ between the
+  Prometheus 2.x r1 and the verify container run and a 3.x promtool on a
+  developer's PATH — a pinned decimal is green on one and red on the
+  other. Also corrected the four runbooks (`api-latency.md`,
+  `slo-latency-burn-{fast,medium,slow}.md`) that documented the deleted
+  rate guard and asserted the alert "deliberately CANNOT fire" — that
+  triage note is now false and is dropped.
 - **ops / the archival-node role still hard-failed one import earlier (F128):**
   the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,
   `21-clickhouse-drop-guard.yml` and `22-clickhouse-exporter.yml`, but

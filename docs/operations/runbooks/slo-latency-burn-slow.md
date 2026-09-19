@@ -1,6 +1,6 @@
 ---
 title: Runbook — slo-latency-burn-slow
-last_verified: 2026-08-29
+last_verified: 2026-09-19
 status: current
 severity: P3
 ---
@@ -27,11 +27,18 @@ of requests slower than 200 ms), sustained `for: 30m`.
 Note the alert's `runbook_url` annotation points at `api-latency.md`, not
 this file — this runbook is the family-specific supplement.
 
-The latency burn rules carry a **min-traffic guard**:
-`stellarindex:api_latency_slo_request_rate:1h > 5` (req/s over the
-SLO-scoped routes). On quiet r1, where synthetic smoke/prewarm traffic runs
-~2.4 req/s, this alert deliberately **cannot fire** — if it did fire, real
-traffic exceeds the floor and the trend is genuine.
+The latency burn rules carry a **min-signal guard**:
+`stellarindex:api_slow_request_count:1h > 5` — an absolute count of bad
+(slow-or-error) requests over the SLO-scoped routes in the trailing hour,
+not a floor on total traffic. (RLT-329, #739): the guard used to compare
+TOTAL request rate against a 5 req/s floor sized off a ~2.4 req/s
+synthetic-monitoring baseline; once the smoke/prewarm/probe User-Agent
+filter excluded that traffic from the histogram, real pre-launch traffic
+never cleared 5 req/s and every latency burn alert sat permanently
+disarmed regardless of how badly the SLO was burning. The count-based
+guard fires on a handful of genuinely bad real requests no matter how few
+total requests came with them, while a single cold-cache outlier in a
+near-empty window still can't trip it.
 
 ## Investigation
 
@@ -59,6 +66,16 @@ Mitigation is usually code-side — refactor the slow path or add a cache layer.
 
 ## Changelog
 
+- 2026-09-19 — re-armed the min-signal guard (RLT-329, #739). The
+  `> 5 req/s` TOTAL-traffic floor from 2026-07-02 was sized off a
+  ~2.4 req/s synthetic-monitoring baseline; once the smoke/prewarm/probe
+  User-Agent filter (2026-09-16) excluded that traffic from
+  `http_request_duration_seconds` entirely, real pre-launch traffic never
+  cleared 5 req/s and this alert was disarmed regardless of burn severity.
+  Replaced with `stellarindex:api_slow_request_count:1h > 5`, an absolute
+  count of bad (slow-or-error) requests, independent of total traffic
+  volume. Dropped the old "if it fired, real traffic exceeds the floor"
+  triage note — it no longer applies to a count-based guard.
 - 2026-08-29 — re-verified against HEAD: windows are 6h AND 24h (not 3d),
   `for: 30m`, `severity: ticket` (P3 frontmatter was already correct);
   impact arithmetic — 1× burn means the budget lasts exactly 30 days (zero

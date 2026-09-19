@@ -1,10 +1,11 @@
 ---
-# promtool unit tests for the availability burn-rate family in
+# promtool unit tests for the burn-rate families in
 # deploy/monitoring/rules/slo.yml:
 #
 #   stellarindex_slo_availability_burn_fast
 #   stellarindex_slo_availability_burn_medium
 #   stellarindex_slo_availability_burn_slow
+#   stellarindex_slo_latency_burn_fast
 #
 #   promtool test rules deploy/monitoring/rule-tests/slo_test.yml
 #
@@ -16,6 +17,13 @@
 # never promised. These cases pin the arithmetic to the published
 # figure: an error rate inside the budget stays silent, one that burns
 # it at 5× tickets and does not page, one that burns it at 20× pages.
+#
+# The latency cases at the bottom (RLT-329, #739) pin the min-signal
+# guard on the latency burn family. Its predecessor was a floor on
+# TOTAL request rate sized off a synthetic-monitoring baseline; once
+# the synthetic User-Agents were excluded from the histogram, real
+# pre-launch traffic never cleared the floor and all three latency
+# burn alerts sat permanently suppressed however badly the SLO burned.
 #
 # Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the header
 # of api_test.yml.
@@ -139,3 +147,184 @@ tests:
               description: |
                 Availability SLO is consuming budget at the 30-day rate.
                 Not urgent; ticket for the next workday.
+
+
+  # ── RLT-329 (#739): the latency burn family's min-signal guard ────
+  #
+  # Both cases run the SAME real (non-synthetic) traffic shape — one
+  # request a minute for two hours, 0.0167 req/s, two orders of
+  # magnitude under the 5 req/s TOTAL-rate floor the guard used to
+  # carry. They differ only in how many of those requests were slow.
+  # Under the old floor NEITHER case could ever fire, however badly
+  # the SLO burned; that is the disarm this pair pins shut.
+  #
+  # Every assertion below is a `> bool` comparison, so it evaluates to
+  # exactly 1 or 0 on any Prometheus. Do not replace them with pinned
+  # sample values: `increase()`/`rate()` extrapolation and range-selector
+  # boundaries differ between 2.x (r1, and the verify container's
+  # PROM_VERSION) and a 3.x promtool on a developer's PATH, so a pinned
+  # decimal passes on one and fails on the other.
+
+  # Three slow requests in the trailing hour: under the guard, silent.
+  - interval: 1m
+    name: too few slow requests to trust leaves the fast burn silent
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="stellarindex_api",instance="r1:8080",method="GET",route="/v1/price"}'
+        values: '0+1x120'
+      - series: 'http_request_success_duration_seconds_bucket{job="stellarindex_api",instance="r1:8080",method="GET",route="/v1/price",le="0.2"}'
+        values: '0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 115 115 115 116 117'
+
+    promql_expr_test:
+      # Both ratio clauses of burn_fast are past the 14.4x budget at
+      # every evaluation of the `for: 2m` hold window (1h58m).
+      - expr: (1 - stellarindex:api_slow_request_ratio:5m{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 1h58m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      - expr: (1 - stellarindex:api_slow_request_ratio:1h{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 1h58m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # ... so the min-signal guard is the ONLY clause deciding the
+      # outcome, and it reads 0 across that same window.
+      - expr: stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > bool 5
+        eval_time: 1h58m
+        exp_samples:
+          - value: 0
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # Both ratio clauses of burn_fast are past the 14.4x budget at
+      # every evaluation of the `for: 2m` hold window (1h59m).
+      - expr: (1 - stellarindex:api_slow_request_ratio:5m{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 1h59m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      - expr: (1 - stellarindex:api_slow_request_ratio:1h{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 1h59m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # ... so the min-signal guard is the ONLY clause deciding the
+      # outcome, and it reads 0 across that same window.
+      - expr: stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > bool 5
+        eval_time: 1h59m
+        exp_samples:
+          - value: 0
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # Both ratio clauses of burn_fast are past the 14.4x budget at
+      # every evaluation of the `for: 2m` hold window (2h).
+      - expr: (1 - stellarindex:api_slow_request_ratio:5m{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 2h
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      - expr: (1 - stellarindex:api_slow_request_ratio:1h{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 2h
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # ... so the min-signal guard is the ONLY clause deciding the
+      # outcome, and it reads 0 across that same window.
+      - expr: stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > bool 5
+        eval_time: 2h
+        exp_samples:
+          - value: 0
+            labels: '{slo="api_latency_p95_under_200ms"}'
+
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_slo_latency_burn_fast
+        exp_alerts: []
+
+  # Twelve slow requests in the trailing hour over the SAME traffic
+  # volume: real signal, so the alert fires. This is the regression
+  # assertion for #739 — with the old `api_latency_slo_request_rate:1h
+  # > 5` guard this traffic never clears 5 req/s and the alert stays
+  # silent no matter how many requests were slow.
+  - interval: 1m
+    name: slow requests on quiet real traffic fire the fast burn
+    input_series:
+      - series: 'http_request_duration_seconds_count{job="stellarindex_api",instance="r1:8080",method="GET",route="/v1/price"}'
+        values: '0+1x120'
+      - series: 'http_request_success_duration_seconds_bucket{job="stellarindex_api",instance="r1:8080",method="GET",route="/v1/price",le="0.2"}'
+        values: '0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 106 106 106 106 106 106 106 106 106 106 106 106 107 108'
+
+    promql_expr_test:
+      # Both ratio clauses of burn_fast are past the 14.4x budget at
+      # every evaluation of the `for: 2m` hold window (1h58m).
+      - expr: (1 - stellarindex:api_slow_request_ratio:5m{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 1h58m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      - expr: (1 - stellarindex:api_slow_request_ratio:1h{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 1h58m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # ... so the min-signal guard is the ONLY clause deciding the
+      # outcome, and it reads 1 across that same window.
+      - expr: stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > bool 5
+        eval_time: 1h58m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # Both ratio clauses of burn_fast are past the 14.4x budget at
+      # every evaluation of the `for: 2m` hold window (1h59m).
+      - expr: (1 - stellarindex:api_slow_request_ratio:5m{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 1h59m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      - expr: (1 - stellarindex:api_slow_request_ratio:1h{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 1h59m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # ... so the min-signal guard is the ONLY clause deciding the
+      # outcome, and it reads 1 across that same window.
+      - expr: stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > bool 5
+        eval_time: 1h59m
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # Both ratio clauses of burn_fast are past the 14.4x budget at
+      # every evaluation of the `for: 2m` hold window (2h).
+      - expr: (1 - stellarindex:api_slow_request_ratio:5m{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 2h
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      - expr: (1 - stellarindex:api_slow_request_ratio:1h{slo="api_latency_p95_under_200ms"}) > bool (14.4 * 0.001)
+        eval_time: 2h
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+      # ... so the min-signal guard is the ONLY clause deciding the
+      # outcome, and it reads 1 across that same window.
+      - expr: stellarindex:api_slow_request_count:1h{slo="api_latency_p95_under_200ms"} > bool 5
+        eval_time: 2h
+        exp_samples:
+          - value: 1
+            labels: '{slo="api_latency_p95_under_200ms"}'
+
+    alert_rule_test:
+      - eval_time: 2h
+        alertname: stellarindex_slo_latency_burn_fast
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              team: stellarindex
+              component: api
+              slo: api_latency_p95_under_200ms
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
+              summary: "FAST burn — consuming SLO budget at >14.4× rate"
+              description: |
+                Latency SLO (99.9% under 200 ms over 30d) is burning fast.
+                At current rate we would consume 5% of monthly budget in 1
+                hour. Both 5m and 1h windows agree — not a one-off spike.
+                Follow the api-latency runbook; check Redis cache hit rate
+                + Postgres connection pool first.
