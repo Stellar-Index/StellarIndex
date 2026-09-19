@@ -57,6 +57,39 @@ against.
 
 ### Fixed
 
+- **clickhouse / op-stream successful-tx set-build (F111, T385):** `StreamSDEXOps`
+  and `StreamClassicOps` still restricted to successful transactions with
+  `AND o.tx_hash IN (SELECT tx_hash FROM stellar.transactions WHERE successful = 1
+  AND ledger_seq BETWEEN ? AND ?)`. ClickHouse answers that with a
+  `CreatingSetsTransform`, which materialises the WHOLE window's tx-hash set in
+  memory before the join runs — the shape that blew the 10 GiB query budget on a
+  dense 250k-ledger window (2026-07-11). The third sibling,
+  `StreamContractCallOps`, was moved off it then and these two were not, so every
+  wide re-derive that reaches them (`ch-rebuild`'s SDEX arm,
+  `ch-reproject`, `classic-movements-backfill`, `compute-completeness`) carried
+  the OOM shape. Both queries now use that sibling's grace_hash `INNER JOIN` over
+  a derived table, with `GROUP BY tx_hash` supplying the set semantics `IN` gave
+  for free — these readers take no `FINAL`, so an un-merged duplicate part in
+  `stellar.transactions` would otherwise fan every op row of that tx out into
+  two. The join is spelled BEFORE the outer `WHERE`, which is load-bearing and
+  not cosmetic: hoisting the outer ledger window into a derived table instead
+  removes the set-build but stops ClickHouse propagating that window through
+  `o.ledger_seq = r.ledger_seq`, and `stellar.operation_results` — full chain
+  history of wide `result_xdr` — then loses primary-key pruning entirely and
+  full-scans as the join's spilled build side. `StreamSDEXOps`' doc comment also
+  claimed `join_algorithm=full_sorting_merge` while the query has set
+  `grace_hash` throughout; it now says what the code does.
+  `test/integration/stream_ops_operation_results_pruning_test.go` is the live
+  proof on the pinned ClickHouse line, over a 1M-ledger fixture read through a
+  1,000-ledger window: it drives both production entry points, recovers the exact
+  statement each executed from `system.query_log`, and asserts no `CreatingSet`
+  step plus `EXPLAIN indexes = 1` pruning on `stellar.operation_results`
+  (measured 1/62 granules, 29,576 read_rows, against 124/124 and 1,021,384 for
+  the hoisted-window shape). All three rejected shapes — IN-subquery,
+  hoisted-window, and join-without-`GROUP BY` — are frozen in that test as
+  oracles and each is asserted to still exhibit its own pathology, so no
+  assertion can pass vacuously.
+
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before
   T424/F-1334/W6-tst-1 widened `scripts/ci/check-change-class.sh` to also
