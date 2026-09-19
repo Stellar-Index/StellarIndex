@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -79,9 +81,13 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		"Maximum runtime for the rs-stellar-archivist scan command")
 	failOnMissed := fs.Bool("fail-on-missed", false,
 		"Treat checkpointsMissed > 0 as a hard failure (ADR-0017 X1.7). "+
-			"Default off for backward compat with the operator workflow that "+
-			"tolerated scattered missed checkpoints; flip to true after the "+
-			"cross-anchor archive bootstrap completes (PRs #200/#202/#203).")
+			"Counts only checkpoints absent from INSIDE the mirror's own "+
+			"coverage span — a checkpoint the walk reached before the mirror's "+
+			"fill job did is reported as unmirrored, never as missed, so this "+
+			"flag cannot fire on the trailing edge. Default off for backward "+
+			"compat with the operator workflow that tolerated scattered missed "+
+			"checkpoints; the deployed tier-B units pass it (ADR-0017 "+
+			"amendment 2026-09-19).")
 	maxRuntime := fs.Duration("max-runtime", 24*time.Hour,
 		"Hard cap on total verification runtime. 0 = no cap (run until "+
 			"completion or operator interrupt). Default 24h matches the "+
@@ -166,8 +172,21 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 	}
 
 	fmt.Fprintf(os.Stderr, "verify-archive: bucket=%s range=[%d,%d] tier=%s\n", bucket, *from, *to, *tier)
+	var mirrorCoverage archiveMirrorCoverage
 	if doCheckpoint {
-		fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor against %s\n", *archiveRoot)
+		// Measure what the cross-anchor mirror holds BEFORE the walk,
+		// so every checkpoint absence can be attributed: inside the
+		// span it is a hole in the archive, above it the mirror's fill
+		// job simply has not got there yet. Without the span the two
+		// are indistinguishable and the run reports the fill lag as
+		// missing data (F144).
+		mirrorCoverage = readArchiveMirrorCoverage(*archiveRoot)
+		fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor against %s (mirror coverage %s)\n",
+			*archiveRoot, mirrorCoverage)
+		if !mirrorCoverage.Known {
+			fmt.Fprintf(os.Stderr, "verify-archive: warn: cannot read the cross-anchor mirror's "+
+				"checkpoint span under %s/ledger — every absent checkpoint counts as missed\n", *archiveRoot)
+		}
 	}
 
 	// systemd Type=notify integration: signal READY=1 once at start
@@ -309,7 +328,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 			walkTier = "checkpoint"
 		}
 		highestLedger, highestHash, err := verifyArchiveLCMWalk(cfg, bucket, effectiveFrom, uint32(*to), *maxRuntime, *workers,
-			doChain, doCheckpoint, *archiveRoot, *failOnMissed, effectiveResumeHash,
+			doChain, doCheckpoint, *archiveRoot, mirrorCoverage, *failOnMissed, effectiveResumeHash,
 			*stateFile, walkTier, priorState)
 		if err != nil {
 			return err
@@ -335,18 +354,23 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 			}
 			now := time.Now().UTC()
 			newState := latestState
+			advancedTo := highestLedger
 			if doChain {
 				newState = updateTierState(newState, "chain", highestLedger, highestHash, now)
 			}
 			if doCheckpoint {
-				newState = updateTierState(newState, "checkpoint", highestLedger, "", now)
+				var anchored uint32
+				newState, anchored = applyCheckpointTierState(newState, highestLedger, mirrorCoverage, now)
+				if !doChain {
+					advancedTo = anchored
+				}
 			}
 			if err := writeVerifyArchiveState(*stateFile, newState); err != nil {
 				return fmt.Errorf("write state %s: %w", *stateFile, err)
 			}
 			if highestLedger > 0 {
 				fmt.Fprintf(os.Stderr, "verify-archive: state advanced to ledger %d (file: %s)\n",
-					highestLedger, *stateFile)
+					advancedTo, *stateFile)
 			} else {
 				fmt.Fprintf(os.Stderr, "verify-archive: in-progress chunks cleared, no high-water advance (file: %s)\n", *stateFile)
 			}
@@ -377,6 +401,11 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 // the given bucket range. Split from verifyArchive so Tier D can run
 // standalone without the ledgerstream setup.
 //
+// mirrorCoverage is the checkpoint span the cross-anchor mirror holds
+// (see archiveMirrorCoverage). Checkpoints the walk reaches above it
+// are counted as unmirrored rather than missed, and they do not
+// advance the checkpoint tier's high-water.
+//
 // failOnMissed: when true, a non-zero checkpointsMissed at the end
 // of the walk is treated as a hard failure per ADR-0017 X1.7.
 // When false (default), missed checkpoints are reported but tolerated
@@ -386,7 +415,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 // chunk results — used by the caller to advance the persisted
 // verify-archive state. highestLedgerHashHex is hex-encoded;
 // callers carry it forward as -resume-from-hash on the next run.
-func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, maxRuntime time.Duration, workers int, doChain, doCheckpoint bool, archiveRoot string, failOnMissed bool, resumeFromHash string, stateFile, tier string, priorState VerifyArchiveState) (uint32, string, error) { //nolint:funlen,gocognit,gocyclo
+func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, maxRuntime time.Duration, workers int, doChain, doCheckpoint bool, archiveRoot string, mirrorCoverage archiveMirrorCoverage, failOnMissed bool, resumeFromHash string, stateFile, tier string, priorState VerifyArchiveState) (uint32, string, error) { //nolint:funlen,gocognit,gocyclo
 	// verify-archive's purpose is chain-check, not full-coverage
 	// delivery — at the trailing edge Galexie may not have uploaded
 	// the next 1-2 partition files yet, and the systemd timer fires
@@ -533,7 +562,8 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 		doChain, doCheckpoint, archiveRoot,
 		startedAt, progressEvery,
 		chunkOrchestratorOpts{
-			ChunkIdxs: chunkIdxs,
+			MirrorCoverage: mirrorCoverage,
+			ChunkIdxs:      chunkIdxs,
 			OnChunkDone: func(originalIdx int, res chunkResult) {
 				if stateFile == "" {
 					return
@@ -555,18 +585,20 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// highestLedger / highestHash are reported back to the caller so
 	// it can persist incremental-run state via -state-file.
 	var (
-		verified          int
-		mismatches        int
-		checkpointsOK     int
-		checkpointsMissed int
-		highestLedger     uint32
-		highestHashHex    string
+		verified              int
+		mismatches            int
+		checkpointsOK         int
+		checkpointsMissed     int
+		checkpointsUnmirrored int
+		highestLedger         uint32
+		highestHashHex        string
 	)
 	for _, r := range results {
 		verified += r.Verified
 		mismatches += r.Mismatches
 		checkpointsOK += r.CheckpointsOK
 		checkpointsMissed += r.CheckpointsMissed
+		checkpointsUnmirrored += r.CheckpointsUnmirrored
 		if r.LastSeq > highestLedger {
 			highestLedger = r.LastSeq
 			highestHashHex = fmt.Sprintf("%x", r.LastHash[:])
@@ -611,13 +643,16 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	fmt.Fprintf(os.Stderr, "\nverify-archive: verified %d ledgers in %s (%.0f ledgers/s, %d workers)\n",
 		verified, elapsed.Round(time.Second), float64(verified)/elapsed.Seconds(), workers)
 	if doCheckpoint {
+		// missed = absent from INSIDE the mirror's coverage span (a
+		// hole in the cross-anchor archive). unmirrored = beyond that
+		// span, i.e. the walk reached a checkpoint the mirror's fill
+		// job has not delivered yet — a lag, not a hole (F144).
+		note := "unmirrored = beyond the mirror's coverage, not a failure"
 		if failOnMissed {
-			fmt.Fprintf(os.Stderr, "verify-archive: checkpoints matched=%d missed=%d (fail-on-missed: any miss = hard failure)\n",
-				checkpointsOK, checkpointsMissed)
-		} else {
-			fmt.Fprintf(os.Stderr, "verify-archive: checkpoints matched=%d missed=%d (missed = archive file absent, not a failure)\n",
-				checkpointsOK, checkpointsMissed)
+			note = "fail-on-missed: any in-coverage miss = hard failure"
 		}
+		fmt.Fprintf(os.Stderr, "verify-archive: checkpoints matched=%d missed=%d unmirrored=%d, mirror coverage %s (%s)\n",
+			checkpointsOK, checkpointsMissed, checkpointsUnmirrored, mirrorCoverage, note)
 	}
 	if walkErr != nil {
 		return 0, "", fmt.Errorf("verification FAILED: %w", walkErr)
@@ -635,10 +670,15 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 		fmt.Fprintf(os.Stderr, "verify-archive: chain-link integrity OK ✓\n")
 	}
 	if doCheckpoint {
-		if checkpointsOK == 0 && checkpointsMissed > 0 {
-			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor INCONCLUSIVE — %d missed, 0 matched (archive mirror may be stale)\n", checkpointsMissed)
+		if checkpointsOK == 0 && checkpointsMissed+checkpointsUnmirrored > 0 {
+			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor INCONCLUSIVE — 0 matched (%d missed, %d unmirrored; archive mirror may be stale)\n",
+				checkpointsMissed, checkpointsUnmirrored)
 		} else {
-			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor OK ✓  (%d matched, %d missed)\n", checkpointsOK, checkpointsMissed)
+			fmt.Fprintf(os.Stderr, "verify-archive: checkpoint anchor OK ✓  (%d matched, %d missed, %d unmirrored)\n",
+				checkpointsOK, checkpointsMissed, checkpointsUnmirrored)
+		}
+		if err := checkpointAnchorReached(checkpointsOK, checkpointsMissed, checkpointsUnmirrored); err != nil {
+			return 0, "", err
 		}
 		if err := checkpointAnchorDecision(checkpointsOK, checkpointsMissed, failOnMissed); err != nil {
 			return 0, "", err
@@ -646,6 +686,27 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	}
 	_ = mismatches // reserved for future exit-code semantics
 	return highestLedger, highestHashHex, nil
+}
+
+// checkpointAnchorReached is DAT-09 restated under the coverage
+// taxonomy: a checkpoint-tier run that encountered checkpoints but
+// MATCHED none anchored nothing, and must not be certified — whether
+// the files were absent from inside the mirror's span (holes) or
+// beyond it (not yet mirrored). Splitting a trailing-edge absence out
+// of checkpointsMissed would otherwise let a walk that ran entirely
+// above the mirror's high-water report "0 missed" and exit 0.
+//
+// It cannot fire on the deployed tier-B shape: the checkpoint tier's
+// high-water is clamped to the mirror's high-water
+// (checkpointWatermark), so -from-last-verified always re-enters the
+// mirrored span by the safety overlap and matches there.
+func checkpointAnchorReached(checkpointsOK, checkpointsMissed, checkpointsUnmirrored int) error {
+	if checkpointsOK > 0 || checkpointsMissed+checkpointsUnmirrored == 0 {
+		return nil
+	}
+	return fmt.Errorf("verification FAILED: checkpoint anchor inconclusive — 0 matched "+
+		"(%d missed, %d beyond the mirror's coverage) — nothing was anchored",
+		checkpointsMissed, checkpointsUnmirrored)
 }
 
 // checkpointAnchorDecision is the DB/archive-free core of the
@@ -663,6 +724,15 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 // certified complete or advance the checkpoint tier's
 // LastVerifiedLedger — the caller skips the state-persist on any
 // non-nil error returned here.
+//
+// Since F144, checkpointsMissed counts only checkpoints absent from
+// INSIDE the mirror's coverage span — a hole in the cross-anchor
+// archive. A checkpoint the walk reached before the mirror's fill job
+// did is counted as unmirrored and never arrives here, which is what
+// makes -fail-on-missed wirable on the nightly tier-B unit. The
+// all-missed branch below is consequently the narrow case of
+// checkpointAnchorReached, which the caller runs first and which also
+// covers a run that saw only unmirrored checkpoints.
 func checkpointAnchorDecision(checkpointsOK, checkpointsMissed int, failOnMissed bool) error {
 	if checkpointsOK == 0 && checkpointsMissed > 0 {
 		return fmt.Errorf("verification FAILED: checkpoint anchor inconclusive — %d missed, 0 matched — nothing was anchored", checkpointsMissed)
@@ -1028,6 +1098,169 @@ func checkpointsEqual(a, b historyCheckpoint) bool {
 		}
 	}
 	return true
+}
+
+// archiveMirrorCoverage is the checkpoint span the local cross-anchor
+// mirror (`-archive-root`, /srv/history-archive on r1) actually holds,
+// discovered from the mirror itself rather than assumed.
+//
+// It exists because ADR-0017 contract 3 is written against
+// `network_head` ("for every checkpoint seq <= network_head the file
+// exists") while the mirror is filled by its own periodic job, so in
+// steady state the newest checkpoints the LCM walk reaches have no
+// mirror file yet and never did. Measured on r1 2026-09-19: the mirror
+// holds 1,007,807 of the 1,007,807 checkpoint files between ledger 63
+// and its high-water 64,499,647 — not one hole — while the fill job
+// lands at 02:2x UTC and the tier-B walk runs at 04:38 UTC, so the walk
+// asks about the ~23 checkpoints closed in between. Counting those as
+// "missing from the archive" is the walk over-asking, not a
+// completeness breach, and it is the whole of the `missed=23` the unit
+// has been logging.
+//
+// The distinction is the same one the LCM side already draws with
+// TolerateTrailingMissing for the galexie bucket's trailing edge (see
+// verifyArchiveLCMWalk): a trailing absence is a delivery lag, an
+// interior one is a defect.
+//
+// Known == false means the mirror could not be read at all (missing
+// root, no ledger/ tree, unreadable). Every absence then counts as a
+// genuine miss — the pre-existing behaviour — so a broken -archive-root
+// can never be mistaken for "everything is outside coverage".
+type archiveMirrorCoverage struct {
+	Floor     uint32 // lowest checkpoint ledger the mirror holds
+	HighWater uint32 // highest checkpoint ledger the mirror holds
+	Known     bool
+}
+
+// outsideCoverage reports whether checkpoint seq lies beyond the span
+// the mirror holds, i.e. whether its absence is a coverage boundary
+// rather than a hole. Unknown coverage answers false: no tolerance is
+// extended to a mirror we could not measure.
+func (c archiveMirrorCoverage) outsideCoverage(seq uint32) bool {
+	return c.Known && (seq < c.Floor || seq > c.HighWater)
+}
+
+// String renders the span for the run's log line.
+func (c archiveMirrorCoverage) String() string {
+	if !c.Known {
+		return "unknown"
+	}
+	return fmt.Sprintf("[%d, %d]", c.Floor, c.HighWater)
+}
+
+// readArchiveMirrorCoverage measures the checkpoint span held under
+// <archiveRoot>/ledger by descending the hex-nested tree to its least
+// and greatest leaf. Four readdirs per bound (with backtracking past
+// empty branches), so it costs nothing next to the walk itself.
+func readArchiveMirrorCoverage(archiveRoot string) archiveMirrorCoverage {
+	root := filepath.Join(archiveRoot, "ledger")
+	low, lowOK := extremeMirrorCheckpoint(root, 0, false)
+	high, highOK := extremeMirrorCheckpoint(root, 0, true)
+	if !lowOK || !highOK {
+		return archiveMirrorCoverage{}
+	}
+	return archiveMirrorCoverage{Floor: low, HighWater: high, Known: true}
+}
+
+// mirrorTreeDepth is the number of directory levels between
+// <archiveRoot>/ledger and a ledger-XXXXXXXX.xdr.gz file: the first
+// three bytes of the hex-encoded sequence, one level each.
+const mirrorTreeDepth = 3
+
+// extremeMirrorCheckpoint returns the least (highest == false) or
+// greatest (highest == true) checkpoint sequence reachable below dir.
+// Names at every level are fixed-width hex, so lexical order is
+// numeric order. A branch that holds no conforming leaf is skipped, so
+// an empty or half-created directory cannot shorten the answer.
+func extremeMirrorCheckpoint(dir string, depth int, highest bool) (uint32, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, false
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	slices.Sort(names)
+	if highest {
+		slices.Reverse(names)
+	}
+	for _, name := range names {
+		if depth < mirrorTreeDepth {
+			if seq, ok := extremeMirrorCheckpoint(filepath.Join(dir, name), depth+1, highest); ok {
+				return seq, true
+			}
+			continue
+		}
+		if seq, ok := parseMirrorLedgerFile(name); ok {
+			return seq, true
+		}
+	}
+	return 0, false
+}
+
+// parseMirrorLedgerFile reads the checkpoint sequence out of a mirror
+// leaf file name (`ledger-0000007f.xdr.gz` → 127). Anything that is not
+// a checkpoint-shaped ledger file is rejected: the tree also carries
+// the archivist's own scratch files, and admitting one would move the
+// measured bound off a checkpoint boundary.
+func parseMirrorLedgerFile(name string) (uint32, bool) {
+	hexSeq, ok := strings.CutPrefix(name, "ledger-")
+	if !ok {
+		return 0, false
+	}
+	hexSeq, ok = strings.CutSuffix(hexSeq, ".xdr.gz")
+	if !ok || len(hexSeq) != 8 {
+		return 0, false
+	}
+	seq, err := strconv.ParseUint(hexSeq, 16, 32)
+	if err != nil || seq%64 != 63 {
+		return 0, false
+	}
+	return uint32(seq), true
+}
+
+// applyCheckpointTierState records the checkpoint tier's new
+// high-water, bounded to what the cross-anchor mirror was able to
+// anchor, and explains on stderr whenever the walk outran the mirror
+// or the mirror stopped moving. Returns the updated state and the
+// ledger actually certified.
+func applyCheckpointTierState(st VerifyArchiveState, highestLedger uint32, cov archiveMirrorCoverage, now time.Time) (VerifyArchiveState, uint32) {
+	anchored := checkpointWatermark(highestLedger, cov)
+	if anchored < highestLedger {
+		fmt.Fprintf(os.Stderr, "verify-archive: checkpoint high-water held at %d "+
+			"(walk reached %d; the cross-anchor mirror holds nothing above %d, so that span "+
+			"is not certified and the next run re-anchors it)\n",
+			anchored, highestLedger, cov.HighWater)
+	}
+	if prior := st.Tiers["checkpoint"].LastVerifiedLedger; cov.Known && cov.HighWater <= prior {
+		fmt.Fprintf(os.Stderr, "verify-archive: warn: the cross-anchor mirror's high-water %d has not "+
+			"advanced past the previously certified %d — this run anchored nothing new; check the "+
+			"mirror's fill job\n", cov.HighWater, prior)
+	}
+	return updateTierState(st, "checkpoint", anchored, "", now), anchored
+}
+
+// checkpointWatermark bounds the checkpoint tier's persisted
+// high-water to what this run could actually ANCHOR.
+//
+// The LCM walk runs to the galexie bucket's tip, which is ahead of the
+// cross-anchor mirror; certifying the tip would record the unanchored
+// trailing span as cross-anchor-verified, and -from-last-verified would
+// then start the next run above it. Measured on r1 2026-09-19 the run
+// advanced the checkpoint tier to 64,501,171 with the mirror holding
+// nothing above 64,499,647 — 23 checkpoints certified by a check that
+// never ran against them. Clamping to the mirror's high-water leaves
+// that span for the next run, which is the first one that can prove it.
+//
+// updateTierState only ever moves a tier's high-water FORWARD, so this
+// cannot rewind an already-persisted watermark; the clamp simply
+// declines to advance past the anchor.
+func checkpointWatermark(highestLedger uint32, cov archiveMirrorCoverage) uint32 {
+	if cov.Known && cov.HighWater < highestLedger {
+		return cov.HighWater
+	}
+	return highestLedger
 }
 
 // readArchivedLedgerHash fetches the canonical ledger-hash for

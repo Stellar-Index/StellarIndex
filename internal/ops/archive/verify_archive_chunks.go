@@ -105,17 +105,24 @@ func checkResumeFromHash(expectedHex string, firstPrevHash sdkxdr.Hash, firstSeq
 // zero ledgers — only happens when the chunk's range is empty
 // (degenerate splits) or the underlying bucket lacks the range.
 type chunkResult struct {
-	Idx               int
-	From              uint32
-	To                uint32
-	FirstSeq          uint32
-	FirstPrevHash     sdkxdr.Hash // PreviousLedgerHash of first ledger seen
-	LastSeq           uint32
-	LastHash          sdkxdr.Hash
-	Verified          int
-	Mismatches        int
-	CheckpointsOK     int
+	Idx           int
+	From          uint32
+	To            uint32
+	FirstSeq      uint32
+	FirstPrevHash sdkxdr.Hash // PreviousLedgerHash of first ledger seen
+	LastSeq       uint32
+	LastHash      sdkxdr.Hash
+	Verified      int
+	Mismatches    int
+	CheckpointsOK int
+	// CheckpointsMissed counts checkpoints with no file in the
+	// cross-anchor mirror INSIDE the span the mirror holds — a hole
+	// in the archive, the thing ADR-0017 contract 3 forbids.
 	CheckpointsMissed int
+	// CheckpointsUnmirrored counts checkpoints the walk reached
+	// beyond that span: the mirror's fill job has not delivered them
+	// yet. A delivery lag, not a hole — see archiveMirrorCoverage.
+	CheckpointsUnmirrored int
 }
 
 // stitchChunks validates the boundary between adjacent NON-EMPTY
@@ -181,6 +188,70 @@ func stitchChunks(results []chunkResult) error {
 	return nil
 }
 
+// checkpointAnchorOutcome is one checkpoint's cross-anchor verdict.
+// A divergence (our hash != the archive's) is not a member: it aborts
+// the walk with an error rather than being tallied.
+type checkpointAnchorOutcome int
+
+const (
+	// checkpointAnchorMatched — the mirror's canonical header hash for
+	// this checkpoint equals ours.
+	checkpointAnchorMatched checkpointAnchorOutcome = iota
+	// checkpointAnchorMissed — no file, INSIDE the span the mirror
+	// holds. A hole in the cross-anchor archive (ADR-0017 contract 3).
+	checkpointAnchorMissed
+	// checkpointAnchorUnmirrored — no file, beyond that span. The
+	// mirror's fill job has not delivered this checkpoint yet.
+	checkpointAnchorUnmirrored
+)
+
+// String is the `outcome` label value on
+// obs.VerifyArchiveCheckpointsTotal. "matched"/"missed" are the
+// pre-existing values and keep their meaning; "unmirrored" is new.
+func (o checkpointAnchorOutcome) String() string {
+	switch o {
+	case checkpointAnchorMatched:
+		return "matched"
+	case checkpointAnchorMissed:
+		return "missed"
+	case checkpointAnchorUnmirrored:
+		return "unmirrored"
+	}
+	return "unknown"
+}
+
+// classifyCheckpointAnchor reads the cross-anchor mirror's canonical
+// header hash for checkpoint seq and classifies it against ours.
+//
+// An ABSENT file is only "missed" when the mirror claims to cover
+// that checkpoint. Above the mirror's high-water the walk is simply
+// ahead of the fill job — on r1 the mirror is filled at 02:2x UTC and
+// the tier-B walk runs at 04:38 UTC, so ~23 checkpoints closed in
+// between are absent on every single run, by design (F144). Counting
+// those as missing archive data is what made ADR-0017's hard
+// invariant unenforceable on the deployed path: the flag that would
+// enforce it could not be turned on without failing every night.
+//
+// Errors (read failure, hash divergence) abort the chunk walk; the
+// caller bumps the mismatch counter and propagates.
+func classifyCheckpointAnchor(archiveRoot string, seq uint32, ourHash sdkxdr.Hash, cov archiveMirrorCoverage) (checkpointAnchorOutcome, error) {
+	expected, hit, err := readArchivedLedgerHash(archiveRoot, seq)
+	switch {
+	case err != nil:
+		return checkpointAnchorMissed, fmt.Errorf("ledger %d: archive read failed: %w", seq, err)
+	case !hit && cov.outsideCoverage(seq):
+		return checkpointAnchorUnmirrored, nil
+	case !hit:
+		return checkpointAnchorMissed, nil
+	case expected != ourHash:
+		return checkpointAnchorMissed, fmt.Errorf("checkpoint anchor mismatch at ledger %d:\n"+
+			"  our LCM hash          = %s\n"+
+			"  archive-signed hash   = %s",
+			seq, hashToHex(ourHash), hashToHex(expected))
+	}
+	return checkpointAnchorMatched, nil
+}
+
 // verifyChunk walks one chunk's ledger range and returns the
 // counters + boundary hashes the orchestrator needs to stitch
 // chunks. Pure walk-logic — no parent-context creation, no flag
@@ -202,6 +273,7 @@ func verifyChunk(
 	idx int,
 	chainCheckInternal, doCheckpoint bool,
 	archiveRoot string,
+	mirrorCoverage archiveMirrorCoverage,
 	progressMu *sync.Mutex,
 	startedAt time.Time,
 	progressEvery time.Duration,
@@ -251,26 +323,21 @@ func verifyChunk(
 			}
 
 			if doCheckpoint && seq%64 == 63 {
-				expected, hit, cerr := readArchivedLedgerHash(archiveRoot, seq)
-				switch {
-				case cerr != nil:
+				outcome, cerr := classifyCheckpointAnchor(archiveRoot, seq, hash, mirrorCoverage)
+				if cerr != nil {
 					res.Mismatches++
 					obs.VerifyArchiveMismatchesTotal.WithLabelValues(chunkLabel, "checkpoint").Inc()
-					return fmt.Errorf("ledger %d: archive read failed: %w", seq, cerr)
-				case !hit:
-					res.CheckpointsMissed++
-					obs.VerifyArchiveCheckpointsTotal.WithLabelValues(chunkLabel, "missed").Inc()
-				case expected != hash:
-					res.Mismatches++
-					obs.VerifyArchiveMismatchesTotal.WithLabelValues(chunkLabel, "checkpoint").Inc()
-					return fmt.Errorf("checkpoint anchor mismatch at ledger %d:\n"+
-						"  our LCM hash          = %s\n"+
-						"  archive-signed hash   = %s",
-						seq, hashToHex(hash), hashToHex(expected))
-				default:
-					res.CheckpointsOK++
-					obs.VerifyArchiveCheckpointsTotal.WithLabelValues(chunkLabel, "matched").Inc()
+					return cerr
 				}
+				switch outcome {
+				case checkpointAnchorMatched:
+					res.CheckpointsOK++
+				case checkpointAnchorMissed:
+					res.CheckpointsMissed++
+				case checkpointAnchorUnmirrored:
+					res.CheckpointsUnmirrored++
+				}
+				obs.VerifyArchiveCheckpointsTotal.WithLabelValues(chunkLabel, outcome.String()).Inc()
 			}
 
 			prevSeq = seq
@@ -307,6 +374,12 @@ func verifyChunk(
 // chunks are numbered 0..len-1 in the progress log + result array,
 // and no per-chunk completion is reported anywhere.
 type chunkOrchestratorOpts struct {
+	// MirrorCoverage is the checkpoint span the cross-anchor mirror
+	// holds, measured once before the walk. The zero value (Known
+	// false) treats every absent checkpoint as missed, which is the
+	// behaviour every caller had before the span existed.
+	MirrorCoverage archiveMirrorCoverage
+
 	// ChunkIdxs maps each position in `chunks` to the chunk's
 	// ORIGINAL idx in the parent run's full pre-resume chunk list.
 	// nil ⇒ identity (0, 1, …, len(chunks)-1). When resume has
@@ -378,7 +451,7 @@ func runVerifyChunks(
 		g.Go(func() error {
 			res, err := verifyChunk(
 				gctx, lsCfg, chunk, originalIdx,
-				doChain, doCheckpoint, archiveRoot,
+				doChain, doCheckpoint, archiveRoot, opts.MirrorCoverage,
 				&progressMu, startedAt, progressEvery,
 				&totalVerified,
 			)
