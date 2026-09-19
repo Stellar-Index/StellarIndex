@@ -278,9 +278,15 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 			// timeout risk on phoenix's [51.5M,tip] re-derive, pre-empted the
 			// same way as aquarius. Matches() gates purely on contract
 			// identity and the correlation buffer only groups a SINGLE pool's
-			// events, so the prefilter is counts-identical. The gate is static
-			// (factory creation events predate the lake), so gatedPrefilter's
-			// walk is a no-op here — the throwaway just enumerates the seed.
+			// events, so the prefilter is counts-identical. factories +
+			// creationSym are set so gatedPrefilter's walk actually runs: the
+			// factory's ("create","liquidity_pool") events ARE in the lake
+			// from ledger 51,572,026 (an earlier comment here claimed they
+			// predate it and that the walk was therefore a no-op — both were
+			// false), and since F048 the decoder admits the pools they
+			// announce, so a pool created after the curated seed was last
+			// hand-edited is picked up by the walk instead of being missed.
+			factories: []string{phoenix.MainnetFactory}, creationSym: phoenix.EventActionCreate,
 			newGatedDec: func() gatedDecoder { return phoenix.NewDecoder() },
 			// aggregateReconcile RETIRED (2026-08-21): the eventLedgerCarrier
 			// own-ledger attribution (completeness.countLedger) counts each

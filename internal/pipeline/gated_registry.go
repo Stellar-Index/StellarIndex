@@ -23,14 +23,20 @@ import (
 // GatedMeta is the per-source description a factory-anchored decoder
 // (ADR-0035) needs to seed its contractid.Registry: the trust-root factory
 // SET (a protocol can have several factories — e.g. Blend was redeployed),
-// the topic_0_sym of the factories' creation event (which announces a new
+// the topic[0] name of the factories' creation event (which announces a new
 // child), the genesis ledger (lower bound for the deploy walk across all
 // factories), and a constructor that builds the source's decoder with
 // contractid (child-gate) options applied.
 type GatedMeta struct {
-	Factories   []string // canonical factory C-strkeys (gate trust roots); empty for curated-only sources
-	CreationSym string   // topic_0_sym of the creation event (e.g. "deploy"); empty for curated-only sources
-	Genesis     uint32   // earliest factory deploy ledger; lower bound for the walk
+	Factories []string // canonical factory C-strkeys (gate trust roots); empty for curated-only sources
+	// CreationSym is the creation event's topic[0] NAME (e.g. "deploy").
+	// Empty for curated-only sources. It is matched against the lake in
+	// both on-wire encodings — the topic_0_sym column (Symbol topics) and
+	// the ScvString encoding in topics_xdr[1] (String topics, e.g.
+	// phoenix's "create", for which topic_0_sym is always empty). See
+	// internal/storage/clickhouse/event_reader.go topic0Predicate.
+	CreationSym string
+	Genesis     uint32 // earliest factory deploy ledger; lower bound for the walk
 	// CuratedSet is the in-code curated child set for sources with NO
 	// factory namespace (ADR-0040 §1 mechanism 3 — comet,
 	// blend_emitter, upshift). It is the source's whole trust root:
@@ -88,13 +94,25 @@ var gatedSources = map[string]GatedMeta{
 		NewDecoder: func(opts ...contractid.Option) dispatcher.Decoder { return blend_emitter.NewDecoder(opts...) },
 	},
 	phoenix.SourceName: {
-		// Curated-set gate (ADR-0040 §1 mechanism 2): the factory's
-		// creation events predate the lake, so the decoder's in-code
-		// seed (MainnetGatedSet) is the trust root; this entry adds
-		// the protocol_contracts warm + live-upsert hook on top
-		// (no-ops until a decodable creation event ever appears).
+		// Factory-anchored gate (ADR-0040 §1 mechanism 1) since F048.
+		// The previous comment here said the factory's creation events
+		// predate the lake and that this entry was therefore inert:
+		// both were false. The ("create","liquidity_pool") events run
+		// from ledger 51,572,026 (captures under
+		// test/fixtures/phoenix/factory-create), and the decoder now
+		// admits the pool each one announces, gated on the factory
+		// trust root. The decoder's in-code seed (MainnetGatedSet) is
+		// the cold-start warm root — it still carries the stake
+		// contracts, which the factory does NOT announce (the POOL
+		// deploys them) — and this entry adds the protocol_contracts
+		// warm + live-upsert hook so an admitted pool is durable.
+		//
+		// CreationSym is the ScvString "create", not a Symbol: the
+		// lake's topic_0_sym column is empty for these rows, which is
+		// why the prefilter also matches topics_xdr (see
+		// internal/storage/clickhouse/event_reader.go topic0Predicate).
 		Factories:   []string{phoenix.MainnetFactory},
-		CreationSym: "create",
+		CreationSym: phoenix.EventActionCreate,
 		Genesis:     51_572_016,
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return phoenix.NewDecoder(opts...) },
 	},

@@ -17,6 +17,25 @@ against.
 
 ### Fixed
 
+- **clickhouse / topic[0] prefilter:** `StreamContractEventsFiltered` now matches
+  a requested creation symbol in BOTH on-wire encodings. `extract.go` fills the
+  lake's `topic_0_sym` convenience column from `Topics[0].GetSym()` — Symbol
+  only — so it is EMPTY for every event whose topic[0] is an `ScvString`, and a
+  prefilter of `topic_0_sym IN (…)` alone matched nothing for a String-topic
+  protocol. Phoenix publishes `("create","liquidity_pool")` as two Strings, so
+  `seed-protocol-contracts` and the `-ch` re-derive's `gatedPrefilter` walk both
+  asked the lake for `"create"`, got zero rows over a lake holding those events
+  since ledger 51,572,026, and reported a clean walk that had admitted nothing.
+  The predicate now also matches the `ScvString` encoding in `topics_xdr[1]`.
+  This only WIDENS a prefilter — it can never undercount, and the decoder's
+  `Matches()` remains the attribution decision — and it leaves the meaning of
+  `topic_0_sym` for the rows already written untouched, so no lake re-extract is
+  implied. Phoenix's reconcile-catalogue entry now sets `factories` +
+  `creationSym` so that walk actually runs, and three comments asserting the
+  walk was inert because "the factory's creation events predate the lake" are
+  corrected: the events are in the lake, and the walk was inert for this reason
+  instead (F048).
+
 - **phoenix / contract-identity gate:** the factory anchor can finally admit a
   pool. `pipeline.GatedMeta` declared phoenix's factory and a `"create"`
   creation symbol, and `seed-protocol-contracts` walked exactly those events —

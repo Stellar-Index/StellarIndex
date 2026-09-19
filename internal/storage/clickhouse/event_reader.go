@@ -9,6 +9,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // ClassicTokenTopic0Syms are the CAP-67 / SEP-41 token-event topic[0] symbols.
@@ -212,6 +213,50 @@ func StreamContractEventsFiltered(ctx context.Context, addr string, from, to uin
 	return nil
 }
 
+// topic0Predicate renders the topic[0] prefilter for a list of requested
+// action names.
+//
+// It must match BOTH on-wire encodings of topic[0], because the lake's
+// convenience column only carries one of them. extract.go fills topic_0_sym
+// from `v0.Topics[0].GetSym()` — Symbol ONLY — so the column is EMPTY for
+// every event whose topic[0] is an ScvString. (The PG landing zone made the
+// other choice, tryDecodeSymbolOrString, which is why the two disagree.)
+// Filtering on topic_0_sym alone therefore silently matched NOTHING for a
+// String-topic protocol: phoenix publishes `("create","liquidity_pool")` as
+// two Strings, so the seed-protocol-contracts walk and the -ch gated
+// prefilter — both of which ask for topic_0_sym "create" — returned zero rows
+// over a lake that holds those events from ledger 51,572,026 (F048).
+//
+// Matching topics_xdr[1] against the ScvString encoding of the same name
+// closes that without touching what topic_0_sym MEANS for the ~6B rows
+// already written: re-extracting the whole lake to widen the column is a
+// multi-day rewrite of the largest table, and nothing else needs it.
+//
+// This only ever WIDENS a prefilter, so it cannot cause an undercount, and it
+// cannot cause a mis-attribution either: the prefilter is a cheap SQL scope,
+// never the attribution decision — each decoder's Matches() is still the final
+// per-event gate. Cost is negligible: topic_0_sym is not in the sort key and
+// has no skip index (ORDER BY is (ledger_seq, tx_hash, op_index, event_index)),
+// so it was already a scan, and topics_xdr is in the SELECT list regardless.
+func topic0Predicate(topic0Syms []string) string {
+	asStrings := make([]string, 0, len(topic0Syms))
+	for _, s := range topic0Syms {
+		b64, err := scval.EncodeString(s)
+		if err != nil {
+			// Not encodable as an ScvString (over the XDR length bound):
+			// no lake row can carry it in that form, so the Symbol arm
+			// alone is exhaustive for this name.
+			continue
+		}
+		asStrings = append(asStrings, b64)
+	}
+	pred := "topic_0_sym IN (" + sqlQuoteList(topic0Syms) + ")"
+	if len(asStrings) > 0 {
+		pred += " OR topics_xdr[1] IN (" + sqlQuoteList(asStrings) + ")"
+	}
+	return "(" + pred + ")"
+}
+
 // contractEventsFilteredQuery builds the StreamContractEventsFiltered query
 // text. Split out so the query shape (column trim, FINAL, prefilters, the
 // bounded-scan SETTINGS) is unit-testable without a ClickHouse server.
@@ -221,7 +266,7 @@ func contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms []st
 		where += " AND contract_id IN (" + sqlQuoteList(contractIDs) + ")"
 	}
 	if len(topic0Syms) > 0 {
-		where += " AND topic_0_sym IN (" + sqlQuoteList(topic0Syms) + ")"
+		where += " AND " + topic0Predicate(topic0Syms)
 	}
 	if len(excludeTopic0Syms) > 0 {
 		where += " AND topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0Syms) + ")"

@@ -1765,6 +1765,14 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 // The factory ids are always included (via GatedSet) so their creation events
 // still stream and self-seed in-window children. Deduped + sorted (a stable
 // prefilter keeps CH query plans / logs steady across a pass).
+//
+// The (b) walk asks the lake for src.creationSym, which is a topic[0] NAME,
+// not necessarily a Symbol: phoenix publishes ("create","liquidity_pool") as
+// two ScvStrings, and the lake's topic_0_sym column is empty for those rows.
+// The streamer's prefilter matches both encodings for exactly that reason
+// (internal/storage/clickhouse/event_reader.go topic0Predicate) — before it
+// did, a walk over a String-topic factory returned zero rows and (b)
+// contributed nothing, silently degrading the prefilter to (a) alone (F048).
 func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, src reconSource, hi uint32) ([]string, error) {
 	set := make(map[string]struct{})
 	// (a) the registry the real re-derive starts the stream with.
