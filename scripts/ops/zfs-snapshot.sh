@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# zfs-snapshot.sh — rolling ZFS snapshots of the ClickHouse lake and
-# Postgres datasets on r1 (decision 2026-08-29).
+# zfs-snapshot.sh — rolling ZFS snapshots of the ClickHouse lake, the
+# Postgres datasets and the MinIO Galexie archive on r1 (decision
+# 2026-08-29; archive added 2026-09-19, NS03).
 #
 # WHAT THIS PROTECTS AGAINST. pgBackRest (ADR-0043) covers Postgres
 # off-host with PITR, and the lake is re-derivable from the Galexie
@@ -12,6 +13,24 @@
 # multi-day rebuild. See docs/operations/runbooks/zfs-snapshots.md for
 # the recovery procedures and the HONEST consistency semantics (a ZFS
 # snapshot is crash-consistent for both engines, nothing more).
+#
+# THE ARCHIVE IS IN THE LIST, and it is the reason the list is not just
+# "the two databases" (NS03). data/minio holds the Galexie LCM archive —
+# the CDP source of truth the ClickHouse lake and the served Postgres
+# tier are RE-DERIVED FROM. Protecting the derivatives while leaving the
+# thing they derive from with no snapshot and no off-host copy is the
+# wrong way round: an `mc rm --recursive` against the wrong prefix had
+# nothing to roll back to, and the only remaining recovery was a
+# re-ingest from the public Stellar history archives (a very long
+# recovery, not an unrecoverable loss — but measured in days to weeks,
+# with no SLA from a third party). The archive is APPEND-MOSTLY, so a
+# retained day pins only what was deleted or overwritten that day: the
+# carrying cost on the happy path is ~0, and the day it is not ~0 is
+# exactly the day the snapshot is worth having.
+#
+# This is the LOCAL half only. There is still no off-host copy of the
+# archive — see docs/operations/off-site-backup-plan.md §1 and
+# docs/architecture/ha-plan.md §8 for what that needs.
 #
 # WHAT IT DOES, per run (`rotate`, the timer's mode):
 #
@@ -54,7 +73,11 @@
 #
 #   ZFS_SNAPSHOT_POOL            pool to read free space from   (data)
 #   ZFS_SNAPSHOT_DATASETS        space-separated `<dataset>:<retention_days>`
-#                                (data/clickhouse:3 data/postgres:7)
+#                                (data/clickhouse:3 data/postgres:7
+#                                 data/minio:7). MUST stay in step with
+#                                 the role's zfs_snapshot_datasets —
+#                                 scripts/ci/zfs-snapshot-coverage-test.sh
+#                                 renders the template and compares.
 #   ZFS_SNAPSHOT_MIN_FREE_BYTES  guard floor in bytes           (2 TiB)
 #   TEXTFILE_DIR                 node_exporter textfile dir; /dev/null
 #                                disables the metric write.
@@ -74,7 +97,7 @@
 set -euo pipefail
 
 ZFS_SNAPSHOT_POOL="${ZFS_SNAPSHOT_POOL:-data}"
-ZFS_SNAPSHOT_DATASETS="${ZFS_SNAPSHOT_DATASETS:-data/clickhouse:3 data/postgres:7}"
+ZFS_SNAPSHOT_DATASETS="${ZFS_SNAPSHOT_DATASETS:-data/clickhouse:3 data/postgres:7 data/minio:7}"
 ZFS_SNAPSHOT_MIN_FREE_BYTES="${ZFS_SNAPSHOT_MIN_FREE_BYTES:-2199023255552}"  # 2 TiB
 TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 

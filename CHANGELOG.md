@@ -89,6 +89,42 @@ against.
   hoisted-window, and join-without-`GROUP BY` — are frozen in that test as
   oracles and each is asserted to still exhibit its own pathology, so no
   assertion can pass vacuously.
+- **ops / the Galexie archive was in neither backup net (NS03):** the rolling
+  ZFS snapshot job covered `data/clickhouse` and `data/postgres` — and nothing
+  else. Measured on r1 2026-09-19: `data/postgres` held 8 snapshots,
+  `data/clickhouse` 4, and **every other dataset held zero, including
+  `data/minio` at 2.64 TB** — the Galexie LCM archive, which is the CDP source
+  of truth the ClickHouse lake and the served Postgres tier are *re-derived
+  from*. Protecting the derivatives and leaving the thing they derive from with
+  no snapshot is the wrong way round, and the off-site half does not cover it
+  either: the only off-site credential on the box is pgBackRest's, scoped to its
+  own repo2 bucket, so a mis-aimed `mc rm --recursive` had nothing at all to
+  roll back to. `data/minio` is now the third entry in the role's
+  `zfs_snapshot_datasets` and in `zfs-snapshot.sh`'s built-in
+  `ZFS_SNAPSHOT_DATASETS` default (both, so a hand-run or a host with no
+  `/etc/default/zfs-snapshot` gets the same set), at **7-day retention**: the
+  archive is append-mostly, so a retained day pins only what that day deleted or
+  overwrote — ~0 on the happy path — and the window exists to NOTICE a deletion,
+  which is Postgres's week rather than the lake's three days. **Be accurate
+  about the blast radius:** losing the archive is a *very long recovery*
+  (re-ingest from the public Stellar history archives, days–weeks, no
+  third-party SLA), **not an unrecoverable loss** — `ha-plan.md` §8 and
+  `off-site-backup-plan.md` §1 now say so rather than calling it
+  irreplaceable-forever, and both record that this is the LOCAL half only: there
+  is still no off-host copy of the archive, and that remains a cost decision.
+  The staleness alert is already per-dataset (`{{ $labels.dataset }}`), so
+  `data/minio` is covered by it the first time the job runs. Pinned by
+  `scripts/ci/zfs-snapshot-coverage-test.sh`, which renders the real
+  `zfs-snapshot.env.j2` against the role defaults, sources `zfs-snapshot.sh` and
+  asks its own `parse_datasets` what the shipped default resolves to, requires
+  the dataset mounted at `minio_data_path` to be covered (derived from
+  `zfs_datasets`, not hardcoded on the name) and fails if the two defaults ever
+  diverge. **Follow-up outside this unit's file set:**
+  `docs/operations/runbooks/zfs-snapshots.md` still enumerates only the two
+  datasets and needs the third; `deploy/monitoring/rules/zfs-snapshots.yml`'s
+  `absent_over_time` producer-down branch is pinned to `data/clickhouse` and
+  could gain a `data/minio` twin.
+
 - **ansible / the archival-node role hard-failed on any host without ClickHouse
   (F128):** `tasks/main.yml` imported three CH-CONFIG task files —
   `20-clickhouse-serving-profile.yml`, `21-clickhouse-drop-guard.yml`,

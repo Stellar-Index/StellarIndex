@@ -1469,19 +1469,39 @@ stellarindex_watched_sep41_contracts:
   - CDTKPWPLOURQA2SGTKTUQOWRCBZEORB4BWBOMJ3D3ZTQQSGE5F6JBQLV
 
 # ─── Rolling ZFS snapshots (decision 2026-08-29; tag `zfs-snapshots`) ──
-# Daily crash-consistent snapshots of the ClickHouse lake and Postgres
-# datasets so a logical fault (bad migration, DROP, bad re-derive) is a
+# Daily crash-consistent snapshots of the ClickHouse lake, the Postgres
+# datasets and the MinIO Galexie archive so a logical fault (bad
+# migration, DROP, bad re-derive, a mis-aimed `mc rm --recursive`) is a
 # clone-and-copy instead of a multi-day rebuild. Runbook:
 # docs/operations/runbooks/zfs-snapshots.md. Only `auto-*` snapshots
 # are ever pruned; operator/manual snapshots are never touched.
 zfs_snapshots_enabled: true
 # Dataset names are relative to zfs_data_pool_name. Retention is in
-# days. ClickHouse merges churn ~250 GB/day of parts, so each retained
-# day pins ~250 GB; Postgres churn is small, so it keeps a week.
+# days. MUST stay in step with scripts/ops/zfs-snapshot.sh's built-in
+# ZFS_SNAPSHOT_DATASETS default — scripts/ci/zfs-snapshot-coverage-test.sh
+# renders this through zfs-snapshot.env.j2 and compares the two.
+#
+# ClickHouse merges churn ~250 GB/day of parts, so each retained day
+# pins ~250 GB; Postgres churn is small, so it keeps a week.
+#
+# minio (NS03, 2026-09-19): the Galexie LCM archive — the CDP source of
+# truth the lake and the served tier are RE-DERIVED FROM, and until now
+# the one durable store in neither safety net (no snapshot here, and the
+# off-site §1 mirror in docs/operations/off-site-backup-plan.md is still
+# proposed; pgBackRest repo2 covers Postgres only). Measured on r1
+# 2026-09-19: data/minio 2.64 TB used, 0 snapshots. It is append-mostly,
+# so a retained day pins only what was deleted or overwritten that day —
+# ~0 on the happy path — which is why it gets Postgres's week rather
+# than the lake's three days: the window is there to NOTICE a deletion,
+# and the cost of the window is only paid when there is something to
+# recover. Losing it is a very long recovery (re-ingest from the public
+# Stellar history archives), not an unrecoverable loss.
 zfs_snapshot_datasets:
   - name: "clickhouse"
     retention_days: 3
   - name: "postgres"
+    retention_days: 7
+  - name: "minio"
     retention_days: 7
 # Hard guardrail: below this much pool free space the job prunes the
 # oldest auto snapshots (never a dataset's newest one) and, if still
