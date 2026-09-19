@@ -181,9 +181,39 @@ update → no collision), so their clean-slate is a harmless no-op.
 source-filtered; protocol tables by ledger), then `stellarindex-ops ch-rebuild
 -write -sources <projected>`. Scoped ≤ 62.894 M so the **live tail (> 62.894 M)
 the indexer is still writing stays untouched**; the delete/rebuild range never
-overlaps the indexer's current writes, so ingestion keeps running. Resumable
-(per-window marker), `ON_ERROR_STOP`. After it completes, refresh the CAGGs over
-the rebuilt time range (they materialise from `trades`).
+overlaps the indexer's current writes, so ingestion keeps running. After it
+completes, refresh the CAGGs over the rebuilt time range (they materialise from
+`trades`).
+
+Four rules bound the DELETE, and the script's header is their source of truth:
+
+1. **Ask first.** Each window runs `ch-rebuild -write -preflight` for the same
+   range and sources *before* its DELETE — the same BackfillSafe / live-cursor /
+   buffered-range refusals the real run would hit. Anything short of the
+   `ch-rebuild: preflight ok […] rederive=…` verdict line deletes nothing.
+2. **Delete only what that verdict says will be re-derived.** The statements are
+   built per source from the verdict's `rederive=` list, in **one transaction**
+   with `ON_ERROR_STOP`, and the same list is what `-write` is then given. `SRC`
+   narrows the run and the DELETE with it; a source the script has no DELETE map
+   for is refused outright (`sushiswap_v3` is absent deliberately — it is not
+   BackfillSafe, so it must never be deleted).
+3. **Never forget an emptied window.** Done-state is **per source**
+   (`source lo hi`), not a bare window marker, and a separate `$DIRTY` file gets
+   `lo hi sources` *before* the DELETE — a run that cannot write that record
+   deletes nothing. Every run rebuilds its dirty windows first, for exactly the
+   sources that were deleted, whatever `SRC/FROM/TO` it is given.
+4. **Never let an emptied window be certified complete.** `$DIRTY` is local and
+   the ADR-0033 completeness verdict cannot see it, so every state that leaves a
+   window emptied prints a `TELL THE VERDICT` line with the command that files
+   the range as a projection dirty window:
+   `ch-rebuild -from LO -to HI -sources <deleted> -record-dirty-window`.
+   compute-completeness then re-reconciles that range instead of carrying its
+   prior clean claim over it, and clears the obligation only with the verdict
+   that discharges it. **Filing is currently the operator's step** — the script
+   prints the command, it does not run it. A *successful* window files nothing,
+   on purpose (#408): one obligation per routine window would point the next
+   nightly at ~12.9 M ledgers × 8 un-prefiltered sources and time every source's
+   verdict out, which is worse than the stale claim it would fix.
 
 **Forward-correctness dependency.** The live indexer (rc.107) still writes
 mis-keyed projected data forward (it lacks the `event_index` collision fix). The

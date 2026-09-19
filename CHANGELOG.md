@@ -79,6 +79,27 @@ against.
   not announced by the factory — the pool deploys them — so they stay seeded,
   not self-registered (F048).
 
+- **ops / `ch-rebuild-projected.sh`:** a clean-slate window that is left
+  EMPTIED can now be told to the completeness verdict, and a window whose
+  local marker cannot be written is no longer deleted (F075). `$DIRTY` is a
+  file on the rebuild host and the ADR-0033 verdict cannot see it, so between
+  a failed re-derive and its recovery `/v1/coverage` kept carrying its prior
+  clean claim over a range with no rows in it. Every state that leaves a
+  window emptied — a failed re-derive, an ambiguous DELETE, a window still
+  pending in `$DIRTY` at the start of a run — now prints a `TELL THE VERDICT`
+  line with the command that files the range: the new
+  `ch-rebuild -record-dirty-window`, which records one projection dirty window
+  per deleted source under the catalogue names the reconcile keys on, so the
+  next `compute-completeness` re-reconciles the range instead of carrying the
+  claim. The script PRINTS that command and does not run it — filing stays the
+  operator's step for now. The obligation is discharged only by the verdict
+  that covers it — nothing in the rebuild path retracts one. A SUCCESSFUL window still records
+  nothing, on purpose (#408): one obligation per routine window would point
+  the next nightly at ~12.9M ledgers across 8 un-prefiltered sources and time
+  every source's verdict out. Separately, `mark_dirty`'s exit code is now
+  checked and `$DIRTY` is probed for appendability up front: an unwritable or
+  missing state directory used to lose the marker silently and DELETE the
+  window anyway, leaving nothing that would ever rebuild it.
 - **projector / `projector-replay`:** a replay's cursor rewind can no longer
   be reverted by the live projector's in-flight cycle. A cycle reads its
   cursor, spends up to `PerSourceTimeout` scanning and sinking, then
