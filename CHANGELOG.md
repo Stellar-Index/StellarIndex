@@ -187,6 +187,20 @@ against.
   — the textfile exporter writes the mismatch counter and the last-success gauge alone —
   so a miss is observable as a unit failure rather than as a number
   (`verify_archive_textfile.go`, untouched here).
+- **test / the two ops subcommands that still default to WRITE (K015):**
+  `TestBackfillDefaultsToWrite` and `TestCHBackfillDefaultsToWrite` pin the
+  remaining half of the write-gate convention: `backfill` and `ch-backfill`
+  declare `-dry-run false`, so they APPLY unless the operator remembers a flag.
+  Both ship RED behind `//go:build k015evidence`, because the flip is not a
+  code-only change — `scripts/ops/ch-live-catchup.sh` (a timer),
+  `ch-full-backfill.sh`, `phaseD-backfill.sh`, `phaseD-range.sh`,
+  `ordinal-rederive-chunks.sh` and `restore-drill.sh` all invoke ch-backfill
+  with no mode flag, and flipping the default without them turns the production
+  catch-up into a silent preview that still exits 0 and records its windows as
+  done. Those files are outside this unit's set; the tests are the acceptance
+  check for whoever lands the sweep
+  (`go test -tags k015evidence ./internal/ops/{ingest,chops}/`).
+
 - **ops / six mutating subcommands had no write gate at all (K015):**
   `census-backfill`, `backfill-router`, `tag-routed-via`, `tag-signer`,
   `seed-soroswap-pairs` and `seed-protocol-contracts` declared neither `-write`
