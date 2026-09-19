@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // RawEventSink is the contract a sink must satisfy to receive
@@ -326,6 +327,11 @@ const (
 //nolint:contextcheck // intentional fresh context; see godoc above.
 func (s *AsyncSink) run() {
 	defer close(s.done)
+	// An unrecovered panic in ANY goroutine kills the whole process this
+	// sink is linked into. Registered after close(s.done) so it unwinds
+	// first and done still closes: a contained panic must not leave Stop
+	// blocked forever on a worker that is already gone.
+	defer worker.Recover(s.logger, "soroban-events-sink-drain")
 	s.abortFlush = s.stopping
 	batch := make([]Row, 0, s.batchSz)
 	ticker := time.NewTicker(s.flush)
@@ -437,6 +443,13 @@ func (s *AsyncSink) flushBatch(rows []Row) []Row {
 		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 		attemptDone := make(chan struct{})
 		go func() {
+			// This watchdog owns nothing and has no failure of its own,
+			// but an unrecovered panic here would still take the whole
+			// process down, so it carries the guard like every other
+			// detached goroutine. cancel() below is idempotent and the
+			// deferred cancel in the caller runs regardless, so recovering
+			// cannot strand the write.
+			defer worker.Recover(s.logger, "soroban-events-flush-abort-watch")
 			select {
 			case <-abort:
 				cancel() // unblock a write stuck past its own WriteTimeout

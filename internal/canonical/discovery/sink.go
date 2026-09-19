@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // AsyncSink is a non-blocking [DiscoverySink]-compatible adapter
@@ -218,6 +220,11 @@ func (s *AsyncSink) FailedCount() uint64 {
 // slow recorder.
 func (s *AsyncSink) run() {
 	defer close(s.done)
+	// An unrecovered panic in ANY goroutine kills the whole process this
+	// sink is linked into. Registered after close(s.done) so it unwinds
+	// first and done still closes: a contained panic must not leave Stop
+	// blocked forever on a worker that is already gone.
+	defer worker.Recover(s.logger, "discovery-async-sink-drain")
 	for hit := range s.ch {
 		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
 		if err := s.rec.Record(ctx, hit); err != nil {

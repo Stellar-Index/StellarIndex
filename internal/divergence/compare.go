@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Result is the outcome of one divergence comparison. Carries
@@ -176,8 +177,15 @@ func Compare(
 			// see "this reference is broken" without losing the
 			// other references' results. A misbehaving reference
 			// MUST NOT take the whole comparison run down.
+			//
+			// The recovered value also goes through worker.Report so
+			// it moves stellarindex_worker_panics_total, the metric
+			// the page rule reads: a panic visible only inside one
+			// comparison's Failures map is invisible to the alert
+			// that exists to say "a detached goroutine died".
 			defer func() {
 				if rv := recover(); rv != nil {
+					worker.Report(nil, "divergence-reference-lookup", rv)
 					// Best-effort send; channel is buffered to len(refs)
 					// so this is a non-blocking write.
 					results <- fetchOutcome{

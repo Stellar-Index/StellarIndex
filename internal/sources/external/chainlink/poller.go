@@ -13,6 +13,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Poller implements external.Poller for Chainlink Data Feeds.
@@ -137,6 +138,20 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		go func(pair canonical.Pair, spec FeedSpec) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			// An unrecovered panic in ANY goroutine kills the whole
+			// process. Report the panicking feed as a failed one rather
+			// than letting it vanish from `updates`: a price feed that
+			// silently stops reporting is the failure mode this source's
+			// error accounting exists to make visible.
+			defer func() {
+				if rec := recover(); rec != nil {
+					worker.Report(logger, "external-chainlink-feed-poll", rec)
+					results <- result{
+						err:  fmt.Errorf("chainlink feed poll panicked: %v", rec),
+						pair: pair,
+					}
+				}
+			}()
 			// Scale first: the on-chain decimals() verified against the
 			// configured value (decimals.go). A disagreeing or unknown
 			// scale refuses the feed before its price is read.
@@ -163,7 +178,15 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			results <- result{update: u, pair: pair, round: rnd}
 		}(pr, spec)
 	}
-	go func() { wg.Wait(); close(results) }()
+	go func() {
+		// Close from a DEFER, not as a trailing statement: if the join
+		// panicked and the panic were merely contained, the fan-in range
+		// below would block on a channel nobody ever closes — a wedged
+		// poll tick is worse than the crash it replaces.
+		defer close(results)
+		defer worker.Recover(logger, "external-chainlink-feed-join")
+		wg.Wait()
+	}()
 
 	var updates []canonical.OracleUpdate
 	var firstErr error
