@@ -80,9 +80,91 @@ func newDefaultTransport() http.RoundTripper {
 // Endpoint returns the URL the client talks to.
 func (c *Client) Endpoint() string { return c.endpoint }
 
+// HTTPStatusError is returned by every call whose HTTP response carried
+// a status >= 400, whatever the body looked like: empty, an HTML or
+// plain-text proxy page, JSON that is not a JSON-RPC envelope, or a
+// JSON-RPC error envelope. The status is the one thing a caller needs
+// to tell "the endpoint is rate limiting or briefly unwell" from "this
+// request is wrong", and before this type existed it was dropped on
+// the empty-body and error-envelope paths and only present as text on
+// the others — so classify with errors.As on this type, never by
+// matching the message.
+//
+// When the body was a JSON-RPC error envelope, Err is the
+// *[JSONRPCError] and Unwrap exposes it, so errors.As for
+// *[JSONRPCError] keeps working on a non-2xx response. Otherwise Err
+// is nil.
+type HTTPStatusError struct {
+	// Method is the JSON-RPC method that was called.
+	Method string
+	// StatusCode is the HTTP status, always >= 400.
+	StatusCode int
+	// Body is the response body, truncated for logging. Empty when the
+	// response had no body.
+	Body string
+	// Err is the *[JSONRPCError] from the body's error envelope, or nil
+	// when the body carried none.
+	Err error
+}
+
+func (e *HTTPStatusError) Error() string {
+	switch {
+	case e.Err != nil:
+		return fmt.Sprintf("stellarrpc: %s: HTTP %d: %v", e.Method, e.StatusCode, e.Err)
+	case e.Body == "":
+		return fmt.Sprintf("stellarrpc: %s: HTTP %d (empty body)", e.Method, e.StatusCode)
+	case e.Body[0] == '{':
+		return fmt.Sprintf("stellarrpc: %s: HTTP %d (no JSON-RPC error envelope): %s", e.Method, e.StatusCode, e.Body)
+	default:
+		return fmt.Sprintf("stellarrpc: %s: HTTP %d: %s", e.Method, e.StatusCode, e.Body)
+	}
+}
+
+// Unwrap returns the JSON-RPC error envelope the response carried, if any.
+func (e *HTTPStatusError) Unwrap() error { return e.Err }
+
+// ResponseDecodeError is returned when a response with a status below
+// 400 had a body that does not decode as a JSON-RPC envelope: empty,
+// cut short, or a proxy's HTML interstitial served with a 200. It is a
+// property of that one response, not of the request, which is why it
+// is a type of its own — a caller that retries can tell it from a
+// result that decoded as an envelope but did not fit the target type
+// (that one stays a plain error: re-asking returns the same shape).
+type ResponseDecodeError struct {
+	// Method is the JSON-RPC method that was called.
+	Method string
+	// Body is the response body, truncated for logging.
+	Body string
+	// Err is the underlying encoding/json error.
+	Err error
+}
+
+func (e *ResponseDecodeError) Error() string {
+	return fmt.Sprintf("stellarrpc: %s: decode: %v (body: %s)", e.Method, e.Err, e.Body)
+}
+
+// Unwrap returns the underlying encoding/json error.
+func (e *ResponseDecodeError) Unwrap() error { return e.Err }
+
+// newHTTPStatusError builds the error for a status >= 400. The body is
+// decoded on a best-effort basis only to recover an error envelope; a
+// body that is empty, not JSON, or JSON of another shape still yields
+// an *HTTPStatusError, never a decode error that loses the status.
+func newHTTPStatusError(method string, status int, body []byte) *HTTPStatusError {
+	e := &HTTPStatusError{Method: method, StatusCode: status, Body: truncate(string(body), 256)}
+	var envelope jsonrpcResponse
+	if json.Unmarshal(body, &envelope) == nil && envelope.Error != nil {
+		e.Err = envelope.Error
+	}
+	return e
+}
+
 // call is the low-level JSON-RPC round-trip. Callers unmarshal the
 // result into their own target. If the remote returned an error
-// envelope, call returns it wrapped as a *[JSONRPCError].
+// envelope with a status below 400, call returns the *[JSONRPCError].
+// Any status >= 400 returns an *[HTTPStatusError] (wrapping the
+// *[JSONRPCError] when the body carried one); an undecodable body with
+// a status below 400 returns a *[ResponseDecodeError].
 func (c *Client) call(ctx context.Context, method string, params any, result any) error {
 	id := c.nextID.Add(1)
 	req := jsonrpcRequest{Version: "2.0", ID: int(id), Method: method, Params: params}
@@ -122,24 +204,22 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 			method, MaxResponseBytes)
 	}
 
-	// Upstream proxies sometimes return HTML on 5xx — guard.
-	if resp.StatusCode >= 400 && len(respBody) > 0 && respBody[0] != '{' {
-		return fmt.Errorf("stellarrpc: %s: HTTP %d: %s", method, resp.StatusCode, truncate(string(respBody), 256))
+	// A status >= 400 is a failure whatever the body is — an upstream
+	// proxy's HTML page, nothing at all, JSON that happens to parse, or
+	// a JSON-RPC error envelope — and the caller must not be able to
+	// treat it as success. Decided BEFORE the body is decoded so the
+	// status is never lost to a decode error or replaced by the
+	// envelope's own code.
+	if resp.StatusCode >= 400 {
+		return newHTTPStatusError(method, resp.StatusCode, respBody)
 	}
 
 	var envelope jsonrpcResponse
 	if err := json.Unmarshal(respBody, &envelope); err != nil {
-		return fmt.Errorf("stellarrpc: %s: decode: %w (body: %s)", method, err, truncate(string(respBody), 256))
+		return &ResponseDecodeError{Method: method, Body: truncate(string(respBody), 256), Err: err}
 	}
 	if envelope.Error != nil {
 		return envelope.Error
-	}
-	// Non-2xx status without a JSON-RPC error envelope is still a
-	// failure — we must not let the caller treat it as success just
-	// because the body happened to be valid JSON. Synthesize.
-	if resp.StatusCode >= 400 {
-		return fmt.Errorf("stellarrpc: %s: HTTP %d (no JSON-RPC error envelope): %s",
-			method, resp.StatusCode, truncate(string(respBody), 256))
 	}
 	if result != nil && len(envelope.Result) > 0 {
 		if err := json.Unmarshal(envelope.Result, result); err != nil {

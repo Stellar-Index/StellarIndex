@@ -503,3 +503,125 @@ func TestEventClosedAtMalformedIsError(t *testing.T) {
 		}
 	}
 }
+
+// rawResponder answers every request with the given status and body,
+// verbatim — including no body at all, which http.Error cannot produce.
+func rawResponder(status int, body string) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}))
+}
+
+// Every response with a status >= 400 must come back as an
+// *HTTPStatusError carrying that status, whatever the body was. The
+// client used to keep the status only for a non-empty non-JSON body and
+// a valid-JSON non-envelope body; an EMPTY body surfaced as "decode:
+// unexpected end of JSON input", a non-decodable JSON body as a decode
+// error, and an error ENVELOPE as the bare *JSONRPCError — so a caller
+// could not tell a 429 from a malformed request (RLT-416: the soroswap
+// pair seed failed the nightly pass closed on one such 429).
+func TestHTTPStatusSurvivesEveryBodyShape(t *testing.T) {
+	const envelope32005 = `{"jsonrpc":"2.0","id":1,"error":{"code":-32005,"message":"rate limit exceeded"}}`
+	cases := []struct {
+		name     string
+		status   int
+		body     string
+		wantCode int // non-zero: the wrapped *JSONRPCError's code
+	}{
+		{"503 empty body", http.StatusServiceUnavailable, "", 0},
+		{"429 empty body", http.StatusTooManyRequests, "", 0},
+		{"502 HTML body", http.StatusBadGateway, "<html>bad gateway</html>", 0},
+		{"429 non-envelope JSON", http.StatusTooManyRequests, `{"error":"rate limited"}`, 0},
+		{"500 valid JSON, no error member", http.StatusInternalServerError, `{"message":"Internal server error"}`, 0},
+		{"503 truncated JSON", http.StatusServiceUnavailable, `{"jsonrpc":"2.0","err`, 0},
+		{"429 envelope -32005", http.StatusTooManyRequests, envelope32005, -32005},
+		{"503 envelope -32000", http.StatusServiceUnavailable, `{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"unavailable"}}`, -32000},
+		{"400 envelope -32602", http.StatusBadRequest, `{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"invalid params"}}`, -32602},
+		{"401 empty body", http.StatusUnauthorized, "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := rawResponder(tc.status, tc.body)
+			defer s.Close()
+
+			_, err := rpc.New(s.URL).SimulateTransaction(context.Background(), "envelope")
+			if err == nil {
+				t.Fatalf("HTTP %d returned a nil error", tc.status)
+			}
+			var statusErr *rpc.HTTPStatusError
+			if !errors.As(err, &statusErr) {
+				t.Fatalf("error %q (%T) is not an *HTTPStatusError — the HTTP status was dropped", err, err)
+			}
+			if statusErr.StatusCode != tc.status {
+				t.Errorf("StatusCode = %d, want %d", statusErr.StatusCode, tc.status)
+			}
+			if statusErr.Method != "simulateTransaction" {
+				t.Errorf("Method = %q, want simulateTransaction", statusErr.Method)
+			}
+			if want := fmt.Sprintf("HTTP %d", tc.status); !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not mention %q", err, want)
+			}
+			var jerr *rpc.JSONRPCError
+			switch gotEnvelope := errors.As(err, &jerr); {
+			case tc.wantCode != 0 && (!gotEnvelope || jerr.Code != tc.wantCode):
+				t.Errorf("error %q does not wrap the *JSONRPCError with code %d", err, tc.wantCode)
+			case tc.wantCode == 0 && gotEnvelope:
+				t.Errorf("error %q wraps a *JSONRPCError (%d) the body never carried", err, jerr.Code)
+			}
+		})
+	}
+}
+
+// Below 400 the contract is unchanged for an error envelope — the bare
+// *JSONRPCError, no status wrapper — and an undecodable body is a
+// *ResponseDecodeError, distinct from a result that decoded as an
+// envelope but does not fit the target type.
+func TestErrorTypesBelowHTTP400(t *testing.T) {
+	t.Run("error envelope is the bare JSONRPCError", func(t *testing.T) {
+		s := rawResponder(http.StatusOK, `{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"invalid params"}}`)
+		defer s.Close()
+		_, err := rpc.New(s.URL).LatestLedger(context.Background())
+		var jerr *rpc.JSONRPCError
+		if !errors.As(err, &jerr) || jerr.Code != -32602 {
+			t.Fatalf("error %v (%T); want *JSONRPCError -32602", err, err)
+		}
+		var statusErr *rpc.HTTPStatusError
+		if errors.As(err, &statusErr) {
+			t.Errorf("a 200 response produced an *HTTPStatusError (%d)", statusErr.StatusCode)
+		}
+	})
+	for name, body := range map[string]string{
+		"HTML interstitial": "<html>checking your browser</html>",
+		"empty body":        "",
+		"truncated JSON":    `{"jsonrpc":"2.0","resu`,
+	} {
+		t.Run("undecodable 200: "+name, func(t *testing.T) {
+			s := rawResponder(http.StatusOK, body)
+			defer s.Close()
+			_, err := rpc.New(s.URL).LatestLedger(context.Background())
+			var decodeErr *rpc.ResponseDecodeError
+			if !errors.As(err, &decodeErr) {
+				t.Fatalf("error %v (%T) is not a *ResponseDecodeError", err, err)
+			}
+			if decodeErr.Method != "getLatestLedger" || decodeErr.Err == nil {
+				t.Errorf("ResponseDecodeError = %+v; want the method and the json error", decodeErr)
+			}
+			if !strings.Contains(err.Error(), "decode:") {
+				t.Errorf("error %q lost the decode: prefix operators grep for", err)
+			}
+		})
+	}
+	t.Run("result of the wrong shape is not a ResponseDecodeError", func(t *testing.T) {
+		s := rawResponder(http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":"not an object"}`)
+		defer s.Close()
+		_, err := rpc.New(s.URL).LatestLedger(context.Background())
+		if err == nil || !strings.Contains(err.Error(), "decode result") {
+			t.Fatalf("error %v; want a decode result error", err)
+		}
+		var decodeErr *rpc.ResponseDecodeError
+		if errors.As(err, &decodeErr) {
+			t.Error("a well-formed envelope with a wrong-shaped result was classed as an undecodable response")
+		}
+	})
+}

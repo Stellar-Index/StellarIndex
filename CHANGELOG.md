@@ -476,6 +476,21 @@ against.
   template change is a non-rendering comment recording that; no role apply
   is needed and the rendered `stellarindex.toml` is unchanged. (RLT-416,
   #805)
+- **stellarrpc (client errors):** every response with an HTTP status of 400
+  or above now returns a typed `*HTTPStatusError` carrying the status. The
+  client kept the status only as message text, and only for a non-empty
+  non-JSON body or a valid-JSON body with no `error` member: an empty body
+  surfaced as `decode: unexpected end of JSON input`, an undecodable JSON
+  body as a decode error, and a JSON-RPC error envelope as the bare
+  `*JSONRPCError` — so no caller could tell a 429 from a malformed request,
+  which is what left the soroswap pair-seed retry above blind to the usual
+  shape of a hosted provider's rate limit. `*HTTPStatusError` unwraps to the
+  `*JSONRPCError` when the body carried one, so `errors.As` for it is
+  unaffected; its message now leads with `stellarrpc: <method>: HTTP <code>`.
+  An undecodable body on a status below 400 is a typed
+  `*ResponseDecodeError` (same `decode:` message as before). No other caller
+  classifies these errors — `detect-gaps`, `rpc-probe`, `verify-decoders` and
+  `seed-soroswap-pairs` only print them. (RLT-416, #805)
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process
