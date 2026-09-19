@@ -273,6 +273,29 @@ against.
   warns rather than fails because `-to` overshooting the live tip is this
   subcommand's documented normal use.
 
+- **movements / the cap67 watermark could advance past ledgers nobody derived
+  (RLT-295):** the contiguity gate lived INSIDE `Cap67Range`'s `if last == 0`
+  branch, so `ch-cap67-movements -to N` — the invocation an operator reaches
+  for after an incident — trusted the operator's upper bound verbatim, derived
+  straight over a near-tip lake hole and stamped
+  `stellar.cap67_movements_watermark` above it at every window top. The
+  watermark is read back as `max(thru_ledger)`, the derive resumes at
+  watermark+1 with no trailing re-derive, and `/movements` floors its Postgres
+  arm at the same value, so the skipped ledgers' classic/native movements were
+  served by neither arm, permanently and with nothing to see: the raw lake
+  heals itself via `ch-live-catchup`, `account_movements` never revisits.
+  The clamp is now unconditional — a non-zero `-to` is min()'d against the
+  contiguous tip (and the run says so on stderr) — and the advance itself is
+  fail-closed: `SetCap67MovementsWatermark` takes the window's lower bound and
+  refuses to record it unless `stellar.ledgers` holds every ledger in it
+  (`ErrCap67MovementsHole`) and the window continues the derived prefix rather
+  than skipping over it (`ErrCap67MovementsSkippedPrefix`, the same loss
+  reached through `-from` above watermark+1). A refusal is delay, not loss: the
+  watermark holds and the next `-follow` tick retries once the hole heals.
+  Both shapes are proven through the real subcommand against a seeded lake
+  hole in `test/integration/clickhouse_cap67_to_clamp_test.go`, the write-side
+  guard in `clickhouse_cap67_advance_guard_test.go`. Still open, outside this
+  change's files: the watermark has no staleness alert.
 - **ops / the archival-node role still hard-failed one import earlier (F128):**
   the ClickHouse-config gate landed on `20-clickhouse-serving-profile.yml`,
   `21-clickhouse-drop-guard.yml` and `22-clickhouse-exporter.yml`, but
