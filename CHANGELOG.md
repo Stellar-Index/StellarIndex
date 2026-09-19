@@ -111,6 +111,20 @@ against.
   (`GET /v1/changes/coin/{id}`, one shared TanStack Query cache entry — no
   second, independently-computed 24h figure beside it), falling back to the
   baked value only until the worker has a row (F090).
+- **explorer / account + contract pages:** `DirectoryLabel` now decides
+  "warn the user" with the canonical scam vocabulary instead of a private
+  copy of it. It held `{malicious, unsafe}` — two of the six
+  `DIRECTORY_SCAM_FLAG_TAGS` — and matched the served strings
+  case-sensitively, so an address tagged `#scam`, `#phishing`, `#fraud`,
+  `#hack`, or `#Malicious` in any spelling the upstream directory ships
+  rendered on `/accounts/{G…}` and `/contract/{C…}` as a neutral grey
+  badge with no "treat with caution" line — while the same tags make the
+  server withhold that issuer's price and rank its assets last. The
+  component now calls `scamFlagTags`/`hasDirectoryScamFlag`, the one
+  frontend list that `pricingguard.TestScamFlagTagSet_MatchesFrontend`
+  pins equal to the Go `DirectoryScamFlagTags`, and its test enumerates
+  the warning from that exported list so a private subset cannot come
+  back (F091).
 - **projector / `projector-replay`:** a replay's cursor rewind can no longer
   be reverted by the live projector's in-flight cycle. A cycle reads its
   cursor, spends up to `PerSourceTimeout` scanning and sinking, then
