@@ -447,6 +447,25 @@ against.
   then re-run the range with `-resume=false`. Every other insert failure
   still holds its window (COR-09). The comments claiming only non-trade
   inserts can reach that seam are corrected (audit RLT-132).
+- **ops (soroswap pair seed):** one transient RPC failure no longer fails
+  the seed, and with it the nightly completeness pass. Failing closed on a
+  seed error (above) made `compute-completeness` and
+  `verify-reconciliation` exactly as reliable as the sweep, which is 1+3N
+  sequential `simulateTransaction` calls (about 640 on pubnet) with no
+  retry anywhere under it — so a single 429, 5xx or dropped connection
+  stopped the run for every source. Each call is now retried on a
+  *transient* failure only — transport error or truncated body, HTTP 429 or
+  5xx, JSON-RPC `-32603` internal error — up to 5 attempts with 1s/2s/4s/8s
+  backoff that honours the context. A contract that rejects the call, any
+  other 4xx and any other JSON-RPC error are deterministic and still fail
+  at once; an endpoint that stays down for a whole budget still fails the
+  run closed, and the error carries the attempt count and wraps the cause.
+  Each retry is logged at WARN. The retry re-issues the one failed call; it
+  never restarts the sweep. Worst-case added wall time is 15s of backoff
+  per call plus up to four extra attempts; across a sweep it is bounded by
+  the caller's existing 15-minute seed context. The inter-call throttle
+  now honours the context too. `seed-soroswap-pairs` and `verify-decoders`
+  share the sweep and get the same behaviour. (RLT-416, #805)
 - **api (markets, pools):** `last_price` on `/v1/markets` and `/v1/pools` no
   longer grows by the decimals factor on every cache hit. Both handlers
   correct a non-7-decimals pair's raw price in place, and the in-process
