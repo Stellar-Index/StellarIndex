@@ -54,6 +54,7 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	from := fs.Uint("from", 0, "First ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "Last ledger sequence (inclusive, required)")
+	bucket := fs.String("bucket", "", "galexie bucket override. Default: the range vs ingestion.live_seam_ledger picks archive-or-live; with no seam configured it stays cfg.Storage.S3BucketLive, which does NOT hold historic ranges — pass the archive bucket for those (see opsutil.ResolveStreamBucket)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -100,10 +101,23 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 
 	fmt.Fprintf(os.Stderr, "verify-decoders: registered %d decoders: %s\n",
 		len(registered), strings.Join(registered, ", "))
-	fmt.Fprintf(os.Stderr, "verify-decoders: streaming ledgers %d..%d from %s\n",
-		*from, *to, cfg.Storage.S3Endpoint)
+	// Seam-aware bucket choice with a -bucket escape hatch, shared with
+	// ch-backfill / census-backfill / sdex-claim-audit rather than
+	// re-derived. There was no flag at all here and the bucket was
+	// hardcoded to cfg.Storage.S3BucketLive, which is TRIMMED: pointing
+	// verify-decoders at a historic range read a prefix of it or none of
+	// it, and the table below then reported every decoder as silent —
+	// the exact conclusion an operator uses this command to reach
+	// (RLT-282).
+	streamBucket, err := opsutil.ResolveStreamBucket(cfg, *bucket, uint32(*from), uint32(*to))
+	if err != nil {
+		return err
+	}
 
-	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, cfg.Storage.S3BucketLive, 1)
+	fmt.Fprintf(os.Stderr, "verify-decoders: streaming ledgers %d..%d from %s bucket %q\n",
+		*from, *to, cfg.Storage.S3Endpoint, streamBucket)
+
+	lsCfg := opsutil.NewBoundedLedgerStreamConfig(cfg, streamBucket, 1)
 
 	type perSourceStat struct {
 		outputs int
@@ -198,7 +212,50 @@ func verifyDecoders(args []string) error { //nolint:funlen,gocognit,gocyclo // l
 			}
 		}
 	}
-	return nil
+
+	// Coverage last, so the operator keeps the full table, but non-zero
+	// so a short walk is never read as the verdict (RLT-282). Every
+	// number above — and above all the "emitted zero outputs" line, the
+	// single claim this command exists to make — describes the ledgers
+	// that were actually delivered. A walk that covered a fraction of
+	// the range reports the same silent decoders as a decoder that is
+	// genuinely broken.
+	return verifyWalkCoverage(uint32(*from), uint32(*to), totalLedgers, streamBucket)
+}
+
+// verifyWalkCoverage turns a verify-decoders walk that did not deliver
+// its whole range into a hard error, naming the bucket it read.
+//
+// Same defect class as chops.walkCoverage / chops.backfillCoverage /
+// ingest.censusCoverage, reached here by the same two roads: the trimmed
+// live bucket cannot hold a historic range, and
+// opsutil.NewBoundedLedgerStreamConfig always sets
+// TolerateTrailingMissing, which converts the SDK's missing-object error
+// into a clean walk-complete for any hole within 65,536 ledgers of -to.
+// Either way ledgerstream.Stream returns nil and the per-source table is
+// simply computed over fewer ledgers.
+//
+// It fails closed rather than warning because this command's output is
+// consumed as an assertion — "decoder X fired / did not fire over
+// [from,to]" — and that assertion is worthless over an unknown subset.
+// Re-running is free: the command writes nothing.
+func verifyWalkCoverage(from, to uint32, delivered int, bucket string) error {
+	requested := uint64(to) - uint64(from) + 1
+	if uint64(delivered) == requested {
+		return nil
+	}
+	if delivered == 0 {
+		return fmt.Errorf(
+			"verify-decoders processed 0 ledgers in [%d, %d] from bucket %q — nothing was examined, "+
+				"so every decoder is reported silent; historical ranges need -bucket galexie-archive. "+
+				"Refusing to report on a range that was never opened",
+			from, to, bucket)
+	}
+	return fmt.Errorf(
+		"verify-decoders processed %d of %d requested ledgers in [%d, %d] from bucket %q — the per-source "+
+			"table above covers only that subset, so a decoder reported silent may simply be absent from "+
+			"the part that was read; historical ranges need -bucket galexie-archive",
+		delivered, requested, from, to, bucket)
 }
 
 // buildVerifyDispatcher wires every decoder we ship, returning the

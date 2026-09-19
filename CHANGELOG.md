@@ -196,6 +196,17 @@ against.
   climbs. A row carrying both a poison output and a held fault is retried
   whole, so it is not a shed candidate and its quarantine budget still
   accumulates.
+- **ops / verify-decoders had no `-bucket` and never checked what it read
+  (RLT-282):** the bucket was hardcoded to `cfg.Storage.S3BucketLive`, which is
+  TRIMMED, so pointing the command at a historic range read a prefix of it or
+  none of it — and because `TolerateTrailingMissing` turns that into a clean
+  walk-complete, the per-source table then reported every decoder as silent and
+  the command exited 0. That is the loudest possible false positive from a tool
+  whose single claim is "decoder X fired / did not fire over this range". It now
+  takes `-bucket` and resolves through `opsutil.ResolveStreamBucket`, names the
+  bucket in its banner, and fails closed through `verifyWalkCoverage` when
+  delivered != requested, after printing the table.
+
 - **ops / sdex-claim-audit counted no ledgers and defaulted to the trimmed
   bucket (RLT-282):** the tool exists to be differenced against an external
   anchor's trade count for the same range, so a walk that covered less of the
