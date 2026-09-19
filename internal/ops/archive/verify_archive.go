@@ -319,11 +319,14 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		// (we record under each underlying tier so a future
 		// `-tier chain -from-last-verified` run reads the right one).
 		//
-		// Always write on no-error (even when highestLedger == 0):
-		// updateTierState clears the InProgress section, and a no-
-		// advance success (every chunk was already Done from the
-		// prior run) still needs that cleanup. Re-read first so the
-		// per-chunk Done updates the walker wrote during the run
+		// Always write on no-error: updateTierState clears the
+		// InProgress section, which every clean end-to-end run needs
+		// regardless of whether the high-water advanced. Since
+		// RLT-281 a clean walk always verified at least one ledger
+		// (the all-Done resume re-walks rather than returning a
+		// zero-ledger success, and `verified == 0` is an error), so
+		// highestLedger == 0 here is defensive only. Re-read first so
+		// the per-chunk Done updates the walker wrote during the run
 		// aren't clobbered.
 		if *stateFile != "" {
 			latestState, rerr := readVerifyArchiveState(*stateFile)
@@ -493,16 +496,17 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// last one left off, not from genesis. The state-file is owned
 	// by the runner inside this function for the in-flight period;
 	// main re-reads after we return to apply its own updateTierState.
-	filteredChunks, chunkIdxs, resumeReason := resumeChunks(priorState, tier, from, to, workers, chunks)
+	filteredChunks, chunkIdxs, resumeReason := planResumedWalk(priorState, tier, from, to, workers, chunks)
 	if stateFile != "" {
 		fmt.Fprintf(os.Stderr, "verify-archive: %s\n", resumeReason)
 	}
-	if filteredChunks == nil {
-		// Every chunk in the prior run was Done — this run is a
-		// no-op success. Caller's updateTierState clears InProgress.
-		// Return zero highest-ledger so updateTierState doesn't
-		// regress the LastVerifiedLedger high-water mark.
-		return 0, "", nil
+	if len(filteredChunks) == 0 {
+		// planResumedWalk never returns an empty plan — an all-Done
+		// prior run is re-walked, not certified (RLT-281). Defensive:
+		// a zero-chunk walk verifies zero ledgers, and a zero-ledger
+		// run that exits nil advances last_success_unix for a run
+		// that anchored nothing.
+		return 0, "", fmt.Errorf("verification FAILED: empty walk plan for [%d, %d] across %d worker(s)", from, to, workers)
 	}
 
 	// Seed the in-flight state with the full unfiltered chunk plan

@@ -315,6 +315,24 @@ against.
   than a relaxed one — every ticker must still be answerable, by one index or
   the other.
 
+- **ops(verify-archive):** an all-Done resume certified a run that
+  verified zero ledgers (RLT-281). A chunk's `Done` marker records only
+  that the chunk's own walk returned no error — the cross-chunk stitch,
+  the checkpoint-anchor decision and the high-water advance all happen
+  *after* the walk and are not recorded per chunk, so a prior run that
+  marked every chunk `Done` and still left `in_progress` behind is by
+  construction one that failed at or after those proofs (a real
+  boundary chain break leaves exactly that state). The walk read
+  `resumeChunks`' "all chunks already Done" verdict directly and
+  returned `(0, "", nil)`; the textfile defer keys on `retErr == nil`,
+  so `stellarindex_verify_archive_last_success_unix` advanced for a run
+  that anchored nothing — holding the
+  `stellarindex_verify_archive_run_stale` page green — while
+  `updateTierState` cleared the `in_progress` record that was the only
+  remaining trace of the failed run. The new `planResumedWalk` re-walks
+  the full plan in that case instead, and an empty walk plan is now a
+  hard error rather than a silent zero-ledger success. Partial resume
+  is unchanged.
 - **docs / integration-trigger table drift (T424):** `docs/contributing/local-verification.md`'s
   path-filter table listed the `integration` change class as it stood before
   T424/F-1334/W6-tst-1 widened `scripts/ci/check-change-class.sh` to also

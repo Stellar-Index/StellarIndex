@@ -378,24 +378,18 @@ func pinnedTipFromPriorRun(st VerifyArchiveState, tier string, from uint32, work
 //	"resumed N of M chunks, K already Done"   → run filtered
 //
 // When prior progress matches but every chunk is Done, returns
-// (nil, "all chunks already Done in prior run") — the caller
-// treats that as a no-op success.
+// (nil, "all chunks already Done in prior run"). resumeChunks answers
+// only "what did the prior run finish?" — whether any of that may
+// actually be SKIPPED is planResumedWalk's call, and it re-walks the
+// all-Done case rather than certifying it.
 func resumeChunks(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk) ([]opsutil.RangeChunk, []int, string) {
 	tierState, ok := st.Tiers[tier]
 	if !ok || tierState.InProgress == nil {
-		idxs := make([]int, len(chunks))
-		for i := range chunks {
-			idxs[i] = i
-		}
-		return chunks, idxs, "no prior in-progress for this tier"
+		return chunks, allChunkIdxs(chunks), "no prior in-progress for this tier"
 	}
 	rp := tierState.InProgress
 	if rp.From != from || rp.To != to || rp.Workers != workers || len(rp.Chunks) != len(chunks) {
-		idxs := make([]int, len(chunks))
-		for i := range chunks {
-			idxs[i] = i
-		}
-		return chunks, idxs, fmt.Sprintf(
+		return chunks, allChunkIdxs(chunks), fmt.Sprintf(
 			"prior in-progress plan differs (from=%d→%d to=%d→%d workers=%d→%d chunks=%d→%d), ignoring",
 			rp.From, from, rp.To, to, rp.Workers, workers, len(rp.Chunks), len(chunks))
 	}
@@ -415,4 +409,49 @@ func resumeChunks(st VerifyArchiveState, tier string, from, to uint32, workers i
 		return nil, nil, fmt.Sprintf("all %d chunks already Done in prior run", len(chunks))
 	}
 	return keep, idxs, fmt.Sprintf("resumed %d of %d chunks, %d already Done", len(keep), len(chunks), doneCount)
+}
+
+// allChunkIdxs is the identity index map — "walk every chunk in the
+// plan".
+func allChunkIdxs(chunks []opsutil.RangeChunk) []int {
+	idxs := make([]int, len(chunks))
+	for i := range chunks {
+		idxs[i] = i
+	}
+	return idxs
+}
+
+// planResumedWalk is resumeChunks' verdict narrowed to what this run
+// can still PROVE. It never returns an empty plan.
+//
+// "Which chunks did the prior run finish?" is not the same question as
+// "which chunks may this run skip?". A chunk's Done marker records
+// only that the chunk's OWN walk returned no error. Everything that
+// makes a run a VERIFICATION rather than a read — the cross-chunk
+// stitch, the checkpoint-anchor decision, the high-water advance —
+// happens after the walk, and none of it is recorded per chunk. So a
+// prior run that marked every chunk Done and still left InProgress
+// behind is, by construction, a run that failed at or after those
+// proofs: a real stitch break at a chunk boundary leaves exactly this
+// state.
+//
+// Treating that as a no-op success (RLT-281) returned (0, "", nil)
+// from a walk that verified ZERO ledgers, which the caller's textfile
+// defer writes out as a clean run — advancing
+// stellarindex_verify_archive_last_success_unix and holding the
+// stellarindex_verify_archive_run_stale page green for a run that
+// anchored nothing, while clearing the InProgress record that was the
+// only remaining trace of the failed one.
+//
+// The proofs cannot be reconstructed from the Done markers (the
+// checkpoint OK/missed tallies are not persisted at all), so the
+// conservative reading is the only defensible one: re-walk.
+func planResumedWalk(st VerifyArchiveState, tier string, from, to uint32, workers int, chunks []opsutil.RangeChunk) ([]opsutil.RangeChunk, []int, string) {
+	keep, idxs, reason := resumeChunks(st, tier, from, to, workers, chunks)
+	if len(keep) > 0 {
+		return keep, idxs, reason
+	}
+	return chunks, allChunkIdxs(chunks), reason +
+		" — re-walking the full plan: a Done marker records only that the chunk's own walk " +
+		"succeeded, not that the cross-chunk stitch or the checkpoint-anchor decision ran"
 }
