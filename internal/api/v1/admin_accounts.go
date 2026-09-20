@@ -31,6 +31,13 @@ import (
 type PlatformAccountStore interface {
 	Get(ctx context.Context, id uuid.UUID) (platform.Account, error)
 	Update(ctx context.Context, a platform.Account) error
+	// UpdateAtomic loads the row, applies mutate, and writes the result
+	// back inside one transaction holding a row lock — see
+	// postgresstore.AccountStore.UpdateAtomic (Q148). PATCH
+	// /v1/admin/accounts/{id} uses this instead of Get+Update so two
+	// concurrent operator PATCHes on the same account can't race a
+	// lost update on the kill-switch (status) field.
+	UpdateAtomic(ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error) (before, after platform.Account, err error)
 }
 
 // AdminAccountView is the wire shape the operator account endpoints
@@ -191,32 +198,18 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	acct, err := s.platformAccounts.Get(r.Context(), id)
+	// UpdateAtomic loads the row under a row lock and writes the mutated
+	// result back inside the same transaction, so a concurrent PATCH on
+	// this account can't read the same stale snapshot we did (Q148).
+	beforeAcct, acct, err := s.platformAccounts.UpdateAtomic(r.Context(), id, func(a *platform.Account) error {
+		applyAccountOverrides(a, req, time.Now().UTC())
+		return nil
+	})
 	if errors.Is(err, platform.ErrNotFound) {
 		writeAccountNotFound(w, r)
 		return
 	}
 	if err != nil {
-		s.logger.Error("admin account overrides: load failed", "err", err, "account_id", id)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/account-get-failed",
-			"Could not load account", http.StatusInternalServerError,
-			"see X-Request-ID in server logs")
-		return
-	}
-
-	before := adminAccountView(acct)
-	priorTier := acct.Tier
-	priorStatus := acct.Status
-	priorRateOverride := acct.RateLimitPerMinOverride
-	priorQuotaOverride := acct.MonthlyRequestQuotaOverride
-	applyAccountOverrides(&acct, req, time.Now().UTC())
-
-	if err := s.platformAccounts.Update(r.Context(), acct); err != nil {
-		if errors.Is(err, platform.ErrNotFound) {
-			writeAccountNotFound(w, r)
-			return
-		}
 		s.logger.Error("admin account overrides: update failed", "err", err, "account_id", id)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/account-update-failed",
@@ -225,10 +218,16 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	priorTier := beforeAcct.Tier
+	priorStatus := beforeAcct.Status
+	priorRateOverride := beforeAcct.RateLimitPerMinOverride
+	priorQuotaOverride := beforeAcct.MonthlyRequestQuotaOverride
+
 	clamped, clampFailed := s.clampKeysAfterTierChange(r.Context(), subject, priorTier, acct)
 	evicted, evictFailed := s.evictKeyCacheOnEnforcementChange(
 		r.Context(), subject, priorStatus, priorRateOverride, priorQuotaOverride, acct)
 
+	before := adminAccountView(beforeAcct)
 	after := adminAccountView(acct)
 	s.logger.Info("admin account override",
 		"actor_key_id", subject.KeyID,

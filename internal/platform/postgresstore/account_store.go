@@ -17,10 +17,22 @@ import (
 // AccountStore implements [platform.AccountStore] against
 // Postgres. Constructor takes a [*Store] so multiple platform
 // stores share the connection pool.
-type AccountStore struct{ s *Store }
+type AccountStore struct {
+	s              *Store
+	sweepBatchRows int
+}
 
 // NewAccountStore returns the Postgres-backed implementation.
-func NewAccountStore(s *Store) *AccountStore { return &AccountStore{s: s} }
+func NewAccountStore(s *Store) *AccountStore {
+	return &AccountStore{s: s, sweepBatchRows: defaultSweepBatchRows}
+}
+
+// WithSweepBatchSize overrides the per-statement row cap
+// [AccountStore.ReapSuspendedOrphans] uses. See [TokenStore.WithSweepBatchSize].
+func (r *AccountStore) WithSweepBatchSize(n int) *AccountStore {
+	r.sweepBatchRows = n
+	return r
+}
 
 const (
 	pgErrUniqueViolation = "23505"
@@ -143,36 +155,103 @@ func (r *AccountStore) Update(ctx context.Context, a platform.Account) error {
 	// suspension would be enforced with no record of when or why. Every
 	// reader projects both columns (accountColumns), so an untouched
 	// round-trip rewrites the same values it read.
-	const q = `
-		UPDATE accounts SET
-			name = $2,
-			billing_email = $3,
-			tier = $4,
-			status = $5,
-			suspended_at = $6,
-			suspended_reason = NULLIF($7, ''),
-			rate_limit_per_min_override = NULLIF($8, 0),
-			monthly_request_quota_override = NULLIF($9, 0)
-		WHERE id = $1
-	`
+	n, err := execAccountUpdate(ctx, r.s.db, a)
+	if err != nil {
+		return fmt.Errorf("update account: %w", err)
+	}
+	if n == 0 {
+		return platform.ErrNotFound
+	}
+	return nil
+}
+
+// accountUpdateQuery is the single UPDATE statement both [AccountStore.Update]
+// and [AccountStore.UpdateAtomic] issue — kept as one literal so the two
+// callers can never drift on which columns are written.
+const accountUpdateQuery = `
+	UPDATE accounts SET
+		name = $2,
+		billing_email = $3,
+		tier = $4,
+		status = $5,
+		suspended_at = $6,
+		suspended_reason = NULLIF($7, ''),
+		rate_limit_per_min_override = NULLIF($8, 0),
+		monthly_request_quota_override = NULLIF($9, 0)
+	WHERE id = $1
+`
+
+// accountExecer is satisfied by both *sql.DB and *sql.Tx, so
+// execAccountUpdate runs unchanged whether the caller is outside a
+// transaction (Update) or inside one holding a row lock (UpdateAtomic).
+type accountExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func execAccountUpdate(ctx context.Context, exec accountExecer, a platform.Account) (int64, error) {
 	var suspendedAt any
 	if !a.SuspendedAt.IsZero() {
 		suspendedAt = a.SuspendedAt
 	}
-	res, err := r.s.db.ExecContext(ctx, q,
+	res, err := exec.ExecContext(ctx, accountUpdateQuery,
 		a.ID, a.Name, a.BillingEmail,
 		a.Tier.StorageValue(), string(a.Status),
 		suspendedAt, a.SuspendedReason,
 		a.RateLimitPerMinOverride, a.MonthlyRequestQuotaOverride,
 	)
 	if err != nil {
-		return fmt.Errorf("update account: %w", err)
+		return 0, err
 	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return platform.ErrNotFound
+	return res.RowsAffected()
+}
+
+// UpdateAtomic loads the account row under a `SELECT ... FOR UPDATE` row
+// lock, applies mutate to an in-memory copy, and writes the result back
+// — all inside one transaction, so a concurrent PATCH on the same
+// account cannot interleave between the read and the write.
+//
+// Q148 (audit-2026-09-18): handleAdminAccountOverrides previously did a
+// plain Get, mutated in memory, then Update — with no lock and no
+// version check. Update rewrites every mutable column (not a diff), so
+// two operator PATCHes racing on the same account (one flipping
+// status, the other setting an override) both start from the same
+// stale snapshot and the second commit silently discards the first's
+// change. Status is the operator kill switch (C3-010): a lost SUSPEND
+// under this race is a live hole, not just clobbered data.
+//
+// mutate returning an error aborts the transaction; nothing is read or
+// written durably. platform.ErrNotFound (unwrapped) is returned when
+// the row does not exist.
+func (r *AccountStore) UpdateAtomic(
+	ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error,
+) (before, after platform.Account, err error) {
+	tx, err := r.s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return platform.Account{}, platform.Account{}, fmt.Errorf("update account atomic: begin tx: %w", err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+
+	row := tx.QueryRowContext(ctx, `SELECT `+accountColumns+` FROM accounts WHERE id = $1 FOR UPDATE`, id)
+	before, err = scanAccount(row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return platform.Account{}, platform.Account{}, platform.ErrNotFound
+		}
+		return platform.Account{}, platform.Account{}, fmt.Errorf("update account atomic: load: %w", err)
+	}
+
+	after = before
+	if mErr := mutate(&after); mErr != nil {
+		return platform.Account{}, platform.Account{}, mErr
+	}
+
+	if _, err := execAccountUpdate(ctx, tx, after); err != nil {
+		return platform.Account{}, platform.Account{}, fmt.Errorf("update account atomic: write: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return platform.Account{}, platform.Account{}, fmt.Errorf("update account atomic: commit: %w", err)
+	}
+	return before, after, nil
 }
 
 // Suspend sets status=suspended + reason. Idempotent — calling
@@ -240,19 +319,30 @@ func (r *AccountStore) Unsuspend(ctx context.Context, id uuid.UUID) error {
 func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM accounts a
-		WHERE a.status = 'suspended'
-		  AND a.suspended_reason LIKE $1 ESCAPE '\'
-		  AND a.suspended_at IS NOT NULL
-		  AND a.suspended_at < $2
-		  AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a.id)
-		  AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a.id)
+		WHERE a.id IN (
+		    SELECT a2.id FROM accounts a2
+		     WHERE a2.status = 'suspended'
+		       AND a2.suspended_reason LIKE $1 ESCAPE '\'
+		       AND a2.suspended_at IS NOT NULL
+		       AND a2.suspended_at < $2
+		       AND NOT EXISTS (SELECT 1 FROM users u WHERE u.account_id = a2.id)
+		       AND NOT EXISTS (SELECT 1 FROM api_keys k WHERE k.account_id = a2.id)
+		     LIMIT $3
+		)
 	`
-	res, err := r.s.db.ExecContext(ctx, q, likePrefixPattern(reasonPrefix), olderThan)
-	if err != nil {
-		return 0, fmt.Errorf("reap suspended orphans: %w", err)
+	var total int64
+	for i := 0; i < sweepMaxBatchesPerCall; i++ {
+		res, err := r.s.db.ExecContext(ctx, q, likePrefixPattern(reasonPrefix), olderThan, r.sweepBatchRows)
+		if err != nil {
+			return total, fmt.Errorf("reap suspended orphans: %w", err)
+		}
+		n, _ := res.RowsAffected()
+		total += n
+		if n < int64(r.sweepBatchRows) {
+			break
+		}
 	}
-	n, _ := res.RowsAffected()
-	return n, nil
+	return total, nil
 }
 
 // likePrefixPattern escapes LIKE metacharacters in p and appends `%`
