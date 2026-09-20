@@ -7,8 +7,9 @@ import (
 )
 
 // kill/unkill events carry a single topic (Symbol(action)) and an
-// SCV_VOID body ("AAAAAQ==") — verified in the lake. emitKill reads
-// only the action + identity, so the body is irrelevant to the decode.
+// SCV_VOID body ("AAAAAQ==") — verified in the lake. emitKill validates
+// that shape (requireVoidBody) but otherwise reads only the action +
+// identity; the body's content carries no additional information.
 func TestDecode_killSwitch(t *testing.T) {
 	d := NewDecoder()
 	ev := events.Event{
@@ -37,6 +38,28 @@ func TestDecode_killSwitch(t *testing.T) {
 	}
 	if ke.Action != EventKillDeposit || ke.EventIndex != 2 || ke.ContractID != ev.ContractID {
 		t.Errorf("KillEvent wrong: %+v", ke)
+	}
+}
+
+// TestDecode_killSwitchRejectsNonVoidBody pins Q043: emitKill must
+// validate the documented single-topic/void-body shape (the same
+// requireVoidBody check decode_admin.go's emergency-mode pair applies)
+// instead of building a KillEvent from ContractID/Ledger/TxHash alone
+// without ever looking at Topic length or Value.
+func TestDecode_killSwitchRejectsNonVoidBody(t *testing.T) {
+	d := NewDecoder()
+	ev := events.Event{
+		ContractID:     "CCRULRY3VV6NVQHZ43KDKC75OHR6YEH7WCQBDTTU6JBIH75NC72VW6JJ",
+		Ledger:         61_000_000,
+		TxHash:         "killtx-malformed",
+		OperationIndex: 0,
+		EventIndex:     3,
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+		Topic:          []string{TopicSymbolKillDeposit},
+		Value:          "AAAACgAAAAAAAAAAAAAAAAAAAAA=", // I128, not the documented SCV_VOID body
+	}
+	if _, err := d.Decode(ev); err == nil {
+		t.Error("Decode: expected error on kill event with non-void body, got nil")
 	}
 }
 

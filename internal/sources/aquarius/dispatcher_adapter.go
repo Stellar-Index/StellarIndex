@@ -225,11 +225,16 @@ func emitFee(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Even
 }
 
 // emitKill builds a KillEvent for a pool circuit-breaker toggle. These
-// events carry NO body (SCV_VOID) and a single topic, so there is
-// nothing to decode — the action (the classify() result) and the event
-// identity are the whole signal. Extracted from Decode to keep its
-// cognitive complexity under the gocognit ceiling.
+// events carry NO body (SCV_VOID) and a single topic — validated via
+// requireVoidBody, the same shape check decode_admin.go's emergency-mode
+// pair uses — so the action (the classify() result) and the event
+// identity are the whole signal once the shape is confirmed. Extracted
+// from Decode to keep its cognitive complexity under the gocognit
+// ceiling.
 func emitKill(ev *events.Event, closedAt time.Time, kind string) ([]consumer.Event, error) {
+	if err := requireVoidBody(ev, kind); err != nil {
+		return nil, err
+	}
 	return []consumer.Event{KillEvent{
 		ContractID: ev.ContractID,
 		Ledger:     ev.Ledger,
