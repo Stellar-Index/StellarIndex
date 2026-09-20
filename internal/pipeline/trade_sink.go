@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 
@@ -585,8 +586,9 @@ func (b *externalRetryBuffer) drainOnce(ctx context.Context) {
 // runs AFTER PersistEvents' workers have finished their own drain, i.e.
 // at the very end of the process's [ShutdownDeadline] window, so it gets
 // the reserved tail. External trades are the vendor-refillable class —
-// whatever doesn't land is warned about with its depth and refetched
-// from the venue.
+// whatever doesn't land is counted on SinkUndrainedRowsTotal like every
+// other shutdown loss and reported at ERROR with its depth and venues,
+// so the operator can record the window and refetch from the venue.
 //
 //nolint:contextcheck // intentional fresh context: the parent ctx is cancelled at shutdown, so threading it would fail every insert instantly (same pattern as drainBufferedEvents / flushShutdown).
 func (b *externalRetryBuffer) finalDrain() {
@@ -602,9 +604,30 @@ func (b *externalRetryBuffer) finalDrain() {
 
 	b.mu.Lock()
 	remaining := len(b.ring)
+	venues := ringVenues(b.ring)
 	b.mu.Unlock()
-	if remaining > 0 {
-		b.logger.Warn("external trade retry buffer not fully drained at shutdown — remaining entries are vendor-refillable (ADR-0041)",
-			"remaining", remaining)
+	if remaining == 0 {
+		return
 	}
+	// Counted by ROW like reportAbandonedTrades: these rows have nowhere
+	// left to go once this pass ends, and the alert's value is the size of
+	// the served-tier gap whatever its recovery path.
+	obs.SinkUndrainedRowsTotal.WithLabelValues(obs.SinkPersistEvents, "trade").Add(float64(remaining))
+	b.logger.Error("external trade retry buffer not fully drained at shutdown — remaining entries are vendor-refillable (ADR-0041); record the venues and window",
+		"remaining", remaining, "venues", venues)
+}
+
+// ringVenues lists the distinct trade sources in ring, sorted, for the
+// shutdown-loss report. Caller holds b.mu.
+func ringVenues(ring []canonical.Trade) []string {
+	seen := make(map[string]struct{}, 4)
+	for _, t := range ring {
+		seen[t.Source] = struct{}{}
+	}
+	venues := make([]string, 0, len(seen))
+	for v := range seen {
+		venues = append(venues, v)
+	}
+	sort.Strings(venues)
+	return venues
 }
