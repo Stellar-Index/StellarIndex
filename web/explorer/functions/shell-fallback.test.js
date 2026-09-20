@@ -6,16 +6,10 @@
 // didn't originate from jsdom's own fetch classes. `node` uses the
 // platform's native fetch (undici) throughout, matching the CF Workers
 // runtime these functions actually run under.
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, it, expect } from 'vitest';
-
-import { onRequest as accountsOnRequest } from './accounts/[[path]].js';
-import { onRequest as contractsOnRequest } from './contracts/[[path]].js';
-import { onRequest as issuersOnRequest } from './issuers/[[path]].js';
-import { onRequest as ledgersOnRequest } from './ledgers/[[path]].js';
-import { onRequest as marketsOnRequest } from './markets/[[path]].js';
-import { onRequest as transactionsOnRequest } from './transactions/[[path]].js';
-import { onRequest as creatorsOnRequest } from './insights/creators/[[path]].js';
-import { onRequest as sponsorsOnRequest } from './insights/sponsors/[[path]].js';
 
 // REL-02 (+ the sibling absence finding on contracts/issuers/ledgers): every
 // one of these functions used to hardcode `status: 200` on the shell
@@ -23,22 +17,57 @@ import { onRequest as sponsorsOnRequest } from './insights/sponsors/[[path]].js'
 // a missing/broken shell asset into a soft-200 "error page" that caches,
 // uptime monitors, and search engines can't distinguish from a real page.
 
-// [name, handler, the shell path that handler must read]. The shell path
-// is carried EXPLICITLY rather than derived from the name: the two
-// insights handlers are nested two segments deep, and a `/${name}/shell/`
-// convention would have quietly asserted the wrong path for them — which
-// is the same copy-paste failure the last describe in this file exists to
-// catch.
-const cases = [
-  ['accounts', accountsOnRequest, '/accounts/shell/'],
-  ['contracts', contractsOnRequest, '/contracts/shell/'],
-  ['issuers', issuersOnRequest, '/issuers/shell/'],
-  ['ledgers', ledgersOnRequest, '/ledgers/shell/'],
-  ['markets', marketsOnRequest, '/markets/shell/'],
-  ['transactions', transactionsOnRequest, '/transactions/shell/'],
-  ['insights/creators', creatorsOnRequest, '/insights/creators/shell/'],
-  ['insights/sponsors', sponsorsOnRequest, '/insights/sponsors/shell/'],
-];
+// K022: `cases` used to be a hand-maintained [name, handler, path] array —
+// a new long-tail shell route (the `assets/[[path]].js` handler drifted in
+// untested this way) shipped with no matching entry and no failure. Walk
+// the directory instead: every `[[path]].js` whose source references a
+// `/shell/` sub-fetch is a shell-fallback handler and is picked up
+// automatically. `og/[[path]].js` is a different contract (dynamic image
+// generation, covered by its own og.test.js) and has no such reference, so
+// it's excluded without needing a hand-written exclusion list either.
+//
+// The expected shell path is derived from the handler's DIRECTORY position,
+// not grepped from its own source — grepping the source would just echo
+// back a copy-pasted wrong path, defeating the "each handler fetches its
+// own shell path" check below.
+const functionsDir = path.dirname(fileURLToPath(import.meta.url));
+
+function discoverShellFallbackHandlers(dir, relSegments = []) {
+  const found = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) {
+      found.push(
+        ...discoverShellFallbackHandlers(path.join(dir, entry.name), [
+          ...relSegments,
+          entry.name,
+        ]),
+      );
+      continue;
+    }
+    if (entry.name !== '[[path]].js') continue;
+    const filePath = path.join(dir, entry.name);
+    if (!fs.readFileSync(filePath, 'utf8').includes('/shell/')) continue;
+    found.push({ name: relSegments.join('/'), filePath });
+  }
+  return found;
+}
+
+const cases = await Promise.all(
+  discoverShellFallbackHandlers(functionsDir).map(
+    async ({ name, filePath }) => {
+      const mod = await import(pathToFileURL(filePath).href);
+      return [name, mod.onRequest, `/${name}/shell/`];
+    },
+  ),
+);
+
+// Guard against the discovery walk itself silently finding nothing (a
+// broken cwd/glob would pass every describe.each below vacuously).
+if (cases.length === 0) {
+  throw new Error(
+    'discoverShellFallbackHandlers found no [[path]].js shell-fallback handlers — check functionsDir',
+  );
+}
 
 function makeContext({ shellStatus }) {
   const request = new Request('https://stellarindex.io/whatever/long-tail-id');
@@ -136,7 +165,7 @@ describe.each(cases)(
   },
 );
 
-// Each handler must read ITS OWN shell. These six files are copy-pasted from
+// Each handler must read ITS OWN shell. These files are copy-pasted from
 // one another, and the pre-existing fake matched on `/shell/` alone — so a
 // handler that fetched a sibling's shell passed every assertion.
 describe('each handler fetches its own shell path', () => {
