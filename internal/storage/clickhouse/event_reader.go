@@ -58,6 +58,17 @@ func sqlQuoteEscaped(s string) string {
 	return "'" + s + "'"
 }
 
+// sqlQuoteEscapedList renders a string slice as a SQL IN list using
+// sqlQuoteEscaped per element — the list-shaped counterpart of
+// sqlQuoteEscaped, for a caller-supplied slice rather than a single value.
+func sqlQuoteEscapedList(ss []string) string {
+	q := make([]string, len(ss))
+	for i, s := range ss {
+		q[i] = sqlQuoteEscaped(s)
+	}
+	return strings.Join(q, ",")
+}
+
 // boundedScanSettings is the per-QUERY settings clause for the full-history
 // scan class (the recognition shape scan and the completeness reconcile event
 // stream). The connection-level class in openRead already caps tracked
@@ -266,7 +277,11 @@ func topic0Predicate(topic0Syms []string) string {
 func contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs bool) string {
 	where := "WHERE ledger_seq BETWEEN ? AND ?"
 	if len(contractIDs) > 0 {
-		where += " AND contract_id IN (" + sqlQuoteList(contractIDs) + ")"
+		// contractIDs is caller-supplied (e.g. a decoder's live-grown
+		// GatedContractSet(), not a compile-time constant) — escape it
+		// like sqlQuoteEscaped's other lake-derived-value callers, not
+		// sqlQuoteList's compile-time-constant topic symbols.
+		where += " AND contract_id IN (" + sqlQuoteEscapedList(contractIDs) + ")"
 	}
 	if len(topic0Syms) > 0 {
 		where += " AND " + topic0Predicate(topic0Syms)
