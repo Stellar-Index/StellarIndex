@@ -2,6 +2,7 @@ package aquarius
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -195,9 +196,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			return nil, err
 		}
 		return []consumer.Event{av}, nil
-	default:
-		// EventTrade (and, defensively, anything Matches() let
-		// through) decodes as a trade.
+	case EventTrade:
 		trade, err := decodeTrade(&ev, closedAt)
 		if err != nil {
 			if errors.Is(err, ErrZeroAmountTrade) {
@@ -210,6 +209,14 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 			return nil, err
 		}
 		return []consumer.Event{TradeEvent{Trade: trade}}, nil
+	default:
+		// Every kind Matches() gates in is handled explicitly above. A
+		// kind that reaches here matched the identity gate but has no
+		// decode arm — fail closed (ADR-0035/CS-026) instead of forcing
+		// it through decodeTrade: a trade-shaped topic on an unhandled
+		// kind would otherwise be silently misattributed as a real
+		// trade rather than surfacing as a visible gap.
+		return nil, fmt.Errorf("%w: unhandled event kind %q", ErrMalformedPayload, kind)
 	}
 }
 
