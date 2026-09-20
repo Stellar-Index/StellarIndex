@@ -5,6 +5,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"database/sql/driver"
 	"reflect"
 	"strings"
@@ -322,6 +323,7 @@ func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 		Timestamp:        ts,
 		TxHashes:         []string{mevTxHashA},
 		Accounts:         []string{"GTAKER"},
+		NotionalUSD:      "1234.56",
 		DedupKey:         "arbitrage:" + mevTxHashA + ":GTAKER",
 		DetailJSON:       []byte(`{"legs":2}`),
 	}
@@ -364,11 +366,39 @@ func TestInsertMEVEvent_ArgsAndIdempotency(t *testing.T) {
 	if v := stmt.arg(t, 6); v != `{"legs":2}` {
 		t.Errorf("$6 = %v, want the detail JSON text", v)
 	}
-	if v := stmt.arg(t, 7); v != ev.DedupKey {
-		t.Errorf("$7 = %v, want the dedup key %q", v, ev.DedupKey)
+	wantProfit := sql.NullString{String: "1234.56", Valid: true}
+	if v := stmt.arg(t, 7); v != wantProfit {
+		t.Errorf("$7 = %#v, want profit_usd bound from NotionalUSD %#v", v, wantProfit)
+	}
+	if v := stmt.arg(t, 8); v != ev.DedupKey {
+		t.Errorf("$8 = %v, want the dedup key %q", v, ev.DedupKey)
 	}
 	if !strings.Contains(stmt.sql, "ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING") {
 		t.Errorf("InsertMEVEvent lost its idempotency arm — a re-scanned window would mint duplicate public accusations:\n%s", stmt.sql)
+	}
+}
+
+// TestInsertMEVEvent_EmptyNotionalUSDStoresNull: a wash-trade or other
+// no-profit-semantic candidate carries NotionalUSD == "" (see
+// domain.MEVStoredEvent's doc comment: '"" → stored NULL'). profit_usd
+// must bind to SQL NULL for that case, not the literal string "".
+func TestInsertMEVEvent_EmptyNotionalUSDStoresNull(t *testing.T) {
+	ev := domain.MEVStoredEvent{
+		Kind:             "wash_trade",
+		DetectedAtLedger: 58_000_031,
+		Timestamp:        time.Date(2026, 8, 29, 7, 0, 0, 0, time.UTC),
+		TxHashes:         []string{mevTxHashB},
+		Accounts:         []string{"GWASHER"},
+		NotionalUSD:      "",
+		DedupKey:         "wash_trade:" + mevTxHashB + ":GWASHER",
+		DetailJSON:       []byte(`{}`),
+	}
+	store, conn := newScriptedStore(t, scriptedResult{rowsAffected: 1})
+	if _, err := store.InsertMEVEvent(context.Background(), ev); err != nil {
+		t.Fatalf("InsertMEVEvent: %v", err)
+	}
+	if v := conn.stmts[0].arg(t, 7); v != (sql.NullString{}) {
+		t.Errorf("$7 = %#v, want an invalid sql.NullString (binds SQL NULL) for empty NotionalUSD", v)
 	}
 }
 

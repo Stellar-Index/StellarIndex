@@ -215,14 +215,15 @@ func (s *Store) InsertMEVEvent(ctx context.Context, e domain.MEVStoredEvent) (bo
         ) VALUES (
             $1, $2, $3,
             NULL, NULL, $4, $5,
-            $6, NULL, $7
+            $6, $7, $8
         )
         ON CONFLICT (dedup_key) WHERE dedup_key IS NOT NULL DO NOTHING
     `
+	profitUSD := nullString(e.NotionalUSD)
 	res, err := s.db.ExecContext(ctx, q,
 		e.Timestamp.UTC(), int(e.DetectedAtLedger), e.Kind,
 		e.TxHashes, e.Accounts,
-		string(e.DetailJSON), e.DedupKey,
+		string(e.DetailJSON), profitUSD, e.DedupKey,
 	)
 	if err != nil {
 		return false, fmt.Errorf("timescale: InsertMEVEvent: %w", err)
