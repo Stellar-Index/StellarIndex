@@ -67,6 +67,16 @@ const QuarantineAfterCyclesNoProgress = 720
 // drop.
 const PermanentSkipPerCycle = 1
 
+// heldRowLogEvery throttles the per-row "holding cursor" warning to the
+// first failing cycle and every Nth after, mirroring the sink's own
+// infraRetryLogEvery: a held row is retried every [Interval] for as long as
+// the fault lasts (forever, for an infra fault), and one line per row per
+// cycle turned a sustained outage into thousands of identical warnings that
+// buried the ERROR lines an operator actually needs. The cycle-level
+// signals (runs_total{outcome="sink_retry"}, the per-cycle held-progress
+// warning, lag) are unaffected and remain the paging surface.
+const heldRowLogEvery = 20
+
 // sinkDisposition is the projector's durability verdict for ONE sink write
 // failure. It answers exactly one question: may the cursor advance past this
 // row?
