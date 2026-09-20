@@ -1008,10 +1008,12 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			// is not also a shed candidate — the cursor is already held for it,
 			// and shedding would drop the retry budget this row is counting.
 			held = append(held, heldRow{id: id, disposition: disposition, fails: fails, err: sinkErr})
-			p.logger.Warn("projector: sink failure — holding cursor for retry (NOT advancing past this ledger)",
-				"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
-				"op_index", ev.OperationIndex, "event_index", ev.EventIndex,
-				"disposition", disposition.String(), "consecutive_cycles", fails, "err", sinkErr)
+			if fails == 1 || fails%heldRowLogEvery == 0 {
+				p.logger.Warn("projector: sink failure — holding cursor for retry (NOT advancing past this ledger)",
+					"source", src.Name, "ledger", ev.Ledger, "tx", ev.TxHash,
+					"op_index", ev.OperationIndex, "event_index", ev.EventIndex,
+					"disposition", disposition.String(), "consecutive_cycles", fails, "err", sinkErr)
+			}
 			return
 		}
 		// Every fault of this row is permanent, so the cursor MAY advance past
