@@ -215,6 +215,131 @@ run       "drift: index absent live entirely"     1 "$tmp/intent.sql" "$tmp/live
 expect_msg "drift: names the missing index" "DRIFT account_movements.INDEX idx_am_tx" \
   "$tmp/intent.sql" "$tmp/live-idx-missing.sql"
 
+# ─── the REVERSE direction on a declared table (T358 / T453) ─────────
+# An index hand-added live during an incident (or dropped from the repo
+# but never dropped live) is an index-only divergence too. Before this it
+# was invisible: the comparison walked the repo's indices only, and the
+# "uncodified" bucket counts TABLES, so an extra index on a declared table
+# never reached any counter — rc=0, "0 divergent, 0 uncodified".
+awk '/^    INDEX idx_am_tx/ { print $0 ","; print "    INDEX idx_am_hand amount TYPE minmax GRANULARITY 4"; next } { print }' \
+  "$tmp/live-ok.sql" > "$tmp/live-idx-extra.sql"
+run       "drift: index present live but never declared" 1 "$tmp/intent.sql" "$tmp/live-idx-extra.sql"
+expect_msg "drift: names the undeclared index" "DRIFT account_movements.INDEX idx_am_hand: present in" \
+  "$tmp/intent.sql" "$tmp/live-idx-extra.sql"
+
+# A projection hand-added live, rendered the way SHOW CREATE renders one:
+# the body is a multi-line ( SELECT … ORDER BY … ) block whose closing
+# paren sits alone one level deeper than the column list's. It must be
+# reported as the PROJECTION it is — not swallowed, and not misread as a
+# column named SELECT (which is what the old parser made of it).
+awk -v bt="$bt" '
+  /^    INDEX idx_am_tx/ {
+    print $0 ","
+    print "    PROJECTION p_by_tx"
+    print "    ("
+    print "        SELECT " bt "tx_hash" bt ", " bt "amount" bt
+    print "        ORDER BY " bt "tx_hash" bt
+    print "    )"
+    next
+  }
+  { print }' "$tmp/live-ok.sql" > "$tmp/live-proj.sql"
+run       "drift: projection present live but never declared" 1 "$tmp/intent.sql" "$tmp/live-proj.sql"
+expect_msg "drift: names the undeclared projection" "DRIFT account_movements.PROJECTION p_by_tx: present in" \
+  "$tmp/intent.sql" "$tmp/live-proj.sql"
+name="drift: a projection body is not misread as columns"
+out="$(INTENT="$tmp/intent.sql" LIVE_SCHEMA="$tmp/live-proj.sql" TEXTFILE_DIR=/dev/null \
+       DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$drift" 2>&1)"
+if ! grep -qF -- "DRIFT account_movements.columns" <<<"$out" && grep -qF -- "PROJECTION p_by_tx" <<<"$out"; then
+  ok "$name"
+else
+  bad "$name: the multi-line PROJECTION body must be skipped by the column parser and reported by name" "$out"
+fi
+
+# ─── cut-over objects: operator DDL beside the intent (T453) ─────────
+# The v2 halves of an in-flight migration are declared in an operator
+# file marked `-- si-cutover-object:` and are deliberately absent from
+# tier1_schema.sql. Before this, a live v2 table landed in UNCODIFIED and
+# its ENGINE/ORDER BY were never compared — the ReplacingMergeTree
+# version column ledger_entries_current_v2 exists to change could be
+# wrong live and produce zero signal. Now: compared like any declared
+# table WHEN live; "no cut-over in progress" when absent; never counted
+# as uncodified.
+mkdir -p "$tmp/cutover"
+cat > "$tmp/cutover/am_v2.sql" <<'SQL'
+-- si-apply-scope: operator
+-- si-cutover-object: stellar.account_movements_v2
+CREATE TABLE IF NOT EXISTS stellar.account_movements_v2
+(
+    address       String,
+    ledger        UInt32,
+    tx_hash       String,
+    op_index      UInt32,
+    amount        Int128,
+    version       UInt64
+)
+ENGINE = ReplacingMergeTree(version)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (address, ledger, tx_hash, op_index);
+SQL
+live_v2() {
+  cat "$tmp/live-ok.sql"
+  cat <<SQL
+
+CREATE TABLE stellar.account_movements_v2
+(
+    ${bt}address${bt} String,
+    ${bt}ledger${bt} UInt32,
+    ${bt}tx_hash${bt} String,
+    ${bt}op_index${bt} UInt32,
+    ${bt}amount${bt} Int128,
+    ${bt}version${bt} UInt64
+)
+ENGINE = ReplacingMergeTree($1)
+PARTITION BY intDiv(ledger, 1000000)
+ORDER BY (address, ledger, tx_hash, op_index)
+SETTINGS index_granularity = 8192;
+SQL
+}
+live_v2 version > "$tmp/live-v2-ok.sql"
+live_v2 ledger  > "$tmp/live-v2-bad.sql"
+# run_cut <name> <want-rc> <needle-or-empty> <live>  — with the cut-over file named explicitly
+run_cut() {
+  local name="$1" want="$2" needle="$3" live="$4" out rc
+  out="$(INTENT="$tmp/intent.sql" INTENT_CUTOVER="$tmp/cutover/am_v2.sql" LIVE_SCHEMA="$live" \
+         TEXTFILE_DIR=/dev/null DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$drift" 2>&1)"
+  rc=$?
+  if [[ "$rc" -eq "$want" ]] && { [[ -z "$needle" ]] || grep -qF -- "$needle" <<<"$out"; }; then
+    ok "$name (rc=$rc${needle:+, reported: $needle})"
+  else
+    bad "$name: rc=$rc, want $want${needle:+ and $needle}" "$out"
+  fi
+}
+run_cut "cut-over object absent live is not drift"          0 "CUTOVER account_movements_v2: declared in am_v2.sql, not live" "$tmp/live-ok.sql"
+run_cut "cut-over object live and matching is clean"        0 "" "$tmp/live-v2-ok.sql"
+name="cut-over object live is not counted as uncodified"
+out="$(INTENT="$tmp/intent.sql" INTENT_CUTOVER="$tmp/cutover/am_v2.sql" LIVE_SCHEMA="$tmp/live-v2-ok.sql" \
+       TEXTFILE_DIR=/dev/null DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$drift" 2>&1)"
+if ! grep -qF -- "UNCODIFIED account_movements_v2" <<<"$out"; then ok "$name"; else bad "$name" "$out"; fi
+run_cut "cut-over object live with the wrong version column is drift" 1 "DRIFT account_movements_v2.engine" "$tmp/live-v2-bad.sql"
+# Discovery: a marked file BESIDE the intent is found without being named.
+mkdir -p "$tmp/disc" && cp "$tmp/intent.sql" "$tmp/disc/intent.sql" && cp "$tmp/cutover/am_v2.sql" "$tmp/disc/am_v2.sql"
+name="cut-over DDL beside the intent is discovered without INTENT_CUTOVER"
+out="$(INTENT="$tmp/disc/intent.sql" LIVE_SCHEMA="$tmp/live-v2-bad.sql" \
+       TEXTFILE_DIR=/dev/null DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$drift" 2>&1)"
+rc=$?
+if [[ "$rc" -eq 1 ]] && grep -qF -- "DRIFT account_movements_v2.engine" <<<"$out"; then
+  ok "$name (rc=$rc)"
+else
+  bad "$name: rc=$rc, want 1 with DRIFT account_movements_v2.engine" "$out"
+fi
+# A marked file that does not CREATE what it marks cannot be compared — refuse, never "clean".
+printf -- '-- si-cutover-object: stellar.ghost_v2\n' > "$tmp/cutover/ghost.sql"
+name="cut-over marker without a CREATE refuses (rc=2)"
+out="$(INTENT="$tmp/intent.sql" INTENT_CUTOVER="$tmp/cutover/ghost.sql" LIVE_SCHEMA="$tmp/live-ok.sql" \
+       TEXTFILE_DIR=/dev/null DEPLOYED_VERSIONS_DIR="$no_sidecars" bash "$drift" 2>&1)"
+rc=$?
+if [[ "$rc" -eq 2 ]]; then ok "$name"; else bad "$name: rc=$rc" "$out"; fi
+
 # A whole table never created on the box.
 awk '/^CREATE TABLE stellar.account_movements/{skip=1} skip && /^SETTINGS index_granularity/{skip=0; next} !skip' \
   "$tmp/live-ok.sql" > "$tmp/live-missing.sql"

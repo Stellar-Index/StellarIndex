@@ -36,6 +36,16 @@
 #   * ORDER BY       — likewise. This is the one that silently corrupts
 #                      a rebuild rather than failing it.
 #   * column NAMES, in order — an added/dropped/reordered column.
+#   * secondary INDEX declarations — name + TYPE + params + GRANULARITY,
+#     exact text on both sides; and PROJECTION / CONSTRAINT names. In
+#     BOTH directions: one the repo declares that live lacks, and one
+#     live carries that the repo never declared, are each drift.
+#
+# Cut-over objects — the v2 halves an operator file marks with
+# `-- si-cutover-object:` (deliberately absent from tier1_schema.sql) —
+# are compared the same way WHEN LIVE, from every marked *.sql beside the
+# intent file or the colon-separated INTENT_CUTOVER list. Absent live is
+# "no cut-over in progress", not drift.
 #
 # Column TYPES are reported as INFO, not drift. ClickHouse re-renders
 # types, DEFAULT expressions, CODECs and TTLs in its own canonical form,
@@ -64,6 +74,7 @@
 #   LIVE=1 ch-schema-drift.sh                # the same thing, said out loud
 #   LIVE=0 ch-schema-drift.sh                # the newest daily snapshot instead
 #   LIVE_SCHEMA=/path/schema.sql ch-schema-drift.sh   # an explicit capture
+#   INTENT_CUTOVER=a.sql:b.sql ch-schema-drift.sh     # cut-over DDL by name ("" = none)
 #
 # The intent side resolves from $INTENT, else the copy the archival-node
 # role ships to the host, else this checkout — see the block below the
@@ -162,6 +173,28 @@ if [[ -z "$INTENT" ]]; then
   fi
 fi
 
+# ─── cut-over objects: the operator DDL beside the intent (T453) ─────
+# deploy/clickhouse/*.sql files marked `-- si-cutover-object: X` declare
+# the v2 halves of an in-flight r1 migration. They are deliberately NOT
+# in tier1_schema.sql — a completed cut-over would read as drift forever
+# (scripts/ci/lint-ch-apply-scope.sh rule 6) — which until now meant a
+# hand-applied v2 table with the wrong ReplacingMergeTree version column
+# or ORDER BY landed in the UNCODIFIED bucket and was never compared: the
+# exact silent-mis-sort this check exists for. Every marked file beside
+# the intent (or the colon-separated list in INTENT_CUTOVER; set it empty
+# for none) goes through the same parser, and its marked objects are
+# compared exactly like a declared table WHEN LIVE. Absent live is "no
+# cut-over in progress", never drift.
+cutover_files=()
+if [[ -n "${INTENT_CUTOVER+x}" ]]; then
+  IFS=: read -r -a cutover_files <<<"$INTENT_CUTOVER"
+else
+  for f in "$(dirname "$INTENT")"/*.sql; do
+    [[ -r "$f" && "$f" != "$INTENT" ]] || continue
+    grep -q '^-- si-cutover-object:' "$f" && cutover_files+=("$f")
+  done
+fi
+
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
@@ -216,7 +249,7 @@ parse_schema() {
       if (kind == "table" && aliasbase != "" && engine == "" && cols == "") {
         printf "%s\talias\t%s\n", tbl, aliasbase
         tbl = ""; kind = ""; mvto = ""; engine = ""; partexpr = ""
-        orderexpr = ""; cols = ""; incols = 0; depth = 0; aliasbase = ""
+        orderexpr = ""; cols = ""; incols = 0; depth = 0; aliasbase = ""; inproj = 0
         return
       }
       if (kind == "view") {
@@ -236,7 +269,7 @@ parse_schema() {
         printf "%s\tcolumns\t%s\n", tbl, cols
       }
       tbl = ""; kind = ""; mvto = ""; engine = ""; partexpr = ""
-      orderexpr = ""; cols = ""; incols = 0; depth = 0; aliasbase = ""
+      orderexpr = ""; cols = ""; incols = 0; depth = 0; aliasbase = ""; inproj = 0
     }
     function mvtarget(s,   x) {
       x = s
@@ -304,11 +337,17 @@ parse_schema() {
     incols == 1 {
       # NB: `close` is an awk builtin — these must not be named open/close.
       nopen = gsub(/\(/, "(", line); nclose = gsub(/\)/, ")", line)
-      if (line ~ /^ *\) *$/ || (nclose > nopen && depth + nopen - nclose <= 0)) {
+      # A lone ")" closes the column list only at its own depth: SHOW
+      # CREATE renders a PROJECTION body as an indented ( ... ) block whose
+      # closing paren sits on a line of its own, one level deeper.
+      if ((line ~ /^ *\) *$/ && depth <= 1) || (nclose > nopen && depth + nopen - nclose <= 0)) {
         incols = 2
         depth = 0
       } else {
         depth += nopen - nclose
+        # Inside a multi-line PROJECTION body: its SELECT/ORDER BY lines
+        # are not columns. The name was captured on the PROJECTION line.
+        if (inproj) { if (depth <= 1) inproj = 0; next }
         c = line
         sub(/^ +/, "", c); sub(/,? *$/, "", c)
         # Skip table-level clauses inside the parens. Anchored with an
@@ -341,6 +380,22 @@ parse_schema() {
           if (iname != "" && iname ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
             printf "%s\tindex\t%s\t%s\n", tbl, iname, norm(irest)
           }
+        } else if (c ~ /^(PROJECTION|CONSTRAINT) /) {
+          # Projections and constraints: compared on EXISTENCE by name,
+          # both directions (T453). Their bodies (a SELECT, a CHECK
+          # expression) are re-rendered by ClickHouse the way an MV
+          # SELECT body is, so text equality would be the same false-positive
+          # machine the header refuses for column types.
+          pc = c
+          pkind = (pc ~ /^PROJECTION /) ? "projection" : "constraint"
+          sub(/^(PROJECTION|CONSTRAINT) +/, "", pc)
+          gsub(/`/, "", pc)
+          pname = pc; sub(/[ (].*$/, "", pname)
+          if (pname != "" && pname ~ /^[A-Za-z_][A-Za-z0-9_]*$/) {
+            printf "%s\t%s\t%s\t%s\n", tbl, pkind, pname, pkind
+          }
+          # The body may open on a later line (SHOW CREATE puts it there).
+          if (pkind == "projection" && (depth > 1 || c !~ /\(/)) inproj = 1
         }
         next
       }
@@ -739,8 +794,27 @@ if [[ ! -s "$work/live.facts" ]]; then
   exit 2
 fi
 
+for f in ${cutover_files[@]+"${cutover_files[@]}"}; do
+  [[ -z "$f" ]] && continue
+  [[ -r "$f" ]] || { note "cut-over DDL $f is not readable — cannot compare its objects"; exit 2; }
+  parse_schema "$f" > "$work/cutover.facts" || { note "failed to parse $f"; exit 2; }
+  while IFS= read -r obj; do
+    obj="${obj##*.}"
+    [[ -z "$obj" ]] && continue
+    if ! grep -q "^$obj"$'\t'"kind"$'\t' "$work/cutover.facts"; then
+      note "cut-over DDL $(basename "$f") marks $obj as si-cutover-object but does not CREATE it — cannot compare"
+      exit 2
+    fi
+    awk -F'\t' -v t="$obj" '$1==t' "$work/cutover.facts" >> "$work/intent.facts"
+    printf '%s\tcutover\t%s\n' "$obj" "$(basename "$f")" >> "$work/intent.facts"
+  done < <(sed -n 's/^-- si-cutover-object: *//p' "$f" | tr -d '\r ')
+done
+
 fact() { awk -F'\t' -v t="$2" -v k="$3" '$1==t && $2==k {print $3; exit}' "$1"; }
 tables_in() { awk -F'\t' '$2=="kind" {print $1}' "$1" | sort -u; }
+# Named sub-objects of one table: <name>\t<compared text>.
+subobjects_in() { awk -F'\t' -v t="$2" -v k="$3" '$1==t && $2==k {print $3"\t"$4}' "$1"; }
+sub_kinds="index projection constraint"
 
 declared="$(tables_in "$work/intent.facts")"
 livetabs="$(tables_in "$work/live.facts")"
@@ -751,12 +825,20 @@ divergent_tables=0
 
 while IFS= read -r t; do
   [[ -z "$t" ]] && continue
-  compared=$((compared + 1))
+  label="$(basename "$INTENT")"
+  cutover_src="$(fact "$work/intent.facts" "$t" cutover)"
+  [[ -n "$cutover_src" ]] && label="$cutover_src"
   if ! grep -qx "$t" <<<"$livetabs"; then
-    note "DRIFT $t: declared in $(basename "$INTENT") but ABSENT from $live_origin"
+    if [[ -n "$cutover_src" ]]; then
+      note "CUTOVER $t: declared in $cutover_src, not live — no cut-over in progress"
+      continue
+    fi
+    compared=$((compared + 1))
+    note "DRIFT $t: declared in $label but ABSENT from $live_origin"
     drift=$((drift + 1)); divergent_tables=$((divergent_tables + 1))
     continue
   fi
+  compared=$((compared + 1))
   bad=0
   keys="engine partition order columns"
   # AS-clone declarations resolve to their base's facts (see the parser's
@@ -765,7 +847,7 @@ while IFS= read -r t; do
   alias_base="$(fact "$work/intent.facts" "$t" alias)"
   if [[ -n "$alias_base" ]]; then
     if ! grep -qx "$alias_base" <<<"$declared"; then
-      note "DRIFT $t: declared AS $alias_base, but $alias_base is not declared in $(basename "$INTENT")"
+      note "DRIFT $t: declared AS $alias_base, but $alias_base is not declared in $label"
       drift=$((drift + 1)); divergent_tables=$((divergent_tables + 1))
       continue
     fi
@@ -795,28 +877,41 @@ while IFS= read -r t; do
       drift=$((drift + 1)); bad=1
     fi
   done
-  # ─── indices: real DRIFT, not INFO (T339, 2026-09 reverification) ─────
-  # A secondary index's TYPE+params+GRANULARITY (e.g. idx_lec_key_xdr's
-  # bloom_filter false-positive rate) is exact declared text on both
-  # sides — unlike a column's DEFAULT/CODEC rendering, this is not the
-  # type-rendering false-positive machine the header above refuses. Each
-  # index declared in the repo is checked by NAME against its live
-  # counterpart; an index the repo does not declare is left to the
-  # existing "uncodified" accounting, same as any other undeclared object.
-  while IFS=$'\t' read -r iname iwant; do
-    [[ -z "$iname" ]] && continue
-    igot="$(awk -F'\t' -v t="$live_src" -v n="$iname" \
-      '$1==t && $2=="index" && $3==n {print $4; exit}' "$work/live.facts")"
-    if [[ -z "$igot" ]]; then
-      note "DRIFT $t.INDEX $iname: declared in $(basename "$INTENT") but ABSENT from $live_origin"
-      drift=$((drift + 1)); bad=1
-    elif [[ "$iwant" != "$igot" ]]; then
-      note "DRIFT $t.INDEX $iname:"
-      note "    repo: $iwant"
-      note "    live: $igot"
-      drift=$((drift + 1)); bad=1
-    fi
-  done < <(awk -F'\t' -v t="$intent_src" '$1==t && $2=="index" {print $3"\t"$4}' "$work/intent.facts")
+  # ─── named sub-objects: indices, projections, constraints — BOTH ways ──
+  # (T339 / T358 / T453.) An index's TYPE+params+GRANULARITY (e.g.
+  # idx_lec_key_xdr's bloom_filter false-positive rate) is exact declared
+  # text on both sides, so it is compared textually; a projection's SELECT
+  # and a constraint's CHECK are re-rendered by ClickHouse the way an MV's
+  # SELECT is, so those compare on existence by name. EITHER direction is
+  # drift: one the repo declares that live lacks or renders differently,
+  # and one live carries that the repo never declared — the rule the
+  # column list already applies to a hand-added column. None of this is
+  # left to the "uncodified" accounting below: that bucket counts TABLES,
+  # so an extra index on a declared table could never reach it.
+  for skind in $sub_kinds; do
+    sk="$(tr '[:lower:]' '[:upper:]' <<<"$skind")"
+    while IFS=$'\t' read -r sname swant; do
+      [[ -z "$sname" ]] && continue
+      sgot="$(awk -F'\t' -v t="$live_src" -v k="$skind" -v n="$sname" \
+        '$1==t && $2==k && $3==n {print $4; exit}' "$work/live.facts")"
+      if [[ -z "$sgot" ]]; then
+        note "DRIFT $t.$sk $sname: declared in $label but ABSENT from $live_origin"
+        drift=$((drift + 1)); bad=1
+      elif [[ "$swant" != "$sgot" ]]; then
+        note "DRIFT $t.$sk $sname:"
+        note "    repo: $swant"
+        note "    live: $sgot"
+        drift=$((drift + 1)); bad=1
+      fi
+    done < <(subobjects_in "$work/intent.facts" "$intent_src" "$skind")
+    while IFS=$'\t' read -r sname _; do
+      [[ -z "$sname" ]] && continue
+      if ! grep -qx -- "$sname" <<<"$(subobjects_in "$work/intent.facts" "$intent_src" "$skind" | cut -f1)"; then
+        note "DRIFT $t.$sk $sname: present in $live_origin but not declared in $label"
+        drift=$((drift + 1)); bad=1
+      fi
+    done < <(subobjects_in "$work/live.facts" "$live_src" "$skind")
+  done
   [[ "$bad" -eq 1 ]] && divergent_tables=$((divergent_tables + 1))
 done <<<"$declared"
 
