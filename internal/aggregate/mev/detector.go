@@ -179,8 +179,14 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 	if nEdges < nNodes {
 		return Candidate{}, false
 	}
-	// Reject the degenerate 2-asset single-venue round-trip.
-	if nNodes <= 2 && len(sourceSet) < 2 {
+	// Reject a degenerate single-venue round-trip: either the classic
+	// 2-asset case, or a larger graph that padded a real cycle with a
+	// redundant extra leg on a pair it already covers (nEdges > nNodes
+	// — a genuine minimal cycle always has nEdges == nNodes). Without
+	// the nEdges>nNodes arm, a 3+ node tree/path payment that doubles
+	// one pair's leg on a single venue still cleared the nEdges>=nNodes
+	// cycle test and skipped the venue check entirely.
+	if (nNodes <= 2 || nEdges > nNodes) && len(sourceSet) < 2 {
 		return Candidate{}, false
 	}
 
