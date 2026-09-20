@@ -149,6 +149,37 @@ against.
 
 ### Fixed
 
+- **sources / cctp, rozo, sorocredit, phoenix, scale — doc/comment drift
+  corrected against the shipped decoder and registry state (Q020, Q023,
+  Q076, Q086, Q088, T086, T114, T687, T063):** nine documentation and
+  comment claims had fallen out of sync with code that moved past them
+  without a doc update. `sorocredit/README.md` still described 7 topic
+  symbols and `BackfillSafe: false` against an 8-symbol `EventSymbols()`
+  and a `BackfillSafe: true` registry entry, and cited the pre-move
+  `cmd/stellarindex-ops/reconciliation_catalogue.go` path. `rozo/events.go`
+  cited a nonexistent `AmountDecimals` field on the rozo registry entry
+  for its 7-decimals claim. `cctp/README.md` and
+  `docs/operations/wasm-audits/cctp.md` still described the 2026-05-26
+  WASM-history audit as pending with `BackfillSafe: false`, though the
+  audit approved and flipped the flag the same day; the audit doc's
+  replay SQL and coverage claim also still reflected the original
+  4-symbol transfer-flow scope instead of the 26 symbols the 2026-07-08/09
+  governance-event audits added. `cctp/decode.go` claimed contract-ID
+  filtering happens downstream of the package, contradicted by
+  `dispatcher_adapter.go`'s own in-package `IsCCTPContract` calls.
+  `docs/operations/wasm-audits/rozo.md`'s replay SQL still listed the
+  original 3 contracts and the never-observed-live `payment`/`flush`
+  short-form symbols instead of the 4th contract and the on-wire
+  `payment_event`/`flush_event` forms the 2026-07-09 addendum itself
+  documents. `docs/operations/wasm-audits/phoenix.md` and the registry's
+  phoenix caption asserted binary string presence as if it were runtime
+  uniformity, omitting that the pre-upgrade pool WASM's runtime stream
+  emitted only 7 of 8 swap fields (the gap `phoenix.RawSwap.Decodable()`
+  exists to recover from). `external/scale/scale.go` said "three FX
+  venues" while naming only two. All are documentation/comment
+  corrections against already-shipped, already-tested code — no decoder
+  or registry behavior changed.
+
 - **ansible / the archival-node WAL-headroom guard stops crediting a walked-up
   ancestor as WAL (RWC-529, #529):** the guard refuses a `max_wal_size` that
   does not fit the filesystem `pg_wal` is really on — the substitution that
