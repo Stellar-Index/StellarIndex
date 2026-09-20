@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
 // TestClassifySinkFault pins the three-valued taxonomy that replaced the
@@ -44,6 +45,15 @@ func TestClassifySinkFault(t *testing.T) {
 		{
 			name: "postgres numeric out of range (class 22)",
 			err:  &pgconn.PgError{Code: "22003", Message: "numeric field overflow"},
+			want: dispositionSkip,
+		},
+		{
+			// The sink recovers its own panics and wraps them in
+			// pipeline.ErrSinkPanic; its classifier drops the event. Holding it
+			// here instead re-ran the panicking decode every cycle for the whole
+			// unclassified budget (Q053).
+			name: "recovered sink panic (pipeline.ErrSinkPanic)",
+			err:  fmt.Errorf("sink: %w", fmt.Errorf("%w for blend/new_auction: runtime error: index out of range", pipeline.ErrSinkPanic)),
 			want: dispositionSkip,
 		},
 		{
