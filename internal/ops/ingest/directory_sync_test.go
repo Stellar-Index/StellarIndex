@@ -181,3 +181,69 @@ func runDirectorySyncCapturingStderr(t *testing.T, args []string) (error, string
 	os.Stderr = orig
 	return runErr, <-done
 }
+
+// buildDirectoryTarballN renders n well-formed account files, each
+// body under one tar block, so every entry occupies exactly 1024
+// bytes (header + one data block) of the uncompressed archive.
+func buildDirectoryTarballN(t *testing.T, n int) []byte {
+	t.Helper()
+	files := make(map[string]string, n)
+	for i := range n {
+		letter := string(rune('A' + i%26))
+		addr := "G" + strings.Repeat(letter, 55)
+		files["public-directory-master/accounts/"+addr+".json"] = `{"address": "` + addr + `", "name": "Entry ` + letter + `", "tags": ["exchange"]}`
+	}
+	return buildDirectoryTarball(t, files)
+}
+
+// TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary — the
+// size bound is an exact multiple of tar's 512-byte block. Cut there,
+// between two entries, tar.Reader sees a clean end of archive and the
+// walk used to return the entries read so far with a nil error: a
+// partial snapshot that ReplaceDirectory then pruned the table down
+// to. The bound must be a refusal, not a shorter result.
+func TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary(t *testing.T) {
+	tarball := buildDirectoryTarballN(t, 3) // 3 × 1024 B + 1024 B end-of-archive, uncompressed
+
+	entries, _, err := parseDirectoryTarball(bytes.NewReader(tarball), 2*1024)
+	if err == nil {
+		t.Fatalf("parse at a 2048 B bound returned %d entries and nil error; want a refusal, got a silently truncated snapshot", len(entries))
+	}
+	if !strings.Contains(err.Error(), "size bound") {
+		t.Errorf("err = %v, want the size-bound refusal", err)
+	}
+	if entries != nil {
+		t.Errorf("entries = %v, want none on a refused snapshot", entries)
+	}
+}
+
+// TestParseDirectoryTarball_RejectsCorruptGzipTrailer — tar.Reader
+// stops at the end-of-archive marker, before the gzip trailer, so the
+// CRC-32 the archive carries was never checked. A flipped CRC byte
+// must fail the run.
+func TestParseDirectoryTarball_RejectsCorruptGzipTrailer(t *testing.T) {
+	tarball := buildDirectoryTarballN(t, 3)
+	// gzip trailer: 4-byte CRC-32 then 4-byte ISIZE, last 8 bytes.
+	tarball[len(tarball)-8] ^= 0xFF
+
+	entries, _, err := parseDirectoryTarball(bytes.NewReader(tarball), directoryMaxTarballBytes)
+	if err == nil {
+		t.Fatalf("parse of a tarball with a corrupt CRC returned %d entries and nil error; want an integrity refusal", len(entries))
+	}
+	if !strings.Contains(err.Error(), "integrity") {
+		t.Errorf("err = %v, want the tarball-integrity refusal", err)
+	}
+}
+
+// TestParseDirectoryTarball_AcceptsIntactArchiveWithinTheBound — the
+// integrity checks must not reject a well-formed archive that fits.
+func TestParseDirectoryTarball_AcceptsIntactArchiveWithinTheBound(t *testing.T) {
+	tarball := buildDirectoryTarballN(t, 3)
+	entries, skipped, err := parseDirectoryTarball(bytes.NewReader(tarball), 8*1024)
+	if err != nil {
+		t.Fatalf("parseDirectoryTarball: %v", err)
+	}
+	if len(entries) != 3 || skipped != 0 {
+		t.Errorf("entries=%d skipped=%d, want 3/0", len(entries), skipped)
+	}
+}
