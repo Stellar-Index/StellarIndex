@@ -10,10 +10,11 @@ import (
 )
 
 // ErrUnknownEvent flags an event whose topic[0] symbol isn't one
-// of CCTP's four. Per AGENTS.md ("Comet uses a shared topic")
-// the dispatcher matches by topic bytes; another protocol could
-// in theory emit the same symbol. Consumer should drop by
-// ContractID before invoking the decoder.
+// of CCTP's 26 (see events.go). Per AGENTS.md ("Comet uses a
+// shared topic") the dispatcher matches by topic bytes; another
+// protocol could in theory emit the same symbol. ContractID
+// filtering is applied by IsCCTPContract (dispatcher_adapter.go),
+// in this same package, before Classify is trusted.
 var ErrUnknownEvent = errors.New("cctp: unknown event topic")
 
 // ErrMalformedBody surfaces a schema drift — body Map missing a
@@ -28,8 +29,9 @@ var ErrMalformedBody = errors.New("cctp: malformed event body")
 var ErrMalformedTopic = errors.New("cctp: malformed event topics")
 
 // Classify reports which CCTP event the given Event is, or empty
-// string if topic[0] doesn't match. Contract-ID filtering happens
-// DOWNSTREAM.
+// string if topic[0] doesn't match. Classify alone does not gate on
+// contract identity — callers (Matches, Decode, both in this
+// package) apply IsCCTPContract before trusting the result.
 func Classify(e *events.Event) string { //nolint:gocyclo,gocognit,cyclop // one case per CCTP topic (26, the full mainnet census — docs/protocols/cctp.md); flattening keeps the dispatch table auditable against the contract source
 	if len(e.Topic) < 1 {
 		return ""
