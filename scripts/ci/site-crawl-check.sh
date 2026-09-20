@@ -64,6 +64,11 @@ COUNT=$(fetch "$API/v1/assets?asset_class=all&limit=100" | python3 -c 'import js
 
 echo "== 5. issuer list↔detail closure (sample 20)"
 KEYS=$(fetch "$API/v1/issuers?limit=20" | python3 -c 'import json,sys; [print(r["g_strkey"]) for r in json.load(sys.stdin)["data"]]' || true)
+# A fetch/parse failure and a genuinely empty issuer listing both leave
+# KEYS empty — the for loop below then iterates zero times and reports
+# nothing, so a broken listing endpoint silently skipped this whole
+# check instead of failing it (F136).
+[ -n "$KEYS" ] || fail "issuer listing unfetchable or unparseable (0 keys) — cannot run the list↔detail closure check"
 for g in $KEYS; do
   CODE=$(status_of "$API/v1/issuers/$g")
   [ "$CODE" = "200" ] || fail "listed issuer $g → detail HTTP $CODE"
