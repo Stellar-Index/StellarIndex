@@ -1,6 +1,6 @@
 import type { MetadataRoute } from 'next';
 
-import { API_BASE_URL } from '@/api/client';
+import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import { loadADRs } from '@/lib/adr';
 import { routeAvailable } from '@/lib/network-routes';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -322,63 +322,58 @@ type SitemapSource = {
   subclass: string;
 };
 
+// All six listings below go through buildFetch (src/lib/buildFetch.ts):
+// bounded retry with backoff instead of one 5s shot, and — except where
+// noted — fail-hard via requireRows so a persistent transport failure or
+// an authoritative-empty listing fails the BUILD rather than quietly
+// shipping a sitemap missing a whole URL family. A bare `catch { return
+// [] }` here previously made a transient API blip indistinguishable from
+// "there are truly zero rows", and Google silently drops the missing
+// URLs rather than complaining.
+
 async function fetchSources(): Promise<SitemapSource[]> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/sources`, {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as {
-      data: { name: string; class?: string; subclass?: string }[];
-    };
-    return (env.data ?? []).map((s) => ({
-      name: s.name,
-      class: s.class ?? '',
-      subclass: s.subclass ?? '',
-    }));
-  } catch {
-    return [];
-  }
+  const rows = requireRows(
+    await buildFetchData<{ name: string; class?: string; subclass?: string }[]>(
+      '/v1/sources',
+    ),
+    '/v1/sources listing for sitemap',
+  );
+  return rows.map((s) => ({
+    name: s.name,
+    class: s.class ?? '',
+    subclass: s.subclass ?? '',
+  }));
 }
 
 async function fetchLendingPools(): Promise<string[]> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/lending/pools`, {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    // /v1/lending/pools returns the pool contract address in the `pool`
-    // field (matching the /lending/[pool] route's generateStaticParams).
-    // Reading `contract_id` here (the field doesn't exist) emitted
-    // `/lending/undefined` into the sitemap — a 404 Google penalises.
-    const env = (await res.json()) as {
-      data: { pool: string }[];
-    };
-    return (env.data ?? []).map((p) => p.pool).filter(Boolean);
-  } catch {
-    return [];
-  }
+  // Empty is tolerated here, same call as /lending/[pool]'s own
+  // generateStaticParams: retry covers transport flakiness, but a
+  // network with zero live pools right now is a real state, not a
+  // broken one — there's no curated fallback to fall back to for the
+  // sitemap the way that page has.
+  //
+  // /v1/lending/pools returns the pool contract address in the `pool`
+  // field (matching the /lending/[pool] route's generateStaticParams).
+  // Reading `contract_id` here (the field doesn't exist) emitted
+  // `/lending/undefined` into the sitemap — a 404 Google penalises.
+  const rows =
+    (await buildFetchData<{ pool: string }[]>('/v1/lending/pools')) ?? [];
+  return rows.map((p) => p.pool).filter(Boolean);
 }
 
 async function fetchMarketPairs(): Promise<string[]> {
-  try {
-    // Match the per-pair generateStaticParams cap (500) so the
-    // sitemap doesn't undercount the routes we actually
-    // pre-render. Pre-2026-05-08 this was 100 in both places —
-    // bumped together so Google sees the same surface that
-    // returns 200.
-    const res = await fetch(
-      `${API_BASE_URL}/v1/markets?limit=500&order_by=volume_24h_usd_desc`,
-      { signal: AbortSignal.timeout(5_000) },
-    );
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as {
-      data: { base: string; quote: string }[];
-    };
-    return (env.data ?? []).map((m) => `${m.base}~${m.quote}`);
-  } catch {
-    return [];
-  }
+  // Match the per-pair generateStaticParams cap (500) so the
+  // sitemap doesn't undercount the routes we actually
+  // pre-render. Pre-2026-05-08 this was 100 in both places —
+  // bumped together so Google sees the same surface that
+  // returns 200.
+  const rows = requireRows(
+    await buildFetchData<{ base: string; quote: string }[]>(
+      '/v1/markets?limit=500&order_by=volume_24h_usd_desc',
+    ),
+    '/v1/markets listing for sitemap',
+  );
+  return rows.map((m) => `${m.base}~${m.quote}`);
 }
 
 async function fetchCurrencyTickers(): Promise<string[]> {
@@ -388,52 +383,33 @@ async function fetchCurrencyTickers(): Promise<string[]> {
   // fiat}; filter to fiat client-side so the sitemap only includes
   // the fiat tickers (which is what the per-currency converter
   // pages cover).
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as {
-      data: Array<{ ticker: string; class: string }>;
-    };
-    return (env.data ?? [])
-      .filter((row) => row.class === 'fiat')
-      .map((row) => row.ticker);
-  } catch {
-    return [];
-  }
+  const rows = requireRows(
+    await buildFetchData<Array<{ ticker: string; class: string }>>(
+      '/v1/assets/verified',
+    ),
+    '/v1/assets/verified listing for sitemap',
+  );
+  return rows.filter((row) => row.class === 'fiat').map((row) => row.ticker);
 }
 
 async function fetchIssuerKeys(): Promise<string[]> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/issuers?limit=100`, {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: { g_strkey: string }[] };
-    return (env.data ?? []).map((i) => i.g_strkey);
-  } catch {
-    return [];
-  }
+  const rows = requireRows(
+    await buildFetchData<{ g_strkey: string }[]>('/v1/issuers?limit=100'),
+    '/v1/issuers listing for sitemap',
+  );
+  return rows.map((i) => i.g_strkey);
 }
 
 async function fetchCoinSlugs(): Promise<string[]> {
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/assets?limit=500`, {
-      signal: AbortSignal.timeout(5_000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    // /v1/assets returns rows with `slug` populated when sourced
-    // from the coins reader (rc.47 lift). Fall back to `asset_id`
-    // for any row without a friendly slug — those routes are still
-    // pre-rendered under /assets/{asset_id}.
-    const env = (await res.json()) as {
-      data: { slug?: string; asset_id?: string }[];
-    };
-    return (env.data ?? [])
-      .map((d) => d.slug || d.asset_id || '')
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+  // /v1/assets returns rows with `slug` populated when sourced
+  // from the coins reader (rc.47 lift). Fall back to `asset_id`
+  // for any row without a friendly slug — those routes are still
+  // pre-rendered under /assets/{asset_id}.
+  const rows = requireRows(
+    await buildFetchData<{ slug?: string; asset_id?: string }[]>(
+      '/v1/assets?limit=500',
+    ),
+    '/v1/assets listing for sitemap',
+  );
+  return rows.map((d) => d.slug || d.asset_id || '').filter(Boolean);
 }

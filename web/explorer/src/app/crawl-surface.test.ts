@@ -33,13 +33,44 @@ import { metadata as txMeta } from './tx/page';
  * eligible for the index.
  */
 
-// Every API-derived sitemap section catches its own transport failure
-// and falls back to []. Rejecting fetch leaves exactly the statically
-// enumerated pages, which is the set under test.
-function stubFetchOffline() {
+// Every API-derived sitemap section now goes through buildFetch
+// (src/lib/buildFetch.ts) — an unreachable or empty listing fails the
+// BUILD (T250/T293: the old bare-fetch/catch/[] fallback silently and
+// permanently dropped a whole URL family on a single transient
+// failure). Stub one benign row per listing so these tests, which only
+// assert on the STATICALLY enumerated pages, don't take a dependency on
+// live API reachability.
+function stubFetchMinimal() {
+  const ok = (rows: unknown) =>
+    Promise.resolve(
+      new Response(JSON.stringify({ data: rows }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
   vi.stubGlobal(
     'fetch',
-    vi.fn(() => Promise.reject(new Error('offline'))),
+    vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/v1/sources')) {
+        return ok([{ name: 'sdex', class: 'exchange', subclass: 'dex' }]);
+      }
+      if (url.includes('/v1/lending/pools')) return ok([]);
+      if (url.includes('/v1/markets')) {
+        return ok([{ base: 'native', quote: 'USDC-ISSUER' }]);
+      }
+      if (url.includes('/v1/assets/verified')) {
+        return ok([{ ticker: 'USD', class: 'fiat' }]);
+      }
+      if (url.includes('/v1/issuers')) {
+        // gitleaks:allow — fake fixture shape, not a real Stellar account
+        return ok([
+          { g_strkey: 'GATESTSITEMAPXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX' },
+        ]);
+      }
+      if (url.includes('/v1/assets')) return ok([{ slug: 'xlm' }]);
+      return ok([]);
+    }),
   );
 }
 
@@ -61,7 +92,7 @@ const EXPLORER_HUBS = [
 
 describe('sitemap', () => {
   it('lists the chain-explorer hubs', async () => {
-    stubFetchOffline();
+    stubFetchMinimal();
     const entries = await sitemap();
     const paths = new Set(entries.map((e) => new URL(e.url).pathname));
     for (const hub of EXPLORER_HUBS) {
@@ -89,7 +120,7 @@ describe('sitemap', () => {
    * This test joins the two: sitemap ⊆ reachable-from-the-nav.
    */
   it('submits nothing a reader cannot navigate to', async () => {
-    stubFetchOffline();
+    stubFetchMinimal();
     const entries = await sitemap();
     const reachable = reachableRoutes();
 
@@ -121,7 +152,7 @@ describe('sitemap', () => {
    * entries are under test; the API-derived sections fall back to [].
    */
   it('names a real page for every entry', async () => {
-    stubFetchOffline();
+    stubFetchMinimal();
     const entries = await sitemap();
     const unrouted = [
       ...new Set(
@@ -180,7 +211,7 @@ describe('sitemap', () => {
   ]);
 
   it('submits every page the nav offers', async () => {
-    stubFetchOffline();
+    stubFetchMinimal();
     const entries = await sitemap();
     const sitemapped = new Set(
       entries
