@@ -69,12 +69,46 @@ var shapeSafeParams = map[string]struct{}{
 // not a legitimate use of these parameters.
 const maxShapeValueLen = 48
 
+// maxShapeNameLen bounds a logged parameter NAME. Unlike a value, a
+// name is never allow-listed before it reaches the log — any
+// `name+"=<set>"` term uses the caller's own key verbatim — so without
+// this it is as unbounded a channel as the value was before
+// maxShapeValueLen.
+const maxShapeNameLen = 48
+
+// maxShapeParts bounds how many distinct parameters contribute a term
+// to the shape. A request can carry an arbitrary number of distinct
+// query keys; each becomes its own term, so the part COUNT is a third
+// flooding channel independent of any single name or value's length.
+const maxShapeParts = 32
+
+// boundedLogField strips control characters (a log-injection
+// primitive — a raw newline splits one log line into two) and caps
+// length, so a caller-controlled string can carry only so much into a
+// single log line. Shared by QueryShape and Logger: every field whose
+// length or content the caller picks goes through the same bound.
+func boundedLogField(s string, maxLen int) string {
+	s = strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return -1
+		}
+		return r
+	}, s)
+	if len(s) > maxLen {
+		s = s[:maxLen] + "…"
+	}
+	return s
+}
+
 // QueryShape renders a request's query string as a diagnosable,
 // non-identifying shape. Returns "" when there is no query string, so
 // the caller can omit the field entirely rather than log an empty one.
 //
 // Deterministic: parameters are sorted, so the same shape produces the
-// same string and an operator can group by it.
+// same string and an operator can group by it. The cap in
+// maxShapeParts is applied after sorting so a truncated shape is still
+// the same prefix every time, not whichever keys a hostile caller's
+// map iteration happened to hit first.
 func QueryShape(u *url.URL) string {
 	if u == nil || u.RawQuery == "" {
 		return ""
@@ -90,28 +124,20 @@ func QueryShape(u *url.URL) string {
 	parts := make([]string, 0, len(values))
 	for name, vals := range values {
 		if _, safe := shapeSafeParams[name]; !safe {
-			parts = append(parts, name+"=<set>")
+			parts = append(parts, boundedLogField(name, maxShapeNameLen)+"=<set>")
 			continue
 		}
 		v := ""
 		if len(vals) > 0 {
 			v = vals[0]
 		}
-		if len(v) > maxShapeValueLen {
-			v = v[:maxShapeValueLen] + "…"
-		}
-		// A safe-listed parameter carrying a newline would break the log
-		// line into two records — a log-injection primitive. Strip the
-		// control characters rather than trusting the enumeration.
-		v = strings.Map(func(r rune) rune {
-			if r < 0x20 || r == 0x7f {
-				return -1
-			}
-			return r
-		}, v)
+		v = boundedLogField(v, maxShapeValueLen)
 		parts = append(parts, name+"="+v)
 	}
 	sort.Strings(parts)
+	if len(parts) > maxShapeParts {
+		parts = append(parts[:maxShapeParts], "…(truncated)")
+	}
 	return strings.Join(parts, "&")
 }
 
