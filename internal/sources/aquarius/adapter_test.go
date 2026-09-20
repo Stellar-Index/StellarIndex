@@ -165,6 +165,99 @@ func TestDecoder_AddPoolRegistersNewPool(t *testing.T) {
 	}
 }
 
+// TestDecoder_ChHashOrderCanDropRegisteredPoolTrade documents Q040
+// (NEEDS-COORDINATION — the fix needs internal/projector/projector.go's
+// processEventSafely, out of this unit's scope; see also
+// internal/storage/clickhouse/event_reader.go's
+// `ORDER BY ledger_seq, tx_hash, op_index, event_index`).
+//
+// The lake read that feeds the live decoder orders events within a
+// ledger by tx_hash — a lexical string sort, not Stellar's actual
+// intra-ledger transaction-apply order (which the lake CAN resolve, via
+// stellar.tx_hash_index / clickhouse.TxIndexReader, but the projector's
+// forward stream does not consult it — docs/architecture/
+// contract-call-coverage-audit.md "Walker terrain check"). A genuinely
+// legitimate pool creation (add_pool) and its first trade can land in
+// the SAME ledger in different transactions; if the trade's tx_hash
+// lexically precedes the add_pool's, the lake delivers the trade FIRST.
+// Because this decoder's registry is grown live from add_pool alone
+// (Decode(), self-seed), that ordering flips the trade from "will
+// register successfully" to "permanently, silently dropped": Matches()
+// returns false for the not-yet-registered pool and nothing downstream
+// (this decoder has no logger/metrics hook) ever signals it happened.
+//
+// This test proves the divergence exists deterministically, at the
+// Decoder alone, independent of any live ClickHouse connection: same
+// two events, only the callback ORDER changes, with the same outcome
+// the lake's tx_hash sort would produce.
+func TestDecoder_ChHashOrderCanDropRegisteredPoolTrade(t *testing.T) {
+	newPool := makeContractStrkey(t, 0x9C)
+	announce := events.Event{
+		ContractID: MainnetRouter,
+		Ledger:     64_000_000,
+		TxHash:     "b_same_ledger_pool_create", // lexically AFTER the trade's hash
+		Topic:      []string{TopicSymbolAddPool},
+		Value:      encodeAddPoolBody(t, newPool),
+	}
+	trade := events.Event{
+		ContractID: newPool,
+		Ledger:     64_000_000,
+		TxHash:     "a_same_ledger_pool_trade", // lexically BEFORE the add_pool's hash
+		Topic: []string{
+			TopicSymbolTrade,
+			encodeContractAddrFromStrkey(t, makeContractStrkey(t, 0x01)),
+			encodeContractAddrFromStrkey(t, makeContractStrkey(t, 0x02)),
+			encodeAccountAddrFromStrkey(t, makeAccountStrkey(t, 0x03)),
+		},
+		Value:          encodeTradeBody(t, big.NewInt(1_000_000), big.NewInt(2_000_000), big.NewInt(0)),
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+	if trade.TxHash >= announce.TxHash {
+		t.Fatalf("test setup: want trade.TxHash < announce.TxHash lexically, got %q >= %q", trade.TxHash, announce.TxHash)
+	}
+
+	// True chronological order (add_pool really did happen first
+	// on-chain — a pool must exist before it can be traded): the trade
+	// matches once the pool is registered.
+	chrono := NewDecoder()
+	if !chrono.Matches(announce) {
+		t.Fatal("chronological order: Matches(add_pool) = false, want true")
+	}
+	if _, err := chrono.Decode(announce); err != nil {
+		t.Fatalf("chronological order: Decode(add_pool): %v", err)
+	}
+	if !chrono.Matches(trade) {
+		t.Fatal("chronological order: Matches(trade) = false after add_pool registered it, want true")
+	}
+
+	// stellar.contract_events' ORDER BY (ledger_seq, tx_hash, op_index,
+	// event_index) delivers these two SAME-LEDGER events in the
+	// opposite (hash) order: trade, then add_pool. That is what the
+	// live projector actually streams.
+	hashOrder := NewDecoder()
+	if hashOrder.Matches(trade) {
+		t.Fatal("hash order: Matches(trade) = true before add_pool was ever seen — test setup invalid")
+	}
+	// The projector's caller treats this Matches()=false miss as
+	// (0, false, nil) — no error, no count (internal/projector/
+	// projector.go processEventSafely) — so this trade is now gone:
+	// the cursor advances past it and it is never offered again.
+	//
+	// The pool DOES register once its own add_pool is later seen, but
+	// that is too late for the trade that already came and went.
+	if _, err := hashOrder.Decode(announce); err != nil {
+		t.Fatalf("hash order: Decode(add_pool): %v", err)
+	}
+	if !hashOrder.Matches(trade) {
+		t.Fatal("hash order: pool never registered — test setup invalid")
+	}
+	// The point: a real one-pass forward stream calls Matches()/Decode()
+	// once per event, in stream order, and never replays a miss. The
+	// registration succeeding on a SECOND look proves the trade's
+	// original miss was a stream-ordering artifact, not a real
+	// unregistered-pool rejection — exactly the silent loss Q040 names.
+}
+
 // TestDecoder_AddPoolMalformedBody: a router add_pool whose body
 // isn't Vec[Address(contract), …] is a decode error (skip + count),
 // never a registration.
@@ -239,6 +332,39 @@ func TestDecoder_Decode_MalformedClosedAtReturnsError(t *testing.T) {
 	}
 	if _, err := d.Decode(ev); err == nil {
 		t.Error("expected EventClosedAt error on malformed timestamp, got nil")
+	}
+}
+
+// TestDecoder_Decode_UnrecognizedKindFailsClosed pins Q041: Decode()'s
+// switch must fail closed on a kind it has no explicit case for, not
+// force it through decodeTrade just because the topic shape happens to
+// resemble one. Before the fix, an event whose topic[0] classify()
+// doesn't recognize — but which otherwise has trade-shaped topics/body —
+// was silently decoded as a genuine trade (ADR-0035/CS-026 violation).
+func TestDecoder_Decode_UnrecognizedKindFailsClosed(t *testing.T) {
+	d := NewDecoder()
+	tokenIn := makeContractStrkey(t, 0x01)
+	tokenOut := makeContractStrkey(t, 0x02)
+	user := makeAccountStrkey(t, 0x03)
+	ev := events.Event{
+		Topic: []string{
+			encodeSymbol(t, "totally_unrecognized_topic"),
+			encodeContractAddrFromStrkey(t, tokenIn),
+			encodeContractAddrFromStrkey(t, tokenOut),
+			encodeAccountAddrFromStrkey(t, user),
+		},
+		Value:          encodeTradeBody(t, big.NewInt(1_000_000), big.NewInt(2_000_000), big.NewInt(0)),
+		Ledger:         62_000_000,
+		TxHash:         "unrecognized-kind",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-04-23T12:00:00Z",
+	}
+	if classify(&ev) != "" {
+		t.Fatalf("test setup: classify() recognized the topic, want unclassified")
+	}
+	out, err := d.Decode(ev)
+	if err == nil {
+		t.Fatalf("Decode(unrecognized kind, trade-shaped) = (%v, nil), want an error — it was silently decoded as a trade", out)
 	}
 }
 
