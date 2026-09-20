@@ -179,7 +179,10 @@ type Config struct {
 	// sets this flag on a bounded range therefore owns the coverage
 	// check — count the delivered ledgers and fail a short walk, as
 	// chops.backfillCoverage, ingest.censusCoverage and
-	// ingest.backfillChunkCoverage do (RLT-266).
+	// ingest.backfillChunkCoverage do (RLT-266). A caller that skips this
+	// is not silent: every whole-request-inside-the-window tolerate event
+	// increments obs.LedgerstreamTrailingMissingToleratedTotal with
+	// scope="whole_range" (Q058), so it is visible even without one.
 	//
 	// Delivery caveat: when the SDK's BufferedStorageBackend hits a
 	// missing file it cancels its internal context, dropping any
@@ -570,6 +573,17 @@ func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err er
 	if seq > to || to-seq > window {
 		return err
 	}
+	// scope=whole_range when the tolerance window covers the entire
+	// requested range: every ledger in [from,to] would satisfy the
+	// to-seq<=window check above regardless of where seq actually falls,
+	// so this tolerate event is indistinguishable from swallowing a real
+	// mid-history hole (Q058). See
+	// [obs.LedgerstreamTrailingMissingToleratedTotal].
+	scope := "trailing_edge"
+	if to-from < window {
+		scope = "whole_range"
+	}
+	obs.LedgerstreamTrailingMissingToleratedTotal.WithLabelValues(scope).Inc()
 	if cfg.Logger != nil {
 		cfg.Logger.WithFields(map[string]interface{}{
 			"missing_ledger": seq,
@@ -577,6 +591,7 @@ func maybeTolerateTrailingMissing(cfg Config, from, to, delivered uint32, err er
 			"delivered":      delivered,
 			"gap_to_tip":     to - seq,
 			"window":         window,
+			"scope":          scope,
 		}).Warn("ledgerstream: bounded walk hit trailing-edge missing file — treating as walk-complete (TolerateTrailingMissing=true)")
 	}
 	return nil

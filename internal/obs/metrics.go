@@ -281,6 +281,7 @@ func registerAppMetricsTail() {
 		LedgerstreamTierReadTotal,
 		LedgerstreamColdReadDurationSeconds,
 		LedgerstreamLiveStartRetriesTotal,
+		LedgerstreamTrailingMissingToleratedTotal,
 
 		DEXTVLRefreshTotal,
 		DEXTVLRefreshDurationSeconds,
@@ -1591,6 +1592,36 @@ var LedgerstreamLiveStartRetriesTotal = prometheus.NewCounter(
 		Name: "stellarindex_ledgerstream_live_start_retries_total",
 		Help: "Re-attempts of a live-tail stream that failed before delivering any ledger (datastore unreachable / schema unreadable at start). Climbs only while the indexer is up but cannot open the lake.",
 	},
+)
+
+// LedgerstreamTrailingMissingToleratedTotal — bounded walks that ended by
+// converting a missing-ledger-file error into a clean walk-complete via
+// Config.TolerateTrailingMissing (RLT-140). Emitted by
+// internal/ledgerstream's maybeTolerateTrailingMissing, alongside the
+// existing Warn log — this used to be log-only, which made a caller that
+// forgot its own coverage check indistinguishable from a healthy walk in
+// any dashboard.
+//
+// `scope` is one of:
+//
+//	trailing_edge — the missing sequence sits inside the tolerance window
+//	                but the requested range is WIDER than the window, so a
+//	                genuine mid-history hole earlier in the range would
+//	                still have errored. Consistent with the documented
+//	                "mid-range gaps still error" guarantee.
+//	whole_range   — the tolerance window covers the ENTIRE requested range
+//	                (to-from < window), so this tolerate event cannot be
+//	                told apart from a real interior hole (Q058). The
+//	                caller MUST own a coverage check here — see the
+//	                TolerateTrailingMissing godoc — and this label is what
+//	                lets an operator notice a caller that doesn't have
+//	                one, instead of it failing silently.
+var LedgerstreamTrailingMissingToleratedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ledgerstream_trailing_missing_tolerated_total",
+		Help: "Bounded walks that tolerated a trailing-edge missing-ledger error as walk-complete. scope=whole_range means the tolerance window covered the entire requested range, so the event is indistinguishable from swallowing a real mid-history hole.",
+	},
+	[]string{"scope"},
 )
 
 // Sep1CacheOpsTotal — per-outcome counter for SEP-1 cache
