@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/pgarray"
@@ -88,30 +89,91 @@ const directoryUpsertChunk = 500
 // would reintroduce exactly that split.
 const DirectoryOperatorOverrideSource = "operator-override"
 
-// ReplaceDirectory upserts the full entry set for one source and
-// prunes rows of that source the upstream no longer carries.
+// DirectoryChurnLimit bounds how far ONE sync may move a source's
+// snapshot: the rows it prunes and the addresses it newly scam-flags
+// are each capped at max(Floor, ceil(Fraction × rows the source held
+// before the sync)). A snapshot past either cap is refused whole with
+// [ErrDirectoryChurnExceeded] and the table is left as it was.
+//
+// The upstream is an unpinned branch of a third-party repo, and a
+// scam tag is not a label: it withholds the issuer's price and market
+// cap (pricingguard.ScamGate). A hijacked, truncated or mis-generated
+// snapshot could therefore prune the flags the gate withholds on, or
+// flag thousands of issuers and withhold their prices, in one
+// transaction with nothing failing. Real churn is a handful of rows a
+// day; a legitimate mass change ships with `directory-sync
+// -accept-churn`. The first sync of a source (nothing held yet) is
+// unbounded by construction. Both fractions/floors are placeholders
+// chosen conservatively, not measured upstream churn.
+type DirectoryChurnLimit struct {
+	Fraction float64
+	Floor    int64
+}
+
+// DefaultDirectoryChurnLimit is what [Store.ReplaceDirectory] applies:
+// 5 % of the held rows, never below 100 (so a small table is not
+// jammed by its own arithmetic).
+var DefaultDirectoryChurnLimit = DirectoryChurnLimit{Fraction: 0.05, Floor: 100}
+
+// DirectoryChurnUnbounded accepts any snapshot — the operator's
+// explicit opt-in for a known upstream mass change.
+var DirectoryChurnUnbounded = DirectoryChurnLimit{}
+
+// ErrDirectoryChurnExceeded is returned (wrapped, with the numbers)
+// when a snapshot would prune or newly flag more rows than the limit
+// allows; nothing was written.
+var ErrDirectoryChurnExceeded = errors.New("directory: snapshot exceeds the churn ceiling")
+
+// ceiling is the row cap for a source that held `existing` rows, or
+// ok=false when the sync is unbounded (no limit, or nothing held yet).
+func (l DirectoryChurnLimit) ceiling(existing int64) (maxRows int64, ok bool) {
+	if existing == 0 || (l.Fraction <= 0 && l.Floor <= 0) {
+		return 0, false
+	}
+	return max(int64(math.Ceil(float64(existing)*l.Fraction)), l.Floor), true
+}
+
+// DirectorySyncResult is what one ReplaceDirectory run did.
+type DirectorySyncResult struct {
+	Upserted     int64
+	Pruned       int64
+	NewlyFlagged int64 // addresses of this source carrying a scam tag now that did not before
+	Existing     int64 // rows the source held before the sync
+}
+
+// ReplaceDirectory is [Store.ReplaceDirectoryWithin] under
+// [DefaultDirectoryChurnLimit].
+func (s *Store) ReplaceDirectory(ctx context.Context, source string, entries []DirectoryEntry) (upserted, pruned int64, err error) {
+	res, err := s.ReplaceDirectoryWithin(ctx, source, entries, DefaultDirectoryChurnLimit)
+	return res.Upserted, res.Pruned, err
+}
+
+// ReplaceDirectoryWithin upserts the full entry set for one source and
+// prunes rows of that source the upstream no longer carries, refusing
+// the whole snapshot if it moves more than `limit` allows.
 // Everything runs in one transaction: now() is transaction-stable in
 // Postgres, so every upserted row lands with an identical synced_at
 // and the prune is simply "same source, older synced_at". A partial
-// failure rolls the whole sync back — the table never holds a
-// half-applied upstream snapshot.
-func (s *Store) ReplaceDirectory(ctx context.Context, source string, entries []DirectoryEntry) (upserted, pruned int64, err error) {
+// failure — or a churn refusal, judged after the prune — rolls the
+// whole sync back; the table never holds a half-applied upstream
+// snapshot.
+func (s *Store) ReplaceDirectoryWithin(ctx context.Context, source string, entries []DirectoryEntry, limit DirectoryChurnLimit) (res DirectorySyncResult, err error) {
 	if source == "" {
-		return 0, 0, errors.New("directory: source must be non-empty")
+		return res, errors.New("directory: source must be non-empty")
 	}
 	// A sync may never run AS the operator: it would adopt every
 	// operator override into an upstream snapshot and then prune the
 	// ones that snapshot omits — i.e. silently delete the corrections
 	// this source exists to protect.
 	if source == DirectoryOperatorOverrideSource {
-		return 0, 0, fmt.Errorf("directory: %q is the reserved operator-override source and cannot be synced", source)
+		return res, fmt.Errorf("directory: %q is the reserved operator-override source and cannot be synced", source)
 	}
 	// An empty snapshot means the fetch/parse upstream broke, not that
 	// the directory emptied — proceeding would prune every row of this
 	// source. Fail loudly instead; an operator emptying a source on
 	// purpose can DELETE directly.
 	if len(entries) == 0 {
-		return 0, 0, errors.New("directory: refusing to sync an empty entry set (would prune the whole source)")
+		return res, errors.New("directory: refusing to sync an empty entry set (would prune the whole source)")
 	}
 	// Entries are keyed on the JSON body's `address` field, not the tar
 	// filename, so a careless/malicious upstream can ship two files that
@@ -124,7 +186,7 @@ func (s *Store) ReplaceDirectory(ctx context.Context, source string, entries []D
 	entries = dedupDirectoryEntriesByAddress(entries)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, 0, fmt.Errorf("directory: begin: %w", err)
+		return res, fmt.Errorf("directory: begin: %w", err)
 	}
 	defer func() {
 		if err != nil {
@@ -132,32 +194,118 @@ func (s *Store) ReplaceDirectory(ctx context.Context, source string, entries []D
 		}
 	}()
 
+	before, err := snapshotDirectoryChurn(ctx, tx, source)
+	if err != nil {
+		return res, err
+	}
+	res.Existing = before.rows
+
 	for start := 0; start < len(entries); start += directoryUpsertChunk {
 		end := min(start+directoryUpsertChunk, len(entries))
 		q, args := buildDirectoryUpsert(entries[start:end], source)
 
-		res, execErr := tx.ExecContext(ctx, q, args...)
+		r, execErr := tx.ExecContext(ctx, q, args...)
 		if execErr != nil {
 			err = fmt.Errorf("directory: upsert chunk [%d:%d): %w", start, end, execErr)
-			return 0, 0, err
+			return res, err
 		}
-		n, _ := res.RowsAffected()
-		upserted += n
+		n, _ := r.RowsAffected()
+		res.Upserted += n
 	}
 
-	res, execErr := tx.ExecContext(ctx, `
+	r, execErr := tx.ExecContext(ctx, `
 		DELETE FROM account_directory
 		 WHERE source = $1 AND synced_at < now()`, source)
 	if execErr != nil {
 		err = fmt.Errorf("directory: prune: %w", execErr)
-		return 0, 0, err
+		return res, err
 	}
-	pruned, _ = res.RowsAffected()
+	res.Pruned, _ = r.RowsAffected()
+
+	// Judged after the prune, inside the transaction: a refusal is a
+	// rollback, so the table is exactly as it was.
+	if res.NewlyFlagged, err = before.newlyFlagged(ctx, tx, source); err != nil {
+		return res, err
+	}
+	if err = before.check(limit, res); err != nil {
+		return res, err
+	}
 
 	if err = tx.Commit(); err != nil {
-		return 0, 0, fmt.Errorf("directory: commit: %w", err)
+		return res, fmt.Errorf("directory: commit: %w", err)
 	}
-	return upserted, pruned, nil
+	return res, nil
+}
+
+// directoryChurn is a source's pre-sync state, the base a
+// [DirectoryChurnLimit] is judged against.
+type directoryChurn struct {
+	rows    int64
+	flagged map[string]struct{} // addresses carrying a scam-class tag before the sync
+}
+
+func snapshotDirectoryChurn(ctx context.Context, tx *sql.Tx, source string) (*directoryChurn, error) {
+	c := &directoryChurn{flagged: map[string]struct{}{}}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT count(*) FROM account_directory WHERE source = $1`, source).Scan(&c.rows); err != nil {
+		return nil, fmt.Errorf("directory: count before sync: %w", err)
+	}
+	if err := scanDirectoryFlaggedAddresses(ctx, tx, source, func(addr string) { c.flagged[addr] = struct{}{} }); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// newlyFlagged counts the source's scam-flagged addresses AFTER the
+// upsert + prune that were not flagged before it. Run after the prune,
+// every remaining row of the source is from this snapshot.
+func (c *directoryChurn) newlyFlagged(ctx context.Context, tx *sql.Tx, source string) (int64, error) {
+	var n int64
+	err := scanDirectoryFlaggedAddresses(ctx, tx, source, func(addr string) {
+		if _, was := c.flagged[addr]; !was {
+			n++
+		}
+	})
+	return n, err
+}
+
+func (c *directoryChurn) check(limit DirectoryChurnLimit, res DirectorySyncResult) error {
+	maxRows, bounded := limit.ceiling(c.rows)
+	if !bounded {
+		return nil
+	}
+	if res.Pruned > maxRows {
+		return fmt.Errorf("%w: prunes %d of %d rows (ceiling %d)", ErrDirectoryChurnExceeded, res.Pruned, c.rows, maxRows)
+	}
+	if res.NewlyFlagged > maxRows {
+		return fmt.Errorf("%w: newly scam-flags %d addresses of %d rows (ceiling %d)", ErrDirectoryChurnExceeded, res.NewlyFlagged, c.rows, maxRows)
+	}
+	return nil
+}
+
+// scanDirectoryFlaggedAddresses visits every address of `source` that
+// carries a scam-class tag, through the same predicate the listing
+// rank and the RWA census use (directoryScamTaggedSQL), so "counts as
+// newly flagged" can never disagree with "has its price withheld".
+func scanDirectoryFlaggedAddresses(ctx context.Context, tx *sql.Tx, source string, visit func(addr string)) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT address FROM account_directory
+		 WHERE source = $1 AND `+directoryScamTaggedSQL, source)
+	if err != nil {
+		return fmt.Errorf("directory: flagged addresses: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var addr string
+		if err := rows.Scan(&addr); err != nil {
+			return fmt.Errorf("directory: flagged addresses: %w", err)
+		}
+		visit(addr)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("directory: flagged addresses: %w", err)
+	}
+	return nil
 }
 
 // dedupDirectoryEntriesByAddress collapses entries sharing an Address

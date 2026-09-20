@@ -91,6 +91,7 @@ func directorySync(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	url := fs.String("url", directoryDefaultURL, "Tarball URL of the public-directory repo (https only)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "Wall-clock timeout for the whole run")
+	acceptChurn := fs.Bool("accept-churn", false, "Accept a snapshot beyond the churn ceiling (prunes or newly scam-flags more rows than one day plausibly does) — only for a known upstream mass change")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -129,11 +130,22 @@ func directorySync(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	upserted, pruned, err := store.ReplaceDirectory(ctx, directorySource, entries)
+	limit := timescale.DefaultDirectoryChurnLimit
+	if *acceptChurn {
+		limit = timescale.DirectoryChurnUnbounded
+	}
+	res, err := store.ReplaceDirectoryWithin(ctx, directorySource, entries, limit)
+	if errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
+		// Nonzero exit fails the systemd unit, which
+		// stellarindex_systemd_unit_failed tickets; the numbers land in
+		// journald beside this hint.
+		return fmt.Errorf("%w — nothing written; if upstream really changed this much, re-run with -accept-churn", err)
+	}
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Synced: %d upserted, %d pruned (source=%s).\n", upserted, pruned, directorySource)
+	fmt.Printf("Synced: %d upserted, %d pruned, %d newly scam-flagged, %d held before (source=%s).\n",
+		res.Upserted, res.Pruned, res.NewlyFlagged, res.Existing, directorySource)
 	return nil
 }
 
