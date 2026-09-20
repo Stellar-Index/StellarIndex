@@ -62,6 +62,21 @@ import (
 // re-create the journal pressure this file's 429 note is about.
 const SlowRequestThreshold = 500 * time.Millisecond
 
+// maxLoggedPathLen and maxLoggedUserAgentLen bound how much of these
+// two caller-controlled fields reach the journal per line. Neither is
+// allow-listed the way QueryShape's parameters are, and nothing else
+// bounds them application-side — a path or User-Agent is otherwise
+// limited only by Go's net/http default header/request-line size
+// (~1 MB), which is a transport limit, not a log-safety one. Paths
+// here can legitimately carry a 56-char Stellar contract/account id
+// plus nested resource segments, so the path bound is generous; the
+// User-Agent bound matches real browser/SDK strings with room to
+// spare.
+const (
+	maxLoggedPathLen      = 512
+	maxLoggedUserAgentLen = 256
+)
+
 func Logger(logger *slog.Logger) Middleware {
 	if logger == nil {
 		logger = slog.Default()
@@ -86,13 +101,13 @@ func Logger(logger *slog.Logger) Middleware {
 			latency := time.Since(start)
 			attrs := []any{
 				"method", r.Method,
-				"path", r.URL.Path,
+				"path", boundedLogField(r.URL.Path, maxLoggedPathLen),
 				"status", rec.status,
 				"bytes", rec.bytes,
 				"latency_ms", float64(latency.Microseconds()) / 1000.0,
 				"request_id", RequestIDFrom(r),
 				"remote_ip", remote,
-				"user_agent", r.UserAgent(),
+				"user_agent", boundedLogField(r.UserAgent(), maxLoggedUserAgentLen),
 			}
 
 			// A slow request additionally carries its query SHAPE. On
