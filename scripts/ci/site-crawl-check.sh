@@ -117,6 +117,70 @@ case "$OG_CTYPE" in
   *) fail "$OG_PATH content-type '$OG_CTYPE' is not an image" ;;
 esac
 
+echo "== 8. deployed build freshness (BUILD_SHA vs main, wall-clock age)"
+# Q225: nothing compared the deployed build against main or measured its
+# age. The explorer's own footer (BuildBadge, components/nav/Footer.tsx)
+# stamps `title="Built <ISO time> from commit <sha>"` — read it back and
+# check it two ways: the commit is actually an ancestor of main (via
+# GitHub's compare API, read-only/unauthenticated), and the build isn't
+# older than the freshness budget below. Catches the exact failure mode
+# explorer-deploy.yml's own header names as a reason it exists: "CF git
+# integration paused" silently freezing the live site.
+HOME_HTML=$(fetch "$SITE/" || true)
+BADGE=$(grep -oE 'title="Built [^"]*"' <<<"$HOME_HTML" | awk 'NR==1' || true)
+if [ -z "$BADGE" ]; then
+  fail "no build badge on $SITE/ — can't verify deploy freshness (BuildBadge renders nothing when NEXT_PUBLIC_BUILD_SHA is unset)"
+else
+  DEPLOY_SHA=$(grep -oE '[0-9a-fA-F]{40}' <<<"$BADGE" | awk 'NR==1' || true)
+  DEPLOY_TIME=$(sed -E 's/.*Built ([^ ]+) from commit.*/\1/' <<<"$BADGE")
+  if [ -z "$DEPLOY_SHA" ]; then
+    fail "build badge present but no parseable 40-char commit SHA: $BADGE"
+  else
+    COMPARE=$(fetch "https://api.github.com/repos/Stellar-Index/StellarIndex/compare/$DEPLOY_SHA...main" || true)
+    read -r CMP_STATUS CMP_AHEAD <<<"$(python3 -c '
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get("status", "unknown"), d.get("ahead_by", -1))
+except Exception:
+    print("unknown", -1)
+' <<<"$COMPARE")"
+    case "$CMP_STATUS" in
+      identical | behind) ;; # deployed sha IS main, or main hasn't caught up to it yet
+      ahead)
+        # CF auto-deploys on every push (explorer-deploy.yml); a small lag
+        # is normal mid-build. Budget is generous so one CF build window
+        # never false-positives, but still catches a stuck deploy inside
+        # the same weekly crawl run. Tune via STALE_COMMIT_BUDGET.
+        [ "$CMP_AHEAD" -le "${STALE_COMMIT_BUDGET:-200}" ] ||
+          fail "deployed build $DEPLOY_SHA is $CMP_AHEAD commit(s) behind main — auto-deploy may be stuck (docs/operations/explorer-deployment.md)"
+        ;;
+      *)
+        fail "could not resolve deployed commit $DEPLOY_SHA against main via GitHub compare (status: $CMP_STATUS)"
+        ;;
+    esac
+  fi
+  if [ -n "$DEPLOY_TIME" ]; then
+    DEPLOY_EPOCH=$(python3 -c '
+import sys, datetime
+try:
+    print(int(datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")).timestamp()))
+except Exception:
+    print(0)
+' "$DEPLOY_TIME")
+    if [ "$DEPLOY_EPOCH" -gt 0 ]; then
+      NOW_EPOCH=$(date +%s)
+      AGE_HOURS=$(((NOW_EPOCH - DEPLOY_EPOCH) / 3600))
+      # 72h ≈ 10x CF Pages' normal build latency (minutes) — generous
+      # enough not to flag a slow build, tight enough to still be caught
+      # inside the weekly crawl window rather than a full week later.
+      # Tune via STALE_HOURS_BUDGET.
+      [ "$AGE_HOURS" -le "${STALE_HOURS_BUDGET:-72}" ] ||
+        fail "deployed build is ${AGE_HOURS}h old (built $DEPLOY_TIME) — exceeds the ${STALE_HOURS_BUDGET:-72}h freshness budget"
+    fi
+  fi
+fi
+
 echo
 if [ "$FAILURES" -gt 0 ]; then
   echo "site-crawl-check: $FAILURES failure(s)." >&2
