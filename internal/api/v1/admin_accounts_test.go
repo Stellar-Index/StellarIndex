@@ -55,6 +55,29 @@ func (f *fakePlatformAccountStore) Update(_ context.Context, a platform.Account)
 	return nil
 }
 
+// UpdateAtomic is a sequential (non-locking) stand-in for
+// postgresstore.AccountStore.UpdateAtomic: real concurrent-PATCH
+// serialisation is only provable against Postgres's row lock (see
+// TestAccountStoreUpdateAtomic_SerialisesConcurrentPatches), so these
+// handler-level tests only need the same before/after + error routing
+// the real implementation exposes.
+func (f *fakePlatformAccountStore) UpdateAtomic(
+	ctx context.Context, id uuid.UUID, mutate func(*platform.Account) error,
+) (before, after platform.Account, err error) {
+	before, err = f.Get(ctx, id)
+	if err != nil {
+		return platform.Account{}, platform.Account{}, err
+	}
+	after = before
+	if err := mutate(&after); err != nil {
+		return platform.Account{}, platform.Account{}, err
+	}
+	if err := f.Update(ctx, after); err != nil {
+		return platform.Account{}, platform.Account{}, err
+	}
+	return before, after, nil
+}
+
 func newAdminAccountServer(t *testing.T, subject auth.Subject, store v1.PlatformAccountStore, sink v1.AuditSink) *httptest.Server {
 	t.Helper()
 	srv := v1.New(v1.Options{
