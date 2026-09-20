@@ -84,8 +84,45 @@ type OHLCBar struct {
 // ohlcPriceDigits is how many fractional digits the wire OHLC
 // prices carry. Ten is generous enough to represent sub-stroop
 // prices without being absurd — consistent with the /v1/history
-// price field.
+// price field. It is a floor, not a cap: see [priceRenderScale].
 const ohlcPriceDigits = 10
+
+// priceRenderSigDigits is how many significant digits [ratToDecimal]
+// keeps when a price is too small for its requested scale;
+// priceRenderMaxScale bounds the extension. Both mirror the
+// aggregator's formatRatFixed so the served string and the stored one
+// agree digit for digit.
+const (
+	priceRenderSigDigits = 12
+	priceRenderMaxScale  = 60
+)
+
+// priceRenderScale returns the fractional places a wire price needs.
+// The fixed `digits` render of a non-zero rational is all zeros — and
+// reparses as price 0 — exactly when its first significant digit lies
+// beyond the last rendered place; only then is the scale extended,
+// magnitude-relatively, so no positive price ever serves as zero.
+// Every other value keeps the requested scale, byte-identical.
+func priceRenderScale(r *big.Rat, digits int) int {
+	if r == nil || r.Sign() == 0 {
+		return digits
+	}
+	x := new(big.Rat).Abs(r)
+	one := big.NewRat(1, 1)
+	ten := big.NewRat(10, 1)
+	firstSigPlace := 0
+	for x.Cmp(one) < 0 && firstSigPlace < priceRenderMaxScale {
+		x.Mul(x, ten)
+		firstSigPlace++
+	}
+	if firstSigPlace <= digits {
+		return digits
+	}
+	if need := firstSigPlace + priceRenderSigDigits; need < priceRenderMaxScale {
+		return need
+	}
+	return priceRenderMaxScale
+}
 
 // handleOHLC serves GET /v1/ohlc?base=...&quote=...&from=...&to=...
 //
@@ -509,9 +546,10 @@ func parseFromToClamped(w http.ResponseWriter, r *http.Request) (from, to time.T
 }
 
 // ratToDecimal renders a *big.Rat as a fixed-width decimal string
-// with `digits` fractional places, truncating (floors) — matching
-// priceRatioDecimal's rounding choice for consistency across
-// /v1/price and /v1/history.
+// with at least `digits` fractional places, truncating (floors) —
+// the rounding choice shared by every price surface, /v1/price and
+// /v1/history included, which render through it. A price too small
+// for `digits` gets more places rather than zeros ([priceRenderScale]).
 //
 // Returns "0" for nil input.
 func ratToDecimal(r *big.Rat, digits int) string {
@@ -521,6 +559,7 @@ func ratToDecimal(r *big.Rat, digits int) string {
 	if digits < 0 {
 		digits = 0
 	}
+	digits = priceRenderScale(r, digits)
 	num := new(big.Int).Set(r.Num())
 	den := new(big.Int).Set(r.Denom())
 

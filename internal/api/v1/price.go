@@ -2933,8 +2933,10 @@ func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceS
 //
 // Guarantees:
 //   - Never panics (guards against zero BaseAmount by returning "0").
-//   - Always exactly `decimals` fractional digits; truncates (floors),
-//     doesn't round.
+//   - At least `decimals` fractional digits; truncates (floors),
+//     doesn't round. A ratio too small for `decimals` is extended
+//     rather than served as zero — [ratToDecimal] renders it, so
+//     /v1/history and the bucketed surfaces agree digit for digit.
 //
 // Example: QuoteAmount=12,420,000 and BaseAmount=1,000,000,000
 // (100 XLM → 12.42 USDC at 7 decimals) with decimals=7 returns
@@ -2945,32 +2947,10 @@ func VWAP1mToSnapshot(assetID, quote, vwap string, bucketStart time.Time) PriceS
 // avoid this by storing pre-scaled prices.
 func priceRatioDecimal(t canonical.Trade, decimals int) string {
 	base := t.BaseAmount.BigInt()
-	quote := t.QuoteAmount.BigInt()
 	if base.Sign() == 0 {
 		return "0"
 	}
-	if decimals < 0 {
-		decimals = 0
-	}
-
-	// Multiply quote by 10^decimals before integer-dividing by base.
-	// This shifts the decimal point into the integer domain.
-	scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
-	scaledQuote := new(big.Int).Mul(quote, scale)
-	integerPart, _ := new(big.Int).DivMod(scaledQuote, base, new(big.Int))
-
-	s := integerPart.String()
-	// Pad with leading zeros if shorter than `decimals`.
-	if len(s) <= decimals {
-		pad := decimals - len(s) + 1
-		s = leftPad(s, pad, '0')
-	}
-	// Insert the decimal point.
-	if decimals == 0 {
-		return s
-	}
-	split := len(s) - decimals
-	return s[:split] + "." + s[split:]
+	return ratToDecimal(new(big.Rat).SetFrac(t.QuoteAmount.BigInt(), base), decimals)
 }
 
 func leftPad(s string, n int, c byte) string {
