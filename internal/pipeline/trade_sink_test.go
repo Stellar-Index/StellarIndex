@@ -300,7 +300,7 @@ func TestClassifyFault_Policy(t *testing.T) {
 		{"numeric out of range 22003", &pgconn.PgError{Code: "22003", Message: "numeric field overflow"}, faultData},
 		{"canonical trade validation", fmt.Errorf("timescale: InsertTrade: %w", canonical.ErrInvalidTrade), faultData},
 		{"canonical oracle validation", fmt.Errorf("%w: zero timestamp", canonical.ErrInvalidOracle), faultData},
-		{"recovered sink panic", fmt.Errorf("%w for band/band.update: boom", errSinkPanic), faultData},
+		{"recovered sink panic", fmt.Errorf("%w for band/band.update: boom", ErrSinkPanic), faultData},
 		{"context canceled", context.Canceled, faultShutdown},
 		{"deadline exceeded", context.DeadlineExceeded, faultShutdown},
 	}

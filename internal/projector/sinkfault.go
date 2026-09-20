@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -172,6 +173,13 @@ func classifySinkFault(err error) sinkDisposition {
 	}
 	// … or our own canonical validation did, before the statement ran.
 	if isValueShapeError(err) {
+		return dispositionSkip
+	}
+	// … or the sink itself panicked on this event. Deterministic for the
+	// event, and the sink's own classifier already drops it; holding the
+	// cursor would re-run the panicking decode every cycle for the whole
+	// budget. Skipped under the same shed cap + health proof as the rest.
+	if errors.Is(err, pipeline.ErrSinkPanic) {
 		return dispositionSkip
 	}
 	// Global + self-clearing: DB down/restarting/at capacity, or we are

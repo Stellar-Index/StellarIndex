@@ -873,13 +873,13 @@ func HandleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 	return handleEvent(ctx, logger, store, ev, true)
 }
 
-// errSinkPanic is the sentinel every recovered sink panic wraps, so the
-// sink's own [classifyFault] can recognise it as permanent for that
-// event (a tight retry loop over a panicking decode is strictly worse
-// than isolating it). The rendered message is unchanged from before the
-// sentinel existed; external callers that only read the error string or
-// classify with the storage-layer predicates see no difference.
-var errSinkPanic = errors.New("pipeline: panic in event sink")
+// ErrSinkPanic is the sentinel every recovered sink panic wraps, so both
+// classifiers on the durability edge — this package's [classifyFault] and
+// the projector's classifySinkFault — read it as permanent for that event:
+// a tight retry loop over a panicking decode is strictly worse than
+// isolating it. The rendered message is unchanged from before the sentinel
+// existed.
+var ErrSinkPanic = errors.New("pipeline: panic in event sink")
 
 // handleEvent is [HandleEvent]'s body with one extra knob: countEvent.
 // The per-source received/last-seen counters must be bumped ONCE per
@@ -897,7 +897,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"kind", ev.EventKind(),
 				"source", ev.Source())
 			obs.SourceInsertErrorsTotal.WithLabelValues(ev.Source(), "panic").Inc()
-			retErr = fmt.Errorf("%w for %s/%s: %v", errSinkPanic, ev.Source(), ev.EventKind(), r)
+			retErr = fmt.Errorf("%w for %s/%s: %v", ErrSinkPanic, ev.Source(), ev.EventKind(), r)
 		}
 	}()
 

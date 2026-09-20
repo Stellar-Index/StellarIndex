@@ -140,12 +140,10 @@ func classifyFault(err error) faultClass {
 //     Asset / strkey before any SQL runs, so the same value fails
 //     identically forever. Without this arm the asymmetric default
 //     would block-and-retry a poison row until shutdown.
-//   - a recovered sink panic ([errSinkPanic]): deterministic for the
-//     event that produced it. HandleEvent's exported contract still
-//     hands the projector a generic error there (its own safe-side
-//     default is retry-and-alert); this sink treats it as permanent
-//     because a tight retry loop over a panicking decode is strictly
-//     worse than isolating the event.
+//   - a recovered sink panic ([ErrSinkPanic]): deterministic for the
+//     event that produced it, and the projector's classifier reads it
+//     the same way, because a tight retry loop over a panicking decode
+//     is strictly worse than isolating the event.
 func isPermanentDataFault(err error) bool {
 	if timescale.IsPermanentDataError(err) {
 		return true
@@ -156,7 +154,7 @@ func isPermanentDataFault(err error) bool {
 		canonical.ErrInvalidAmount,
 		canonical.ErrInvalidAsset,
 		canonical.ErrInvalidStrkey,
-		errSinkPanic,
+		ErrSinkPanic,
 	} {
 		if errors.Is(err, sentinel) {
 			return true
