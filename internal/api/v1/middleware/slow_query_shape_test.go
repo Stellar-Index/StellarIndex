@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -110,6 +111,48 @@ func TestQueryShapeResistsLogInjectionAndFlooding(t *testing.T) {
 	if got := QueryShape(long); len(got) > maxShapeValueLen+64 {
 		t.Errorf("shape length %d is unbounded — an allow-listed parameter must not "+
 			"become a journal-flooding channel", len(got))
+	}
+}
+
+func TestQueryShapeCapsUnallowlistedParameterNameLength(t *testing.T) {
+	// A non-allow-listed parameter's NAME is logged verbatim
+	// (`name=<set>`) — only its VALUE is redacted. Before this fix,
+	// nothing bounded that name: a caller could roll the journal by
+	// sending one absurdly long, unrecognised parameter key.
+	u, err := url.Parse("/v1/assets?" + strings.Repeat("x", 5000) + "=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := QueryShape(u)
+	// A generous bound, well above any real parameter name and far below
+	// the 5000-byte fixture: this fails on the un-truncated NAME and
+	// passes once it's capped, independent of the exact cap chosen.
+	const wantMaxLen = 200
+	if len(got) > wantMaxLen {
+		t.Errorf("shape length %d is unbounded — an unrecognised parameter NAME must not "+
+			"become a journal-flooding channel (fixture name was 5000 bytes, want <= %d)", len(got), wantMaxLen)
+	}
+}
+
+func TestQueryShapeCapsPartCount(t *testing.T) {
+	// A caller can send an arbitrary number of DISTINCT parameter
+	// names, each contributing its own `name=<set>` term. Before this
+	// fix nothing capped the term count, so a query string with
+	// thousands of distinct keys produced a proportionally long shape.
+	values := url.Values{}
+	for i := 0; i < 2000; i++ {
+		values.Set("p"+strconv.Itoa(i), "1")
+	}
+	u := &url.URL{Path: "/v1/assets", RawQuery: values.Encode()}
+	got := QueryShape(u)
+	n := strings.Count(got, "=<set>")
+	// A generous bound, well above any legitimate request's distinct
+	// parameter count and far below the 2000-key fixture: this fails
+	// when every key becomes its own term and passes once the term
+	// count is capped, independent of the exact cap chosen.
+	const wantMaxParts = 100
+	if n > wantMaxParts {
+		t.Errorf("shape carried %d distinct parameter terms, want <= %d", n, wantMaxParts)
 	}
 }
 
