@@ -55,5 +55,11 @@ ENGINE = MergeTree
 PARTITION BY day
 ORDER BY (day, contract_id);
 
-CREATE TABLE IF NOT EXISTS stellar.contracts_census_daily_staging
-AS stellar.contracts_census_daily;
+-- No shared staging table. Each ch-census-rollup run computes into a
+-- private stellar.contracts_census_daily_staging_<16 hex> it CREATEs AS
+-- the live table and DROPs on exit (concurrent timer + backfill runs
+-- must never share one), so the static twin the sibling rollups use was
+-- never written by any code path. A host provisioned while it was still
+-- declared carries an empty orphan; this drop is the one reason to
+-- re-run this file there.
+DROP TABLE IF EXISTS stellar.contracts_census_daily_staging;

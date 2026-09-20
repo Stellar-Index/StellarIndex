@@ -1406,6 +1406,3 @@ CREATE TABLE IF NOT EXISTS stellar.contracts_census_daily
 ENGINE = MergeTree
 PARTITION BY day
 ORDER BY (day, contract_id);
-
-CREATE TABLE IF NOT EXISTS stellar.contracts_census_daily_staging
-AS stellar.contracts_census_daily;
