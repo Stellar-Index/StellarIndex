@@ -5,10 +5,14 @@ package v1
 
 import (
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
@@ -104,3 +108,59 @@ func TestSupplyStorageFallbackOmitsConsistencyWithoutSelfChecks(t *testing.T) {
 }
 
 func ptrBool(b bool) *bool { return &b }
+
+// TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark pins ADR-0041 Decision 4
+// on the storage-derived arm: `as_of_ledger` is the lake watermark — the same
+// ledger `flags.stale` is judged from — not the storage reader's own
+// max(last_modified_ledger), which is when a balance last moved and trails
+// the tip by however long the holders have been idle. The two were stamped
+// from different sources, so a response could carry a fresh-looking stale
+// flag beside a months-old as_of_ledger, or the reverse.
+func TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark(t *testing.T) {
+	const (
+		lastMoved = 64165090 // dealStorageSupply().AsOfLedger
+		lakeTip   = 64200000
+	)
+	cases := []struct {
+		name      string
+		wm        LakeWatermarkReader
+		wantAsOf  uint32
+		wantStale bool
+	}{
+		{"fresh watermark", &stubWatermark{ledger: lakeTip, closedAt: time.Now()}, lakeTip, false},
+		{"stale watermark", &stubWatermark{ledger: lakeTip, closedAt: time.Now().Add(-lakeStaleThreshold - 30*time.Second)}, lakeTip, true},
+		{"no watermark reader wired", nil, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := &fakeStorageSupply{out: dealStorageSupply()}
+			if st.out.AsOfLedger != lastMoved {
+				t.Fatalf("fixture AsOfLedger = %d, want %d", st.out.AsOfLedger, lastMoved)
+			}
+			srv := &Server{
+				tokenSupply:         &fakeTokenSupply{supply: zeroFlows()},
+				storageSupply:       st,
+				lakeWatermarkReader: tc.wm,
+				logger:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			mux := http.NewServeMux()
+			mux.HandleFunc("GET /v1/assets/{asset_id}/supply", srv.handleAssetSupply)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/v1/assets/"+storageDealContractID+"/supply", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body)
+			}
+			got, flags := decodeSupplyEnvelope(t, rec.Body.Bytes())
+			if got.Source != string(supply.BasisContractStorageBalances) {
+				t.Fatalf("source = %q, want %q", got.Source, supply.BasisContractStorageBalances)
+			}
+			if got.AsOfLedger != tc.wantAsOf {
+				t.Errorf("as_of_ledger = %d, want %d (the lake watermark flags.stale is judged from, "+
+					"not the last ledger a balance entry moved at)", got.AsOfLedger, tc.wantAsOf)
+			}
+			if flags.Stale != tc.wantStale {
+				t.Errorf("flags.stale = %v, want %v", flags.Stale, tc.wantStale)
+			}
+		})
+	}
+}

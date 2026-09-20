@@ -263,7 +263,6 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 		Source:                      string(supply.BasisContractStorageBalances),
 		CirculatingSupplyLowerBound: true,
 		BalanceEntries:              st.BalanceEntries,
-		AsOfLedger:                  st.AsOfLedger,
 	}
 	if st.HasSelfChecks() {
 		consistent := st.SelfConsistent()
@@ -273,7 +272,11 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 		d := st.Decimals
 		resp.Decimals = &d
 	}
-	_, stale, _ := s.lakeWatermark(ctx)
+	// The same watermark stamps as_of_ledger and decides flags.stale, as on
+	// the mint/burn arm: a reading fresh to the lake tip is fresh to that
+	// ledger, not to the last ledger any one balance entry happened to move.
+	wmLedger, stale, _ := s.lakeWatermark(ctx)
+	resp.AsOfLedger = wmLedger
 	return resp, stale, true
 }
 
