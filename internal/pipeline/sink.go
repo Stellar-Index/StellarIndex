@@ -973,9 +973,11 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		// per-source gap-detector signal because there was no row
 		// to count. Now we write a row per router invocation; the
 		// gap-detector target on the hypertable measures honest
-		// coverage. Counter bump still surfaces activity on the
-		// `entries` column of /v1/diagnostics/ingestion.
-		bumpEntryCount(ctx, logger, store, soroswap_router.SourceName)
+		// coverage. The `entries` bump for /v1/diagnostics/ingestion
+		// follows the landed insert, as in every persist helper:
+		// REL-08 re-invokes this function on an infra retry, so a
+		// bump ahead of the insert counted one entry per attempt (and
+		// one for a row the store then rejected).
 		row := timescale.SoroswapRouterSwap{
 			Ledger:          e.Swap.Ledger,
 			LedgerCloseTime: e.Swap.ClosedAt,
@@ -1015,6 +1017,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"err", err)
 			return err
 		}
+		bumpEntryCount(ctx, logger, store, soroswap_router.SourceName)
 		return nil
 	case defindex.Event:
 		// Strategy-layer flow (vault → strategy capital movement).
@@ -1022,7 +1025,6 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		// 0050). `actor` here is the vault contract C-strkey
 		// (the strategy contract's `from` field); end-user attribution
 		// lives at the vault layer (case defindex.VaultEvent below).
-		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		strategyRow := timescale.DefindexFlow{
 			Ledger:          e.Flow.Ledger,
 			LedgerCloseTime: e.Flow.ClosedAt,
@@ -1046,13 +1048,13 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"err", err)
 			return err
 		}
+		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		return nil
 	case defindex.VaultEvent:
 		// Vault-wrapper layer (user-facing deposit/withdraw).
 		// Persists to defindex_flows with layer='vault'. `actor` here
 		// is the end-user G-strkey (or routing C-strkey if the user
 		// came via an aggregator).
-		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		amounts := make([]string, 0, len(e.Flow.Amounts))
 		for _, a := range e.Flow.Amounts {
 			amounts = append(amounts, a.String())
@@ -1081,6 +1083,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"err", err)
 			return err
 		}
+		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		return nil
 	case defindex.DFeesEvent:
 		// Vault-layer per-asset protocol-fee distribution (`dfees`,
@@ -1090,7 +1093,6 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		// per token, a shape defindex_flows' one-row-per-flow schema
 		// doesn't carry — hence its own defindex_fees table (migration
 		// 0146; correlate by tx_hash + op_index).
-		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		feeRow := timescale.DefindexFee{
 			Ledger:          e.Fee.Ledger,
 			LedgerCloseTime: e.Fee.ClosedAt,
@@ -1113,6 +1115,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 				"err", err)
 			return err
 		}
+		bumpEntryCount(ctx, logger, store, defindex.SourceName)
 		return nil
 	case external.TradeEvent:
 		return persistTrade(ctx, logger, store, e.Trade)
