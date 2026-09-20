@@ -230,6 +230,35 @@ func TestSourceContributions_PerSourceWeights(t *testing.T) {
 	}
 }
 
+// TestSourceContributions_WeightIsCorrectlyRoundedAboveTwoPow53 pins
+// each weight to the correctly-rounded float64 of the exact ratio.
+// Rounding numerator and denominator to float64 before dividing is
+// lossy once a quote volume exceeds 2^53 — the ordinary case for a
+// Soroban i128 — and lands ulps away: for 2^53+1 over
+// (2^53+1)+(2^53+10) it gives 0.49999999999999966693 where the exact
+// ratio rounds to 0.49999999999999977796.
+func TestSourceContributions_WeightIsCorrectlyRoundedAboveTwoPow53(t *testing.T) {
+	const q1, q2 = 1<<53 + 1, 1<<53 + 10
+	trades := []canonical.Trade{
+		mkTradeWithSource("a", 1, q1),
+		mkTradeWithSource("b", 1, q2),
+	}
+	got := aggregate.SourceContributions(trades)
+	if len(got) != 2 {
+		t.Fatalf("got %d sources, want 2", len(got))
+	}
+	total := big.NewInt(q1 + q2)
+	want := map[string]float64{}
+	for src, q := range map[string]int64{"a": q1, "b": q2} {
+		want[src], _ = new(big.Rat).SetFrac(big.NewInt(q), total).Float64()
+	}
+	for _, c := range got {
+		if c.Weight != want[c.Source] {
+			t.Errorf("%s weight = %.20g, want the correctly-rounded exact ratio %.20g", c.Source, c.Weight, want[c.Source])
+		}
+	}
+}
+
 func TestSourceContributions_EmptyInput(t *testing.T) {
 	if got := aggregate.SourceContributions(nil); got != nil {
 		t.Errorf("got %v, want nil for empty input", got)

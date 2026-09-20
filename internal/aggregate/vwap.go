@@ -125,11 +125,12 @@ func SourceContributions(trades []canonical.Trade) []SourceContribution {
 	if totalQuote.Sign() == 0 {
 		return nil
 	}
-	totalQuoteF, _ := new(big.Float).SetInt(totalQuote).Float64()
 	out := make([]SourceContribution, 0, len(bySource))
 	for source, a := range bySource {
-		quoteF, _ := new(big.Float).SetInt(a.quote).Float64()
-		weight := quoteF / totalQuoteF
+		// One correctly-rounded conversion of the exact ratio. Rounding
+		// numerator and denominator to float64 first is lossy above 2^53
+		// — every Soroban quote volume — and lands the weight ulps off.
+		weight, _ := new(big.Rat).SetFrac(a.quote, totalQuote).Float64()
 		out = append(out, SourceContribution{
 			Source:      source,
 			Weight:      weight,
