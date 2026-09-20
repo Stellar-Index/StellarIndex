@@ -68,3 +68,32 @@ func TestCensusDayFilterHasASkipIndex(t *testing.T) {
 		t.Fatalf("stellar.contract_events declares no minmax skip index on %s, the column censusDayInsert filters on — the day window full-scans the table:\n%s", col, ddl)
 	}
 }
+
+// TestCensusStagingTableIsPerRunOnly pins that no DDL file declares a
+// shared stellar.contracts_census_daily_staging. RunCensusDay CREATEs a
+// crypto-random-suffixed private staging table per run and DROPs it (the
+// W1-chrollup-4 isolation), so a static twin is dead DDL that reads as a
+// second writer path and shows up on every host as an empty orphan.
+func TestCensusStagingTableIsPerRunOnly(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	root := filepath.Join(filepath.Dir(thisFile), "..", "..", "..")
+	for _, rel := range []string{"tier1_schema.sql", "contracts_census_daily.sql"} {
+		raw, err := os.ReadFile(filepath.Join(root, "deploy", "clickhouse", rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if regexp.MustCompile(`(?i)CREATE\s+TABLE\s+(IF\s+NOT\s+EXISTS\s+)?stellar\.contracts_census_daily_staging\b`).Match(raw) {
+			t.Errorf("%s declares stellar.contracts_census_daily_staging, which no code path writes: the rollup uses a private per-run table", rel)
+		}
+	}
+	name, err := privateStagingTable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !regexp.MustCompile(`^contracts_census_daily_staging_[0-9a-f]{16}$`).MatchString(name) {
+		t.Fatalf("privateStagingTable() = %q, want contracts_census_daily_staging_<16 hex>", name)
+	}
+}

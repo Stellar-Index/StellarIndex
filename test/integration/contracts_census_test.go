@@ -132,6 +132,27 @@ func TestRunCensusDay_PrunesByCloseTimeAndSwapsPartition(t *testing.T) {
 			t.Errorf("census[%s] = (events %d, last_ledger %d), want (events %d, last_ledger %d)", id, got[id][0], got[id][1], w[0], w[1])
 		}
 	}
+
+	// (3) staging is per-run and private: the run's own table is dropped on
+	// exit, and the Tier-1 schema declares no shared twin for anything to
+	// leave behind.
+	var staging []string
+	srows, err := conn.Query(ctx, `SELECT name FROM system.tables
+		WHERE database = 'stellar' AND name LIKE 'contracts_census_daily_staging%' ORDER BY name`)
+	if err != nil {
+		t.Fatalf("list staging tables: %v", err)
+	}
+	defer func() { _ = srows.Close() }()
+	for srows.Next() {
+		var n string
+		if err := srows.Scan(&n); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		staging = append(staging, n)
+	}
+	if len(staging) != 0 {
+		t.Fatalf("census staging tables left after the run: %v, want none (the shared stellar.contracts_census_daily_staging is dead DDL; the private one is dropped)", staging)
+	}
 }
 
 // explain returns EXPLAIN output as one newline-joined string.
