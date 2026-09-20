@@ -193,8 +193,10 @@ type Payment struct {
 	// contract.
 	Destination string
 
-	// Amount in raw token units (USDC = 7 decimals on Stellar per
-	// internal/sources/external/registry.go's USDC contract). The
+	// Amount in raw token units (USDC = 7 decimals on Stellar — the
+	// same convention internal/sources/external/registry.go encodes as
+	// AmountDecimals:7 for every on-chain DEX entry; rozo itself has no
+	// AmountDecimals field there since bridges aren't VWAP-scaled). The
 	// decoder preserves i128 → *big.Int → string per ADR-0003 ("i128
 	// never truncates to int64"). Stored as decimal string on the
 	// wire shape; downstream may parse to *big.Int as needed.

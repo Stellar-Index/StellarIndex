@@ -130,11 +130,12 @@ const (
 
 // Topic[0] pre-encoded base64 — package-init constants so
 // Classify() does single string-equal comparisons rather than
-// full SCVal decodes per event. All four are >= 12 chars (a
-// `deposit_for_burn` is 16) so the Soroban macro emits them as
-// long-form ScSymbol via `Symbol::new(env, …)`, not the
-// 9-char-capped `symbol_short!`. The wire shape is still ScSymbol
-// in both cases; the macro picks the constructor by length.
+// full SCVal decodes per event. All 26 are >= 10 chars
+// (`denylisted` is the shortest; `deposit_for_burn` is 16) so the
+// Soroban macro emits them as long-form ScSymbol via
+// `Symbol::new(env, …)`, not the 9-char-capped `symbol_short!`.
+// The wire shape is still ScSymbol in both cases; the macro picks
+// the constructor by length.
 var (
 	TopicSymbolDepositForBurn             = scval.MustEncodeSymbol(EventDepositForBurn)
 	TopicSymbolMintAndWithdraw            = scval.MustEncodeSymbol(EventMintAndWithdraw)

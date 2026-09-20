@@ -202,12 +202,19 @@ SELECT … FROM soroban_events
 WHERE contract_id IN (
   'CAC5SKP5FJT2ZZ7YLV4UCOM6Z5SQCCVPZWHLLLVQNQG2RWWOOSP3IYRL',
   'CCRLTS3CMJHYHFD7MYRBJPNW6R3LCXNDO2B6TK6AS6FSXAHR6GBMGLRE',
-  'CAQPKW5AUPEA4C7OERZRUCBWT5RZDSETO4PR5REVRC5MT4CF3PBSKXQC'
-) AND topic_0_sym IN ('payment', 'flush');
+  'CAQPKW5AUPEA4C7OERZRUCBWT5RZDSETO4PR5REVRC5MT4CF3PBSKXQC',
+  'CAFO6OUZAL62SGDVGHHJPSCOOF3HUKXLED3C3FS5RRQI2VBZ4F5HBPXI'
+) AND topic_0_sym IN ('payment_event', 'flush_event', 'payment', 'flush');
 ```
 
+Updated by the 2026-07-09 addendum below: the 4th contract
+(`CAFO6OUZ…`) and the corrected on-wire symbols (`payment_event` /
+`flush_event` — the deployed contracts never emit the short forms
+`payment` / `flush`, kept here only for forward-safety per
+`events.go`).
+
 Re-audit triggers: stellar.expert reports new WASM hash for any
-of the 3 payment contracts, OR a new Rozo deploy beyond
+of the 4 payment contracts, OR a new Rozo deploy beyond
 `MainnetPaymentContracts`.
 
 ## Live-traffic verification notes

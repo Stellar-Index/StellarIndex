@@ -176,19 +176,18 @@ This package is **wired into the ingest pipeline** (#40):
   [`0038_create_cctp_events`](../../../migrations/0038_create_cctp_events.up.sql).
 - Registry: `internal/sources/external/registry.go` —
   `Class: ClassBridge, IncludeInVWAP: false, DefaultWeight: 0,
-  BackfillAvailable: true, BackfillSafe: false`.
+  BackfillAvailable: true, BackfillSafe: true`.
 
 **Operator steps to turn it on:**
 
 1. Apply migration 0038 (`stellarindex-migrate up` after the SCP —
    migrations are not auto-deployed).
 2. Add `"cctp"` to `ingestion.enabled_sources` in the region TOML.
-3. `BackfillSafe` stays `false` until a WASM-history audit lands
-   at `docs/operations/wasm-audits/cctp.md`. The contracts are
-   brand new (a single WASM hash is expected) but the audit is
-   required program work before `stellarindex-ops backfill` will
-   run CCTP against historical ranges. Live ingest works without
-   it — per the user's direction CCTP needs little/no history.
+3. `BackfillSafe` is `true` since the 2026-05-26 WASM-history audit
+   at `docs/operations/wasm-audits/cctp.md` found a single WASM hash
+   per contract with zero upgrades across all 3 mainnet contracts —
+   `stellarindex-ops backfill` may run CCTP against historical
+   ranges.
 
 ## Tests
 
