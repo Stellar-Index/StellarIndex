@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Migration lint: money-column (ADR-0003) + file integrity (audit C4-7)
-# + register completeness (wave-D PS-01).
+# + register completeness (wave-D PS-01) + ClickHouse money-column.
 #
-# Three passes, all gating (exit non-zero on any violation):
+# Four passes, all gating (exit non-zero on any violation):
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
 #      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
@@ -11,6 +11,9 @@
 #   3. register completeness — every NNNN_*.up.sql has a row in
 #      migrations/README.md's register, and no row names a file that does
 #      not exist.
+#   4. ClickHouse money-column — the lake DDL under deploy/clickhouse/
+#      must never hold a monetary column in Float32/Float64 (ADR-0003
+#      applied to the substrate; see the pass for the type rule).
 #
 # ── register-completeness detail ──
 #
@@ -49,6 +52,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 fail=0
 
+indent() { printf '  %s\n' "${1//$'\n'/$'\n'  }"; }
+
 # Monetary column-name stems. `_usd` matches only as a suffix of the
 # column name (value_usd, volume_usd, …) so `usda`-style codes don't
 # trip it. stroop/wei/circulating/market_cap carried over from the
@@ -82,7 +87,7 @@ for f in migrations/*.up.sql; do
     | grep -viE -- '-- *lint-money:ok +[^ ]' || true)
   if [ -n "$hits" ]; then
     echo "lint-migrations ❌ ${f}: monetary column is not NUMERIC (ADR-0003):" >&2
-    echo "$hits" | sed 's/^/  /' >&2
+    indent "$hits" >&2
     fail=1
   fi
   # Stale escapes: a lint-money:ok marker on a line the pattern does
@@ -91,7 +96,7 @@ for f in migrations/*.up.sql; do
     | grep -vEi "(^|[[:space:](,])\"?(${name})\"?[[:space:]]+(${type})\b" || true)
   if [ -n "$stale" ]; then
     echo "lint-migrations ❌ ${f}: stale lint-money:ok marker (line no longer matches the lint) — remove it:" >&2
-    echo "$stale" | sed 's/^/  /' >&2
+    indent "$stale" >&2
     fail=1
   fi
 done
@@ -138,16 +143,16 @@ for down in migrations/*.down.sql; do
 done
 
 # Duplicate NNNN prefixes among *.up.sql (two migrations claiming one number).
-dupes=$(ls migrations/*.up.sql 2>/dev/null \
+dupes=$(find migrations -maxdepth 1 -name '*.up.sql' \
   | sed -E 's#.*/([0-9]+)_.*#\1#' | sort | uniq -d || true)
 if [ -n "$dupes" ]; then
   echo "lint-migrations ❌ duplicate migration number(s) among *.up.sql:" >&2
-  echo "$dupes" | sed 's/^/  /' >&2
+  indent "$dupes" >&2
   fail=1
 fi
 
 # Numbering gaps → WARNING only (non-fatal; see header).
-gaps=$(ls migrations/*.up.sql 2>/dev/null \
+gaps=$(find migrations -maxdepth 1 -name '*.up.sql' \
   | sed -E 's#.*/([0-9]+)_.*#\1#' | sort -n | awk '
     NR==1 { prev = $1 + 0; next }
     { cur = $1 + 0; while (prev + 1 < cur) { prev++; printf "%04d ", prev } prev = cur }
@@ -194,7 +199,92 @@ else
   fi
 fi
 
+# ── pass 4: ClickHouse money columns (ADR-0003) ────────────────────
+# The lake DDL is money too, and ClickHouse has no NUMERIC. An on-chain
+# amount is exact in Int64 (classic stroops are an XDR int64) or in
+# Int128/Int256 (Soroban i128/u256); a USD figure belongs in
+# Decimal(38, n) or the decimal String the aggregator already writes.
+# Float32/Float64 are never a home for money — 53 bits of mantissa is
+# the same 2^53 cliff ADR-0003 forbids in JSON. Same name stems as
+# pass 1. Flagged columns are keyed table.column (a name alone would
+# exempt every later column of that name in the file).
+#
+# Escape hatch: the same inline `-- lint-money:ok <reason>` as pass 1.
+#
+# ch_float_baseline lists the Float64 money columns that predate this
+# pass, keyed file:table.column. Each is a documented display magnitude
+# (its DDL header says so) mirrored between the operator file and
+# tier1_schema.sql, and the fix belongs with that DDL: retype, or carry
+# the inline escape with its reason. An entry that no longer matches is
+# stale and FAILS, so this list only shrinks.
+CH_DIR="${CH_DIR:-deploy/clickhouse}"
+ch_float_baseline='account_cohort_rollup.sql:stellar.asset_month_usd_prices.volume_usd
+account_cohort_rollup.sql:stellar.account_cohort_positions.amount
+tier1_schema.sql:stellar.asset_month_usd_prices.volume_usd
+tier1_schema.sql:stellar.account_cohort_positions.amount'
+
+# ch_money_floats prints one `line<TAB>table.column<TAB>raw` per money
+# column typed Float32/Float64 (Nullable or not) in $1. Table context
+# comes from the enclosing CREATE TABLE / ALTER TABLE; a line that is a
+# comment or carries a reasoned lint-money:ok escape is skipped.
+ch_money_floats() {
+  awk -v name="$name" '
+    {
+      raw = $0; line = tolower($0)
+      if (match(line, /create +(or +replace +)?table +(if +not +exists +)?[a-z0-9_.]+/) ||
+          match(line, /alter +table +(if +exists +)?[a-z0-9_.]+/)) {
+        n = split(substr(line, RSTART, RLENGTH), a, " "); tbl = a[n]
+      }
+      if (line ~ /^[ \t]*--/) next
+      if (line ~ /-- *lint-money:ok +[^ ]/) next
+      if (!match(line, "(^|[ \t(,])`?(" name ")`?[ \t]+(nullable\\()?float(32|64)([^a-z0-9_]|$)")) next
+      col = substr(line, RSTART, RLENGTH)
+      sub(/^[ \t(,]*`?/, "", col); sub(/`?[ \t].*$/, "", col)
+      printf "%d\t%s.%s\t%s\n", NR, tbl, col, raw
+    }' "$1"
+}
+
+ch_files=0
+ch_seen=""
+for f in "$CH_DIR"/*.sql; do
+  [ -e "$f" ] || continue
+  ch_files=$((ch_files + 1))
+  b="$(basename "$f")"
+  while IFS="$(printf '\t')" read -r ln key raw; do
+    [ -n "$key" ] || continue
+    if grep -qx "${b}:${key}" <<<"$ch_float_baseline"; then
+      ch_seen="${ch_seen}${b}:${key}"$'\n'
+      continue
+    fi
+    echo "lint-migrations ❌ ${f}:${ln}: money column ${key} is a float — ClickHouse money is Int64/Int128/Int256 (an exact on-chain integer) or Decimal, never Float32/Float64 (ADR-0003):" >&2
+    echo "  ${raw}" >&2
+    fail=1
+  done < <(ch_money_floats "$f")
+  stale=$(grep -nEi -- '-- *lint-money:ok' "$f" \
+    | grep -vEi "(^|[[:space:](,])\`?(${name})\`?[[:space:]]+(Nullable\()?Float(32|64)\b" || true)
+  if [ -n "$stale" ]; then
+    echo "lint-migrations ❌ ${f}: stale lint-money:ok marker (line no longer matches the lint) — remove it:" >&2
+    indent "$stale" >&2
+    fail=1
+  fi
+done
+if [ "$ch_files" -eq 0 ]; then
+  echo "lint-migrations ❌ no *.sql under ${CH_DIR} — the ClickHouse money pass cannot pass vacuously" >&2
+  fail=1
+fi
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  # An entry for a file that is gone exempts nothing; only a present
+  # file whose column no longer matches is a stale exemption.
+  [ -e "${CH_DIR}/${entry%%:*}" ] || continue
+  if ! grep -qx "$entry" <<<"$ch_seen"; then
+    echo "lint-migrations ❌ stale ch_float_baseline entry ${entry} — the column is no longer a float money column; remove the entry (the list only shrinks)" >&2
+    fail=1
+  fi
+done <<<"$ch_float_baseline"
+echo "lint-migrations: ClickHouse money pass inspected ${ch_files} file(s) under ${CH_DIR}."
+
 if [ "$fail" -eq 0 ]; then
-  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register)."
+  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money)."
 fi
 exit "$fail"
