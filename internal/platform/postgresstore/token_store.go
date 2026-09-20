@@ -20,14 +20,15 @@ import (
 // enough that one-table-many-purposes would force callers to
 // remember which fields apply to which row.
 type TokenStore struct {
-	s   *Store
-	now func() time.Time
+	s              *Store
+	now            func() time.Time
+	sweepBatchRows int
 }
 
 // NewTokenStore returns the Postgres-backed implementation.
 // `now` defaults to time.Now.UTC; tests inject a fixed clock.
 func NewTokenStore(s *Store) *TokenStore {
-	return &TokenStore{s: s, now: func() time.Time { return time.Now().UTC() }}
+	return &TokenStore{s: s, now: func() time.Time { return time.Now().UTC() }, sweepBatchRows: defaultSweepBatchRows}
 }
 
 // WithClock overrides the time source. Tests that pin
@@ -37,20 +38,52 @@ func (r *TokenStore) WithClock(now func() time.Time) *TokenStore {
 	return r
 }
 
+// WithSweepBatchSize overrides the per-statement row cap the reaper
+// sweeps below use. Tests use a small value so a batch boundary is
+// reachable without seeding tens of thousands of rows; production
+// leaves the default (defaultSweepBatchRows).
+func (r *TokenStore) WithSweepBatchSize(n int) *TokenStore {
+	r.sweepBatchRows = n
+	return r
+}
+
+// defaultSweepBatchRows and sweepMaxBatchesPerCall bound every
+// reaper-driven DELETE in this package (TokenStore's login-code-lockout
+// and magic-link sweeps; AccountStore's suspended-orphan reap).
+//
+// Q142: each of these deleted an unbounded row count in one statement
+// — `DELETE FROM t WHERE <predicate>` with no LIMIT — against a table
+// whose growth an unauthenticated caller controls (an attacker-chosen
+// email or a signup-race retry). A single sweep landing during a large
+// backlog held row locks and WAL for as long as the delete took, on
+// the same connection pool the request path shares. Each sweep now
+// issues bounded `DELETE ... WHERE pk IN (SELECT pk ... LIMIT
+// defaultSweepBatchRows)` statements in a loop, capped at
+// sweepMaxBatchesPerCall batches per call — the remainder, if any,
+// waits for the reaper's next tick rather than holding one
+// unbounded transaction open.
+const (
+	defaultSweepBatchRows  = 2000
+	sweepMaxBatchesPerCall = 25
+)
+
 // CreateMagicLinkToken inserts a new row. Caller already
 // generated the random plaintext + computed sha256 and is
 // responsible for emailing the plaintext to the user.
 func (r *TokenStore) CreateMagicLinkToken(ctx context.Context, t platform.MagicLinkToken) error {
+	ip, err := ipString(t.RequestedIP)
+	if err != nil {
+		return fmt.Errorf("create magic link token: %w", err)
+	}
 	const q = `
 		INSERT INTO magic_link_tokens (
 			token_hash, email, purpose, expires_at, requested_ip
 		)
 		VALUES ($1, $2, $3, $4, $5)
 	`
-	_, err := r.s.db.ExecContext(ctx, q,
-		t.TokenHash, t.Email, string(t.Purpose), t.ExpiresAt, ipString(t.RequestedIP),
-	)
-	if err != nil {
+	if _, err := r.s.db.ExecContext(ctx, q,
+		t.TokenHash, t.Email, string(t.Purpose), t.ExpiresAt, ip,
+	); err != nil {
 		return fmt.Errorf("create magic link token: %w", err)
 	}
 	return nil
@@ -326,18 +359,29 @@ func (r *TokenStore) ClearLoginCodeLockout(ctx context.Context, email string) er
 func (r *TokenStore) SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, error) {
 	const q = `
 		DELETE FROM login_code_lockouts
-		 WHERE updated_at < $1
-		   AND (locked_until IS NULL OR locked_until <= $2)
+		 WHERE email IN (
+		     SELECT email FROM login_code_lockouts
+		      WHERE updated_at < $1
+		        AND (locked_until IS NULL OR locked_until <= $2)
+		      LIMIT $3
+		 )
 	`
-	res, err := r.s.db.ExecContext(ctx, q, olderThan, r.now())
-	if err != nil {
-		return 0, fmt.Errorf("sweep login code lockouts: %w", err)
+	var total int64
+	for i := 0; i < sweepMaxBatchesPerCall; i++ {
+		res, err := r.s.db.ExecContext(ctx, q, olderThan, r.now(), r.sweepBatchRows)
+		if err != nil {
+			return total, fmt.Errorf("sweep login code lockouts: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, fmt.Errorf("sweep login code lockouts: rows affected: %w", err)
+		}
+		total += n
+		if n < int64(r.sweepBatchRows) {
+			break
+		}
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("sweep login code lockouts: rows affected: %w", err)
-	}
-	return n, nil
+	return total, nil
 }
 
 // CountLoginCodeLockouts returns the current row count. Feeds the
@@ -373,16 +417,30 @@ func (r *TokenStore) CountLoginCodeLockouts(ctx context.Context) (int64, error) 
 // classifyMagicLinkMiss draws for a slow user, then deletes them. The
 // predicate drives over `magic_link_tokens_expires_idx`.
 func (r *TokenStore) SweepExpiredMagicLinkTokens(ctx context.Context, olderThan time.Time) (int64, error) {
-	const q = `DELETE FROM magic_link_tokens WHERE expires_at < $1`
-	res, err := r.s.db.ExecContext(ctx, q, olderThan)
-	if err != nil {
-		return 0, fmt.Errorf("sweep expired magic link tokens: %w", err)
+	const q = `
+		DELETE FROM magic_link_tokens
+		 WHERE token_hash IN (
+		     SELECT token_hash FROM magic_link_tokens
+		      WHERE expires_at < $1
+		      LIMIT $2
+		 )
+	`
+	var total int64
+	for i := 0; i < sweepMaxBatchesPerCall; i++ {
+		res, err := r.s.db.ExecContext(ctx, q, olderThan, r.sweepBatchRows)
+		if err != nil {
+			return total, fmt.Errorf("sweep expired magic link tokens: %w", err)
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return total, fmt.Errorf("sweep expired magic link tokens: rows affected: %w", err)
+		}
+		total += n
+		if n < int64(r.sweepBatchRows) {
+			break
+		}
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("sweep expired magic link tokens: rows affected: %w", err)
-	}
-	return n, nil
+	return total, nil
 }
 
 // CountMagicLinkTokens returns the current row count. Feeds the
