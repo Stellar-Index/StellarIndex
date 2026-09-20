@@ -1,7 +1,7 @@
 ---
 title: High-Availability Infrastructure Plan
 last_verified: 2026-07-25
-status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01
+status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for ClickHouse (§4.3's hardware-expansion claim corrected 2026-07-24, §8/§3.3's backup deployment status corrected 2026-07-25, audit-2026-07-23 DOC-05/DOC-06). 2026-09-02 (#361): §2 diagram, §3.4, §3.8, §6 and the §8/restore-drill "reality check" blocks corrected against code — those blocks had INVERTED (repo2 + restore drill are live). §3 still lacks a CH tier (see top amendment); cost/RTO tables NOT re-verified. 2026-09-03: §3.3's retention block no longer claims daily OHLC back to 2015 — `prices_1d` starts 2018-07-01. 2026-09-20 (HO-361): every `file:line` citation in this doc re-checked against HEAD; two had drifted from code moving underneath them (§0 availability banner's `sla-probe.sh` line, §3.3's `18-pgbackrest-backup.yml` restore-drill-enable range) and are corrected — no prose claim changed
 ---
 
 > ⚠️ **Multi-region content superseded by ADR-0050 / [`multi-region-ha.md`](multi-region-ha.md) (2026-08-21).** This plan's multi-region framing (and its "active/active out of scope for v1" stance) is overturned. The **single-region HA design** below (HAProxy / Patroni / Redis-Sentinel) remains current and is **Phase 1** of the multi-region plan — read it for that, not for the multi-region shape.
@@ -13,7 +13,7 @@ status: ratified but PARTIALLY STALE — §4.3/§8 refreshed 2026-07-18 for Clic
 > smoke or SLA-probe checks; the only external signal is the
 > Alertmanager dead-man's-switch, which detects a hard outage but does
 > not compute a percentage. `stellarindex-sla-probe` runs **on the API
-> host against `http://localhost:3000/v1`** (`configs/healthchecks/sla-probe.sh:21`,
+> host against `http://localhost:3000/v1`** (`configs/healthchecks/sla-probe.sh:27`,
 > unset on R1), so its availability tally cannot see a Caddy, TLS, DNS
 > or network failure. Any published availability number must therefore
 > be stated as an objective, not a measurement, until an off-host probe
@@ -296,7 +296,7 @@ provisioned; cloud is pay-as-you-use for DR.
   > 2026-07-27 once the galexie trim cleared the capacity condition it
   > was gated on, and its cadence is **monthly** (first Saturday, 04:00
   > UTC) per ADR-0043 §1/§3 —
-  > `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:333-350`
+  > `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:512-537`
   > carries the enable task and the dated rationale. The drill's own
   > precondition check still refuses (exit 2, uncounted) if free space
   > regresses, so it is safe under capacity pressure.
