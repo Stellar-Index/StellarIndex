@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
 	"sort"
@@ -686,12 +687,13 @@ func (s *Server) handleChartFiat(
 		if useInverse {
 			rate = p.InverseUSD
 		}
-		if rate <= 0 {
+		r := fxRateRat(rate)
+		if r == nil {
 			continue
 		}
 		wire = append(wire, HistoryPointWire{
 			T: WireTime(p.Bucket),
-			P: fmt.Sprintf("%.10f", rate),
+			P: ratToDecimal(r, ohlcPriceDigits),
 			// FX rates have no volume — omit v_usd entirely.
 		})
 	}
@@ -784,12 +786,29 @@ func (s *Server) handleChartFiatCross(
 	writeChartJSON(w, series, Flags{Triangulated: len(wire) > 0})
 }
 
+// fxRateRat lifts an FX history rate into exact arithmetic. The reader
+// hands the fx_quotes NUMERIC over as a float64; its shortest round-trip
+// decimal IS the column's value for anything up to 15 significant
+// digits, which every published fiat rate satisfies, whereas the
+// float's binary expansion would render 0.3/0.1 as 2.9999999999. nil
+// unless the rate is finite and strictly positive — a price is only
+// defined for positive rates, so anything else is a miss, not a point.
+func fxRateRat(rate float64) *big.Rat {
+	if !(rate > 0) || math.IsInf(rate, 1) {
+		return nil
+	}
+	r, ok := new(big.Rat).SetString(strconv.FormatFloat(rate, 'f', -1, 64))
+	if !ok {
+		return nil
+	}
+	return r
+}
+
 // crossFiatChartPoints merges two ascending daily USD-leg series on
 // equal buckets and emits the cross rate rate_usd[quote]/rate_usd[base]
-// per shared day. big.Rat.SetFloat64 is exact for every finite float64,
-// and the single Quo keeps the derived leg free of compounding float
-// error; ratToDecimal renders the same 10-digit decimal string the
-// other price surfaces use.
+// per shared day. Both legs go through [fxRateRat] and the single Quo
+// keeps the derived leg free of compounding float error; ratToDecimal
+// renders the same decimal string the other price surfaces use.
 func crossFiatChartPoints(basePts, quotePts []FXQuotePoint) []HistoryPointWire {
 	n := len(basePts)
 	if len(quotePts) < n {
@@ -807,12 +826,8 @@ func crossFiatChartPoints(basePts, quotePts []FXQuotePoint) []HistoryPointWire {
 		default:
 			i++
 			j++
-			if b.RateUSD <= 0 || q.RateUSD <= 0 {
-				continue
-			}
-			br := new(big.Rat).SetFloat64(b.RateUSD)
-			qr := new(big.Rat).SetFloat64(q.RateUSD)
-			if br == nil || qr == nil || br.Sign() <= 0 {
+			br, qr := fxRateRat(b.RateUSD), fxRateRat(q.RateUSD)
+			if br == nil || qr == nil {
 				continue
 			}
 			cross := new(big.Rat).Quo(qr, br)

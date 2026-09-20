@@ -723,8 +723,10 @@ func TestHistory_FlippedRowNonstandardDecimals(t *testing.T) {
 
 // TestHistory_FlippedInversionIsExactAtScale puts the swap at magnitudes
 // where a float — or a reciprocal taken as a division rather than as a
-// swap — drifts. Nothing here is rounded except the final render at ten
-// fractional digits.
+// swap — drifts. Nothing here is rounded except the final render, which
+// floors at ten fractional digits and extends past them only for a
+// price whose first significant digit lies beyond the tenth place —
+// a positive price is never served as an all-zero string.
 func TestHistory_FlippedInversionIsExactAtScale(t *testing.T) {
 	t.Parallel()
 	usdc := mustParseAsset(t, usdcClassicID)
@@ -744,7 +746,7 @@ func TestHistory_FlippedInversionIsExactAtScale(t *testing.T) {
 	}
 	for i, want := range []struct{ base, quote, price string }{
 		{"3", "1000000000000000001", "333333333333333333.6666666666"},
-		{"1000000000000000001", "3", "0.0000000000"},
+		{"1000000000000000001", "3", "0.000000000000000002999999999999"},
 		{"1", "7", "7.0000000000"},
 		{"3", "1", "0.3333333333"},
 	} {
