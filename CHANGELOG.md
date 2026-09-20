@@ -149,6 +149,22 @@ against.
 
 ### Fixed
 
+- **ledgerstream / trailing-missing tolerance events are now observable
+  (RLT-140, Q058):** `maybeTolerateTrailingMissing` converted a bounded
+  walk's missing-ledger error to a clean walk-complete with only a Warn
+  log — unlike the sibling retry path's
+  `obs.LedgerstreamLiveStartRetriesTotal`, nothing aggregatable moved. Adds
+  `obs.LedgerstreamTrailingMissingToleratedTotal`, labelled
+  `scope=trailing_edge|whole_range`. `whole_range` fires when the tolerance
+  window covers the *entire* requested range — the case the function's own
+  godoc already documents as indistinguishable from swallowing a genuine
+  mid-history hole, where the caller is required to own a coverage check.
+  That case was previously invisible in any dashboard; it is now directly
+  alertable. No tolerance-behaviour change for either current caller
+  (`pipeline.LedgerstreamConfig`, `opsutil.NewBoundedLedgerStreamConfig`)
+  — both already have downstream coverage checks (`seamed.go`'s
+  `lastArchive` check; `ingest.backfillChunkCoverage`, RLT-266).
+
 - **ansible / the archival-node WAL-headroom guard stops crediting a walked-up
   ancestor as WAL (RWC-529, #529):** the guard refuses a `max_wal_size` that
   does not fit the filesystem `pg_wal` is really on — the substitution that
