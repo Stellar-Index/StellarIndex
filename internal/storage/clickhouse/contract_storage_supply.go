@@ -83,13 +83,22 @@ type ContractStorageSupply struct {
 	sawInstance bool
 }
 
+// HasSelfChecks reports whether the contract published anything to cross-check
+// against — its own TotalSupply, its own HolderCount, or both. A caller that
+// serves [ContractStorageSupply.SelfConsistent] must gate on this: "nothing to
+// check" is not a verdict, and publishing it as one dresses a bare token in a
+// confirmation it never earned.
+func (s ContractStorageSupply) HasSelfChecks() bool {
+	return s.DeclaredTotal != nil || s.DeclaredHolders != nil
+}
+
 // SelfConsistent reports whether every cross-check the contract itself offered
 // agreed with what we decoded.
 //
 // It is TRUE when a contract offered no cross-checks at all — absence of
 // contradiction, which is all a bare token can give us. Callers that need to
-// distinguish "checked and agreed" from "nothing to check" read DeclaredTotal /
-// DeclaredHolders directly.
+// distinguish "checked and agreed" from "nothing to check" gate on
+// [ContractStorageSupply.HasSelfChecks].
 func (s ContractStorageSupply) SelfConsistent() bool {
 	if s.DeclaredTotal != nil && s.Total != nil && s.DeclaredTotal.Cmp(s.Total) != 0 {
 		return false

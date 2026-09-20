@@ -9707,13 +9707,13 @@ export interface components {
              */
             source: "mint_burn_flows" | "ledger_total_coins" | "contract_storage_balances";
             /** @description True when total_supply is a provable FLOOR rather than the figure itself, and must not be presented as exact. Set for source=contract_storage_balances: that reading sees only balances that are ledger entries right now, and Soroban state expiry archives contract-data entries, so a real and restorable balance can be invisible to it. Omitted when false. */
-            total_supply_lower_bound?: boolean;
+            circulating_supply_lower_bound?: boolean;
             /** @description Number of per-holder balance entries summed. Only present for source=contract_storage_balances. */
             balance_entries?: number;
             /** @description Whether every cross-check the contract itself published agreed with what was summed — its own TotalSupply against the sum, and its own HolderCount against the number of entries visible. False means the contract reports more holders (or a larger total) than the lake can show, which is what an archived balance looks like; the figure is still served, but as a floor. Only present for source=contract_storage_balances; absent means the contract offered no cross-checks, which is not the same as a failed one. */
-            contract_self_checks_agreed?: boolean;
+            supply_consistent?: boolean;
             /** @description The scale the CONTRACT ITSELF declares, read from its instance storage (METADATA or Config, either spelling). Only present for source=contract_storage_balances. OMITTED when the chain declares no scale — a consumer must not substitute a default, because a wrong exponent is a published money figure wrong by a power of ten. */
-            declared_decimals?: number;
+            decimals?: number;
             /**
              * Format: int64
              * @description Lake watermark this read is fresh to (ADR-0041): the highest ledger captured at serve time (for native, the exact ledger total_coins came from). Omitted when no watermark reader is wired. Pairs with flags.stale.
