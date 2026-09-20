@@ -141,6 +141,13 @@ const (
 	// the connection. We never read the body for content, so a hostile
 	// or buggy endpoint must not tie the worker up streaming megabytes.
 	maxDrainBytes = 64 << 10 // 64 KiB
+
+	// webhookUserAgent identifies deliveries to the customer's endpoint
+	// operator so an unexpected POST can be traced back to us (RLT-450).
+	// Every other outbound fetch in the repo sets an identifying
+	// User-Agent (internal/metadata/sep1.go, internal/stellarrpc); this
+	// path was the one exception.
+	webhookUserAgent = "stellar-index/webhooks (+https://stellarindex.io)"
 )
 
 // Compile-time guard for the two-worker double-delivery invariant
@@ -345,9 +352,25 @@ func (w *Worker) tick(ctx context.Context) {
 		// only; the outcome write has its own (see Worker.mark), because
 		// this one is already spent exactly when the POST timed out.
 		attemptCtx, cancel := context.WithTimeout(ctx, w.attemptTimeout())
-		w.deliverOne(attemptCtx, d)
+		w.deliverOneRecovered(attemptCtx, d)
 		cancel()
 	}
+}
+
+// deliverOneRecovered isolates a single delivery's panic to that delivery
+// (RLT-450). Without this, tick's top-level `defer
+// recoverBackgroundWorker(...)` (cmd/stellarindex-api) only stops the whole
+// process from crashing — it still ends the poll loop permanently, so one
+// bad row (a future decode edge case, a nil dereference) would silently
+// starve every OTHER pending delivery for the rest of the process lifetime.
+func (w *Worker) deliverOneRecovered(ctx context.Context, d platform.WebhookDelivery) {
+	defer func() {
+		if r := recover(); r != nil {
+			w.opts.Logger.Error("customer-webhook: deliverOne panicked; delivery left for lease expiry, batch continues",
+				"panic", r, "delivery_id", d.ID, "webhook_id", d.WebhookID)
+		}
+	}()
+	w.deliverOne(ctx, d)
 }
 
 // attemptTimeout is the per-delivery deadline: the HTTP client's own
@@ -431,6 +454,7 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", webhookUserAgent)
 	req.Header.Set("X-StellarIndex-Event", d.EventType)
 	req.Header.Set("X-StellarIndex-Timestamp", strconv.FormatInt(sigTS, 10))
 	req.Header.Set("X-StellarIndex-Signature", "sha256="+signature)

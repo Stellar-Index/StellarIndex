@@ -147,12 +147,14 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 		gotSignature string
 		gotTimestamp string
 		gotEventHdr  string
+		gotUserAgent string
 		gotBody      []byte
 	)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotSignature = r.Header.Get("X-StellarIndex-Signature")
 		gotTimestamp = r.Header.Get("X-StellarIndex-Timestamp")
 		gotEventHdr = r.Header.Get("X-StellarIndex-Event")
+		gotUserAgent = r.Header.Get("User-Agent")
 		gotBody, _ = io.ReadAll(r.Body)
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -202,6 +204,11 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 	}
 	if gotEventHdr != string(platform.WebhookEventIncidentSEV1) {
 		t.Errorf("event header = %q", gotEventHdr)
+	}
+	// RLT-450: deliveries must identify themselves so an endpoint
+	// operator can trace an unexpected POST back to us.
+	if gotUserAgent == "" || gotUserAgent == "Go-http-client/1.1" {
+		t.Errorf("User-Agent = %q, want an identifying stellar-index UA, not the Go default", gotUserAgent)
 	}
 	if string(gotBody) != string(payload) {
 		t.Errorf("body = %q, want %q", gotBody, payload)

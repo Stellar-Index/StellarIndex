@@ -501,7 +501,7 @@ func validateWebhookURL(ctx context.Context, raw string) error {
 // time when name resolution genuinely fails. This keeps tests
 // terse without weakening the production check.
 func rejectInternalHost(parent context.Context, host string) error {
-	if isReservedTLD(host) {
+	if nettools.IsReservedTLD(host) {
 		return nil
 	}
 	// Literal IP gets checked directly; named host gets resolved.
@@ -542,20 +542,7 @@ func blockedResolvedAddrError(host string, addrs []net.IPAddr) error {
 	return nil
 }
 
-// isReservedTLD reports whether `host` ends in an RFC 2606 /
-// RFC 6761 reserved TLD that's guaranteed not to resolve to real
-// infrastructure. Case-insensitive; matches the TLD suffix only.
-func isReservedTLD(host string) bool {
-	h := strings.ToLower(host)
-	for _, tld := range []string{".example", ".test", ".invalid", ".localhost"} {
-		if h == tld[1:] || strings.HasSuffix(h, tld) {
-			return true
-		}
-	}
-	return false
-}
-
-// (SSRF IP-block logic moved to internal/nettools.IsBlockedIP — the single
+// (SSRF IP-block and reserved-TLD logic moved to internal/nettools — the single
 // canonical union blocklist shared with SEP-1 resolution + webhook delivery,
 // CS-008. Registration + delivery now agree by construction.)
 

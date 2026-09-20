@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -287,5 +288,76 @@ func TestNew_AcceptsOptionsWithinTheLeaseInvariant(t *testing.T) {
 	w := New(nopStore{}, Options{BatchLimit: 5})
 	if w == nil {
 		t.Fatal("New returned nil for an in-invariant BatchLimit")
+	}
+}
+
+// panicOnOneStore is a DeliveryStore whose GetWebhook panics for one
+// specific webhook id and answers normally for everything else. Models a
+// future decode edge case or a bad row surfacing as a panic partway
+// through a batch.
+type panicOnOneStore struct {
+	webhooks  map[uuid.UUID]platform.CustomerWebhook
+	pending   []platform.WebhookDelivery
+	panicOn   uuid.UUID
+	delivered []uuid.UUID
+}
+
+func (s *panicOnOneStore) ListPendingDeliveries(context.Context, int) ([]platform.WebhookDelivery, error) {
+	return s.pending, nil
+}
+
+func (s *panicOnOneStore) GetWebhook(_ context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
+	if id == s.panicOn {
+		panic("simulated panic: this delivery's row is corrupt")
+	}
+	if w, ok := s.webhooks[id]; ok {
+		return w, nil
+	}
+	return platform.CustomerWebhook{}, platform.ErrNotFound
+}
+
+func (s *panicOnOneStore) MarkDelivered(_ context.Context, id uuid.UUID, _ int) error {
+	s.delivered = append(s.delivered, id)
+	return nil
+}
+
+func (s *panicOnOneStore) MarkAttemptFailed(context.Context, uuid.UUID, string, int, time.Time) error {
+	return nil
+}
+
+func (*panicOnOneStore) WebhookAccountStatus(context.Context, uuid.UUID) (platform.AccountStatus, error) {
+	return platform.AccountActive, nil
+}
+
+// TestTick_PanicInOneDeliveryDoesNotStopTheBatch pins RLT-450: tick had no
+// recover() anywhere between it and deliverOne, so a panic on one row
+// (a decode edge case, a nil dereference) killed the poll loop for the
+// rest of the process — every OTHER pending delivery, including ones
+// already claimed in the same batch, silently stopped being drained.
+func TestTick_PanicInOneDeliveryDoesNotStopTheBatch(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	badID := uuid.New()
+	goodID := uuid.New()
+	goodDeliveryID := uuid.New()
+	store := &panicOnOneStore{
+		webhooks: map[uuid.UUID]platform.CustomerWebhook{
+			goodID: {ID: goodID, URL: ts.URL, SecretHash: []byte("secret"), Enabled: true},
+		},
+		panicOn: badID,
+		pending: []platform.WebhookDelivery{
+			{ID: uuid.New(), WebhookID: badID, EventType: "incident.sev1", Payload: []byte(`{}`)},
+			{ID: goodDeliveryID, WebhookID: goodID, EventType: "incident.sev1", Payload: []byte(`{}`)},
+		},
+	}
+	w := New(store, Options{HTTPClient: &http.Client{Timeout: 5 * time.Second}})
+
+	w.tick(context.Background())
+
+	if len(store.delivered) != 1 || store.delivered[0] != goodDeliveryID {
+		t.Fatalf("delivered = %v, want exactly the good delivery (%s) delivered despite the first row panicking", store.delivered, goodDeliveryID)
 	}
 }
