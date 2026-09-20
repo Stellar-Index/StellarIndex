@@ -149,6 +149,23 @@ against.
 
 ### Fixed
 
+- **storage / MEV detection: dropped notional, and a doubled-leg single-venue
+  false positive (T416, RLT-275, T001):** `InsertMEVEvent` wrote a literal SQL
+  `NULL` for `profit_usd` regardless of the detected candidate's
+  `NotionalUSD`, silently discarding it on every insert; it now binds through
+  the existing `nullString` helper. Separately, `buildArbCandidate`'s
+  single-venue guard only fired for 2-node cycles, so a 3+ node payment that
+  padded a real cycle with a redundant extra leg on a pair it already covers
+  (more edges than nodes — never true of a genuine minimal cycle) still
+  cleared the cycle test and skipped the venue check entirely on one venue;
+  the guard now also fires whenever edges exceed nodes.
+- **storage / the assets listing `q` filter can find a Soroban contract id
+  (RLT-023):** a Soroban-native row has NULL code/slug/issuer by nature (a
+  contract asset has no SEP-1 code or issuer account), so the search
+  predicate's `COALESCE(ca.slug, ca.code)` was NULL for every such row and
+  `type=soroban` combined with any `q` matched nothing. It now falls back to
+  `ca.asset_id`, mirroring the listing's own "slug" output column.
+
 - **ansible / the archival-node WAL-headroom guard stops crediting a walked-up
   ancestor as WAL (RWC-529, #529):** the guard refuses a `max_wal_size` that
   does not fit the filesystem `pg_wal` is really on — the substitution that
