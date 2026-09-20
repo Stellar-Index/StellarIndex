@@ -95,6 +95,25 @@ func TestBuildAssetsQuery_QFilter(t *testing.T) {
 	}
 }
 
+// TestBuildAssetsQuery_QFilterMatchesSorobanContractID pins RLT-023: a
+// Soroban-native row has NULL code/slug/issuer (see the discovered-
+// contract arm of listAssetsBaseSelect), so the q predicate's slug leg
+// must fall back to ca.asset_id — exactly as the base SELECT's own
+// "slug" column already does (COALESCE(ca.slug, ca.code, ca.asset_id))
+// — or type=soroban&q=<contract id> can never match a row.
+func TestBuildAssetsQuery_QFilterMatchesSorobanContractID(t *testing.T) {
+	t.Parallel()
+	sql, _ := mustBuildAssetsQuery(t, 50, "", "", "", "CAUP7", "soroban", AssetsOrderObservationCountDesc)
+	// The trailing "LIKE LOWER(" pins this to the q PREDICATE specifically
+	// — listAssetsBaseSelect's SELECT list also has a
+	// "COALESCE(ca.slug, ca.code, ca.asset_id)" (its "slug" output
+	// column), so matching that substring alone would pass whether or
+	// not the WHERE clause was ever fixed.
+	if !strings.Contains(sql, "LOWER(COALESCE(ca.slug, ca.code, ca.asset_id)) LIKE LOWER(") {
+		t.Errorf("q predicate must fall back to ca.asset_id (the only identifying column a Soroban-native row has); got:\n%s", sql)
+	}
+}
+
 // TestBuildAssetsQuery_IssuerAndQ pins the placeholder ORDER when both
 // are set: issuer takes $1, the LIKE pattern $2.
 func TestBuildAssetsQuery_IssuerAndQ(t *testing.T) {
