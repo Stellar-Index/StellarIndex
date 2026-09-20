@@ -21,7 +21,11 @@ package canonical
 //     `int(p.Lo)`, `float64(p.Hi)`, … are sign-reinterpreting /
 //     narrowing / precision-losing and fail.
 //   - a `MustI128()` / `MustU128()` / `MustI256()` / `MustU256()`
-//     result used directly as the operand of a numeric conversion.
+//     result used as the operand of a numeric conversion.
+//   - either of the above reached through a local: `lo := p.Lo;
+//     int64(lo)` is the same truncation and is judged the same way,
+//     however many plain assignments sit between the word and the
+//     conversion (see collectWordTaint).
 //
 // Escape hatch: a `//i128:ok <reason>` comment on the same line (or
 // the line above) exempts a site. Reasons are mandatory; stale
@@ -129,10 +133,99 @@ func basicKind(t types.Type) types.BasicKind {
 	return types.Invalid
 }
 
+// wordTaint is what an operand is known to carry: a parts-struct word
+// (field name + the word's own type) or a Must[IU]128/256() result.
+type wordTaint struct {
+	field    string
+	fieldTyp types.Type
+	accessor string
+}
+
+// classifyWord recognises the three spellings of the same operand — the
+// word itself, a Must* call, or a local bound to either — so a conversion
+// is judged the same whichever the author picked. A guard that only knew
+// the inline shape was defeated by `lo := p.Lo; int64(lo)`.
+func classifyWord(info *types.Info, tainted map[types.Object]wordTaint, expr ast.Expr) (wordTaint, bool) {
+	switch e := ast.Unparen(expr).(type) {
+	case *ast.CallExpr:
+		if sel, ok := ast.Unparen(e.Fun).(*ast.SelectorExpr); ok && mustAccessors[sel.Sel.Name] {
+			return wordTaint{accessor: sel.Sel.Name}, true
+		}
+	case *ast.SelectorExpr:
+		if !partFields[e.Sel.Name] {
+			return wordTaint{}, false
+		}
+		if recv, ok := info.Types[e.X]; ok && isPartsType(recv.Type) {
+			return wordTaint{field: e.Sel.Name, fieldTyp: info.TypeOf(e)}, true
+		}
+	case *ast.Ident:
+		if obj := info.ObjectOf(e); obj != nil {
+			tn, ok := tainted[obj]
+			return tn, ok
+		}
+	}
+	return wordTaint{}, false
+}
+
+// eachBinding calls fn for every `name := value`, `name = value` and
+// `var name = value` pair in n (pairwise forms only; a tuple-returning
+// call binds nothing the guard can name).
+func eachBinding(n ast.Node, fn func(lhs ast.Expr, rhs ast.Expr)) {
+	switch s := n.(type) {
+	case *ast.AssignStmt:
+		if len(s.Lhs) == len(s.Rhs) {
+			for i := range s.Lhs {
+				fn(s.Lhs[i], s.Rhs[i])
+			}
+		}
+	case *ast.ValueSpec:
+		if len(s.Names) == len(s.Values) {
+			for i := range s.Names {
+				fn(s.Names[i], s.Values[i])
+			}
+		}
+	}
+}
+
+// collectWordTaint records every object bound to a parts word, a Must*
+// result, or another tainted object, iterating to a fixpoint so a chain
+// of locals is seen through. Flow-insensitive on purpose: a local that
+// ever held a word is treated as the word (escape with //i128:ok).
+func collectWordTaint(info *types.Info, files []*ast.File) map[types.Object]wordTaint {
+	tainted := map[types.Object]wordTaint{}
+	for changed := true; changed; {
+		changed = false
+		for _, f := range files {
+			ast.Inspect(f, func(n ast.Node) bool {
+				eachBinding(n, func(lhs, rhs ast.Expr) {
+					id, ok := ast.Unparen(lhs).(*ast.Ident)
+					if !ok {
+						return
+					}
+					obj := info.ObjectOf(id)
+					if obj == nil {
+						return
+					}
+					if _, seen := tainted[obj]; seen {
+						return
+					}
+					if tn, ok := classifyWord(info, tainted, rhs); ok {
+						tainted[obj] = tn
+						changed = true
+					}
+				})
+				return true
+			})
+		}
+	}
+	return tainted
+}
+
 // checkConversion inspects one call expression; when it is a lossy
 // numeric conversion of a parts-struct word (or a Must* accessor
-// result) it returns a violation message, else "".
-func checkConversion(info *types.Info, call *ast.CallExpr) string {
+// result), directly or through a tainted local, it returns a violation
+// message, else "".
+func checkConversion(info *types.Info, tainted map[types.Object]wordTaint, call *ast.CallExpr) string {
 	if len(call.Args) != 1 {
 		return ""
 	}
@@ -144,30 +237,26 @@ func checkConversion(info *types.Info, call *ast.CallExpr) string {
 	if !ok || target.Info()&types.IsNumeric == 0 {
 		return ""
 	}
-	arg := ast.Unparen(call.Args[0])
+	tn, ok := classifyWord(info, tainted, call.Args[0])
+	if !ok {
+		return ""
+	}
+	via := ""
+	if id, isIdent := ast.Unparen(call.Args[0]).(*ast.Ident); isIdent {
+		via = fmt.Sprintf(" (through local %q)", id.Name)
+	}
 
-	// (b) Must[IU]128/256() result fed straight into a numeric
-	// conversion — never a correct decode.
-	if inner, ok := arg.(*ast.CallExpr); ok {
-		if sel, ok := ast.Unparen(inner.Fun).(*ast.SelectorExpr); ok && mustAccessors[sel.Sel.Name] {
-			return fmt.Sprintf("%s(…%s()) — a 128-bit accessor result must go through canonical.FromInt128Parts/FromUInt128Parts, never a numeric conversion", target.Name(), sel.Sel.Name)
-		}
+	// (b) Must[IU]128/256() result fed into a numeric conversion — never
+	// a correct decode.
+	if tn.accessor != "" {
+		return fmt.Sprintf("%s(…%s())%s — a 128-bit accessor result must go through canonical.FromInt128Parts/FromUInt128Parts, never a numeric conversion", target.Name(), tn.accessor, via)
 	}
 
 	// (a) lossy conversion of a parts-struct word field.
-	sel, ok := arg.(*ast.SelectorExpr)
-	if !ok || !partFields[sel.Sel.Name] {
-		return ""
-	}
-	recv, ok := info.Types[sel.X]
-	if !ok || !isPartsType(recv.Type) {
-		return ""
-	}
-	fieldKind := basicKind(info.TypeOf(sel))
-	if fieldKind == target.Kind() {
+	if basicKind(tn.fieldTyp) == target.Kind() {
 		return "" // lossless same-width same-sign conversion (the correct decode shape)
 	}
-	return fmt.Sprintf("%s(<x>.%s) truncates/reinterprets a 128-bit word (field is %s) — decode via canonical.FromInt128Parts(int64(p.Hi), uint64(p.Lo)) or the FromUInt* siblings", target.Name(), sel.Sel.Name, info.TypeOf(sel))
+	return fmt.Sprintf("%s(<x>.%s)%s truncates/reinterprets a 128-bit word (field is %s) — decode via canonical.FromInt128Parts(int64(p.Hi), uint64(p.Lo)) or the FromUInt* siblings", target.Name(), tn.field, via, tn.fieldTyp)
 }
 
 // TestI128TruncationGuard — ADR-0003. Repo-wide go/types walk
@@ -186,6 +275,7 @@ func TestI128TruncationGuard(t *testing.T) {
 	allMarkers := map[string]token.Position{}
 
 	for _, pkg := range pkgs {
+		tainted := collectWordTaint(pkg.TypesInfo, pkg.Syntax)
 		for _, f := range pkg.Syntax {
 			markers := markerLines(pkg.Fset, f)
 			for line := range markers {
@@ -197,7 +287,7 @@ func TestI128TruncationGuard(t *testing.T) {
 				if !ok {
 					return true
 				}
-				msg := checkConversion(pkg.TypesInfo, call)
+				msg := checkConversion(pkg.TypesInfo, tainted, call)
 				if msg == "" {
 					return true
 				}
@@ -263,6 +353,16 @@ func sink() {
 	_ = uint64(p.Lo)        // OK: the correct FromInt128Parts low-word shape
 	_ = int64(p.Hi)         // OK: the correct FromInt128Parts high-word shape
 	_ = int64(a.MustI128()) // TRUNCATE: Must* result fed to a conversion
+
+	lo := p.Lo
+	_ = int64(lo)  // TRUNCATE: the same word, bound to a local first
+	_ = uint64(lo) // OK: the correct shape through a local
+	lo2 := lo
+	_ = int32(lo2) // TRUNCATE: two locals deep
+	var hi int64 = p.Hi
+	_ = float64(hi) // TRUNCATE: var-declared local
+	m := a.MustI128()
+	_ = float64(m) // TRUNCATE: Must* result bound to a local
 }
 `
 	fset := token.NewFileSet()
@@ -280,6 +380,7 @@ func sink() {
 	if _, err := (&types.Config{}).Check("example.test/fake/xdr", fset, []*ast.File{f}, info); err != nil {
 		t.Fatalf("type-check synthetic source: %v", err)
 	}
+	tainted := collectWordTaint(info, []*ast.File{f})
 
 	fired := map[string]bool{}
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -291,12 +392,15 @@ func sink() {
 		if err := printer.Fprint(&b, fset, call); err != nil {
 			t.Fatalf("render call: %v", err)
 		}
-		fired[b.String()] = checkConversion(info, call) != ""
+		fired[b.String()] = checkConversion(info, tainted, call) != ""
 		return true
 	})
 
-	mustFire := []string{"int64(p.Lo)", "float64(p.Hi)", "int32(p.Lo)", "int64(a.MustI128())"}
-	mustPass := []string{"uint64(p.Lo)", "int64(p.Hi)"}
+	mustFire := []string{
+		"int64(p.Lo)", "float64(p.Hi)", "int32(p.Lo)", "int64(a.MustI128())",
+		"int64(lo)", "int32(lo2)", "float64(hi)", "float64(m)",
+	}
+	mustPass := []string{"uint64(p.Lo)", "int64(p.Hi)", "uint64(lo)"}
 	for _, k := range mustFire {
 		if seen, ok := fired[k]; !ok {
 			t.Fatalf("positive-control expr %s never inspected — synthetic source drifted", k)

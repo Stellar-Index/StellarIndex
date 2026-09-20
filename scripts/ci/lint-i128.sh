@@ -43,6 +43,34 @@ if [ -n "$hits" ]; then
   fail=1
 fi
 
+# The same truncation one hop away: `lo := p.Lo` (or `=`) and then
+# `int64(lo)` further down the same file. File-local and flow-
+# insensitive by design — the go/types guard is the authority on locals;
+# this is its fast mirror, so the grep gate and the deep gate reject the
+# same rewrite of the same bug.
+go_files=()
+while IFS= read -r f; do go_files+=("$f"); done \
+  < <(find internal cmd pkg -name '*.go' ! -name '*_test.go' 2>/dev/null | sort)
+vhits=$(awk '
+    FNR == 1 { split("", bound) }
+    /^[[:space:]]*\/\// { next }
+    {
+      line = $0
+      sub(/[[:space:]]\/\/.*$/, "", line)
+      if (match(line, /[A-Za-z_][A-Za-z0-9_]*[[:space:]]*:?=[[:space:]]*[A-Za-z_][A-Za-z0-9_.]*\.Lo([^A-Za-z0-9_]|$)/)) {
+        v = substr(line, RSTART, RLENGTH); sub(/[[:space:]]*:?=.*$/, "", v); bound[v] = 1
+      }
+      for (v in bound) {
+        if (match(line, "(^|[^A-Za-z0-9_])int(8|16|32|64)?\\(" v "\\)")) print FILENAME ":" FNR ":" $0
+      }
+    }' "${go_files[@]}" || true)
+if [ -n "$vhits" ]; then
+  echo "lint-i128 ❌ i128 truncation through a local — the variable was bound to <x>.Lo earlier in the file (ADR-0003):" >&2
+  echo "$vhits" >&2
+  echo "  → pass the word as uint64(p.Lo) to canonical.FromInt128Parts; do not narrow it first." >&2
+  fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
   echo "✅ i128 lint passed."
 fi
