@@ -70,13 +70,67 @@ var mustAccessors = map[string]bool{
 
 var i128OkMarker = regexp.MustCompile(`^\s*i128:ok\s+\S+`)
 
+// guardScope is the import-path segment set the repo-wide guards
+// protect — the same directories scripts/ci/lint-i128.sh scans. A load
+// error there is fatal: the guard cannot vouch for code it could not
+// type-check. One outside it (scripts/ tooling, test/ harnesses) is
+// reported and that package skipped, so a scratch file cannot take the
+// guard down with it.
+var guardScope = []string{"/internal/", "/cmd/", "/pkg/"}
+
+// minGuardedPackages is the floor on in-scope packages the loader must
+// return (132 when set). A silently narrowed load — a changed pattern, a
+// moved module boundary — must not green the guard on a near-empty tree.
+const minGuardedPackages = 100
+
+func inGuardScope(pkgPath, module string) bool {
+	rel := strings.TrimPrefix(pkgPath, module)
+	for _, seg := range guardScope {
+		if strings.HasPrefix(rel, seg) {
+			return true
+		}
+	}
+	return false
+}
+
+// partitionLoadErrors keeps the packages the guards can walk and splits
+// the load failures by scope: in-scope failures are fatal, out-of-scope
+// ones are skipped with their reason.
+func partitionLoadErrors(pkgs []*packages.Package, module string) (keep []*packages.Package, fatal, skipped []string) {
+	for _, p := range pkgs {
+		if len(p.Errors) == 0 {
+			keep = append(keep, p)
+			continue
+		}
+		msg := fmt.Sprintf("package %s failed to load: %v", p.PkgPath, p.Errors)
+		if inGuardScope(p.PkgPath, module) {
+			fatal = append(fatal, msg)
+		} else {
+			skipped = append(skipped, msg)
+		}
+	}
+	return keep, fatal, skipped
+}
+
+// guardedCount is how many of pkgs are in guardScope.
+func guardedCount(pkgs []*packages.Package, module string) int {
+	n := 0
+	for _, p := range pkgs {
+		if inGuardScope(p.PkgPath, module) {
+			n++
+		}
+	}
+	return n
+}
+
 // loadRepoPackages type-checks every non-test package in the repo
 // once (parse once, types per package — packages.Load batches this).
 func loadRepoPackages(t *testing.T) []*packages.Package {
 	t.Helper()
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedFiles | packages.NeedCompiledGoFiles |
-			packages.NeedImports | packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo,
+			packages.NeedImports | packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo |
+			packages.NeedModule,
 		Dir:   repoRoot(),
 		Tests: false,
 	}
@@ -84,15 +138,30 @@ func loadRepoPackages(t *testing.T) []*packages.Package {
 	if err != nil {
 		t.Fatalf("packages.Load: %v", err)
 	}
+	module := ""
 	for _, p := range pkgs {
-		for _, e := range p.Errors {
-			t.Fatalf("package %s failed to load: %v", p.PkgPath, e)
+		if p.Module != nil {
+			module = p.Module.Path
+			break
 		}
 	}
-	if len(pkgs) == 0 {
-		t.Fatal("packages.Load returned no packages")
+	if module == "" {
+		t.Fatal("packages.Load returned no package with a module path")
 	}
-	return pkgs
+	keep, fatal, skipped := partitionLoadErrors(pkgs, module)
+	for _, m := range skipped {
+		t.Logf("skipping out-of-scope %s", m)
+	}
+	for _, m := range fatal {
+		t.Error(m)
+	}
+	if len(fatal) > 0 {
+		t.FailNow()
+	}
+	if n := guardedCount(keep, module); n < minGuardedPackages {
+		t.Fatalf("only %d in-scope packages loaded (floor %d) — the load has been narrowed and the guard would be vacuous", n, minGuardedPackages)
+	}
+	return keep
 }
 
 func repoRoot() string { return "../.." }
