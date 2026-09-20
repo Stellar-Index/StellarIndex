@@ -256,7 +256,6 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 		return AssetSupply{}, false, false
 	}
 
-	consistent := st.SelfConsistent()
 	resp := AssetSupply{
 		AssetID:                     assetID,
 		ContractID:                  contractID,
@@ -264,8 +263,11 @@ func (s *Server) storageSupplyResponse(ctx context.Context, assetID, contractID 
 		Source:                      string(supply.BasisContractStorageBalances),
 		CirculatingSupplyLowerBound: true,
 		BalanceEntries:              st.BalanceEntries,
-		SupplyConsistent:            &consistent,
 		AsOfLedger:                  st.AsOfLedger,
+	}
+	if st.HasSelfChecks() {
+		consistent := st.SelfConsistent()
+		resp.SupplyConsistent = &consistent
 	}
 	if st.DecimalsFound {
 		d := st.Decimals
