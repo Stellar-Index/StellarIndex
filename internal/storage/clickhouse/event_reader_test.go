@@ -131,6 +131,21 @@ func TestForEachLedgerWindow(t *testing.T) {
 	}
 }
 
+// TestContractEventsFilteredQuery_ContractIDsEscaped pins T345/T387:
+// contractIDs is a caller-supplied slice (a decoder's live-grown
+// GatedContractSet(), not a compile-time constant) — an unescaped quote in
+// one element must not be inlined raw into the query text (it would close
+// the string literal early and let the remainder run as SQL).
+func TestContractEventsFilteredQuery_ContractIDsEscaped(t *testing.T) {
+	q := contractEventsFilteredQuery([]string{`CAAA' OR '1'='1`}, nil, nil, false, false)
+	if strings.Contains(q, `contract_id IN ('CAAA' OR '1'='1')`) {
+		t.Fatalf("contractIDs inlined unescaped — injection vector open:\n%s", q)
+	}
+	if !strings.Contains(q, `contract_id IN ('CAAA\' OR \'1\'=\'1')`) {
+		t.Errorf("contractIDs not escaped as expected:\n%s", q)
+	}
+}
+
 // TestSQLQuoteEscaped — lake-sourced strings are escaped before being inlined
 // into the exemplar query text.
 func TestSQLQuoteEscaped(t *testing.T) {
