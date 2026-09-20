@@ -96,6 +96,10 @@ for a 1440-point chart) — the table is a default, not a constraint.
 `vwap` is served from the existing `prices_<gran>` CAGGs (live
 today).
 
+**Superseded 2026-07-05 — `twap` is served; see the amendment of
+2026-09-20 below. The two paragraphs that follow are the original
+decision, kept as written.**
+
 `twap` is NOT yet served — we do not maintain a TWAP CAGG at audit
 time. Requests with `price_type=twap` return `400 Bad Request` with
 problem+json explaining the parameter is reserved for forward
@@ -137,7 +141,8 @@ cap and receive `flags.truncated=true`.
   using it continue working unchanged.
 - TWAP support is explicitly deferred. The 400 response includes a
   pointer to this ADR so consumers know the parameter is honored
-  on a future release.
+  on a future release. *(Superseded 2026-07-05 — see the amendment
+  of 2026-09-20.)*
 - Coverage matrix rows F1.3 (Historical Price Chart) move from
   partial to served.
 
@@ -190,3 +195,33 @@ recomputable with a FORCED `refresh_continuous_aggregate`. §Cap's
 "~35 days of data" figure was always about the response cap, not about
 what is stored; the two bounds are independent and the OpenAPI
 `granularity` description states each.
+
+## Amendment — 2026-09-20: `price_type=twap` is served, and has been since 2026-07-05
+
+Recorded because §price_type handling and the Consequences still
+describe `twap` as a reserved parameter that returns `400`, while the
+amendment above already spoke of "since TWAP shipped" — this ADR
+contradicted itself for the reader who stopped at §price_type. **The
+decision is untouched:** the `(timeframe, granularity, price_type)`
+contract and the refusal to fall back silently to VWAP both stand.
+
+**What shipped.** Migration 0081 added the `twap_1h` and `twap_1d`
+continuous aggregates over `prices_1m`, and `/v1/chart?price_type=twap`
+serves them for every non-fiat base. The requested `granularity` is
+snapped onto the grain a TWAP CAGG backs — `1d`, `1w`, `1mo` → `1d`;
+everything finer → `1h` — and the response's own `granularity` reports
+the grain actually served, so a consumer never mistakes a snapped
+series for the one they asked for. A fiat:fiat pair is served from
+`fx_quotes` for every `price_type`, `twap` included: the daily
+reference rate is the time series, and there is no sub-daily trade
+stream to time-weight.
+
+**What §price_type feared did not happen.** The concern was an
+on-the-fly TWAP from the 1m CAGG that would later disagree with a real
+TWAP CAGG. The CAGG shipped first; nothing was ever served from an
+interim computation, so there was no consumer-visible break.
+
+**Where it is pinned.** `TestChart_TWAP_ServesTimeWeightedSeries`,
+`TestChart_TWAP_GranularitySnapping` and
+`TestChart_TWAP_StablecoinFallback` in `internal/api/v1/chart_test.go`.
+Launch-readiness row L7.8 is closed by this amendment.
