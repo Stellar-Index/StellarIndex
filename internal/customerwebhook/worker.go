@@ -428,7 +428,14 @@ func (w *Worker) deliverOne(ctx context.Context, d platform.WebhookDelivery) {
 	resp, err := w.opts.HTTPClient.Do(req)
 	if err != nil {
 		obs.CustomerWebhookDeliveryDurationSeconds.WithLabelValues("network_error").Observe(time.Since(start).Seconds())
-		w.handleFailure(ctx, d, 0, fmt.Sprintf("POST %s: %v", wh.URL, err), "network_error")
+		// RSEC-Y1: err can carry internal network detail — in particular
+		// the SSRF dial guard's own refusal names the resolved address it
+		// blocked. last_error is stored verbatim and served by the
+		// dashboard API's deliveryDTO, so the customer gets a fixed,
+		// address-free reason; the real error is logged for operators.
+		w.opts.Logger.Warn("customer-webhook: delivery POST failed",
+			"err", err, "delivery_id", d.ID, "webhook_id", d.WebhookID)
+		w.handleFailure(ctx, d, 0, "network error contacting webhook URL", "network_error")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()

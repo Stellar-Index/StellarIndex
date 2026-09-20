@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -204,6 +205,45 @@ func TestWorker_DeliversOn2xx(t *testing.T) {
 	}
 	if string(gotBody) != string(payload) {
 		t.Errorf("body = %q, want %q", gotBody, payload)
+	}
+}
+
+// TestWorker_NetworkErrorDoesNotLeakRawErrorText pins RSEC-Y1: a
+// transport-level failure (here, a closed listener — connection refused)
+// must record a fixed, address-free last_error. The raw dial error names
+// the destination host:port, and last_error is served verbatim by the
+// dashboard API's deliveryDTO.
+func TestWorker_NetworkErrorDoesNotLeakRawErrorText(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := ts.URL
+	ts.Close() // listener now refuses every connection
+
+	store := newFakeStore()
+	webhookID, secret := makeWebhook(t, url, true)
+	store.addWebhook(platform.CustomerWebhook{
+		ID: webhookID, URL: url, SecretHash: secret, Enabled: true,
+	})
+	deliveryID := uuid.New()
+	store.enqueue(platform.WebhookDelivery{
+		ID: deliveryID, WebhookID: webhookID,
+		EventType: string(platform.WebhookEventIncidentSEV1),
+		Payload:   []byte(`{}`), NextAttemptAt: time.Now().Add(-time.Second),
+	})
+
+	runOneTick(t, store, customerwebhook.Options{PollInterval: 30 * time.Millisecond})
+
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	fails := store.failures[deliveryID]
+	if len(fails) != 1 {
+		t.Fatalf("failures = %v, want exactly one attempt recorded", fails)
+	}
+	msg := fails[0].msg
+	if strings.Contains(msg, "127.0.0.1") || strings.Contains(msg, url) {
+		t.Errorf("last_error %q leaks the destination address", msg)
+	}
+	if msg != "network error contacting webhook URL" {
+		t.Errorf("last_error = %q, want the fixed customer-safe reason", msg)
 	}
 }
 

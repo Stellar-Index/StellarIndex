@@ -158,8 +158,12 @@ func TestTick_TimedOutPOSTStillRecordsTheAttempt(t *testing.T) {
 			testutil.ToFloat64(obs.CustomerWebhookDeliveryAttemptsTotal.WithLabelValues("mark_error"))-markErrBefore)
 	}
 	got := store.failed[0]
-	if got.status != 0 || !strings.Contains(got.msg, "POST ") {
-		t.Errorf("recorded failure = %+v, want a status-0 network failure naming the POST", got)
+	// RSEC-Y1: the recorded message is the fixed, address-free reason —
+	// not the raw dial/transport error text, which can name an internal
+	// destination — so this only pins the status and outcome, not wording
+	// that used to embed the URL.
+	if got.status != 0 || got.msg == "" {
+		t.Errorf("recorded failure = %+v, want a status-0 network failure", got)
 	}
 	// Transient, first attempt: a retry must be SCHEDULED (backoff is
 	// jittered into [15s, 30s]), not cleared.
