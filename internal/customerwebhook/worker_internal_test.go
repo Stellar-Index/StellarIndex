@@ -262,3 +262,30 @@ func TestNew_DefaultClientWiresSSRFGuardAndRefusesRedirects(t *testing.T) {
 		t.Errorf("CheckRedirect = %v, want http.ErrUseLastResponse", rerr)
 	}
 }
+
+// TestNew_RejectsOptionsThatBreakTheLeaseInvariant pins RLT-223: the
+// compile-time guard beside the defaults (storeLeaseDuration vs
+// defaultBatchLimit/defaultHTTPTimeout/markWriteTimeout) only protects the
+// DEFAULT values. A caller-supplied BatchLimit or HTTPClient.Timeout that
+// pushes the worst-case serial batch time at or past the store's claim
+// lease must be refused at construction, not silently accepted to double-
+// deliver in production once the lease expires mid-batch.
+func TestNew_RejectsOptionsThatBreakTheLeaseInvariant(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("New did not panic on a BatchLimit/Timeout combination that exceeds the store's claim lease")
+		}
+	}()
+	// 100 rows x (10s default timeout + 1s markWriteTimeout) = 1100s,
+	// far past the 5-minute (300s) storeLeaseDuration.
+	New(nopStore{}, Options{BatchLimit: 100})
+}
+
+// TestNew_AcceptsOptionsWithinTheLeaseInvariant is the control: a
+// BatchLimit comfortably under the lease must construct cleanly.
+func TestNew_AcceptsOptionsWithinTheLeaseInvariant(t *testing.T) {
+	w := New(nopStore{}, Options{BatchLimit: 5})
+	if w == nil {
+		t.Fatal("New returned nil for an in-invariant BatchLimit")
+	}
+}

@@ -259,6 +259,25 @@ func New(store DeliveryStore, opts Options) *Worker {
 	if opts.Clock == nil {
 		opts.Clock = time.Now
 	}
+	// RLT-223: the compile-time guard beside the defaults only covers the
+	// DEFAULT BatchLimit and HTTPClient.Timeout. A caller-supplied Options
+	// can raise either independently — Options.BatchLimit's doc comment
+	// says explicitly "if you raise this, keep the product under the
+	// lease", which was an unenforced operator obligation, not a runtime
+	// check. effectiveTimeout mirrors attemptTimeout()'s own fallback (a
+	// zero/absent Timeout still bounds each attempt at defaultHTTPTimeout
+	// via the attempt context, so that — not the raw client field — is
+	// the true per-attempt worst case). Fail closed at construction
+	// rather than let a misconfigured worker double-deliver under load.
+	effectiveTimeout := opts.HTTPClient.Timeout
+	if effectiveTimeout <= 0 {
+		effectiveTimeout = defaultHTTPTimeout
+	}
+	if worst := time.Duration(opts.BatchLimit) * (effectiveTimeout + markWriteTimeout); worst >= storeLeaseDuration {
+		panic(fmt.Sprintf(
+			"customerwebhook: New: BatchLimit(%d) x (effective HTTPClient.Timeout(%s) + markWriteTimeout(%s)) = %s, must stay under the store's %s claim lease (storeLeaseDuration) or a row is re-claimed and double-delivered before this batch finishes it",
+			opts.BatchLimit, effectiveTimeout, markWriteTimeout, worst, storeLeaseDuration))
+	}
 	return &Worker{
 		store:    store,
 		accounts: accounts,
