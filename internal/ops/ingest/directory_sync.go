@@ -32,19 +32,47 @@ import (
 //
 // The labels are DISPLAY data with third-party attribution — they
 // never feed verification, the currency catalogue, or the in-repo
-// scam list. `ReplaceDirectory` refuses an empty parse (a broken
-// fetch must not prune the table), and per-file JSON errors are
-// counted + reported, failing the run only if EVERYTHING failed.
+// scam list. A truncated, corrupt or oversized tarball fails the run
+// (parseDirectoryTarball), `ReplaceDirectory` refuses an empty parse
+// (a broken fetch must not prune the table), and per-file JSON errors
+// are counted + reported, failing the run only if EVERYTHING failed.
 const (
 	directorySource     = "stellar-expert"
 	directoryDefaultURL = "https://github.com/stellar-expert/public-directory/archive/refs/heads/master.tar.gz"
 
-	// directoryMaxTarballBytes bounds the decompressed read. The
-	// tarball is ~4 MB compressed today; 256 MB of headroom is an
-	// order-of-magnitude guard against a decompression bomb from a
-	// compromised -url, not a tight fit.
+	// directoryMaxTarballBytes bounds both the compressed and the
+	// decompressed read. The tarball is ~4 MB compressed today; 256 MB
+	// of headroom is an order-of-magnitude guard against a
+	// decompression bomb from a compromised -url, not a tight fit. A
+	// stream that reaches the bound is REFUSED, never truncated: see
+	// boundedReader.
 	directoryMaxTarballBytes = 256 << 20
 )
+
+var errDirectoryTarballTooLarge = errors.New("directory-sync: tarball reached the size bound")
+
+// boundedReader is io.LimitReader with the bound made fatal. A plain
+// LimitReader reports a clean EOF at the bound, and 256 MiB is an
+// exact multiple of tar's 512-byte block, so a stream cut there
+// between two entries handed tar.Reader a well-formed end of archive:
+// a partial, non-empty snapshot that ReplaceDirectory would then
+// accept and prune the table down to.
+type boundedReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (b *boundedReader) Read(p []byte) (int, error) {
+	if b.left <= 0 {
+		return 0, errDirectoryTarballTooLarge
+	}
+	if int64(len(p)) > b.left {
+		p = p[:b.left]
+	}
+	n, err := b.r.Read(p)
+	b.left -= int64(n)
+	return n, err
+}
 
 // directoryAddressRe matches the strkey forms the table's CHECK
 // accepts. Entries outside it (malformed upstream rows) are skipped
@@ -140,13 +168,22 @@ func fetchDirectoryTarball(ctx context.Context, url string) (entries []timescale
 		return nil, 0, fmt.Errorf("directory-sync: fetch: HTTP %d from %s", resp.StatusCode, url)
 	}
 
-	gz, err := gzip.NewReader(io.LimitReader(resp.Body, directoryMaxTarballBytes))
+	return parseDirectoryTarball(resp.Body, directoryMaxTarballBytes)
+}
+
+// parseDirectoryTarball walks a gzip tarball of the repo, bounding
+// both the compressed and decompressed streams at maxBytes, and
+// verifies the gzip trailer before returning: a truncated, corrupt or
+// oversized snapshot is an error, never a shorter entry set.
+func parseDirectoryTarball(body io.Reader, maxBytes int64) (entries []timescale.DirectoryEntry, skipped int, err error) {
+	gz, err := gzip.NewReader(&boundedReader{r: body, left: maxBytes})
 	if err != nil {
 		return nil, 0, fmt.Errorf("directory-sync: gzip: %w", err)
 	}
 	defer func() { _ = gz.Close() }()
 
-	tr := tar.NewReader(io.LimitReader(gz, directoryMaxTarballBytes))
+	plain := &boundedReader{r: gz, left: maxBytes}
+	tr := tar.NewReader(plain)
 	for {
 		hdr, herr := tr.Next()
 		if errors.Is(herr, io.EOF) {
@@ -169,6 +206,14 @@ func fetchDirectoryTarball(ctx context.Context, url string) (entries []timescale
 			continue
 		}
 		entries = append(entries, e)
+	}
+	// tar.Reader stops at the end-of-archive marker without reading
+	// the gzip trailer, so a CRC or length mismatch (and a stream cut
+	// inside the trailer) went unverified. Draining to EOF makes gzip
+	// check both; it is the only integrity signal an unpinned branch
+	// tarball carries.
+	if _, err := io.Copy(io.Discard, plain); err != nil {
+		return nil, 0, fmt.Errorf("directory-sync: tarball integrity: %w", err)
 	}
 	if len(entries) == 0 {
 		return nil, skipped, fmt.Errorf("directory-sync: parsed 0 entries (%d skipped) — refusing; upstream layout changed or fetch was truncated", skipped)
