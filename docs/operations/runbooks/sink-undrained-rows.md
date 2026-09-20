@@ -1,6 +1,6 @@
 ---
 title: Runbook — stellarindex_ingestion_sink_undrained_rows
-last_verified: 2026-09-18
+last_verified: 2026-09-20
 status: active
 severity: ticket
 ---
@@ -38,11 +38,14 @@ on either, so a bad deploy lost rows silently. The ClickHouse live-sink
 half of the same class already had
 `stellarindex_ch_live_sink_ledgers_total{outcome="dropped"}` and the
 [ch-live-sink-drops](ch-live-sink-drops.md) rules; this counter and
-alert are the served-tier twin. The counter increments ONLY in the two
+alert are the served-tier twin. The counter increments ONLY in the three
 functions that emit those ERROR lines (`reportAbandonedTrades`,
-`reportAbandonedEvent`), by row, so the alert's value is the size of
-the gap and a steady-state flush that hands its rows to the shutdown
-drain to retry is never counted.
+`reportAbandonedEvent`, and the external retry buffer's `finalDrain`),
+by row, so the alert's value is the size of the gap and a steady-state
+flush that hands its rows to the shutdown drain to retry is never
+counted. Until 2026-09-20 the external buffer's final pass only logged
+a Warn and never incremented, so a vendor-refillable loss was invisible
+to the alert.
 
 **Scrape-window caveat.** The increment lands 20–25 s after SIGTERM and
 the process exits by 30 s. r1 scrapes the indexer every 15 s, so a
@@ -61,7 +64,9 @@ if nothing fired.
   - `served-tier event abandoned on shutdown — re-derive this source's tail`
     with `kind=`, `source=`;
   - `PersistEvents drain deadline exceeded — made a final best-effort persist pass`
-    with `undrained_events=`, `undrained_trades=`, `ledger_from=`, `ledger_to=`.
+    with `undrained_events=`, `undrained_trades=`, `ledger_from=`, `ledger_to=`;
+  - `external trade retry buffer not fully drained at shutdown — remaining entries are vendor-refillable (ADR-0041); record the venues and window`
+    with `remaining=`, `venues=`.
 - Often alongside: [trade-insert-backpressure](trade-insert-backpressure.md)
   ticketing in the minutes before the deploy (`stellarindex_trade_insert_retries_total{outcome="retry"}`),
   or a Postgres restart in the deploy's own log.
@@ -70,7 +75,7 @@ if nothing fired.
 
 ```sh
 # The authoritative record: what was abandoned, and the range / source to re-derive.
-ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since "-3h" --no-pager | grep -E "abandoned on shutdown|drain deadline exceeded"'
+ssh root@136.243.90.96 'journalctl -u stellarindex-indexer --since "-3h" --no-pager | grep -E "abandoned on shutdown|drain deadline exceeded|retry buffer not fully drained"'
 
 # What the counter saw (may be smaller than the journal — see the scrape-window caveat).
 ssh root@136.243.90.96 'curl -s "http://localhost:9090/api/v1/query?query=increase(stellarindex_sink_undrained_rows_total%5B1h%5D)" | python3 -m json.tool | grep -E "\"sink\"|\"kind\"|value"'
@@ -87,8 +92,9 @@ Write down, per ERROR line: `ledger_from`/`ledger_to` (trades) or
 1. **`kind="trade"`, ERROR line carries a non-zero ledger range** →
    on-chain trades (SDEX and Soroban DEXes). Recoverable from the lake:
    Resolution A.
-2. **`kind="trade"`, `ledger_from=0`** → the abandoned batch held only
-   external CEX/FX trades (they carry no ledger). No lake copy exists;
+2. **`kind="trade"`, `ledger_from=0`, or the `retry buffer not fully
+   drained` line** → external CEX/FX trades (they carry no ledger; the
+   retry-buffer line names the `venues=`). No lake copy exists;
    Resolution C.
 3. **`kind="event"`** → a non-trade served-tier write (oracle update,
    supply observation, blend / cctp / rozo row). The line names the
@@ -150,8 +156,8 @@ re-derive by source:
 ### C — external CEX/FX trades: record the loss
 
 External trades have no ledger and no lake copy; the source poller
-does not replay history. Note the venue and window in the incident
-record. Served prices are unaffected beyond that window (the next poll
+does not replay history. Note the venue (`venues=` on the retry-buffer
+line, or the batch's sources) and window in the incident record. Served prices are unaffected beyond that window (the next poll
 refills the feed), so no further action.
 
 ### D — stop it recurring
@@ -171,7 +177,10 @@ None. The counter increments only where a row has nowhere left to go.
 A steady-state flush interrupted by shutdown carries its rows into the
 bounded drain and is counted only if THAT also fails; a projector-owned
 event the sink was never going to write is skipped before counting
-(`TestDrainFinalPass_SkipInSinkExcludedFromReport`).
+(`TestDrainFinalPass_SkipInSinkExcludedFromReport`); the external retry
+buffer counts only what is still in its ring AFTER its final pass, never
+the rows a steady-state tick re-queued for the next retry
+(`TestExternalRetryBuffer_FinalDrainDoesNotCountLandedRows`).
 
 ## Related
 
@@ -187,12 +196,15 @@ event the sink was never going to write is skipped before counting
 - `docs/adr/0034-tiered-clickhouse-architecture.md` — why the range is recoverable;
   `docs/adr/0041-ingest-durability-semantics.md` — why the drain is
   bounded rather than blocking.
-- `internal/pipeline/trade_sink.go` (`reportAbandonedTrades`) and
-  `internal/pipeline/sink.go` (`reportAbandonedEvent`) — the only two
-  increment sites; `pipeline.ShutdownDeadline` — where the budget comes
-  from.
+- `internal/pipeline/trade_sink.go` (`reportAbandonedTrades`,
+  `externalRetryBuffer.finalDrain`) and `internal/pipeline/sink.go`
+  (`reportAbandonedEvent`) — the only three increment sites;
+  `pipeline.ShutdownDeadline` — where the budget comes from.
 
 ## Changelog
 
+- 2026-09-20 — the external retry buffer's final pass counts what it
+  could not land (`kind="trade"`, `venues=` on its ERROR line), so
+  Resolution C is reachable from the alert, not only from the journal.
 - 2026-09-18 — created with `stellarindex_sink_undrained_rows_total` and
   the alert; served-tier twin of the `ch_live_sink` rules.
