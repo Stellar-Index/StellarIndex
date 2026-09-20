@@ -163,18 +163,96 @@ func TestRollupSweep_GroupsAndUpserts(t *testing.T) {
 		}
 	}
 
-	// Second sweep with no new traffic: same cumulative batch again
-	// (counters are cumulative; the sink merges with GREATEST so a
-	// replay is a no-op server-side).
-	if _, err := r.Sweep(ctx); err != nil {
+	// Second sweep with no new traffic: every row is exactly what the
+	// sink already acknowledged, so nothing is written — a quiet tick
+	// must not cost a Postgres round-trip per active subject-day.
+	n, err = r.Sweep(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
-	second := sink.batches[1]
-	sortRows(second)
-	for i := range want {
-		if second[i] != want[i] {
-			t.Errorf("replay row[%d] = %+v, want %+v (sweep must be idempotent)", i, second[i], want[i])
-		}
+	if n != 0 || len(sink.batches) != 1 {
+		t.Fatalf("quiet re-sweep upserted %d rows in %d batches, want 0 rows / 1 batch total", n, len(sink.batches))
+	}
+
+	// One more request on one key: only that row goes through, and it
+	// carries the FULL cumulative value (the sink merges with GREATEST,
+	// so a delta would under-count).
+	_ = c.IncrementDetail(ctx, "key:k1", "/v1/price", usage.ClassOK)
+	n, err = r.Sweep(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || len(sink.batches) != 2 {
+		t.Fatalf("changed re-sweep upserted %d rows in %d batches, want 1 row / 2 batches total", n, len(sink.batches))
+	}
+	changed := usage.RollupRow{Day: "2026-07-03", Subject: "key:k1", Endpoint: "/v1/price", OK: 2}
+	if got := sink.batches[1]; len(got) != 1 || got[0] != changed {
+		t.Errorf("changed batch = %+v, want exactly [%+v]", got, changed)
+	}
+}
+
+// TestRollupSweep_ResendsAfterSinkFailure — rows a failed upsert did
+// not land are not marked acknowledged; the next sweep sends them all.
+func TestRollupSweep_ResendsAfterSinkFailure(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 7, 3, 9, 0, 0, 0, time.UTC)
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+	_ = c.IncrementDetail(ctx, "key:k1", "/v1/price", usage.ClassOK)
+	_ = c.IncrementDetail(ctx, "key:k2", "/v1/ohlc", usage.ClassOK)
+
+	sink := &fakeSink{err: errors.New("pg down")}
+	r := usage.NewRollup(c, sink, time.Minute, nil)
+	if _, err := r.Sweep(ctx); err == nil {
+		t.Fatal("Sweep returned nil with a failing sink")
+	}
+	sink.err = nil
+	n, err := r.Sweep(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 || len(sink.batches) != 1 || len(sink.batches[0]) != 2 {
+		t.Fatalf("after sink recovery upserted %d rows, batches %+v; want both rows resent", n, sink.batches)
+	}
+}
+
+// blockingSink holds every upsert until its context ends and reports
+// which error ended it.
+type blockingSink struct{ err error }
+
+func (b *blockingSink) UpsertUsageDaily(ctx context.Context, _ []usage.RollupRow) error {
+	<-ctx.Done()
+	b.err = ctx.Err()
+	return ctx.Err()
+}
+
+// TestRollupSweep_DeadlineBoundsSink — a sink that never answers is cut
+// off within one interval, not held until the caller's context dies.
+func TestRollupSweep_DeadlineBoundsSink(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 7, 3, 9, 0, 0, 0, time.UTC)
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	_ = c.IncrementDetail(context.Background(), "key:k1", "/v1/price", usage.ClassOK)
+
+	const interval = 100 * time.Millisecond
+	sink := &blockingSink{}
+	r := usage.NewRollup(c, sink, interval, nil)
+
+	// The caller's context outlives the interval by far: only the
+	// sweep's own deadline can return before it does.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := r.Sweep(ctx)
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Sweep err = %v, want context.DeadlineExceeded", err)
+	}
+	if elapsed > 10*interval {
+		t.Fatalf("Sweep took %s against a %s interval; the sink was not bounded by the sweep deadline", elapsed, interval)
+	}
+	if !errors.Is(sink.err, context.DeadlineExceeded) {
+		t.Errorf("sink saw %v, want context.DeadlineExceeded", sink.err)
 	}
 }
 
