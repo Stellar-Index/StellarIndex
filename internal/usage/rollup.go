@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -35,7 +37,9 @@ type RollupSink interface {
 // DefaultRollupInterval is the sweep cadence. Five minutes keeps
 // the dashboard's "today" row at most one tick stale while the
 // per-sweep cost stays tiny (one SCAN + one HGETALL per active
-// subject-day, then one batched upsert).
+// subject-day, then a chunked upsert of only the rows that changed
+// since the sink last acknowledged them). It is also the per-sweep
+// deadline: a sweep that outlives its own cadence is already behind.
 const DefaultRollupInterval = 5 * time.Minute
 
 // Rollup is the ticker-driven worker that folds the Redis
@@ -53,7 +57,17 @@ type Rollup struct {
 	interval time.Duration
 	logger   *slog.Logger
 	nowFn    func() time.Time
+
+	mu sync.Mutex
+	// lastSent mirrors what the sink has acknowledged, pruned to the
+	// swept dates, so a quiet tick writes nothing. A restart resends
+	// everything once, which the GREATEST merge absorbs.
+	lastSent map[rollupKey]RollupRow
 }
+
+type rollupKey struct{ day, subject, endpoint string }
+
+func keyOf(r RollupRow) rollupKey { return rollupKey{r.Day, r.Subject, r.Endpoint} }
 
 // NewRollup constructs the worker. Returns nil when either
 // dependency is missing so callers can gate with a plain nil check
@@ -74,6 +88,7 @@ func NewRollup(counter *Counter, sink RollupSink, interval time.Duration, logger
 		interval: interval,
 		logger:   logger,
 		nowFn:    counter.nowFn,
+		lastSent: make(map[rollupKey]RollupRow),
 	}
 }
 
@@ -104,11 +119,17 @@ func (r *Rollup) Run(ctx context.Context) error {
 }
 
 // Sweep reads today's + yesterday's detail counters out of Redis,
-// groups them per (day, subject, endpoint), and upserts the batch
-// into the sink. Returns the number of rows upserted. Exposed for
-// tests and for a potential ops-side manual re-sweep.
+// groups them per (day, subject, endpoint), and upserts the rows the
+// sink has not yet acknowledged at their current value. Returns the
+// number of rows upserted. Bounded to one interval of wall-clock so a
+// stalled Redis or Postgres cannot pin the worker; one sweep at a
+// time. Exposed for tests and for the ops-side manual re-sweep.
 func (r *Rollup) Sweep(ctx context.Context) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	start := time.Now()
+	ctx, cancel := context.WithTimeout(ctx, r.interval)
+	defer cancel()
 	now := r.nowFn().UTC()
 	dates := []string{
 		now.AddDate(0, 0, -1).Format("2006-01-02"),
@@ -119,7 +140,7 @@ func (r *Rollup) Sweep(ctx context.Context) (int, error) {
 		r.observe("scan_error", start)
 		return 0, fmt.Errorf("usage rollup: scan: %w", err)
 	}
-	rows := groupDetails(details)
+	rows := r.unsent(groupDetails(details))
 	if len(rows) == 0 {
 		r.observe("ok", start)
 		return 0, nil
@@ -128,8 +149,35 @@ func (r *Rollup) Sweep(ctx context.Context) (int, error) {
 		r.observe("sink_error", start)
 		return 0, fmt.Errorf("usage rollup: upsert %d rows: %w", len(rows), err)
 	}
+	r.markSent(rows, dates)
 	r.observe("ok", start)
 	return len(rows), nil
+}
+
+// unsent drops the rows whose cumulative counters are exactly what the
+// sink last acknowledged; a changed or never-sent row goes through.
+func (r *Rollup) unsent(rows []RollupRow) []RollupRow {
+	out := rows[:0]
+	for _, row := range rows {
+		if prev, ok := r.lastSent[keyOf(row)]; ok && prev == row {
+			continue
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
+// markSent records an acknowledged batch and forgets days that have
+// left the sweep window, so the mirror never outgrows the window.
+func (r *Rollup) markSent(rows []RollupRow, dates []string) {
+	for k := range r.lastSent {
+		if !slices.Contains(dates, k.day) {
+			delete(r.lastSent, k)
+		}
+	}
+	for _, row := range rows {
+		r.lastSent[keyOf(row)] = row
+	}
 }
 
 // observe records the paired outcome counter + latency histogram
@@ -145,7 +193,6 @@ func (r *Rollup) observe(outcome string, start time.Time) {
 // an older binary sweeping hashes written by a newer one must not
 // misfile counts).
 func groupDetails(details []DetailRow) []RollupRow {
-	type rollupKey struct{ day, subject, endpoint string }
 	grouped := make(map[rollupKey]*RollupRow, len(details))
 	order := make([]rollupKey, 0, len(details))
 	for _, d := range details {
