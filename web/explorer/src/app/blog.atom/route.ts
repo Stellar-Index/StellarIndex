@@ -8,6 +8,7 @@
 
 import { NextResponse } from 'next/server';
 
+import { cdata, escapeXml } from '@/lib/atom';
 import { loadBlogPosts, type BlogPost } from '@/lib/blog';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -25,11 +26,11 @@ export function GET() {
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <id>${SITE_URL}/blog</id>
-  <title>${esc(FEED_TITLE)}</title>
+  <title>${escapeXml(FEED_TITLE)}</title>
   <link rel="self" href="${SITE_URL}/blog.atom" type="application/atom+xml" />
   <link rel="alternate" href="${SITE_URL}/blog" type="text/html" />
   <updated>${updated}</updated>
-  <author><name>${esc(FEED_AUTHOR)}</name></author>
+  <author><name>${escapeXml(FEED_AUTHOR)}</name></author>
 ${entries}
 </feed>
 `;
@@ -48,13 +49,13 @@ function renderEntry(p: BlogPost): string {
   const published = atomDate(p.date);
   return `  <entry>
     <id>${id}</id>
-    <title>${esc(p.title)}</title>
+    <title>${escapeXml(p.title)}</title>
     <link rel="alternate" href="${url}" type="text/html" />
-    <author><name>${esc(p.author)}</name></author>
+    <author><name>${escapeXml(p.author)}</name></author>
     <published>${published}</published>
     <updated>${published}</updated>
-    <summary type="text">${esc(p.summary)}</summary>
-    <content type="text"><![CDATA[${p.body}]]></content>
+    <summary type="text">${escapeXml(p.summary)}</summary>
+    <content type="text">${cdata(p.body)}</content>
   </entry>`;
 }
 
@@ -70,12 +71,4 @@ function atomDate(date?: string): string {
   const d = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return new Date().toISOString();
   return d.toISOString();
-}
-
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }

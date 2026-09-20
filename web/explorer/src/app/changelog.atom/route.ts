@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 
+import { cdata, escapeXml } from '@/lib/atom';
 import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -49,11 +50,11 @@ export function GET() {
   const body = `<?xml version="1.0" encoding="UTF-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
   <id>${SITE_URL}/changelog</id>
-  <title>${esc(FEED_TITLE)}</title>
+  <title>${escapeXml(FEED_TITLE)}</title>
   <link rel="self" href="${SITE_URL}/changelog.atom" type="application/atom+xml" />
   <link rel="alternate" href="${SITE_URL}/changelog" type="text/html" />
   <updated>${updated}</updated>
-  <author><name>${esc(FEED_AUTHOR)}</name></author>
+  <author><name>${escapeXml(FEED_AUTHOR)}</name></author>
 ${entries}
 </feed>
 `;
@@ -87,11 +88,11 @@ function renderEntry(r: Release): string {
 
   return `  <entry>
     <id>${id}</id>
-    <title>${esc(title)}</title>
+    <title>${escapeXml(title)}</title>
     <link rel="alternate" href="${url}" type="text/html" />
     <published>${published}</published>
     <updated>${published}</updated>
-    <content type="text"><![CDATA[${summary}]]></content>
+    <content type="text">${cdata(summary)}</content>
   </entry>`;
 }
 
@@ -109,12 +110,4 @@ function atomDate(date?: string): string {
   const d = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return new Date().toISOString();
   return d.toISOString();
-}
-
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
