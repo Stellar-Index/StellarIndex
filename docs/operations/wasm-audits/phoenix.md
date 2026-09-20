@@ -258,7 +258,15 @@ WASMs was binary-scanned for the 8 swap-field strings the
 decoder requires. **All 14 contain all 8 strings**, including
 the space-bearing `actual received amount` literal (the
 riskiest tripwire per Phoenix Q2). No silent rename across the
-upgrade chain. WASM bytes preserved + SHA-256-verified at
+upgrade chain. **Byte presence is not runtime uniformity**: the
+pre-upgrade pool WASM's runtime event stream actually emitted
+only 7 of the 8 fields per swap (no `ActualReceived`) for
+ledgers 51,019,036 → 53,134,167, despite the string being
+present in the binary — a real emission gap, not a rename. The
+decoder handles this via `phoenix.RawSwap.Decodable()` (a
+reduced-field recovery path distinct from `Complete()`'s
+post-upgrade 8-field check); see `internal/sources/phoenix/decode.go`
+for the authoritative account. WASM bytes preserved + SHA-256-verified at
 `evidence/r1-walk-2026-05-01/wasm-bytes/<hash>.wasm` on r1 for
 all 22 hashes; disassembly artifacts (`wasm2wat` + `strings`)
 preserved alongside under `evidence/r1-walk-2026-05-01/disasm/`.
@@ -529,7 +537,11 @@ Rationale:
 - 2 unique WASM hashes; both contain all 8 expected event-field
   string literals; both have identical contract interfaces.
 - Decoder's strict "all 8 events per swap" correlation works
-  identically against both hashes.
+  identically against both hashes for the CURRENT (post-upgrade)
+  era. The pre-upgrade pool WASM's runtime stream only emitted 7 of
+  the 8 fields (no `ActualReceived`) — see "Decoder verdict per pool
+  WASM" above; `RawSwap.Decodable()` is the reduced-field recovery
+  path for those swaps, distinct from `Complete()`.
 - Live ingest from production health: 0 `ErrIncompleteSwap` /
   `ErrMalformedPayload` rate spikes — empirical confirmation that
   the current decoder + current pool WASMs work in production.

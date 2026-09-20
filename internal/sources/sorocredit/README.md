@@ -20,7 +20,7 @@ not a wrapper). A user opens a position, which deploys a per-user
 `Collateral-<uuid>` child contract; the protocol then publishes periodic
 per-position statements and settles them on a schedule.
 
-## Event surface (7 topic[0] symbols, all emitted BY the main contract)
+## Event surface (8 topic[0] symbols, all emitted BY the main contract)
 
 Schemas verified against **real r1-lake fixtures, 2026-07-07** (the golden
 frames in `source_test.go`). Bodies are Soroban `Vec` tuples — decoded
@@ -35,9 +35,10 @@ positionally (there are no map field names to key on).
 | `BeaconUpdated` | `[sym]` | `Vec[Void, Address(new_beacon)]` | `credit_events` |
 | `SupportedAssetAdded` | `[sym, Address(asset)]` | `Vec[…config…]` | `credit_events` |
 | `CollateralHashUpdated` | `[sym]` | `Vec[Bytes(old), Bytes(new)]` | `credit_events` |
+| `TreasuryUpdated` | `[sym]` | `Vec[Address(old), Address(new)]` | `credit_events` |
 
 Every event is decoded — the EVERY-event invariant (no partial decoder).
-The three low-volume config events (1–4 occurrences each) land in
+The four low-volume config events (1–4 occurrences each) land in
 `credit_events` with the full body captured in `attributes`, alongside
 the meaningful-volume `Withdrawal`.
 
@@ -133,10 +134,10 @@ therefore **true** in `external.Registry`, safe **from genesis
   projector is the **sole writer** (ADR-0031/0032).
 - `internal/config/validate.go` — `KnownSources` includes `sorocredit`.
 - `internal/sources/external/registry.go` — `Metadata{Class: lending,
-  IncludeInVWAP: false, BackfillSafe: false}`.
+  IncludeInVWAP: false, BackfillSafe: true}`.
 - `internal/storage/timescale/per_source_gaps.go` — four gap targets
   (`sorocredit-{positions,statements,settlements,events}`).
-- `cmd/stellarindex-ops/reconciliation_catalogue.go` — a `reconSource`
+- `internal/ops/chops/reconciliation_catalogue.go` — a `reconSource`
   so the ADR-0033 projection reconcile covers all four tables (the
   dynamic `EventKind()` — `sorocredit.<event_type>` — gives per-table
   attribution).
