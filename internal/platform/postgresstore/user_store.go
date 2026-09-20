@@ -210,6 +210,14 @@ func scanSession(row interface {
 }
 
 func (r *UserStore) CreateSession(ctx context.Context, s platform.Session) (platform.Session, error) {
+	ipFirst, err := ipString(s.IPFirstSeen)
+	if err != nil {
+		return platform.Session{}, fmt.Errorf("create session: %w", err)
+	}
+	ipLast, err := ipString(s.IPLastSeen)
+	if err != nil {
+		return platform.Session{}, fmt.Errorf("create session: %w", err)
+	}
 	const q = `
 		INSERT INTO sessions (
 			token_hash, user_id, expires_at,
@@ -221,7 +229,7 @@ func (r *UserStore) CreateSession(ctx context.Context, s platform.Session) (plat
 
 	row := r.s.db.QueryRowContext(ctx, q,
 		s.TokenHash, s.UserID, s.ExpiresAt,
-		ipString(s.IPFirstSeen), ipString(s.IPLastSeen), s.UserAgent,
+		ipFirst, ipLast, s.UserAgent,
 		s.GeoFirstSeen, s.GeoLastSeen,
 	)
 	out, err := scanSession(row)
@@ -265,6 +273,10 @@ func (r *UserStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte)
 // to once-per-minute to avoid hot-row contention; this method
 // itself is unconditional — every call writes.
 func (r *UserStore) TouchSession(ctx context.Context, id uuid.UUID, ip net.IP, userAgent string) error {
+	ipStr, err := ipString(ip)
+	if err != nil {
+		return fmt.Errorf("touch session: %w", err)
+	}
 	const q = `
 		UPDATE sessions SET
 			last_seen_at = now(),
@@ -272,7 +284,7 @@ func (r *UserStore) TouchSession(ctx context.Context, id uuid.UUID, ip net.IP, u
 			user_agent = $3
 		WHERE id = $1 AND revoked_at IS NULL
 	`
-	res, err := r.s.db.ExecContext(ctx, q, id, ipString(ip), userAgent)
+	res, err := r.s.db.ExecContext(ctx, q, id, ipStr, userAgent)
 	if err != nil {
 		return fmt.Errorf("touch session: %w", err)
 	}
@@ -303,15 +315,28 @@ func (r *UserStore) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID)
 	return nil
 }
 
-// ipString renders nil → empty so the column accepts the
-// caller's intent. Postgres `inet` rejects empty string, so we
-// pass "0.0.0.0" as a sentinel for unknown — but this only
-// happens for tests.
-func ipString(ip net.IP) string {
+// errNilClientIP is returned by ipString when ip is nil.
+var errNilClientIP = errors.New("postgresstore: nil client IP")
+
+// ipString renders ip as the literal the `inet NOT NULL` session /
+// magic-link-token columns require.
+//
+// Q188 (audit-2026-09-18): this used to silently return the "0.0.0.0"
+// sentinel for a nil IP, commented "but this only happens for tests" —
+// false: clientIP (internal/api/v1/dashboardauth) returns nil whenever
+// r.RemoteAddr fails to split into host:port, which reaches
+// CreateSession and CreateMagicLinkToken on every real login /
+// magic-link request, not just tests. Writing a plausible-looking
+// placeholder into a security-forensics column would let that
+// malformed-request condition masquerade as "the client at 0.0.0.0"
+// instead of surfacing. The schema has no representable NULL here
+// (inet NOT NULL, migration 0027), so this fails closed instead: the
+// caller gets an error and nothing is written.
+func ipString(ip net.IP) (string, error) {
 	if ip == nil {
-		return "0.0.0.0"
+		return "", errNilClientIP
 	}
-	return ip.String()
+	return ip.String(), nil
 }
 
 // Compile-time interface check.
