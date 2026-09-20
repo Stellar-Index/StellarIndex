@@ -210,6 +210,14 @@ func scanSession(row interface {
 }
 
 func (r *UserStore) CreateSession(ctx context.Context, s platform.Session) (platform.Session, error) {
+	ipFirst, err := ipString(s.IPFirstSeen)
+	if err != nil {
+		return platform.Session{}, fmt.Errorf("create session: %w", err)
+	}
+	ipLast, err := ipString(s.IPLastSeen)
+	if err != nil {
+		return platform.Session{}, fmt.Errorf("create session: %w", err)
+	}
 	const q = `
 		INSERT INTO sessions (
 			token_hash, user_id, expires_at,
@@ -221,7 +229,7 @@ func (r *UserStore) CreateSession(ctx context.Context, s platform.Session) (plat
 
 	row := r.s.db.QueryRowContext(ctx, q,
 		s.TokenHash, s.UserID, s.ExpiresAt,
-		ipString(s.IPFirstSeen), ipString(s.IPLastSeen), s.UserAgent,
+		ipFirst, ipLast, s.UserAgent,
 		s.GeoFirstSeen, s.GeoLastSeen,
 	)
 	out, err := scanSession(row)
@@ -283,12 +291,9 @@ func (r *UserStore) TouchSession(ctx context.Context, id uuid.UUID, ip net.IP, u
 			user_agent = $3
 		WHERE id = $1 AND revoked_at IS NULL
 	`
-	// Deliberately NOT ipString(ip): that helper's "0.0.0.0" sentinel
-	// exists so CreateSession's unconditional NOT NULL bind always has
-	// a value for a row that doesn't exist yet. Here the row already
-	// exists, so an unresolved ip means "leave the existing value" —
-	// signalled to the query above as an empty string, which NULLIF
-	// turns into NULL and COALESCE turns into "keep ip_last_seen".
+	// Deliberately NOT ipString(ip), which fails closed on nil for inserts
+	// that have no value to fall back to. Here the row exists, so an
+	// unresolved ip means "keep ip_last_seen": empty string → NULLIF → COALESCE.
 	ipParam := ""
 	if ip != nil {
 		ipParam = ip.String()
@@ -324,19 +329,28 @@ func (r *UserStore) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID)
 	return nil
 }
 
-// ipString renders nil → "0.0.0.0" so [CreateSession]'s unconditional
-// (non-NULLIF-wrapped) bind of ip_first_seen/ip_last_seen — both
-// `inet NOT NULL` — always has a value to insert, even though
-// `clientIP` (dashboardauth/handlers.go) can return nil in production
-// (RemoteAddr without a splittable port). [TouchSession] deliberately
-// does NOT reuse this sentinel: it has an existing row to fall back
-// to, so it builds its own nil-aware empty-string param instead of
-// stamping a fake address over a real one (RNC36).
-func ipString(ip net.IP) string {
+// errNilClientIP is returned by ipString when ip is nil.
+var errNilClientIP = errors.New("postgresstore: nil client IP")
+
+// ipString renders ip as the literal the `inet NOT NULL` session /
+// magic-link-token columns require.
+//
+// Q188 (audit-2026-09-18): this used to silently return the "0.0.0.0"
+// sentinel for a nil IP, commented "but this only happens for tests" —
+// false: clientIP (internal/api/v1/dashboardauth) returns nil whenever
+// r.RemoteAddr fails to split into host:port, which reaches
+// CreateSession and CreateMagicLinkToken on every real login /
+// magic-link request, not just tests. Writing a plausible-looking
+// placeholder into a security-forensics column would let that
+// malformed-request condition masquerade as "the client at 0.0.0.0"
+// instead of surfacing. The schema has no representable NULL here
+// (inet NOT NULL, migration 0027), so this fails closed instead: the
+// caller gets an error and nothing is written.
+func ipString(ip net.IP) (string, error) {
 	if ip == nil {
-		return "0.0.0.0"
+		return "", errNilClientIP
 	}
-	return ip.String()
+	return ip.String(), nil
 }
 
 // Compile-time interface check.
