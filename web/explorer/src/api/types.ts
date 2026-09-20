@@ -5374,8 +5374,10 @@ export interface components {
              *     claimable_balance_create, claimable_balance_claim,
              *     claimable_balance_clawback, liquidity_pool_deposit, or
              *     liquidity_pool_withdraw on ClickHouse pre-P23 archive rows
-             *     (`provenance: classic_derived`); transfer on Postgres post-P23
-             *     tail rows (`provenance: cap67_event`).
+             *     (`provenance: classic_derived`); transfer on ClickHouse post-P23
+             *     rows derived from the lake's CAP-67 events (`provenance:
+             *     cap67_derived`) and on Postgres post-P23 tail rows
+             *     (`provenance: cap67_event`).
              */
             movement_kind: string;
             /** @enum {string} */
@@ -5402,11 +5404,16 @@ export interface components {
             counterparty?: string;
             /**
              * @description classic_derived = reconstructed from the ClickHouse pre-P23 lake
-             *     (ADR-0047); cap67_event = a post-P23 CAP-67 unified event read
-             *     from the Postgres sep41_transfers "recent tail" (ADR-0048 D5).
+             *     (ADR-0047); cap67_derived = a post-P23 transfer derived from the
+             *     lake's CAP-67 unified events by `stellarindex-ops
+             *     ch-cap67-movements`, the archive's continuation past P23;
+             *     cap67_event = a post-P23 CAP-67 unified event read from the
+             *     Postgres sep41_transfers "recent tail" (ADR-0048 D5). The tail is
+             *     floored at the derive's watermark, so a ledger is served from one
+             *     of the two post-P23 sides, never both.
              * @enum {string}
              */
-            provenance: "classic_derived" | "cap67_event";
+            provenance: "classic_derived" | "cap67_derived" | "cap67_event";
             /** @description Kind-specific remainder (balance_id, claimants, pool_id, revocation, …). Empty/absent on transfer rows. */
             attributes?: {
                 [key: string]: unknown;
