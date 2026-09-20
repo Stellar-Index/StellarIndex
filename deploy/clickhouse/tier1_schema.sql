@@ -175,7 +175,21 @@ CREATE TABLE IF NOT EXISTS stellar.contract_events
     -- contract_id=? would otherwise full-scan. New parts indexed on insert;
     -- existing history needs `ALTER TABLE stellar.contract_events
     -- MATERIALIZE INDEX idx_contract_id`.
-    INDEX idx_contract_id contract_id TYPE bloom_filter(0.01) GRANULARITY 1
+    INDEX idx_contract_id contract_id TYPE bloom_filter(0.01) GRANULARITY 1,
+    -- Day-window pruning for the census rollup (stellarindex-ops
+    -- ch-census-rollup, internal/storage/clickhouse/contracts_census.go):
+    -- it filters WHERE close_time >= day AND close_time < day+1 every
+    -- 30 min, but close_time is in neither the partition key nor the sort
+    -- key, and ClickHouse keeps part-level min/max only for partition-key
+    -- columns — so without this index every granule of the table is read
+    -- per run. close_time is monotone in ledger_seq (the sort key), so a
+    -- per-granule minmax prunes a one-day window to ~one day of granules.
+    -- Existing history needs the one-time
+    --   `ALTER TABLE stellar.contract_events
+    --      ADD INDEX idx_ce_close_time close_time TYPE minmax GRANULARITY 1`
+    -- (new parts are indexed on insert from then on) followed by
+    --   `ALTER TABLE stellar.contract_events MATERIALIZE INDEX idx_ce_close_time`.
+    INDEX idx_ce_close_time close_time TYPE minmax GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)

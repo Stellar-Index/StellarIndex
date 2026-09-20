@@ -23,13 +23,14 @@ type censusExecConn interface {
 }
 
 // censusDayInsert computes one day's census into the given PRIVATE
-// staging table. The close_time day predicate prunes on the source's
-// partition/ordering via ledger_seq is not available day-wise, so the day
-// filter rides on close_time directly; ClickHouse prunes contract_events
-// parts by its close_time minmax index. uniqExact over the PK matches the
-// legacy census exactly. The staging name is a crypto-random suffix minted
-// per run (privateStagingTable), never user input, so the Format-built
-// identifier is safe.
+// staging table. A day is not expressible in ledger_seq (the partition and
+// sort key), so the filter rides on close_time and pruning depends on
+// contract_events' idx_ce_close_time minmax skip index
+// (deploy/clickhouse/tier1_schema.sql) — a host that has not MATERIALIZEd
+// it still gets the right answer, from a full scan. uniqExact over the PK
+// matches the legacy census exactly. The staging name is a crypto-random
+// suffix minted per run (privateStagingTable), never user input, so the
+// Format-built identifier is safe.
 func censusDayInsert(staging string) string {
 	return fmt.Sprintf(`
 	INSERT INTO stellar.%s
