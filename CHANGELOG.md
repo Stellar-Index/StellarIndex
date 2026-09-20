@@ -93,6 +93,33 @@ against.
   newly linked into the API is covered the day it lands; it subsumes the two
   narrower walks without replacing them. The HTTP listener stays the one
   exemption, checked BY CONTENT on main.go's own crash-by-design argument.
+- **test / shell-fallback route coverage now derives from the filesystem (K022):**
+  `web/explorer/functions/shell-fallback.test.js` hand-maintained an 8-entry
+  `[name, handler, path]` array; `functions/assets/[[path]].js` had already
+  shipped the same shell-fallback pattern as the other six routes with no
+  matching entry, so its 200/503 propagation, header-stripping, and
+  own-shell-path behaviour ran with zero test coverage. The suite now walks
+  `functions/` with `fs.readdirSync`, includes any `[[path]].js` whose
+  source references a `/shell/` sub-fetch, and derives each handler's
+  expected shell path from its directory position rather than grepping it
+  back out of the handler's own source (which would just echo a
+  copy-pasted wrong path). `og/[[path]].js` is excluded automatically — a
+  different contract, covered by its own `og.test.js`. Test-only; no
+  handler behaviour changed.
+- **test / VWAP methodology docs pinned against source (HO-359):**
+  `TestVWAPDocStablecoinProxyMapMatchesSource` and
+  `TestProtocolsReadmeBridgeContractCountsMatchSource`
+  (`internal/aggregate/vwap_methodology_doc_test.go`) check
+  `docs/methodology/vwap-aggregation.md`'s stablecoin-proxy table and
+  `docs/protocols/README.md`'s CCTP/Rozo pinned-contract counts against
+  `aggregate.FiatBackers`, `cctp.MainnetContracts()` and
+  `rozo.MainnetPaymentContracts` respectively, so the numbers a protocol
+  team is asked to verify can't silently drift from what the code ships.
+  A prior truth-audit sweep found the two pages' claims could not be
+  confirmed by reading alone; re-checked at HEAD, both pages' load-bearing
+  facts (source-class table, stablecoin proxy map, freeze/router/TWAP
+  file references, ADR citations, bridge contract counts) were accurate —
+  no content fix was needed, only this regression guard.
 
 ### Changed
 
@@ -3805,6 +3832,281 @@ against.
   same refusal, `/price` and `/price/tip/stream`, already listed it —
   and the reference mirror, the Postman collection and the explorer's
   generated types are regenerated from it.
+
+- **api / QueryShape caps a non-allow-listed parameter's NAME and the
+  shape's term count (F170, K026, T651, F174, T665):** the slow-request
+  query shape already redacted every unrecognised parameter's VALUE but
+  logged its NAME verbatim at unbounded length, and put no cap on how many
+  distinct parameters could each contribute a term — either one let a
+  caller roll the journal with a single request. `QueryShape` now runs
+  every logged name and value through a shared `boundedLogField` (strip
+  control characters, cap length) and truncates the term list past
+  `maxShapeParts`, applied after the existing sort so a truncated shape is
+  still a deterministic prefix.
+- **api / the access log caps `path` and `user_agent` length
+  (Q176):** both were logged verbatim with nothing but Go's ~1 MB default
+  header/request-line size bounding them — an attacker-chosen path or
+  User-Agent was the same journal-flooding channel `QueryShape` already
+  guards its parameters against. `Logger` now truncates both through the
+  same `boundedLogField` helper.
+- **docs / ha-plan.md's two stale `file:line` citations now point at the
+  right lines (HO-361):** the `sla-probe.sh` BASE_URL citation still said
+  `:21` after comment lines were added above the assignment (now `:27`), and
+  the `18-pgbackrest-backup.yml` restore-drill-enable citation still said
+  `:333-350` after a ClickHouse schema-drift task block landed earlier in
+  the file and pushed it to `:512-537`. Neither underlying claim was wrong,
+  only the pointer — but a stale citation sends an operator mid-incident to
+  the wrong lines. `TestHAPlanFileLineCitationsResolve`
+  (`internal/ops/chops/ha_plan_citations_test.go`) pins every citation in
+  the doc against the cited file's actual content so a future reflow fails
+  the test instead of leaving a silently wrong line number.
+- **pipeline / the soroswap-router and defindex `entries` bump follows the
+  landed insert (Q062):** the four inline `handleEvent` cases bumped
+  `source_entry_counts` BEFORE their insert, unlike every persist helper,
+  so an infra retry (REL-08 re-invokes `handleEvent` per attempt) counted
+  one entry per attempt of the same event and a row the store rejected
+  still counted one. The bump now runs only after the row landed, as in
+  the other 35 sites. `TestHandleEvent_EntryCountFollowsTheLandedInsert`
+  pins all four cases on the nil-store validation seam (the old order
+  surfaced as a recovered sink panic); the build-tagged
+  `TestSourceEntryCounts_RouterBumpFollowsTheLandedInsert` asserts the
+  tally on a real Postgres.
+- **pipeline / external trades left in the retry buffer at shutdown count
+  as undrained rows (RLT-190):** `externalRetryBuffer.finalDrain` only
+  logged a Warn for whatever its final bounded pass could not land, so a
+  vendor-refillable loss never reached `stellarindex_sink_undrained_rows_total`
+  or its alert — the runbook's Resolution C existed but nothing routed to
+  it. The pass now adds the remaining rows to the counter (`kind="trade"`,
+  by row, like `reportAbandonedTrades`) and reports at ERROR with
+  `remaining=` and the sorted `venues=`; the runbook's symptom grep,
+  triage tree and increment-site inventory follow the code.
+  `TestExternalRetryBuffer_FinalDrainCountsUndrainedRows` pins it, with a
+  landed-rows guard beside it.
+- **projector / the per-row "holding cursor for retry" warning is throttled
+  (RLT-142):** a held row is retried every cycle for as long as its fault
+  lasts — forever, for an infra fault — and the projector warned once per row
+  per cycle with no rate limit, so a sustained Postgres outage produced
+  thousands of identical lines that buried the ERROR lines an operator needs.
+  The warning now fires on the first failing cycle and every 20th after
+  (`heldRowLogEvery`, mirroring the sink's `infraRetryLogEvery`), still
+  carrying the running `consecutive_cycles` count. The per-cycle
+  held-progress warning and the `sink_retry` metrics are unchanged.
+  `TestCycle_HeldRowWarningIsThrottled` pins it (41 cycles → 3 lines).
+- **projector / a recovered sink panic is shed, not held for the whole
+  quarantine budget (Q053):** `pipeline.HandleEvent` recovers a sink panic
+  and returns it wrapped in the (now exported) `pipeline.ErrSinkPanic`,
+  which the sink's own classifier drops as permanent for that event. The
+  projector's `classifySinkFault` did not recognise the sentinel, so the
+  same error fell to the unclassified arm and held the sole-writer cursor
+  while the panicking decode re-ran every cycle — 20 cycles with a
+  sink-health proof, 720 without. It is now a skip verdict on both sides,
+  under the same shed cap and health proof as a class-22/23 rejection.
+  `TestClassifySinkFault` and `TestCycle_SinkPanicIsShedLikeAPermanentFault`
+  pin it.
+- **api / a served price is never an all-zero string (T045, RLT-009):**
+  `/v1/ohlc`, `/v1/vwap`, `/v1/twap`, `/v1/price/tip`, `/v1/history` and the
+  fiat chart legs render prices through `ratToDecimal`, which floored at ten
+  fractional places with no escape — any price below 1e-10 served as
+  `0.0000000000`, and `/v1/history` pinned exactly that for a
+  3/1000000000000000001 trade. The renderer now extends its scale
+  magnitude-relatively (twelve significant digits, sixty places at most),
+  the same rule the aggregator's own `formatRatFixed` already applied, so
+  normal-magnitude prices are byte-identical and a sub-1e-10 price keeps its
+  digits. The direct fiat chart leg no longer formats a float with
+  `%.10f` (round-to-nearest, unlike every other surface's truncation); both
+  fiat legs lift the reader's float64 through its shortest round-trip
+  decimal — the NUMERIC value for any rate of ≤15 significant digits — so
+  0.3/0.1 renders `3.0000000000`, not `2.9999999999`. The float64 itself
+  enters at `FXQuotePoint`, whose storage reader scans the NUMERIC into a
+  float; threading the column's text form through is the remaining leg.
+- **docs / ADR-0020 and launch-readiness L7.8 stop claiming
+  `/v1/chart?price_type=twap` returns 400 (T513):** it has served the
+  `twap_1h` / `twap_1d` aggregates since 2026-07-05, and the ADR's own
+  2026-09-07 amendment already said so. §price_type and the Consequences
+  carry a superseded marker, a dated amendment records what shipped and
+  where it is pinned, and L7.8 is closed.
+- **clickhouse / the dead `contracts_census_daily_staging` table is gone
+  from both DDL files (T411):** `tier1_schema.sql` and the operator mirror
+  `contracts_census_daily.sql` both declared a shared
+  `stellar.contracts_census_daily_staging`, but no code path has written it
+  since the rollup moved to a crypto-random-suffixed private staging table
+  per run (the concurrent timer + backfill isolation) — so every host
+  carried an empty orphan that read as a second writer path. The
+  declaration is removed; the operator file now carries the one-line
+  `DROP TABLE IF EXISTS` for hosts provisioned while it was declared.
+  `TestCensusStagingTableIsPerRunOnly` pins both files, and the census
+  integration test asserts no `contracts_census_daily_staging%` table
+  survives a run on a real server.
+- **clickhouse / `ch-schema-drift.sh` sees the whole shape of a declared
+  table, in both directions, and the cut-over DDL beside its intent (T358,
+  T453):** the T339 fix compared secondary indices the repo declares
+  against live, but only that way round — an index hand-added live on a
+  declared table (or dropped from `tier1_schema.sql` and never dropped
+  live) reported rc=0, "0 divergent, 0 uncodified", because the
+  uncodified bucket counts TABLES and the code comment claiming otherwise
+  was wrong. Indices are now compared textually and PROJECTION /
+  CONSTRAINT by name, each in BOTH directions, as real DRIFT — the rule
+  the column list already applied to a hand-added column; a SHOW CREATE
+  multi-line projection body is skipped by the column parser instead of
+  being read as a column named `SELECT`. The intent side was also only
+  `tier1_schema.sql`, so the `si-cutover-object` v2 tables
+  (`ledger_entries_current_v2`, `contract_events_daily_v2` and their MVs)
+  landed in UNCODIFIED with their ENGINE / ORDER BY never compared —
+  `ledger_entries_current_v2` exists to change the ReplacingMergeTree
+  version column, and hand-applied with the wrong one it produced zero
+  signal. Every marked `*.sql` beside the intent (or named in
+  `INTENT_CUTOVER`) is now parsed with the same parser; its objects are
+  compared like any declared table when live, reported as "no cut-over in
+  progress" when absent, and never counted uncodified. Eleven harness
+  cases pin this (nine fail on the previous script). Hosts only compare
+  cut-over objects once the role ships those files beside
+  `/usr/local/share/stellarindex/tier1_schema.sql`; a checkout run finds
+  them in `deploy/clickhouse/` unaided.
+- **clickhouse / the census rollup's day window now has an index to prune
+  on (T354):** `stellar.contract_events` declares
+  `INDEX idx_ce_close_time close_time TYPE minmax GRANULARITY 1`. The
+  30-minute `ch-census-rollup` filters `WHERE close_time >= day AND
+  close_time < day+1`, but the table is partitioned and sorted by
+  `ledger_seq` and ClickHouse keeps part-level min/max for partition-key
+  columns only, so every run read every granule of the billions-row table
+  while the code's own comment claimed a "close_time minmax index" that no
+  DDL declared. close_time is monotone in ledger_seq, so the per-granule
+  minmax prunes a one-day window to about a day of granules. Existing
+  hosts need the one-time `ADD INDEX` + `MATERIALIZE INDEX` written next
+  to the declaration; the drift checker reports the index absent until
+  then. `TestCensusDayFilterHasASkipIndex` pins the predicate column to a
+  declared minmax index, and the integration test
+  `TestRunCensusDay_PrunesByCloseTimeAndSwapsPartition` proves on a real
+  server that the planner drops the neighbouring day's granules and that
+  the rollup lands exact per-contract counts.
+- **test / the repo-wide guards fail only on the packages they protect
+  (Q132):** `loadRepoPackages`, shared by `TestI128TruncationGuard` and
+  `TestAssetTypeExhaustiveGuard`, hard-failed on a load error in ANY
+  package under the repo root — a broken `scripts/dev` tool took both
+  guards down and hid whatever they would have said. A load error is
+  now fatal only under `internal/`, `cmd/` and `pkg/` (the set
+  `scripts/ci/lint-i128.sh` scans); an out-of-scope failure is logged
+  and that package skipped. The loader also refuses to return fewer
+  than 100 in-scope packages (132 today), so a narrowed load cannot
+  green either guard on a near-empty tree.
+  `TestLoadRepoPackages_ScopesLoadErrors` pins the partition.
+- **test / the i128 truncation guard now sees through locals (F053):**
+  `TestI128TruncationGuard` judged only the inline shapes `int64(p.Lo)`
+  and `int64(a.MustI128())`; binding the word to a variable first
+  (`lo := p.Lo; int64(lo)`) was silently accepted, and the grep sibling
+  `scripts/ci/lint-i128.sh` was defeated by the same rewrite. The guard
+  now records every local bound to a parts word or a `Must*` result (and
+  to another such local, to a fixpoint) and applies the same rule at the
+  conversion; the positive control pins the through-a-local cases red.
+  The grep gains a file-local second pass for `x := <p>.Lo` followed by
+  `int(8|16|32|64)?(x)`.
+- **ci / the money-column gate now reads the lake DDL (T454):**
+  `scripts/ci/lint-migrations.sh` gains a fourth pass over
+  `deploy/clickhouse/*.sql`: a monetary column typed `Float32`/`Float64`
+  (Nullable or not) fails, keyed `table.column`, with the same inline
+  `-- lint-money:ok <reason>` escape as the Postgres pass and the same
+  stale-marker check. Before this the ADR-0003 gate globbed only
+  `migrations/*.up.sql`, so `volume_usd Float64` in the ClickHouse DDL was
+  invisible while the identical column in a migration was a CI failure.
+  The four pre-existing float money columns (`asset_month_usd_prices
+  .volume_usd`, `account_cohort_positions.amount`, each in the operator
+  file and its `tier1_schema.sql` mirror) sit in a baseline inside the
+  script that only shrinks; retyping one, or giving it the inline
+  escape, is a change to that DDL. `scripts/ci/lint-migrations-test.sh`
+  pins every verdict on fixtures.
+- **aggregate / a source's VWAP weight is the correctly-rounded exact
+  ratio (K048):** `SourceContributions` rounded each source's quote
+  volume and the total to `float64` before dividing, so above 2^53 —
+  every Soroban i128 volume — the served `Weight` landed ulps away from
+  the true share. It is now one `big.Rat` division of the exact
+  integers with a single correctly-rounded conversion.
+  `TestSourceContributions_WeightIsCorrectlyRoundedAboveTwoPow53` pins
+  the value for 2^53+1 over 2^54+11.
+- **api / `/v1/accounts/{g}/movements` `provenance` enum (RLT-208):** the
+  ClickHouse arm serves rows the `ch-cap67-movements` derive stamps
+  `cap67_derived`, and the handler passes the value through, but the OpenAPI
+  `AccountMovement.provenance` enum listed only `classic_derived` and
+  `cap67_event`, so the generated explorer union and Postman collection
+  rejected a value the endpoint returns for every post-P23 archive row. The
+  spec now carries all three values with what each means, and
+  `TestAccountMovementProvenance_SpecEnumIsTheGoVocabulary` pins the enum
+  to the Go constants the writers stamp.
+- **api / `/v1/assets/{id}/supply` `as_of_ledger` on the storage-derived arm
+  (RLT-008):** a `contract_storage_balances` reading stamped `as_of_ledger`
+  from the storage reader's own max(last_modified_ledger) — the last ledger
+  any holder's balance moved at — while `flags.stale` was judged from the
+  lake watermark, so the two fields in one response described different
+  ledgers and an idle token could carry a months-old `as_of_ledger` beside
+  a fresh stale verdict. Both now come from the same watermark read, as the
+  mint/burn arm already did; `TestSupplyStorageFallbackAsOfLedgerIsLakeWatermark`
+  pins it, including the no-reader case where the field is omitted.
+- **api / `/v1/assets/{id}/supply` spec names and `supply_consistent` (RLT-002, RWC-532):**
+  the OpenAPI `AssetSupply` schema documented `total_supply_lower_bound`,
+  `contract_self_checks_agreed` and `declared_decimals` while the handler
+  has only ever served `circulating_supply_lower_bound`, `supply_consistent`
+  and `decimals`, so the generated explorer types and the Postman collection
+  typed three fields no response carries. The spec now names the served
+  fields and `TestAssetSupplyResponseFieldsMatchSpec` pins the handler struct
+  to the schema in both directions. On the same path `supply_consistent` was
+  `true` for a token that published no `TotalSupply` or `HolderCount` to
+  check against; it is now omitted there, as its own description said, and
+  set only when the contract offered something to agree with
+  (`ContractStorageSupply.HasSelfChecks`).
+- **usage / `usage_daily` upserts are chunked multi-row statements (F060,
+  Q155):** `Store.UpsertUsageDaily` sent one prepared `INSERT … ON CONFLICT`
+  per row inside a single transaction that only committed at the end, so a
+  sweep's round-trip count and its transaction size both grew with the number
+  of active subject-days. Rows now go as multi-row `VALUES` statements of at
+  most 500 rows, each autocommitted, with duplicate keys inside a batch folded
+  to their per-column maximum before the statement is built (Postgres refuses
+  the same conflict target twice in one statement). The batch is validated
+  whole before the first statement is sent. Unit tests pin the statement
+  count against a recording driver; an integration test drives a 1,201-row
+  batch across three chunks on real Postgres.
+- **usage / the rollup sweep is bounded by its own cadence and writes only
+  what changed (K052, Q155):** `Rollup.Sweep` passed the worker's context
+  straight through, so a stalled Redis or Postgres held the sweep open
+  indefinitely, and every tick re-sent every active subject-day's cumulative
+  counters even when nothing had moved. A sweep now runs under a deadline of
+  one interval (five minutes in production), holds a per-row mirror of what
+  the sink last acknowledged, and sends only rows whose counters differ from
+  it — a quiet tick writes nothing, a change sends the full cumulative value
+  (never a delta), a failed upsert leaves its rows unacknowledged so the next
+  sweep resends them, and a restart resends everything once, which the
+  GREATEST merge absorbs. One sweep runs at a time.
+- **storage / the directory sync refuses a snapshot that prunes or newly
+  scam-flags more than one day plausibly does (F178, RSEC-D1):**
+  `ReplaceDirectory` refused only an EMPTY snapshot, then ran the prune
+  unconditionally in the same transaction. The upstream is an unpinned
+  branch of a third-party repo and a scam-class tag withholds the issuer's
+  price, so a hijacked, truncated or mis-generated snapshot that kept one
+  row could un-flag every scam issuer, or flag thousands of issuers and
+  withhold their prices, in one commit with nothing failing and no number
+  reported. `ReplaceDirectoryWithin` now judges both counts inside the
+  transaction against `DirectoryChurnLimit` (default 5 % of the rows the
+  source held, never below 100; a source's first sync is unbounded) and
+  rolls the whole snapshot back past it with `ErrDirectoryChurnExceeded`;
+  `directory-sync` exits nonzero on that (which the
+  `stellarindex_systemd_unit_failed` catch-all tickets), prints upserted /
+  pruned / newly-flagged / held-before on success, and takes an explicit
+  `-accept-churn` for a known upstream mass change. Pinned against real
+  Timescale by `TestDirectorySync_ChurnCeiling` (a 4000-row source, a
+  1000-row prune and a 1000-address flagging both refused and rolled back,
+  150/150 lands, the opt-in accepts) and `TestDirectoryChurnLimit_Ceiling`.
+- **ops / directory-sync refuses a truncated, corrupt or oversized tarball
+  (T219, RSEC-D1):** the 256 MiB read bound was a plain `io.LimitReader` —
+  a clean EOF at an exact multiple of tar's 512-byte block — so a stream
+  cut between two entries handed `tar.Reader` a well-formed end of archive
+  and the walk returned the entries read so far with a nil error, a
+  partial snapshot `ReplaceDirectory` then pruned the table down to; and
+  `tar.Reader` stops at the end-of-archive marker before the gzip trailer,
+  so the archive's CRC-32 was never verified. The bound is now a refusal
+  (`boundedReader`), and the stream is drained to EOF after the walk so
+  gzip checks its CRC and length. Pinned by
+  `TestParseDirectoryTarball_RefusesTruncationAtBlockBoundary` (a 2048 B
+  bound over a 3-entry archive used to return 2 entries, nil) and
+  `TestParseDirectoryTarball_RejectsCorruptGzipTrailer` (a flipped CRC
+  byte used to return all 3 entries, nil).
 
 ### Added
 
