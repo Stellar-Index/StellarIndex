@@ -74,6 +74,49 @@ for g in $KEYS; do
   [ "$CODE" = "200" ] || fail "listed issuer $g → detail HTTP $CODE"
 done
 
+echo "== 6. long-tail shell fallback (structurally unreached by the sitemap sample)"
+# T328: sitemap.ts deliberately excludes per-entity long tails ("unbounded
+# long tails served as noindex shells") so section 1's sitemap sample can
+# never land on a CF Pages Function's fallback branch. Probe one synthetic
+# id per shell-fallback Function directly (functions/*/[[path]].js): each
+# must answer 200 with its shell document (never a hard 404), and the
+# shell itself must clear the same red flags as section 2.
+PROBE_ID="sitecrawlprobe$(date +%s)"
+for path in \
+  "/assets/${PROBE_ID}" \
+  "/accounts/G${PROBE_ID}" \
+  "/contracts/C${PROBE_ID}" \
+  "/ledgers/9${PROBE_ID}" \
+  "/markets/native~${PROBE_ID}" \
+  "/issuers/G${PROBE_ID}" \
+  "/transactions/${PROBE_ID}" \
+  "/insights/sponsors/G${PROBE_ID}" \
+  "/insights/creators/G${PROBE_ID}" \
+  ; do
+  CODE=$(status_of "$SITE$path")
+  [ "$CODE" = "200" ] || fail "long-tail shell $path → HTTP $CODE (CF Pages Function fallback broken)"
+  HTML=$(fetch "$SITE$path" || true)
+  if [ -n "$HTML" ]; then
+    grep -qE '>undefined<|>NaN<|\[object Object\]' <<<"$HTML" &&
+      fail "$path (shell) contains placeholder text"
+    grep -q '· Stellar Index · Stellar Index' <<<"$HTML" &&
+      fail "$path (shell) has a doubled title suffix"
+  fi
+done
+
+echo "== 7. og image Function"
+# T300: the 8th CF Pages Function (functions/og/[[path]].js) renders a PNG,
+# not HTML, so it needs its own shape check rather than section 2's markup
+# greps.
+OG_PATH="/og/assets/native"
+OG_CODE=$(status_of "$SITE$OG_PATH")
+[ "$OG_CODE" = "200" ] || fail "$OG_PATH → HTTP $OG_CODE"
+OG_CTYPE=$(curl -s -o /dev/null --max-time 30 -w '%{content_type}' "$SITE$OG_PATH")
+case "$OG_CTYPE" in
+  image/*) ;;
+  *) fail "$OG_PATH content-type '$OG_CTYPE' is not an image" ;;
+esac
+
 echo
 if [ "$FAILURES" -gt 0 ]; then
   echo "site-crawl-check: $FAILURES failure(s)." >&2
