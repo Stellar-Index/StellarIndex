@@ -1,9 +1,9 @@
 ---
 title: CCTP WASM-history audit
-last_verified: 2026-05-24
-status: "in progress — wasm-history walk pending"
+last_verified: 2026-05-26
+status: "approved — see Audit decision"
 source: cctp
-backfill_safe: false
+backfill_safe: true
 ---
 
 # CCTP WASM audit
@@ -13,14 +13,11 @@ Audit log for the `cctp` source's `BackfillSafe` flag. See
 
 ## Status
 
-**Skeleton (2026-05-24).** Source decoder + wiring landed in #40
-(commit `8448db13`); registry entry sits at `BackfillSafe: false`
-pending the wasm-history walk. The walk itself is gated on r1's
-verify-archive bootstrap finishing (ZFS-ARC + MinIO I/O
-contention — see README.md §2 "Where to run wasm-history") so
-this doc captures the per-contract / per-event expectations now,
-and the operator fills in the timeline + per-hash review
-sections once the walk lands.
+**Approved (2026-05-26).** Source decoder + wiring landed in #40
+(commit `8448db13`); the wasm-history walk (§"WASM timeline" below)
+found zero upgrades across all 3 mainnet contracts, and the registry
+entry was flipped to `BackfillSafe: true` in the same commit as the
+audit decision below.
 
 CCTP is Circle's cross-chain transfer protocol — Stellar is one
 of N chains in the v2 deployment. The three contracts are
@@ -38,7 +35,7 @@ output is unaffected either way.
 | Source name (registry key) | `cctp` |
 | Registry class | `ClassBridge` |
 | Decoder file | [`internal/sources/cctp/decode.go`](../../../internal/sources/cctp/decode.go) |
-| Dispatcher hook | event-based `Decoder` (topic[0] classify; one of four `Event*` symbols) |
+| Dispatcher hook | event-based `Decoder` (topic[0] classify; one of 26 `Event*` symbols) |
 | Package README | [`internal/sources/cctp/README.md`](../../../internal/sources/cctp/README.md) |
 | Wiring PR | #40 (commit `8448db13`) |
 
@@ -153,8 +150,13 @@ variants of a single template):
   per Phase 1 audit; the forwarder doesn't introduce its own
   topic namespace.
 
-Decoder coverage matches the full event set the contracts emit
-(verified at `internal/sources/cctp/events.go` constants). No
+Decoder coverage matches the full event set the contracts emit —
+verified against the contracts' Rust source
+([`docs/architecture/cctp-stellar-coverage.md`](../../architecture/cctp-stellar-coverage.md)),
+which `internal/sources/cctp/events.go`'s 26 `Event*` constants
+mirror; the ROADMAP #89b/89c topic-match audits (2026-07-08/09)
+additionally cross-checked every `topic_0_sym` the 3 contracts have
+ever emitted on mainnet against that set and found none missing. No
 i128 scale drift to worry about — no upgrades to drift through.
 
 Disassembly + per-WASM source comparison deferred until either
@@ -186,8 +188,26 @@ WHERE contract_id IN (
   'CAE2G5Z77UP7GYPYGFOWFGW7C7J6I4YP2AFGSADRKQY62SYUFLPNFTXL',
   'CACMENFFJPJMSDAJQLX4R7K3SFZIW2LJSE3R2UMLGSWHFHS353FVXAZV',
   'CBZL2IH7F6BIDAA3WBNXYKIXSATJGMSW7K5P5MJ6STX5RXN47TZJDF5T'
-) AND topic_0_sym IN ('deposit_for_burn', 'mint_and_withdraw',
-                      'message_sent', 'message_received');
+) AND topic_0_sym IN (
+  -- Transfer-flow (original 2026-05-26 approval scope):
+  'deposit_for_burn', 'mint_and_withdraw', 'message_sent',
+  'message_received', 'mint_and_forward',
+  -- Governance/admin — added to the decoder by the ROADMAP #89b/89c
+  -- topic-match audits (2026-07-08/09); covered by this same
+  -- single-WASM, no-upgrade finding, so no separate re-walk is
+  -- needed, but a replay run BEFORE 2026-07-09 must re-run with
+  -- this full list to pick these up:
+  'ownership_transfer', 'ownership_transfer_completed',
+  'admin_changed', 'admin_change_started',
+  'remote_token_messenger_added', 'token_pair_linked',
+  'attester_enabled', 'attester_manager_updated',
+  'signature_threshold_updated', 'max_message_body_size_updated',
+  'pauser_changed', 'rescuer_changed', 'denylisted',
+  'un_denylisted', 'denylister_changed', 'fee_recipient_set',
+  'min_fee_controller_set', 'set_token_controller',
+  'set_burn_limit_per_message', 'swap_minter_config_set',
+  'token_decimal_config_added'
+);
 ```
 
 Re-audit triggers: any of these tipped from this single-WASM
