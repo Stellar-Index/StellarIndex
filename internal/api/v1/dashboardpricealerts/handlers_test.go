@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -386,6 +387,81 @@ func TestHandleUpdate_CrossAccount404(t *testing.T) {
 	h.HandleUpdate(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want 404 (no cross-account leak)", w.Code)
+	}
+}
+
+// TestHandleUpdate_LastFiredAtOmittedWhenZero pins T153: a never-fired
+// alert's zero LastFiredAt must be genuinely absent from the response
+// JSON, not serialized as "0001-01-01T00:00:00Z" (omitempty is a no-op
+// on a struct-typed time.Time).
+func TestHandleUpdate_LastFiredAtOmittedWhenZero(t *testing.T) {
+	h, store, sc := newTestRig(t, nil)
+	seed := platform.PriceAlert{AccountID: sc.Account.ID, BaseAsset: "native", QuoteAsset: "fiat:USD", Condition: platform.AlertAbove, Threshold: "0.2", Enabled: true}
+	created, _ := store.CreatePriceAlert(context.Background(), seed, 0)
+
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/price-alerts/"+created.ID.String(), updateRequest{Threshold: ptr("0.5")}, sc)
+	req.SetPathValue("id", created.ID.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if v, present := raw["last_fired_at"]; present {
+		t.Errorf("last_fired_at should be omitted for a never-fired alert, got %v", v)
+	}
+}
+
+// failGetStore wraps fakeStore and makes GetPriceAlert fail starting
+// on its THIRD call, simulating a transient read error on the
+// post-update reload while leaving the handler's two earlier lookups
+// (parseAndAuthorise, then the pre-patch "current" fetch) unaffected.
+type failGetStore struct {
+	*fakeStore
+	calls int
+}
+
+func (s *failGetStore) GetPriceAlert(ctx context.Context, id uuid.UUID) (platform.PriceAlert, error) {
+	s.calls++
+	if s.calls > 2 {
+		return platform.PriceAlert{}, errors.New("reload failed")
+	}
+	return s.fakeStore.GetPriceAlert(ctx, id)
+}
+
+// TestHandleUpdate_ReloadFailureReturns500 pins T155: when the
+// post-update GetPriceAlert reload fails, the handler must surface a
+// 500, not silently write 200 with a zero-value DTO.
+func TestHandleUpdate_ReloadFailureReturns500(t *testing.T) {
+	store := newFakeStore()
+	sc := dashboardauth.SessionContext{
+		Session: platform.Session{ID: uuid.New(), UserID: uuid.New()},
+		User:    platform.User{ID: uuid.New(), Email: "owner@example.com", Role: platform.RoleOwner},
+		Account: platform.Account{ID: uuid.New(), Slug: "example", Tier: platform.TierFree, Status: platform.AccountActive},
+	}
+	sc.User.AccountID = sc.Account.ID
+	seed := platform.PriceAlert{AccountID: sc.Account.ID, BaseAsset: "native", QuoteAsset: "fiat:USD", Condition: platform.AlertAbove, Threshold: "0.2", Enabled: true}
+	created, _ := store.CreatePriceAlert(context.Background(), seed, 0)
+
+	h, err := NewHandlers(Config{
+		Alerts: &failGetStore{fakeStore: store},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:    func() time.Time { return time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("NewHandlers: %v", err)
+	}
+
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/price-alerts/"+created.ID.String(), updateRequest{Threshold: ptr("0.99")}, sc)
+	req.SetPathValue("id", created.ID.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 when the post-update reload fails", w.Code)
 	}
 }
 

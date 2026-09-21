@@ -77,16 +77,18 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 
 // priceAlertDTO is the wire shape the dashboard reads.
 type priceAlertDTO struct {
-	ID              string    `json:"id"`
-	BaseAsset       string    `json:"base_asset"`
-	QuoteAsset      string    `json:"quote_asset"`
-	Condition       string    `json:"condition"`
-	Threshold       string    `json:"threshold"`
-	CooldownSeconds int       `json:"cooldown_seconds"`
-	Enabled         bool      `json:"enabled"`
-	LastFiredAt     time.Time `json:"last_fired_at,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID              string `json:"id"`
+	BaseAsset       string `json:"base_asset"`
+	QuoteAsset      string `json:"quote_asset"`
+	Condition       string `json:"condition"`
+	Threshold       string `json:"threshold"`
+	CooldownSeconds int    `json:"cooldown_seconds"`
+	Enabled         bool   `json:"enabled"`
+	// Pointer so a zero LastFiredAt (never fired) is genuinely omitted —
+	// omitempty does NOT omit a zero time.Time (it's a non-empty struct).
+	LastFiredAt *time.Time `json:"last_fired_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 func toDTO(a platform.PriceAlert) priceAlertDTO {
@@ -98,10 +100,20 @@ func toDTO(a platform.PriceAlert) priceAlertDTO {
 		Threshold:       a.Threshold,
 		CooldownSeconds: a.CooldownSeconds,
 		Enabled:         a.Enabled,
-		LastFiredAt:     a.LastFiredAt,
+		LastFiredAt:     nilIfZero(a.LastFiredAt),
 		CreatedAt:       a.CreatedAt,
 		UpdatedAt:       a.UpdatedAt,
 	}
+}
+
+// nilIfZero returns nil for a zero time.Time so the DTO's `omitempty`
+// pointer field is genuinely omitted rather than serialized as the
+// year-1 zero timestamp.
+func nilIfZero(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }
 
 type listResponse struct {
@@ -262,7 +274,12 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	updated, _ := h.cfg.Alerts.GetPriceAlert(r.Context(), id)
+	updated, err := h.cfg.Alerts.GetPriceAlert(r.Context(), id)
+	if err != nil {
+		h.cfg.Logger.Error("reload price alert after update", "err", err, "id", id)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, toDTO(updated))
 }
 
