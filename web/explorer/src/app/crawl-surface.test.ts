@@ -267,6 +267,39 @@ describe('long-tail shell metadata', () => {
   });
 
   /**
+   * F095: Next's metadata merge (lib/metadata/resolve-metadata.js
+   * `mergeMetadata`) only touches keys present on the object a segment
+   * returns — it iterates `for (const key in metadata)`. A shell that
+   * returns no `alternates` key at all does not get "no canonical"; it
+   * inherits the root layout's `alternates: { canonical: '/' }`
+   * unchanged, so every arbitrary long-tail /assets/* and /markets/*
+   * hit baked a rel=canonical pointing at the homepage. noindex hid the
+   * consequence (the tag was never crawled under an indexed URL) but
+   * did not remove the tag itself. The fix must explicitly declare
+   * `alternates` on the shell's metadata so the merge overrides the
+   * parent instead of falling through to it.
+   */
+  it('overrides the root layout canonical instead of inheriting it', async () => {
+    const assetMeta = await assetMetadata({
+      params: Promise.resolve({ slug: 'shell' }),
+    });
+    expect(
+      assetMeta,
+      '/assets/shell must declare alternates itself, not inherit the root layout canonical',
+    ).toHaveProperty('alternates');
+    expect(assetMeta.alternates?.canonical).toBeUndefined();
+
+    const marketMeta = await pairMetadata({
+      params: Promise.resolve({ pair: 'shell' }),
+    });
+    expect(
+      marketMeta,
+      '/markets/shell must declare alternates itself, not inherit the root layout canonical',
+    ).toHaveProperty('alternates');
+    expect(marketMeta.alternates?.canonical).toBeUndefined();
+  });
+
+  /**
    * The query-param entity pages are the third shape of the same defect.
    * /contract?id=, /ledger?seq=, /tx?hash= and /operation?tx=&i= render
    * ENTIRELY from their query string, and each tags itself

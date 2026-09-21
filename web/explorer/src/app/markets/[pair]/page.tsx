@@ -178,7 +178,18 @@ export async function generateMetadata({
   // the crawler still walks out through the nav.
   const decoded = pair === 'shell' ? null : decodePairSlug(pair);
   if (!decoded) {
-    return { title: 'Pair', robots: { index: false, follow: true } };
+    // Metadata merges shallowly per top-level key, so omitting
+    // `alternates` here inherits the root layout's
+    // `alternates: { canonical: '/' }` verbatim — every one of these
+    // arbitrary long-tail URLs baked a rel=canonical pointing at the
+    // homepage. noindex only kept it out of the index under that tag,
+    // it didn't remove the tag. Override with an empty object so no
+    // canonical is emitted.
+    return {
+      title: 'Pair',
+      robots: { index: false, follow: true },
+      alternates: {},
+    };
   }
   const baseLabel = shortAssetText(decoded.base);
   const quoteLabel = shortAssetText(decoded.quote);
