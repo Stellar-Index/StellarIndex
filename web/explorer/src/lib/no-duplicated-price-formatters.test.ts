@@ -49,6 +49,28 @@ describe.each(files)('%s', (rel) => {
   });
 });
 
+// RLT-388: /convert/[from]/[to]'s headline (ConvertLive.tsx), interactive
+// widget (ConvertPair.tsx) and SEO meta description (page.tsx) each
+// hand-copied their own quote-per-base rate ladder. The meta copy broke
+// at >=100 -> toFixed(2) while the others broke at >=1000, so the same
+// rate rendered with a different digit count in the page body than in
+// its <meta> description. All three now import formatPairPrice.
+const CONVERT_RATE_FILES = [
+  '../app/convert/[from]/[to]/page.tsx',
+  '../app/convert/[from]/[to]/ConvertLive.tsx',
+  '../app/convert/[from]/[to]/ConvertPair.tsx',
+];
+
+describe.each(CONVERT_RATE_FILES)('%s', (rel) => {
+  const src = readFileSync(resolve(HERE, rel), 'utf8');
+
+  it('imports the shared formatPairPrice instead of a local rate fork', () => {
+    expect(src).toMatch(/formatPairPrice.*from ['"]@\/lib\/format['"]/);
+    expect(src).not.toMatch(/function formatRate\b/);
+    expect(src).not.toMatch(/function formatRateForMeta\b/);
+  });
+});
+
 describe('the shared LastPriceCell', () => {
   const src = readFileSync(
     resolve(HERE, '../components/LastPriceCell.tsx'),

@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 
 import { apiGet } from '@/api/client';
 import type { components } from '@/api/types';
-import { formatRelative } from '@/lib/format';
+import { formatPairPrice, formatRelative } from '@/lib/format';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 type PriceBatchEnvelope = components['schemas']['PriceBatchEnvelope'];
@@ -224,14 +224,14 @@ export function ConvertLiveRate({
     <>
       {rate != null ? (
         <p className="text-ink font-mono text-2xl tabular-nums">
-          1 {from} = {formatRate(rate)} {to}
+          1 {from} = {formatPairPrice(rate)} {to}
         </p>
       ) : (
         <p className="text-ink-muted text-sm">Rate currently unavailable.</p>
       )}
       {inverse != null && (
         <p className="text-ink-body font-mono text-sm tabular-nums">
-          1 {to} = {formatRate(inverse)} {from}
+          1 {to} = {formatPairPrice(inverse)} {from}
         </p>
       )}
       {basis != null && (
@@ -278,7 +278,7 @@ export function ConvertSnippets({
               {amt.toLocaleString('en-US')} {from}
             </span>
             <span className="text-ink font-mono font-medium tabular-nums">
-              {formatRate(amt * rate)} {to}
+              {formatPairPrice(amt * rate)} {to}
             </span>
           </div>
         ))}
@@ -290,13 +290,13 @@ export function ConvertSnippets({
         {showingLastPublished ? (
           <>
             All values calculated at the last published rate of 1 {from} ={' '}
-            {formatRate(rate)} {to}. The live rate is unavailable right now, so
+            {formatPairPrice(rate)} {to}. The live rate is unavailable right now, so
             these are not current.
           </>
         ) : (
           <>
             All values calculated at the current mid-market rate of 1 {from} ={' '}
-            {formatRate(rate)} {to}
+            {formatPairPrice(rate)} {to}
             {observedAt != null && <>, observed {formatRelative(observedAt)}</>}
             . Rates update on each forex-source refresh tick.
           </>
@@ -304,13 +304,4 @@ export function ConvertSnippets({
       </p>
     </section>
   );
-}
-
-function formatRate(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 1000)
-    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  if (Math.abs(n) >= 1) return n.toFixed(4);
-  if (Math.abs(n) >= 0.01) return n.toFixed(6);
-  return n.toFixed(8);
 }

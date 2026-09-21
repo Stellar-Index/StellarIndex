@@ -3,6 +3,7 @@
 import { useState, useMemo } from 'react';
 import { ArrowLeftRight } from 'lucide-react';
 
+import { formatPairPrice } from '@/lib/format';
 import { rateBasis, useConvertRate } from './ConvertLive';
 
 /**
@@ -97,7 +98,7 @@ export function ConvertPair({
           </span>
           <div className="border-line bg-surface flex items-center gap-2 rounded-md border p-2">
             <span className="text-ink w-full font-mono text-2xl tabular-nums">
-              {result != null ? formatRate(result) : '—'}
+              {result != null ? formatPairPrice(result) : '—'}
             </span>
             <span className="bg-surface-subtle text-ink-body rounded-sm px-1.5 py-0.5 font-mono text-xs tracking-wider uppercase">
               {toLabel}
@@ -110,7 +111,7 @@ export function ConvertPair({
           <>
             1 {fromLabel} ={' '}
             <span className="font-mono tabular-nums">
-              {formatRate(direction === 'forward' ? rate : inverse)}
+              {formatPairPrice(direction === 'forward' ? rate : inverse)}
             </span>{' '}
             {toLabel}
             {basis != null && (
@@ -126,13 +127,4 @@ export function ConvertPair({
       </p>
     </section>
   );
-}
-
-function formatRate(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 1000)
-    return n.toLocaleString('en-US', { maximumFractionDigits: 2 });
-  if (Math.abs(n) >= 1) return n.toFixed(4);
-  if (Math.abs(n) >= 0.01) return n.toFixed(6);
-  return n.toFixed(8);
 }
