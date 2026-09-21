@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+- **observability / job heartbeat — stale `.pidN.prom` siblings no longer
+  wait on a contention that may never come (T597, T601):**
+  `sweepStalePIDFiles` previously ran only when a second concurrent run of
+  the same job contended for the lock, so a loser that died hard (SIGKILL,
+  OOM) with no follow-up contention left its fallback textfile behind
+  indefinitely, pinning its `pid` label in Prometheus forever. The primary
+  heartbeat now also sweeps its own dead siblings on every heartbeat tick
+  and unconditionally before releasing its lock at `Stop`, so a dead
+  sibling is reaped within one heartbeat interval — or by the time the
+  primary exits, whichever comes first — instead of only on the next
+  contention.
+
 - **scripts / lint-changed-test's own lint-count assertions weren't
   shellcheck-optional (RLT-055):** three fixture assertions hard-coded the
   "N lint(s)" totals `lint-changed.sh` reports assuming shellcheck is on
