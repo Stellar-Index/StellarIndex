@@ -115,6 +115,35 @@ func TestHandlerBudgets_StayInsideTheRequestTimeout(t *testing.T) {
 	}
 }
 
+// TestPriceAtAndPriceChangesHaveRequestBudgets pins RLT-455 directly
+// against the two files it named, rather than relying on the general
+// walker above (which only validates budgets that EXIST and is
+// structurally blind to a handler with none at all). price_at.go's
+// alias walk and price_changes.go's up-to-five sequential PriceAt
+// calls (current anchor + 4 horizons) had no per-request
+// context.WithTimeout, so a slow run held its pool connection until
+// the client gave up with nothing here to catch it.
+func TestPriceAtAndPriceChangesHaveRequestBudgets(t *testing.T) {
+	for _, file := range []string{"price_at.go", "price_changes.go"} {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, file, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", file, err)
+		}
+		found := false
+		ast.Inspect(f, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok && isRequestWithTimeout(call) {
+				found = true
+			}
+			return true
+		})
+		if !found {
+			t.Errorf("%s: no context.WithTimeout(r.Context(), …) budget — an unbounded "+
+				"handler read holds its pool connection until the client gives up", file)
+		}
+	}
+}
+
 // budgetExemptions names the files whose request-derived
 // context.WithTimeout budget is legitimately not a handler budget, with
 // the reason. Keyed on the path suffix so it survives a move within the
