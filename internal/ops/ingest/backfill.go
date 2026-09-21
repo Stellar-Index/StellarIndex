@@ -503,11 +503,17 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 			"written", rawSink.WrittenCount(),
 			"dropped", rawSink.DroppedCount(),
 			"skipped", rawSink.SkippedCount(),
+			"lost", rawSink.LostCount(),
 		)
 		if dropped := rawSink.DroppedCount(); dropped > 0 {
 			logger.Warn("soroban-events: rows dropped at shutdown race",
 				"dropped", dropped,
 				"impact", "the dropped rows are NOT in soroban_events — investigate; only expected on hard kill")
+		}
+		if lost := rawSink.LostCount(); lost > 0 {
+			logger.Error("soroban-events: rows permanently lost — re-derive the logged ledger ranges from the CH lake (ADR-0034)",
+				"lost", lost,
+				"impact", "a permanent data fault or an expired drain abandoned rows; the cursor still advances, so re-walk the range")
 		}
 	}
 

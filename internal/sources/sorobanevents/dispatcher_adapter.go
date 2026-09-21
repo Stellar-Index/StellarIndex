@@ -140,9 +140,17 @@ type AsyncSink struct {
 	// goroutine (run -> drainOnStop -> flushBatch), never concurrently.
 	abortFlush <-chan struct{}
 	draining   bool
+	startOnce  sync.Once
 	stopOnce   sync.Once
 	stopping   chan struct{}
-	done       chan struct{}
+	// quiesced closes once Stop has seen every in-flight PushEvent
+	// return; only then may drainOnStop take its final poll of ch,
+	// because a producer past the stopping check can still win the
+	// send. pushMu is that barrier: producers hold it shared for the
+	// duration of PushEvent, Stop takes it exclusively once.
+	quiesced chan struct{}
+	pushMu   sync.RWMutex
+	done     chan struct{}
 
 	mu      sync.Mutex
 	dropped uint64
@@ -186,6 +194,7 @@ func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
 		batchSz:          opts.BatchSize,
 		drainGrace:       opts.DrainGrace,
 		stopping:         make(chan struct{}),
+		quiesced:         make(chan struct{}),
 		done:             make(chan struct{}),
 	}
 }
@@ -194,7 +203,7 @@ func NewAsyncSink(w BatchWriter, opts AsyncSinkOptions) *AsyncSink {
 // no-op. Caller must Stop before the process exits to flush pending
 // rows.
 func (s *AsyncSink) Start() {
-	go s.run()
+	s.startOnce.Do(func() { go s.run() })
 }
 
 // PushEvent captures `ev` into a Row and enqueues it for the
@@ -230,13 +239,27 @@ func (s *AsyncSink) PushEvent(ev events.Event) {
 		}
 		return
 	}
+	s.pushMu.RLock()
+	defer s.pushMu.RUnlock()
+	// Checked before the blocking select: once Stop has fired, a row
+	// must never enter ch — the drain's final poll may already be past.
+	select {
+	case <-s.stopping:
+		s.countDropped()
+		return
+	default:
+	}
 	select {
 	case s.ch <- row:
 	case <-s.stopping:
-		s.mu.Lock()
-		s.dropped++
-		s.mu.Unlock()
+		s.countDropped()
 	}
+}
+
+func (s *AsyncSink) countDropped() {
+	s.mu.Lock()
+	s.dropped++
+	s.mu.Unlock()
 }
 
 // Stop signals shutdown to producers (closing the stopping channel
@@ -258,6 +281,12 @@ func (s *AsyncSink) PushEvent(ev events.Event) {
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
 		close(s.stopping)
+		// Every producer inside PushEvent is now unblocked; wait for
+		// them all to leave so nothing can enter ch after the drain's
+		// final poll.
+		s.pushMu.Lock()
+		close(s.quiesced)
+		s.pushMu.Unlock()
 		<-s.done
 	})
 }
@@ -381,7 +410,10 @@ func (s *AsyncSink) run() {
 // them into batch, and triggers a final flush. s.ch is
 // deliberately NOT closed — that would panic any in-flight
 // producer; the stopping signal already unblocked them via
-// PushEvent's select.
+// PushEvent's select. The final, non-blocking poll of ch happens
+// only after Stop reports quiesced: a producer that won the send
+// against a closed stopping would otherwise leave its row in a
+// channel nobody reads again, counted neither written nor dropped.
 func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 	// s.stopping is already closed here, so leaving abortFlush pointing
 	// at it would abandon every batch this drain flushes — the bug this
@@ -399,9 +431,19 @@ func (s *AsyncSink) drainOnStop(batch *[]Row, flush func()) {
 			if len(*batch) >= s.batchSz {
 				flush()
 			}
-		default:
-			flush()
-			return
+		case <-s.quiesced:
+			for {
+				select {
+				case row := <-s.ch:
+					*batch = append(*batch, row)
+					if len(*batch) >= s.batchSz {
+						flush()
+					}
+				default:
+					flush()
+					return
+				}
+			}
 		}
 	}
 }
@@ -467,8 +509,7 @@ func (s *AsyncSink) flushBatch(rows []Row) []Row {
 			return nil
 		}
 		if s.isPermanentFault(err) {
-			s.abandonBatch(rows, err, "permanent data fault")
-			return nil
+			return s.isolatePermanentFault(rows, err)
 		}
 		select {
 		case <-abort:
@@ -483,6 +524,31 @@ func (s *AsyncSink) flushBatch(rows []Row) []Row {
 			"err", err, "rows", len(rows), "backoff", backoff)
 		backoff = min(backoff*2, asyncSinkRetryMaxBackoff)
 	}
+}
+
+// isolatePermanentFault narrows a batch-wide permanent fault to the
+// row(s) that carry it. Postgres rejects the whole multi-row INSERT
+// for one bad row, so abandoning rows[] as-is would lose up to
+// BatchSize-1 good rows for one poison row; bisecting re-flushes each
+// half (log2(BatchSize) extra round trips per poison row) and only a
+// batch of one that still faults is abandoned. Returns the rows a
+// Stop-raced steady-state flush handed back, exactly as [flushBatch].
+func (s *AsyncSink) isolatePermanentFault(rows []Row, err error) []Row {
+	if len(rows) <= 1 {
+		s.abandonBatch(rows, err, "permanent data fault")
+		return nil
+	}
+	mid := len(rows) / 2
+	left := s.flushBatch(rows[:mid])
+	right := s.flushBatch(rows[mid:])
+	if len(left) == 0 && len(right) == 0 {
+		return nil
+	}
+	// Fresh backing array: left and right alias rows, and appending
+	// one into the other's spare capacity would overwrite live rows.
+	carried := make([]Row, 0, len(left)+len(right))
+	carried = append(carried, left...)
+	return append(carried, right...)
 }
 
 // abandonBatch counts + loudly logs rows[] as permanently lost, with

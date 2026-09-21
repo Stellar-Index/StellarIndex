@@ -408,6 +408,11 @@ func run(cfgPath string, dryRun bool) error {
 		Logger:           logger.With("component", "soroban-events"),
 	})
 	rawEventSink.Start()
+	rawEventMetricsStop, rawEventMetricsDone := watchSorobanEventsSink(rawEventSink, logger.With("component", "soroban-events"))
+	defer func() {
+		rawEventMetricsStop()
+		<-rawEventMetricsDone
+	}()
 	// Ctx-cancel safety net (see backfill.go for rationale):
 	// PushEvent blocks under back-pressure, but the dispatcher hot
 	// path has no ctx awareness, so an unbounded postgres stall
@@ -434,10 +439,15 @@ func run(cfgPath string, dryRun bool) error {
 			"written", rawEventSink.WrittenCount(),
 			"dropped", rawEventSink.DroppedCount(),
 			"skipped", rawEventSink.SkippedCount(),
+			"lost", rawEventSink.LostCount(),
 		)
 		if dropped := rawEventSink.DroppedCount(); dropped > 0 {
 			logger.Warn("soroban-events: rows dropped at shutdown — last batch may be partial",
 				"dropped", dropped)
+		}
+		if lost := rawEventSink.LostCount(); lost > 0 {
+			logger.Error("soroban-events: rows permanently lost — re-derive the logged ledger ranges from the CH lake (ADR-0034)",
+				"lost", lost)
 		}
 	}()
 	disp.SetRawEventSink(rawEventSink)
@@ -1485,6 +1495,55 @@ func emitDiscoveryRecordFailMetricDelta(prev, current uint64, logger *slog.Logge
 // meta-version break fails EVERY ledger, so log only 1-in-256 to stay loud
 // without flooding. The Prometheus counter (errored outcome) carries the true
 // rate; this is just the human breadcrumb.
+// watchSorobanEventsSink bridges the raw-event sink's LostCount — rows
+// abandoned on a positively-classified permanent data fault or an
+// expired shutdown drain — onto
+// source_insert_errors_total{source="soroban-events",kind="dropped"},
+// the series the existing dropped-rows alert already watches per source.
+// Same (cancel, done) shape and background context as
+// [watchDiscoveryDrops]: the final flush after Stop is the one that
+// matters and must outlive the root context.
+func watchSorobanEventsSink(sink *sorobanevents.AsyncSink, logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// RECOVER (#368 M4). A metrics bridge over one monotonic counter;
+		// its death costs the loss signal, which worker_panics_total then
+		// reports, and must never take ingest down with it.
+		defer worker.Recover(logger, "soroban-events-lost-watch")
+		ticker := time.NewTicker(15 * time.Second)
+		defer ticker.Stop()
+
+		var lastLost uint64
+		for {
+			select {
+			case <-ticker.C:
+				lastLost = emitSorobanEventsLostMetricDelta(lastLost, sink.LostCount(), logger)
+			case <-ctx.Done():
+				emitSorobanEventsLostMetricDelta(lastLost, sink.LostCount(), logger)
+				return
+			}
+		}
+	}()
+	return cancel, done
+}
+
+func emitSorobanEventsLostMetricDelta(prev, current uint64, logger *slog.Logger) uint64 {
+	if current <= prev {
+		return current
+	}
+	delta := current - prev
+	obs.SourceInsertErrorsTotal.WithLabelValues(sorobanevents.SourceName, "dropped").Add(float64(delta))
+	if logger != nil {
+		logger.Error("soroban-events: rows permanently lost — re-derive from the CH lake (ADR-0034)",
+			"delta", delta,
+			"total", current,
+		)
+	}
+	return current
+}
+
 var chExtractErrLog atomic.Uint64
 
 func logCHExtractErrSampled(logger *slog.Logger, ledger uint32, err error) {
