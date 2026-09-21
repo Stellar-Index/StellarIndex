@@ -5,7 +5,17 @@ import Link from 'next/link';
 import { MarketChart } from '@/components/charts/MarketChart';
 import { useNativeUsdPrice } from '@/api/hooks';
 import { cn } from '@/lib/cn';
-import { usePriceFlash, useTipStream } from '@/lib/live/hooks';
+import {
+  isFrameStale,
+  useLiveClock,
+  usePriceFlash,
+  useTipStream,
+} from '@/lib/live/hooks';
+
+/** A tip tick is "live" while fresher than this, matching the
+ * LivePairPrice/LiveAssetPrice sibling widgets (30s of silence =
+ * wedged stream or backgrounded tab). */
+const TIP_LIVE_STALE_MS = 30_000;
 
 /**
  * HomeHeroChart — a featured XLM/USD OHLC+volume chart on the landing
@@ -15,14 +25,19 @@ import { usePriceFlash, useTipStream } from '@/lib/live/hooks';
  * would resolve to USDC at ~$1.00. The candles come from /v1/ohlc.
  */
 export function HomeHeroChart() {
-  const { price, change24hPct: change } = useNativeUsdPrice();
+  const { price, change24hPct: change, stale } = useNativeUsdPrice();
   // Make the "live USD price" label honest (RT-2): overlay the tip-price
-  // stream on the build-time-baked initial and flash on each tick.
+  // stream on the build-time-baked initial and flash on each tick. A
+  // frame older than TIP_LIVE_STALE_MS (stream wedged/quiet) must not
+  // keep claiming "live" — same WB-04 rule the sibling widgets apply.
+  const clock = useLiveClock();
   const tip = useTipStream('native');
-  const tipStr = tip?.data.data.price;
-  const livePrice =
-    tipStr != null && Number.isFinite(Number(tipStr)) ? Number(tipStr) : price;
-  const flash = usePriceFlash(tipStr);
+  const tipFresh =
+    tip != null && !isFrameStale(clock, tip.receivedAt, TIP_LIVE_STALE_MS);
+  const tipStr = tipFresh ? tip.data.data.price : undefined;
+  const tipActive = tipStr != null && Number.isFinite(Number(tipStr));
+  const livePrice = tipActive ? Number(tipStr) : price;
+  const flash = usePriceFlash(tipActive ? tipStr : undefined);
 
   return (
     <section className="rounded-card border-line bg-surface shadow-card border p-5">
@@ -35,7 +50,12 @@ export function HomeHeroChart() {
             XLM
           </Link>
           <span className="text-ink-muted text-sm">
-            Stellar Lumens · live USD price
+            Stellar Lumens ·{' '}
+            {tipActive
+              ? 'live USD price'
+              : stale
+                ? 'USD price · stale'
+                : 'USD price'}
           </span>
           {livePrice != null && (
             <span

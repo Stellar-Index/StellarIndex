@@ -455,21 +455,28 @@ export function useSources(
  * source XLM's price from /v1/price?asset=native, never the coins list.
  */
 export function useNativeUsdPrice() {
-  const price = useQuery<number | null>({
+  const price = useQuery<{ price: number | null; stale: boolean }>({
     queryKey: ['/v1/price', 'native', 'fiat:USD'],
     retry: false,
     enabled: PRICING_ENABLED, // no aggregator on test nets → /v1/price 404s
     staleTime: 30_000,
+    // Poll like usePricePoll's default cadence (60s) so a page that only
+    // renders this hook — no tip stream, no ledger follow — still moves;
+    // matches useNetworkStats' refetchInterval convention below.
+    refetchInterval: 60_000,
     queryFn: async () => {
-      const env = await apiGet<{ data: { price?: string | null } }>(
-        '/v1/price',
-        {
-          asset: 'native',
-          quote: 'fiat:USD',
-        },
-      );
+      const env = await apiGet<{
+        data: { price?: string | null };
+        flags?: { stale?: boolean };
+      }>('/v1/price', {
+        asset: 'native',
+        quote: 'fiat:USD',
+      });
       const p = env.data?.price ? Number(env.data.price) : null;
-      return p != null && Number.isFinite(p) && p > 0 ? p : null;
+      return {
+        price: p != null && Number.isFinite(p) && p > 0 ? p : null,
+        stale: Boolean(env.flags?.stale),
+      };
     },
   });
   const change = useQuery<number | null>({
@@ -495,7 +502,8 @@ export function useNativeUsdPrice() {
     },
   });
   return {
-    price: price.data ?? null,
+    price: price.data?.price ?? null,
+    stale: price.data?.stale ?? false,
     change24hPct: change.data ?? null,
     isLoading: price.isLoading,
     isError: price.isError,

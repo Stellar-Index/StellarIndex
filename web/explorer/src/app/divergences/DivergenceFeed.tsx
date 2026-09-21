@@ -106,17 +106,27 @@ export function DivergenceFeed() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
-                  <th className="py-1.5 pr-4 font-normal">Pair</th>
-                  <th className="py-1.5 pr-4 font-normal">Reference</th>
-                  <th className="py-1.5 pr-4 text-right font-normal">
-                    Our price
+                  <th scope="col" className="py-1.5 pr-4 font-normal">
+                    Pair
                   </th>
-                  <th className="py-1.5 pr-4 text-right font-normal">
+                  <th scope="col" className="py-1.5 pr-4 font-normal">
                     Reference
                   </th>
-                  <th className="py-1.5 pr-4 text-right font-normal">Δ%</th>
-                  <th className="py-1.5 pr-4 font-normal">Observed</th>
-                  <th className="py-1.5 pr-4 font-normal">State</th>
+                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
+                    Our price
+                  </th>
+                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
+                    Reference
+                  </th>
+                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
+                    Δ%
+                  </th>
+                  <th scope="col" className="py-1.5 pr-4 font-normal">
+                    Observed
+                  </th>
+                  <th scope="col" className="py-1.5 pr-4 font-normal">
+                    State
+                  </th>
                   <th className="py-1.5 font-normal" aria-hidden />
                 </tr>
               </thead>

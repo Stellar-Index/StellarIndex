@@ -419,7 +419,9 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
                   {detail.auth_flags_as_of_ledger != null && (
                     <>
                       {' '}
-                      (ledger {detail.auth_flags_as_of_ledger.toLocaleString()})
+                      (ledger{' '}
+                      {detail.auth_flags_as_of_ledger.toLocaleString('en-US')}
+                      )
                     </>
                   )}
                   . This account no longer exists on the ledger, so these are
