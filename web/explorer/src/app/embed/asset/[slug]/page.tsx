@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { LivePrice } from '../../LivePrice';
+import { LiveChangeChip } from '../../LiveChangeChip';
 
 // The /v1/assets row shape, derived from the generated OpenAPI
 // contract via the shared alias in src/api/hooks.ts (spec `Asset`
@@ -315,9 +316,24 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
           assetId={liveAssetId}
           initial={priceNum != null ? formatPrice(priceNum) : '—'}
         />
-        <ChangeChip pct={change1h} label="1h" />
-        <ChangeChip pct={change24h} label="24h" />
-        <ChangeChip pct={change7d} label="7d" />
+        <LiveChangeChip
+          entityType="coin"
+          entityID={liveAssetId}
+          window="1h"
+          initialPct={change1h}
+        />
+        <LiveChangeChip
+          entityType="coin"
+          entityID={liveAssetId}
+          window="24h"
+          initialPct={change24h}
+        />
+        <LiveChangeChip
+          entityType="coin"
+          entityID={liveAssetId}
+          window="7d"
+          initialPct={change7d}
+        />
       </div>
       {points.length > 0 && <Sparkline points={points} />}
       <div className="text-ink-faint mt-auto flex items-center justify-between text-[10px]">
@@ -329,30 +345,6 @@ export default async function EmbedAssetPage({ params }: { params: Params }) {
         )}
       </div>
     </div>
-  );
-}
-
-function ChangeChip({
-  pct,
-  label,
-}: {
-  pct: number | null | undefined;
-  label: string;
-}) {
-  if (pct == null || !Number.isFinite(pct)) return null;
-  const cls =
-    pct > 0
-      ? 'bg-up-subtle text-up'
-      : pct < 0
-        ? 'bg-down-subtle text-down'
-        : 'bg-surface-subtle text-ink-body';
-  return (
-    <span
-      className={`rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}
-    >
-      {pct > 0 ? '+' : ''}
-      {pct.toFixed(2)}% {label}
-    </span>
   );
 }
 

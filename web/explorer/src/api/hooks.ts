@@ -382,7 +382,14 @@ export function useChangeSummary(
   return useQuery<ChangeSummary>({
     queryKey: ['/v1/changes', entityType, entityID],
     queryFn: () =>
-      apiGet<ChangeSummary>(`/v1/changes/${entityType}/${entityID}`),
+      // A `pair` id is the literal `base/quote` form (per the OpenAPI
+      // `id` parameter doc) and must occupy one path segment — an
+      // unencoded `/` splits the request across two segments and
+      // matches no route. `coin` ids never contain `/`, so this is a
+      // no-op for every existing caller.
+      apiGet<ChangeSummary>(
+        `/v1/changes/${entityType}/${encodeURIComponent(entityID)}`,
+      ),
     enabled: !!entityID,
     staleTime: 60_000,
   });
