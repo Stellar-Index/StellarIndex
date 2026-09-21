@@ -31,6 +31,23 @@ function publishedAvailabilityPct(): number {
   return Number((m as RegExpExecArray)[1]);
 }
 
+// RLT-332: the targets table states a flat "<= 30 s" price-freshness
+// bound for /v1/price/tip, but internal/api/v1/price_tip.go's
+// last-good fallback branch serves the most recent observation with
+// no synthetic age cap when the rolling window is empty. The aside
+// must disclose that uncapped fallback case rather than leave the
+// page implying a hard 30 s ceiling.
+describe('/sla price-freshness fallback disclosure', () => {
+  it('discloses the uncapped last-good fallback next to the 30 s target', () => {
+    renderPage();
+    const section = document.getElementById('targets') as HTMLElement;
+    expect(section).not.toBeNull();
+    const text = section.textContent ?? '';
+    expect(text).toMatch(/no trade in that window/i);
+    expect(text).toMatch(/no synthetic age ceiling/i);
+  });
+});
+
 describe('/sla availability figure', () => {
   it('is stated as a NN.N % objective in the targets table', () => {
     renderPage();
