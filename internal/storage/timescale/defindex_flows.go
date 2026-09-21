@@ -102,7 +102,17 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 			return errors.New("timescale: InsertDefindexFlow: strategy layer requires Amount")
 		}
 	case DefindexLayerVault:
-		if len(e.AmountsVec) == 0 {
+		// AmountsVec present-but-empty is a legal shape, not a caller
+		// bug: decode.go's decodeVaultFlow accepts an empty on-chain
+		// `amounts` Vec (a zero-asset deposit/withdraw is valid SCVal)
+		// and documents that the decision of what to do with it belongs
+		// downstream (TestDecodeVaultFlow_emptyAmountsVec). Rejecting it
+		// here reintroduced the mismatch that empty check was meant to
+		// guard against: a genuine on-chain event turned into an
+		// unclassified sink fault (held, then quarantined) instead of a
+		// clean insert. Only a Go-nil AmountsVec — the caller never set
+		// the field at all — is the actual bug this guard exists for.
+		if e.AmountsVec == nil {
 			return errors.New("timescale: InsertDefindexFlow: vault layer requires AmountsVec")
 		}
 		if e.DfTokens == "" {
@@ -143,8 +153,11 @@ func (s *Store) InsertDefindexFlow(ctx context.Context, e DefindexFlow) error {
 	if e.DfTokens != "" {
 		dfTokens = e.DfTokens
 	}
+	// nil (strategy layer, field never populated) stays SQL NULL; a
+	// present-but-empty vault AmountsVec ({}) is written as an empty
+	// array so it stays distinguishable from "not applicable".
 	var amountsVec interface{}
-	if len(e.AmountsVec) > 0 {
+	if e.AmountsVec != nil {
 		amountsVec = e.AmountsVec
 	}
 	_, err := s.db.ExecContext(ctx, q,
