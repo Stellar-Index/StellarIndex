@@ -102,8 +102,9 @@ const jobHeartbeatLabel = "ops_job"
 // `on (ops_job, instance, pid)` because of it: two files that differ only
 // by a label the join ignores would cross-match, and a cleanly-finished
 // primary would be "rescued" by its still-running sibling into a permanent
-// false ticket. Dead siblings are reaped on the next contention — see
-// [sweepStalePIDFiles], including the residual it does not cover.
+// false ticket. Dead siblings are reaped on the next contention, on the
+// primary's own heartbeat tick, and when the primary stops — see
+// [sweepStalePIDFiles] and [JobHeartbeat.sweepIfPrimary].
 //
 // Deliberately FAIL-SOFT: every write error is swallowed. A heartbeat is
 // observability for a job whose actual work is re-deriving the lake;
@@ -233,19 +234,21 @@ func pidPath(path string, pid int) string {
 // file removed, so a shared-host misidentification errs toward keeping a
 // file rather than blinding a live run's monitoring.
 //
-// Runs on contention only, which is exactly when a new file is about to be
-// created, so the set is bounded by the number of concurrent runs. It is
-// deliberately NOT run at every startup: the common case is a single run
-// with no contention, and scanning the collector directory on every
-// `ch-backfill` invocation would be work for nothing.
+// Called from three places, deliberately NOT from every startup: [claimPath]
+// on contention (exactly when a new sibling is about to be created, so the
+// set stays bounded by the number of concurrent runs), and
+// [JobHeartbeat.sweepIfPrimary] on the primary's own heartbeat tick and at
+// Stop. A single no-contention run — the overwhelmingly common case — never
+// pays for a directory scan at NewJobHeartbeat time; it only sweeps once it
+// is already enabled and already touching disk on its own schedule.
 //
-// RESIDUAL, stated so it is not silently assumed away: a loser that is
-// never followed by another contention leaves its file behind — the sweep
-// is triggered by the next contention, not by a timer. That is one stale
-// file per job name in the worst case, and its `running=0` /
-// `last_exit_ok` terminal state is honest (a real run that really ended),
-// so it neither alerts nor lies. A pid reused by an unrelated process
-// keeps the file one cycle longer.
+// T597/T601: contention-only sweeping left a loser's file behind forever
+// when it was never followed by another contention (a hard-killed run with
+// no successor). The tick/Stop callers close that gap: as long as the
+// primary for a given path is alive and progressing through its own
+// lifecycle, a dead sibling is reaped within one tick, and unconditionally
+// by the time the primary exits — not only on the next contention. A pid
+// reused by an unrelated process keeps the file one cycle longer either way.
 //
 // Fail-soft throughout: a directory that cannot be read, or a file that
 // cannot be removed, is skipped.
@@ -326,9 +329,31 @@ func (h *JobHeartbeat) Start() {
 				return
 			case <-t.C:
 				h.write()
+				h.sweepIfPrimary()
 			}
 		}
 	}()
+}
+
+// sweepIfPrimary reaps this path's dead `.pidN.prom` siblings — see
+// [sweepStalePIDFiles] — but only from the lock holder. The primary is the
+// one series both guaranteed to be present for the job's whole lifetime and
+// already holding the canonical unsuffixed path siblings key off; a
+// fallback run sweeping too would just duplicate the same scan under a
+// different path.
+//
+// Called from the ticker (so a dead sibling is reaped within one heartbeat
+// interval even absent a new contention) and from Stop (so it is reaped
+// unconditionally by the time a run ends, even a run shorter than one
+// tick) — see T597/T601 on [sweepStalePIDFiles].
+func (h *JobHeartbeat) sweepIfPrimary() {
+	h.mu.Lock()
+	primary := h.lock != nil
+	path := h.path
+	h.mu.Unlock()
+	if primary {
+		sweepStalePIDFiles(path)
+	}
 }
 
 // Progress records that `total` units (ledgers, rows, …) are complete and
@@ -425,6 +450,10 @@ func (h *JobHeartbeat) Stop(exitOK bool) {
 		<-done
 	}
 	h.write()
+	// Sweep before releasing the claim: this is the primary's last chance
+	// to reap dead siblings for this path without waiting on a future
+	// contention that may never come (T597/T601).
+	h.sweepIfPrimary()
 
 	// Release the claim only after the terminal state is on disk, so a
 	// follow-on run cannot adopt the path and overwrite running=0 with its

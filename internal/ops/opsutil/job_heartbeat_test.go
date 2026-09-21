@@ -390,6 +390,33 @@ func TestJobHeartbeatSweepsDeadPIDSiblings(t *testing.T) {
 	}
 }
 
+// TestJobHeartbeatSweepsDeadSiblingWithoutNewContention is the T597/T601
+// regression: sweepStalePIDFiles previously ran on contention ONLY, so a
+// loser that died without a follow-up contention leaked its `.pidN.prom`
+// file forever — this run never contends with anyone, so the old
+// contention-only path never fires at all.
+func TestJobHeartbeatSweepsDeadSiblingWithoutNewContention(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ops_job_ch_backfill.prom")
+
+	// A sibling left behind by a run that hard-died with no successor.
+	deadPID := findDeadPID(t)
+	dead := filepath.Join(dir, fmt.Sprintf("ops_job_ch_backfill.pid%d.prom", deadPID))
+	if err := os.WriteFile(dead, []byte("# stale\n"), 0o644); err != nil { //nolint:gosec // test fixture
+		t.Fatalf("write %s: %v", dead, err)
+	}
+
+	// A single, uncontended run: no second NewJobHeartbeat call, so
+	// claimPath's contention-triggered sweep is never reached.
+	hb := opsutil.NewJobHeartbeat("ch-backfill", path, nil)
+	hb.Start()
+	hb.Stop(true)
+
+	if _, err := os.Stat(dead); !os.IsNotExist(err) {
+		t.Errorf("stale sibling for dead pid %d survived a run with no new contention (err=%v) — a dead loser's file must not wait on a contention that may never come", deadPID, err)
+	}
+}
+
 // findDeadPID returns a pid that is not currently addressable, so the sweep
 // test does not depend on a hardcoded guess being free on the runner.
 func findDeadPID(t *testing.T) int {
