@@ -410,6 +410,21 @@ else
     defer_check "Generated-artifact drift" "node or npx is not installed"
 fi
 
+# Config reference drift (T186). docs/reference/config/README.md is generated
+# from internal/config/config.go struct tags (`make docs-config`) but was
+# never in the diff list above, so a struct-tag removal/rename left the doc
+# describing a config block that no longer exists until a human noticed it
+# (2026-09-01, #466: the polygon-forex connector). Needs only `go run`, so —
+# unlike the block above — it runs unconditionally, no node/npx gate.
+echo "=== Generated config reference drift ==="
+go run ./cmd/stellarindex-ops docs-config > docs/reference/config/README.md
+if ! git diff --exit-code --stat -- docs/reference/config; then
+    echo "⚠️  docs/reference/config/README.md was STALE and has been regenerated above."
+    echo "    Commit this file — lint-docs.sh's config-sync check only catches the"
+    echo "    reverse direction (a tag added but not documented), not this one."
+    exit 1
+fi
+
 # ── Parallel phase (TIER 1b) ─────────────────────────────────────────────────
 #
 # Same sections, same assertions as before; only WHEN and IN WHAT PROCESS

@@ -33,14 +33,21 @@ for f in "$CI_YML" "$VERIFY_SH"; do
   fi
 done
 
-# extract_invoked <file-or-block-on-stdin> — pull the scripts/ci/*.sh paths
-# that are EXECUTED (prefixed by `./` or `bash `), not merely mentioned. The
-# prefix requirement deliberately excludes ci.yml's CID-03 restore step, which
-# lists gate scripts in a `for f in scripts/ci/… ` loop as git-show ARGUMENTS,
-# never as commands to run.
+# extract_invoked <file-or-block-on-stdin> — pull the scripts/ci/* paths
+# that are EXECUTED (prefixed by `./`, `bash `, `python3 ./` or `go run ./`),
+# not merely mentioned. RLT-377: a `.sh`-only extension requirement missed
+# every non-shell gate ci.yml actually runs (`go run ./scripts/ci/lint-
+# golangci-config` has no extension at all; the `lint-*.py` gates have `.py`)
+# — those gates were invisible to this check in EITHER direction, so it could
+# report parity while one silently dropped out of verify.sh. The name itself
+# is unextended (`[A-Za-z0-9._-]+`, no trailing `\.sh`), which covers any
+# extension — or none — without needing another interpreter added here later.
+# The prefix requirement deliberately excludes ci.yml's CID-03 restore step,
+# which lists gate scripts in a `for f in scripts/ci/… ` loop as git-show
+# ARGUMENTS, never as commands to run.
 extract_invoked() {
-  grep -oE '(\./|bash +)scripts/ci/[A-Za-z0-9._-]+\.sh' \
-    | sed -E 's#^(\./|bash +)##' | sort -u
+  grep -oE '(\./|bash +|python3? +\./|go run +\./)scripts/ci/[A-Za-z0-9._-]+' \
+    | sed -E 's#^(\./|bash +|python3? +\./|go run +\./)##' | sort -u
 }
 
 # Every gate CI invokes, in ANY job. Reading one job is how two gates added
