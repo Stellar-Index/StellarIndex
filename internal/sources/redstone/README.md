@@ -71,11 +71,12 @@ in the regression fixture.
 Every feed publishes at `DECIMALS = 8`, so price-scale handling
 is uniform. The asset modelling is an explicit registry.
 
-`feeds.go` holds `feedRegistry` — all 30 mainnet feeds keyed on the
+`feeds.go` holds `feedRegistry` — all 32 mainnet feeds keyed on the
 **exact** on-chain `feed_id()` string, each mapped to a canonical
 `(base, quote)` pair (19 captured on-chain 2026-05-22 + 11 from
-the 2026-07-24 relayer expansion at ledger 63624934 — see
-`docs/protocols/redstone.md` for the per-feed evidence). The
+the 2026-07-24 relayer expansion at ledger 63624934, + `USDT0`
+(2026-08-31, #439) and `earnUSDC_FUNDAMENTAL` (2026-09-08) since
+— see `docs/protocols/redstone.md` for the per-feed evidence). The
 feed_ids are NOT always the display name —
 `EUROC` is `EUROC/EUR`, `BENJI` is `BENJI_ETHEREUM_FUNDAMENTAL`,
 the SolvBTC variants carry `_FUNDAMENTAL` suffixes.
