@@ -37,6 +37,14 @@ NoNewPrivileges=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
+# T572: ch-holders-rollup now takes an exclusive flock on
+# /var/lib/stellarindex/ch-holders-rollup.lock before it runs, so a
+# manually-invoked run cannot overlap this timer. ProtectSystem=strict
+# makes the whole filesystem read-only except what is listed here —
+# PrivateTmp is per-unit-instance and would NOT be visible to a
+# manually-invoked process outside systemd, so the lock has to live on
+# the shared, already stellarindex-owned data dir, not under /tmp.
+ReadWritePaths=/var/lib/stellarindex
 
 # The initial backfill is a long catch-up; steady-state runs are
 # minutes. No TimeoutStartSec ceiling would risk a wedged run holding
