@@ -20,7 +20,7 @@ OUT=$(mktemp)
 PASS=0
 FAIL=0
 
-# shellcheck disable=SC2329  # invoked indirectly by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
 cleanup() {
   git reset -q -- "$FIX" 2>/dev/null
   rm -f "$FIX" "$OUT"

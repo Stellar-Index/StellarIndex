@@ -12,7 +12,7 @@ cd "$(dirname "$0")/../.." || exit 1
 GATE="scripts/ci/lint-docs.sh"
 FIX="docs/adr/0099-zz-lint-docs-fixture.md"
 PASS=0; FAIL=0
-# shellcheck disable=SC2329  # invoked indirectly by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
 cleanup() { rm -f "$FIX"; }
 trap cleanup EXIT
 
