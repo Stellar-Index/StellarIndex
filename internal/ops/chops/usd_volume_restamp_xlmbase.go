@@ -264,37 +264,11 @@ func (r *xlmBaseRestampRun) summary(cfgPath string, from, to time.Time) string {
 //
 // # The membership + order are DERIVED, not copied
 //
-// From `_timescaledb_catalog.continuous_agg` on r1 2026-09-03: exactly
-// these twelve aggregates have `trades` as their root hypertable
-// (oracle_prices_* hang off `oracle_updates`, supply_1d off
-// `asset_supply_history` — a usd_volume restamp cannot move them).
-//
-// Ten of the twelve read `trades` directly and are mutually independent,
-// so their relative order is free. `twap_1h` and `twap_1d` are the only
-// HIERARCHICAL ones — `parent_mat_hypertable_id` points at prices_1m's
-// materialisation — so prices_1m MUST be refreshed before them or they
-// re-materialise from stale input. That is the one load-bearing edge,
-// and it is why prices_1m leads and the twaps trail.
-//
-// Note the trap: prices_15m/1h/4h/1d/1w/1mo are NOT built on prices_1m
-// (each reads `trades` itself), so the coarse ones do not inherit a
-// prices_1m refresh — each needs its own call.
-var xlmBaseRestampCAGGs = []timescale.CAGGSpec{
-	// Must lead: twap_1h/twap_1d are materialised FROM this one.
-	{Name: "prices_1m", MinWindow: 2 * time.Minute},
-	{Name: "prices_15m", MinWindow: 30 * time.Minute},
-	{Name: "prices_1h", MinWindow: 3 * time.Hour},
-	{Name: "prices_4h", MinWindow: 12 * time.Hour},
-	{Name: "prices_1d", MinWindow: 3 * 24 * time.Hour},
-	{Name: "prices_1w", MinWindow: 3 * 7 * 24 * time.Hour},
-	{Name: "prices_1mo", MinWindow: 93 * 24 * time.Hour},
-	{Name: "dex_volume_by_pair_1d", MinWindow: 3 * 24 * time.Hour},
-	{Name: "source_volume_1h", MinWindow: 3 * time.Hour},
-	{Name: "pools_per_source_1h", MinWindow: 3 * time.Hour},
-	// Must trail prices_1m.
-	{Name: "twap_1h", MinWindow: 3 * time.Hour},
-	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour},
-}
+// [timescale.TradesCAGGs] is the one list: every aggregate rooted on
+// `trades`, prices_1m first and the hierarchical twaps last. Holding a
+// second copy here let the two drift to seven and twelve entries, with
+// five of the twelve unrefreshable through RefreshContinuousAggregate.
+var xlmBaseRestampCAGGs = timescale.TradesCAGGs
 
 // followUp is the run's post-write block: the ordered CAGG refresh every
 // tier must be followed by, plus the `-min-rel-delta` guidance that only

@@ -527,3 +527,190 @@ func TestSourceEntryCounts_GappedNonTradeSinksReconcile(t *testing.T) {
 		}
 	}
 }
+
+// TestSourceEntryCounts_FXQuotesBumpInlineAndReconcile pins the third
+// inline-bump path BumpSourceEntryCount's contract names: the fx_quotes
+// insert (the `massive` forex worker's only write) must bump the
+// per-source tally exactly once per row that actually lands — not on a
+// same-generation re-run, not on an in-place rate correction — and the
+// seed's fx_quotes fold must reconcile to the same number. Before the
+// bump existed the active fiat-FX feed had NO entries at all until an
+// operator re-seeded, indistinguishable from a dead connector.
+func TestSourceEntryCounts_FXQuotesBumpInlineAndReconcile(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	count := func(source string) int64 {
+		m, err := store.SourceEntryCounts(ctx)
+		if err != nil {
+			t.Fatalf("SourceEntryCounts: %v", err)
+		}
+		return m[source]
+	}
+
+	day := time.Now().UTC().Truncate(24 * time.Hour)
+	batch := []timescale.FXQuote{
+		{Bucket: day, Ticker: "EUR", RateUSD: 0.92, InverseUSD: 1 / 0.92, Source: "massive"},
+		{Bucket: day.AddDate(0, 0, -1), Ticker: "EUR", RateUSD: 0.91, InverseUSD: 1 / 0.91, Source: "massive"},
+		{Bucket: day, Ticker: "GBP", RateUSD: 0.79, InverseUSD: 1 / 0.79, Source: "massive"},
+	}
+	if err := store.InsertFXQuoteBatch(ctx, batch); err != nil {
+		t.Fatalf("InsertFXQuoteBatch: %v", err)
+	}
+	if got := count("massive"); got != 3 {
+		t.Fatalf("after first batch: massive entries = %d, want 3 (one per landed fx_quotes row)", got)
+	}
+
+	// Same batch again: the worker's hourly refresh re-writes today's
+	// row and the trailing history at the same generation. No new row
+	// lands, so the tally must not move.
+	if err := store.InsertFXQuoteBatch(ctx, batch); err != nil {
+		t.Fatalf("InsertFXQuoteBatch replay: %v", err)
+	}
+	if got := count("massive"); got != 3 {
+		t.Fatalf("after replay: massive entries = %d, want 3 (re-run must not inflate)", got)
+	}
+
+	// An in-place correction updates a row; still not a new entry.
+	corrected := []timescale.FXQuote{{Bucket: day, Ticker: "EUR", RateUSD: 0.93, InverseUSD: 1 / 0.93, Source: "massive"}}
+	if err := store.InsertFXQuoteBatch(ctx, corrected); err != nil {
+		t.Fatalf("InsertFXQuoteBatch correction: %v", err)
+	}
+	if got := count("massive"); got != 3 {
+		t.Fatalf("after correction: massive entries = %d, want 3 (update is not an entry)", got)
+	}
+
+	// The seed reconciles from the table and must agree with the bumps.
+	if _, err := store.SeedSourceEntryCounts(ctx); err != nil {
+		t.Fatalf("SeedSourceEntryCounts: %v", err)
+	}
+	if got := count("massive"); got != 3 {
+		t.Fatalf("after seed: massive entries = %d, want 3 (seed fold must equal the inline bumps)", got)
+	}
+}
+
+// TestSourceEntryCounts_UnfoldedSinksReconcile is the reconciliation
+// invariant for the sinks the seed used to leave out: aquarius (whose
+// non-swap streams were dropped in favour of its trades count),
+// blend_emitter, sorocredit and upshift (absent outright). Each source
+// gets one idempotent row plus a replay over-count via the sink's
+// non-idempotent bumpEntryCount; the seed must SET-reset every one of
+// them to the honest row count instead of overwriting (aquarius) or
+// ignoring (the rest) it.
+func TestSourceEntryCounts_UnfoldedSinksReconcile(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	count := func(source string) int64 {
+		m, err := store.SourceEntryCounts(ctx)
+		if err != nil {
+			t.Fatalf("SourceEntryCounts: %v", err)
+		}
+		return m[source]
+	}
+	bump := func(source string) {
+		t.Helper()
+		if err := store.BumpSourceEntryCount(ctx, source, 1); err != nil {
+			t.Fatalf("bump %s: %v", source, err)
+		}
+	}
+
+	xlm, err := c.NewCryptoAsset("XLM")
+	if err != nil {
+		t.Fatal(err)
+	}
+	usd, err := c.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	xlmUSD, _ := c.NewPair(xlm, usd)
+	ts := time.Now().UTC().Add(-3 * time.Hour).Truncate(time.Second)
+
+	const (
+		contractID = "CC4WPS7HRSPRZAXBVUDYLRXLZRHPLA6VTZARKZJTNVNECAS5IDRXRUB6"
+		backstopID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+		userAddr   = "GA1IF6WRUM4NRJIF7SDBEK4HXQFLA33MB47AR33YHV5EDJKC742OCLEV"
+	)
+
+	// aquarius: one swap (trades, idempotent inline bump) + one liquidity
+	// row, bumped as the sink does. The seed must sum both streams.
+	if err := store.InsertTrade(ctx, mkIntegrationTrade("aquarius", 1, ts, xlmUSD, 100_000_000, 12_000_000)); err != nil {
+		t.Fatalf("InsertTrade aquarius: %v", err)
+	}
+	if err := store.InsertAquariusLiquidity(ctx, timescale.AquariusLiquidityEvent{
+		ContractID: contractID, Ledger: 1001, LedgerCloseTime: ts,
+		TxHash: strings.Repeat("a1", 32), OpIndex: 0, EventIndex: 0,
+		Action: timescale.AquariusLiquidityDeposit,
+		Tokens: []string{contractID}, Amounts: []c.Amount{c.NewAmount(big.NewInt(5_000))},
+		Shares: c.NewAmount(big.NewInt(100)),
+	}); err != nil {
+		t.Fatalf("InsertAquariusLiquidity: %v", err)
+	}
+	bump("aquarius")
+
+	if err := store.InsertBlendEmitterDistribute(ctx, timescale.BlendEmitterDistributeEvent{
+		ContractID: contractID, Ledger: 1002, LedgerCloseTime: ts,
+		TxHash: strings.Repeat("b2", 32), OpIndex: 0, EventIndex: 0,
+		BackstopID: backstopID, Amount: c.NewAmount(big.NewInt(7_000)),
+	}); err != nil {
+		t.Fatalf("InsertBlendEmitterDistribute: %v", err)
+	}
+	bump("blend_emitter")
+
+	if err := store.InsertCreditEvent(ctx, timescale.CreditEvent{
+		EventType: "withdrawal", CollateralContract: contractID, Account: userAddr, Amount: "1000",
+		Ledger: 1003, LedgerCloseTime: ts, TxHash: strings.Repeat("c3", 32), OpIndex: 0, EventIndex: 0,
+	}); err != nil {
+		t.Fatalf("InsertCreditEvent: %v", err)
+	}
+	bump("sorocredit")
+
+	if err := store.InsertUpshiftVaultEvent(ctx, timescale.UpshiftVaultEvent{
+		ContractID: contractID, Ledger: 1004, LedgerCloseTime: ts,
+		TxHash: strings.Repeat("d4", 32), OpIndex: 0, EventIndex: 0,
+		Kind: timescale.UpshiftDeposit, Caller: userAddr, Receiver: userAddr, Owner: userAddr,
+		Assets: c.NewAmount(big.NewInt(9_000)), Shares: c.NewAmount(big.NewInt(9_000)),
+	}); err != nil {
+		t.Fatalf("InsertUpshiftVaultEvent: %v", err)
+	}
+	bump("upshift")
+
+	// A replay re-drives the sink over the same events: the rows are
+	// idempotent, the bumps are not.
+	for _, src := range []string{"aquarius", "blend_emitter", "sorocredit", "upshift"} {
+		bump(src)
+	}
+	want := map[string]int64{"aquarius": 2, "blend_emitter": 1, "sorocredit": 1, "upshift": 1}
+	for src, w := range want {
+		if got := count(src); got != w+1 {
+			t.Fatalf("precondition: %s drifted tally = %d, want %d", src, got, w+1)
+		}
+	}
+
+	if _, err := store.SeedSourceEntryCounts(ctx); err != nil {
+		t.Fatalf("SeedSourceEntryCounts: %v", err)
+	}
+	for src, w := range want {
+		if got := count(src); got != w {
+			t.Errorf("after seed: %s entries = %d, want %d (the seed must fold every table the sink bumps for it)", src, got, w)
+		}
+	}
+}

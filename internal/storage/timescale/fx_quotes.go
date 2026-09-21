@@ -20,9 +20,12 @@ import (
 // comparison + chart math (precision loss above 2^53 isn't a
 // concern for fx rates which are O(1)–O(10000)).
 type FXQuote struct {
-	Bucket     time.Time
-	Ticker     string
-	RateUSD    float64
+	Bucket  time.Time
+	Ticker  string
+	RateUSD float64
+	// InverseUSD is the stored NUMERIC reciprocal on read. It is IGNORED
+	// on write: [Store.InsertFXQuoteBatch] derives inverse_usd from
+	// rate_usd in NUMERIC so the column never carries a float64 quotient.
 	InverseUSD float64
 	Source     string
 }
@@ -46,20 +49,43 @@ type FXQuote struct {
 // MR-1 describes). A gen-0-over-gen-0 write (worker idempotency) still
 // re-writes the same row, exactly as before.
 //
+// The per-source `entries` tally (source_entry_counts, migration 0035)
+// is bumped INLINE, the way the trades / oracle_updates inserts do it:
+// `xmax = 0` marks a genuinely new row, and the HAVING clause makes the
+// counter upsert produce nothing on a duplicate, an update or a
+// generation-guard skip — so a re-run over already-stored dates never
+// inflates the tally, and [Store.SeedSourceEntryCounts]'s fx_quotes
+// fold reconciles to the same number.
+//
 // Empty slice is a no-op.
 func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error {
 	if len(quotes) == 0 {
 		return nil
 	}
+	// inverse_usd is derived from rate_usd INSIDE the statement, in
+	// NUMERIC. The worker's float64 reciprocal (1.0 / rate) carries a
+	// second rounding the stored rate does not, so the cached column and
+	// the exact 1/rate_usd the money path computes disagreed in the last
+	// digits; the served /v1/chart and asset-listing fiat legs read this
+	// column. One rate, one reciprocal, both NUMERIC (ADR-0003).
 	const stmt = `
-		INSERT INTO fx_quotes (bucket, ticker, rate_usd, inverse_usd, source, derive_generation)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (ticker, bucket) DO UPDATE
-		   SET rate_usd          = EXCLUDED.rate_usd,
-		       inverse_usd       = EXCLUDED.inverse_usd,
-		       source            = EXCLUDED.source,
-		       derive_generation = EXCLUDED.derive_generation
-		 WHERE fx_quotes.derive_generation <= EXCLUDED.derive_generation
+		WITH ins AS (
+			INSERT INTO fx_quotes (bucket, ticker, rate_usd, inverse_usd, source, derive_generation)
+			VALUES ($1, $2, $3, 1::numeric / $3::numeric, $4, $5)
+			ON CONFLICT (ticker, bucket) DO UPDATE
+			   SET rate_usd          = EXCLUDED.rate_usd,
+			       inverse_usd       = EXCLUDED.inverse_usd,
+			       source            = EXCLUDED.source,
+			       derive_generation = EXCLUDED.derive_generation
+			 WHERE fx_quotes.derive_generation <= EXCLUDED.derive_generation
+			RETURNING (xmax = 0) AS inserted
+		)
+		INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
+		SELECT $4, count(*) FILTER (WHERE inserted), now() FROM ins
+		HAVING count(*) FILTER (WHERE inserted) > 0
+		ON CONFLICT (source) DO UPDATE
+		  SET entry_count = sec.entry_count + EXCLUDED.entry_count,
+		      updated_at  = EXCLUDED.updated_at
 	`
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -79,13 +105,11 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 		// pre-filters non-finite values; this is an exported method with
 		// a second caller, and both the guard and the CHECK read as
 		// "positive rates only" (cold audit 2026-08-04).
-		if q.Ticker == "" ||
-			math.IsNaN(q.RateUSD) || math.IsNaN(q.InverseUSD) ||
-			q.RateUSD <= 0 || q.InverseUSD <= 0 {
+		if q.Ticker == "" || math.IsNaN(q.RateUSD) || math.IsInf(q.RateUSD, 0) || q.RateUSD <= 0 {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, stmt,
-			q.Bucket, q.Ticker, q.RateUSD, q.InverseUSD, q.Source, s.deriveGeneration,
+			q.Bucket, q.Ticker, q.RateUSD, q.Source, s.deriveGeneration,
 		); err != nil {
 			return fmt.Errorf("timescale: InsertFXQuoteBatch ticker=%q: %w", q.Ticker, err)
 		}

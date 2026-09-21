@@ -104,20 +104,66 @@ func (s *Store) LedgerRangeToTimeRange(ctx context.Context, fromLedger, toLedger
 	return minTs.Time, maxTs.Time, nil
 }
 
-// allowedCAGGViews is the strict allow-list of view names accepted
-// by RefreshContinuousAggregate. Required because we string-format
-// the view name into the SQL — the procedure's first arg is REGCLASS
-// and pgx doesn't placeholder it. Allow-list keeps SQL injection
-// off the table even though callers are internal.
-var allowedCAGGViews = map[string]bool{
-	"prices_1m":  true,
-	"prices_15m": true,
-	"prices_1h":  true,
-	"prices_4h":  true,
-	"prices_1d":  true,
-	"prices_1w":  true,
-	"prices_1mo": true,
+// TradesCAGGs is the ORDERED set of every continuous aggregate rooted
+// on `trades`, with each one's minimum refresh window. It is the ONE
+// list the refresh allow-list, the backfill's price set
+// ([CAGGsLiveForever]) and the usd_volume restamp follow-up derive
+// from; two hand-copied lists had drifted to seven and twelve entries.
+//
+// Membership and order come from `_timescaledb_catalog.continuous_agg`
+// (r1, 2026-09-03): exactly these twelve have `trades` as their root
+// hypertable (oracle_prices_* hang off oracle_updates, supply_1d off
+// asset_supply_history). Ten read `trades` directly and are mutually
+// independent; twap_1h / twap_1d are HIERARCHICAL — built on
+// prices_1m's materialisation — so prices_1m leads and the twaps
+// trail, or they re-materialise from stale input. The other prices_*
+// rungs are NOT built on prices_1m (each reads `trades` itself) and do
+// not inherit its refresh. TestTradesCAGGsMatchCatalog holds the list
+// against the migrated schema.
+//
+// Per-entry MinWindow is the Timescale-imposed minimum refresh
+// window: refresh_continuous_aggregate rejects (`SQLSTATE 22023:
+// refresh window too small`) any window narrower than 2× bucket
+// width. Callers pad the actual ts range up to MinWindow before
+// invoking refresh ([PadRefreshWindow]); the padded area beyond the
+// range has no new trades, so the no-op buckets are nearly free.
+var TradesCAGGs = []CAGGSpec{
+	// Must lead: twap_1h / twap_1d are materialised FROM this one.
+	{Name: "prices_1m", MinWindow: 2 * time.Minute},
+	{Name: "prices_15m", MinWindow: 30 * time.Minute},
+	{Name: "prices_1h", MinWindow: 3 * time.Hour},
+	{Name: "prices_4h", MinWindow: 12 * time.Hour},
+	{Name: "prices_1d", MinWindow: 3 * 24 * time.Hour},
+	{Name: "prices_1w", MinWindow: 3 * 7 * 24 * time.Hour},
+	// 1mo CAGG uses calendar months, not 30-day windows. Padding
+	// to ~93 days (3 calendar months) trivially clears the
+	// "must span >= 2 buckets" minimum without depending on month
+	// arithmetic at the storage seam.
+	{Name: "prices_1mo", MinWindow: 93 * 24 * time.Hour},
+	{Name: "dex_volume_by_pair_1d", MinWindow: 3 * 24 * time.Hour},
+	{Name: "source_volume_1h", MinWindow: 3 * time.Hour},
+	{Name: "pools_per_source_1h", MinWindow: 3 * time.Hour},
+	// Must trail prices_1m.
+	{Name: "twap_1h", MinWindow: 3 * time.Hour},
+	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour},
 }
+
+// allowedCAGGViews is the strict allow-list of view names accepted by
+// RefreshContinuousAggregate, derived from [TradesCAGGs]. Required
+// because we string-format the view name into the SQL — the
+// procedure's first arg is REGCLASS and pgx doesn't placeholder it.
+// Allow-list keeps SQL injection off the table even though callers
+// are internal.
+var allowedCAGGViews = func() map[string]bool {
+	m := make(map[string]bool, len(TradesCAGGs))
+	for _, c := range TradesCAGGs {
+		m[c.Name] = true
+	}
+	return m
+}()
+
+// IsRefreshableCAGG reports whether RefreshContinuousAggregate accepts viewName.
+func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName] }
 
 // CAGGsLiveForever is the ORDERED set of price aggregates the
 // backfill tool refreshes after each chunk. It holds all seven, and
@@ -162,10 +208,11 @@ var allowedCAGGViews = map[string]bool{
 // twap_1h and twap_1d are materialised FROM prices_1m (migrations
 // 0081 / 0126 / 0147), so an unmaterialised minute range empties the
 // TWAP surface one level down as well. Those two views are NOT in
-// this set and are not refreshed by backfill — they are outside
-// allowedCAGGViews, and re-materialising them is the operator step
-// the twap-history-missing runbook owns. That exclusion is stated
-// rather than silent, which is the whole point of this comment.
+// this set and are not refreshed by backfill — RefreshContinuousAggregate
+// accepts them (they are in [TradesCAGGs]), but re-materialising them
+// is the operator step the twap-history-missing runbook owns. That
+// exclusion is stated rather than silent, which is the whole point of
+// this comment.
 //
 // ORDER IS DEFENSIVE, not load-bearing today, and prices_1m leads.
 // Nothing in this set reads prices_1m: the other six read `trades`
@@ -178,7 +225,7 @@ var allowedCAGGViews = map[string]bool{
 // reason, as chops.xlmBaseRestampCAGGs and the re-derive runbook's
 // list (docs/operations/usd-volume-rederive-2026-08.md).
 //
-// COST of the two fine rungs, from the MinWindow constants below
+// COST of the two fine rungs, from the MinWindow constants in [TradesCAGGs]
 // rather than an estimate. All seven read `trades`, so each rung is
 // one more pass over the chunk's rows: seven passes instead of five.
 // On scanned ts range the fine rungs are the CHEAP ones — they pad to
@@ -195,34 +242,21 @@ var allowedCAGGViews = map[string]bool{
 // 30-day range materialises order-of-10M minute buckets. Those rows
 // are exactly what the surfaces listed above read.
 //
-// Per-entry MinWindow is the Timescale-imposed minimum refresh
-// window: refresh_continuous_aggregate rejects (`SQLSTATE 22023:
-// refresh window too small`) any window narrower than 2× bucket
-// width. The backfill caller pads the chunk's actual ts range up
-// to the entry's MinWindow before invoking refresh; the padded
-// area beyond the chunk has no new trades, so the no-op buckets
-// are nearly free. Caught live 2026-05-14 on the first 10k-ledger
-// test backfill — chunk's natural ts range was ~4h, which was
-// fine for prices_1h but failed every coarser CAGG.
+// CAGGSpec names a continuous aggregate and its minimum refresh window.
 type CAGGSpec struct {
 	Name      string
 	MinWindow time.Duration
 }
 
-var CAGGsLiveForever = []CAGGSpec{
-	// Must lead: twap_1h / twap_1d are materialised FROM this one.
-	{Name: "prices_1m", MinWindow: 2 * time.Minute},
-	{Name: "prices_15m", MinWindow: 30 * time.Minute},
-	{Name: "prices_1h", MinWindow: 3 * time.Hour},
-	{Name: "prices_4h", MinWindow: 12 * time.Hour},
-	{Name: "prices_1d", MinWindow: 3 * 24 * time.Hour},
-	{Name: "prices_1w", MinWindow: 3 * 7 * 24 * time.Hour},
-	// 1mo CAGG uses calendar months, not 30-day windows. Padding
-	// to ~93 days (3 calendar months) trivially clears the
-	// "must span >= 2 buckets" minimum without depending on month
-	// arithmetic at the storage seam.
-	{Name: "prices_1mo", MinWindow: 93 * 24 * time.Hour},
-}
+var CAGGsLiveForever = func() []CAGGSpec {
+	out := make([]CAGGSpec, 0, len(TradesCAGGs))
+	for _, c := range TradesCAGGs {
+		if strings.HasPrefix(c.Name, "prices_") {
+			out = append(out, c)
+		}
+	}
+	return out
+}()
 
 // PadRefreshWindow expands [from, to] to span at least minWindow
 // while staying centered on the original midpoint. Used by the
@@ -614,6 +648,30 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 //	                                 'rozo'.
 //	sep41_transfers                — SEP-41 transfer/approve/… audit
 //	                                 trail; literal source 'sep41_transfers'.
+//	aquarius_*                     — the seven Aquarius non-swap streams
+//	                                 (reserves, reserves_sync, protocol_fee,
+//	                                 kill_switches, liquidity, rewards_events,
+//	                                 admin); literal source 'aquarius' (summed
+//	                                 WITH aquarius swaps from `trades`).
+//	soroswap_liquidity             — Soroswap add/remove liquidity; literal
+//	                                 source 'soroswap' (summed WITH skim +
+//	                                 swaps).
+//	phoenix_initialize             — Phoenix pool initialize; and
+//	phoenix_admin_events           — Phoenix admin; literal source 'phoenix'.
+//	blend_emitter_events           — Blend emitter distribute/drop/swap-
+//	                                 config; literal source 'blend_emitter'.
+//	credit_positions               — sorocredit collateral contracts; and
+//	credit_statements              — sorocredit statements; and
+//	credit_settlements             — sorocredit settlements; and
+//	credit_events                  — every other sorocredit event; all
+//	                                 four literal source 'sorocredit'.
+//	upshift_vault_events           — Upshift vault deposit/withdraw/…;
+//	                                 literal source 'upshift'.
+//
+// [TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable] holds this
+// list in lockstep with DefaultGapDetectorTargets: a per-source table
+// the gap detector watches but the seed does not fold is a source whose
+// bumped tally a re-seed would silently overwrite.
 //
 // Every source whose 'entries' tally is bumped via
 // pipeline/sink.go::bumpEntryCount (a NON-idempotent +1 per decoded event)
@@ -637,8 +695,7 @@ func (s *Store) SourceEntryCounts(ctx context.Context) (map[string]int64, error)
 // every bumpEntryCount source instead of leaving it drifted (or zeroing the
 // ones that used to have no table), so seed-reset is SAFE and required after
 // a replay.
-func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
-	const q = `
+const seedSourceEntryCountsSQL = `
         INSERT INTO source_entry_counts AS sec (source, entry_count, updated_at)
         SELECT source, sum(c)::bigint, now()
         FROM (
@@ -726,13 +783,54 @@ func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
             SELECT 'rozo'               AS source, count(*) AS c FROM rozo_events
             UNION ALL
             SELECT 'sep41_transfers'    AS source, count(*) AS c FROM sep41_transfers
+            UNION ALL
+            -- Aquarius swaps are 'trades' rows (counted above); every
+            -- other Aquarius event lands in exactly one of these seven
+            -- tables. soroswap / phoenix likewise gain their remaining
+            -- non-swap streams (liquidity; initialize + admin).
+            SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_reserves
+            UNION ALL
+            SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_reserves_sync
+            UNION ALL
+            SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_protocol_fee
+            UNION ALL
+            SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_kill_switches
+            UNION ALL
+            SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_liquidity
+            UNION ALL
+            SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_rewards_events
+            UNION ALL
+            SELECT 'aquarius'           AS source, count(*) AS c FROM aquarius_admin
+            UNION ALL
+            SELECT 'soroswap'           AS source, count(*) AS c FROM soroswap_liquidity
+            UNION ALL
+            SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_initialize
+            UNION ALL
+            SELECT 'phoenix'            AS source, count(*) AS c FROM phoenix_admin_events
+            UNION ALL
+            -- Pure log-only sinks with one table per decoded event
+            -- (sorocredit routes each event type to exactly one of its
+            -- four tables, so the four are a DISJOINT partition).
+            SELECT 'blend_emitter'      AS source, count(*) AS c FROM blend_emitter_events
+            UNION ALL
+            SELECT 'sorocredit'         AS source, count(*) AS c FROM credit_positions
+            UNION ALL
+            SELECT 'sorocredit'         AS source, count(*) AS c FROM credit_statements
+            UNION ALL
+            SELECT 'sorocredit'         AS source, count(*) AS c FROM credit_settlements
+            UNION ALL
+            SELECT 'sorocredit'         AS source, count(*) AS c FROM credit_events
+            UNION ALL
+            SELECT 'upshift'            AS source, count(*) AS c FROM upshift_vault_events
         ) u
         GROUP BY source
         ON CONFLICT (source) DO UPDATE
           SET entry_count = EXCLUDED.entry_count,
               updated_at  = EXCLUDED.updated_at
     `
-	res, err := s.db.ExecContext(ctx, q)
+
+func (s *Store) SeedSourceEntryCounts(ctx context.Context) (int64, error) {
+	res, err := s.db.ExecContext(ctx, seedSourceEntryCountsSQL)
 	if err != nil {
 		return 0, fmt.Errorf("timescale: SeedSourceEntryCounts: %w", err)
 	}
