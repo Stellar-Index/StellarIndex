@@ -29004,11 +29004,15 @@ rc.48 deploy to R1.
   for trades quoted in USDC SAC.
 
 ### Operations
-- **`scripts/ops/recompute-usd-volume-soroban.sql`** (#1000) —
+- **`scripts/ops/recompute-usd-volume-soroban.sql`** —
   one-shot psql script that retroactively prices ~124k historical
   Soroban DEX trades (Aquarius 104k, Phoenix 8k, Soroswap 8k,
   Comet 3k) that landed before the SAC wrapper config was added.
   Operator runs it once to fix the "trades but no volume" gap.
+  (No issue tracks this entry: the `#1000` reference this line
+  originally carried never resolved to this change and now points
+  to an unrelated later issue, so it has been dropped rather than
+  left as a misdirected link.)
 
 ## [v0.5.0-rc.29] — 2026-05-08
 
