@@ -30,8 +30,10 @@ touch "$TMP/scripts/ci/lint-alsorestored.sh"
 touch "$TMP/scripts/ci/lint-b.sh"
 touch "$TMP/scripts/ci/lint-docs.sh"
 touch "$TMP/scripts/ci/lint-newthing.sh"
+touch "$TMP/scripts/ci/lint-newthing.py"
 touch "$TMP/scripts/ci/lint-otherjob.sh"
 touch "$TMP/scripts/ci/lint-restored.sh"
+touch "$TMP/scripts/ci/lint-golangci-config"
 
 pass=0
 fail=0
@@ -168,6 +170,40 @@ expect 'an explicitly exempt gate is not required in verify.sh' 0 'OK — all'
 # ── Missing files → FAIL (defensive) ────────────────────────────────
 run "$TMP/does-not-exist.yml" "$TMP/verify-ok.sh"
 expect 'missing ci.yml → FAIL' 1 'file not found'
+
+# ── RLT-377: a non-.sh gate (python3/go run, extensionless or `.py`) is
+#    extracted too, not silently invisible to both sides ────────────────
+write_ci_nonsh() {
+  # $1 = out. import-checks runs a shell gate plus a `python3 ./…py` gate
+  # and a `go run ./…` gate with no extension at all — the shapes ci.yml
+  # actually uses for its non-shell lints (lint-go-typographic-quotes.py,
+  # lint-golangci-config).
+  {
+    echo 'jobs:'
+    echo '  import-checks:'
+    echo '    steps:'
+    echo '      - name: shell gate'
+    echo '        run: ./scripts/ci/lint-a.sh'
+    echo '      - name: python gate'
+    echo '        run: python3 ./scripts/ci/lint-newthing.py'
+    echo '      - name: go-run gate, no extension'
+    echo '        run: go run ./scripts/ci/lint-golangci-config'
+  } > "$1"
+}
+
+write_ci_nonsh "$TMP/ci-nonsh.yml"
+
+write_verify "$TMP/verify-nonsh-missing.sh" scripts/ci/lint-a.sh
+run "$TMP/ci-nonsh.yml" "$TMP/verify-nonsh-missing.sh"
+expect 'non-.sh gates (python3/go run) are extracted and their absence FAILs' 1 'lint-newthing.py'
+
+write_verify "$TMP/verify-nonsh-ok.sh" scripts/ci/lint-a.sh
+{
+  echo 'python3 ./scripts/ci/lint-newthing.py'
+  echo 'go run ./scripts/ci/lint-golangci-config'
+} >> "$TMP/verify-nonsh-ok.sh"
+run "$TMP/ci-nonsh.yml" "$TMP/verify-nonsh-ok.sh"
+expect 'non-.sh gates mirrored in verify.sh (same non-.sh invocation style) → OK' 0 'OK — all'
 
 echo
 # ── A verify.sh step naming a script that does not exist → FAIL ─────
