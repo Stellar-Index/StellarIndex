@@ -326,10 +326,11 @@ func (s *Server) handleOracleStreams(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []OracleReading{}, Flags{})
 		return
 	}
-	// 8s ceiling on the oracle_updates hypertable scan. Same
-	// pattern as #1082-#1103. Steady-state ~600ms per the
-	// 2026-05-08 prod probe, but cold-cache scans of 7d × 80
-	// oracle streams can take 5-10s.
+	// 8s ceiling on the oracle_updates hypertable scan, matching
+	// the fail-fast-on-slow-upstream timeout used by the other
+	// hypertable-scanning endpoints (/v1/pools, /v1/history).
+	// Steady-state ~600ms per the 2026-05-08 prod probe, but
+	// cold-cache scans of 7d × 80 oracle streams can take 5-10s.
 	osCtx, osCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer osCancel()
 	updates, err := reader.LatestOracleStreams(osCtx)
