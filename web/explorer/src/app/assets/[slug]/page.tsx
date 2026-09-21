@@ -642,6 +642,16 @@ export async function generateMetadata({
       // (/accounts, /contracts, /ledgers, /transactions); follow stays
       // on so the crawler still walks out through the nav.
       robots: { index: false, follow: true },
+      // Metadata merges shallowly per top-level key (Next's
+      // mergeMetadata only touches keys present in THIS object), so
+      // omitting `alternates` here does not mean "no canonical" — it
+      // inherits the root layout's `alternates: { canonical: '/' }`
+      // verbatim. Every one of these arbitrary long-tail URLs was
+      // baking a rel=canonical pointing at the homepage; noindex only
+      // stopped it from being indexed under that tag, it didn't remove
+      // the tag. Override with an empty object so no canonical (or
+      // atom-feed `types`) is emitted at all.
+      alternates: {},
     };
   }
   const metaResults = await Promise.all([
