@@ -74,3 +74,11 @@ ruler:
       directory: /etc/loki/rules
   rule_path: {{ loki_data_dir }}/rules-tmp
   alertmanager_url: http://{{ hostvars[groups['prometheus_pair'][0] | default(inventory_hostname)].ansible_host | default('127.0.0.1') }}:9093
+
+# This role is the future multi-host HA topology (gated on R2, not yet
+# applied anywhere — see configs/loki/README.md#migration-to-the-ha-role).
+# r1 runs the single-host stop-gap from configs/loki/loki.r1.yml instead.
+# Disabled here too so the upstream phone-home default to Grafana Labs
+# isn't re-armed the day this role is first applied.
+analytics:
+  reporting_enabled: false

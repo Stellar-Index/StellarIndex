@@ -484,7 +484,10 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		// Log + return 200 anyway — the user shouldn't see
 		// "we tried to email you and failed" because that's a
 		// signal an attacker can use to confirm an email
-		// exists. Operator gets the alert via Loki / Sentry.
+		// exists. Operator gets the alert via the
+		// stellarindex_notify_send_failure_ratio_high Prometheus
+		// rule on NotifySendsTotal (configs/prometheus/rules.r1/notify.yml)
+		// — there is no Sentry integration and no Loki alert rule.
 		h.cfg.Logger.Error("send magic link email", "err", err, "email", maskEmail(email))
 	} else {
 		obs.NotifySendsTotal.WithLabelValues(obs.NotifyTemplateMagicLink, obs.NotifySendResultSent).Inc()
