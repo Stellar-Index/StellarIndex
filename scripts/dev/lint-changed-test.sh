@@ -53,6 +53,12 @@ INSTALL="$PWD/scripts/dev/install-hooks.sh"
 TMP="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP"' EXIT
 
+# The shellcheck step is the one lint-changed defers when the tool is absent
+# (RLT-055): every fixture assertion that counts steps has to branch on
+# this, not just the one at "shellcheck -x on the files" below, or the
+# hard-coded totals go red on a checkout without it on PATH.
+if command -v shellcheck >/dev/null 2>&1; then HAVE_SHELLCHECK=1; else HAVE_SHELLCHECK=0; fi
+
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.invalid
@@ -107,7 +113,7 @@ expect_has "discovery reports the staged count" "lint-changed: 11 changed file(s
 expect_has ".sh -> bash -n on the file" "plan  bash -n: bash -n tools/run.sh" "$out"
 # git lists staged paths in index order (alphabetical), and the plan keeps it.
 expect_has ".sh -> lint-shell-sigpipe scoped to the pipefail scripts" "lint-shell-sigpipe.sh scripts/dev/verify.sh tools/run.sh" "$out"
-if command -v shellcheck >/dev/null 2>&1; then
+if [ "$HAVE_SHELLCHECK" -eq 1 ]; then
     expect_has ".sh -> shellcheck -x on the files" "plan  shellcheck: shellcheck -x scripts/dev/verify.sh tools/run.sh" "$out"
 else
     expect_has ".sh -> shellcheck deferred when absent" "skip  shellcheck:" "$out"
@@ -280,14 +286,16 @@ expect_exit "the run FAILS" 1 "$rc"
 expect_has "the failure names lint-shell-sigpipe" "lint-changed: FAIL lint-shell-sigpipe" "$out"
 expect_has "the gate's own diagnosis is shown" "tools/offender.sh:3 pipes into an EARLY-EXIT consumer" "$out"
 expect_has "bash -n still passed (the failure is the sigpipe class, not syntax)" "lint-changed: ok   bash -n" "$out"
-expect_has "the summary counts one failure and names it" "of 4 lint(s) failed over 1 changed file(s)" "$out"
+redcount=3; [ "$HAVE_SHELLCHECK" -eq 1 ] && redcount=4
+expect_has "the summary counts one failure and names it" "of ${redcount} lint(s) failed over 1 changed file(s)" "$out"
 
 R="$TMP/green"; new_repo "$R"
 put "$R" tools/fixed.sh $'#!/usr/bin/env bash\nset -euo pipefail\nprintf \'%s\\n\' a b c > "$1"\nhead -n 1 "$1"'
 git -C "$R" add -A
 out="$(cd "$R" && "$DISPATCH" --staged 2>&1)"; rc=$?
 expect_exit "the write-then-slice rewrite passes" 0 "$rc"
-expect_has "the summary accounts for every lint that ran" "lint-changed: OK — 4 lint(s) over 1 changed file(s)" "$out"
+greencount=3; [ "$HAVE_SHELLCHECK" -eq 1 ] && greencount=4
+expect_has "the summary accounts for every lint that ran" "lint-changed: OK — ${greencount} lint(s) over 1 changed file(s)" "$out"
 
 R="$TMP/loose"; new_repo "$R"
 put "$R" tools/loose.sh $'#!/usr/bin/env bash\necho hi'
@@ -443,7 +451,8 @@ if [ -x "$TMP/customhooks/pre-commit" ]; then ok "the hook was written there"; e
 echo "lint-changed-test: the dispatcher and the installer pass their own lints"
 out="$("$DISPATCH" -- scripts/dev/lint-changed.sh scripts/dev/install-hooks.sh 2>&1)"; rc=$?
 expect_exit "lint-changed over its own two scripts passes" 0 "$rc"
-expect_has "and accounts for what it ran (bash -n twice, sigpipe, fixture-isolation, shellcheck)" "lint-changed: OK — 5 lint(s) over 2 changed file(s)" "$out"
+selfcount=4; [ "$HAVE_SHELLCHECK" -eq 1 ] && selfcount=5
+expect_has "and accounts for what it ran (bash -n twice, sigpipe, fixture-isolation, shellcheck)" "lint-changed: OK — ${selfcount} lint(s) over 2 changed file(s)" "$out"
 
 echo "lint-changed-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
