@@ -4,9 +4,25 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/mev"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
+
+// validMEVKinds is the openapi ?kind= enum: the detectors' own
+// exported Kind* constants (so live kinds can't drift from what the
+// workers write to mev_events.kind) plus oracle_deviation, reserved
+// in the spec for a detector that doesn't exist yet — a filter on it
+// is valid and just yields no rows, not a 400.
+var validMEVKinds = map[string]bool{
+	mev.KindArbitrage:          true,
+	mev.KindSandwich:           true,
+	mev.KindOracleSandwich:     true,
+	mev.KindLiquidationCascade: true,
+	mev.KindWashTrade:          true,
+	"oracle_deviation":         true,
+}
 
 // MEVReader is the storage seam for /v1/mev. timescale.Store
 // implements via ListMEVEvents.
@@ -50,10 +66,30 @@ func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	kind := r.URL.Query().Get("kind")
+	if kind != "" && !validMEVKinds[kind] {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-kind",
+			"Invalid kind", http.StatusBadRequest,
+			"kind must be one of arbitrage, sandwich, oracle_sandwich, oracle_deviation, liquidation_cascade, wash_trade; got "+kind)
+		return
+	}
 
-	rows, err := s.mev.ListMEVEvents(r.Context(), kind, limit)
+	// Hard 8s ceiling — companion to the same fix on /v1/pools and
+	// /v1/markets (#1082): without it a cold-cache scan hangs until
+	// the ingress times out instead of returning a fast, retryable 503.
+	mCtx, mCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer mCancel()
+	rows, err := s.mev.ListMEVEvents(mCtx, kind, limit)
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(mCtx, err) {
+			s.logger.Warn("ListMEVEvents deadline exceeded", "limit", limit, "kind", kind)
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/mev-timeout",
+				"MEV query timed out", http.StatusServiceUnavailable,
+				"the underlying mev_events scan didn't return in 8s. Retry in a few seconds.")
 			return
 		}
 		s.logger.Error("ListMEVEvents failed", "err", err, "kind", kind)

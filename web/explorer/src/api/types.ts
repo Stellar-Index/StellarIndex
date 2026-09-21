@@ -14137,6 +14137,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     listAnomalies: {
