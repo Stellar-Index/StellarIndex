@@ -412,8 +412,10 @@ type AccountCohortPosition struct {
 // CohortHoldingsLimit is exported so the API can say a cap applied.
 const CohortHoldingsLimit = 400
 
+// CohortFlowAssetsLimit is exported so the API can say a cap applied.
+const CohortFlowAssetsLimit = 12
+
 const (
-	cohortFlowAssets     = 12
 	cohortContractsLimit = 60
 	cohortPositionsLimit = 120
 )
@@ -495,7 +497,7 @@ func (r *ExplorerReader) readCohortHoldings(ctx context.Context, out *AccountCoh
 	return rows.Err()
 }
 
-// readCohortFlows serves every month for the cohortFlowAssets assets it
+// readCohortFlows serves every month for the CohortFlowAssetsLimit assets it
 // moved most, plus the all-assets row. Assets past the cap are not
 // summed into an "other" bucket — their units differ — so the view says
 // how many were left out. Each row carries the month's own USD price
@@ -517,7 +519,7 @@ func (r *ExplorerReader) readCohortFlows(ctx context.Context, out *AccountCohort
 		      LIMIT ?
 		  ))
 		ORDER BY f.month, f.asset`,
-		out.Relation, out.Root, CohortAllAssets, out.Relation, out.Root, CohortAllAssets, cohortFlowAssets)
+		out.Relation, out.Root, CohortAllAssets, out.Relation, out.Root, CohortAllAssets, CohortFlowAssetsLimit)
 	if err != nil {
 		return fmt.Errorf("clickhouse: account cohort flows: %w", err)
 	}

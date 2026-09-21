@@ -80,9 +80,13 @@ type AccountCohortFlowsV struct {
 	Granularity string `json:"granularity"`
 	// Assets are the assets broken out per month, the cohort's most
 	// moved first; a month's Movements and ActiveAccounts count EVERY
-	// asset, not only these.
-	Assets []string                  `json:"assets"`
-	Points []AccountCohortFlowPointV `json:"points"`
+	// asset, not only these. AssetsTruncated says the read cap
+	// (clickhouse.CohortFlowAssetsLimit) applied and assets past it were
+	// left out — not folded into an "other" bucket, since their units
+	// differ.
+	Assets          []string                  `json:"assets"`
+	AssetsTruncated bool                      `json:"assets_truncated"`
+	Points          []AccountCohortFlowPointV `json:"points"`
 }
 
 // AccountCohortFlowPointV is one month. InflowUSDThen / OutflowUSDThen
@@ -181,7 +185,7 @@ const accountCohortValuationBasis = "live_vwap_current"
 // the budget. The cap keeps the price reads to the holdings that carry
 // the value — the largest by balance — and the response says how many
 // were left unpriced by it (AccountCohortValuationV.UnpricedOverCap).
-// Flow assets (at most clickhouse's cohortFlowAssets, 12) are priced on
+// Flow assets (at most clickhouse.CohortFlowAssetsLimit, 12) are priced on
 // top of the cap.
 const cohortPricedHoldingsCap = 50
 
@@ -354,9 +358,14 @@ func cohortHoldingsView(holdings []clickhouse.AccountCohortHolding, price cohort
 
 // cohortFlowsView groups the reader's rows — ascending by (month, asset),
 // the all-assets row keyed CohortAllAssets — into one point per month.
+// Assets is then re-ordered by total movements across every month, most
+// moved first (ties broken by asset id), matching the reader's own
+// ranking (sum(movements) DESC, asset) rather than the rows' alphabetic
+// per-month order.
 func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) AccountCohortFlowsV {
 	out := AccountCohortFlowsV{Granularity: "1M", Assets: []string{}, Points: []AccountCohortFlowPointV{}}
 	shown := map[string]struct{}{}
+	movements := map[string]uint64{}
 	var cur *AccountCohortFlowPointV
 	var then *cohortThenSum
 	flush := func() {
@@ -384,6 +393,7 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) 
 			shown[f.Asset] = struct{}{}
 			out.Assets = append(out.Assets, f.Asset)
 		}
+		movements[f.Asset] += f.Movements
 		af, thenIn, thenOut := cohortAssetFlowView(f, price)
 		if thenIn != nil {
 			then.in.Add(then.in, thenIn)
@@ -393,6 +403,14 @@ func cohortFlowsView(flows []clickhouse.AccountCohortFlow, price cohortPriceFn) 
 		cur.ByAsset = append(cur.ByAsset, af)
 	}
 	flush()
+	sort.SliceStable(out.Assets, func(i, j int) bool {
+		a, b := out.Assets[i], out.Assets[j]
+		if movements[a] != movements[b] {
+			return movements[a] > movements[b]
+		}
+		return a < b
+	})
+	out.AssetsTruncated = len(out.Assets) >= clickhouse.CohortFlowAssetsLimit
 	return out
 }
 

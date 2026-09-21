@@ -404,3 +404,50 @@ func TestAccountCohortView_ValuesFlowsAtTheMonthsOwnPrice(t *testing.T) {
 		t.Errorf("a month with no then-priced asset must omit the point sums, got in %s out %s", deref(sepP.InflowUSDThen), deref(sepP.OutflowUSDThen))
 	}
 }
+
+// The doc comment on AccountCohortFlowsV.Assets promises "the cohort's
+// most moved first". The rows arrive ordered by (month, asset) for
+// grouping into points, so building Assets by first appearance yields
+// alphabetic order within the earliest month instead — this pins the
+// ranked order the field actually promises.
+func TestAccountCohortView_FlowAssetsOrderedByMovementNotFirstAppearance(t *testing.T) {
+	noPrice := func(string) (cohortPrice, bool) { return cohortPrice{}, false }
+	jul := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	aug := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	flows := []clickhouse.AccountCohortFlow{
+		// "AAA" sorts before "ZEBRA" alphabetically and appears first, but
+		// "ZEBRA" moves far more once August is counted.
+		{Month: jul, Asset: "AAA", Inflow: big.NewInt(1), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1},
+		{Month: jul, Asset: "ZEBRA", Inflow: big.NewInt(1), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1},
+		{Month: aug, Asset: "ZEBRA", Inflow: big.NewInt(1), Outflow: big.NewInt(0), Movements: 100, ActiveAccounts: 1},
+	}
+	out := cohortFlowsView(flows, noPrice)
+	want := []string{"ZEBRA", "AAA"}
+	if len(out.Assets) != 2 || out.Assets[0] != want[0] || out.Assets[1] != want[1] {
+		t.Errorf("flows.assets = %v, want %v (most moved first)", out.Assets, want)
+	}
+}
+
+// AssetsTruncated must say when the reader's per-cohort cap
+// (clickhouse.CohortFlowAssetsLimit) left assets out, mirroring
+// HoldingsTruncated.
+func TestAccountCohortView_FlowAssetsTruncatedFlag(t *testing.T) {
+	noPrice := func(string) (cohortPrice, bool) { return cohortPrice{}, false }
+	jul := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+
+	full := make([]clickhouse.AccountCohortFlow, 0, clickhouse.CohortFlowAssetsLimit)
+	for i := 0; i < clickhouse.CohortFlowAssetsLimit; i++ {
+		asset := string(rune('A' + i))
+		full = append(full, clickhouse.AccountCohortFlow{Month: jul, Asset: asset, Inflow: big.NewInt(1), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1})
+	}
+	if got := cohortFlowsView(full, noPrice).AssetsTruncated; !got {
+		t.Errorf("assets_truncated = %v at the cap (%d assets), want true", got, clickhouse.CohortFlowAssetsLimit)
+	}
+
+	partial := []clickhouse.AccountCohortFlow{
+		{Month: jul, Asset: "AAA", Inflow: big.NewInt(1), Outflow: big.NewInt(0), Movements: 1, ActiveAccounts: 1},
+	}
+	if got := cohortFlowsView(partial, noPrice).AssetsTruncated; got {
+		t.Errorf("assets_truncated = %v under the cap (1 asset), want false", got)
+	}
+}
