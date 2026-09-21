@@ -149,6 +149,103 @@ against.
 
 ### Fixed
 
+- **sources / cctp, rozo, sorocredit, phoenix, scale — doc/comment drift
+  corrected against the shipped decoder and registry state (Q020, Q023,
+  Q076, Q086, Q088, T086, T114, T687, T063):** nine documentation and
+  comment claims had fallen out of sync with code that moved past them
+  without a doc update. `sorocredit/README.md` still described 7 topic
+  symbols and `BackfillSafe: false` against an 8-symbol `EventSymbols()`
+  and a `BackfillSafe: true` registry entry, and cited the pre-move
+  `cmd/stellarindex-ops/reconciliation_catalogue.go` path. `rozo/events.go`
+  cited a nonexistent `AmountDecimals` field on the rozo registry entry
+  for its 7-decimals claim. `cctp/README.md` and
+  `docs/operations/wasm-audits/cctp.md` still described the 2026-05-26
+  WASM-history audit as pending with `BackfillSafe: false`, though the
+  audit approved and flipped the flag the same day; the audit doc's
+  replay SQL and coverage claim also still reflected the original
+  4-symbol transfer-flow scope instead of the 26 symbols the 2026-07-08/09
+  governance-event audits added. `cctp/decode.go` claimed contract-ID
+  filtering happens downstream of the package, contradicted by
+  `dispatcher_adapter.go`'s own in-package `IsCCTPContract` calls.
+  `docs/operations/wasm-audits/rozo.md`'s replay SQL still listed the
+  original 3 contracts and the never-observed-live `payment`/`flush`
+  short-form symbols instead of the 4th contract and the on-wire
+  `payment_event`/`flush_event` forms the 2026-07-09 addendum itself
+  documents. `docs/operations/wasm-audits/phoenix.md` and the registry's
+  phoenix caption asserted binary string presence as if it were runtime
+  uniformity, omitting that the pre-upgrade pool WASM's runtime stream
+  emitted only 7 of 8 swap fields (the gap `phoenix.RawSwap.Decodable()`
+  exists to recover from). `external/scale/scale.go` said "three FX
+  venues" while naming only two. All are documentation/comment
+  corrections against already-shipped, already-tested code — no decoder
+  or registry behavior changed.
+- **storage / MEV detection: dropped notional, and a doubled-leg single-venue
+  false positive (T416, RLT-275, T001):** `InsertMEVEvent` wrote a literal SQL
+  `NULL` for `profit_usd` regardless of the detected candidate's
+  `NotionalUSD`, silently discarding it on every insert; it now binds through
+  the existing `nullString` helper. Separately, `buildArbCandidate`'s
+  single-venue guard only fired for 2-node cycles, so a 3+ node payment that
+  padded a real cycle with a redundant extra leg on a pair it already covers
+  (more edges than nodes — never true of a genuine minimal cycle) still
+  cleared the cycle test and skipped the venue check entirely on one venue;
+  the guard now also fires whenever edges exceed nodes.
+- **storage / the assets listing `q` filter can find a Soroban contract id
+  (RLT-023):** a Soroban-native row has NULL code/slug/issuer by nature (a
+  contract asset has no SEP-1 code or issuer account), so the search
+  predicate's `COALESCE(ca.slug, ca.code)` was NULL for every such row and
+  `type=soroban` combined with any `q` matched nothing. It now falls back to
+  `ca.asset_id`, mirroring the listing's own "slug" output column.
+- **sorobanevents / the raw-event sink isolates a poison row, never orphans a
+  row at shutdown, and its loss counter is finally observed (RLT-134, Q061,
+  Q121, Q130):** a permanent data fault (pq class 22/23) on a multi-row
+  INSERT abandoned the whole batch — up to 999 good rows lost for one bad
+  one; `flushBatch` now bisects the batch and abandons only the row(s) that
+  still fault alone. A `PushEvent` racing `Stop()` could win the send against
+  an already-closed stopping signal after the drain's last poll, leaving the
+  row in a channel nobody reads again, counted neither written nor dropped;
+  producers now check stopping first and `Stop()` waits for every in-flight
+  producer behind a barrier before the drain takes its final poll, so
+  written+dropped+lost always equals pushed. `Start()` is now the no-op its
+  doc promised on a second call instead of launching a second worker that
+  panicked the process on `close(done)`. `LostCount()` had no production
+  caller: the indexer bridges it onto
+  `stellarindex_source_insert_errors_total{source="soroban-events",kind="dropped"}`
+  every 15 s and on shutdown (the existing per-source dropped-rows alert
+  covers it), and both the indexer's and the ops backfill's drain log lines
+  carry `lost` with an ERROR naming the CH-lake re-derive path.
+- **storage / the fx_quotes insert bumps `source_entry_counts` inline (F110, T437):**
+  `InsertFXQuoteBatch` never touched the per-source entries tally its own
+  contract said it did, so the active fiat-FX feed reported zero entries
+  until an operator re-seeded. The upsert now bumps by the rows whose
+  `xmax = 0`, the same replay-safe shape as the trades and oracle paths;
+  `TestSourceEntryCounts_FXQuotesBumpInlineAndReconcile` proves bump,
+  replay, correction and seed all agree.
+- **storage / the entries seed folds every bumped per-source hypertable (T341):**
+  sixteen tables the sink bumps (the seven Aquarius non-swap streams,
+  soroswap_liquidity, phoenix_initialize, phoenix_admin_events,
+  blend_emitter_events, the four sorocredit tables, upshift_vault_events)
+  were missing from `SeedSourceEntryCounts`, so a re-seed collapsed
+  aquarius to its swap count and zeroed blend_emitter / sorocredit /
+  upshift. `TestSeedSourceEntryCountsFoldsEveryPerSourceHypertable` holds
+  the seed SQL in lockstep with `DefaultGapDetectorTargets`.
+- **storage / `fx_quotes.inverse_usd` is derived in NUMERIC (RLT-114):** the
+  worker's float64 `1.0 / rate` was bound straight into the NUMERIC
+  column; the insert now computes `1::numeric / rate_usd` itself, so the
+  stored reciprocal is exact and agrees with the Rat-space resolver.
+- **storage / one trades-rooted CAGG list (RLT-255, leg 1):**
+  `timescale.TradesCAGGs` replaces the seven-entry refresh allow-list and
+  the twelve-entry restamp copy; the five volume/TWAP aggregates the Go
+  refresh used to reject are now refreshable, and
+  `TestTradesCAGGsMatchCatalog` holds the list against the migrated
+  schema in both directions.
+- **forex / a cold start with the primary's names endpoint down still
+  installs a snapshot (T052):** rates in hand are labelled by ticker and
+  served instead of the refresh returning before `cache.Set`.
+- **forex / a healed baseline stays healable until the current feed agrees
+  (T054):** the history-majority heal no longer collapses the ticker to
+  "confirmed", so an inverted heal (broken history, healthy current feed)
+  is re-pointed once the history endpoint is corrected instead of wedging
+  the ticker permanently.
 - **ansible / the archival-node WAL-headroom guard stops crediting a walked-up
   ancestor as WAL (RWC-529, #529):** the guard refuses a `max_wal_size` that
   does not fit the filesystem `pg_wal` is really on — the substitution that
