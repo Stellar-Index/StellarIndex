@@ -302,6 +302,10 @@ stale_patterns=(
   "#1083\b"                      # dangling ref (RSWP-073) — resolves to an
                                   # unrelated live issue, never the PR that
                                   # shipped the cursor/prewarm work it cited
+  "#1108\b"                      # dangling ref (RSWP-086) — CHANGELOG's
+                                  # r1-smoke.sh budget-bump entry never
+                                  # identified the actual PR; #1108 now
+                                  # resolves to an unrelated live issue
   "PR #1042"                     # dangling citation — no such PR exists; #1042 resolves to an unrelated issue
   "#1066(–|-)#1073"              # fabricated PR range (RSWP-070) that now
                                   # collides with real, unrelated issues;

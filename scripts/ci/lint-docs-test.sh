@@ -58,6 +58,14 @@ check "a reintroduced 'PR #1042' citation in CHANGELOG.md is caught" red
 git checkout -- CHANGELOG.md
 check "clean tree passes again after revert" ok
 
+# RSWP-086: CHANGELOG's r1-smoke.sh budget-bump entry cited a PR number
+# (#1108) that never identified the actual PR; #1108 now resolves to a
+# real, unrelated issue, not a 404.
+echo "(#1108)" >> CHANGELOG.md
+check "a reintroduced '#1108' citation in CHANGELOG.md is caught" red
+git checkout -- CHANGELOG.md
+check "clean tree passes again after revert" ok
+
 cat > "$FIX2" <<'EOF'
 ---
 title: "[SEV-2] fixture — aged incident, plain prose action item"
