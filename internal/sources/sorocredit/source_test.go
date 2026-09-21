@@ -251,6 +251,35 @@ func TestGolden_ConfigEvents(t *testing.T) {
 	}
 }
 
+// TestGolden_BodyCapturedVerbatim pins the "nothing is dropped" / "captured
+// verbatim" promise made by decodeSettlement, decodeSupportedAssetAdded and
+// decodeConfigBody's godocs: Attributes["body"] must equal the event's raw
+// base64 XDR payload byte-for-byte, not a rendering of it. scval.Display is
+// lossy by design (120-rune truncation, depth-3 cap, exotic types degrade
+// to their type name) — running the audit-trail capture through it would
+// silently violate the promise for any body that trips those limits.
+func TestGolden_BodyCapturedVerbatim(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{
+		"Liquidation", "SupportedAssetAdded", "BeaconUpdated",
+		"CollateralHashUpdated", "TreasuryUpdated",
+	} {
+		name := name
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			e := mustDecodeOne(t, name)
+			got, ok := e.Attributes["body"]
+			if !ok {
+				t.Fatalf("%s: Attributes[%q] missing", name, "body")
+			}
+			want := goldenFrames[name].data
+			if got != want {
+				t.Errorf("%s: Attributes[\"body\"] = %q, want the raw base64 body %q verbatim", name, got, want)
+			}
+		})
+	}
+}
+
 // TestGolden_RoundTripEveryFrame runs the full classify→decode→Event join
 // over every golden frame (all 8 event types decode without error, carry
 // the parsed timestamp, and report the right source).

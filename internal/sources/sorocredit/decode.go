@@ -236,7 +236,13 @@ func decodeSettlement(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: Liquidation settler: %w", ErrMalformedPayload, err)
 	}
-	attrs := map[string]any{"body": scval.DisplayB64(e.Value)}
+	// Verbatim, not scval.Display: Display truncates long fragments and
+	// degrades exotic types to their type name (lossy by design — see its
+	// godoc), which would silently contradict the "nothing is dropped"
+	// promise below. e.Value is already the base64-encoded XDR body, so
+	// storing it directly is the lossless capture; scval.Parse decodes it
+	// back on demand.
+	attrs := map[string]any{"body": e.Value}
 	// Primary debt-asset leg: data[1] is Vec[Address], data[2] is
 	// Vec[i128]. Promote the first of each; a shape mismatch degrades
 	// into an attribute note rather than failing the whole row. Nested
@@ -333,7 +339,7 @@ func decodeSupportedAssetAdded(e *events.Event) (decoded, error) {
 	}
 	return decoded{
 		Asset:      asset,
-		Attributes: map[string]any{"body": scval.DisplayB64(e.Value)},
+		Attributes: map[string]any{"body": e.Value},
 	}, nil
 }
 
@@ -347,6 +353,6 @@ func decodeSupportedAssetAdded(e *events.Event) (decoded, error) {
 //nolint:unparam // uniform decoder signature; see godoc.
 func decodeConfigBody(e *events.Event) (decoded, error) {
 	return decoded{
-		Attributes: map[string]any{"body": scval.DisplayB64(e.Value)},
+		Attributes: map[string]any{"body": e.Value},
 	}, nil
 }
