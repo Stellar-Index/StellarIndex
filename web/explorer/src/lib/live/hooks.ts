@@ -8,7 +8,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
 import { subscribeStream } from './streams';
@@ -349,6 +349,7 @@ export function usePricePoll({
       try {
         const r = await fetch(
           `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
+          { signal: timeoutSignal() },
         );
         if (cancelled) return;
         if (r.status === 404) {

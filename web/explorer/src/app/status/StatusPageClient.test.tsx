@@ -10,7 +10,10 @@ import {
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
-import StatusPageClient from './StatusPageClient';
+import StatusPageClient, {
+  probeEndpoint,
+  type PublicEndpoint,
+} from './StatusPageClient';
 
 // The /v1/status doc now arrives via the SHARED useStatus query (FEC
 // A6-6/D2 fold), so the page renders under a fresh QueryClient per case.
@@ -526,5 +529,56 @@ describe('StatusPageClient overall banner ticket note', () => {
 
     await screen.findByText('Degraded performance');
     expect(screen.queryByText(/active ticket/i)).not.toBeInTheDocument();
+  });
+});
+
+// RLT-385: a 2xx status alone isn't proof the API answered — a WAF
+// challenge page, maintenance interstitial or misrouted edge response
+// can return 200 with an unrelated body. probeEndpoint used to trust
+// `res.ok` alone and report those as 'fast'.
+describe('probeEndpoint body-shape check', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const healthzEndpoint: PublicEndpoint = {
+    path: '/v1/healthz',
+    group: 'Health',
+    description: 'Liveness probe',
+    probe: { kind: 'get', path: '/v1/healthz' },
+  };
+
+  it('reports error, not fast, for a 200 whose body is not a v1 envelope', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response('<html>Attention Required! | Cloudflare</html>', {
+            status: 200,
+            headers: { 'content-type': 'text/html' },
+          }),
+      ),
+    );
+
+    const result = await probeEndpoint(healthzEndpoint)();
+
+    expect(result.kind).toBe('error');
+  });
+
+  it('reports fast for a genuine v1 envelope', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ data: { status: 'ok' }, as_of: '2026-01-01' }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+
+    const result = await probeEndpoint(healthzEndpoint)();
+
+    expect(result.kind).toBe('fast');
   });
 });
