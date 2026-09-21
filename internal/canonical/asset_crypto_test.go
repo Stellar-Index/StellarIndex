@@ -3,6 +3,10 @@ package canonical
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 )
 
@@ -114,4 +118,33 @@ func TestIsKnownCrypto(t *testing.T) {
 	if IsKnownCrypto("NOTAREALTICKER") {
 		t.Error("NOTAREALTICKER should not be known")
 	}
+}
+
+// TestADR0014DocumentsEveryAllocatedCode pins T519: every code in
+// knownCryptoCodes must have a citation in ADR-0014's text — either
+// the initial allow-list or an Amendments entry, per the file's own
+// policy ("Append new crypto codes here as a one-liner. Never
+// supersede this ADR for an addition."). A code landed in the map
+// without a matching doc entry is exactly the drift this test exists
+// to catch.
+func TestADR0014DocumentsEveryAllocatedCode(t *testing.T) {
+	adrPath := filepath.Join(repoRoot(), "docs", "adr", "0014-crypto-ticker-representation.md")
+	doc, err := os.ReadFile(adrPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", adrPath, err)
+	}
+	text := string(doc)
+
+	var missing []string
+	for code := range knownCryptoCodes {
+		if !strings.Contains(text, code) {
+			missing = append(missing, code)
+		}
+	}
+	if len(missing) == 0 {
+		return
+	}
+	sort.Strings(missing)
+	t.Errorf("ADR-0014 doesn't document %d allow-listed code(s): %s — add an Amendments entry",
+		len(missing), strings.Join(missing, ", "))
 }
