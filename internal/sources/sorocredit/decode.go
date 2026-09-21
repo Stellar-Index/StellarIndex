@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
@@ -82,12 +83,17 @@ func addrTopic(e *events.Event, field string) (string, error) {
 	return addr, nil
 }
 
+// strTopic decodes topic[i] as a String in its scval.ToText form: the
+// UUIDs it carries are contract-chosen bytes bound to `text NOT NULL`
+// columns, and Postgres refuses a NUL / invalid UTF-8 there (SQLSTATE
+// 22021) on every attempt, costing the row for good (cf. the rozo memo
+// fix).
 func strTopic(e *events.Event, i int, field string) (string, error) {
 	sv, err := scval.Parse(e.Topic[i])
 	if err != nil {
 		return "", fmt.Errorf("%w: %s topic[%d] parse: %w", ErrMalformedPayload, field, i, err)
 	}
-	s, err := scval.AsString(sv)
+	s, err := scval.AsText(sv)
 	if err != nil {
 		return "", fmt.Errorf("%w: %s string: %w", ErrMalformedPayload, field, err)
 	}
@@ -124,7 +130,10 @@ func decodeNewCollateralContract(e *events.Event) (decoded, error) {
 	if len(vec) < 2 {
 		return decoded{}, fmt.Errorf("%w: NewCollateralContract body not a 2-Vec (len=%d)", ErrMalformedPayload, len(vec))
 	}
-	name, err := scval.AsString(vec[0])
+	// AsText, not AsString: position_name is bound to a `text NOT NULL`
+	// column (see strTopic). An escaped name has no "Collateral-" prefix
+	// to strip, so its UUID is the whole text form.
+	name, err := scval.AsText(vec[0])
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: NewCollateralContract name: %w", ErrMalformedPayload, err)
 	}
@@ -145,7 +154,11 @@ func decodeNewCollateralContract(e *events.Event) (decoded, error) {
 //
 //	topics = [Symbol, String(statement_uuid), String(position_uuid)]
 //	data   = Vec[ i128(amount), Address(collateral_contract), u64(timestamp) ]
-func decodeStatement(e *events.Event) (decoded, error) {
+//
+// closedAt is the ledger close time (already parsed by decodeOne, which
+// fails the whole event before reaching here if it can't be); it is
+// canonical.SafeUnixSeconds's bound and its out-of-range fallback.
+func decodeStatement(e *events.Event, closedAt time.Time) (decoded, error) {
 	if len(e.Topic) < 3 {
 		return decoded{}, fmt.Errorf("%w: StatementPublished needs 3 topics, got %d", ErrMalformedPayload, len(e.Topic))
 	}
@@ -180,7 +193,11 @@ func decodeStatement(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: StatementPublished timestamp: %w", ErrMalformedPayload, err)
 	}
-	ts := time.Unix(int64(tsUnix), 0).UTC() //nolint:gosec // u64 unix seconds; contract-emitted, in range.
+	// SafeUnixSeconds bound-checks tsUnix on its raw u64 form before any
+	// int64 cast: an unchecked cast of a contract-supplied value > MaxInt64
+	// wraps negative and stamps a far-past StatementTime (the router
+	// deadline_ts overflow class — see internal/canonical/safetime.go).
+	ts := canonical.SafeUnixSeconds(tsUnix, closedAt)
 	return decoded{
 		StatementUUID:      stmtUUID,
 		PositionUUID:       posUUID,

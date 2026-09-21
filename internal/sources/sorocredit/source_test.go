@@ -3,13 +3,17 @@ package sorocredit
 import (
 	"encoding/base64"
 	"errors"
+	"math"
 	"math/big"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // ─── real-lake golden frames (base64 SCVal) ──────────────────────────
@@ -432,6 +436,86 @@ func TestDecode_LargeI128_NoTruncation(t *testing.T) {
 	}
 	if out.Amount != big1.String() {
 		t.Errorf("large i128 lost precision: got %q, want %q", out.Amount, big1.String())
+	}
+}
+
+// ─── Q074: NUL/invalid-UTF8 UUID and u64 epoch overflow ──────────────
+
+// TestDecode_StatementPublished_NULUUIDSurvivesAsHexText proves Q074's
+// poison-pill fix: a statement_uuid/position_uuid is bytes chosen by
+// whoever calls the contract, bound to a `text NOT NULL` column. Before
+// the fix, strTopic decoded it through scval.AsString and bound the raw
+// bytes unchecked — a NUL or invalid-UTF8 value there would be refused by
+// Postgres (SQLSTATE 22021) and the row lost for good. It must now come
+// back as scval.ToText's lossless hex form, never the raw NUL-bearing
+// string.
+func TestDecode_StatementPublished_NULUUIDSurvivesAsHexText(t *testing.T) {
+	t.Parallel()
+	rawUUID := "bad\x00uuid-not-utf8-\xff"
+	body := b64(t, vecSV(
+		i128SV(big.NewInt(2360)),
+		contractAddrSV(t, contractStrkey(t, 0x01)),
+		u64SV(1_700_000_000),
+	))
+	ev := events.Event{
+		LedgerClosedAt: "2026-07-06T00:00:00Z",
+		Topic: []string{
+			topicSymStatementPublished,
+			b64(t, stringSV("stmt-ok")),
+			b64(t, stringSV(rawUUID)),
+		},
+		Value: body,
+	}
+	out, err := decodeOne(&ev)
+	if err != nil {
+		t.Fatalf("decodeOne: %v", err)
+	}
+	if strings.Contains(out.PositionUUID, "\x00") {
+		t.Fatalf("PositionUUID still carries a raw NUL byte: %q — would hit SQLSTATE 22021 on insert", out.PositionUUID)
+	}
+	want := scval.ToText(rawUUID)
+	if out.PositionUUID != want {
+		t.Errorf("PositionUUID = %q, want the scval.ToText hex form %q", out.PositionUUID, want)
+	}
+}
+
+// TestDecode_StatementPublished_TimestampOverflowFallsBackToClosedAt
+// proves Q074's other half: decodeStatement cast the on-wire u64
+// timestamp straight to int64 with a //nolint:gosec silencing the
+// overflow check. A value above math.MaxInt64 wraps negative under that
+// cast (the same overflow class as the router deadline_ts bug) and would
+// stamp a bogus 1969 StatementTime. It must instead fall back to the
+// ledger close time.
+func TestDecode_StatementPublished_TimestampOverflowFallsBackToClosedAt(t *testing.T) {
+	t.Parallel()
+	closedAtRFC := "2026-07-06T00:00:00Z"
+	body := b64(t, vecSV(
+		i128SV(big.NewInt(2360)),
+		contractAddrSV(t, contractStrkey(t, 0x01)),
+		u64SV(math.MaxUint64),
+	))
+	ev := events.Event{
+		LedgerClosedAt: closedAtRFC,
+		Topic: []string{
+			topicSymStatementPublished,
+			b64(t, stringSV("stmt")),
+			b64(t, stringSV("pos")),
+		},
+		Value: body,
+	}
+	out, err := decodeOne(&ev)
+	if err != nil {
+		t.Fatalf("decodeOne: %v", err)
+	}
+	wantClosedAt, perr := time.Parse(time.RFC3339, closedAtRFC)
+	if perr != nil {
+		t.Fatalf("time.Parse: %v", perr)
+	}
+	if out.StatementTime == nil {
+		t.Fatal("StatementTime is nil")
+	}
+	if !out.StatementTime.Equal(wantClosedAt) {
+		t.Errorf("StatementTime = %v, want the ledger-close fallback %v (an unchecked cast wraps negative instead)", out.StatementTime, wantClosedAt)
 	}
 }
 

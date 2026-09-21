@@ -32,7 +32,7 @@ func decodeOne(ev *events.Event) (Event, error) {
 	case TypeNewCollateralContract:
 		d, derr = decodeNewCollateralContract(ev)
 	case TypeStatement:
-		d, derr = decodeStatement(ev)
+		d, derr = decodeStatement(ev, observedAt)
 	case TypeSettlement:
 		d, derr = decodeSettlement(ev)
 	case TypeWithdrawal:
