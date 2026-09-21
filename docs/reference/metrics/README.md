@@ -826,6 +826,22 @@ noise — it drives the `stellarindex_amm_self_pair_swap_burst` alert. Find
 the offending tx/signer in `soroban_events` (topic POOL/swap on the pool
 contract).
 
+### `stellarindex_amm_non_positive_swap_total`
+
+Counter, label `source`.
+
+AMM swap events decoded with a **non-positive amount** (`in <= 0` or
+`out <= 0`) and dropped to zero rows. It is the sibling of
+`stellarindex_amm_self_pair_swap_total`: both drop a swap that decoded
+cleanly but has no honest rows. It counts only swaps inside the same
+close-time recency window as the self-pair counter, so a replay or
+completeness sweep that builds its own comet decoder does not inflate it.
+Incremented at the decoder drop point (comet `dispatcher_adapter`).
+**Detection only**: it changes no serving or freeze decision.
+
+When to look: any sustained count. Find the offending tx in
+`soroban_events` (topic POOL/swap on the pool contract).
+
 ### `stellarindex_external_dust_dropped_total`
 
 Counter, label `source`.
