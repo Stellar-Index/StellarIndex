@@ -28355,7 +28355,7 @@ rc.48 deploy to R1.
   `type=https://api.stellarindex.io/errors/invalid-cursor`)
   with a hint to drop the parameter or pass back a fresh
   `next_cursor`. Empty cursor (no parameter) is still valid.
-  Same approach used by `/v1/history` since #1083. Other
+  Same approach already used by `/v1/history`. Other
   cursored endpoints (`/v1/markets`, `/v1/issuers`,
   `/v1/sources`, `/v1/lending/pools`) currently *reset* to
   page 1 on garbage rather than 400'ing — they have a milder
@@ -28580,7 +28580,7 @@ rc.48 deploy to R1.
   responses (typical 6-8s) and was filling Healthchecks.io with
   spurious failures.
 - **`perf(api)`: prewarm `/v1/pools` + `/v1/markets` at 5/25/100/200
-  limits** (#1083). The API binary, after Postgres connectivity is
+  limits**. The API binary, after Postgres connectivity is
   proven, fires four warm-up requests at server start so the first
   user request after a deploy or pool-size shift doesn't pay the
   cold-cache penalty. No behavior change for ongoing requests.

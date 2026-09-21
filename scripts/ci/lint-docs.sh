@@ -299,6 +299,9 @@ stale_patterns=(
                                   # #1002 is now a real, unrelated issue, so
                                   # the reference would resolve to the wrong
                                   # thing instead of just dangling
+  "#1083\b"                      # dangling ref (RSWP-073) — resolves to an
+                                  # unrelated live issue, never the PR that
+                                  # shipped the cursor/prewarm work it cited
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
