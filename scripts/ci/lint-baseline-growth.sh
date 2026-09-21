@@ -9,6 +9,24 @@
 #   - .gitleaksignore                     (per-finding secret-scan fingerprints)
 #   - .gitleaks.toml                      ([allowlist]/[[rules.allowlists]]
 #                                          path/regex exemptions)
+#   - scripts/ci/govulncheck-allow.txt    (accepted-risk vuln ids — a .txt,
+#                                          missed by the *.baseline glob;
+#                                          Q233/T467)
+#   - .golangci.yml                       (linters.exclusions.rules —
+#                                          per-path/linter lint exemptions;
+#                                          Q233)
+#   - configs/ansible/.ansible-lint       (skip_list — grandfathered
+#                                          ansible-lint rule classes,
+#                                          auto-discovered by ansible-lint
+#                                          rather than named in any CI
+#                                          yaml; T467)
+#   - deploy/systemd/ORPHANS              (declared-orphan unit exemptions
+#                                          for lint-deploy-systemd-
+#                                          authority.sh; Q233)
+#   - scripts/ci/migration-immutability.sha256 (watched for a MUTATED
+#                                          hash on an existing basename,
+#                                          not a new one — new migrations
+#                                          are meant to append freely; Q233)
 #
 # Each is designed to shrink monotonically, and the linters already
 # fail on STALE entries — but nothing stopped a commit from GROWING
@@ -94,10 +112,72 @@ added_entries() {
     | grep -E "$pattern" || true
 }
 
+# golangci_exclusions_block <rev>
+# Prints just the `linters.exclusions:` block of .golangci.yml at <rev> —
+# from the "  exclusions:" line up to (not including) the next 0-indent
+# top-level key. Scoping to this block, rather than diffing the whole
+# file, keeps unrelated changes (enabled linters, complexity settings)
+# from being read as growth.
+golangci_exclusions_block() {
+  local rev="$1"
+  git show "${rev}:.golangci.yml" 2>/dev/null | awk '
+    /^  exclusions:/ { grab=1 }
+    grab && /^[^[:space:]]/ { grab=0 }
+    grab { print }
+  '
+}
+
+# golangci_exclusions_added_lines <base> <head>
+# Non-comment/blank lines ADDED to the exclusions block between <base>
+# and <head> — a new `- path: …` / `linters: […]` entry widens what
+# golangci-lint skips, the same shape as the other watched surfaces.
+golangci_exclusions_added_lines() {
+  local base="$1" head="$2" b h result
+  b="$(mktemp)"; h="$(mktemp)"
+  golangci_exclusions_block "$base" > "$b"
+  golangci_exclusions_block "$head" > "$h"
+  result="$(diff "$b" "$h" 2>/dev/null \
+    | grep -E '^>' \
+    | sed 's/^>[[:space:]]*//' \
+    | grep -vE '^\s*(#|$)' || true)"
+  rm -f "$b" "$h"
+  printf '%s' "$result"
+}
+
+# mutated_migration_hash_entries <base> <head>
+# Unlike the other surfaces, a brand-new line in
+# scripts/ci/migration-immutability.sha256 is the NORMAL, append-only
+# case (a new migration — "New migrations are append-only: allowed
+# freely", lint-migration-immutability.sh) and must not need a trailer.
+# The hazard this gate exists to catch is a MUTATED line: an EXISTING
+# basename's recorded hash rewritten to match an edited shipped
+# migration in the same commit, which defeats lint-migration-
+# immutability.sh's own check the same way a grown .gitleaksignore
+# defeats gitleaks (W1-migrations-5). So this emits only entries whose
+# basename existed at <base> with a DIFFERENT hash at <head>.
+mutated_migration_hash_entries() {
+  local base="$1" head="$2" file="scripts/ci/migration-immutability.sha256" b h
+  b="$(mktemp)"; h="$(mktemp)"
+  git show "${base}:${file}" > "$b" 2>/dev/null || true
+  git show "${head}:${file}" > "$h" 2>/dev/null || true
+  awk '
+    FNR == NR {
+      if ($0 ~ /^[[:space:]]*(#|$)/) next
+      want[$2] = $1
+      next
+    }
+    {
+      if ($0 ~ /^[[:space:]]*(#|$)/) next
+      if (($2 in want) && want[$2] != $1) print $1 "  " $2
+    }
+  ' "$b" "$h" || true
+  rm -f "$b" "$h"
+}
+
 # detect_growth <base> <head>
 # Emits one TAB-separated "<watched-file>\t<added-entry>" line for every
 # entry ADDED to any watched baseline/allowlist between <base> and <head>.
-# The four surfaces below are exactly the escape hatches this gate exists
+# The nine surfaces below are exactly the escape hatches this gate exists
 # to keep shrink-only; each contributes its file path as the scope token
 # a Baseline-Growth trailer must name.
 detect_growth() {
@@ -144,6 +224,48 @@ detect_growth() {
   added="$(added_entries "$base" "$head" .gitleaks.toml "$gitleaks_toml_entry")"
   while IFS= read -r line; do
     [[ -n "$line" ]] && printf '%s\t%s\n' .gitleaks.toml "$line"
+  done <<<"$added"
+
+  # 5) scripts/ci/govulncheck-allow.txt: one accepted-risk OSV/GO-id per
+  #    line (an inline `# reason` comment is part of the entry, not
+  #    stripped) — the same "silence this specific finding" shape as the
+  #    others. A *.baseline glob misses it because it's a .txt (Q233).
+  added="$(added_entries "$base" "$head" scripts/ci/govulncheck-allow.txt '^GO-')"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/govulncheck-allow.txt "$line"
+  done <<<"$added"
+
+  # 6) .golangci.yml's linters.exclusions.rules block: a new path/linter
+  #    exemption silently turns a real violation off for a file pattern
+  #    (Q233). See golangci_exclusions_added_lines() for the block-scoping.
+  added="$(golangci_exclusions_added_lines "$base" "$head")"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' .golangci.yml "$line"
+  done <<<"$added"
+
+  # 7) configs/ansible/.ansible-lint's skip_list: each entry silences a
+  #    whole ansible-lint rule class repo-wide (CID-3) — the same
+  #    shrink-only shape, but auto-discovered by ansible-lint rather than
+  #    named in any CI yaml, so nothing else points a reader at it (T467).
+  added="$(added_entries "$base" "$head" configs/ansible/.ansible-lint '^\s*-\s+\S')"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' configs/ansible/.ansible-lint "$line"
+  done <<<"$added"
+
+  # 8) deploy/systemd/ORPHANS: declaring a unit here silences
+  #    lint-deploy-systemd-authority.sh's orphan check for it (LID-7) —
+  #    the same "declare an exemption" shape as a *.baseline entry (Q233).
+  added="$(added_entries "$base" "$head" deploy/systemd/ORPHANS '.')"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' deploy/systemd/ORPHANS "$line"
+  done <<<"$added"
+
+  # 9) scripts/ci/migration-immutability.sha256: watched for MUTATED
+  #    entries only, not appended ones — see mutated_migration_hash_entries()
+  #    (Q233).
+  added="$(mutated_migration_hash_entries "$base" "$head")"
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && printf '%s\t%s\n' scripts/ci/migration-immutability.sha256 "$line"
   done <<<"$added"
 }
 
