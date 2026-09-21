@@ -105,7 +105,10 @@ func stateSnapshot(args []string) error {
 	// -dry-run collects the write set (so it can be counted) but never writes.
 	collect := *write || *dryRun
 
-	url, passphrase := resolveArchiveTarget(*cfgPath, *archiveURL)
+	url, passphrase, err := resolveArchiveTarget(*cfgPath, *archiveURL, *write)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 	arch, err := historyarchive.Connect(url, historyarchive.ArchiveOptions{
 		NetworkPassphrase: passphrase,
@@ -168,22 +171,38 @@ func printWriteSet(t *snapTally) {
 // resolveArchiveTarget picks the archive URL + network passphrase, preferring
 // the config but falling back to the public pubnet archive so a read works
 // even without a config file.
-func resolveArchiveTarget(cfgPath, override string) (url, passphrase string) {
+//
+// A write is different: -write inserts the checkpoint's entries straight into
+// the target ClickHouse's ledger_entry_changes, and nothing downstream checks
+// that the archive network just read actually matches the network the target
+// ClickHouse tracks. Silently defaulting to the public archive on a config
+// load failure would let a stale/missing -config write pubnet's checkpoint
+// into a testnet (or vice versa) ledger_entry_changes without the operator
+// ever seeing more than a stderr line. For write, resolveArchiveTarget
+// refuses to guess instead: an unresolved network aborts the run.
+func resolveArchiveTarget(cfgPath, override string, write bool) (url, passphrase string, err error) {
 	url, passphrase = override, defaultPubnetPassphrase
-	if cfg, err := config.LoadWithEnv(cfgPath); err == nil {
+	cfg, cfgErr := config.LoadWithEnv(cfgPath)
+	switch {
+	case cfgErr == nil:
 		if url == "" {
 			url = cfg.Stellar.HistoryArchiveURL
 		}
 		if p := cfg.Stellar.Passphrase(); p != "" {
 			passphrase = p
 		}
-	} else {
-		fmt.Fprintf(os.Stderr, "state-snapshot: config load failed (%v) — using public-archive defaults\n", err)
+	case write:
+		return "", "", fmt.Errorf("state-snapshot -write requires a resolvable -config (network passphrase + archive URL) to avoid writing the wrong network's checkpoint into ClickHouse: %w", cfgErr)
+	default:
+		fmt.Fprintf(os.Stderr, "state-snapshot: config load failed (%v) — using public-archive defaults\n", cfgErr)
 	}
 	if url == "" {
+		if write {
+			return "", "", errors.New("state-snapshot -write requires an archive URL (config Stellar.HistoryArchiveURL or -archive); refusing to default to the public archive for a write")
+		}
 		url = defaultPubnetArchive
 	}
-	return url, passphrase
+	return url, passphrase, nil
 }
 
 // resolveCheckpoint returns the requested checkpoint ledger, or the latest
@@ -284,7 +303,8 @@ func (t *snapTally) withinModWindow(ledgerSeq uint32) bool {
 // the ~62M live-capture floor, so a SAC/SEP-41 Balance(Address) or Blend
 // reserve entry idle since before then is ABSENT from current-state and
 // invisible to seed-sac-balances / the ADR-0039 reserve readers. LP joins
-// scope=all AND scope=storage (the #30 native-pool reserve reader). ttl /
+// scope=all AND scope=storage (the ADR-0039 native liquidity-pool reserve
+// reader, internal/storage/clickhouse/liquidity_pool_state_reader.go). ttl /
 // config_setting are never written (not read by any current-state reader).
 func (t *snapTally) shouldCollect(typ xdr.LedgerEntryType, isInstance bool) bool {
 	switch typ {
