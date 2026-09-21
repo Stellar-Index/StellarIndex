@@ -164,3 +164,22 @@ describe('DivergenceFeed board rows are keyboard-operable', () => {
     expect(pressed).toHaveLength(1);
   });
 });
+
+// REGRESSION (RLT-215): the board's column headers were bare <th> with no
+// scope, so a screen reader announcing a data cell never names which column
+// it belongs to.
+describe('DivergenceFeed table header cells declare their scope', () => {
+  it('every named column header is scope="col"', async () => {
+    mountFeed();
+    await seriesButton('Plot AAA');
+
+    const headers = screen.getAllByRole('columnheader');
+    // The trailing aria-hidden spacer column carries no accessible name and
+    // is intentionally excluded — scope has nothing to attach to there.
+    const named = headers.filter((h) => h.textContent?.trim());
+    expect(named.length).toBeGreaterThan(0);
+    for (const h of named) {
+      expect(h).toHaveAttribute('scope', 'col');
+    }
+  });
+});

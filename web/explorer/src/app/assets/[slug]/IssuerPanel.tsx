@@ -133,7 +133,7 @@ export function IssuerPanel({ gStrkey }: { gStrkey: string }) {
           <p className="text-ink-muted mt-2 text-xs">
             Flags are the last known values before this account was removed
             {data.auth_flags_as_of_ledger != null && (
-              <> (ledger {data.auth_flags_as_of_ledger.toLocaleString()})</>
+              <> (ledger {data.auth_flags_as_of_ledger.toLocaleString('en-US')})</>
             )}
             , not its current policy.
           </p>

@@ -134,17 +134,27 @@ export function AnomaliesFeed() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-line text-ink-muted border-b text-left text-[11px] tracking-wider uppercase">
-                  <th className="py-1.5 pr-4 font-normal">Pair</th>
-                  <th className="py-1.5 pr-4 font-normal">Reason</th>
-                  <th className="py-1.5 pr-4 font-normal">Frozen at</th>
-                  <th className="py-1.5 pr-4 font-normal">Duration</th>
-                  <th className="py-1.5 pr-4 text-right font-normal">
+                  <th scope="col" className="py-1.5 pr-4 font-normal">
+                    Pair
+                  </th>
+                  <th scope="col" className="py-1.5 pr-4 font-normal">
+                    Reason
+                  </th>
+                  <th scope="col" className="py-1.5 pr-4 font-normal">
+                    Frozen at
+                  </th>
+                  <th scope="col" className="py-1.5 pr-4 font-normal">
+                    Duration
+                  </th>
+                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
                     Deviation
                   </th>
-                  <th className="py-1.5 pr-4 text-right font-normal">
+                  <th scope="col" className="py-1.5 pr-4 text-right font-normal">
                     Frozen value
                   </th>
-                  <th className="py-1.5 font-normal">State</th>
+                  <th scope="col" className="py-1.5 font-normal">
+                    State
+                  </th>
                 </tr>
               </thead>
               <tbody>
