@@ -162,15 +162,25 @@ window_delete_sql() {
   fi
   for s in "${names[@]}"; do
     case "$s" in
-      aquarius) ;; # trades only
-      soroswap) echo "DELETE FROM soroswap_skim_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+      aquarius)
+        echo "DELETE FROM aquarius_rewards_events WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM aquarius_admin WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM aquarius_protocol_fee WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM aquarius_kill_switches WHERE ledger BETWEEN $lo AND $hi;" ;;
+      soroswap)
+        echo "DELETE FROM soroswap_skim_events WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM soroswap_liquidity WHERE ledger BETWEEN $lo AND $hi;" ;;
       phoenix)
         echo "DELETE FROM phoenix_liquidity WHERE ledger BETWEEN $lo AND $hi;"
-        echo "DELETE FROM phoenix_stake_events WHERE ledger BETWEEN $lo AND $hi;" ;;
+        echo "DELETE FROM phoenix_stake_events WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM phoenix_initialize WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM phoenix_admin_events WHERE ledger BETWEEN $lo AND $hi;" ;;
       comet) echo "DELETE FROM comet_liquidity WHERE ledger BETWEEN $lo AND $hi;" ;;
       cctp) echo "DELETE FROM cctp_events WHERE ledger BETWEEN $lo AND $hi;" ;;
       rozo) echo "DELETE FROM rozo_events WHERE ledger BETWEEN $lo AND $hi;" ;;
-      defindex) echo "DELETE FROM defindex_flows WHERE ledger BETWEEN $lo AND $hi;" ;;
+      defindex)
+        echo "DELETE FROM defindex_flows WHERE ledger BETWEEN $lo AND $hi;"
+        echo "DELETE FROM defindex_fees WHERE ledger BETWEEN $lo AND $hi;" ;;
       blend)
         echo "DELETE FROM blend_auctions WHERE ledger BETWEEN $lo AND $hi;"
         echo "DELETE FROM blend_positions WHERE ledger BETWEEN $lo AND $hi;"

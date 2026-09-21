@@ -75,7 +75,7 @@ func TestChRebuildProjectedScript_NarrowedRunDeletesOnlyItsOwnTables(t *testing.
 		t.Fatalf("want one DELETE batch, got %d\n%s", len(dels), run.log)
 	}
 	got := strings.Join(tablesDeleted(dels[0].stdin), " ")
-	if want := "soroswap_skim_events trades:soroswap"; got != want {
+	if want := "soroswap_liquidity soroswap_skim_events trades:soroswap"; got != want {
 		t.Errorf("SRC=soroswap deleted %q, want exactly %q — every other table was emptied for a source this run never re-derives", got, want)
 	}
 	if srcs := run.writes()[0].flag("-sources"); srcs != "soroswap" {
@@ -134,6 +134,52 @@ func TestChRebuildProjectedScript_EachSourceDeletesOnlyTablesTheCatalogueSaysItO
 	}
 }
 
+// The reverse of the containment test above: the catalogue is the ceiling
+// AND the floor. A table the catalogue says a source owns wholesale
+// (whereFilter == "") must be emptied by that source's window, or the
+// clean-slate re-derive that follows leaves the catalogue's own rows
+// stale forever — the hand-maintained case statement falling behind the
+// catalogue in the other direction from the one the containment test
+// guards.
+func TestChRebuildProjectedScript_EachSourceDeletesEveryTableTheCatalogueSaysItOwnsWholesale(t *testing.T) {
+	t.Parallel()
+	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	if err != nil {
+		t.Fatalf("catalogue: %v", err)
+	}
+	wholesale := map[string][]string{} // source → tables owned outright
+	for _, src := range cat {
+		for _, tg := range src.targets {
+			if tg.table == "trades" || tg.whereFilter != "" {
+				continue
+			}
+			wholesale[src.name] = append(wholesale[src.name], tg.table)
+		}
+	}
+	for _, source := range strings.Split(scriptDefaultSources, ",") {
+		want := wholesale[source]
+		if len(want) == 0 {
+			continue
+		}
+		t.Run(source, func(t *testing.T) {
+			t.Parallel()
+			run := runProjectedScript(t, "", map[string]string{"SRC": source})
+			if run.exit != 0 || len(run.deletes()) != 1 {
+				t.Fatalf("exit %d, %d DELETE batches\n%s", run.exit, len(run.deletes()), run.log)
+			}
+			deleted := map[string]bool{}
+			for _, tbl := range tablesDeleted(run.deletes()[0].stdin) {
+				deleted[tbl] = true
+			}
+			for _, tbl := range want {
+				if !deleted[tbl] {
+					t.Errorf("SRC=%s never deletes %s, which the catalogue lists as wholly owned by it — the re-derive that follows leaves it stale", source, tbl)
+				}
+			}
+		})
+	}
+}
+
 // The DELETE set comes from what the binary says it WILL re-derive, not
 // from what was asked for: a source the config cannot resolve is in the
 // request and not in the run.
@@ -144,7 +190,7 @@ func TestChRebuildProjectedScript_DeleteSetFollowsThePreflightVerdict(t *testing
 		t.Fatalf("exit %d\n%s", run.exit, run.log)
 	}
 	got := strings.Join(tablesDeleted(run.deletes()[0].stdin), " ")
-	if want := "cctp_events soroswap_skim_events trades:soroswap"; got != want {
+	if want := "cctp_events soroswap_liquidity soroswap_skim_events trades:soroswap"; got != want {
 		t.Errorf("deleted %q, want %q (the verdict named only soroswap,cctp)", got, want)
 	}
 	if srcs := run.writes()[0].flag("-sources"); srcs != "soroswap,cctp" {
