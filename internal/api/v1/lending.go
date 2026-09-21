@@ -60,7 +60,7 @@ func (s *Server) handleLendingPools(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, []LendingPool{}, Flags{})
 		return
 	}
-	// 8s ceiling — same pattern as #1082 / #1099–#1104.
+	// 8s ceiling — same pattern as the cold-path series.
 	// ListBlendPools fans out per-pool auction-count + user-count
 	// queries against the trades hypertable; cold cache can take 5+s.
 	lpCtx, lpCancel := context.WithTimeout(r.Context(), 8*time.Second)
