@@ -164,6 +164,37 @@ body
 	}
 }
 
+// TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs — the 2026-05-10
+// post used to cite "PR #1228" and "PR #1229" for its two follow-up
+// items. Neither PR exists in this repo (max issue/PR is far below
+// 1228); the loader publishes BodyMarkdown verbatim to
+// status.stellarindex.io, so a reader following either link gets a
+// 404 on GitHub. The remediation commits are real and are cited by
+// SHA instead.
+func TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs(t *testing.T) {
+	got, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	const slug = "2026-05-10-redis-writes-blocked-disk-full"
+	var found bool
+	for _, inc := range got {
+		if inc.Slug != slug {
+			continue
+		}
+		found = true
+		for _, dangling := range []string{"#1228", "#1229"} {
+			if strings.Contains(inc.BodyMarkdown, dangling) {
+				t.Errorf("%s: body still cites dangling reference %q (no such issue/PR exists in this repo)",
+					slug, dangling)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("incident %q not found in corpus", slug)
+	}
+}
+
 // A malformed resolved_at must fail rather than silently publishing a
 // RESOLVED incident as never-resolved.
 func TestParseFile_RejectsMalformedResolvedAt(t *testing.T) {
