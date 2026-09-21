@@ -89,7 +89,7 @@ Operational follow-ups:
       the critical remediation (root-disk alert below) is the real fix.
 - [x] Add Prometheus alert rule on `node_filesystem_avail_bytes /
       node_filesystem_size_bytes < 0.15` for `/` — shipped in
-      commit 922ebd72 / PR #1229 as
+      commit 922ebd72431142931250d93dcac4e1967930e3dc as
       `stellarindex_node_root_disk_warning` (< 20% for 10m, P2)
       and `stellarindex_node_root_disk_full` (< 10% for 1m, P1).
       Catches the gap that `stellarindex_timescale_disk_full`
@@ -98,7 +98,7 @@ Operational follow-ups:
       (acknowledged 2026-06-10 — deferred cosmetic hygiene)
 - [x] Document the recovery sequence (this incident notes done):
       `docs/operations/runbooks/redis-write-blocked-disk-full.md`
-      — runbook landed in PR #1228.
+      — runbook landed in commit 7843ec721dfcafa3c510d614d3bb61d97e8023f6.
 
 ## Lessons learned
 
