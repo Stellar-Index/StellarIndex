@@ -89,12 +89,12 @@ func (s *Server) handlePairs(w http.ResponseWriter, r *http.Request) {
 
 	out := []Market{}
 	if found {
-		// dex-nonstandard-decimals forward normalization — see
-		// markets.go's adjustListingPrice / handlePools/handleMarkets
-		// equivalent comment. Resolve decimals against the ACTUAL matched
-		// alias legs (native vs crypto:XLM vs the SAC), not the requested
-		// spelling — same precedent as lookupPriceAt's post-alias resolve.
-		market.LastPrice = s.adjustListingPrice(matchedBase, matchedQuote, market.LastPrice)
+		// Scam-issuer gate + dex-nonstandard-decimals forward
+		// normalization — see markets.go's adjustListingPrice. Both
+		// resolve against the ACTUAL matched alias legs (native vs
+		// crypto:XLM vs the SAC), not the requested spelling — same
+		// precedent as lookupPriceAt's post-alias resolve.
+		market.LastPrice = s.adjustListingPrice(r.Context(), matchedBase, matchedQuote, market.LastPrice, "pairs")
 		out = append(out, market)
 	}
 	writeJSON(w, out, Flags{})

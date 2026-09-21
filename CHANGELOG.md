@@ -451,6 +451,13 @@ against.
   "confirmed", so an inverted heal (broken history, healthy current feed)
   is re-pointed once the history endpoint is corrected instead of wedging
   the ticker permanently.
+- **api / the listings withhold a directory-flagged issuer's last_price
+  (T663, RLT-314):** `/v1/markets`, `/v1/pools` and `/v1/pairs` now reach the
+  same scam-gate decision `/v1/price`, `/v1/vwap` and `/v1/twap` do before a
+  row's `last_price` goes to the wire. The market still lists — trade count
+  and volume are activity, not a price — but the price is null. One
+  chokepoint (`adjustListingPrice`) serves all three surfaces so they cannot
+  drift apart again; pinned by `TestListingsWithholdScamFlaggedLastPrice`.
 - **ansible / the archival-node WAL-headroom guard stops crediting a walked-up
   ancestor as WAL (RWC-529, #529):** the guard refuses a `max_wal_size` that
   does not fit the filesystem `pg_wal` is really on — the substitution that

@@ -346,7 +346,7 @@ func (s *Server) handlePools(w http.ResponseWriter, r *http.Request) { //nolint:
 	// same raw quote/base ratio /v1/price's closed-1m-bucket path serves.
 	// See adjustListingPriceStrings for the byte-identical-on-7dp contract.
 	for i := range rows {
-		rows[i].LastPrice = s.adjustListingPriceStrings(rows[i].Base, rows[i].Quote, rows[i].LastPrice)
+		rows[i].LastPrice = s.adjustListingPriceStrings(pCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "pools")
 	}
 	env := Envelope{Data: rows, Flags: Flags{}}
 	if next != "" {
@@ -627,7 +627,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// equivalent comment. /v1/markets's last_price sources from the same
 	// prices_1d / pools_per_source_1h raw ratio.
 	for i := range rows {
-		rows[i].LastPrice = s.adjustListingPriceStrings(rows[i].Base, rows[i].Quote, rows[i].LastPrice)
+		rows[i].LastPrice = s.adjustListingPriceStrings(mCtx, rows[i].Base, rows[i].Quote, rows[i].LastPrice, "markets")
 	}
 
 	// Optional opt-in: attach 24h hourly volume history per row
@@ -854,10 +854,19 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 	return merged, observedAt, stale, nil
 }
 
-// adjustListingPrice applies the dex-nonstandard-decimals forward
-// normalization to a listing row's last_price — see handleMarkets /
+// adjustListingPrice is the ONE path a listing row's last_price takes to
+// the wire: the scam-issuer withholding decision first, then the
+// dex-nonstandard-decimals forward normalization — see handleMarkets /
 // handlePools / pairs.go's handlePairs call sites for the full
 // rationale (docs/operations/runbooks/dex-nonstandard-decimals.md).
+//
+// Withholding returns nil, so the row still lists (the market exists;
+// its trade count and volume are activity, not a price) but carries no
+// last_price — the listing analogue of the 404 /v1/price, /v1/vwap and
+// /v1/twap answer for the same pair. Gating here rather than per handler
+// is what keeps /v1/markets, /v1/pools and /v1/pairs from drifting apart
+// the way /v1/vwap and /v1/twap once did (see scamWithheld). `surface`
+// labels the withheld metric.
 //
 // nil / empty lastPrice passes through unchanged (no bucket to correct).
 // Returns lastPrice UNCHANGED (same pointer) when baseDecimals ==
@@ -867,9 +876,12 @@ func (s *Server) fanOutAssetMarkets(ctx context.Context, reader MarketsReader, a
 // 10-digit rendering, so reformatting unconditionally would change the
 // wire bytes for every already-correct 7dp pair — the overwhelming
 // common case on a listing endpoint with thousands of pairs.
-func (s *Server) adjustListingPrice(base, quote canonical.Asset, lastPrice *string) *string {
+func (s *Server) adjustListingPrice(ctx context.Context, base, quote canonical.Asset, lastPrice *string, surface string) *string {
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice
+	}
+	if scamWithheld(ctx, s.scam, base, quote, surface) {
+		return nil
 	}
 	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
 	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
@@ -892,7 +904,7 @@ func (s *Server) adjustListingPrice(base, quote canonical.Asset, lastPrice *stri
 // layer, so a parse failure here is defensive-only (fails open —
 // returns lastPrice unchanged rather than dropping the row or 500ing
 // the whole listing).
-func (s *Server) adjustListingPriceStrings(baseRaw, quoteRaw string, lastPrice *string) *string {
+func (s *Server) adjustListingPriceStrings(ctx context.Context, baseRaw, quoteRaw string, lastPrice *string, surface string) *string {
 	if lastPrice == nil || *lastPrice == "" {
 		return lastPrice
 	}
@@ -904,5 +916,5 @@ func (s *Server) adjustListingPriceStrings(baseRaw, quoteRaw string, lastPrice *
 	if err != nil {
 		return lastPrice
 	}
-	return s.adjustListingPrice(base, quote, lastPrice)
+	return s.adjustListingPrice(ctx, base, quote, lastPrice, surface)
 }
