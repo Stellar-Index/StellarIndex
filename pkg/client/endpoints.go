@@ -457,8 +457,16 @@ func (c *Client) AssetMetadata(ctx context.Context, assetID string) (*Envelope[A
 // SourcesOptions filters [Client.Sources]. Class is one of the
 // canonical class strings ("exchange" / "aggregator" / "oracle"
 // / "authority_sanity"); empty returns the full registry.
+//
+// Include opts into the extra columns [Source] documents as
+// request-gated: "stats" populates TradeCount24h/VolumeUSD24h/
+// MarketsCount24h; "sparkline"/"sparkline7d" additionally populate
+// VolumeHistory24h/VolumeHistory7d (server: internal/api/v1/sources.go
+// "sparkline implies stats"). Comma-joined into the `include` query
+// param; empty stays the all-static registry projection.
 type SourcesOptions struct {
-	Class string // optional; empty = all classes
+	Class   string   // optional; empty = all classes
+	Include []string // optional; e.g. []string{"stats"}
 }
 
 // Sources lists the source registry — venues + oracles +
@@ -473,6 +481,9 @@ func (c *Client) Sources(ctx context.Context, opts SourcesOptions) (*Envelope[[]
 	v := url.Values{}
 	if opts.Class != "" {
 		v.Set("class", opts.Class)
+	}
+	if len(opts.Include) > 0 {
+		v.Set("include", strings.Join(opts.Include, ","))
 	}
 	var env Envelope[[]Source]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/sources", v, nil, &env); err != nil {
@@ -550,6 +561,21 @@ type MarketsOptions struct {
 	// alphabetically-first spam tokens, and make this SDK disagree with
 	// an equivalent curl and with the OpenAPI default.
 	OrderBy MarketsOrderBy
+	// Include opts into the extra columns [Market] documents as
+	// request-gated: "sparkline" populates VolumeHistory24h,
+	// "inception" populates FirstTradeAt (server:
+	// internal/api/v1/markets.go). Comma-joined into the `include`
+	// query param; empty omits both.
+	Include []string
+	// Source restricts the listing to markets a single registered
+	// source observed in the recency window. Mutually exclusive with
+	// Asset — the server 400s `unknown-source` / `invalid-asset-id`
+	// rather than silently ignoring one, same posture as [PoolsQuery].
+	Source string
+	// Asset restricts the listing to markets where the given
+	// canonical asset_id appears on either side (base or quote).
+	// Mutually exclusive with Source.
+	Asset string
 }
 
 // Markets lists the (base, quote) pairs the deployment has
@@ -566,6 +592,15 @@ func (c *Client) Markets(ctx context.Context, opts MarketsOptions) (*Envelope[[]
 	}
 	if opts.OrderBy != "" {
 		v.Set("order_by", string(opts.OrderBy))
+	}
+	if len(opts.Include) > 0 {
+		v.Set("include", strings.Join(opts.Include, ","))
+	}
+	if opts.Source != "" {
+		v.Set("source", opts.Source)
+	}
+	if opts.Asset != "" {
+		v.Set("asset", opts.Asset)
 	}
 	var env Envelope[[]Market]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/markets", v, nil, &env); err != nil {

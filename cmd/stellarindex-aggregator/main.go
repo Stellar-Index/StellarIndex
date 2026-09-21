@@ -169,6 +169,37 @@ func divergenceSourceNames(sources map[string]float64) []string {
 	return names
 }
 
+// anomalyFreezeWebhookPayload is the JSON body POSTed to a customer's
+// webhook on an `anomaly.freeze` delivery. Documented in the OpenAPI
+// spec as AnomalyFreezeWebhookPayload (openapi/stellar-index.v1.yaml);
+// spec_contract_test.go's TestAnomalyFreezeWebhookPayloadMatchesSpec
+// keeps the two in lockstep.
+type anomalyFreezeWebhookPayload struct {
+	Event       string `json:"event"`
+	Asset       string `json:"asset"`
+	Quote       string `json:"quote"`
+	FrozenValue string `json:"frozen_value"`
+	Reason      string `json:"reason"`
+	At          string `json:"at"`
+}
+
+// divergenceFiringWebhookPayload is the JSON body POSTed to a
+// customer's webhook on a `divergence.firing` delivery. Documented in
+// the OpenAPI spec as DivergenceFiringWebhookPayload
+// (openapi/stellar-index.v1.yaml); spec_contract_test.go's
+// TestDivergenceFiringWebhookPayloadMatchesSpec keeps the two in
+// lockstep.
+type divergenceFiringWebhookPayload struct {
+	Event         string   `json:"event"`
+	Pair          string   `json:"pair"`
+	OurPrice      string   `json:"our_price"`
+	Median        string   `json:"median"`
+	DivergencePct float64  `json:"divergence_pct"`
+	SuccessCount  int      `json:"success_count"`
+	Sources       []string `json:"sources"`
+	At            string   `json:"at"`
+}
+
 //nolint:gocognit,gocyclo,funlen // top-level binary lifecycle — splitting reduces readability of dependency-construction order
 func run(cfgPath string, dryRun bool) error {
 	cfg, err := config.LoadWithEnv(cfgPath)
@@ -312,13 +343,13 @@ func run(cfgPath string, dryRun bool) error {
 		if fanout != nil {
 			sinkOpts = append(sinkOpts, timescale.WithFreezeHook(
 				func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) {
-					payload := customerwebhook.MarshalPayload(logger, map[string]any{
-						"event":        string(platform.WebhookEventAnomalyFreeze),
-						"asset":        asset.String(),
-						"quote":        quote.String(),
-						"frozen_value": frozenValue,
-						"reason":       string(decision.Reason),
-						"at":           time.Now().UTC().Format(time.RFC3339Nano),
+					payload := customerwebhook.MarshalPayload(logger, anomalyFreezeWebhookPayload{
+						Event:       string(platform.WebhookEventAnomalyFreeze),
+						Asset:       asset.String(),
+						Quote:       quote.String(),
+						FrozenValue: frozenValue,
+						Reason:      string(decision.Reason),
+						At:          time.Now().UTC().Format(time.RFC3339Nano),
 					})
 					if payload == nil {
 						return
@@ -439,15 +470,15 @@ func run(cfgPath string, dryRun bool) error {
 		var divWarningHook divergence.WarningHook
 		if divFanout != nil {
 			divWarningHook = func(ctx context.Context, pair canonical.Pair, cached divergence.CachedResult) {
-				payload := customerwebhook.MarshalPayload(logger, map[string]any{
-					"event":          string(platform.WebhookEventDivergenceFiring),
-					"pair":           pair.String(),
-					"our_price":      formatDivergencePrice(cached.OurPrice),
-					"median":         formatDivergencePrice(cached.Median),
-					"divergence_pct": cached.DivergencePct,
-					"success_count":  cached.SuccessCount,
-					"sources":        divergenceSourceNames(cached.Sources),
-					"at":             cached.ComputedAt.Format(time.RFC3339Nano),
+				payload := customerwebhook.MarshalPayload(logger, divergenceFiringWebhookPayload{
+					Event:         string(platform.WebhookEventDivergenceFiring),
+					Pair:          pair.String(),
+					OurPrice:      formatDivergencePrice(cached.OurPrice),
+					Median:        formatDivergencePrice(cached.Median),
+					DivergencePct: cached.DivergencePct,
+					SuccessCount:  cached.SuccessCount,
+					Sources:       divergenceSourceNames(cached.Sources),
+					At:            cached.ComputedAt.Format(time.RFC3339Nano),
 				})
 				if payload == nil {
 					return
