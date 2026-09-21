@@ -3,6 +3,8 @@ package clickhouse
 import (
 	"context"
 	"fmt"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // holdersRollupTopN is how deep each asset's precomputed board goes —
@@ -130,6 +132,71 @@ var holdersRollupStatements = []string{
 	                 stellar.accounts_trustline_histogram_staging AND stellar.accounts_trustline_histogram`,
 }
 
+// holdersRollupFillStatements is every statement in holdersRollupStatements
+// except the final atomic swap: the truncates and inserts that populate the
+// five staging arms.
+var holdersRollupFillStatements = holdersRollupStatements[:len(holdersRollupStatements)-1]
+
+// holdersRollupExchangeStatement is the final, multi-pair EXCHANGE TABLES
+// statement — split out so RunHoldersRollup can run holdersRollupShrinkGuard
+// between the fills finishing and the swap firing.
+var holdersRollupExchangeStatement = holdersRollupStatements[len(holdersRollupStatements)-1]
+
+// holdersRollupShrinkGuardMinRatio is the floor a staging arm's row count may
+// fall to relative to what is CURRENTLY live before RunHoldersRollup refuses
+// to publish it. EXCHANGE TABLES only guarantees the SWAP is atomic (RA-2);
+// it has no opinion on what it is swapping in. ClickHouse can finish a FINAL
+// scan that read far fewer rows than a healthy cycle without returning any
+// error — a merge left mid-flight, a scan silently truncated by
+// max_execution_time on a subset of parts — so a row-count check between the
+// fills and the swap is the only thing standing between a broken cycle and a
+// board published as authoritative. Holder counts move gradually cycle to
+// cycle (30 min); halving would itself be page-one pubnet news, not a normal
+// rollup, so this floor never fires on a healthy chain.
+const holdersRollupShrinkGuardMinRatio = 0.5
+
+// holdersRollupShrinkGuardTables pairs each staging arm the swap is about to
+// publish with the live table it will replace.
+var holdersRollupShrinkGuardTables = [][2]string{
+	{"stellar.asset_holders_rollup_staging", "stellar.asset_holders_rollup"},
+	{"stellar.asset_holders_counts_staging", "stellar.asset_holders_counts"},
+}
+
+// holdersRollupConn is what one holders-rollup cycle needs from a
+// connection: Exec for every statement, QueryRow for
+// holdersRollupShrinkGuard. Named so the cycle is drivable without a
+// ClickHouse connection — the same split runRollupCycle/runRollupSteps use.
+type holdersRollupConn interface {
+	Exec(ctx context.Context, query string, args ...any) error
+	QueryRow(ctx context.Context, query string, args ...any) driver.Row
+}
+
+// holdersRollupShrinkGuard aborts the cycle — leaving the previous (good)
+// cycle live — when a staging arm has shrunk by more than
+// holdersRollupShrinkGuardMinRatio relative to its live counterpart. A live
+// count of zero (first cycle ever, or a not-yet-populated deployment) has
+// nothing to compare against and is skipped rather than treated as a shrink.
+func holdersRollupShrinkGuard(ctx context.Context, conn holdersRollupConn) error {
+	for _, pair := range holdersRollupShrinkGuardTables {
+		staging, live := pair[0], pair[1]
+		var stagingCount, liveCount uint64
+		if err := conn.QueryRow(ctx, "SELECT count() FROM "+staging).Scan(&stagingCount); err != nil {
+			return fmt.Errorf("clickhouse: holders rollup shrink guard: count %s: %w", staging, err)
+		}
+		if err := conn.QueryRow(ctx, "SELECT count() FROM "+live).Scan(&liveCount); err != nil {
+			return fmt.Errorf("clickhouse: holders rollup shrink guard: count %s: %w", live, err)
+		}
+		if liveCount == 0 {
+			continue
+		}
+		if float64(stagingCount) < float64(liveCount)*holdersRollupShrinkGuardMinRatio {
+			return fmt.Errorf("clickhouse: holders rollup shrink guard: %s has %d row(s), down from %d live in %s (floor %.0f%% of live) — refusing to publish, previous cycle stays live",
+				staging, stagingCount, liveCount, live, holdersRollupShrinkGuardMinRatio*100)
+		}
+	}
+	return nil
+}
+
 // RunHoldersRollup executes one full recompute + atomic exchange.
 func RunHoldersRollup(ctx context.Context, addr string, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
@@ -137,12 +204,30 @@ func RunHoldersRollup(ctx context.Context, addr string, logf func(format string,
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	for i, stmt := range holdersRollupStatements {
+	return runHoldersRollupSteps(ctx, conn, logf)
+}
+
+// runHoldersRollupSteps runs the fills, then holdersRollupShrinkGuard, then
+// the swap, against an already-open connection — split out from
+// RunHoldersRollup so the cycle is drivable in a test without dialing
+// ClickHouse. holdersRollupShrinkGuard runs after every staging arm is
+// filled and before the swap, so a broken cycle errors out with the
+// previous cycle left live rather than publishing a degraded board.
+func runHoldersRollupSteps(ctx context.Context, conn holdersRollupConn, logf func(format string, args ...any)) error {
+	total := len(holdersRollupStatements)
+	for i, stmt := range holdersRollupFillStatements {
 		if err := conn.Exec(ctx, stmt); err != nil {
-			return fmt.Errorf("clickhouse: holders rollup step %d/%d: %w", i+1, len(holdersRollupStatements), err)
+			return fmt.Errorf("clickhouse: holders rollup step %d/%d: %w", i+1, total, err)
 		}
-		logf("step %d/%d done", i+1, len(holdersRollupStatements))
+		logf("step %d/%d done", i+1, total)
 	}
+	if err := holdersRollupShrinkGuard(ctx, conn); err != nil {
+		return err
+	}
+	if err := conn.Exec(ctx, holdersRollupExchangeStatement); err != nil {
+		return fmt.Errorf("clickhouse: holders rollup step %d/%d: %w", total, total, err)
+	}
+	logf("step %d/%d done", total, total)
 	return nil
 }
 
