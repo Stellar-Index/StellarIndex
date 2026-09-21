@@ -512,6 +512,44 @@ func TestPrometheusStatusBackend_IncidentsDedupesByAlertname(t *testing.T) {
 	}
 }
 
+// TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity pins
+// RLT-077: the `severity` alert label is operator-controlled (any
+// alertname can set it to anything) and is published verbatim on the
+// public /v1/status JSON. A value outside the three documented
+// severities (page/ticket/informational) must be normalized before it
+// reaches ActiveIncident, not passed through unvalidated.
+func TestPrometheusStatusBackend_IncidentsNormalizesUnknownSeverity(t *testing.T) {
+	const body = `{
+		"status":"success",
+		"data":{
+			"resultType":"vector",
+			"result":[
+				{"metric":{"alertname":"stellarindex_weird_alert","alertstate":"firing","severity":"<script>alert(1)</script>"},"value":[1730000000,"1"]}
+			]
+		}
+	}`
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(body))
+	}))
+	defer ts.Close()
+
+	p := &PrometheusStatusBackend{URL: ts.URL}
+	got, err := p.Incidents(context.Background())
+	if err != nil {
+		t.Fatalf("Incidents: %v", err)
+	}
+	if got.PageCount != 0 || got.TicketCount != 0 || got.InformationalCount != 0 {
+		t.Errorf("counts = %+v, want all zero for an out-of-enum severity", got)
+	}
+	if len(got.Active) != 1 {
+		t.Fatalf("Active len = %d, want 1", len(got.Active))
+	}
+	if got.Active[0].Severity != "unknown" {
+		t.Errorf("Active[0].Severity = %q, want %q (unvalidated label must not pass through)", got.Active[0].Severity, "unknown")
+	}
+}
+
 // TestStatus_OverallRollup_F0055 pins the F-0055 fix: the
 // customer-facing `overall` field is computed from the worst-case
 // per-service state plus the two cross-cutting canaries

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -109,5 +110,58 @@ func TestFindIncidentForEmit_RefusesWrongStatus(t *testing.T) {
 				t.Errorf("got slug %q, want %q", got.Slug, tc.wantSlug)
 			}
 		})
+	}
+}
+
+// TestIncidentPayloadFields_OmitsAffectedComponentsWhenNil pins
+// RLT-211: incidents.Incident tags affected_components `omitempty`,
+// so an incident with no components published via /v1/incidents
+// simply lacks the key. incidentPayloadFields hand-builds a
+// map[string]any for the webhook body, where a struct's json tag has
+// no bearing on map-value marshaling — a nil slice assigned into the
+// map serializes as `"affected_components":null` regardless of the
+// tag, giving webhook subscribers a shape /v1/incidents never sends.
+func TestIncidentPayloadFields_OmitsAffectedComponentsWhenNil(t *testing.T) {
+	found := &incidents.Incident{
+		Slug:      "2026-05-12-firing-sev1",
+		Title:     "Redis blip",
+		Severity:  incidents.SeverityMajor,
+		Status:    incidents.StatusInvestigating,
+		StartedAt: time.Now().UTC(),
+		// AffectedComponents intentionally nil.
+	}
+
+	fields := incidentPayloadFields(found, platform.WebhookEventIncidentSEV1)
+
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, present := decoded["affected_components"]; present {
+		t.Errorf("affected_components present in payload = %s, want key absent for a nil slice (matches Incident's omitempty contract)", raw)
+	}
+}
+
+// TestIncidentPayloadFields_IncludesAffectedComponentsWhenSet is the
+// companion positive case: a non-empty slice must still round-trip.
+func TestIncidentPayloadFields_IncludesAffectedComponentsWhenSet(t *testing.T) {
+	found := &incidents.Incident{
+		Slug:               "2026-05-12-firing-sev1",
+		Title:              "Redis blip",
+		Severity:           incidents.SeverityMajor,
+		Status:             incidents.StatusInvestigating,
+		StartedAt:          time.Now().UTC(),
+		AffectedComponents: []string{"api", "aggregator"},
+	}
+
+	fields := incidentPayloadFields(found, platform.WebhookEventIncidentSEV1)
+
+	got, ok := fields["affected_components"].([]string)
+	if !ok || len(got) != 2 {
+		t.Fatalf("affected_components = %#v, want [api aggregator]", fields["affected_components"])
 	}
 }

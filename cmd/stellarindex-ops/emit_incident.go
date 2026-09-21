@@ -66,14 +66,21 @@ func findIncidentForEmit(all []incidents.Incident, slug string, eventType platfo
 // render, so a hook subscriber sees what the public status page shows.
 func incidentPayloadFields(found *incidents.Incident, eventType platform.WebhookEventType) map[string]any {
 	fields := map[string]any{
-		"event":               string(eventType),
-		"slug":                found.Slug,
-		"title":               found.Title,
-		"severity":            string(found.Severity),
-		"status":              string(found.Status),
-		"started_at":          found.StartedAt.UTC().Format(time.RFC3339Nano),
-		"affected_components": found.AffectedComponents,
-		"at":                  time.Now().UTC().Format(time.RFC3339Nano),
+		"event":      string(eventType),
+		"slug":       found.Slug,
+		"title":      found.Title,
+		"severity":   string(found.Severity),
+		"status":     string(found.Status),
+		"started_at": found.StartedAt.UTC().Format(time.RFC3339Nano),
+		"at":         time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	// A map value's json tag has no effect — unlike incidents.Incident
+	// (`affected_components,omitempty`), a nil slice assigned into a
+	// map[string]any always marshals as `"affected_components":null`.
+	// Only set the key when there's something to report, matching the
+	// omitempty contract the corpus struct and pkg/client/types.go pin.
+	if len(found.AffectedComponents) > 0 {
+		fields["affected_components"] = found.AffectedComponents
 	}
 	if found.ResolvedAt != nil {
 		fields["resolved_at"] = found.ResolvedAt.UTC().Format(time.RFC3339Nano)
