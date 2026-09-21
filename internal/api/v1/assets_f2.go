@@ -441,7 +441,15 @@ func (s *Server) populateMarketCap(ctx context.Context, detail *AssetDetail, ass
 		if fdv, err := usdMarketValue(snap.MaxSupply, usdPrice, detail.Decimals); err != nil {
 			s.logger.Warn("fdv_usd compute failed",
 				"err", err, "asset_key", key, "price", usdPrice)
-		} else if !capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+		} else if capExceedsObservedTurnover(fdv, detail.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+			// FDV is the cap computed over MAX supply, so it is >= market_cap_usd
+			// and can breach the ceiling on its own even when circulating supply
+			// did not — maxSupply > circulatingSupply is the common case for an
+			// issuer with a declared cap above what has vested. Flagging here too
+			// (RWC-535) matches the mc branch above: a withheld fdv_usd with no
+			// flag was indistinguishable from "no max_supply on record".
+			detail.MarketCapLowLiquidity = true
+		} else {
 			// FDV is the cap computed over MAX supply, so it is the larger
 			// of the two figures and clears the ceiling strictly less often
 			// than the cap does. Withholding the cap while still publishing

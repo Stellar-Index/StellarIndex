@@ -54,6 +54,7 @@ type Publisher struct {
 	reader   PriceReader
 	interval time.Duration
 	logger   *slog.Logger
+	decimals *v1.NonstandardDecimalsCache
 
 	// lastPublished tracks the most recent ObservedAt we've already
 	// fanned out, keyed by topic. Each pair's poller goroutine has
@@ -65,11 +66,23 @@ type Publisher struct {
 	lastPublished map[string]time.Time
 }
 
+// Options holds Publisher's optional knobs, per the repo's trailing-struct
+// constructor convention (docs/engineering-standards.md 14.2) — the zero
+// value is a valid, fully-functional Publisher.
+type Options struct {
+	// Decimals wires the dex-nonstandard-decimals confirmed-decimals cache
+	// so tickOnce can correct a raw snapshot before publishing (see
+	// [v1.NormalizeRawPriceSnapshot]). nil (the zero value) treats every
+	// pair as standard-decimals — the same fail-open default every other
+	// consumer of the cache gets when it isn't wired.
+	Decimals *v1.NonstandardDecimalsCache
+}
+
 // New constructs a Publisher. The reader is the same PriceReader
 // the /v1/price handler uses; the hub is the same instance passed
 // to v1.Options.Hub. Interval clamps to 1 s minimum (zero / negative
 // uses [DefaultInterval]).
-func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger *slog.Logger) *Publisher {
+func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger *slog.Logger, opts Options) *Publisher {
 	if hub == nil {
 		panic("streampublish: hub must not be nil")
 	}
@@ -90,6 +103,7 @@ func New(hub *streaming.Hub, reader PriceReader, interval time.Duration, logger 
 		reader:        reader,
 		interval:      interval,
 		logger:        logger,
+		decimals:      opts.Decimals,
 		lastPublished: map[string]time.Time{},
 	}
 }
@@ -196,6 +210,15 @@ func (p *Publisher) tickOnce(ctx context.Context, pair canonical.Pair, topic str
 	if !p.shouldPublish(topic, snap.ObservedAt.Time()) {
 		return
 	}
+
+	// dex-nonstandard-decimals forward normalization (M2). reader.LatestPrice
+	// returns the RAW closed-1m/last-trade ratio (see
+	// v1.Server.normalizeRawPriceSnapshot's doc comment) — the handler-side
+	// /v1/price path corrects it before serving, and this producer must too,
+	// or a flagged Soroban pair streams the wrong price by a power of ten
+	// while the REST surface serves the corrected one. Byte-identical no-op
+	// for every standard-decimals pair (the overwhelming common case).
+	v1.NormalizeRawPriceSnapshot(&snap, pair.Base, pair.Quote, p.decimals)
 
 	// The DOCUMENTED envelope shape — field-compatible with /v1/price
 	// responses and the redispub bridge's fan-out (cold audit
