@@ -28778,21 +28778,21 @@ rc.48 deploy to R1.
 - **Asset detail: market-cap timeline empty-state** (PR #1041)
   on the Supply tab — placeholder until the supply-history
   hypertable joins up with per-asset USD prices.
-- **/exchanges all-CEX markets table** (PR #1042) sorted by 24h
+- **/exchanges all-CEX markets table** sorted by 24h
   USD volume across every venue, merged client-side.
-- **/exchanges/{venue} candle chart** (PR #1042) — TradingView-
+- **/exchanges/{venue} candle chart** — TradingView-
   style lightweight-charts panel with selectable pair, timeframe
   (24h/7d/30d/1y/all) and granularity (1m/15m/1h/4h/1d).
-- **/exchanges/{venue} subscription disclaimer** (PR #1042) —
+- **/exchanges/{venue} subscription disclaimer** —
   explicit callout that the curated pair set is by-design, not
   a data bug.
 - **/lending pool list + detail: deploy timestamp + initiator**
-  (PR #1042) for every Blend pool we know about, sourced from the
+  for every Blend pool we know about, sourced from the
   Phase-4 wasm-history audit.
 
 ### Performance
 
-- **Background prewarm goroutine** (PR #1042) for the heaviest
+- **Background prewarm goroutine** for the heaviest
   API caches. /v1/sources?include=stats and /v1/markets / /v1/pools
   each scan ~24h of the trades hypertable on cold paths (5–10s);
   the rc.35/rc.36 caches drop them to <1ms but TTL expiry meant
@@ -28812,29 +28812,28 @@ rc.48 deploy to R1.
   this change and now points to an unrelated issue filed long after
   this release, so it has been dropped rather than left as a
   misdirected link.)
-- **/currencies header copy** (PR #1042) updated to credit
+- **/currencies header copy** updated to credit
   Massive (Polygon.io); points users at the new range-selectable
   chart on /currencies/[ticker].
 
 ### Fixed
 
-- **Wider lookback windows for /v1/coins change_1h/24h/7d** (PR
-  #1042). Old windows (10 min / 1 h / 4 h around target) often
+- **Wider lookback windows for /v1/coins change_1h/24h/7d**. Old windows (10 min / 1 h / 4 h around target) often
   missed low-volume pairs; widened to 35 min / 2 h 30 min / 14 h.
   The DISTINCT ON ... ORDER BY bucket DESC selector still picks
   the latest available row inside the window so the anchor stays
   close to the target.
-- **/dexes detail link** (PR #1042) now points at `/dexes/{source}`
+- **/dexes detail link** now points at `/dexes/{source}`
   instead of `/sources/{source}`; the latter route exists but
   rendered the operator-metadata view, not the per-DEX detail.
-- **AssetLabel: case-insensitive C-strkey match** (PR #1042) plus
+- **AssetLabel: case-insensitive C-strkey match** plus
   a length-16 truncation fallback for any unstructured asset
   string. Stops the long contract IDs that bled through on
   /dexes pool rows when the SAC wrapper map didn't resolve them.
-- **View Code button** (PR #1042) drops the literal `</>` text
+- **View Code button** drops the literal `</>` text
   next to the Code2 SVG — was rendering both side-by-side
   site-wide.
-- **/assets empty-state cells** (PR #1042) now have explanatory
+- **/assets empty-state cells** now have explanatory
   tooltips on the Dash so users see why a row is missing 7d %,
   market cap, or supply rather than just `—`.
 
