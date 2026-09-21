@@ -1680,7 +1680,8 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		return fmt.Errorf("api.streaming.pairs: %w", err)
 	}
 	if len(streamPairs) > 0 {
-		pub := streampublish.New(hub, priceReader, cfg.API.Streaming.PollInterval, logger.With("component", "stream-publisher"))
+		pub := streampublish.New(hub, priceReader, cfg.API.Streaming.PollInterval, logger.With("component", "stream-publisher"),
+			streampublish.Options{Decimals: nonstandardDecimalsCache})
 		bgWG.Add(1)
 		go func() {
 			defer bgWG.Done()

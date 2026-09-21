@@ -313,6 +313,48 @@ func slogDiscard() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+// TestPopulateMarketCapFlagsFDVOnlyCeilingBreach (RWC-535) covers the row
+// shape TestPopulateMarketCapAgreesWithTheListingOnTheSameAsset does not:
+// circulating supply small enough that market_cap_usd CLEARS the turnover
+// ceiling and publishes, while max_supply is large enough that fdv_usd
+// alone breaches it. FDV >= market_cap_usd whenever max_supply >
+// circulating_supply, so this is the common shape for any issuer whose
+// declared cap sits above what has vested — not an edge case.
+func TestPopulateMarketCapFlagsFDVOnlyCeilingBreach(t *testing.T) {
+	s := &Server{
+		logger:                  slogDiscard(),
+		minMarketCapVolumeUSD:   1000,
+		maxMarketCapVolumeRatio: 50_000,
+	}
+	price := "1.5666161388"
+	vol := slvrVolumeUSD // $3,791.13915551 — ceiling at 50,000x is ~$189.56M
+	detail := AssetDetail{Decimals: 7, PriceUSD: &price, VolumeUSD24h: &vol}
+	// 50,000,000 tokens circulating ($78.3M cap) — under the ~$189.56M ceiling.
+	circ, _ := new(big.Int).SetString("500000000000000", 10)
+	// 200,000,000 tokens max supply ($313.3M FDV) — over the ceiling.
+	maxSup, _ := new(big.Int).SetString("2000000000000000", 10)
+	snap := supply.Supply{CirculatingSupply: circ, MaxSupply: maxSup}
+	asset, err := canonical.ParseAsset("SLVR-GBZVELEQD3WBN3R3VAG64HVBDOZ76ZL6QPLSFGKWPFED33Q3234NSLVR")
+	if err != nil {
+		t.Fatalf("parse asset: %v", err)
+	}
+
+	s.populateMarketCap(context.Background(), &detail, asset, snap, asset.String(), 5)
+
+	if detail.MarketCapUSD == nil {
+		t.Fatal("market_cap_usd suppressed even though it clears the ceiling on its own")
+	}
+	if detail.FDVUSD != nil {
+		t.Errorf("fdv_usd = %q, want withheld — it breaches the turnover ceiling on its own",
+			*detail.FDVUSD)
+	}
+	if !detail.MarketCapLowLiquidity {
+		t.Error("market_cap_low_liquidity is false on an FDV-only ceiling breach; " +
+			"a withheld fdv_usd with no flag is indistinguishable from an asset with " +
+			"no max_supply on record")
+	}
+}
+
 // TestFillContractMarketCapsAppliesTheSameCeiling covers the third call site.
 // The RWA contract arm computes its own cap from its own supply reader, so it
 // is a separate place the guard has to be remembered — and an unwired call

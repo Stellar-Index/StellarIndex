@@ -1055,6 +1055,16 @@ func (s *Server) normalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote cano
 	snap.Price = s.normalizeRawRatioString(snap.Price, base, quote)
 }
 
+// NormalizeRawPriceSnapshot is [Server.normalizeRawPriceSnapshot] for a
+// caller with no *Server — streampublish's SSE bridge reads the same raw
+// storePriceReader.LatestPrice source this method's doc comment names, but
+// lives in its own package (avoiding an import cycle into v1), so it has no
+// *Server to invoke the method through. decimals may be nil (fails open at
+// aggregate.StandardDecimals, same as every other caller of ResolveDecimals).
+func NormalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote canonical.Asset, decimals *NonstandardDecimalsCache) {
+	snap.Price = normalizeRawRatioStringWithLookup(snap.Price, base, quote, decimals)
+}
+
 // normalizeRawRatioString is the string-level primitive under
 // [Server.normalizeRawPriceSnapshot]: it applies the dex-nonstandard-decimals
 // forward normalization (aggregate.AdjustPrice) to a decimal price STRING
@@ -1071,8 +1081,15 @@ func (s *Server) normalizeRawPriceSnapshot(snap *PriceSnapshot, base, quote cano
 // wire bytes of every already-correct 7dp price (the CAGG's NUMERIC::text
 // rendering doesn't match ratToDecimal's fixed digit count).
 func (s *Server) normalizeRawRatioString(value string, base, quote canonical.Asset) string {
-	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
-	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, quote)
+	return normalizeRawRatioStringWithLookup(value, base, quote, s.nonstandardDecimals)
+}
+
+// normalizeRawRatioStringWithLookup is the lookup-parameterized primitive
+// under [Server.normalizeRawRatioString] and [NormalizeRawPriceSnapshot] —
+// the single implementation both share.
+func normalizeRawRatioStringWithLookup(value string, base, quote canonical.Asset, decimals *NonstandardDecimalsCache) string {
+	baseDec := aggregate.ResolveDecimals(decimals, base)
+	quoteDec := aggregate.ResolveDecimals(decimals, quote)
 	if baseDec == quoteDec {
 		return value
 	}

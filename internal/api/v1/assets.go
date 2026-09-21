@@ -178,14 +178,26 @@ type AssetDetail struct {
 	// declaration) or when USD price is unavailable.
 	FDVUSD *string `json:"fdv_usd,omitempty"`
 
-	// MarketCapLowLiquidity is true when market_cap_usd (and fdv_usd) were
-	// deliberately SUPPRESSED — served null — because the backing USD price
-	// came from negligible liquidity (a single venue AND trailing-24h USD
-	// volume below aggregate.min_market_cap_volume_usd). It disambiguates
-	// "suppressed on purpose" from "no supply/price data" so consumers render
-	// "market cap unavailable — illiquid" rather than a fabricated headline.
-	// The price_usd itself still serves; we guard the VALUATION, not the
-	// price. Omitted (false) whenever a cap is present or unaffected.
+	// MarketCapLowLiquidity is true when market_cap_usd or fdv_usd were
+	// deliberately SUPPRESSED — served null — for either of two reasons:
+	//
+	//   - the dust FLOOR: the backing USD price came from negligible
+	//     liquidity (a single venue AND trailing-24h USD volume below
+	//     aggregate.min_market_cap_volume_usd), or
+	//   - the turnover CEILING: the computed figure itself is an
+	//     implausible multiple of the asset's own observed trading
+	//     (capExceedsObservedTurnover, aggregate.max_market_cap_volume_ratio)
+	//     — a claim so large against the volume backing it that publishing
+	//     it as a headline valuation would be misleading even though the
+	//     price passed the floor. FDV (computed over max_supply, so >=
+	//     market_cap_usd) can breach the ceiling on its own even when
+	//     market_cap_usd did not.
+	//
+	// It disambiguates "suppressed on purpose" from "no supply/price data"
+	// so consumers render "market cap unavailable — illiquid" rather than a
+	// fabricated headline. The price_usd itself still serves; we guard the
+	// VALUATION, not the price. Omitted (false) whenever a cap is present or
+	// unaffected.
 	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 
 	// MarketCapDecimalsMismatch is true when market_cap_usd and fdv_usd were

@@ -74,7 +74,7 @@ func TestPublisher_PublishesOnNewBucket(t *testing.T) {
 		PriceType: "vwap", ObservedAt: v1.WireTime(bucket1), WindowSeconds: 60,
 	})
 
-	pub := streampublish.New(hub, reader, time.Second, nil)
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{})
 
 	// Subscribe BEFORE Run starts so we don't miss the immediate
 	// poll-once tick.
@@ -165,7 +165,7 @@ func TestPublisher_TwoSubscribersIdenticalPayload(t *testing.T) {
 		ObservedAt: v1.WireTime(time.Date(2026, 5, 2, 12, 0, 0, 0, time.UTC)),
 	})
 
-	pub := streampublish.New(hub, reader, time.Second, nil)
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{})
 
 	chA, cancelA := hub.Subscribe([]string{topic}, "")
 	defer cancelA()
@@ -206,7 +206,7 @@ func TestPublisher_ErrPriceNotFoundIsSilent(t *testing.T) {
 	quote := mustParse(t, "fiat:USD")
 	topic := v1.PriceStreamTopic(asset, quote, 60)
 
-	pub := streampublish.New(hub, reader, time.Second, nil)
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{})
 	ch, cancel := hub.Subscribe([]string{topic}, "")
 	defer cancel()
 
@@ -234,7 +234,7 @@ func TestPublisher_ReaderErrorContinues(t *testing.T) {
 	quote := mustParse(t, "fiat:USD")
 	topic := v1.PriceStreamTopic(asset, quote, 60)
 
-	pub := streampublish.New(hub, reader, time.Second, nil)
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{})
 	ch, cancel := hub.Subscribe([]string{topic}, "")
 	defer cancel()
 
@@ -270,7 +270,7 @@ func TestPublisher_ReaderErrorContinues(t *testing.T) {
 func TestPublisher_NoPairsBlocksUntilCancel(t *testing.T) {
 	hub := streaming.NewHub(0)
 	reader := &fakeReader{}
-	pub := streampublish.New(hub, reader, time.Second, nil)
+	pub := streampublish.New(hub, reader, time.Second, nil, streampublish.Options{})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -319,7 +319,7 @@ func TestPublisher_Run_RecoversPanickingPollLoop(t *testing.T) {
 	hub := streaming.NewHub(0)
 	asset := mustParse(t, "native")
 	quote := mustParse(t, "fiat:USD")
-	pub := streampublish.New(hub, panicReader{}, time.Second, nil)
+	pub := streampublish.New(hub, panicReader{}, time.Second, nil, streampublish.Options{})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
