@@ -264,15 +264,36 @@ func (r *UserStore) GetSessionByTokenHash(ctx context.Context, tokenHash []byte)
 // TouchSession updates the last-seen fields. Caller debounces
 // to once-per-minute to avoid hot-row contention; this method
 // itself is unconditional — every call writes.
+//
+// ip_last_seen is `inet NOT NULL` (migration 0027), so a nil ip
+// can't be written as NULL — but it must not be written as a fake
+// address either: `clientIP` (dashboardauth/handlers.go) can
+// legitimately return nil (RemoteAddr without a splittable port),
+// and RNC36 found this method stamping the literal sentinel
+// "0.0.0.0" into that row whenever it did, corrupting the
+// session-hijack / abuse-forensics column this data exists for.
+// COALESCE against the existing value leaves the column genuinely
+// unchanged on a nil ip, matching what the caller's own comment
+// (dashboardauth/middleware.go's parseIP) already promised.
 func (r *UserStore) TouchSession(ctx context.Context, id uuid.UUID, ip net.IP, userAgent string) error {
 	const q = `
 		UPDATE sessions SET
 			last_seen_at = now(),
-			ip_last_seen = $2,
+			ip_last_seen = COALESCE(NULLIF($2, '')::inet, ip_last_seen),
 			user_agent = $3
 		WHERE id = $1 AND revoked_at IS NULL
 	`
-	res, err := r.s.db.ExecContext(ctx, q, id, ipString(ip), userAgent)
+	// Deliberately NOT ipString(ip): that helper's "0.0.0.0" sentinel
+	// exists so CreateSession's unconditional NOT NULL bind always has
+	// a value for a row that doesn't exist yet. Here the row already
+	// exists, so an unresolved ip means "leave the existing value" —
+	// signalled to the query above as an empty string, which NULLIF
+	// turns into NULL and COALESCE turns into "keep ip_last_seen".
+	ipParam := ""
+	if ip != nil {
+		ipParam = ip.String()
+	}
+	res, err := r.s.db.ExecContext(ctx, q, id, ipParam, userAgent)
 	if err != nil {
 		return fmt.Errorf("touch session: %w", err)
 	}
@@ -303,10 +324,14 @@ func (r *UserStore) RevokeAllUserSessions(ctx context.Context, userID uuid.UUID)
 	return nil
 }
 
-// ipString renders nil → empty so the column accepts the
-// caller's intent. Postgres `inet` rejects empty string, so we
-// pass "0.0.0.0" as a sentinel for unknown — but this only
-// happens for tests.
+// ipString renders nil → "0.0.0.0" so [CreateSession]'s unconditional
+// (non-NULLIF-wrapped) bind of ip_first_seen/ip_last_seen — both
+// `inet NOT NULL` — always has a value to insert, even though
+// `clientIP` (dashboardauth/handlers.go) can return nil in production
+// (RemoteAddr without a splittable port). [TouchSession] deliberately
+// does NOT reuse this sentinel: it has an existing row to fall back
+// to, so it builds its own nil-aware empty-string param instead of
+// stamping a fake address over a real one (RNC36).
 func ipString(ip net.IP) string {
 	if ip == nil {
 		return "0.0.0.0"

@@ -650,15 +650,20 @@ func (c *Client) CreateKey(ctx context.Context, req CreateKeyRequest) (*Envelope
 }
 
 // AdminCreateKeyRequest is the body for [Client.AdminCreateKey].
-// Identifier + Label are required. Tier is "apikey" (default) or
-// "operator". RateLimitPerMin zero inherits the deployment default.
-// Scopes as in [CreateKeyRequest].
+// Identifier + Label + Reason are required. Tier is "apikey"
+// (default) or "operator". RateLimitPerMin zero inherits the
+// deployment default. Scopes as in [CreateKeyRequest].
+//
+// Reason is sent as the `X-Reason` header, not in the JSON body —
+// the server captures it into the audit log for every admin write
+// (platform-spec §7.2) and 400s the request without it.
 type AdminCreateKeyRequest struct {
 	Identifier      string   `json:"identifier"`
 	Label           string   `json:"label"`
 	Tier            string   `json:"tier,omitempty"`
 	RateLimitPerMin int      `json:"rate_limit_per_min,omitempty"`
 	Scopes          []string `json:"scopes,omitempty"`
+	Reason          string   `json:"-"`
 }
 
 // AdminCreateKey mints an API key for ANOTHER identifier — the
@@ -673,8 +678,12 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 	if req.Label == "" {
 		return nil, &APIError{Status: 400, Title: "label required"}
 	}
+	if req.Reason == "" {
+		return nil, &APIError{Status: 400, Title: "reason required"}
+	}
 	var env Envelope[KeyCreated]
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/admin/keys", nil, req, &env); err != nil {
+	headers := map[string]string{"X-Reason": req.Reason}
+	if err := c.doJSON(ctx, http.MethodPost, "/v1/admin/keys", nil, req, &env, headers); err != nil {
 		return nil, err
 	}
 	return &env, nil
@@ -684,7 +693,9 @@ func (c *Client) AdminCreateKey(ctx context.Context, req AdminCreateKeyRequest) 
 // is permanent; the key cannot be reactivated. Returns nil on
 // success (204), or an *APIError when the server rejects the
 // request — typically 401 (no credentials), 403 (caller doesn't
-// own the key), or 404 (key not found / already revoked).
+// own the key), 404 (key not found / already revoked), or 409
+// (keyID names the credential the request itself authenticated
+// with — revoke a different key first).
 //
 // keyID is the public ID returned in [KeyCreated.KeyID] / on each
 // row of [Client.Keys] — NOT the plaintext secret. Returning the
