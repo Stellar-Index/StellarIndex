@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+- **docs / CHANGELOG — dangling PR 1132 citation in the rc.5x
+  `/v1/coins/{slug}` entry corrected (RSWP-093):** the entry credited its
+  case-insensitive-XLM-intercept companion to that PR number; it didn't
+  exist at the time and has since been assigned to an unrelated,
+  currently-open issue, so the reference resolved to the wrong thing
+  instead of just dangling. Removed the citation rather than guess a
+  replacement number; `scripts/ci/lint-docs.sh`'s stale-reference check
+  now guards against it reappearing.
+
 - **docs — CHANGELOG's sac_wrappers entry misattributed to an unrelated
   live issue (RSWP-063):** the v0.5.0-rc.30 `[supply.sac_wrappers]` entry
   cited PR 1002 as one of its sources; that number didn't exist at the
@@ -28303,8 +28312,7 @@ rc.48 deploy to R1.
   slug misses, retry once with `strings.ToUpper`. Preserves
   case-significance for the rare issued asset that intentionally
   uses lowercase (Stellar protocol allows it) — the literal form
-  wins when both exist. Companion to PR #1132's case-insensitive
-  XLM intercept.
+  wins when both exist.
 - **`/v1/assets/NATIVE` (uppercase) no longer 400s**. The
   canonical `asset_id` format mandates lowercase `native` (per
   ADR-0010), so capitalised variants returned 400

@@ -307,6 +307,12 @@ stale_patterns=(
                                   # collides with real, unrelated issues;
                                   # alternation (not `.`) because the en-dash
                                   # is 3 UTF-8 bytes and CI's grep runs C locale
+  "#1132"                        # CHANGELOG's /v1/coins/{slug} case-insensitive
+                                  # entry cited a PR number that didn't exist
+                                  # yet (RSWP-093); #1132 is now a real,
+                                  # unrelated issue, so the reference would
+                                  # resolve to the wrong thing instead of just
+                                  # dangling
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
