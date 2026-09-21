@@ -108,6 +108,17 @@ type rateGuard struct {
 	// acceptance or a two-fetch pending confirmation (two agreeing
 	// samples = corroborated).
 	bootstrapUnconfirmed bool
+
+	// healedUncorroborated marks a baseline the history-majority heal
+	// installed and no current fetch has agreed with since. A heal is
+	// history's word alone: if the history endpoint was the broken side
+	// (the mirror image of the UZS incident), the healed baseline is the
+	// poisoned one, and the confirm veto then refuses the correct current
+	// feed against the same broken bars. Keeping the baseline healable
+	// until the current feed corroborates it lets a corrected history
+	// re-point it instead of wedging the ticker for good. Cleared exactly
+	// as bootstrapUnconfirmed is.
+	healedUncorroborated bool
 }
 
 // stuckRejectionThreshold is how many consecutive identical history-bar
@@ -381,8 +392,15 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 			w.logger.Warn("forex: names fetch failed — reusing last known names",
 				"err", err, "names", len(names))
 		} else {
-			w.logger.Warn("forex: names fetch failed and no cached names", "err", err)
-			return
+			// Cold start with the primary's names endpoint down — the
+			// case the rates fallback exists for. buildSnapshot drops an
+			// unnamed code and fetchHistory only walks named ones, so an
+			// empty map would install nothing; label each rate with its
+			// own ticker instead and let the next successful names fetch
+			// replace the labels.
+			names = tickerNames(rates)
+			w.logger.Warn("forex: names fetch failed and no cached names — labelling rates by ticker",
+				"err", err, "currencies", len(names))
 		}
 	}
 
@@ -705,9 +723,12 @@ func (w *Worker) computeHistoryVeto(snap *Snapshot) {
 // BootstrapPoisonHealed / ConfirmedBaselineIsNeverHealed /
 // SplitRejectedSeriesFailsAgreement tests).
 //
-// It fires ONLY against a bootstrapUnconfirmed baseline: one
-// uncorroborated sample vs ≥historyHealMinBars mutually-agreeing dated
-// bars is unambiguous — the sample loses. A CONFIRMED baseline (two
+// It fires ONLY against a baseline the current feed has not
+// corroborated — a bootstrapUnconfirmed one, or one an earlier heal
+// installed (healedUncorroborated): one uncorroborated sample vs
+// ≥historyHealMinBars mutually-agreeing dated bars is unambiguous — the
+// sample loses, and a healed baseline is still history's word alone
+// until a current fetch agrees with it. A CONFIRMED baseline (two
 // agreeing current fetches) against an agreeing history series is
 // genuinely ambiguous from in here (which endpoint is broken?), so it
 // stays rejected + stuck-reclassified for an operator instead of letting
@@ -731,7 +752,7 @@ func (w *Worker) healFromHistoryMajority(
 		return batch, false
 	}
 	g := w.guards[ticker]
-	if g == nil || !g.bootstrapUnconfirmed || withinBand(med, g.lastAccepted) {
+	if g == nil || (!g.bootstrapUnconfirmed && !g.healedUncorroborated) || withinBand(med, g.lastAccepted) {
 		return batch, false
 	}
 	w.logger.Warn("forex: unconfirmed bootstrap baseline refuted by agreeing history majority; healing",
@@ -745,6 +766,7 @@ func (w *Worker) healFromHistoryMajority(
 	g.conflictStuckRate = 0
 	g.conflictStuckCount = 0
 	g.bootstrapUnconfirmed = false
+	g.healedUncorroborated = true
 	if ix, ok := currentRowIx[ticker]; ok {
 		batch[ix].RateUSD = 0
 	}
@@ -804,6 +826,7 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 		g.lastAccepted = rate
 		g.pending = 0
 		g.bootstrapUnconfirmed = false // second agreeing sample corroborates
+		g.healedUncorroborated = false
 		g.conflictStuckRate = 0
 		g.conflictStuckCount = 0
 		return true
@@ -818,6 +841,7 @@ func (w *Worker) acceptRate(ticker string, rate float64) bool {
 		g.lastAccepted = rate
 		g.pending = 0
 		g.bootstrapUnconfirmed = false
+		g.healedUncorroborated = false
 		g.conflictStuckRate = 0
 		g.conflictStuckCount = 0
 		return true
@@ -1066,6 +1090,16 @@ func (w *Worker) fetchHistory(ctx context.Context, names map[string]string, late
 				RateUSD: rate,
 			})
 		}
+	}
+	return out
+}
+
+// tickerNames labels every rate code with its own upper-cased ticker —
+// the display name of last resort when no names endpoint has answered.
+func tickerNames(rates map[string]float64) map[string]string {
+	out := make(map[string]string, len(rates))
+	for code := range rates {
+		out[code] = upper(code)
 	}
 	return out
 }
