@@ -1,0 +1,52 @@
+# deploy/systemd/DIVERGENCES — reference-copy vs .j2-template directive
+# disagreements that predate lint-deploy-systemd-authority.sh's content
+# check (RLT-434, issue #818) and are not yet reconciled.
+#
+# The reference copy under deploy/systemd/ is documentation; the .j2 in
+# the role is what's actually deployed. Declaring an entry here says
+# "this pre-existing gap is known and tracked", not "this is correct" —
+# nobody has confirmed which side matches production, and closing an
+# entry means making the two agree (usually: updating the reference copy
+# to match what actually runs), then deleting the line.
+# scripts/ci/lint-deploy-systemd-authority.sh fails on any UNDECLARED
+# divergence between a reference copy and its template twin.
+#
+# Format: <unit>:<directive>  # why it's still open
+
+# The deployed template wraps the binary in run-heavy-job.sh (lock +
+# ops_batch identity logging, 14-stellarindex-services.yml); these
+# reference copies predate that wrapper and still show a bare ExecStart.
+archive-completeness.service:ExecStart
+galexie-archive-fill.service:ExecStart
+galexie-archive-trim.service:ExecStart
+verify-archive-tier-a.service:ExecStart
+verify-archive-tier-b.service:ExecStart
+
+# Reference and template disagree on which env file the unit reads.
+# Which one matches what's actually on r1 has not been confirmed.
+stellarindex-aggregator.service:EnvironmentFile
+stellarindex-api.service:EnvironmentFile
+stellarindex-indexer.service:EnvironmentFile
+supply-snapshot.service:EnvironmentFile
+
+# Cosmetic wording drift in the [Unit] Description= line; harmless but
+# undeclared.
+stellarindex-aggregator.service:Description
+stellarindex-api.service:Description
+stellarindex-indexer.service:Description
+
+# Template lengthened the restart cooldown to 10s; reference still shows
+# the old 5s.
+stellarindex-api.service:RestartSec
+
+# Template runs uncapped by design (its own comment: "MAX_RUNTIME=0 =
+# uncapped: ... WatchdogSec is the only bound"); reference still shows
+# the earlier 16h cap.
+verify-archive-tier-a.service:Environment:VERIFY_ARCHIVE_MAX_RUNTIME
+verify-archive-tier-b.service:Environment:VERIFY_ARCHIVE_MAX_RUNTIME
+
+# Template runs de-privileged as stellarindex (the CS-118 hardening note
+# in stellarindex-api.service.j2 describes the same move for the API);
+# reference still shows User=root.
+verify-archive-tier-a.service:User
+verify-archive-tier-b.service:User
