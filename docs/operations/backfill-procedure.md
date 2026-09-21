@@ -15,10 +15,12 @@ Operator runbook for `stellarindex-ops backfill`. Use when:
   was flipped in `internal/sources/external/registry.go`); historical
   rows can now be ingested.
 
-The CLI lives at `cmd/stellarindex-ops/backfill.go`. It replays a
-bounded ledger range through the same dispatcher → decoder →
-sink path the live indexer uses, so output matches what the
-indexer would have produced.
+The `backfill` subcommand is registered in `cmd/stellarindex-ops/main.go`'s
+dispatch table; the implementation lives in
+[`internal/ops/ingest/backfill.go`](../../internal/ops/ingest/backfill.go).
+It replays a bounded ledger range through the same dispatcher → decoder →
+sink path the live indexer uses, so output matches what the indexer would
+have produced.
 
 ## What it does (and doesn't)
 
