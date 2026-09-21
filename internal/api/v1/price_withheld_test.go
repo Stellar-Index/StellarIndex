@@ -9,6 +9,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // The thin-market substance gate's wire contract (2026-08-04 valuation
@@ -105,6 +106,46 @@ func TestPriceTip_GateAllows_Serves(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Errorf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+}
+
+// TestPriceTip_Withheld_ScamIssuerReasonInDetail (T683) — a scam-issuer
+// withhold and a substance-gate withhold both 404 with the same problem
+// TYPE, but the DETAIL text must name the gate that actually fired: pre-fix
+// writePriceWithheldProblem hard-coded the substance gate's wording for
+// every withheld cause, so a directory-flagged issuer's response claimed
+// "trailing market activity is below the serve floor" — a reason that
+// never fired. Driven through the real *pricingguard.ScamGate, following
+// the /v1/vwap and /v1/price/tip quote-leg suites, so the pair-aware
+// primitive is what's proved, not a hand-written fake.
+func TestPriceTip_Withheld_ScamIssuerReasonInDetail(t *testing.T) {
+	flagged, err := canonical.NewClassicAsset("RIO", scamQuoteLegIssuer)
+	if err != nil {
+		t.Fatalf("build flagged classic: %v", err)
+	}
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/" + flagged.String(): {Price: "0.12", PriceType: "vwap"},
+		},
+	}
+	dir := &scamQuoteLegDirectory{flagged: map[string]bool{scamQuoteLegIssuer: true}}
+	srv := v1.New(v1.Options{
+		Prices: reader,
+		Scam:   pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{}),
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/tip?asset=native&quote="+flagged.String())
+	if resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 404: %s", resp.StatusCode, body)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), "directory-flagged issuer") {
+		t.Errorf("scam-gate withheld detail must name the flagged issuer as the cause: %s", body)
+	}
+	if strings.Contains(string(body), "trailing market activity is below the serve floor") {
+		t.Errorf("scam-gate withheld body must not reuse the substance gate's wording — the reason must discriminate: %s", body)
 	}
 }
 
