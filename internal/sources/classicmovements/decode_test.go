@@ -1050,3 +1050,75 @@ func TestDecoder_createAccount_zeroBalance_sponsored(t *testing.T) {
 		t.Fatalf("want zero-amount create_account, got kind=%q amount=%s", m.Kind, m.Amount)
 	}
 }
+
+func mkAccountMergeOp(t *testing.T, destSeed byte) xdr.Operation {
+	t.Helper()
+	_, dest := mkAccount(t, destSeed)
+	muxedDest := xdr.MuxedAccount{Type: xdr.CryptoKeyTypeKeyTypeEd25519, Ed25519: dest.Ed25519}
+	return xdr.Operation{
+		Body: xdr.OperationBody{
+			Type:        xdr.OperationTypeAccountMerge,
+			Destination: &muxedDest,
+		},
+	}
+}
+
+func mkAccountMergeSuccessResult(bal int64) xdr.OperationResult {
+	b := xdr.Int64(bal)
+	return xdr.OperationResult{
+		Code: xdr.OperationResultCodeOpInner,
+		Tr: &xdr.OperationResultTr{
+			Type: xdr.OperationTypeAccountMerge,
+			AccountMergeResult: &xdr.AccountMergeResult{
+				Code:                 xdr.AccountMergeResultCodeAccountMergeSuccess,
+				SourceAccountBalance: &b,
+			},
+		},
+	}
+}
+
+// TestDecoder_accountMerge_zeroBalance_sponsored pins the CAP-33 rule
+// mirrored onto AccountMerge: SourceAccountBalance == 0 (a fully
+// sponsored account merging away with no native reserve of its own)
+// is a REAL merge, not a malformed op.
+func TestDecoder_accountMerge_zeroBalance_sponsored(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x50)
+	destAddr, _ := mkAccount(t, 0x51)
+	op := mkAccountMergeOp(t, 0x51)
+	result := mkAccountMergeSuccessResult(0)
+
+	outs, err := NewDecoder().Decode(dispatcher.OpContext{
+		Ledger: 37_124_900, TxHash: "txmergesponsored", TxSource: fromAddr, OpIndex: 0,
+		Op: op, OpResult: result,
+	})
+	if err != nil {
+		t.Fatalf("zero SourceAccountBalance must decode (CAP-33 sponsored merge), got: %v", err)
+	}
+	if len(outs) != 1 {
+		t.Fatalf("got %d outputs, want 1", len(outs))
+	}
+	m := outs[0].(MovementEvent).Movement
+	if m.Kind != KindAccountMerge || m.Amount.Sign() != 0 {
+		t.Fatalf("want zero-amount account_merge, got kind=%q amount=%s", m.Kind, m.Amount)
+	}
+	if m.FromAddress != fromAddr || m.ToAddress != destAddr {
+		t.Errorf("From/To = %q/%q, want %q/%q", m.FromAddress, m.ToAddress, fromAddr, destAddr)
+	}
+}
+
+// TestDecoder_accountMerge_negativeBalance_errorsLoudly pins that a
+// NEGATIVE SourceAccountBalance (never legal, unlike zero) is still
+// rejected as malformed.
+func TestDecoder_accountMerge_negativeBalance_errorsLoudly(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x52)
+	op := mkAccountMergeOp(t, 0x53)
+	result := mkAccountMergeSuccessResult(-1)
+
+	_, err := NewDecoder().Decode(dispatcher.OpContext{
+		Ledger: 37_124_901, TxHash: "txmergenegative", TxSource: fromAddr, OpIndex: 0,
+		Op: op, OpResult: result,
+	})
+	if !errors.Is(err, ErrMalformedMovement) {
+		t.Errorf("err = %v, want errors.Is(err, ErrMalformedMovement)", err)
+	}
+}

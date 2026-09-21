@@ -775,8 +775,13 @@ func decodeAccountMerge(ledger uint32, closedAt time.Time, txHash string, opInde
 		return nil, fmt.Errorf("%w: success result but no SourceAccountBalance (ledger %d tx %s op %d)",
 			ErrMalformedMovement, ledger, txHash, opIndex)
 	}
-	if bal <= 0 {
-		return nil, fmt.Errorf("%w: non-positive SourceAccountBalance %d (ledger %d tx %s op %d)",
+	// bal == 0 is LEGAL since CAP-33 sponsored reserves (Protocol 15):
+	// a fully-sponsored account can merge away with zero native balance
+	// (the sponsor, not the merging account, held the reserve). Mirrors
+	// the StartingBalance == 0 rule in decodeCreateAccount above; only a
+	// NEGATIVE balance is malformed.
+	if bal < 0 {
+		return nil, fmt.Errorf("%w: negative SourceAccountBalance %d (ledger %d tx %s op %d)",
 			ErrMalformedMovement, bal, ledger, txHash, opIndex)
 	}
 
