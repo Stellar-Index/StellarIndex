@@ -196,6 +196,77 @@ func TestSnapshotEntryRow_PopulatesTheQueryableColumns(t *testing.T) {
 	}
 }
 
+// TestResolveChangeIndexCollisions_ReassignsCollidingRows is the regression
+// test for T347/T386: crc32(key) is only 32 bits, so two DIFFERENT keys
+// sharing a ledger_seq/tx_hash/op_index group can legitimately collide on
+// ChangeIndex — the exact shape the 2026-07-03 site audit measured destroying
+// >55% of a 48M-entry snapshot. Without a resolution pass, that collision
+// reaches ClickHouse and one row silently REPLACES the other at merge time.
+func TestResolveChangeIndexCollisions_ReassignsCollidingRows(t *testing.T) {
+	rows := []LedgerEntryChangeRow{
+		{LedgerSeq: 60_000_000, ChangeIndex: 42, KeyXDR: "keyA"},
+		{LedgerSeq: 60_000_000, ChangeIndex: 42, KeyXDR: "keyB"},
+		{LedgerSeq: 60_000_000, ChangeIndex: 42, KeyXDR: "keyC"},
+		// A different ledger_seq sharing the same colliding value must be
+		// left alone — collision is scoped to the ORDER BY group, not global.
+		{LedgerSeq: 60_000_001, ChangeIndex: 42, KeyXDR: "keyD"},
+	}
+	if err := resolveChangeIndexCollisions(rows); err != nil {
+		t.Fatalf("resolveChangeIndexCollisions: %v", err)
+	}
+
+	seenInLedger := map[uint32]map[uint32]string{}
+	for _, r := range rows {
+		if seenInLedger[r.LedgerSeq] == nil {
+			seenInLedger[r.LedgerSeq] = map[uint32]string{}
+		}
+		if prev, clash := seenInLedger[r.LedgerSeq][r.ChangeIndex]; clash {
+			t.Fatalf("ledger_seq %d: ChangeIndex %d still collides between %q and %q after resolution",
+				r.LedgerSeq, r.ChangeIndex, prev, r.KeyXDR)
+		}
+		seenInLedger[r.LedgerSeq][r.ChangeIndex] = r.KeyXDR
+	}
+	if got := rows[3].ChangeIndex; got != 42 {
+		t.Errorf("keyD (lone occupant of its own ledger_seq) ChangeIndex = %d, want unchanged 42", got)
+	}
+}
+
+// TestResolveChangeIndexCollisions_DeterministicRegardlessOfInputOrder pins
+// the idempotency half: an interrupted backfill resumed re-derives the SAME
+// rows, possibly in a different order (a different stream/goroutine
+// interleaving). Resolution must depend only on the SET of colliding keys,
+// never on arrival order, or a resumed run assigns a key a different index
+// than its first pass and duplicates instead of replacing.
+func TestResolveChangeIndexCollisions_DeterministicRegardlessOfInputOrder(t *testing.T) {
+	base := []LedgerEntryChangeRow{
+		{LedgerSeq: 70_000_000, ChangeIndex: 7, KeyXDR: "AAA"},
+		{LedgerSeq: 70_000_000, ChangeIndex: 7, KeyXDR: "BBB"},
+		{LedgerSeq: 70_000_000, ChangeIndex: 7, KeyXDR: "CCC"},
+	}
+
+	forward := append([]LedgerEntryChangeRow(nil), base...)
+	if err := resolveChangeIndexCollisions(forward); err != nil {
+		t.Fatalf("resolveChangeIndexCollisions (forward): %v", err)
+	}
+
+	reversed := []LedgerEntryChangeRow{base[2], base[1], base[0]}
+	if err := resolveChangeIndexCollisions(reversed); err != nil {
+		t.Fatalf("resolveChangeIndexCollisions (reversed): %v", err)
+	}
+
+	want := make(map[string]uint32, len(forward))
+	for _, r := range forward {
+		want[r.KeyXDR] = r.ChangeIndex
+	}
+	for _, r := range reversed {
+		if want[r.KeyXDR] != r.ChangeIndex {
+			t.Errorf("key %q resolved to ChangeIndex %d in forward order, %d in reverse order — "+
+				"a resumed backfill would duplicate this row instead of replacing it",
+				r.KeyXDR, want[r.KeyXDR], r.ChangeIndex)
+		}
+	}
+}
+
 // TestSnapshotEntryRow_RefusesAnEntryWithNoDerivableKey — ok=false means "skip
 // this one entry", never "abort the backfill". The reachable case is a
 // LedgerEntryType this build's SDK does not know (a future protocol adding an
