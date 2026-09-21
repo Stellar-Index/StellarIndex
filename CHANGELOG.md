@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+- **ops / stellarindex-ops CLI — `-h`/`-help` on a subcommand no longer
+  exits 1 (F070, K055):** every subcommand's `flag.FlagSet` uses
+  `flag.ContinueOnError`, so `-h` makes `fs.Parse` print usage and return
+  `flag.ErrHelp`. `realMain`'s dispatch had no case for it: the error fell
+  through the generic branch, printed `"<subcommand>: flag: help
+  requested"` on top of the usage line the flag package had just
+  printed, and returned exit code 1 — indistinguishable from a real
+  failure for a scripted caller. `realMain`'s error-to-exit-code mapping
+  is now `dispatchExitCode`, a standalone, unit-tested function that
+  treats `flag.ErrHelp` as exit 0 with no extra stderr line.
+
 - **observability / job heartbeat — stale `.pidN.prom` siblings no longer
   wait on a contention that may never come (T597, T601):**
   `sweepStalePIDFiles` previously ran only when a second concurrent run of
