@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -450,5 +451,24 @@ func TestLendingPoolReserves_PricingFansOutBounded(t *testing.T) {
 	// reported as zero.
 	if env.Data.TVLUSD != nil {
 		t.Errorf("tvl_usd = %q, want null when no reserve priced", *env.Data.TVLUSD)
+	}
+}
+
+// The 8s-ceiling comment on handleLendingPools once cited specific issue
+// numbers (#1082, #1099-#1104) from the cold-path-protection series. Those
+// numbers resolve to OTHER endpoints (pools, sources, coins, chart, history,
+// oracle) — none of them lending — and no PR by any of those numbers exists
+// in this repo's remote. A reader following the reference lands on unrelated
+// content instead of lending's own fix. The comment must describe the
+// pattern without citing numbers that don't point back to lending.
+func TestLendingPoolsCommentDoesNotCiteUnrelatedIssueNumbers(t *testing.T) {
+	src, err := os.ReadFile("lending.go")
+	if err != nil {
+		t.Fatalf("read lending.go: %v", err)
+	}
+	for _, stale := range []string{"#1082", "#1099", "#1104"} {
+		if strings.Contains(string(src), stale) {
+			t.Errorf("lending.go still cites %s, which resolves to an unrelated endpoint's fix, not lending's own", stale)
+		}
 	}
 }
