@@ -303,6 +303,10 @@ stale_patterns=(
                                   # unrelated live issue, never the PR that
                                   # shipped the cursor/prewarm work it cited
   "PR #1042"                     # dangling citation — no such PR exists; #1042 resolves to an unrelated issue
+  "#1066(–|-)#1073"              # fabricated PR range (RSWP-070) that now
+                                  # collides with real, unrelated issues;
+                                  # alternation (not `.`) because the en-dash
+                                  # is 3 UTF-8 bytes and CI's grep runs C locale
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
