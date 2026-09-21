@@ -74,6 +74,17 @@ mkrepo() {
     printf '# fingerprints\ncafe0000cafe0000cafe0000cafe0000cafe0000:x_test.go:generic-api-key:1\n' \
       > .gitleaksignore
     printf '[allowlist]\npaths = [\n  %s,\n]\n' "'''^docs/archive/'''" > .gitleaks.toml
+    # Seed the five surfaces added for Q233/T467, mirroring their real
+    # shape closely enough to exercise the growth detectors.
+    printf '# accepted-risk vulns\nGO-2026-0001  # reviewed, localhost-only\n' \
+      > scripts/ci/govulncheck-allow.txt
+    mkdir -p deploy/systemd
+    printf '# declared orphans\nexisting-orphan.service\n' > deploy/systemd/ORPHANS
+    printf 'aaaa0000  0001_existing.up.sql\n' > scripts/ci/migration-immutability.sha256
+    mkdir -p configs/ansible
+    printf 'profile: moderate\nskip_list:\n  - yaml[truthy]\n' > configs/ansible/.ansible-lint
+    printf 'linters:\n  exclusions:\n    generated: strict\n    rules:\n      - path: _test\\.go\n        linters:\n          - funlen\nissues:\n  max-same-issues: 0\n' \
+      > .golangci.yml
     git add -A
     git commit -qm "base"
     BASE_OUT="$(git rev-parse HEAD)"
@@ -171,6 +182,101 @@ comment_toml() {
   (
     cd "$TMP/repo" || exit 1
     printf '%s\n' '# clarify why an existing path is allowlisted' >> .gitleaks.toml
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# grow_govulncheck <commit-message> — add an accepted-risk vuln id
+# (Q233: scripts/ci/govulncheck-allow.txt is a .txt, missed by the
+# *.baseline glob).
+grow_govulncheck() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf 'GO-2026-9999  # newly accepted, not actually reviewed\n' \
+      >> scripts/ci/govulncheck-allow.txt
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# grow_orphans <commit-message> — declare a new orphan systemd unit
+# (Q233: deploy/systemd/ORPHANS silences lint-deploy-systemd-authority.sh).
+grow_orphans() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf 'newly-orphaned.service\n' >> deploy/systemd/ORPHANS
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# grow_ansible_lint <commit-message> — widen the ansible-lint skip_list
+# (T467: configs/ansible/.ansible-lint, auto-discovered rather than named
+# in any CI yaml).
+grow_ansible_lint() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf '  - name[casing]\n' >> configs/ansible/.ansible-lint
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# grow_golangci_exclusion <commit-message> — add a new path/linter
+# exemption to .golangci.yml's exclusions.rules block (Q233).
+grow_golangci_exclusion() {
+  (
+    cd "$TMP/repo" || exit 1
+    # Insert a new rule INSIDE the exclusions.rules block (after its one
+    # seeded entry) — appending at EOF would land past the block's end
+    # (the "issues:" key) and prove nothing.
+    sed -i.bak '/^          - funlen$/a\
+      - path: cmd/.*/main\\.go\
+        linters:\
+          - errcheck
+' .golangci.yml
+    rm -f .golangci.yml.bak
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# golangci_unrelated <commit-message> — a .golangci.yml edit OUTSIDE the
+# exclusions block: must NOT be read as growth.
+golangci_unrelated() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf 'output:\n  formats:\n    text:\n      colors: true\n' >> .golangci.yml
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# migration_append <commit-message> — add a checksum for a brand-new
+# migration file (the normal, append-only case): must NOT be flagged.
+migration_append() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf 'bbbb1111  0002_new.up.sql\n' >> scripts/ci/migration-immutability.sha256
+    git add -A
+    printf '%s\n' "$1" > "$TMP/gmsg"
+    git commit -q -F "$TMP/gmsg"
+  )
+}
+
+# migration_mutate <commit-message> — rewrite the hash recorded for an
+# EXISTING basename (Q233: the shipped-migration-edit-hiding shape).
+migration_mutate() {
+  (
+    cd "$TMP/repo" || exit 1
+    printf 'cccc2222  0001_existing.up.sql\n' > scripts/ci/migration-immutability.sha256
     git add -A
     printf '%s\n' "$1" > "$TMP/gmsg"
     git commit -q -F "$TMP/gmsg"
@@ -311,6 +417,57 @@ grow "$(printf 'feat: declared at the tip\n\nBaseline-Growth: scripts/ci/demo.ba
 unrelated "chore: follow-up"
 runGate "$GROW_SHA"
 expect "declared tip is a clean base — no re-flag on follow-up" 0 "no undeclared"
+
+# --- 13. Q233/T467: govulncheck-allow.txt growth is caught -----------
+mkrepo 0
+grow_govulncheck "chore: accept a new vuln"
+runGate
+expect "govulncheck-allow.txt growth fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/govulncheck-allow.txt"
+
+# --- 14. Q233: deploy/systemd/ORPHANS growth is caught ----------------
+mkrepo 0
+grow_orphans "chore: declare an orphan unit"
+runGate
+expect "ORPHANS growth fails undeclared" 1 "UNDECLARED GROWTH: deploy/systemd/ORPHANS"
+
+# --- 15. T467: configs/ansible/.ansible-lint skip_list growth is caught
+mkrepo 0
+grow_ansible_lint "chore: grandfather another ansible-lint rule"
+runGate
+expect "ansible-lint skip_list growth fails undeclared" 1 "UNDECLARED GROWTH: configs/ansible/.ansible-lint"
+
+# --- 16. Q233: .golangci.yml exclusions.rules growth is caught --------
+mkrepo 0
+grow_golangci_exclusion "chore: exempt another path from lint"
+runGate
+expect ".golangci.yml exclusions growth fails undeclared" 1 "UNDECLARED GROWTH: .golangci.yml"
+
+# --- 17. an unrelated .golangci.yml edit (outside exclusions) passes --
+mkrepo 0
+golangci_unrelated "chore: tweak output formatting"
+runGate
+expect ".golangci.yml edit outside exclusions passes" 0 "no undeclared"
+
+# --- 18. Q233: migration-immutability.sha256 — a normal append (new
+# migration checksum) must NOT be flagged; append-only is the documented,
+# always-allowed case.
+mkrepo 0
+migration_append "feat: add migration 0002"
+runGate
+expect "new migration checksum append passes" 0 "no undeclared"
+
+# --- 19. Q233: migration-immutability.sha256 — a MUTATED hash on an
+# EXISTING basename (the shipped-migration-edit-hiding shape) is caught.
+mkrepo 0
+migration_mutate "fix: quietly rehash an existing migration"
+runGate
+expect "mutated migration checksum fails undeclared" 1 "UNDECLARED GROWTH: scripts/ci/migration-immutability.sha256"
+
+# --- 20. declaring the new surfaces with a scoped trailer passes ------
+mkrepo 0
+grow_govulncheck "$(printf 'chore: accept a new vuln\n\nBaseline-Growth: scripts/ci/govulncheck-allow.txt — reviewed, localhost-only')"
+runGate
+expect "declared govulncheck-allow.txt growth passes" 0 "no undeclared"
 
 echo
 echo "lint-baseline-growth-test: $pass passed, $fail failed"
