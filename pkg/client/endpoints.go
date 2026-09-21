@@ -996,8 +996,8 @@ type ChangeSummaryQuery struct {
 // rollup, plus ATH/ATL + streak/acceleration markers. The
 // change-summary worker writes one row per (entity_type, entity_id)
 // every 5 min. For coin entities the API expands friendly slugs
-// (XLM, USDC) into canonical asset_id forms server-side per
-// PR #1115, so passing the slug works.
+// (XLM, USDC) into canonical asset_id forms server-side (see
+// internal/api/v1/changes.go), so passing the slug works.
 //
 // The rollup covers the pairs the deployment's aggregator prices,
 // not every indexed asset: an asset with no published VWAP has no
