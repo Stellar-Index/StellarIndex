@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+- **docs — CHANGELOG's sac_wrappers entry misattributed to an unrelated
+  live issue (RSWP-063):** the v0.5.0-rc.30 `[supply.sac_wrappers]` entry
+  cited PR 1002 as one of its sources; that number didn't exist at the
+  time and has since been assigned to an unrelated, currently-open issue,
+  so the reference resolved to the wrong thing instead of just dangling.
+  Removed the reference; `scripts/ci/lint-docs.sh` now guards against it
+  reappearing.
+
 - **docs / CHANGELOG — dangling `#1004` citation in the rc.30 `known_issuers`
   entry corrected (RSWP-065):** the number was a stale PR reference that
   has since been reused by an unrelated live issue, so the citation no
@@ -29016,8 +29024,8 @@ rc.48 deploy to R1.
   the SAC wrapper rounds 2-4 against each issuer's stellar.toml
   ACCOUNTS list. /v1/issuers and the /assets table now surface
   org names for ~14 anchors covering most non-XLM trade volume.
-- **`[supply.sac_wrappers]` expanded to 38 entries** (#990,
-  #1002). The operator-config map now resolves
+- **`[supply.sac_wrappers]` expanded to 38 entries** (#990). The
+  operator-config map now resolves
   every SAC contract on the top Aquarius / Soroswap / Phoenix
   pools to its underlying classic asset. Drives both the
   explorer's pool-row labels (USDC, BLND, etc. instead of
