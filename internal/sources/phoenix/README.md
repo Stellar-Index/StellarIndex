@@ -64,7 +64,12 @@ handles:
 | --- | --- |
 | Factory | `CB4SVAWJA6TSRNOJZ7W2AWFW46D5VR4ZMFZKDIKXEINZCZEGZCJZCKMI` |
 | Multihop | `CCLZRD4E72T7JCZCN3P7KNPYNXFYKQCL64ECLX7WP5GNVYPYJGU2IO2G` |
-| XLM SAC (Phoenix-specific) | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
+
+There is no "Phoenix-specific" XLM SAC — there is exactly one native-XLM
+SAC per network, derivable from `canonical.Asset.SacContractID()` (see
+`aquarius.MainnetXLMSAC`). A row publishing `CDLZFC3SY…` here previously
+was the synthetic id used across test/integration fixtures, not a real
+mainnet contract; see `events.go`'s removal note.
 
 Pools (assumed stable):
 

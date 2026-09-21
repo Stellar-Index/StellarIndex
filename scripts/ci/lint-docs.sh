@@ -1197,6 +1197,23 @@ for knob in ClickHouseLiveSink:clickhouse_live_sink ClickHouseProjectorSource:cl
   done
 done
 
+# ─── 21. Phoenix's synthetic XLM SAC test-fixture id must not resurface ─────
+#
+# internal/sources/phoenix/events.go documents CDLZFC3SY… as the synthetic
+# id used across test/integration fixtures — NOT the XLM SAC on any network
+# (removed 2026-07-26, audit C4-012 follow-through). A README that
+# republishes it as a verified mainnet address silently reopens the booby
+# trap that removal closed: the moment code reads it, XLM stops being XLM.
+# Fixtures are exempt; prose docs (READMEs) are not.
+
+echo "Checking Phoenix's synthetic XLM SAC test-fixture id hasn't resurfaced in a README..."
+PHOENIX_FAKE_XLM_SAC="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+while IFS= read -r -d '' readme; do
+  if grep -q "$PHOENIX_FAKE_XLM_SAC" "$readme"; then
+    err "$readme republishes '$PHOENIX_FAKE_XLM_SAC' as if it were a real address — internal/sources/phoenix/events.go documents this as the synthetic test/integration-fixture id, NOT a real XLM SAC on any network. Use aquarius.MainnetXLMSAC or canonical.Asset.SacContractID() instead; do not print this id in a README."
+  fi
+done < <(find . -name node_modules -prune -o -name README.md -print0)
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 count=$(cat "$ERROR_FILE")
