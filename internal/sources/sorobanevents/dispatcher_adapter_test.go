@@ -380,8 +380,13 @@ func TestAsyncSink_FlushBatch_PermanentFaultCountsLostNotRetried(t *testing.T) {
 	if got := sink.WrittenCount(); got != 0 {
 		t.Errorf("WrittenCount = %d, want 0", got)
 	}
-	if got := w.callCount(); got != 1 {
-		t.Errorf("writer called %d times, want exactly 1 — a permanent fault must not be retried", got)
+	// One attempt on the pair, then one per row to isolate the fault —
+	// bisection, never a backoff retry of the same batch.
+	if got := w.callCount(); got != 3 {
+		t.Errorf("writer called %d times, want exactly 3 (batch, then each half) — a permanent fault must not be retried", got)
+	}
+	if out := logBuf.String(); strings.Contains(out, "retrying with backpressure") {
+		t.Errorf("log output = %q; a permanent fault must never enter the backoff retry loop", out)
 	}
 	if out := logBuf.String(); !strings.Contains(out, `reason="permanent data fault"`) {
 		t.Errorf("log output = %q; want it to contain reason=\"permanent data fault\" — a wired IsPermanentFault must abandon on the FIRST attempt, not retry until shutdown", out)
@@ -618,5 +623,189 @@ func TestAsyncSink_StopRacingInFlightSteadyStateFlush_RowsLandNotLost(t *testing
 	}
 	if got := w.Calls(); got < 2 {
 		t.Errorf("writer saw %d calls, want >=2 — the interrupted batch was never retried", got)
+	}
+}
+
+// TestAsyncSink_StartTwice_IsNoOp pins Start's documented idempotency.
+// Without the once-guard a second Start launched a second run()
+// goroutine; both raced to close(s.done) on Stop and the loser panicked
+// the whole process with "close of closed channel".
+func TestAsyncSink_StartTwice_IsNoOp(t *testing.T) {
+	t.Parallel()
+
+	w := newBlockableWriter()
+	close(w.release)
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    4,
+		BatchSize:     2,
+		FlushInterval: 10 * time.Second,
+		WriteTimeout:  time.Second,
+	})
+	sink.Start()
+	sink.Start()
+	sink.PushEvent(captureableEvent(t, 6_000_000))
+	sink.Stop()
+	// The duplicate worker's panic surfaces asynchronously after Stop
+	// returns; give it the chance to, so the un-guarded code fails here.
+	time.Sleep(50 * time.Millisecond)
+
+	if got := sink.WrittenCount(); got != 1 {
+		t.Errorf("WrittenCount = %d, want 1", got)
+	}
+}
+
+// TestAsyncSink_PushEventAfterStop_NeverOrphansARow pins the
+// shutdown-race accounting: a PushEvent that arrives once Stop has
+// fired must be counted dropped, never enqueued. Before the fix the
+// blocking select had both a free slot and a closed stopping ready and
+// picked one at random — roughly half the late rows landed in a channel
+// nobody reads again, counted neither written, dropped nor lost.
+func TestAsyncSink_PushEventAfterStop_NeverOrphansARow(t *testing.T) {
+	t.Parallel()
+
+	w := newBlockableWriter()
+	close(w.release)
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    128,
+		BatchSize:     8,
+		FlushInterval: 10 * time.Second,
+		WriteTimeout:  time.Second,
+	})
+	sink.Start()
+	sink.Stop()
+
+	const late = 64
+	for i := 0; i < late; i++ {
+		sink.PushEvent(captureableEvent(t, uint32(7_000_000+i)))
+	}
+
+	if got := len(sink.ch); got != 0 {
+		t.Errorf("%d rows orphaned in the buffer after Stop — neither written nor dropped", got)
+	}
+	if got := sink.DroppedCount(); got != late {
+		t.Errorf("DroppedCount = %d, want %d — every post-Stop row must be counted dropped", got, late)
+	}
+	if got := sink.WrittenCount() + sink.DroppedCount() + sink.LostCount(); got != late {
+		t.Errorf("written+dropped+lost = %d, want %d", got, late)
+	}
+}
+
+// TestAsyncSink_PushEventDuringStop_EveryRowAccounted hammers PushEvent
+// from several producers while Stop runs and checks the ledger balances:
+// every pushed row is written, dropped or lost, and the buffer is empty
+// once Stop returns — the drain's final poll must not run until every
+// in-flight producer has left PushEvent.
+func TestAsyncSink_PushEventDuringStop_EveryRowAccounted(t *testing.T) {
+	t.Parallel()
+
+	w := newBlockableWriter()
+	close(w.release)
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    16,
+		BatchSize:     4,
+		FlushInterval: time.Millisecond,
+		WriteTimeout:  time.Second,
+	})
+	sink.Start()
+
+	const producers, perProducer = 8, 200
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for p := 0; p < producers; p++ {
+		wg.Add(1)
+		go func(p int) {
+			defer wg.Done()
+			<-start
+			for i := 0; i < perProducer; i++ {
+				sink.PushEvent(captureableEvent(t, uint32(8_000_000+p*perProducer+i)))
+			}
+		}(p)
+	}
+	close(start)
+	time.Sleep(2 * time.Millisecond)
+	sink.Stop()
+	wg.Wait()
+
+	const pushed = producers * perProducer
+	if got := len(sink.ch); got != 0 {
+		t.Errorf("%d rows orphaned in the buffer after Stop", got)
+	}
+	if got := sink.WrittenCount() + sink.DroppedCount() + sink.LostCount(); got != pushed {
+		t.Errorf("written+dropped+lost = %d, want %d (written=%d dropped=%d lost=%d)",
+			got, pushed, sink.WrittenCount(), sink.DroppedCount(), sink.LostCount())
+	}
+	if got := w.WrittenRows(); uint64(got) != sink.WrittenCount() {
+		t.Errorf("writer saw %d rows, WrittenCount = %d", got, sink.WrittenCount())
+	}
+}
+
+// poisonWriter rejects any batch containing a row at poisonLedger with a
+// pq class-22 data fault — what Postgres does to a whole multi-row
+// INSERT when one row is malformed — and writes every other batch.
+type poisonWriter struct {
+	mu           sync.Mutex
+	poisonLedger uint32
+	written      []Row
+}
+
+func (w *poisonWriter) InsertSorobanEventsBatch(_ context.Context, rows []Row) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, r := range rows {
+		if r.Ledger == w.poisonLedger {
+			return &pgconn.PgError{Code: "22P02", Message: "invalid input syntax"}
+		}
+	}
+	w.written = append(w.written, rows...)
+	return nil
+}
+
+// TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow pins the
+// batch-splitting contract: one poison row in a batch loses exactly that
+// row. Before the fix the whole batch was abandoned — BatchSize-1 good
+// rows counted lost and missing from soroban_events for one bad one.
+func TestAsyncSink_FlushBatch_PermanentFaultIsolatesPoisonRow(t *testing.T) {
+	t.Parallel()
+
+	const base, batch = uint32(9_000_000), 8
+	const poison = base + 5
+	var logBuf bytes.Buffer
+	w := &poisonWriter{poisonLedger: poison}
+	sink := NewAsyncSink(w, AsyncSinkOptions{
+		BufferSize:    batch,
+		BatchSize:     batch,
+		FlushInterval: 10 * time.Second,
+		WriteTimeout:  time.Second,
+		Logger:        slog.New(slog.NewTextHandler(&logBuf, nil)),
+		IsPermanentFault: func(err error) bool {
+			var pgErr *pgconn.PgError
+			return errors.As(err, &pgErr) && pgErr.Code[:2] == "22"
+		},
+	})
+	sink.Start()
+	for i := uint32(0); i < batch; i++ {
+		sink.PushEvent(captureableEvent(t, base+i))
+	}
+	sink.Stop()
+
+	if got := sink.LostCount(); got != 1 {
+		t.Errorf("LostCount = %d, want 1 — only the poison row is a permanent fault", got)
+	}
+	if got := sink.WrittenCount(); got != batch-1 {
+		t.Errorf("WrittenCount = %d, want %d — the good rows must land", got, batch-1)
+	}
+	w.mu.Lock()
+	seen := make(map[uint32]bool, len(w.written))
+	for _, r := range w.written {
+		seen[r.Ledger] = true
+	}
+	w.mu.Unlock()
+	for i := uint32(0); i < batch; i++ {
+		if want := base+i != poison; seen[base+i] != want {
+			t.Errorf("ledger %d written = %v, want %v", base+i, seen[base+i], want)
+		}
+	}
+	if out := logBuf.String(); !strings.Contains(out, "rows=1") || !strings.Contains(out, `reason="permanent data fault"`) {
+		t.Errorf("log output = %q; want exactly one row abandoned with reason=\"permanent data fault\"", out)
 	}
 }
