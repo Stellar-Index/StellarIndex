@@ -104,7 +104,7 @@ func TestLendingPools_HappyPath(t *testing.T) {
 	}
 	first := env.Data[0]
 	if first.Protocol != "blend" {
-		t.Errorf("Protocol = %q, want \"blend\" (handler hard-codes per-PR-comment-#1110)", first.Protocol)
+		t.Errorf("Protocol = %q, want \"blend\" (handler hard-codes it; Blend is the only lending protocol integrated)", first.Protocol)
 	}
 	if first.Pool != "CAJJZSGMMM3PD7N33TAPHGBUGTB43OC73HVIK2L2G6BNGGGYOSSYBXBD" {
 		t.Errorf("Pool = %q", first.Pool)
