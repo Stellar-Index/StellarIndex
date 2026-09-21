@@ -219,6 +219,14 @@ func registerAppMetricsTail() {
 		// the same funlen reason as its neighbour above.
 		SinkUndrainedRowsTotal,
 
+		// Dispatcher-level counters (RLT-135), registered here rather than
+		// beside their SourceDecodeErrorsTotal neighbour in
+		// [registerAppMetrics] for the same funlen reason as
+		// SourceUnrepresentableSymbolsTotal above.
+		DispatcherTxReadErrorsTotal,
+		DispatcherTxEventReadErrorsTotal,
+		DispatcherEntryMetaUnsupportedTotal,
+
 		MEVDetectRunsTotal,
 		MEVEventsInsertedTotal,
 		MEVDetectDurationSeconds,
@@ -1156,6 +1164,43 @@ var DecoderPanicsTotal = prometheus.NewCounterVec(
 		Help: "Decoder panics recovered by the dispatcher and skipped as decode errors, per source. Non-zero means a decoder bug is dropping every event of that shape.",
 	},
 	[]string{"source"},
+)
+
+// DispatcherTxReadErrorsTotal — process-wide counter of malformed
+// transactions skipped during ProcessLedger (dispatcher.Stats.TxReadErrors).
+// Mirrors the WARN log statsflush emits on every flush window with a
+// nonzero delta (RLT-135): the log was the only signal until now, which
+// meant no alert rule or dashboard could key off a sustained climb.
+var DispatcherTxReadErrorsTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_tx_read_errors_total",
+		Help: "Malformed transactions skipped during ProcessLedger. A sustained climb means the bad-tx skip is masking a downstream price gap.",
+	},
+)
+
+// DispatcherTxEventReadErrorsTotal — process-wide counter of transactions
+// whose GetTransactionEvents() failed (dispatcher.Stats.TxEventReadErrors),
+// e.g. an unsupported future TransactionMeta version. Non-zero means
+// Soroban event ingestion is broken even if the completeness reconcile
+// still reads "complete" (G15-06). Sibling of [DispatcherTxReadErrorsTotal].
+var DispatcherTxEventReadErrorsTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_tx_event_read_errors_total",
+		Help: "Transactions whose Soroban events failed to read (e.g. unsupported TransactionMeta version). Non-zero means Soroban ingestion is silently broken.",
+	},
+)
+
+// DispatcherEntryMetaUnsupportedTotal — process-wide counter of
+// transactions whose apply-phase entry-change walk was skipped for an
+// unhandled TransactionMeta version (dispatcher.Stats.EntryMetaUnsupported).
+// A sustained climb means the LedgerEntry supply observers are blind while
+// every component table simply stops advancing. Sibling of
+// [DispatcherTxReadErrorsTotal].
+var DispatcherEntryMetaUnsupportedTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_dispatcher_entry_meta_unsupported_total",
+		Help: "Transactions whose apply-phase entry changes were skipped for an unhandled TransactionMeta version.",
+	},
 )
 
 // SourceUnknownSymbolsTotal — per-source counter of asset slots in

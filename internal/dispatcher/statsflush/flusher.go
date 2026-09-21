@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -186,17 +187,17 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	}
 
 	// Surface dispatcher-level tx-read errors at WARN when a delta
-	// appears in this flush window. The counter sits outside the
-	// per-source row schema (LedgerTransactionReader.Read failures
-	// aren't attributable to a source) so the statsflush hypertable
-	// can't carry it; the WARN log is the canonical signal until
-	// it gets promoted to a Prometheus counter.
+	// appears in this flush window, and add it to the Prometheus
+	// counter (RLT-135). The counter sits outside the per-source row
+	// schema (LedgerTransactionReader.Read failures aren't attributable
+	// to a source) so the statsflush hypertable can't carry it.
 	if delta := current.TxReadErrors - f.last.TxReadErrors; delta > 0 {
 		f.logger.Warn("dispatcher: tx-read errors during this flush window",
 			"delta", delta,
 			"total", current.TxReadErrors,
 			"window", f.interval.String(),
 		)
+		obs.DispatcherTxReadErrorsTotal.Add(float64(delta))
 	}
 
 	// G15-06: a climbing tx-event-read-error count means
@@ -210,6 +211,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 			"total", current.TxEventReadErrors,
 			"window", f.interval.String(),
 		)
+		obs.DispatcherTxEventReadErrorsTotal.Add(float64(delta))
 	}
 
 	// An unhandled TransactionMeta version stops the apply-phase entry
@@ -224,6 +226,7 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 			"total", current.EntryMetaUnsupported,
 			"window", f.interval.String(),
 		)
+		obs.DispatcherEntryMetaUnsupportedTotal.Add(float64(delta))
 	}
 
 	if len(rows) > 0 {
@@ -244,12 +247,13 @@ func (f *Flusher) flushAt(ctx context.Context, now time.Time) {
 	// Snapshot for next-tick delta computation. Make a copy of the
 	// maps so concurrent dispatcher writes can't mutate our reference.
 	f.last = dispatcher.Stats{
-		EventsSeen:        copyIntMap(current.EventsSeen),
-		DecodeErrors:      copyIntMap(current.DecodeErrors),
-		OrphanEvents:      copyIntMap(current.OrphanEvents),
-		UnmatchedHits:     current.UnmatchedHits,
-		TxReadErrors:      current.TxReadErrors,
-		TxEventReadErrors: current.TxEventReadErrors,
+		EventsSeen:           copyIntMap(current.EventsSeen),
+		DecodeErrors:         copyIntMap(current.DecodeErrors),
+		OrphanEvents:         copyIntMap(current.OrphanEvents),
+		UnmatchedHits:        current.UnmatchedHits,
+		TxReadErrors:         current.TxReadErrors,
+		TxEventReadErrors:    current.TxEventReadErrors,
+		EntryMetaUnsupported: current.EntryMetaUnsupported,
 	}
 }
 

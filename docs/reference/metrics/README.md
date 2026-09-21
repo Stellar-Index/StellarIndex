@@ -575,6 +575,29 @@ rate, absence is unambiguous, which is why this counter is deliberately
 NOT pre-seeded in `seedBoundedLabelSeries` the way the `increase()`- and
 `rate()`-based counters are.
 
+### `stellarindex_dispatcher_tx_read_errors_total`, `stellarindex_dispatcher_tx_event_read_errors_total`, `stellarindex_dispatcher_entry_meta_unsupported_total`
+
+Counters, no labels (process-wide — the underlying dispatcher counters
+aren't attributable to a source).
+
+Promoted from WARN-only logging (RLT-135). `statsflush` adds each
+flush window's delta on every tick alongside the existing WARN log:
+
+- `tx_read_errors` — malformed transactions skipped during
+  `ProcessLedger`. A sustained climb means the bad-tx skip is masking
+  a downstream price gap.
+- `tx_event_read_errors` — transactions whose `GetTransactionEvents()`
+  failed (e.g. an unsupported future `TransactionMeta` version),
+  silently dropping every tx's Soroban events (G15-06).
+- `entry_meta_unsupported` — transactions whose apply-phase
+  entry-change walk was skipped for an unhandled `TransactionMeta`
+  version; every classic balance / trustline / offer / LP change in
+  that tx becomes invisible.
+
+**When to look at these:** any sustained non-zero rate. All three are
+process-lifetime cumulative counters — chart `increase(...[5m])`
+against the flush interval (5m), not the raw value.
+
 ### `stellarindex_source_unknown_symbols_total`
 
 Counter, label `source`.
