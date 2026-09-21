@@ -142,6 +142,18 @@ const classicMovementsWindowDeadline = 20 * time.Minute
 // separate ingestion_cursors row. Idempotent either way — ClickHouse
 // re-inserting an already-written window collapses at merge time.
 //
+// MaxAccountMovementLedger alone is only sound when [-from,-to]
+// itself is what was actually written before: it reports the highest
+// ledger ANYWHERE in that range, not a contiguous frontier from
+// -from. A later run that WIDENS -from below a prior, narrower run's
+// start would otherwise find that prior run's tip and jump straight
+// to it, never revisiting the newly-widened earlier range (Q216). So
+// -resume also checks clickhouse.MinAccountMovementLedger([-from,-to])
+// and only trusts the jump when data starts exactly at -from; if the
+// range's data starts anywhere above -from, that's a gap between
+// -from and it, and the run starts at -from instead (slower, never
+// wrong — the re-processed prefix is idempotent).
+//
 // -verify (default false) recounts each window from
 // stellar.account_movements right after it's processed (whether or
 // not -write persisted anything new this run) and compares per-
@@ -193,12 +205,28 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	}
 
 	if *resume {
-		maxLedger, found, merr := clickhouse.MaxAccountMovementLedger(ctx, *chAddr, startLedger, clampedTo)
+		maxLedger, maxFound, merr := clickhouse.MaxAccountMovementLedger(ctx, *chAddr, startLedger, clampedTo)
 		if merr != nil {
 			fmt.Fprintf(os.Stderr, "classic-movements-backfill: resume lookup failed (%v) — starting from -from\n", merr)
-		} else if found && maxLedger >= startLedger {
-			fmt.Fprintf(os.Stderr, "classic-movements-backfill: resuming at ledger %d (highest ledger already in stellar.account_movements for this range; that ledger is deliberately re-processed, not skipped)\n", maxLedger)
-			startLedger = maxLedger
+		} else if maxFound && maxLedger >= startLedger {
+			// Confirm the range's data actually starts AT -from before
+			// trusting the jump — see the -resume doc comment (Q216):
+			// max(ledger) alone can't distinguish "this range was fully
+			// processed up to maxLedger" from "a narrower prior run left
+			// data at the top of this WIDER range, and [-from, that data)
+			// was never touched."
+			minLedger, minFound, minErr := clickhouse.MinAccountMovementLedger(ctx, *chAddr, startLedger, clampedTo)
+			if minErr != nil {
+				fmt.Fprintf(os.Stderr, "classic-movements-backfill: resume contiguity check failed (%v) — starting from -from, not trusting the resume jump\n", minErr)
+			} else {
+				resumeAt, jumped := classicMovementsResumeStart(startLedger, maxLedger, minLedger, minFound)
+				if jumped {
+					fmt.Fprintf(os.Stderr, "classic-movements-backfill: resuming at ledger %d (highest ledger already in stellar.account_movements for this range; that ledger is deliberately re-processed, not skipped)\n", resumeAt)
+					startLedger = resumeAt
+				} else {
+					fmt.Fprintf(os.Stderr, "classic-movements-backfill: resume skipped — data in [%d,%d] starts at ledger %d, not -from=%d (likely a narrower prior run); starting from -from so that gap is revisited\n", startLedger, clampedTo, minLedger, startLedger)
+				}
+			}
 		}
 	}
 
@@ -328,6 +356,30 @@ func classicMovementsBackfill(args []string) error { //nolint:gocognit,gocyclo,f
 	return nil
 }
 
+// classicMovementsResumeStart is the pure -resume decision (Q216):
+// given startLedger (-from, post-clamp) and the two ClickHouse
+// lookups over [startLedger,clampedTo] — maxLedger/maxFound from
+// MaxAccountMovementLedger and minLedger/minFound from
+// MinAccountMovementLedger — decide whether it's safe to jump
+// startLedger forward to maxLedger.
+//
+// It is safe ONLY when minFound && minLedger == startLedger: that
+// proves the range's data starts exactly at startLedger, so
+// everything between startLedger and maxLedger was genuinely written
+// by a run that covered this same starting point (the ledger-ordered-
+// insert invariant then makes maxLedger a sound checkpoint — see
+// sortAccountMovementRowsForInsert's doc comment). If the data
+// instead starts ABOVE startLedger, that gap is exactly the widened
+// -from scenario: jumping to maxLedger would skip it silently.
+// Caller has already confirmed maxFound && maxLedger >= startLedger
+// before calling this.
+func classicMovementsResumeStart(startLedger, maxLedger, minLedger uint32, minFound bool) (resumeAt uint32, jumped bool) {
+	if !minFound || minLedger != startLedger {
+		return startLedger, false
+	}
+	return maxLedger, true
+}
+
 // windowResult holds everything one call to classicMovementsAttemptWindow
 // produces for a single [wlo,whi] window: the pre-fan-out batch ready
 // for clickhouse.InsertAccountMovements, the per-movement_kind counts
@@ -390,10 +442,23 @@ func classicMovementsAttemptWindow(
 	if err := classicMovementsDecodeOpsSurface(winCtx, chAddr, dec, opTypes, wlo, whi, &res); err != nil {
 		return res, err
 	}
-	classicMovementsResolvePendingClaimableBalances(winCtx, chAddr, dec, wlo, whi, &res)
+	// Entry-changes BEFORE pending-claim resolution (T137): a claim/
+	// clawback against a CAP-0038-revocation-created balance is decoded
+	// in the ops surface above, but the CREATE for that same balance is
+	// only produced here, by classicMovementsHandleCAP0038Op via
+	// classicmovements.DecodeCAP0038Revocation — a path that does NOT
+	// go through dec.Decode, so dec's own in-run BalanceId index never
+	// learns about it. Running this phase first means that create is
+	// already sitting in res.batch by the time
+	// classicMovementsResolvePendingClaimableBalances runs its
+	// batch-local fallback check (see that function's doc comment) —
+	// without this ordering, a same-window claim against such a
+	// balance would resolve to "unresolved" even though the create is
+	// right there in this window's own batch.
 	if err := classicMovementsDecodeEntryChangesSurface(winCtx, chAddr, entryChangeOpTypes, wlo, whi, &res); err != nil {
 		return res, err
 	}
+	classicMovementsResolvePendingClaimableBalances(winCtx, chAddr, dec, wlo, whi, &res)
 	if err := classicMovementsWriteAndVerify(winCtx, chAddr, wlo, whi, write, verify, &res); err != nil {
 		return res, err
 	}
@@ -406,7 +471,8 @@ func classicMovementsAttemptWindow(
 // into res. dec.Decode also updates dec's shared claimable-balance-
 // create index as a side effect (see classicmovements.Decoder's doc
 // comment); that index feeds
-// classicMovementsResolvePendingClaimableBalances, called next.
+// classicMovementsResolvePendingClaimableBalances, called after
+// classicMovementsDecodeEntryChangesSurface (see that call site).
 func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec *classicmovements.Decoder, opTypes []string, wlo, whi uint32, res *windowResult) error {
 	werr := clickhouse.StreamClassicOps(winCtx, chAddr, wlo, whi, opTypes, func(op clickhouse.ClassicOp) error {
 		res.windowRead++
@@ -448,15 +514,26 @@ func classicMovementsDecodeOpsSurface(winCtx context.Context, chAddr string, dec
 // classicMovementsResolvePendingClaimableBalances is the ADR-0047
 // Phase 3 second pass: resolve claim/clawback rows the main decode
 // loop couldn't correlate against a create seen earlier in this
-// window (dec.decodeOp records these instead of failing). Two passes
-// over pending, not one interleaved loop:
+// window (dec.decodeOp records these instead of failing). Three
+// passes over pending, not one interleaved loop:
 //
 //  1. The free in-memory re-check (closes the same-window tx_hash-
 //     ordering gap — see Decoder.ResolveBalance's doc comment) for
 //     every ref, collecting the misses.
-//  2. ONE batched clickhouse.FindClaimableBalanceCreates call for all
-//     of this window's misses together, for creates outside this
-//     run's range entirely (ADR-0048 D2: previously a Postgres
+//  2. A free re-check against res.batch itself (T137): dec's in-run
+//     BalanceId index is populated only by dec.Decode, but this
+//     window's CAP-0038-revocation creates (classicMovementsHandleCAP0038Op,
+//     via classicmovements.DecodeCAP0038Revocation) bypass dec.Decode
+//     entirely and land straight in res.batch — see
+//     classicMovementsAttemptWindow's call-order comment for why this
+//     phase now runs after the entry-changes surface. Without this
+//     check, a claim against a balance CAP-0038 created earlier in
+//     this SAME window would fall through to ClickHouse below and
+//     find nothing yet, since this window hasn't been written yet
+//     either.
+//  3. ONE batched clickhouse.FindClaimableBalanceCreates call for all
+//     of this window's remaining misses together, for creates outside
+//     this run's range entirely (ADR-0048 D2: previously a Postgres
 //     lookup, one query per ref before 2026-07-12 — see that
 //     function's doc comment for why serial per-ref lookups were
 //     replaced).
@@ -473,12 +550,22 @@ func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chA
 		return
 	}
 
+	batchIdx := classicMovementsBatchClaimableBalanceIndex(res.batch)
+
 	var misses []classicmovements.PendingClaimableBalanceRef
 	for _, ref := range pending {
 		if asset, amount, createdBy, ok := dec.ResolveBalance(ref.BalanceIDHex); ok {
 			res.windowResolvedIndex++
 			res.windowDecoded++
 			m := classicmovements.ResolvePendingClaimableBalance(ref, asset, amount, createdBy)
+			res.windowCounts[m.Kind]++
+			res.batch = append(res.batch, accountMovementOf(m))
+			continue
+		}
+		if create, ok := batchIdx[ref.BalanceIDHex]; ok {
+			res.windowResolvedIndex++
+			res.windowDecoded++
+			m := classicmovements.ResolvePendingClaimableBalance(ref, create.Asset, canonical.NewAmount(create.Amount), create.FromAddress)
 			res.windowCounts[m.Kind]++
 			res.batch = append(res.batch, accountMovementOf(m))
 			continue
@@ -516,6 +603,34 @@ func classicMovementsResolvePendingClaimableBalances(winCtx context.Context, chA
 
 	fmt.Fprintf(os.Stderr, "classic-movements-backfill: window [%d,%d] claimable-balance correlation — %d resolved (index), %d resolved (clickhouse), %d unresolved\n",
 		wlo, whi, res.windowResolvedIndex, res.windowResolvedCH, res.windowUnresolved)
+}
+
+// classicMovementsBatchClaimableBalanceIndex scans res.batch (as
+// accumulated so far this window) for 'claimable_balance_create'
+// movements and returns them keyed by balance_id — the free,
+// same-window fallback classicMovementsResolvePendingClaimableBalances
+// checks between dec's in-run index and the ClickHouse lookup (T137).
+// Needed because not every create reaches dec's index: a CAP-0038
+// revocation's create is built by
+// classicmovements.DecodeCAP0038Revocation directly, never through
+// dec.Decode (see classicMovementsHandleCAP0038Op), so dec never
+// learns its balance_id. A malformed/missing balance_id attribute is
+// silently skipped, same as Decoder.indexClaimableBalanceCreate: worst
+// case a resolvable ref falls through to the ClickHouse pass instead,
+// still correct, just slower.
+func classicMovementsBatchClaimableBalanceIndex(batch []clickhouse.AccountMovement) map[string]clickhouse.AccountMovement {
+	idx := make(map[string]clickhouse.AccountMovement)
+	for _, m := range batch {
+		if m.MovementKind != string(classicmovements.KindClaimableBalanceCreate) {
+			continue
+		}
+		id, ok := m.Attributes["balance_id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+		idx[id] = m
+	}
+	return idx
 }
 
 // classicMovementsDecodeEntryChangesSurface is the ADR-0047 Phase 4
