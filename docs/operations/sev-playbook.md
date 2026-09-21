@@ -325,6 +325,29 @@ Concretely: no postmortem section names an individual. Action
 items are framed around the system change that'd prevent a
 recurrence.
 
+### 6.4 Credential/PII exposure incidents
+
+A redaction-class fix — one that stops a credential or PII value
+from being written to the log store, e.g. `7843f129` (customer
+emails and `X-API-Key` in Caddy access logs) — is not complete once
+the leak is closed. Two follow-ups are mandatory in the SAME
+release cycle as the fix, not deferred as postmortem action items:
+
+1. **File the incident record** under `internal/incidents/data/`
+   (§5.1's template) even if the exposure never paged and never hit
+   the status page. "Nothing paged" and "nothing was exposed" are
+   different claims; the record is what lets the second be checked
+   later.
+2. **Run the key-rotation / notification runbook:**
+   [`runbooks/credential-exposure-redaction-fix.md`](runbooks/credential-exposure-redaction-fix.md).
+   A clean retention-window scan (see the runbook) proves the LOG
+   STORE no longer holds the value — it says nothing about whether
+   the value was read by anyone with log access while it was
+   exposed. Any credential (API key, session token) potentially
+   exposed this way gets targeted rotation offered to its owner;
+   PII exposure gets an affected-customer notification. Neither is
+   satisfied by the redaction fix landing.
+
 ---
 
 ## 7. Escalation chain
