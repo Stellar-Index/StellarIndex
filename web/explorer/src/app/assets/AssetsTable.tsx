@@ -391,7 +391,15 @@ export function AssetsTable({
                     // and that arithmetic would print a DIFFERENT wrong
                     // number. A rank the data cannot back is better
                     // omitted than guessed.
-                    rank={cursor ? null : idx + 1}
+                    //
+                    // Q224: the same reasoning applies within page 1. idx
+                    // walks rankedAssets, which reflects whatever column
+                    // the user has sorted by — not the server's default
+                    // (market-cap-ish) order. Numbering a "Volume 24h"
+                    // sort "#1, #2, …" reads as a directory-wide rank it
+                    // is not, so only label rows in the untouched default
+                    // order.
+                    rank={cursor || !defaultOrder ? null : idx + 1}
                     // Badge "verified" ONLY for the real verified row.
                     // The listing serves COALESCE(slug, code) AS slug, so
                     // a NULL-slug impersonator emits the verified asset's

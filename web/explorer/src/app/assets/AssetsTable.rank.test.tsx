@@ -201,3 +201,27 @@ describe('AssetsTable rank column across cursor pages (EXR-06)', () => {
     expect(rankCells().every((c) => c === '')).toBe(true);
   });
 });
+
+// Q224: the same over-claim happens WITHOUT pagination. Clicking a
+// sortable header re-sorts `rankedAssets` client-side; numbering the
+// result "#1, #2, …" presents that page-local sort order as a
+// directory-wide rank, which it is not.
+describe('AssetsTable rank column under a non-default column sort (Q224)', () => {
+  function rankCells(): string[] {
+    return screen
+      .getAllByRole('row')
+      .slice(1) // header
+      .map((tr) => tr.querySelectorAll('td')[0]?.textContent?.trim() ?? '');
+  }
+
+  it('still numbers rows in the untouched default order', () => {
+    renderTable();
+    expect(rankCells()).toEqual(['1', '2', '3']);
+  });
+
+  it('renders no rank once the user sorts by a column', () => {
+    renderTable();
+    fireEvent.click(screen.getByRole('button', { name: /Volume 24h/ }));
+    expect(rankCells().every((c) => c === '')).toBe(true);
+  });
+});
