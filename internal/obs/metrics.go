@@ -103,6 +103,7 @@ func registerAppMetrics() {
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
 		PriceServeScamWithheldTotal,
+		PricingGuardTrailingFetchFailedTotal,
 
 		SupplyCrossCheckDivergenceStroops,
 		SupplyCrossCheckTotal,
@@ -540,6 +541,12 @@ func seedBoundedLabelSeriesTail() {
 		for _, outcome := range []string{"ok", "error"} {
 			ExplorerSWRRefreshTotal.WithLabelValues(cache, outcome)
 		}
+	}
+	// RLT-242: the guard's trailing-fetch error path is fail-open and
+	// EXPECTED to sit at zero on a healthy DB, so an absent series would
+	// be indistinguishable from "never wired" — seed both known paths.
+	for _, path := range []string{"latest", "at"} {
+		PricingGuardTrailingFetchFailedTotal.WithLabelValues(path)
 	}
 }
 
@@ -3028,6 +3035,30 @@ var PriceServeScamWithheldTotal = prometheus.NewCounterVec(
 		Help: "Aggregated price serves withheld by the scam-pricing gate (directory-flagged issuer), labelled by serving surface.",
 	},
 	[]string{"surface"},
+)
+
+// PricingGuardTrailingFetchFailedTotal — count of
+// internal/pricingguard.GuardServedVWAP1mConfidence /
+// GuardServedVWAP1mAt trailing-baseline fetches that errored (RLT-242).
+// The guard fails OPEN on this error — it serves the candidate bucket
+// unguarded rather than blackout a pair — which is the right posture
+// for a transient DB blip, but it means the manipulation/fat-finger
+// band the guard exists to enforce (see package doc) silently stood
+// down for that request with only a WARN log as a trace. This counter
+// is the quantitative signal: a sustained non-zero rate means the
+// robust-band check is not running for real traffic and correlates
+// with the timescale readyz probe, the same way [RateLimitFailOpenTotal]
+// correlates with the redis readyz probe.
+//
+// Labelled by `path`: "latest" (GuardServedVWAP1mConfidence, the
+// /v1/price + assets + price-alert callers) or "at" (GuardServedVWAP1mAt,
+// /v1/price/at + /v1/price/changes). Two-value cardinality.
+var PricingGuardTrailingFetchFailedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_pricingguard_trailing_fetch_failed_total",
+		Help: "Serving-sanity guard trailing-baseline fetches that errored and fell back to serving the candidate unguarded (fail-open), by path (latest|at).",
+	},
+	[]string{"path"},
 )
 
 // ─── Supply-derivation metrics ────────────────────────────────────

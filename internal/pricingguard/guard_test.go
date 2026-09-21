@@ -6,7 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -300,7 +303,7 @@ func TestGuardServedVWAP1mConfidence_EmptyBaselineFirstBucketIsLowConfidence(t *
 	// Store returns no rows STRICTLY older than the candidate (only the
 	// candidate's own bucket) — the real first-bucket shape.
 	store := fakeTrailing{rows: []timescale.Vwap1mRow{mkRow(0, "999999.0")}}
-	served, lowConfidence := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), manip)
+	served, lowConfidence, substituted := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), manip)
 	// Still served (no blackout of a genuine new pair).
 	if served.VWAP != manip.VWAP || !served.Bucket.Equal(manip.Bucket) {
 		t.Fatalf("first bucket must still be served (no blackout); got %+v", served)
@@ -309,10 +312,14 @@ func TestGuardServedVWAP1mConfidence_EmptyBaselineFirstBucketIsLowConfidence(t *
 	if !lowConfidence {
 		t.Fatal("empty-baseline first bucket must be lowConfidence=true (served stale), not confident stale=false")
 	}
+	// Accepted against an empty baseline, not a rejection — never both.
+	if substituted {
+		t.Fatal("empty-baseline accept must not also be substituted")
+	}
 	// The completely-empty store is the same case.
-	served, lowConfidence = GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), mkRow(0, "42.0"))
-	if served.VWAP != "42.0" || !lowConfidence {
-		t.Fatalf("empty baseline must serve the value low-confidence; got served=%s lowConfidence=%v", served.VWAP, lowConfidence)
+	served, lowConfidence, substituted = GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), mkRow(0, "42.0"))
+	if served.VWAP != "42.0" || !lowConfidence || substituted {
+		t.Fatalf("empty baseline must serve the value low-confidence, not substituted; got served=%s lowConfidence=%v substituted=%v", served.VWAP, lowConfidence, substituted)
 	}
 }
 
@@ -322,22 +329,46 @@ func TestGuardServedVWAP1mConfidence_ValidatedBucketIsConfident(t *testing.T) {
 	// wrongly degrade every healthy pair.
 	candidate := mkRow(0, "1.01")
 	store := fakeTrailing{rows: steadyRows(12)}
-	served, lowConfidence := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), candidate)
-	if served.VWAP != candidate.VWAP || lowConfidence {
-		t.Fatalf("validated bucket must be confident (lowConfidence=false), byte-identical; got served=%s lowConfidence=%v", served.VWAP, lowConfidence)
+	served, lowConfidence, substituted := GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), candidate)
+	if served.VWAP != candidate.VWAP || lowConfidence || substituted {
+		t.Fatalf("validated bucket must be confident and unsubstituted, byte-identical; got served=%s lowConfidence=%v substituted=%v", served.VWAP, lowConfidence, substituted)
 	}
 	// Thin (but non-empty) history is still a validated centre → confident.
-	served, lowConfidence = GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), mkRow(0, "5.0"))
+	// (5.0 vs. the steady 1.0 baseline may itself be rejected as an
+	// outlier — substituted is orthogonal to lowConfidence here, only
+	// lowConfidence is this case's claim.)
+	served, lowConfidence, _ = GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), mkRow(0, "5.0"))
 	_ = served
 	if lowConfidence {
 		t.Fatal("thin-but-non-empty baseline must be confident (lowConfidence=false)")
 	}
 	// A transient fetch error fails open WITHOUT flagging stale (unchanged
-	// posture — a DB blip must not mark every price low-confidence).
+	// posture — a DB blip must not mark every price low-confidence) and
+	// without flagging substituted (the candidate was served as-is).
 	errStore := fakeTrailing{err: errors.New("boom")}
-	_, lowConfidence = GuardServedVWAP1mConfidence(context.Background(), errStore, nil, testPair(t), mkRow(0, "100.0"))
+	_, lowConfidence, substituted = GuardServedVWAP1mConfidence(context.Background(), errStore, nil, testPair(t), mkRow(0, "100.0"))
+	if lowConfidence || substituted {
+		t.Fatal("transient fetch error must fail open with lowConfidence=false, substituted=false, not flag stale")
+	}
+}
+
+// RNC27: a rejected candidate — the guard swapping in an older
+// last-known-good bucket — must surface substituted=true so a caller
+// stapling enrichment from a SEPARATE, independently-keyed cache
+// (confidence score, composite-router flags) knows that cache answers
+// for the current tick, not for the older bucket actually served.
+func TestGuardServedVWAP1mConfidence_RejectedCandidateIsSubstituted(t *testing.T) {
+	candidate := mkRow(0, "100.0") // 100x fat-finger vs. the steady 1.0 baseline
+	rows := steadyRows(12)
+	served, lowConfidence, substituted := GuardServedVWAP1mConfidence(context.Background(), fakeTrailing{rows: rows}, nil, testPair(t), candidate)
+	if served.VWAP != "1.0" {
+		t.Fatalf("rejected candidate must serve last-known-good 1.0; got %s", served.VWAP)
+	}
 	if lowConfidence {
-		t.Fatal("transient fetch error must fail open with lowConfidence=false, not flag stale")
+		t.Fatal("a rejected candidate has a validated baseline by definition — must not be lowConfidence")
+	}
+	if !substituted {
+		t.Fatal("rejected candidate must report substituted=true")
 	}
 }
 
@@ -349,5 +380,29 @@ func TestGuardServedVWAP1m_TrailingFetchErrorFailsOpen(t *testing.T) {
 	served := GuardServedVWAP1m(context.Background(), store, nil, testPair(t), candidate)
 	if served.VWAP != candidate.VWAP || !served.Bucket.Equal(candidate.Bucket) {
 		t.Fatalf("fetch error must fail open (serve candidate); got %+v", served)
+	}
+}
+
+// RLT-242: a fail-open trailing-fetch error must not be silent — it stands
+// down the manipulation/fat-finger band with only a log line as a trace, so
+// it needs a counter an alert can fire on. Proves the counter actually
+// increments on the real fail-open paths, not just that logging happened.
+func TestGuardServedVWAP1mConfidence_TrailingFetchErrorIncrementsMetric(t *testing.T) {
+	before := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("latest"))
+	store := fakeTrailing{err: errors.New("boom")}
+	GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), mkRow(0, "100.0"))
+	after := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("latest"))
+	if after != before+1 {
+		t.Fatalf("PricingGuardTrailingFetchFailedTotal{path=latest} = %v, want %v (before %v + one fail-open fetch error)", after, before+1, before)
+	}
+}
+
+func TestGuardServedVWAP1mAt_TrailingFetchErrorIncrementsMetric(t *testing.T) {
+	before := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at"))
+	store := fakeTrailing{err: errors.New("boom")}
+	GuardServedVWAP1mAt(context.Background(), store, nil, testPair(t), mkRow(0, "100.0"), time.Now(), time.Hour)
+	after := testutil.ToFloat64(obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at"))
+	if after != before+1 {
+		t.Fatalf("PricingGuardTrailingFetchFailedTotal{path=at} = %v, want %v (before %v + one fail-open fetch error)", after, before+1, before)
 	}
 }

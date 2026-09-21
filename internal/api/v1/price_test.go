@@ -673,6 +673,35 @@ func TestPrice_ConfidenceFlowsToWire(t *testing.T) {
 	}
 }
 
+// TestPrice_SubstitutedSnapshotSkipsConfidenceStaple — RNC27: when the
+// serving-sanity guard substituted an older last-known-good bucket for
+// the served value (snapshot.Substituted), the confidence staple must
+// NOT be stapled — it's looked up from a SEPARATE cache keyed only by
+// (asset, quote, window), with no as-of of its own, so it would answer
+// for the CURRENT tick rather than for the older bucket actually served.
+func TestPrice_SubstitutedSnapshotSkipsConfidenceStaple(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.07", PriceType: "vwap", Substituted: true},
+		},
+	}
+	conf := &stubConfidenceLooker{
+		score: v1.PriceSnapshotConfidence{Confidence: 0.92},
+		found: true,
+	}
+	srv := v1.New(v1.Options{Prices: reader, Confidence: conf})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if strings.Contains(body, `"confidence"`) {
+		t.Errorf("confidence must not be stapled onto a substituted (last-known-good) snapshot: %s", body)
+	}
+	if conf.calls != 0 {
+		t.Errorf("confidence looker calls = %d, want 0 — must not even be consulted on a substituted snapshot", conf.calls)
+	}
+}
+
 // TestPrice_ConfidenceCacheMissOmitsFields — looker returns
 // (zero, false, nil): the snapshot has no confidence-related
 // fields on the wire (omitempty hides them).

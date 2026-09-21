@@ -44,6 +44,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -85,19 +86,21 @@ func GuardServedVWAP1m(
 	pair canonical.Pair,
 	candidate timescale.Vwap1mRow,
 ) timescale.Vwap1mRow {
-	served, _ := GuardServedVWAP1mConfidence(ctx, store, logger, pair, candidate)
+	served, _, _ := GuardServedVWAP1mConfidence(ctx, store, logger, pair, candidate)
 	return served
 }
 
 // GuardServedVWAP1mConfidence is [GuardServedVWAP1m] plus the
-// low-confidence signal a serving path needs for its stale flag.
-// lowConfidence is true when the served bucket had NO usable trailing
-// baseline to validate against (a pair's first-ever served minute):
-// [aggregate.GuardServedVWAP] FAILS OPEN there, so a single manipulated /
-// fat-finger print would otherwise be served with stale=false and no
-// volume floor (adversarial-review W6-fresh-1). The value is STILL served
-// (never a blackout of a legitimate new pair) — the caller surfaces it as
-// stale / low-confidence instead of a confident price.
+// low-confidence signal a serving path needs for its stale flag, and the
+// substituted signal a serving path needs to withhold enrichment that
+// isn't ABOUT the served bucket. lowConfidence is true when the served
+// bucket had NO usable trailing baseline to validate against (a pair's
+// first-ever served minute): [aggregate.GuardServedVWAP] FAILS OPEN there,
+// so a single manipulated / fat-finger print would otherwise be served
+// with stale=false and no volume floor (adversarial-review W6-fresh-1).
+// The value is STILL served (never a blackout of a legitimate new pair) —
+// the caller surfaces it as stale / low-confidence instead of a confident
+// price.
 //
 // It is only ever true on a SUCCESSFUL trailing fetch that returned no
 // usable baseline; a transient fetch error still fails open with
@@ -105,20 +108,30 @@ func GuardServedVWAP1m(
 // price stale). On a validated bucket (populated OR thin baseline)
 // lowConfidence is false and the row is byte-identical to
 // [GuardServedVWAP1m].
+//
+// substituted is true when the candidate was rejected as an outlier and
+// `served` is the older last-known-good bucket instead (RNC27). A caller
+// that staples enrichment looked up from a SEPARATE, independently-keyed
+// cache (confidence score, composite-router flags — anything keyed by
+// (pair, window) rather than by the served bucket itself) must treat
+// substituted=true as "that enrichment answers for the CURRENT tick, not
+// for the older bucket actually served" and withhold it rather than
+// mis-attribute a live read to a stale value.
 func GuardServedVWAP1mConfidence(
 	ctx context.Context,
 	store TrailingReader,
 	logger *slog.Logger,
 	pair canonical.Pair,
 	candidate timescale.Vwap1mRow,
-) (served timescale.Vwap1mRow, lowConfidence bool) {
+) (served timescale.Vwap1mRow, lowConfidence, substituted bool) {
 	rows, err := store.RecentClosedVWAP1mCombined(ctx, pair, SampleFetch)
 	if err != nil {
+		obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("latest").Inc()
 		if logger != nil {
 			logger.Warn("served-vwap guard: trailing fetch failed — serving candidate unguarded",
 				"pair", pair.String(), "err", err)
 		}
-		return candidate, false // fail-open (transient) — not low-confidence
+		return candidate, false, false // fail-open (transient) — not low-confidence
 	}
 	served, rejected, lowConfidence := selectGuardedVWAP1m(candidate, rows)
 	if rejected && logger != nil {
@@ -135,7 +148,7 @@ func GuardServedVWAP1mConfidence(
 			"candidate_bucket", candidate.Bucket,
 			"candidate_vwap", candidate.VWAP)
 	}
-	return served, lowConfidence
+	return served, lowConfidence, rejected
 }
 
 // GuardServedVWAP1mAt is [GuardServedVWAP1m] for the POINT-IN-TIME
@@ -171,6 +184,7 @@ func GuardServedVWAP1mAt(
 ) (served timescale.Vwap1mRow, ok bool) {
 	rows, err := store.RecentClosedVWAP1mCombined(ctx, pair, SampleFetch)
 	if err != nil {
+		obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at").Inc()
 		if logger != nil {
 			logger.Warn("served-vwap guard (point-in-time): trailing fetch failed — serving candidate unguarded",
 				"pair", pair.String(), "err", err)
