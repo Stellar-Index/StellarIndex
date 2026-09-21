@@ -324,8 +324,9 @@ bad=$(unknown_in "$SRC")
 # cannot both read it and append to it may not delete anything (rule 3). The
 # probe is the real operation — an append — because the state directory may
 # be missing, full, read-only, or occupied by something that is not a file.
-: >> "$DIRTY" && [ -f "$DIRTY" ] && [ -r "$DIRTY" ] \
-  || refuse "\$DIRTY ($DIRTY) is not a readable, appendable file — it is the only record that a window was emptied, and without it a DELETE could be forgotten"
+if ! { : >> "$DIRTY" && [ -f "$DIRTY" ] && [ -r "$DIRTY" ]; }; then
+  refuse "\$DIRTY ($DIRTY) is not a readable, appendable file — it is the only record that a window was emptied, and without it a DELETE could be forgotten"
+fi
 
 # ── recovery first: windows an earlier run emptied and did not rebuild ──
 dirty_lines=()
