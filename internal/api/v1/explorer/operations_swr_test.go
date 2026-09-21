@@ -138,7 +138,7 @@ func TestOperationsDirectory_StaleEntryIsServedWhileOneDetachedRefreshRuns(t *te
 		Operations: []OpView{{Ledger: 61_000_000, TxHash: "seeded"}},
 	}
 	h.opsDir.mu.Lock()
-	h.opsDir.entries = map[int]opsDirEntry{50: {view: seeded, cachedAt: staleAt}}
+	h.opsDir.entry, h.opsDir.has = opsDirEntry{view: seeded, cachedAt: staleAt}, true
 	h.opsDir.mu.Unlock()
 
 	// Hold the rebuild open so the request cannot possibly be answered by it.
@@ -183,7 +183,7 @@ func TestOperationsDirectory_StaleEntryIsServedWhileOneDetachedRefreshRuns(t *te
 	// carries the NEW page, not the seeded one.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, _, fresh := h.opsDir.get(50); fresh {
+		if _, _, fresh := h.opsDir.get(); fresh {
 			break
 		}
 		time.Sleep(time.Millisecond)
@@ -205,7 +205,7 @@ func TestOperationsDirectory_FailedRefreshKeepsServingTheLastGoodPage(t *testing
 	staleAt := time.Now().Add(-3 * opsDirTTL)
 	seeded := OperationsView{NextCursor: "last-good", Operations: []OpView{{Ledger: 61_000_000}}}
 	h.opsDir.mu.Lock()
-	h.opsDir.entries = map[int]opsDirEntry{50: {view: seeded, cachedAt: staleAt}}
+	h.opsDir.entry, h.opsDir.has = opsDirEntry{view: seeded, cachedAt: staleAt}, true
 	h.opsDir.mu.Unlock()
 	reader.fail.Store(true)
 
@@ -242,7 +242,65 @@ func TestOperationsDirectory_CursorPageBypassesTheCache(t *testing.T) {
 	if got := reader.calls.Load(); got != 2 {
 		t.Errorf("cursor pages made %d reads, want 2 (never cached)", got)
 	}
-	if _, ok, _ := h.opsDir.get(50); ok {
+	if _, ok, _ := h.opsDir.get(); ok {
 		t.Error("a cursor page populated the first-page cache")
+	}
+}
+
+// K053: two DIFFERENT accepted `?limit=` values on the first page must share
+// ONE warm cache entry, not mint an independent lake read (and cache slot)
+// per limit. Pre-fix, opsDirCache keyed strictly by the requested limit, so
+// a caller sweeping ?limit=50..200 bought a fresh lake read for every value.
+func TestOperationsDirectory_DifferentLimitsShareOneCacheEntry(t *testing.T) {
+	h, reader, captured := newOpsDirHandler()
+	limit := 50
+	h.ParseLimit = func(_ http.ResponseWriter, _ *http.Request, _, _ int) (int, bool) {
+		return limit, true
+	}
+
+	if got := getOperations(t, h).Code; got != http.StatusOK {
+		t.Fatalf("cold status = %d, want 200", got)
+	}
+	if got := reader.calls.Load(); got != 1 {
+		t.Fatalf("cold fill made %d reads, want 1", got)
+	}
+
+	limit = 200
+	if got := getOperations(t, h).Code; got != http.StatusOK {
+		t.Fatalf("second-limit status = %d, want 200", got)
+	}
+	if got := reader.calls.Load(); got != 1 {
+		t.Errorf("a different accepted ?limit= made %d lake reads, want 1 "+
+			"(one warm entry must serve every limit by slicing, not a slot per limit)", got)
+	}
+	if captured.stale {
+		t.Error("second-limit hit served with flags.stale — should be the same freshly-warmed entry")
+	}
+}
+
+// K053: sliceOperationsView must recompute NextCursor from the RETAINED
+// rows' own identity, not reuse the ceiling page's cursor — reusing it
+// would skip every row between the requested limit and the ceiling.
+func TestSliceOperationsView_RecomputesCursorFromRetainedRows(t *testing.T) {
+	full := OperationsView{
+		NextCursor: "999.9.9", // the ceiling page's own next cursor — must NOT leak through
+		Operations: []OpView{
+			{Ledger: 10, TxIndex: 0, OpIndex: 0},
+			{Ledger: 10, TxIndex: 1, OpIndex: 0},
+			{Ledger: 11, TxIndex: 0, OpIndex: 0},
+		},
+	}
+
+	sliced := sliceOperationsView(full, 2)
+	if len(sliced.Operations) != 2 {
+		t.Fatalf("sliced to %d operations, want 2", len(sliced.Operations))
+	}
+	if want := encodeCursor(10, 1, 0); sliced.NextCursor != want {
+		t.Errorf("NextCursor = %q, want %q (the 2nd retained row's identity)", sliced.NextCursor, want)
+	}
+
+	// limit >= available rows: served whole, cursor untouched.
+	if whole := sliceOperationsView(full, 10); len(whole.Operations) != 3 || whole.NextCursor != full.NextCursor {
+		t.Errorf("over-limit slice = %+v, want the view unchanged", whole)
 	}
 }
