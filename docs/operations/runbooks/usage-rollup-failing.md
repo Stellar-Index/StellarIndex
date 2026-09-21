@@ -1,6 +1,6 @@
 ---
 title: Runbook — usage-rollup-failing
-last_verified: 2026-07-04
+last_verified: 2026-09-21
 status: draft
 severity: P3
 ---
@@ -14,7 +14,7 @@ severity: P3
 | Alerts | `stellarindex_usage_rollup_failing` (informational) |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/api.yml` + `configs/prometheus/rules.r1/api.yml` |
 | Typical MTTR | 5–15 min (it's almost always Redis or Postgres reachability, shared with louder alerts) |
-| Impact | Dashboard per-endpoint usage analytics stop advancing; `/v1/account/usage` degrades to endpoint-less legacy per-day rows. NO customer pricing impact. Counters keep accumulating in Redis (35-day TTL) — nothing is lost unless the outage exceeds that. |
+| Impact | Dashboard per-endpoint usage analytics stop advancing; `/v1/account/usage` degrades to endpoint-less legacy per-day rows. NO customer pricing impact. Counters keep accumulating in Redis (35-day TTL). The live worker only ever sweeps TODAY + YESTERDAY, so a day the outage skips entirely is NOT recovered automatically once the sweep window moves past it — it must be recovered with `usage-rollup-backfill` (see Mitigation) before its Redis counters expire at 35 days. |
 
 ## Symptoms
 
@@ -51,9 +51,26 @@ journalctl -u stellarindex-api --since -30min | grep -i "usage rollup"
   this alert clears itself on the next successful sweep (the
   worker retries forever, sweeping today + yesterday, and the
   upsert is GREATEST-merged so replays are safe).
-- No operator "catch-up" step exists or is needed inside the
-  35-day Redis TTL. Beyond that window, unswept days are gone —
-  note it in the incident log; there is no re-derive path.
+- If the outage spanned a full UTC day boundary, the live worker's
+  two-day sweep window has already moved past the skipped day and
+  will never re-fold it on its own (COR-10). Recover it with the
+  `usage-rollup-backfill` subcommand of `stellarindex-ops` — same
+  grouping code as the live worker, safe to re-run (GREATEST-merged
+  upsert):
+
+  ```sh
+  # Size the recovery first (dry run, no writes):
+  stellarindex-ops usage-rollup-backfill -config /etc/stellarindex.toml \
+    -from 2026-07-19 -to 2026-07-21
+
+  # Then apply it:
+  stellarindex-ops usage-rollup-backfill -config /etc/stellarindex.toml \
+    -from 2026-07-19 -to 2026-07-21 -write
+  ```
+
+  The Redis detail counters this reads carry a 35-day TTL, so this
+  only works within that window — past it, unswept days are gone;
+  note it in the incident log, there is no re-derive path.
 
 ## Root cause analysis
 
@@ -73,10 +90,13 @@ Redis/Postgres blips do not fire it.
 - Metric reference: [`stellarindex_usage_rollup_sweeps_total`](../../reference/metrics/README.md#stellarindex_usage_rollup_sweeps_total)
   + [`stellarindex_usage_rollup_sweep_duration_seconds`](../../reference/metrics/README.md#stellarindex_usage_rollup_sweep_duration_seconds)
 - Worker: `internal/usage/rollup.go` (wired in `cmd/stellarindex-api/main.go`)
+- Catch-up tool: `cmd/stellarindex-ops/usage_rollup_backfill.go` (`stellarindex-ops usage-rollup-backfill`)
 - Table: `migrations/0071_create_usage_daily.up.sql`
 - Endpoint served from the rollups: `/v1/account/usage`
 - Catalogue row: [alerts-catalog.md](../alerts-catalog.md)
 
 ## Changelog
 
+- 2026-09-21 — documented the `usage-rollup-backfill` catch-up step
+  (#798); the mitigation previously claimed no such step existed.
 - 2026-07-04 — created with the usage-rollup pipeline (#32/#37b).

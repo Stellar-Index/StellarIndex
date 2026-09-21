@@ -47,7 +47,10 @@ const usageRollupMaxRangeDays = 35
 //
 //	stellarindex-ops usage-rollup-backfill \
 //	  -config /etc/stellarindex.toml \
-//	  -from 2026-07-19 -to 2026-07-21
+//	  -from 2026-07-19 -to 2026-07-21 -write
+//
+// Omitting -write runs a dry pass: it scans Redis and reports what it
+// would upsert without touching usage_daily (see [opsutil.RegisterWriteGate]).
 //
 // Safe to re-run: [timescale.Store.UpsertUsageDaily] is a GREATEST()
 // merge over the cumulative per-day counters, so a repeat pass is a
