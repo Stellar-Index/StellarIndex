@@ -149,6 +149,17 @@ against.
 
 ### Fixed
 
+- **platform / account store — admin PATCH race, unbounded reaper sweeps
+  and a fabricated client IP (Q148, Q142, Q188):** `PATCH
+  /v1/admin/accounts/{id}` now loads, mutates and writes the account under
+  `SELECT ... FOR UPDATE` in one transaction, so two racing operator
+  PATCHes can no longer silently discard one another (including a
+  suspend). The magic-link, login-lockout and suspended-orphan reaper
+  sweeps delete in bounded batches instead of one unbounded `DELETE`.
+  `CreateSession` and `CreateMagicLinkToken` now fail on a nil client IP
+  instead of writing a `0.0.0.0` placeholder into the forensics columns;
+  `TouchSession` still leaves `ip_last_seen` unchanged on a nil IP.
+
 - **sources / cctp, rozo, sorocredit, phoenix, scale — doc/comment drift
   corrected against the shipped decoder and registry state (Q020, Q023,
   Q076, Q086, Q088, T086, T114, T687, T063):** nine documentation and
