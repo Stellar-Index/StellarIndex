@@ -8,6 +8,7 @@
 // /v1/price on mount + every 60s, and while /v1/price/tip/stream is
 // fresh the headline ticks in real time with a direction flash.
 
+import { useChangeSummary } from '@/api/hooks';
 import { cn } from '@/lib/cn';
 import { formatSubunitPrice } from '@/lib/format';
 import {
@@ -27,6 +28,7 @@ export function LivePairPrice({
   initialObservedAt,
   quoteIsUsd,
   quoteSuffix,
+  initialChangePct,
 }: {
   base: string;
   quote: string;
@@ -36,6 +38,17 @@ export function LivePairPrice({
   quoteIsUsd: boolean;
   /** Short label appended for non-USD quotes (e.g. "XLM"). */
   quoteSuffix: string;
+  /**
+   * 24h % change baked at build time from the page's own chart
+   * points (last vs 24h-ago). Rendered as the change badge until the
+   * live change-summary worker (GET /v1/changes/pair/{base}/{quote})
+   * reports a fresher figure — mirrors the asset-sidebar fix (F090):
+   * this page is a static export with no client refresh, so a badge
+   * built once at deploy and never touched again can point the wrong
+   * direction for as long as the tab stays open while the price
+   * beside it keeps ticking live.
+   */
+  initialChangePct?: number | null;
 }) {
   // FEC audit A6-5: the 60s poll loop lives in the canonical usePricePoll.
   const poll = usePricePoll({
@@ -58,6 +71,13 @@ export function LivePairPrice({
 
   const shown = tipActive ? tipNumber : price;
 
+  // Same live feed the asset-sidebar change pill polls (F090), keyed on
+  // this pair instead of a single coin — never a second, independently
+  // -stuck 24h figure beside a price that keeps ticking.
+  const changeSummary = useChangeSummary('pair', `${base}/${quote}`);
+  const liveChangePct = unwrapH24DeltaPct(changeSummary.data);
+  const changePct = liveChangePct ?? initialChangePct ?? null;
+
   return (
     <>
       <span
@@ -69,6 +89,9 @@ export function LivePairPrice({
       >
         {shown != null ? formatQuotePrice(shown, quoteIsUsd, quoteSuffix) : '—'}
       </span>
+      {changePct != null && Number.isFinite(changePct) && (
+        <ChangeBadge pct={changePct} window="24h" />
+      )}
       {tipActive ? (
         <span className="text-ink-muted flex items-center gap-1.5 text-xs">
           <span
@@ -122,4 +145,39 @@ function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+}
+
+// Reads h24_delta_pct off either the standard {data, as_of, flags}
+// envelope or a bare row (useChangeSummary currently hands back the
+// raw JSON) — same either-shape tolerance as the asset-sidebar's
+// unwrapChangeSummary, scoped to the one field this badge needs.
+function unwrapH24DeltaPct(raw: unknown): number | null {
+  if (raw == null || typeof raw !== 'object') return null;
+  const maybe = raw as {
+    data?: { h24_delta_pct?: number | null };
+    h24_delta_pct?: number | null;
+  };
+  const row = maybe.data != null && typeof maybe.data === 'object' ? maybe.data : maybe;
+  return typeof row.h24_delta_pct === 'number' ? row.h24_delta_pct : null;
+}
+
+function ChangeBadge({ pct, window }: { pct: number; window: string }) {
+  const tone =
+    pct > 0
+      ? 'bg-up-subtle text-up'
+      : pct < 0
+        ? 'bg-down-subtle text-down'
+        : 'bg-surface-subtle text-ink-body';
+  const sign = pct > 0 ? '+' : '';
+  return (
+    <span
+      className={`rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${tone}`}
+    >
+      {sign}
+      {pct.toFixed(2)}%
+      <span className="ml-1 text-[10px] tracking-wider uppercase opacity-70">
+        {window}
+      </span>
+    </span>
+  );
 }

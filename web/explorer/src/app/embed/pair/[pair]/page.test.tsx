@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 import EmbedPairPage from './page';
 
@@ -16,8 +17,17 @@ function jsonResponse(body: unknown, status = 200) {
   });
 }
 
+// The page now also renders <LiveChangeChip> (K061), a TanStack Query
+// consumer — every render needs a QueryClient in scope.
 async function renderPage(pair: string) {
-  render(await EmbedPairPage({ params: Promise.resolve({ pair }) }));
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={client}>
+      {await EmbedPairPage({ params: Promise.resolve({ pair }) })}
+    </QueryClientProvider>,
+  );
 }
 
 describe('EmbedPairPage — live price refresh (W8.10)', () => {
@@ -43,6 +53,8 @@ describe('EmbedPairPage — live price refresh (W8.10)', () => {
         }
         if (url.includes('/v1/chart'))
           return jsonResponse({ data: { points: [] } });
+        if (url.includes('/v1/changes'))
+          return jsonResponse({ type: 'not-found' }, 404);
         throw new Error(`unexpected fetch: ${url}`);
       }),
     );
@@ -75,6 +87,8 @@ describe('EmbedPairPage — live price refresh (W8.10)', () => {
         }
         if (url.includes('/v1/chart'))
           return jsonResponse({ data: { points: [] } });
+        if (url.includes('/v1/changes'))
+          return jsonResponse({ type: 'not-found' }, 404);
         throw new Error(`unexpected fetch: ${url}`);
       }),
     );

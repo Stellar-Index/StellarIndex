@@ -428,10 +428,8 @@ export default async function PairPage({ params }: { params: Params }) {
               initialObservedAt={price?.observed_at ?? null}
               quoteIsUsd={isUsdQuote(quote)}
               quoteSuffix={shortAssetText(quote)}
+              initialChangePct={change24h}
             />
-            {change24h != null && Number.isFinite(change24h) && (
-              <ChangeBadge pct={change24h} window="24h" />
-            )}
           </div>
           <div className="mt-4">
             <PairChart
@@ -767,27 +765,6 @@ function AssetBadge({ canonical }: { canonical: string }) {
     >
       {label}
     </Link>
-  );
-}
-
-function ChangeBadge({ pct, window }: { pct: number; window: string }) {
-  const tone =
-    pct > 0
-      ? 'bg-up-subtle text-up'
-      : pct < 0
-        ? 'bg-down-subtle text-down'
-        : 'bg-surface-subtle text-ink-body';
-  const sign = pct > 0 ? '+' : '';
-  return (
-    <span
-      className={`rounded-sm px-2 py-0.5 font-mono text-xs tabular-nums ${tone}`}
-    >
-      {sign}
-      {pct.toFixed(2)}%
-      <span className="ml-1 text-[10px] tracking-wider uppercase opacity-70">
-        {window}
-      </span>
-    </span>
   );
 }
 

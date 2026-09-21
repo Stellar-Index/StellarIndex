@@ -7,6 +7,7 @@ import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
+import { LiveChangeChip } from '../../LiveChangeChip';
 import { isCIStub } from '@/lib/buildFetch';
 import { shortAssetText } from '@/lib/asset-label';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -174,7 +175,12 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
         ) : (
           <span className="font-mono text-2xl tabular-nums">—</span>
         )}
-        <ChangeChip pct={change24h} label="24h" />
+        <LiveChangeChip
+          entityType="pair"
+          entityID={`${base}/${quote}`}
+          window="24h"
+          initialPct={change24h}
+        />
       </div>
       {points.length > 0 && (
         <Sparkline points={points} positive={(change24h ?? 0) >= 0} />
@@ -183,30 +189,6 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
         Powered by Stellar Index
       </div>
     </div>
-  );
-}
-
-function ChangeChip({
-  pct,
-  label,
-}: {
-  pct: number | null | undefined;
-  label: string;
-}) {
-  if (pct == null || !Number.isFinite(pct)) return null;
-  const cls =
-    pct > 0
-      ? 'bg-up-subtle text-up'
-      : pct < 0
-        ? 'bg-down-subtle text-down'
-        : 'bg-surface-subtle text-ink-body';
-  return (
-    <span
-      className={`rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${cls}`}
-    >
-      {pct > 0 ? '+' : ''}
-      {pct.toFixed(2)}% {label}
-    </span>
   );
 }
 
