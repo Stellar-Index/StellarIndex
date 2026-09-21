@@ -294,6 +294,11 @@ stale_patterns=(
                                   # #1001 is now a real, unrelated issue, so
                                   # the reference would resolve to the wrong
                                   # thing instead of just dangling
+  "#1002"                        # CHANGELOG's sac_wrappers entry cited a PR
+                                  # number that didn't exist yet (RSWP-063);
+                                  # #1002 is now a real, unrelated issue, so
+                                  # the reference would resolve to the wrong
+                                  # thing instead of just dangling
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
