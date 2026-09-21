@@ -1,5 +1,4 @@
-import { API_BASE_URL } from '@/api/client';
-import { isCIStub } from '@/lib/buildFetch';
+import { buildFetchData } from '@/lib/buildFetch';
 
 /**
  * Mirror of `VerifiedItemListItem` on the wire.
@@ -17,27 +16,19 @@ export interface VerifiedItem {
   market_cap_usd?: string;
 }
 
-// CI builds use a stub hostname that doesn't resolve; bypass the
-// network fetch in that case so static export doesn't time out.
-
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
-
 /**
  * fetchVerifiedCurrencies is the shared `/v1/assets/verified`
  * fetcher consumed by both this strip and the AssetsTable. Single
  * server-side fetch per page render — the page calls this once,
  * passes the result to both components as a prop.
+ *
+ * Goes through buildFetchData's fail-hard contract (src/lib/buildFetch.ts):
+ * a persistent transport failure THROWS and fails the build instead of
+ * silently baking a catalogue with zero verified rows. A scam token
+ * impersonating a verified ticker relies on exactly that kind of quiet
+ * degradation — see the (code, issuer) rule in AGENTS.md.
  */
 export async function fetchVerifiedCurrencies(): Promise<VerifiedItem[]> {
-  if (isCIStub) return [];
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) return [];
-    const env = (await res.json()) as { data?: VerifiedItem[] };
-    return env.data ?? [];
-  } catch {
-    return [];
-  }
+  const data = await buildFetchData<VerifiedItem[]>('/v1/assets/verified');
+  return data ?? [];
 }
