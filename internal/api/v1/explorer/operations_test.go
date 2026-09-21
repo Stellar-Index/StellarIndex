@@ -6,26 +6,28 @@ import (
 )
 
 // TestOpsDirCache covers the /v1/operations directory first-page cache: a miss
-// on empty, a hit within TTL, per-limit keying, and — since #444 / #332 F2
-// (2026-09-02) — that an entry past opsDirTTL is still RETURNED, marked
-// fresh=false, instead of reading as a miss. The stale-serve contract is the
-// point of the change: at 3s fill-on-miss, nearly every production hit missed
-// and paid the lake read inline. Staleness is now the caller's judgment (it
-// serves the entry with flags.stale and kicks a detached rebuild), exactly as
+// on empty, a hit within TTL, that the ONE entry serves every limit (K053 —
+// pre-fix this cache keyed by limit, so a different accepted limit missed and
+// bought its own lake read), and — since #444 / #332 F2 (2026-09-02) — that
+// an entry past opsDirTTL is still RETURNED, marked fresh=false, instead of
+// reading as a miss. The stale-serve contract is the point of that change: at
+// 3s fill-on-miss, nearly every production hit missed and paid the lake read
+// inline. Staleness is now the caller's judgment (it serves the entry with
+// flags.stale and kicks a detached rebuild), exactly as
 // hot_reads.go / contract_detail_cache.go do.
 func TestOpsDirCache(t *testing.T) {
 	var c opsDirCache
 
-	// Miss on an empty (zero-value) cache — must not panic on the nil map.
-	if _, ok, _ := c.get(50); ok {
+	// Miss on an empty (zero-value) cache — must not panic.
+	if _, ok, _ := c.get(); ok {
 		t.Fatal("empty cache returned a hit")
 	}
 
 	view := OperationsView{NextCursor: "abc", Operations: make([]OpView, 3)}
-	c.put(50, view)
+	c.put(view)
 
 	// Hit within TTL, marked fresh.
-	e, ok, fresh := c.get(50)
+	e, ok, fresh := c.get()
 	if !ok {
 		t.Fatal("expected a hit right after put")
 	}
@@ -39,20 +41,23 @@ func TestOpsDirCache(t *testing.T) {
 		t.Error("entry carries no fill time — the served as_of would be a lie")
 	}
 
-	// Keyed by limit — a different limit is a distinct entry (miss).
-	if _, ok, _ := c.get(200); ok {
-		t.Fatal("limit=200 should miss when only limit=50 was cached")
+	// ONE entry serves every limit (K053): the cache itself is limit-
+	// agnostic now — slicing to the caller's requested limit is the
+	// handler's job (sliceOperationsView), not this cache's.
+	e2, ok, _ := c.get()
+	if !ok || e2.view.NextCursor != "abc" {
+		t.Fatal("a second get() must return the SAME entry, not miss on a different requested limit")
 	}
 
 	// Past the TTL: still returned, marked stale, with its real fill time.
 	c.mu.Lock()
 	backdated := time.Now().Add(-2 * opsDirTTL)
-	entry := c.entries[50]
+	entry := c.entry
 	entry.cachedAt = backdated
-	c.entries[50] = entry
+	c.entry = entry
 	c.mu.Unlock()
 
-	e, ok, fresh = c.get(50)
+	e, ok, fresh = c.get()
 	if !ok {
 		t.Fatal("expired entry must still be RETURNED (stale-serve), not dropped")
 	}
