@@ -65,7 +65,9 @@ check "clean tree passes again after removing the doc fixture" ok
 
 before=$(git rev-parse HEAD)
 # gitleaks:allow — placeholder trailer text, not a real credential.
-git commit --allow-empty -q -m "test: throwaway fixture commit
+# A CI runner has no git identity; give the throwaway commit one.
+git -c user.name=lint-attribution-test -c user.email=lint-attribution-test@invalid \
+  commit --allow-empty -q -m "test: throwaway fixture commit
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 after=$(git rev-parse HEAD)
