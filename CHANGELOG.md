@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+- **api / cache-control — three SEP-40 oracle passthroughs stuck in the
+  300s catalogue band (RLT-438):** `/v1/oracle/lastprice`,
+  `/v1/oracle/prices` and `/v1/oracle/x_last_price` matched the
+  `/v1/oracle/` prefix arm and served the 5-minute closed-bucket-catalogue
+  directive, same as `/v1/oracle/latest` did before #344 carved it out.
+  All three are "last observed price" or excludes-in-progress-bucket
+  surfaces with no closed-bucket contract of their own; they now join
+  `/v1/oracle/latest` in the 30s client / 5s CDN short band in
+  `shortBandPolicy`.
+
 - **ops / stellarindex-ops CLI — `-h`/`-help` on a subcommand no longer
   exits 1 (F070, K055):** every subcommand's `flag.FlagSet` uses
   `flag.ContinueOnError`, so `-h` makes `fs.Parse` print usage and return

@@ -98,10 +98,11 @@ func TestPolicyForPath_PinsDirectives(t *testing.T) {
 		{"/v1/markets", "public, max-age=60, s-maxage=300"},
 		{"/v1/pairs", "public, max-age=60, s-maxage=300"},
 		{"/v1/sources", "public, max-age=60, s-maxage=300"},
-		// NB /v1/oracle/latest is NOT here — it left the catalogue band
-		// in #344; see TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand.
-		{"/v1/oracle/lastprice", "public, max-age=60, s-maxage=300"},
-		{"/v1/oracle/prices", "public, max-age=60, s-maxage=300"},
+		// NB /v1/oracle/latest, /v1/oracle/lastprice, /v1/oracle/prices and
+		// /v1/oracle/x_last_price are NOT here — they left the catalogue
+		// band in #344/RLT-438; see
+		// TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand and
+		// TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand.
 
 		// Registry catalogues + change-summary
 		{"/v1/issuers", "public, max-age=60, s-maxage=300"},
@@ -281,7 +282,7 @@ func TestPolicyForPath_CDNDisabled(t *testing.T) {
 		{"/v1/pairs", "public, max-age=60"},
 		{"/v1/sources", "public, max-age=60"},
 		{"/v1/aggregators", "public, max-age=60"},
-		{"/v1/oracle/lastprice", "public, max-age=60"},
+		{"/v1/oracle/lastprice", "public, max-age=30"},
 		// Non-cacheable directives unchanged.
 		{"/v1/healthz", "no-store"},
 		{"/v1/account/me", "private, no-store"},
@@ -336,6 +337,32 @@ func TestPolicyForPath_OracleLatestIsNotTheOraclePrefixBand(t *testing.T) {
 	}
 	if !strings.Contains(prefix, "s-maxage=300") {
 		t.Errorf("/v1/oracle/streams = %q, want the 300s catalogue band (only `latest` was moved)", prefix)
+	}
+}
+
+// TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand pins RLT-438:
+// /v1/oracle/lastprice and /v1/oracle/x_last_price are, like
+// /v1/oracle/latest, "last observed price" surfaces with no closed-bucket
+// contract, and /v1/oracle/prices is itself closed-bucket (it excludes the
+// in-progress bucket, same as /v1/price/changes). None of the three belong
+// in the `/v1/oracle/` prefix's 300s catalogue band, yet only
+// /v1/oracle/latest had been carved out of it — the other three fell
+// through and served a stale 5-minute-lag directive on a "latest" surface.
+func TestPolicyForPath_OracleSEP40PassthroughsShareTheShortBand(t *testing.T) {
+	const wantShortBand = "public, max-age=30, s-maxage=5"
+	for _, path := range []string{"/v1/oracle/lastprice", "/v1/oracle/prices", "/v1/oracle/x_last_price"} {
+		got := policyForPath(path, true)
+		if got != wantShortBand {
+			t.Errorf("policyForPath(%q) = %q, want the short band %q shared with /v1/oracle/latest", path, got, wantShortBand)
+		}
+		if strings.Contains(got, "s-maxage=300") {
+			t.Errorf("policyForPath(%q) = %q — still in the 300s /v1/oracle/ prefix catalogue band", path, got)
+		}
+	}
+	// A genuine catalogue sibling must stay in the 300s band — this guards
+	// against over-widening the exact-match carve-out into a new prefix.
+	if prefix := policyForPath("/v1/oracle/streams", true); !strings.Contains(prefix, "s-maxage=300") {
+		t.Errorf("/v1/oracle/streams = %q, want the 300s catalogue band (only the four named SEP-40 passthroughs moved)", prefix)
 	}
 }
 

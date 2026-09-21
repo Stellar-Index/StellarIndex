@@ -197,12 +197,24 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 // source" surface with NO closed-bucket contract and no staleness
 // flag, and it sat in the 300 s catalogue band purely because of the
 // `/v1/oracle/` prefix arm below. #344.
+//
+// The other three SEP-40 passthrough endpoints share the same defect
+// and the same fix: /v1/oracle/lastprice and /v1/oracle/x_last_price
+// are both "last observed price" surfaces with the identical
+// no-closed-bucket-contract nature as /v1/oracle/latest, and
+// /v1/oracle/prices is itself a closed-bucket surface (it excludes
+// the in-progress bucket, same as /v1/price/changes above) — none of
+// them belong in the 300 s catalogue band's `/v1/oracle/` prefix
+// arm either.
 func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	case path == "/v1/price",
 		strings.HasPrefix(path, "/v1/price/batch"),
 		path == "/v1/price/changes",
-		path == "/v1/oracle/latest":
+		path == "/v1/oracle/latest",
+		path == "/v1/oracle/lastprice",
+		path == "/v1/oracle/prices",
+		path == "/v1/oracle/x_last_price":
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=5", true
 		}
