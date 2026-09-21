@@ -71,7 +71,7 @@ HEALTHCHECKS_URL_SLA_PROBE=
 # SLA probe tuning (defaults match the binary's flag defaults).
 # SLA_PROBE_BASE_URL=http://localhost:3000/v1
 # SLA_PROBE_DURATION=30s
-# SLA_PROBE_CONCURRENCY=2
+# SLA_PROBE_CONCURRENCY=1
 # SLA_PROBE_PAIR=native,fiat:USD
 EOF
   chmod 0600 "$ENV_FILE"
