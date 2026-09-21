@@ -138,7 +138,23 @@ export default function SLAPage() {
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             /v1/price
           </code>{' '}
-          when you need reproducibility.
+          when you need reproducibility.{' '}
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
+            /v1/price/tip
+          </code>
+          &apos;s 30-second bound is a rolling-window target, not a hard cap:
+          when a pair has no trade in that window, the endpoint falls back to
+          the most recent observation it has and serves it as-is — with no
+          synthetic age ceiling and{' '}
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
+            flags.stale
+          </code>{' '}
+          left <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">false</code>,
+          since that fallback is in-contract per ADR-0018. Read{' '}
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
+            observed_at
+          </code>{' '}
+          on the response to know how old that particular answer is.
         </Aside>
       </Section>
 

@@ -320,6 +320,54 @@ func TestPriceTip_StablecoinFiatProxyFallback(t *testing.T) {
 	}
 }
 
+// TestPriceTip_ReportsWithheldFromProxyLeg is [T684]: the stablecoin-
+// fiat-proxy peg walk inside computeTip's fallback chain HAS a price
+// for the asset (the peg leg) and policy withholds it — the tip
+// surface must report errors/price-withheld, the same verdict
+// /v1/price already gives via [TestPriceReportsWithheldFromProxyLeg],
+// not errors/price-not-found (which tells the customer to look
+// nowhere when /v1/observations, /v1/ohlc and /v1/history all have
+// the data).
+func TestPriceTip_ReportsWithheldFromProxyLeg(t *testing.T) {
+	peg, err := canonical.ParseAsset(msp06Peg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset, err := canonical.ParseAsset("RIO-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reader := &pegAwarePriceReader{errByPair: map[string]error{
+		// Direct fiat read misses — the dominant on-chain shape.
+		asset.String() + "/fiat:USD": v1.ErrPriceNotFound,
+		// The peg leg HAS a price, and policy withholds it.
+		asset.String() + "/" + peg.String(): v1.ErrPriceWithheld,
+	}}
+	srv := v1.New(v1.Options{
+		Prices:            reader,
+		USDPeggedClassics: []canonical.Asset{peg},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price/tip?asset="+asset.String()+"&quote=fiat:USD")
+	body, _ := readAll(resp)
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404. Body: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(body, "errors/price-withheld") {
+		t.Errorf("body reports the wrong problem type — the proxy leg returned a "+
+			"WITHHELD verdict, so the answer is \"we have a price and decline to "+
+			"publish it\", not \"we have none\" (T684). Body: %s", body)
+	}
+	if strings.Contains(body, "errors/price-not-found") {
+		t.Errorf("withheld reported as not-found — the customer is told to look "+
+			"nowhere, when the withheld body would name /v1/observations, "+
+			"/v1/ohlc and /v1/history. Body: %s", body)
+	}
+}
+
 // TestPriceTip_HistoryErrorFallsThroughToFallback — a hypertable
 // hiccup must NOT take down the tip surface when LatestPrice can
 // still serve. The handler logs the error and quietly drops to the

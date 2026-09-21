@@ -257,7 +257,8 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// /v1/price/tip?asset=native&quote=fiat:USD 404s out of the box on
 	// every fresh deployment because nothing on-chain ever quotes in
 	// fiat:USD — same exact failure mode as /v1/price had.
-	if proxySnap, proxySources, ok, _ := s.tryStablecoinFiatProxy(ctx, asset, quote); ok {
+	proxySnap, proxySources, proxyOK, proxyWithheld := s.tryStablecoinFiatProxy(ctx, asset, quote)
+	if proxyOK {
 		return proxySnap, proxySources, nil
 	}
 	// Last-resort fiat-vs-fiat cross-rate via the forex snapshot.
@@ -275,11 +276,12 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// Last, so an observed market still wins.
 	if fxSnap, fxSources, ok, withheld := s.tryUSDAnchoredFiatCross(ctx, asset, quote); ok {
 		return fxSnap, fxSources, nil
-	} else if withheld {
-		// The USD leg is withheld, so the derived price is too. This
-		// surface already distinguishes the two verdicts (see the
-		// ErrPriceWithheld arm above), so report it honestly rather than
-		// letting it fall through as "no data".
+	} else if withheld || proxyWithheld {
+		// The USD leg (either the stablecoin-fiat proxy's peg walk above,
+		// or this cross's own leg) is withheld, so the derived price is
+		// too. This surface already distinguishes the two verdicts (see
+		// the ErrPriceWithheld arm above), so report it honestly rather
+		// than letting it fall through as "no data".
 		return PriceSnapshot{}, nil, newPriceWithheld(PriceWithheldUpstreamLeg)
 	}
 	// Last of all: the SAC-form combinations the caller did not name —
