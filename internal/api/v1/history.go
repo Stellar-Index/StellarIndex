@@ -343,9 +343,11 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 		afterOpIndex = c.opIndex
 	}
 
-	// 8s ceiling on the trades hypertable range query. Same
-	// pattern as #1082 / #1099 / #1100 / #1101 / #1102. Long
-	// `from` windows (no `from` set, or month-spanning) can take
+	// 8s ceiling on the trades hypertable range query, part of the
+	// cold-path timeout pattern applied across every aggregation
+	// endpoint (CHANGELOG.md: "Cold-path 8-second response ceiling
+	// on every aggregation endpoint"). Long `from` windows (no
+	// `from` set, or month-spanning) can take
 	// 5–10s on a cold cache scanning per-trade rows. One ceiling spans
 	// every alias scan below — the fan-in must not multiply the
 	// endpoint's worst-case hold.
