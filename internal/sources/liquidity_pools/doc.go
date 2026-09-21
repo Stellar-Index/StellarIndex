@@ -1,6 +1,6 @@
 // Package liquidity_pools is the canonical LiquidityPoolEntry
 // observer per ADR-0022. Plugs into the dispatcher's
-// LedgerEntryChange hook (#297) and emits one Observation per
+// LedgerEntryChange hook (Task #54) and emits one Observation per
 // asset-side of a pool change touching an operator-watched
 // classic credit asset.
 //

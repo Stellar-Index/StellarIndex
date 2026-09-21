@@ -22,7 +22,7 @@ type AccountObservationLookup interface {
 
 // LCMHomeDomainResolver replaces the operator-static
 // `[metadata.issuer_home_domains]` map with live data observed by
-// the AccountEntry observer (#298). Per ADR-0021 the static map
+// the AccountEntry observer (Task #54). Per ADR-0021 the static map
 // stays in tree as a bootstrap fallback — operators that flip
 // to LCM keep the static entries for issuers the observer hasn't
 // backfilled yet.

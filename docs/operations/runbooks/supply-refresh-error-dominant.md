@@ -264,9 +264,9 @@ USDC through):
 
 ```toml
 [supply.stale_component_ledgers_by_asset]
-# asset_key (CODE-ISSUER for classic, bare contract id for SEP-41)
+# asset_key (CODE:ISSUER for classic, bare contract id for SEP-41)
 # = relaxed threshold in ledgers. ≈5000 ≈ 7 h.
-"PHO-GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6" = 5000
+"PHO:GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6" = 5000
 ```
 
 Identify *which* asset to override from the per-asset metric — the
@@ -302,7 +302,7 @@ fix.
 
 - **Bootstrap window after fresh deploy.** The
   `_no_observation` outcome dominates briefly while the
-  AccountEntry observer (#298) backfills the watched accounts.
+  AccountEntry observer (Task #54) backfills the watched accounts.
   The 30 min `for` clause typically absorbs this; longer
   bootstraps still trip it. Operators that anticipate this can
   silence the alert during deploy windows.
