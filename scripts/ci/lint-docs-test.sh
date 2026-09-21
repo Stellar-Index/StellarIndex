@@ -50,6 +50,14 @@ check "an ADR with no docs/adr/README.md Index row is caught" red
 rm -f "$FIX"
 check "clean tree passes again" ok
 
+# §4 stale-reference check: CHANGELOG.md must not carry the dangling
+# "PR #1042" citation back in (RSWP-068 — #1042 resolves to a real but
+# unrelated issue, not the PR the changelog implies).
+echo "(PR #1042)" >> CHANGELOG.md
+check "a reintroduced 'PR #1042' citation in CHANGELOG.md is caught" red
+git checkout -- CHANGELOG.md
+check "clean tree passes again after revert" ok
+
 cat > "$FIX2" <<'EOF'
 ---
 title: "[SEV-2] fixture — aged incident, plain prose action item"

@@ -302,6 +302,7 @@ stale_patterns=(
   "#1083\b"                      # dangling ref (RSWP-073) — resolves to an
                                   # unrelated live issue, never the PR that
                                   # shipped the cursor/prewarm work it cited
+  "PR #1042"                     # dangling citation — no such PR exists; #1042 resolves to an unrelated issue
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
