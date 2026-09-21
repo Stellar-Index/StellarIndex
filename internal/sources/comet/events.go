@@ -92,9 +92,11 @@ const MainnetBackstopPool = "CAS3FL6TLZKDGGSISDBWGGPXT3NRR4DYTZD7YOD3HMYO6LTJUVG
 // loop for discovering byte-identical Balancer-v1 deployments.
 func MainnetGatedSet() []string { return []string{MainnetBackstopPool} }
 
-// cometTopicArity is the topic count on every Comet event:
-// [Symbol("POOL"), Symbol("<event_name>")]. Anything other than 2 is
-// a schema change we don't claim.
+// cometTopicArity is the minimum topic count on every Comet event:
+// [Symbol("POOL"), Symbol("<event_name>")]. classify checks a floor
+// (len(e.Topic) < cometTopicArity), not equality, so a future event
+// with extra trailing topics still classifies on its first two — the
+// contract-identity gate in Matches, not arity, is what we trust.
 const cometTopicArity = 2
 
 // LiquidityKind discriminates the four liquidity-mutating Comet

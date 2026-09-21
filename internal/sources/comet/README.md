@@ -72,8 +72,10 @@ The task brief listed several "classic Balancer-v1" events
 - **`set_controller`** — the function *exists* but the Soroban port
   does **not** publish an event for it. A future contract upgrade
   that adds one would surface as a new `(POOL, set_controller)`
-  topic and the dispatcher would route it to our `Decode`, which
-  rejects with `ErrNotCometEvent` until a handler is added.
+  topic; `classify` doesn't recognise it, so `Matches` returns
+  `false` before the dispatcher ever calls `Decode` — it falls
+  through to the global unmatched tally described below, not to
+  `ErrNotCometEvent`, until a handler is added.
 - **`gulp`** — the function exists (absorbs tokens sent directly to
   the contract) but does not publish an event.
 - **BPT (Balancer Pool Token) `transfer`** — emitted via the
