@@ -14337,6 +14337,59 @@
               "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
               "cookie": [],
               "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "Server is degraded (dependency outage, startup, shutdown).",
+              "originalRequest": {
+                "url": {
+                  "path": [
+                    "mev"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Filter to one pattern (e.g. arbitrage). (This can only be one of arbitrage,sandwich,oracle_sandwich,oracle_deviation,liquidation_cascade,wash_trade)",
+                        "type": "text/plain"
+                      },
+                      "key": "kind",
+                      "value": "oracle_deviation"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Maximum events to return (1-500, default 50).",
+                        "type": "text/plain"
+                      },
+                      "key": "limit",
+                      "value": "50"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/problem+json"
+                  }
+                ],
+                "method": "GET",
+                "body": {}
+              },
+              "status": "Service Unavailable",
+              "code": 503,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+              "cookie": [],
+              "_postman_previewlanguage": "json"
             }
           ],
           "event": [],
