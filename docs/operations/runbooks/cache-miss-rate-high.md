@@ -36,7 +36,7 @@ severity: P2
    - `markets` / `asset_markets` — backs `/v1/markets?asset=<x>`
    - `markets` / `all_pools` — backs `/v1/pools`
 2. **Check the prewarm code.** Open `cmd/stellarindex-api/main.go`, function `prewarmCaches` (main.go:4429) — it dispatches two tiers: `prewarmHeavy` (the `sources_stats` family, 5-min cadence) and `prewarmLight` (markets/pools/coins/native, 60 s cadence). Find the call corresponding to the alerted op. Compare every argument against what the handler at `internal/api/v1/markets.go` passes.
-3. **Diff the cache keys.** The cache key is a `fmt.Sprintf` of the args (see `internal/api/v1/markets_cache.go` `fetchPairs` / `fetchPools`). If the prewarm passes `Order=0` and the handler passes `Order=1`, the keys differ. We've shipped 3 of these bugs in 24h (#1185 Order, #1194 Sources, #1195 Limit) — same family.
+3. **Diff the cache keys.** The cache key is a `fmt.Sprintf` of the args (see `internal/api/v1/markets_cache.go` `fetchPairs` / `fetchPools`). If the prewarm passes `Order=0` and the handler passes `Order=1`, the keys differ. We've shipped 3 of these bugs in 24h (Order dimension, #1194 Sources, #1195 Limit) — same family.
 4. **Sanity check the cache TTL vs prewarm cadence.** `v1.NewCachedMarketsReader(...)` is constructed with `2*time.Minute`; `prewarmCaches` runs the heavy tier every 5 min and the light tier every 60 s. If a tier's cadence ever exceeds its caches' TTL, the cache expires before the next refresh and looks like a miss-storm.
 
 5. **Rule out key churn before blaming the prewarm.** The `observations`
@@ -63,7 +63,7 @@ severity: P2
 
 ## Related
 
-- Worked examples of the pattern: PR #1185 (Order dimension drift),
+- Worked examples of the pattern: the Order dimension drift bug,
   #1194 (Sources dimension), #1195 (Limit dimension via implicit
   handler-side subtraction). Read these for fix exemplars; all
   three follow the same diff-and-fix shape this runbook describes.
@@ -74,6 +74,12 @@ severity: P2
 
 ## Changelog
 
+- 2026-09-21 — dropped the dangling PR citations for the Order
+  dimension drift bug (RSWP-105). No such PR was ever opened; the
+  bare issue number now resolves to an unrelated, real, open issue
+  (backfill-chainlink error handling), so the citation pointed a
+  reader at the wrong thing rather than at nothing. Replaced with a
+  plain description of the bug the citations meant to name.
 - 2026-09-01 — denominator narrowed to the read outcomes
   (`hit|miss|stale`) in both rule trees. `evicted` / `refresh_error`
   are side-events; with the bounded `oracle` / `observations` caches
@@ -91,4 +97,5 @@ severity: P2
   per-limit + per-DEX, leaving only `asset_markets` cold; the
   "≤ 60 s post-deploy" verification scoped to the light tier.
   Status promoted draft → current.
-- 2026-05-09 — initial draft, motivated by PRs #1185 / #1194 / #1195 / #1196.
+- 2026-05-09 — initial draft, motivated by the Order-dimension drift
+  bug plus #1194 / #1195 / #1196.
