@@ -288,6 +288,7 @@ stale_patterns=(
   "stellarindex\.ctx\.io"         # old placeholder domain
   "ctx-indexer\|ctx-aggregator\|ctx-api\|ctx-ops\|ctx-migrate" # old binary names (we use stellarindex- prefix now — adjust if you change the policy)
   "CTX Rates"                    # old project name (now "Stellar Index")
+  "\(#1004\)"                    # CHANGELOG's rc.30 known_issuers entry cited a PR number since reused by an unrelated live issue (RSWP-065)
   "#1001"                        # CHANGELOG's sac_wrappers entry cited a PR
                                   # number that didn't exist yet (RSWP-062);
                                   # #1001 is now a real, unrelated issue, so
