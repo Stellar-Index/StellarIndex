@@ -22,7 +22,7 @@ import (
 // a response. Every other done-ness is a SERVER-side budget expiring
 // with the client still waiting, and must flow through to the 503
 // timeout-response branch: the cold-path WithTimeout guards inside
-// handlers (#1082, #1099-#1105), and the blanket
+// handlers, and the blanket
 // middleware.RequestTimeout deadline, which since C3-102 wraps
 // r.Context() itself.
 //
@@ -57,7 +57,7 @@ func TestClientAborted_directContextCanceled_aliveReqCtx(t *testing.T) {
 func TestClientAborted_directDeadlineExceeded_aliveReqCtx(t *testing.T) {
 	// THE bug fix: a bare context.DeadlineExceeded with the request
 	// context still alive comes from one of our cold-path
-	// context.WithTimeout(8s) guards (#1082, #1099-#1105). Returning
+	// context.WithTimeout(8s) guards. Returning
 	// true here would short-circuit the handler before its 503
 	// timeout-response branch fires — the client would get an empty
 	// body instead of a structured problem+json.

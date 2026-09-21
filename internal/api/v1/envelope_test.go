@@ -264,7 +264,7 @@ func TestWriteProblem_NonAuthDoesNotSetWWWAuthenticate(t *testing.T) {
 // HTTPMetrics label this 499" path. The decision rule is
 // req-context-done → true; everything else (including bare ctx
 // errors when r.Context() is alive) is false so that server-side
-// context.WithTimeout deadlines (#1082, #1099-#1105) flow into
+// context.WithTimeout deadlines flow into
 // each handler's 503 timeout-response branch instead of being
 // silently swallowed.
 func TestClientAborted(t *testing.T) {

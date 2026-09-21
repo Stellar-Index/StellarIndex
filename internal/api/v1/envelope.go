@@ -404,7 +404,7 @@ func writeProblemErr(
 // A done request context whose Err is [context.DeadlineExceeded] is
 // the opposite case — a SERVER-side budget expiring with the client
 // still on the wire. Two of those exist: the cold-path
-// context.WithTimeout guards inside handlers (#1082, #1099-#1105), and
+// context.WithTimeout guards inside handlers, and
 // since C3-102 the blanket middleware.RequestTimeout deadline, which
 // wraps r.Context() itself. Testing only `Err() != nil` conflated the
 // second with a client abort: on the global deadline the handler
