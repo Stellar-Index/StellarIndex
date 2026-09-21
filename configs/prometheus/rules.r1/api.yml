@@ -145,8 +145,8 @@ groups:
       # cache wrappers (`v1.CachedMarketsReader`, etc) — when miss
       # rate stays > 50 % for 10 min on a hot op, the prewarm key
       # has drifted from what the handler looks up. We've shipped
-      # three of these bugs in 24 h (#1185 / #1194 / #1195); the
-      # alert is the cheapest detector. Deliberate that we
+      # three of these bugs in 24 h (the Order dimension, #1194,
+      # #1195); the alert is the cheapest detector. Deliberate that we
       # threshold on RATIO not absolute miss count: a cache that
       # serves 1 req/s with 100 % miss is fine, a cache that
       # serves 1000 req/s with 50 % miss is a phantom-key drift.

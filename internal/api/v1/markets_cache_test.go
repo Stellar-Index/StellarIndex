@@ -3,6 +3,9 @@ package v1
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -157,9 +160,10 @@ func readCacheCounter(t *testing.T, cache, op, result string) float64 {
 // AllPools' miss-on-first-call + hit-on-repeat-call increments the
 // stellarindex_api_cache_ops_total counter on the right label set.
 // Detection target: a future refactor that drops the metric inc on
-// either branch. Three earlier session bugs (#1185 / #1194 / #1195)
-// were prewarm-key drifts; this test guards the OBSERVABILITY of
-// future drifts by ensuring the counter actually moves.
+// either branch. Three earlier session bugs (the Order dimension,
+// #1194, #1195) were prewarm-key drifts; this test guards the
+// OBSERVABILITY of future drifts by ensuring the counter actually
+// moves.
 func TestCachedMarketsReader_HitMissCounter(t *testing.T) {
 	up := &fakeMarketsReader{}
 	c := NewCachedMarketsReader(up, 60*time.Second)
@@ -452,4 +456,29 @@ func TestCachedMarketsReader_PoolsSWRKeepsStaleOnError(t *testing.T) {
 
 func (f *fakeMarketsReader) FirstTradeBatch(_ context.Context, _ [][2]string) (map[string]time.Time, error) {
 	return map[string]time.Time{}, nil
+}
+
+// TestNoDanglingPR1185Citation guards against re-introducing the "#1185"
+// / "PR #1185" citation into the cache-miss-rate-high runbook or its
+// Prometheus rule comment (RSWP-105). No PR #1185 was ever opened; the
+// bare number now resolves to a real but unrelated open issue, so the
+// citation misleads a reader rather than merely dangling. Mirrors
+// TestNoDanglingIssueReferences (dangling_issue_refs_test.go) for the
+// same repo-wide class of defect.
+func TestNoDanglingPR1185Citation(t *testing.T) {
+	const stale = "#1185"
+	root := repoRoot(t)
+	files := []string{
+		filepath.Join(root, "docs", "operations", "runbooks", "cache-miss-rate-high.md"),
+		filepath.Join(root, "configs", "prometheus", "rules.r1", "api.yml"),
+	}
+	for _, f := range files {
+		b, err := os.ReadFile(f) //nolint:gosec // repo-relative path resolved above
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		if strings.Contains(string(b), stale) {
+			t.Errorf("%s still cites the dangling %q reference; it now resolves to an unrelated issue, not the Order-dimension prewarm/handler cache-key drift bug", f, stale)
+		}
+	}
 }
