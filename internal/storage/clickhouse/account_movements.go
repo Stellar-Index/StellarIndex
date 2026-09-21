@@ -418,6 +418,35 @@ func MaxAccountMovementLedger(ctx context.Context, addr string, from, to uint32)
 	return uint32(hi), true, nil
 }
 
+// MinAccountMovementLedger returns the lowest ledger already present
+// in stellar.account_movements within [from,to] inclusive. Paired
+// with MaxAccountMovementLedger: classic-movements-backfill's -resume
+// only trusts a jump to MaxAccountMovementLedger's result when
+// MinAccountMovementLedger([from,to]) itself equals from — i.e. the
+// range genuinely has data starting right at the resume window's own
+// lower bound, not merely somewhere inside it. Without that check, a
+// later invocation with a WIDENED -from (covering an earlier range a
+// prior, narrower run never touched) still finds that prior run's tip
+// via max(ledger) and jumps straight to it, silently never
+// revisiting the newly-widened earlier range (Q216).
+func MinAccountMovementLedger(ctx context.Context, addr string, from, to uint32) (ledger uint32, found bool, err error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = conn.Close() }()
+	var cnt, lo uint64
+	if err := conn.QueryRow(ctx,
+		`SELECT toUInt64(count()), toUInt64(min(ledger)) FROM stellar.account_movements WHERE ledger BETWEEN ? AND ?`,
+		from, to).Scan(&cnt, &lo); err != nil {
+		return 0, false, fmt.Errorf("clickhouse: min account_movements ledger [%d,%d]: %w", from, to, err)
+	}
+	if cnt == 0 {
+		return 0, false, nil
+	}
+	return uint32(lo), true, nil
+}
+
 // ClaimableBalanceCreateRow is one resolved claimable_balance_create
 // movement's asset/amount/creator, keyed by balance_id in
 // FindClaimableBalanceCreates' returned map.

@@ -15,6 +15,37 @@ against.
 
 ## [Unreleased]
 
+- **ops / classic-movements-backfill — -resume could skip a widened -from
+  range, and a same-window CAP-0038 claim could resolve to "unresolved"
+  (Q216, T137):** `MaxAccountMovementLedger` reports the highest ledger
+  anywhere in `[-from,-to]`, not a contiguous frontier from `-from`; a run
+  that widened `-from` below a prior, narrower run's start still found that
+  prior run's tip and jumped straight to it, silently never revisiting the
+  newly-widened earlier range. `-resume` now also checks the new
+  `MinAccountMovementLedger` and only trusts the jump when the range's data
+  genuinely starts at `-from`. Separately, `classicMovementsHandleCAP0038Op`
+  builds its claimable-balance-create movements via
+  `classicmovements.DecodeCAP0038Revocation` directly (bypassing
+  `dec.Decode`), so a claim against a balance CAP-0038 auto-liquidation
+  created earlier in the SAME window always fell through to "unresolved" —
+  the create was in that window's own batch but nothing consulted it before
+  the ClickHouse fallback. `classicMovementsAttemptWindow` now decodes the
+  entry-changes surface before resolving pending claims, and
+  `classicMovementsResolvePendingClaimableBalances` checks a batch-local
+  balance_id index as a free fallback.
+  **T355 (deferred, needs coordination):** `cbLookupCreatesQuery`'s
+  `idx_cb_balance_id` bloom-filter skip index is declared in both
+  `internal/storage/clickhouse/account_movements.go`'s `accountMovementsDDL`
+  and `deploy/clickhouse/tier1_schema.sql` (already applied to r1 via a
+  one-off `ALTER TABLE`), and is disabled (`use_skip_indexes = 0`) by the
+  only production query that touches its indexed expression, kept only for
+  a documented-but-nonexistent future point-lookup caller. Removing it
+  correctly needs both DDL copies changed in lockstep (to avoid schema
+  drift between a fresh deploy and r1) plus a follow-up operator
+  `ALTER TABLE ... DROP INDEX` against the live database — outside a single
+  fixer's file scope and outside "commit code, never run a migration
+  against a real database." Left as-is pending that coordination.
+
 - **ci / agent-attribution guard now runs unconditionally in CI, not only
   an opt-in local hook (F167, F172):** a prior attempt at this wired the
   check into `ci.yml`'s `doc-checks` job, which never runs at all for a

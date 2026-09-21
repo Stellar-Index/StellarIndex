@@ -521,6 +521,20 @@ func TestClickHouseAccountMovementsRoundTrip(t *testing.T) {
 		t.Fatalf("MaxAccountMovementLedger (empty range) found=true, want false")
 	}
 
+	// ── MinAccountMovementLedger: -resume's contiguity check (Q216) ──
+	minLedger, minFound, err := chstore.MinAccountMovementLedger(ctx, addr, ledger, ledger)
+	if err != nil {
+		t.Fatalf("MinAccountMovementLedger: %v", err)
+	}
+	if !minFound || minLedger != ledger {
+		t.Fatalf("MinAccountMovementLedger = (%d, %v), want (%d, true)", minLedger, minFound, ledger)
+	}
+	if _, found, err := chstore.MinAccountMovementLedger(ctx, addr, ledger+1, ledger+1000); err != nil {
+		t.Fatalf("MinAccountMovementLedger (empty range): %v", err)
+	} else if found {
+		t.Fatalf("MinAccountMovementLedger (empty range) found=true, want false")
+	}
+
 	// ── FindClaimableBalanceCreates: the ClickHouse Phase-3 batched fallback
 	// lookup (2026-07-12: replaces a serial per-ref FindClaimableBalanceCreate
 	// after the idx_cb_balance_id skip index made per-lookup cost negligible
