@@ -204,13 +204,22 @@ func (c *Config) validate() error {
 // Handlers exposes the auth flow to be mounted in the v1 mux.
 type Handlers struct{ cfg *Config }
 
-// NewHandlers validates the config and returns a mount-ready
-// Handlers.
-func NewHandlers(cfg Config) (*Handlers, error) {
+// NewHandlers validates cfg IN PLACE and returns a mount-ready
+// Handlers backed by that same pointer.
+//
+// cfg is a *Config, not a value: validate() defaults several
+// fields (Generator.Secret, Logger, Now, PasskeyCeremonyGuard —
+// see validate() below), and a by-value parameter would apply
+// those defaults to a local copy, leaving the caller's own
+// Config — which [Middleware] and [RequireSession] are built
+// from directly, without going through NewHandlers — un-
+// defaulted. Passing the pointer means one validated Config
+// serves every consumer, current and future.
+func NewHandlers(cfg *Config) (*Handlers, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
-	return &Handlers{cfg: &cfg}, nil
+	return &Handlers{cfg: cfg}, nil
 }
 
 // Mount installs the auth routes onto a mux:

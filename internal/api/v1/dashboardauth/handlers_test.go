@@ -52,7 +52,7 @@ func newTestRig(t *testing.T) *testRig {
 		MagicLinkTTL:     15 * time.Minute,
 		SessionTTL:       30 * 24 * time.Hour,
 	}
-	h, err := NewHandlers(cfg)
+	h, err := NewHandlers(&cfg)
 	if err != nil {
 		t.Fatalf("NewHandlers: %v", err)
 	}

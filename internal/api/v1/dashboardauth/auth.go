@@ -139,13 +139,17 @@ func HashMagicLinkPlaintext(plaintext string) []byte {
 type Generator struct {
 	Read func([]byte) (int, error)
 	// Secret keys the 6-digit code derivation (see
-	// [Generator.CodeForHash]). Production wires it from the
+	// [Generator.CodeForHash]) AND, despite the env var's name, also
+	// keys the WebAuthn passkey-ceremony cookie MAC
+	// (passkeyCeremonyMAC in passkey.go) — the same server secret
+	// backs both. Production wires it from the
 	// STELLARINDEX_DASHBOARD_CODE_SECRET env (config
 	// api.dashboard.code_secret_env); when left empty,
-	// Config.validate() fills a random per-process secret so the
-	// derivation is NEVER unkeyed — the trade-off being that
-	// in-flight codes stop verifying across a restart (the magic
-	// link is unaffected; codes live 15 minutes anyway).
+	// Config.validate() fills a random per-process secret so neither
+	// derivation is ever unkeyed — the trade-off being that in-flight
+	// codes AND in-flight passkey ceremonies stop verifying across a
+	// restart (the magic link token itself is unaffected; both live
+	// well under a restart-cycle timescale).
 	Secret []byte
 }
 

@@ -72,7 +72,7 @@ func loginThroughProductionWiring(t *testing.T, logs *bytes.Buffer) (*httptest.R
 		t.Fatalf("buildDashboardSender: %v", err)
 	}
 	tokens := &countingTokenStore{}
-	h, err := dashboardauth.NewHandlers(dashboardauth.Config{
+	h, err := dashboardauth.NewHandlers(&dashboardauth.Config{
 		Accounts:         unusedAccountStore{},
 		Users:            unusedUserStore{},
 		Tokens:           tokens,
