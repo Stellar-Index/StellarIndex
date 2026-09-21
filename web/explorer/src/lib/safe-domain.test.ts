@@ -46,6 +46,22 @@ describe('isSafePublicImageUrl', () => {
     ).toBe(false);
   });
 
+  it('rejects loopback / localhost with a trailing root-zone dot', () => {
+    expect(isSafePublicImageUrl('https://localhost./icon.png')).toBe(false);
+    expect(isSafePublicImageUrl('https://127.0.0.1./icon.png')).toBe(false);
+  });
+
+  it('rejects an IPv4-mapped IPv6 loopback literal', () => {
+    // new URL(...).hostname normalizes the dotted form to compressed hex
+    // (::ffff:127.0.0.1 -> [::ffff:7f00:1]); both must be caught.
+    expect(isSafePublicImageUrl('https://[::ffff:127.0.0.1]/icon.png')).toBe(
+      false,
+    );
+    expect(isSafePublicImageUrl('https://[::ffff:7f00:1]/icon.png')).toBe(
+      false,
+    );
+  });
+
   it('rejects non-URL garbage and empty/missing values', () => {
     expect(isSafePublicImageUrl('not a url')).toBe(false);
     expect(isSafePublicImageUrl('')).toBe(false);

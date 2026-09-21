@@ -62,11 +62,30 @@ function isPrivateIPv4(host: string): boolean {
   return false;
 }
 
+// An IPv4-mapped IPv6 literal (::ffff:a.b.c.d, or its compressed hex form
+// such as ::ffff:7f00:1 that `new URL(...).hostname` normalizes to) targets
+// the same host at the network layer as the embedded IPv4 address. Returns
+// that IPv4 in dotted form, or null if host isn't one of these.
+function ipv4FromMappedIPv6(host: string): string | null {
+  const dotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/.exec(host);
+  if (dotted) return dotted[1];
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+  if (!hex) return null;
+  const n1 = parseInt(hex[1], 16);
+  const n2 = parseInt(hex[2], 16);
+  return `${n1 >> 8}.${n1 & 0xff}.${n2 >> 8}.${n2 & 0xff}`;
+}
+
 function isPrivateHostname(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, ''); // strip IPv6 [] brackets
+  const host = hostname
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '') // strip IPv6 [] brackets
+    .replace(/\.$/, ''); // normalize a trailing root-zone dot ("localhost.")
   if (host === 'localhost' || host.endsWith('.localhost')) return true;
   if (host.endsWith('.local') || host.endsWith('.internal')) return true;
   if (isPrivateIPv4(host)) return true;
+  const mapped = ipv4FromMappedIPv6(host);
+  if (mapped && isPrivateIPv4(mapped)) return true;
   // IPv6 loopback, unspecified, unique-local (fc00::/7), link-local (fe80::/10).
   if (host === '::1' || host === '::') return true;
   if (/^(fc|fd)[0-9a-f]{2}:/.test(host)) return true;
