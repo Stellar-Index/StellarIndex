@@ -45,7 +45,7 @@ func BuildRegistry(names []string, oracle config.OracleConfig, watchedSEP41 []st
 	var sources []Source
 	seen := map[string]bool{}
 	for _, name := range names {
-		lower := strings.ToLower(name)
+		lower := strings.ToLower(strings.TrimSpace(name))
 		s, ok, err := buildSource(lower, oracle, watchedSEP41, gated, soroswapOpts...)
 		if err != nil {
 			return Registry{}, err
@@ -109,8 +109,9 @@ var sep41SupplySyms = []string{
 // so a far-behind catch-up window doesn't stream the CAP-67 classic-token
 // firehose (under the r1 archive's uniform V4 meta, ~99.8% of all
 // contract_events / soroban_events — transfer alone is ~88%). It's the
-// classic-token topic[0] set MINUS set_admin: every one of the eight sources
-// below was audited (events.go + classify) and none consumes any of these six,
+// classic-token topic[0] set MINUS set_admin: every one of the ten sources
+// below (incl. upshift and sushiswap_v3, added since this comment was first
+// written) was audited (events.go + classify) and none consumes any of these six,
 // so the exclusion is provably lossless — whereas blend DOES dispatch on
 // set_admin, so set_admin is deliberately retained (its volume is negligible —
 // not even in the top-20 topic_0_sym). This is an exclude-list rather than a
@@ -177,9 +178,16 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 		// ADR-0035/0040: contract-gated (curated set — comet has no
 		// factory namespace). gated[comet] layers the protocol_contracts
 		// warm on the in-code MainnetGatedSet trust root.
+		//
+		// WithoutMetrics (Q018): the dispatcher ALWAYS builds its own
+		// comet.Decoder when comet is enabled, independent of whether
+		// the projector also runs (Phase-3 parallel double-write). Both
+		// would otherwise decode the same live event and double-count
+		// the self-pair / non-positive-amount exploit-detection
+		// counters. The dispatcher's instance stays the canonical one.
 		return Source{
 			Name:              comet.SourceName,
-			Decoder:           comet.NewDecoder(gated[comet.SourceName]...),
+			Decoder:           comet.NewDecoder(gated[comet.SourceName]...).WithoutMetrics(),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
 		}, true, nil
 	case blend.SourceName:

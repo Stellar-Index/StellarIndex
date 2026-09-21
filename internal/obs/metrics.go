@@ -53,6 +53,7 @@ func registerAppMetrics() {
 		SourceUnknownSymbolsTotal,
 		SourceOrphanEventsTotal,
 		AMMSelfPairSwapTotal,
+		AMMNonPositiveSwapTotal,
 		ExternalPollerPollsTotal,
 		ExternalPollerLastSuccessUnix,
 		ChainlinkFeedDecimalsMismatchTotal,
@@ -340,6 +341,8 @@ func seedBoundedLabelSeries() {
 	// deployed" — the exact F-0033 ambiguity. Its `source` label is bounded to
 	// the single known producer (comet).
 	AMMSelfPairSwapTotal.WithLabelValues("comet")
+	// Same dead-metric ambiguity as AMMSelfPairSwapTotal above, same fix.
+	AMMNonPositiveSwapTotal.WithLabelValues("comet")
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
 	}
@@ -1241,6 +1244,25 @@ var AMMSelfPairSwapTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_amm_self_pair_swap_total",
 		Help: "AMM swaps dropped as self-pair (token_in==token_out) — an exploit primitive with no honest purpose. By source.",
+	},
+	[]string{"source"},
+)
+
+// AMMNonPositiveSwapTotal — per-source counter of AMM swap events decoded
+// as carrying a non-positive amount (in/out <= 0) and dropped to zero rows.
+// Sibling detection metric to [AMMSelfPairSwapTotal]: same "decoded cleanly,
+// zero honest rows" drop shape, same exploit-adjacent significance, so it is
+// recency-gated the same way (the decoder's own [selfPairLiveWindow]) —
+// without that gate, `reconciliation_catalogue.go` and `verify_decoders.go`
+// constructing their own un-disabled comet.NewDecoder() to replay historical
+// ledgers would inflate this counter on every completeness sweep, exactly
+// the false-positive shape the self-pair gate exists to avoid. Incremented
+// at the decoder drop point (comet dispatcher_adapter). Detection only — it
+// changes no serving or freeze decision.
+var AMMNonPositiveSwapTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_amm_non_positive_swap_total",
+		Help: "AMM swaps dropped for a non-positive amount (in/out <= 0). By source.",
 	},
 	[]string{"source"},
 )
