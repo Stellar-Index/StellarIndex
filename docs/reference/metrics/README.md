@@ -1596,6 +1596,16 @@ with all-pair-success records as `ok`. Per-pair errors still surface
 as soft warnings; this counter is the tick-level rollup operators
 watch for sustained instability.
 
+### `stellarindex_aggregator_catalogue_tickers_skipped`
+
+Gauge, no labels.
+
+Verified-currency catalogue tickers that carry a `coingecko_id` but are
+excluded from the aggregator cross-check pair set because they are not
+on the ADR-0014 crypto allow-list. Non-zero means a catalogue entry is
+silently not cross-checked. Allocate the code in ADR-0014 or drop the
+`coingecko_id`.
+
 ### `stellarindex_aggregator_vwap_writes_total`
 
 Counter, no labels.
