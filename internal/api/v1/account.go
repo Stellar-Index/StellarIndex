@@ -282,7 +282,10 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 // filled. Fallback path: the legacy [UsageReader] per-day Redis
 // totals (one row per day, no endpoint) when the rollup reader is
 // unwired, errors, or hasn't produced rows for this subject yet
-// (fresh deployment / worker not yet swept).
+// (fresh deployment / worker not yet swept). Any day the rollup
+// reader is missing entirely (a worker-outage gap, not "zero
+// traffic") is backfilled from the legacy reader rather than
+// silently dropped (Q160).
 //
 // Subject keying calls [middleware.UsageKeyForSubject] directly (HLT-01:
 // this used to reimplement the derivation inline, which could silently
@@ -291,11 +294,19 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 // only for credentials carrying no owner reference). The account key is
 // what makes this endpoint's name true: the rows cover every key the
 // account holds, not just the one that authenticated the call, and they
-// survive a key rotation (RLT-404). Anonymous callers receive 401. The
-// `?from=` / `?to=` query params are reserved in the OpenAPI spec
-// but ignored — every successful response is the trailing 30-day
-// window today; full from/to honouring lands when an operator
-// surface needs it.
+// survive a key rotation (RLT-404). The `?from=` / `?to=` query params
+// are reserved in the OpenAPI spec but ignored — every successful
+// response is the trailing 30-day window today; full from/to honouring
+// lands when an operator surface needs it.
+//
+// A magic-link dashboard session authenticates this route too, same
+// precedence as [Server.handleAccountMe]: a session identifies the
+// account directly, so it reads under that account's key
+// (`id:acct:<slug>`, via [usageKeyForSession]) without needing the caller
+// to also hold an API key (GH #796 / RLT-415 — every signed-in dashboard
+// user with only a session cookie used to 401 here, and the frontend
+// silently swallowed it into an empty usage page). Anonymous callers
+// (neither session nor API key) receive 401.
 //
 // Backend-absent posture: the handler returns `[]` in the
 // wire-shape envelope (200 OK with an empty data array). Callers
@@ -303,19 +314,27 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 // wired" can probe `/v1/readyz` (NOT `/healthz` — the
 // per-dependency `checks` field is `/readyz`-only).
 func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
-	subject, ok := auth.SubjectFrom(r.Context())
-	if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/unauthorized",
-			"Authentication required", http.StatusUnauthorized,
-			"/v1/account/usage requires an API key (or a SEP-10 token, on a deployment running auth_mode=sep10 — a deployment accepts one or the other, never both)")
-		return
+	key := ""
+	if s.sessionPeeker != nil {
+		if sess, ok := s.sessionPeeker.SessionFromContext(r.Context()); ok {
+			key = usageKeyForSession(sess.AccountSlug)
+		}
 	}
-	// The single UsageTracker-shared derivation (id:<Identifier>, the
-	// owner account, or key:<KeyID> as fallback) — calling it directly
-	// instead of reimplementing it here means the writer and this reader
-	// can never drift apart.
-	key := middleware.UsageKeyForSubject(subject)
+	if key == "" {
+		subject, ok := auth.SubjectFrom(r.Context())
+		if !ok || subject.Tier == auth.TierAnonymous || subject.Tier == "" {
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/unauthorized",
+				"Authentication required", http.StatusUnauthorized,
+				"/v1/account/usage requires a magic-link session, an API key, or a SEP-10 token (on a deployment running auth_mode=sep10)")
+			return
+		}
+		// The single UsageTracker-shared derivation (id:<Identifier>, the
+		// owner account, or key:<KeyID> as fallback) — calling it directly
+		// instead of reimplementing it here means the writer and this reader
+		// can never drift apart.
+		key = middleware.UsageKeyForSubject(subject)
+	}
 	if key == "" {
 		writeJSON(w, []UsageRow{}, Flags{})
 		return
@@ -327,9 +346,31 @@ func (s *Server) handleAccountUsage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, s.readUsageLegacy(r, key), Flags{})
 }
 
-// readUsageRollup reads the per-endpoint rollups for the subject.
-// ok=false means "fall back to the legacy per-day totals": reader
-// unwired, read error, or zero rows.
+// usageKeyForSession derives the account-scoped usage key a
+// dashboard session reads under — the SAME key an API key minted on
+// that account writes under ([middleware.UsageKeyForSubject]'s
+// Identifier branch: `id:` + [auth.AccountIdentifier]). Routes
+// through the shared derivation rather than duplicating the `id:`
+// prefix so the two can never drift apart; the synthetic Subject's
+// Tier only needs to clear UsageKeyForSubject's anonymous guard and
+// never leaves this function.
+func usageKeyForSession(accountSlug string) string {
+	if accountSlug == "" {
+		return ""
+	}
+	return middleware.UsageKeyForSubject(auth.Subject{
+		Identifier: auth.AccountIdentifier(accountSlug),
+		Tier:       auth.TierAPIKey,
+	})
+}
+
+// readUsageRollup reads the per-endpoint rollups for the subject and
+// backfills any day the rollup worker produced NO row for at all from
+// the legacy per-day reader (Q160), so a worker-outage gap in the
+// middle of the 30-day window doesn't silently vanish from the
+// response — only "the rollup reader itself produced nothing usable"
+// (unwired, read error, or zero rows) falls back to the legacy shape
+// entirely; ok=false means that.
 func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool) {
 	if s.usageRollupReader == nil {
 		return nil, false
@@ -343,6 +384,7 @@ func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool)
 		return nil, false
 	}
 	out := make([]UsageRow, len(days))
+	present := make(map[string]struct{}, len(days))
 	for i, d := range days {
 		out[i] = UsageRow{
 			Date:      d.Date,
@@ -351,8 +393,39 @@ func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool)
 			Errors:    int(d.Errors),
 			Throttled: int(d.Throttled),
 		}
+		present[d.Date] = struct{}{}
 	}
+	out = append(out, s.backfillMissingUsageDays(r, key, present)...)
 	return out, true
+}
+
+// backfillMissingUsageDays fills in, from the legacy per-day reader,
+// any day within the trailing 30-day window that `present` (the days
+// the rollup reader actually produced a row for) has no entry for at
+// all — a rollup-worker gap, not a legitimate zero-traffic day (which
+// the rollup reader still emits a row for). Best-effort: a legacy
+// read failure just means no backfill, same posture as
+// [Server.readUsageLegacy].
+func (s *Server) backfillMissingUsageDays(r *http.Request, key string, present map[string]struct{}) []UsageRow {
+	if s.usageReader == nil {
+		return nil
+	}
+	legacyDays, err := s.usageReader.Read(r.Context(), key, 30)
+	if err != nil {
+		s.logger.Warn("usage rollup backfill read", "err", err, "subject", key)
+		return nil
+	}
+	var backfilled []UsageRow
+	for _, d := range legacyDays {
+		if _, ok := present[d.Date]; ok {
+			continue
+		}
+		backfilled = append(backfilled, UsageRow{
+			Date:     d.Date,
+			Requests: int(d.Requests),
+		})
+	}
+	return backfilled
 }
 
 // readUsageLegacy reads the per-day Redis totals (no endpoint

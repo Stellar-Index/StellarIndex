@@ -377,6 +377,27 @@ func TestPlatformPostgresStores(t *testing.T) {
 			t.Errorf("UserAgent = %q", gotSess.UserAgent)
 		}
 
+		// RNC36: a nil ip (clientIP couldn't resolve one — RemoteAddr
+		// without a splittable port) must leave ip_last_seen UNCHANGED,
+		// never overwrite it with the "0.0.0.0" sentinel. Pre-fix this
+		// touch stamped the literal sentinel over the real IP recorded
+		// above; UA still updates because TouchSession's other columns
+		// are unconditional.
+		if err := users.TouchSession(ctx, sess.ID, nil, "curl/9-no-ip"); err != nil {
+			t.Fatalf("touch with nil ip: %v", err)
+		}
+		gotSess, err = users.GetSession(ctx, sess.ID)
+		if err != nil {
+			t.Fatalf("get session after nil-ip touch: %v", err)
+		}
+		if !gotSess.IPLastSeen.Equal(newIP) {
+			t.Errorf("IPLastSeen after nil-ip touch = %v, want unchanged %v (must not become 0.0.0.0)",
+				gotSess.IPLastSeen, newIP)
+		}
+		if gotSess.UserAgent != "curl/9-no-ip" {
+			t.Errorf("UserAgent after nil-ip touch = %q, want %q", gotSess.UserAgent, "curl/9-no-ip")
+		}
+
 		// Revoke → subsequent GetSession returns ErrNotFound.
 		if err := users.RevokeSession(ctx, sess.ID); err != nil {
 			t.Fatalf("revoke: %v", err)

@@ -106,7 +106,11 @@ func New(opts Options) *Client {
 // 200 path). Centralised here so every endpoint method gets the
 // same auth header, user-agent, problem+json error decoding, and
 // context propagation behaviour.
-func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, body any, out any) error {
+// extraHeaders is optional and variadic so every existing call site
+// (43 today) keeps compiling unchanged; a caller that needs to set a
+// request header the common path doesn't cover (e.g. X-Reason on an
+// admin write) passes exactly one map.
+func (c *Client) doJSON(ctx context.Context, method, path string, query url.Values, body any, out any, extraHeaders ...map[string]string) error {
 	u, err := url.Parse(c.baseURL + path)
 	if err != nil {
 		return fmt.Errorf("client: parse url: %w", err)
@@ -136,6 +140,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	applyExtraHeaders(req, extraHeaders)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -143,6 +148,24 @@ func (c *Client) doJSON(ctx context.Context, method, path string, query url.Valu
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	return decodeJSONResponse(resp, method, path, out)
+}
+
+// applyExtraHeaders sets each header from the (0 or 1) optional map
+// doJSON's callers may pass — pulled out of doJSON to keep its
+// cognitive complexity down rather than nesting a second loop inline.
+func applyExtraHeaders(req *http.Request, extraHeaders []map[string]string) {
+	for _, h := range extraHeaders {
+		for k, v := range h {
+			req.Header.Set(k, v)
+		}
+	}
+}
+
+// decodeJSONResponse reads + decodes doJSON's response, split out
+// purely to keep doJSON's own cognitive complexity under the repo's
+// gocognit threshold — no behaviour change from when this was inline.
+func decodeJSONResponse(resp *http.Response, method, path string, out any) error {
 	// Cap response read so a misbehaving server can't wedge the
 	// caller. 16 MiB is far above any single envelope we serve.
 	//
