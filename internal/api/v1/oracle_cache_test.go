@@ -238,6 +238,51 @@ func TestCachedOracleReader_BoundedUnderAssetChurn(t *testing.T) {
 	}
 }
 
+// TestCachedOracleReader_LeaderAbortDoesNotFailUnrelatedWaiter is the
+// regression proof for RLT-439: the caller that happens to trigger a
+// cold fill is not privileged. If THAT caller's own context is
+// cancelled mid-flight (client disconnect, its own deadline), every
+// OTHER caller single-flighted onto the same key must still get the
+// real result — the leader's abort must not propagate as a failure to
+// an unrelated waiter whose own context is perfectly live.
+func TestCachedOracleReader_LeaderAbortDoesNotFailUnrelatedWaiter(t *testing.T) {
+	up := &fakeOracleUpstream{updatesDelay: 150 * time.Millisecond}
+	c := NewCachedOracleReader(up, 5*time.Second)
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+
+	leaderErrCh := make(chan error, 1)
+	go func() {
+		_, err := c.LatestOracleUpdatesForAssets(leaderCtx, nativeAssets(t), "")
+		leaderErrCh <- err
+	}()
+	time.Sleep(30 * time.Millisecond) // let the leader admit the entry
+
+	waiterErrCh := make(chan error, 1)
+	go func() {
+		_, err := c.LatestOracleUpdatesForAssets(context.Background(), nativeAssets(t), "")
+		waiterErrCh <- err
+	}()
+	time.Sleep(30 * time.Millisecond) // let the waiter join the in-flight fetch
+
+	cancelLeader() // the LEADER's own request aborts, mid-flight
+
+	leaderErr := <-leaderErrCh
+	if !errors.Is(leaderErr, context.Canceled) {
+		t.Fatalf("leader err = %v; want context.Canceled (its own ctx died)", leaderErr)
+	}
+
+	waiterErr := <-waiterErrCh
+	if waiterErr != nil {
+		t.Fatalf("waiter (own context never cancelled) got err = %v; want nil — "+
+			"the leader's abort must not propagate to an unrelated waiter", waiterErr)
+	}
+
+	if got := up.updatesCalls.Load(); got != 1 {
+		t.Errorf("upstream called %d times; want 1 (single-flight preserved across the leader's abort)", got)
+	}
+}
+
 // TestCachedOracleReader_StreamsAreCached — LatestOracleStreams was the one
 // pass-through on the wrapper (#332 F5): every /v1/oracle/streams hit re-ran
 // the oracle_updates scan and rebuilt ~34 KB, 0.43–0.46 s WARM on production.
