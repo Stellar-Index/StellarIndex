@@ -6606,11 +6606,13 @@ paths:
            impersonate real exchanges.
         4. The asset is a real-world instrument, by `basis`:
            `sep1_anchor_declaration` (the bound entry declares an
-           `anchor_asset_type` in `definition.anchor_classes`) or
+           `anchor_asset_type` in `definition.anchor_classes`),
            `oracle_rwa_feed` (an independent oracle publishes a
            net-asset-value feed for an instrument of this code, per
-           ADR-0028). The oracle arm is keyed on the CODE, so it is
-           admissible only after requirement 3 has bound the issuer.
+           ADR-0028), or `sep1_isin_declaration` (the bound entry's
+           `anchor_asset` is a well-formed ISIN). The oracle arm is
+           keyed on the CODE, so it is admissible only after
+           requirement 3 has bound the issuer.
 
         TWO VALUATIONS, NEVER FOLDED. A tokenized real-world asset is
         bought and held rather than traded, so most members have no

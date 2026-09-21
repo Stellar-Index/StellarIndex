@@ -83,6 +83,28 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 			},
 			required: []string{"not since-inception"},
 		},
+		{
+			// RLT-220: the /rwa/assets requirement-4 prose named only two
+			// bases while the same operation's 200 example already listed
+			// a third (sep1_isin_declaration, internal/rwa BasisSep1ISIN).
+			// The narrative and its own example disagreed with each other.
+			path: "openapi/stellar-index.v1.yaml",
+			forbidden: []string{
+				"`definition.anchor_classes`) or `oracle_rwa_feed` (an independent oracle publishes a net-asset-value feed for an instrument of this code, per ADR-0028). The oracle arm is keyed",
+			},
+			required: []string{
+				"or `sep1_isin_declaration` (the bound entry's `anchor_asset` is a well-formed ISIN)",
+			},
+		},
+		{
+			path: "docs/reference/api/stellar-index.v1.yaml",
+			forbidden: []string{
+				"`definition.anchor_classes`) or `oracle_rwa_feed` (an independent oracle publishes a net-asset-value feed for an instrument of this code, per ADR-0028). The oracle arm is keyed",
+			},
+			required: []string{
+				"or `sep1_isin_declaration` (the bound entry's `anchor_asset` is a well-formed ISIN)",
+			},
+		},
 	}
 
 	for _, tc := range cases {
