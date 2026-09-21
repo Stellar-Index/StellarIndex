@@ -106,7 +106,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 
 	snapshot, sources, err := s.computeTip(r.Context(), asset, quote, window)
 	if errors.Is(err, ErrPriceWithheld) {
-		writePriceWithheldProblem(w, r, asset, quote)
+		writePriceWithheldProblemReason(w, r, asset, quote, priceWithheldReason(err))
 		return
 	}
 	if errors.Is(err, ErrPriceNotFound) {
@@ -189,7 +189,7 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// attacker-authored rate the 2026-08-04 incident class made these
 	// gates for, so a slow gate correctly costs the emission instead.
 	if s.substance != nil && !s.substance.Allowed(ctx, asset, quote, "tip") {
-		return PriceSnapshot{}, nil, ErrPriceWithheld
+		return PriceSnapshot{}, nil, newPriceWithheld(PriceWithheldSubstance)
 	}
 	// Scam-issuer gate: same posture as the substance gate on this
 	// surface — a directory-scam-flagged issuer's live tip is still an
@@ -205,7 +205,7 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// flagged issuer's own trades, while `?asset=<FLAGGED>` 404'd
 	// (F002/K001). One call, both legs, folded inside pricingguard.
 	if scamWithheld(ctx, s.scam, asset, quote, "tip") {
-		return PriceSnapshot{}, nil, ErrPriceWithheld
+		return PriceSnapshot{}, nil, newPriceWithheld(PriceWithheldScamIssuer)
 	}
 	// Which alias combinations the window merges, and which it holds back
 	// until every other read has missed, is [tipMergePairs].
@@ -280,7 +280,7 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 		// surface already distinguishes the two verdicts (see the
 		// ErrPriceWithheld arm above), so report it honestly rather than
 		// letting it fall through as "no data".
-		return PriceSnapshot{}, nil, ErrPriceWithheld
+		return PriceSnapshot{}, nil, newPriceWithheld(PriceWithheldUpstreamLeg)
 	}
 	// Last of all: the SAC-form combinations the caller did not name —
 	// for a wrapped classic, its Soroban SAC/SAC pool. Every established
