@@ -1,6 +1,10 @@
 package ingest
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -76,6 +80,93 @@ func TestShouldCollect_ContractDataStorage(t *testing.T) {
 				t.Errorf("%s under scope=%s: shouldCollect=%v, want %v", c.name, sname, got, want[sname])
 			}
 		}
+	}
+}
+
+// TestShouldCollectDoc_DoesNotCiteUnrelatedPR is the regression for RSWP-011:
+// shouldCollect's doc comment cited "#30" as the LP-scope reader, but PR #30
+// is "Remove TradingView attribution logo from charts" (merged 2026-07-21) —
+// unrelated to state-snapshot or LP reserves. A reader following that
+// reference lands on the wrong PR entirely. The doc must instead name the
+// actual ADR-0039 native liquidity-pool reserve reader.
+func TestShouldCollectDoc_DoesNotCiteUnrelatedPR(t *testing.T) {
+	t.Parallel()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "state_snapshot.go", nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse state_snapshot.go: %v", err)
+	}
+
+	var doc *ast.CommentGroup
+	for _, d := range file.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Name.Name != "shouldCollect" {
+			continue
+		}
+		doc = fd.Doc
+	}
+	if doc == nil {
+		t.Fatal("shouldCollect is gone from state_snapshot.go (or lost its doc comment) — this guard has moved")
+	}
+	text := doc.Text()
+
+	if strings.Contains(text, "#30") {
+		t.Errorf("shouldCollect doc comment still cites \"#30\" as the LP-scope reader — PR #30 is "+
+			"\"Remove TradingView attribution logo from charts\" (merged 2026-07-21), unrelated: %q", text)
+	}
+	if !strings.Contains(text, "liquidity_pool_state_reader.go") {
+		t.Errorf("shouldCollect doc comment does not name internal/storage/clickhouse/liquidity_pool_state_reader.go "+
+			"— a reader would not know which reader actually consumes the LP scope=all/storage rows: %q", text)
+	}
+}
+
+// TestResolveArchiveTarget_WriteRefusesUnresolvedConfig is the regression for
+// T240: -write inserts the checkpoint straight into the target ClickHouse's
+// ledger_entry_changes with no cross-check against the network that
+// ClickHouse instance actually tracks. On a config load failure,
+// resolveArchiveTarget used to log one stderr line and silently fall back to
+// the public pubnet archive/passphrase — so a stale or missing -config could
+// make -write insert mainnet's checkpoint into a testnet ledger (or vice
+// versa) with no abort and no operator-visible failure. For write=true, an
+// unresolved config must return an error, not a fallback.
+func TestResolveArchiveTarget_WriteRefusesUnresolvedConfig(t *testing.T) {
+	t.Parallel()
+	const missingCfg = "/nonexistent/stellarindex-config-does-not-exist.toml"
+
+	url, passphrase, err := resolveArchiveTarget(missingCfg, "", true)
+	if err == nil {
+		t.Fatalf("resolveArchiveTarget(missing config, write=true) = (%q, %q, nil), want an error — "+
+			"a write must never silently fall back to the public archive", url, passphrase)
+	}
+	if url != "" || passphrase != "" {
+		t.Errorf("resolveArchiveTarget(missing config, write=true) returned non-empty (%q, %q) alongside an error", url, passphrase)
+	}
+
+	// Even an explicit -archive override cannot be trusted for a write when the
+	// config (and so the passphrase) failed to resolve.
+	url, passphrase, err = resolveArchiveTarget(missingCfg, "https://history.stellar.org/prd/core-live/core_live_001", true)
+	if err == nil {
+		t.Fatalf("resolveArchiveTarget(missing config, override, write=true) = (%q, %q, nil), want an error", url, passphrase)
+	}
+}
+
+// TestResolveArchiveTarget_ReadStillFallsBackOnUnresolvedConfig pins the
+// read-only behaviour the fix must preserve: state-snapshot's read path is
+// documented to work without a config file, so write=false keeps falling
+// back to the public archive rather than erroring.
+func TestResolveArchiveTarget_ReadStillFallsBackOnUnresolvedConfig(t *testing.T) {
+	t.Parallel()
+	const missingCfg = "/nonexistent/stellarindex-config-does-not-exist.toml"
+
+	url, passphrase, err := resolveArchiveTarget(missingCfg, "", false)
+	if err != nil {
+		t.Fatalf("resolveArchiveTarget(missing config, write=false) unexpected error: %v", err)
+	}
+	if url != defaultPubnetArchive {
+		t.Errorf("resolveArchiveTarget(missing config, write=false) url = %q, want defaultPubnetArchive %q", url, defaultPubnetArchive)
+	}
+	if passphrase != defaultPubnetPassphrase {
+		t.Errorf("resolveArchiveTarget(missing config, write=false) passphrase = %q, want defaultPubnetPassphrase %q", passphrase, defaultPubnetPassphrase)
 	}
 }
 
