@@ -12,7 +12,7 @@ import {
 import { Badge, Card, Container, type BadgeTone } from '@/components/ui';
 import { isSafeHref } from '@/lib/markdown';
 import type { components, paths } from '@/api/types';
-import { API_BASE_URL } from '@/api/client';
+import { API_BASE_URL, timeoutSignal } from '@/api/client';
 import { CURRENT_NETWORK } from '@/lib/networks';
 import { useStatus } from '@/api/hooks';
 import BackupsPanel from './BackupsPanel';
@@ -215,7 +215,7 @@ type EndpointProbe =
 //             when omitted.
 type ProbeTier = 'hot' | 'warm';
 
-interface PublicEndpoint {
+export interface PublicEndpoint {
   path: string;
   group: string;
   description: string;
@@ -525,7 +525,7 @@ export default function StatusPageClient({
       try {
         const res = await fetch(
           `${region.apiBaseUrl}/v1/diagnostics/ingestion`,
-          { cache: 'no-store' },
+          { cache: 'no-store', signal: timeoutSignal() },
         );
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const env = (await res.json()) as {
@@ -900,6 +900,7 @@ function StatusNotices() {
       try {
         const res = await fetch(`${API_BASE_URL}/v1/status/notices`, {
           cache: 'no-store',
+          signal: timeoutSignal(),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const env = (await res.json()) as {
@@ -1354,16 +1355,33 @@ function EndpointMatrix({
 //     "stream"). These never animate or change colour because
 //     the page can't observe them without escalating to a paid
 //     synthetic-monitor.
-type EndpointProbeResult =
+export type EndpointProbeResult =
   | { kind: 'fast'; latencyMs: number }
   | { kind: 'slow'; latencyMs: number }
   | { kind: 'down'; latencyMs: number; status: number }
   | { kind: 'error'; latencyMs: number }
   | { kind: 'static'; label: 'requires-auth' | 'streaming' };
 
+// hasEnvelopeShape reads and parses the response body, returning true only
+// for a genuine v1 envelope (`{"data": ...}` — every 2xx handler writes one
+// via writeJSON, see internal/api/v1/envelope.go). A 2xx status alone isn't
+// proof the API answered: a WAF challenge page, a maintenance interstitial
+// or a misrouted edge response can all return 200 with an unrelated body,
+// and probeEndpoint used to report those as 'fast'.
+async function hasEnvelopeShape(res: Response): Promise<boolean> {
+  try {
+    const body: unknown = await res.json();
+    return typeof body === 'object' && body !== null && 'data' in body;
+  } catch {
+    return false;
+  }
+}
+
 // probeEndpoint returns a closure so the same-shape probe runs
 // every poll without re-allocating the URL.
-function probeEndpoint(ep: PublicEndpoint): () => Promise<EndpointProbeResult> {
+export function probeEndpoint(
+  ep: PublicEndpoint,
+): () => Promise<EndpointProbeResult> {
   if (ep.probe.kind === 'requires-auth' || ep.probe.kind === 'streaming') {
     const label = ep.probe.kind;
     return () => Promise.resolve({ kind: 'static', label });
@@ -1391,6 +1409,12 @@ function probeEndpoint(ep: PublicEndpoint): () => Promise<EndpointProbeResult> {
       if (!warm.ok) {
         return { kind: 'down', latencyMs: -1, status: warm.status };
       }
+      // A 200 with the wrong body (WAF page, interstitial) isn't a
+      // live API — no point warming a connection to it and then
+      // timing a second doomed request.
+      if (!(await hasEnvelopeShape(warm))) {
+        return { kind: 'error', latencyMs: -1 };
+      }
     } catch {
       // Warm-up threw (network / abort / TLS). No point timing a
       // second doomed request — report the error now.
@@ -1405,6 +1429,9 @@ function probeEndpoint(ep: PublicEndpoint): () => Promise<EndpointProbeResult> {
       const latencyMs = performance.now() - start;
       if (!res.ok) {
         return { kind: 'down', latencyMs, status: res.status };
+      }
+      if (!(await hasEnvelopeShape(res))) {
+        return { kind: 'error', latencyMs };
       }
       return latencyMs < PROBE_SLOW_MS
         ? { kind: 'fast', latencyMs }

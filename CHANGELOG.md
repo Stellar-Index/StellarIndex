@@ -205,6 +205,23 @@ against.
   instead of writing a `0.0.0.0` placeholder into the forensics columns;
   `TouchSession` still leaves `ip_last_seen` unchanged on a nil IP.
 
+- **explorer-web / status page and price poll — unbounded client fetches
+  (T275):** the `/v1/price` poll (`usePricePoll` in `lib/live/hooks.ts`)
+  and two status-page polls (`/v1/diagnostics/ingestion`,
+  `/v1/status/notices`) issued `fetch()` with no `AbortSignal`, so a hung
+  connection left the poll waiting past its own interval with no way to
+  recover. All three now pass `timeoutSignal()`, the same bounded-signal
+  helper `apiGet` already uses.
+
+- **explorer-web / status page endpoint matrix — probes trusted `res.ok`
+  alone (RLT-385):** `probeEndpoint` in `StatusPageClient.tsx` reported a
+  200 response as `'fast'`/`'slow'` without ever reading the body, so a
+  WAF challenge page, maintenance interstitial or misrouted edge response
+  could be reported as a healthy API. Both the warm-up and timed fetch now
+  parse the body and require the v1 envelope shape (`{"data": ...}`,
+  per `internal/api/v1/envelope.go`) before counting the response as a
+  real answer.
+
 - **sources / cctp, rozo, sorocredit, phoenix, scale — doc/comment drift
   corrected against the shipped decoder and registry state (Q020, Q023,
   Q076, Q086, Q088, T086, T114, T687, T063):** nine documentation and
