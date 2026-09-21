@@ -52,6 +52,52 @@ func TestHub_TopicMapDoesNotGrowWithChurn(t *testing.T) {
 	}
 }
 
+// TestHub_FullSubscribedCeilingDoesNotSweepEveryInsert: when every topic
+// holds a subscriber a sweep frees nothing, and re-sweeping on each new
+// topic made Subscribe O(n) per topic under h.mu (20k topics took ~234 s
+// under -race in CI). An unsubscribe must still re-arm the ceiling sweep.
+func TestHub_FullSubscribedCeilingDoesNotSweepEveryInsert(t *testing.T) {
+	const ceiling, extra = 8, 20
+
+	hub := NewHub(0)
+	hub.SetMaxTopics(ceiling)
+	cancels := make([]func(), 0, ceiling+extra)
+	for i := range ceiling + extra {
+		_, cancel := hub.Subscribe([]string{fmt.Sprintf("closed:HELD%d/USD", i)}, "")
+		cancels = append(cancels, cancel)
+	}
+	defer func() {
+		for _, c := range cancels {
+			c()
+		}
+	}()
+
+	hub.mu.RLock()
+	since, n := hub.sinceSweep, len(hub.topics)
+	hub.mu.RUnlock()
+	if n != ceiling+extra {
+		t.Fatalf("topic map holds %d topics, want %d: subscribed topics are never reaped", n, ceiling+extra)
+	}
+	// One sweep at the first insert over the ceiling finds it futile; the
+	// remaining extra-1 inserts must not sweep.
+	if since != extra-1 {
+		t.Fatalf("sinceSweep = %d after %d inserts over a fully-subscribed ceiling, want %d "+
+			"(a futile ceiling must not be re-swept on every insert)", since, extra, extra-1)
+	}
+
+	cancels[0]()
+	_, cancel := hub.Subscribe([]string{"closed:AFTER/USD"}, "")
+	cancels = append(cancels, cancel)
+
+	hub.mu.RLock()
+	_, stillThere := hub.topics["closed:HELD0/USD"]
+	hub.mu.RUnlock()
+	if stillThere {
+		t.Fatal("topic that lost its last subscriber survived the next insert at the ceiling; " +
+			"an unsubscribe must re-arm the ceiling sweep")
+	}
+}
+
 // TestStream_CapRejectsBeforeTopicCreation pins
 // REL-05-resource-exhaustion: a connection the concurrency caps refuse
 // must never allocate a Hub topic. Before the fix Stream() called

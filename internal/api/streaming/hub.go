@@ -99,6 +99,12 @@ type Hub struct {
 	maxTopics  int
 	lastSweep  time.Time
 	sinceSweep int
+	// ceilingFutile: the last sweep left the map at the ceiling, so every
+	// topic held a subscriber and re-sweeping on each insert frees nothing.
+	ceilingFutile bool
+	// unsubscribed is set when a topic loses its last subscriber, the one
+	// event that can make a futile ceiling reapable again.
+	unsubscribed atomic.Bool
 
 	// reaped is a cumulative diagnostic counter; atomic so
 	// [Hub.TopicsReaped] can be read without taking mu.
@@ -205,6 +211,7 @@ func (h *Hub) SetMaxTopics(n int) {
 	}
 	h.mu.Lock()
 	h.maxTopics = n
+	h.ceilingFutile = false
 	h.mu.Unlock()
 }
 
@@ -394,6 +401,9 @@ func (h *Hub) dropSubscriber(topic string, sub *subscription) {
 	_, present := t.subs[sub]
 	if present {
 		delete(t.subs, sub)
+		if len(t.subs) == 0 {
+			h.unsubscribed.Store(true)
+		}
 	}
 	// Unsubscribing is activity: it starts the idle clock the reaper
 	// measures against, so a topic that just lost its last listener
@@ -470,12 +480,17 @@ func (h *Hub) getOrCreateTopic(name string) *topicState {
 // map is at its ceiling. Caller holds h.mu for writing.
 func (h *Hub) maybeReapLocked(now time.Time) {
 	h.sinceSweep++
+	// A futile ceiling waits for an unsubscribe or the growth/interval
+	// trigger: sweeping on every insert is O(n) under h.mu per new topic.
+	atCeiling := len(h.topics) >= h.maxTopics &&
+		(!h.ceilingFutile || h.unsubscribed.Load())
 	if h.sinceSweep < topicSweepGrowth &&
-		len(h.topics) < h.maxTopics &&
+		!atCeiling &&
 		now.Sub(h.lastSweep) < topicSweepInterval {
 		return
 	}
 	h.reapLocked(now)
+	h.ceilingFutile = len(h.topics) >= h.maxTopics
 }
 
 // reapLocked drops every topic that no longer earns its memory:
@@ -497,6 +512,7 @@ func (h *Hub) maybeReapLocked(now time.Time) {
 func (h *Hub) reapLocked(now time.Time) {
 	h.lastSweep = now
 	h.sinceSweep = 0
+	h.unsubscribed.Store(false)
 
 	type candidate struct {
 		name     string
