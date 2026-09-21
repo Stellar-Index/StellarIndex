@@ -573,6 +573,100 @@ func TestHandleUpdate_RejectsBadURL(t *testing.T) {
 	}
 }
 
+// failGetStore wraps fakeStore and makes GetWebhook fail starting on
+// its THIRD call, simulating a transient read error on the
+// post-update reload while leaving the handler's two earlier lookups
+// (parseAndAuthorise, then the pre-patch "current" fetch) unaffected.
+type failGetStore struct {
+	*fakeStore
+	calls int
+}
+
+func (s *failGetStore) GetWebhook(ctx context.Context, id uuid.UUID) (platform.CustomerWebhook, error) {
+	s.calls++
+	if s.calls > 2 {
+		return platform.CustomerWebhook{}, errors.New("reload failed")
+	}
+	return s.fakeStore.GetWebhook(ctx, id)
+}
+
+// TestHandleUpdate_ReloadFailureReturns500 pins T155: when the
+// post-update GetWebhook reload fails, the handler must surface a
+// 500, not silently write 200 with a zero-value DTO.
+func TestHandleUpdate_ReloadFailureReturns500(t *testing.T) {
+	store := newFakeStore()
+	sc := dashboardauth.SessionContext{
+		Session: platform.Session{ID: uuid.New(), UserID: uuid.New()},
+		User:    platform.User{ID: uuid.New(), Email: "owner@example.com", Role: platform.RoleOwner},
+		Account: platform.Account{ID: uuid.New(), Slug: "example", Tier: platform.TierFree, Status: platform.AccountActive},
+	}
+	sc.User.AccountID = sc.Account.ID
+	mine := uuid.New()
+	store.webhooks[mine] = platform.CustomerWebhook{
+		ID: mine, AccountID: sc.Account.ID,
+		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+
+	h, err := NewHandlers(Config{
+		Webhooks: &failGetStore{fakeStore: store},
+		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:      func() time.Time { return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC) },
+	})
+	if err != nil {
+		t.Fatalf("NewHandlers: %v", err)
+	}
+
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), updateRequest{Name: strPtr("renamed")}, sc)
+	req.SetPathValue("id", mine.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500 when the post-update reload fails", w.Code)
+	}
+}
+
+// TestHandleListDeliveries_ZeroTimestampsOmitted pins T153: a
+// delivery row with no scheduled retry and no delivery yet must
+// genuinely omit next_attempt_at/delivered_at, not serialize the
+// year-1 zero timestamp (omitempty is a no-op on a struct-typed
+// time.Time).
+func TestHandleListDeliveries_ZeroTimestampsOmitted(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	mine := uuid.New()
+	store.webhooks[mine] = platform.CustomerWebhook{
+		ID: mine, AccountID: sc.Account.ID,
+		URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	store.deliveries[mine] = []platform.WebhookDelivery{
+		{ID: uuid.New(), WebhookID: mine, EventType: "incident.sev1"},
+	}
+
+	req := sessionReq(t, http.MethodGet, "/v1/dashboard/webhooks/"+mine.String()+"/deliveries", nil, sc)
+	req.SetPathValue("id", mine.String())
+	w := httptest.NewRecorder()
+	h.HandleListDeliveries(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+
+	var raw struct {
+		Deliveries []map[string]any `json:"deliveries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(raw.Deliveries) != 1 {
+		t.Fatalf("got %d deliveries, want 1", len(raw.Deliveries))
+	}
+	d := raw.Deliveries[0]
+	if v, present := d["next_attempt_at"]; present {
+		t.Errorf("next_attempt_at should be omitted when zero, got %v", v)
+	}
+	if v, present := d["delivered_at"]; present {
+		t.Errorf("delivered_at should be omitted when zero, got %v", v)
+	}
+}
+
 // TestHandleListDeliveries_HappyPath — returns the delivery log
 // for the caller's own webhook.
 func TestHandleListDeliveries_HappyPath(t *testing.T) {

@@ -125,14 +125,17 @@ func toDTO(w platform.CustomerWebhook) webhookDTO {
 }
 
 type deliveryDTO struct {
-	ID                 string    `json:"id"`
-	EventType          string    `json:"event_type"`
-	AttemptCount       int       `json:"attempt_count"`
-	NextAttemptAt      time.Time `json:"next_attempt_at,omitempty"`
-	DeliveredAt        time.Time `json:"delivered_at,omitempty"`
-	LastError          string    `json:"last_error,omitempty"`
-	LastResponseStatus int       `json:"last_response_status,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
+	ID           string `json:"id"`
+	EventType    string `json:"event_type"`
+	AttemptCount int    `json:"attempt_count"`
+	// Pointer times so a zero value (no retry scheduled / not yet
+	// delivered) is genuinely omitted — omitempty does NOT omit a zero
+	// time.Time (it's a non-empty struct).
+	NextAttemptAt      *time.Time `json:"next_attempt_at,omitempty"`
+	DeliveredAt        *time.Time `json:"delivered_at,omitempty"`
+	LastError          string     `json:"last_error,omitempty"`
+	LastResponseStatus int        `json:"last_response_status,omitempty"`
+	CreatedAt          time.Time  `json:"created_at"`
 }
 
 func toDeliveryDTO(d platform.WebhookDelivery) deliveryDTO {
@@ -140,12 +143,22 @@ func toDeliveryDTO(d platform.WebhookDelivery) deliveryDTO {
 		ID:                 d.ID.String(),
 		EventType:          d.EventType,
 		AttemptCount:       d.AttemptCount,
-		NextAttemptAt:      d.NextAttemptAt,
-		DeliveredAt:        d.DeliveredAt,
+		NextAttemptAt:      nilIfZero(d.NextAttemptAt),
+		DeliveredAt:        nilIfZero(d.DeliveredAt),
 		LastError:          d.LastError,
 		LastResponseStatus: d.LastResponseStatus,
 		CreatedAt:          d.CreatedAt,
 	}
+}
+
+// nilIfZero returns nil for a zero time.Time so the DTO's `omitempty`
+// pointer fields are genuinely omitted rather than serialized as the
+// year-1 zero timestamp.
+func nilIfZero(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }
 
 type listResponse struct {
@@ -336,7 +349,12 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	updated, _ := h.cfg.Webhooks.GetWebhook(r.Context(), id)
+	updated, err := h.cfg.Webhooks.GetWebhook(r.Context(), id)
+	if err != nil {
+		h.cfg.Logger.Error("reload webhook after update", "err", err, "id", id)
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return
+	}
 	httpx.WriteJSON(w, http.StatusOK, toDTO(updated))
 }
 
