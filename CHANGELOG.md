@@ -182,6 +182,18 @@ against.
 
 ### Fixed
 
+- **sources / sorocredit — event body capture was lossy despite a
+  "nothing is dropped" promise (Q069, RLT-111):** `decodeSettlement`,
+  `decodeSupportedAssetAdded` and `decodeConfigBody` stored
+  `Attributes["body"]` by running the raw event payload through
+  `scval.DisplayB64`, which truncates at 120 runes, caps recursion depth
+  at 3, and degrades exotic types to their type name — `scval.Display`
+  documents itself as lossy by design. The decoders' own godocs promised
+  the opposite ("captured verbatim", "nothing is dropped"). `body` now
+  stores the raw base64 XDR payload directly; `scval.Parse` decodes it
+  back on demand. `scval.Display`/`DisplayB64` are unchanged and remain
+  correct for their actual purpose (compact explorer rendering).
+
 - **platform / account store — admin PATCH race, unbounded reaper sweeps
   and a fabricated client IP (Q148, Q142, Q188):** `PATCH
   /v1/admin/accounts/{id}` now loads, mutates and writes the account under
