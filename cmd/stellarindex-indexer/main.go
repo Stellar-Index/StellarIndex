@@ -2092,7 +2092,25 @@ func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logge
 
 	raw, err := lcm.MarshalBinary()
 	if err == nil {
-		err = hdb.Append(seq, hashdb.Hash(raw))
+		h := hashdb.Hash(raw)
+		// Verify-then-Append-on-ErrMissing (hashdb.Verify's own
+		// docstring): a re-ingested ledger (restart, cursor rewind)
+		// must never blindly overwrite an already-recorded hash —
+		// that would erase the drift-detector's baseline for the one
+		// case (a rewritten upstream object) it exists to catch.
+		verr := hdb.Verify(seq, h)
+		switch {
+		case verr == nil:
+			// Already recorded and matches — nothing to write.
+		case errors.Is(verr, hashdb.ErrMissing):
+			err = hdb.Append(seq, h)
+		default:
+			if errors.Is(verr, hashdb.ErrDrift) {
+				obs.HashdbDriftTotal.Add(1)
+				logger.Error("hashdb drift on live-append — refusing to overwrite recorded hash", "ledger", seq, "err", verr)
+			}
+			err = verr
+		}
 	}
 	if err != nil {
 		obs.HashdbAppendTotal.WithLabelValues("error").Inc()

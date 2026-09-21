@@ -224,6 +224,115 @@ func TestRecordHashdb_AppendErrorIsFailureTolerant(t *testing.T) {
 	}
 }
 
+// validLedgerCloseMetaWithBaseFee is validLedgerCloseMeta with a
+// non-zero BaseFee — a scalar header field cheap to vary so two calls
+// for the SAME seq encode to different bytes (and therefore different
+// hashdb hashes), simulating a re-ingested ledger whose upstream
+// bytes changed underneath it.
+func validLedgerCloseMetaWithBaseFee(seq uint32, baseFee uint32) sdkxdr.LedgerCloseMeta {
+	lcm := validLedgerCloseMeta(seq)
+	lcm.V1.LedgerHeader.Header.BaseFee = sdkxdr.Uint32(baseFee)
+	return lcm
+}
+
+// TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend confirms that
+// re-ingesting an already-recorded ledger with IDENTICAL bytes goes
+// through Verify (not a blind Append): lastAppended still advances,
+// but the stored record is untouched (same hash either way, but this
+// pins that the append path is now read-first).
+func TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend(t *testing.T) {
+	// Not t.Parallel(): asserts an exact delta on the process-global
+	// HashdbAppendTotal counter, which the other hashdb append tests
+	// in this file also do under t.Parallel() — running serially
+	// avoids racing their windows.
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	path := filepath.Join(t.TempDir(), "drift.db")
+	db, err := hashdb.Create(path, 500)
+	if err != nil {
+		t.Fatalf("hashdb.Create: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var lastAppended atomic.Uint32
+	lcm := validLedgerCloseMeta(500)
+	recordHashdb(db, lcm, logger, &lastAppended)
+	recordHashdb(db, lcm, logger, &lastAppended)
+
+	if got := lastAppended.Load(); got != 500 {
+		t.Errorf("lastAppended = %d, want 500", got)
+	}
+	raw, err := lcm.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary: %v", err)
+	}
+	got, err := db.Get(500)
+	if err != nil {
+		t.Fatalf("Get(500): %v", err)
+	}
+	if want := hashdb.Hash(raw); got != want {
+		t.Error("hashdb.Get(500) does not match the ledger's hash after a same-bytes re-ingest")
+	}
+}
+
+// TestRecordHashdb_DriftOnReingestDoesNotOverwrite is the load-bearing
+// regression test for Q112/Q128/T133: recordHashdb previously called
+// hashdb.Append unconditionally on every live ledger, so re-ingesting
+// an already-recorded ledger with DIFFERENT bytes (upstream rewrite,
+// or a restart replaying past the last committed cursor) silently
+// clobbered the original fingerprint — destroying the exact tamper
+// evidence ADR-0016's drift detector exists to preserve. This asserts
+// the second, differing-content call for the SAME seq leaves the
+// FIRST hash on disk, increments HashdbDriftTotal, and does NOT
+// advance lastAppended for that call.
+func TestRecordHashdb_DriftOnReingestDoesNotOverwrite(t *testing.T) {
+	// Not t.Parallel(): see TestRecordHashdb_ReingestSameBytesDoesNotDoubleAppend.
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	path := filepath.Join(t.TempDir(), "drift.db")
+	db, err := hashdb.Create(path, 500)
+	if err != nil {
+		t.Fatalf("hashdb.Create: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	driftBefore := testutil.ToFloat64(obs.HashdbDriftTotal)
+
+	var lastAppended atomic.Uint32
+	first := validLedgerCloseMetaWithBaseFee(500, 100)
+	recordHashdb(db, first, logger, &lastAppended)
+	if got := lastAppended.Load(); got != 500 {
+		t.Fatalf("lastAppended after first append = %d, want 500", got)
+	}
+	firstRaw, err := first.MarshalBinary()
+	if err != nil {
+		t.Fatalf("MarshalBinary(first): %v", err)
+	}
+	wantHash := hashdb.Hash(firstRaw)
+
+	// Reset lastAppended so we can tell whether the SECOND (drifting)
+	// call advances it — it must not.
+	lastAppended.Store(0)
+
+	second := validLedgerCloseMetaWithBaseFee(500, 999) // different bytes, same seq
+	recordHashdb(db, second, logger, &lastAppended)
+
+	if got := lastAppended.Load(); got != 0 {
+		t.Errorf("lastAppended after drifting re-ingest = %d, want 0 (unchanged — the drifting write must not be treated as durably recorded)", got)
+	}
+
+	got, err := db.Get(500)
+	if err != nil {
+		t.Fatalf("Get(500) after drifting re-ingest: %v", err)
+	}
+	if got != wantHash {
+		t.Error("hashdb.Get(500) changed after a drifting re-ingest — Append overwrote the original recorded hash instead of refusing")
+	}
+
+	driftAfter := testutil.ToFloat64(obs.HashdbDriftTotal)
+	if driftAfter-driftBefore != 1 {
+		t.Errorf("HashdbDriftTotal delta = %v, want 1", driftAfter-driftBefore)
+	}
+}
+
 // TestOpenOrCreateHashDB_CreatesWhenMissing covers first-ever-run:
 // an operator flipping cfg.HashDB.Enabled=true on a region with no
 // existing hashdb file shouldn't need a separate bootstrap step.

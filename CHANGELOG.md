@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+- **indexer / hashdb live-append no longer overwrites a recorded hash on
+  re-ingest (Q112, Q128, T133):** `recordHashdb` called `hashdb.Append`
+  unconditionally on every live ledger, with no prior read — a restart or
+  cursor rewind that re-ingested an already-recorded ledger with different
+  bytes (the exact upstream-rewrite scenario ADR-0016's drift detector
+  exists to catch) silently clobbered the original fingerprint instead of
+  flagging it. `recordHashdb` now calls `hashdb.Verify` first and only
+  falls back to `Append` on `ErrMissing`, per `Verify`'s own documented
+  contract; a mismatch increments `HashdbDriftTotal` and logs instead of
+  overwriting.
+
 ### Added
 
 - **docs / engineering standards no longer claim unbuilt CI enforcement (NS30, NS31, NS32):**
