@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+- **scripts / lint-changed-test's own lint-count assertions weren't
+  shellcheck-optional (RLT-055):** three fixture assertions hard-coded the
+  "N lint(s)" totals `lint-changed.sh` reports assuming shellcheck is on
+  PATH, unlike the one existing guard for it. `lint-changed.sh` counts only
+  the steps it actually ran toward that total and defers shellcheck
+  separately when the tool is absent, so on a checkout without shellcheck
+  the real count is one lower and each assertion went red. All three now
+  branch on a shared `HAVE_SHELLCHECK` probe, same as the existing guard.
+
 - **indexer / hashdb live-append no longer overwrites a recorded hash on
   re-ingest (Q112, Q128, T133):** `recordHashdb` called `hashdb.Append`
   unconditionally on every live ledger, with no prior read — a restart or
