@@ -2,8 +2,10 @@ package clickhouse
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"sort"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -57,7 +59,12 @@ func SnapshotEntryRow(post *xdr.LedgerEntry, closeTime time.Time) (LedgerEntryCh
 		// >55% of the 48M-entry Phase-C snapshot already destroyed
 		// (blast radius: account-state, trustline, supply, and wasm
 		// readers). crc32(key) is deterministic, so re-runs stay
-		// idempotent per key instead of duplicating.
+		// idempotent per key instead of duplicating — but a 32-bit
+		// checksum still collides between two DIFFERENT keys sharing a
+		// ledger_seq often enough in a multi-million-row backfill to
+		// reproduce the same collapse. This is only the BASE value:
+		// InsertEntryChanges resolves any residual collision across the
+		// whole write batch before it reaches ClickHouse.
 		ChangeIndex: crc32.ChecksumIEEE([]byte(keyB64)),
 		ChangeType:  "state",
 		EntryType:   entryTypeName(post.Data.Type),
@@ -88,9 +95,17 @@ const entryBackfillChunk = 20_000
 // Idempotent under the table's ReplacingMergeTree. Returns the number written.
 // throttle is a pause between chunks — keep it non-zero for large backfills so
 // the insert + the ledger_entries_current MV don't spike the live serving CH.
+//
+// Resolves any ChangeIndex collision across the whole batch before writing
+// (resolveChangeIndexCollisions) — SnapshotEntryRow's crc32(key) base value is
+// only collision-free in the common case; this is the chokepoint that makes
+// it collision-free in fact for every row that reaches ClickHouse.
 func InsertEntryChanges(ctx context.Context, addr string, rows []LedgerEntryChangeRow, throttle time.Duration) (int, error) {
 	if len(rows) == 0 {
 		return 0, nil
+	}
+	if err := resolveChangeIndexCollisions(rows); err != nil {
+		return 0, err
 	}
 	// Ops-batch identity from the environment (2026-08-28 r1 incident;
 	// see ops_auth.go) — CH `default` user when unset.
@@ -154,4 +169,77 @@ func insertEntryChunk(ctx context.Context, conn clickhouse.Conn, chunk []LedgerE
 		return fmt.Errorf("clickhouse: send entry-changes batch: %w", err)
 	}
 	return nil
+}
+
+// maxChangeIndexProbeAttempts bounds resolveChangeIndexCollisions' re-hash
+// loop. A real collision resolves within a handful of probes; this is a
+// fail-closed ceiling, not a realistic count.
+const maxChangeIndexProbeAttempts = 1 << 20
+
+// resolveChangeIndexCollisions makes ChangeIndex unique within every
+// (ledger_seq, tx_hash, op_index) group in rows — the exact tuple prefix the
+// table's ReplacingMergeTree ORDER BY shares change_index with. A 32-bit
+// crc32(key) base value collides between two DIFFERENT keys often enough in a
+// multi-million-row backfill (2026-07-03 site audit, SnapshotEntryRow's doc
+// comment) to silently drop one of them at merge time.
+//
+// Colliding rows within a group are walked in KeyXDR-sorted order — never
+// arrival order — and re-hashed with an incrementing salt until free. Sorting
+// by key means the outcome depends only on the SET of keys sharing the group,
+// so re-running the same rows in any order (an interrupted backfill resumed)
+// resolves to the same final indices and stays idempotent rather than
+// duplicating.
+func resolveChangeIndexCollisions(rows []LedgerEntryChangeRow) error {
+	type groupKey struct {
+		ledgerSeq uint32
+		txHash    string
+		opIndex   int32
+	}
+	groups := make(map[groupKey][]int, len(rows))
+	for i := range rows {
+		k := groupKey{rows[i].LedgerSeq, rows[i].TxHash, rows[i].OpIndex}
+		groups[k] = append(groups[k], i)
+	}
+	for _, idxs := range groups {
+		if len(idxs) < 2 {
+			continue
+		}
+		if err := resolveGroupCollisions(rows, idxs); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// resolveGroupCollisions assigns each row in idxs (all sharing one
+// ledger_seq/tx_hash/op_index group) a ChangeIndex distinct from every other
+// row in the group, mutating rows in place.
+func resolveGroupCollisions(rows []LedgerEntryChangeRow, idxs []int) error {
+	sort.Slice(idxs, func(a, b int) bool {
+		return rows[idxs[a]].KeyXDR < rows[idxs[b]].KeyXDR
+	})
+	used := make(map[uint32]bool, len(idxs))
+	for _, i := range idxs {
+		ci := rows[i].ChangeIndex
+		for attempt := uint32(0); used[ci]; attempt++ {
+			if attempt >= maxChangeIndexProbeAttempts {
+				return fmt.Errorf("clickhouse: no unique change_index found for key %s (ledger_seq %d) after %d probes",
+					rows[i].KeyXDR, rows[i].LedgerSeq, attempt)
+			}
+			ci = changeIndexProbe(rows[i].KeyXDR, attempt)
+		}
+		used[ci] = true
+		rows[i].ChangeIndex = ci
+	}
+	return nil
+}
+
+// changeIndexProbe re-hashes key with an incrementing salt — the fallback
+// discriminator when the base crc32(key) collides with another key in the
+// same group.
+func changeIndexProbe(key string, attempt uint32) uint32 {
+	buf := make([]byte, len(key)+4)
+	copy(buf, key)
+	binary.BigEndian.PutUint32(buf[len(key):], attempt+1)
+	return crc32.ChecksumIEEE(buf)
 }
