@@ -55,7 +55,25 @@ const VALUATION_REASON: Record<string, string> = {
     'Withheld — a price exists but its liquidity is below the floor at which a market cap would mean anything.',
   supply_unavailable:
     'A price exists but no circulating-supply reading does, so no market cap can be computed.',
+  decimals_unavailable:
+    "A price and a supply both exist, but this contract's own declared decimal scale does not, so there is no exponent to divide the supply by.",
 };
+
+/**
+ * How a valuation was established, in the words the surface uses. Keyed
+ * on the server's `basis` enum (six values across the classic and
+ * contract arms — RLT-027): a basis missing here fell through to a
+ * generic "priced by an independent oracle feed" line even for a
+ * declaration or a third-party curation, which is not what either is.
+ */
+const BASIS_PROSE: Record<string, string> = {
+  oracle_rwa_feed: 'priced by an independent oracle feed',
+  sep1_isin_declaration: 'declared by the issuer under a registered ISIN',
+  third_party_curated: 'listed by a named third-party curator, not an attestation or a feed',
+  curated_contract_instrument: 'bound by a curated in-repo entry to a named real-world instrument',
+  contract_oracle_rwa_feed: "priced by an independent oracle feed, keyed on the contract's declared symbol",
+};
+const BASIS_PROSE_FALLBACK = 'priced by an independent oracle feed';
 
 /**
  * Why a premium or discount is not a number. Same rule as the valuation
@@ -1414,7 +1432,7 @@ function AssetRow({ asset }: { asset: RWAAsset }) {
         <div className="text-ink-muted text-xs">
           {asset.basis === 'sep1_anchor_declaration'
             ? `declared by the issuer${asset.anchor_class ? ` as ${asset.anchor_class}` : ''}`
-            : 'priced by an independent oracle feed'}
+            : (asset.basis && BASIS_PROSE[asset.basis]) || BASIS_PROSE_FALLBACK}
         </div>
       </Td>
       <Td align="right">

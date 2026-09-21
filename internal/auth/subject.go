@@ -62,8 +62,8 @@ type Subject struct {
 	// KeyID — public-safe identifier for the credential the caller
 	// presented. For apikey, populated from APIKeyRecord.KeyID
 	// (distinct from the secret hash so it's safe to appear in
-	// logs / /v1/account/me responses). Empty for anonymous and
-	// pre-#190 SEP-10 stubs.
+	// logs / /v1/account/me responses). Empty for anonymous and for
+	// SEP-10 subjects, which have no key record to draw one from.
 	KeyID string
 
 	// RateLimitPerMin — per-tier budget the rate-limit middleware

@@ -264,12 +264,11 @@ func ContractRecognitionSources() []string {
 // are ADDED rather than folded into [RejectContractNotNamed], which
 // keeps its original meaning exactly: nobody named this address.
 const (
-	RejectNotContract       = "not_a_contract_address"
-	RejectContractNotNamed  = "contract_not_named_in_directory"
-	RejectContractNoTag     = "contract_named_without_issuing_tag"
-	RejectContractScam      = "contract_scam_flagged"
-	RejectNoContractBasis   = "no_real_world_instrument_basis_for_contract"
-	RejectContractDuplicate = "duplicate_contract_declaration"
+	RejectNotContract      = "not_a_contract_address"
+	RejectContractNotNamed = "contract_not_named_in_directory"
+	RejectContractNoTag    = "contract_named_without_issuing_tag"
+	RejectContractScam     = "contract_scam_flagged"
+	RejectNoContractBasis  = "no_real_world_instrument_basis_for_contract"
 
 	// RejectContractListedNotCurated — an independent listing directory
 	// names the address and NO in-repo curated binding does. This is

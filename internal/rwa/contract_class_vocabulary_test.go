@@ -1,9 +1,12 @@
 package rwa_test
 
 import (
+	"os"
 	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 )
@@ -102,5 +105,61 @@ func TestTheTBillFundsKeepTheClassTheyShippedWith(t *testing.T) {
 	}
 	if seen != 5 {
 		t.Errorf("found %d T-Bill fund bindings, want 5", seen)
+	}
+}
+
+// TestOpenAPIAnchorClassEnumMatchesContractVocabulary pins the wire contract
+// to the Go vocabulary it serves. `anchor_class` is populated from BOTH the
+// classic and contract arms (RLT-026): a term the contract arm may legally
+// emit (`fund`) but the spec's enum omits is an undocumented value on every
+// Spiko SAFO row, live, with no way for a generated client to model it.
+func TestOpenAPIAnchorClassEnumMatchesContractVocabulary(t *testing.T) {
+	raw, err := os.ReadFile("../../openapi/stellar-index.v1.yaml")
+	if err != nil {
+		t.Fatalf("read spec: %v", err)
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse spec: %v", err)
+	}
+
+	node := doc
+	for _, key := range []string{"components", "schemas"} {
+		next, ok := node[key].(map[string]any)
+		if !ok {
+			t.Fatalf("spec missing %q", key)
+		}
+		node = next
+	}
+	rwaAsset, ok := node["RWAAsset"].(map[string]any)
+	if !ok {
+		t.Fatal("spec missing components.schemas.RWAAsset")
+	}
+	props, ok := rwaAsset["properties"].(map[string]any)
+	if !ok {
+		t.Fatal("RWAAsset has no properties")
+	}
+	anchorClass, ok := props["anchor_class"].(map[string]any)
+	if !ok {
+		t.Fatal("RWAAsset.properties has no anchor_class")
+	}
+	rawEnum, ok := anchorClass["enum"].([]any)
+	if !ok {
+		t.Fatal("anchor_class has no enum")
+	}
+
+	var specEnum []string
+	for _, v := range rawEnum {
+		specEnum = append(specEnum, v.(string))
+	}
+	sort.Strings(specEnum)
+
+	want := rwa.ContractAnchorClasses() // superset the field is actually populated from
+	sort.Strings(want)
+
+	if strings.Join(specEnum, ",") != strings.Join(want, ",") {
+		t.Errorf("openapi anchor_class enum = %v, want %v (rwa.ContractAnchorClasses) — "+
+			"a class the contract arm may legally serve must be documented on the wire",
+			specEnum, want)
 	}
 }
