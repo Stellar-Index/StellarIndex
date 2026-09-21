@@ -52,7 +52,9 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -247,20 +249,40 @@ func realMain() int {
 		printUsage()
 		return 2
 	}
-	if err := run(args); err != nil {
-		var ec *opsutil.ExitCodeError
-		if errors.As(err, &ec) {
-			if ec.Err != nil {
-				fmt.Fprintf(os.Stderr, "%s: %v\n", args[0], ec.Err)
-			}
-			return ec.Code
-		}
-		if !errors.Is(err, opsutil.ErrExitSilently) {
-			fmt.Fprintf(os.Stderr, "%s: %v\n", args[0], err)
-		}
-		return 1
+	return dispatchExitCode(args[0], run(args), os.Stderr)
+}
+
+// dispatchExitCode turns a subcommand handler's returned error into the
+// process exit code, writing the "<subcommand>: <err>" prefix line to
+// stderr where one is warranted. Split out of realMain so the error
+// classification (ExitCodeError / flag.ErrHelp / ErrExitSilently / plain
+// error) is testable without going through os.Args and the fd-2 filter
+// realMain installs.
+func dispatchExitCode(name string, err error, stderr io.Writer) int {
+	if err == nil {
+		return 0
 	}
-	return 0
+	var ec *opsutil.ExitCodeError
+	if errors.As(err, &ec) {
+		if ec.Err != nil {
+			fmt.Fprintf(stderr, "%s: %v\n", name, ec.Err)
+		}
+		return ec.Code
+	}
+	// Every subcommand's flag.FlagSet uses flag.ContinueOnError (see
+	// opsutil.NewMutatingFlagSet), so `-h`/`-help` on a subcommand already
+	// printed that subcommand's usage via fs.Parse and returns
+	// flag.ErrHelp as the error — it is not a failure. Without this case
+	// it fell through to the generic branch below and printed
+	// "<subcommand>: flag: help requested" then exited 1, telling a
+	// scripted caller that asked for help that it failed.
+	if errors.Is(err, flag.ErrHelp) {
+		return 0
+	}
+	if !errors.Is(err, opsutil.ErrExitSilently) {
+		fmt.Fprintf(stderr, "%s: %v\n", name, err)
+	}
+	return 1
 }
 
 // usageBody is the static portion of `stellarindex-ops -h`. The header
