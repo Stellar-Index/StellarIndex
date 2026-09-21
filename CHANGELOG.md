@@ -17,6 +17,19 @@ against.
 
 ### Added
 
+- **docs / engineering standards no longer claim unbuilt CI enforcement (NS30, NS31, NS32):**
+  `docs/engineering-standards.md` §2.4, §2.6 and §2.7 asserted a
+  `docs/reference/deprecations.md` table, a `internal/config/flags.go` flag
+  registry with age-based build warnings/failures, and a CI removal-suggestion
+  scan for `// workaround` comments as if each existed. None do. Section 6's
+  "Enforcement mechanisms" table repeated the same claim for the first two via
+  `scripts/ci/check-deprecations.sh` and `scripts/ci/check-flag-age.sh`, which
+  also don't exist. All five spots now carry an explicit "Gap:" disclaimer.
+  `TestEngineeringStandardsDoesNotClaimUnbuiltEnforcement` and its companion
+  `TestEngineeringStandardsSection6DoesNotClaimUnbuiltEnforcement`
+  (`test/controlwiring/engineering_standards_gap_claims_test.go`) pin both the
+  prose and the table so the doc can't silently re-assert either mechanism
+  without the artifact actually landing.
 - **test / the withholding guard can now see the handler package (T669):**
   `TestV1VWAPCacheSeamsAreGated` scans `internal/api/v1` for every function
   that reads the aggregator's published VWAP cache and fails unless the
