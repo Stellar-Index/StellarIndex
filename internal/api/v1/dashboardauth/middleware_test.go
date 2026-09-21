@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -74,6 +75,54 @@ func TestMiddleware_NilNowDoesNotPanic(t *testing.T) {
 	}
 	if cfg.Now == nil {
 		t.Fatal("Middleware should have defaulted a nil cfg.Now")
+	}
+}
+
+// TestNewHandlers_ValidatesCallerConfigInPlace is the RLT-179
+// regression for the by-value-Config/validate-on-a-copy pattern:
+// main.go builds ONE Config (authCfg), hands it to NewHandlers to
+// build the handlers, then hands the SAME variable's address to
+// Middleware — exactly the shape reproduced here. If NewHandlers
+// validated a local copy (the old `func NewHandlers(cfg Config)`),
+// validate()'s defaults (Generator.Secret, Logger, Now,
+// PasskeyCeremonyGuard) would land on that copy and never reach the
+// caller's own cfg, silently leaving Middleware (or any other
+// consumer built from the same variable) with the undefaulted zero
+// values. NewHandlers now takes *Config, so the caller's own struct
+// carries every default after the call.
+func TestNewHandlers_ValidatesCallerConfigInPlace(t *testing.T) {
+	cfg := Config{
+		Accounts:         newFakeAccountStore(),
+		Users:            newFakeUserStore(),
+		Tokens:           newFakeTokenStore(nil),
+		Sender:           &notify.NoopSender{},
+		DashboardBaseURL: "https://app.stellarindex.io",
+		EmailFrom:        "Stellar Index <hello@stellarindex.io>",
+	}
+	if cfg.PasskeyCeremonyGuard != nil {
+		t.Fatal("test setup: PasskeyCeremonyGuard must start nil")
+	}
+
+	if _, err := NewHandlers(&cfg); err != nil {
+		t.Fatalf("NewHandlers: %v", err)
+	}
+
+	// The exact fields validate() defaults (handlers.go), read back
+	// off the CALLER's own cfg — not off Handlers.cfg — mirroring
+	// main.go's dashboardauth.Middleware(&authCfg) call built from
+	// the same variable NewHandlers was given.
+	if cfg.PasskeyCeremonyGuard == nil {
+		t.Error("caller's Config.PasskeyCeremonyGuard is still nil after NewHandlers — " +
+			"validate() defaulted a copy, not this struct; Middleware(&cfg) would run unguarded")
+	}
+	if cfg.Logger == nil {
+		t.Error("caller's Config.Logger is still nil after NewHandlers")
+	}
+	if cfg.Now == nil {
+		t.Error("caller's Config.Now is still nil after NewHandlers")
+	}
+	if cfg.Generator == nil || len(cfg.Generator.Secret) == 0 {
+		t.Error("caller's Config.Generator.Secret is still unset after NewHandlers")
 	}
 }
 
