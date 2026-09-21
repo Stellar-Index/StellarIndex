@@ -1472,7 +1472,15 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// off the asset/quote shape that customers see via /v1/price.
 	o.recordPairWrite(pair, now)
 
-	o.publishToStream(ctx, pair, window, value, now)
+	// The SSE closed-bucket contract (ADR-0015, openapi price/stream)
+	// promises byte-identical payloads across every subscriber on the same
+	// (asset, quote, window) — including cross-region. Raw tick wall-clock
+	// carries per-instance scheduling jitter (sub-second to low-second),
+	// so two regions publishing "the same" bucket would stamp different
+	// observed_at values. Truncate to the minute boundary — the aggregator's
+	// documented closed-bucket cadence (internal/api/streaming/hub.go,
+	// doc.go) — same convention as usd_fx_resolver.go's bucket floor.
+	o.publishToStream(ctx, pair, window, value, now.Truncate(time.Minute))
 	return nil
 }
 
@@ -1489,6 +1497,17 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 // downstream consumer of the returned value sees the SAME corrected
 // number, and keeps refreshPairWindow under the funlen ceiling.
 func (o *Orchestrator) computeNormalizedVWAP(trades []canonical.Trade, pair canonical.Pair) (*big.Rat, error) {
+	// Scale-normalize BEFORE the weighted sum: this pair's window can mix
+	// on-chain (7dp) and CEX (8dp) trades (native vs crypto:XLM spellings
+	// resolve to the same aggregate.Pair, and triangulation legs draw from
+	// both tiers), and the raw Σquote/Σbase mean over-weights the
+	// finer-scaled source ~10× per decimal (CS-040) — see
+	// aggregate.NormalizeAmountScale. This is the same correction
+	// internal/api/v1's price_tip.go and ohlc_fiat_combine.go already apply
+	// on their VWAP paths; a single-scale window (today's common case) is
+	// returned byte-identical.
+	trades = aggregate.NormalizeAmountScale(trades, amountScaleDecimalsFor)
+
 	vwap, err := aggregate.VWAP(trades)
 	if err != nil {
 		return nil, err
@@ -1496,6 +1515,15 @@ func (o *Orchestrator) computeNormalizedVWAP(trades []canonical.Trade, pair cano
 	return aggregate.AdjustPrice(vwap,
 		aggregate.ResolveDecimals(o.cfg.DecimalsLookup, pair.Base),
 		aggregate.ResolveDecimals(o.cfg.DecimalsLookup, pair.Quote)), nil
+}
+
+// amountScaleDecimalsFor resolves a trade source's smallest-unit scale from
+// the external registry, mirroring internal/api/v1's identically-named
+// helper. aggregate.NormalizeAmountScale takes this as a parameter rather
+// than importing internal/sources/external itself — that package imports
+// aggregate, so the reverse edge would be an import cycle.
+func amountScaleDecimalsFor(source string) int {
+	return external.Lookup(source).AmountScaleDecimals()
 }
 
 // markFrozenThisTick records that (pair, window) was refused

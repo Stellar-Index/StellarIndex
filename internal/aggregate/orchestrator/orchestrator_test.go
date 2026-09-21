@@ -2047,6 +2047,81 @@ func TestTick_StreamPublisher_ErrorDoesNotPropagate(t *testing.T) {
 	}
 }
 
+// TestTick_StreamPublisher_ObservedAtTruncatedToMinute is the RLT-344
+// regression: the ADR-0015 / openapi price/stream contract promises
+// byte-identical closed-bucket payloads across every subscriber on the
+// same (asset, quote, window) — including cross-region — which raw tick
+// wall-clock cannot honour (per-instance scheduling jitter). observed_at
+// must be the minute-truncated bucket boundary, not the tick's exact
+// wall-clock read.
+func TestTick_StreamPublisher_ObservedAtTruncatedToMinute(t *testing.T) {
+	pair := xlmUsdtPair(t)
+	store := &mockStore{
+		trades: []canonical.Trade{
+			buildTrade(t, big.NewInt(10_000_000_000), big.NewInt(1_758_200_000), time.Now()),
+		},
+	}
+	cache, _ := newTestRedis(t)
+	pub := &recordingStreamPublisher{}
+	o := New(store, cache, Config{
+		Pairs:           []canonical.Pair{pair},
+		Windows:         []time.Duration{5 * time.Minute},
+		StreamPublisher: pub,
+	})
+	// A tick time with deliberate sub-minute jitter — 17.5 s past the
+	// minute — so a bug that forwards it raw is distinguishable from the
+	// correct minute-floor.
+	tickTime := time.Date(2026, 9, 21, 14, 35, 17, 500_000_000, time.UTC)
+	o.clock = func() time.Time { return tickTime }
+
+	if err := o.Tick(context.Background()); err != nil {
+		t.Fatalf("Tick: %v", err)
+	}
+	if len(pub.calls) != 1 {
+		t.Fatalf("PublishClosedBucket called %d times, want 1", len(pub.calls))
+	}
+	want := time.Date(2026, 9, 21, 14, 35, 0, 0, time.UTC)
+	if got := pub.calls[0].observedAt; !got.Equal(want) {
+		t.Errorf("observed_at = %s, want %s (minute-truncated bucket boundary) — "+
+			"got the raw tick wall-clock instead", got, want)
+	}
+}
+
+// TestComputeNormalizedVWAP_MixesOnChainAndCEXScale is the RLT-119 /
+// GH #604 regression: a window mixing on-chain (sdex, 7dp) and CEX
+// (binance, 8dp) trades of equal real volume must weight them equally.
+// Without aggregate.NormalizeAmountScale wired in, the raw Σquote/Σbase
+// sum over-weights the finer-scaled CEX leg 10× and produces 13/110
+// (≈0.1181) instead of the true equal-volume midpoint 0.11 — the same
+// arithmetic aggregate.TestNormalizeAmountScale_MixedWindowFixesVWAP
+// pins in isolation.
+func TestComputeNormalizedVWAP_MixesOnChainAndCEXScale(t *testing.T) {
+	pair := xlmUsdtPair(t)
+	pow10 := func(n int) *big.Int { return new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(n)), nil) }
+
+	// 1000 XLM @ 0.10, stamped at sdex's 7dp on-chain scale.
+	onchain := buildTradeFrom(t, "sdex",
+		new(big.Int).Mul(big.NewInt(1000), pow10(7)),
+		new(big.Int).Mul(big.NewInt(100), pow10(7)),
+		time.Now())
+	// 1000 XLM @ 0.12, stamped at binance's 8dp CEX scale — equal real volume.
+	cex := buildTradeFrom(t, "binance",
+		new(big.Int).Mul(big.NewInt(1000), pow10(8)),
+		new(big.Int).Mul(big.NewInt(120), pow10(8)),
+		time.Now())
+
+	o := New(nil, nil, Config{})
+	got, err := o.computeNormalizedVWAP([]canonical.Trade{onchain, cex}, pair)
+	if err != nil {
+		t.Fatalf("computeNormalizedVWAP: %v", err)
+	}
+	if got.Cmp(big.NewRat(11, 100)) != 0 {
+		t.Errorf("VWAP = %s, want 0.11 (equal-real-volume midpoint) — "+
+			"13/110 (%s) is the un-normalized, CEX-over-weighted bug value",
+			got.FloatString(10), big.NewRat(13, 110).FloatString(10))
+	}
+}
+
 // TestTick_AnomalyWarn_EmitsMetric pins the COR-09 / AGT-06 fix: an
 // ActionWarn decision must leave an observable trace.
 //
