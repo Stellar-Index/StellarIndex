@@ -116,8 +116,10 @@ The following trigger automatic PR blocks:
 
 2. Call sites in the repo migrate within the same minor version.
 
-3. Public deprecations are documented in CHANGELOG **and** a
-   dedicated `docs/reference/deprecations.md` table.
+3. Public deprecations are documented in CHANGELOG. A dedicated
+   `docs/reference/deprecations.md` table is a gap: nothing in
+   `scripts/` builds or checks one yet, so CHANGELOG prose is the
+   only enforced record until that mechanism lands.
 
 4. Removal at the next major version at the earliest — never
    sooner than 90 days after deprecation landed.
@@ -143,12 +145,14 @@ Feature flags are **not** a tech-debt accumulator. Rules:
 
 - Every flag has an owner, a default, and a **scheduled removal
   date** — a labelled issue that expires the flag.
-- The flag registry `internal/config/flags.go` contains a struct
-  with every flag + its metadata. CI builds a doc from it.
-- A flag older than **90 days past its removal date** triggers a
-  build warning. 180 days: build failure.
 - Kill-switches (for ops) are a different flavour — they live
   forever but must be documented in a runbook.
+- **Gap:** a central flag registry (e.g. `internal/config/flags.go`)
+  with age-based CI enforcement (build warning at 90 days past
+  removal, build failure at 180) is not implemented. No such file
+  or CI check exists yet. Until it does, flag age is reviewer
+  vigilance only — track it as a gap to fill, not a standing
+  mechanism.
 
 ### 2.7. No "temporary" workarounds
 
@@ -157,10 +161,14 @@ Every workaround for an upstream bug / limitation has:
 1. A link to the upstream issue.
 2. A code comment with the link.
 3. A tracked issue in our tracker labelled `workaround`.
-4. A removal test: when upstream fixes, CI finds the workaround
-   and suggests removal.
 
 We do not carry workarounds indefinitely.
+
+**Gap:** an automated removal check — CI finding a workaround
+comment and suggesting removal once upstream fixes land — is not
+implemented. No such scan exists in `scripts/` and no `// workaround`
+comment convention is enforced yet. Until it does, removal relies on
+the tracked issue above, not CI.
 
 ### 2.8. Refactor-as-you-go
 
@@ -626,9 +634,9 @@ mechanism in the codebase.
 | Definition of Done | CI + PR template | `.github/` |
 | Forbidden patterns | `golangci-lint` custom rules | `.golangci.yml` |
 | TODO discipline | CI regex check | `scripts/ci/check-todo-tracking.sh` |
-| Deprecation policy | CI scan on `Deprecated:` | `scripts/ci/check-deprecations.sh` |
+| Deprecation policy | **Gap:** no CI scan implemented | — (see §2.4) |
 | Dependency minimalism | `go mod tidy` + `govulncheck` | `security.yml` |
-| Feature flag hygiene | CI scan of flag registry | `scripts/ci/check-flag-age.sh` |
+| Feature flag hygiene | **Gap:** no flag registry or CI scan implemented | — (see §2.6) |
 | SLOs as code | `internal/obs/slo.go` struct + Prometheus derivation | `docker/prometheus/` |
 | Runbook ↔ alert link | CI bidirectional check | `scripts/ci/check-runbook-links.sh` |
 | Doc freshness | CI scan | `scripts/ci/check-doc-freshness.sh` |
