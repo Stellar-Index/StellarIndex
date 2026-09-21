@@ -43,7 +43,10 @@ describe('FEC guards (repo-walk)', () => {
   // NEW file importing formatPairPrice (e.g. a 5th venue price table)
   // must either use the shared LastPriceCell or be reviewed onto this
   // list. lib/format.ts defines it; the four non-cell importers use it
-  // for stat lines, reviewed 2026-08-24.
+  // for stat lines, reviewed 2026-08-24. RLT-388 (2026-09-21): the
+  // /convert/[from]/[to] headline, interactive widget and meta
+  // description were three independent formatRate forks that could
+  // (and did) disagree; folded onto formatPairPrice.
   it('formatPairPrice importers are exactly the reviewed set', () => {
     const allowed = new Set([
       'lib/format.ts',
@@ -52,6 +55,9 @@ describe('FEC guards (repo-walk)', () => {
       'app/markets/[pair]/page.tsx',
       'app/sources/[name]/page.tsx',
       'app/assets/[slug]/LiquidityTabPanel.tsx',
+      'app/convert/[from]/[to]/page.tsx',
+      'app/convert/[from]/[to]/ConvertLive.tsx',
+      'app/convert/[from]/[to]/ConvertPair.tsx',
     ]);
     const importers = sources
       .filter((f) => f.text.includes('formatPairPrice'))

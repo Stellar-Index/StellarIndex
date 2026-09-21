@@ -6,6 +6,7 @@ import { Breadcrumbs } from '@/components/ui';
 import { SITE_OG_IMAGES } from '@/lib/seo';
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import { buildConvertParams } from '@/lib/convert-params';
+import { formatPairPrice } from '@/lib/format';
 import { ConvertPair } from './ConvertPair';
 import { ConvertChart } from './ConvertChart';
 import { ConvertLiveRate, ConvertSnippets } from './ConvertLive';
@@ -177,7 +178,7 @@ export async function generateMetadata({
   const detail = await fetchDetail(f, t);
   const rate = detail?.cross_rates?.[t];
   const ratePart =
-    rate != null ? ` 1 ${f} = ${formatRateForMeta(rate)} ${t}.` : '';
+    rate != null ? ` 1 ${f} = ${formatPairPrice(rate)} ${t}.` : '';
   return {
     title: `${f} to ${t} — live exchange rate + currency converter`,
     description: `Convert ${f} to ${t} at the live mid-market rate.${ratePart} Real-time forex rate, interactive converter, and ${f}/${t} cross-rates at common amounts (1, 10, 100, 1000, 10000).`,
@@ -188,7 +189,7 @@ export async function generateMetadata({
       title: `${f} to ${t} converter`,
       description:
         rate != null
-          ? `1 ${f} = ${formatRateForMeta(rate)} ${t} — live forex rate.`
+          ? `1 ${f} = ${formatPairPrice(rate)} ${t} — live forex rate.`
           : `Live ${f} to ${t} forex rate + converter.`,
       url: `${CURRENT_NETWORK.explorerUrl}/convert/${f}/${t}`,
       type: 'website',
@@ -284,11 +285,4 @@ export default async function ConvertPage({ params }: { params: Params }) {
       </section>
     </div>
   );
-}
-
-function formatRateForMeta(n: number): string {
-  if (!Number.isFinite(n)) return '—';
-  if (Math.abs(n) >= 100) return n.toFixed(2);
-  if (Math.abs(n) >= 1) return n.toFixed(4);
-  return n.toFixed(6);
 }

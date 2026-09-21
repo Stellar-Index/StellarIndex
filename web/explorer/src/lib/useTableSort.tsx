@@ -107,7 +107,10 @@ function compareValues(a: SortValue, b: SortValue): number {
   if (aEmpty) return 1;
   if (bEmpty) return -1;
   if (typeof a === 'number' && typeof b === 'number') return a - b;
-  return String(a).localeCompare(String(b));
+  // Pinned to en-US, same as every formatter in lib/format.ts, so a
+  // non-ASCII column sorts identically between the SSG build and
+  // client hydration regardless of the browser's default locale.
+  return String(a).localeCompare(String(b), 'en-US');
 }
 
 /**
