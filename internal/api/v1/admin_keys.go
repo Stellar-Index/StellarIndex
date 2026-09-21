@@ -88,12 +88,8 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
 		return
 	}
-	reason := r.Header.Get("X-Reason")
-	if reason == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/missing-reason",
-			"X-Reason header required", http.StatusBadRequest,
-			"every admin write captures an X-Reason header into the audit log")
+	reason, ok := s.requireReason(w, r)
+	if !ok {
 		return
 	}
 
@@ -205,12 +201,8 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 			"this deployment has no AccountStore wired — typically because Redis is unavailable")
 		return
 	}
-	reason := r.Header.Get("X-Reason")
-	if reason == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/missing-reason",
-			"X-Reason header required", http.StatusBadRequest,
-			"every admin write captures an X-Reason header into the audit log")
+	reason, ok := s.requireReason(w, r)
+	if !ok {
 		return
 	}
 	keyID := r.PathValue("keyID")
