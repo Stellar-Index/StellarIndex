@@ -7772,9 +7772,12 @@ export interface components {
              *     `curated_contract_instrument`. Absent under either oracle
              *     basis and under `sep1_isin_declaration` — each of those
              *     names an instrument, not its class, and none is invented.
+             *     `fund` is contract-arm only: SEP-1's declared vocabulary
+             *     (`sep1_anchor_declaration`) never emits it — see
+             *     `definition.contract_anchor_classes`.
              * @enum {string}
              */
-            anchor_class?: "stock" | "bond" | "commodity" | "realestate";
+            anchor_class?: "stock" | "bond" | "commodity" | "realestate" | "fund";
             /** @description The off-chain instrument the issuer declared this token anchors to, verbatim. */
             anchor_asset?: string;
             valuation: components["schemas"]["RWAValuation"];
@@ -10568,8 +10571,13 @@ export interface components {
              *     prefix feature shipped.
              */
             key_prefix?: string;
-            /** @enum {string} */
-            tier?: "anonymous" | "apikey" | "partner";
+            /**
+             * @description The auth.Tier value actually served (internal/auth/subject.go).
+             *     `operator` is an internal credential, reserved for admin
+             *     endpoints; never issued to a public caller.
+             * @enum {string}
+             */
+            tier?: "anonymous" | "apikey" | "sep10" | "operator";
             rate_limit_per_min?: number;
             /** Format: date-time */
             created_at?: string;
@@ -14188,7 +14196,10 @@ export interface operations {
                                 frozen_at?: string;
                                 /** Format: int64 */
                                 frozen_at_ledger?: number;
-                                /** @enum {string} */
+                                /**
+                                 * @description Only `divergence`, `outlier_storm` and `other` are currently emitted by the automated freeze mapper. `manual` is reserved for a genuinely operator-initiated freeze (no automated writer exists yet); `single_source` is reserved for a single-source deviation freeze, which the current mapper folds into `outlier_storm`.
+                                 * @enum {string}
+                                 */
                                 reason?: "single_source" | "divergence" | "outlier_storm" | "manual" | "other";
                                 frozen_value?: string;
                                 /** Format: date-time */

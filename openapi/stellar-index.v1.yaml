@@ -3211,7 +3211,15 @@ paths:
                             quote_id:            { type: string }
                             frozen_at:           { type: string, format: date-time }
                             frozen_at_ledger:    { type: integer, format: int64 }
-                            reason:              { type: string, enum: [single_source, divergence, outlier_storm, manual, other] }
+                            reason:
+                              type: string
+                              enum: [single_source, divergence, outlier_storm, manual, other]
+                              description: >-
+                                Only `divergence`, `outlier_storm` and `other` are currently
+                                emitted by the automated freeze mapper. `manual` is reserved for
+                                a genuinely operator-initiated freeze (no automated writer exists
+                                yet); `single_source` is reserved for a single-source deviation
+                                freeze, which the current mapper folds into `outlier_storm`.
                             frozen_value:        { type: string }
                             recovered_at:        { type: [string, "null"], format: date-time }
                             recovered_at_ledger: { type: [integer, "null"], format: int64 }
@@ -15280,12 +15288,15 @@ components:
             than reconstructing the rule.
         anchor_class:
           type: string
-          enum: [stock, bond, commodity, realestate]
+          enum: [stock, bond, commodity, realestate, fund]
           description: |
             Declared class. Present under `sep1_anchor_declaration` and
             `curated_contract_instrument`. Absent under either oracle
             basis and under `sep1_isin_declaration` — each of those
             names an instrument, not its class, and none is invented.
+            `fund` is contract-arm only: SEP-1's declared vocabulary
+            (`sep1_anchor_declaration`) never emits it — see
+            `definition.contract_anchor_classes`.
         anchor_asset:
           type: string
           description: The off-chain instrument the issuer declared this token anchors to, verbatim.
@@ -18613,7 +18624,13 @@ components:
             match dashboard rows to entries in their secret
             manager. Empty on legacy keys minted before the
             prefix feature shipped.
-        tier:             { type: string, enum: [anonymous, apikey, partner] }
+        tier:
+          type: string
+          enum: [anonymous, apikey, sep10, operator]
+          description: |
+            The auth.Tier value actually served (internal/auth/subject.go).
+            `operator` is an internal credential, reserved for admin
+            endpoints; never issued to a public caller.
         rate_limit_per_min: { type: integer }
         created_at:       { type: string, format: date-time }
 

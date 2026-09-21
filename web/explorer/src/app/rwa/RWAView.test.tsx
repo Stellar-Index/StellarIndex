@@ -1795,4 +1795,26 @@ describe('sumStablecoins', () => {
       screen.queryByText(/As a third-party curator counts it/),
     ).not.toBeInTheDocument();
   });
+
+  it('describes a third-party-curated basis as curation, not an oracle feed', async () => {
+    apiGetData.mockResolvedValue(
+      view({
+        assets: [
+          asset({
+            basis: 'third_party_curated',
+            anchor_class: undefined,
+          }),
+        ],
+      }),
+    );
+    renderView();
+
+    expect(await screen.findByText('USTRY')).toBeInTheDocument();
+    expect(
+      screen.getByText(/listed by a named third-party curator/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText('priced by an independent oracle feed'),
+    ).not.toBeInTheDocument();
+  });
 });

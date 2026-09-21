@@ -71,6 +71,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -142,6 +144,29 @@ func main() {
 		fmt.Fprintf(os.Stderr, "stellarindex-aggregator: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// formatDivergencePrice renders a divergence comparator price as the
+// decimal-as-string DivergenceFiringWebhookPayload documents. These
+// values originate as float64 (divergence.CachedResult mirrors the
+// comparator's own external-reference arithmetic, not a stored
+// canonical.Amount), so strconv preserves exactly what was computed
+// rather than inventing false fixed-point precision.
+func formatDivergencePrice(v float64) string {
+	return strconv.FormatFloat(v, 'f', -1, 64)
+}
+
+// divergenceSourceNames renders the divergence comparator's per-source
+// price map as the array of source NAMES the spec documents, not the
+// map MarshalPayload's plain json.Marshal would otherwise serialize
+// (an object keyed on name -> price).
+func divergenceSourceNames(sources map[string]float64) []string {
+	names := make([]string, 0, len(sources))
+	for name := range sources {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 //nolint:gocognit,gocyclo,funlen // top-level binary lifecycle — splitting reduces readability of dependency-construction order
@@ -417,11 +442,11 @@ func run(cfgPath string, dryRun bool) error {
 				payload := customerwebhook.MarshalPayload(logger, map[string]any{
 					"event":          string(platform.WebhookEventDivergenceFiring),
 					"pair":           pair.String(),
-					"our_price":      cached.OurPrice,
-					"median":         cached.Median,
+					"our_price":      formatDivergencePrice(cached.OurPrice),
+					"median":         formatDivergencePrice(cached.Median),
 					"divergence_pct": cached.DivergencePct,
 					"success_count":  cached.SuccessCount,
-					"sources":        cached.Sources,
+					"sources":        divergenceSourceNames(cached.Sources),
 					"at":             cached.ComputedAt.Format(time.RFC3339Nano),
 				})
 				if payload == nil {
