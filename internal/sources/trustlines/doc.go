@@ -1,6 +1,6 @@
 // Package trustlines is the canonical TrustlineEntry observer per
 // ADR-0022. Plugs into the dispatcher's LedgerEntryChange hook
-// (#297) and emits one Observation per change touching a
+// (Task #54) and emits one Observation per change touching a
 // trustline whose Asset matches an operator-watched classic
 // credit asset.
 //
@@ -21,7 +21,7 @@
 // Why classic-only:
 //
 //   - Native (XLM) — Algorithm 1, not Algorithm 2. The
-//     AccountEntry observer (#298) already covers XLM holders.
+//     AccountEntry observer (Task #54) already covers XLM holders.
 //   - Pool-share trustlines (TrustLineAsset.LiquidityPoolId) —
 //     LP shares aren't classic-asset trustlines; their reserves
 //     come from the LP-reserve observer (Task #65).

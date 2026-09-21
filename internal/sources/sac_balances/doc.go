@@ -1,6 +1,6 @@
 // Package sac_balances is the canonical Stellar-Asset-Contract
 // (SAC) balance observer per ADR-0022. Plugs into the
-// dispatcher's LedgerEntryChange hook (#297) and emits one
+// dispatcher's LedgerEntryChange hook (Task #54) and emits one
 // Observation per ContractData-delta on a watched SAC wrapper
 // contract whose Key matches the SEP-41 balance shape
 // `Vec(Symbol("Balance"), Address(holder))`.

@@ -1,11 +1,11 @@
 // Package claimable_balances is the canonical
 // ClaimableBalanceEntry observer per ADR-0022. Plugs into the
-// dispatcher's LedgerEntryChange hook (#297) and emits one
+// dispatcher's LedgerEntryChange hook (Task #54) and emits one
 // Observation per change touching a claimable balance whose
 // asset matches an operator-watched classic credit asset.
 //
 // Operator usage: the same `[supply] watched_classic_assets`
-// list used by the trustlines observer (#304) drives this one
+// list used by the trustlines observer (Task #55) drives this one
 // too. Match fast-path is type discriminator
 // (LedgerEntryTypeClaimableBalance) + asset variant + asset_key
 // map lookup.

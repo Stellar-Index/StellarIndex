@@ -1112,11 +1112,11 @@ type supplyRefresherBinding struct {
 func buildSupplyRefreshers(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) ([]supplyRefresherBinding, error) {
 	out := make([]supplyRefresherBinding, 0, 1+len(cfg.Supply.WatchedClassicAssets)+len(cfg.Supply.WatchedSEP41Contracts))
 
-	xlmRefresher, err := buildXLMRefresher(cfg, store, closeTimes, logger)
+	xlmRefresher, xlmAssetKey, err := buildXLMRefresher(cfg, store, closeTimes, logger)
 	if err != nil {
 		return nil, fmt.Errorf("xlm refresher: %w", err)
 	}
-	out = append(out, supplyRefresherBinding{refresher: xlmRefresher, assetKey: "XLM"})
+	out = append(out, supplyRefresherBinding{refresher: xlmRefresher, assetKey: xlmAssetKey})
 
 	classicBindings, err := buildClassicRefreshers(cfg, store, closeTimes, logger)
 	if err != nil {
@@ -1262,10 +1262,10 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 	return out, nil
 }
 
-func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) (*supply.Refresher, error) {
+func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) (*supply.Refresher, string, error) {
 	staticReader, err := supply.NewConfigReserveBalanceReader(cfg.Supply.ReserveBalancesStroops)
 	if err != nil {
-		return nil, fmt.Errorf("config reserve reader: %w", err)
+		return nil, "", fmt.Errorf("config reserve reader: %w", err)
 	}
 	chained := supplyAggregatorChainReader{
 		live:   supply.NewLCMReserveBalanceReader(supplyAggregatorStoreLookup{s: store}),
@@ -1276,15 +1276,24 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes led
 	// frozen pubnet 50.0 B constant.
 	computer, err := supply.NewXLMComputerForNetwork(cfg.Stellar.Passphrase(), cfg.Supply.SDFReserveAccounts, chained)
 	if err != nil {
-		return nil, fmt.Errorf("xlm computer: %w", err)
+		return nil, "", fmt.Errorf("xlm computer: %w", err)
+	}
+	// assetKey must match supply.AssetKey's "XLM" form — the shape
+	// StaleComponentLedgersByAsset overrides and refresher snapshot
+	// lookups are keyed on — not the "native" AssetType literal. Returned
+	// to the caller so the metric-label binding and the internal
+	// registration can never drift apart again.
+	assetKey, err := supply.AssetKey(canonical.NativeAsset())
+	if err != nil {
+		return nil, "", fmt.Errorf("derive asset_key for native XLM: %w", err)
 	}
 	return supply.NewRefresher(
 		supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
 		computer,
 		supplyAggregatorInserter{s: store},
-		logger.With("asset", "native"),
-		supplyRefresherOptions(cfg, "native")...,
-	), nil
+		logger.With("asset", assetKey),
+		supplyRefresherOptions(cfg, assetKey)...,
+	), assetKey, nil
 }
 
 // runSupplyRefresh ticks the supply refresher on `cadence`,
