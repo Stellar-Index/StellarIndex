@@ -54,7 +54,7 @@ Healthchecks dashboard.
 Default tuning (override via `/etc/default/stellarindex-healthchecks`):
 - `SLA_PROBE_BASE_URL=http://localhost:3000/v1`
 - `SLA_PROBE_DURATION=30s`
-- `SLA_PROBE_CONCURRENCY=2`
+- `SLA_PROBE_CONCURRENCY=1`
 - `SLA_PROBE_PAIR=native,fiat:USD`
 
 ## Architecture
