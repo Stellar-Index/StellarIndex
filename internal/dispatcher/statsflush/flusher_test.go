@@ -1,14 +1,19 @@
 package statsflush
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -181,5 +186,82 @@ func TestRun_ShutdownDrain_UsesLiveContext(t *testing.T) {
 	}
 	if len(w.calls[0]) != 1 || w.calls[0][0].EventsSeen != 7 {
 		t.Errorf("drain rows = %+v, want one band row with EventsSeen 7", w.calls[0])
+	}
+}
+
+// TestFlushAt_PromotesDispatcherCountersToPrometheus is the regression
+// test for RLT-135: TxReadErrors, TxEventReadErrors and
+// EntryMetaUnsupported used to be WARN-log-only, with no Prometheus
+// series an alert rule or dashboard could key off. A single flush
+// window with all three nonzero must both log the WARN (unchanged
+// behaviour) and add the exact delta to the matching counter.
+func TestFlushAt_PromotesDispatcherCountersToPrometheus(t *testing.T) {
+	before := struct{ txRead, txEvent, entryMeta float64 }{
+		testutil.ToFloat64(obs.DispatcherTxReadErrorsTotal),
+		testutil.ToFloat64(obs.DispatcherTxEventReadErrorsTotal),
+		testutil.ToFloat64(obs.DispatcherEntryMetaUnsupportedTotal),
+	}
+
+	src := &stubStatsSource{stats: dispatcher.Stats{
+		TxReadErrors:         3,
+		TxEventReadErrors:    2,
+		EntryMetaUnsupported: 5,
+	}}
+	w := &fakeStatsWriter{}
+	var buf bytes.Buffer
+	f := New(src, w, slog.New(slog.NewTextHandler(&buf, nil)), Options{Interval: 5 * time.Minute})
+
+	f.flushAt(context.Background(), time.Now())
+
+	if got := testutil.ToFloat64(obs.DispatcherTxReadErrorsTotal) - before.txRead; got != 3 {
+		t.Errorf("DispatcherTxReadErrorsTotal delta = %v, want 3", got)
+	}
+	if got := testutil.ToFloat64(obs.DispatcherTxEventReadErrorsTotal) - before.txEvent; got != 2 {
+		t.Errorf("DispatcherTxEventReadErrorsTotal delta = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(obs.DispatcherEntryMetaUnsupportedTotal) - before.entryMeta; got != 5 {
+		t.Errorf("DispatcherEntryMetaUnsupportedTotal delta = %v, want 5", got)
+	}
+
+	out := buf.String()
+	for _, want := range []string{"tx-read errors", "tx-event read errors", "unsupported TransactionMeta version"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("log output missing %q\nfull log: %s", want, out)
+		}
+	}
+}
+
+// TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch is the
+// regression test for T110/RLT-135: the end-of-flush snapshot used to
+// omit EntryMetaUnsupported, so f.last.EntryMetaUnsupported stayed 0
+// forever and the delta at every subsequent tick equalled the full
+// cumulative total — the WARN fired on every flush window for the
+// life of the process instead of only when NEW occurrences appeared
+// in that window.
+//
+// Drives two ticks with the SAME cumulative EntryMetaUnsupported value
+// (i.e. no new occurrences between them) and asserts the WARN appears
+// exactly once — from the first tick, which had a genuine delta — not
+// twice.
+func TestFlushAt_EntryMetaUnsupported_SnapshotAdvances_NoLatch(t *testing.T) {
+	src := &stubStatsSource{stats: dispatcher.Stats{EntryMetaUnsupported: 4}}
+	w := &fakeStatsWriter{}
+	var buf bytes.Buffer
+	f := New(src, w, slog.New(slog.NewTextHandler(&buf, nil)), Options{Interval: 5 * time.Minute})
+
+	base := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+
+	// Tick 1: fresh delta of 4 against the zero-value baseline. WARN fires.
+	f.flushAt(context.Background(), base)
+	if got := f.last.EntryMetaUnsupported; got != 4 {
+		t.Fatalf("after flush 1, f.last.EntryMetaUnsupported = %d, want 4 (snapshot must advance)", got)
+	}
+
+	// Tick 2: no new occurrences — current stays at 4. Must NOT re-warn.
+	f.flushAt(context.Background(), base.Add(5*time.Minute))
+
+	got := strings.Count(buf.String(), "unsupported TransactionMeta version during this flush window")
+	if got != 1 {
+		t.Errorf("WARN logged %d times across 2 flat-delta ticks, want 1 (must not latch on the cumulative total forever)", got)
 	}
 }
