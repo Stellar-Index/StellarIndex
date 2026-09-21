@@ -259,8 +259,11 @@ echo "  Discovery"
 # retry. (robots.txt is currently served by Cloudflare's
 # auto-content-signals path, not the API binary; the check still
 # verifies "a 200 reaches the client" which is what crawlers see.)
-# /.well-known/security.txt follows once PR #1131 lands in r1.
 check "robots.txt"         "/robots.txt"
+# RFC 9116 disclosure metadata, served by the API binary itself
+# (internal/api/v1/server.go's handleSecurityTxt) — already live,
+# not a pending promotion.
+check "security.txt"       "/.well-known/security.txt"
 echo
 
 echo "  Behaviour pins"
@@ -292,7 +295,6 @@ expect_status 404 "asset not found"      "/v1/assets/AAAA-GA5ZSEJYB37JRC5AVCIA5M
 #   /v1/observations?source=fakesrc 400 (#1164)
 #   /v1/oracle/latest?source=fakesrc 400 (#1168)
 #   /metrics 404 from public host (#1172 + binary loopback gate #1207)
-#   /.well-known/security.txt 200 (#1131)
 #   /v1/markets?asset=USDC 400 invalid-asset-id (#1189)
 #   /v1/markets?source=binance&asset=native 400 conflicting-filters (#1189)
 #   /v1/pools?asset=USDC 400 invalid-asset-id (#1190)
