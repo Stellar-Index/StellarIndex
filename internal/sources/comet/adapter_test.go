@@ -217,6 +217,130 @@ func TestDecoder_Decode_SelfPairSwap_ReplayDoesNotIncrement(t *testing.T) {
 	}
 }
 
+// TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric is the
+// non-positive-amount analog of TestDecoder_Decode_SelfPairSwap_
+// IncrementsDetectionMetric (T108): a swap whose body decodes cleanly but
+// carries a zero/negative amount is the sibling "decoded, zero honest rows"
+// drop shape to a self-pair swap, and must bump
+// obs.AMMNonPositiveSwapTotal{source="comet"} the same way, so an operator
+// can tell "armed but quiet" from "never wired" the same as the self-pair
+// counter.
+func TestDecoder_Decode_NonPositiveAmounts_IncrementsDetectionMetric(t *testing.T) {
+	d := NewDecoder()
+	d.now = func() time.Time { return mustTime(t, "2026-08-25T03:56:02Z") } // +5m, LIVE case
+	caller := accountStrkeyFromSeed(t, 0x10)
+	tokenIn := contractStrkeyFromSeed(t, 0x20)
+	tokenOut := contractStrkeyFromSeed(t, 0x30)
+	body := encodeSwapBody(t, caller, tokenIn, tokenOut,
+		big.NewInt(1_000_000), big.NewInt(0)) // AmountOut == 0
+	ev := events.Event{
+		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
+		Value:          body,
+		Ledger:         64_112_340,
+		TxHash:         "deadbeef",
+		OperationIndex: 0,
+		LedgerClosedAt: "2026-08-25T03:51:02Z",
+	}
+	before := testutil.ToFloat64(obs.AMMNonPositiveSwapTotal.WithLabelValues(SourceName))
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("non-positive-amount swap must not error: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("non-positive-amount swap must produce zero events, got %d", len(out))
+	}
+	after := testutil.ToFloat64(obs.AMMNonPositiveSwapTotal.WithLabelValues(SourceName))
+	if after-before != 1 {
+		t.Fatalf("AMMNonPositiveSwapTotal{comet} must increment by 1 on a live non-positive-amount swap, got delta %v", after-before)
+	}
+}
+
+// TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement is the
+// non-positive-amount analog of TestDecoder_Decode_SelfPairSwap_
+// ReplayDoesNotIncrement (T108's must-fix): a backfill or completeness
+// re-derive re-runs Decode over a HISTORICAL window whose ledger close
+// time is far in the past relative to wall-clock now.
+// reconciliation_catalogue.go and verify_decoders.go construct their own
+// un-disabled comet.NewDecoder() to replay history — without the recency
+// gate, every completeness sweep would inflate this counter and defeat its
+// "happening now" signal, exactly the failure mode the self-pair sibling
+// metric was already gated against.
+func TestDecoder_Decode_NonPositiveAmounts_ReplayDoesNotIncrement(t *testing.T) {
+	d := NewDecoder()
+	d.now = func() time.Time { return mustTime(t, "2026-08-26T06:00:00Z") } // ~26h later, replay case
+	caller := accountStrkeyFromSeed(t, 0x10)
+	tokenIn := contractStrkeyFromSeed(t, 0x20)
+	tokenOut := contractStrkeyFromSeed(t, 0x30)
+	body := encodeSwapBody(t, caller, tokenIn, tokenOut,
+		big.NewInt(1_000_000), big.NewInt(0))
+	ev := events.Event{
+		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
+		Value:          body,
+		Ledger:         64_112_340,
+		TxHash:         "deadbeef",
+		LedgerClosedAt: "2026-08-25T03:51:02Z",
+	}
+	before := testutil.ToFloat64(obs.AMMNonPositiveSwapTotal.WithLabelValues(SourceName))
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("replayed non-positive-amount swap must not error: %v", err)
+	}
+	if len(out) != 0 {
+		t.Fatalf("replayed non-positive-amount swap must still produce zero events, got %d", len(out))
+	}
+	after := testutil.ToFloat64(obs.AMMNonPositiveSwapTotal.WithLabelValues(SourceName))
+	if after != before {
+		t.Fatalf("a replayed (stale-close-time) non-positive-amount swap must NOT bump the metric; got delta %v", after-before)
+	}
+}
+
+// TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters pins Q018: the
+// projector builds an INDEPENDENT comet.Decoder alongside the dispatcher's
+// whenever comet is enabled and the projector is also running (ADR-0032
+// Phase-3 parallel double-write) — both decode the same live event. Without
+// an opt-out, self-pair / non-positive-amount detections would be counted
+// twice per real occurrence. WithoutMetrics must suppress BOTH counters
+// while leaving the (nil, nil) drop behaviour unchanged.
+func TestDecoder_WithoutMetrics_SuppressesBothDetectionCounters(t *testing.T) {
+	d := NewDecoder().WithoutMetrics()
+	d.now = func() time.Time { return mustTime(t, "2026-08-25T03:56:02Z") } // LIVE case
+	caller := accountStrkeyFromSeed(t, 0x10)
+	token := contractStrkeyFromSeed(t, 0x20)
+
+	selfPairBody := encodeSwapBody(t, caller, token, token, big.NewInt(1_000_000), big.NewInt(900_000))
+	selfPairEv := events.Event{
+		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
+		Value:          selfPairBody,
+		Ledger:         64_112_340,
+		TxHash:         "deadbeef",
+		LedgerClosedAt: "2026-08-25T03:51:02Z",
+	}
+	beforeSelfPair := testutil.ToFloat64(obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName))
+	if out, err := d.Decode(selfPairEv); err != nil || len(out) != 0 {
+		t.Fatalf("self-pair swap: got (%v, %v), want (0 events, nil)", out, err)
+	}
+	if after := testutil.ToFloat64(obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName)); after != beforeSelfPair {
+		t.Fatalf("WithoutMetrics() must suppress AMMSelfPairSwapTotal; got delta %v", after-beforeSelfPair)
+	}
+
+	tokenOut := contractStrkeyFromSeed(t, 0x30)
+	nonPosBody := encodeSwapBody(t, caller, token, tokenOut, big.NewInt(1_000_000), big.NewInt(0))
+	nonPosEv := events.Event{
+		Topic:          []string{TopicSymbolPool, TopicSymbolSwap},
+		Value:          nonPosBody,
+		Ledger:         64_112_341,
+		TxHash:         "cafef00d",
+		LedgerClosedAt: "2026-08-25T03:51:02Z",
+	}
+	beforeNonPos := testutil.ToFloat64(obs.AMMNonPositiveSwapTotal.WithLabelValues(SourceName))
+	if out, err := d.Decode(nonPosEv); err != nil || len(out) != 0 {
+		t.Fatalf("non-positive-amount swap: got (%v, %v), want (0 events, nil)", out, err)
+	}
+	if after := testutil.ToFloat64(obs.AMMNonPositiveSwapTotal.WithLabelValues(SourceName)); after != beforeNonPos {
+		t.Fatalf("WithoutMetrics() must suppress AMMNonPositiveSwapTotal; got delta %v", after-beforeNonPos)
+	}
+}
+
 // TestDecoder_Decode_HappyPath_NoDetectionMetric is the false-positive guard:
 // a NORMAL distinct-pair swap must NOT bump the exploit metric. Without this,
 // the exploit alert would be noise — exactly what a self-pair-only signal must

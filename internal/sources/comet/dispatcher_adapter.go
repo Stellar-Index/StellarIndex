@@ -4,6 +4,8 @@ import (
 	"errors"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
@@ -43,6 +45,20 @@ type Decoder struct {
 	// see EventClosedAt). Injectable so tests are deterministic; defaults to
 	// time.Now in NewDecoder.
 	now func() time.Time
+
+	// countMetrics gates the exploit-detection counters
+	// (obs.AMMSelfPairSwapTotal / obs.AMMNonPositiveSwapTotal). The
+	// dispatcher ALWAYS builds a comet.Decoder when comet is enabled,
+	// and the projector builds an INDEPENDENT second instance alongside
+	// it whenever Projector.Enabled (ADR-0032 Phase-3 parallel
+	// double-write — both decode the same live events, deduped at the
+	// DB layer by ON CONFLICT DO NOTHING). Without this gate both
+	// instances would increment the same detection event, doubling the
+	// exploit signal (Q018). Default true; the projector registry
+	// disables it via [Decoder.WithoutMetrics] so the dispatcher's
+	// instance — which exists whether or not the projector runs — stays
+	// the single canonical counter.
+	countMetrics bool
 }
 
 // selfPairLiveWindow bounds how recent a self-pair swap's ledger close time
@@ -62,7 +78,26 @@ const selfPairLiveWindow = time.Hour
 // event to self-register from, so live fan-out never fires.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	base := []contractid.Option{contractid.WithSeed(MainnetGatedSet())}
-	return &Decoder{reg: contractid.New(append(base, opts...)...), now: time.Now}
+	return &Decoder{reg: contractid.New(append(base, opts...)...), now: time.Now, countMetrics: true}
+}
+
+// WithoutMetrics disables this Decoder's exploit-detection counter
+// increments. See the countMetrics field doc for why: it is the
+// projector registry's opt-out when the dispatcher already runs its
+// own comet.Decoder over the same event stream (Q018).
+func (d *Decoder) WithoutMetrics() *Decoder {
+	d.countMetrics = false
+	return d
+}
+
+// bumpDroppedSwapMetric increments counter for a determinate,
+// zero-row swap drop (self-pair or non-positive-amount) — gated on
+// countMetrics (Q018) and close-time recency (T108), same rationale
+// as the countMetrics field doc and selfPairLiveWindow.
+func (d *Decoder) bumpDroppedSwapMetric(counter *prometheus.CounterVec, closedAt time.Time) {
+	if d.countMetrics && d.now().Sub(closedAt) < selfPairLiveWindow {
+		counter.WithLabelValues(SourceName).Inc()
+	}
 }
 
 // Name implements [dispatcher.Decoder].
@@ -138,12 +173,18 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 				// close-time recency so a backfill / completeness re-derive of
 				// the historical exploit window does NOT re-fire the alert (see
 				// selfPairLiveWindow).
-				if d.now().Sub(closedAt) < selfPairLiveWindow {
-					obs.AMMSelfPairSwapTotal.WithLabelValues(SourceName).Inc()
-				}
+				d.bumpDroppedSwapMetric(obs.AMMSelfPairSwapTotal, closedAt)
 				return nil, nil
 			}
 			if errors.Is(err, ErrNonPositiveAmounts) {
+				// Sibling detection signal to the self-pair branch above —
+				// same "decoded cleanly, zero honest rows" drop shape, same
+				// recency gate: reconciliation_catalogue.go and
+				// verify_decoders.go construct their own un-disabled
+				// comet.NewDecoder() to replay historical ledgers, and an
+				// ungated counter would be inflated by every completeness
+				// sweep rather than reflecting live activity.
+				d.bumpDroppedSwapMetric(obs.AMMNonPositiveSwapTotal, closedAt)
 				return nil, nil
 			}
 			return nil, err

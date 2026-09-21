@@ -1274,7 +1274,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 // attribution sweeper.
 func routerEnabled(enabledSources []string) bool {
 	for _, s := range enabledSources {
-		if s == soroswap_router.SourceName {
+		if strings.ToLower(strings.TrimSpace(s)) == soroswap_router.SourceName {
 			return true
 		}
 	}
@@ -1310,8 +1310,9 @@ func startRoutedViaTagger(parent context.Context, store *timescale.Store, logger
 // the gate and the UPDATE can never drift.
 func ammSignerEnabled(enabledSources []string) bool {
 	for _, s := range enabledSources {
+		folded := strings.ToLower(strings.TrimSpace(s))
 		for _, amm := range timescale.AMMSignerSources {
-			if s == amm {
+			if folded == amm {
 				return true
 			}
 		}

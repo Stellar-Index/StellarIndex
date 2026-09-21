@@ -972,6 +972,13 @@ func (a APIConfig) validate() error {
 		return fmt.Errorf("%w: api.auth_mode %q must be none/apikey/apikey_optional/sep10",
 			ErrInvalidConfig, a.AuthMode)
 	}
+	switch a.AuthBackend {
+	case "redis", "postgres":
+		// ok
+	default:
+		return fmt.Errorf("%w: api.auth_backend %q must be redis/postgres",
+			ErrInvalidConfig, a.AuthBackend)
+	}
 	if a.AnonRateLimitPerMin < 0 {
 		return fmt.Errorf("%w: api.anon_rate_limit_per_min must be >= 0",
 			ErrInvalidConfig)

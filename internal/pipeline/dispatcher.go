@@ -105,7 +105,7 @@ func BuildDispatcher(names []string, oracle config.OracleConfig, gated map[strin
 	var opDecoders []dispatcher.OpDecoder
 	var callDecoders []dispatcher.ContractCallDecoder
 	for _, name := range names {
-		switch strings.ToLower(name) {
+		switch strings.ToLower(strings.TrimSpace(name)) {
 		case soroswap.SourceName:
 			decoders = append(decoders, soroswap.NewDecoder(soroswapOpts...))
 		case aquarius.SourceName:

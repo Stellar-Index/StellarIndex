@@ -114,6 +114,7 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 		"no listen":                     {func(c *config.Config) { c.API.ListenAddr = "" }, "listen_addr"},
 		"bad listen":                    {func(c *config.Config) { c.API.ListenAddr = "3000" }, "listen_addr"},
 		"unknown auth":                  {func(c *config.Config) { c.API.AuthMode = "oauth" }, "auth_mode"},
+		"unknown auth backend":          {func(c *config.Config) { c.API.AuthBackend = "mysql" }, "auth_backend"},
 		"neg rate limit":                {func(c *config.Config) { c.API.AnonRateLimitPerMin = -5 }, "anon_rate_limit"},
 		"bad log level":                 {func(c *config.Config) { c.Obs.LogLevel = "verbose" }, "log_level"},
 		"bad log format":                {func(c *config.Config) { c.Obs.LogFormat = "xml" }, "log_format"},
