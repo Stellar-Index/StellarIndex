@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"sync"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // CachedOracleReader wraps an [OracleReader] with a per-process TTL
@@ -178,12 +180,27 @@ func (c *CachedOracleReader) LatestOracleStreams(ctx context.Context) ([]canonic
 	})
 }
 
-// fetch is the TTL + single-flight loop, identical in shape to
-// CachedIssuersReader.fetchList — same delete-on-error,
-// waiter-err-pointer safety. Inline cold-miss is fine here because
-// the upstream query is sub-300 ms; if a future r1 measurement
-// shows miss spikes above SLO the swr[T] helper from
-// asset_catalogue_cache.go drops in.
+// oracleFetchBudget bounds a fill goroutine's own upstream call —
+// independent of any single caller's ctx. See fetch's fill comment:
+// this is what stops one caller's abort from propagating to every
+// caller single-flighted onto the same fill. Mirrors
+// CachedHistoryReader's historyRefreshBudget.
+const oracleFetchBudget = 30 * time.Second
+
+// errOracleFillPanicked is handed to waiters when the fill goroutine
+// they joined panicked, rather than a nil-ish "no error, no data" —
+// see fill's comment. Mirrors CachedHistoryReader.errHistoryFillPanicked.
+var errOracleFillPanicked = errors.New("oracle cache: fill panicked")
+
+// fetch is the TTL + single-flight loop, in the same shape as
+// CachedIssuersReader.fetchList EXCEPT for who runs the upstream
+// call: a fill is always DETACHED into its own goroutine on
+// oracleFetchBudget, never bound to whichever caller happened to
+// trigger it. A caller that cancels its own ctx (client disconnect,
+// its own deadline) only stops that caller from waiting — it must
+// not abort the in-flight fetch out from under every other caller
+// single-flighted onto the same key. Mirrors CachedHistoryReader's
+// cold path (LatestTradePerSource), the proven fix for this shape.
 func (c *CachedOracleReader) fetch(
 	ctx context.Context,
 	op, key string,
@@ -200,33 +217,64 @@ func (c *CachedOracleReader) fetch(
 		return out, nil
 	}
 
-	// (B) Join an in-flight refresh.
+	// (B)/(C) No usable value: join the running fill, or start one.
+	// Either way this caller only ever WAITS on it — the fill's own
+	// upstream call runs on its own detached context (see fill).
+	var entry *oracleCacheEntry
 	if ok && e.flight != nil {
-		entry := e
-		ch := e.flight
-		c.mu.Unlock()
-		select {
-		case <-ch:
-			if entry.err != nil {
-				obs.APICacheOpsTotal.WithLabelValues("oracle", op, "miss").Inc()
-				return nil, entry.err
-			}
-			obs.APICacheOpsTotal.WithLabelValues("oracle", op, "hit").Inc()
-			return entry.updates, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
+		entry = e
+	} else {
+		done := make(chan struct{})
+		entry = &oracleCacheEntry{flight: done}
+		if !ok {
+			c.evictIfFullLocked(op)
 		}
+		c.entries[key] = entry
+		//nolint:gosec,contextcheck // G118 / contextcheck:
+		// intentional detached fill — the leader's own ctx must not
+		// abort a fill every other single-flighted waiter depends on;
+		// see fetch's and fill's doc comments (RLT-439).
+		go c.fill(key, entry, done, upstream)
 	}
-
-	// (C) Leader: take the slot, run the upstream call inline.
-	done := make(chan struct{})
-	entry := &oracleCacheEntry{flight: done}
-	if !ok {
-		c.evictIfFullLocked(op)
-	}
-	c.entries[key] = entry
+	flight := entry.flight
 	c.mu.Unlock()
 	obs.APICacheOpsTotal.WithLabelValues("oracle", op, "miss").Inc()
+
+	select {
+	case <-flight:
+		if entry.err != nil {
+			return nil, entry.err
+		}
+		return entry.updates, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// fill runs the upstream call on oracleFetchBudget — NOT the ctx of
+// whichever caller triggered it — and settles entry for every waiter
+// holding its pointer. This is what fetch's (B)/(C) branch depends
+// on: the fill must outlive any one caller's cancellation.
+//
+// The panic guard exists because entry starts zero-valued (no error,
+// no updates): a fill that panicked without settling would still
+// close(done), and every waiter would read that as a legitimate empty
+// success rather than a failure. Mirrors CachedHistoryReader.fill.
+func (c *CachedOracleReader) fill(
+	key string,
+	entry *oracleCacheEntry,
+	done chan struct{},
+	upstream func(context.Context) ([]canonical.OracleUpdate, error),
+) {
+	defer close(done)
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(nil, "api-oracle-cache-fill", rec)
+			c.settleFailedFill(key, entry, errOracleFillPanicked)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), oracleFetchBudget)
+	defer cancel()
 
 	rows, err := upstream(ctx)
 
@@ -237,9 +285,21 @@ func (c *CachedOracleReader) fetch(
 		entry.flight = nil
 	} else {
 		entry.err = err
-		delete(c.entries, key)
+		if c.entries[key] == entry {
+			delete(c.entries, key)
+		}
 	}
 	c.mu.Unlock()
-	close(done)
-	return rows, err
+}
+
+// settleFailedFill hands a fill failure to every waiter holding
+// entry's pointer and drops it from the map — errors are never
+// TTL-cached — unless a concurrent fresh fill already replaced it.
+func (c *CachedOracleReader) settleFailedFill(key string, entry *oracleCacheEntry, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	entry.err = err
+	if c.entries[key] == entry {
+		delete(c.entries, key)
+	}
 }
