@@ -8,6 +8,8 @@ import (
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // amount renders a classic Int64 stroop amount as a decimal string (ADR-0003).
@@ -30,18 +32,35 @@ func assetID(a xdr.Asset) string {
 		return "native"
 	case xdr.AssetTypeAssetTypeCreditAlphanum4:
 		an := a.MustAlphaNum4()
-		return assetCode(an.AssetCode[:]) + "-" + an.Issuer.Address()
+		code, ok := assetCode(an.AssetCode[:])
+		if !ok {
+			return "unknown_asset"
+		}
+		return code + "-" + an.Issuer.Address()
 	case xdr.AssetTypeAssetTypeCreditAlphanum12:
 		an := a.MustAlphaNum12()
-		return assetCode(an.AssetCode[:]) + "-" + an.Issuer.Address()
+		code, ok := assetCode(an.AssetCode[:])
+		if !ok {
+			return "unknown_asset"
+		}
+		return code + "-" + an.Issuer.Address()
 	default:
 		return "unknown_asset"
 	}
 }
 
-// assetCode trims the trailing NUL padding from a fixed-width asset code.
-func assetCode(raw []byte) string {
-	return strings.TrimRight(string(raw), "\x00")
+// assetCode trims the trailing NUL padding from a fixed-width asset code
+// and validates what remains against [canonical.ValidateAssetCode] — the
+// same rule internal/canonical.AssetFromXDR enforces. ok=false for a code
+// AssetFromXDR would refuse (empty after trim, over-length, or carrying a
+// non-ASCII-alphanumeric byte), so this package never mints an asset id
+// the canonical layer disagrees with.
+func assetCode(raw []byte) (string, bool) {
+	code := strings.TrimRight(string(raw), "\x00")
+	if canonical.ValidateAssetCode(code) != nil {
+		return "", false
+	}
+	return code, true
 }
 
 // AssetID is the exported canonical asset id ("native" / "CODE-ISSUER") —
@@ -60,10 +79,18 @@ func TrustLineAssetID(t xdr.TrustLineAsset) string {
 		return "native"
 	case xdr.AssetTypeAssetTypeCreditAlphanum4:
 		an := t.MustAlphaNum4()
-		return assetCode(an.AssetCode[:]) + "-" + an.Issuer.Address()
+		code, ok := assetCode(an.AssetCode[:])
+		if !ok {
+			return "unknown_asset"
+		}
+		return code + "-" + an.Issuer.Address()
 	case xdr.AssetTypeAssetTypeCreditAlphanum12:
 		an := t.MustAlphaNum12()
-		return assetCode(an.AssetCode[:]) + "-" + an.Issuer.Address()
+		code, ok := assetCode(an.AssetCode[:])
+		if !ok {
+			return "unknown_asset"
+		}
+		return code + "-" + an.Issuer.Address()
 	case xdr.AssetTypeAssetTypePoolShare:
 		if t.LiquidityPoolId != nil {
 			return "pool:" + hex.EncodeToString((*t.LiquidityPoolId)[:])
@@ -91,10 +118,18 @@ func changeTrustAsset(c xdr.ChangeTrustAsset) string {
 		return "native"
 	case xdr.AssetTypeAssetTypeCreditAlphanum4:
 		an := c.MustAlphaNum4()
-		return assetCode(an.AssetCode[:]) + "-" + an.Issuer.Address()
+		code, ok := assetCode(an.AssetCode[:])
+		if !ok {
+			return "unknown_asset"
+		}
+		return code + "-" + an.Issuer.Address()
 	case xdr.AssetTypeAssetTypeCreditAlphanum12:
 		an := c.MustAlphaNum12()
-		return assetCode(an.AssetCode[:]) + "-" + an.Issuer.Address()
+		code, ok := assetCode(an.AssetCode[:])
+		if !ok {
+			return "unknown_asset"
+		}
+		return code + "-" + an.Issuer.Address()
 	case xdr.AssetTypeAssetTypePoolShare:
 		return "liquidity_pool_share"
 	default:

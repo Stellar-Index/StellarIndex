@@ -106,6 +106,16 @@ func NewClassicAsset(code, issuer string) (Asset, error) {
 	return Asset{Type: AssetClassic, Code: code, Issuer: issuer}, nil
 }
 
+// ValidateAssetCode reports whether code is a valid classic Stellar
+// asset code — the same rule [AssetFromXDR] enforces via
+// [NewClassicAsset]. Exported so callers that render an XDR asset code
+// outside the NewClassicAsset path (e.g. internal/xdrjson, which must
+// not mint a canonical-looking id for a code AssetFromXDR would
+// reject) can share the contract instead of diverging on it.
+func ValidateAssetCode(code string) error {
+	return validateClassicAssetCode(code)
+}
+
 // validateClassicAssetCode enforces Stellar's alphanum4/alphanum12
 // asset-code rules: length 1–12, chars [a-zA-Z0-9] only. Rejected
 // inputs include empty, over-length, and non-ASCII-alphanumeric
