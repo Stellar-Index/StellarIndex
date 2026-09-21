@@ -32,10 +32,13 @@ type Decoder struct {
 // (correct for a from-genesis stream, insufficient for an incremental
 // restart — hence the DB warm in production wiring).
 //
-// Future per-WASM-hash dispatch (per
-// docs/architecture/contract-schema-evolution.md) would add a version
-// selector but the event surface is currently covered by a single
-// contract version (V2).
+// The event surface already spans both pool-factory contract versions:
+// MainnetPoolFactories trusts V1 (CCZD6ESM…) and V2, and decodeByKind
+// dispatches the three V1-only event kinds (update_emissions /
+// new_liquidation_auction / delete_liquidation_auction, ROADMAP #89
+// residual) alongside the V2 vocabulary. A future per-WASM-hash dispatch
+// (per docs/architecture/contract-schema-evolution.md) would still be
+// needed for a hypothetical V3.
 func NewDecoder(opts ...contractid.Option) *Decoder {
 	// The factory trust-root set is intrinsic to the protocol (verified,
 	// hard-coded), so it's always installed first; caller opts (WithSeed /

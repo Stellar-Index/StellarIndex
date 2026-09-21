@@ -14,7 +14,7 @@ const SourceName = "blend_backstop"
 // Backstop contracts — the two mainnet Blend Backstop deployments.
 // The Backstop is a SEPARATE event surface from the Blend pool /
 // pool-factory decoder (internal/sources/blend); it has its own
-// contract addresses and its own 10-event vocabulary. Gating on BOTH
+// contract addresses and its own 12-event vocabulary. Gating on BOTH
 // is mandatory: the backstop's symbols (claim / withdraw /
 // queue_withdrawal / gulp_emissions) OVERLAP with Blend POOL event
 // symbols, so the contract-id gate — not the topic symbol — is what
