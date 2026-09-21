@@ -11,7 +11,10 @@
 #   REFERENCE — the role ships its own .j2 for the same unit. The copy
 #     here is documentation and is NOT what runs; the .j2 is. Editing it
 #     changes nothing, which is how several of these drifted (see the
-#     drift notes in stellarindex-api.service.j2).
+#     drift notes in stellarindex-api.service.j2) — RestartSec, User and
+#     VERIFY_ARCHIVE_MAX_RUNTIME among them (issue #818). Being templated
+#     used to be enough to pass; now the two must also agree on every
+#     directive they share, checked by deploy-systemd-reference-diff.py.
 #
 # A third state is the finding this lint exists for:
 #
@@ -23,15 +26,18 @@
 #
 # Every orphan must be listed in deploy/systemd/ORPHANS with a reason, so
 # adding one is a deliberate act with a written justification rather than
-# an accident.
+# an accident. Every REFERENCE/template directive disagreement not yet
+# reconciled must likewise be listed in deploy/systemd/DIVERGENCES — a
+# todo list, not a suppression; an UNDECLARED one still fails the lint.
 #
 # Run: bash scripts/ci/lint-deploy-systemd-authority.sh
 set -uo pipefail
 cd "$(dirname "$0")/../.." || exit 1
 
-DIR=deploy/systemd
-ROLE=configs/ansible/roles/archival-node
+DIR="${DEPLOY_SYSTEMD_DIR:-deploy/systemd}"
+ROLE="${DEPLOY_SYSTEMD_ROLE:-configs/ansible/roles/archival-node}"
 ORPHANS="$DIR/ORPHANS"
+DIVERGENCES="$DIR/DIVERGENCES"
 fail=0
 checked=0
 
@@ -48,6 +54,9 @@ fi
 
 declared=""
 [ -f "$ORPHANS" ] && declared=$(grep -vE '^\s*#|^\s*$' "$ORPHANS" | sed -E 's/\s*#.*//; s/\s+$//')
+
+declared_div=""
+[ -f "$DIVERGENCES" ] && declared_div=$(grep -vE '^\s*#|^\s*$' "$DIVERGENCES" | sed -E 's/\s*#.*//; s/\s+$//')
 
 for f in "$DIR"/*.service "$DIR"/*.timer; do
   [ -f "$f" ] || continue
@@ -73,8 +82,28 @@ for f in "$DIR"/*.service "$DIR"/*.timer; do
   if grep -qxF "$b" <<<"$authoritative"; then
     continue
   fi
-  # REFERENCE: the role templates the same unit itself.
-  [ -f "$ROLE/templates/systemd/$b.j2" ] && continue
+  # REFERENCE: the role templates the same unit itself. Being templated
+  # used to be the whole check; now the two copies must also agree on
+  # every directive they both declare (RLT-434) — see
+  # deploy-systemd-reference-diff.py for what counts as a divergence.
+  j2="$ROLE/templates/systemd/$b.j2"
+  if [ -f "$j2" ]; then
+    diverged=$(python3 "$(dirname "$0")/deploy-systemd-reference-diff.py" "$f" "$j2")
+    if [ -n "$diverged" ]; then
+      while IFS= read -r line; do
+        [ -n "$line" ] || continue
+        key="${line%% = *}"
+        if grep -qxF "$b:$key" <<<"$declared_div"; then
+          echo "  known divergence (declared in $DIVERGENCES): $b:$key"
+          continue
+        fi
+        echo "  DIVERGED: $f and $j2 disagree on $key, undeclared in $DIVERGENCES:"
+        echo "          $line"
+        fail=$((fail + 1))
+      done <<<"$diverged"
+    fi
+    continue
+  fi
 
   # ORPHAN — must be declared.
   if grep -qxF "$b" <<<"$declared"; then
@@ -93,7 +122,7 @@ if [ "$checked" -eq 0 ]; then
 fi
 
 if [ "$fail" -gt 0 ]; then
-  echo "lint-deploy-systemd-authority: $fail undeclared orphan unit(s) of $checked checked"
+  echo "lint-deploy-systemd-authority: $fail undeclared orphan(s) or divergence(s) of $checked unit(s) checked"
   exit 1
 fi
-echo "lint-deploy-systemd-authority: OK — $checked unit file(s), every one installed, templated, or a declared orphan."
+echo "lint-deploy-systemd-authority: OK — $checked unit file(s), every one installed, a matching reference, or declared in ORPHANS/DIVERGENCES."
