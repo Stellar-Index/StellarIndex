@@ -2319,6 +2319,22 @@ rather than of request traffic, and a withheld leg shows up as a pool
 moving into `unpriced_pools` on `/v1/protocols` (the `≥` lower bound),
 never as a smaller number claiming to be exact.
 
+### `stellarindex_pricingguard_trailing_fetch_failed_total`
+
+Counter, label `path` (`latest` | `at`).
+
+Fires once per serving-sanity guard trailing-baseline fetch that
+errored (`internal/pricingguard.GuardServedVWAP1mConfidence` for
+`latest`, the `/v1/price` + assets + price-alert callers;
+`GuardServedVWAP1mAt` for `at`, `/v1/price/at` + `/v1/price/changes`).
+The guard fails OPEN on that error and serves the candidate bucket
+unguarded, so the robust-band check did not run for that request.
+
+When to look at it: a sustained non-zero rate means the guard is not
+enforcing for real traffic; correlate with the timescale readyz probe,
+as `stellarindex_ratelimit_fail_open_total` correlates with redis.
+Dashboard-only, no alert rule.
+
 ### `stellarindex_price_serve_scam_withheld_total`
 
 Counter, label `surface` (`price_read` | `tip` | `oracle` |
