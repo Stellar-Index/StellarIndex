@@ -195,6 +195,35 @@ func TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs(t *testing.T) {
 	}
 }
 
+// TestLoad_CredentialPIIExposureIncidentRecord — K089/F168: the
+// 7843f129 (#480) log-store credential/PII exposure had no
+// customer-facing incident record. This asserts the record exists,
+// parses, and its status is "resolved" (not silently dropped as
+// malformed, and not stuck at "investigating" forever).
+func TestLoad_CredentialPIIExposureIncidentRecord(t *testing.T) {
+	got, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	const slug = "2026-09-02-log-store-credential-pii-exposure"
+	var found *Incident
+	for i := range got {
+		if got[i].Slug == slug {
+			found = &got[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("incident record %q not found in corpus — the #480 credential/PII exposure has no filed incident", slug)
+	}
+	if found.Status != StatusResolved {
+		t.Errorf("%s: status = %q, want %q", slug, found.Status, StatusResolved)
+	}
+	if found.Severity != SeverityMinor {
+		t.Errorf("%s: severity = %q, want %q", slug, found.Severity, SeverityMinor)
+	}
+}
+
 // A malformed resolved_at must fail rather than silently publishing a
 // RESOLVED incident as never-resolved.
 func TestParseFile_RejectsMalformedResolvedAt(t *testing.T) {
