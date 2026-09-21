@@ -57,14 +57,31 @@ export type RequestExample = {
   headers?: Record<string, string>;
 };
 
+// [absence: path templating] asExample() callers pass OpenAPI-style
+// placeholders (`/v1/assets/{id}`) meaning "substitute into the path", but
+// buildUrl used to treat the whole string as a literal path and dump every
+// param — including the one the placeholder names — onto the query string.
+// The rendered example (`/v1/assets/%7Bid%7D?id=...`) never matched the
+// panel's real request (`/v1/assets/<id>`). Substitute `{name}` from params
+// first; anything left over still becomes a query param, as before.
 function buildUrl(
   path: string,
   params?: Record<string, string | number | undefined>,
 ): string {
-  const url = new URL(path.startsWith('/') ? path : `/${path}`, API_BASE_URL);
+  const consumed = new Set<string>();
+  const resolvedPath = path.replace(/\{([^{}]+)\}/g, (placeholder, name) => {
+    const v = params?.[name];
+    if (v === undefined) return placeholder;
+    consumed.add(name);
+    return encodeURIComponent(String(v));
+  });
+  const url = new URL(
+    resolvedPath.startsWith('/') ? resolvedPath : `/${resolvedPath}`,
+    API_BASE_URL,
+  );
   if (params) {
     for (const [k, v] of Object.entries(params)) {
-      if (v !== undefined) url.searchParams.set(k, String(v));
+      if (v !== undefined && !consumed.has(k)) url.searchParams.set(k, String(v));
     }
   }
   return url.toString();
