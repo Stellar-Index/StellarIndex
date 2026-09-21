@@ -252,6 +252,19 @@ against.
   venues" while naming only two. All are documentation/comment
   corrections against already-shipped, already-tested code — no decoder
   or registry behavior changed.
+- **sources / blend — three more doc/comment claims corrected against the
+  shipped decoder (Q022, Q082):** `blend/auction_data.go`'s
+  `decodeAuctionData` doc said the asset-key parse "stays generous" to
+  account addresses; `decodeAssetAmountMap` actually routes every key
+  through `canonical.NewSorobanAsset`, which rejects any non-C-strkey
+  (G-addresses included). `blend_backstop/events.go` described a
+  "10-event vocabulary" against a 12-constant `Event*` block.
+  `blend/dispatcher_adapter.go`'s `NewDecoder` doc said the event surface
+  "is currently covered by a single contract version (V2)" while
+  `MainnetPoolFactories` trusts both V1 and V2 and `decodeByKind` already
+  dispatches the three V1-only event kinds. All three are documentation
+  corrections against already-shipped, already-tested code — no decoder
+  or registry behavior changed.
 - **storage / MEV detection: dropped notional, and a doubled-leg single-venue
   false positive (T416, RLT-275, T001):** `InsertMEVEvent` wrote a literal SQL
   `NULL` for `profit_usd` regardless of the detected candidate's

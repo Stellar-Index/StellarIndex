@@ -31,11 +31,12 @@ const (
 //	  "block" → u32                         — auction-start block
 //	  "lot"   → ScvMap{ Address → i128 }   — assets the filler receives
 //
-// Decoder is by name (resilient to field reordering) and accepts
-// both Soroban contract addresses and account addresses for the
-// asset key — Blend asset registries today are all Soroban
-// contracts (SAC-wrapped classic + per-token Soroban tokens) but
-// the asset-key parse stays generous to future-proof.
+// Decoder is by name (resilient to field reordering). The asset key
+// must be a Soroban contract address: decodeAssetAmountMap routes it
+// through canonical.NewSorobanAsset, which rejects any non-C-strkey
+// (account/G-addresses included) — matching Blend's asset registries,
+// which are all Soroban contracts (SAC-wrapped classic + per-token
+// Soroban tokens) today.
 func decodeAuctionData(sv scval.ScVal) (AuctionData, error) {
 	entries, err := scval.AsMap(sv)
 	if err != nil {
