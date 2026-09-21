@@ -16,6 +16,12 @@
 # `docs/**` and CHANGELOG.md on push, so a docs-only push skips it
 # entirely — and a docs-only push carries an author exactly like any
 # other.
+#
+# The self-attribution job below (F167/F172) rides the same reasoning: it
+# is the one workflow that still runs on a docs-only push, so it is the gate
+# for an agent/vendor attribution marker landing in a doc — ci.yml's
+# doc-checks job never even starts for that push, paths-ignore having
+# skipped the whole workflow before any job-level condition is evaluated.
 name: commit-identity
 
 on:
@@ -90,3 +96,44 @@ jobs:
             exit 1
           fi
           echo "commit-identity: OK — $n commit(s), every author and committer allowed."
+
+  self-attribution:
+    name: no agent/vendor self-attribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history: the commit-message scan below needs the same
+          # pushed range the identity job above computes, which an
+          # incremental fetch would not have.
+          fetch-depth: 0
+
+      - name: self-test the gate
+        # Proves the gate can still go red before trusting it to pass.
+        run: ./scripts/ci/lint-attribution-test.sh
+
+      - name: Check tracked docs and this push's commit messages
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT" = pull_request ]; then
+            range="${BASE_SHA}..${HEAD_SHA}"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            range="${BEFORE}..${SHA}"
+          else
+            # A new branch, or a force-push whose predecessor is gone. Fall
+            # back to what this ref adds over every OTHER ref, so a new
+            # branch is judged on its own commits rather than the whole
+            # history it inherited.
+            range="$SHA --not --exclude=refs/heads/$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo _) --all"
+          fi
+
+          ./scripts/ci/lint-attribution.sh "$range"
