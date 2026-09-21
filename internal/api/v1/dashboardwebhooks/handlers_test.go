@@ -7,8 +7,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -302,6 +304,24 @@ func TestHandleCreate_RejectsSSRFTargets(t *testing.T) {
 					w.Code, w.Body.String(), tc.url)
 			}
 		})
+	}
+}
+
+// TestBlockedResolvedAddrError_DoesNotLeakResolvedIP pins RSEC-Y1: the
+// error validateWebhookURL returns for a DNS-resolved internal address must
+// name the customer-supplied hostname, never the resolved IP — that error
+// text is written verbatim into the 400 response body.
+func TestBlockedResolvedAddrError_DoesNotLeakResolvedIP(t *testing.T) {
+	host := "rebind.example.net"
+	err := blockedResolvedAddrError(host, []net.IPAddr{{IP: net.ParseIP("169.254.169.254")}})
+	if err == nil {
+		t.Fatal("blockedResolvedAddrError = nil, want a rejection for a cloud-metadata address")
+	}
+	if !strings.Contains(err.Error(), host) {
+		t.Errorf("error %q does not name the rejected host %q", err.Error(), host)
+	}
+	if strings.Contains(err.Error(), "169.254.169.254") {
+		t.Errorf("error %q leaks the resolved internal address", err.Error())
 	}
 }
 
