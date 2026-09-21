@@ -28786,11 +28786,15 @@ rc.48 deploy to R1.
 
 ### Changed
 
-- **/assets/[slug] converter: searchable CurrencyCombobox**
-  (PR #1043). Replaced the plain `<select>` with the same
-  keyboard-friendly combobox that backs /currencies/[ticker]'s
-  converter — typing narrows ~110 entries down inline. Component
-  lifted to `@/components/CurrencyCombobox`.
+- **/assets/[slug] converter: searchable CurrencyCombobox**.
+  Replaced the plain `<select>` with the same keyboard-friendly
+  combobox that backs /currencies/[ticker]'s converter — typing
+  narrows ~110 entries down inline. Component lifted to
+  `@/components/CurrencyCombobox`. (No PR tracks this entry: the
+  `#1043` reference this line originally carried never resolved to
+  this change and now points to an unrelated issue filed long after
+  this release, so it has been dropped rather than left as a
+  misdirected link.)
 - **/currencies header copy** (PR #1042) updated to credit
   Massive (Polygon.io); points users at the new range-selectable
   chart on /currencies/[ticker].
