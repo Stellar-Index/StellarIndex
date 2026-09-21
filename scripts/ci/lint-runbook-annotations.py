@@ -59,9 +59,9 @@ def err(path, alert, msg):
 
 def resolve_local_runbook(value):
     """Return a repo-relative path if `value` targets a local runbook
-    file, else None (external/opaque URL — presence-only)."""
-    if value.startswith(RUNBOOKS_MARKER):
-        return value
+    file via an absolute https:// URL, else None (external/opaque URL —
+    presence-only). A bare repo-relative path is NOT resolved here — it
+    fails its own check below instead of being treated as valid."""
     if value.startswith("https://") and RUNBOOKS_MARKER in value:
         return RUNBOOKS_MARKER + value.split(RUNBOOKS_MARKER, 1)[1]
     return None
@@ -120,8 +120,20 @@ for d in DIRS:
                     err(path, name, "`annotations.runbook_url` is empty")
                     continue
 
+                value = value.strip()
+
+                # A bare repo-relative path (no https:// scheme) is
+                # unclickable in the Discord templates, which only ever
+                # render `.Annotations.runbook_url` as raw text — this
+                # must fail even when the target file exists.
+                if value.startswith(RUNBOOKS_MARKER):
+                    err(path, name, f"`annotations.runbook_url` is a bare "
+                        f"repo-relative path ({value!r}) — Discord renders "
+                        "it unclickable; use the absolute https:// form")
+                    continue
+
                 # File existence for local-runbook targets (ex-§9).
-                local = resolve_local_runbook(value.strip())
+                local = resolve_local_runbook(value)
                 if local is not None and not os.path.isfile(local):
                     err(path, name, f"runbook_url points to missing file: {local}")
 
