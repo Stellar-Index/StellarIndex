@@ -38,6 +38,32 @@ function stripComments(body: string): string {
   return body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 }
 
+/**
+ * True if `body` renders an `<img>` without ever calling
+ * isSafePublicImageUrl for real — i.e. a genuine occurrence, not one
+ * mentioned only in a comment. Comments are stripped BEFORE both checks,
+ * so neither an `<img` inside a comment nor a decoy comment naming the
+ * guard can change the verdict.
+ */
+function isUnguardedImg(body: string): boolean {
+  const code = stripComments(body);
+  return /<img[\s>]/.test(code) && !code.includes('isSafePublicImageUrl');
+}
+
+/**
+ * True if `body` wires `dangerouslySetInnerHTML` without routing the
+ * value through serializeJsonLd (lib/seo.ts) first. serializeJsonLd is
+ * the only sanctioned way to inject a JSON-LD `<script>` block: it
+ * HTML-escapes `<`/`>`/`&` so an attacker-controlled string (e.g. an
+ * issuer's own stellar.toml ORG_NAME) can't close the script tag and
+ * inject markup. Comments are stripped first for the same reason as
+ * isUnguardedImg above.
+ */
+function isUnsafeJsonLdSink(body: string): boolean {
+  const code = stripComments(body);
+  return code.includes('dangerouslySetInnerHTML') && !code.includes('serializeJsonLd');
+}
+
 /** Every non-test source file under src/, as [repo-relative path, contents]. */
 function sourceFiles(): Array<[string, string]> {
   const out: Array<[string, string]> = [];
@@ -66,11 +92,72 @@ describe('trust-surface guards', () => {
     // a guard rather than a spot check: the predicate was applied at two
     // of three <img> sites, and nothing said which three.
     const offenders = sourceFiles()
-      .filter(([, body]) => /<img[\s>]/.test(body))
-      .filter(([, body]) => !body.includes('isSafePublicImageUrl'))
+      .filter(([, body]) => isUnguardedImg(body))
       .map(([path]) => path)
       .sort();
     expect(offenders).toEqual([]);
+  });
+
+  it('the SEC-10 <img> guard is not fooled by a decoy comment (T254/T324)', () => {
+    // A file with a real, unguarded <img> and an UNRELATED comment that
+    // happens to name isSafePublicImageUrl must still be flagged — the
+    // guard checks for a real call, not the string anywhere in the file.
+    const decoyComment = `
+      // isSafePublicImageUrl is enforced by the caller, see lib/safe-domain
+      export function Icon({ src }: { src: string }) {
+        return <img src={src} />;
+      }
+    `;
+    expect(isUnguardedImg(decoyComment)).toBe(true);
+
+    // The real, guarded shape still passes.
+    const guarded = `
+      export function Icon({ src }: { src: string }) {
+        if (!isSafePublicImageUrl(src)) return null;
+        return <img src={src} />;
+      }
+    `;
+    expect(isUnguardedImg(guarded)).toBe(false);
+  });
+
+  it('every JSON-LD dangerouslySetInnerHTML sink escapes via serializeJsonLd (T195)', () => {
+    // serializeJsonLd (lib/seo.ts) is the only sanctioned way to inject a
+    // `<script type="application/ld+json">` block; a site wired straight
+    // to JSON.stringify or a hand-rolled string is a stored-XSS sink
+    // (e.g. an issuer-controlled stellar.toml ORG_NAME). Deriving the
+    // sink list from source is the point, same as the SEC-10 guard above:
+    // nothing else says which files carry a dangerouslySetInnerHTML block.
+    const offenders = sourceFiles()
+      .filter(([, body]) => isUnsafeJsonLdSink(body))
+      .map(([path]) => path)
+      .sort();
+    expect(offenders).toEqual([]);
+  });
+
+  it('the JSON-LD sink guard catches an unescaped dangerouslySetInnerHTML (T195)', () => {
+    const unsafe = `
+      export function Bad({ data }: { data: unknown }) {
+        return (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: JSON.stringify(data) }}
+          />
+        );
+      }
+    `;
+    expect(isUnsafeJsonLdSink(unsafe)).toBe(true);
+
+    const safe = `
+      export function Good({ data }: { data: unknown }) {
+        return (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: serializeJsonLd(data) }}
+          />
+        );
+      }
+    `;
+    expect(isUnsafeJsonLdSink(safe)).toBe(false);
   });
 
   it('every asset detail view renders the scam callout', () => {
