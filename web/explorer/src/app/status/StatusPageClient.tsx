@@ -719,7 +719,10 @@ export default function StatusPageClient({
             <FreshnessRow freshness={status.freshness} />
           )}
           <IngestionRegions regions={REGIONS} snapshots={ingestionByRegion} />
-          <ActiveIncidents incidents={status.incidents?.active ?? []} />
+          <ActiveIncidents
+            incidents={status.incidents?.active ?? []}
+            incidentsStatus={status.incidents_status}
+          />
         </>
       )}
       {/* Backups panel is mainnet-only: the lean test-nets run with
@@ -905,8 +908,16 @@ function StatusNotices() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const env = (await res.json()) as {
           data?: { notices?: StatusNotice[] };
+          flags?: { stale?: boolean };
         };
         if (cancelled) return;
+        // A 200 with flags.stale means the store read failed server-side and
+        // the empty/last-known list it returned is NOT a genuine "nothing to
+        // announce" — treat it the same as a network failure (RLT-465):
+        // keep the last-known notices, surface the caveat, don't clear.
+        if (env.flags?.stale) {
+          throw new Error('notice read failed upstream');
+        }
         // The endpoint already returns only active notices, but filter
         // defensively so a `resolved` row can never leak into the banner.
         setNotices(
@@ -1238,11 +1249,28 @@ function FreshnessRow({
   );
 }
 
-function ActiveIncidents({ incidents }: { incidents: IncidentEntry[] }) {
+function ActiveIncidents({
+  incidents,
+  incidentsStatus,
+}: {
+  incidents: IncidentEntry[];
+  // Tri-state trust signal for `incidents` (StatusResponse.IncidentsStatus,
+  // internal/api/v1/status.go). "unknown" means the Alertmanager query
+  // FAILED, so an empty `incidents` array is absence-of-signal, not an
+  // all-clear — rendering "No active incidents" for it would be the same
+  // silent collapse W1.1 guards against elsewhere on this page (RLT-465).
+  incidentsStatus?: string;
+}) {
+  const trusted =
+    incidentsStatus === 'ok' || incidentsStatus === 'degraded';
   return (
     <section>
       <SectionHead>Active incidents</SectionHead>
-      {incidents.length === 0 ? (
+      {!trusted ? (
+        <Card className="text-ink-faint px-4 py-6 text-center text-sm">
+          Can’t confirm active incidents — the incidents feed is unreachable.
+        </Card>
+      ) : incidents.length === 0 ? (
         <Card className="text-ink-faint px-4 py-6 text-center text-sm">
           No active incidents.
         </Card>

@@ -6,6 +6,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -281,6 +282,42 @@ func TestStatusNotices_PublicUnwiredEmpty(t *testing.T) {
 	}
 	if list.Count != 0 {
 		t.Errorf("Count = %d, want 0", list.Count)
+	}
+}
+
+// TestStatusNotices_ListErrorMarksStale pins RLT-465: a ListActive
+// failure must not be byte-identical to a genuine empty list on the
+// wire — flags.stale distinguishes "nothing to announce" from
+// "couldn't ask".
+func TestStatusNotices_ListErrorMarksStale(t *testing.T) {
+	store := newFakeStatusNoticeStore()
+	store.listErr = errors.New("notice store unavailable")
+	srv := v1.New(v1.Options{StatusNotices: store})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/v1/status/notices")
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data  v1.StatusNoticesList `json:"data"`
+		Flags struct {
+			Stale bool `json:"stale"`
+		} `json:"flags"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.Count != 0 || len(env.Data.Notices) != 0 {
+		t.Errorf("data = %+v, want empty", env.Data)
+	}
+	if !env.Flags.Stale {
+		t.Error("flags.stale = false on a failed ListActive read; want true — a caller can't tell a real empty list from a failed one")
 	}
 }
 
