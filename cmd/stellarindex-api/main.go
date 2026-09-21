@@ -4065,7 +4065,7 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		if priceWithheld(ctx, r.substance, r.scam, asset, quote, "price_read") {
 			return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
 		}
-		served, lowConfidence := pricingguard.GuardServedVWAP1mConfidence(ctx, r.s, r.logger, pair, row)
+		served, lowConfidence, substituted := pricingguard.GuardServedVWAP1mConfidence(ctx, r.s, r.logger, pair, row)
 		// CS-017: the bucket closes at Bucket+1min; flag stale when that
 		// close is older than the freshness window, so a dormant pair's
 		// months-old VWAP is no longer served as stale=false. Applied to the
@@ -4077,8 +4077,16 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		// manipulated/fat-finger print). lowConfidence marks that unvalidated
 		// case; serve the value but as stale, never as a confident price.
 		stale := r.bucketIsStale(served.Bucket, lowConfidence)
-		return v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket),
-			served.Sources, stale, nil
+		snap := v1.VWAP1mToSnapshot(asset.String(), quote.String(), served.VWAP, served.Bucket)
+		// RNC27: substituted means the guard swapped in an older
+		// last-known-good bucket for `row`. The handler's confidence/
+		// composite-flags staples are looked up from a SEPARATE cache keyed
+		// by (pair, window) with no as-of of their own, so they answer for
+		// the current tick, not for this older bucket — snap.Substituted
+		// tells the handler to withhold them rather than mis-attribute a
+		// live read to the substituted value.
+		snap.Substituted = substituted
+		return snap, served.Sources, stale, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return v1.PriceSnapshot{}, nil, false, err

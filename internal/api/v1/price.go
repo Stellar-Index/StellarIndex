@@ -404,6 +404,19 @@ type PriceSnapshot struct {
 	// accompanies Confidence. Optional with the same semantics —
 	// nil means "not available".
 	ConfidenceFactors *ConfidenceFactors `json:"confidence_factors,omitempty"`
+
+	// Substituted is true when the serving-sanity guard
+	// (pricingguard.GuardServedVWAP1mConfidence) rejected the latest
+	// closed bucket as an outlier and served an older last-known-good
+	// one instead (RNC27). Not on the wire — an internal signal set by
+	// the reader and consumed by the handler that built this snapshot,
+	// telling it NOT to staple confidence/composite-quality enrichment
+	// looked up under the CURRENT tick's Redis keys: those staples
+	// carry no as-of of their own, so attaching them to an older
+	// substituted bucket would misattribute a live read to a value
+	// that isn't live. See [Server.attachConfidence] /
+	// [Server.attachCompositeFlags].
+	Substituted bool `json:"-"`
 }
 
 // ConfidenceFactors mirrors `confidence.Factors` on the wire so
@@ -763,15 +776,21 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// `/v1/price` (the closed-bucket surface) — tip + observations
 	// surfaces don't carry it. Best-effort: cache misses + read
 	// errors leave the snapshot's Confidence/ConfidenceFactors
-	// fields nil, and the response ships cleanly without them.
-	s.attachConfidence(r, &snapshot, asset, quote)
+	// fields nil, and the response ships cleanly without them. Skipped
+	// on a substituted snapshot — see [Server.attachConfidence] (RNC27).
+	if !snapshot.Substituted {
+		s.attachConfidence(r, &snapshot, asset, quote)
+	}
 
 	flags := Flags{Stale: stale, Triangulated: triangulated}
 	// Surface the router's composite-quality signals (diverged /
 	// rerouted) that the aggregator persists to
 	// cachekeys.VWAPCompositeMeta — a no-op unless the served value is a
-	// triangulated composite. Best-effort.
-	s.attachCompositeFlags(r, &flags, asset, quote, triangulated)
+	// triangulated composite. Best-effort. Skipped on a substituted
+	// snapshot — see [Server.attachCompositeFlags] (RNC27).
+	if !snapshot.Substituted {
+		s.attachCompositeFlags(r, &flags, asset, quote, triangulated)
+	}
 	flags.Frozen = frozen
 	// SingleSource is forced true when the snapshot is the LKG
 	// fallback — by the ActionFreeze contract every frozen response
