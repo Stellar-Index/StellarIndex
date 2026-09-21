@@ -29009,7 +29009,7 @@ rc.48 deploy to R1.
   ACCOUNTS list. /v1/issuers and the /assets table now surface
   org names for ~14 anchors covering most non-XLM trade volume.
 - **`[supply.sac_wrappers]` expanded to 38 entries** (#990,
-  #1002, #1003). The operator-config map now resolves
+  #1002). The operator-config map now resolves
   every SAC contract on the top Aquarius / Soroswap / Phoenix
   pools to its underlying classic asset. Drives both the
   explorer's pool-row labels (USDC, BLND, etc. instead of
