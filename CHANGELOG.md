@@ -15,6 +15,23 @@ against.
 
 ## [Unreleased]
 
+- **ci / agent-attribution guard now runs unconditionally in CI, not only
+  an opt-in local hook (F167, F172):** a prior attempt at this wired the
+  check into `ci.yml`'s `doc-checks` job, which never runs at all for a
+  docs-only push — `ci.yml` skips the entire workflow via its top-level
+  `paths-ignore` on `**.md`/`docs/**` before any job-level condition is
+  evaluated, so exactly the case an attribution marker in a doc would land
+  as went unchecked. New `scripts/ci/lint-attribution.sh` (self-tested by
+  `scripts/ci/lint-attribution-test.sh`) instead runs from a new
+  `self-attribution` job added to `.github/workflows/commit-identity.yml`,
+  which already carries no path filtering and always fetches full history
+  for exactly this reason. It scans every tracked doc for an agent/vendor
+  self-attribution marker and scans this push's own commit range for the
+  same marker in a commit message. Before this, the only thing that ever
+  checked either case was `scripts/dev/install-hooks.sh`'s opt-in
+  pre-commit hook — skippable with `--no-verify`, absent on a fresh clone,
+  and blind to a web-UI commit either way.
+
 - **api / price/at and price/changes — withheld prices reported as
   not-found, no per-request DB ceiling (RLT-454, RLT-455):** both
   handlers swallowed `ErrPriceWithheld` into the same generic
