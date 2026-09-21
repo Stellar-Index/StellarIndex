@@ -878,9 +878,15 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q, typ string, order Asse
 		conds = append(conds, typeCond)
 	}
 	if q != "" {
+		// COALESCE(ca.slug, ca.code, ca.asset_id) mirrors the base
+		// SELECT's own "slug" column (listAssetsBaseSelect) — a
+		// Soroban-native row has NULL code/slug/issuer (contract
+		// assets have no SEP-1 code or issuer account), so without
+		// the asset_id fallback this predicate was NULL for every
+		// such row and type=soroban&q=... matched nothing.
 		args = append(args, "%"+q+"%")
 		conds = append(conds, fmt.Sprintf(
-			"(LOWER(ca.code) LIKE LOWER($%d) OR LOWER(COALESCE(ca.slug, ca.code)) LIKE LOWER($%d) OR LOWER(ca.issuer_g_strkey) LIKE LOWER($%d))",
+			"(LOWER(ca.code) LIKE LOWER($%d) OR LOWER(COALESCE(ca.slug, ca.code, ca.asset_id)) LIKE LOWER($%d) OR LOWER(ca.issuer_g_strkey) LIKE LOWER($%d))",
 			len(args), len(args), len(args)))
 	}
 	args = append(args, assetsCursorArgs(cursor, order)...)
