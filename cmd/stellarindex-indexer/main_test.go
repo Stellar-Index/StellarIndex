@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -14,6 +16,7 @@ import (
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/hashdb"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -73,6 +76,57 @@ func TestEmitDiscoveryDropMetricDelta_AddsOnlyNewDrops(t *testing.T) {
 	after := testutil.ToFloat64(obs.DiscoveryDroppedHitsTotal)
 	if got := after - mid; got != 0 {
 		t.Fatalf("counter delta after second emit = %v, want 0", got)
+	}
+}
+
+// TestAggregatorPairsFromCatalogue_ReportsSkippedTickers pins T103:
+// a catalogue ticker with a coingecko_id that canonical.NewCryptoAsset
+// rejects (not on the ADR-0014 allow-list) must be excluded from the
+// aggregator pair set AND surfaced — via the skipped-tickers gauge and
+// a warn log naming it — rather than silently dropped by a bare
+// `continue`.
+func TestAggregatorPairsFromCatalogue_ReportsSkippedTickers(t *testing.T) {
+	y := `verified_currencies:
+  - ticker: BTC
+    slug: btc
+    name: Bitcoin
+    class: crypto
+    coingecko_id: bitcoin
+    reference_only: true
+  - ticker: ZZZFAKE
+    slug: zzzfake
+    name: Not On The Allow-list
+    class: crypto
+    coingecko_id: zzzfake-coin
+    reference_only: true
+`
+	cat, err := currency.LoadFromBytes([]byte(y))
+	if err != nil {
+		t.Fatalf("LoadFromBytes: %v", err)
+	}
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+
+	pairs := aggregatorPairsFromCatalogue(cat, logger)
+
+	// BTC is allow-listed: 3 fiat pairs (USD/EUR/GBP). ZZZFAKE must
+	// not appear anywhere in the result.
+	if len(pairs) != 3 {
+		t.Fatalf("pairs = %d, want 3 (BTC only)", len(pairs))
+	}
+	for _, p := range pairs {
+		if p.Base.Code == "ZZZFAKE" {
+			t.Fatalf("ZZZFAKE leaked into aggregator pairs: %+v", p)
+		}
+	}
+
+	if got := testutil.ToFloat64(obs.AggregatorCatalogueTickersSkipped); got != 1 {
+		t.Fatalf("AggregatorCatalogueTickersSkipped = %v, want 1", got)
+	}
+
+	if !strings.Contains(buf.String(), "ZZZFAKE") {
+		t.Fatalf("skip warning missing ticker ZZZFAKE, log = %s", buf.String())
 	}
 }
 

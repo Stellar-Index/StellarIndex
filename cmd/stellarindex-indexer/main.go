@@ -33,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -1121,7 +1122,7 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 	// seed yaml automatically expands aggregator coverage. The
 	// hardcoded list (`defaultAggregatorPairs`) remains as a
 	// fallback when the catalogue isn't wired.
-	aggregatorPairs := aggregatorPairsFromCatalogue(catalogue)
+	aggregatorPairs := aggregatorPairsFromCatalogue(catalogue, logger)
 	if len(aggregatorPairs) == 0 {
 		aggregatorPairs = defaultAggregatorPairs()
 	}
@@ -1729,7 +1730,7 @@ func emitDiscoverySkipMetricDelta(prev, current uint64) uint64 {
 // / GBP — the divergence layer's coverage). Operators who want
 // narrower polling can add a per-poller Symbols override in a
 // future config field; for now the catalogue is the single knob.
-func aggregatorPairsFromCatalogue(cat *currency.Catalogue) []canonical.Pair {
+func aggregatorPairsFromCatalogue(cat *currency.Catalogue, logger *slog.Logger) []canonical.Pair {
 	if cat == nil {
 		return nil
 	}
@@ -1739,12 +1740,15 @@ func aggregatorPairsFromCatalogue(cat *currency.Catalogue) []canonical.Pair {
 	}
 	fiats := []string{"USD", "EUR", "GBP"}
 	out := make([]canonical.Pair, 0, len(cgIDs)*len(fiats))
+	var skipped []string
 	for ticker := range cgIDs {
 		ca, err := canonical.NewCryptoAsset(ticker)
 		if err != nil {
 			// Ticker not on the canonical crypto allow-list (e.g. a
 			// future entry we haven't added). Skip — adding to the
-			// allow-list is a separate, deliberate change.
+			// allow-list is a separate, deliberate change. Recorded
+			// below so the gap is visible instead of a silent drop.
+			skipped = append(skipped, ticker)
 			continue
 		}
 		for _, f := range fiats {
@@ -1759,7 +1763,22 @@ func aggregatorPairsFromCatalogue(cat *currency.Catalogue) []canonical.Pair {
 			out = append(out, p)
 		}
 	}
+	reportSkippedAggregatorTickers(skipped, logger)
 	return out
+}
+
+// reportSkippedAggregatorTickers surfaces the catalogue/allow-list
+// gap aggregatorPairsFromCatalogue finds: a currency with an active
+// coingecko_id that canonical.NewCryptoAsset still rejects. Split out
+// to keep aggregatorPairsFromCatalogue under the funlen ceiling.
+func reportSkippedAggregatorTickers(skipped []string, logger *slog.Logger) {
+	obs.AggregatorCatalogueTickersSkipped.Set(float64(len(skipped)))
+	if len(skipped) == 0 || logger == nil {
+		return
+	}
+	sort.Strings(skipped)
+	logger.Warn("aggregator catalogue: tickers excluded from cross-check pairs — not on ADR-0014 crypto allow-list",
+		"tickers", skipped, "count", len(skipped))
 }
 
 // defaultAggregatorPairs is the pre-catalogue hardcoded pair set

@@ -219,6 +219,12 @@ func registerAppMetricsTail() {
 		// the same funlen reason as its neighbour above.
 		SinkUndrainedRowsTotal,
 
+		// Aggregator catalogue/allow-list gap gauge (T103), registered here
+		// rather than beside its DiscoveryRecordFailuresTotal neighbour in
+		// [registerAppMetrics] for the same funlen reason as
+		// SourceUnrepresentableSymbolsTotal above.
+		AggregatorCatalogueTickersSkipped,
+
 		// Dispatcher-level counters (RLT-135), registered here rather than
 		// beside their SourceDecodeErrorsTotal neighbour in
 		// [registerAppMetrics] for the same funlen reason as
@@ -1538,6 +1544,24 @@ var DiscoverySkippedHitsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_discovery_skipped_hits_total",
 		Help: "Discovery hits skipped because (contract_id, event_type) was already enqueued in this process.",
+	},
+)
+
+// AggregatorCatalogueTickersSkipped — count of verified-currency
+// catalogue tickers (those carrying a `coingecko_id`) that
+// aggregatorPairsFromCatalogue (cmd/stellarindex-indexer) EXCLUDED
+// from the aggregator cross-check pair set because
+// canonical.NewCryptoAsset rejected the ticker — it isn't on the
+// ADR-0014 crypto allow-list yet. Gauge, not a counter: it's a
+// snapshot of the current catalogue/allow-list mismatch, set once
+// per startup catalogue build, not an event tally. Before this
+// metric the skip was a bare `continue` with no signal at all — a
+// currency could gain pricing coverage in the seed yaml and never
+// join aggregator cross-check, silently.
+var AggregatorCatalogueTickersSkipped = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_aggregator_catalogue_tickers_skipped",
+		Help: "Verified-currency catalogue tickers with a coingecko_id excluded from the aggregator cross-check pair set because they are not on the ADR-0014 crypto allow-list.",
 	},
 )
 

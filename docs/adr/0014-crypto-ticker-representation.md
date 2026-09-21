@@ -138,6 +138,17 @@ ADR for an addition._
 - 2026-04-23 — initial allow-list of 22 codes (observed in CEX
   oracle traffic + top-cap global cryptos). See
   `canonical.IsKnownCrypto` for the live list.
+- 2026-04-24 (#19) — added `DAI`, `PYUSD`, `USDP` (stablecoins),
+  `EURC`, `EUROC`, `EUROB` (euro-pegged stablecoins) and `MXNe`
+  (Bitso peso-pegged stablecoin) — published by RedStone's Stellar
+  adapter. Kept `crypto`, not normalized to `fiat`, so the decoder
+  stays fiat-proxy-agnostic: the aggregator maps each to its fiat
+  leg (USD / EUR / MXN) at VWAP time, per the "stablecoin-as-fiat is
+  aggregator policy" rule.
+- 2026-05-05 (#643) — added `DASH`. One-line allow-list extension;
+  no connector or aggregator change at the time — wired into the
+  per-CEX `DefaultPairs()` maps separately as venues list it
+  (Kraken, Binance, Bitstamp).
 - 2026-05-22 (#53) — added `SolvBTC`, `SolvBTC_FUNDAMENTAL`,
   `SolvBTC.BBN_FUNDAMENTAL` — tokenized-BTC feeds from RedStone's
   Stellar deployment. BTC-backed crypto tokens, so `crypto` not the
@@ -164,6 +175,16 @@ ADR for an addition._
   2026-07-24 relayer expansion (ledger 63624934). These two keep
   `fiat:USD`: the `/USD` suffix is exactly what makes them
   dollar-denominated (see the 2026-08-29 D8 amendment above).
+- 2026-08-31 (#439) — added `USDT0`, the omnichain USDT
+  representation published by RedStone's Stellar adapter. A DISTINCT
+  code from `USDT`, deliberately: its own issuance and peg risk, so
+  collapsing the two here would be the eager normalisation the
+  stablecoin rule above rejects. Whether it should ALSO proxy to
+  `fiat:USD` at VWAP time is an aggregator-policy decision, taken in
+  `internal/aggregate/stablecoin.go`, not this ADR. It was arriving
+  as `raw:USDT0` and ticketing
+  `stellarindex_ingestion_oracle_unknown_symbols` before this
+  amendment.
 
 ## References
 
