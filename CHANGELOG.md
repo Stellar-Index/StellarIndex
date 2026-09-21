@@ -15,6 +15,25 @@ against.
 
 ## [Unreleased]
 
+- **api / price/at and price/changes — withheld prices reported as
+  not-found, no per-request DB ceiling (RLT-454, RLT-455):** both
+  handlers swallowed `ErrPriceWithheld` into the same generic
+  `errors/price-not-found` 404 a pair with no data at all gets, even
+  though `storePriceAtReader.PriceAt` (`cmd/stellarindex-api/main.go`)
+  actively returns it once the substance/scam gate refuses to publish a
+  pair — the same distinction `/v1/price`, `/v1/price/tip` and the
+  SEP-40 surface already carry. Both handlers now track whether any
+  alias/peg orientation hit the gate and report the distinct
+  `errors/price-withheld` 404 once every orientation is exhausted;
+  `/v1/price/changes`'s per-horizon `available:false` is left as-is
+  (the gate is evaluated per horizon target time, so one horizon can be
+  withheld while its siblings are not — the endpoint already treats a
+  per-item miss the way the batch endpoint does). Neither handler also
+  declared a `context.WithTimeout(r.Context(), …)` budget, so an
+  unbounded alias/peg walk held its pool connection with nothing to
+  catch it; both now cap at 8s, matching the sibling single-shot read
+  endpoints.
+
 - **api / cache-control — three SEP-40 oracle passthroughs stuck in the
   300s catalogue band (RLT-438):** `/v1/oracle/lastprice`,
   `/v1/oracle/prices` and `/v1/oracle/x_last_price` matched the

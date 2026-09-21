@@ -75,6 +75,30 @@ func TestHandlePriceAt(t *testing.T) {
 	}
 }
 
+// TestHandlePriceAt_WithheldDistinctFromNotFound pins RLT-454: a
+// reader that returns ErrPriceWithheld (the pair HAS a closed bucket
+// but the substance/scam gate refuses to publish it) must 404 with the
+// distinct errors/price-withheld type, not the generic
+// errors/price-not-found the "we have never seen this pair" case uses
+// — same contract handlePrice and handlePriceTip already carry.
+func TestHandlePriceAt_WithheldDistinctFromNotFound(t *testing.T) {
+	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	s := &Server{priceAt: priceAtStub{err: ErrPriceWithheld}}
+	req := httptest.NewRequest(http.MethodGet, "/v1/price/at?asset=native&ts="+ts.Format(time.RFC3339), nil)
+	rec := httptest.NewRecorder()
+	s.handlePriceAt(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"https://api.stellarindex.io/errors/price-withheld"`) {
+		t.Errorf("body did not carry the distinct price-withheld type: %s", body)
+	}
+	if strings.Contains(body, `"type":"https://api.stellarindex.io/errors/price-not-found"`) {
+		t.Errorf("body used the generic price-not-found type though the reader withheld the price: %s", body)
+	}
+}
+
 // priceAtPairStub answers only for pairs present in byPair (keyed
 // "base/quote"); everything else gets ErrPriceAtUnavailable. Lets the
 // stablecoin-fallback test distinguish the literal fiat:USD read from

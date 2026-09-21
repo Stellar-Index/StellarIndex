@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -126,9 +127,28 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Per-request DB ceiling (RLT-455): the endpoint issues up to five
+	// sequential PriceAt reads (the current anchor plus one per
+	// horizon), each walking alias combinations and, for a fiat:USD
+	// quote, every configured USD peg. Without a bounded context a slow
+	// run holds its pool connection until the client gives up. 8s
+	// matches the sibling single-shot read endpoints (oracle.go,
+	// vwap.go, ohlc.go) and fires before the blanket request-timeout
+	// middleware.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
 	now := time.Now().UTC()
-	pair, current, triangulated, found := s.resolvePriceChangePair(r.Context(), asset, quote, now)
+	pair, current, triangulated, found, withheld := s.resolvePriceChangePair(ctx, asset, quote, now)
 	if !found {
+		if withheld {
+			// At least one orientation HAS a closed bucket and the
+			// substance/scam gate refused to publish it — the distinct
+			// 404 type so integrators can branch, same contract as
+			// /v1/price and /v1/price/tip (see ErrPriceWithheld).
+			writePriceWithheldProblem(w, r, asset, quote)
+			return
+		}
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/price-not-found",
 			"No current price for pair", http.StatusNotFound,
@@ -146,7 +166,7 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	horizons := []*PriceChangeHorizon{&resp.H1, &resp.H24, &resp.D7, &resp.D30}
 	for i, h := range priceChangeHorizons {
-		*horizons[i] = s.priceChangeHorizon(r.Context(), pair, current.value, now.Add(-h.dur), h.dur)
+		*horizons[i] = s.priceChangeHorizon(ctx, pair, current.value, now.Add(-h.dur), h.dur)
 	}
 
 	writeJSON(w, resp, Flags{Triangulated: triangulated})
@@ -166,12 +186,19 @@ type priceAtResult struct {
 // direct/aliased bucket exists, the operator's USD-pegged classics
 // (the same stablecoin-proxy chain /v1/price and /v1/price/at use) —
 // flagging triangulated=true on that path. found=false when no
-// orientation has a fresh-enough current bucket.
+// orientation has a fresh-enough current bucket; withheld=true (only
+// meaningful when found=false) means at least one orientation DID have
+// a bucket but the substance/scam gate refused to publish it — the
+// caller reports the distinct price-withheld 404 rather than the
+// generic not-found (see ErrPriceWithheld).
 func (s *Server) resolvePriceChangePair(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
-) (canonical.Pair, priceAtResult, bool, bool) {
-	if pair, res, ok := s.currentPriceForAliases(ctx, asset, quote, now); ok {
-		return pair, res, false, true
+) (canonical.Pair, priceAtResult, bool, bool, bool) {
+	withheld := false
+	if pair, res, ok, w := s.currentPriceForAliases(ctx, asset, quote, now); ok {
+		return pair, res, false, true, false
+	} else if w {
+		withheld = true
 	}
 	// Stablecoin fiat-proxy fallback: retry each USD peg. First hit
 	// wins; the response still echoes the requested quote (fiat:USD)
@@ -183,20 +210,26 @@ func (s *Server) resolvePriceChangePair(
 			if sameAsset(peg, asset) {
 				continue
 			}
-			if pair, res, ok := s.currentPriceForAliases(ctx, asset, peg, now); ok {
-				return pair, res, true, true
+			if pair, res, ok, w := s.currentPriceForAliases(ctx, asset, peg, now); ok {
+				return pair, res, true, true, false
+			} else if w {
+				withheld = true
 			}
 		}
 	}
-	return canonical.Pair{}, priceAtResult{}, false, false
+	return canonical.Pair{}, priceAtResult{}, false, false, withheld
 }
 
 // currentPriceForAliases returns the first (assetAlias, quoteAlias)
 // orientation with a current closed bucket within
-// priceChangesCurrentStaleness of now.
+// priceChangesCurrentStaleness of now. withheld reports whether any
+// orientation tried hit the substance/scam gate (ErrPriceWithheld)
+// rather than simply having no bucket — the caller needs that to
+// choose the correct 404 type once every orientation is exhausted.
 func (s *Server) currentPriceForAliases(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
-) (canonical.Pair, priceAtResult, bool) {
+) (canonical.Pair, priceAtResult, bool, bool) {
+	withheld := false
 	for _, a := range assetAliases(asset) {
 		for _, q := range assetAliases(quote) {
 			if a.Equal(q) {
@@ -208,6 +241,9 @@ func (s *Server) currentPriceForAliases(
 			}
 			value, observedAt, resSec, err := s.priceAt.PriceAt(ctx, pair, now, priceChangesCurrentStaleness)
 			if err != nil {
+				if errors.Is(err, ErrPriceWithheld) {
+					withheld = true
+				}
 				continue
 			}
 			// dex-nonstandard-decimals forward normalization (M2) on the
@@ -216,16 +252,25 @@ func (s *Server) currentPriceForAliases(
 			// the served current_price / reference_price absolute values are
 			// corrected. Resolve against the actual traded legs. No-op at 7dp.
 			value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
-			return pair, priceAtResult{value: value, observedAt: observedAt, resSec: resSec}, true
+			return pair, priceAtResult{value: value, observedAt: observedAt, resSec: resSec}, true, false
 		}
 	}
-	return canonical.Pair{}, priceAtResult{}, false
+	return canonical.Pair{}, priceAtResult{}, false, withheld
 }
 
 // priceChangeHorizon computes one horizon's delta for an already-
 // resolved pair. Returns an unavailable (all-null) horizon on any miss
 // — reader error, no bucket that far back, or an unparseable ratio —
-// so a single bad horizon never fails the whole response.
+// so a single bad horizon never fails the whole response. A gate
+// withholding is intentionally folded into the same unavailable=false
+// outcome (never surfaced as a distinct wire signal): the gate is
+// asked about `target`, not `now` (T038), so one horizon can be
+// withheld while its siblings are not, and PriceChangeHorizon carries
+// per-horizon granularity the same way the batch endpoint's per-row
+// result does — omit/null rather than a distinct reason (see
+// lookupPriceBatch in price.go). The top-level 404 in
+// handlePriceChanges is the only place this endpoint distinguishes
+// withheld, mirroring resolvePriceChangePair's "current" anchor.
 func (s *Server) priceChangeHorizon(
 	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
 ) PriceChangeHorizon {

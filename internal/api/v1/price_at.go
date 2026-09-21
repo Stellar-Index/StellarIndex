@@ -95,12 +95,32 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if snap, found := s.lookupPriceAt(r.Context(), asset, quote, ts); found {
+	// Per-request DB ceiling (RLT-455): the alias walk tries up to 4
+	// combinations directly, then every configured USD peg on the
+	// stablecoin-fallback path, each a ClosedVWAPAtOrBefore CAGG
+	// lookup. Without a bounded context a slow run holds its pool
+	// connection until the client gives up. 8s matches the sibling
+	// single-shot read endpoints (oracle.go, vwap.go, ohlc.go) and
+	// fires before the blanket request-timeout middleware.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
+	snap, found, withheld := s.lookupPriceAt(ctx, asset, quote, ts)
+	if found {
 		writeJSON(w, snap, Flags{})
 		return
 	}
-	if snap, found := s.lookupPriceAtStablecoinFallback(r.Context(), asset, quote, ts); found {
-		writeJSON(w, snap, Flags{Triangulated: true})
+	fbSnap, fbFound, fbWithheld := s.lookupPriceAtStablecoinFallback(ctx, asset, quote, ts)
+	if fbFound {
+		writeJSON(w, fbSnap, Flags{Triangulated: true})
+		return
+	}
+	if withheld || fbWithheld {
+		// At least one orientation HAS a closed bucket at-or-before ts
+		// and the substance/scam gate refused to publish it — the
+		// distinct 404 type so integrators can branch, same contract
+		// as /v1/price and /v1/price/changes (see ErrPriceWithheld).
+		writePriceWithheldProblem(w, r, asset, quote)
 		return
 	}
 	// The 404 below carries the same ambiguity the series surfaces have
@@ -117,7 +137,7 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		outside      bool
 	)
 	if pair, pairErr := canonical.NewPair(asset, quote); pairErr == nil {
-		coverageFrom, outside = s.coverageAnnotation(r.Context(), s.priceAtCoverageSet(pair), ts)
+		coverageFrom, outside = s.coverageAnnotation(ctx, s.priceAtCoverageSet(pair), ts)
 	}
 	writeProblemCoverage(w, r,
 		"https://api.stellarindex.io/errors/price-not-found",
@@ -128,7 +148,13 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 
 // lookupPriceAt walks the alias combinations (F-1340, same as every
 // other price surface) and returns the first in-lookback bucket.
-func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool) {
+// withheld reports whether any orientation tried hit the
+// substance/scam gate (ErrPriceWithheld) rather than simply having no
+// bucket — the caller needs that to choose the correct 404 type once
+// every orientation (and, via lookupPriceAtStablecoinFallback, every
+// peg) is exhausted.
+func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, bool) {
+	withheld := false
 	for _, a := range assetAliases(asset) {
 		for _, q := range assetAliases(quote) {
 			if a.Equal(q) {
@@ -140,6 +166,9 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 			}
 			value, bucketAt, resSec, lookErr := s.priceAt.PriceAt(ctx, pair, ts, priceAtMaxLookback)
 			if lookErr != nil {
+				if errors.Is(lookErr, ErrPriceWithheld) {
+					withheld = true
+				}
 				continue
 			}
 			if ts.Sub(bucketAt) > priceAtMaxLookback {
@@ -162,10 +191,10 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 				PriceType:     "vwap",
 				ObservedAt:    WireTime(bucketAt),
 				WindowSeconds: resSec,
-			}, true
+			}, true, false
 		}
 	}
-	return PriceSnapshot{}, false
+	return PriceSnapshot{}, false, withheld
 }
 
 // lookupPriceAtStablecoinFallback is the CAGG sibling of the
@@ -179,20 +208,25 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 // operator-declared USD-pegged classic in priority order; the first
 // in-lookback bucket wins. The snapshot echoes the REQUESTED quote —
 // flags.triangulated (stamped by the caller) marks the proxy, same
-// contract as tryStablecoinFiatProxy on /v1/price.
+// contract as tryStablecoinFiatProxy on /v1/price. withheld carries
+// [Server.lookupPriceAt]'s withheld signal up across every peg tried.
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
-) (PriceSnapshot, bool) {
+) (PriceSnapshot, bool, bool) {
+	withheld := false
 	for _, proxied := range s.priceAtUSDPegPairs(asset, quote) {
-		snap, found := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts)
+		snap, found, w := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts)
+		if w {
+			withheld = true
+		}
 		if !found {
 			continue
 		}
 		snap.AssetID = asset.String()
 		snap.Quote = quote.String()
-		return snap, true
+		return snap, true, false
 	}
-	return PriceSnapshot{}, false
+	return PriceSnapshot{}, false, withheld
 }
 
 // priceAtUSDPegPairs is the ordered proxy list

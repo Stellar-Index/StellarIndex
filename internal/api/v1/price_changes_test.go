@@ -137,6 +137,38 @@ func TestHandlePriceChanges_StablecoinFallbackTriangulated(t *testing.T) {
 	}
 }
 
+// priceChangesWithheldStub answers ErrPriceWithheld for every pair and
+// every ts — models a pair the substance/scam gate refuses to publish
+// for, as opposed to a pair with no data at all.
+type priceChangesWithheldStub struct{}
+
+func (priceChangesWithheldStub) PriceAt(
+	context.Context, canonical.Pair, time.Time, time.Duration,
+) (string, time.Time, int, error) {
+	return "", time.Time{}, 0, ErrPriceWithheld
+}
+
+// TestHandlePriceChanges_WithheldDistinctFromNotFound pins RLT-454:
+// when every orientation of the current-price anchor is withheld
+// (rather than simply absent), the 404 must carry the distinct
+// errors/price-withheld type — same contract /v1/price and
+// /v1/price/at carry.
+func TestHandlePriceChanges_WithheldDistinctFromNotFound(t *testing.T) {
+	s := &Server{priceAt: priceChangesWithheldStub{}}
+	rec := httptest.NewRecorder()
+	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=native&quote=fiat:USD", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"https://api.stellarindex.io/errors/price-withheld"`) {
+		t.Errorf("body did not carry the distinct price-withheld type: %s", body)
+	}
+	if strings.Contains(body, `"type":"https://api.stellarindex.io/errors/price-not-found"`) {
+		t.Errorf("body used the generic price-not-found type though every orientation was withheld: %s", body)
+	}
+}
+
 // priceChangesPairStub answers only for pairs present in byPair (keyed
 // "base/quote"), for ANY ts — so it exercises the pair-orientation /
 // stablecoin-fallback resolution without modeling horizon ages.
