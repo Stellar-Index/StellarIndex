@@ -134,6 +134,26 @@ func (s *Server) requireOperator(w http.ResponseWriter, r *http.Request, instanc
 	return subject, true
 }
 
+// requireReason enforces the admin-write X-Reason contract (platform-spec
+// §7.2) shared by every unconditional operator-tier write: POST/DELETE
+// /v1/admin/keys, PATCH /v1/admin/accounts/{id} and the status-notice
+// create/resolve routes. Returns the reason + ok=true when present; on
+// ok=false a problem+json has already been written. Operator-conditional
+// routes (e.g. /v1/account/keys, gated only when the caller happens to be
+// operator-tier) use account.go's operatorReasonOK instead — the message
+// there names that route explicitly.
+func (s *Server) requireReason(w http.ResponseWriter, r *http.Request) (string, bool) {
+	reason := r.Header.Get("X-Reason")
+	if reason == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-reason",
+			"X-Reason header required", http.StatusBadRequest,
+			"every admin write captures an X-Reason header into the audit log")
+		return "", false
+	}
+	return reason, true
+}
+
 // handleAdminAccountGet serves GET /v1/admin/accounts/{id} — read the
 // account-level tier + overrides so an operator can inspect current
 // state before patching. Operator-tier only; read-only (no audit row —
@@ -185,12 +205,8 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	reason := r.Header.Get("X-Reason")
-	if reason == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/missing-reason",
-			"X-Reason header required", http.StatusBadRequest,
-			"every admin write captures an X-Reason header into the audit log")
+	reason, ok := s.requireReason(w, r)
+	if !ok {
 		return
 	}
 	req, ok := parseAccountOverrideRequest(w, r)

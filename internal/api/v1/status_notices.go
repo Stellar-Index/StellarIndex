@@ -147,9 +147,8 @@ func (s *Server) handleAdminStatusNoticeCreate(w http.ResponseWriter, r *http.Re
 		writeStatusNoticeStoreUnavailable(w, r)
 		return
 	}
-	reason := r.Header.Get("X-Reason")
-	if reason == "" {
-		writeMissingReason(w, r)
+	reason, ok := s.requireReason(w, r)
+	if !ok {
 		return
 	}
 	req, ok := parseCreateNoticeRequest(w, r)
@@ -206,9 +205,8 @@ func (s *Server) handleAdminStatusNoticeResolve(w http.ResponseWriter, r *http.R
 		writeStatusNoticeStoreUnavailable(w, r)
 		return
 	}
-	reason := r.Header.Get("X-Reason")
-	if reason == "" {
-		writeMissingReason(w, r)
+	reason, ok := s.requireReason(w, r)
+	if !ok {
 		return
 	}
 	id, err := uuid.Parse(r.PathValue("id"))
@@ -307,13 +305,6 @@ func writeStatusNoticeStoreUnavailable(w http.ResponseWriter, r *http.Request) {
 		"https://api.stellarindex.io/errors/status-notice-store-unavailable",
 		"Status notice store not configured", http.StatusServiceUnavailable,
 		"this deployment has no StatusNoticeStore wired — typically because Postgres is unavailable")
-}
-
-func writeMissingReason(w http.ResponseWriter, r *http.Request) {
-	writeProblem(w, r,
-		"https://api.stellarindex.io/errors/missing-reason",
-		"X-Reason header required", http.StatusBadRequest,
-		"every admin write captures an X-Reason header into the audit log")
 }
 
 // recordStatusNoticeAudit persists the audit row for a notice mutation.
