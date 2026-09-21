@@ -397,6 +397,11 @@ func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncident
 		}
 		seen[name] = true
 
+		// Only the three alert-rule severities we document are ever
+		// counted or published verbatim; anything else is an
+		// unvalidated Prometheus label value (any alertname can set
+		// severity to whatever it likes) and is normalized to
+		// "unknown" rather than passed through to the public JSON.
 		switch severity {
 		case "page":
 			out.PageCount++
@@ -404,6 +409,8 @@ func (p *PrometheusStatusBackend) Incidents(ctx context.Context) (StatusIncident
 			out.TicketCount++
 		case "informational":
 			out.InformationalCount++
+		default:
+			severity = "unknown"
 		}
 
 		if len(out.Active) < maxActive {
