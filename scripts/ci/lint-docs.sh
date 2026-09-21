@@ -453,6 +453,23 @@ if [ -d docs/adr ]; then
   done
 fi
 
+# Every ADR file must have a row in docs/adr/README.md's index table — the
+# per-file loop above only validates an ADR's OWN frontmatter, so a new ADR
+# landing without a README row (or a renumber that drops one) went undetected.
+if [ -d docs/adr ] && [ -f docs/adr/README.md ]; then
+  index_section=$(awk '/^## Index/{flag=1} flag' docs/adr/README.md)
+  for adr in docs/adr/[0-9]*.md; do
+    [ -f "$adr" ] || continue
+    num=$(basename "$adr" | grep -oE '^[0-9]+')
+    # A row is either linked ("| [0051](...)") or plain ("| 0036 | ..." for
+    # archived ADRs kept out of docs/adr) — match the table cell, not any
+    # mention of the number (a "supersedes 0016" aside must not count).
+    if ! grep -qE "^\| (\[$num\]|$num \|)" <<<"$index_section"; then
+      err "ADR '$adr' (ADR-$num) has no row in docs/adr/README.md's Index table"
+    fi
+  done
+fi
+
 # ─── 9. Every alert rule's runbook_url must live in ANNOTATIONS + exist ─────
 #
 # Prometheus alert rules ship with `runbook_url` so the pager routes

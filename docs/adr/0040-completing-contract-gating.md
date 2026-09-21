@@ -212,5 +212,11 @@ wasm-audit census confirmed exactly ONE mainnet pool, Blend's BLND/USDC
 backstop `CAS3FL6T…`; `comet.MainnetGatedSet` is the in-code trust root,
 `seed-protocol-contracts -source comet` upserts it with provenance
 `curated`, and the WASM-hash sweep is the registered upkeep loop).
+
+> **See Amendment (2026-07-24) above:** the preceding sentence's "WASM-hash
+> sweep is the registered upkeep loop" is aspirational, not shipped — no
+> such sweep exists in the codebase. The curated one-pool allowlist is the
+> live mechanism.
+
 CS-026 closed — every integrated on-chain source now gates `Matches()`
 on contract identity.
