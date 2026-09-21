@@ -345,11 +345,12 @@ export function usePricePoll({
     // last price comes from /v1/pools, not this aggregator VWAP path).
     if (!CURRENT_NETWORK.pricing) return;
     let cancelled = false;
+    const controller = new AbortController();
     const tick = async () => {
       try {
         const r = await fetch(
           `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
-          { signal: timeoutSignal() },
+          { signal: timeoutSignal(undefined, controller.signal) },
         );
         if (cancelled) return;
         if (r.status === 404) {
@@ -383,13 +384,14 @@ export function usePricePoll({
           polled: true,
         });
       } catch {
-        // Network blip — keep whatever we have.
+        // Network blip, timeout, or unmount/dep-change abort — keep whatever we have.
       }
     };
     void tick();
     const id = setInterval(() => void tick(), intervalMs);
     return () => {
       cancelled = true;
+      controller.abort();
       clearInterval(id);
     };
   }, [asset, quote, intervalMs]);

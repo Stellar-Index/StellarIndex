@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
-import { apiGet, timeoutSignal } from './client';
+import { apiGet, asExample, timeoutSignal } from './client';
 
 // [absence: timeouts] every runtime fetch used to have no upper bound at
 // all. timeoutSignal is the shared primitive that closes that gap while
@@ -41,6 +41,33 @@ describe('timeoutSignal', () => {
     await vi.advanceTimersByTimeAsync(4_000);
     expect(signal.aborted).toBe(false);
     vi.useRealTimers();
+  });
+});
+
+// REGRESSION (T268): asExample('/v1/assets/{id}', { id: slug }) rendered
+// `/v1/assets/%7Bid%7D?id=<slug>` — the placeholder was never substituted
+// and the param it named was dumped onto the query string instead — while
+// the panel's real request hit `/v1/assets/<slug>`. The `<>` reveal must
+// show the URL that was actually fetched.
+describe('asExample', () => {
+  it('substitutes an OpenAPI-style path placeholder from params, not the query string', () => {
+    const example = asExample('/v1/assets/{id}', {
+      id: 'USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    });
+    expect(example.url).toContain(
+      '/v1/assets/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+    );
+    expect(example.url).not.toContain('%7Bid%7D');
+    expect(example.url).not.toContain('?id=');
+  });
+
+  it('still sends leftover params as a query string alongside a substituted placeholder', () => {
+    const example = asExample('/v1/accounts/{account}/graph', {
+      account: 'GABC123',
+      depth: 2,
+    });
+    expect(example.url).toContain('/v1/accounts/GABC123/graph?');
+    expect(example.url).toContain('depth=2');
   });
 });
 
