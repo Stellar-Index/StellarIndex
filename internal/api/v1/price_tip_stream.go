@@ -239,11 +239,12 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer releaseProducer()
-		sub, cancelSub := s.hub.Subscribe([]string{topic}, streaming.LastEventIDFrom(r))
+		lastEventID := streaming.LastEventIDFrom(r)
+		sub, cancelSub := s.hub.Subscribe([]string{topic}, lastEventID)
 		defer cancelSub()
 
 		ch := make(chan streaming.Event, tipStreamProducerQueueDepth)
-		go s.forwardTipStream(r.Context(), ch, sub, firstEv)
+		go s.forwardTipStream(r.Context(), ch, sub, firstEv, lastEventID != "")
 		streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 		return
 	}
@@ -300,16 +301,31 @@ func (s *Server) writeTipProducerRefused(
 // cancels or the Hub subscription closes (hub shutdown / topic evict —
 // the client's EventSource auto-reconnects and lands on a fresh
 // subscription).
+//
+// isResume is whether this connection supplied a Last-Event-ID: on a
+// fresh connect the Hub has nothing to replay (an empty lastEventID
+// makes [streaming.Hub.Subscribe] skip replay entirely), so the
+// pre-flight snapshot is the only way the first frame doesn't wait for
+// the shared producer's next tick. On a RESUME, `sub` already replays
+// the buffered backlog after the client's cursor, in ID order — but
+// firstEv was computed fresh, under its own [streaming.Generator], at
+// reconnect time, so its ID is newer than anything already buffered.
+// Prepending it ahead of the replay then sends a newer id: first and
+// older ones after, so the SSE cursor (and whatever the client renders
+// as "current") walks backwards through the reconnect (Q170/T161). The
+// backlog itself already carries the pair's current state, so firstEv
+// adds nothing a resuming client needs — skip it.
 func (s *Server) forwardTipStream(
 	ctx context.Context,
 	ch chan<- streaming.Event,
 	sub <-chan streaming.Event,
 	firstEv streaming.Event,
+	isResume bool,
 ) {
 	defer s.recoverStreamProducer("price_tip")
 	defer close(ch)
 
-	if len(firstEv.Data) > 0 {
+	if !isResume && len(firstEv.Data) > 0 {
 		select {
 		case <-ctx.Done():
 			return
