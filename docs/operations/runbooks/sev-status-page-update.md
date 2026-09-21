@@ -1,6 +1,6 @@
 ---
 title: SEV status-page update
-last_verified: 2026-08-29
+last_verified: 2026-09-20
 status: living doc
 related:
   - docs/operations/sev-playbook.md
@@ -151,6 +151,41 @@ integration is paused, the manual fallback is
 — `status-page.yml` rebuilds the redirect stub only and will not
 publish an incident.
 
+**Known risk: a genuine API outage can block the update it's meant to
+announce.** The status page shares ONE `next build` with every other
+explorer route (there is no separate build target for
+`web/explorer/src/app/status/`). `src/lib/buildFetch.ts` documents a
+deliberate fail-hard contract: a real entity page (`/assets/[slug]`,
+`/markets/[pair]`, …) whose build-time fetch fails persistently THROWS
+and aborts the WHOLE `next build` — that's correct for those pages
+(never bake fallback HTML for a real entity) but it means the exact
+SEV this runbook targets (the live API is down) can make the build
+that would publish the NEW incident update fail too, on an unrelated
+page's fetch, not the status page's own code (`web/explorer/src/lib/incidents.ts`
+reads the corpus from disk, not the network). This is not yet fixed —
+isolating the status page's build/deploy from the rest of the site is
+an infra change (a separate Cloudflare Pages project + build target)
+that hasn't been scoped.
+
+**Interim workaround.** If a status-page-update build fails and the
+failure is `BuildFetchError` (not a status-page or corpus error), the
+API itself is almost certainly the thing down — use the manual
+fallback above with the stub override to force every OTHER page onto
+its networkless fallback content for this one build, so the incident
+update still publishes:
+
+```sh
+gh workflow run explorer-deploy.yml --ref main -f network=mainnet \
+    -f environment=production -f api_base_url=https://ci-stub.invalid
+```
+
+This bakes fallback/not-found HTML for asset, market, issuer, etc.
+pages until the next successful build (acceptable — those pages are
+already degraded by the same outage) while the incident corpus, which
+never depended on the network, still renders correctly. Do not use
+this for a routine deploy; it is a break-glass step for exactly this
+scenario.
+
 ### 5 — Customer webhook fan-out (optional but expected)
 
 After the incident `.md` is merged AND the API binary is
@@ -251,3 +286,12 @@ git, full stop.
   every pointer, both deploy sentences and the frontmatter `related:`
   entry updated, and the same drift fixed in AGENTS.md's tree map.
   Host shapes → r1's IP.
+- 2026-09-20 — documented an unfixed risk: the status page shares one
+  `next build` with the rest of the explorer, so a genuine API outage
+  can fail the build that would publish the incident update (via
+  `buildFetch.ts`'s fail-hard contract on an unrelated page), even
+  though the status page's own data never touches the network. Added
+  the `api_base_url=https://ci-stub.invalid` break-glass workaround for
+  the manual deploy fallback. Real fix (an isolated build/deploy target
+  for the status page) is not yet scoped — see internal tracking for
+  F103.
