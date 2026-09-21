@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+- **docs / CHANGELOG — dangling `#1004` citation in the rc.30 `known_issuers`
+  entry corrected (RSWP-065):** the number was a stale PR reference that
+  has since been reused by an unrelated live issue, so the citation no
+  longer pointed at a 404 — it pointed at real but unrelated content,
+  which is worse. Removed the citation rather than guess a replacement
+  number; `scripts/ci/lint-docs.sh`'s stale-reference check now guards
+  against it reappearing.
+
 - **docs — CHANGELOG's sac_wrappers entry misattributed to an unrelated
   live issue (RSWP-062):** the v0.5.0-rc.30 `[supply.sac_wrappers]` entry
   cited PR 1001 as one of its sources; that number didn't exist at the
@@ -29001,8 +29009,8 @@ rc.48 deploy to R1.
 ## [v0.5.0-rc.30] — 2026-05-08
 
 ### Added
-- **`known_issuers` curated fallback expanded to 14 entries**
-  (#1004). Adds Blend Capital (BLND), Velo Labs, Phoenix,
+- **`known_issuers` curated fallback expanded to 14 entries.**
+  Adds Blend Capital (BLND), Velo Labs, Phoenix,
   Mykobo (USDx/EURx/GBPx — single G-strkey), Apay (BTC + ETH
   wrapped), Libre, and Circle EURC. Sourced by cross-referencing
   the SAC wrapper rounds 2-4 against each issuer's stellar.toml
