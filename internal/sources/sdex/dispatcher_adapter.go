@@ -42,10 +42,32 @@ func (*Decoder) Matches(op xdr.Operation) bool {
 // (the buyer-side actor who placed the aggressive offer). Maker
 // comes from each claim atom — usually a G-address, but for
 // liquidity-pool fills it's the pool hash (hex-encoded).
-func (*Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
+func (d *Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
+	out, _ := d.decodeCounted(ctx)
+	return out, nil
+}
+
+// DecodeCounted is the completeness-census-facing variant of Decode: same
+// decode logic, but also returns how many claim atoms failed to decode
+// (decodeClaimAtom errors — structurally malformed claims, NOT the trades
+// canonical.Trade.Validate() later rejects as one-sided fills, which both
+// the live writer and the census intentionally filter symmetrically).
+//
+// The census (compute_completeness.go's reDeriveSDEXCensusViaDecoder) needs
+// this count to mark a ledger BLIND rather than silently treating a
+// per-claim drop as "zero trades, clean" — the same class of blindness
+// [dispatcher.ContractCallDecoder] callers already thread via
+// completeness.BlindSpots. Decode cannot report it without breaking the
+// dispatcher.OpDecoder signature every other source implements, so it is a
+// second, additive method rather than a signature change.
+func (d *Decoder) DecodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) {
+	return d.decodeCounted(ctx)
+}
+
+func (*Decoder) decodeCounted(ctx dispatcher.OpContext) ([]consumer.Event, int) {
 	atoms := extractClaimAtoms(ctx.Op, ctx.OpResult)
 	if len(atoms) == 0 {
-		return nil, nil
+		return nil, 0
 	}
 	taker := ctx.TxSource
 	if ctx.OpSource != "" {
@@ -55,6 +77,7 @@ func (*Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 		taker = ctx.OpSource
 	}
 
+	var failed int
 	out := make([]consumer.Event, 0, len(atoms))
 	for i, atom := range atoms {
 		trade, err := decodeClaimAtom(
@@ -92,11 +115,12 @@ func (*Decoder) Decode(ctx dispatcher.OpContext) ([]consumer.Event, error) {
 			// in this op are independently valid and a returned error
 			// would drop them too.
 			obs.SourceDecodeErrorsTotal.WithLabelValues(SourceName).Inc()
+			failed++
 			continue
 		}
 		out = append(out, TradeEvent{Trade: trade})
 	}
-	return out, nil
+	return out, failed
 }
 
 // TradeEvent is the [consumer.Event] this source emits. Matches

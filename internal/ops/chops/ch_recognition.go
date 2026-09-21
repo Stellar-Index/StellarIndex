@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -49,25 +50,9 @@ func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: pa
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	// Warm the factory-anchored gated registries (ADR-0035) read-only from
-	// protocol_contracts so real protocol children are recognized and a
-	// FOREIGN emitter of the same topic is flagged. The recognition shapes
-	// come from CH, but the child-contract registry lives in Postgres, so
-	// we open a short-lived store just to warm it. Requires
-	// protocol_contracts seeded (`seed-protocol-contracts`).
-	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	disp, err := chRecognitionDispatcher(ctx, cfg)
 	if err != nil {
-		return fmt.Errorf("storage open (gated registry warm): %w", err)
-	}
-	defer func() { _ = store.Close() }()
-	gatedOpts, err := pipeline.GatedRegistryOptions(ctx, store, slog.Default(), ctx, false)
-	if err != nil {
-		return fmt.Errorf("gated registry warm: %w", err)
-	}
-
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gatedOpts)
-	if err != nil {
-		return fmt.Errorf("build dispatcher: %w", err)
+		return err
 	}
 
 	hi := uint32(*to)
@@ -164,6 +149,32 @@ func chRecognition(args []string) error { //nolint:gocognit,funlen // linear: pa
 	// which is where a lake-side recognition gate belongs now that
 	// soroban_events is decommission-pending (cold audit 2026-08-04).
 	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))
+}
+
+// chRecognitionDispatcher builds the production decoder dispatcher
+// ch-recognition audits against: warms the factory-anchored gated registries
+// (ADR-0035) and the soroswap pair-tokens seed (NS14) from a short-lived
+// Postgres store (protocol_contracts / soroswap_pairs live there even though
+// the recognition shapes themselves come from CH), then closes it.
+func chRecognitionDispatcher(ctx context.Context, cfg config.Config) (*dispatcher.Dispatcher, error) {
+	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	if err != nil {
+		return nil, fmt.Errorf("storage open (gated registry warm): %w", err)
+	}
+	defer func() { _ = store.Close() }()
+	gatedOpts, err := pipeline.GatedRegistryOptions(ctx, store, slog.Default(), ctx, false)
+	if err != nil {
+		return nil, fmt.Errorf("gated registry warm: %w", err)
+	}
+	seedOpt, err := soroswapRecognitionSeed(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gatedOpts, seedOpt)
+	if err != nil {
+		return nil, fmt.Errorf("build dispatcher: %w", err)
+	}
+	return disp, nil
 }
 
 func pctOf(n, d uint64) float64 {
