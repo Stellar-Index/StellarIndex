@@ -28620,8 +28620,8 @@ rc.48 deploy to R1.
   - GO-2026-4918 — `golang.org/x/net@v0.52.0`; fixed in v0.53.0
   Local `govulncheck ./...` clean post-bump. CI's
   `govulncheck + gitleaks` job goes green for every subsequent
-  PR; previously every PR today (`#1066`–`#1073`) failed it with
-  the same four findings.
+  PR; previously every open PR failed it with the same four
+  findings.
 ### Added
 
 - **Explorer**: cross-rates table on `/currencies/{ticker}`
