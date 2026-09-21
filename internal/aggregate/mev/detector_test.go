@@ -101,6 +101,23 @@ func TestDetectArbitrage_SingleVenueRoundTripRejected(t *testing.T) {
 	}
 }
 
+// A 3-asset graph that pads a genuine triangular cycle with a redundant
+// second leg on a pair it already covers (native/usdc twice) — all on
+// one venue — must still be rejected as a single-venue degenerate, the
+// same as the 2-asset round-trip. nEdges(4) > nNodes(3) here, so the
+// plain nEdges>=nNodes cycle test alone would wrongly accept it.
+func TestDetectArbitrage_DoubledLegSingleVenueRejected(t *testing.T) {
+	trades := []canonical.Trade{
+		trade(t, "soroswap", 1, "GUSER", "native", usdc),
+		trade(t, "soroswap", 2, "GUSER", usdc, aqua),
+		trade(t, "soroswap", 3, "GUSER", aqua, "native"),
+		trade(t, "soroswap", 4, "GUSER", "native", usdc),
+	}
+	if got := DetectArbitrage(trades, nil); len(got) != 0 {
+		t.Errorf("doubled-leg single-venue graph flagged as arb: %+v", got)
+	}
+}
+
 // A single trade can't be a cycle; off-chain (ledger 0) is excluded.
 func TestDetectArbitrage_SingleAndOffChainExcluded(t *testing.T) {
 	single := []canonical.Trade{trade(t, "soroswap", 1, "GARB", "native", usdc)}
