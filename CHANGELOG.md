@@ -28580,7 +28580,7 @@ rc.48 deploy to R1.
   `/v1/history` (+ `/since-inception`), `/v1/oracle/latest`,
   `/v1/oracle/streams`, `/v1/lending/pools`, `/v1/issuers`,
   `/v1/issuers/{g_strkey}`. Steady-state behavior unchanged.
-- **`scripts/dev/r1-smoke.sh` per-request budget: 5s → 10s** (#1108).
+- **`scripts/dev/r1-smoke.sh` per-request budget: 5s → 10s**.
   Sits one second above the 8s server-side ceiling — a request that
   crosses 10s wall-clock is genuinely hung (504-class), not just
   scanning a cold partition for the first time today. The previous
