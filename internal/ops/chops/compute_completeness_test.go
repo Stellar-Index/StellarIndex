@@ -1009,6 +1009,36 @@ func TestSubstrateClaim_SkipSubstrateCarriesRatherThanAsserts(t *testing.T) {
 	}
 }
 
+// TestRecognitionClaim_SkipRecognitionIsLabeledCarriedNotProven pins T239:
+// recOK reads true both when this run's shape scan genuinely found nothing
+// unrecognized AND when -skip-recognition ran no scan at all (the skip's
+// nil-gaps result is indistinguishable from a clean one at the recOK
+// boolean). Pre-fix, the published per-source detail said nothing in either
+// case, so "complete: substrate + recognition + projection verified to tip"
+// could describe a source whose recognition axis was never re-proven this
+// run. recognitionClaim must render the two cases differently.
+func TestRecognitionClaim_SkipRecognitionIsLabeledCarriedNotProven(t *testing.T) {
+	skipped := recognitionClaim(true, true)
+	if !strings.Contains(skipped, "-skip-recognition") || !strings.Contains(skipped, "carried") {
+		t.Errorf("recognitionClaim(true, skip=true) must disclose that nothing was scanned, got: %q", skipped)
+	}
+
+	proven := recognitionClaim(true, false)
+	if strings.Contains(proven, "-skip-recognition") || strings.Contains(proven, "carried") {
+		t.Errorf("recognitionClaim(true, skip=false) must not claim a carry it didn't make, got: %q", proven)
+	}
+	if proven == skipped {
+		t.Fatal("a genuinely clean scan and a skipped scan must not render the identical detail — that is the T239 gap")
+	}
+
+	// A real gap always reports the gap, regardless of skip (skip=true with
+	// recOK=false cannot happen via runRecognitionScan, but the function must
+	// still fail closed rather than silently prefer the skip wording).
+	if got := recognitionClaim(false, false); !strings.Contains(got, "unhandled topic") {
+		t.Errorf("recognitionClaim(false, false) = %q, want the unhandled-topic detail", got)
+	}
+}
+
 // TestLakeCoverageProblem_UnprovenSubstratePinsNumericWatermark pins FINDING 1
 // (the C4-057 NUMERIC-field gap). substrateClaim's BOOLEAN correctly went false
 // for an unproven lake, but only `lake_complete` was gated by it — the numeric

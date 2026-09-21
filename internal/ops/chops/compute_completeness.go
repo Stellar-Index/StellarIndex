@@ -529,9 +529,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// members folded into ownerOf above — W1-flowcompleteness-1).
 		recOK, recProblems := sourceRecognitionOK(genesis, recBySource[src.name])
 		problems = append(problems, recProblems...)
-		if !recOK {
-			detail = append(detail, "recognition: unhandled topic on this source's contract(s)")
-		}
+		detail = append(detail, recognitionClaim(recOK, *skipRecognition))
 
 		// Substrate∧recognition watermark drives COVERAGE — coverage means "did
 		// we capture every event" (substrate is the proof). Projection is a
@@ -998,6 +996,27 @@ func sourceRecognitionOK(genesis uint32, attributed []uint32) (bool, []uint32) {
 		}
 	}
 	return ok, problems
+}
+
+// recognitionClaim states what THIS run knows about the source's recognition
+// axis (Claim 2a), mirroring substrateClaim/projectionClaim's explicit-carry
+// contract: recOK alone cannot distinguish "this run's shape scan found
+// nothing unrecognized" from "-skip-recognition trusted the prior audit with
+// NO evidence from this run" (runRecognitionScan returns nil gaps on skip,
+// so recOK reads true either way). substrateClaim already states this
+// distinction for -skip-substrate; recognition had no equivalent, so the
+// published detail — and the "complete: substrate + recognition + projection
+// verified to tip" default — read identically whether recognition was
+// proven or merely carried (T239). Pure.
+func recognitionClaim(recOK, skipRecognition bool) string {
+	switch {
+	case !recOK:
+		return "recognition: unhandled topic on this source's contract(s)"
+	case skipRecognition:
+		return "recognition: carried from the prior audit (-skip-recognition), not re-proven this run"
+	default:
+		return "recognition: verified — every on-chain event shape recognized by a decoder"
+	}
 }
 
 // combineWatermark applies the served-tier projection gate to the lake
@@ -1704,11 +1723,11 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// later drops as malformed-asset). Independent SOURCE (the lake's full op
 		// set, substrate-proven) vs the live-ingested ops — catches drops, never
 		// passes by construction.
-		expected, err := reDeriveSDEXCensusViaDecoder(ctx, chAddr, lo, hi)
+		expected, blind, err := reDeriveSDEXCensusViaDecoder(ctx, chAddr, lo, hi)
 		if err != nil {
 			return nil, completeness.BlindSpots{}, err
 		}
-		return func(reconTarget) map[uint32]int { return expected }, completeness.BlindSpots{}, nil
+		return func(reconTarget) map[uint32]int { return expected }, blind, nil
 
 	default:
 		// Factory-anchored sources (ADR-0035): seed the gate registry from the
@@ -1868,8 +1887,9 @@ func reconcileTarget(ctx context.Context, store *timescale.Store, src reconSourc
 // distinct-PK accumulation is natural fan-out; splitting hurts the read.
 //
 //nolint:gocognit // windowed stream → per-op decode → per-trade Validate +
-func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, error) {
+func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to uint32) (map[uint32]int, completeness.BlindSpots, error) {
 	out := make(map[uint32]int)
+	blind := completeness.NewBlindTracker()
 	dec := sdex.NewDecoder()
 	// sdexPK is the served trades primary key minus its per-ledger constants:
 	// source is always "sdex" and ts is the ledger close-time (constant within
@@ -1893,8 +1913,11 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 		}
 		seen := make(map[uint32]map[sdexPK]struct{})
 		if err := clickhouse.StreamSDEXOps(ctx, chAddr, lo, hi, func(op clickhouse.SDEXOp) error {
-			// SDEX Decode soft-fails per claim (never a non-nil error).
-			outs, _ := dec.Decode(dispatcher.OpContext{
+			// SDEX Decode soft-fails per claim (never a non-nil error);
+			// DecodeCounted additionally reports how many claim atoms in
+			// this op failed to decode, so a failure marks the ledger
+			// BLIND (C4-059) instead of silently reading as zero trades.
+			outs, failed := dec.DecodeCounted(dispatcher.OpContext{
 				Ledger:   op.Ledger,
 				ClosedAt: op.ClosedAt,
 				TxHash:   op.TxHash,
@@ -1903,6 +1926,9 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 				Op:       op.Op,
 				OpResult: op.OpResult,
 			})
+			for i := 0; i < failed; i++ {
+				blind.Undecodable(op.Ledger)
+			}
 			// Mirror the served write exactly with two filters: (1)
 			// canonical.Trade.Validate() (BaseAmount>0 ∧ QuoteAmount>0) — the
 			// decoder emits one-side-zero fills for raw completeness but
@@ -1924,7 +1950,7 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 			}
 			return nil
 		}); err != nil {
-			return nil, err
+			return nil, completeness.BlindSpots{}, err
 		}
 		for ledger, s := range seen {
 			out[ledger] += len(s)
@@ -1933,7 +1959,7 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 			break
 		}
 	}
-	return out, nil
+	return out, blind.Result(), nil
 }
 
 // contractCallRowID projects a ContractCall-source event onto the identity the
@@ -2241,6 +2267,9 @@ func computeRecognitionGapsCH(ctx context.Context, cfg config.Config, chAddr str
 	if err != nil {
 		return nil, err
 	}
+	if verr := recognitionScanEmptyErr(len(shapes), from, tip); verr != nil {
+		return nil, verr
+	}
 	var gaps []completeness.RecognitionGap
 	for _, s := range shapes {
 		if _, ok := disp.Recognize(s.Event()); ok {
@@ -2269,7 +2298,25 @@ func computeRecognitionGaps(ctx context.Context, store *timescale.Store, cfg con
 	if err != nil {
 		return nil, err
 	}
+	if verr := recognitionScanEmptyErr(len(samples), sorobanEraGenesis, tip); verr != nil {
+		return nil, verr
+	}
 	return completeness.AuditRecognition(samples, disp), nil
+}
+
+// recognitionScanEmptyErr fails closed on a recognition scan that read zero
+// event shapes: no samples means no gaps means recognition_ok=true with no
+// distinction from "genuinely clean" — the same vacuous-pass
+// verify-recognition already refuses (verify_recognition.go). Reachable for
+// any pre-Soroban range and once soroban_events / the lake window is
+// retention-dropped or decommissioned.
+func recognitionScanEmptyErr(nShapes int, from, tip uint32) error {
+	if nShapes > 0 {
+		return nil
+	}
+	return fmt.Errorf("recognition scan read 0 event shapes in ledgers [%d, %d] — "+
+		"the source read nothing for this range; refusing to certify recognition coverage vacuously",
+		from, tip)
 }
 
 func nilOrOne(v uint32) []uint32 {

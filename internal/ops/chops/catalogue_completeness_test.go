@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -123,11 +124,30 @@ const blendEmitterDropWaiver = "fan-out: one drop event → N recipient rows " +
 	"(whereFilter event_kind <> 'drop') and omits the drop kind so the 1:1 " +
 	"distribute/swap_config rows still reconcile per-ledger; density gap-detector covers drop"
 
-// observationWaiver covers the five supply observers: LedgerEntry
-// observations, not soroban-event projections — they never flow through the
-// EventKind re-derive and are covered by their own observer coverage axis.
-const observationWaiver = "LedgerEntry observation (supply observer), not a soroban-event " +
-	"projection — outside the EventKind re-derive; covered by the observer's own coverage axis"
+// accountObservationWaiver covers account_observations specifically: a
+// LedgerEntry observation, not a soroban-event projection, so it never flows
+// through the EventKind re-derive — but unlike the other four observers it
+// genuinely IS covered by its own axis: migrations/0144_account_observer_watermark
+// tracks freshness for this table. Do not reuse this reason for a table that
+// has no such watermark — see observationWaiverNoAxis.
+const accountObservationWaiver = "LedgerEntry observation (supply observer), not a soroban-event " +
+	"projection — outside the EventKind re-derive; covered by the account observer watermark " +
+	"(migrations/0144_account_observer_watermark)"
+
+// observationWaiverNoAxis covers the four NON-account supply observers
+// (trustline / claimable-balance / liquidity-pool-reserve / SAC-balance):
+// LedgerEntry observations, not soroban-event projections, so — like
+// accounts — they never flow through the EventKind re-derive. UNLIKE
+// accounts, none of the four has a completeness or freshness mechanism of
+// any kind: no observer watermark exists for them (only migration 0144,
+// account-only). This waiver documents that gap rather than asserting
+// coverage that does not exist — do not describe it as "covered by the
+// observer's own coverage axis" until one of these four gains an equivalent
+// watermark.
+const observationWaiverNoAxis = "LedgerEntry observation (supply observer), not a soroban-event " +
+	"projection — outside the EventKind re-derive; NO observer watermark or other completeness " +
+	"mechanism exists for this table (unlike account_observations / migration 0144) — a real gap, " +
+	"tracked here rather than silently assumed covered"
 
 // externalWaiver covers the external CEX/FX source: off-chain vendor data
 // with no on-chain lake to re-derive against.
@@ -229,11 +249,11 @@ var projRoutes = []projRoute{
 	// ── deliberately off the projection axis ──
 	{typeName: "external.TradeEvent", table: "trades", disp: noReconcile, reason: externalWaiver},
 	{typeName: "external.UpdateEvent", table: "oracle_updates", disp: noReconcile, reason: externalWaiver},
-	{typeName: "accounts.Observation", table: "account_observations", disp: noReconcile, reason: observationWaiver},
-	{typeName: "trustlines.Observation", table: "trustline_observations", disp: noReconcile, reason: observationWaiver},
-	{typeName: "claimable_balances.Observation", table: "claimable_observations", disp: noReconcile, reason: observationWaiver},
-	{typeName: "liquidity_pools.Observation", table: "lp_reserve_observations", disp: noReconcile, reason: observationWaiver},
-	{typeName: "sac_balances.Observation", table: "sac_balance_observations", disp: noReconcile, reason: observationWaiver},
+	{typeName: "accounts.Observation", table: "account_observations", disp: noReconcile, reason: accountObservationWaiver},
+	{typeName: "trustlines.Observation", table: "trustline_observations", disp: noReconcile, reason: observationWaiverNoAxis},
+	{typeName: "claimable_balances.Observation", table: "claimable_observations", disp: noReconcile, reason: observationWaiverNoAxis},
+	{typeName: "liquidity_pools.Observation", table: "lp_reserve_observations", disp: noReconcile, reason: observationWaiverNoAxis},
+	{typeName: "sac_balances.Observation", table: "sac_balance_observations", disp: noReconcile, reason: observationWaiverNoAxis},
 }
 
 // sinkHandleEventTypes parses pipeline.handleEvent and returns the set of
@@ -423,6 +443,47 @@ func TestCatalogue_WaiversAreDeclared(t *testing.T) {
 		}
 		if r.reason == "" {
 			t.Errorf("%s → %s is noReconcile but has no reason — a projection-axis waiver must state why (fan-out / census / off-chain / observation)", r.typeName, r.table)
+		}
+	}
+}
+
+// TestCatalogue_ObservationWaiversDoNotOverclaimCoverage: only
+// account_observations has an actual completeness/freshness mechanism
+// (migrations/0144_account_observer_watermark). The other four supply
+// observers (trustline / claimable-balance / liquidity-pool-reserve /
+// SAC-balance) have NONE. A waiver reason claiming "covered by the
+// observer's own coverage axis" for one of those four would assert a
+// mechanism that does not exist — exactly the false-comfort a reader of
+// this CI-enforced table is entitled not to be given. Pins that only the
+// accounts table may carry the "covered by ... watermark" language, and
+// that every other observation waiver honestly says no mechanism exists.
+func TestCatalogue_ObservationWaiversDoNotOverclaimCoverage(t *testing.T) {
+	const falseCoverageClaim = "covered by the observer's own coverage axis"
+	nonAccountObservers := map[string]bool{
+		"trustlines.Observation":         true,
+		"claimable_balances.Observation": true,
+		"liquidity_pools.Observation":    true,
+		"sac_balances.Observation":       true,
+	}
+	for _, r := range projRoutes {
+		if !nonAccountObservers[r.typeName] {
+			continue
+		}
+		if strings.Contains(r.reason, falseCoverageClaim) {
+			t.Errorf("%s → %s waiver claims %q, but no observer watermark or other completeness mechanism exists for this table (only account_observations has one, migration 0144) — the reason overclaims coverage", r.typeName, r.table, falseCoverageClaim)
+		}
+		if !strings.Contains(r.reason, "NO observer watermark") && !strings.Contains(r.reason, "no observer watermark") {
+			t.Errorf("%s → %s waiver does not state that no completeness mechanism exists for this table", r.typeName, r.table)
+		}
+	}
+	// accounts is the one observer that DOES have a mechanism; its waiver
+	// must say so, not use the no-axis wording.
+	for _, r := range projRoutes {
+		if r.typeName != "accounts.Observation" {
+			continue
+		}
+		if !strings.Contains(r.reason, "watermark") {
+			t.Errorf("accounts.Observation waiver does not cite the account observer watermark (migration 0144) it is actually covered by: %q", r.reason)
 		}
 	}
 }

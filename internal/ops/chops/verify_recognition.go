@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -60,7 +61,12 @@ func verifyRecognition(args []string) error {
 		return fmt.Errorf("gated registry warm: %w", err)
 	}
 
-	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gatedOpts)
+	seedOpt, err := soroswapRecognitionSeed(ctx, store)
+	if err != nil {
+		return err
+	}
+
+	disp, err := pipeline.BuildDispatcher(cfg.Ingestion.EnabledSources, cfg.Oracle, gatedOpts, seedOpt)
 	if err != nil {
 		return fmt.Errorf("build dispatcher: %w", err)
 	}
@@ -102,4 +108,25 @@ func verifyRecognition(args []string) error {
 			g.ContractID, sym, g.Count, g.MinLedger, g.MaxLedger, g.Reason)
 	}
 	return fmt.Errorf("%d unrecognized event shape(s) — a decoder is missing a topic (ADR-0033 EVERY-event policy)", len(gaps))
+}
+
+// soroswapRecognitionSeed loads the soroswap pair registry and returns the
+// dispatcher option that seeds the soroswap decoder's pair-tokens cache from
+// it — the same registry compute-completeness folds into its recognition
+// census (compute_completeness.go). Without this, Matches() rejects every
+// real SoroswapPair event (swap/sync/deposit/withdraw/skim) and each becomes
+// a false recognition gap even though the indexer decodes + serves them.
+// Shared by verify-recognition and ch-recognition (NS14) so the seeding
+// logic — and its fail-closed posture on the load error, a partial registry
+// would silently under-recognize — lives in one place.
+func soroswapRecognitionSeed(ctx context.Context, store *timescale.Store) (soroswap.DecoderOption, error) {
+	pairs, err := store.LoadSoroswapPairRegistry(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load soroswap pair registry: %w", err)
+	}
+	seed := make(map[string]soroswap.PairTokens, len(pairs))
+	for _, p := range pairs {
+		seed[p.PairStrkey] = soroswap.PairTokens{}
+	}
+	return soroswap.WithSeededPairTokensDecoder(seed), nil
 }
