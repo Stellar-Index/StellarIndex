@@ -1,8 +1,11 @@
 package v1
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -139,8 +142,8 @@ func TestCachedSourcesStatsReader_ErrorIsNotCached(t *testing.T) {
 // stellarindex_api_cache_ops_total{cache="sources_stats"} counter
 // for both ops on the wrapper. Same regression-guard rationale as
 // the markets + assetsReader variants — if a future refactor drops the
-// .Inc() on either branch the alert from #1197 silently stops
-// firing for these surfaces.
+// .Inc() on either branch, the cache-ops alert silently stops firing
+// for these surfaces.
 func TestCachedSourcesStatsReader_HitMissCounter(t *testing.T) {
 	for _, tc := range []struct {
 		op   string
@@ -176,5 +179,28 @@ func TestCachedSourcesStatsReader_HitMissCounter(t *testing.T) {
 				t.Errorf("hit counter delta = %v, want 1", delta)
 			}
 		})
+	}
+}
+
+// danglingPRRef is the RSWP-112 citation this file's HitMissCounter doc
+// comment used to carry: no such PR exists, and the bare number now
+// resolves to unrelated content. Built from parts so this guard's own
+// source doesn't itself trip the check it performs.
+var danglingPRRef = "#" + "1197"
+
+// TestSourceStatsCacheTestFileHasNoDanglingPRReference guards RSWP-112:
+// strip dangling citations instead of reintroducing them, and don't
+// invent a replacement PR number we can't verify.
+func TestSourceStatsCacheTestFileHasNoDanglingPRReference(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed to resolve this test file's path")
+	}
+	src, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("reading %s: %v", file, err)
+	}
+	if bytes.Contains(src, []byte(danglingPRRef)) {
+		t.Errorf("this file cites PR %s, which does not exist and now resolves to unrelated content (RSWP-112)", danglingPRRef)
 	}
 }
