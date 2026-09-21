@@ -94,9 +94,12 @@ func (s *Server) handleStatusNotices(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.statusNotices.ListActive(r.Context())
 	if err != nil {
 		// A notice-store blip must never fail the status surface — the
-		// banner is a nicety layered over the SLA-truth /v1/status.
+		// banner is a nicety layered over the SLA-truth /v1/status. But an
+		// empty body here must not be byte-identical to a genuine "no
+		// active notices" — flags.stale marks it a failed read so a caller
+		// can tell "nothing to announce" from "couldn't ask" (RLT-465).
 		s.logger.Warn("status notices list failed; returning empty", "err", err)
-		writeJSON(w, StatusNoticesList{Notices: []StatusNotice{}, Count: 0}, Flags{})
+		writeJSON(w, StatusNoticesList{Notices: []StatusNotice{}, Count: 0}, Flags{Stale: true})
 		return
 	}
 	views := statusNoticeViews(rows)

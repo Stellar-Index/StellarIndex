@@ -418,6 +418,62 @@ describe('StatusPageClient honest staleness', () => {
     expect(screen.getByText('API outage in progress')).toBeInTheDocument();
     expect(screen.getByText(/notices feed unreachable/i)).toBeInTheDocument();
   });
+
+  // RLT-465: a notice-store read failure returns HTTP 200 with an empty
+  // list and flags.stale=true (status_notices.go handleStatusNotices) —
+  // byte-identical on the surface to a genuine "nothing to announce". A
+  // client that only checks res.ok would silently accept the empty list
+  // as truth and clear whatever notice was previously showing.
+  it('treats a 200 with flags.stale on the notices feed as a failed poll, not a genuine empty list', async () => {
+    const polls: Array<() => void> = [];
+    const realSetInterval = globalThis.setInterval;
+    vi.stubGlobal('setInterval', ((
+      fn: () => void,
+      ms?: number,
+      ...rest: unknown[]
+    ) => {
+      if (ms === 30_000) polls.push(fn);
+      return realSetInterval(fn, ms, ...rest);
+    }) as typeof setInterval);
+    let degraded = false;
+    mockFeeds({
+      status: async () => json({ data: statusPayload({}) }),
+      notices: async () =>
+        json({
+          data: degraded
+            ? { notices: [], count: 0 }
+            : {
+                notices: [
+                  {
+                    id: '22222222-2222-4222-8222-222222222222',
+                    title: 'Notice-store degraded',
+                    body: 'investigating',
+                    severity: 'major',
+                    status: 'active',
+                    created_at: new Date().toISOString(),
+                  },
+                ],
+                count: 1,
+              },
+          flags: { stale: degraded },
+        }),
+    });
+    renderPageWithClient();
+
+    await waitFor(() =>
+      expect(screen.getByText('Notice-store degraded')).toBeInTheDocument(),
+    );
+
+    degraded = true;
+    await act(async () => {
+      for (const poll of polls) poll();
+    });
+
+    // The stale read must not silently clear the banner …
+    expect(screen.getByText('Notice-store degraded')).toBeInTheDocument();
+    // … and must be flagged the same way an outright fetch failure is.
+    expect(screen.getByText(/notices feed unreachable/i)).toBeInTheDocument();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -529,6 +585,25 @@ describe('StatusPageClient overall banner ticket note', () => {
 
     await screen.findByText('Degraded performance');
     expect(screen.queryByText(/active ticket/i)).not.toBeInTheDocument();
+  });
+
+  // RLT-465: incidents_status "unknown" means the Alertmanager query
+  // FAILED, so `incidents.active` (empty here — the zero value of a
+  // failed query) is absence-of-signal, not an all-clear. The panel used
+  // to ignore incidents_status entirely and always render "No active
+  // incidents." for an empty array, which is the exact silent collapse
+  // W1.1 exists to prevent elsewhere on this page.
+  it('does not claim "No active incidents" when the alerting query failed', async () => {
+    renderWithIncidents(
+      { active_count: 0, page_count: 0, ticket_count: 0 },
+      'unknown',
+    );
+
+    await screen.findByText('Active incidents');
+    expect(
+      screen.getByText(/can.t confirm active incidents/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('No active incidents.')).not.toBeInTheDocument();
   });
 });
 
