@@ -92,7 +92,7 @@ See [_template.md](_template.md) for the boilerplate.
 | 0037 | Accepted | Rebrand to Stellar Index (Stellar Atlas name was taken) — **kept in `docs/archive/` (gitignored, not present on a fresh clone), not `docs/adr/`** | 2026-06-12 |
 | [0038](0038-network-explorer.md) | Accepted | Network explorer (full Stellar + Soroban) over the certified lake | 2026-06-14 |
 | [0039](0039-soroban-contract-state-reader.md) | Accepted | Soroban contract current-state reader — read-time decode from the lake | 2026-06-18 |
-| [0040](0040-completing-contract-gating.md) | Accepted | Completing contract-identity gating: phoenix/defindex curated-set gates, aquarius enumeration, comet WASM-hash gate (closes CS-026) | 2026-07-02 |
+| [0040](0040-completing-contract-gating.md) | Accepted (amended 2026-07-24, 2026-09-09) | Completing contract-identity gating: phoenix/defindex/comet curated-set gates, aquarius enumeration (comet's WASM-hash sweep never shipped — curated-set allowlist is the live mechanism; closes CS-026) | 2026-07-02 |
 | [0041](0041-ingest-durability-semantics.md) | Accepted | Ingest durability semantics — cursor is a resume hint, verdict is the durability claim; CH sink defaults on; drop alerting | 2026-07-02 |
 | [0042](0042-v1-wire-shape.md) | Accepted | The v1 wire shape — Unit-D collapse pre-flip, /v1/assets/{slug} kind discriminator, v1.0 freeze contract with x-stability tiers | 2026-07-02 |
 | [0043](0043-backup-and-restore-strategy.md) | Accepted | Backup + restore strategy — offsite repo2, CH lake protection via drilled re-derive + tail/DDL push, monthly scratch-restore drills | 2026-07-02 |
@@ -103,6 +103,7 @@ See [_template.md](_template.md) for the boilerplate.
 | [0048](0048-serve-by-query-shape.md) | Accepted | Serve by query shape — the account-movement archive is ClickHouse-native (amends 0047 D1) | 2026-07-10 |
 | [0049](0049-anonymous-access-and-passkey-auth.md) | Proposed | Anonymous access, open self-service registration, and passkey auth (no payment surface) — retroactive record of the shipped auth pivot | 2026-08-14 |
 | [0050](0050-multi-region-ha-architecture.md) | Accepted | Multi-region HA — active/active pricing, R1-authority lake, provider-independent archive DR (supersedes 0016, amends 0008; ratifies [multi-region-ha.md](../architecture/multi-region-ha.md)) | 2026-08-21 |
+| [0051](0051-usd-anchored-fiat-derivation.md) | Accepted | USD-anchored derivation of local-currency prices | 2026-08-31 |
 
 ## Related
 

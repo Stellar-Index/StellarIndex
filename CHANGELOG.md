@@ -251,6 +251,25 @@ against.
 
 ### Fixed
 
+- **docs / ADR index had no completeness check (T543):**
+  `docs/adr/README.md`'s Index table topped out at ADR-0050 though
+  ADR-0051 (USD-anchored fiat derivation, landed 2026-08-31) already
+  existed on disk; `scripts/ci/lint-docs.sh`'s ADR integrity check (§8)
+  only validated each ADR file's own frontmatter and never cross-checked
+  the index, so the gap went undetected. Added ADR-0051's row and a new
+  §8 check: every `docs/adr/NNNN-*.md` file must have a matching Index
+  row, or the lint fails naming the offender.
+
+- **docs / ADR-0040's index summary still claimed comet's automatic
+  WASM-hash sweep shipped (T544):** ADR-0040 was amended 2026-07-24 to
+  record that what shipped for comet is the curated one-pool allowlist,
+  not the aspirational automatic WASM-hash sweep — the ADR's own body
+  says so, but `docs/adr/README.md`'s one-line index summary still read
+  "comet WASM-hash gate". Reworded the summary to match the ADR's own
+  amendment, and added a pointer beside the ADR's "the WASM-hash sweep is
+  the registered upkeep loop" line so a reader hitting that sentence in
+  the body, not just the top-of-doc amendment, sees the correction.
+
 - **sources / sorocredit — event body capture was lossy despite a
   "nothing is dropped" promise (Q069, RLT-111):** `decodeSettlement`,
   `decodeSupportedAssetAdded` and `decodeConfigBody` stored
