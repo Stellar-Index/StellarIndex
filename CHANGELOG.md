@@ -28162,8 +28162,8 @@ rc.48 deploy to R1.
   and `GetCoinBySlug` queries.
 
 - **Explorer home page now emits `<link rel="canonical">`**.
-  Detail pages picked it up via #1094/#1095/#1097 but the root
-  `/` was left without one, so search engines were free to treat
+  Detail pages picked it up via 92d8ccda1/b66321fa0/176c8b2e7 but
+  the root `/` was left without one, so search engines were free to treat
   `https://stellarindex.io/`, `https://stellarindex.io` (no
   trailing slash), and `https://stellarindex.io/index.html` as
   separate pages and split link equity between them. Default
@@ -28195,8 +28195,9 @@ rc.48 deploy to R1.
   trailing-slash variant, the no-trailing-slash variant, the
   `index.html` form, and any `?ref=…` referral-tag form as
   separate URLs and split link equity. Each page now declares its
-  own canonical alongside the existing meta. Companion to #1167
-  (home page) and the per-detail-page canonicals from #1094-1097.
+  own canonical alongside the existing meta. Companion to 08465cb44
+  (home page) and the per-detail-page canonicals from
+  92d8ccda1, b66321fa0 and 176c8b2e7.
 - **`/v1/incidents.atom` summary truncation is now UTF-8-safe**.
   `summaryFromMarkdown` did `p[:397] + "..."` — a naive byte
   slice that could split a multi-byte UTF-8 codepoint in half
