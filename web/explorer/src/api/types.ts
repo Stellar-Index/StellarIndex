@@ -5091,7 +5091,7 @@ export interface paths {
          *
          *     BOUNDED BY CONSTRUCTION: every read is a primary-key range over
          *     this root's own rollup rows, with per-section caps
-         *     (`holdings_truncated` says when one applied).
+         *     (`holdings_truncated` / `flows.assets_truncated` say when one applied).
          */
         get: operations["getAccountGraphCohort"];
         put?: never;
@@ -6050,8 +6050,10 @@ export interface components {
         AccountCohortFlows: {
             /** @enum {string} */
             granularity: "1M";
-            /** @description The assets broken out per month — the cohort's most moved. A month's headline counts every asset, not only these. */
+            /** @description The assets broken out per month, most moved first. A month's headline counts every asset, not only these. */
             assets: string[];
+            /** @description True when the flow-asset read cap applied — assets past it are left out entirely, not folded into an "other" bucket, since their units differ. */
+            assets_truncated: boolean;
             points: components["schemas"]["AccountCohortFlowPoint"][];
         };
         AccountCohortFlowPoint: {
@@ -22731,6 +22733,7 @@ export interface operations {
                      *             "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
                      *             "native"
                      *           ],
+                     *           "assets_truncated": false,
                      *           "points": [
                      *             {
                      *               "period": "2026-07",
