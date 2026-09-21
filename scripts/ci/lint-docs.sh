@@ -288,6 +288,11 @@ stale_patterns=(
   "stellarindex\.ctx\.io"         # old placeholder domain
   "ctx-indexer\|ctx-aggregator\|ctx-api\|ctx-ops\|ctx-migrate" # old binary names (we use stellarindex- prefix now — adjust if you change the policy)
   "CTX Rates"                    # old project name (now "Stellar Index")
+  "#1001"                        # CHANGELOG's sac_wrappers entry cited a PR
+                                  # number that didn't exist yet (RSWP-062);
+                                  # #1001 is now a real, unrelated issue, so
+                                  # the reference would resolve to the wrong
+                                  # thing instead of just dangling
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \

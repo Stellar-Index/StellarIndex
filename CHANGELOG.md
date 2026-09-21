@@ -15,6 +15,14 @@ against.
 
 ## [Unreleased]
 
+- **docs — CHANGELOG's sac_wrappers entry misattributed to an unrelated
+  live issue (RSWP-062):** the v0.5.0-rc.30 `[supply.sac_wrappers]` entry
+  cited PR 1001 as one of its sources; that number didn't exist at the
+  time and has since been assigned to an unrelated, currently-open issue,
+  so the reference resolved to the wrong thing instead of just dangling.
+  Removed the reference; `scripts/ci/lint-docs.sh` now guards against it
+  reappearing.
+
 - **ops / classic-movements-backfill — -resume could skip a widened -from
   range, and a same-window CAP-0038 claim could resolve to "unresolved"
   (Q216, T137):** `MaxAccountMovementLedger` reports the highest ledger
@@ -28996,7 +29004,7 @@ rc.48 deploy to R1.
   ACCOUNTS list. /v1/issuers and the /assets table now surface
   org names for ~14 anchors covering most non-XLM trade volume.
 - **`[supply.sac_wrappers]` expanded to 38 entries** (#990,
-  #1001, #1002, #1003). The operator-config map now resolves
+  #1002, #1003). The operator-config map now resolves
   every SAC contract on the top Aquarius / Soroswap / Phoenix
   pools to its underlying classic asset. Drives both the
   explorer's pool-row labels (USDC, BLND, etc. instead of
