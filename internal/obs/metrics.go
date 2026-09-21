@@ -225,6 +225,13 @@ func registerAppMetricsTail() {
 		// SourceUnrepresentableSymbolsTotal above.
 		AggregatorCatalogueTickersSkipped,
 
+		// Chainlink decimals()-verify fail-open counter (RLT-188),
+		// registered here rather than beside its
+		// ChainlinkFeedDecimalsMismatchTotal neighbour in
+		// [registerAppMetrics] for the same funlen reason as
+		// SourceUnrepresentableSymbolsTotal above.
+		ChainlinkFeedDecimalsVerifyFailedTotal,
+
 		// Dispatcher-level counters (RLT-135), registered here rather than
 		// beside their SourceDecodeErrorsTotal neighbour in
 		// [registerAppMetrics] for the same funlen reason as
@@ -1385,6 +1392,31 @@ var ChainlinkFeedDecimalsMismatchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_chainlink_feed_decimals_mismatch_total",
 		Help: "Chainlink readings refused because the configured feed decimals disagree with the aggregator's on-chain decimals(), by consumer (divergence|ingest) and pair.",
+	},
+	[]string{"consumer", "pair"},
+)
+
+// ChainlinkFeedDecimalsVerifyFailedTotal — count of failed on-chain
+// decimals() RPC calls that fell back to the last known value
+// (configured, or a previously verified on-chain read) instead of
+// refusing the feed. Labels match ChainlinkFeedDecimalsMismatchTotal:
+//
+//   - consumer ∈ {divergence, ingest}: which Chainlink reader made the
+//     failing call.
+//   - pair: the canonical pair string the feed is mapped to.
+//
+// This is the fail-OPEN sibling of the mismatch counter above: a feed
+// whose decimals() call keeps failing is still being served at its
+// last known scale, so it produces no divergence signal on its own.
+// Without this counter, repeated decimals()-verification failures are
+// visible only in WARN logs and an operator cannot alert on them.
+// Zero forever is the healthy state; a sustained rate means the RPC
+// endpoint or the feed itself is unhealthy even though readings keep
+// flowing.
+var ChainlinkFeedDecimalsVerifyFailedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_chainlink_feed_decimals_verify_failed_total",
+		Help: "Chainlink decimals() RPC calls that failed and fell back to the last known decimals value, by consumer (divergence|ingest) and pair.",
 	},
 	[]string{"consumer", "pair"},
 )

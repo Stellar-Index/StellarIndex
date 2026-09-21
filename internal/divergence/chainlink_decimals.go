@@ -99,9 +99,13 @@ func (r *ChainlinkReference) resolveDecimals(ctx context.Context, pair canonical
 	}
 	if err != nil {
 		// Keep whatever we knew (configured, or a prior on-chain read);
-		// never guess a scale for a feed we know nothing about.
+		// never guess a scale for a feed we know nothing about. Counted
+		// separately from the mismatch counter: this is the fail-OPEN
+		// path (readings keep flowing at the last known scale), so a
+		// WARN log alone gives an operator nothing to alert on.
 		st.lastErr = err
 		st.nextCheck = now.Add(chainlinkDecimalsRetryInterval)
+		obs.ChainlinkFeedDecimalsVerifyFailedTotal.WithLabelValues("divergence", pair.String()).Inc()
 		r.logger.Warn("chainlink decimals() read failed — keeping last known value, will retry",
 			"source", ChainlinkSourceName,
 			"pair", pair.String(),

@@ -205,11 +205,14 @@ func TestChainlink_Decimals_MismatchRefusedAndCounted(t *testing.T) {
 
 // TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry — decimals()
 // fails (500) but latestRoundData() works: the configured value is kept
-// with a WARN, the read is retried only after the retry interval, and
+// with a WARN, the fail-open counter advances so the failure is
+// alertable, the read is retried only after the retry interval, and
 // nothing crashes.
 func TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry(t *testing.T) {
 	t.Parallel()
 	pair := mustPair(t, "fiat:JPY", "fiat:USD")
+	failCounter := obs.ChainlinkFeedDecimalsVerifyFailedTotal.WithLabelValues("divergence", pair.String())
+	before := testutil.ToFloat64(failCounter)
 	f := newChainlinkFakeRPC(t, roundDataHex(big.NewInt(670_000), time.Date(2026, 9, 18, 11, 0, 0, 0, time.UTC)), 8, http.StatusInternalServerError)
 	ref, clock, logBuf := newDecimalsTestRef(t, f, pair.String(), "0x00000000000000000000000000000000000000e4", 8)
 
@@ -223,13 +226,19 @@ func TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry(t *testing.T) {
 	if !strings.Contains(logBuf.String(), "level=WARN") || !strings.Contains(logBuf.String(), "decimals() read failed") {
 		t.Errorf("no WARN line for the failed decimals() read; got:\n%s", logBuf.String())
 	}
+	if got := testutil.ToFloat64(failCounter) - before; got != 1 {
+		t.Errorf("fail-open counter advanced by %v after one failed decimals() read, want 1", got)
+	}
 
-	// Within the retry window: no re-read.
+	// Within the retry window: no re-read, counter unmoved.
 	if _, err := ref.LookupPrice(context.Background(), pair, ref.now()); err != nil {
 		t.Fatalf("second LookupPrice: %v", err)
 	}
 	if n := f.decimalsCalls.Load(); n != 1 {
 		t.Errorf("decimals() called %d times inside the retry window, want 1", n)
+	}
+	if got := testutil.ToFloat64(failCounter) - before; got != 1 {
+		t.Errorf("fail-open counter advanced by %v inside the retry window, want 1 (no re-read)", got)
 	}
 	// Past it: retried, and once the chain answers it is verified equal.
 	clock.Advance(chainlinkDecimalsRetryInterval + time.Second)
@@ -239,6 +248,9 @@ func TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry(t *testing.T) {
 	}
 	if n := f.decimalsCalls.Load(); n != 2 {
 		t.Errorf("decimals() called %d times after the retry interval, want 2", n)
+	}
+	if got := testutil.ToFloat64(failCounter) - before; got != 1 {
+		t.Errorf("fail-open counter advanced by %v once the retry succeeded, want 1 (no further failure)", got)
 	}
 }
 

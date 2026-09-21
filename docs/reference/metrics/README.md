@@ -749,6 +749,20 @@ healthy state. A mis-scaled feed would otherwise be a permanent
 10^(d-8) false divergence (or 10^(d-8)-off oracle rows) with no signal
 at all; failing closed and counting here is the alternative.
 
+### `stellarindex_chainlink_feed_decimals_verify_failed_total`
+
+Counter, labels `consumer` ∈ {divergence, ingest}, `pair`.
+
+Count of on-chain `decimals()` RPC calls that FAILED and fell back to
+the last known decimals value (configured, or a previously verified
+on-chain read) instead of refusing the feed. This is the fail-OPEN
+sibling of `stellarindex_chainlink_feed_decimals_mismatch_total`
+above: readings keep flowing at the last known scale, so a repeatedly
+failing `decimals()` call produces no divergence signal on its own —
+only a WARN log. Zero forever is the healthy state; a sustained rate
+means the RPC endpoint or the feed is unhealthy even though pricing
+keeps working.
+
 ### `stellarindex_external_fx_last_quote_unix`
 
 Gauge, label `source`.
