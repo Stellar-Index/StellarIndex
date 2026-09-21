@@ -33,14 +33,31 @@ func isTopHeldAssets(q string) bool {
 	return strings.Contains(q, "stellar.asset_holders_counts")
 }
 
-// statsConn wires a full happy-path rollup snapshot.
+// isStatsCycleMarker matches AccountsStats' post-read consistency re-check
+// (T346): a bare max(computed_at) read, distinct from isStatsMetrics' three-
+// column select and isStatsProbe's LIMIT 1.
+func isStatsCycleMarker(q string) bool {
+	return strings.Contains(q, "max(computed_at)") && strings.Contains(q, "stellar.accounts_stats")
+}
+
+// statsConn wires a full happy-path rollup snapshot. The cycle marker
+// answers with the newest metrics timestamp, matching what readStatsMetrics
+// derives as ComputedAt — so a happy path never trips the T346 retry.
 func statsConn(t *testing.T, metrics, wealth, trust, held [][]any) (*ExplorerReader, *stubConn) {
 	t.Helper()
+	var newest time.Time
+	for _, row := range metrics {
+		if at, ok := row[2].(time.Time); ok && at.After(newest) {
+			newest = at
+		}
+	}
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
 		case isStatsProbe(q):
 			return &stubRows{data: [][]any{{int64(1)}}}, nil
+		case isStatsCycleMarker(q):
+			return &stubRows{data: [][]any{{newest}}}, nil
 		case isStatsMetrics(q):
 			return &stubRows{data: metrics}, nil
 		case isWealthHistogram(q):
@@ -267,17 +284,76 @@ func TestAccountsStats_HistogramsAreOrderedByBucket(t *testing.T) {
 
 // TestAccountsStats_ProbeGatesEveryRead — the probe exists so a deployment
 // without the rollup tables does not issue four failing reads per request.
-// Exactly five queries: the probe plus one read per table.
+// Exactly six queries: the probe, one read per table, and the post-read
+// cycle-marker re-check (T346) — no retry on a consistent read.
 func TestAccountsStats_ProbeGatesEveryRead(t *testing.T) {
 	r, conn := statsConn(t, nil, nil, nil, nil)
 	if _, _, err := r.AccountsStats(t.Context()); err != nil {
 		t.Fatalf("AccountsStats: %v", err)
 	}
-	if len(conn.queries) != 5 {
-		t.Fatalf("issued %d queries, want 5 (probe + four rollup reads):\n%s",
+	if len(conn.queries) != 6 {
+		t.Fatalf("issued %d queries, want 6 (probe + four rollup reads + cycle marker):\n%s",
 			len(conn.queries), strings.Join(conn.queries, "\n---\n"))
 	}
 	if !isStatsProbe(conn.queries[0]) {
 		t.Errorf("first query is not the schema probe:\n%s", conn.queries[0])
+	}
+}
+
+// TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead pins T346: a swap
+// landing between the first read and the post-read marker check must not be
+// served as a blended snapshot. The stub reports the marker as having moved
+// forward exactly once — the shape one EXCHANGE landing mid-read produces —
+// so AccountsStats must retry and the second attempt's (self-consistent)
+// values must be what is served.
+//
+// Proven red against the pre-fix AccountsStats, which had no marker
+// re-check at all: it returned the FIRST read's snapshot (TotalAccounts=1)
+// instead of retrying to the second, consistent one (TotalAccounts=2).
+func TestAccountsStats_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
+	cycle1 := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	cycle2 := cycle1.Add(30 * time.Minute)
+
+	conn := &stubConn{}
+	metricsCalls := 0
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case isStatsProbe(q):
+			return &stubRows{data: [][]any{{int64(1)}}}, nil
+		case isStatsMetrics(q):
+			metricsCalls++
+			// First read observes cycle1; the retry (second call) observes
+			// cycle2 — as if the swap landed and stayed, i.e. the retry is
+			// self-consistent.
+			if metricsCalls == 1 {
+				return &stubRows{data: [][]any{{"total_accounts", int64(1), cycle1}}}, nil
+			}
+			return &stubRows{data: [][]any{{"total_accounts", int64(2), cycle2}}}, nil
+		case isStatsCycleMarker(q):
+			// The marker always reports the CURRENT live cycle: cycle2 by
+			// the time the first read's marker check fires, so read #1
+			// mismatches (cycle1 vs cycle2) and read #2 matches (cycle2 vs
+			// cycle2).
+			return &stubRows{data: [][]any{{cycle2}}}, nil
+		case isWealthHistogram(q), isTrustlineHistogram(q), isTopHeldAssets(q):
+			return &stubRows{}, nil
+		}
+		t.Fatalf("unexpected query: %s", q)
+		return nil, nil
+	}
+	r := &ExplorerReader{conn: conn}
+
+	got, ok, err := r.AccountsStats(t.Context())
+	if err != nil {
+		t.Fatalf("AccountsStats: %v", err)
+	}
+	if !ok {
+		t.Fatal("ok = false on a read that resolved consistent after one retry")
+	}
+	if got.TotalAccounts != 2 {
+		t.Errorf("TotalAccounts = %d, want 2 (the retried, self-consistent read) — serving 1 means a torn read from a mid-swap cycle reached the caller", got.TotalAccounts)
+	}
+	if metricsCalls != 2 {
+		t.Errorf("readStatsMetrics ran %d time(s), want exactly 2 (one retry after the marker mismatch)", metricsCalls)
 	}
 }

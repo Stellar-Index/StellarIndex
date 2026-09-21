@@ -3,6 +3,7 @@ package clickhouse
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestRollupStatementsKeepTheSpillValve refuses a statement that sets
@@ -33,7 +34,7 @@ func TestRollupStatementsKeepTheSpillValve(t *testing.T) {
 	for _, s := range sponsorsRollupStatements {
 		lists["sponsors"] = append(lists["sponsors"], s.sql)
 	}
-	lists["holders"] = append(lists["holders"], holdersRollupStatements...)
+	lists["holders"] = append(lists["holders"], holdersRollupStatements(time.Now())...)
 
 	checked := 0
 	for name, stmts := range lists {
