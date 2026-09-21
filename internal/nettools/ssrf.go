@@ -52,8 +52,22 @@ import (
 //     4 bytes and net.IPNet.Contains rejects the length mismatch.
 //   - fec0::/10      — RFC 3879 deprecated site-local unicast. Matches
 //     neither IsLinkLocalUnicast (fe80::/10) nor IsPrivate (fc00::/7).
+//   - ::ffff:0:0:0/96 — RFC 2765 "IPv4-translated" form (distinct from the
+//     standard ::ffff:a.b.c.d IPv4-MAPPED form To4() already unwraps): the
+//     v4 address sits in bits 96-127 but the 0xffff marker sits in bits
+//     64-79 with a zero group at 80-95, e.g. `::ffff:0:7f00:1` for
+//     127.0.0.1. To4() looks for the marker at bytes[10:12], not
+//     bytes[8:10], so this form reads as plain global-unicast v6 and
+//     bypasses every v4 range above exactly like the NAT64/6to4 forms.
+//   - 2001::/32      — RFC 4380 Teredo tunneling. A Teredo relay can be
+//     coerced into forwarding to an embedded (obfuscated) destination
+//     address, so the whole prefix is blocked rather than decoded.
+//   - 240.0.0.0/4    — IANA "Reserved for future use"; not internet-routable.
+//   - 255.255.255.255/32 — RFC 919 limited broadcast.
+//   - 192.88.99.0/24 — RFC 3068 6to4 relay anycast; deprecated (RFC 7526)
+//     and not a legitimate customer destination.
 var extraBlockedNets = func() []*net.IPNet {
-	out := make([]*net.IPNet, 0, 9)
+	out := make([]*net.IPNet, 0, 14)
 	for _, cidr := range []string{
 		"100.64.0.0/10",
 		"192.0.0.0/24",
@@ -64,6 +78,11 @@ var extraBlockedNets = func() []*net.IPNet {
 		"2002::/16",
 		"::/96",
 		"fec0::/10",
+		"::ffff:0:0:0/96",
+		"2001::/32",
+		"240.0.0.0/4",
+		"255.255.255.255/32",
+		"192.88.99.0/24",
 	} {
 		_, n, err := net.ParseCIDR(cidr)
 		if err != nil {

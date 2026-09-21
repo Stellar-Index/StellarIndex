@@ -69,6 +69,23 @@ func TestIsBlockedIP(t *testing.T) {
 		{"fec0::1", true},
 		// (Public IPv6 2606:4700:4700::1111 asserted false above proves
 		// ::/96, 2002::/16 and fec0::/10 did not over-block a real dest.)
+
+		// IPv4-translated (RFC 2765, ::ffff:0:0:0/96) — distinct from the
+		// standard ::ffff:a.b.c.d mapped form: the 0xffff marker sits one
+		// group earlier, so To4() does not unwrap it (RSEC-E5).
+		{"::ffff:0:7f00:1", true}, // 127.0.0.1 wearing the translated form
+		{"::ffff:0:a9fe:a9fe", true},
+
+		// Teredo tunneling (RFC 4380, 2001::/32) — relay can be coerced
+		// into forwarding to an embedded destination.
+		{"2001:0:4136:e378:8000:63bf:3fff:fdd2", true},
+
+		// IANA reserved (240.0.0.0/4) and limited broadcast (RFC 919).
+		{"240.0.0.1", true},
+		{"255.255.255.255", true},
+
+		// Deprecated 6to4 relay anycast (RFC 3068 / 7526).
+		{"192.88.99.1", true},
 	}
 	for _, c := range cases {
 		ip := net.ParseIP(c.ip)

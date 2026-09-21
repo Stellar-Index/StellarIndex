@@ -501,7 +501,7 @@ func validateWebhookURL(ctx context.Context, raw string) error {
 // time when name resolution genuinely fails. This keeps tests
 // terse without weakening the production check.
 func rejectInternalHost(parent context.Context, host string) error {
-	if isReservedTLD(host) {
+	if nettools.IsReservedTLD(host) {
 		return nil
 	}
 	// Literal IP gets checked directly; named host gets resolved.
@@ -521,28 +521,28 @@ func rejectInternalHost(parent context.Context, host string) error {
 		// will surface the failure as a delivery error then.
 		return nil //nolint:nilerr // intentional: tolerate transient DNS at registration
 	}
+	return blockedResolvedAddrError(host, addrs)
+}
+
+// blockedResolvedAddrError reports the first resolved address in addrs that
+// falls in a non-public range, or nil if none do. Split out of
+// rejectInternalHost so the client-facing wording is unit-testable without a
+// real DNS resolution.
+//
+// RSEC-Y1: the error text carries only `host` — the customer's own input —
+// never the resolved IP. validateWebhookURL's caller writes err.Error()
+// straight into the 400 response body, and the resolved address is internal
+// network topology, not something the customer's own request disclosed.
+func blockedResolvedAddrError(host string, addrs []net.IPAddr) error {
 	for _, ipa := range addrs {
 		if nettools.IsBlockedIP(ipa.IP) {
-			return fmt.Errorf("url host %q resolves to an internal address (%s) — webhook destinations must be publicly routable", host, ipa.IP.String())
+			return fmt.Errorf("url host %q resolves to an internal address — webhook destinations must be publicly routable", host)
 		}
 	}
 	return nil
 }
 
-// isReservedTLD reports whether `host` ends in an RFC 2606 /
-// RFC 6761 reserved TLD that's guaranteed not to resolve to real
-// infrastructure. Case-insensitive; matches the TLD suffix only.
-func isReservedTLD(host string) bool {
-	h := strings.ToLower(host)
-	for _, tld := range []string{".example", ".test", ".invalid", ".localhost"} {
-		if h == tld[1:] || strings.HasSuffix(h, tld) {
-			return true
-		}
-	}
-	return false
-}
-
-// (SSRF IP-block logic moved to internal/nettools.IsBlockedIP — the single
+// (SSRF IP-block and reserved-TLD logic moved to internal/nettools — the single
 // canonical union blocklist shared with SEP-1 resolution + webhook delivery,
 // CS-008. Registration + delivery now agree by construction.)
 
