@@ -28203,7 +28203,7 @@ rc.48 deploy to R1.
   `watched_classic_assets` for Algorithm 2,
   `watched_sep41_contracts` for Algorithm 3) and explicitly states
   the consequence — so the next operator who tails the indexer log
-  sees the problem in the first 30 seconds. (PR #1216)
+  sees the problem in the first 30 seconds.
 - **`/v1/coins?limit=200` prewarm now matches the handler's
   internal `listingLimit`**. Same family as #1194. The handler
   subtracts 1 from the requested limit when cursor/issuer/q are
