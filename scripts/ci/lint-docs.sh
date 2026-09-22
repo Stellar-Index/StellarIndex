@@ -365,6 +365,12 @@ stale_patterns=(
                                   # live issue (Atom renderer CDATA/XSS), so
                                   # the reference would resolve to the wrong
                                   # thing instead of just dangling
+  "#879\b"                        # dangling ref (RSWP-053) — CHANGELOG's
+                                  # Top-markets/Markets-table null-asset
+                                  # entry cited the original Recent-trades
+                                  # fix as PR "#879"; #879 now resolves to
+                                  # an unrelated live issue (DirectoryLabel
+                                  # scam-tag case-sensitivity), not that fix
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
