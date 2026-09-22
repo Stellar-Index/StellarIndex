@@ -10,8 +10,8 @@ import (
 )
 
 // DEXTVLTotalView is the headline TVL figure across the pooled-liquidity
-// protocols the snapshot covers (#338) — the sum of the per-protocol
-// figures actually published on the same response, never an independent
+// protocols the snapshot covers — the sum of the per-protocol figures
+// actually published on the same response, never an independent
 // re-derivation.
 //
 // That definition is the point. `tvl_usd` is the EXACT sum of the
@@ -83,7 +83,7 @@ var dexTVLScopeExclusions = []DEXTVLExclusion{
 		Subject: "classic liquidity pools",
 		Reason: "Stellar's protocol-native CAP-38 constant-product pools are indexed and served " +
 			"per-pool at /v1/liquidity-pools (two-sided reserves + as_of_ledger) but are not yet " +
-			"valued into a protocol row; which protocol they attach to is an open product decision (#338)",
+			"valued into a protocol row; which protocol they attach to is an open product decision",
 	},
 	{
 		Subject: "sdex",
@@ -147,8 +147,7 @@ func (c *DEXTVLCache) Total() *DEXTVLTotalView {
 }
 
 // reconcileDEXTVLTotal folds a per-protocol snapshot into the headline
-// total, admitting only the parts whose own published claims hold
-// (#338). This is the divergence check the issue asks for, and its
+// total, admitting only the parts whose own published claims hold. Its
 // action is to REFUSE rather than to warn: a protocol that fails
 // admission is dropped from the sum and named in `excluded`, so a
 // wrong total is never served in the first place.
