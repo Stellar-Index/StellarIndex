@@ -54,15 +54,21 @@ export function AssetClientFallback({ slug }: { slug: string }) {
           // we render the friendly recovery panel below without
           // looping.
           const reloadKey = `assetFallbackReloaded:${slug}`;
-          if (
-            typeof window !== 'undefined' &&
-            !sessionStorage.getItem(reloadKey)
-          ) {
-            sessionStorage.setItem(reloadKey, '1');
-            // Brief delay so the reload feels intentional (not a flash).
-            setTimeout(() => window.location.reload(), 600);
-            setState('reloading');
-            return;
+          try {
+            if (
+              typeof window !== 'undefined' &&
+              !sessionStorage.getItem(reloadKey)
+            ) {
+              sessionStorage.setItem(reloadKey, '1');
+              // Brief delay so the reload feels intentional (not a flash).
+              setTimeout(() => window.location.reload(), 600);
+              setState('reloading');
+              return;
+            }
+          } catch {
+            // sessionStorage blocked (private mode, disabled storage) —
+            // skip the auto-reload and fall through to the recovery panel;
+            // we already have live data, so this is not a fetch error.
           }
           setState('recoverable');
           return;
