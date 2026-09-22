@@ -150,6 +150,78 @@ func work() {}
 	}
 }
 
+// TestScan_NamedCalleeGoStmtsAreWalked is issue #558: a `go` statement
+// resolved to a named callee is checked for whether the callee itself
+// defers the guard, but the callee may start further goroutines of its
+// own — in another file of the same package, as here. Before the fix,
+// ScanFile only parsed the ONE file it was given, so `workers.go`'s own
+// `go` statements were never even visited, let alone required to be
+// guarded: `sites found: 1` with the guarded helper reporting Recovers
+// and the two unrecovered goroutines it starts invisible. The fix must
+// surface all three sites, attributing the two inner ones to workers.go.
+func TestScan_NamedCalleeGoStmtsAreWalked(t *testing.T) {
+	dir := filepath.Join("testdata", "namedcallee_gostmts")
+	if err := os.MkdirAll(dir, 0o750); err != nil {
+		t.Fatalf("mkdir %s: %v", dir, err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(dir)
+		_ = os.Remove("testdata")
+	})
+	if err := os.WriteFile(filepath.Join(dir, "workers.go"), []byte(`package main
+
+import "github.com/Stellar-Index/StellarIndex/internal/worker"
+
+func startWorkers() {
+	defer worker.Recover(nil, "startWorkers")
+	go unrecoveredOne()
+	go unrecoveredTwo()
+}
+
+func unrecoveredOne() {}
+func unrecoveredTwo() {}
+`), 0o600); err != nil {
+		t.Fatalf("write workers.go: %v", err)
+	}
+	path := filepath.Join(dir, "main.go")
+	if err := os.WriteFile(path, []byte(`package main
+
+func run() {
+	go startWorkers()
+}
+`), 0o600); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	sites := scan(t, path)
+	if len(sites) != 3 {
+		t.Fatalf("found %d go statements, want 3 (go startWorkers() plus its two inner goroutines); targets: %v", len(sites), targets(sites))
+	}
+	byTarget := map[string]guardscan.Site{}
+	for _, s := range sites {
+		byTarget[s.Target] = s
+	}
+	top, ok := byTarget["startWorkers"]
+	if !ok {
+		t.Fatalf("go startWorkers() was not discovered; targets: %v", targets(sites))
+	}
+	if top.Kind != guardscan.KindPackageFunc || !top.Recovers {
+		t.Errorf("go startWorkers(): kind=%q recovers=%v, want package-func/true", top.Kind, top.Recovers)
+	}
+	for _, name := range []string{"unrecoveredOne", "unrecoveredTwo"} {
+		inner, ok := byTarget[name]
+		if !ok {
+			t.Fatalf("go %s(), started inside startWorkers() in workers.go, was never discovered; targets: %v", name, targets(sites))
+		}
+		if inner.Recovers {
+			t.Errorf("go %s(): reported as recovering, but neither startWorkers nor %s defers a guard around it", name, name)
+		}
+		if !strings.HasPrefix(inner.Origin, "workers.go:") {
+			t.Errorf("go %s(): origin=%q, want a position in workers.go", name, inner.Origin)
+		}
+	}
+}
+
 // TestScan_CrossPackageResolvesRealModuleSource points the resolver at a
 // REAL package of this module — internal/worker — and checks it lands on
 // the real declarations. This is the leg that proves go.mod discovery and
