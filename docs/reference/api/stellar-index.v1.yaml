@@ -13854,6 +13854,11 @@ components:
           bucket; this response carries the previous bucket's
           last-known-good value (ADR-0019). Only fires on `/v1/price`;
           tip + observations surfaces ignore freeze.
+        - `frozen_checked` — true only when the freeze marker was
+          actually read (looker wired and the read succeeded). When
+          false, `frozen` is NOT meaningful — the check never ran, so
+          `frozen: false` must not be read as "confirmed not frozen".
+          Same posture as `divergence_checked`.
         - `single_source` — the bucket had only one contributing
           source. When `frozen=true` this is forced true (an LKG
           fallback is by definition single-sourced). Informational;
@@ -13918,6 +13923,14 @@ components:
             emission, so a `false` there can also mean "the check did not
             answer in time". The stream degrades the flag, never the cadence.
         frozen:                      { type: boolean, default: false }
+        frozen_checked:
+          type: boolean
+          default: false
+          description: >
+            True only when the freeze marker was actually read (looker wired
+            and the read succeeded). When false, `frozen` is NOT meaningful —
+            the check never ran, so a `false` there must not be read as
+            "confirmed not frozen". Same posture as `divergence_checked`.
         single_source:               { type: boolean, default: false }
         diverged:
           type: boolean

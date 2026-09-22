@@ -56,7 +56,9 @@ type Envelope struct {
 //   - Frozen: anomaly detection refused to publish the new bucket;
 //     this response carries the previous bucket's last-known-good
 //     value (ADR-0019 freeze policy). Only fires on /v1/price; the
-//     tip + observations surfaces ignore freeze.
+//     tip + observations surfaces ignore freeze. FrozenChecked
+//     disambiguates "confirmed not frozen" from "the marker read
+//     failed, so this is unknown" — same posture as DivergenceChecked.
 //   - OutsideCoverage: the requested time range ends at or before the
 //     pair's `coverage_from` — every instant asked for predates the
 //     history this deployment holds, so the empty answer is a coverage
@@ -115,7 +117,13 @@ type Flags struct {
 	// whose coverage floor could not be established.
 	OutsideCoverage bool `json:"outside_coverage,omitempty"`
 	Frozen          bool `json:"frozen,omitempty"`
-	SingleSource    bool `json:"single_source,omitempty"`
+	// FrozenChecked is true only when the freeze marker was actually
+	// read (looker wired and the read succeeded) — same two-valued
+	// posture as DivergenceChecked. When false, `frozen` is NOT
+	// meaningful: the check never ran, so `frozen: false` must not be
+	// read as "confirmed not frozen".
+	FrozenChecked bool `json:"frozen_checked,omitempty"`
+	SingleSource  bool `json:"single_source,omitempty"`
 	// Diverged marks a triangulated composite whose contributing routes
 	// disagreed (the aggregator's router divergence signal, persisted to
 	// cachekeys.VWAPCompositeMeta). Surfaced on the /v1/price
