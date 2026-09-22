@@ -20,6 +20,7 @@ const contractIndexTestPool = "CAQUARIUSPOOL000000000000000000000000000000000000
 // two ways a build comes back incomplete in production.
 type rosterStub struct {
 	failRounds int32
+	panicFirst bool
 	calls      atomic.Int32
 	rounds     atomic.Int32
 }
@@ -28,6 +29,9 @@ func (r *rosterStub) ListProtocolContracts(ctx context.Context, source string) (
 	r.calls.Add(1)
 	if source == protocolRegistry[0].Name {
 		r.rounds.Add(1)
+	}
+	if r.panicFirst && r.rounds.Load() == 1 {
+		panic("registry roster read panicked")
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
@@ -125,6 +129,31 @@ func TestContractProtocolIndex_IncompleteBuildRetriesInsteadOfCachingForTenMinut
 	defer s.contractIndex.mu.Unlock()
 	if !s.contractIndex.complete {
 		t.Fatal("the successful retry must be recorded complete")
+	}
+}
+
+// A panic inside the build must not leave inFlight stuck true: the next
+// call must still retry the build instead of serving the stale/nil map
+// forever.
+func TestContractProtocolIndex_PanicDuringBuildClearsInFlight(t *testing.T) {
+	stub := &rosterStub{panicFirst: true}
+	s := newContractIndexServer(stub)
+	ctx := context.Background()
+
+	func() {
+		defer func() { _ = recover() }()
+		s.contractProtocolIndexFor(ctx)
+	}()
+
+	s.contractIndex.mu.Lock()
+	inFlight := s.contractIndex.inFlight
+	s.contractIndex.mu.Unlock()
+	if inFlight {
+		t.Fatal("inFlight left true after a panic in the build — every later call would be stuck serving the stale/nil map")
+	}
+
+	if name, ok := s.contractProtocol(ctx, contractIndexTestPool); !ok || name != "aquarius" {
+		t.Fatalf("label after the panicking build recovered = %q/%v, want aquarius/true", name, ok)
 	}
 }
 
