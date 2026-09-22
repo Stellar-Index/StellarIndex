@@ -9,6 +9,18 @@ superseded_by: null
 
 # ADR-0025: Caddy trusts Cloudflare for client-IP signal via CIDR-pinned static list
 
+> **Amendment (2026-09-21, RSWP-132).** The "PR #1239" citations below
+> (Context intro and References → Implementation) no longer identify
+> the change that shipped this ADR's fix. No PR #1239 has ever
+> existed in this repo; GitHub has since assigned #1239 to a real but
+> unrelated open issue about admin-key monthly quotas, so a reader
+> following the citation lands on wrong content instead of a 404 —
+> worse than a dead link. The actual PR number for the Caddy
+> `trusted_proxies`/`client_ip_headers` fix does not survive in git
+> history, so the citation is not replaced with a guess. Treat both
+> "PR #1239" mentions below as historical record only, not a live
+> reference.
+
 ## Context
 
 R1's reverse-proxy topology is `Cloudflare edge → Caddy (origin
