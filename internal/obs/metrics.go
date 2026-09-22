@@ -275,19 +275,6 @@ func registerAppMetricsTail() {
 		PricelessCoverageCheckRunsTotal,
 		PricelessCoverageCheckLastSuccessUnix,
 
-		SignupReaperRunsTotal,
-		SignupReaperRunDurationSeconds,
-		SignupReaperRowsDeletedTotal,
-		AccountRows,
-		APIKeyRows,
-
-		LoginCodeLockoutRows,
-		LoginCodeLockoutRowsDeletedTotal,
-		LoginCodeLockoutErrorsTotal,
-
-		MagicLinkTokenRows,
-		MagicLinkTokenRowsDeletedTotal,
-		MagicLinkTokenErrorsTotal,
 		NotifySendsTotal,
 
 		DEXTradeNonstandardDecimalsTotal,
@@ -321,11 +308,33 @@ func registerAppMetricsTail() {
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
 		DecoderPanicsTotal,
+	)
+	registerAuthReaperMetrics()
+
+	seedBoundedLabelSeries()
+}
+
+// registerAuthReaperMetrics registers the three auth-table reapers' metrics
+// (signup, login-code, magic-link); split out of registerAppMetricsTail for funlen.
+func registerAuthReaperMetrics() {
+	Registry.MustRegister(
+		SignupReaperRunsTotal,
+		SignupReaperRunDurationSeconds,
+		SignupReaperRowsDeletedTotal,
+		AccountRows,
+		APIKeyRows,
+
+		LoginCodeLockoutRows,
+		LoginCodeLockoutRowsDeletedTotal,
+		LoginCodeLockoutErrorsTotal,
+
+		MagicLinkTokenRows,
+		MagicLinkTokenRowsDeletedTotal,
+		MagicLinkTokenErrorsTotal,
+
 		AuthReaperLastSweepUnix,
 		AuthReaperIntervalSeconds,
 	)
-
-	seedBoundedLabelSeries()
 }
 
 // seedBoundedLabelSeries pre-registers the zero-valued label combinations
