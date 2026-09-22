@@ -154,6 +154,25 @@ check "an aged incident's unresolved action item written as a '- [ ]' checkbox i
 rm -f "$FIX2"
 check "clean tree passes a third time" ok
 
+# RLT-171: an unquoted comma inside a flow-mapping `description:` splits
+# the mapping at that comma — the trailing fragment becomes a bogus
+# null-valued schema key and the description silently truncates.
+sed -i.bak 's/asset:           { type: string, description: Reserve underlying token (C-strkey). }/asset: { type: string, description: Reserve underlying token, C-strkey. }/' \
+  openapi/stellar-index.v1.yaml
+check "a reintroduced unquoted comma in a flow-mapping description is caught" red
+mv openapi/stellar-index.v1.yaml.bak openapi/stellar-index.v1.yaml
+check "clean tree passes again after revert" ok
+
+# RLT-171: internal_routes_re must not exempt a route that IS documented
+# in the spec — that exemption doesn't keep the route out of the public
+# docs, it only blinds this check to it. Undocument the staff look-up
+# route and confirm the (former) exemption no longer hides the gap.
+sed -i.bak 's|^  /account/admin/lookup:$|  /account/admin/lookup-zzfixture:|' \
+  openapi/stellar-index.v1.yaml
+check "an undocumented /account/admin/lookup route is now caught (exemption removed)" red
+mv openapi/stellar-index.v1.yaml.bak openapi/stellar-index.v1.yaml
+check "clean tree passes again after revert" ok
+
 echo
 echo "lint-docs-test: $PASS passed, $FAIL failed"
 exit "$FAIL"

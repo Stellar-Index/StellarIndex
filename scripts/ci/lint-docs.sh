@@ -92,7 +92,13 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
   # past this check (that's how the undocumented staff route escaped).
   # internal_routes_re allow-lists routes deliberately kept out of the public
   # spec (staff/PII endpoints); add a route here with a reason to exempt it.
-  internal_routes_re='^/account/admin/'  # staff-only lookup, intentionally not public
+  # RLT-171: '^/account/admin/' used to exempt the staff look-up on the
+  # premise it was "intentionally not public" — but it IS documented, in
+  # full, at openapi/stellar-index.v1.yaml's `/account/admin/lookup` path.
+  # The exemption never blocked publication; it only blinded this check to
+  # a route that was in the spec the whole time. Empty until a route is
+  # actually kept undocumented on purpose.
+  internal_routes_re='^$'
   grep -rhoE 'Handle(Func)?\("[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
     sed -E 's|.*"[A-Z]+ /v1||; s|"$||' | \
     sed -E 's|^$|/|' | \
@@ -207,6 +213,43 @@ PY
     while IFS= read -r line; do
       [ -n "$line" ] && err "OpenAPI: $line — an inline parameter and a \$ref to the shared component define the same field twice; keep the \$ref and fold any unique prose into the operation description"
     done <<< "$dup_out"
+  fi
+fi
+
+# RLT-171: a `description:` value inside a flow mapping (`{ ... }`) that
+# contains an unquoted comma splits into extra map entries at that comma.
+# Any fragment past the split with no `key: value` shape becomes a bogus
+# key with a null value, and the description itself silently truncates —
+# `description: Total supplied, underlying token base units.` parsed to
+# description "Total supplied" plus a phantom null-valued key. Quote any
+# flow-mapping description that contains a comma.
+echo "Checking OpenAPI for comma-split flow-mapping descriptions..."
+if [ -f openapi/stellar-index.v1.yaml ] && command -v python3 >/dev/null 2>&1; then
+  null_out=$(python3 - <<'PY' 2>&1 || true
+import sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(0)  # PyYAML absence is already fail-closed by lint-rule-structure
+spec = yaml.safe_load(open("openapi/stellar-index.v1.yaml", encoding="utf-8")) or {}
+
+def walk(node, path=""):
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if v is None and "/example/" not in path:
+                print(f"{path}: bogus null-valued key {k!r} — likely an unquoted comma inside a nearby flow-mapping description")
+            walk(v, f"{path}/{k}")
+    elif isinstance(node, list):
+        for i, item in enumerate(node):
+            walk(item, f"{path}[{i}]")
+
+walk(spec)
+PY
+)
+  if [ -n "$null_out" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && err "OpenAPI: $line"
+    done <<< "$null_out"
   fi
 fi
 
