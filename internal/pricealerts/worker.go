@@ -231,15 +231,12 @@ func (w *Worker) evaluateOne(ctx context.Context, a platform.PriceAlert, now tim
 		return nil
 	}
 	enqueued, err := w.enqueueAll(ctx, hooks, payload)
-	if err != nil {
-		return err
-	}
 	w.logger.Info("price alert fired",
 		"alert_id", a.ID, "account_id", a.AccountID,
 		"pair", base.String()+"/"+quote.String(),
 		"condition", string(a.Condition), "threshold", a.Threshold,
-		"observed", priceStr, "deliveries", enqueued)
-	return nil
+		"observed", priceStr, "deliveries", enqueued, "targets", len(hooks))
+	return err
 }
 
 // coolingDown reports whether the alert fired recently enough that its
@@ -271,12 +268,16 @@ func (w *Worker) subscribedHooks(ctx context.Context, accountID uuid.UUID) ([]pl
 }
 
 // enqueueAll enqueues one price.alert delivery per target webhook and
-// returns the count enqueued. A single per-webhook enqueue failure aborts
-// and returns the error; the alert is already marked fired (see
-// evaluateOne), so the crossing is not re-delivered to the webhooks that
-// already received it on the next tick.
+// returns the count enqueued. It attempts every webhook even when an
+// earlier one fails — the alert is already marked fired (see
+// evaluateOne), so a crossing is never re-delivered to a webhook that
+// already received it, and aborting the loop early would silently skip
+// every webhook after the failing one instead of just the failing one.
+// Per-webhook errors are joined and returned alongside the count so the
+// caller can log which targets were missed without losing the rest.
 func (w *Worker) enqueueAll(ctx context.Context, hooks []platform.CustomerWebhook, payload []byte) (int, error) {
 	enqueued := 0
+	var errs []error
 	for _, h := range hooks {
 		d := platform.WebhookDelivery{
 			WebhookID: h.ID,
@@ -284,11 +285,12 @@ func (w *Worker) enqueueAll(ctx context.Context, hooks []platform.CustomerWebhoo
 			Payload:   payload,
 		}
 		if err := w.webhooks.EnqueueDelivery(ctx, d); err != nil {
-			return enqueued, fmt.Errorf("enqueue delivery for webhook %s: %w", h.ID, err)
+			errs = append(errs, fmt.Errorf("enqueue delivery for webhook %s: %w", h.ID, err))
+			continue
 		}
 		enqueued++
 	}
-	return enqueued, nil
+	return enqueued, errors.Join(errs...)
 }
 
 // observe records the paired counter + histogram for one sweep.
