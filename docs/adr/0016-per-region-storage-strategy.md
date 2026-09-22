@@ -30,6 +30,21 @@ superseded_by: [0050]
 > [`docs/architecture/storage-considerations.md`](../architecture/storage-considerations.md)
 > §"r1 ZFS pool inventory".
 
+> **Doc-truth correction (2026-09-22, RLT-304).** The "Local Tier D"
+> bullet below claims a comparison against a locally-held ledger hash;
+> that's wrong about the mechanism. `verifyArchivePeers`
+> (`internal/ops/archive/verify_archive.go`) never reads a local
+> archive hash. It fetches each peer's `history-XXXXXXXX.json`, picks
+> one peer as the reference, and cross-compares the rest against
+> *that peer* — pure peer-vs-peer consensus, with no local input at
+> all. This is by design, not an oversight: R2/R3 (the regions Tier D
+> exists for) have no local `/srv/history-archive` mirror to hold such
+> a hash in the first place. Verifying a region's own bytes against
+> its local mirror is Tier B, which is R1-only. The accurate
+> description lives in
+> [`docs/operations/archive-completeness.md`](../operations/archive-completeness.md)
+> ("verify the hashes agree" among peers, no local-chain claim).
+
 ## Context
 
 Each region of the Stellar Index fleet (R1 Frankfurt, R2 US-East,

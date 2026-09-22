@@ -337,9 +337,13 @@ so they rely on:
    upstream.
 2. **Local Tier D (weekly cron):** HTTP fetches checkpoint hashes
    from ~6 tier-1 validator archives (LOBSTR, SatoshiPay, SDF,
-   PublicNode, Blockdaemon, Franklin Templeton); compares against
-   the local chain. Catches **forks** (internally-consistent chains
-   that don't match the network's signed reality).
+   PublicNode, Blockdaemon, Franklin Templeton) and cross-compares
+   them against *each other* — peer consensus only; no local ledger
+   hash is read (R2/R3 have no local mirror to compare against in
+   the first place). Catches **forks** (internally-consistent chains
+   that don't match the network's signed reality); it does not by
+   itself confirm this region's own bytes match the quorum — that is
+   Tier B, delegated to R1 (RLT-304).
 3. **Cross-region CAGG consistency check:** monitoring job samples
    `(pair, window, from_ts)` triples across R1/R2/R3 and asserts
    the closed-bucket VWAP rows match. Tests the actual API outcome
