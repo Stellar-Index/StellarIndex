@@ -13,8 +13,10 @@
 
 /openapi.yaml         /stellar-index.v1.yaml  200
 /openapi.yml          /stellar-index.v1.yaml  200
+/openapi.json         /stellar-index.v1.yaml  200
 /spec.yaml            /stellar-index.v1.yaml  200
 /spec.yml             /stellar-index.v1.yaml  200
+/spec.json            /stellar-index.v1.yaml  200
 
 # Versioned alias — pin a major version explicitly so future v2/v3
 # can ship alongside without breaking existing v1 consumers.
