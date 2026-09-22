@@ -29,6 +29,16 @@
 #     unreachable, hashdb file I/O error), which is a DIFFERENT
 #     failure mode than "found drift" — the detector going blind
 #     rather than the detector finding something.
+#
+#   - `stellarindex_hashdb_append_failing` — the write-side companion:
+#     the per-ledger `hashdb.Append` call (recorded by
+#     stellarindex_hashdb_append_total{outcome}) is deliberately
+#     failure-tolerant and never stalls ingest, so a sustained run of
+#     `error` outcomes has no other signal. If Append is silently not
+#     recording, the periodic verify sweep finds nothing to compare
+#     against (Missing, not Drifted) — the detector goes blind on the
+#     write side without ever tripping drift_detected or
+#     verify_failing.
 
 groups:
   - name: stellarindex.hashdb
@@ -80,4 +90,32 @@ groups:
             than found anything. Not customer-facing on its own, but it
             means drift (if any is happening) is going unnoticed. Check the
             indexer's "hashdb verify sweep failed" WARN log lines, then the
+            runbook.
+
+      - alert: stellarindex_hashdb_append_failing
+        expr: |
+          sum(rate(stellarindex_hashdb_append_total{outcome="error"}[15m]))
+            >
+          sum(rate(stellarindex_hashdb_append_total{outcome="ok"}[15m]))
+          and
+          sum(rate(stellarindex_hashdb_append_total{outcome=~"error|ok"}[15m])) > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: hashdb
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+          summary: "hashdb per-ledger Append failing more often than it succeeds (P3)"
+          description: |
+            More error-outcome hashdb.Append calls than ok-outcome ones
+            over the last 15m, sustained 10+ min. Append runs once per
+            ledger on the indexer's live ingest loop and is deliberately
+            failure-tolerant — it never stalls or fails ingest — so this
+            counter is the ONLY signal that the write side has gone
+            silent. A sustained run of errors here means the periodic
+            verify sweep has nothing recorded to compare against and
+            will report Missing, not Drifted, even if real drift is
+            happening. Check the indexer's hashdb Append error logs
+            (disk full, permission error, out-of-range seq), then the
             runbook.

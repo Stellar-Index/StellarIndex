@@ -1,0 +1,66 @@
+---
+# promtool unit tests for the hashdb alert family (T634), rules live in
+# hashdb.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/hashdb_test.yml
+#
+# stellarindex_hashdb_append_total{outcome} has carried the warning
+# "error means the drift detector is silently not recording" since it
+# was declared (internal/obs/metrics.go), but until T634 nothing
+# consumed it: hashdb.yml alerted on the verify-sweep side only
+# (drift_detected, verify_failing), leaving the write side with zero
+# alert coverage. A sustained run of Append errors is the ONLY signal
+# that hashdb has gone blind on ingest — the periodic verify sweep
+# would just report Missing, never Drifted, for ledgers appended while
+# broken.
+
+rule_files:
+  - ../rules/hashdb.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Append is failing more than it succeeds, sustained ───────────
+  - interval: 1m
+    name: sustained hashdb Append errors trip append_failing
+    input_series:
+      - series: 'stellarindex_hashdb_append_total{outcome="error",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+2x40'
+      - series: 'stellarindex_hashdb_append_total{outcome="ok",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+0x40'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_hashdb_append_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: hashdb
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/hashdb-drift-detected.md
+              summary: "hashdb per-ledger Append failing more often than it succeeds (P3)"
+              description: |
+                More error-outcome hashdb.Append calls than ok-outcome ones
+                over the last 15m, sustained 10+ min. Append runs once per
+                ledger on the indexer's live ingest loop and is deliberately
+                failure-tolerant — it never stalls or fails ingest — so this
+                counter is the ONLY signal that the write side has gone
+                silent. A sustained run of errors here means the periodic
+                verify sweep has nothing recorded to compare against and
+                will report Missing, not Drifted, even if real drift is
+                happening. Check the indexer's hashdb Append error logs
+                (disk full, permission error, out-of-range seq), then the
+                runbook.
+
+  # ── ordinary ingest: Append succeeding must never fire ───────────
+  - interval: 1m
+    name: healthy hashdb Append outcomes never trip append_failing
+    input_series:
+      - series: 'stellarindex_hashdb_append_total{outcome="error",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+0x40'
+      - series: 'stellarindex_hashdb_append_total{outcome="ok",instance="r1:9101",job="stellarindex_indexer"}'
+        values: '0+2x40'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_hashdb_append_failing
+        exp_alerts: []
