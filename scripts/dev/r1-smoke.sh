@@ -287,18 +287,23 @@ expect_status 404 "asset not found"      "/v1/assets/AAAA-GA5ZSEJYB37JRC5AVCIA5M
 # wrong on rc.37 — adding them as live `expect_status` calls now
 # would false-fail every smoke run against the unpatched binary.
 # Uncomment after rc.38 reaches r1 (signal: `/v1/version` data.version
-# == v0.5.0-rc.38). The PRs below are all in main:
+# == v0.5.0-rc.38). All of the behaviour below is in main. No PR/issue
+# numbers here (RSWP-108): the ones this list previously cited each
+# now resolve to an unrelated live GitHub issue, not the change that
+# shipped the behaviour — the same class of dangling citation as
+# RSWP-086/-092/-094 above. Cite a real PR/issue number when one is
+# confirmed rather than guessing a replacement.
 #
 #   /v1/coins?cursor=garbage 400
-#   /v1/markets?cursor=garbage 400 (#1135)
-#   /v1/markets?source=fakesrc 400 (#1162)
-#   /v1/observations?source=fakesrc 400 (#1164)
-#   /v1/oracle/latest?source=fakesrc 400 (#1168)
-#   /metrics 404 from public host (#1172 + binary loopback gate #1207)
+#   /v1/markets?cursor=garbage 400
+#   /v1/markets?source=fakesrc 400
+#   /v1/observations?source=fakesrc 400
+#   /v1/oracle/latest?source=fakesrc 400
+#   /metrics 404 from public host + binary loopback gate
 #   /v1/markets?asset=USDC 400 invalid-asset-id
 #   /v1/markets?source=binance&asset=native 400 conflicting-filters
-#   /v1/pools?asset=USDC 400 invalid-asset-id (#1190)
-#   /v1/pools?asset=native&base=native 400 conflicting-filters (#1190)
+#   /v1/pools?asset=USDC 400 invalid-asset-id
+#   /v1/pools?asset=native&base=native 400 conflicting-filters
 #
 # Worked-example template ready to uncomment + adjust:
 #

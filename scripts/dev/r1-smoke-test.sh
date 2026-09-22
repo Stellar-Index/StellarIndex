@@ -62,5 +62,22 @@ else
   ok "no dangling #1189 citation remains"
 fi
 
+# RSWP-108: the "queued for promotion" block cited (#1135, #1162,
+# #1164, #1168, #1172, #1207, #1189, #1190) as the PRs/issues behind
+# each pinned behaviour. Every one of those numbers now resolves to an
+# unrelated live GitHub issue (confirmed via `gh issue view`), not the
+# change it was cited for — the same dangling-citation class as the
+# #1131/#1134 checks above. #1135 also appears earlier in the file as
+# unrelated motivating context for expect_status's dual-status design
+# (not a "PR that shipped this" claim) and is intentionally excluded
+# from this loop.
+for n in 1162 1164 1168 1172 1207 1189 1190; do
+  if grep -q "#${n}\b" "$SMOKE"; then
+    bad "no dangling #${n} citation remains (resolves to an unrelated GitHub issue)"
+  else
+    ok "no dangling #${n} citation remains"
+  fi
+done
+
 echo "r1-smoke-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
