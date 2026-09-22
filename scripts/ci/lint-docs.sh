@@ -463,6 +463,11 @@ stale_patterns=(
                                   # a PR number that didn't exist yet;
                                   # #1216 is now a real, unrelated open issue
                                   # (window-bounded shape-guard test gap)
+  "PR #1223"                     # dangling ref (RSWP-120) — CHANGELOG's F2
+                                  # fields fiat-proxy-fallback entry cited a
+                                  # PR number that never existed; #1223 is
+                                  # now a real, unrelated open issue (supply
+                                  # reference-leg fixture test)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
