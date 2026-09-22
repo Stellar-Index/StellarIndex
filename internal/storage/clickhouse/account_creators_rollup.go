@@ -362,6 +362,15 @@ func creatorsBoardSteps() []rollupStep {
 	return []rollupStep{
 		{sql: `TRUNCATE TABLE stellar.account_creators_rollup_staging`},
 		{sql: `TRUNCATE TABLE stellar.account_creators_stats_staging`},
+		// live_accounts/live_stroops are aggregated over the DISTINCT
+		// (creator, created) pair, not over account_creators_ops rows
+		// directly: that table is one row per creation OPERATION, so an
+		// address recycled by one creator (create -> merge -> create ...)
+		// would otherwise be counted, and its live balance summed, once
+		// per creation instead of once per surviving address (#541). The
+		// inner subquery collapses to one row per pair before the live
+		// join is resolved; accounts_created/funded_stroops are immutable
+		// history and stay per-event, as documented on AccountCreatorRow.
 		{sql: `INSERT INTO stellar.account_creators_rollup_staging
 	     (rank, creator, accounts_created, funded_stroops, live_accounts, live_stroops,
 	      first_ledger, last_ledger, first_created_at, last_created_at)
@@ -369,22 +378,45 @@ func creatorsBoardSteps() []rollupStep {
 	        creator, accounts_created, funded_stroops, live_accounts, live_stroops,
 	        first_ledger, last_ledger, first_created_at, last_created_at
 	 FROM (
-	     SELECT c.creator AS creator,
-	            toUInt64(count()) AS accounts_created,
-	            toInt128(sum(c.amount)) AS funded_stroops,
-	            toUInt64(countIf(e.account_id != '')) AS live_accounts,
-	            toInt128(sum(e.balance)) AS live_stroops,
-	            min(c.ledger) AS first_ledger,
-	            max(c.ledger) AS last_ledger,
-	            min(c.closed_at) AS first_created_at,
-	            max(c.closed_at) AS last_created_at
-	     FROM stellar.account_creators_ops AS c
+	     SELECT totals.creator AS creator,
+	            totals.accounts_created AS accounts_created,
+	            totals.funded_stroops AS funded_stroops,
+	            ifNull(live.live_accounts, 0) AS live_accounts,
+	            ifNull(live.live_stroops, 0) AS live_stroops,
+	            totals.first_ledger AS first_ledger,
+	            totals.last_ledger AS last_ledger,
+	            totals.first_created_at AS first_created_at,
+	            totals.last_created_at AS last_created_at
+	     FROM (
+	         SELECT creator,
+	                toUInt64(count()) AS accounts_created,
+	                toInt128(sum(amount)) AS funded_stroops,
+	                min(ledger) AS first_ledger,
+	                max(ledger) AS last_ledger,
+	                min(closed_at) AS first_created_at,
+	                max(closed_at) AS last_created_at
+	         FROM stellar.account_creators_ops
+	         GROUP BY creator
+	     ) AS totals
 	     LEFT JOIN (
-	         SELECT account_id, balance
-	         FROM stellar.ledger_entries_current FINAL
-	         WHERE entry_type = 'account' AND change_type != 'removed'
-	     ) AS e ON c.created = e.account_id
-	     GROUP BY creator
+	         SELECT creator,
+	                toUInt64(uniqExactIf(created, is_live)) AS live_accounts,
+	                toInt128(sum(live_balance)) AS live_stroops
+	         FROM (
+	             SELECT c.creator AS creator,
+	                    c.created AS created,
+	                    max(e.account_id != '') AS is_live,
+	                    any(e.balance) AS live_balance
+	             FROM stellar.account_creators_ops AS c
+	             LEFT JOIN (
+	                 SELECT account_id, balance
+	                 FROM stellar.ledger_entries_current FINAL
+	                 WHERE entry_type = 'account' AND change_type != 'removed'
+	             ) AS e ON c.created = e.account_id
+	             GROUP BY c.creator, c.created
+	         )
+	         GROUP BY creator
+	     ) AS live ON totals.creator = live.creator
 	 )
 	 ` + creatorsBoardSettings},
 		{sql: `INSERT INTO stellar.account_creators_stats_staging (metric, value)
