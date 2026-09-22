@@ -14,7 +14,7 @@ export default function manifest(): MetadataRoute.Manifest {
       'Protocol explorer + API for the Stellar network — complete, verified, per-protocol on-chain data.',
     start_url: '/',
     display: 'standalone',
-    background_color: '#ffffff',
+    background_color: '#0a0b0d',
     theme_color: '#1f4ae0',
     icons: [
       { src: '/icon.svg', type: 'image/svg+xml', sizes: 'any' },
