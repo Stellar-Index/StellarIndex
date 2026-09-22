@@ -126,8 +126,11 @@ Run/heed these locally before pushing so PRs are green on first push:
 6. **actions-pinning lint** — only when touching `.github/workflows/`: any
    NEW third-party action must be SHA-pinned, not tag-pinned.
 7. **ansible syntax + ansible-lint** — when touching `configs/ansible/`.
-8. **pnpm audit --audit-level high** on both web apps (advisory;
-   `ERR_PNPM_AUDIT_BAD_RESPONSE` from the registry is tolerated).
+8. **web-deps vuln scan (trivy, pnpm-lock)** on both web apps — reads the
+   committed lockfile against trivy's own vuln DB (`ignore-unfixed`,
+   `CRITICAL,HIGH`). Replaced the `pnpm audit --audit-level high` gate,
+   which had enforced nothing since 2026-07-15 (the npm advisory endpoint
+   loud-skipped on `ERR_PNPM_AUDIT_BAD_RESPONSE`).
 9. **release-validate.yml** fires if the PR touches `docker/**`, `Makefile`,
    `go.mod`/`go.sum`, release/deploy workflows, or `cut-release.sh`:
    cross-compiles every binary + builds every Dockerfile. A dep bump pays

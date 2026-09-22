@@ -96,8 +96,11 @@ the Prometheus dashboards authoritative (no editorial gate).
 
 ## CI / deploy
 
-CI runs `pnpm typecheck`, `pnpm lint`, `pnpm build`, and
-`pnpm audit --audit-level high` on every push touching
-`web/status/`. The Cloudflare Pages project is configured to
-deploy from `main` on push; preview deploys fire automatically
-for every PR.
+CI runs `pnpm typecheck`, `pnpm lint`, `pnpm build`, and a trivy
+vuln scan of the committed `pnpm-lock.yaml` (`ignore-unfixed`,
+`CRITICAL,HIGH`) on every push touching `web/status/`. The `pnpm audit`
+gate this replaced had enforced nothing since 2026-07-15 — the npm
+advisory endpoint it called loud-skipped on
+`ERR_PNPM_AUDIT_BAD_RESPONSE`. The Cloudflare Pages project is
+configured to deploy from `main` on push; preview deploys fire
+automatically for every PR.
