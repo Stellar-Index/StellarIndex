@@ -3,8 +3,6 @@
 # Lines are patterns + owners (GitHub handles or teams). The last
 # matching pattern wins. PRs touching matched paths require review
 # from the listed owners.
-#
-# See docs/discovery/repo-structure-plan.md §12.
 
 # Default owner — every PR without a more specific match.
 *                               @ash
