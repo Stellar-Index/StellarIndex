@@ -295,8 +295,10 @@ Operators see (via Prometheus + alertmanager):
   (`internal/obs/metrics.go:3037` and `:3146` — **corrected 2026-09-02**;
   the single `stellarindex_anomaly_freeze_engaged` gauge this line used
   to name does not exist)
-- `stellarindex_anomaly_z_score{asset="USTRY-G..."}` histogram: spikes
-- `stellarindex_anomaly_confidence{asset="USTRY-G..."}` gauge: drops
+- No Prometheus series carries the z-score or confidence value itself
+  (`stellarindex_anomaly_z_score` / `stellarindex_anomaly_confidence` do
+  not exist in `internal/obs/metrics.go`); operators read those from the
+  `/v1/price` response's `confidence_factors` field, not Prometheus
 - P2 alert "anomaly freeze engaged on USTRY-G..." fires within 1
   bucket of trip
 - Runbook `anomaly-freeze-engaged.md` walks through:
