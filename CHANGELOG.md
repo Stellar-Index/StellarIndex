@@ -28007,7 +28007,6 @@ rc.48 deploy to R1.
   the at-or-before lookup. One new test
   (`TestLookupUSDPrice_StablecoinFiatProxyFallback`) pins the
   /v1/assets path; existing TestChange24hPct tests still pass.
-  (PR #1223)
 - **Explorer `/exchanges/<venue>` chart now distinguishes "API
   outage" from "no pairs reporting"**. The pair-list fetcher's
   `.catch(() => setPairsLoading(false))` swallowed every error,
