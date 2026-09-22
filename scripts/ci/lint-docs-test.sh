@@ -16,9 +16,10 @@ cd "$(dirname "$0")/../.." || exit 1
 GATE="scripts/ci/lint-docs.sh"
 FIX="docs/adr/0099-zz-lint-docs-fixture.md"
 FIX2="internal/incidents/data/2020-01-01-zz-lint-docs-fixture.md"
+FIX3="docs/design/zz-lint-docs-fixture.md"
 PASS=0; FAIL=0
 # shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
-cleanup() { rm -f "$FIX" "$FIX2"; }
+cleanup() { rm -f "$FIX" "$FIX2" "$FIX3"; }
 trap cleanup EXIT
 
 check() { # <name> <expected ok|red>
@@ -91,6 +92,19 @@ check "clean tree passes again after revert" ok
 echo "R-013 → #1265" >> docs/architecture/coverage-matrix.md
 check "a reintroduced 'R-013 -> #1265' citation is caught" red
 git checkout -- docs/architecture/coverage-matrix.md
+check "clean tree passes again after revert" ok
+
+# §4 stale-reference check must cover docs/design/, not just
+# docs/architecture/ — a dangling PR citation in a design doc previously
+# escaped the scan entirely because docs/design/ was omitted from the
+# grep roots.
+cat > "$FIX3" <<'EOF'
+# fixture design doc
+
+Cites the dangling reference (PR #1042).
+EOF
+check "a dangling 'PR #1042' citation in docs/design/ is caught" red
+rm -f "$FIX3"
 check "clean tree passes again after revert" ok
 
 cat > "$FIX2" <<'EOF'

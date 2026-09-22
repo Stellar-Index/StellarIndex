@@ -364,6 +364,7 @@ for pattern in "${stale_patterns[@]}"; do
     CHANGELOG.md \
     docs/reference/ \
     docs/architecture/ \
+    docs/design/ \
     docs/operations/ \
     docs/development/ \
     docs/remediation-2026-07-01/ \
@@ -421,9 +422,10 @@ fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
 # each protocol team "each page carries a last_verified date", yet 15 of
 # 17 protocol pages and 2 of 5 methodology pages carried none, so
 # widening the scan roots alone would have been a no-op — every one of
-# them would simply have been skipped. Under docs/architecture and
-# docs/adr it stays advisory (ADRs are immutable records; the ADR checks
-# live in §8).
+# them would simply have been skipped. Under docs/architecture, docs/adr
+# and docs/design it stays advisory (ADRs are immutable records, ADR
+# checks live in §8; docs/design captures point-in-time investigations,
+# not living procedure).
 #
 # RECORD subtrees are exempt by design: evidence/, postmortems/,
 # incidents/, notes/ and wasm-audits/ are dated artefacts of a moment,
@@ -435,7 +437,7 @@ fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
 # opt out by accident. A freshness stamp on a post-mortem would
 # demand periodic re-verification of something that must never change,
 # and would hard-fail at 180 days for being exactly what it is.
-find docs/architecture docs/operations docs/adr docs/contributing \
+find docs/architecture docs/operations docs/adr docs/design docs/contributing \
      docs/protocols docs/methodology -type f -name '*.md' 2>/dev/null | while read -r f; do
   # Skip generated docs, archive, templates.
   if grep -q "GENERATED FILE - DO NOT EDIT" "$f" 2>/dev/null; then continue; fi
