@@ -1139,3 +1139,47 @@ groups:
             goroutine dump / strace before killing it — a hang here has
             recurred (galexie wedge, 2026-07-05) and the stack is the
             only evidence of which read blocked.
+
+      # ── T578: a job that RAN TO COMPLETION and FAILED had no alert ──
+      # `stellarindex_ops_job_last_exit_ok` has been emitted by
+      # opsutil.JobHeartbeat.render() since C6-020, but no rule in either
+      # tree ever selected it — the metric existed, was scraped, and was
+      # silently unread. A job that exits 1 (backfill hit a permanent
+      # error, verify-contiguity found a gap it couldn't close) finishes
+      # cleanly from the heartbeat's point of view: running→0, no further
+      # staleness, no_progress's `running == 1` guard goes false too. Both
+      # existing siblings are correctly silent on it, and nothing else
+      # was watching.
+      #
+      # No `running == 1` guard here — unlike the two siblings above, this
+      # alert is specifically about the TERMINAL state a finished run left
+      # behind, not about a process that is still alive. `for: 0m` matches
+      # the other terminal-state alerts in this tree (e.g.
+      # stellarindex_projector_row_dropped_permanent): one bad exit is the
+      # whole signal, not a rate to sustain.
+      - alert: stellarindex_ops_job_run_failed
+        expr: stellarindex_ops_job_last_exit_ok == 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+          summary: "ops job {{ $labels.ops_job }} exited with an error on its last run"
+          description: |
+            The job's textfile reports last_exit_ok=0: the most recent
+            run of this stellarindex-ops subcommand ended with a non-zero
+            exit, not a crash (a crash leaves running=1 forever and is
+            covered by heartbeat_stale instead). The range it was walking
+            is NOT confirmed complete.
+
+            Check the job's log for the failure (`journalctl -u <unit>
+            --since -6h | tail -100`, or the terminal it ran in), fix the
+            underlying cause, and re-run the same window — every backfill
+            here is idempotent, so re-running a covered range is free and
+            leaving the hole is not.
+
+            This value persists until the job's next run overwrites it,
+            same as heartbeat_stale — deliberate, so a failed run does not
+            go invisible just because nothing is currently running.

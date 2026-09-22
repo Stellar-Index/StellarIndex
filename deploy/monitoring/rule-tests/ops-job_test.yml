@@ -300,6 +300,59 @@ tests:
                 that is deliberate (a job that died must not become invisible
                 just because nothing is running).
 
+  # ── T578: a job that finished and FAILED tickets run_failed ──────
+  # The job ran to completion (running→0 at t=10m, same as the "cleanly
+  # finished" case above) but its last run errored: last_exit_ok=0. The
+  # two siblings must stay silent — their `running == 1` guard is false —
+  # while run_failed, which carries no such guard, must fire.
+  - interval: 1m
+    name: a job that finished with a failing exit tickets run_failed
+    input_series:
+      - series: 'stellarindex_ops_job_heartbeat_unix{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+60x10 600+0x50'
+      - series: 'stellarindex_ops_job_running{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '1+0x10 0+0x50'
+      - series: 'stellarindex_ops_job_progress_total{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+100x10 1000+0x50'
+      - series: 'stellarindex_ops_job_last_exit_ok{job="node_exporter",instance="r1:9100",ops_job="ch-backfill"}'
+        values: '0+0x60'
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_ops_job_run_failed
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              ops_job: ch-backfill
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+              summary: "ops job ch-backfill exited with an error on its last run"
+              description: |
+                The job's textfile reports last_exit_ok=0: the most recent
+                run of this stellarindex-ops subcommand ended with a non-zero
+                exit, not a crash (a crash leaves running=1 forever and is
+                covered by heartbeat_stale instead). The range it was walking
+                is NOT confirmed complete.
+
+                Check the job's log for the failure, fix the underlying
+                cause, and re-run the same window — every backfill here is
+                idempotent, so re-running a covered range is free and leaving
+                the hole is not.
+
+                This value persists until the job's next run overwrites it,
+                same as heartbeat_stale — deliberate, so a failed run does
+                not go invisible just because nothing is currently running.
+      - eval_time: 30m
+        alertname: stellarindex_ops_job_heartbeat_stale
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: stellarindex_ops_job_no_progress
+        exp_alerts: []
+
   # ── C6-020 PROBE (d): flock winner vs .pid loser on ONE host ─────
   # The concurrency guard's own output, joined against itself.
   #
