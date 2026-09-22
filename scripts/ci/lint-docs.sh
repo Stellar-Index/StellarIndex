@@ -383,6 +383,11 @@ stale_patterns=(
                                   # #970; #970 is now a real, unrelated
                                   # issue (PATCH /v1/admin/accounts race),
                                   # not the sparkline feature request
+  "#971\b"                        # dangling ref (RSWP-057) — CHANGELOG's
+                                  # rc.23 Massive.com forex-provider entry
+                                  # cited this as its issue; #971 now
+                                  # resolves to an unrelated live issue
+                                  # (RedisAPIKeyValidator cache eviction)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
