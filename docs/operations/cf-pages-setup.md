@@ -216,6 +216,10 @@ and `/account` shows the signed-out shell. To turn login on:
   custom-domain attachment can take ~30 s after project create
   for CF to issue the cert. Check
   `https://dash.cloudflare.com/<account>/pages/view/<project>/domains`.
+- **The explorer itself is down or serving a stale build** — see
+  [`runbooks/explorer-cf-pages-down.md`](runbooks/explorer-cf-pages-down.md)
+  for diagnosis and rollback (full outage, edge-function failure, or
+  a stale deploy stuck past the 20,000-file ceiling).
 
 ## Dashboard retirement (`app.stellarindex.io`) — DONE 2026-06-17
 
