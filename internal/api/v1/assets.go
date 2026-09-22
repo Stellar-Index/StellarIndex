@@ -1120,6 +1120,14 @@ func (s *Server) handleAssetList(w http.ResponseWriter, r *http.Request) {
 	writeEnvelope(w, env)
 }
 
+// AssetsListOverfetchBy is how far past the caller's limit the classic
+// assets listing paths (handleAssetListFromAssets and its unified-path
+// sibling below) request, so the (limit+1)th row can signal a next
+// page. Exported so callers that must mirror this arithmetic — the
+// prewarm's cache-key set — have one symbol to reference instead of a
+// second copy of the +1.
+const AssetsListOverfetchBy = 1
+
 // handleAssetListFromAssets serves /v1/assets when an AssetsReader is
 // wired. Sources rows from ListAssetsExt and projects each AssetRow
 // into an AssetDetail with the asset-catalogue overlay fields
@@ -1179,7 +1187,7 @@ func (s *Server) handleAssetListFromAssets(
 	// emitted a next cursor — only the first page of ~199K assets was
 	// reachable).
 	opts := timescale.ListAssetsOptions{
-		Limit:  limit + 1,
+		Limit:  limit + AssetsListOverfetchBy,
 		Issuer: filters.issuer,
 		Code:   filters.code,
 		Type:   filters.typ,
@@ -2993,7 +3001,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	}
 	// Overfetch-by-one (same shape as handleAssetListFromAssets) to
 	// drive the cursor advance.
-	opts.Limit = limit + 1
+	opts.Limit = limit + AssetsListOverfetchBy
 	rows, err := s.assetsReader.ListAssetsExt(r.Context(), opts)
 	if err != nil {
 		if clientAborted(r, err) {

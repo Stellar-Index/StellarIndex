@@ -5,6 +5,7 @@ import (
 	"sort"
 	"testing"
 
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -56,7 +57,7 @@ func TestPrewarmAssetListingsMirrorsTheHandlerOverfetch(t *testing.T) {
 		got := limitsFor(order)
 		want := make([]int, 0, len(assetListingPrewarmLimits))
 		for _, l := range assetListingPrewarmLimits {
-			want = append(want, l+1) // handleAssetListFromAssets: Limit: limit + 1
+			want = append(want, l+v1.AssetsListOverfetchBy)
 		}
 		sort.Ints(want)
 
