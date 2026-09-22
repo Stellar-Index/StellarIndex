@@ -46,9 +46,11 @@ for (( lo=START; lo<BAND_END; lo+=CHUNK )); do
   hi=$(( lo + CHUNK ))
   [ "$hi" -gt "$BAND_END" ] && hi=$BAND_END
   echo "=== chunk [$lo,$hi) $(date -u +%H:%M:%SZ) ==="
-  if ! "$OPS" ch-backfill -config "$CONFIG" -ch-addr "$CH_ADDR" \
-        -from "$lo" -to "$hi" -parallel 3 -flush-every 100; then
-    echo "CHUNK [$lo,$hi) FAILED rc=$? — stopping so the failure is visible"
+  "$OPS" ch-backfill -config "$CONFIG" -ch-addr "$CH_ADDR" \
+        -from "$lo" -to "$hi" -parallel 3 -flush-every 100
+  rc=$?
+  if [ "$rc" -ne 0 ]; then
+    echo "CHUNK [$lo,$hi) FAILED rc=$rc — stopping so the failure is visible"
     exit 1
   fi
 done
