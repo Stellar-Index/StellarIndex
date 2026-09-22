@@ -124,7 +124,8 @@ until such a rule is added:
 
 2. Call sites in the repo migrate within the same minor version.
 
-3. Public deprecations are documented in CHANGELOG. A dedicated
+3. Public deprecations are documented in the release's CHANGELOG
+   section, taken from the deprecating commit's message. A dedicated
    `docs/reference/deprecations.md` table is a gap: nothing in
    `scripts/` builds or checks one yet, so CHANGELOG prose is the
    only enforced record until that mechanism lands.
@@ -256,8 +257,8 @@ the tracked issue above, not CI.
 ### 3.4. Release discipline
 
 - Tag = release. No "in-between unreleased in prod" state.
-- Release notes are auto-generated from CHANGELOG's `[Unreleased]`
-  section via the `release.yml` workflow.
+- Release notes are auto-generated from the CHANGELOG section
+  written at the release cut via the `release.yml` workflow.
 - Rollback procedure documented per release in
   `docs/operations/rollback/<version>.md`.
 - Every release has a "canary window" — 24 h on staging before
@@ -709,8 +710,7 @@ standard via this doc's amendment process.
 - Every change to `engineering-standards.md` is a PR with the tech
   lead as approver.
 - Changes land only when the team agrees in writing in the PR.
-- CHANGELOG entry under `[Unreleased]` → `### Changed` documents
-  the standard change.
+- The commit message documents the standard change.
 - Standards that are relaxed have a rationale in the PR body
   (never "we got lazy").
 

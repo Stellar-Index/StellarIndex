@@ -40,7 +40,7 @@ endpoint change.
 5. Prewarm: if the endpoint gets a prewarm goroutine, it must call
    the cached reader with BYTE-IDENTICAL args to the handler (three
    real bugs from drifted Order/Sources/Limit dimensions).
-6. CHANGELOG under [Unreleased]; API minor bump if additive.
+6. API minor bump if additive.
 
 ## 3. Checks
 

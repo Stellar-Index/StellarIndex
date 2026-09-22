@@ -49,9 +49,9 @@
 #
 #   A shipped migration's UP body is immutable; its DOWN body and its
 #   header COMMENTS may be corrected through the baseline-refresh path
-#   (lint-migration-immutability --write) with a CHANGELOG line;
-#   anything stored in the database (COMMENT ON, defaults) needs a new
-#   migration.
+#   (lint-migration-immutability --write) and said so in the commit
+#   message; anything stored in the database (COMMENT ON, defaults)
+#   needs a new migration.
 #
 #   This gate deliberately cannot tell those apart — it hashes bytes,
 #   and a hash cannot know whether the changed line was above BEGIN;.
@@ -199,7 +199,7 @@ Fix one of these ways (migrations/README.md "Amending a shipped migration"):
     what a FRESH database gets; every applied environment stays wrong.
   * The change is a HEADER COMMENT on an up.sql, or a down.sql body —
     that is correctable in place. Make the edit, refresh the baseline in
-    the same commit, and add a CHANGELOG line:
+    the same commit, and say so in the commit message:
         ./scripts/ci/lint-migration-immutability.sh --write
     The changed checksum line is then visible + reviewable in the diff.
   * The file was genuinely never shipped/applied anywhere — same

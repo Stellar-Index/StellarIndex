@@ -45,11 +45,10 @@ mid-release wastes a tag and forces a `.N+1` cut.
    AND optional job must be green.
 2. **Working tree matches `main`.** `git checkout main && git pull
    --ff-only origin main`.
-3. **CHANGELOG.md `[Unreleased]` is curated.** Walk it top to bottom
-   and confirm every entry has a PR citation, every section heading
-   that has no entries has been deleted, and that the order matches
-   user-relevance (operator-visible at the top, internal refactors
-   at the bottom).
+3. **Write the release section.** Walk `git log --oneline
+   vPREV..HEAD`, operator-visible changes first and internal
+   refactors last, and name every `pkg/*` break and deprecation
+   called out in a commit message (see step 4).
 4. **Breaking `pkg/*` changes are called out in the CHANGELOG.**
    `pkg/*` has no tag clock of its own — this repo is a single Go
    module (ADR-0005), so `pkg/client` ships inside the root
@@ -81,10 +80,9 @@ mid-release wastes a tag and forces a `.N+1` cut.
    - Adds a new SSE endpoint, no schema change → minor bump (`v0.2.0 → v0.3.0`)
    - Bug fix only, no operator-visible change → patch bump (`v0.3.0 → v0.3.1`)
    - Removes a `[external]` config key → minor bump pre-v1.0 (`v0.3.1 → v0.4.0`); major bump post-v1.0
-2. **Promote the CHANGELOG `[Unreleased]` block.** In a one-commit
-   PR:
-   - Replace `## [Unreleased]` with `## [vX.Y.Z] — YYYY-MM-DD`
-   - Add a fresh empty `## [Unreleased]` block above it
+2. **Write the CHANGELOG section.** In a one-commit PR:
+   - Insert `## [vX.Y.Z] — YYYY-MM-DD` with the section from
+     pre-flight step 3 under the empty `## [Unreleased]` heading
    - Title the PR `release: vX.Y.Z`
 
    (This file carries no `[vX.Y.Z]: <compare-url>` link references at

@@ -3,8 +3,8 @@ Release notes template for a Stellar Index binary release.
 
 The release.yml workflow auto-builds release notes by extracting
 the matching CHANGELOG section. This template is the SHAPE that
-CHANGELOG sections should follow — keep your CHANGELOG entry
-matching this layout and the workflow output is publication-ready.
+CHANGELOG sections should follow — write the release-cut CHANGELOG
+section in this layout and the workflow output is publication-ready.
 
 If you need to edit the notes after publication (e.g. add a
 "Tested against protocol XX" line the workflow couldn't infer),

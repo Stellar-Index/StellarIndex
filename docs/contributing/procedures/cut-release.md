@@ -18,13 +18,13 @@ SemVer policy: `docs/architecture/semver-policy.md`.
 
 ## Steps
 
-1. **Curate `[Unreleased]`**: every entry present (entries were
-   added inline with their commits — verify nothing landed without
-   one: skim `git log <last-tag>..HEAD --oneline` against the
-   section), empty subsections deleted, BREAKING changes flagged.
-2. **Promote commit**: replace `## [Unreleased]` with
-   `## [vX.Y.Z] — YYYY-MM-DD`, add a fresh empty `[Unreleased]`
-   above. Pick the bump per SemVer policy (pkg/client breaking =
+1. **Write the release section**: walk `git log <last-tag>..HEAD
+   --oneline`, operator-visible changes first and internal
+   refactors last, BREAKING changes flagged from their commit
+   messages.
+2. **Write the CHANGELOG section**: insert `## [vX.Y.Z] —
+   YYYY-MM-DD` with that section under the empty `## [Unreleased]`
+   heading. Pick the bump per SemVer policy (pkg/client breaking =
    major consideration; pre-v1 minor for features).
 3. **Tag via the guard-rail script** (never `git tag` by hand):
    ```sh
