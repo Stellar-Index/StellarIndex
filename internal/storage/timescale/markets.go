@@ -404,7 +404,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// price re-expressed canonically (inverted for the flipped one). The
 	// XLM-fallback is already resolved into vol_24h_usd in `pools`, so
 	// summing it across directions is correct. See canonical.Orient.
-	canonBase, canonQuote, flipped := canonOrientSQL("base_asset", "quote_asset")
+	canonBase, canonQuote, flipped := canonOrientSQL()
 	cte += `,
         canon AS (
           SELECT source,
@@ -536,7 +536,7 @@ func (s *Store) sourceMarketsCommon(ctx context.Context, source, cursor string, 
 // PREVIOUS day (6h end_offset, materialized_only) and it is pair-wide
 // rather than per-venue anyway.
 func buildSourceMarketsQuery(since time.Time, source, cursor string, limit int, order MarketsOrder) (string, []any) {
-	canonBase, canonQuote, flipped := canonOrientSQL("base_asset", "quote_asset")
+	canonBase, canonQuote, flipped := canonOrientSQL()
 	ctes := perSourcePoolsCTE + `
            AND p.source = $4
          GROUP BY p.source, p.base_asset, p.quote_asset
@@ -929,7 +929,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// the most-recent trade's price re-expressed in the canonical
 	// orientation (inverted for the flipped direction). See
 	// canonOrientSQL / canonical.Orient.
-	canonBase, canonQuote, flipped := canonOrientSQL("base_asset", "quote_asset")
+	canonBase, canonQuote, flipped := canonOrientSQL()
 	ctes := distinctPairsActivityCTEs + `        raw AS (
             SELECT COALESCE(d.base_asset, h.base_asset)   AS base_asset,
                    COALESCE(d.quote_asset, h.quote_asset) AS quote_asset,

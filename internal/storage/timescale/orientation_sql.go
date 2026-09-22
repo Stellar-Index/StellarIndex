@@ -40,13 +40,14 @@ func quoteRankSQL(col string) string {
 }
 
 // canonOrientSQL returns SQL expressions for the canonical (base,
-// quote) orientation of a market stored as (bcol, qcol), plus a
+// quote) orientation of a market stored as (base_asset, quote_asset), plus a
 // boolean `flipped` — true when the stored row is reversed relative to
 // canonical (so the caller inverts that row's price before combining).
 // Mirrors canonical.Orient: the canonical quote is the higher-quoteRank
 // asset, ties broken by the greater asset_id string. Each returned
 // expression is fully parenthesised and safe to inline.
-func canonOrientSQL(bcol, qcol string) (canonBase, canonQuote, flipped string) {
+func canonOrientSQL() (canonBase, canonQuote, flipped string) {
+	const bcol, qcol = "base_asset", "quote_asset"
 	rb, rq := quoteRankSQL(bcol), quoteRankSQL(qcol)
 	// The stored base (bcol) is actually the canonical QUOTE when it
 	// outranks the stored quote, or on a tie sorts after it.
