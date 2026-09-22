@@ -495,6 +495,7 @@ lane_c() { # web typecheck/lint/test/build. Graceful-skip when pnpm isn't
            # job, so a local skip just defers the check. The build catches
            # Next.js output: 'export' constraints (e.g. dynamic =
            # 'force-static' on sitemap/robots) that typecheck alone misses.
+    echo "=== _redirects rule cap ===" && ./scripts/ci/check-redirects-cap.sh
     if command -v pnpm >/dev/null 2>&1 && [ -f web/explorer/pnpm-lock.yaml ]; then
         echo "=== Showcase typecheck ===" && make web-typecheck
         echo "=== Showcase lint ==="      && make web-lint

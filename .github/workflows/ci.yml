@@ -1812,6 +1812,15 @@ jobs:
           cache-dependency-path: web/explorer/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         if: needs.preflight.outputs.web == 'true'
+      # T335: web/explorer/public/_redirects documents Cloudflare Pages'
+      # free-plan ~100-rule cap in its own comments but nothing enforced
+      # it — past the cap CF Pages silently drops the excess rules at
+      # deploy time with no build error. working-directory overrides the
+      # job default since the script lives at the repo root.
+      - name: _redirects within Cloudflare Pages free-plan rule cap
+        if: needs.preflight.outputs.web == 'true'
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/ci/check-redirects-cap.sh
       - name: Generated API types are in sync
         if: needs.preflight.outputs.web == 'true'
         run: |
