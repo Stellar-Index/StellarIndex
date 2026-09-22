@@ -177,7 +177,7 @@ assert_cmd galexie_writer_creds_valid bash -c '
 # assertion here uses — no new alert rule needed. Expected to page
 # (severity: ticket, not page) until the operator runs that script
 # post-Phase-D; that visibility IS the fix — today the gap is silent.
-# shellcheck disable=SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 compression_policies_applied() {
   [[ -r /etc/stellarindex/postgres-password.txt ]] || return 1
   PGPASSWORD="$(cat /etc/stellarindex/postgres-password.txt)" \
@@ -227,7 +227,7 @@ PG_PASSWORD_FILE="${PG_PASSWORD_FILE:-/etc/stellarindex/postgres-password.txt}"
 assert_grep pg_max_worker_processes_codified \
   "$PG_CONF_FILE" \
   '^max_worker_processes[[:space:]]*=[[:space:]]*32'
-# shellcheck disable=SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 pg_max_worker_processes_live() {
   [[ -r "$PG_PASSWORD_FILE" ]] || return 1
   local live
@@ -264,7 +264,7 @@ assert_cmd pg_max_worker_processes_live pg_max_worker_processes_live
 # duplicate rows must not double-count). CH via HTTP :8123 with curl —
 # dependency-light, and the clickhouse-client default native port on r1
 # famously hits MinIO (:9000), not CH (:9300).
-# shellcheck disable=SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
 tx_hash_index_parity() {
   local ch="http://127.0.0.1:8123/"
   local tip floor sample n in_list found
