@@ -19,7 +19,7 @@ vi.mock('./streams', () => ({
   },
 }));
 
-const { resetLedgerFollowThrottleForTest, useLedgerFollow } =
+const { resetLedgerFollowThrottleForTest, useLedgerFollow, followThrottleSizeForTest } =
   await import('./hooks');
 
 // The defect (#470): `HomeTopMovers` and `HomeTopAssets` BOTH call
@@ -166,5 +166,38 @@ describe('useLedgerFollow', () => {
     expect(invalidateSpy).toHaveBeenCalledTimes(2);
 
     now.mockRestore();
+  });
+
+  // T306: AccountMovementsPanel folds the runtime account id into its
+  // follow key (['/v1/accounts/{id}/movements', id, ...]), so the throttle
+  // map's key set is NOT bounded by call sites — it grows with every
+  // distinct account a tab visits, and nothing evicted an entry once its
+  // panel unmounted (only the test-only reset ever cleared the map).
+  it('evicts a key from the throttle map once its last follower unmounts', () => {
+    // Simulate visiting 5 distinct account pages, one after another.
+    for (let i = 0; i < 5; i++) {
+      const { unmount } = renderFollowers([
+        ['/v1/accounts/{id}/movements', `GACCOUNT${i}`, 'tip'],
+      ]);
+      pushLedger(1000 + i);
+      unmount();
+    }
+
+    expect(followThrottleSizeForTest()).toBe(0);
+  });
+
+  // Two panels sharing one key (the #470 shape) must not have the entry
+  // evicted while either is still mounted — only the LAST unmount clears it.
+  it('keeps the throttle entry while a sibling follower of the same key is still mounted', () => {
+    const a = renderFollowers([['/v1/assets']]);
+    const b = renderFollowers([['/v1/assets']]);
+    pushLedger(1000);
+    expect(followThrottleSizeForTest()).toBe(1);
+
+    a.unmount();
+    expect(followThrottleSizeForTest()).toBe(1);
+
+    b.unmount();
+    expect(followThrottleSizeForTest()).toBe(0);
   });
 });
