@@ -35395,7 +35395,7 @@ pipeline itself is what's being tested.
   fallback so a transient TimescaleDB error doesn't take down the
   whole tip surface when the LatestPrice path is healthy.
 
-- **`pkg/client/` Go SDK skeleton (#201)**: first public-package
+- **`pkg/client/` Go SDK skeleton (commit `a60264246`)**: first public-package
   surface under [ADR-0005](docs/adr/0005-monorepo.md)'s SemVer
   promise. v0.1.0 pre-release. Generic `Envelope[T]` for type-
   safe data fields; covered endpoints: `Price`, `HistorySinceInception`,

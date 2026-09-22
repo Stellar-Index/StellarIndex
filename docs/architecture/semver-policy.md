@@ -62,7 +62,7 @@ packages can be refactored, renamed, or deleted in any PR.
 
 Currently shipped:
 - `pkg/client` — Go SDK for the public API
-  ([#201](https://github.com/Stellar-Index/StellarIndex/pull/201)).
+  (commit `a60264246`, "pkg/client/ Go SDK skeleton").
   Wire-shape types (`Envelope`, `Flags`, `Pagination`,
   `AssetDetail`, …) live in `pkg/client/types.go` rather than a
   separate `pkg/types` package — see docs/architecture/repo-map.md for the
