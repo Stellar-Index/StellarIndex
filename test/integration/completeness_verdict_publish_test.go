@@ -249,6 +249,61 @@ func TestPublishCompletenessVerdict_RacingAdvanceRejectsAndKeepsWindow(t *testin
 	}
 }
 
+// TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip is finding T379:
+// the CS-083 guard's second arm ("OR EXCLUDED.first_problem_ledger > 0")
+// exists so a newly-discovered problem is always recorded even when it
+// can't advance the tip — but the UPDATE SET applied tip_ledger =
+// EXCLUDED.tip_ledger unconditionally, so a regressive-tip run that found a
+// problem also silently lowered the stored (monotonic, network-head) tip.
+// RED on the unfixed query: after a problem-arm write with a lower tip, the
+// stored tip_ledger drops to the regressive run's tip instead of holding.
+func TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store := openVerdictStore(t, ctx, dsn)
+
+	if err := store.UpsertCompletenessSnapshot(ctx, verdictSnap(63_500_000)); err != nil {
+		t.Fatalf("seed stored verdict: %v", err)
+	}
+
+	// A regressive-window run (smaller tip) that ALSO found a problem: the
+	// second CS-083 arm applies the write so the problem is recorded, but
+	// tip_ledger must not regress below the previously stored, more-advanced
+	// tip.
+	problem := verdictSnap(63_000_000)
+	problem.Complete = false
+	problem.FirstProblem = 63_100_000
+	problem.Detail = "gap detected"
+	if err := store.UpsertCompletenessSnapshot(ctx, problem); err != nil {
+		t.Fatalf("upsert (problem arm): %v", err)
+	}
+
+	snaps, err := store.ListCompletenessSnapshots(ctx)
+	if err != nil {
+		t.Fatalf("list snapshots: %v", err)
+	}
+	var got *timescale.CompletenessSnapshot
+	for i := range snaps {
+		if snaps[i].Source == verdictPublishSource {
+			got = &snaps[i]
+		}
+	}
+	if got == nil {
+		t.Fatalf("no stored verdict for %s", verdictPublishSource)
+	}
+	if got.Tip != 63_500_000 {
+		t.Errorf("tip_ledger = %d, want 63500000 (the problem arm must not regress the monotonic tip)", got.Tip)
+	}
+	if got.FirstProblem != 63_100_000 {
+		t.Errorf("first_problem_ledger = %d, want 63100000 (the problem itself must still be recorded)", got.FirstProblem)
+	}
+	if got.Complete {
+		t.Errorf("complete = true, want false (the problem arm's other fields still land)")
+	}
+}
+
 // done2finished adapts the publish's result channel to the waiter's
 // "did it already finish?" probe WITHOUT consuming the result.
 func done2finished[T any](done chan T) func() bool {

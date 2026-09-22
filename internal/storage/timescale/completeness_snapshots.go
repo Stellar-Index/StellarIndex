@@ -53,7 +53,10 @@ const upsertCompletenessSnapshotQuery = `
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())
         ON CONFLICT (source) DO UPDATE SET
             genesis_ledger           = EXCLUDED.genesis_ledger,
-            tip_ledger               = EXCLUDED.tip_ledger,
+            -- tip_ledger is network head and monotonic: GREATEST keeps a
+            -- problem-arm write (below) from lowering it just because a
+            -- regressive-window run also found a problem (CS-083).
+            tip_ledger               = GREATEST(EXCLUDED.tip_ledger, completeness_snapshots.tip_ledger),
             watermark_ledger         = EXCLUDED.watermark_ledger,
             coverage_pct             = EXCLUDED.coverage_pct,
             complete                 = EXCLUDED.complete,
@@ -71,7 +74,9 @@ const upsertCompletenessSnapshotQuery = `
         -- only when this run advanced (or held) the tip, OR it found a
         -- problem (a newly-discovered problem must always be recorded, even
         -- if it lowers the watermark). The tip is monotonic (network head
-        -- only grows), so a smaller tip means a stale/partial run.
+        -- only grows), so a smaller tip means a stale/partial run — the
+        -- problem arm still records the problem but tip_ledger itself is
+        -- floored at GREATEST above, never regressed.
         WHERE EXCLUDED.tip_ledger >= completeness_snapshots.tip_ledger
            OR EXCLUDED.first_problem_ledger > 0`
 
