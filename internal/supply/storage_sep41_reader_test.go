@@ -200,7 +200,6 @@ func TestAssetBoundSEP41Computer_HappyPath(t *testing.T) {
 			Burn:     big.NewInt(0),
 			Clawback: big.NewInt(0),
 		},
-		genesisSeeded: true,
 	}
 	reader := NewStorageSEP41SupplyReader(store)
 	computer, err := NewSEP41Computer(Policy{}, reader)

@@ -98,7 +98,6 @@ func TestComputers_StampLedgerCloseTimeNotWallClock(t *testing.T) {
 		reader := &stubSEP41Reader{comps: supply.SEP41SupplyComponents{
 			MintTotal: bigInt(1000), BurnTotal: bigInt(0), ClawbackTotal: bigInt(0),
 			AdminBalance: bigInt(0), LockedAccountBalances: bigInt(0), LockedContractBalances: bigInt(0),
-			GenesisBaselineSeeded: true,
 		}}
 		c, err := supply.NewSEP41Computer(supply.Policy{}, reader)
 		if err != nil {

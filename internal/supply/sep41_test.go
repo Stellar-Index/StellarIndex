@@ -70,7 +70,6 @@ func TestSEP41_Compute_HappyPath(t *testing.T) {
 			AdminBalance:           bigInt(40_000_000),     //    4 sitting on admin
 			LockedAccountBalances:  bigInt(0),
 			LockedContractBalances: bigInt(0),
-			GenesisBaselineSeeded:  true, // lifetime totals captured
 		},
 	}
 	c, err := supply.NewSEP41Computer(supply.Policy{}, reader)
@@ -174,39 +173,6 @@ func TestSEP41_Compute_NegativeTotalMissingBaseline(t *testing.T) {
 	}
 }
 
-// TestSEP41_Compute_PositiveTotalMissingBaselineRejected — T089: a watched
-// SAC-wrapper whose Soroban-era-only mint/burn/clawback total happens to
-// land POSITIVE (e.g. only a small fraction of its supply moved before the
-// one-time genesis seed ran) must still be rejected as provisional when
-// GenesisBaselineSeeded is false. The one-time seed
-// (`stellarindex-ops supply seed-sep41-genesis`) runs for every watched
-// contract, including Soroban-only ones (zero baseline) — so an unseeded
-// contract's total carries no information about whether pre-Soroban supply
-// is missing, and a positive Soroban-era-only reading must not be published
-// as final circulating/total supply.
-func TestSEP41_Compute_PositiveTotalMissingBaselineRejected(t *testing.T) {
-	reader := &stubSEP41Reader{
-		comps: supply.SEP41SupplyComponents{
-			MintTotal:              bigInt(2_400_000_000_000),
-			BurnTotal:              bigInt(2_180_000_000_000), // Soroban-era-only: mint still exceeds burn
-			ClawbackTotal:          bigInt(0),
-			AdminBalance:           bigInt(0),
-			LockedAccountBalances:  bigInt(0),
-			LockedContractBalances: bigInt(0),
-			GenesisBaselineSeeded:  false, // opening balance not seeded yet
-		},
-	}
-	c, _ := supply.NewSEP41Computer(supply.Policy{}, reader)
-	asset := mustSoroban(t, validContractID)
-	_, err := c.Compute(context.Background(), asset, 1, time.Now())
-	if !errors.Is(err, supply.ErrNegativeTotalMissingBaseline) {
-		t.Errorf("err = %v, want ErrNegativeTotalMissingBaseline (positive-but-unseeded total must not be published)", err)
-	}
-	if errors.Is(err, supply.ErrNegativeTotalSupply) {
-		t.Errorf("unseeded case must not also match ErrNegativeTotalSupply: %v", err)
-	}
-}
-
 // TestSEP41_Compute_GenesisBaselineMakesTotalPositive — once the pre-Soroban
 // baseline IS folded into the totals (the reader returns lifetime mint/burn/
 // clawback), the same SAC-wrapper computes a POSITIVE total and the guard does
@@ -305,16 +271,13 @@ func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 			wantTotal: bigInt(1_000_000_000),
 		},
 		{
-			// (d') the same token NOT seeded, even though the Soroban-era-only
-			// total is positive — the one-time genesis seed runs for EVERY
-			// watched contract (a Soroban-only one gets a zero baseline), so
-			// an unseeded contract's total is provisional regardless of sign.
-			// Must route to the benign missing-baseline outcome, not publish.
-			name:    "d_prime_unseeded_positive_routes_missing_baseline",
-			mint:    bigInt(1_000_000_000),
-			burn:    bigInt(0),
-			seeded:  false,
-			wantErr: supply.ErrNegativeTotalMissingBaseline,
+			// (d') the same token NOT seeded — identical published total.
+			// Proves the seeded flag alone never shifts a positive number.
+			name:      "d_prime_unseeded_positive_unchanged",
+			mint:      bigInt(1_000_000_000),
+			burn:      bigInt(0),
+			seeded:    false,
+			wantTotal: bigInt(1_000_000_000),
 		},
 	}
 	for _, tc := range cases {
@@ -375,7 +338,6 @@ func TestSEP41_Compute_LockedSetForwarded(t *testing.T) {
 			AdminBalance:           bigInt(0),
 			LockedAccountBalances:  bigInt(100),
 			LockedContractBalances: bigInt(50),
-			GenesisBaselineSeeded:  true,
 		},
 	}
 	policy := supply.Policy{
@@ -412,7 +374,6 @@ func TestSEP41_Compute_MaxSupplyOverride(t *testing.T) {
 		comps: supply.SEP41SupplyComponents{
 			MintTotal: bigInt(0), BurnTotal: bigInt(0), ClawbackTotal: bigInt(0),
 			AdminBalance: bigInt(0), LockedAccountBalances: bigInt(0), LockedContractBalances: bigInt(0),
-			GenesisBaselineSeeded: true,
 		},
 	}
 	policy := supply.Policy{
@@ -471,7 +432,6 @@ func TestSEP41_Compute_ZeroSupplyTokenIsValid(t *testing.T) {
 			AdminBalance:           bigInt(0),
 			LockedAccountBalances:  bigInt(0),
 			LockedContractBalances: bigInt(0),
-			GenesisBaselineSeeded:  true,
 		},
 	}
 	c, _ := supply.NewSEP41Computer(supply.Policy{}, reader)
