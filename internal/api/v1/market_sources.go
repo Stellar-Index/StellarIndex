@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -95,22 +96,28 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 8s ceiling on the per-source aggregate, matching the cold-path
+	// timeout pattern applied across every other aggregation endpoint
+	// (/v1/sources?include=stats, /v1/history, …). Derived from
+	// r.Context() so a client that hangs up mid-query is observed —
+	// the deadline is the resource bound, cancellation is the early
+	// exit, and both need the DB call to hold a context, not r.Context()
+	// passed straight through with nothing capping it.
+	msCtx, msCancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer msCancel()
+
 	var (
 		rows []timescale.SourceStats
 		err  error
 	)
 	if asset != "" {
-		rows, err = s.marketSources.AssetSourceStats(r.Context(), sourceStatsAliases(asset))
+		rows, err = s.marketSources.AssetSourceStats(msCtx, sourceStatsAliases(asset))
 	} else {
-		rows, err = s.marketSources.PairSourceStats(r.Context(),
+		rows, err = s.marketSources.PairSourceStats(msCtx,
 			sourceStatsAliases(base), sourceStatsAliases(quote))
 	}
 	if err != nil {
-		s.logger.Warn("market sources", "err", err)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/market-sources-error",
-			"Market sources failed", http.StatusInternalServerError,
-			"Storage layer returned an error.")
+		s.writeMarketSourcesError(w, r, msCtx, err)
 		return
 	}
 
@@ -141,6 +148,27 @@ func (s *Server) handleMarketSources(w http.ResponseWriter, r *http.Request) {
 		out.Sources = append(out.Sources, sv)
 	}
 	writeJSON(w, out, Flags{})
+}
+
+// writeMarketSourcesError reports a /v1/markets/sources storage failure:
+// silent on a client disconnect, a retryable 503 naming the endpoint on
+// the handler's own 8s budget expiring, otherwise a plain 500.
+func (s *Server) writeMarketSourcesError(w http.ResponseWriter, r *http.Request, msCtx context.Context, err error) {
+	if clientAborted(r, err) {
+		return
+	}
+	if handlerTimedOut(msCtx, err) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/market-sources-timeout",
+			"Market sources query timed out", http.StatusServiceUnavailable,
+			"the underlying trades-hypertable scan didn't return in 8s. Try again shortly.")
+		return
+	}
+	s.logger.Warn("market sources", "err", err)
+	writeProblem(w, r,
+		"https://api.stellarindex.io/errors/market-sources-error",
+		"Market sources failed", http.StatusInternalServerError,
+		"Storage layer returned an error.")
 }
 
 // sourceStatsAliases expands a raw asset_id query param into every
