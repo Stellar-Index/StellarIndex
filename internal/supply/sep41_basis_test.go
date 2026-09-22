@@ -89,7 +89,6 @@ func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T)
 					AdminBalance:           bigInt(tc.admin),
 					LockedAccountBalances:  bigInt(tc.lockedAccounts),
 					LockedContractBalances: bigInt(tc.lockedContracts),
-					GenesisBaselineSeeded:  true,
 				},
 			}
 
