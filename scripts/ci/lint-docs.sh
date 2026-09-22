@@ -388,6 +388,12 @@ stale_patterns=(
                                   # cited this as its issue; #971 now
                                   # resolves to an unrelated live issue
                                   # (RedisAPIKeyValidator cache eviction)
+  "#973\b"                       # dangling ref (RSWP-058) — CHANGELOG's
+                                  # rc.24 circulating_supply/market_cap_usd
+                                  # entry and its rc.23 cancellation note
+                                  # both cited "#973"; #973 now resolves to
+                                  # an unrelated live issue (dead-affordance/
+                                  # IsReservedTLD), never the feature it named
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
