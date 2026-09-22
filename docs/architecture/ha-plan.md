@@ -416,16 +416,24 @@ provisioned; cloud is pay-as-you-use for DR.
 
 ### 3.7 stellarindex-aggregator
 
-- **Instances:** 2, leader-elected via Redis `SET key NX EX 30`
-  with periodic renewal.
-- **Role:** reads `trades` hypertable, computes running VWAP/TWAP,
-  writes to Redis hot-key + Timescale precompute tables.
-- **Why leader-elected instead of sharded:** our aggregation compute
-  load is small (< 1 core per second on current market volume); a
-  single active instance is simpler and preserves strict ordering.
-- **Failure mode:** leader dies → standby acquires lock within 30 s;
-  Redis hot keys stale-flag for ≤ 30 s until the new leader writes
-  fresh values.
+- **Instances (corrected 2026-09-22):** **one**. There is no
+  leader-election path in `cmd/stellarindex-aggregator` — no lock
+  acquisition, no `SET key NX EX`, no Sentinel-aware failover code —
+  and `deploy/systemd/stellarindex-aggregator.service` runs it as a
+  single long-running daemon on one host. The Redis `SET key NX EX 30`
+  leader-election description below was never implemented; treat it
+  as removed, not as the target design.
+- **Role:** on each tick (default 30 s) reads `trades`/indexer output,
+  computes VWAP/TWAP + confidence, writes the result to Redis and to
+  Timescale precompute tables.
+- **Why single-instance instead of leader-elected or sharded:**
+  aggregation compute load is small (< 1 core per second on current
+  market volume); a single active instance is simpler and preserves
+  strict ordering.
+- **Failure mode:** the process dies → no standby takes over. Prices
+  serve stale cached values from Redis until the host's supervisor
+  (systemd `Restart=`) or an operator restarts the unit; there is
+  currently no automatic failover for this component.
 
 ### 3.8 stellarindex-indexer fleet
 
