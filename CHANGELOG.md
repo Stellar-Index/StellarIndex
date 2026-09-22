@@ -27786,7 +27786,7 @@ rc.48 deploy to R1.
   `scripts/ops/fx-history-backfill`). Cross-linked from
   alerts-catalog + external-poller-stale. Prevention notes
   capture the choice between auto-migrate-in-deploy-workflow
-  vs. gate-readyz-on-schema-version. (PR #1230)
+  vs. gate-readyz-on-schema-version.
 - **Runbook + customer-facing incident post for the 2026-05-10
   Redis-write-blocked outage** — r1's root filesystem reached
   100% with 35 GB of stale logs, blocking Redis snapshots,

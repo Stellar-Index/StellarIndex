@@ -68,6 +68,13 @@ check "a reintroduced '(PR #1254)' citation in CHANGELOG.md is caught" red
 git checkout -- CHANGELOG.md
 check "clean tree passes again after revert" ok
 
+# RSWP-127: CHANGELOG's fx_quotes/migration-0028 runbook entry cited
+# "(PR #1230)" but no such PR exists.
+echo "(PR #1230)" >> CHANGELOG.md
+check "a reintroduced 'PR #1230' citation in CHANGELOG.md is caught" red
+git checkout -- CHANGELOG.md
+check "clean tree passes again after revert" ok
+
 # RSWP-086: CHANGELOG's r1-smoke.sh budget-bump entry cited a PR number
 # (#1108) that never identified the actual PR; #1108 now resolves to a
 # real, unrelated issue, not a 404.
