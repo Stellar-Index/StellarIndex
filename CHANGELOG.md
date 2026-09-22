@@ -29251,7 +29251,7 @@ roll forward verbatim.)
   `MASSIVE_API_KEY` in `/etc/default/stellarindex` for the forex
   worker to populate the cache; without it `/v1/currencies` serves
   the "warming up" empty state.
-- **`?include=sparkline7d` on `/v1/coins`** (#970). Attaches
+- **`?include=sparkline7d` on `/v1/coins`**. Attaches
   `price_history_7d` (7 daily samples) per row, batched in a
   single `GetCoinsPriceHistory7dBatch` storage call. Same
   direct-or-XLM-triangulated path as the existing 24h sparkline.
@@ -29259,7 +29259,7 @@ roll forward verbatim.)
 ### Changed
 - **`/assets` table** drops the From-ATH and First-seen columns;
   the chart column is now 7-day daily, not 24-hour hourly. Brings
-  the listing in line with the original spec (#970).
+  the listing in line with the original spec.
 
 ## [v0.5.0-rc.22] — 2026-05-07
 

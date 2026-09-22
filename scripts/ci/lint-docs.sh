@@ -378,6 +378,11 @@ stale_patterns=(
                                   # now resolves to an unrelated live
                                   # issue (Timescale job-failure alert
                                   # arithmetic), not any of those features
+  "#970\b"                       # dangling ref (RSWP-056) — CHANGELOG's
+                                  # rc.23 sparkline7d/coins entries cited
+                                  # #970; #970 is now a real, unrelated
+                                  # issue (PATCH /v1/admin/accounts race),
+                                  # not the sparkline feature request
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
