@@ -66,6 +66,31 @@ async function pickEURAsReceiveLeg() {
   fireEvent.click(eur);
 }
 
+// T303. useFiatTokens ran its /v1/price/batch fetch (and 5-minute poll)
+// unconditionally on mount, before the picker that is the only place fiat
+// rates are shown was ever opened.
+describe('AssetSwap fiat batch fetch', () => {
+  it('does not fetch fiat rates until the token picker is opened', async () => {
+    stubApi();
+    renderSwap();
+
+    // Let any unconditional effect/query fire before we check.
+    await screen.findByRole('button', { name: /USD/ });
+
+    const fiatCalls = vi
+      .mocked(apiGet)
+      .mock.calls.filter(([path]) => path.startsWith('/v1/price/batch'));
+    expect(fiatCalls).toHaveLength(0);
+
+    await pickEURAsReceiveLeg();
+
+    const fiatCallsAfterOpen = vi
+      .mocked(apiGet)
+      .mock.calls.filter(([path]) => path.startsWith('/v1/price/batch'));
+    expect(fiatCallsAfterOpen.length).toBeGreaterThan(0);
+  });
+});
+
 describe('AssetSwap fiat leg basis', () => {
   it('says when the fiat leg was observed instead of implying it is current', async () => {
     stubApi();
