@@ -89,8 +89,8 @@ export function useDialog<T extends HTMLElement>(
       if (ix !== -1) dialogStack.splice(ix, 1);
       // FEC audit A6-3: restore focus ONLY if the user hasn't already
       // focused something outside the dialog. The popover consumers
-      // (CurrencyCombobox, sidebar AccountMenu) close on outside-mousedown
-      // with no backdrop — the browser focuses the clicked control, and an
+      // (sidebar AccountMenu) close on outside-mousedown with no
+      // backdrop — the browser focuses the clicked control, and an
       // unconditional restore here yanked focus back to the trigger
       // (keystrokes lost). Modals with a backdrop are unaffected: focus at
       // close is inside the dialog (or on body after unmount), so the

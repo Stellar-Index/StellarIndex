@@ -5,8 +5,8 @@ import { useCallback, useState } from 'react';
 import { useDialog } from './useDialog';
 
 // FEC audit A6-3: useDialog restored focus to the pre-open trigger on EVERY
-// close. Its popover consumers (CurrencyCombobox, sidebar AccountMenu) close
-// on outside-mousedown with no backdrop, so clicking from an open popover
+// close. Its popover consumers (sidebar AccountMenu) close on
+// outside-mousedown with no backdrop, so clicking from an open popover
 // straight into another control had focus yanked back off that control.
 // The fix restores only when focus is still inside the dialog / on body.
 
