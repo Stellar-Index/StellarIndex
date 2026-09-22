@@ -377,6 +377,10 @@ stale_patterns=(
                                   # v6→v7 bump PR as #1353 (RSWP-147); that number
                                   # now resolves to an unrelated auto-filed
                                   # ci-health-bot issue, not the PR it named
+  "#1369"                        # remediation STATUS.md cited the deferred
+                                  # tooling-groups entry as #1368 + #1369
+                                  # (RSWP-149); #1369 now resolves to an
+                                  # unrelated, already-merged W3 slice PR
   "R-013.*#1265"                  # coverage-matrix.md's R-013 row cited #1265
                                   # (RSWP-141); #1265 now resolves to an
                                   # unrelated resolveTip completeness-clamp

@@ -99,6 +99,12 @@ check "a reintroduced '#1347' citation in STATUS.md is caught" red
 echo "#1353" >> docs/remediation-2026-07-01/STATUS.md
 check "a reintroduced '#1353' citation in remediation STATUS.md is caught" red
 git checkout -- docs/remediation-2026-07-01/STATUS.md
+# RSWP-149: docs/remediation-2026-07-01/STATUS.md must not carry the
+# dangling "#1369" citation back in — #1369 now resolves to an
+# unrelated, already-merged W3 slice PR, not the tooling-groups bump.
+echo "#1369" >> docs/remediation-2026-07-01/STATUS.md
+check "a reintroduced '#1369' citation in remediation STATUS.md is caught" red
+git checkout -- docs/remediation-2026-07-01/STATUS.md
 check "clean tree passes again after revert" ok
 
 # §4 stale-reference check: docs/architecture/coverage-matrix.md must not
