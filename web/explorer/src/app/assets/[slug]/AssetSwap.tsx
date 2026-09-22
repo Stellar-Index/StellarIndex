@@ -275,11 +275,18 @@ export function AssetSwap({
   const [amount, setAmount] = useState('1');
   const [edited, setEdited] = useState<'from' | 'to'>('from');
   const [picker, setPicker] = useState<'from' | 'to' | null>(null);
+  // The picker (and the fiat list it needs) is opt-in UI: don't pay for
+  // /v1/price/batch on every asset-page mount just because the converter
+  // is rendered. Once opened, keep fetching so a picked/closed/reopened
+  // picker doesn't refetch from empty each time.
+  const [pickerEverOpened, setPickerEverOpened] = useState(false);
 
-  // Fiat rates are only needed once the picker is open to offer them, so the
-  // batch fetch (and its 5-minute poll) stays off until then instead of
-  // running unconditionally for every swap-widget mount.
-  const fiatTokens = useFiatTokens(picker !== null);
+  const fiatTokens = useFiatTokens(pickerEverOpened);
+
+  function openPicker(side: 'from' | 'to') {
+    setPicker(side);
+    setPickerEverOpened(true);
+  }
 
   // The leg that still IS the page asset always reflects the live prop price;
   // any other leg uses its captured price. Deriving this at render keeps the
@@ -356,7 +363,7 @@ export function AssetSwap({
           token={fromToken}
           onEdit={(v) => onEdit('from', v)}
           onFocus={() => reseed('from')}
-          onPick={() => setPicker('from')}
+          onPick={() => openPicker('from')}
         />
         <SwapRow
           value={toValue}
@@ -364,7 +371,7 @@ export function AssetSwap({
           token={toToken}
           onEdit={(v) => onEdit('to', v)}
           onFocus={() => reseed('to')}
-          onPick={() => setPicker('to')}
+          onPick={() => openPicker('to')}
         />
 
         {/* Seam swap button — the signature element. Punches through both
