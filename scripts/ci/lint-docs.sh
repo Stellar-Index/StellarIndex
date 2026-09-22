@@ -602,10 +602,17 @@ fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
 # each protocol team "each page carries a last_verified date", yet 15 of
 # 17 protocol pages and 2 of 5 methodology pages carried none, so
 # widening the scan roots alone would have been a no-op — every one of
-# them would simply have been skipped. Under docs/architecture, docs/adr
-# and docs/design it stays advisory (ADRs are immutable records, ADR
-# checks live in §8; docs/design captures point-in-time investigations,
-# not living procedure).
+# them would simply have been skipped. Under docs/architecture and
+# docs/design it stays advisory (point-in-time investigations, not
+# living procedure).
+#
+# docs/adr is deliberately OUT of this find-root, not merely skipped by
+# it: ADRs are immutable records whose only real gate is §8
+# (status/superseded_by/index-row). Listing docs/adr here while its
+# missing-stamp case fell to the `*) continue` arm meant the scan
+# implied freshness coverage — 0 of 51 ADRs carry last_verified — that
+# §6 never actually gave it (T557). Add a §8 check instead if ADR
+# amendment banners ever need aging.
 #
 # RECORD subtrees are exempt by design: evidence/, postmortems/,
 # incidents/, notes/ and wasm-audits/ are dated artefacts of a moment,
@@ -617,7 +624,7 @@ fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
 # opt out by accident. A freshness stamp on a post-mortem would
 # demand periodic re-verification of something that must never change,
 # and would hard-fail at 180 days for being exactly what it is.
-find docs/architecture docs/operations docs/adr docs/design docs/contributing \
+find docs/architecture docs/operations docs/design docs/contributing \
      docs/protocols docs/methodology -type f -name '*.md' 2>/dev/null | while read -r f; do
   # Skip generated docs, archive, templates.
   if grep -q "GENERATED FILE - DO NOT EDIT" "$f" 2>/dev/null; then continue; fi

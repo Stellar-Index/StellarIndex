@@ -195,6 +195,32 @@ check "an undocumented /account/admin/lookup route is now caught (exemption remo
 mv openapi/stellar-index.v1.yaml.bak openapi/stellar-index.v1.yaml
 check "clean tree passes again after revert" ok
 
+# T557: docs/adr is out of the §6 freshness find-root — an ADR is an
+# immutable record whose only real gate is §8 (status/superseded_by/
+# index-row), so an explicit last_verified in an ADR must not be aged
+# by §6 (that would imply a freshness contract §8 doesn't actually give
+# 0/51 ADRs, since ADRs never carry the field). Add a valid README
+# index row so §8 passes and only §6's handling of the stale date is
+# under test.
+cat > "$FIX" <<'EOF'
+---
+adr: 0099
+title: Fixture ADR for lint-docs self-test
+status: Accepted
+last_verified: 2020-01-01
+date: 2026-09-21
+supersedes: []
+superseded_by: null
+---
+
+# ADR-0099: fixture (carries a deliberately stale last_verified)
+EOF
+printf '| [0099](0099-zz-lint-docs-fixture.md) | Accepted | Fixture ADR for lint-docs self-test | 2026-09-21 |\n' >> docs/adr/README.md
+check "a stale last_verified on an ADR is not aged by §6 (docs/adr is out of its find-root)" ok
+git checkout -- docs/adr/README.md
+rm -f "$FIX"
+check "clean tree passes a fourth time" ok
+
 echo
 echo "lint-docs-test: $PASS passed, $FAIL failed"
 exit "$FAIL"
