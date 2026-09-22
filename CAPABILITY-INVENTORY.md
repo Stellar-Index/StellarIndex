@@ -90,7 +90,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 - Store/mint → `auth.NewRedisAPIKeyStore(...).Create` / `platform/postgresstore.NewAPIKeyStore(s).Create`
 - SEP-10 → `sep10.NewValidator(opts)`, `sep10.NewRedisReplayGuard(rdb)`
 - Throttles/verifiers → `NewRedisLoginThrottle`, `NewRedisSignupIPThrottle`, `NewRedisSignupVerifier`, `NewRedisSignupEmailLocker`, `NewRedisSignupTracker`, `NewRedisTouchDebouncer`
-- Store contracts → `platform.{AccountStore,APIKeyStore,UsageStore,WebhookStore,TokenStore,BillingStore,AuditStore}` (impls in `postgresstore`)
+- Store contracts → `platform.{AccountStore,APIKeyStore,UsageStore,WebhookStore,TokenStore,AuditStore}` (impls in `postgresstore`)
 
 ## Email — `internal/notify`
 - Send → `notify.Sender`; `NewResendSender(apiKey)` (prod) / `NoopSender` (dev)
