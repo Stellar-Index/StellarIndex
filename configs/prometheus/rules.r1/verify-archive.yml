@@ -78,6 +78,16 @@ groups:
       # behaviour for a fresh host; making a never-verified host page is
       # a separate operator decision.
       #
+      # absent_over_time branch (OBS-2 pattern; same shape as
+      # stellarindex_api_price_stale in api.yml and
+      # stellarindex_ch_schema_snapshot_stale in storage.yml): `time() -
+      # x` over an empty vector is itself empty, so if the textfile is
+      # never written at all — node_exporter down, the collector
+      # directory misconfigured, the unit never scheduled — the series
+      # doesn't exist and the bare comparison can never fire, exactly
+      # the scenario this page exists for. absent_over_time(...[36h])
+      # restores that coverage.
+      #
       # 36h = 24h cadence + 12h cushion.
       - alert: stellarindex_verify_archive_run_stale
         expr: |
@@ -88,6 +98,8 @@ groups:
               tier="chain"
             } > 0)
           ) > (36 * 3600)
+          or
+          absent_over_time(stellarindex_verify_archive_last_success_unix{tier="chain"}[36h]) == 1
         for: 10m
         labels:
           severity: page
@@ -143,6 +155,10 @@ groups:
 
             Runbook: docs/operations/runbooks/verify-archive-tier-b.md
 
+      # Same absent_over_time branch as the Tier A staleness rule above
+      # (OBS-2 pattern) — `time() - x` over an empty vector is empty, so
+      # a Tier B textfile that was never written (unit never scheduled,
+      # node_exporter down) would otherwise never page.
       - alert: stellarindex_verify_archive_tier_b_run_stale
         expr: |
           (
@@ -152,6 +168,8 @@ groups:
               tier="checkpoint"
             } > 0)
           ) > (36 * 3600)
+          or
+          absent_over_time(stellarindex_verify_archive_last_success_unix{tier="checkpoint"}[36h]) == 1
         for: 10m
         labels:
           severity: ticket
