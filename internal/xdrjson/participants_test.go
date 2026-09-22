@@ -25,6 +25,66 @@ func TestParticipantAccounts_Payment(t *testing.T) {
 	}
 }
 
+// TestParticipantAccounts_CreateClaimableBalanceClaimants is the T098
+// regression: a create_claimable_balance op's claimants are genuine account
+// addresses (ClaimantV0.Destination), not opaque free text, so they must be
+// indexed as participants the same as a payment destination.
+func TestParticipantAccounts_CreateClaimableBalanceClaimants(t *testing.T) {
+	claimant, err := xdr.NewClaimant(xdr.ClaimantTypeClaimantTypeV0, xdr.ClaimantV0{
+		Destination: xdr.MustAddress(gAddr),
+		Predicate:   xdr.ClaimPredicate{Type: xdr.ClaimPredicateTypeClaimPredicateUnconditional},
+	})
+	if err != nil {
+		t.Fatalf("NewClaimant: %v", err)
+	}
+	b64 := mustBody(t, xdr.OperationTypeCreateClaimableBalance, xdr.CreateClaimableBalanceOp{
+		Asset:     xdr.MustNewNativeAsset(),
+		Amount:    1,
+		Claimants: []xdr.Claimant{claimant},
+	})
+	got, err := xdrjson.ParticipantAccounts(b64)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 1 || got[0] != gAddr {
+		t.Errorf("participants = %v, want [%s]", got, gAddr)
+	}
+}
+
+// TestParticipantAccounts_ClaimClaimableBalanceNoAccountField documents that
+// claim_claimable_balance carries no account-typed field: the claimant is
+// the op's own source account, already indexed separately.
+func TestParticipantAccounts_ClaimClaimableBalanceNoAccountField(t *testing.T) {
+	b64 := mustBody(t, xdr.OperationTypeClaimClaimableBalance, xdr.ClaimClaimableBalanceOp{
+		BalanceId: xdr.ClaimableBalanceId{
+			Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0,
+			V0:   &xdr.Hash{},
+		},
+	})
+	got, err := xdrjson.ParticipantAccounts(b64)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("participants = %v, want none", got)
+	}
+}
+
+// TestParticipantAccounts_BeginSponsoringFutureReservesTarget is the T098
+// regression: the sponsorship target is a genuine account address.
+func TestParticipantAccounts_BeginSponsoringFutureReservesTarget(t *testing.T) {
+	b64 := mustBody(t, xdr.OperationTypeBeginSponsoringFutureReserves, xdr.BeginSponsoringFutureReservesOp{
+		SponsoredId: xdr.MustAddress(gAddr2),
+	})
+	got, err := xdrjson.ParticipantAccounts(b64)
+	if err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	if len(got) != 1 || got[0] != gAddr2 {
+		t.Errorf("participants = %v, want [%s]", got, gAddr2)
+	}
+}
+
 func TestParticipantAccounts_NoneForSelfContained(t *testing.T) {
 	// manage_data has no counterparty account field → no participants.
 	body, _ := xdr.NewOperationBody(xdr.OperationTypeManageData, xdr.ManageDataOp{DataName: "k"})
