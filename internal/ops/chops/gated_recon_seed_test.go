@@ -2,6 +2,7 @@ package chops
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
@@ -27,5 +28,21 @@ func TestPreseedFactoryChildrenSkipsEmptyOrInvertedWindow(t *testing.T) {
 	// to == genesis → empty window, also skipped.
 	if err := preseedFactoryChildren(context.Background(), nil, src, src.genesis); err != nil {
 		t.Fatalf("empty window at genesis==to: expected skip (nil), got: %v", err)
+	}
+}
+
+// RLT-395: a preseed walk over a real, non-empty window that finds zero
+// factory children must not go silent — an empty gate registry then makes
+// every pre-existing pool's events look like a real projection gap for the
+// rest of the re-derive instead of the decoder-blind spot it actually is.
+func TestPreseedResultMessageWarnsOnZeroSeeded(t *testing.T) {
+	msg := preseedResultMessage("blend", 0)
+	if !strings.Contains(msg, "WARNING") || !strings.Contains(msg, "blend") {
+		t.Fatalf("expected a visible WARNING naming the source for a zero-seed result, got: %q", msg)
+	}
+
+	seededMsg := preseedResultMessage("blend", 3)
+	if strings.Contains(seededMsg, "WARNING") {
+		t.Fatalf("a successful seed must not read as a warning, got: %q", seededMsg)
 	}
 }
