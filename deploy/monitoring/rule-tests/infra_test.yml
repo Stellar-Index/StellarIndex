@@ -220,3 +220,44 @@ tests:
                 timeout or transport error the controller recorded. Schedule a
                 replacement during the next maintenance window even if ZFS
                 isn't complaining yet.
+
+  # ── T583: no rule existed on node_textfile_scrape_error ────────────
+  # Pins that a sustained textfile-collector parse error rings after
+  # the 15m debounce, and NOT before it (the tmp+mv atomic-write
+  # pattern every writer uses means a transient mid-write read should
+  # never survive 15m, so an early fire would be a false positive).
+  - interval: 1m
+    name: a sustained textfile-collector scrape error rings after 15m
+    input_series:
+      - series: 'node_textfile_scrape_error{instance="r1:9100"}'
+        values: '0+0x10 1+0x30'
+
+    alert_rule_test:
+      # Condition went true at t=11m; at t=20m it has held only 9m —
+      # still pending, must not have fired yet.
+      - eval_time: 20m
+        alertname: stellarindex_textfile_scrape_error
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: stellarindex_textfile_scrape_error
+        exp_alerts:
+          - exp_labels:
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-scrape-error.md
+              summary: "node_exporter textfile collector on r1:9100 has a scrape error"
+              description: |
+                node_textfile_scrape_error{instance="r1:9100"} = 1
+                for 15+ min. Something under
+                /var/lib/node_exporter/textfile_collector/ is malformed and
+                node_exporter has stopped exporting that file's series.
+                Every alert built on a textfile-sourced metric on this host
+                (archive-completeness, sla-probe, nvme wear,
+                process-mappings, zfs-snapshots, binary/stack version skew)
+                is now blind to whatever that file reports, with no
+                individual alert saying so. Runbook: find the bad file from
+                node_exporter's own log, fix or remove it, confirm the
+                gauge clears.

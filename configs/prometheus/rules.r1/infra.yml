@@ -247,6 +247,47 @@ groups:
             catchup slows, Postgres WAL flush stalls. Check chassis airflow
             + ambient temperature.
 
+      # ── Textfile-collector scrape errors (T583) ─────────────────────
+      #
+      # node_exporter's own `node_textfile_scrape_error` gauge is 1 when
+      # ANY file under --collector.textfile.directory failed to parse on
+      # the last scrape (malformed exposition, wrong HELP/TYPE line, a
+      # write caught mid-truncate). This host hangs a dozen alert
+      # families off that one directory — archive_completeness,
+      # sla_probe, nvme_*, process-mappings, zfs-snapshots, binary/stack
+      # version skew, api-smoke — and a parse failure silently drops the
+      # whole broken file's series, so every alert reading it goes quiet
+      # instead of firing. There was no rule on this metric at all: same
+      # "make the dead-alert state itself observable" pattern as
+      # stellarindex_metrics_registry_absent (metrics-registry.yml), one
+      # level further down the stack.
+      #
+      # `for: 15m` rides out the tmp+mv atomic-write pattern every writer
+      # in 10-observability.yml uses — a scrape landing mid-rename would
+      # read a transient error node_exporter self-clears next cycle.
+      - alert: stellarindex_textfile_scrape_error
+        expr: node_textfile_scrape_error > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/textfile-scrape-error.md
+          summary: "node_exporter textfile collector on {{ $labels.instance }} has a scrape error"
+          description: |
+            node_textfile_scrape_error{instance="{{ $labels.instance }}"} = 1
+            for 15+ min. Something under
+            /var/lib/node_exporter/textfile_collector/ is malformed and
+            node_exporter has stopped exporting that file's series.
+            Every alert built on a textfile-sourced metric on this host
+            (archive-completeness, sla-probe, nvme wear,
+            process-mappings, zfs-snapshots, binary/stack version skew)
+            is now blind to whatever that file reports, with no
+            individual alert saying so. Runbook: find the bad file from
+            node_exporter's own log, fix or remove it, confirm the
+            gauge clears.
+
       # ── Catch-all: any systemd unit sitting in `failed` ───────────
       #
       # Most of this host's ~20 oneshot timers are named in NO alert
