@@ -309,6 +309,7 @@ func registerAppMetricsTail() {
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
 		DecoderPanicsTotal,
+		SourceAmountDegradedTotal,
 	)
 	registerAuthReaperMetrics()
 
@@ -1189,6 +1190,21 @@ var DecoderPanicsTotal = prometheus.NewCounterVec(
 		Help: "Decoder panics recovered by the dispatcher and skipped as decode errors, per source. Non-zero means a decoder bug is dropping every event of that shape.",
 	},
 	[]string{"source"},
+)
+
+// SourceAmountDegradedTotal — per-source, per-field counter of decoded
+// events whose money-bearing field failed to parse into its expected
+// shape (e.g. sorocredit's Liquidation settled_amount, when data[2]
+// isn't a non-empty Vec[i128]). The decode still returns a nil error
+// (Q072): the row is written with the field NULL rather than the event
+// being dropped, so without this counter a zeroed leg in a served SUM
+// is invisible — no error, no failed decode, just a quiet undercount.
+var SourceAmountDegradedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_source_amount_degraded_total",
+		Help: "Decoded events whose money-bearing field could not be parsed and was recorded NULL, labelled by source and field. Non-zero means served volume is silently under-reporting.",
+	},
+	[]string{"source", "field"},
 )
 
 // DispatcherTxReadErrorsTotal — process-wide counter of malformed
