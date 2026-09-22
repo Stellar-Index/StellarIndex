@@ -225,20 +225,12 @@ export default function MethodologyPage() {
         <DefList
           rows={[
             {
-              term: 'Outlier storm',
-              def: 'More than 50% of trades in the window were filtered as statistical outliers. Indicates upstream-data noise that the aggregate cannot trust.',
+              term: 'Single-source deviation',
+              def: 'A closed-bucket VWAP move at or above the class freeze threshold, contributed by only one source — the manipulation signature the threshold table is calibrated against. The same move with more than one corroborating source is a warning, not a freeze.',
             },
             {
-              term: 'Source-class collapse',
-              def: 'All exchange-class sources for a pair drop out simultaneously. Common cause: vendor outage taking out CEX feeds, leaving only DEX trades whose volume is too thin for a confident VWAP.',
-            },
-            {
-              term: 'Cross-oracle divergence',
-              def: 'Our VWAP and ≥2 independent oracles disagree by more than the configured tolerance for the asset class. Catches cases where our ingest has gone wrong without catching the failure ourselves.',
-            },
-            {
-              term: 'Operator-triggered',
-              def: 'On-call can freeze a pair manually during incident response — surfaced on the status page.',
+              term: 'Statistical divergence',
+              def: 'The published price scores below the confidence floor AND its deviation from the rolling per-asset baseline exceeds 5 standard deviations AND it is still single-source, all three at once. Confidence itself blends the baseline z-score, source count and diversity, liquidity, and cross-oracle agreement — divergence alone never freezes a pair on its own.',
             },
           ]}
         />
@@ -251,7 +243,13 @@ export default function MethodologyPage() {
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             /v1/incidents.atom
           </code>
-          .
+          . Freezes are automatic only — on-call cannot start one by hand.
+          Once a freeze has climbed the full extension ladder without
+          clearing on its own, an operator can end it early with{' '}
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
+            stellarindex-ops freeze-unfreeze
+          </code>
+          , which is logged and reflected on the status page immediately.
         </Aside>
       </Section>
 
