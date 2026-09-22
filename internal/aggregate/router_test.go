@@ -21,6 +21,7 @@ const testIssuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 var (
 	xlm      = canonical.NativeAsset()
 	usd      = canonical.Asset{Type: canonical.AssetFiat, Code: "USD"}
+	eur      = canonical.Asset{Type: canonical.AssetFiat, Code: "EUR"}
 	gbp      = canonical.Asset{Type: canonical.AssetFiat, Code: "GBP"}
 	btc      = canonical.Asset{Type: canonical.AssetCrypto, Code: "BTC"}
 	obscure  = canonical.Asset{Type: canonical.AssetClassic, Code: "OBSCURE", Issuer: testIssuer}
@@ -36,6 +37,15 @@ func rq(base, quote canonical.Asset, num, den int64, conf float64) aggregate.Quo
 		Price:      big.NewRat(num, den),
 		Confidence: conf,
 	}
+}
+
+// rqp is [rq] plus a data-provenance list (RLT-278): the underlying row(s)
+// (e.g. an fx_quotes ticker) the quote's price was actually computed from,
+// beyond its nominal pair.
+func rqp(base, quote canonical.Asset, num, den int64, conf float64, provenance ...string) aggregate.Quote {
+	q := rq(base, quote, num, den, conf)
+	q.Provenance = provenance
+	return q
 }
 
 func rl(from, to canonical.Asset, num, den int64, conf float64) aggregate.RouteLeg {
@@ -651,6 +661,46 @@ func TestRouter_CorroborationEdgeDisjointAgreeing(t *testing.T) {
 	if pathCount != 2 || corroboration != 2 {
 		t.Errorf("(pathCount, corroborationCount) = (%d, %d), want (2, 2) — two edge-disjoint "+
 			"agreeing routes are two independent confirmations", pathCount, corroboration)
+	}
+}
+
+// RLT-278: USD/GBP and EUR/GBP are nominally different pairs (edge-disjoint
+// under raw {From,To} identity) but both fiat crosses are snapped from a
+// SHARED underlying fx_quotes GBP row, so the two routes are not
+// independent evidence — corroborationCount must stay at 1, not jump to 2.
+func TestRouter_CorroborationSharedFXProvenance(t *testing.T) {
+	edges := mustEdges(t,
+		rq(obscure, usd, 3, 1, 0.9),
+		rqp(usd, gbp, 1, 5, 0.9, "fx:GBP"), // USD/GBP snaps only the GBP row
+		rq(obscure, eur, 3, 1, 0.9),
+		rqp(eur, gbp, 1, 5, 0.9, "fx:EUR", "fx:GBP"), // EUR/GBP snaps EUR AND GBP rows
+	)
+	_, _, pathCount, corroboration, diverged, _, err := aggregate.CombineRoutes(edges, obscure, gbp, 2, 0)
+	if err != nil {
+		t.Fatalf("CombineRoutes: %v", err)
+	}
+	if diverged {
+		t.Error("diverged=true, want false (routes agree exactly)")
+	}
+	if pathCount != 2 {
+		t.Errorf("pathCount=%d, want 2 (two surviving routes)", pathCount)
+	}
+	if corroboration != 1 {
+		t.Errorf("corroborationCount=%d, want 1 — obscure->USD->GBP and obscure->EUR->GBP "+
+			"both read the same fx_quotes GBP row, so they are one independent confirmation "+
+			"of the GBP rate, not two", corroboration)
+	}
+}
+
+// Companion to [TestRouter_CorroborationSharedFXProvenance]: the primitive
+// itself (no confidence/median machinery) must also see the shared row.
+func TestRouter_MaxEdgeDisjointRoutes_SharedFXProvenance(t *testing.T) {
+	routes := [][]aggregate.RouteLeg{
+		{rl(obscure, usd, 3, 1, 0.9), {From: usd, To: gbp, Price: big.NewRat(1, 5), Confidence: 0.9, Provenance: []string{"fx:GBP"}}},
+		{rl(obscure, eur, 3, 1, 0.9), {From: eur, To: gbp, Price: big.NewRat(1, 5), Confidence: 0.9, Provenance: []string{"fx:EUR", "fx:GBP"}}},
+	}
+	if got := aggregate.MaxEdgeDisjointRoutes(routes); got != 1 {
+		t.Errorf("MaxEdgeDisjointRoutes=%d, want 1 — both legs into GBP share the fx:GBP provenance key", got)
 	}
 }
 
