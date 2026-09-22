@@ -24,8 +24,8 @@
 # Use expect_status for *behaviour pins* — asserting documented 4xx
 # responses (e.g. invalid-cursor, invalid-limit, coin-not-found) so
 # a regression that flips a documented 400 back to a silent 200
-# (the class of bug that motivated #1134) fails the smoke instead
-# of sailing past liveness checks.
+# (the class of bug that motivated these behaviour pins) fails the
+# smoke instead of sailing past liveness checks.
 
 set -uo pipefail
 
@@ -77,7 +77,7 @@ check() {
 # the problem+json error type, not just "some 4xx". Behavioural
 # pinning catches regressions that flip a documented 400 into a
 # silent 200-with-empty-body (the class of bug that motivated this
-# helper — see #1134 / #1135 for context). When STATUS is multi-
+# helper — see #1135 for context). When STATUS is multi-
 # valued, the jq-test runs against whatever body came back — keep
 # it generic ('.type? != null') or omit it for those checks.
 expect_status() {
@@ -270,7 +270,7 @@ echo "  Behaviour pins"
 # These don't just check liveness — they verify the API still
 # returns the documented error envelope, so a regression that
 # weakens a documented 4xx into a silent 200 (the class of bug
-# behind #1134) would fail the smoke immediately.
+# these pins guard against) would fail the smoke immediately.
 expect_status 400 "assets bad limit"     "/v1/assets?limit=999999" \
   -- '.type | endswith("/invalid-limit")'
 # Use a well-formed-but-nonexistent classic asset_id (random
@@ -289,7 +289,7 @@ expect_status 404 "asset not found"      "/v1/assets/AAAA-GA5ZSEJYB37JRC5AVCIA5M
 # Uncomment after rc.38 reaches r1 (signal: `/v1/version` data.version
 # == v0.5.0-rc.38). The PRs below are all in main:
 #
-#   /v1/coins?cursor=garbage 400  (#1134, in main)
+#   /v1/coins?cursor=garbage 400
 #   /v1/markets?cursor=garbage 400 (#1135)
 #   /v1/markets?source=fakesrc 400 (#1162)
 #   /v1/observations?source=fakesrc 400 (#1164)

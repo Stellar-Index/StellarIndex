@@ -487,7 +487,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 		// silent-empty-page anti-pattern: a typo in `?source=`
 		// looks identical on the wire to "this source has no
 		// trades", which sends callers chasing nonexistent data).
-		// Mirrors the same guard pattern on /v1/coins (PR #1134),
+		// Mirrors the same guard pattern on /v1/coins,
 		// /v1/markets cursor (#1135), and /v1/pools.
 		if _, ok := external.Registry[source]; !ok {
 			writeProblem(w, r,
