@@ -14,11 +14,13 @@
 #
 # THE ACCEPTED RISK: the github.com/lib/pq unmaintained-driver disclosure batch
 # --------------------------------------------------------------------------
-# All entries below are in github.com/lib/pq@v1.12.3 — the Postgres wire-protocol
-# driver (go.mod: "Postgres driver (ADR-0006)"). v1.12.3 is already the LATEST
-# release; lib/pq is effectively unmaintained, so there is NO fixed version for
-# any of these (govulncheck reports "Fixed in: N/A" for each). They are the
-# CVE-2026-56868..56874 batch disclosed 2026-08.
+# All entries below are in github.com/lib/pq@v1.10.9 — an INDIRECT dependency
+# pulled in by github.com/golang-migrate/migrate/v4's postgres driver for
+# schema migrations (go.mod: "// indirect"). The app's own Postgres driver is
+# github.com/jackc/pgx/v5 (go.mod: "Postgres driver (ADR-0006)"), which is
+# unaffected by this batch. lib/pq is effectively unmaintained, so there is NO
+# fixed version for any of these (govulncheck reports "Fixed in: N/A" for
+# each). They are the CVE-2026-56868..56874 batch disclosed 2026-08.
 #
 # Every one of these requires either a MALICIOUS / COMPROMISED PostgreSQL server
 # OR an ACTIVE MITM attacker on the pre-authentication transport to exploit —
@@ -38,10 +40,11 @@
 # never pointed at attacker-controlled servers, uses password/trust auth (not
 # GSSAPI), and sets host without a separate hostaddr / .pgpass.
 #
-# THE DURABLE FIX (tracked, post-launch follow-up): migrate off the unmaintained
-# lib/pq to the maintained github.com/jackc/pgx driver, which is not affected by
-# this batch and receives security fixes. That migration is out of scope for a
-# CI unblock and is tracked separately as a post-launch item. Until then, these
+# THE DURABLE FIX: the app's own Postgres access has already moved to the
+# maintained github.com/jackc/pgx driver (ADR-0006), which is not affected by
+# this batch. lib/pq survives only as golang-migrate's transitive schema-
+# migration dependency; removing it entirely depends on golang-migrate
+# dropping its own lib/pq-backed postgres driver upstream. Until then, these
 # risks are accepted on the localhost-only trust-boundary rationale above and
 # re-reviewed whenever this list changes.
 #
