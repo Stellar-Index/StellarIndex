@@ -42,7 +42,7 @@ func TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		prewarmCaches(ctx, discardLogger(), stats, markets, assets, issuers, nil, nil)
+		prewarmCaches(ctx, discardLogger(), stats, markets, assets, issuers, nil, nil, nil)
 	}()
 
 	// Both passes must complete well inside the shorter (60s) cadence,

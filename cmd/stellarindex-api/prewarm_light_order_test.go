@@ -96,7 +96,7 @@ func TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops(t *testin
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
 	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers,
-		[]string{"USDC-GDHUXCJQVGYUYVYEPCTAZ7WMHNMTZJWKUANE2LFXTYUZ3YPDN2PDM26"}, nil)
+		[]string{"USDC-GDHUXCJQVGYUYVYEPCTAZ7WMHNMTZJWKUANE2LFXTYUZ3YPDN2PDM26"}, nil, nil)
 
 	names := order.snapshot()
 

@@ -930,7 +930,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		"seeded", seeded, "requested", requested,
 		"max_age", assetsListingSeedMaxAge.String())
 
-	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, cachedIssuersReader, verifiedAssetIDs, listingSnapshots)
+	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, cachedIssuersReader, verifiedAssetIDs, listingSnapshots, cachedNetworkStats)
 
 	// TLS cert expiry self-probe (F-0051, audit-2026-05-26). Public
 	// TLS is fronted by Caddy + Let's Encrypt with auto-renewal 30d
@@ -5097,6 +5097,7 @@ func prewarmCaches(
 	issuers *v1.CachedIssuersReader,
 	verifiedAssetIDs []string,
 	snaps *assetsListingSnapshots,
+	networkStats *v1.CachedNetworkStatsReader,
 ) {
 	defer recoverBackgroundWorker(logger, "prewarm-caches")
 	heavyCadence := 5 * time.Minute
@@ -5130,7 +5131,7 @@ func prewarmCaches(
 	go func() {
 		defer warm.Done()
 		defer recoverBackgroundWorker(logger, "prewarm-light-initial")
-		prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps)
+		prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps, networkStats)
 	}()
 	go func() {
 		defer warm.Done()
@@ -5151,7 +5152,7 @@ func prewarmCaches(
 		case <-heavyTick.C:
 			prewarmHeavy(ctx, logger, stats)
 		case <-lightTick.C:
-			prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps)
+			prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps, networkStats)
 		}
 	}
 }
@@ -5198,6 +5199,7 @@ func prewarmLight(
 	issuers *v1.CachedIssuersReader,
 	verifiedAssetIDs []string,
 	snaps *assetsListingSnapshots,
+	networkStats *v1.CachedNetworkStatsReader,
 ) {
 	// 5-min ceiling on the whole prewarm cycle. Pre-2026-05-14 this
 	// was 60s shared across ~25 sequential calls — when the first
@@ -5412,6 +5414,16 @@ func prewarmLight(
 	// This runs on the 60s light cadence — 5x inside the 5-minute TTL, so
 	// a dropped cycle still cannot expose a cold slot.
 	prewarmIssuers(mkCtx, logger, issuers)
+
+	// /v1/network/stats (CachedNetworkStatsReader, main.go) had no
+	// prewarm at all (RLT-287): the reader was constructed but never
+	// threaded into this goroutine, so every binary restart left the
+	// explorer's network strip paying the full ~485ms p95 network-wide
+	// aggregate inline on the first request instead of getting a warm
+	// SWR value. Steady state is largely self-healing (the reader
+	// serves stale-while-revalidate once any value exists), so this
+	// closes the cold-start gap specifically.
+	prewarmNetworkStats(mkCtx, logger, networkStats)
 }
 
 // marketsPrewarmLimits are the `?limit=` values the /v1/markets prewarm
@@ -5674,6 +5686,19 @@ func prewarmIssuers(ctx context.Context, logger *slog.Logger, issuers *v1.Cached
 		if _, err := issuers.ListIssuers(ctx, lim); err != nil {
 			logger.Debug("prewarm issuers failed", "limit", lim, "err", err)
 		}
+	}
+}
+
+// prewarmNetworkStats keeps the single /v1/network/stats SWR slot warm.
+//
+// Split out of [prewarmLight] like prewarmIssuers, so the call can be
+// asserted in isolation without standing up the markets/assets readers.
+func prewarmNetworkStats(ctx context.Context, logger *slog.Logger, networkStats *v1.CachedNetworkStatsReader) {
+	if networkStats == nil {
+		return
+	}
+	if _, err := networkStats.GetNetworkStats(ctx); err != nil {
+		logger.Debug("prewarm network stats failed", "err", err)
 	}
 }
 
