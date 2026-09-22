@@ -117,4 +117,51 @@ describe('AccountPositions price envelope', () => {
     expect(screen.getAllByText('$50.00').length).toBeGreaterThan(0);
     expect(screen.getAllByText('$19.50').length).toBeGreaterThan(0);
   });
+
+  it('sums the portfolio total in exact cents, not a re-floated Number multiply (RLT-069)', async () => {
+    // Crafted so `Number(amount) * Number(price)` summed as floats rounds
+    // the total UP to the next cent: float total = $675,005.24, exact
+    // BigInt total (Σ of the two holdings' correctly-rounded cent values)
+    // = $675,005.23. Either holding computed independently and correctly
+    // rounded still sums, in float, to the wrong total.
+    vi.mocked(apiGet).mockImplementation(async (path: string) => {
+      if (path.startsWith('/v1/accounts/')) {
+        return {
+          data: {
+            account_id: ACCOUNT,
+            exists: true,
+            balance: '132764525', // 13.2764525 XLM
+            trustlines: [{ asset: USDC, balance: '6852799660' }], // 685.279966 USDC
+          },
+        };
+      }
+      if (path === '/v1/price/batch') {
+        return {
+          data: [
+            {
+              asset_id: 'crypto:XLM',
+              quote: 'fiat:USD',
+              price: '676.749654447081070430',
+              price_type: 'vwap',
+              observed_at: hoursAgo(1),
+            },
+            {
+              asset_id: USDC,
+              quote: 'fiat:USD',
+              price: '971.895334601568151811',
+              price_type: 'vwap',
+              observed_at: hoursAgo(1),
+            },
+          ],
+          as_of: new Date().toISOString(),
+          flags: { stale: false },
+        };
+      }
+      throw new Error(`unexpected path ${path}`);
+    });
+    renderPanel();
+
+    expect(await screen.findAllByText('$675,005.23')).not.toHaveLength(0);
+    expect(screen.queryByText('$675,005.24')).not.toBeInTheDocument();
+  });
 });

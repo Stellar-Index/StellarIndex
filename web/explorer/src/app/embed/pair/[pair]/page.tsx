@@ -137,9 +137,14 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
 
   const priceNum = price?.price ? Number(price.price) : null;
   const points = chart?.points ?? [];
+  // 24h change: the server's own computed figure (RLT-069) — never
+  // re-derived from two /v1/chart points, which disagrees with it
+  // whenever a bucket is missing or backfilled.
+  const change24hNum =
+    price?.change_24h_pct != null ? Number(price.change_24h_pct) : null;
   const change24h =
-    points.length >= 2 && points[0]?.p && points[points.length - 1]?.p
-      ? (Number(points[points.length - 1].p) / Number(points[0].p) - 1) * 100
+    change24hNum != null && Number.isFinite(change24hNum)
+      ? change24hNum
       : null;
 
   const baseLabel = shortAssetText(base);

@@ -40,6 +40,11 @@ interface PriceResp {
   price_type?: string;
   observed_at?: string;
   window_seconds?: number;
+  // Server-computed trailing-24h percentage change (decimal string,
+  // e.g. "+1.27"). RLT-069: re-deriving this from two /v1/chart points
+  // duplicated a computation the API already publishes and disagreed
+  // with it whenever a bucket was missing or backfilled.
+  change_24h_pct?: string | null;
 }
 
 interface ChartPoint {
@@ -347,11 +352,16 @@ export default async function PairPage({ params }: { params: Params }) {
     perSource.set(t.source, (perSource.get(t.source) ?? 0) + 1);
   }
 
-  // Compute change from the chart points: last vs 24h-ago.
+  // 24h change: the server's own computed figure (RLT-069) — never
+  // re-derived from two /v1/chart points, which disagrees with it
+  // whenever a bucket is missing, backfilled, or the window boundary
+  // doesn't land exactly on the two samples picked here.
   const points = chart?.points ?? [];
+  const change24hNum =
+    price?.change_24h_pct != null ? Number(price.change_24h_pct) : null;
   const change24h =
-    points.length >= 2 && points[0]?.p && points[points.length - 1]?.p
-      ? (Number(points[points.length - 1].p) / Number(points[0].p) - 1) * 100
+    change24hNum != null && Number.isFinite(change24hNum)
+      ? change24hNum
       : null;
   // Render the rest of the fetched /v1/chart series instead of
   // discarding it (visuals survey bug #7): the hourly VWAP trend as a

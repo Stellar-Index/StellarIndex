@@ -45,8 +45,41 @@ type PriceType = components['schemas']['Price']['price_type'];
  */
 interface PricedAt {
   price: number;
+  /** Decimal string exactly as the API served it — RLT-069: the float
+   * `price` above is display-only; the multiply against a holding's
+   * balance must run on this, never on the floated copy. */
+  priceRaw: string;
   priceType: PriceType | null;
   observedAt: string | null;
+}
+
+/**
+ * Exact `baseUnits (integer, `decimals` places) × priceRaw (decimal
+ * string)`, in USD cents, computed entirely in BigInt. RLT-069: the
+ * previous `Number(amount) * Number(price)` float multiply, summed
+ * again as a float across holdings, doesn't preserve Σ parts == whole
+ * for a portfolio total (AGENTS.md invariant 1 — never accumulate
+ * money in float64). Returns null on unparseable input.
+ */
+function valueUsdCents(
+  baseUnits: string,
+  decimals: number,
+  priceRaw: string,
+): bigint | null {
+  const amountMatch = /^-?\d+$/.exec(baseUnits.trim());
+  const priceMatch = /^(-?)(\d+)(?:\.(\d+))?$/.exec(priceRaw.trim());
+  if (!amountMatch || !priceMatch) return null;
+  const [, priceSign, priceWhole, priceFrac = ''] = priceMatch;
+  const amount = BigInt(amountMatch[0]);
+  const priceScaled = BigInt(`${priceSign}${priceWhole}${priceFrac}`);
+  const scale = BigInt(decimals + priceFrac.length);
+  const numerator = amount * priceScaled * 100n;
+  const denom = 10n ** scale;
+  // Round half away from zero at the cent boundary.
+  const half = denom / 2n;
+  return numerator >= 0n
+    ? (numerator + half) / denom
+    : -((-numerator + half) / denom);
 }
 
 interface PriceBatch {
@@ -63,6 +96,10 @@ interface Holding {
   priceUSD: number | null;
   priceType: PriceType | null;
   valueUSD: number | null;
+  /** Exact cents behind valueUSD — the portfolio total sums THIS, never
+   * the re-floated `valueUSD` (RLT-069: float re-sum reintroduces the
+   * per-cent rounding error the BigInt multiply just removed). */
+  valueCents: bigint | null;
 }
 
 const usdFmt = new Intl.NumberFormat('en-US', {
@@ -123,10 +160,12 @@ export function AccountPositions({ id }: { id: string }) {
       let observedAt: string | null = null;
       let oldestMs = Number.POSITIVE_INFINITY;
       for (const row of env.data ?? []) {
-        const p = row.price ? Number(row.price) : NaN;
+        if (!row.price) continue;
+        const p = Number(row.price);
         if (!(Number.isFinite(p) && p > 0)) continue;
         const at: PricedAt = {
           price: p,
+          priceRaw: row.price,
           priceType: row.price_type ?? null,
           observedAt: row.observed_at ?? null,
         };
@@ -171,19 +210,26 @@ export function AccountPositions({ id }: { id: string }) {
     const amount = scaledUnits(raw, 7);
     const priced = priceMap[asset] ?? null;
     const priceUSD = priced?.price ?? null;
-    const valueUSD =
-      priceUSD != null && Number.isFinite(amount) ? amount * priceUSD : null;
+    // Exact BigInt multiply on the raw stroop integer and the API's
+    // decimal price string — RLT-069, see valueUsdCents.
+    const cents = priced ? valueUsdCents(raw, 7, priced.priceRaw) : null;
+    const valueUSD = cents != null ? Number(cents) / 100 : null;
     return {
       asset,
       amount,
       priceUSD,
       priceType: priced?.priceType ?? null,
       valueUSD,
+      valueCents: cents,
     };
   });
   holdings.sort((a, b) => (b.valueUSD ?? -1) - (a.valueUSD ?? -1));
 
-  const total = holdings.reduce((sum, h) => sum + (h.valueUSD ?? 0), 0);
+  const totalCents = holdings.reduce(
+    (sum, h) => sum + (h.valueCents ?? 0n),
+    0n,
+  );
+  const total = Number(totalCents) / 100;
   const pricedCount = holdings.filter((h) => h.valueUSD != null).length;
   const slices = holdings
     .filter((h) => h.valueUSD != null && h.valueUSD > 0)
