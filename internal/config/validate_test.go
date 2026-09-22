@@ -297,6 +297,25 @@ func TestValidate_RejectsBadFields(t *testing.T) {
 			},
 			"s3_cold_secret_key_env",
 		},
+
+		// T209: the bucket field is the sole ColdTieringEnabled gate, so
+		// a bucket set without its region/endpoint used to reach
+		// pipeline.NewColdDataStore with a zero-value Region — SigV4
+		// cannot sign against that. Reject at load time.
+		"cold bucket set without region": {
+			func(c *config.Config) {
+				c.Storage.S3ColdBucketArchive = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+				c.Storage.S3ColdEndpoint = "https://s3.us-east-2.amazonaws.com"
+			},
+			"s3_cold_region",
+		},
+		"cold bucket set without endpoint": {
+			func(c *config.Config) {
+				c.Storage.S3ColdBucketArchive = "aws-public-blockchain/v1.1/stellar/ledgers/pubnet"
+				c.Storage.S3ColdRegion = "us-east-2"
+			},
+			"s3_cold_endpoint",
+		},
 	}
 
 	for name, tc := range cases {

@@ -369,6 +369,24 @@ func (s StorageConfig) validate() error { //nolint:gocognit,gocyclo // dispatch-
 	if s.S3ColdSecretKeyEnv != "" && !envVarNameShapePattern.MatchString(s.S3ColdSecretKeyEnv) {
 		return errEnvNameShape("s3_cold_secret_key_env")
 	}
+	// Cold tiering's enable flag (StorageConfig.ColdTieringEnabled) is
+	// the bucket field alone — region and endpoint have no independent
+	// gate. A bucket set without them reaches
+	// pipeline.NewColdDataStore with a zero-value Region (SigV4 has no
+	// meaningful signature without one) and no BaseEndpoint override,
+	// silently resolving to whatever the AWS default endpoint resolver
+	// guesses for an empty region. Require all three together, same
+	// all-or-nothing shape as the hot tier's S3Endpoint block above.
+	if s.S3ColdBucketArchive != "" {
+		if s.S3ColdRegion == "" {
+			return fmt.Errorf("%w: storage.s3_cold_region required when s3_cold_bucket_archive is set",
+				ErrInvalidConfig)
+		}
+		if s.S3ColdEndpoint == "" {
+			return fmt.Errorf("%w: storage.s3_cold_endpoint required when s3_cold_bucket_archive is set",
+				ErrInvalidConfig)
+		}
+	}
 	// ClickHouse feed-switch dependency (ADR-0034 #10, C3-20): the
 	// projector reads forward events from the CH lake's contract_events,
 	// so CH must actually be BEING WRITTEN — i.e. the real-time dual-sink
