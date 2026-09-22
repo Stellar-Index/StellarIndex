@@ -10,43 +10,8 @@
 // /markets, /accounts, /contracts, /issuers, /ledgers, /transactions
 // (S-022 / S1b): pre-rendered slugs keep their SEO, everything else
 // hydrates from the API via the /assets/shell/ client view.
+import { shellFallback } from '../_shared/shellFallback.js';
+
 export async function onRequest(context) {
-  const { request, env } = context;
-  const url = new URL(request.url);
-  try {
-    const asset = await env.ASSETS.fetch(request);
-    if (asset.status !== 404) {
-      return asset;
-    }
-
-    // Strip the client's conditional-request headers from the shell
-    // sub-fetch — they describe the long-tail URL, not the shell asset
-    // (see functions/markets/[[path]].js for the full rationale; cold
-    // audit 2026-08-04).
-    const shellHeaders = new Headers(request.headers);
-    shellHeaders.delete('if-none-match');
-    shellHeaders.delete('if-modified-since');
-
-    const shell = await env.ASSETS.fetch(
-      new Request(new URL('/assets/shell/', url.origin), {
-        method: request.method,
-        headers: shellHeaders,
-        redirect: request.redirect,
-      }),
-    );
-    // REL-02: propagate the shell fetch's real status — forcing 200 turns
-    // a missing/broken shell into a soft-200 error page.
-    return new Response(shell.body, {
-      status: shell.ok ? 200 : 503,
-      headers: shell.headers,
-    });
-  } catch {
-    // env.ASSETS.fetch (and the Request/URL construction around it) can
-    // throw on a worker-runtime fault (binding unavailable, network fault)
-    // instead of resolving to a Response. Unhandled, that throw surfaces as
-    // CF's raw, unbranded 500 error page rather than the 503 this handler
-    // already returns for a failed shell fetch — treat both failure modes
-    // the same way.
-    return new Response('Service temporarily unavailable', { status: 503 });
-  }
+  return shellFallback(context, '/assets/shell/');
 }

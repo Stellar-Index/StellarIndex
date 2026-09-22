@@ -134,30 +134,28 @@ describe.each(cases)(
   },
 );
 
-// The shell sub-fetch must NOT inherit the client's conditional-request
-// headers.
+// T309: the shell sub-fetch must forward the client's conditional-request
+// headers, and a real 304 from the shell asset server must pass through to
+// the client unchanged rather than being coerced into a 503.
 //
 // `new Request(url, request)` copies every header, including if-none-match
 // and if-modified-since — validators that describe the LONG-TAIL url the
-// client asked for, not the shell asset being read. If one ever matched the
-// shell's own validator, the asset server answers 304 with a null body,
-// `shell.ok` is false (304 is outside 200-299), and the handler turns a
-// healthy cache revalidation into a 503 with an empty body — on the second
-// and every later visit to that url, including every search-engine recrawl.
-//
-// Latent rather than live: production emits no ETag on these routes today
-// (verified 2026-08-04), so a client has no validator to send. That is a
-// property of the platform's current behaviour, not a guarantee this handler
-// makes — hence the unconditional sub-fetch, and this test.
+// client asked for, not the shell asset being read, but they are also the
+// only validators a conforming client can present for the shell asset
+// itself once the origin starts emitting an ETag/Last-Modified on it. The
+// old behaviour (strip both headers unconditionally) meant the fallback
+// could never honor a cache revalidation even when the origin supported
+// one; production emits no ETag on these routes today (verified
+// 2026-08-04), so this was latent rather than live.
 describe.each(cases)(
   '%s/[[path]].js conditional requests',
   (_name, onRequest) => {
-    function contextRecordingShellHeaders(seen) {
+    function contextRecordingShellHeaders(seen, shellStatus = 200) {
       const request = new Request(
         'https://stellarindex.io/whatever/long-tail-id',
         {
           headers: {
-            'if-none-match': '"some-etag-for-a-different-resource"',
+            'if-none-match': '"some-shell-etag"',
             'if-modified-since': 'Wed, 21 Oct 2026 07:28:00 GMT',
           },
         },
@@ -171,12 +169,13 @@ describe.each(cases)(
               if (url.includes('/shell/')) {
                 seen.ifNoneMatch = req.headers.get('if-none-match');
                 seen.ifModifiedSince = req.headers.get('if-modified-since');
-                // A conforming asset server would answer 304 here if the
-                // validator matched. Assert we never let it get the chance.
-                return new Response('<html>shell</html>', {
-                  status: 200,
-                  headers: { 'content-type': 'text/html' },
-                });
+                return new Response(
+                  shellStatus === 304 ? null : '<html>shell</html>',
+                  {
+                    status: shellStatus,
+                    headers: { 'content-type': 'text/html' },
+                  },
+                );
               }
               return new Response('not found', { status: 404 });
             },
@@ -185,12 +184,18 @@ describe.each(cases)(
       };
     }
 
-    it('strips validators from the shell sub-fetch', async () => {
+    it('forwards validators to the shell sub-fetch', async () => {
       const seen = {};
-      const res = await onRequest(contextRecordingShellHeaders(seen));
-      expect(seen.ifNoneMatch).toBeNull();
-      expect(seen.ifModifiedSince).toBeNull();
+      const res = await onRequest(contextRecordingShellHeaders(seen, 200));
+      expect(seen.ifNoneMatch).toBe('"some-shell-etag"');
+      expect(seen.ifModifiedSince).toBe('Wed, 21 Oct 2026 07:28:00 GMT');
       expect(res.status).toBe(200);
+    });
+
+    it('passes through a real 304 from the shell fetch instead of a 503', async () => {
+      const seen = {};
+      const res = await onRequest(contextRecordingShellHeaders(seen, 304));
+      expect(res.status).toBe(304);
     });
   },
 );
