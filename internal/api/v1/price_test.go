@@ -1231,6 +1231,38 @@ func TestPrice_FreezeErrorIsBestEffort(t *testing.T) {
 	}
 }
 
+// TestPrice_FreezeErrorLeavesSingleSourceUnasserted — a freeze lookup
+// error means the freeze status is UNKNOWN, not "confirmed not
+// frozen". Before the fix, the error silently fell into the
+// not-frozen branch and single_source was derived from the raw
+// source count as if the freeze check had actually cleared the pair
+// — asserting a fact (single-sourced AND confirmed unfrozen) the
+// failed read never established. A single-source bucket must not
+// claim single_source=true off that silent assumption, and
+// frozen_checked must reflect the failed read.
+func TestPrice_FreezeErrorLeavesSingleSourceUnasserted(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
+		},
+		sources: map[string][]string{
+			"native/fiat:USD": {"sdex"}, // single source
+		},
+	}
+	frz := &stubFrozenLooker{err: errors.New("redis exploded")}
+	srv := v1.New(v1.Options{Prices: reader, Freeze: frz})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if strings.Contains(body, `"single_source":true`) {
+		t.Errorf("single_source must not be derived from source count when the freeze check itself failed: %s", body)
+	}
+	if strings.Contains(body, `"frozen_checked":true`) {
+		t.Errorf("frozen_checked must be false when the marker read failed: %s", body)
+	}
+}
+
 // TestPrice_NoFreezeLooker_DerivesFromSources — without a FrozenLooker
 // wired, frozen never fires and single_source comes from the
 // observation count.

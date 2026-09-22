@@ -746,6 +746,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	frozen := held.outcome == frozenServeHeld
+	frozenChecked := held.checked
 	if frozen {
 		snapshot, sources, triangulated = held.snapshot, []string{}, held.triangulated
 		stale, viaFallback = true, true
@@ -792,13 +793,26 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		s.attachCompositeFlags(r, &flags, asset, quote, triangulated)
 	}
 	flags.Frozen = frozen
+	flags.FrozenChecked = frozenChecked
 	// SingleSource is forced true when the snapshot is the LKG
 	// fallback — by the ActionFreeze contract every frozen response
 	// is single-sourced (a multi-source bucket couldn't have been
-	// frozen). When NOT frozen, derive from the observation count.
-	if frozen {
+	// frozen). When NOT frozen, derive from the observation count —
+	// except when a WIRED freeze looker's read itself failed: that
+	// leaves `frozen` false by construction, but the true freeze
+	// status for this pair is UNKNOWN, not confirmed-false, so
+	// deriving single_source from the served bucket's source count
+	// would assert a fact the failed read never established. A
+	// deployment with no freeze looker at all has no such gap — there
+	// is no freeze verdict to be wrong about — so it keeps deriving
+	// from sources as before.
+	freezeReadFailed := s.freeze != nil && !frozenChecked
+	switch {
+	case frozen:
 		flags.SingleSource = true
-	} else {
+	case freezeReadFailed:
+		flags.SingleSource = false
+	default:
 		flags.SingleSource = len(sources) == 1
 	}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
@@ -2363,11 +2377,13 @@ func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quot
 
 // lookupFrozen consults the FrozenLooker (when wired) for the
 // supplied pair and returns whether the most-recent published bucket
-// was frozen. Read errors and absence both fall through with
-// frozen=false — same best-effort posture as divergence lookup.
-func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) bool {
+// was frozen. checked is false when no verdict was reached (looker
+// not wired, or the marker read failed) — same two-valued posture as
+// lookupDivergenceFlag, so a caller can tell "confirmed not frozen"
+// from "unknown" instead of silently reading the latter as the former.
+func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) (frozen, checked bool) {
 	if s.freeze == nil {
-		return false
+		return false, false
 	}
 	frozen, err := s.freeze.FrozenForPair(r.Context(), asset, quote)
 	if err != nil {
@@ -2377,9 +2393,9 @@ func (s *Server) lookupFrozen(r *http.Request, asset, quote canonical.Asset) boo
 				"asset", asset.String(),
 				"quote", quote.String())
 		}
-		return false
+		return false, false
 	}
-	return frozen
+	return frozen, true
 }
 
 // frozenServe is the outcome of [Server.resolveFrozenServe]. Three
@@ -2401,8 +2417,14 @@ const (
 
 // frozenResolution carries [Server.resolveFrozenServe]'s verdict.
 // snapshot and triangulated are meaningful only for frozenServeHeld.
+// checked is false when the freeze marker itself could not be read
+// (looker not wired, or the read failed) — outcome is then
+// frozenServeNotFrozen by construction, but that is "unknown",
+// not "confirmed not frozen"; a caller must not derive other
+// facts (e.g. single_source) from it as if it were confirmed.
 type frozenResolution struct {
 	outcome      frozenServe
+	checked      bool
 	snapshot     PriceSnapshot
 	triangulated bool
 }
@@ -2452,12 +2474,12 @@ var frozenHeldWindows = []time.Duration{5 * time.Minute, time.Hour, 24 * time.Ho
 // rejected: there is no last-known-good to prefer, and the only other
 // value on hand is the one being withheld.
 func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote canonical.Asset) frozenResolution {
-	pairBase, frozen := s.frozenPairBase(r, requested, served, quote)
+	pairBase, frozen, checked := s.frozenPairBase(r, requested, served, quote)
 	if !frozen {
-		return frozenResolution{outcome: frozenServeNotFrozen}
+		return frozenResolution{outcome: frozenServeNotFrozen, checked: checked}
 	}
 	if s.triangulated == nil {
-		return frozenResolution{outcome: frozenServeNothingHeld}
+		return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
 	}
 	for _, window := range frozenHeldWindows {
 		value, isTriangulated, found, err := s.triangulated.LookupTriangulatedVWAP(r.Context(), pairBase, quote, window)
@@ -2473,6 +2495,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		}
 		return frozenResolution{
 			outcome:      frozenServeHeld,
+			checked:      true,
 			triangulated: isTriangulated,
 			snapshot: PriceSnapshot{
 				AssetID:   requested.String(),
@@ -2488,7 +2511,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 			},
 		}
 	}
-	return frozenResolution{outcome: frozenServeNothingHeld}
+	return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
 }
 
 // frozenPairBase reports which spelling of the pair carries the freeze
@@ -2508,15 +2531,19 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 // Only when no bucket was read (`served` is zero — the fallback chain
 // answered) is the requested literal's marker consulted: it is the only
 // pair there is to ask about.
-func (s *Server) frozenPairBase(r *http.Request, requested, served, quote canonical.Asset) (canonical.Asset, bool) {
+func (s *Server) frozenPairBase(r *http.Request, requested, served, quote canonical.Asset) (asset canonical.Asset, frozen, checked bool) {
 	governing := served
 	if governing.IsZero() {
 		governing = requested
 	}
-	if s.lookupFrozen(r, governing, quote) {
-		return governing, true
+	frozen, checked = s.lookupFrozen(r, governing, quote)
+	if !checked {
+		return canonical.Asset{}, false, false
 	}
-	return canonical.Asset{}, false
+	if frozen {
+		return governing, true, true
+	}
+	return canonical.Asset{}, false, true
 }
 
 // writeFrozenNothingHeldProblem is the single-asset refusal for
@@ -3166,7 +3193,8 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 			// (K037 class sweep; same rule as [Server.frozenPairBase]).
 			// The value needs no substitution here, unlike the default
 			// path: a frozen pair's `vwap:` key IS what the freeze holds.
-			flags := Flags{Triangulated: triangulated, Frozen: s.lookupFrozen(r, a, q)}
+			frozenVal, frozenChecked := s.lookupFrozen(r, a, q)
+			flags := Flags{Triangulated: triangulated, Frozen: frozenVal, FrozenChecked: frozenChecked}
 			flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
 			writeJSON(w, snap, flags)
 			return

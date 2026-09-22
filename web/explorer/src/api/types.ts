@@ -6567,6 +6567,11 @@ export interface components {
          *       bucket; this response carries the previous bucket's
          *       last-known-good value (ADR-0019). Only fires on `/v1/price`;
          *       tip + observations surfaces ignore freeze.
+         *     - `frozen_checked` — true only when the freeze marker was
+         *       actually read (looker wired and the read succeeded). When
+         *       false, `frozen` is NOT meaningful — the check never ran, so
+         *       `frozen: false` must not be read as "confirmed not frozen".
+         *       Same posture as `divergence_checked`.
          *     - `single_source` — the bucket had only one contributing
          *       source. When `frozen=true` this is forced true (an LKG
          *       fallback is by definition single-sourced). Informational;
@@ -6616,6 +6621,11 @@ export interface components {
             divergence_checked: boolean;
             /** @default false */
             frozen: boolean;
+            /**
+             * @description True only when the freeze marker was actually read (looker wired and the read succeeded). When false, `frozen` is NOT meaningful — the check never ran, so a `false` there must not be read as "confirmed not frozen". Same posture as `divergence_checked`.
+             * @default false
+             */
+            frozen_checked: boolean;
             /** @default false */
             single_source: boolean;
             /**

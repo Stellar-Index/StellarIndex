@@ -73,7 +73,13 @@ type Flags struct {
 	// really "not applicable").
 	OutsideCoverage bool `json:"outside_coverage,omitempty"`
 	Frozen          bool `json:"frozen,omitempty"`
-	SingleSource    bool `json:"single_source,omitempty"`
+	// FrozenChecked reports whether the freeze marker was actually
+	// read. When false, Frozen is NOT meaningful — the check never
+	// ran (looker not wired, or the read failed), so a false Frozen
+	// must not be read as "confirmed not frozen". Same CS-087 shape
+	// as DivergenceChecked.
+	FrozenChecked bool `json:"frozen_checked,omitempty"`
+	SingleSource  bool `json:"single_source,omitempty"`
 	// Diverged is set on a TRIANGULATED /v1/price response when the
 	// composite came from routes that disagreed (the aggregator's
 	// router divergence signal). Mirrors the server's envelope flag;
