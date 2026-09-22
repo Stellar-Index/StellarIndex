@@ -99,6 +99,46 @@ func TestMethodology_BaselineShape(t *testing.T) {
 	}
 }
 
+// TestMethodology_SourcesCarryOnChain pins that /v1/methodology's
+// per-source rows carry `on_chain`, matching /v1/sources (#609,
+// #610). A consumer reading class=exchange off /v1/methodology
+// cannot otherwise tell a dispatcher-path Stellar venue (sdex,
+// soroswap) from an off-chain reference feed (binance, coinbase).
+func TestMethodology_SourcesCarryOnChain(t *testing.T) {
+	srv := v1.New(v1.Options{})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/methodology")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.Methodology `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	gotSources := map[string]v1.MethodologySource{}
+	for _, s := range env.Data.Sources {
+		gotSources[s.Name] = s
+	}
+
+	onChain, ok := gotSources["sdex"]
+	if !ok {
+		t.Fatal("expected source \"sdex\" in Methodology.Sources")
+	}
+	if !onChain.OnChain {
+		t.Error("sdex OnChain = false, want true")
+	}
+
+	offChain, ok := gotSources["binance"]
+	if !ok {
+		t.Fatal("expected source \"binance\" in Methodology.Sources")
+	}
+	if offChain.OnChain {
+		t.Errorf("binance OnChain = true, want false")
+	}
+}
+
 // TestMethodology_SurfacesStablecoinPegConfig confirms operator-
 // declared USD pegs round-trip through the response. Empty when
 // the operator hasn't declared any.

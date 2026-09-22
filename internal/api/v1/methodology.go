@@ -127,6 +127,10 @@ type MethodologySource struct {
 	Paid              bool   `json:"paid"`
 	BackfillAvailable bool   `json:"backfill_available"`
 	BackfillSafe      bool   `json:"backfill_safe"`
+	// OnChain mirrors Source.OnChain (sources.go) — true when the
+	// source observes the Stellar network directly rather than an
+	// off-chain vendor API. See external.IsOnChain.
+	OnChain bool `json:"on_chain"`
 }
 
 // MethodologyReference is a pointer to an ADR or other narrative
@@ -204,6 +208,7 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 			Paid:              md.Paid,
 			BackfillAvailable: md.BackfillAvailable,
 			BackfillSafe:      md.BackfillSafe,
+			OnChain:           external.IsOnChain(name),
 		})
 	}
 
