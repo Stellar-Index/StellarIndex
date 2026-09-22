@@ -290,6 +290,14 @@ jobs:
               - '**/*.go'
               - 'go.mod'
               - 'go.sum'
+              # The OpenAPI spec is a Go-test dependency, not just a web one:
+              # internal/api/v1's handler_spec_fields_test.go and a dozen
+              # sibling spec-parity tests (pkg/client/spec_contract_test.go
+              # etc.) read this file directly. Without it here, a diff
+              # confined to openapi/**  sets `go=false` and the `test` job
+              # (gated on needs.preflight.outputs.go) skips every one of
+              # them — RLT-169.
+              - 'openapi/**'
             web:
               - 'web/**'
               - 'openapi/**'
