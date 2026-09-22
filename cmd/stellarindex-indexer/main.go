@@ -13,9 +13,14 @@
 //
 // Flags:
 //
-//	-config PATH    TOML config file (required)
-//	-dry-run        Load config, open connections, validate, exit.
-//	                No ledgers consumed. Boot sanity only.
+//	-config PATH             TOML config file (required)
+//	-dry-run                 Load config, open connections, validate, exit.
+//	                         No ledgers consumed. Boot sanity only.
+//	-verify-hashdb-from N    Run one ADR-0016 hashdb verify pass over an
+//	-verify-hashdb-to N      explicit [from,to] ledger range against the
+//	                         archive bucket and exit — for verifying or
+//	                         bootstrapping history older than the live
+//	                         trailing window. Both required together.
 //
 // Graceful shutdown: SIGINT + SIGTERM cancel the root context;
 // the binary waits up to 30 s for in-flight work to finish before
@@ -117,6 +122,8 @@ func realMain() int {
 		cfgPath     = flag.String("config", "", "Path to TOML config file (required)")
 		dryRun      = flag.Bool("dry-run", false, "Load config + open connections + exit without ingesting")
 		showVersion = flag.Bool("version", false, "Print version and exit")
+		verifyFrom  = flag.Uint("verify-hashdb-from", 0, "Run one ADR-0016 hashdb verify pass over [from,to] against the archive bucket and exit, instead of ingesting (requires -verify-hashdb-to)")
+		verifyTo    = flag.Uint("verify-hashdb-to", 0, "See -verify-hashdb-from")
 	)
 	flag.Parse()
 
@@ -125,10 +132,25 @@ func realMain() int {
 		return 0
 	}
 
+	rangeFlags := verifyHashDBRangeFlags{from: *verifyFrom, to: *verifyTo}
+	from, to, requested, rerr := rangeFlags.validate()
+	if rerr != nil {
+		fmt.Fprintf(os.Stderr, "stellarindex-indexer: %v\n", rerr)
+		return 2
+	}
+
 	if *cfgPath == "" {
 		fmt.Fprintln(os.Stderr, "stellarindex-indexer: -config is required")
 		flag.Usage()
 		return 2
+	}
+
+	if requested {
+		if err := runVerifyHashDBRange(context.Background(), *cfgPath, from, to); err != nil {
+			fmt.Fprintf(os.Stderr, "stellarindex-indexer: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	if err := run(*cfgPath, *dryRun); err != nil {
@@ -136,6 +158,70 @@ func realMain() int {
 		return 1
 	}
 	return 0
+}
+
+// verifyHashDBRangeFlags holds the -verify-hashdb-from/-to flag pair. The
+// zero value means "not requested" (the ordinary ingest path runs
+// unchanged).
+//
+// T122: hashDBVerifySweep's window was always a strict trailing window off
+// the indexer's own live tip, recomputed every tick by startHashDBVerifier's
+// ticker — there was no way to verify or bootstrap an older range that had
+// already scrolled out of it short of deleting the hashdb file and losing
+// the tamper-evidence baseline. This flag pair, plus runVerifyHashDBRange
+// and the hashDBVerifyPass split above, is that missing entry point.
+type verifyHashDBRangeFlags struct {
+	from, to uint
+}
+
+// validate reports whether either flag was set (requested) and, if so,
+// checks the pair is well-formed. Neither flag set is the common case and
+// returns requested=false with a nil error.
+func (f verifyHashDBRangeFlags) validate() (from, to uint32, requested bool, err error) {
+	if f.from == 0 && f.to == 0 {
+		return 0, 0, false, nil
+	}
+	if f.from == 0 || f.to == 0 {
+		return 0, 0, true, errors.New("-verify-hashdb-from and -verify-hashdb-to must both be set")
+	}
+	if f.from > f.to {
+		return 0, 0, true, fmt.Errorf("-verify-hashdb-from (%d) must be <= -verify-hashdb-to (%d)", f.from, f.to)
+	}
+	return uint32(f.from), uint32(f.to), true, nil
+}
+
+// runVerifyHashDBRange loads cfgPath and runs one bounded ADR-0016 verify
+// pass over the operator-supplied [from, to] range against the archive
+// bucket (pipeline.LedgerstreamConfig's historical-reads config — the same
+// one the ordinary catch-up path uses for ledger < the live seam), then
+// returns. It does not start ingestion.
+func runVerifyHashDBRange(ctx context.Context, cfgPath string, from, to uint32) error {
+	cfg, err := config.LoadWithEnv(cfgPath)
+	if err != nil {
+		return err
+	}
+	logger := mkLogger(cfg.Obs)
+
+	if !cfg.HashDB.Enabled {
+		return fmt.Errorf("verify-hashdb-range: hashdb.enabled is false in %s", cfgPath)
+	}
+
+	verifyDB, err := hashdb.Open(cfg.HashDB.Path)
+	if err != nil {
+		return fmt.Errorf("verify-hashdb-range: open hashdb %s: %w", cfg.HashDB.Path, err)
+	}
+	defer func() {
+		if cerr := verifyDB.Close(); cerr != nil {
+			logger.Warn("hashdb verify handle close", "err", cerr)
+		}
+	}()
+
+	archiveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketArchive)
+	outcome := hashDBVerifyPass(ctx, logger, verifyDB, archiveCfg, from, to)
+	if outcome != sweepOutcomeOK {
+		return fmt.Errorf("verify-hashdb-range: sweep did not complete cleanly (outcome=%d) — see log for detail", outcome)
+	}
+	return nil
 }
 
 //nolint:funlen,gocognit,gocyclo // top-level binary lifecycle; splitting reduces readability of dependency-construction order
@@ -2280,6 +2366,25 @@ func hashDBVerifySweep(
 		return
 	}
 
+	hashDBVerifyPass(ctx, logger, verifyDB, lsCfg, from, to)
+}
+
+// hashDBVerifyPass runs one bounded ADR-0016 verify pass over an explicit
+// [from, to] ledger range and records/logs its outcome. Split out of
+// hashDBVerifySweep (T122) so the same pass can run either off the live
+// tip's trailing window (hashDBVerifySweep's job) OR over an
+// operator-supplied older range that has already scrolled out of that
+// window — see runVerifyHashDBRange, the -verify-hashdb-from/-to CLI mode.
+// Before this split there was no way to verify or bootstrap an arbitrary
+// older range: the only entry point recomputed [from, to] itself from the
+// indexer's own live tip every tick.
+func hashDBVerifyPass(
+	ctx context.Context,
+	logger *slog.Logger,
+	verifyDB *hashdb.DB,
+	lsCfg ledgerstream.Config,
+	from, to uint32,
+) hashDBVerifySweepOutcome {
 	// Stream STRICT: the shared live-tail config tolerates
 	// trailing-missing objects (a live reader racing galexie's upload
 	// edge needs that), but this sweep's window trails ledgers the
@@ -2303,13 +2408,14 @@ func hashDBVerifySweep(
 	res := verifier.Result()
 	dur := time.Since(start).Seconds()
 
-	switch classifyHashDBVerifySweep(res, streamErr, from, to) {
+	outcome := classifyHashDBVerifySweep(res, streamErr, from, to)
+	switch outcome {
 	case sweepOutcomeShutdown:
 		// Shutdown mid-walk with nothing found: don't record any
 		// outcome — a partial, driftless sweep is neither clean nor
 		// failing, and stamping it "ok" would be the same
 		// vacuous-green lie the strict-stream change above removes.
-		return
+		return outcome
 	case sweepOutcomeDrift:
 		// Drift FIRST — even when the stream ALSO errored (including
 		// a shutdown cancel) mid-walk, drift already tallied is the
@@ -2350,6 +2456,7 @@ func hashDBVerifySweep(
 			"verified", res.Verified, "missing", res.Missing, "out_of_range", res.OutOfRange,
 		)
 	}
+	return outcome
 }
 
 // hashDBVerifySweepOutcome is what a completed (or aborted)
