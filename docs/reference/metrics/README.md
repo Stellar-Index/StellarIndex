@@ -2799,6 +2799,15 @@ extensions on one pair and it pages. A sustained rate with
 stuck; rising alongside the gauge usually means broad false-firing
 on cold or sparse per-asset baselines rather than a market event.
 
+### `stellarindex_anomaly_freeze_held_unscored_total`
+
+Counter, no labels.
+
+Freeze holds that expired on an unscored bucket: the restart
+bootstrap or a scoring outage. The hold stays in place without using
+an extension, so the extension and escalation counters stay at zero.
+A sustained rate means scoring is down while a freeze is held.
+
 ### `stellarindex_anomaly_freeze_escalated_total`
 
 Counter, no labels. **Drives a severity:page rule.**
