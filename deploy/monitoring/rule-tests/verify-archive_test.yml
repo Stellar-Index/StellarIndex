@@ -14,6 +14,20 @@
 # The firing cases below hold last_success FIXED while time advances —
 # which is precisely what a job failing every night looks like on the
 # new signal, and what was indistinguishable from health on the old one.
+#
+# Q280: both rules select `stellarindex_verify_archive_last_success_unix
+# {tier=...} > 0`, so a host that has NEVER written the textfile at all
+# (node_exporter down, the collector directory misconfigured, the unit
+# never scheduled) leaves the series absent — not old. `time() - x` over
+# an empty vector is itself empty, so the bare comparison can never fire,
+# exactly the scenario the page exists for (same OBS-2 pattern as
+# restore-drill.yml, curated-rwa-sync.yml, storage.yml's
+# ch-schema-snapshot alert). The "never written" cases below cover that.
+#
+# PROVEN-RED (Q280): delete the `or absent_over_time(...) == 1` arm from
+# either alert in verify-archive.yml and re-run — the matching "never
+# written" case reports 0 firing alerts (FAIL) because with the series
+# absent nothing selects it.
 
 rule_files:
 - ../rules/verify-archive.yml
@@ -68,3 +82,60 @@ tests:
         runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
         summary: verify-archive Tier B checkpoint anchor hasn't run cleanly in 1d 15h 59m 0s
         description: "The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+\n(24h cadence + 12h cushion) — either the timer isn't enabled or\nevery recent attempt failed. The single-source-corruption anchor\ncheck is not running. Lower urgency than the Tier A chain staleness\npage (Tier B is defence-in-depth), but investigate. Diagnosis:\n  - `systemctl status verify-archive-tier-b.timer` — is it active?\n  - `journalctl -u verify-archive-tier-b.service` — what's failing?\n  - is the /srv/history-archive mirror synced to the checked range?\n\nRunbook: docs/operations/runbooks/verify-archive-tier-b.md\n"
+
+# ── Q280: textfile never written at all (series absent, not stale) ──
+- interval: 1h
+  name: chain tier never written pages off the absent_over_time branch
+  input_series:
+  - series: 'up{job="node_exporter",instance="localhost:9100"}'
+    values: '1x40'
+  alert_rule_test:
+  - eval_time: 37h
+    alertname: stellarindex_verify_archive_run_stale
+    exp_alerts:
+    - exp_labels:
+        severity: page
+        team: stellarindex
+        component: archive
+        tier: chain
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-run-stale.md
+        summary: "(R1 integrity-leader) verify-archive Tier A hasn't run cleanly in 1s"
+        description: |
+          R1 is the integrity leader per ADR-0016 — its nightly chain-link
+          verification is what R2/R3 trust. 36h without a clean run means
+          either the timer isn't enabled or every recent attempt failed.
+          Escalate immediately; the cross-region trust property degrades
+          with each missed cycle. Diagnosis:
+            - `systemctl status verify-archive-tier-a.timer` — is it active?
+            - `journalctl -u verify-archive-tier-a.service` — what's failing?
+            - check `archive_files_missing` — a gap upstream blocks verify.
+
+- interval: 1h
+  name: checkpoint tier never written tickets off the absent_over_time branch
+  input_series:
+  - series: 'up{job="node_exporter",instance="localhost:9100"}'
+    values: '1x40'
+  alert_rule_test:
+  - eval_time: 37h
+    alertname: stellarindex_verify_archive_tier_b_run_stale
+    exp_alerts:
+    - exp_labels:
+        severity: ticket
+        team: stellarindex
+        component: archive
+        tier: checkpoint
+      exp_annotations:
+        runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/verify-archive-tier-b.md
+        summary: "verify-archive Tier B checkpoint anchor hasn't run cleanly in 1s"
+        description: |
+          The Tier B checkpoint-anchor timer hasn't fired cleanly in 36h+
+          (24h cadence + 12h cushion) — either the timer isn't enabled or
+          every recent attempt failed. The single-source-corruption anchor
+          check is not running. Lower urgency than the Tier A chain staleness
+          page (Tier B is defence-in-depth), but investigate. Diagnosis:
+            - `systemctl status verify-archive-tier-b.timer` — is it active?
+            - `journalctl -u verify-archive-tier-b.service` — what's failing?
+            - is the /srv/history-archive mirror synced to the checked range?
+
+          Runbook: docs/operations/runbooks/verify-archive-tier-b.md
