@@ -15,6 +15,15 @@ against.
 
 ## [Unreleased]
 
+- **sources — decoder hardening (Q072, RLT-115):** sorocredit counts a
+  settlement whose amounts leg cannot be parsed in the new
+  `stellarindex_source_amount_degraded_total{source,field}`; decoded rows
+  are unchanged. soroswap-router no longer turns a swap deadline at or
+  above 2^63 into a bogus near-epoch timestamp; the deadline is left
+  unset instead. Rows already ingested with such a deadline keep the bad
+  value until the contract-call range is re-derived with
+  `stellarindex-ops ch-rebuild -contract-calls`.
+
 - **docs / CHANGELOG — dangling PR 1132 citation in the rc.5x
   `/v1/coins/{slug}` entry corrected (RSWP-093):** the entry credited its
   case-insensitive-XLM-intercept companion to that PR number; it didn't
