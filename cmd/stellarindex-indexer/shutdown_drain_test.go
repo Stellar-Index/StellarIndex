@@ -167,3 +167,47 @@ func TestShutdownCancelsRootBeforeDraining(t *testing.T) {
 	t.Error("rootCtx is not cancelled between the shutdown select and externalWait() — " +
 		"the external connectors are bound to rootCtx, so the WaitGroup can never drain and the process hangs")
 }
+
+// TestMetricsServerShutsDownAfterTheDrainNotBeforeIt pins Q106: the metrics
+// server used to be shut down immediately after cancel(), before the
+// producer-wait / external-connector-wait / sink-drain sequence that
+// follows. That made /metrics unscrapable for the entire drain window —
+// exactly when an operator most needs to see in-flight drain progress.
+//
+// Asserted positionally, like the guards above: metricsSrv.Shutdown must
+// appear AFTER the sinkDone wait, not between cancel() and it.
+func TestMetricsServerShutsDownAfterTheDrainNotBeforeIt(t *testing.T) {
+	data, err := readMainGo()
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	var code []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		code = append(code, line)
+	}
+
+	sinkDoneIdx, metricsShutdownIdx := -1, -1
+	for i, line := range code {
+		if sinkDoneIdx < 0 && strings.Contains(line, "case <-sinkDone:") {
+			sinkDoneIdx = i
+		}
+		if strings.Contains(line, "metricsSrv.Shutdown(") {
+			metricsShutdownIdx = i
+		}
+	}
+	if sinkDoneIdx < 0 {
+		t.Fatalf("could not locate the sinkDone wait in main.go")
+	}
+	if metricsShutdownIdx < 0 {
+		t.Fatalf("could not locate metricsSrv.Shutdown( in main.go")
+	}
+	if metricsShutdownIdx < sinkDoneIdx {
+		t.Errorf("metricsSrv.Shutdown (line %d) runs BEFORE the sinkDone wait (line %d) — "+
+			"the metrics endpoint goes down before the producer/connector/sink drain sequence runs, "+
+			"making /metrics unscrapable for the whole drain window (Q106). Move the metrics shutdown "+
+			"to after the drain completes.", metricsShutdownIdx+1, sinkDoneIdx+1)
+	}
+}
