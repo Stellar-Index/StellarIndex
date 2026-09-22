@@ -45,7 +45,8 @@
 #                  internal/ops/archive/**, cmd/stellarindex-ops/**,
 #                  migrations/**, scripts/ops/**, test/integration/**,
 #                  test/harness/**, go.mod
-#   go           — any *.go file, go.mod, go.sum
+#   go           — any *.go file, go.mod, go.sum, openapi/** (Go spec-parity
+#                  tests read the spec directly)
 #   web          — web/**, openapi/**
 #   ansible      — configs/ansible/**
 #
@@ -65,7 +66,11 @@ class_integration() {
 }
 
 class_go() {
-  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$'
+  # openapi/** is a Go-test dependency (internal/api/v1's
+  # handler_spec_fields_test.go and its spec-parity siblings read the spec
+  # file directly), not just a web one — a diff confined to it must still
+  # trigger the go-test job. Mirrored in ci.yml's preflight `go` filter.
+  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/'
 }
 
 class_web() {
