@@ -266,6 +266,15 @@ zero = copy.deepcopy(clean)
 each(zero, "samples_avg", lambda v, m: 0.0)
 write("zero_samples", zero)
 
+# `passing_runs_nan` — Prometheus's literal 'NaN' sample value for a plain
+# scalar (not a headline p95/p99/avail/samples cell, so none of the
+# per-cell "unevaluable" handling touches it). float('nan') parses without
+# raising and is truthy, so a naive `scalar(...) or default` never
+# substitutes, and the later `int(passing_runs)` must not raise.
+nanpass = copy.deepcopy(clean)
+each(nanpass, "passing_runs", lambda v, m: float("nan"))
+write("passing_runs_nan", nanpass)
+
 # `public` — the same window measured against a public name instead of
 # loopback. The network-path caveat must follow the configuration.
 write("public", clean)
@@ -328,6 +337,12 @@ assert_empty_dir 'an absent headline series writes NOTHING' "$TMP/out-absent"
 
 render "$TMP/zero_samples.json" "$TMP/out-zero"
 expect 'every endpoint at 0 samples/run → rc 2 REFUSED' 2 'measured nothing'
+
+# A NaN `passing_runs` scalar must not crash the generator with an
+# uncaught `ValueError: cannot convert float NaN to integer` from the
+# later `int(passing_runs)` — it renders like any other clean window.
+render "$TMP/passing_runs_nan.json" "$TMP/out-nanpass"
+expect 'a NaN passing_runs scalar does not crash the generator' 0 'PROVEN — wrote'
 
 render "$TMP/twohosts.json" "$TMP/out-hosts"
 expect 'two hosts merged into one table → rc 2 REFUSED' 2 'span 2 hosts'
