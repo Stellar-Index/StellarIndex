@@ -100,6 +100,25 @@ function recordUpstreamOutcome(ok) {
   }
 }
 
+// T270: the old fixed-precision formatter here dropped into exponential
+// notation below 1e-6 (e.g. "7.407e-7"), the same scientific-notation
+// regression `@/lib/format`'s formatSubunitPrice
+// was written to avoid (2026-08-06: "is not user-friendly"). This
+// function isn't reachable from `src/lib/format.ts` — Pages Functions
+// bundle standalone from the app — so it mirrors formatSubunitPrice's
+// plain-decimal, trimmed-trailing-zero behavior instead of importing it.
+function formatSubPriceDecimal(n, sig = 4) {
+  const abs = Math.abs(n);
+  if (abs === 0) return '0';
+  const leadingZeros = Math.max(0, -Math.floor(Math.log10(abs)) - 1);
+  const decimals = Math.min(leadingZeros + sig, 20);
+  let out = n.toFixed(decimals);
+  if (out.includes('.')) {
+    out = out.replace(/0+$/, '').replace(/\.$/, '');
+  }
+  return out;
+}
+
 // Exported for unit tests only (functions/og/og.test.js) — resets the
 // in-module breaker and rate-limit state so one test's failures/requests
 // don't leak into another.
@@ -137,7 +156,7 @@ export async function liveSubline(type, rawId, apiOrigin) {
           const fmt =
             n >= 1
               ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
-              : n.toPrecision(4);
+              : formatSubPriceDecimal(n);
           return `1 ${code(base)} = ${fmt} ${code(quote)}`;
         }
       }
