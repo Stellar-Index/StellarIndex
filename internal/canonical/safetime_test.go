@@ -149,3 +149,56 @@ func TestSafeUnix_preEpochCloseTimeKeepsTheCeiling(t *testing.T) {
 		t.Errorf("SafeUnixSeconds(2^63, zero time) = %s, want the (zero) close time", got)
 	}
 }
+
+// TestUnboundedUnixSeconds_farFutureHonoured pins the reason this helper
+// exists instead of routing every u64-seconds field through
+// SafeUnixSeconds: a deadline/unlock-time field is legitimately days or
+// years beyond the ledger it was observed on, so a close-time-windowed
+// clamp would destroy a real value.
+func TestUnboundedUnixSeconds_farFutureHonoured(t *testing.T) {
+	raw := uint64(1_800_000_000) // 2027, far beyond any 24h window
+	got, ok := UnboundedUnixSeconds(raw)
+	if !ok {
+		t.Fatalf("ok = false, want true for an in-range far-future value")
+	}
+	want := time.Unix(1_800_000_000, 0).UTC()
+	if !got.Equal(want) {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+// TestUnboundedUnixSeconds_overflowWrapNearEpochRejected is the
+// regression test for RLT-115: a raw value near math.MaxUint64 (a common
+// "no deadline" / "unlimited" sentinel) wraps to a SMALL negative int64,
+// landing near the 1970 epoch — a plausible, postgres-representable time
+// that a downstream pgTimestamptzRepresentable-style range check would
+// NOT catch, silently corrupting the stored deadline/unlock time. This
+// must be rejected at the cast itself.
+func TestUnboundedUnixSeconds_overflowWrapNearEpochRejected(t *testing.T) {
+	for name, raw := range map[string]uint64{
+		"maxUint64":        math.MaxUint64,
+		"maxUint64minus1k": math.MaxUint64 - 1000,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, ok := UnboundedUnixSeconds(raw)
+			if ok {
+				t.Fatalf("ok = true, got %v — wrapped to a plausible near-epoch time instead of being rejected", got)
+			}
+			if !got.IsZero() {
+				t.Errorf("got %v, want zero time on ok=false", got)
+			}
+		})
+	}
+}
+
+// TestUnboundedUnixSeconds_justOverMaxInt64Rejected pins the exact
+// boundary: math.MaxInt64 itself must cast cleanly (positive), and
+// MaxInt64+1 must be rejected rather than silently wrapping negative.
+func TestUnboundedUnixSeconds_justOverMaxInt64Rejected(t *testing.T) {
+	if _, ok := UnboundedUnixSeconds(uint64(math.MaxInt64)); !ok {
+		t.Errorf("ok = false for math.MaxInt64, want true")
+	}
+	if got, ok := UnboundedUnixSeconds(uint64(math.MaxInt64) + 1); ok {
+		t.Errorf("ok = true, got %v, want false for math.MaxInt64+1", got)
+	}
+}

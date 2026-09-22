@@ -3,7 +3,10 @@
 
 package canonical
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 // SafeUnixFutureWindow bounds how far past the ledger close a decoded
 // on-chain timestamp may sit before [SafeUnixSeconds] /
@@ -56,6 +59,27 @@ func SafeUnixSeconds(raw uint64, closedAt time.Time) time.Time {
 		return closedAt.UTC()
 	}
 	return time.Unix(int64(raw), 0).UTC()
+}
+
+// UnboundedUnixSeconds converts a raw u64 UNIX-seconds value to a UTC
+// time WITHOUT clamping it to a close-time window, for fields that are
+// legitimately far in the future relative to the ledger they were
+// observed on — a swap/router deadline or a timelock unlock time — where
+// [SafeUnixSeconds]'s tight ceiling would wrongly clamp a real value.
+//
+// It only guards the int64 cast itself: a raw value above math.MaxInt64
+// wraps NEGATIVE and, for raw values near math.MaxUint64 specifically,
+// wraps to a small negative number — a bogus time near the 1970 epoch
+// that reads as perfectly plausible downstream and is NOT caught by a
+// postgres-timestamptz-range check (unlike a wrap deep into the past,
+// which lands billions of years before 4713 BC and is caught that way).
+// ok is false for any raw value that would wrap; callers should treat
+// that the same as an already-absent value (leave the field unset).
+func UnboundedUnixSeconds(raw uint64) (t time.Time, ok bool) {
+	if raw > uint64(math.MaxInt64) {
+		return time.Time{}, false
+	}
+	return time.Unix(int64(raw), 0).UTC(), true
 }
 
 // SafeUnixMillis is [SafeUnixSeconds] for raw u64 UNIX-milliseconds

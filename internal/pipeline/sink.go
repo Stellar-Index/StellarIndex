@@ -1888,9 +1888,24 @@ func persistBlendEmitterDrop(ctx context.Context, logger *slog.Logger, store *ti
 	return nil
 }
 
+// blendEmitterUnlockTime converts a Soroban-emitted raw UnlockTime to a
+// UTC time, or the zero time if the raw value would overflow the int64
+// cast (see canonical.UnboundedUnixSeconds) — a queued (q_swap)
+// UnlockTime is legitimately days beyond its own ledger close time, so
+// a close-time-windowed guard like SafeUnixSeconds would wrongly clamp
+// a real value (see blend_emitter/README's timelock lifecycle).
+func blendEmitterUnlockTime(raw uint64) time.Time {
+	t, ok := canonical.UnboundedUnixSeconds(raw)
+	if !ok {
+		return time.Time{}
+	}
+	return t
+}
+
 // persistBlendEmitterSwapConfig writes one `q_swap` / `swap` row via
 // Store.InsertBlendEmitterSwapConfig.
 func persistBlendEmitterSwapConfig(ctx context.Context, logger *slog.Logger, store *timescale.Store, e blend_emitter.SwapConfigEvent) error {
+	unlockTime := blendEmitterUnlockTime(e.UnlockTime)
 	if err := store.InsertBlendEmitterSwapConfig(ctx, timescale.BlendEmitterSwapConfigEvent{
 		ContractID:       e.ContractID,
 		Ledger:           e.Ledger,
@@ -1901,7 +1916,7 @@ func persistBlendEmitterSwapConfig(ctx context.Context, logger *slog.Logger, sto
 		Kind:             timescale.BlendEmitterKind(e.Kind),
 		NewBackstop:      e.NewBackstop,
 		NewBackstopToken: e.NewBackstopToken,
-		UnlockTime:       time.Unix(int64(e.UnlockTime), 0).UTC(), //nolint:gosec // UnlockTime is a Soroban-emitted Unix timestamp, in range.
+		UnlockTime:       unlockTime,
 	}); err != nil {
 		obs.SourceInsertErrorsTotal.WithLabelValues(blend_emitter.SourceName, "blend_emitter_swap_config").Inc()
 		logger.Error("insert Blend Emitter swap config failed",

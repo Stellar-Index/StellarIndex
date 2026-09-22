@@ -3,6 +3,7 @@ package soroswap_router
 import (
 	"encoding/base64"
 	"errors"
+	"math"
 	"math/big"
 	"testing"
 	"time"
@@ -213,6 +214,40 @@ func TestDecodeRouterArgs_zeroDeadlineYieldsZeroTime(t *testing.T) {
 	}
 	if !swap.DeadlineTs.IsZero() {
 		t.Errorf("DeadlineTs = %v, want zero time (so the sink NULLs the column)", swap.DeadlineTs)
+	}
+}
+
+// TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime is the
+// regression test for RLT-115. A deadline near math.MaxUint64 (a
+// common "unlimited" sentinel some callers pass instead of 0) wraps
+// NEGATIVE under a bare int64(deadline) cast — landing near the 1970
+// epoch, a bogus but plausible, postgres-representable time that
+// silently corrupts the stored deadline instead of being treated as
+// absent.
+func TestDecodeRouterArgs_overflowDeadlineYieldsZeroTime(t *testing.T) {
+	t.Parallel()
+	a := makeContractAddress(t, byte(0x40))
+	b := makeContractAddress(t, byte(0x41))
+	to := makeAccountAddress(t, byte(0x42))
+
+	args := []string{
+		mustB64(t, i128SCVal(big.NewInt(10))),
+		mustB64(t, i128SCVal(big.NewInt(20))),
+		mustB64(t, vecSCVal(addrSCVal(a), addrSCVal(b))),
+		mustB64(t, addrSCVal(to)),
+		mustB64(t, u64SCVal(math.MaxUint64)), // overflow-wrap sentinel
+	}
+	swap, err := decodeRouterArgs(
+		FnSwapExactTokensForTokens, args,
+		MainnetRouter, 0, "tx", 0, "", "",
+		time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		[]string{MainnetRouter},
+	)
+	if err != nil {
+		t.Fatalf("decodeRouterArgs: %v", err)
+	}
+	if !swap.DeadlineTs.IsZero() {
+		t.Errorf("DeadlineTs = %v, want zero time — got a wrapped near-epoch time instead of the overflow being rejected", swap.DeadlineTs)
 	}
 }
 
