@@ -1,7 +1,7 @@
 ---
 title: Platform spec — customer + staff dashboards, billing, full lifecycle
 last_verified: 2026-07-26
-status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed; §1.5, §2.1, §2.2, §3.1 and §7 marked NOT BUILT against code 2026-09-02 (#363). Sections without a 2026-09-02 note were NOT re-verified
+status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed; §1.5, §2.1, §2.2, §3.1, §7 and §8.3 marked NOT BUILT against code 2026-09-02 (#363), §8.3 added 2026-09-22 (T297). Sections without a re-verification note were NOT re-verified
 ---
 
 # Platform spec — customer + staff dashboards, billing, full lifecycle
@@ -20,8 +20,11 @@ status: design proposal — §7.2 admin endpoints split into SHIPPED vs proposed
 > **Not built:** MFA/TOTP anywhere (§1.5), the `GET /v1/auth/whoami` route
 > (§2.1), the `permissions` JSON model (§2.2 — superseded by key scopes), the
 > `api_usage_events` event-ingestion pipeline (§3 — the table + CAGGs exist in
-> migration 0027 but are permanently empty), the staff perimeter (§7), and the
-> MRR/ARR revenue surfaces (already covered by §4's SUPERSEDED banner).
+> migration 0027 but are permanently empty), the staff perimeter (§7), the
+> MRR/ARR revenue surfaces (already covered by §4's SUPERSEDED banner), and
+> the GDPR data-subject-rights endpoints (§8.3 — no `data-export` or account
+> deletion route exists anywhere in `internal/api/v1`; also blocked on the
+> retention/legal decisions in the still-unmerged privacy-policy draft).
 > The per-section notes added on 2026-09-02 mark each of these inline.
 
 ## Goals
@@ -785,7 +788,17 @@ audit-2026-07-23); the audit row carries `keys_clamped` /
 - `api_usage_events`: 12 months hot, then dropped (customers can
   export their own data anytime)
 
-### 8.3 GDPR / data subject rights
+### 8.3 GDPR / data subject rights — **NOT BUILT**
+
+> **Not implemented (verified 2026-09-22, T297):** `server.go`'s account
+> route table has no `GET /v1/account/data-export` and no `DELETE
+> /v1/account`; only `DELETE /v1/account/keys/{keyID}` exists, which revokes
+> an API key, not the account. Shipping the design below is a legal/product
+> decision, not just an engineering one — the retention window, the
+> verification step for a deletion request, and how erasure interacts with
+> the 7-year archived `audit_log` (§8.2) all need a decision this doc does
+> not make. Track against the terms-of-service/privacy-policy review this
+> section depends on.
 
 Endpoints (rate-limited heavily):
 
