@@ -72,7 +72,7 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 // the same market in both directions has its markets_24h inflated by
 // one per flipped pair.
 func sourceStatsQuery() string {
-	canonBase, canonQuote, _ := canonOrientSQL("base_asset", "quote_asset")
+	canonBase, canonQuote, _ := canonOrientSQL()
 	return `
 		WITH xlm_usd AS (
 		  SELECT vwap

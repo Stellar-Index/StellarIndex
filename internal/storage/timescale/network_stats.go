@@ -77,7 +77,7 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 // Without this, a market that prices_1m recorded in both directions is
 // counted twice.
 func networkStatsQuery() string {
-	canonBase, canonQuote, _ := canonOrientSQL("base_asset", "quote_asset")
+	canonBase, canonQuote, _ := canonOrientSQL()
 	return `
 		SELECT
 		  (SELECT SUM(volume_usd)::text FROM prices_1m
