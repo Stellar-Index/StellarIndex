@@ -119,16 +119,17 @@ var ErrNotSoroban = errors.New("supply: asset is not a SEP-41 Soroban token")
 // the refresher maps it to the paging `compute_error` outcome.
 var ErrNegativeTotalSupply = errors.New("supply: SEP-41 mint − burn − clawback went negative")
 
-// ErrNegativeTotalMissingBaseline is returned when the total goes
-// negative but the contract's pre-Soroban genesis baseline has NOT
-// been seeded (migration 0088, incident 2026-07-06). A classic asset's
-// SAC-wrapper minted largely before Soroban legitimately reads
-// Σburn > Σmint over the Soroban-era-only window until the operator
+// ErrNegativeTotalMissingBaseline is returned whenever the contract's
+// pre-Soroban genesis baseline has NOT been seeded (migration 0088,
+// incident 2026-07-06), regardless of the Soroban-era-only total's
+// sign. A classic asset's SAC-wrapper minted largely before Soroban
+// legitimately reads Σburn > Σmint over the Soroban-era-only window —
+// or, by coincidence, still comes out positive — until the operator
 // seeds its opening balance (`stellarindex-ops supply seed-sep41-genesis`).
-// This is a range-scoped-baseline-missing condition, NOT indexer
-// corruption — the refresher maps it to the benign `missing_baseline`
-// outcome so it doesn't page.
-var ErrNegativeTotalMissingBaseline = errors.New("supply: SEP-41 total negative and pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
+// Either way the total is provisional. This is a range-scoped-
+// baseline-missing condition, NOT indexer corruption — the refresher
+// maps it to the benign `missing_baseline` outcome so it doesn't page.
+var ErrNegativeTotalMissingBaseline = errors.New("supply: SEP-41 pre-Soroban genesis baseline not seeded — run `stellarindex-ops supply seed-sep41-genesis`")
 
 // Compute returns the [Supply] for a SEP-41 Soroban token at the
 // supplied ledger. Per Algorithm 3:
@@ -171,21 +172,30 @@ func (c *SEP41Computer) Compute(ctx context.Context, asset canonical.Asset, ledg
 	total.Sub(total, comps.BurnTotal)
 	total.Sub(total, comps.ClawbackTotal)
 
-	if total.Sign() < 0 {
-		// Distinguish a legitimately-missing pre-Soroban baseline (the
-		// SAC-wrapper's opening balance hasn't been seeded yet — a
-		// negative Soroban-era-only total is EXPECTED, not corruption)
-		// from a genuine post-seed inconsistency (baseline present and
-		// the total is STILL negative — physically impossible). The
-		// former routes to the benign `missing_baseline` outcome; the
-		// latter pages via `compute_error`. Migration 0088 / incident
-		// 2026-07-06.
-		sentinel := ErrNegativeTotalSupply
-		if !comps.GenesisBaselineSeeded {
-			sentinel = ErrNegativeTotalMissingBaseline
-		}
+	// The one-time genesis seed (migration 0088, `stellarindex-ops supply
+	// seed-sep41-genesis`) runs for EVERY watched SEP-41 contract, not just
+	// SAC-wrappers with pre-Soroban history — a Soroban-only contract is
+	// seeded with a zero baseline. So GenesisBaselineSeeded==false means the
+	// totals are provisional regardless of sign: a SAC-wrapper's
+	// Soroban-era-only total can land POSITIVE by coincidence (partial
+	// pre-Soroban history already reflected in early Soroban-era mints) while
+	// still omitting real pre-Soroban supply. Route unseeded contracts to the
+	// benign `missing_baseline` outcome before even looking at the sign, so a
+	// positive-but-incomplete total is never silently published as final.
+	if !comps.GenesisBaselineSeeded {
 		return Supply{}, fmt.Errorf("%w: mint=%s burn=%s clawback=%s for %s at ledger %d",
-			sentinel,
+			ErrNegativeTotalMissingBaseline,
+			comps.MintTotal, comps.BurnTotal, comps.ClawbackTotal,
+			key, ledger)
+	}
+
+	if total.Sign() < 0 {
+		// Baseline is seeded (checked above) and the total is STILL
+		// negative — physically impossible, a genuine post-seed
+		// inconsistency. Pages via `compute_error`. Migration 0088 /
+		// incident 2026-07-06.
+		return Supply{}, fmt.Errorf("%w: mint=%s burn=%s clawback=%s for %s at ledger %d",
+			ErrNegativeTotalSupply,
 			comps.MintTotal, comps.BurnTotal, comps.ClawbackTotal,
 			key, ledger)
 	}
