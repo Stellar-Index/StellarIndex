@@ -352,3 +352,49 @@ func TestNewColdDataStore_RequiresBucket(t *testing.T) {
 		t.Fatal("NewColdDataStore returned no error with an empty s3_cold_bucket_archive")
 	}
 }
+
+// TestNewColdDataStore_RequiresRegion is (half of) the T209 regression:
+// a bucket set without its region used to sail past NewColdDataStore
+// straight into newColdS3Client and out to FromS3Client's live bucket
+// probe, which (with a local stand-in endpoint) fails deep inside the
+// AWS SDK's own endpoint-rule evaluation ("A region must be set when
+// sending requests to S3") rather than at our load-time boundary.
+// config.StorageConfig.validate rejects this shape at load time, but
+// NewColdDataStore is reachable from hand-built configs (tests, future
+// operators) so it must name the actual missing field itself rather
+// than surface the SDK's error from three layers down — the same
+// reason coldCredentials repeats the key-pair check below.
+//
+// The sibling s3_cold_endpoint requirement is covered by
+// config.TestValidate_RejectsBadFields's "cold bucket set without
+// endpoint" case rather than here: an empty endpoint doesn't fail like
+// this — it silently resolves to AWS's real default regional endpoint,
+// so reproducing ITS unfixed behaviour would mean actually reaching
+// live AWS, which this repo's tests must not do.
+func TestNewColdDataStore_RequiresRegion(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/xml")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>` +
+			`<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">` +
+			`<Name>aws-public-blockchain</Name><Prefix>v1.1/stellar/ledgers/pubnet</Prefix>` +
+			`<KeyCount>0</KeyCount><MaxKeys>1</MaxKeys><IsTruncated>false</IsTruncated>` +
+			`</ListBucketResult>`))
+	}))
+	defer srv.Close()
+
+	storage := coldOnlyStorage()
+	storage.S3ColdEndpoint = srv.URL
+	storage.S3ColdRegion = ""
+
+	_, err := NewColdDataStore(context.Background(), storage)
+	if err == nil {
+		t.Fatal("NewColdDataStore returned no error with an empty s3_cold_region alongside a set " +
+			"s3_cold_bucket_archive")
+	}
+	if !strings.Contains(err.Error(), "s3_cold_region") {
+		t.Errorf("err = %q, want it to name storage.s3_cold_region directly (not the AWS SDK's "+
+			"generic endpoint-resolution failure three layers down)", err)
+	}
+}

@@ -82,6 +82,19 @@ func NewColdDataStore(ctx context.Context, storage config.StorageConfig) (datast
 	if storage.S3ColdBucketArchive == "" {
 		return nil, fmt.Errorf("cold datastore: storage.s3_cold_bucket_archive is empty (cold tiering disabled)")
 	}
+	// config.StorageConfig.validate rejects a bucket set without its
+	// region/endpoint at load time; the check is repeated here for the
+	// same reason coldCredentials repeats the key-pair check below —
+	// this func is reachable from callers that build a StorageConfig by
+	// hand (tests, future operators). Without it a bare bucket reaches
+	// newColdS3Client with a zero-value Region, which SigV4 cannot sign
+	// against.
+	if storage.S3ColdRegion == "" {
+		return nil, fmt.Errorf("cold datastore: storage.s3_cold_region is empty (required when s3_cold_bucket_archive is set)")
+	}
+	if storage.S3ColdEndpoint == "" {
+		return nil, fmt.Errorf("cold datastore: storage.s3_cold_endpoint is empty (required when s3_cold_bucket_archive is set)")
+	}
 	client, err := newColdS3Client(storage)
 	if err != nil {
 		return nil, err
