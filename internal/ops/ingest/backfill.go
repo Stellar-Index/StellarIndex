@@ -27,6 +27,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // SorobanEventsPseudoSource is the backfill-only source name that
@@ -253,13 +254,10 @@ func backfill(args []string) error {
 	errCh := make(chan error, len(chunks))
 	for i, c := range chunks {
 		wg.Add(1)
-		go func(i int, c chunkRange) {
-			defer wg.Done()
-			chunkLogger := logger.With("chunk", i, "chunk_from", c.from, "chunk_to", c.to)
-			if err := runBackfillChunk(rootCtx, chunkLogger, opts, cfg, store, c); err != nil {
-				errCh <- fmt.Errorf("chunk %d [%d, %d]: %w", i, c.from, c.to, err)
-			}
-		}(i, c)
+		chunkLogger := logger.With("chunk", i, "chunk_from", c.from, "chunk_to", c.to)
+		go runChunkGuarded(chunkLogger, fmt.Sprintf("backfill-chunk-%d", i), i, c, errCh, &wg, func() error {
+			return runBackfillChunk(rootCtx, chunkLogger, opts, cfg, store, c)
+		})
 	}
 	wg.Wait()
 	close(errCh)
@@ -280,6 +278,26 @@ func backfill(args []string) error {
 	)
 	backfillOK = true
 	return nil
+}
+
+// runChunkGuarded runs one chunk's work (run) with panic recovery so a
+// panic inside a single parallel chunk cannot take the whole backfill
+// process down (NS27): an unrecovered panic in any goroutine terminates
+// the entire Go process, not just the goroutine that panicked. The
+// panicking chunk is reported via worker.Report (same accounting as every
+// other detached worker) and surfaced through errCh so the backfill still
+// returns a non-nil error instead of silently completing short.
+func runChunkGuarded(logger *slog.Logger, name string, i int, c chunkRange, errCh chan<- error, wg *sync.WaitGroup, run func() error) {
+	defer wg.Done()
+	defer func() {
+		if r := recover(); r != nil {
+			worker.Report(logger, name, r)
+			errCh <- fmt.Errorf("chunk %d [%d, %d]: panic: %v", i, c.from, c.to, r)
+		}
+	}()
+	if err := run(); err != nil {
+		errCh <- fmt.Errorf("chunk %d [%d, %d]: %w", i, c.from, c.to, err)
+	}
 }
 
 // buildChunkDispatcher constructs the per-chunk dispatcher and,
