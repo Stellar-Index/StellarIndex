@@ -371,6 +371,13 @@ stale_patterns=(
                                   # fix as PR "#879"; #879 now resolves to
                                   # an unrelated live issue (DirectoryLabel
                                   # scam-tag case-sensitivity), not that fix
+  "\(#888\)\|shipped in #888"    # dangling ref (RSWP-054) — CHANGELOG's
+                                  # navbar mobile menu / IA-restructure,
+                                  # /signin placeholder, and forex
+                                  # placeholder entries cited "#888"; it
+                                  # now resolves to an unrelated live
+                                  # issue (Timescale job-failure alert
+                                  # arithmetic), not any of those features
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \

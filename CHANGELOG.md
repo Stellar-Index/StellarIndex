@@ -37,6 +37,15 @@ against.
   replacement number; `scripts/ci/lint-docs.sh`'s stale-reference
   check now guards against it reappearing.
 
+- **docs / CHANGELOG — dangling `#888` citations in the navbar mobile
+  menu, /signin, and /v1/currencies entries corrected (RSWP-054):**
+  all three credited their preceding placeholder to "#888"; that
+  number now resolves to an unrelated, currently-open issue (Timescale
+  job-failure alert arithmetic), so the references pointed at real but
+  unrelated content instead of just dangling. Removed the citations
+  rather than guess a replacement number; `scripts/ci/lint-docs.sh`'s
+  stale-reference check now guards against it reappearing.
+
 - **sources — decoder hardening (Q072, RLT-115):** sorocredit counts a
   settlement whose amounts leg cannot be parsed in the new
   `stellarindex_source_amount_degraded_total{source,field}`; decoded rows
@@ -29272,7 +29281,7 @@ roll forward verbatim.)
   the explorer side.
 
 ### Fixed
-- **Navbar mobile menu.** The IA-restructure (#888) wrapped the
+- **Navbar mobile menu.** The IA-restructure wrapped the
   desktop nav in `hidden md:flex` without a mobile fallback —
   < 768px screens saw only the logo. New hamburger drawer mirrors
   the desktop dropdowns: Currencies link, Blockchain group
@@ -29378,7 +29387,7 @@ roll forward verbatim.)
   Replaces /signup's "POST /v1/signup → here is your plaintext key"
   flow with a magic-link form posting to /v1/auth/login (which
   already existed via the dashboardauth bundle). The /signin
-  placeholder shipped in #888 also gets the real form. Both pages
+  placeholder also gets the real form. Both pages
   share the same `SignInForm` component with a `mode` flag for
   copy variation. The email link goes to whatever the operator
   configured as DashboardBaseURL — the existing dashboardauth
@@ -29409,7 +29418,7 @@ roll forward verbatim.)
   unavailable). 404 with problem+json shape when the ticker isn't
   in the snapshot; 503 while the cache warms up.
 - **`GET /v1/currencies` + /currencies real table.** Replaces the
-  forex placeholder shipped in #888 with live fiat coverage. New
+  forex placeholder with live fiat coverage. New
   `internal/sources/forex` package wraps the free, MIT-licensed
   currency-api (ECB / FRBNY-aggregated, daily-updated, 200+
   currencies, no API key, hosted on jsDelivr). The API binary
