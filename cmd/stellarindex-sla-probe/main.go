@@ -193,6 +193,17 @@ type slaTargets struct {
 	AvailabilityPct float64 `json:"availability_pct"`
 }
 
+// validateConcurrency rejects a -concurrency value that would break
+// collectSamples: 0 spawns no workers (wg.Wait returns instantly with
+// no samples, so every endpoint reads as failed) and a negative value
+// panics on wg.Add's negative counter check.
+func validateConcurrency(c int) error {
+	if c <= 0 {
+		return fmt.Errorf("-concurrency must be >= 1, got %d", c)
+	}
+	return nil
+}
+
 func main() {
 	// API key default falls through to STELLARINDEX_PROBE_API_KEY so
 	// the systemd unit can pass it via Environment= without leaking
@@ -225,6 +236,11 @@ func main() {
 	if *baseURL == "" {
 		fmt.Fprintln(os.Stderr, "stellarindex-sla-probe: -base-url is required")
 		flag.Usage()
+		os.Exit(2)
+	}
+
+	if err := validateConcurrency(*concurrency); err != nil {
+		fmt.Fprintf(os.Stderr, "stellarindex-sla-probe: %v\n", err)
 		os.Exit(2)
 	}
 
