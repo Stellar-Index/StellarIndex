@@ -317,6 +317,10 @@ stale_patterns=(
                                   # unrelated issue, so the reference would
                                   # resolve to the wrong thing instead of just
                                   # dangling
+  "#1272\b"                      # coverage-matrix's R-014 entry cited this as
+                                  # the PR (RSWP-145); no PR exists for that
+                                  # commit and #1272 is now a real, unrelated
+                                  # live issue (dashboard webhook role gate)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
