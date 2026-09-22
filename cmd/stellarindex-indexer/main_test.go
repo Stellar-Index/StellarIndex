@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
@@ -127,6 +128,73 @@ func TestAggregatorPairsFromCatalogue_ReportsSkippedTickers(t *testing.T) {
 
 	if !strings.Contains(buf.String(), "ZZZFAKE") {
 		t.Fatalf("skip warning missing ticker ZZZFAKE, log = %s", buf.String())
+	}
+}
+
+// TestMergeAggregatorPairs_SupplementsRatherThanReplaces pins Q104:
+// a catalogue yielding even one pair must not silently replace the
+// hardcoded defaultAggregatorPairs() set — it supplements it. Before
+// the fix, `len(aggregatorPairs) == 0` was the only fallback trigger,
+// so a catalogue with a single ticker (e.g. only BTC) would drop
+// every other hardcoded ticker (XLM, ETH, ADA, ...) from aggregator
+// polling.
+func TestMergeAggregatorPairs_SupplementsRatherThanReplaces(t *testing.T) {
+	t.Parallel()
+
+	btc, err := canonical.NewCryptoAsset("BTC")
+	if err != nil {
+		t.Fatalf("NewCryptoAsset(BTC): %v", err)
+	}
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("NewFiatAsset(USD): %v", err)
+	}
+	btcUSD, err := canonical.NewPair(btc, usd)
+	if err != nil {
+		t.Fatalf("NewPair(BTC,USD): %v", err)
+	}
+
+	// A catalogue that resolved to exactly one pair (as a catalogue
+	// with only one coingecko_id-bearing ticker would).
+	catalogue := []canonical.Pair{btcUSD}
+	defaults := defaultAggregatorPairs()
+
+	got := mergeAggregatorPairs(catalogue, defaults)
+
+	// XLM/USD is in the hardcoded default set but not in the
+	// one-pair catalogue result — it must survive the merge.
+	xlm, err := canonical.NewCryptoAsset("XLM")
+	if err != nil {
+		t.Fatalf("NewCryptoAsset(XLM): %v", err)
+	}
+	xlmUSD, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair(XLM,USD): %v", err)
+	}
+	var foundXLM bool
+	for _, p := range got {
+		if p.String() == xlmUSD.String() {
+			foundXLM = true
+			break
+		}
+	}
+	if !foundXLM {
+		t.Fatalf("mergeAggregatorPairs dropped XLM/USD from the hardcoded default set; got %d pairs: %v", len(got), got)
+	}
+
+	// No duplicate of the catalogue-supplied BTC/USD pair.
+	var btcCount int
+	for _, p := range got {
+		if p.String() == btcUSD.String() {
+			btcCount++
+		}
+	}
+	if btcCount != 1 {
+		t.Fatalf("BTC/USD appeared %d times, want exactly 1 (deduped)", btcCount)
+	}
+
+	if len(got) != len(defaults) {
+		t.Fatalf("merged set = %d pairs, want %d (defaults ∪ catalogue with no new tickers)", len(got), len(defaults))
 	}
 }
 
