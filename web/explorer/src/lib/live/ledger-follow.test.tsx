@@ -201,3 +201,20 @@ describe('useLedgerFollow', () => {
     expect(followThrottleSizeForTest()).toBe(0);
   });
 });
+
+// T648: resetLedgerFollowThrottleForTest is an ungated production export
+// that clears module-level state shared by every mounted follower. It
+// must refuse to run outside tests rather than being callable from a
+// production bundle.
+describe('resetLedgerFollowThrottleForTest production gating', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('throws when called with NODE_ENV=production', () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    expect(() => resetLedgerFollowThrottleForTest()).toThrow(
+      /must not be called outside tests/,
+    );
+  });
+});
