@@ -33,6 +33,30 @@ func TestPercentile_LinearInterp(t *testing.T) {
 	}
 }
 
+func TestValidateConcurrency_RejectsZeroAndNegative(t *testing.T) {
+	cases := []struct {
+		name    string
+		c       int
+		wantErr bool
+	}{
+		{"negative", -1, true},
+		{"zero", 0, true},
+		{"one", 1, false},
+		{"positive", 8, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateConcurrency(tc.c)
+			if tc.wantErr && err == nil {
+				t.Fatalf("validateConcurrency(%d) = nil, want error", tc.c)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("validateConcurrency(%d) = %v, want nil", tc.c, err)
+			}
+		})
+	}
+}
+
 func TestRunProbe_PassPath(t *testing.T) {
 	// Fake API: every request returns 200 + a healthz-shaped body
 	// + an observed_at near now (so freshness < 30s).
