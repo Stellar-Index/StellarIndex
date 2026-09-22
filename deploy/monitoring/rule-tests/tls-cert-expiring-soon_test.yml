@@ -1,0 +1,53 @@
+# promtool unit tests for Q191: stellarindex_tls_cert_expiring_soon had no
+# absent()/absent_over_time() arm, unlike stellarindex_api_price_stale a few
+# lines above it in the same file. If the TLS self-probe
+# (internal/api/v1/tls_probe.go) wedges or crashes, the
+# stellarindex_tls_cert_not_after_unix gauge goes ABSENT rather than
+# reporting a safe value, and a bare `< 14d and > 0` comparison sees no
+# data and never fires — the exact case this alert exists to catch (an
+# unattended cert heading for expiry) goes silent.
+#
+#   promtool test rules deploy/monitoring/rule-tests/tls-cert-expiring-soon_test.yml
+
+rule_files:
+  - ../rules/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  # The gauge is present and healthy (expiry far in the future): no alert.
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_tls_cert_not_after_unix{job="stellarindex_api",instance="r1:8080",host="api.stellarindex.io"}'
+        values: '2000000000+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_tls_cert_expiring_soon
+        exp_alerts: []
+
+  # The prober goes silent (crash/wedge) for over an hour: the gauge series
+  # is entirely absent. This is the case the missing arm could never catch.
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_tls_cert_expiring_soon
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+              summary: "TLS cert for  expires in <14 days"
+              description: |
+                The leaf certificate for  expires at
+                1970-01-01 00:00:01 +0000 UTC. Caddy's Let's Encrypt
+                auto-renewal normally triggers 30 days before expiry;
+                this alert firing means the renewal hasn't happened
+                (rate limit, DNS issue, ACME quota, Caddy stuck). If the
+                gauge is ABSENT (the absent_over_time branch fires alone),
+                the TLS prober itself is down — check it before assuming
+                the cert is fine.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md

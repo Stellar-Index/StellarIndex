@@ -1,0 +1,49 @@
+# promtool unit tests for Q191 against the R1 OVERLAY —
+# configs/prometheus/rules.r1/, the tree r1 actually loads. Case-for-case
+# the same as tls-cert-expiring-soon_test.yml (read its header for what the
+# gap was); only rule_files differs. lint-rule-equivalence keeps the two
+# trees' expr/for in step, but it compares text — this proves the overlay's
+# copy actually catches an absent prober, which is the property the class
+# lacked.
+#
+#   promtool test rules deploy/monitoring/rule-tests/tls-cert-expiring-soon-r1_test.yml
+
+rule_files:
+  - ../../../configs/prometheus/rules.r1/api.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'stellarindex_tls_cert_not_after_unix{job="stellarindex-api",instance="r1:8080",host="api.stellarindex.io"}'
+        values: '2000000000+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_tls_cert_expiring_soon
+        exp_alerts: []
+
+  - interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_tls_cert_expiring_soon
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
+              summary: "TLS cert for  expires in <14 days"
+              description: |
+                The leaf certificate for  expires at
+                1970-01-01 00:00:01 +0000 UTC. Caddy's Let's Encrypt
+                auto-renewal normally triggers 30 days before expiry;
+                this alert firing means the renewal hasn't happened
+                (rate limit, DNS issue, ACME quota, Caddy stuck). If the
+                gauge is ABSENT (the absent_over_time branch fires alone),
+                the TLS prober itself is down — check it before assuming
+                the cert is fine.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
