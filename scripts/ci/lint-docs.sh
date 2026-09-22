@@ -479,6 +479,11 @@ stale_patterns=(
                                   # number that didn't exist yet; #1227 is
                                   # now a real, unrelated live issue (supply
                                   # policy SDFReserveAccounts strkey gap)
+  "PR #1232"                     # dangling ref (RSWP-129) — CHANGELOG's
+                                  # explorer common-name 404 redirects entry
+                                  # cited a PR number that didn't exist yet;
+                                  # #1232 is now a real, unrelated live issue
+                                  # (Tier D verify-archive cron lock/watchdog gap)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
