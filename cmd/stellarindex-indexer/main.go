@@ -966,12 +966,6 @@ func run(cfgPath string, dryRun bool) error {
 	shutdownCtx, stopDrain := context.WithTimeout(context.Background(), pipeline.ShutdownDeadline)
 	defer stopDrain()
 
-	if metricsSrv != nil {
-		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
-			logger.Warn("metrics server shutdown", "err", err)
-		}
-	}
-
 	// G20-02: when we entered shutdown via rootCtx.Done() (not via the
 	// producer's own exit), the ledgerstream producer goroutine may
 	// still be mid-`events <- ev`. Closing `events` underneath it is a
@@ -1038,6 +1032,17 @@ func run(cfgPath string, dryRun bool) error {
 			logger.Warn("projector drain timeout — hard exit")
 		}
 	}
+	// Shut the metrics server down last, after the drain sequence above
+	// has run to completion (or timed out). Doing this earlier — right
+	// after cancel() — made /metrics unscrapable for the entire drain
+	// window that follows, which is exactly when an operator most needs
+	// to see in-flight drain progress (Q106).
+	if metricsSrv != nil {
+		if err := metricsSrv.Shutdown(shutdownCtx); err != nil {
+			logger.Warn("metrics server shutdown", "err", err)
+		}
+	}
+
 	// Surface the producer's failure only now that everything it had
 	// already produced has been persisted. The exit code is unchanged;
 	// what changed is that the buffer is not thrown away first.
