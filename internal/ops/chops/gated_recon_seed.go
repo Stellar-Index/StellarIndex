@@ -61,8 +61,22 @@ func preseedFactoryChildren(ctx context.Context, store *timescale.Store, src rec
 	if err != nil {
 		return fmt.Errorf("preseed %s factory children: %w", src.name, err)
 	}
-	if seeded > 0 {
-		fmt.Fprintf(os.Stderr, "verify-reconciliation: pre-seeded %d %s factory children (gate registry)\n", seeded, src.name)
-	}
+	fmt.Fprint(os.Stderr, preseedResultMessage(src.name, seeded))
 	return nil
+}
+
+// preseedResultMessage reports the outcome of a factory preseed walk,
+// including the zero case. A silent zero is indistinguishable from "this
+// source's window genuinely predates every deploy" (RLT-395): the walk
+// covers a non-empty, non-inverted window (preseedFactoryChildren already
+// returned early otherwise), so finding no creation events there is
+// suspicious enough to surface — an empty in-memory registry makes the
+// gated decoder's Matches() reject every real child's events for the rest
+// of the re-derive, which reports them as missing rather than as the
+// decoder-blind gap they actually are.
+func preseedResultMessage(name string, seeded int) string {
+	if seeded > 0 {
+		return fmt.Sprintf("verify-reconciliation: pre-seeded %d %s factory children (gate registry)\n", seeded, name)
+	}
+	return fmt.Sprintf("verify-reconciliation: WARNING %s factory preseed walk found 0 children in a non-empty window — gate registry stays empty; any pre-existing pool's events will be undercounted as missing, not attributed, for the rest of this re-derive\n", name)
 }
