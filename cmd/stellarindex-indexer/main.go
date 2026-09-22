@@ -1120,12 +1120,11 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 	// R-018 Phase 1.2: derive the set from the verified-currency
 	// catalogue so adding USDT / EURC / a new global crypto to the
 	// seed yaml automatically expands aggregator coverage. The
-	// hardcoded list (`defaultAggregatorPairs`) remains as a
-	// fallback when the catalogue isn't wired.
-	aggregatorPairs := aggregatorPairsFromCatalogue(catalogue, logger)
-	if len(aggregatorPairs) == 0 {
-		aggregatorPairs = defaultAggregatorPairs()
-	}
+	// hardcoded list (`defaultAggregatorPairs`) is unioned in, not
+	// replaced — a catalogue yielding even one pair must not drop
+	// coverage for a hardcoded ticker the catalogue hasn't (yet)
+	// picked up a coingecko_id for (Q104).
+	aggregatorPairs := mergeAggregatorPairs(aggregatorPairsFromCatalogue(catalogue, logger), defaultAggregatorPairs())
 
 	if cfg.CoinGecko.Enabled {
 		p := externalcoingecko.NewPoller()
@@ -1779,6 +1778,28 @@ func reportSkippedAggregatorTickers(skipped []string, logger *slog.Logger) {
 	sort.Strings(skipped)
 	logger.Warn("aggregator catalogue: tickers excluded from cross-check pairs — not on ADR-0014 crypto allow-list",
 		"tickers", skipped, "count", len(skipped))
+}
+
+// mergeAggregatorPairs unions the catalogue-derived aggregator pairs
+// with the hardcoded fallback set, deduplicated by wire form
+// (Pair.String()). The catalogue supplements defaultAggregatorPairs
+// rather than replacing it: a catalogue that yields pairs for some
+// tickers must not silently drop coverage for a hardcoded ticker the
+// catalogue hasn't (yet) picked up a coingecko_id for.
+func mergeAggregatorPairs(catalogue, defaults []canonical.Pair) []canonical.Pair {
+	out := make([]canonical.Pair, 0, len(catalogue)+len(defaults))
+	seen := make(map[string]struct{}, len(catalogue)+len(defaults))
+	for _, sets := range [][]canonical.Pair{catalogue, defaults} {
+		for _, p := range sets {
+			key := p.String()
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // defaultAggregatorPairs is the pre-catalogue hardcoded pair set
