@@ -46,6 +46,15 @@ against.
   rather than guess a replacement number; `scripts/ci/lint-docs.sh`'s
   stale-reference check now guards against it reappearing.
 
+- **docs / CHANGELOG — dangling issue 971 citation in the rc.23
+  Massive.com forex-provider entry corrected (RSWP-057):** that number was
+  cited as the originating issue; it has since been reused by an unrelated
+  live issue (a `RedisAPIKeyValidator.statusCache` eviction finding), so
+  the citation no longer 404s — it silently points a reader at unrelated
+  content, which is worse than a dead link. Removed the citation rather
+  than guess a replacement number; `scripts/ci/lint-docs.sh`'s
+  stale-reference check now guards against it reappearing.
+
 - **sources — decoder hardening (Q072, RLT-115):** sorocredit counts a
   settlement whose amounts leg cannot be parsed in the new
   `stellarindex_source_amount_degraded_total{source,field}`; decoded rows
@@ -29244,7 +29253,7 @@ roll forward verbatim.)
 
 ### Added
 - **Massive.com forex provider replaces the currency-api jsDelivr
-  shim** (#971). `/v1/currencies` now sources rates from
+  shim.** `/v1/currencies` now sources rates from
   `api.massive.com` (Polygon-shape REST). Hourly grain instead of
   daily, so `change_1h_pct` / `change_24h_pct` / `change_7d_pct`
   are honest rolling-window percentages. Operator must export
