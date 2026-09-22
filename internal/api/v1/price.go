@@ -1082,8 +1082,47 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 	return snap, srcs, stale, err
 }
 
-// readPriceWithAliasesServed is [Server.readPriceWithAliases] plus the
-// one thing its echo deliberately hides: WHICH alias's market the
+// priceReadResult carries readPriceWithAliasesServedOnce's return tuple
+// through singleflight.Group.Do, which only carries one value.
+type priceReadResult struct {
+	snap   PriceSnapshot
+	srcs   []string
+	stale  bool
+	served canonical.Asset
+}
+
+// priceReadFlightTimeout bounds a coalesced price read. It runs on a
+// context detached from any single caller — the same "survives
+// per-caller cancellation" shape as lakeWMFlight (server.go) and
+// internal/metadata/cache.go's fetch slot — so one caller's
+// cancellation or disconnect can't cut the read short for every other
+// request waiting on the same (asset, quote) key.
+const priceReadFlightTimeout = 8 * time.Second
+
+// readPriceWithAliasesServed is [Server.readPriceWithAliasesServedOnce]
+// coalesced across concurrent requests for the same (asset, quote) pair
+// via singleflight: a burst of identical requests for a hot pair drives
+// ONE upstream read instead of one each (HO-344).
+func (s *Server) readPriceWithAliasesServed(_ context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, error) {
+	key := asset.String() + "/" + quote.String()
+	v, err, _ := s.priceReadFlight.Do(key, func() (any, error) {
+		fetchCtx, cancel := context.WithTimeout(context.Background(), priceReadFlightTimeout) //nolint:contextcheck // singleflight deliberately survives per-caller cancellation, see internal/metadata/cache.go
+		defer cancel()
+		snap, srcs, stale, served, err := s.readPriceWithAliasesServedOnce(fetchCtx, reader, asset, quote)
+		if err != nil {
+			return nil, err
+		}
+		return priceReadResult{snap: snap, srcs: srcs, stale: stale, served: served}, nil
+	})
+	if err != nil {
+		return PriceSnapshot{}, nil, false, canonical.Asset{}, err
+	}
+	r := v.(priceReadResult)
+	return r.snap, r.srcs, r.stale, r.served, nil
+}
+
+// readPriceWithAliasesServedOnce is [Server.readPriceWithAliases] plus
+// the one thing its echo deliberately hides: WHICH alias's market the
 // snapshot was read from. The snapshot still echoes the requested id.
 //
 // The freeze marker is keyed on the literal pair the aggregator prices
@@ -1091,7 +1130,7 @@ func (s *Server) readPriceWithAliases(ctx context.Context, reader PriceReader, a
 // about to serve frozen?" needs the pair that was actually read, not
 // the spelling the client used — see [Server.resolveFrozenServe]. The
 // served alias is the zero Asset whenever err is non-nil.
-func (s *Server) readPriceWithAliasesServed(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, error) {
+func (s *Server) readPriceWithAliasesServedOnce(ctx context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, error) {
 	aliases := assetAliases(asset)
 	var firstSnap PriceSnapshot
 	var firstSrcs []string
