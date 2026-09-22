@@ -136,7 +136,15 @@ func decodeRouterArgs(
 	// nor the IsZero guard from a missing value.)
 	var deadlineTs time.Time
 	if deadline != 0 {
-		deadlineTs = time.Unix(int64(deadline), 0).UTC()
+		// UnboundedUnixSeconds only guards the int64 cast: a deadline
+		// near math.MaxUint64 wraps to a small negative int64 and would
+		// otherwise silently stamp a bogus near-epoch deadline instead
+		// of leaving it unset. Legitimate far-future deadlines (below
+		// MaxInt64) are preserved as-is; the sink NULLs anything still
+		// outside postgres's timestamptz range.
+		if t, ok := canonical.UnboundedUnixSeconds(deadline); ok {
+			deadlineTs = t
+		}
 	}
 
 	// Map (a0, a1) → (AmountIn, AmountOut) per function shape.

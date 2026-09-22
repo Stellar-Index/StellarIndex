@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -493,5 +494,28 @@ func TestPersistWorker_UsesShutdownSafeCtxOnFlushAndPersistArms(t *testing.T) {
 	// `<-in` arm's non-trade branch.
 	if calls < 3 {
 		t.Errorf("persistWorker calls shutdownSafeCtx %d times, want >= 3 (flushTicker arm, `<-in` batch-flush branch, `<-in` persistEventResilient branch) — CON-09's fix must guard every flush/persist call reachable from the racy select, not just ctx.Done()'s own arm", calls)
+	}
+}
+
+// TestBlendEmitterUnlockTime_overflowSentinelRejected is the
+// regression test for RLT-115 at this call site: a Blend Emitter
+// UnlockTime near math.MaxUint64 (a plausible "unlimited" sentinel)
+// wrapped NEGATIVE under a bare int64(e.UnlockTime) cast, landing near
+// the 1970 epoch — a bogus but postgres-representable time that would
+// silently corrupt the stored unlock time instead of leaving it unset.
+func TestBlendEmitterUnlockTime_overflowSentinelRejected(t *testing.T) {
+	if got := blendEmitterUnlockTime(math.MaxUint64); !got.IsZero() {
+		t.Errorf("blendEmitterUnlockTime(MaxUint64) = %v, want zero time — got a wrapped near-epoch time instead of the overflow being rejected", got)
+	}
+}
+
+// TestBlendEmitterUnlockTime_farFutureHonoured pins that a legitimate
+// queued (q_swap) UnlockTime — days beyond its own ledger close time —
+// is preserved rather than clamped to a close-time window.
+func TestBlendEmitterUnlockTime_farFutureHonoured(t *testing.T) {
+	raw := uint64(2_000_000_000) // 2033, far beyond any 24h window
+	want := time.Unix(2_000_000_000, 0).UTC()
+	if got := blendEmitterUnlockTime(raw); !got.Equal(want) {
+		t.Errorf("blendEmitterUnlockTime(%d) = %v, want %v", raw, got, want)
 	}
 }
