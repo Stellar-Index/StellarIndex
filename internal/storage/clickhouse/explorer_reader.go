@@ -395,6 +395,13 @@ type ExplorerReader struct {
 	// reader built by the constructors; nil (test-built readers) admits
 	// everything.
 	refreshGate *RefreshGate
+
+	// disasmCache backs buildWasmDisassembly (wasm_disasm_tool.go): the
+	// wabt fork/exec cost for a contract's wasm is paid at most once per
+	// process, keyed by the content-addressed wasm hash, instead of once
+	// per request (Q203). Non-nil for every reader built by the
+	// constructors; nil-safe for test-built readers (permanent miss).
+	disasmCache *wasmDisasmCache
 }
 
 // SetWealthRefreshErrorHandler installs a callback for background
@@ -470,6 +477,7 @@ func NewExplorerReaderAuth(ctx context.Context, addr, username, password string)
 		stateCache:  newAccountStateCache(),
 		stateFlight: newPerKeyFlight(),
 		refreshGate: NewRefreshGate(DefaultDetachedRefreshLimit),
+		disasmCache: newWasmDisasmCache(),
 		ttlVerdicts: newTTLLivenessCache(func(ctx context.Context, keys []string) (map[string]TTLLiveness, error) {
 			// Verdicts are judged at the lake's tip AS OF compute time —
 			// "current" means current relative to what the lake holds now.
