@@ -324,7 +324,12 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Name != nil {
-		current.Name = *req.Name
+		name := strings.TrimSpace(*req.Name)
+		if err := validateWebhookName(name); err != nil {
+			writeProblem(w, http.StatusBadRequest, err.Error(), r.URL.Path)
+			return
+		}
+		current.Name = name
 	}
 	if req.URL != nil {
 		if err := validateWebhookURL(r.Context(), *req.URL); err != nil {
@@ -465,8 +470,8 @@ func parseCreateRequest(ctx context.Context, r *http.Request) (createRequest, in
 	}
 	req.Name = strings.TrimSpace(req.Name)
 	req.URL = strings.TrimSpace(req.URL)
-	if req.Name == "" || len(req.Name) > 200 {
-		return createRequest{}, http.StatusBadRequest, "name must be 1–200 chars"
+	if err := validateWebhookName(req.Name); err != nil {
+		return createRequest{}, http.StatusBadRequest, err.Error()
 	}
 	if err := validateWebhookURL(ctx, req.URL); err != nil {
 		return createRequest{}, http.StatusBadRequest, err.Error()
@@ -475,6 +480,13 @@ func parseCreateRequest(ctx context.Context, r *http.Request) (createRequest, in
 		return createRequest{}, http.StatusBadRequest, err.Error()
 	}
 	return req, 0, ""
+}
+
+func validateWebhookName(name string) error {
+	if name == "" || len(name) > 200 {
+		return errors.New("name must be 1–200 chars")
+	}
+	return nil
 }
 
 func validateWebhookURL(ctx context.Context, raw string) error {

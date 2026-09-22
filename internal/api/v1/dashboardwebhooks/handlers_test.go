@@ -573,6 +573,29 @@ func TestHandleUpdate_RejectsBadURL(t *testing.T) {
 	}
 }
 
+// TestHandleUpdate_RejectsEmptyName pins T154: PATCHing an empty (or
+// whitespace-only) name must 400, matching the create path's
+// validation, instead of silently writing an empty name.
+func TestHandleUpdate_RejectsEmptyName(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	mine := uuid.New()
+	store.webhooks[mine] = platform.CustomerWebhook{
+		ID: mine, AccountID: sc.Account.ID,
+		Name: "before", URL: "https://ok.example", Events: []string{"incident.sev1"}, Enabled: true,
+	}
+	patch := updateRequest{Name: strPtr("   ")}
+	req := sessionReq(t, http.MethodPatch, "/v1/dashboard/webhooks/"+mine.String(), patch, sc)
+	req.SetPathValue("id", mine.String())
+	w := httptest.NewRecorder()
+	h.HandleUpdate(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", w.Code)
+	}
+	if store.webhooks[mine].Name != "before" {
+		t.Errorf("rejected update should have preserved the original name, got %q", store.webhooks[mine].Name)
+	}
+}
+
 // failGetStore wraps fakeStore and makes GetWebhook fail starting on
 // its THIRD call, simulating a transient read error on the
 // post-update reload while leaving the handler's two earlier lookups
