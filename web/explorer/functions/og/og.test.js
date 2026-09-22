@@ -7,6 +7,10 @@
 // kill-switch), not satori/resvg rendering.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+// T301: capture the html the function rendered so a test can assert on the
+// card's footer byline without needing the real satori/resvg pipeline.
+const capturedHtml = { last: null };
+
 vi.mock('workers-og', () => ({
   // F087: mirrors workers-og@0.0.27's actual ImageResponse header
   // construction (`{"Content-Type":...,"Cache-Control":<default>,
@@ -14,7 +18,8 @@ vi.mock('workers-og', () => ({
   // 'cache-control' key reproduces the same doubled-header defect here
   // that it would against the real, WASM-only library.
   ImageResponse: class FakeImageResponse extends Response {
-    constructor(_html, opts) {
+    constructor(html, opts) {
+      capturedHtml.last = html;
       super('fake-png-bytes', {
         status: 200,
         headers: {
@@ -217,5 +222,19 @@ describe('og function — per-network API origin (network-hardcodes T283)', () =
     expect(String(requestedUrl)).toMatch(
       /^https:\/\/api\.testnet\.stellarindex\.io\/v1\/price\?/,
     );
+  });
+
+  it('renders the request host as the card byline, not the mainnet domain (T301)', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { price: '1.5' } }), {
+        status: 200,
+      }),
+    );
+    await onRequest({
+      request: new Request('https://testnet.stellarindex.io/og/assets/usdc'),
+      env: {},
+    });
+    expect(capturedHtml.last).toContain('testnet.stellarindex.io');
+    expect(capturedHtml.last).not.toContain('>stellarindex.io<');
   });
 });
