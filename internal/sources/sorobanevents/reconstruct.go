@@ -39,7 +39,10 @@ func Reconstruct(row Row) (events.Event, error) {
 		return events.Event{}, fmt.Errorf("sorobanevents.Reconstruct: tx_hash is %d bytes, want 32 (ledger=%d)", len(row.TxHash), row.Ledger)
 	}
 
-	topics := reconstructTopics(row)
+	topics, err := reconstructTopics(row)
+	if err != nil {
+		return events.Event{}, err
+	}
 
 	var opArgs []string
 	if len(row.OpArgsXDR) > 0 {
@@ -76,16 +79,16 @@ func Reconstruct(row Row) (events.Event, error) {
 // trailing strings. Those legacy rows still cap at 4 (that is all
 // their storage kept); a ClickHouse-lake re-project recovers the
 // truncated tail.
-func reconstructTopics(row Row) []string {
+//
+// An empty slot ahead of a non-empty one is not a "fewer topics"
+// case (those trail off with nothing after them) — it's a storage
+// gap. Decoders dispatch on topic[0] and read the rest by position
+// (Q123), so silently skipping the gap would shift every later topic
+// down one slot and hand a decoder the wrong field at the wrong
+// index. Fail closed instead of returning a misaligned slice.
+func reconstructTopics(row Row) ([]string, error) {
 	if len(row.TopicsXDR) > 0 {
-		out := make([]string, 0, len(row.TopicsXDR))
-		for _, x := range row.TopicsXDR {
-			if len(x) == 0 {
-				continue
-			}
-			out = append(out, base64.StdEncoding.EncodeToString(x))
-		}
-		return out
+		return dropTrailingEmpty(row.TopicsXDR, row)
 	}
 
 	// Legacy fallback: the four fixed topic columns.
@@ -96,12 +99,30 @@ func reconstructTopics(row Row) []string {
 		// rather than the higher count the original event had.
 		want = 4
 	}
-	out := make([]string, 0, want)
-	for i := 0; i < want; i++ {
-		if len(xdrs[i]) == 0 {
+	return dropTrailingEmpty(xdrs[:want], row)
+}
+
+// dropTrailingEmpty base64-encodes a topic slot slice, allowing only
+// a trailing run of empty slots (the legitimate "fewer topics than
+// the fixed column count" case). A non-empty slot found after an
+// empty one is a storage gap and returns an error rather than a
+// position-shifted slice.
+func dropTrailingEmpty(xdrs [][]byte, row Row) ([]string, error) {
+	out := make([]string, 0, len(xdrs))
+	gapAt := -1
+	for i, x := range xdrs {
+		if len(x) == 0 {
+			if gapAt < 0 {
+				gapAt = i
+			}
 			continue
 		}
-		out = append(out, base64.StdEncoding.EncodeToString(xdrs[i]))
+		if gapAt >= 0 {
+			return nil, fmt.Errorf(
+				"sorobanevents.Reconstruct: topic gap at index %d, non-empty topic %d follows it (ledger=%d, contract=%s)",
+				gapAt, i, row.Ledger, row.ContractID)
+		}
+		out = append(out, base64.StdEncoding.EncodeToString(x))
 	}
-	return out
+	return out, nil
 }
