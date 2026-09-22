@@ -185,6 +185,46 @@ func TestReconstruct_PreservesFiveOrMoreTopics(t *testing.T) {
 	}
 }
 
+// TestReconstruct_TopicGapErrors is the Q123 regression guard: a
+// stored row whose topics_xdr has an empty slot followed by a
+// non-empty one must fail closed instead of silently shifting the
+// later topic down a position.
+//
+// Proven-red against the pre-fix code: reconstructTopics used a bare
+// `continue` on an empty slot with no gap tracking, so this row
+// reconstructed a 2-element Topic slice (["swap","extra"], the empty
+// slot dropped and "extra" shifted from index 2 to index 1) with a
+// nil error, instead of erroring.
+func TestReconstruct_TopicGapErrors(t *testing.T) {
+	t.Parallel()
+
+	swap, err := symbolSV("swap").MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal swap topic: %v", err)
+	}
+	extra, err2 := u32SV(7).MarshalBinary()
+	if err2 != nil {
+		t.Fatalf("marshal extra topic: %v", err2)
+	}
+
+	var txHash [32]byte
+	txHash[0] = 0xD4
+
+	row := Row{
+		Ledger:     62_900_000,
+		ContractID: mkContractStrkey(t, 0x55),
+		TxHash:     txHash[:],
+		TopicCount: 3,
+		Topic0XDR:  swap,
+		TopicsXDR:  [][]byte{swap, {}, extra}, // gap at index 1
+	}
+
+	_, rerr := Reconstruct(row)
+	if rerr == nil {
+		t.Fatal("Reconstruct() err = nil, want error for a topic gap")
+	}
+}
+
 // TestReconstruct_NoOpArgs handles the common case of an event
 // that didn't come from an InvokeContract op (CAP-67 classic-op
 // transfer events, system events, etc.). OpArgs is nil on
