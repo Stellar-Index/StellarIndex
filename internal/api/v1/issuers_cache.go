@@ -70,10 +70,10 @@ type issuersCacheEntry struct {
 
 // NewCachedIssuersReader wraps `upstream` with a TTL cache. ttl=0
 // disables caching (every call passes through). 5 min is the
-// production default — the verified-issuer catalogue's top-N
-// ranking is stable on the timescale of new SDEX activity. Pin
-// shorter via configs/example.toml's [api] issuers_cache_ttl if
-// the deployment needs fresher data.
+// production default, set by the caller (cmd/stellarindex-api) — the
+// verified-issuer catalogue's top-N ranking is stable on the
+// timescale of new SDEX activity. There is no config knob for this;
+// a deployment needing a different TTL passes one at the call site.
 func NewCachedIssuersReader(upstream IssuersReader, ttl time.Duration) *CachedIssuersReader {
 	return &CachedIssuersReader{
 		upstream: upstream,
