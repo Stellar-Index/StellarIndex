@@ -1,6 +1,6 @@
 ---
 title: Incident (SEV) Playbook
-last_verified: 2026-05-03
+last_verified: 2026-09-22
 status: ratified
 ---
 

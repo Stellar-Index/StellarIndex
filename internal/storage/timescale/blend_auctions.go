@@ -2,9 +2,7 @@ package timescale
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
@@ -228,86 +226,6 @@ func (s *Store) InsertBlendDeleteAuction(ctx context.Context, e blend.DeleteAuct
 		return fmt.Errorf("timescale: InsertBlendDeleteAuction: %w", err)
 	}
 	return nil
-}
-
-// LatestBlendAuctionEvent returns the most recent event row for a
-// given (pool, auction_type, user_address). Returns
-// (nil, ErrNotFound) on no match.
-//
-// Used by the auction-state reconstruction read path: the most
-// recent event tells the caller whether the auction is currently
-// announced, partially-filled, or filled / deleted.
-func (s *Store) LatestBlendAuctionEvent(
-	ctx context.Context,
-	pool string,
-	auctionType uint32,
-	user string,
-) (*BlendAuctionRow, error) {
-	const q = `
-        SELECT pool, auction_type, user_address,
-               ledger, tx_hash, op_index, ts,
-               event_kind,
-               percent,
-               filler, fill_percent,
-               block, bid, lot
-          FROM blend_auctions
-         WHERE pool         = $1
-           AND auction_type = $2
-           AND user_address = $3
-         ORDER BY ledger DESC, op_index DESC
-         LIMIT 1
-    `
-	row := s.db.QueryRowContext(ctx, q, pool, int(auctionType), user)
-	var (
-		out                                 BlendAuctionRow
-		auctionTypeRaw                      int
-		percent, block                      sql.NullInt64
-		filler, fillPercent, bidStr, lotStr sql.NullString
-	)
-	err := row.Scan(
-		&out.Pool, &auctionTypeRaw, &out.User,
-		&out.Ledger, &out.TxHash, &out.OpIndex, &out.Timestamp,
-		&out.EventKind,
-		&percent,
-		&filler, &fillPercent,
-		&block, &bidStr, &lotStr,
-	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
-		}
-		return nil, fmt.Errorf("timescale: LatestBlendAuctionEvent: %w", err)
-	}
-	out.AuctionType = uint32(auctionTypeRaw)
-	if percent.Valid {
-		v := uint32(percent.Int64)
-		out.Percent = &v
-	}
-	if filler.Valid {
-		v := filler.String
-		out.Filler = &v
-	}
-	if fillPercent.Valid {
-		v := fillPercent.String
-		out.FillPercent = &v
-	}
-	if block.Valid {
-		v := uint32(block.Int64)
-		out.Block = &v
-	}
-	if bidStr.Valid {
-		out.Bid, err = decodeBlendAssetAmounts(bidStr.String)
-		if err != nil {
-			return nil, fmt.Errorf("timescale: LatestBlendAuctionEvent: bid: %w", err)
-		}
-	}
-	if lotStr.Valid {
-		out.Lot, err = decodeBlendAssetAmounts(lotStr.String)
-		if err != nil {
-			return nil, fmt.Errorf("timescale: LatestBlendAuctionEvent: lot: %w", err)
-		}
-	}
-	return &out, nil
 }
 
 // BlendAuctionRow is a flattened read-side projection of one
