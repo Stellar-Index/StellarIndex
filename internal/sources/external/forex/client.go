@@ -37,6 +37,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	neturl "net/url"
 	"strings"
 	"time"
 )
@@ -216,12 +217,35 @@ func (c *Client) CurrencyNames(ctx context.Context) (map[string]string, error) {
 				out[strings.ToLower(r.CurrencySymbol)] = r.CurrencyName
 			}
 		}
+		if raw.NextURL != "" && !sameHost(c.base, raw.NextURL) {
+			// next_url is server-supplied and feeds straight into
+			// c.get, which unconditionally attaches the bearer
+			// token. Refuse to follow it off c.base rather than
+			// hand our API key to whatever host it names; keep
+			// the pages already collected.
+			break
+		}
 		url = raw.NextURL
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("massive: empty currency-name map")
 	}
 	return out, nil
+}
+
+// sameHost reports whether next shares scheme and host with base, so
+// [CurrencyNames] can refuse to follow a paginated next_url off the
+// configured Massive host (which would send our bearer token there).
+func sameHost(base, next string) bool {
+	b, err := neturl.Parse(base)
+	if err != nil {
+		return false
+	}
+	n, err := neturl.Parse(next)
+	if err != nil {
+		return false
+	}
+	return n.Scheme == b.Scheme && n.Host == b.Host
 }
 
 func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
