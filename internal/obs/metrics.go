@@ -177,6 +177,7 @@ func registerFreezeLifecycleMetrics() {
 		AnomalyFreezeEngagedTotal,
 		AnomalyFreezeEscalatedTotal,
 		AnomalyFreezeExtensionsTotal,
+		AnomalyFreezeHeldUnscoredTotal,
 		AnomalyFreezeReleasedTotal,
 		AnomalyFreezeActive,
 		AnomalyFreezeRecoveredTotal,
@@ -3451,6 +3452,21 @@ var AnomalyFreezeExtensionsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_extensions_total",
 		Help: "ADR-0019 freeze-hold extensions granted (+30 min each, max 4 before escalation).",
+	},
+)
+
+// AnomalyFreezeHeldUnscoredTotal — counter of hold expiries that
+// landed on a bucket the scorer could not evaluate at all (post-restart
+// bootstrap or a scoring outage — [freeze.TransitionHeldUnscored]).
+// The ladder slides without climbing or releasing on these, which is
+// correct per ADR-0019 (an unscored bucket asked nothing), but a
+// SUSTAINED non-zero rate means scoring itself is stuck, not that any
+// pair is being evaluated — the extension/escalation counters stay
+// silent through that the whole time.
+var AnomalyFreezeHeldUnscoredTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_freeze_held_unscored_total",
+		Help: "ADR-0019 freeze holds that expired on an unscored bucket (restart bootstrap or scoring outage).",
 	},
 )
 
