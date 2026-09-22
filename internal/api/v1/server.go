@@ -1699,6 +1699,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 	applyProtocolOptions(s, opts)
 	s.explorerHandler = explorerHandlerFor(s, opts, logger)
 	loadIncidents(s, logger)
+	warnIfSep1CacheLacksFetchState(s, logger)
 	s.mountRoutes()
 	return s
 }
