@@ -458,6 +458,11 @@ stale_patterns=(
                                   # #201 now resolves to an unrelated merged
                                   # PR (movement-latency cadence tuning), not
                                   # the SDK skeleton commit `a60264246`
+  "PR #1216"                     # dangling ref (RSWP-115) — CHANGELOG's
+                                  # indexer watched-sets boot-WARN entry cited
+                                  # a PR number that didn't exist yet;
+                                  # #1216 is now a real, unrelated open issue
+                                  # (window-bounded shape-guard test gap)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
