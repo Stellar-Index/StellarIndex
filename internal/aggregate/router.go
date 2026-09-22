@@ -137,17 +137,30 @@ type RouteLeg struct {
 	// populates it from real signal; the router only ever takes minima
 	// and maxima of it, so any ordering-consistent scale works.
 	Confidence float64
+	// Provenance names the underlying data row(s) this edge's price was
+	// actually computed from, beyond its nominal {From,To} pair (e.g. an
+	// fx_quotes ticker for a fiat cross snapped via a shared USD-anchored
+	// row). Nil for an organically observed market edge, whose {From,To}
+	// pair already IS its own provenance. [corroboratingRouteCount] folds
+	// this into edge identity so two nominally different pairs that both
+	// bottom out in the same underlying row (RLT-278: USD/GBP and EUR/GBP
+	// both reading the same fx_quotes GBP row) are not miscounted as
+	// edge-disjoint corroboration.
+	Provenance []string
 }
 
 // Quote is a directed price observation for a pair: the price of
 // Pair.Base in Pair.Quote's terms, with a Confidence in [0,1]. It is
 // the input to [BuildEdges]. Step 2 constructs these from fresh VWAPs
 // and their computed confidence; this pure core treats Confidence as an
-// opaque weakest-link weight.
+// opaque weakest-link weight. Provenance carries through to both
+// directions of the resulting [RouteLeg] pair unchanged (see
+// [RouteLeg.Provenance]).
 type Quote struct {
 	Pair       canonical.Pair
 	Price      *big.Rat
 	Confidence float64
+	Provenance []string
 }
 
 // BuildEdges expands directed pair quotes into a bidirectional edge
@@ -208,8 +221,8 @@ func BuildEdges(quotes []Quote) ([]RouteLeg, error) {
 		inv := new(big.Rat).Inv(q.Price)
 		conf := sanitizeConfidence(q.Confidence)
 		edges = append(edges,
-			RouteLeg{From: q.Pair.Base, To: q.Pair.Quote, Price: fwd, Confidence: conf},
-			RouteLeg{From: q.Pair.Quote, To: q.Pair.Base, Price: inv, Confidence: conf},
+			RouteLeg{From: q.Pair.Base, To: q.Pair.Quote, Price: fwd, Confidence: conf, Provenance: q.Provenance},
+			RouteLeg{From: q.Pair.Quote, To: q.Pair.Base, Price: inv, Confidence: conf, Provenance: q.Provenance},
 		)
 	}
 	sort.SliceStable(edges, func(i, j int) bool {
@@ -691,10 +704,12 @@ func spreadExceeds(vals []*big.Rat, pct int) bool {
 //     from every corroborating pair.
 //   - otherwise → the size of the largest set of confidence-clearing
 //     survivors that pairwise BOTH agree tightly AND are edge-disjoint.
-//     Routes sharing any undirected edge collapse to one independent
-//     confirmation, so an all-through-one-bottleneck agreeing set scores 1
-//     (not suppressing), while genuinely edge-disjoint agreeing routes score
-//     their true multiplicity.
+//     Routes sharing any undirected edge, OR any leg [RouteLeg.Provenance]
+//     entry, collapse to one independent confirmation, so an
+//     all-through-one-bottleneck agreeing set scores 1 (not suppressing),
+//     a pair of nominally different fiat crosses secretly sourced from the
+//     same fx_quotes row also scores 1 (RLT-278), and genuinely
+//     edge-disjoint agreeing routes score their true multiplicity.
 func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 	if diverged {
 		return 0
@@ -733,12 +748,15 @@ func corroboratingRouteCount(survivors []scoredRoute, diverged bool) int {
 
 // MaxEdgeDisjointRoutes returns the size of the maximum subset of routes
 // that are PAIRWISE edge-disjoint — the count of genuinely independent
-// paths in the set. Edge identity is the UNDIRECTED leg {From,To}: an
-// edge and its inverse are the same physical market and count as one, so
-// two routes that share any leg (in either direction) are NOT
-// independent. Shortest-route sets are tiny, so the maximum-set-packing
-// search is exact by brute force up to maxCorroborationRoutes routes and
-// a fail-closed (under-counting) greedy estimate beyond.
+// paths in the set. Edge identity is the UNDIRECTED leg {From,To} PLUS
+// each leg's [RouteLeg.Provenance]: an edge and its inverse are the same
+// physical market and count as one, and two edges that nominally quote
+// different pairs but were computed from the same underlying data row
+// (e.g. a fiat cross snapped through a shared fx_quotes row) also count
+// as one, so two routes that share either are NOT independent.
+// Shortest-route sets are tiny, so the maximum-set-packing search is
+// exact by brute force up to maxCorroborationRoutes routes and a
+// fail-closed (under-counting) greedy estimate beyond.
 //
 // This is the pure independence primitive behind the freeze's
 // corroboration count (see corroboratingRouteCount); exported so the
@@ -782,8 +800,19 @@ func routeEdgeSet(route []RouteLeg) map[string]struct{} {
 	set := make(map[string]struct{}, len(route))
 	for _, leg := range route {
 		set[undirectedEdgeKey(leg.From, leg.To)] = struct{}{}
+		for _, p := range leg.Provenance {
+			set[provenanceEdgeKey(p)] = struct{}{}
+		}
 	}
 	return set
+}
+
+// provenanceEdgeKey namespaces a leg's [RouteLeg.Provenance] entry so it can
+// never collide with an [undirectedEdgeKey] market key in the same set: two
+// routes sharing a provenance key are exactly as non-independent as two
+// routes sharing a market edge (RLT-278).
+func provenanceEdgeKey(p string) string {
+	return "provenance\x00" + p
 }
 
 // undirectedEdgeKey is the order-independent identity of the physical

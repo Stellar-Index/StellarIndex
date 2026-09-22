@@ -199,12 +199,12 @@ func (o *Orchestrator) resolveChainLegs(
 ) chainLegStatus {
 	var st chainLegStatus
 	for _, leg := range chain.Legs {
-		price, outcome := o.legPrice(ctx, chain, leg, window, bucketEnd)
+		price, provenance, outcome := o.legPrice(ctx, chain, leg, window, bucketEnd)
 		switch outcome {
 		case "":
 			if _, seen := quoteByPair[leg.String()]; !seen {
 				quoteByPair[leg.String()] = aggregate.Quote{
-					Pair: leg, Price: price, Confidence: legConfidence(leg),
+					Pair: leg, Price: price, Confidence: legConfidence(leg), Provenance: provenance,
 				}
 			}
 		case outcomeFrozenLeg:
@@ -625,10 +625,11 @@ func legConfidence(leg canonical.Pair) float64 {
 	return cachedLegConfidence
 }
 
-// legPrice returns the price for one leg of a triangulation chain.
-// On success, returns (price, ""); on a recoverable miss/error,
-// returns (nil, outcomeLabel) where outcomeLabel is the metric label
-// the caller bubbles up via [obs.AggregatorTriangulationsTotal].
+// legPrice returns the price for one leg of a triangulation chain, plus
+// its data-[]provenance ([aggregate.RouteLeg.Provenance]).
+// On success, returns (price, provenance, ""); on a recoverable
+// miss/error, returns (nil, nil, outcomeLabel) where outcomeLabel is the
+// metric label the caller bubbles up via [obs.AggregatorTriangulationsTotal].
 //
 // FX legs (both sides fiat) attempt the X2.5 snap path via
 // [Config.FXStore]. Snap misses (no FX quote at-or-before bucketEnd)
@@ -639,20 +640,25 @@ func legConfidence(leg canonical.Pair) float64 {
 // FX-store error means we can't trust ANY chained-fiat output this
 // tick, so the chain skips publish.
 //
-// Non-FX legs (and FX legs when FXStore is nil) read the cached VWAP
-// the per-pair refresh wrote earlier this tick.
+// Non-FX legs (and FX legs when FXStore is nil, and a snap-miss
+// fallback) read the cached VWAP the per-pair refresh wrote earlier
+// this tick and carry no FX provenance — only a genuine snap hit does
+// (RLT-278: two different fiat crosses can snap the same underlying
+// fx_quotes row, e.g. USD/GBP and EUR/GBP both reading the GBP row, and
+// the router needs that identity to refuse counting them as
+// independent corroboration).
 func (o *Orchestrator) legPrice(
 	ctx context.Context,
 	chain TriangulationChain,
 	leg canonical.Pair,
 	window time.Duration,
 	bucketEnd time.Time,
-) (*big.Rat, string) {
+) (*big.Rat, []string, string) {
 	if isFXLeg(leg) && o.cfg.FXStore != nil {
 		price, _, _, err := o.cfg.FXStore.FXQuoteAtOrBefore(ctx, leg, bucketEnd, external.FXSources())
 		switch {
 		case err == nil:
-			return price, ""
+			return price, fxLegProvenance(leg), ""
 		case errors.Is(err, timescale.ErrNoFXQuote):
 			// Soft fallback to cached VWAP — degraded but the chain
 			// still publishes. Counter drives the dashboard /
@@ -664,10 +670,29 @@ func (o *Orchestrator) legPrice(
 				"chain", chain.Target.String(),
 				"leg", leg.String(),
 				"err", err)
-			return nil, "redis_error"
+			return nil, nil, "redis_error"
 		}
 	}
-	return o.legPriceFromCache(ctx, chain, leg, window)
+	price, outcome := o.legPriceFromCache(ctx, chain, leg, window)
+	return price, nil, outcome
+}
+
+// fxLegProvenance names the fx_quotes ticker(s) an FX-snap leg's price was
+// actually computed from, excluding the USD anchor (which contributes an
+// exact 1 — see internal/storage/timescale/fx_quotes.go's fxSnapTickers,
+// which this mirrors). USD/GBP snaps only the GBP row; EUR/GBP snaps BOTH
+// the EUR and GBP rows — so the two share "fx:GBP" and the router's
+// corroboration count (RLT-278) correctly refuses to treat them as
+// independent evidence.
+func fxLegProvenance(leg canonical.Pair) []string {
+	var out []string
+	if leg.Base.Code != "USD" {
+		out = append(out, "fx:"+leg.Base.Code)
+	}
+	if leg.Quote.Code != "USD" {
+		out = append(out, "fx:"+leg.Quote.Code)
+	}
+	return out
 }
 
 // outcomeFrozenLeg is the [obs.AggregatorTriangulationsTotal] label
