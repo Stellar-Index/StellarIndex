@@ -57,6 +57,12 @@ func WithDivergenceLedgerProvider(p LedgerProvider) DivergenceSinkOption {
 // microsecond a no-op via ON CONFLICT — but since we control the
 // observed_at upstream (the worker sets it) collisions are rare in
 // practice.
+//
+// obs.OurPrice / RefPrice / DeltaPct are decimal strings (ADR-0003)
+// bound directly into the our_price/ref_price/delta_pct NUMERIC
+// columns — never a Go float64 — mirroring the ::text cast the read
+// path ([Store.ListDivergenceLatest], [Store.ListDivergenceSeries])
+// uses to hand the same columns back out as strings.
 func (s *DivergenceSink) RecordObservation(ctx context.Context, obs domain.DivergenceObservationRecord) error {
 	var ledger uint32
 	if s.getLedger != nil {
