@@ -97,6 +97,9 @@ type fakeWebhooks struct {
 	byAcct   map[uuid.UUID][]platform.CustomerWebhook
 	enqueued []platform.WebhookDelivery
 	enqErr   error
+	// enqErrFor fails EnqueueDelivery only for the named webhook, letting a
+	// test model one bad target among several without failing every target.
+	enqErrFor map[uuid.UUID]error
 }
 
 func (s *fakeWebhooks) ListWebhooksForAccount(_ context.Context, accountID uuid.UUID) ([]platform.CustomerWebhook, error) {
@@ -104,6 +107,9 @@ func (s *fakeWebhooks) ListWebhooksForAccount(_ context.Context, accountID uuid.
 }
 
 func (s *fakeWebhooks) EnqueueDelivery(_ context.Context, d platform.WebhookDelivery) error {
+	if err, ok := s.enqErrFor[d.WebhookID]; ok {
+		return err
+	}
 	if s.enqErr != nil {
 		return s.enqErr
 	}
@@ -177,6 +183,38 @@ func TestSweep_Fires(t *testing.T) {
 	}
 	if after := obstest.HistogramSampleCount(t, obs.PriceAlertEvalDurationSeconds, "outcome", "ok"); after <= before {
 		t.Errorf("ok histogram did not advance (%d -> %d)", before, after)
+	}
+}
+
+// TestEnqueueAll_ContinuesPastFailure proves a single bad webhook does not
+// abort the fan-out: the two healthy targets still get their delivery
+// enqueued, and the failure surfaces in the returned error rather than
+// silently swallowing the remaining webhooks.
+func TestEnqueueAll_ContinuesPastFailure(t *testing.T) {
+	acct := uuid.New()
+	good1 := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	bad := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	good2 := priceAlertWebhook(acct, true, string(platform.WebhookEventPriceAlert))
+	hooks := &fakeWebhooks{
+		enqErrFor: map[uuid.UUID]error{bad.ID: errors.New("delivery queue full")},
+	}
+	w := buildWorker(&fakeAlertStore{}, hooks, fakePrices{})
+
+	enqueued, err := w.enqueueAll(context.Background(),
+		[]platform.CustomerWebhook{good1, bad, good2}, []byte(`{}`))
+
+	if err == nil {
+		t.Fatal("want non-nil error for the failing webhook, got nil")
+	}
+	if enqueued != 2 {
+		t.Fatalf("want 2 successful deliveries enqueued despite the middle failure, got %d", enqueued)
+	}
+	if len(hooks.enqueued) != 2 {
+		t.Fatalf("want 2 deliveries recorded, got %d", len(hooks.enqueued))
+	}
+	gotIDs := map[uuid.UUID]bool{hooks.enqueued[0].WebhookID: true, hooks.enqueued[1].WebhookID: true}
+	if !gotIDs[good1.ID] || !gotIDs[good2.ID] {
+		t.Fatalf("want deliveries for both surviving webhooks, got %+v", hooks.enqueued)
 	}
 }
 
