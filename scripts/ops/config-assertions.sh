@@ -211,6 +211,33 @@ else
   skip compression_policies_applied
 fi
 
+# ── Postgres background-worker headroom (T615, timescale-job-failures-
+# climbing runbook) ────────────────────────────────────────────────────
+# max_worker_processes is postmaster-level (see postgresql.conf.j2's own
+# comment): an ansible apply that renders the file to 32 does nothing to
+# the RUNNING server until Postgres restarts, so grepping the file alone
+# would report "fixed" while the scheduler is still starved at the old
+# value — exactly the 2026-07 incident shape. Check both: the file
+# (codified) and a live SHOW (in effect right now), same
+# codified-vs-applied pairing as supply_reserve_accounts above.
+# Paths are overridable (like TEXTFILE_DIR above) so this pair is
+# testable without root or a live Postgres.
+PG_CONF_FILE="${PG_CONF_FILE:-/etc/postgresql/15/main/postgresql.conf}"
+PG_PASSWORD_FILE="${PG_PASSWORD_FILE:-/etc/stellarindex/postgres-password.txt}"
+assert_grep pg_max_worker_processes_codified \
+  "$PG_CONF_FILE" \
+  '^max_worker_processes[[:space:]]*=[[:space:]]*32'
+# shellcheck disable=SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+pg_max_worker_processes_live() {
+  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
+  local live
+  live=$(PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
+    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
+    "SHOW max_worker_processes;" 2>/dev/null)
+  [[ "$live" =~ ^[0-9]+$ && "$live" -ge 32 ]]
+}
+assert_cmd pg_max_worker_processes_live pg_max_worker_processes_live
+
 # ── tx_hash_index parity probe (explorer 404 authority, 2026-08-01) ──
 # GET /v1/tx/{hash} treats a stellar.tx_hash_index MISS as an
 # AUTHORITATIVE not-found (the bloom-scan fallback for index misses was
