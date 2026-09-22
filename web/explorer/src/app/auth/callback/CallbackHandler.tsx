@@ -40,6 +40,12 @@ export function CallbackHandler() {
       });
       return;
     }
+    // Scrub the plaintext token from this tab's address bar/history
+    // immediately: this page is statically served (no server-side
+    // redirect can strip it), so it would otherwise sit visible in
+    // the URL bar and be retained in browser/session-restore history
+    // for as long as the tab lives, even though it's single-use.
+    window.history.replaceState(null, '', window.location.pathname);
     // Pre-flight only — the actual redirect needs to be a full
     // page navigation so the API's Set-Cookie applies and the
     // 303 redirect lands the browser on the post-login page.
