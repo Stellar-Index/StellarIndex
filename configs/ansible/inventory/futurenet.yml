@@ -9,11 +9,12 @@
 all:
   vars:
     ssh_permit_root_login: "prohibit-password"
-    # Supply-chain checksums (same pinned versions as r1 + node_exporter 1.8.2).
+    # Supply-chain checksums (same pinned versions as r1). node_exporter
+    # installs unpinned via the Debian package (#33 cutover) — no checksum
+    # var for it; see archival-node/defaults/main.yml.
     minio_release_sha256:               "c27873d791b56d33518de11f12c5bfae4be88ebac00e12c6dd0027b08123fd80"
     mc_release_sha256:                  "01f866e9c5f9b87c2b09116fa5d7c06695b106242d829a8bb32990c00312e891"
     pgbackrest_exporter_release_sha256: "e73a862a900ef08d697a64b6644abb078453370e8e02db75a24d8b496ea33e6d"
-    node_exporter_release_sha256:       "6809dd0b3ec45fd6e992c19071d6b5253aed3ead7bf0686885a51d85c6643c66"
 
     region_id:           "futurenet"
     region_name:         "FSN-futurenet"
