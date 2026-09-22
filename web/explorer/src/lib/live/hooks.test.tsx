@@ -35,4 +35,39 @@ describe('usePricePoll', () => {
     const [, init] = fetchMock.mock.calls[0];
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
+
+  // T312: a background tab kept polling /v1/price on the full interval,
+  // burning API quota and battery for data nobody was looking at.
+  it('skips the poll tick while the tab is hidden', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: { price: '0.5', observed_at: '2026-01-01T00:00:00Z' },
+            flags: {},
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const hiddenSpy = vi
+      .spyOn(document, 'hidden', 'get')
+      .mockReturnValue(true);
+
+    renderHook(() =>
+      usePricePoll({ asset: 'native', quote: 'fiat:USD', intervalMs: 1000 }),
+    );
+
+    // Initial synchronous tick is skipped because the tab is hidden.
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(5000);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    hiddenSpy.mockRestore();
+    vi.useRealTimers();
+  });
 });

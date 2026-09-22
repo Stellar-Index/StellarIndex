@@ -400,6 +400,9 @@ export function usePricePoll({
     let cancelled = false;
     const controller = new AbortController();
     const tick = async () => {
+      // A background tab has no reason to hold the poll open — skip the
+      // fetch and pick back up (immediately) on the next visibilitychange.
+      if (typeof document !== 'undefined' && document.hidden) return;
       try {
         const r = await fetch(
           `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
@@ -442,10 +445,17 @@ export function usePricePoll({
     };
     void tick();
     const id = setInterval(() => void tick(), intervalMs);
+    // Catch up the instant the tab regains focus rather than waiting out
+    // whatever's left of the current interval.
+    const onVisible = () => {
+      if (!document.hidden) void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       controller.abort();
       clearInterval(id);
+      document.removeEventListener('visibilitychange', onVisible);
     };
   }, [asset, quote, intervalMs]);
 
