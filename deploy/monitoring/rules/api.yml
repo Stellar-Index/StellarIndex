@@ -328,10 +328,19 @@ groups:
       # leaf NotAfter as a Unix-seconds gauge. Fire at <14 days
       # remaining so the operator has a fortnight to manually
       # renew if Caddy's auto-path is stuck.
+      #
+      # Q191: the prober can itself wedge or crash, in which case the
+      # series goes absent rather than reporting a safe value — a bare
+      # threshold comparison sees no data and never fires, same failure
+      # shape as stellarindex_api_price_stale above. absent_over_time()
+      # surfaces a missing prober as its own signal.
       - alert: stellarindex_tls_cert_expiring_soon
         expr: |
-          stellarindex_tls_cert_not_after_unix - time() < 14 * 24 * 3600
-          and stellarindex_tls_cert_not_after_unix > 0
+          (
+            stellarindex_tls_cert_not_after_unix - time() < 14 * 24 * 3600
+            and stellarindex_tls_cert_not_after_unix > 0
+          )
+          or absent_over_time(stellarindex_tls_cert_not_after_unix[1h]) == 1
         for: 1h
         labels:
           severity: ticket
@@ -345,7 +354,10 @@ groups:
             {{ $value | humanizeTimestamp }}. Caddy's Let's Encrypt
             auto-renewal normally triggers 30 days before expiry;
             this alert firing means the renewal hasn't happened
-            (rate limit, DNS issue, ACME quota, Caddy stuck).
+            (rate limit, DNS issue, ACME quota, Caddy stuck). If the
+            gauge is ABSENT (the absent_over_time branch fires alone),
+            the TLS prober itself is down — check it before assuming
+            the cert is fine.
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/tls-cert-expiring-soon.md
 
