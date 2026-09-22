@@ -10070,7 +10070,10 @@ paths:
         hash, source account, operation count, fee charged, and
         success flag. Summary rows only — fetch `/v1/tx/{hash}`
         for the decoded operations + events of one transaction.
-        A valid but empty ledger returns an empty array.
+        A valid but empty ledger returns an empty array. `total` is the
+        ledger's exact transaction count from its header; `truncated` is
+        true when `total` exceeds the returned page (raise `limit` or
+        fetch `/v1/operations?ledger=` for the rest).
       parameters:
         - { name: seq, in: path, required: true, schema: { type: integer }, example: 63000000 }
         - { name: limit, in: query, description: "Maximum transactions to return (1-1000, default 200).", schema: { type: integer, minimum: 1, maximum: 1000, default: 200 } }
@@ -10094,6 +10097,8 @@ paths:
                     successful: false
                     result_code: -1
                     memo_type: none
+                  total: 1
+                  truncated: false
                 as_of: '2026-07-03T22:39:58.530334586Z'
                 flags:
                   stale: false
@@ -10109,6 +10114,8 @@ paths:
                     properties:
                       ledger: { type: integer }
                       transactions: { type: array, items: { $ref: "#/components/schemas/TxSummary" } }
+                      total: { type: integer, description: "Exact transaction count for this ledger, from its header." }
+                      truncated: { type: boolean, description: "True when total exceeds the returned page." }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /tx/{hash}:

@@ -191,9 +191,14 @@ func (h *Handler) LedgerDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 // LedgerTransactionsView is the wire response for GET /v1/ledgers/{seq}/transactions.
+// Total is the ledger's exact transaction count (from the ledger header);
+// Truncated is true when Total exceeds len(Transactions), so a consumer
+// never has to guess whether the page-size cap cut off real data.
 type LedgerTransactionsView struct {
 	Ledger       uint32          `json:"ledger"`
 	Transactions []TxSummaryView `json:"transactions"`
+	Total        uint32          `json:"total"`
+	Truncated    bool            `json:"truncated"`
 }
 
 // LedgerTransactions serves GET /v1/ledgers/{seq}/transactions.
@@ -233,6 +238,15 @@ func (h *Handler) LedgerTransactions(w http.ResponseWriter, r *http.Request) {
 	out := LedgerTransactionsView{Ledger: seq, Transactions: make([]TxSummaryView, len(rows))}
 	for i, t := range rows {
 		out.Transactions[i] = txSummaryView(t)
+	}
+	// Total/Truncated come from the ledger header, not the tx query, so a
+	// header-read hiccup only loses this metadata (both fields stay zero)
+	// rather than failing a request the transaction fetch already served.
+	if hdr, found, herr := h.Reader.LedgerBySeq(ctx, seq); herr != nil {
+		h.Logger.Warn("explorer LedgerBySeq (transactions total) failed", "err", herr, "seq", seq)
+	} else if found {
+		out.Total = hdr.TxCount
+		out.Truncated = hdr.TxCount > uint32(len(rows))
 	}
 	h.WriteJSON(w, out, false)
 }

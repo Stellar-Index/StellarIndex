@@ -4214,7 +4214,10 @@ export interface paths {
          *     hash, source account, operation count, fee charged, and
          *     success flag. Summary rows only — fetch `/v1/tx/{hash}`
          *     for the decoded operations + events of one transaction.
-         *     A valid but empty ledger returns an empty array.
+         *     A valid but empty ledger returns an empty array. `total` is the
+         *     ledger's exact transaction count from its header; `truncated` is
+         *     true when `total` exceeds the returned page (raise `limit` or
+         *     fetch `/v1/operations?ledger=` for the rest).
          */
         get: operations["getLedgerTransactions"];
         put?: never;
@@ -20841,7 +20844,9 @@ export interface operations {
                      *             "result_code": -1,
                      *             "memo_type": "none"
                      *           }
-                     *         ]
+                     *         ],
+                     *         "total": 1,
+                     *         "truncated": false
                      *       },
                      *       "as_of": "2026-07-03T22:39:58.530334586Z",
                      *       "flags": {
@@ -20857,6 +20862,10 @@ export interface operations {
                         data?: {
                             ledger?: number;
                             transactions?: components["schemas"]["TxSummary"][];
+                            /** @description Exact transaction count for this ledger, from its header. */
+                            total?: number;
+                            /** @description True when total exceeds the returned page. */
+                            truncated?: boolean;
                         };
                     };
                 };
