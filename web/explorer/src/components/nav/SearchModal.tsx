@@ -671,10 +671,8 @@ export function search(
     });
   }
 
-  // ISO-4217 ticker exact match → direct-jump to /assets/<ticker>.
-  // R-018 assets-unification: fiat currencies live under /assets;
-  // /v1/assets/{ticker} dispatches via the catalogue's ticker
-  // fallback (matches USD → us-dollar slug → GlobalAssetView).
+  // ISO-4217 ticker exact match → direct-jump to the same canonical
+  // /external/assets/{friendly-slug} URL as currencyResult (assetHrefFor).
   // We only direct-jump on an exact 3-letter-ticker match so
   // partial codes (e.g. "U" while the user is mid-typing "USDC")
   // fall through to coin results.
@@ -686,7 +684,7 @@ export function search(
         type: 'currency',
         label: `${match.ticker} — ${match.name}`,
         hint: 'open asset detail',
-        href: `/assets/${match.ticker}`,
+        href: assetHrefFor(match.ticker),
       });
     }
   }

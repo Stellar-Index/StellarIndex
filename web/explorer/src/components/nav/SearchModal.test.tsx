@@ -82,3 +82,16 @@ describe('SearchModal verified badge', () => {
     expect(r.verified).toBe(false);
   });
 });
+
+// F094: the ISO-4217 direct-jump result must land on the same canonical
+// /external/assets/{friendly-slug} URL as the plain currency row
+// (currencyResult / assetHrefFor) — not a bare /assets/{TICKER} that has
+// no matching _redirects rule and no pre-rendered page (fiat is excluded
+// from generateStaticParams), so it fell through to the runtime shell.
+describe('SearchModal fiat direct-jump href', () => {
+  it('routes an exact ISO-4217 ticker match to the canonical external-asset URL', () => {
+    const [r] = search('EUR', [], [{ ticker: 'EUR', name: 'Euro' }], false);
+    expect(r.type).toBe('currency');
+    expect(r.href).toBe('/external/assets/euro');
+  });
+});
