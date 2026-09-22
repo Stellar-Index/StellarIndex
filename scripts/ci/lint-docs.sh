@@ -501,6 +501,12 @@ stale_patterns=(
                                   # entry cited this as its shipping PR;
                                   # #1254 is now a real, unrelated live issue
                                   # (config-apply-gate refuted-arm gap)
+  "PR #1255"                     # dangling ref (RSWP-136) — CHANGELOG's
+                                  # default Chainlink feed map entry cited
+                                  # a PR number that didn't exist yet;
+                                  # #1255 is now a real, unrelated live issue
+                                  # (lint-doc-links silently skipping
+                                  # undecodable markdown files)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
