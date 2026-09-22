@@ -719,6 +719,11 @@ export interface paths {
          *     getting 3 rows knows exactly which 2 lack data. The
          *     envelope's `flags.stale` is the OR over per-row staleness.
          *     Above 100 ids, use the POST form (up to 1000 in the body).
+         *
+         *     `pairs` is accepted as an alias for `asset_ids` (same
+         *     comma-separated form) for clients arriving via
+         *     cross-endpoint extrapolation. Exactly one of `asset_ids` /
+         *     `pairs` must be supplied; sending both is a 400.
          */
         get: operations["getPriceBatch"];
         put?: never;
@@ -12482,13 +12487,22 @@ export interface operations {
     };
     getPriceBatch: {
         parameters: {
-            query: {
+            query?: {
                 /**
                  * @description Comma-separated canonical asset ids, max 100. Same strict
                  *     form as `/v1/price?asset=` — short symbols are rejected.
+                 *     Required unless `pairs` is supplied instead.
                  * @example native,USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN
                  */
-                asset_ids: string;
+                asset_ids?: string;
+                /**
+                 * @description Alias for `asset_ids` (same comma-separated form).
+                 *     Mutually exclusive with `asset_ids` — sending both is a
+                 *     400. Accepted for cross-endpoint compatibility with
+                 *     sites that call this kind of parameter "pairs";
+                 *     `asset_ids` is the canonical form.
+                 */
+                pairs?: string;
                 /**
                  * @description Quote-side asset. Either a canonical asset identifier (`native`,
                  *     `<code>-<issuer>`, contract ID) for crypto-quoted pairs, or
