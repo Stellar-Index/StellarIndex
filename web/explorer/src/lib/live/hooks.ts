@@ -227,8 +227,14 @@ const lastFollowRefetchByKey = new Map<string, number>();
 const followKeyRefCount = new Map<string, number>();
 
 /** Test hook: clear the shared throttle between cases. Mirrors
- * `resetStreamsForTest` in ./streams. */
+ * `resetStreamsForTest` in ./streams. Refuses to run in a production
+ * bundle — this mutates module-level state shared by every mounted
+ * follower, so an ungated call reachable from shipped code could reset
+ * live throttling for every panel on the page. */
 export function resetLedgerFollowThrottleForTest(): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('resetLedgerFollowThrottleForTest must not be called outside tests');
+  }
   lastFollowRefetchByKey.clear();
   followKeyRefCount.clear();
 }
