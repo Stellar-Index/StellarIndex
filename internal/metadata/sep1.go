@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -410,6 +411,19 @@ const (
 	maxLongFieldRunes  = 4096
 )
 
+// maxDocumentationFields and maxCurrencies bound FIELD/ENTRY COUNT,
+// not byte size: the 1 MiB body cap and the per-field rune caps above
+// bound the bytes of any one value, but nothing stopped a document
+// with an unbounded number of short DOCUMENTATION keys or CURRENCIES
+// entries from growing the parsed struct — and every field/entry is
+// stored and served verbatim. SEP-1 declares under a dozen
+// DOCUMENTATION fields; real anchors list at most a few hundred
+// currencies.
+const (
+	maxDocumentationFields = 64
+	maxCurrencies          = 1000
+)
+
 // truncateRunes returns s limited to at most maxRunes runes, cutting
 // on a UTF-8 rune boundary so the result is never invalid mid-encoding
 // UTF-8. Returns s unchanged when it already fits (the common case).
@@ -541,15 +555,26 @@ func parseSEP1(body []byte) (*SEP1, error) {
 }
 
 // applySEP1Documentation copies the [DOCUMENTATION] table onto sep,
-// capping each field on a rune boundary.
+// capping each field on a rune boundary, each key's own length, and
+// the total number of fields copied (see [maxDocumentationFields]).
+// Keys are sorted first so the fields kept under the cap are
+// deterministic rather than depending on Go's randomised map order.
 func applySEP1Documentation(sep *SEP1, raw map[string]any) {
 	doc, ok := raw["DOCUMENTATION"].(map[string]any)
 	if !ok {
 		return
 	}
-	for k, v := range doc {
-		if s, ok := v.(string); ok {
-			sep.Documentation[k] = truncateRunes(s, sep1DocFieldCap(k))
+	keys := make([]string, 0, len(doc))
+	for k := range doc {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if len(sep.Documentation) >= maxDocumentationFields {
+			break
+		}
+		if s, ok := doc[k].(string); ok {
+			sep.Documentation[truncateRunes(k, maxShortFieldRunes)] = truncateRunes(s, sep1DocFieldCap(k))
 		}
 	}
 	if name, ok := doc["ORG_NAME"].(string); ok {
@@ -557,7 +582,8 @@ func applySEP1Documentation(sep *SEP1, raw map[string]any) {
 	}
 }
 
-// appendSEP1Currencies reads the [[CURRENCIES]] array onto sep.
+// appendSEP1Currencies reads the [[CURRENCIES]] array onto sep,
+// capped at [maxCurrencies] entries.
 //
 // Two shapes, because the decoder produces both: an array-of-tables
 // normally arrives as []map[string]any, and sometimes as []any of
@@ -566,11 +592,17 @@ func applySEP1Documentation(sep *SEP1, raw map[string]any) {
 func appendSEP1Currencies(sep *SEP1, raw map[string]any) {
 	if currencies, ok := raw["CURRENCIES"].([]map[string]any); ok {
 		for _, c := range currencies {
+			if len(sep.Currencies) >= maxCurrencies {
+				break
+			}
 			sep.Currencies = append(sep.Currencies, parseCurrency(c))
 		}
 	}
 	if arr, ok := raw["CURRENCIES"].([]any); ok {
 		for _, entry := range arr {
+			if len(sep.Currencies) >= maxCurrencies {
+				break
+			}
 			if m, ok := entry.(map[string]any); ok {
 				sep.Currencies = append(sep.Currencies, parseCurrency(m))
 			}
