@@ -297,11 +297,16 @@ func TestPrewarmNetworkThroughput_WarmsTheEntryTheHandlerReads(t *testing.T) {
 	h.PrewarmNetworkThroughput(cancelled)
 }
 
-// TestNetworkThroughput_PartialDecidedAtServeTime pins the midnight-cross
-// correctness of the cached series: `partial` describes the bucket at
-// SERVE time, so an entry computed yesterday does not keep advertising a
-// now-complete day as still accumulating.
-func TestNetworkThroughput_PartialDecidedAtServeTime(t *testing.T) {
+// TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock pins Q206:
+// `partial` must be the value ExplorerReader.NetworkThroughput already
+// derived from the query's own max(close_time), passed through verbatim —
+// never recomputed against the handler's wall clock. A wall-clock recompute
+// reintroduces exactly the multi-region/stale-cache disagreement §2.6b's
+// data-derived flag exists to prevent: a bucket whose day has rolled past
+// per the SERVER's clock is not necessarily a complete day — a cache entry
+// served past its TTL, or a peer region whose clock has already ticked
+// over, would silently clear a bucket that is still genuinely incomplete.
+func TestNetworkThroughput_PartialIsReadFromTheBucketNotWallClock(t *testing.T) {
 	h, _ := newThroughputHandler()
 	h.ParseWindowDays = func(_ *http.Request, def int) int { return def }
 	h.ClientAborted = func(*http.Request, error) bool { return false }
@@ -314,12 +319,15 @@ func TestNetworkThroughput_PartialDecidedAtServeTime(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}
 
-	// An entry computed BEFORE midnight: its newest bucket is yesterday,
-	// and it was flagged partial at compute time.
-	yesterday := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -1)
+	// A stale cache entry whose newest bucket is two days old by the
+	// SERVER's wall clock but was genuinely still accumulating when the
+	// query produced it (Partial: true, data-derived). Under a wall-clock
+	// recompute this gets silently cleared to false because the bucket's
+	// day is "before today"; the bucket's own flag must survive untouched.
+	twoDaysAgo := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -2)
 	h.throughput.put([]clickhouse.ThroughputBucket{
-		{Day: yesterday.AddDate(0, 0, -1), Ledgers: 1},
-		{Day: yesterday, Ledgers: 2, Partial: true},
+		{Day: twoDaysAgo.AddDate(0, 0, -1), Ledgers: 1, Partial: false},
+		{Day: twoDaysAgo, Ledgers: 2, Partial: true},
 	})
 
 	h.NetworkThroughput(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/network/throughput", nil))
@@ -327,7 +335,10 @@ func TestNetworkThroughput_PartialDecidedAtServeTime(t *testing.T) {
 	if len(got.Buckets) != 2 {
 		t.Fatalf("served %d buckets, want 2", len(got.Buckets))
 	}
-	if got.Buckets[1].Partial {
-		t.Error("yesterday still flagged partial — `partial` must be decided at serve time, not read from the cached bucket")
+	if !got.Buckets[1].Partial {
+		t.Error("stale-but-accumulating bucket lost its partial flag — `partial` must be read from the cached bucket, not recomputed against wall-clock today")
+	}
+	if got.Buckets[0].Partial {
+		t.Error("a genuinely complete bucket must stay non-partial")
 	}
 }
