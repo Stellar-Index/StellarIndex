@@ -19,6 +19,7 @@
 
 import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export type IncidentSeverity = 'SEV-1' | 'SEV-2' | 'SEV-3';
 export type IncidentStatus =
@@ -61,33 +62,50 @@ function isValidStatus(v: unknown): v is IncidentStatus {
   );
 }
 
-const REPO_ROOT = path.resolve(process.cwd(), '..', '..');
+// Resolved from this module's own location, not `process.cwd()` — a
+// cwd-positional `path.resolve(process.cwd(), '..', '..')` silently points
+// at the wrong tree (or a nonexistent one) whenever the build/dev process is
+// invoked from anywhere other than web/explorer, and the readdirSync catch
+// below used to swallow the resulting ENOENT with no diagnostic at all.
+const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(MODULE_DIR, '..', '..', '..', '..');
 const DATA_DIR = path.join(REPO_ROOT, 'internal', 'incidents', 'data');
 
 let cache: Incident[] | null = null;
 
-export function loadIncidents(): Incident[] {
-  if (cache) return cache;
+// loadIncidentsFrom reads and parses every incident post under `dir`. An
+// unreadable `dir` is reported with console.warn and treated as zero
+// incidents rather than left to throw — but never silently: swallowing the
+// error with no diagnostic makes it indistinguishable from "no incidents
+// have ever happened", which would publish a false all-clear on /status.
+// Exported for unit testing against a real (nonexistent) path without
+// mocking `node:fs` — see the package comment above.
+export function loadIncidentsFrom(dir: string): Incident[] {
   let files: string[] = [];
   try {
-    files = readdirSync(DATA_DIR);
-  } catch {
-    cache = [];
-    return cache;
+    files = readdirSync(dir);
+  } catch (err) {
+    console.warn(`incidents: failed to read ${dir}: ${String(err)}`);
+    return [];
   }
   const out: Incident[] = [];
   for (const f of files) {
     if (!f.endsWith('.md')) continue;
     if (f.startsWith('_')) continue; // _template.md
-    const full = path.join(DATA_DIR, f);
+    const full = path.join(dir, f);
     const raw = readFileSync(full, 'utf-8');
     const inc = parseIncidentFile(raw, f);
     if (inc) out.push(inc);
   }
   // Newest first.
   out.sort((a, b) => (a.started_at < b.started_at ? 1 : -1));
-  cache = out;
   return out;
+}
+
+export function loadIncidents(): Incident[] {
+  if (cache) return cache;
+  cache = loadIncidentsFrom(DATA_DIR);
+  return cache;
 }
 
 export function loadIncident(slug: string): Incident | null {

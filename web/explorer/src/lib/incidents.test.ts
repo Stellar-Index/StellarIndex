@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { parseIncidentFile } from './incidents';
+import { loadIncidentsFrom, parseIncidentFile } from './incidents';
 
 // TEMPLATE_SEED reproduces the exact shape internal/incidents/_template.md
 // ships: `resolved_at:` and `affected_components:` carry dangling
@@ -115,5 +115,23 @@ Body.
     const inc = parseIncidentFile(raw, '2026-09-19-missing-status.md');
     expect(inc).toBeNull();
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe('loadIncidentsFrom', () => {
+  it('logs a warning instead of publishing a silent empty corpus when the data dir is unreadable', () => {
+    // RLT-467: the readdirSync catch used to set the cache to `[]` with zero
+    // logging on any error — indistinguishable, to every caller, from "no
+    // incidents have ever happened" (a false all-clear on /status). Use a
+    // real nonexistent path so this exercises the actual ENOENT branch
+    // rather than a mocked one.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const incidents = loadIncidentsFrom(
+      '/nonexistent/rlt-467-incidents-dir-does-not-exist',
+    );
+    expect(incidents).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('incidents: failed to read'),
+    );
   });
 });
