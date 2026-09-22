@@ -706,7 +706,10 @@ type ProtocolDetailView struct {
 // a failed read is not a real zero).
 func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	events := s.protocolEvents24h(ctx)
+	// The list's dynamic joins degrade to zeros/absent silently (doc
+	// comment above) — the directory has no per-row analytics.status to
+	// carry a health signal, unlike the detail path.
+	events, _ := s.protocolEvents24h(ctx)
 	verdicts := s.protocolVerdicts(ctx)
 	tvls := s.protocolTVLs()
 
@@ -841,18 +844,24 @@ func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(c
 }
 
 // buildProtocolDetail assembles the full detail view and stamps its
-// analytics status: "ok" only when BOTH analytics halves (the lake
-// analytics and the bespoke block) built healthy under a live context;
-// "stale" when both are present but the bespoke block came from the
-// last-good cache past its staleness horizon; otherwise "unavailable" —
-// so a degraded build is explicit on the wire instead of masquerading as
-// present zeros / silent absence.
+// analytics status: "ok" only when EVERY analytics-adjacent component —
+// the lake analytics, the bespoke block, the contract count, and the 24h
+// event count — built healthy under a live context; "stale" when
+// everything is present but the bespoke block came from the last-good
+// cache past its staleness horizon; otherwise "unavailable" — so a
+// degraded build is explicit on the wire instead of masquerading as
+// present zeros / silent absence. contract_count and events_24h can each
+// fail independently of the lake/bespoke halves (a roster count read or
+// the stats union can error while the rest of the build is healthy), so
+// their health feeds the same status instead of degrading silently.
 func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
 	contracts := s.protocolRoster(ctx, meta)
 	classifyContractKinds(contracts, meta.Factories)
 	s.enrichContractTokens(ctx, meta, contracts)
+	contractCount, contractCountOK := s.detailContractCount(ctx, meta, contracts)
+	events, eventsOK := s.protocolEvents24h(ctx)
 	v := ProtocolDetailView{
-		ProtocolView:     buildProtocolView(meta, s.detailContractCount(ctx, meta, contracts), s.protocolEvents24h(ctx), s.protocolVerdicts(ctx)),
+		ProtocolView:     buildProtocolView(meta, contractCount, events, s.protocolVerdicts(ctx)),
 		Contracts:        contracts,
 		EventKinds:       append([]string{}, meta.EventKinds...),
 		VerificationPage: meta.VerificationPage,
@@ -862,7 +871,7 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	bespokeOK, bespokeStale := s.enrichBespoke(ctx, meta, &v, windowDays)
 	status := protocolAnalyticsOK
 	switch {
-	case !lakeOK || !bespokeOK || ctx.Err() != nil:
+	case !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || ctx.Err() != nil:
 		status = protocolAnalyticsUnavailable
 	case bespokeStale:
 		status = protocolAnalyticsStale
@@ -1028,17 +1037,20 @@ func (s *Server) rosterCountErr(ctx context.Context, meta ProtocolMeta) (int, er
 // total for a source whose contracts are not enumerable (the roster then stays
 // empty while the count is real). A failed count degrades to the roster length
 // and logs — the detail path serves one named protocol, so it cannot omit it
-// the way the directory does.
-func (s *Server) detailContractCount(ctx context.Context, meta ProtocolMeta, roster []ProtocolContractView) int {
+// the way the directory does. ok=false only on a genuine read failure (no
+// counter wired, or an uncounted source, is a legitimate roster-derived
+// count and reports ok=true) so the caller can fold it into analytics.status
+// instead of letting the degraded fallback read as a real number.
+func (s *Server) detailContractCount(ctx context.Context, meta ProtocolMeta, roster []ProtocolContractView) (int, bool) {
 	n, ok, err := s.countedContractTotal(ctx, meta)
 	if err != nil {
 		s.logger.Warn("protocol contract count read failed", "source", meta.Name, "err", err)
-		return len(roster)
+		return len(roster), false
 	}
 	if !ok {
-		return len(roster)
+		return len(roster), true
 	}
-	return n
+	return n, true
 }
 
 // enrichProtocolAnalytics populates the lake-derived analytics on the detail
@@ -1316,17 +1328,20 @@ func attachProtocolTVL(view *ProtocolView, tvls map[string]ProtocolTVLView) {
 
 // protocolEvents24h reads the per-source trailing-24h event counts,
 // degrading to an empty map (every protocol reads 0) when the reader
-// is nil or errors.
-func (s *Server) protocolEvents24h(ctx context.Context) map[string]int64 {
+// is nil or errors. ok=false only on a read error — a nil reader is the
+// documented "not wired" shape the directory already serves zeros for
+// and is not a degradation the detail path's analytics.status should
+// report; a query error is, so the caller can fold it in.
+func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool) {
 	if s.protocolStats == nil {
-		return nil
+		return nil, true
 	}
 	counts, err := s.protocolStats.CountRecentEventsBySource(ctx)
 	if err != nil {
 		s.logger.Warn("protocols events_24h read failed", "err", err)
-		return nil
+		return nil, false
 	}
-	return counts
+	return counts, true
 }
 
 // protocolVerdicts reads the latest completeness verdict per source,

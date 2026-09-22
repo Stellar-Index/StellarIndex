@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // These tests pin the 2026-07-31 audit fixes on the protocol-detail
@@ -200,6 +201,79 @@ func TestFastActivity_DefinitiveAbsenceIsCached(t *testing.T) {
 	defer stub.mu.Unlock()
 	if stub.probeCalls != 1 {
 		t.Fatalf("probe calls = %d, want 1 (definitive answer cached)", stub.probeCalls)
+	}
+}
+
+// erroringCountReader is a contracts reader whose roster reads always
+// succeed (empty) but whose count-without-enumeration path always fails —
+// isolates detailContractCount's error from the roster build.
+type erroringCountReader struct{ err error }
+
+func (erroringCountReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
+	return nil, nil
+}
+
+func (erroringCountReader) ListSourceContractsFromProjection(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (erroringCountReader) ProtocolContractIndex(context.Context) (map[string]string, error) {
+	return nil, nil
+}
+
+func (r erroringCountReader) CountSourceContracts(context.Context, string) (int64, bool, error) {
+	return 0, false, r.err
+}
+
+// erroringStatsReader is a ProtocolStatsReader that always fails.
+type erroringStatsReader struct{ err error }
+
+func (r erroringStatsReader) CountRecentEventsBySource(context.Context) (map[string]int64, error) {
+	return nil, r.err
+}
+
+// TestBuildProtocolDetail_ContractCountErrorDegradesStatus: a failed
+// contract-count read must flip analytics.status to "unavailable" even
+// when the lake analytics and bespoke block both build healthy — before
+// the fix detailContractCount degraded to len(roster) silently and never
+// fed the failure into status, so the page read "ok" while serving a
+// wrong contract_count.
+func TestBuildProtocolDetail_ContractCountErrorDegradesStatus(t *testing.T) {
+	meta, ok := protocolByName("cctp")
+	if !ok {
+		t.Fatal("cctp missing from registry")
+	}
+	srv := New(Options{
+		ProtocolActivity:  prewarmActivityStub{},
+		ProtocolBespoke:   &bespokeStub{},
+		ProtocolContracts: erroringCountReader{err: errors.New("count read failed")},
+	})
+	v := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+	if v.Analytics == nil || v.Analytics.Status != protocolAnalyticsUnavailable {
+		t.Fatalf("status = %+v, want %q: a failed contract count must not read as a healthy build",
+			v.Analytics, protocolAnalyticsUnavailable)
+	}
+}
+
+// TestBuildProtocolDetail_Events24hErrorDegradesStatus: a failed
+// events_24h read must flip analytics.status to "unavailable" even when
+// the lake analytics and bespoke block both build healthy — before the
+// fix protocolEvents24h degraded to a nil map silently (every protocol
+// serves 0) and never fed the failure into status.
+func TestBuildProtocolDetail_Events24hErrorDegradesStatus(t *testing.T) {
+	meta, ok := protocolByName("cctp")
+	if !ok {
+		t.Fatal("cctp missing from registry")
+	}
+	srv := New(Options{
+		ProtocolActivity: prewarmActivityStub{},
+		ProtocolBespoke:  &bespokeStub{},
+		ProtocolStats:    erroringStatsReader{err: errors.New("stats read failed")},
+	})
+	v := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+	if v.Analytics == nil || v.Analytics.Status != protocolAnalyticsUnavailable {
+		t.Fatalf("status = %+v, want %q: a failed events_24h read must not read as a healthy build",
+			v.Analytics, protocolAnalyticsUnavailable)
 	}
 }
 
