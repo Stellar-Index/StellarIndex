@@ -1,7 +1,7 @@
 ---
 title: sorocredit WASM-history audit
-last_verified: 2026-07-07
-status: ratified — single WASM, event schemas invariant genesis→tip
+last_verified: 2026-09-22
+status: "ratified 2026-07-07 — 8th symbol admitted (see 2026-09-22 addendum)"
 source: sorocredit
 backfill_safe: true
 ---
@@ -19,7 +19,9 @@ audit. The main contract has run a **single WASM version** over its
 entire life, and — the load-bearing claim — **every one of the 7
 tracked event types has a single, invariant on-wire schema across the
 whole ledger history**, each matching `internal/sources/sorocredit/decode.go`.
-Backfill is safe **from genesis (ledger 61,620,822)**.
+Backfill is safe **from genesis (ledger 61,620,822)**. An 8th event type,
+`TreasuryUpdated`, was admitted after ratification — see the
+**2026-09-22 addendum** below; it does not change this verdict.
 
 `sorocredit` is an unbranded consumer-USDC credit / CDP protocol
 (`ClassLending`, `DefaultWeight: 0`, `IncludeInVWAP: false`). It
@@ -40,7 +42,7 @@ note.
 | Contract-ID (hex) | `8dd258b8d2856b63044518889bd69020558e3d813a560ad8d75bbf5c1d362627` |
 | Creator | `GADI6FHS…` |
 | Decoder files | [`internal/sources/sorocredit/{events,decode,consumer}.go`](../../../internal/sources/sorocredit/) |
-| Dispatcher hook | event-based `Decoder` (topic[0] classify → one of 7 symbols) + a blend-style childgate |
+| Dispatcher hook | event-based `Decoder` (topic[0] classify → one of 8 symbols) + a blend-style childgate |
 | Genesis ledger | `61,620,822` (2026-03-12 17:14:35 UTC) |
 
 The protocol has a **single trust root** — the main contract — which
@@ -152,6 +154,12 @@ that schema match `decode.go`?**
 | `SupportedAssetAdded` | 1 | 61,620,825 (2026-03-12) | — |
 | `BeaconUpdated` | 1 | 61,620,822 (2026-03-12) | — |
 | `CollateralHashUpdated` | 1 | 61,620,824 (2026-03-12) | — |
+| `TreasuryUpdated` | 1 (known) | 63,847,367 (2026-08-18 discovery) | — |
+
+`TreasuryUpdated` was not part of this 2026-07-07 lake sweep — it was
+found afterward by the ADR-0033 recognition audit and is not covered by
+the per-symbol fingerprint table below. See the **2026-09-22 addendum**
+for its (code-structural, not lake-derived) safety argument.
 
 Two facts fall straight out of this:
 
@@ -218,10 +226,11 @@ Each observed shape is exactly what the decoder expects:
 | `SupportedAssetAdded` | `decodeSupportedAssetAdded` | topics ≥2 (`addr@1`); body captured | `[Symbol,Address]` + `Vec[7 config]` | ✓ |
 | `BeaconUpdated` | `decodeConfigBody` | topics ≥1; body captured | `[Symbol]` + `Vec[Void,Address]` | ✓ |
 | `CollateralHashUpdated` | `decodeConfigBody` | topics ≥1; body captured | `[Symbol]` + `Vec[Bytes,Bytes]` | ✓ |
+| `TreasuryUpdated` | `decodeConfigBody` | topics ≥1; body captured | `[Symbol]` + `Vec[Address,Address]` (1 known occurrence, ledger 63,847,367) | ✓ |
 
 The golden-frame tests in
 [`internal/sources/sorocredit/source_test.go`](../../../internal/sources/sorocredit/source_test.go)
-already decode a real sample of each of the 7 types through the
+already decode a real sample of each of the 8 types through the
 production `decodeOne` path with no error, and the config-event frames
 there are the exact genesis frames (verified against the lake). No new
 decode arm was needed — every WASM state the contract has run emits
@@ -231,7 +240,7 @@ the shapes the current decoder handles.
 
 | failure mode | finding |
 | --- | --- |
-| New event topic added | none — 7 topic[0] symbols, stable; a new one would `classify()` to `""` and skip cleanly |
+| New event topic added | 8 topic[0] symbols tracked (was 7 at ratification — `TreasuryUpdated` admitted, see 2026-09-22 addendum); a still-unmapped topic classifies to `""` and skips cleanly, but is caught by the ADR-0033 recognition audit (`recognition_ok=FALSE`) rather than silently accepted forever |
 | topic[0] symbol renamed | none — every symbol byte-identical across life (grouping key is the symbol) |
 | body field renamed | N/A — positional `Vec`, no field names; element **types** invariant |
 | body arity changed | none — one `Vec` arity per event type across all events |
@@ -268,7 +277,8 @@ unblocked:
 - A new distinct executable hash appears on the ContractInstance
   (`ledger_entry_changes` instance-key query above returns >1 hash).
 - A new topic[0] symbol appears for the contract (surfaced by the
-  projector's unknown-topic path / per-source gap detector).
+  projector's unknown-topic path / per-source gap detector). **Already
+  fired once** — see the 2026-09-22 addendum below.
 - Any of the 4 recurring event types grows a second structural
   fingerprint (re-run the §2 fingerprint query; extend `last_verified`).
 
@@ -282,6 +292,37 @@ wrapper when verify-archive is idle) would do it. It is not required
 for this verdict: event-schema invariance already excludes any
 schema-breaking upgrade, which is the only property `BackfillSafe`
 protects.
+
+## 2026-09-22 addendum — TreasuryUpdated (8th symbol) admitted
+
+`TreasuryUpdated` (topic `Symbol("TreasuryUpdated")`, body
+`Vec[Address old, Address new]`) was discovered by the ADR-0033
+recognition audit (2026-08-18): one real lake event on the main
+contract at ledger 63,847,367 that `classify()` dropped at the time,
+tripping `recognition_ok=FALSE`. `internal/sources/sorocredit/decode.go`
+was updated (commit 8f4569d94) to route it to `TypeTreasuryUpdated` via
+the existing `decodeConfigBody` helper — the same one already covering
+`BeaconUpdated` / `CollateralHashUpdated` above. This doc's counts (the
+source-identity table, §2's per-symbol tables, and the failure-mode
+review) were not updated at the time; that drift is what this addendum
+corrects.
+
+No new lake fingerprint sweep was run for this addendum, and none is
+needed for the safety verdict: `decodeConfigBody` performs **zero**
+typed field extraction — it stores `e.Value` (the raw base64 event
+body) verbatim into `Attributes["body"]` and always returns a nil
+error. There is no body shape it can fail to parse, so
+`TreasuryUpdated`'s schema-invariance risk is nil by construction — the
+same argument the 2026-07-07 audit already accepted for `BeaconUpdated`
+and `CollateralHashUpdated`. Unlike those two (which each fired exactly
+once, at genesis), `TreasuryUpdated`'s one known occurrence is well
+after genesis (ledger 63,847,367, past the 2026-07-07 audit's own
+last-observed ledger of 63,363,505) — a treasury-pointer rotation is an
+admin action, not a genesis-only config write, and may recur. That does
+not change the argument above: any future occurrence still routes
+through the same zero-assertion decoder.
+
+`Registry["sorocredit"].BackfillSafe` stays `true`.
 
 ## References
 
