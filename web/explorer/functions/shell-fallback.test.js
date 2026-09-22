@@ -104,6 +104,36 @@ describe.each(cases)('%s/[[path]].js shell fallback', (_name, onRequest) => {
   });
 });
 
+// T313: `env.ASSETS.fetch` can reject (a worker-runtime fault — binding
+// unavailable, network fault) instead of resolving to a Response. Every
+// handler here used to have zero `try`/`catch` around it, so that rejection
+// propagated out of `onRequest` as an unhandled exception instead of the
+// same 503 already returned for a failed-but-resolved shell fetch.
+function makeThrowingContext() {
+  const request = new Request('https://stellarindex.io/whatever/long-tail-id');
+  return {
+    request,
+    env: {
+      ASSETS: {
+        fetch: async () => {
+          throw new Error('binding unavailable');
+        },
+      },
+    },
+  };
+}
+
+describe.each(cases)(
+  '%s/[[path]].js shell fallback error handling',
+  (_name, onRequest) => {
+    it('returns a 503 Response instead of throwing when ASSETS.fetch rejects', async () => {
+      const res = await onRequest(makeThrowingContext());
+      expect(res).toBeInstanceOf(Response);
+      expect(res.status).toBe(503);
+    });
+  },
+);
+
 // The shell sub-fetch must NOT inherit the client's conditional-request
 // headers.
 //
