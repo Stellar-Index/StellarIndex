@@ -382,6 +382,11 @@ stale_patterns=(
                                   # unrelated resolveTip completeness-clamp
                                   # finding, not the chart truncated/
                                   # data_starts_at PR the row implies
+  "R-021.*#1264"                  # coverage-matrix.md's R-021 row cited #1264
+                                  # (RSWP-140); #1264 now resolves to an
+                                  # unrelated projector_lag_high gauge finding,
+                                  # not the handler-timeout/pq-cancel PR the
+                                  # row implies
   "per #948"                      # dangling ref (RSWP-055) — CHANGELOG's
                                   # "6 more detail surfaces" BreadcrumbList
                                   # entry cited #948 as the issue behind the

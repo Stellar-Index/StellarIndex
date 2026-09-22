@@ -682,7 +682,7 @@ week lands.
   config gap.
 
 - **2026-05-11** — **All five 2026-05-10 ❌ rows have landing
-  code fixes on `main`** (PRs #1261, #1262, #1263, #1264,
+  code fixes on `main`** (PRs #1261, #1262, #1263,
   #1268, #1270 across the session). Headline
   resolutions:
   R-005 → #1261 (batch shares full /v1/price fallback chain),
@@ -694,7 +694,9 @@ week lands.
   here now resolves to an unrelated live issue),
   R-016 → #1270 (asset SEP-1 backfill from known_issuers map),
   R-011 → observations triangulation hint on empty,
-  R-021 → #1264 (handler-timeout helper recognises pq cancel),
+  R-021 → handler-timeout helper recognises pq cancel (no
+  surviving PR number for this entry; the one previously cited
+  here now resolves to an unrelated live issue),
   R-001/R-002 → #1268 (prewarm covers volume-desc + per-CEX).
   R-006 + R-009 remain operator config (#97, #119). The Prod
   cells in this matrix continue to read against rc.39; flip
