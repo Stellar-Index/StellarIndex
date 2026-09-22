@@ -29231,8 +29231,8 @@ rc.48 deploy to R1.
 ## [v0.5.0-rc.24] — 2026-05-07
 
 ### Added
-- **`circulating_supply` + `market_cap_usd` on `/v1/currencies`**
-  (#973). Joined from a curated quarterly-refreshed CSV at
+- **`circulating_supply` + `market_cap_usd` on `/v1/currencies`**.
+  Joined from a curated quarterly-refreshed CSV at
   `internal/sources/forex/circulation_data.csv` covering ~25
   currencies (>95% of global fx spot volume per BIS 2022).
   Each row cites a central-bank series identifier (FRED:M2SL,
@@ -29243,9 +29243,10 @@ rc.48 deploy to R1.
   (`FM.LBL.BMNY.CN`, ~250 countries) is a follow-up.
 - Same fields on `/v1/currencies/{ticker}` detail.
 
-(rc.23 was cancelled mid-build to bundle #973 into the next
-deployable tag; rc.24 supersedes it. Contents of rc.23 below
-roll forward verbatim.)
+(rc.23 was cancelled mid-build to bundle the currency
+circulating-supply/market-cap work into the next deployable tag;
+rc.24 supersedes it. Contents of rc.23 below roll forward
+verbatim.)
 
 ### Carried forward from cancelled rc.23
 
