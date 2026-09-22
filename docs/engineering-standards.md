@@ -72,26 +72,34 @@ the mechanical ones; reviewers enforce the judgement ones.
 
 ### 2.2. Forbidden patterns
 
-The following trigger automatic PR blocks:
+These are forbidden by policy. Only two are mechanically blocked
+today — `.golangci.yml` has no `forbidigo`, `gochecknoglobals`, or
+`panic`/`time.Now`/`init` rule, so the rest are reviewer-enforced
+until such a rule is added:
 
 - **`interface{}` / `any` in `pkg/*`** — public API must be
   strongly typed. In `internal/` allowed only with a code comment
-  justifying it, nothing structural.
+  justifying it, nothing structural. *(reviewer-enforced)*
 - **`panic()` outside `main()` and tests** — library code returns
-  errors; `cmd/*` may panic only during startup.
+  errors; `cmd/*` may panic only during startup. *(reviewer-enforced)*
 - **`init()` functions that do more than assign constants or
   register standard handlers.** Hidden start-time magic is agent-
-  hostile and test-hostile.
+  hostile and test-hostile. *(reviewer-enforced)*
 - **Goroutines without explicit context + shutdown** — every `go`
   statement must take `context.Context` and honour `ctx.Done()`.
+  *(CI-enforced: `contextcheck` catches a goroutine that drops a
+  context it was given, not the absence of a context parameter.)*
 - **SQL string concatenation** — parameterised queries only;
-  `sqlclosecheck` lint catches unclosed rows.
+  *(CI-enforced: `sqlclosecheck` catches the resulting unclosed
+  rows, not the concatenation itself.)*
 - **`time.Now()` inside business logic** — clock passed in as
-  dependency for testability.
+  dependency for testability. *(reviewer-enforced)*
 - **Global mutable state** — use `sync.Map` or channel-based state
   if unavoidable; prefer explicit dependency injection.
+  *(reviewer-enforced)*
 - **Dependency with < 1 GitHub star or < 1 year of history** —
   unless justified in an ADR with the alternative considered.
+  *(reviewer-enforced — not mechanically checkable)*
 
 ### 2.3. `TODO` discipline
 
