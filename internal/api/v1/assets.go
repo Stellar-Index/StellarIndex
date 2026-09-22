@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"sort"
@@ -55,6 +56,25 @@ type Sep1FetchStateReader interface {
 // [Sep1CachedReader] at all, so it cannot stand in front of this seam. A
 // caching wrapper that one day does must be added here the same day.
 var _ Sep1FetchStateReader = (*timescale.Store)(nil)
+
+// warnIfSep1CacheLacksFetchState is the mechanical half of the guard above:
+// the compile-time assertion only proves the bare store type still
+// implements the seam, it says nothing about whatever concrete value a
+// future Options.Sep1Cache actually wires. If that value stops satisfying
+// [Sep1FetchStateReader] — a caching wrapper added without the fetch-state
+// method, say — sep1StatusForNoPayload falls back to "not_fetched" for
+// every issuer with nothing red anywhere. Called once from [New] so that
+// regression logs loudly at boot instead of only showing up as a wrong
+// wire value nobody traced back here.
+func warnIfSep1CacheLacksFetchState(s *Server, logger *slog.Logger) {
+	if s.sep1Cache == nil {
+		return
+	}
+	if _, ok := s.sep1Cache.(Sep1FetchStateReader); !ok {
+		logger.Warn("sep1 overlay: wired Sep1Cache does not implement Sep1FetchStateReader; " +
+			"every issuer will report sep1_status=not_fetched instead of unreachable")
+	}
+}
 
 // AssetReader is the storage-side interface for asset reads.
 // Implementations:
