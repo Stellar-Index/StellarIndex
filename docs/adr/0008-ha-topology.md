@@ -39,6 +39,26 @@ superseded_by: null
 >
 > The decision below is preserved as the original record.
 
+> **Amendment (2026-09-22, T570).** Two claims in §4 ("Stateless
+> services scale horizontally; one leader-elected aggregator") are
+> superseded by the corrected topology in
+> [`docs/architecture/ha-plan.md`](../architecture/ha-plan.md):
+> - The **per-source `stellarindex-indexer` process** framing does not
+>   match the deployed binary. §3.8 of `ha-plan.md` records the
+>   correction (2026-09-02): **one** `stellarindex-indexer` process
+>   walks ledgers via `internal/ledgerstream` and the
+>   `internal/dispatcher` fans each ledger to every registered
+>   decoder. The per-source `Source`/`Orchestrator` goroutine seam was
+>   deleted in 2026-07.
+> - The **Redis-lease leader-elected `stellarindex-aggregator`**
+>   (one active + one standby) is not implemented. The binary run
+>   today (`cmd/stellarindex-aggregator/main.go`) has no leader
+>   election and no standby instance; it ships as a single process.
+>   `ha-plan.md` §3.7 still describes the two-instance design as a
+>   target, not a shipped state.
+>
+> The decision below is preserved as the original record.
+
 ## Context
 
 The availability SLA requires ≥ 99.99 % uptime
@@ -282,3 +302,30 @@ documents stop agreeing. The 99.99 % in this ADR remains what it always
 was: the design target the three-node topology was sized against, to
 be revisited if that topology ships and an off-host probe has measured
 it for 30 days.
+
+## Amendment — 2026-09-22: §4's indexer and aggregator claims (T570)
+
+Recorded because §4 ("Stateless services scale horizontally; one
+leader-elected aggregator") describes a topology that diverged from
+what shipped, while this ADR is otherwise kept current with dated
+amendments. **The decision is untouched; the deployed shape is
+recorded here so the ADR does not read as the current architecture.**
+
+**What §4 says.** "`stellarindex-indexer` runs one process per
+configured source (per-source orchestration)." And:
+"`stellarindex-aggregator` runs **one active + one standby**,
+leader-elected via a Redis lease — only one instance writes to the
+trades hypertable at a time."
+
+**What shipped.** `stellarindex-indexer` is a single process
+(`cmd/stellarindex-indexer/main.go`): it walks ledgers once via
+`internal/ledgerstream` and `internal/dispatcher` fans each ledger to
+every registered decoder. The per-source `Source`/`Orchestrator`
+goroutine seam was deleted in 2026-07 —
+[`ha-plan.md` §3.8](../architecture/ha-plan.md) records this
+correction as of 2026-09-02. `stellarindex-aggregator`
+(`cmd/stellarindex-aggregator/main.go`) has no leader-election code
+path and runs as a single instance; the Redis-lease active/standby
+pair in
+[`ha-plan.md` §3.7](../architecture/ha-plan.md) remains a design
+target, not a shipped state.
