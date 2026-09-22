@@ -387,7 +387,14 @@ func (h *Handler) refreshContractsDir(window int) *keyFlight {
 		start := time.Now()
 		rctx, cancel := context.WithTimeout(context.Background(), contractsDirRefreshTimeout)
 		defer cancel()
-		since := h.windowFloorLedger(rctx, window)
+		since, err := h.windowFloorLedger(rctx, window)
+		if err != nil {
+			// Keep the previous entry (if any) — old-but-real beats blank,
+			// and a failed tip read must not fall back to a genesis-wide
+			// scan (RLT-099 / #581b).
+			h.Logger.Warn("contracts directory detached refresh failed (tip read)", "window_days", window, "err", err)
+			return
+		}
 		rows, err := h.Reader.RecentContracts(rctx, contractsDirMaxLimit, since)
 		obs.ObserveExplorerSWRRefresh("contracts_dir", start, err)
 		if err != nil {

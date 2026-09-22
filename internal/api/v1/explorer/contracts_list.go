@@ -193,7 +193,10 @@ func (h *Handler) ContractInteractions(w http.ResponseWriter, r *http.Request) {
 		since uint32
 	}
 	v, asOf, degraded, err := h.contractDetailCached(ctx, fmt.Sprintf("ix:%s:%d", cid, window), func(rctx context.Context) (any, error) {
-		s := h.windowFloorLedger(rctx, window)
+		s, werr := h.windowFloorLedger(rctx, window)
+		if werr != nil {
+			return nil, werr
+		}
 		// The reader may narrow the window to the contract's own recent
 		// activity; serve the floor it actually used.
 		full, effective, cerr := h.Reader.ContractInteractions(rctx, cid, 200, s)
@@ -318,18 +321,26 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // windowFloorLedger returns the ledger sequence `days` days before the tip,
-// or 0 when the tip is unknown / the window reaches past genesis. Keeps the
-// contract aggregates scoped to a primary-key range rather than a full scan.
-func (h *Handler) windowFloorLedger(ctx context.Context, days int) uint32 {
+// or 0 when the tip is genuinely unknown (no ledgers captured yet) / the
+// window reaches past genesis. A FAILED tip read is returned as an error
+// rather than folded into the 0 floor: 0 means "scan from genesis", and
+// silently substituting it for "the tip read failed" turned a transient
+// ClickHouse error into an unbounded genesis-wide GROUP BY on every caller
+// (RLT-099 / #581b). Callers must refuse the window on error rather than
+// serve one computed from ledger 0.
+func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, error) {
 	tip, err := h.Reader.RecentLedgers(ctx, 1, 0)
-	if err != nil || len(tip) == 0 {
-		return 0
+	if err != nil {
+		return 0, err
+	}
+	if len(tip) == 0 {
+		return 0, nil
 	}
 	span := uint32(days * ledgersPerDay) //nolint:gosec // days is clamped to [1,365]
 	if span >= tip[0].Seq {
-		return 0
+		return 0, nil
 	}
-	return tip[0].Seq - span
+	return tip[0].Seq - span, nil
 }
 
 // contractAttribution loads the contract_id → protocol map (best-effort —
