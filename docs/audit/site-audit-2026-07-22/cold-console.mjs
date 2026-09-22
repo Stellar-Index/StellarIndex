@@ -4,13 +4,24 @@
 const [, , targetUrl, widthArg] = process.argv;
 const width = Number(widthArg || 1440);
 
-const list = await (await fetch('http://127.0.0.1:9222/json/list')).json();
-let page = list.find((t) => t.type === 'page');
-if (!page) {
-  page = await (await fetch('http://127.0.0.1:9222/json/new?about:blank')).json();
+let list;
+let page;
+try {
+  list = await (await fetch('http://127.0.0.1:9222/json/list')).json();
+  page = list.find((t) => t.type === 'page');
+  if (!page) {
+    page = await (await fetch('http://127.0.0.1:9222/json/new?about:blank')).json();
+  }
+} catch (err) {
+  console.error(`cold-console: could not reach CDP at 127.0.0.1:9222 (${err.message})`);
+  process.exit(1);
 }
 
 const ws = new WebSocket(page.webSocketDebuggerUrl);
+ws.addEventListener('error', (err) => {
+  console.error(`cold-console: websocket error (${err.message || err})`);
+  process.exit(1);
+});
 let id = 0;
 const pending = new Map();
 const events = { consoleErrors: [], consoleWarnings: [], exceptions: [], failedRequests: [] };
