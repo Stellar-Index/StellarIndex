@@ -120,7 +120,7 @@ func (r *ExplorerReader) ContractWasm(ctx context.Context, contractID string) (C
 		// A parse miss is non-fatal: still serve the resolved hash + size.
 		info.ToolNote = "export parse: " + perr.Error() + "; "
 	}
-	buildWasmDisassembly(ctx, &info, code)
+	r.buildWasmDisassembly(ctx, &info, code)
 	return info, nil
 }
 

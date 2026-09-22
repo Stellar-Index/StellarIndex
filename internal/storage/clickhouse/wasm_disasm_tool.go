@@ -16,10 +16,15 @@ import (
 //
 // Deployment: wabt isn't installed on r1 by default but is in apt
 // (`apt install wabt`). Until it's installed these fields are empty; once it
-// is, they populate with no code change. The wasm bytes for a hash are
-// immutable, so the whole response is cached hard (Cache-Control max-age=86400)
-// — the per-request fork/exec cost is paid once per contract per day at the CDN
-// edge, not per request.
+// is, they populate with no code change. `Cache-Control: max-age=86400`
+// (wasm_view.go) only bounds re-fetches a CACHING CLIENT or a CDN chooses to
+// honour — it is not itself a server-side cache, and a deployment with no CDN
+// in front of it (CacheControlWithCDN(false), L3.14) pays the header with no
+// effect at all. The fork/exec cost that actually recurs per request is
+// bounded HERE instead: ExplorerReader.disasmCache (wasm_disasm_cache.go)
+// keys a successful run by wasm hash — content-addressed and immutable — so
+// wasm2wat/wasm-decompile run at most once per contract per process, not once
+// per request.
 
 // wasmToolTimeout bounds each external tool invocation. WAT/decompile of a
 // ~50 KB module is sub-second; the timeout only fires on a pathological input.
@@ -34,11 +39,24 @@ const maxDisasmOutputBytes = 2 << 20 // 2 MiB
 // buildWasmDisassembly fills info.Wat + info.Decompiled best-effort and appends
 // to info.ToolNote. It never fails the caller — a missing tool or a tool error
 // just leaves the corresponding field empty with an explanatory note.
-func buildWasmDisassembly(ctx context.Context, info *ContractWasmInfo, code []byte) {
+//
+// info.WasmHash (already set by the caller) is a content address, so a
+// previously-cached SUCCESSFUL run is served without paying fork/exec again.
+// A miss (never cached, or the prior run failed) computes and — only on full
+// success — populates r.disasmCache for the next request. Caching a failure
+// would pin a transient condition (tool not yet installed, a load-induced
+// timeout) as a permanent false negative for that hash, so failures are
+// always retried instead.
+func (r *ExplorerReader) buildWasmDisassembly(ctx context.Context, info *ContractWasmInfo, code []byte) {
+	if cached, ok := r.disasmCache.get(info.WasmHash); ok {
+		info.Wat = cached.wat
+		info.Decompiled = cached.decompiled
+		info.ToolNote += cached.toolNote
+		return
+	}
+
 	wat, watNote := runWasmTool(ctx, "wasm2wat", code, "--no-check")
-	info.Wat = wat
 	dec, decNote := runWasmTool(ctx, "wasm-decompile", code)
-	info.Decompiled = dec
 
 	notes := make([]string, 0, 2)
 	if watNote != "" {
@@ -47,8 +65,17 @@ func buildWasmDisassembly(ctx context.Context, info *ContractWasmInfo, code []by
 	if decNote != "" {
 		notes = append(notes, "decompile: "+decNote)
 	}
+	var note string
 	if len(notes) > 0 {
-		info.ToolNote += strings.Join(notes, "; ")
+		note = strings.Join(notes, "; ")
+	}
+
+	info.Wat = wat
+	info.Decompiled = dec
+	info.ToolNote += note
+
+	if watNote == "" && decNote == "" {
+		r.disasmCache.put(info.WasmHash, wasmDisasmEntry{wat: wat, decompiled: dec, toolNote: note}, time.Now())
 	}
 }
 
