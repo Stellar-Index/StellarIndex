@@ -27840,7 +27840,7 @@ rc.48 deploy to R1.
   upstream). Op breaks down per cached method
   (`distinct_pairs` / `source_markets` / `asset_markets` /
   `all_pools`). Motivation: three back-to-back prewarm-key drift
-  bugs (#1185 / #1194 / #1195) where the prewarm warmed one key
+  bugs (#1185 / #1194 / the Limit dimension) where the prewarm warmed one key
   but user requests looked up another; each was invisible to
   tests + log-greps and only surfaced from live latency probes
   ("dex pools take forever"). With this counter an alert on
@@ -27854,7 +27854,7 @@ rc.48 deploy to R1.
   a high-volume cache with 50% miss will. Runbook
   [cache-miss-rate-high.md](docs/operations/runbooks/cache-miss-rate-high.md)
   walks the operator through diffing prewarm vs handler args
-  (which is what we did manually for #1185 / #1194 / #1195).
+  (which is what we did manually for #1185 / #1194 / the Limit dimension).
   (PR #1197)
 - **`stellarindex_api_cache_ops_total` extended to `coins` and
   `sources_stats` cache wrappers.** PR #1196 only instrumented
@@ -28156,7 +28156,7 @@ rc.48 deploy to R1.
   `Limit: 200` so its cache key (`ListCoinsExt|200|…`) never
   matched the handler's lookup key (`ListCoinsExt|199|…`). The
   explorer's `/currencies` page (the most-trafficked coins read)
-  was hitting cold cache on every load. (PR #1195)
+  was hitting cold cache on every load.
 - **Unfiltered `/v1/pools` prewarm now matches the handler's
   cache key**. Follow-up to PR #1185, which fixed the
   `MarketsOrder` mismatch but missed a second mismatch in the
