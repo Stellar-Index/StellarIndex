@@ -119,3 +119,33 @@ groups:
             Compare stellarindex_binary_version_binaries_total against
             the number of stellarindex-* files in /usr/local/bin to see
             how many dropped out.
+
+      # T561: a probe whose TIMER stops firing entirely freezes every
+      # gauge in its textfile at the last value node_exporter re-scrapes
+      # forever — stellarindex_binary_version_probe_success stays at 1,
+      # so neither _skew nor _probe_degraded (which only fire on a
+      # value the probe itself reported) ever see the timer die. This is
+      # the frozen-textfile-served-indefinitely class: node_exporter has
+      # no opinion on whether a file is still being rewritten.
+      - alert: stellarindex_binary_version_probe_stale
+        expr: absent_over_time(stellarindex_binary_version_probe_success[90m])
+        # stellarindex-binary-version-probe.timer fires every 30 min
+        # (OnCalendar=*:09,39:00); 90m tolerates two missed runs before
+        # paging so eval/scrape jitter can't flap it.
+        for: 10m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: deploy
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+          summary: "Binary version-skew probe has not reported in 90m — the timer may be dead"
+          description: |
+            No stellarindex_binary_version_probe_success sample for 90+
+            minutes despite a 30-minute timer. The probe crashed before
+            writing its textfile, or
+            stellarindex-binary-version-probe.timer stopped firing —
+            either way, _skew and _probe_degraded are now reading a
+            frozen file and cannot detect drift or their own absence.
+            `systemctl status stellarindex-binary-version-probe.timer`
+            on the host.
