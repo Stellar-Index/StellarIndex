@@ -427,14 +427,17 @@ func TestRateLimit_NilKeyFnMasksIPv6To64(t *testing.T) {
 
 func TestSkipHealthAndMetrics(t *testing.T) {
 	cases := map[string]bool{
-		"/v1/healthz":      true,
-		"/v1/readyz":       true,
-		"/v1/livez/lake":   true, // lake-route LB probe must not spend the anon bucket (api-security-3)
-		"/v1/version":      true,
-		"/metrics":         true,
-		"/v1/assets":       false,
-		"/v1/price":        false,
-		"/v1/metrics-fake": false,
+		"/v1/healthz":          true,
+		"/v1/readyz":           true,
+		"/v1/livez/lake":       true, // lake-route LB probe must not spend the anon bucket (api-security-3)
+		"/v1/version":          true,
+		"/metrics":             true,
+		"/robots.txt":          true,
+		"/":                    true,
+		"/errors/rate-limited": true, // RLT-167: must stay in lockstep with isUnauthenticatedInfraPath
+		"/v1/assets":           false,
+		"/v1/price":            false,
+		"/v1/metrics-fake":     false,
 	}
 	for path, want := range cases {
 		r := httptest.NewRequest(http.MethodGet, path, nil)

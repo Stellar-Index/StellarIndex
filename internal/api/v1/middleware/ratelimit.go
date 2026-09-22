@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -419,10 +420,10 @@ func authenticatedRateLimitKey(subject auth.Subject) string {
 // either, or a monitor behind a shared NAT flaps the region on 429.
 func SkipHealthAndMetrics(r *http.Request) bool {
 	switch r.URL.Path {
-	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics":
+	case "/v1/healthz", "/v1/readyz", "/v1/livez/lake", "/v1/version", "/metrics", "/robots.txt", "/":
 		return true
 	}
-	return false
+	return strings.HasPrefix(r.URL.Path, "/errors/")
 }
 
 // rlProblem is a minimised RFC 9457 body duplicated here so the
