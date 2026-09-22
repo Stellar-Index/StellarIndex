@@ -1356,20 +1356,25 @@ func (s *Server) tryUSDAnchoredFiatCross(
 		return PriceSnapshot{}, nil, false, false
 	}
 	var rate float64
-	var rateAt time.Time
+	var rateUpdatedAt time.Time
 	for _, c := range fx.Currencies {
 		if c.Ticker == quote.Code {
 			rate = c.RateUSD
-			rateAt = c.UpdatedAt
+			rateUpdatedAt = c.UpdatedAt
 			break
 		}
 	}
 	if rate <= 0 {
 		return PriceSnapshot{}, nil, false, false
 	}
-	// Fail closed on a stale rate rather than silently deriving a price
-	// from it (fxCrossRateMaxAge) — see its doc comment.
-	if rateAt.IsZero() || time.Since(rateAt) > fxCrossRateMaxAge {
+	// fxObservedAt is the FX leg's own freshness — the older of the
+	// snapshot's publication time and this ticker's own UpdatedAt (the
+	// same held-rate rule [tryFiatCrossRate] applies). An unboundedly
+	// stale rate must not serve at all (T650): [Cache.Latest] never
+	// expires on its own, so without this bound a fx worker outage
+	// would keep answering forever from the last good fetch.
+	fxObservedAt := olderNonZero(fx.PublishedAt, rateUpdatedAt)
+	if fxCrossStale(fxObservedAt, s.fxCrossMaxAge) {
 		return PriceSnapshot{}, nil, false, false
 	}
 
@@ -1397,11 +1402,46 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	out.AssetID = asset.String()
 	out.Quote = quote.String()
 	out.Price = formatCrossRate(new(big.Rat).Mul(usdRat, rateRat))
-	// The USD leg's own observed_at is the honest timestamp: it is the
-	// market observation this price is derived FROM. The FX rate is a
-	// daily fix and is credited in sources, not by overwriting the
-	// market's timestamp with a coarser one.
+	// observed_at is the OLDER of the two legs (same rule as
+	// [tryFiatCrossRate]): the USD leg's own market observation, or the
+	// FX rate's own freshness, whichever is coarser. Stamping the fresh
+	// USD leg's timestamp alone — the pre-T650 behaviour — hid a stale
+	// FX component behind an observed_at that looked current.
+	out.ObservedAt = WireTime(olderNonZero(time.Time(usdSnap.ObservedAt), fxObservedAt))
 	return out, appendFXSource(usdSources), true, false
+}
+
+// defaultFXCrossMaxAge is the fallback staleness budget for
+// [Server.fxCrossMaxAge] when config leaves it unset (0). Mirrors
+// aggregate.composite_reference.fx_max_age_hours (76h,
+// [orchestrator.DefaultCompositeReferenceFXMaxAge]) — the same
+// fx_quotes source, daily buckets that pause over market closes, so
+// the same budget applies; kept as an independent constant rather than
+// importing the aggregator package to avoid a new cross-binary
+// dependency for one number.
+const defaultFXCrossMaxAge = 76 * time.Hour
+
+// fxCrossMaxAgeOrDefault resolves the configured
+// pricing_guard.fx_cross_max_age_hours to a duration, falling back to
+// [defaultFXCrossMaxAge] when unset. A negative value never reaches
+// here — config.Validate rejects it at load.
+func fxCrossMaxAgeOrDefault(hours int) time.Duration {
+	if hours <= 0 {
+		return defaultFXCrossMaxAge
+	}
+	return time.Duration(hours) * time.Hour
+}
+
+// fxCrossStale reports whether an FX leg observed at observedAt is too
+// old to serve, per the T650 staleness gate shared by
+// [Server.tryFiatCrossRate] and [Server.tryUSDAnchoredFiatCross]. A
+// zero observedAt (no per-currency or snapshot timestamp at all) is
+// unknown freshness, not proven-fresh, and is treated as stale.
+func fxCrossStale(observedAt time.Time, maxAge time.Duration) bool {
+	if observedAt.IsZero() {
+		return true
+	}
+	return time.Since(observedAt) > maxAge
 }
 
 // resolveUSDLeg resolves asset/fiat:USD through the same layers
@@ -1448,22 +1488,6 @@ func (s *Server) resolveUSDLeg(
 // Matches the label [tryFiatCrossRate] already uses, so one source name
 // covers every FX-derived value on the price surface.
 const fxSourceName = "massive"
-
-// fxCrossRateMaxAge bounds how old the in-memory forex rate backing a
-// derived cross-rate ([Server.tryUSDAnchoredFiatCross],
-// [Server.tryFiatCrossRate]) may be before it is treated as no rate at
-// all, mirroring the trailing-7-day ceiling [declaredPegFXMaxAge]
-// (assets.go) already applies to the fx_quotes-backed peg fill — same
-// fx staleness discipline, same bound: a stale rate presented as
-// current is worse than no price.
-//
-// The forex worker's own per-ticker hold ([maxHeldRateAge] in the
-// forex package) only prunes a stale ticker out of the NEXT
-// successfully-built snapshot; a refresh that errors before installing
-// one leaves the cached snapshot — and its PublishedAt/UpdatedAt —
-// aging with nothing bounding it. This is the read-site backstop for
-// that case.
-const fxCrossRateMaxAge = 7 * 24 * time.Hour
 
 // appendFXSource adds the FX feed to the USD leg's own sources without
 // dropping them: a customer auditing a BRL price needs to see both the
@@ -2195,12 +2219,13 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 		}
 		rateQuote = 1
 	}
-	// Fail closed on a stale rate rather than silently deriving a price
-	// from it (fxCrossRateMaxAge) — see its doc comment. observedAt
-	// already reflects the older of the two legs, so this one check
-	// covers both a dead worker (stale PublishedAt) and a held ticker
-	// past its own bound (stale per-leg UpdatedAt).
-	if time.Since(observedAt) > fxCrossRateMaxAge {
+	// An unboundedly stale snapshot must not serve (T650): [Cache.Latest]
+	// never expires on its own, so without this bound a forex worker
+	// outage would keep answering forever from the last good fetch.
+	// observedAt already reflects the older of the two legs, so this one
+	// check covers both a dead worker (stale PublishedAt) and a held
+	// ticker past its own bound (stale per-leg UpdatedAt).
+	if fxCrossStale(observedAt, s.fxCrossMaxAge) {
 		return PriceSnapshot{}, nil, false
 	}
 	// Cross-rate = rate_usd[Y] / rate_usd[X], computed as exact big.Rat

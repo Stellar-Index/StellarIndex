@@ -1429,12 +1429,16 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		MinMarketCapVolumeUSD:   cfg.Aggregate.MinMarketCapVolumeUSD,
 		MaxMarketCapVolumeRatio: cfg.Aggregate.MaxMarketCapVolumeRatio,
 		Currencies:              newForexAdapter(forexCache),
-		FXHistory:               &fxHistoryReader{store: store},
-		SEP10:                   sep10Validator,
-		Hub:                     hub,
-		CORS:                    cors,
-		Auth:                    authMW,
-		KeyPolicy:               middleware.KeyPolicy(),
+		// Staleness budget for the fiat-cross-rate / USD-anchored-fiat-cross
+		// fallbacks (T650) — the in-memory forex cache never expires on
+		// its own.
+		FXCrossMaxAgeHours: cfg.PricingGuard.FXCrossMaxAgeHours,
+		FXHistory:          &fxHistoryReader{store: store},
+		SEP10:              sep10Validator,
+		Hub:                hub,
+		CORS:               cors,
+		Auth:               authMW,
+		KeyPolicy:          middleware.KeyPolicy(),
 		// F-1226 (codex audit-2026-05-12): monthly-quota enforcer.
 		// Reads month-to-date counters from the same Redis Counter
 		// the UsageTracker writes. Both the Postgres validator and

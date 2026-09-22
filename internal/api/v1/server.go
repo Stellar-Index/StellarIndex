@@ -366,8 +366,12 @@ type Server struct {
 	minMarketCapVolumeUSD   float64
 	maxMarketCapVolumeRatio float64
 	currencies              CurrenciesReader
-	explorer                ExplorerReader
-	explorerHandler         *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
+	// fxCrossMaxAge bounds how old the forex snapshot's matched rate may
+	// be before [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
+	// refuse to serve it (T650). See fxCrossStale's doc comment.
+	fxCrossMaxAge   time.Duration
+	explorer        ExplorerReader
+	explorerHandler *explorerpkg.Handler // network-explorer endpoints (ADR-0038); see explorer.go
 	// directory resolves curated third-party issuer labels
 	// (account_directory, migration 0136) for the additive
 	// issuer_directory_* fields on /v1/assets + /v1/assets/{id}.
@@ -1144,6 +1148,16 @@ type Options struct {
 	// currencies state.
 	Currencies CurrenciesReader
 
+	// FXCrossMaxAgeHours bounds the age of the forex snapshot's matched
+	// rate that [Server.tryFiatCrossRate] / [Server.tryUSDAnchoredFiatCross]
+	// will serve (config pricing_guard.fx_cross_max_age_hours). Anything
+	// older is refused rather than served with a fresh-looking
+	// observed_at (T650). 0 (the default here when a caller doesn't set
+	// it) falls back to [defaultFXCrossMaxAge] (76h) — the same budget
+	// aggregate.composite_reference.fx_max_age_hours uses for the
+	// identical fx_quotes staleness profile.
+	FXCrossMaxAgeHours int
+
 	// Explorer, when non-nil, backs the network-explorer endpoints
 	// (ADR-0038): /v1/ledgers, /v1/tx, /v1/operations, /v1/contracts,
 	// /v1/search — reading the certified ClickHouse lake directly.
@@ -1614,6 +1628,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		minMarketCapVolumeUSD:   opts.MinMarketCapVolumeUSD,
 		maxMarketCapVolumeRatio: opts.MaxMarketCapVolumeRatio,
 		currencies:              opts.Currencies,
+		fxCrossMaxAge:           fxCrossMaxAgeOrDefault(opts.FXCrossMaxAgeHours),
 		explorer:                opts.Explorer,
 		directory:               opts.Directory,
 		volumeCharacter:         opts.VolumeCharacter,
