@@ -584,6 +584,41 @@ func TestOraclePrices_HappyPath(t *testing.T) {
 	}
 }
 
+// TestOraclePrices_AliasResolvesXLM is the /v1/oracle/prices analogue of
+// TestOracleLastPrice_AliasResolvesXLM (T015). Only the crypto:XLM alias
+// form has closed buckets (CEX trades write it); the literal
+// native/fiat:USD key has none. Pre-fix, recentClosedWithStablecoinFallback
+// read only the literal form and returned an empty array here even though
+// /v1/oracle/lastprice?asset=native (which does loop aliases) would have
+// served a price for the same underlying market.
+func TestOraclePrices_AliasResolvesXLM(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	reader := &stubPriceReader{
+		recent: map[string][]v1.PriceSnapshot{
+			"crypto:XLM/fiat:USD": {
+				{AssetID: "crypto:XLM", Quote: "fiat:USD", Price: "0.12", PriceType: "vwap", ObservedAt: v1.WireTime(t0)},
+			},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/oracle/prices?asset=native")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 via crypto:XLM alias", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.SEP40Price `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 1 {
+		t.Fatalf("returned %d records, want 1 (resolved via crypto:XLM alias)", len(env.Data))
+	}
+	if env.Data[0].Price != "0.12" {
+		t.Errorf("price = %q, want \"0.12\"", env.Data[0].Price)
+	}
+}
+
 // TestOraclePrices_EmptyAsArray is the "no closed buckets yet"
 // case — should return 200 with an empty array, not 404. Distinct
 // from /v1/oracle/lastprice which 404s on a bare unknown asset.

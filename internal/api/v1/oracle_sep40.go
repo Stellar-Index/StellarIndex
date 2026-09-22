@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -68,13 +69,19 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// T015: 8s ceiling on the price read, matching every other
+	// hypertable/Redis-backed handler on this surface (markets.go,
+	// vwap.go, oracle.go, …).
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
 	// F-1340: route the primary read through the rc.89 XLM dual-form
 	// alias loop, exactly as handlePrice does. Without it, SEP-40
 	// `lastprice(native)` queries only the literal `native/fiat:USD`
 	// key and misses a fresh `crypto:XLM/fiat:USD` VWAP that CEX
 	// trades populate — returning stale/empty here while /v1/price
 	// serves fresh. See readPriceWithAliases for the full rationale.
-	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, asset, defaultPriceQuote)
+	snapshot, sources, stale, err := s.readPriceWithAliases(ctx, reader, asset, defaultPriceQuote)
 	// Substance-gated pair: withheld beats the fallback chain — same
 	// rationale as handlePrice (see ErrPriceWithheld). The SEP-40
 	// surface is the LAST place a substanceless price belongs: its
@@ -104,7 +111,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, triangulated, ok, withheld = s.priceFallback(r.Context(), asset, defaultPriceQuote)
+		snapshot, sources, triangulated, ok, withheld = s.priceFallback(ctx, asset, defaultPriceQuote)
 		// MSP-06: a withheld verdict reached from the proxy leg must be
 		// reported as withheld, not as "no price data" — the two are
 		// different answers, and only the withheld problem names the raw
@@ -130,6 +137,14 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if clientAborted(r, err) {
+			return
+		}
+		if handlerTimedOut(ctx, err) {
+			s.logger.Warn("LatestPrice (sep40 lastprice) deadline exceeded", "asset", asset.String())
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/oracle-lastprice-timeout",
+				"Oracle lastprice query timed out", http.StatusServiceUnavailable,
+				"the price read didn't return in 8s; retry shortly.")
 			return
 		}
 		s.logger.Error("LatestPrice (sep40 lastprice) failed",
@@ -216,7 +231,12 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		records = n
 	}
 
-	snapshots, triangulated, err := s.recentClosedWithStablecoinFallback(r.Context(), asset, defaultPriceQuote, records)
+	// T015: same 8s ceiling as lastprice/x_last_price — see that
+	// handler's comment.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+
+	snapshots, triangulated, err := s.recentClosedWithStablecoinFallback(ctx, asset, defaultPriceQuote, records)
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -226,6 +246,15 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		// claim per bucket.
 		if errors.Is(err, ErrPriceWithheld) {
 			writePriceWithheldProblem(w, r, asset, defaultPriceQuote)
+			return
+		}
+		if handlerTimedOut(ctx, err) {
+			s.logger.Warn("RecentClosedSnapshots (sep40 prices) deadline exceeded",
+				"asset", asset.String(), "records", records)
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/oracle-prices-timeout",
+				"Oracle prices query timed out", http.StatusServiceUnavailable,
+				"the price history read didn't return in 8s; retry shortly.")
 			return
 		}
 		s.logger.Error("RecentClosedSnapshots (sep40 prices) failed",
@@ -269,10 +298,17 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 // empty data array on Stellar mainnet — same out-of-the-box failure
 // mode as /v1/oracle/lastprice had pre-#1220, just expressed as
 // 200-empty rather than 404.
+//
+// T015: both the literal-quote read and the peg walk go through
+// [Server.recentClosedForAliases], the same rc.89 XLM dual-form alias
+// loop lastprice/x_last_price use via readPriceWithAliases — without
+// it, `/v1/oracle/prices?asset=native` misses a `crypto:XLM/fiat:USD`
+// bucket the aggregator wrote under the alias spelling, the same gap
+// F-1340 closed on the single-snapshot surfaces.
 func (s *Server) recentClosedWithStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, n int,
 ) ([]PriceSnapshot, bool, error) {
-	snapshots, err := s.prices.RecentClosedSnapshots(ctx, asset, quote, n)
+	snapshots, err := s.recentClosedForAliases(ctx, asset, quote, n)
 	if err != nil {
 		return nil, false, err
 	}
@@ -288,13 +324,36 @@ func (s *Server) recentClosedWithStablecoinFallback(
 		if sameAsset(peg, asset) {
 			continue
 		}
-		pegSnapshots, pegErr := s.prices.RecentClosedSnapshots(ctx, asset, peg, n)
+		pegSnapshots, pegErr := s.recentClosedForAliases(ctx, asset, peg, n)
 		if pegErr != nil || len(pegSnapshots) == 0 {
 			continue
 		}
 		return pegSnapshots, true, nil
 	}
 	return snapshots, false, nil
+}
+
+// recentClosedForAliases tries each XLM dual-form alias of asset (see
+// [assetAliases]) against quote, in priority order, and returns the
+// first non-empty result. Mirrors [Server.readPriceWithAliasesServed]'s
+// alias loop so /v1/oracle/prices doesn't miss a native-vs-crypto:XLM
+// split of the same market the way lastprice/x_last_price used to
+// before F-1340.
+func (s *Server) recentClosedForAliases(ctx context.Context, asset, quote canonical.Asset, n int) ([]PriceSnapshot, error) {
+	var firstErr error
+	for _, a := range assetAliases(asset) {
+		snapshots, err := s.prices.RecentClosedSnapshots(ctx, a, quote, n)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if len(snapshots) > 0 {
+			return snapshots, nil
+		}
+	}
+	return nil, firstErr
 }
 
 // oraclePricesDefault + Max mirror the OpenAPI bounds for the
@@ -327,52 +386,21 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	rawBase := r.URL.Query().Get("base")
-	if rawBase == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/missing-base",
-			"Missing base parameter", http.StatusBadRequest,
-			"base query parameter is required")
-		return
-	}
-	base, err := canonical.ParseAsset(rawBase)
-	if err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-asset-id",
-			"Invalid base identifier", http.StatusBadRequest,
-			err.Error())
+	base, quote, ok := s.parseXLastPriceBaseQuote(w, r)
+	if !ok {
 		return
 	}
 
-	rawQuote := r.URL.Query().Get("quote")
-	if rawQuote == "" {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/missing-quote",
-			"Missing quote parameter", http.StatusBadRequest,
-			"quote query parameter is required")
-		return
-	}
-	quote, err := canonical.ParseAsset(rawQuote)
-	if err != nil {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/invalid-quote",
-			"Invalid quote identifier", http.StatusBadRequest,
-			err.Error())
-		return
-	}
-	if base.Equal(quote) {
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/identity-pair",
-			"Base and quote are the same", http.StatusBadRequest,
-			"price of an asset in itself is always 1; base and quote must differ")
-		return
-	}
+	// T015: same 8s ceiling as handleOracleLastPrice — see that
+	// handler's comment.
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
 
 	// F-1340: route the primary read through the rc.89 XLM dual-form
 	// alias loop, exactly as handlePrice does — so `x_last_price(native,
 	// fiat:USD)` resolves a fresh `crypto:XLM/fiat:USD` VWAP that CEX
 	// trades populate rather than missing it on the literal form.
-	snapshot, sources, stale, err := s.readPriceWithAliases(r.Context(), reader, base, quote)
+	snapshot, sources, stale, err := s.readPriceWithAliases(ctx, reader, base, quote)
 	// Substance-gated pair: withheld beats the fallback chain — same
 	// rationale as handleOracleLastPrice above.
 	if errors.Is(err, ErrPriceWithheld) {
@@ -394,7 +422,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		var ok bool
 		viaFallback = true
 		var withheld bool
-		snapshot, sources, triangulated, ok, withheld = s.priceFallback(r.Context(), base, quote)
+		snapshot, sources, triangulated, ok, withheld = s.priceFallback(ctx, base, quote)
 		// MSP-06, as above.
 		if !ok && withheld {
 			writePriceWithheldProblem(w, r, base, quote)
@@ -417,6 +445,15 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		if clientAborted(r, err) {
 			return
 		}
+		if handlerTimedOut(ctx, err) {
+			s.logger.Warn("LatestPrice (sep40 x_last_price) deadline exceeded",
+				"base", base.String(), "quote", quote.String())
+			writeProblem(w, r,
+				"https://api.stellarindex.io/errors/oracle-xlastprice-timeout",
+				"Oracle x_last_price query timed out", http.StatusServiceUnavailable,
+				"the price read didn't return in 8s; retry shortly.")
+			return
+		}
 		s.logger.Error("LatestPrice (sep40 x_last_price) failed",
 			"err", err, "base", base.String(), "quote", quote.String())
 		writeProblem(w, r,
@@ -437,4 +474,51 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		Timestamp: snapshot.ObservedAt,
 	}
 	writeJSON(w, out, Flags{Stale: stale, Triangulated: triangulated}, sources...)
+}
+
+// parseXLastPriceBaseQuote extracts + validates the base/quote pair for
+// x_last_price (funlen split of handleOracleXLastPrice). Returns
+// ok=false after writing a problem response.
+func (s *Server) parseXLastPriceBaseQuote(w http.ResponseWriter, r *http.Request) (base, quote canonical.Asset, ok bool) {
+	rawBase := r.URL.Query().Get("base")
+	if rawBase == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-base",
+			"Missing base parameter", http.StatusBadRequest,
+			"base query parameter is required")
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+	base, err := canonical.ParseAsset(rawBase)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-asset-id",
+			"Invalid base identifier", http.StatusBadRequest,
+			err.Error())
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+
+	rawQuote := r.URL.Query().Get("quote")
+	if rawQuote == "" {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/missing-quote",
+			"Missing quote parameter", http.StatusBadRequest,
+			"quote query parameter is required")
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+	quote, err = canonical.ParseAsset(rawQuote)
+	if err != nil {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-quote",
+			"Invalid quote identifier", http.StatusBadRequest,
+			err.Error())
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+	if base.Equal(quote) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/identity-pair",
+			"Base and quote are the same", http.StatusBadRequest,
+			"price of an asset in itself is always 1; base and quote must differ")
+		return canonical.Asset{}, canonical.Asset{}, false
+	}
+	return base, quote, true
 }
