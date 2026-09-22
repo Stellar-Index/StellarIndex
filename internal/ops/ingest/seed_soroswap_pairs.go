@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync/atomic"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	"github.com/Stellar-Index/StellarIndex/internal/stellarrpc"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -92,8 +94,7 @@ func seedSoroswapPairs(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	fmt.Fprintf(os.Stderr, "seed-soroswap-pairs: factory=%s rpc=%s\n",
-		cfg.Oracle.Soroswap.FactoryContract, endpoint)
+	logSeedStart(os.Stderr, cfg.Oracle.Soroswap.FactoryContract, endpoint)
 
 	// Decoder.SeedPair fires the WithPairUpsertHook callback for every
 	// pair the factory walk discovers, so SeedFromFactoryRPC + the hook
@@ -134,4 +135,15 @@ func seedSoroswapPairs(args []string) error {
 		return fmt.Errorf("%d upserts failed — check logs above", failed.Load())
 	}
 	return nil
+}
+
+// logSeedStart announces the sweep target. The RPC endpoint is redacted:
+// -rpc / seed_rpc_endpoint / rpc_endpoints[0] can point at a keyed
+// third-party provider that carries its API key in the URL path, the
+// same shape externalchainlink.RedactEndpoint already scrubs for the
+// Chainlink RPC client — printing it raw would put the key in stderr,
+// and from there in any log aggregator that captures ops output.
+func logSeedStart(w io.Writer, factory, endpoint string) {
+	_, _ = fmt.Fprintf(w, "seed-soroswap-pairs: factory=%s rpc=%s\n",
+		factory, externalchainlink.RedactEndpoint(endpoint))
 }
