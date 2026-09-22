@@ -1089,6 +1089,127 @@ tests:
         alertname: stellarindex_ch_schema_snapshot_offsite_stale
         exp_alerts: []
 
+  # ══ stellarindex_ch_schema_drift_detected / _not_converged / _stale (T604) ═
+  - interval: 5m
+    name: a divergent ClickHouse schema tickets after 30m
+    input_series:
+      - series: 'stellarindex_ch_schema_drift_divergent{job="node_exporter",instance="r1:9100"}'
+        values: '2+0x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_ch_schema_drift_detected
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ClickHouse live schema has drifted from tier1_schema.sql (2 table(s))"
+              description: |
+                stellarindex_ch_schema_drift_divergent = 2 — the
+                live ClickHouse schema no longer matches
+                deploy/clickhouse/tier1_schema.sql on ENGINE, PARTITION BY,
+                ORDER BY, columns or indexes. A re-derive against the wrong
+                ORDER BY silently writes a differently-ordered table rather
+                than failing. Decide which side is wrong before touching
+                anything — see the runbook's "converged and drifted" case.
+
+  - interval: 5m
+    name: a clean schema comparison raises nothing
+    input_series:
+      - series: 'stellarindex_ch_schema_drift_divergent{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_ch_schema_drift_detected
+        exp_alerts: []
+
+  - interval: 5m
+    name: an unconverged intent tickets after 30m
+    input_series:
+      - series: 'stellarindex_ch_schema_drift_intent_converged{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_ch_schema_drift_not_converged
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ch-schema-drift could not verify intent vs. host release — no comparison ran"
+              description: |
+                stellarindex_ch_schema_drift_intent_converged == 0: the
+                shipped tier1_schema.sql's release stamp is older than the
+                release this host runs, or one side could not be read.
+                stellarindex_ch_schema_drift_divergent is absent for this
+                run, not clean. This is a provisioning gap: re-apply the
+                archival-node role, then check
+                stellarindex_ch_schema_drift_intent_info for the two
+                releases actually compared.
+
+  - interval: 5m
+    name: a converged intent raises nothing
+    input_series:
+      - series: 'stellarindex_ch_schema_drift_intent_converged{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x60'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_ch_schema_drift_not_converged
+        exp_alerts: []
+
+  # PROVEN-RED case for T604: before this rule existed, a
+  # ch-schema-drift.timer that stopped firing left
+  # stellarindex_ch_schema_drift_last_run_unix (and _divergent,
+  # _intent_converged) frozen at their last values forever — served
+  # fresh by node_exporter every scrape — with no rule anywhere reading
+  # them, so nothing fired. `absent_over_time` alone would not catch a
+  # file that never DISAPPEARS, only never advances, which is why the
+  # `time() - last_run_unix` arm below is required in addition to it.
+  - interval: 5m
+    name: a ch-schema-drift comparison older than 36h tickets
+    input_series:
+      - series: 'stellarindex_ch_schema_drift_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+0x450'
+    alert_rule_test:
+      - eval_time: 2200m
+        alertname: stellarindex_ch_schema_drift_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-restore.md
+              summary: "ch-schema-drift has not completed a comparison in > 36 h (daily timer)"
+              description: |
+                ch-schema-drift.timer (daily, 04:10 UTC) has not written a
+                fresh stellarindex_ch_schema_drift_last_run_unix in over
+                36 h — one missed cycle plus slack — or has never run.
+                _detected and _not_converged above are now evaluating a
+                frozen or absent verdict and cannot fire either way.
+                Check `systemctl status ch-schema-drift.service` and run
+                `ch-schema-drift.sh` by hand.
+
+  - interval: 5m
+    name: a daily-refreshed ch-schema-drift comparison raises nothing
+    input_series:
+      - series: 'stellarindex_ch_schema_drift_last_run_unix{job="node_exporter",instance="r1:9100"}'
+        values: '0+300x450'
+    alert_rule_test:
+      - eval_time: 2200m
+        alertname: stellarindex_ch_schema_drift_stale
+        exp_alerts: []
+
   # ══ stellarindex_nvme_wear_high ═══════════════════════════════════
   - interval: 1m
     name: an nvme past 80 percent rated endurance tickets after 1h
