@@ -149,7 +149,7 @@ pass on current main). Triaged:
   adaptation (`internal/ledgerstream/tiered.go` `GetFile`/`coldGetFile`,
   `tiered_test.go:43`, `cmd/stellarindex-ops/rehydrate_galexie_archive.go:157`) +
   VERSIONS.md bump + r1 ingest smoke — its own reviewed change. PR open with note.
-- **Deferred #1368 + #1369 — tooling groups (HELD).** Coordinated dev-tooling
+- **Deferred #1368 — tooling groups (HELD).** Coordinated dev-tooling
   **majors**: `tailwindcss v3→v4` (ground-up rewrite, CSS-first config migration),
   `typescript 5→6`, `eslint 9→10`, `eslint-config-next 15→16`, `@types/node 22→26`.
   Needs its own migration + visual QA + the eslint flat-config move. PRs open with note.
