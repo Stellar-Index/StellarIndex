@@ -183,7 +183,7 @@ func TestBuildTrade_UnknownSymbol(t *testing.T) {
 
 // TestBuildTrade_DustReturnsTypedSentinel pins the regression for
 // the bitstamp/coinbase/binance dust-trade family extended to
-// Kraken (#1234 / #814). 1e-8 XLM at $0.16 → base × price floor-
+// Kraken. 1e-8 XLM at $0.16 → base × price floor-
 // divides to 0 at 10^8 integer scale → canonical validator would
 // reject with "quote_amount must be positive, got 0" → indexer
 // logs ERROR per frame. With ErrDustTrade the streamer's error-

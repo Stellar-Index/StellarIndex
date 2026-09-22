@@ -27972,13 +27972,13 @@ rc.48 deploy to R1.
   data gap from infra gap at a glance. Same silent-drop family
   as the home-page fixes shipped in #1251. (PR #1254)
 - **Kraken dust trades now use the typed `ErrDustTrade` sentinel**
-  — extends the #814 / #1234 pattern (Coinbase / Binance /
-  Bitstamp) to Kraken. Before this PR the live `parse.go` path
+  — extends the Coinbase / Binance / Bitstamp dust-filter pattern
+  to Kraken. Before this PR the live `parse.go` path
   had NO dust check at all — a sub-precision-floor live trade
   would have produced a Trade with quote=0, the canonical
   validator would reject on insert, and the indexer would
   log "insert trade failed" at ERROR per frame (the same
-  pattern that flooded r1 logs for Bitstamp until #1234).
+  pattern that flooded r1 logs for Bitstamp before its own fix).
   Backfill already had a check but used a generic
   `fmt.Errorf("zero quote")` rather than the typed sentinel
   the consumers explicitly understand. Kraken isn't enabled on
@@ -28045,7 +28045,7 @@ rc.48 deploy to R1.
   precision floor; the canonical validator was rejecting them
   with `quote_amount must be positive, got 0` and the indexer
   was emitting "insert trade failed" at ERROR-per-frame.
-  Following #814's Coinbase + Binance pattern: typed
+  Following the Coinbase + Binance pattern: typed
   `ErrDustTrade` sentinel from `parseTrade` and
   `bitstampCandleToTrade`; the existing streamer / backfill
   error-skip branch absorbs it. Caught from r1 production logs
