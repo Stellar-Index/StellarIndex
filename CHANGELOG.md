@@ -27921,7 +27921,7 @@ rc.48 deploy to R1.
   ones that motivated the original bugs. New op labels:
   `coins/list_coins`, `coins/price_history_24h`,
   `coins/price_history_7d`, `sources_stats/source_stats`,
-  `sources_stats/volume_history_24h`. (PR #1198)
+  `sources_stats/volume_history_24h`.
 
 ### Documentation
 
