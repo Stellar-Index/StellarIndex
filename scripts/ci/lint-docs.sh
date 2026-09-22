@@ -404,6 +404,12 @@ stale_patterns=(
                                   # a PR number that didn't exist yet;
                                   # #1198 is now a real, unrelated live issue
                                   # (trim-galexie-archive delete-key drift)
+  "#201\b"                        # dangling ref (RSWP-001) — semver-policy.md's
+                                  # and CHANGELOG's pkg/client SDK skeleton
+                                  # entries cited "#201" as the landing PR;
+                                  # #201 now resolves to an unrelated merged
+                                  # PR (movement-latency cadence tuning), not
+                                  # the SDK skeleton commit `a60264246`
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
