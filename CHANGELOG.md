@@ -28086,7 +28086,6 @@ rc.48 deploy to R1.
   currentBackoff×2, MinBackoff)` clamped to `MaxBackoff` — so
   consecutive 429s grow exponentially regardless of what the
   venue claims you can retry after. Two new tests pin both shapes.
-  (PR #1227)
 - **Bitstamp dust trades silently dropped** instead of being
   logged as ERROR on every frame. Tiny lots (e.g. 1e-8 XLM at
   $0.16) compute `base × price ÷ 10^8 = 0` under our integer-scale
