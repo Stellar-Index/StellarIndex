@@ -507,6 +507,11 @@ stale_patterns=(
                                   # #1255 is now a real, unrelated live issue
                                   # (lint-doc-links silently skipping
                                   # undecodable markdown files)
+  "PR #1230"                     # dangling ref (RSWP-127) — CHANGELOG's
+                                  # fx_quotes/migration-0028 runbook entry
+                                  # cited a PR number that doesn't exist;
+                                  # #1230 has no corresponding PR or issue,
+                                  # so the citation 404s outright
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
