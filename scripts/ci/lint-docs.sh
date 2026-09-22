@@ -345,6 +345,13 @@ stale_patterns=(
                                   # merged PR "fix: restore main to green",
                                   # not an issue. #803 is the real
                                   # tracking issue.
+  "#845\b"                       # dangling ref (RSWP-050) — CHANGELOG's
+                                  # rc.21 `/sources` 24h-trade-count entry
+                                  # cited #845 twice for its `?include=stats`
+                                  # opt-in; #845 is now a real, unrelated
+                                  # live issue (explorer buildFetch bypass,
+                                  # filed 2026-09-18), not the PR that
+                                  # shipped the stats opt-in
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
