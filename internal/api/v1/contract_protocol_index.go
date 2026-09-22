@@ -77,6 +77,18 @@ func (s *Server) contractProtocolIndexFor(ctx context.Context) map[string]string
 	s.contractIndex.inFlight = true
 	s.contractIndex.mu.Unlock()
 
+	// A panic in the build (or anything it transitively calls) must not
+	// leave inFlight stuck true: every later call would then see it and
+	// serve the stale/nil map forever, never retrying.
+	defer func() {
+		if r := recover(); r != nil {
+			s.contractIndex.mu.Lock()
+			s.contractIndex.inFlight = false
+			s.contractIndex.mu.Unlock()
+			panic(r)
+		}
+	}()
+
 	// Detached from the caller's deadline: the map outlives this request
 	// and is served to every other one, so it is built on its own budget,
 	// never on whatever the triggering request had left.
