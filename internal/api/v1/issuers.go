@@ -98,6 +98,12 @@ type IssuedAsset struct {
 	ObservationCount int64  `json:"observation_count"`
 }
 
+// IssuersListDefaultLimit is the limit handleIssuersList applies when
+// the request omits `?limit=`. Exported so the prewarm — which must
+// keep this exact key warm — references the one source of truth
+// instead of a second, driftable copy.
+const IssuersListDefaultLimit = 100
+
 // handleIssuersList serves GET /v1/issuers.
 //
 // Returns the issuer directory ordered by total observation count
@@ -112,7 +118,7 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			"This deployment hasn't wired the issuer reader yet.")
 		return
 	}
-	limit := 100
+	limit := IssuersListDefaultLimit
 	if v := r.URL.Query().Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 500 {

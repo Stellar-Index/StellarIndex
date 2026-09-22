@@ -74,7 +74,8 @@ func TestPrewarmIssuersWarmsTheLimitsRealCallersUse(t *testing.T) {
 	prewarmIssuers(context.Background(), discardLogger(), cached)
 
 	got := rec.seen()
-	want := []int{1, 5, 100}
+	want := append([]int(nil), prewarmIssuerLimits...)
+	sort.Ints(want)
 	if len(got) != len(want) {
 		t.Fatalf("prewarmed limits = %v, want %v", got, want)
 	}
@@ -92,15 +93,14 @@ func TestPrewarmIssuersWarmsTheLimitsRealCallersUse(t *testing.T) {
 // and the OpenAPI default send. If 100 ever drops out of the set, the
 // most-requested slot goes cold every 5 minutes again.
 func TestPrewarmIssuersCoversTheHandlerDefault(t *testing.T) {
-	const handlerDefaultLimit = 100 // handleIssuersList: `limit := 100`
 	for _, l := range prewarmIssuerLimits {
-		if l == handlerDefaultLimit {
+		if l == v1.IssuersListDefaultLimit {
 			return
 		}
 	}
 	t.Fatalf("prewarmIssuerLimits %v omits the handler's default limit %d — a bare "+
 		"GET /v1/issuers would cold-fill on every cache expiry (1.212s vs 0.129s on r1)",
-		prewarmIssuerLimits, handlerDefaultLimit)
+		prewarmIssuerLimits, v1.IssuersListDefaultLimit)
 }
 
 // TestPrewarmIssuersWarmsInsideTheCacheTTL — warming on a cadence LONGER
@@ -110,15 +110,11 @@ func TestPrewarmIssuersCoversTheHandlerDefault(t *testing.T) {
 // This pins the relationship, not the individual numbers, so either can
 // be tuned as long as the invariant holds.
 func TestPrewarmIssuersWarmsInsideTheCacheTTL(t *testing.T) {
-	const (
-		lightCadence  = 60 * time.Second // prewarmCaches
-		issuersCacheT = 5 * time.Minute  // NewCachedIssuersReader in main
-		minHeadroom   = 2                // survive a dropped cycle
-	)
-	if lightCadence*minHeadroom >= issuersCacheT {
+	const minHeadroom = 2 // survive a dropped cycle
+	if lightCadence*minHeadroom >= issuersCacheTTL {
 		t.Fatalf("prewarm cadence %v gives less than %dx headroom against the %v "+
 			"issuers cache TTL — a single dropped cycle would expose a cold slot",
-			lightCadence, minHeadroom, issuersCacheT)
+			lightCadence, minHeadroom, issuersCacheTTL)
 	}
 }
 

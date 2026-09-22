@@ -859,7 +859,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// aggregate over both tables is mandatory). 5min TTL is the
 	// "verified-issuer catalogue moves on human timescale" knob —
 	// same rationale as cachedSourcesStats.
-	cachedIssuersReader := v1.NewCachedIssuersReader(store, 5*time.Minute)
+	cachedIssuersReader := v1.NewCachedIssuersReader(store, issuersCacheTTL)
 	// /v1/network/stats is the slowest /v1 route (~485ms p95 on r1 — a
 	// network-wide 24h aggregate over the served tier) and feeds the
 	// explorer's network strip. SWR with a 30s TTL keeps it off the
@@ -5088,6 +5088,17 @@ func (a *forexAdapter) Latest() *v1.CurrenciesSnapshot {
 // goroutine's stack, and a guard that travels with the function stays
 // correct if it is ever started from a second place. Started as a named
 // function, so the panic-guard test resolves this declaration (#368 M1).
+//
+// lightCadence and issuersCacheTTL are package-level (rather than
+// local to this function or to the cachedIssuersReader construction
+// site) so the TTL-headroom invariant between them has one source of
+// truth to reference instead of two copies that can silently drift
+// apart.
+const (
+	lightCadence    = 60 * time.Second
+	issuersCacheTTL = 5 * time.Minute
+)
+
 func prewarmCaches(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -5101,7 +5112,6 @@ func prewarmCaches(
 ) {
 	defer recoverBackgroundWorker(logger, "prewarm-caches")
 	heavyCadence := 5 * time.Minute
-	lightCadence := 60 * time.Second
 
 	// Fire both immediately on startup so the first user request
 	// after a binary restart hits a warm cache — CONCURRENTLY, because
@@ -5592,7 +5602,7 @@ func assetListingPrewarmOptions() []timescale.ListAssetsOptions {
 	for _, order := range orders {
 		for _, userLimit := range assetListingPrewarmLimits {
 			out = append(out, timescale.ListAssetsOptions{
-				Limit: userLimit + 1, // mirror handleAssetListFromAssets
+				Limit: userLimit + v1.AssetsListOverfetchBy, // mirror handleAssetListFromAssets
 				Order: order,
 			})
 		}
