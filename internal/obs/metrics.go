@@ -4369,9 +4369,13 @@ var HashdbAppendDurationSeconds = prometheus.NewHistogramVec(
 // same galexie bucket and compares against hashdb; see
 // internal/archivecompleteness.HashDBWindowVerifier). Labels:
 //
-//   - `ok`    — the sweep completed with zero drifted ledgers in the
-//     window (Missing/OutOfRange ledgers don't count against this —
-//     they're expected while the window predates hashdb's coverage).
+//   - `ok`    — the sweep completed with zero drifted ledgers AND at
+//     least one ledger actually compared against a recorded baseline
+//     (Missing/OutOfRange ledgers don't count against this on their
+//     own — they're expected while part of the window predates
+//     hashdb's coverage — but a window where EVERY ledger came back
+//     Missing/OutOfRange never compared anything and is `error`, not
+//     `ok`).
 //   - `drift` — the sweep completed and found at least one drifted
 //     ledger. See HashdbDriftTotal for the per-ledger drift count
 //     this alerts on.

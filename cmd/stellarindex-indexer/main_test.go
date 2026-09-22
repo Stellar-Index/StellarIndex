@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
@@ -552,5 +553,41 @@ func TestOpenOrCreateHashDB_BadMagicFailsClosed(t *testing.T) {
 
 	if _, err := openOrCreateHashDB(path, 42); !errors.Is(err, hashdb.ErrBadMagic) {
 		t.Fatalf("openOrCreateHashDB = %v, want ErrBadMagic (fail-closed)", err)
+	}
+}
+
+// TestHashDBSweepComplete_AllMissingIsNotComplete is Q110: a window
+// where hashdb has no record for ANY ledger (e.g. an append gap, or a
+// window that landed entirely before any baseline existed) must not
+// be reported as a complete/clean sweep — nothing was actually
+// compared. Before the fix, `complete` only checked that every ledger
+// was accounted for (Verified+Drifted+Missing+OutOfRange == window
+// size), which an all-Missing window satisfies trivially, so
+// hashDBVerifySweep's switch fell to its default case and logged
+// "hashdb verify sweep clean" with outcome="ok" despite Verified==0.
+func TestHashDBSweepComplete_AllMissingIsNotComplete(t *testing.T) {
+	t.Parallel()
+
+	const from, to = uint32(100), uint32(104) // 5-ledger window
+
+	allMissing := archivecompleteness.HashDBVerifyResult{
+		From: from, To: to,
+		Missing: 5, // every ledger in [from,to] came back "no record"
+	}
+	observed := allMissing.Verified + allMissing.Drifted + allMissing.Missing + allMissing.OutOfRange
+	if got := hashDBSweepComplete(allMissing, observed, from, to); got {
+		t.Fatalf("hashDBSweepComplete(all-Missing window) = true, want false — Verified==0 means nothing was actually checked against a baseline")
+	}
+
+	// Sanity: a window with at least one real comparison and full
+	// coverage is still reported complete.
+	mostlyVerified := archivecompleteness.HashDBVerifyResult{
+		From: from, To: to,
+		Verified: 4,
+		Missing:  1,
+	}
+	observed = mostlyVerified.Verified + mostlyVerified.Drifted + mostlyVerified.Missing + mostlyVerified.OutOfRange
+	if got := hashDBSweepComplete(mostlyVerified, observed, from, to); !got {
+		t.Fatalf("hashDBSweepComplete(4 verified, 1 missing, full coverage) = false, want true")
 	}
 }

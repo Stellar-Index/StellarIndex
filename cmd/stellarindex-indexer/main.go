@@ -2239,6 +2239,19 @@ func startHashDBVerifier(
 	return cancel, done
 }
 
+// hashDBSweepComplete reports whether a verify pass actually checked
+// the window it was asked to: every ledger in [from, to] accounted
+// for (Verified+Drifted+Missing+OutOfRange == the window size) AND at
+// least one ledger was actually compared against a recorded baseline
+// (Verified > 0). A window where every ledger came back
+// Missing/OutOfRange (a hashdb append gap, or a window that landed
+// entirely before any baseline was recorded) never compared a single
+// hash — that is "we don't know", not "clean", even though the
+// stream itself reached the end without erroring.
+func hashDBSweepComplete(res archivecompleteness.HashDBVerifyResult, observed int, from, to uint32) bool {
+	return observed == int(to-from)+1 && res.Verified > 0
+}
+
 // hashDBVerifySweep runs one verify pass and records its outcome.
 // Split out of startHashDBVerifier so the ticker-plumbing and the
 // actual-work are independently readable (matches the
@@ -2326,8 +2339,8 @@ func hashDBVerifySweep(
 		observed := res.Verified + res.Drifted + res.Missing + res.OutOfRange
 		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
-		logger.Warn("hashdb verify sweep incomplete — stream ended early without error",
-			"from", from, "to", to, "observed", observed, "expected", int(to-from)+1,
+		logger.Warn("hashdb verify sweep incomplete — stream ended early without error, or no ledger in the window had a recorded baseline to compare against",
+			"from", from, "to", to, "observed", observed, "expected", int(to-from)+1, "verified", res.Verified,
 		)
 	default: // sweepOutcomeOK
 		obs.HashdbVerifyRunsTotal.WithLabelValues("ok").Inc()
@@ -2369,7 +2382,7 @@ func classifyHashDBVerifySweep(res archivecompleteness.HashDBVerifyResult, strea
 		return sweepOutcomeError
 	}
 	observed := res.Verified + res.Drifted + res.Missing + res.OutOfRange
-	if observed != int(to-from)+1 {
+	if !hashDBSweepComplete(res, observed, from, to) {
 		return sweepOutcomeIncomplete
 	}
 	return sweepOutcomeOK
