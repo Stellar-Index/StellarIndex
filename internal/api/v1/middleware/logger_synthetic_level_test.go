@@ -48,6 +48,13 @@ func runOnce(t *testing.T, ua string, status int, level slog.Level) *bytes.Buffe
 	if ua != "" {
 		req.Header.Set("User-Agent", ua)
 	}
+	// obs.IsSyntheticRequest trusts the UA only for a request that
+	// arrived directly on loopback (see its doc) — the shape every
+	// legitimate synthetic caller actually uses. httptest.NewRequest's
+	// default RemoteAddr (192.0.2.1, a TEST-NET address) is not that
+	// shape, so set it explicitly rather than let these cases assert
+	// against traffic no real synthetic caller produces.
+	req.RemoteAddr = "127.0.0.1:54321"
 	h.ServeHTTP(httptest.NewRecorder(), req)
 	return buf
 }
@@ -95,6 +102,30 @@ func TestFailingSyntheticRequestStillReachesTheJournal(t *testing.T) {
 		if len(got) != 1 || got[0] != tc.want {
 			t.Errorf("synthetic %d logged %v, want one %s line", tc.status, got, tc.want)
 		}
+	}
+}
+
+// T175: a User-Agent header is entirely client-controlled, so a request
+// that spoofs a synthetic prefix but actually crossed haproxy (evidenced
+// by the X-Forwarded-For hop haproxy stamps on everything it proxies —
+// see obs.IsSyntheticRequest) must keep its INFO line, exactly like any
+// other customer request. Demoting it to DEBUG would let an external
+// caller erase its own successful requests from the journal for free.
+func TestSpoofedSyntheticUAWithProxyHopStillLogsAtInfo(t *testing.T) {
+	buf := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	h := Logger(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+	req.Header.Set("User-Agent", "stellarindex-smoke/1")
+	req.Header.Set("X-Forwarded-For", "203.0.113.42")
+	req.RemoteAddr = "127.0.0.1:54321"
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got := levels(t, buf); len(got) != 1 || got[0] != "INFO" {
+		t.Errorf("spoofed synthetic UA with a proxy hop logged %v, want one INFO line", got)
 	}
 }
 

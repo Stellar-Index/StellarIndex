@@ -35,7 +35,7 @@ import (
 // carry.
 //
 // Synthetic traffic at DEBUG, same argument as the 429 case above and
-// the same judgement the SLO uses ([obs.IsSyntheticUA]). The SLA probe
+// the same judgement the SLO uses ([obs.IsSyntheticRequest]). The SLA probe
 // drives ~800 requests per endpoint per run across ten endpoints every
 // 15 minutes; measured on r1 2026-09-16 that was 287,914 API entries in
 // 5.4 hours — 98% of everything the journal held. With SystemMaxUse at
@@ -135,7 +135,7 @@ func Logger(logger *slog.Logger) Middleware {
 				logger.Error("http request", attrs...)
 			case rec.status >= 400:
 				logger.Warn("http request", attrs...)
-			case obs.IsSyntheticUA(r.UserAgent()):
+			case obs.IsSyntheticRequest(r):
 				logger.Debug("http request", attrs...)
 			default:
 				logger.Info("http request", attrs...)

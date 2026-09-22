@@ -347,10 +347,13 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	customerReq.Header.Set("User-Agent", "Mozilla/5.0")
 	h.ServeHTTP(rr, customerReq)
 
-	// Synthetic probe — should be skipped.
+	// Synthetic probe — genuine shape (loopback peer, no proxy hop,
+	// matching the way r1-smoke.sh/the SLA probe/self-prewarm all hit
+	// the API directly on its own listener). Should be skipped.
 	rr2 := httptest.NewRecorder()
 	smokeReq := httptest.NewRequest(http.MethodGet, "/v1/synthetic-probe", nil)
 	smokeReq.Header.Set("User-Agent", "stellarindex-smoke/1")
+	smokeReq.RemoteAddr = "127.0.0.1:54321"
 	h.ServeHTTP(rr2, smokeReq)
 
 	ts := httptest.NewServer(obs.Handler())
@@ -372,6 +375,54 @@ func TestHTTPMetrics_SyntheticUASkipsHistogram(t *testing.T) {
 	// would have advanced by 2. Pin the negative.
 	if strings.Contains(string(body), httpRequestsRow("GET", "/v1/synthetic-probe", "200", before+2)) {
 		t.Errorf("regression: smoke traffic counted in customer histogram")
+	}
+}
+
+// TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped is the T175
+// regression proof: the User-Agent header alone is client-controlled,
+// so an external caller spoofing `User-Agent: stellarindex-smoke/1`
+// must NOT be able to erase its own traffic from the customer-facing
+// SLO metrics. In the deployed topology every request that reaches
+// the API from outside crosses haproxy, which appends
+// X-Forwarded-For (option forwardfor); only the three legitimate
+// synthetic sources bypass it by hitting the loopback listener
+// directly. A request carrying X-Forwarded-For therefore proves it
+// came from outside no matter what User-Agent it claims, and must be
+// counted like any other customer request.
+func TestHTTPMetrics_SpoofedSyntheticUAIsNotSkipped(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/spoof-probe", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := obs.HTTPMetrics(mux)
+
+	before := httpRequestsBaseline("GET", "/v1/spoof-probe", "200")
+
+	// Attacker-controlled request: claims the synthetic UA, and its
+	// RemoteAddr is the loopback peer haproxy would present on its
+	// behalf — but it also carries the X-Forwarded-For hop haproxy
+	// adds for every proxied request, which a request that truly
+	// bypassed haproxy (the real smoke/probe/prewarm traffic) never
+	// has.
+	rr := httptest.NewRecorder()
+	spoofed := httptest.NewRequest(http.MethodGet, "/v1/spoof-probe", nil)
+	spoofed.Header.Set("User-Agent", "stellarindex-smoke/1")
+	spoofed.Header.Set("X-Forwarded-For", "203.0.113.42")
+	spoofed.RemoteAddr = "127.0.0.1:54321"
+	h.ServeHTTP(rr, spoofed)
+
+	ts := httptest.NewServer(obs.Handler())
+	defer ts.Close()
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	want := httpRequestsRow("GET", "/v1/spoof-probe", "200", before+1)
+	if !strings.Contains(string(body), want) {
+		t.Errorf("spoofed synthetic UA vanished from the customer-facing metric; body:\n%s", string(body))
 	}
 }
 

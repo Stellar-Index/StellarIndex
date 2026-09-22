@@ -2,6 +2,7 @@ package obs
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -95,7 +96,7 @@ func HTTPMetrics(next http.Handler) http.Handler {
 		// observability stream. Failures are caught by the smoke
 		// script's exit code + Healthchecks.io ping (see
 		// configs/healthchecks/smoke.sh).
-		if IsSyntheticUA(r.UserAgent()) {
+		if IsSyntheticRequest(r) {
 			return
 		}
 
@@ -140,20 +141,19 @@ func isStreamingRoute(route string) bool {
 	return strings.HasSuffix(route, "/stream")
 }
 
-// IsSyntheticUA reports whether the User-Agent identifies internal
-// synthetic / maintenance traffic that must not pollute the
-// customer-facing SLO. Matches `stellarindex-smoke/...` (the
-// r1-smoke.sh wrapper), `stellarindex-probe/...` (operator probes,
-// including the SLA probe), and `stellarindex-prewarm/...` (the API's
-// own self-prewarm goroutine, which HTTP-GETs its endpoints to warm
-// caches — its requests are deliberately cold and would otherwise
-// dominate the latency histogram). The match is prefix-only so version
-// suffixes don't affect the decision.
+// IsSyntheticUA reports whether the User-Agent STRING LOOKS LIKE
+// internal synthetic / maintenance traffic: `stellarindex-smoke/...`
+// (the r1-smoke.sh wrapper), `stellarindex-probe/...` (operator
+// probes, including the SLA probe), and `stellarindex-prewarm/...`
+// (the API's own self-prewarm goroutine). The match is prefix-only so
+// version suffixes don't affect the decision.
 //
-// Exported because the same judgement decides the access log's level:
-// a request the SLO refuses to count is a request the journal should
-// not spend its retention on either, and the two must agree on which
-// requests those are or one of them is wrong.
+// This is a NAME check, not a trust check — the header is entirely
+// client-controlled, so a UA-only match must never gate anything
+// customer-observable by itself. [IsSyntheticRequest] is the actual
+// trust boundary; use that (or the equivalent judgement inline, as
+// middleware.Logger does) wherever the answer decides whether a
+// request counts against the customer-facing SLO or the access log.
 func IsSyntheticUA(ua string) bool {
 	if ua == "" {
 		return false
@@ -170,6 +170,49 @@ var syntheticUAPrefixes = []string{
 	"stellarindex-smoke/",
 	"stellarindex-probe/",
 	"stellarindex-prewarm/",
+}
+
+// IsSyntheticRequest reports whether a request should be trusted as
+// first-party synthetic traffic — the judgement [HTTPMetrics] uses to
+// skip the customer-facing SLO metrics, and middleware.Logger uses to
+// demote a successful request to DEBUG (see that package's Logger
+// doc: "the two must agree on which requests those are").
+//
+// A User-Agent prefix match ([IsSyntheticUA]) is necessary but NOT
+// sufficient: it is a plain client-supplied header, so any external
+// caller can set `User-Agent: stellarindex-smoke/1` and erase its own
+// traffic from the error-rate/availability-SLO series before the
+// alerts that watch them ever see the request. The three legitimate
+// sources — r1-smoke.sh, the SLA probe, and the self-prewarm goroutine
+// (see their call sites) — all hit the API's OWN loopback listener
+// directly, bypassing the haproxy front entirely. haproxy
+// (configs/ansible/roles/haproxy/templates/haproxy.cfg.j2, `option
+// forwardfor`) appends X-Forwarded-For to every request it proxies,
+// so any request that crossed it — including one from an attacker
+// spoofing the UA — carries that header; a request that didn't cross
+// it can't have it. Trusting the UA only when the request arrived on
+// loopback WITHOUT an X-Forwarded-For hop closes that gap without the
+// three internal callers needing to prove anything more than the
+// connection they already make.
+func IsSyntheticRequest(r *http.Request) bool {
+	if !IsSyntheticUA(r.UserAgent()) {
+		return false
+	}
+	if r.Header.Get("X-Forwarded-For") != "" {
+		return false
+	}
+	return isLoopbackRemoteAddr(r.RemoteAddr)
+}
+
+// isLoopbackRemoteAddr reports whether a request's RemoteAddr
+// (host[:port] or bare host) resolves to a loopback address.
+func isLoopbackRemoteAddr(remoteAddr string) bool {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // CaptureRoute writes the mux-matched route pattern into the

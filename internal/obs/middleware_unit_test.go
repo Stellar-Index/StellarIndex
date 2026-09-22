@@ -106,6 +106,70 @@ func TestIsStreamingRoute(t *testing.T) {
 	}
 }
 
+// ─── IsSyntheticRequest ───────────────────────────────────────
+
+// TestIsSyntheticRequest is the T175 regression proof at the helper
+// level: a synthetic-looking User-Agent must be trusted only when the
+// request also shows it arrived directly on loopback, bypassing
+// haproxy (which stamps X-Forwarded-For on everything it proxies —
+// see IsSyntheticRequest's doc). The UA prefix alone is
+// attacker-controlled and must never be sufficient by itself.
+func TestIsSyntheticRequest(t *testing.T) {
+	cases := []struct {
+		name       string
+		ua         string
+		remoteAddr string
+		xff        string
+		want       bool
+	}{
+		{
+			name:       "genuine loopback smoke request",
+			ua:         "stellarindex-smoke/1",
+			remoteAddr: "127.0.0.1:54321",
+			want:       true,
+		},
+		{
+			name:       "genuine loopback IPv6 probe request",
+			ua:         "stellarindex-probe/1",
+			remoteAddr: "[::1]:54321",
+			want:       true,
+		},
+		{
+			name:       "spoofed UA from outside, no proxy hop recorded",
+			ua:         "stellarindex-smoke/1",
+			remoteAddr: "203.0.113.5:1234",
+			want:       false,
+		},
+		{
+			name:       "spoofed UA proxied through haproxy (loopback peer + XFF)",
+			ua:         "stellarindex-prewarm/1",
+			remoteAddr: "127.0.0.1:54321",
+			xff:        "203.0.113.42",
+			want:       false,
+		},
+		{
+			name:       "non-synthetic UA on loopback stays uncounted-as-synthetic",
+			ua:         "Mozilla/5.0",
+			remoteAddr: "127.0.0.1:54321",
+			want:       false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodGet, "/v1/whatever", nil)
+			r.Header.Set("User-Agent", tc.ua)
+			r.RemoteAddr = tc.remoteAddr
+			if tc.xff != "" {
+				r.Header.Set("X-Forwarded-For", tc.xff)
+			}
+			if got := IsSyntheticRequest(r); got != tc.want {
+				t.Errorf("IsSyntheticRequest(ua=%q remoteAddr=%q xff=%q) = %v, want %v",
+					tc.ua, tc.remoteAddr, tc.xff, got, tc.want)
+			}
+		})
+	}
+}
+
 // ─── statusRecorder.Flush ─────────────────────────────────────
 
 // flushableRecorder is an httptest.ResponseRecorder with a Flush
