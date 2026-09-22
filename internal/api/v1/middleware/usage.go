@@ -179,6 +179,46 @@ func UsageKeyForSubject(s auth.Subject) string {
 	return ""
 }
 
+// resolvedRouteKey is the context key [ResolveRoute] stashes its
+// pre-dispatch pattern match under.
+type resolvedRouteKey struct{}
+
+// ResolveRoute pre-computes the mux-matched route pattern via a
+// read-only mux.Handler lookup — no dispatch, so it never runs a
+// handler — and stashes it in the request context. Wire this OUTSIDE
+// every pre-dispatch gate (auth, key policy, monthly quota, rate
+// limit, usage tracker): a request one of those gates rejects never
+// reaches the mux, so [obs.CaptureRoute] (wired innermost, directly
+// above the mux) never runs and obs.RouteFromContext/r.Pattern stay
+// empty for the rest of the stack, including [endpointFamily]'s
+// post-response read. Without this, every gate-rejected request
+// bucketed under the bounded-cardinality "unmatched" family instead
+// of its real route (Q177), hiding exactly the per-endpoint throttle
+// pattern the DETAIL family exists to surface.
+//
+// [obs.CaptureRoute] remains the authoritative source once the mux
+// actually dispatches — [endpointFamily] still prefers it — so this
+// only fills the gap for requests a gate stops short of the mux.
+func ResolveRoute(mux muxMatcher) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, pattern := mux.Handler(r); pattern != "" {
+				r = r.WithContext(context.WithValue(r.Context(), resolvedRouteKey{}, pattern))
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// stripMethodPrefix strips the leading "METHOD " a Go 1.22+ mux
+// pattern carries (e.g. "GET /v1/assets/{id}") down to the path.
+func stripMethodPrefix(pattern string) string {
+	if i := strings.IndexByte(pattern, ' '); i >= 0 {
+		return pattern[i+1:]
+	}
+	return pattern
+}
+
 // endpointFamily resolves the bounded-cardinality endpoint label for
 // the request: the mux route pattern path, never the raw URL.
 func endpointFamily(r *http.Request) string {
@@ -189,10 +229,14 @@ func endpointFamily(r *http.Request) string {
 	// inner middleware re-wrapped the request (plain test stacks)
 	// the pattern is visible here directly.
 	if p := r.Pattern; p != "" {
-		if i := strings.IndexByte(p, ' '); i >= 0 {
-			return p[i+1:]
-		}
-		return p
+		return stripMethodPrefix(p)
+	}
+	// A pre-dispatch gate (RateLimit, MonthlyQuota, ...) rejected the
+	// request before the mux ever ran — [ResolveRoute]'s early match
+	// is the only source left. See that doc comment for why this
+	// exists at all.
+	if p, ok := r.Context().Value(resolvedRouteKey{}).(string); ok && p != "" {
+		return stripMethodPrefix(p)
 	}
 	return "unmatched"
 }

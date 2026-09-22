@@ -263,6 +263,61 @@ func TestUsageTracker_UnmatchedRouteBuckets(t *testing.T) {
 	}
 }
 
+// TestUsageTracker_ResolveRoute_ThrottledBeforeDispatch — a 429 from a
+// gate that rejects BEFORE the mux ever dispatches (RateLimit, in
+// production) must still bucket under the real route pattern, not the
+// bounded "unmatched" fallback. Without middleware.ResolveRoute wired
+// ahead of the gate, obs.CaptureRoute never runs (the mux is never
+// reached) and endpointFamily() had no route information left — every
+// production 429 landed under "unmatched" instead of its real
+// endpoint (Q177).
+func TestUsageTracker_ResolveRoute_ThrottledBeforeDispatch(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	counter := usage.New(rdb)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/price", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	subject := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_gate"}
+	stamp := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r = r.WithContext(auth.WithSubject(r.Context(), subject))
+			next.ServeHTTP(w, r)
+		})
+	}
+	// denyBeforeDispatch mimics RateLimit: it 429s WITHOUT calling
+	// next, so the mux (and obs.CaptureRoute) never run — exactly the
+	// production ordering server.go's Handler() wires.
+	denyBeforeDispatch := func(_ http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+		})
+	}
+
+	h := middleware.Chain(mux, stamp, middleware.ResolveRoute(mux),
+		middleware.UsageTracker(counter, nil), denyBeforeDispatch)
+	ts := httptest.NewServer(h)
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/v1/price")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	got := detailCounts(t, counter, "key:kid_gate")
+	if n := got[[2]string{"/v1/price", usage.ClassThrottled}]; n != 1 {
+		t.Errorf("throttled count for /v1/price = %d, want 1 (counts = %v)", n, got)
+	}
+	if n := got[[2]string{"unmatched", usage.ClassThrottled}]; n != 0 {
+		t.Errorf("a gate-rejected request on a real route bucketed under 'unmatched': counts = %v", got)
+	}
+}
+
 // TestUsageTracker_AnonymousSkipped — no subject → no counters at
 // all (nothing to bill).
 func TestUsageTracker_AnonymousSkipped(t *testing.T) {

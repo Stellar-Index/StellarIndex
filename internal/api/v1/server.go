@@ -1905,6 +1905,14 @@ func (s *Server) Handler() http.Handler {
 	// fetch of a trailing-slash URL died at the redirect — exactly
 	// as dead as the 404 this middleware exists to prevent.
 	stack = append(stack, middleware.TrailingSlashRedirect(s.mux))
+	// ResolveRoute pre-matches the route pattern via a read-only
+	// mux.Handler lookup, BEFORE Auth/KeyPolicy/MonthlyQuota/RateLimit
+	// can reject the request short of the mux. Those gates run outside
+	// obs.CaptureRoute (wired innermost), so a gate-rejected request
+	// used to leave UsageTracker's endpointFamily() with no route
+	// info at all and bucket it under "unmatched" (Q177) — this fills
+	// that gap without moving any gate's position.
+	stack = append(stack, middleware.ResolveRoute(s.mux))
 	// RequestTimeout bounds every non-streaming request's context so
 	// EVERY handler inherits a deadline even when it forgets to wrap its
 	// own DB/ClickHouse read (C3-1/C3-2/P1, audit-2026-07-16).
