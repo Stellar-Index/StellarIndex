@@ -12,30 +12,35 @@
 export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
+  try {
+    const asset = await env.ASSETS.fetch(request);
+    if (asset.status !== 404) {
+      return asset;
+    }
 
-  const asset = await env.ASSETS.fetch(request);
-  if (asset.status !== 404) {
-    return asset;
+    // Strip the client's conditional-request headers from the shell
+    // sub-fetch — they describe the long-tail URL, not the shell asset
+    // (see functions/markets/[[path]].js for the full rationale).
+    const shellHeaders = new Headers(request.headers);
+    shellHeaders.delete('if-none-match');
+    shellHeaders.delete('if-modified-since');
+
+    const shell = await env.ASSETS.fetch(
+      new Request(new URL('/lending/shell/', url.origin), {
+        method: request.method,
+        headers: shellHeaders,
+        redirect: request.redirect,
+      }),
+    );
+    // REL-02: propagate the shell fetch's real status — forcing 200 turns
+    // a missing/broken shell into a soft-200 error page.
+    return new Response(shell.body, {
+      status: shell.ok ? 200 : 503,
+      headers: shell.headers,
+    });
+  } catch {
+    // ASSETS.fetch can throw on a worker-runtime fault; answer the same 503
+    // as a failed shell fetch instead of CF's raw 500 page.
+    return new Response('Service temporarily unavailable', { status: 503 });
   }
-
-  // Strip the client's conditional-request headers from the shell
-  // sub-fetch — they describe the long-tail URL, not the shell asset
-  // (see functions/markets/[[path]].js for the full rationale).
-  const shellHeaders = new Headers(request.headers);
-  shellHeaders.delete('if-none-match');
-  shellHeaders.delete('if-modified-since');
-
-  const shell = await env.ASSETS.fetch(
-    new Request(new URL('/lending/shell/', url.origin), {
-      method: request.method,
-      headers: shellHeaders,
-      redirect: request.redirect,
-    }),
-  );
-  // REL-02: propagate the shell fetch's real status — forcing 200 turns
-  // a missing/broken shell into a soft-200 error page.
-  return new Response(shell.body, {
-    status: shell.ok ? 200 : 503,
-    headers: shell.headers,
-  });
 }
