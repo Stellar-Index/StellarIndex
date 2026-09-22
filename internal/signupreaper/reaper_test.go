@@ -22,10 +22,13 @@ type reapCall struct {
 }
 
 type fakeOrphanStore struct {
-	mu      sync.Mutex
-	calls   []reapCall
-	deleted int64
-	err     error
+	mu          sync.Mutex
+	calls       []reapCall
+	deleted     int64
+	err         error
+	accountRows int64
+	apiKeyRows  int64
+	countErr    error
 }
 
 func (f *fakeOrphanStore) ReapSuspendedOrphans(_ context.Context, prefix string, olderThan time.Time) (int64, error) {
@@ -36,6 +39,24 @@ func (f *fakeOrphanStore) ReapSuspendedOrphans(_ context.Context, prefix string,
 		return 0, f.err
 	}
 	return f.deleted, nil
+}
+
+func (f *fakeOrphanStore) CountAccounts(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.countErr != nil {
+		return 0, f.countErr
+	}
+	return f.accountRows, nil
+}
+
+func (f *fakeOrphanStore) CountAPIKeys(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.countErr != nil {
+		return 0, f.countErr
+	}
+	return f.apiKeyRows, nil
 }
 
 func (f *fakeOrphanStore) lastCall(t *testing.T) reapCall {
@@ -181,6 +202,38 @@ func TestRun_ReturnsOnContextCancel(t *testing.T) {
 	}
 	if len(store.calls) == 0 {
 		t.Error("Run did not sweep before returning")
+	}
+}
+
+// TestSweep_PublishesRowCountGauges pins Q181: a successful registration
+// via POST /v1/register is never reaped (only signup-race orphans are),
+// so obs.AccountRows / obs.APIKeyRows are the only per-deployment signal
+// of that table's growth. A sweep must publish the store's current
+// counts verbatim, not just the deleted-orphan count.
+func TestSweep_PublishesRowCountGauges(t *testing.T) {
+	store := &fakeOrphanStore{accountRows: 4217, apiKeyRows: 4310}
+	r := signupreaper.New(store, signupreaper.Options{Logger: silent()})
+
+	r.Sweep(context.Background())
+
+	if got := testutil.ToFloat64(obs.AccountRows); got != 4217 {
+		t.Errorf("AccountRows = %v, want 4217", got)
+	}
+	if got := testutil.ToFloat64(obs.APIKeyRows); got != 4310 {
+		t.Errorf("APIKeyRows = %v, want 4310", got)
+	}
+
+	// A later sweep with a smaller count overwrites, not accumulates —
+	// this is a gauge of current state, not a counter.
+	store.mu.Lock()
+	store.accountRows, store.apiKeyRows = 10, 12
+	store.mu.Unlock()
+	r.Sweep(context.Background())
+	if got := testutil.ToFloat64(obs.AccountRows); got != 10 {
+		t.Errorf("AccountRows after second sweep = %v, want 10", got)
+	}
+	if got := testutil.ToFloat64(obs.APIKeyRows); got != 12 {
+		t.Errorf("APIKeyRows after second sweep = %v, want 12", got)
 	}
 }
 

@@ -52,6 +52,19 @@ type OrphanStore interface {
 	// returning the number of rows removed. Conservative predicate —
 	// see the implementation.
 	ReapSuspendedOrphans(ctx context.Context, reasonPrefix string, olderThan time.Time) (int64, error)
+	// CountAccounts returns the current row count of the accounts
+	// table. Unlike ReapSuspendedOrphans this is not a delete surface —
+	// it exists so the reaper's sweep can publish [obs.AccountRows]:
+	// POST /v1/register (ADR-0049) is unauthenticated and mints a
+	// permanent account on every accepted call, and the reaper's own
+	// sweep never touches those rows (only signup-race orphans), so
+	// this gauge is the only visibility into that table's growth.
+	CountAccounts(ctx context.Context) (int64, error)
+	// CountAPIKeys returns the current row count of the api_keys
+	// table, published as [obs.APIKeyRows]. Register mints one durable
+	// key per account (mintRegisterKey), so this tracks the same
+	// growth from the credential side.
+	CountAPIKeys(ctx context.Context) (int64, error)
 }
 
 // Options tunes the Reaper. Zero values yield production defaults.
@@ -138,9 +151,34 @@ func (r *Reaper) Sweep(ctx context.Context) {
 		r.logger.Info("signup-reaper deleted speculative-account orphans",
 			"deleted", deleted)
 	}
+	r.refreshRowGauges(ctx)
 	// Liveness (#368 M5): the sweep COMPLETED — including the failure arm
 	// above; only the cancelled early return skips this.
 	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperSignup).Set(float64(r.now().Unix()))
+}
+
+// refreshRowGauges publishes the current accounts/api_keys row counts
+// (obs.AccountRows / obs.APIKeyRows). Both tables are durably written
+// by the unauthenticated, friction-free POST /v1/register path
+// (ADR-0049) and neither is bounded by this reaper — it deletes only
+// signup-race orphans — so this is the only per-deployment signal of
+// registration volume. A count failure is logged, not treated as a
+// sweep failure: the delete's own outcome already drives the alert.
+func (r *Reaper) refreshRowGauges(ctx context.Context) {
+	if n, err := r.store.CountAccounts(ctx); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			r.logger.Warn("signup-reaper: count accounts failed", "err", err)
+		}
+	} else {
+		obs.AccountRows.Set(float64(n))
+	}
+	if n, err := r.store.CountAPIKeys(ctx); err != nil {
+		if !errors.Is(err, context.Canceled) {
+			r.logger.Warn("signup-reaper: count api_keys failed", "err", err)
+		}
+	} else {
+		obs.APIKeyRows.Set(float64(n))
+	}
 }
 
 // sweepOnce performs the delete and returns (rows deleted, outcome).

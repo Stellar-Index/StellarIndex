@@ -246,6 +246,67 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 	})
 
+	// Account/CountAccounts+CountAPIKeys pins Q181: the signup-reaper
+	// publishes obs.AccountRows / obs.APIKeyRows from these two counts
+	// because POST /v1/register mints a permanent accounts row + a
+	// permanent api_keys row on every accepted call and the reaper never
+	// deletes a successful registration's rows. Delta-based (this test
+	// shares the database with the others in this file, which insert
+	// their own account/key rows) so it is order-independent.
+	t.Run("Account/CountAccounts+CountAPIKeys", func(t *testing.T) {
+		keys := postgresstore.NewAPIKeyStore(store)
+
+		beforeAccounts, err := accounts.CountAccounts(ctx)
+		if err != nil {
+			t.Fatalf("CountAccounts (before): %v", err)
+		}
+		beforeKeys, err := accounts.CountAPIKeys(ctx)
+		if err != nil {
+			t.Fatalf("CountAPIKeys (before): %v", err)
+		}
+
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "Count Co", Slug: "count-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "count@count.example",
+			Tier:         platform.TierFree, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+
+		hash := sha256.Sum256([]byte("sip_count_fixture_" + acct.ID.String()))
+		key := platform.APIKey{
+			ID:              "kid_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:12],
+			AccountID:       acct.ID,
+			Name:            "registration key",
+			KeyHash:         hash[:],
+			KeyPrefix:       "sip_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:8],
+			Tier:            platform.APIKeyTierAPIKey,
+			RateLimitPerMin: 60,
+			MonthlyQuota:    100000,
+			Permissions:     platform.KeyPermissions{All: true},
+		}
+		if _, err := keys.Create(ctx, key, 25); err != nil {
+			t.Fatalf("create api key: %v", err)
+		}
+
+		afterAccounts, err := accounts.CountAccounts(ctx)
+		if err != nil {
+			t.Fatalf("CountAccounts (after): %v", err)
+		}
+		if afterAccounts != beforeAccounts+1 {
+			t.Errorf("CountAccounts delta = %d, want 1", afterAccounts-beforeAccounts)
+		}
+
+		afterKeys, err := accounts.CountAPIKeys(ctx)
+		if err != nil {
+			t.Fatalf("CountAPIKeys (after): %v", err)
+		}
+		if afterKeys != beforeKeys+1 {
+			t.Errorf("CountAPIKeys delta = %d, want 1", afterKeys-beforeKeys)
+		}
+	})
+
 	t.Run("User/CRUD+sessions", func(t *testing.T) {
 		acct, err := accounts.Create(ctx, platform.Account{
 			Name: "Beta Co", Slug: "beta",

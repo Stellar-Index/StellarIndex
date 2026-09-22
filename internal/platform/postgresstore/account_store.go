@@ -345,6 +345,31 @@ func (r *AccountStore) ReapSuspendedOrphans(ctx context.Context, reasonPrefix st
 	return total, nil
 }
 
+// CountAccounts returns the current row count of the accounts table.
+// Read by the signup-reaper's sweep to publish [obs.AccountRows] — see
+// [AccountStore.ReapSuspendedOrphans]'s doc comment for why the reap
+// itself never bounds a successful POST /v1/register.
+func (r *AccountStore) CountAccounts(ctx context.Context) (int64, error) {
+	const q = `SELECT COUNT(*) FROM accounts`
+	var n int64
+	if err := r.s.db.QueryRowContext(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count accounts: %w", err)
+	}
+	return n, nil
+}
+
+// CountAPIKeys returns the current row count of the api_keys table.
+// Read by the signup-reaper's sweep to publish [obs.APIKeyRows],
+// alongside [AccountStore.CountAccounts].
+func (r *AccountStore) CountAPIKeys(ctx context.Context) (int64, error) {
+	const q = `SELECT COUNT(*) FROM api_keys`
+	var n int64
+	if err := r.s.db.QueryRowContext(ctx, q).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count api keys: %w", err)
+	}
+	return n, nil
+}
+
 // likePrefixPattern escapes LIKE metacharacters in p and appends `%`
 // so the result matches "starts with p literally". Backslash is the
 // ESCAPE char (Postgres default, made explicit in the query).
