@@ -59,6 +59,15 @@ check "a reintroduced 'PR #1042' citation in CHANGELOG.md is caught" red
 git checkout -- CHANGELOG.md
 check "clean tree passes again after revert" ok
 
+# §4 stale-reference check: CHANGELOG.md must not carry the dangling
+# "(PR #1254)" citation back in (RSWP-135 — #1254 resolves to a real but
+# unrelated live issue, config-apply-gate's refuted-arm gap, not the PR
+# that shipped the exchanges-chart error-state fix it named).
+echo "(PR #1254)" >> CHANGELOG.md
+check "a reintroduced '(PR #1254)' citation in CHANGELOG.md is caught" red
+git checkout -- CHANGELOG.md
+check "clean tree passes again after revert" ok
+
 # RSWP-086: CHANGELOG's r1-smoke.sh budget-bump entry cited a PR number
 # (#1108) that never identified the actual PR; #1108 now resolves to a
 # real, unrelated issue, not a 404.
