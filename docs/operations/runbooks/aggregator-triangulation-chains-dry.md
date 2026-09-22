@@ -70,13 +70,17 @@ exactly the state it is blind to.
 ```sh
 # 1) Confirm the shape: missing_leg counting, ok flat at zero.
 #    (All five outcomes are pre-seeded at zero, so a genuine 0 here is
-#    a real zero, not a scrape gap.)
-curl -fs http://localhost:9464/metrics \
+#    a real zero, not a scrape gap.) This is an aggregator metric —
+#    :9464 is the indexer's port; the aggregator auto-shifts to
+#    :9465 on a single-host deploy (see aggregator-silent.md).
+curl -fs http://localhost:9465/metrics \
   | grep '^stellarindex_aggregator_triangulations_total'
 
 # 2) Is the fiat-FX feed alive at all? This gauge only advances on a
-#    committed non-empty fx_quotes batch.
-curl -fs http://localhost:9463/metrics \
+#    committed non-empty fx_quotes batch. The forex worker runs inside
+#    the API binary, which serves /metrics on its public listener
+#    (config's metrics_listen is ignored by the API binary).
+curl -fs http://localhost:3000/metrics \
   | grep '^stellarindex_external_fx_last_quote_unix'
 
 # 3) Is there an fx_quotes row inside the 7-day snap lookback for the
