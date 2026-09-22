@@ -527,6 +527,11 @@ stale_patterns=(
                                   # tracking issue before it existed; #1368
                                   # is now a real, unrelated closed PR
                                   # (W3 remediation slice 05)
+  "\(#1370\)"                    # dangling ref (RSWP-150) — remediation
+                                  # STATUS.md's lucide-react ^1.23 explorer
+                                  # bump note cited this as its PR; #1370 is
+                                  # now a real, unrelated dependabot PR
+                                  # (npm-minor-patch group bump)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \

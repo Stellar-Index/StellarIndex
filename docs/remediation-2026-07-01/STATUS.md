@@ -137,7 +137,7 @@ pass on current main). Triaged:
   coder/websocket); web bumps incl. **tailwind-merge v3** (major — explorer
   verified clean), **next group → Next 16** (explorer+status), date-fns,
   lucide/prettier. Lockfile-conflict cascades resolved via `@dependabot rebase`;
-  the lucide-react ^1.23 explorer bump (#1370) was applied manually after its
+  the lucide-react ^1.23 explorer bump was applied manually after its
   siblings merged. Main rebuilt + `go mod verify` clean after the Go bumps.
 - **Follow-up caught + fixed:** the merged **Next 16** bump REMOVED `next lint`, so
   `pnpm lint` failed and the `web/status` CI job went red on main. Next 16 itself
