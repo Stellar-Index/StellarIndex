@@ -1133,7 +1133,10 @@ function OverviewBody({
               {priceNum != null ? `$${formatPriceSmall(priceNum)}` : '—'}
             </span>
             {(() => {
-              const peg = peggedTo(assetSymbol(coin));
+              const peg = pegBadgeCurrency(
+                assetSymbol(coin),
+                detail?.unverified_warning,
+              );
               if (peg) {
                 return <PeggedBadge currency={peg} />;
               }
@@ -1514,6 +1517,23 @@ function peggedTo(code: string): string | null {
     default:
       return null;
   }
+}
+
+// pegBadgeCurrency gates peggedTo behind the AGENTS.md (code, issuer)
+// rule — code alone is an impersonation vector, a scam token can claim
+// "USDC". unverifiedWarning is the API's own issuer check
+// (detail.unverified_warning): populated exactly when this code matches
+// a verified currency's ticker but the issuer doesn't, i.e. a
+// look-alike. It stays null both for the genuine verified asset and for
+// codes no verified currency claims, so gating on it keeps the badge
+// (and the pill suppression) for the real thing while a collision falls
+// through to the ordinary change-pct pills.
+export function pegBadgeCurrency(
+  code: string,
+  unverifiedWarning: components['schemas']['Asset']['unverified_warning'],
+): string | null {
+  if (unverifiedWarning) return null;
+  return peggedTo(code);
 }
 
 function PeggedBadge({ currency }: { currency: string }) {
