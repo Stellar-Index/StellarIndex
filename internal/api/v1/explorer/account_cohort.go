@@ -66,12 +66,17 @@ type AccountCohortHoldingV struct {
 // does not spend the whole request budget on price reads.
 // UnpricedOverCap is the subset of UnpricedHoldings that was never looked
 // up because it fell outside that cap; the rest had no live price.
+// Degraded is true when at least one in-cap lookup was abandoned because
+// the request's context expired mid-walk (the LabelsContractsBeforePricing
+// case), not because the asset genuinely has no price — the priced/
+// unpriced counts above are then a partial read, not a complete one.
 type AccountCohortValuationV struct {
 	TotalUSD         *string `json:"total_usd,omitempty"`
 	PricedHoldings   int     `json:"priced_holdings"`
 	UnpricedHoldings int     `json:"unpriced_holdings"`
 	PriceCap         int     `json:"price_cap"`
 	UnpricedOverCap  int     `json:"unpriced_over_cap"`
+	Degraded         bool    `json:"degraded,omitempty"`
 	Basis            string  `json:"basis"`
 }
 
@@ -182,9 +187,11 @@ const accountCohortValuationBasis = "live_vwap_current"
 // clickhouse.CohortHoldingsLimit (400) holdings: pricing them all serially
 // spent the whole explorerReadTimeout on prices alone, so the contracts
 // table was labelled on a dead context and every such request pinned at
-// the budget. The cap keeps the price reads to the holdings that carry
-// the value — the largest by balance — and the response says how many
-// were left unpriced by it (AccountCohortValuationV.UnpricedOverCap).
+// the budget. The cap keeps the price reads to the largest holdings by
+// balance, a proxy for value (not the value itself — ranking by actual
+// USD value would mean pricing every holding first, which is exactly
+// what the cap exists to avoid); the response says how many were left
+// unpriced by it (AccountCohortValuationV.UnpricedOverCap).
 // Flow assets (at most clickhouse.CohortFlowAssetsLimit, 12) are priced on
 // top of the cap.
 const cohortPricedHoldingsCap = 50
@@ -264,10 +271,11 @@ func (h *Handler) accountCohortView(ctx context.Context, c clickhouse.AccountCoh
 	out.Contracts = h.cohortContractsView(ctx, c.Contracts)
 	out.Positions = h.cohortPositionsView(ctx, c.Positions)
 	eligible := cohortPriceable(c.Holdings, c.Flows)
-	price := h.cohortPricer(ctx, eligible)
+	price, degraded := h.cohortPricer(ctx, eligible)
 	out.Holdings, out.Valuation = cohortHoldingsView(c.Holdings, price, eligible)
 	out.HoldingsTruncated = len(c.Holdings) >= clickhouse.CohortHoldingsLimit
 	out.Flows = cohortFlowsView(c.Flows, price)
+	out.Valuation.Degraded = *degraded
 	return out
 }
 
@@ -512,10 +520,19 @@ func (h *Handler) cohortPositionsView(ctx context.Context, positions []clickhous
 // cohortPriceable) — everything else is unpriced without a read. The
 // price string is parsed once into an exact big.Rat; a price that does
 // not parse or is not positive is a miss, never a zero.
-func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}) cohortPriceFn {
+//
+// The returned *bool reports true once the walk has abandoned an in-cap
+// lookup because ctx expired mid-request: LookupUSDPrice has no way to
+// tell a cancelled read apart from a genuine no-price (both are (_,
+// false)), so without this the priced/unpriced counts silently read as a
+// complete answer when the walk was actually cut short by the budget
+// (RLT-194). Read it only after every price call for the request has been
+// made — it is not safe to read from another goroutine mid-walk.
+func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}) (cohortPriceFn, *bool) {
 	cache := map[string]cohortPrice{}
 	miss := map[string]struct{}{}
-	return func(asset string) (cohortPrice, bool) {
+	degraded := false
+	fn := func(asset string) (cohortPrice, bool) {
 		if !h.PricingEnabled || h.LookupUSDPrice == nil {
 			return cohortPrice{}, false
 		}
@@ -529,6 +546,11 @@ func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}
 			miss[asset] = struct{}{}
 			return cohortPrice{}, false
 		}
+		if ctx.Err() != nil {
+			degraded = true
+			miss[asset] = struct{}{}
+			return cohortPrice{}, false
+		}
 		parsed, err := canonical.ParseAsset(asset)
 		if err != nil {
 			miss[asset] = struct{}{}
@@ -536,6 +558,9 @@ func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}
 		}
 		raw, ok := h.LookupUSDPrice(ctx, parsed)
 		if !ok {
+			if ctx.Err() != nil {
+				degraded = true
+			}
 			miss[asset] = struct{}{}
 			return cohortPrice{}, false
 		}
@@ -548,6 +573,7 @@ func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}
 		cache[asset] = p
 		return p, true
 	}
+	return fn, &degraded
 }
 
 // cohortAssetKind classifies a canonical asset id the way the lake spells
