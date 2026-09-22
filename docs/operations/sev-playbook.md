@@ -64,12 +64,21 @@ notifications.
 
 ## 3. Detection channels
 
-> ⚠️ **Every channel below assumes paging is wired. As of 2026-07-27 it
-> is NOT** — Alertmanager's fanout receivers are no-op stubs, so alerts
-> accumulate in its UI and reach no human. See
-> [runbooks/wire-paging.md](runbooks/wire-paging.md) (~20 min,
-> operator-only). Until then, treat this playbook's detection column as
-> aspirational and rely on manual checks.
+> ⚠️ **Discord fanout is wired; PagerDuty is not.** The 2026-07-27 state
+> described here — Alertmanager's fanout receivers as no-op stubs that
+> accumulate alerts nobody sees — no longer holds: `chat-page`
+> (`severity=page`) and `chat-default`/`chat-informational` route
+> through real `discord_configs` in
+> [`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml),
+> not empty stubs (see [runbooks/wire-paging.md](runbooks/wire-paging.md)
+> and `v1-launch-plan.md` W6.1). What is still genuinely unbuilt is the
+> **PagerDuty** leg §4 and §7 below assume: that config file has no
+> `pagerduty_configs` for any severity, so there is no 5-min
+> acknowledgement timer, no secondary/backup escalation, and no
+> maintainer fallback — a page today is a Discord message someone has
+> to be watching, not a PagerDuty alert with escalation. Treat §4's
+> "PagerDuty dispatches" step and §7's "oncall rotations live in
+> PagerDuty" as aspirational until that integration exists.
 
 | Channel | What it catches | Fires |
 | ------- | --------------- | ----- |
