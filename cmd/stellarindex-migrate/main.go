@@ -7,6 +7,7 @@
 //
 //	stellarindex-migrate up              Apply every pending migration.
 //	stellarindex-migrate down [N]        Roll back last N migrations (default 1).
+//	                                      Asks for confirmation on a TTY; -yes skips it.
 //	stellarindex-migrate status          Show current + target version.
 //	stellarindex-migrate version         Build version.
 //	stellarindex-migrate help            Print usage.
@@ -21,6 +22,7 @@
 package main
 
 import (
+	"bufio"
 	"errors"
 	"flag"
 	"fmt"
@@ -48,6 +50,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 	fs.SetOutput(io.Discard)
 	dsn := fs.String("dsn", "", "Postgres DSN (overrides STELLARINDEX_POSTGRES_DSN env)")
 	dir := fs.String("migrations", "migrations", "Path to the migrations directory")
+	yes := fs.Bool("yes", false, "skip the interactive confirmation for 'down' (required when stdin is not a TTY)")
 	fs.Usage = func() { printUsage(fs) }
 
 	args := parseArgv(fs, os.Args[1:])
@@ -77,7 +80,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 		if resolvedDSN == "" {
 			die("no DSN: set STELLARINDEX_POSTGRES_DSN or pass -dsn")
 		}
-		if err := cmdDown(*dir, resolvedDSN, n); err != nil {
+		if err := cmdDown(*dir, resolvedDSN, n, *yes); err != nil {
 			die("down: %v", err)
 		}
 	case "status":
@@ -158,7 +161,11 @@ func cmdUp(dir, dsn string) error {
 	return nil
 }
 
-func cmdDown(dir, dsn string, n int) error {
+func cmdDown(dir, dsn string, n int, yes bool) error {
+	if err := confirmDown(n, dsn, yes, os.Stdin, stderr); err != nil {
+		return err
+	}
+
 	m, err := newMigrator(dir, dsn)
 	if err != nil {
 		return err
@@ -181,6 +188,58 @@ func cmdDown(dir, dsn string, n int) error {
 		return fmt.Errorf("post-down version: %w", vErr)
 	}
 	fmt.Printf("rolled back to version %d (dirty=%v)\n", v, dirty)
+	return nil
+}
+
+// isInteractive reports whether the process's real stdin is a terminal
+// that can answer a confirmation prompt. It is checked separately from
+// the reader confirmDown consumes so the two can differ in a test: a
+// non-interactive stdin (CI, a backgrounded shell, an agent harness, or
+// simply `go test`) must fail closed rather than block forever on a read
+// that will never resolve, matching scripts/dev/cut-release.sh's rule
+// for the same class of destructive prompt.
+//
+// A pipe or a regular file is ruled out by ModeCharDevice alone, but
+// /dev/null is ITSELF a character device — and is exactly what a nil
+// exec.Cmd.Stdin, a closed fd, or an explicit `< /dev/null` connects —
+// so it is ruled out by identity (device + inode) rather than by mode.
+func isInteractive() bool {
+	stat, err := os.Stdin.Stat()
+	if err != nil || stat.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	null, err := os.Open(os.DevNull)
+	if err != nil {
+		return true // can't rule it out; assume the char device is real
+	}
+	defer null.Close()
+	nullStat, err := null.Stat()
+	return err != nil || !os.SameFile(stat, nullStat)
+}
+
+// confirmDown gates `down` behind an explicit operator "yes". `down` is
+// the one verb no deploy pipeline runs (only `up` does — see
+// deploy-binary.yml) and rolls back applied schema; it is a manual,
+// break-glass command, so the safe default is to ask before running
+// `m.Steps(-n)`, and to refuse rather than guess when nothing can
+// answer.
+func confirmDown(n int, dsn string, yes bool, in io.Reader, out io.Writer) error {
+	if yes {
+		return nil
+	}
+	if !isInteractive() {
+		return errors.New("stdin is not a TTY and -yes was not given; " +
+			"refusing to guess on a destructive rollback. Pass -yes to confirm non-interactively")
+	}
+	fmt.Fprintf(out, "About to roll back %d migration(s) against %s\n", n, redact.Credentials(dsn))
+	fmt.Fprint(out, "Proceed? [y/N] ")
+	scanner := bufio.NewScanner(in)
+	if !scanner.Scan() {
+		return errors.New("no confirmation read; aborting")
+	}
+	if ans := strings.TrimSpace(scanner.Text()); ans != "y" && ans != "Y" {
+		return errors.New("aborted: down not confirmed")
+	}
 	return nil
 }
 
@@ -349,7 +408,9 @@ Usage:
 
 Subcommands:
   up              Apply every pending migration.
-  down [N]        Roll back last N migrations (default 1).
+  down [N]        Roll back last N migrations (default 1). Prompts for
+                  confirmation on a TTY; pass -yes to skip it (required
+                  when stdin is not a TTY).
   status          Show current applied version.
   force <V>       Clear dirty flag + set version to V (DANGEROUS —
                   manually verify the DB's actual schema matches V
@@ -470,7 +531,7 @@ func reportFlagFailure(fs *flag.FlagSet, argv []string, offset int) {
 		errf("stellarindex-migrate: the %s flag (argument %d) needs a value", describeFlagName(name), offset+i)
 	default:
 		errf("stellarindex-migrate: argument %d is not a flag this tool defines (%s) — "+
-			"only -dsn and -migrations are", offset+i, describeFlagName(name))
+			"only -dsn, -migrations and -yes are", offset+i, describeFlagName(name))
 	}
 	os.Exit(2)
 }
