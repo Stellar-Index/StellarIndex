@@ -15,6 +15,18 @@ against.
 
 ## [Unreleased]
 
+- **docs / CHANGELOG — dangling `#948` citation in the "6 more detail
+  surfaces" BreadcrumbList entry corrected (RSWP-055):** the entry
+  credited the prior `/assets/{slug}` + `/markets/{pair}` BreadcrumbList
+  work to `#948`, which was that work's issue number at the time; `#948`
+  has since been reassigned to an unrelated, currently-open issue (an
+  ECB fallback finding), so the citation no longer dangled — it resolved
+  to the wrong thing. Removed the citation rather than guess a
+  replacement number; `scripts/ci/lint-docs.sh`'s stale-reference check
+  now guards against it reappearing.
+  the existing JSON-LD on `/assets/{slug}` and `/markets/{pair}` —
+  expands SEO coverage from 3 → 9 detail pages.
+
 - **docs / CHANGELOG — dangling PR 845 citation in the rc.21
   `/sources` 24h-trade-count entry corrected (RSWP-050):** the entry
   credited its `?include=stats` opt-in to that PR number twice; the
