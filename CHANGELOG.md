@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+- **docs / CHANGELOG — dangling PR 845 citation in the rc.21
+  `/sources` 24h-trade-count entry corrected (RSWP-050):** the entry
+  credited its `?include=stats` opt-in to that PR number twice; the
+  number has since been reused by an unrelated live issue (filed
+  2026-09-18, about explorer `buildFetch` bypass), so the citation no
+  longer pointed at a 404 — it pointed at real but unrelated content,
+  which is worse. Removed both citations rather than guess a
+  replacement number; `scripts/ci/lint-docs.sh`'s stale-reference
+  check now guards against it reappearing.
+
 - **sources — decoder hardening (Q072, RLT-115):** sorocredit counts a
   settlement whose amounts leg cannot be parsed in the new
   `stellarindex_source_amount_degraded_total{source,field}`; decoded rows
@@ -29784,13 +29794,12 @@ roll forward verbatim.)
 
 ### Added
 - **`/sources` table: 24h trade count column.** Wires the
-  `?include=stats` opt-in (shipped in #845) into the explorer's
-  source-registry view. Each class group is now sorted by 24h
-  trade count desc — most-active venues at the top, alphabetical
-  fallback for venues that haven't traded in the last 24h.
-  Renders `—` for any source the API hasn't populated yet,
-  including `0` (which means "stats requested, no trades
-  observed" per #845's design).
+  `?include=stats` opt-in into the explorer's source-registry view.
+  Each class group is now sorted by 24h trade count desc —
+  most-active venues at the top, alphabetical fallback for venues
+  that haven't traded in the last 24h. Renders `—` for any source
+  the API hasn't populated yet, including `0` (which means "stats
+  requested, no trades observed" by design).
 - **`/research/architecture` doc browser.** Curated set of seven
   long-form architecture narratives — ingest pipeline, aggregation
   plan, supply pipeline, contract schema evolution, oracle
