@@ -3,8 +3,9 @@ import { ImageResponse } from 'workers-og';
 // Dynamic OG card generator (SEO plan D7). GET /og/{type}/{id} → a 1200×630 PNG
 // (satori + resvg-wasm on CF Pages Functions), edge-cached. Market cards carry
 // the LIVE price (near-real-time via the 60s edge cache + a tight upstream
-// timeout). NB the live fetch hits our public API from the edge — fine at this
-// volume + cache; revisit auth/rate-limits (R7) if it grows.
+// timeout, guarded by a circuit breaker below). NB the live fetch hits our
+// public API from the edge; a per-IP rate limit (K067) bounds a single
+// client's request volume in addition to the OG_DISABLED kill-switch.
 
 function code(s) {
   if (!s) return '';
@@ -51,6 +52,29 @@ const MAX_ID_LENGTH = 160;
 // arbitrary attacker-controlled text (markup, whitespace, path traversal).
 const ASSET_LEG_RE = /^[A-Za-z0-9_:-]{1,80}$/;
 
+// K067: a per-IP token bucket. This is deliberately module-scope state, not
+// KV — CF Pages Functions reuse an isolate across many requests, so this is
+// a real (if best-effort, per-isolate) gate against a single client hammering
+// the render path, layered on top of (not replacing) the OG_DISABLED
+// dashboard kill-switch for a sustained/distributed flood.
+const RATE_LIMIT_WINDOW_MS = 10_000;
+const RATE_LIMIT_MAX_PER_WINDOW = 20;
+let rateLimitBuckets = new Map(); // ip -> { count, windowStart }
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  const bucket = rateLimitBuckets.get(ip);
+  if (!bucket || now - bucket.windowStart >= RATE_LIMIT_WINDOW_MS) {
+    rateLimitBuckets.set(ip, { count: 1, windowStart: now });
+    // Opportunistic eviction so an unbounded stream of distinct IPs can't
+    // grow this map forever within one isolate's lifetime.
+    if (rateLimitBuckets.size > 5000) rateLimitBuckets.clear();
+    return false;
+  }
+  bucket.count += 1;
+  return bucket.count > RATE_LIMIT_MAX_PER_WINDOW;
+}
+
 // F101: liveSubline's upstream fetch would otherwise run again on every
 // single markets-type request even while the upstream is down — a
 // per-isolate circuit breaker backs off instead of hammering it. Best
@@ -77,10 +101,12 @@ function recordUpstreamOutcome(ok) {
 }
 
 // Exported for unit tests only (functions/og/og.test.js) — resets the
-// in-module breaker state so one test's failures don't leak into another.
-export function resetUpstreamBreakerForTest() {
+// in-module breaker and rate-limit state so one test's failures/requests
+// don't leak into another.
+export function resetOgGatesForTest() {
   upstreamFailures = 0;
   upstreamOpenUntil = 0;
+  rateLimitBuckets = new Map();
 }
 
 // Exported for unit tests only (functions/og/og.test.js) — CF Pages only
@@ -140,6 +166,17 @@ export async function onRequest(context) {
   if (env?.OG_DISABLED === '1') {
     return new Response('OG image generation is temporarily disabled.', {
       status: 503,
+    });
+  }
+
+  // K067: per-IP gate ahead of everything else — cheaper than the 404
+  // checks below and the only one of these gates that needs the request's
+  // origin, not just its path.
+  const clientIP = request.headers.get('cf-connecting-ip') || 'unknown';
+  if (isRateLimited(clientIP)) {
+    return new Response('Too many requests', {
+      status: 429,
+      headers: { 'retry-after': '10' },
     });
   }
 

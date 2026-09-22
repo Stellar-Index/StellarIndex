@@ -5,7 +5,7 @@
 // Node), so it's stubbed here with a lightweight fake Response — these
 // tests target the request-gating logic (SEC-08/SEC-15/input-validation/
 // kill-switch), not satori/resvg rendering.
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('workers-og', () => ({
   // F087: mirrors workers-og@0.0.27's actual ImageResponse header
@@ -27,11 +27,19 @@ vi.mock('workers-og', () => ({
   },
 }));
 
-const { onRequest, liveSubline, TYPE_LABEL, resetUpstreamBreakerForTest } =
+const { onRequest, liveSubline, TYPE_LABEL, resetOgGatesForTest } =
   await import('./[[path]].js');
 
-function makeContext(pathname, env = {}) {
-  return { request: new Request(`https://stellarindex.io${pathname}`), env };
+// Isolate each test from the rate limiter/circuit breaker's module-scope
+// state — without this, tests sharing the default (no `cf-connecting-ip`)
+// IP bucket would trip the K067 rate limit depending on run order.
+beforeEach(() => resetOgGatesForTest());
+
+function makeContext(pathname, env = {}, headers = {}) {
+  return {
+    request: new Request(`https://stellarindex.io${pathname}`, { headers }),
+    env,
+  };
 }
 
 describe('og function — kill-switch', () => {
@@ -109,17 +117,36 @@ describe('og function — 404 responses are cacheable (F101)', () => {
   });
 });
 
-describe('liveSubline — upstream circuit breaker (F101)', () => {
-  afterEach(() => {
-    vi.restoreAllMocks();
-    resetUpstreamBreakerForTest();
+describe('og function — per-IP rate limit (K067)', () => {
+  it('429s a single IP once it exceeds the per-window budget', async () => {
+    const headers = { 'cf-connecting-ip': '203.0.113.9' };
+    let lastRes;
+    for (let i = 0; i < 21; i += 1) {
+      lastRes = await onRequest(makeContext('/og/assets/usdc', {}, headers));
+    }
+    expect(lastRes.status).toBe(429);
   });
+
+  it('does not rate-limit a different IP sharing the same window', async () => {
+    const flooded = { 'cf-connecting-ip': '203.0.113.9' };
+    const other = { 'cf-connecting-ip': '203.0.113.10' };
+    for (let i = 0; i < 21; i += 1) {
+      await onRequest(makeContext('/og/assets/usdc', {}, flooded));
+    }
+    const res = await onRequest(makeContext('/og/assets/usdc', {}, other));
+    expect(res.status).toBe(200);
+  });
+});
+
+describe('liveSubline — upstream circuit breaker (F101)', () => {
+  afterEach(() => vi.restoreAllMocks());
 
   it('stops calling a repeatedly-failing upstream after the failure threshold', async () => {
     const fetchSpy = vi
       .spyOn(globalThis, 'fetch')
       .mockResolvedValue(new Response('boom', { status: 500 }));
-    const id = 'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+    const id =
+      'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
 
     // Drive the breaker past its threshold with real upstream failures.
     for (let i = 0; i < 5; i += 1) {
