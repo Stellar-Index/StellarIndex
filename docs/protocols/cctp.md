@@ -40,10 +40,10 @@ classified and decoded; no known gap remains.**
 
 | Topic | Emitter | Decoded since |
 |---|---|---|
-| `deposit_for_burn` | TokenMessengerMinter | integration (2026-05-20) |
-| `mint_and_withdraw` | TokenMessengerMinter | integration |
-| `message_sent` | MessageTransmitter | integration |
-| `message_received` | MessageTransmitter | integration |
+| `deposit_for_burn` | TokenMessengerMinter | integration (2026-05-20) — decoder tests (`TestDecodeDepositForBurn_HappyPath` et al.) use synthetic bodies, not a real lake fixture; no `_RealMainnetFixture` test exists yet for this topic. |
+| `mint_and_withdraw` | TokenMessengerMinter | integration (2026-05-20) — same gap: `TestDecodeMintAndWithdraw_HappyPath` is synthetic-only, no real-fixture test. |
+| `message_sent` | MessageTransmitter | integration (2026-05-20) — same gap: `TestDecodeMessageSent_MapBody` is synthetic-only, no real-fixture test. |
+| `message_received` | MessageTransmitter | integration (2026-05-20) — same gap: `TestDecodeMessageReceived_HappyPath` is synthetic-only, no real-fixture test. |
 | `mint_and_forward` | CctpForwarder | **2026-07-02** — found undecoded in the lake (board #31); schema reverse-engineered from mainnet events (body map: amount i128, forward_recipient Address, token Address). Historical catch-up: `projector-replay -source cctp -from 62403000`. |
 | `ownership_transfer` | all three contracts | **2026-07-08** — ROADMAP #89b topic-match audit. 2-step ownership transfer initiated; body `{live_until_ledger: u32, new_owner: Address, old_owner: Address}`. Real fixture: ledger 62211157. |
 | `ownership_transfer_completed` | all three contracts | **2026-07-08**. New owner accepted a pending transfer; body `{new_owner: Address}`. Real fixture: ledger 62146641. |
