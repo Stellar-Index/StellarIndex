@@ -89,7 +89,6 @@ var (
 	// amount. Tiny bitstamp lots (e.g. 1e-8 XLM at $0.16) underflow
 	// the canonical.NewAmount integer scale (10^8). Real trades, but
 	// below our precision floor — drop silently rather than logging
-	// at ERROR. Same shape as the Coinbase + Binance dust filter
-	// (see #814).
+	// at ERROR. Same shape as the Coinbase + Binance dust filter.
 	ErrDustTrade = errors.New("bitstamp: dust trade (quote_amount underflow)")
 )

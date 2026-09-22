@@ -134,9 +134,9 @@ func TestParseFrame_DustTradeReturnsTypedSentinel(t *testing.T) {
 	// with "quote_amount must be positive, got 0" → ERROR-log-on-
 	// every-trade and silent ingestion drop.
 	//
-	// Per #814's pattern (Coinbase + Binance), parseTrade now returns
-	// ErrDustTrade so the streamer's existing skip-on-error branch
-	// drops the frame quietly instead.
+	// Following the Coinbase + Binance dust-trade pattern, parseTrade
+	// now returns ErrDustTrade so the streamer's existing skip-on-error
+	// branch drops the frame quietly instead.
 	//
 	// Reproduces the production log signature from r1 2026-05-10
 	// 15:26:51 UTC ("insert trade failed … quote_amount must be

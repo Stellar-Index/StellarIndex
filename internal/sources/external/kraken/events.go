@@ -84,6 +84,6 @@ var (
 	// canonical.NewAmount integer scale (10^8). Real trades, but
 	// below our precision floor — drop silently rather than
 	// logging at ERROR. Same shape as the Coinbase + Binance +
-	// Bitstamp dust filter (#814 / #1234).
+	// Bitstamp dust filter.
 	ErrDustTrade = errors.New("kraken: dust trade (quote_amount underflow)")
 )
