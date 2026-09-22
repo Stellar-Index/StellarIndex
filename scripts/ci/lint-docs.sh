@@ -490,6 +490,12 @@ stale_patterns=(
                                   # /v1/markets panic fix; #1233 is now a
                                   # real, unrelated open issue (galexie-
                                   # archive-fill.sh / ORPHANS doc drift)
+  "shipped in #1251"             # dangling ref (RSWP-134) — CHANGELOG's
+                                  # /exchanges/<venue> outage-distinction
+                                  # entry cited this as the earlier home-page
+                                  # fix; #1251 is now a real, unrelated open
+                                  # issue (MEV arbitrage 2-venue guard /
+                                  # USD-notional staleness), not that fix
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
