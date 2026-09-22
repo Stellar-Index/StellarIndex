@@ -111,9 +111,9 @@ fanout. Live ingest, backfill, and replay use the same path.)
   way over historical ledgers as it does live. SDEX trades go
   back to genesis.
 - **Decode-error budget**: `ErrUnknownClaimAtomType` should
-  remain at zero on modern ledgers. A non-zero rate signals
-  either a protocol bump we haven't audited or replay over very
-  old (pre-P18) ledgers carrying the V0 atom shape.
+  remain at zero. All three known `ClaimAtom` variants (including
+  V0, see Q2 above) decode successfully; a non-zero rate signals a
+  protocol bump introducing a claim shape we haven't audited yet.
 
 ## References
 
