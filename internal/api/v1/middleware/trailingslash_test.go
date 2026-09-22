@@ -16,7 +16,7 @@ func TestTrailingSlashRedirect_redirectsAndSkipsHandler(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	})
-	mw := TrailingSlashRedirect(inner)
+	mw := TrailingSlashRedirect(http.NewServeMux())(inner)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets/native/", nil)
 	rec := httptest.NewRecorder()
@@ -34,7 +34,7 @@ func TestTrailingSlashRedirect_redirectsAndSkipsHandler(t *testing.T) {
 }
 
 func TestTrailingSlashRedirect_preservesQueryString(t *testing.T) {
-	mw := TrailingSlashRedirect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	mw := TrailingSlashRedirect(http.NewServeMux())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets/?cursor=abc&limit=10", nil)
 	rec := httptest.NewRecorder()
 	mw.ServeHTTP(rec, req)
@@ -50,7 +50,7 @@ func TestTrailingSlashRedirect_preservesQueryString(t *testing.T) {
 func TestTrailingSlashRedirect_rootIsExempt(t *testing.T) {
 	// "/" must not redirect to "" — that would be a broken loop.
 	called := false
-	mw := TrailingSlashRedirect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mw := TrailingSlashRedirect(http.NewServeMux())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -67,7 +67,7 @@ func TestTrailingSlashRedirect_rootIsExempt(t *testing.T) {
 
 func TestTrailingSlashRedirect_noSlashPassesThrough(t *testing.T) {
 	called := false
-	mw := TrailingSlashRedirect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mw := TrailingSlashRedirect(http.NewServeMux())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/v1/assets", nil)
@@ -88,7 +88,7 @@ func TestTrailingSlashRedirect_noSlashPassesThrough(t *testing.T) {
 // than ever emitting that Location.
 func TestTrailingSlashRedirect_refusesProtocolRelativeTarget(t *testing.T) {
 	called := false
-	mw := TrailingSlashRedirect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	mw := TrailingSlashRedirect(http.NewServeMux())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -114,7 +114,7 @@ func TestTrailingSlashRedirect_refusesProtocolRelativeTarget(t *testing.T) {
 func TestTrailingSlashRedirect_methodAgnostic(t *testing.T) {
 	for _, method := range []string{http.MethodPost, http.MethodDelete, http.MethodPut, http.MethodPatch} {
 		t.Run(method, func(t *testing.T) {
-			mw := TrailingSlashRedirect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mw := TrailingSlashRedirect(http.NewServeMux())(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				t.Fatal("inner handler should not have been called")
 			}))
 			req := httptest.NewRequest(method, "/v1/account/keys/", nil)
@@ -128,5 +128,37 @@ func TestTrailingSlashRedirect_methodAgnostic(t *testing.T) {
 				t.Errorf("Location = %q, want /v1/account/keys", loc)
 			}
 		})
+	}
+}
+
+// TestTrailingSlashRedirect_exemptsRegisteredIndexRoute is the Q175
+// regression. `GET /errors/{$}` is registered as the mux's own
+// canonical, exact-match form of "/errors/" — not a client typo of
+// "/errors". Composed with the mux (as server.go wires it), blindly
+// stripping the slash looped forever: the mux's automatic subtree
+// redirect sends "/errors" back to "/errors/", and this middleware
+// 308'd it straight back to "/errors".
+func TestTrailingSlashRedirect_exemptsRegisteredIndexRoute(t *testing.T) {
+	mux := http.NewServeMux()
+	indexCalled := false
+	mux.HandleFunc("GET /errors/{slug}", func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("slug handler should not have matched an empty slug")
+	})
+	mux.HandleFunc("GET /errors/{$}", func(w http.ResponseWriter, r *http.Request) {
+		indexCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	handler := TrailingSlashRedirect(mux)(mux)
+
+	req := httptest.NewRequest(http.MethodGet, "/errors/", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusPermanentRedirect {
+		t.Fatalf("status = 308 Location=%q — stripped a canonical index route; composed with the mux's own subtree redirect this loops forever (Q175)", rec.Header().Get("Location"))
+	}
+	if rec.Code != http.StatusOK || !indexCalled {
+		t.Errorf("status = %d indexCalled=%v, want 200 via the index handler", rec.Code, indexCalled)
 	}
 }

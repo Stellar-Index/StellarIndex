@@ -25,38 +25,61 @@ import (
 //
 // The redirect is method-agnostic — applies to GET, HEAD, POST,
 // DELETE etc. The root path `/` is exempt (it would redirect to
-// the empty string).
+// the empty string), and so is any path that is itself a
+// registered exact-match index route (a mux pattern ending in
+// `/{$}`, e.g. `GET /errors/{$}`) — see muxMatcher below.
 //
 // Sits OUTSIDE the mux so the redirect happens before the mux's
 // 404 fires. Sits INSIDE Logger so the redirect itself is
 // logged, and OUTSIDE the mux's CaptureRoute so it doesn't try
 // to record a route pattern for the redirect response.
-func TrailingSlashRedirect(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if len(p) > 1 && p[len(p)-1] == '/' {
-			target := p[:len(p)-1]
-			// SEC-16: refuse to emit a Location that isn't a clean
-			// same-origin absolute path. A request path of "//evil.com/"
-			// strips to "//evil.com" here — a PROTOCOL-RELATIVE URL that
-			// browsers resolve as an absolute redirect to evil.com, an
-			// unauthenticated open redirect on the API origin (this
-			// middleware sits OUTSIDE the mux, so it runs before
-			// net/http's own ServeMux path-cleaning would otherwise catch
-			// the double slash). Falling through to next lets the mux
-			// either 404 or apply its own safe same-origin path cleanup.
-			if !isCleanSameOriginPath(target) {
-				next.ServeHTTP(w, r)
+func TrailingSlashRedirect(mux muxMatcher) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			p := r.URL.Path
+			if len(p) > 1 && p[len(p)-1] == '/' {
+				// A path the mux itself resolves via an exact-match
+				// index pattern (`/{$}`) is canonical AT the trailing
+				// slash, not a client typo of the no-slash form. Without
+				// this exemption, stripping it here loops forever: the
+				// mux's own automatic subtree redirect sends the
+				// stripped no-slash request straight back to the
+				// trailing-slash form (e.g. `/errors` -> mux 301 ->
+				// `/errors/` -> this middleware's 308 -> `/errors` -> …).
+				if _, pattern := mux.Handler(r); strings.HasSuffix(pattern, "/{$}") {
+					next.ServeHTTP(w, r)
+					return
+				}
+				target := p[:len(p)-1]
+				// SEC-16: refuse to emit a Location that isn't a clean
+				// same-origin absolute path. A request path of "//evil.com/"
+				// strips to "//evil.com" here — a PROTOCOL-RELATIVE URL that
+				// browsers resolve as an absolute redirect to evil.com, an
+				// unauthenticated open redirect on the API origin (this
+				// middleware sits OUTSIDE the mux, so it runs before
+				// net/http's own ServeMux path-cleaning would otherwise catch
+				// the double slash). Falling through to next lets the mux
+				// either 404 or apply its own safe same-origin path cleanup.
+				if !isCleanSameOriginPath(target) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if r.URL.RawQuery != "" {
+					target += "?" + r.URL.RawQuery
+				}
+				http.Redirect(w, r, target, http.StatusPermanentRedirect)
 				return
 			}
-			if r.URL.RawQuery != "" {
-				target += "?" + r.URL.RawQuery
-			}
-			http.Redirect(w, r, target, http.StatusPermanentRedirect)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// muxMatcher is satisfied by *http.ServeMux (Go's enhanced routing).
+// Narrowed to the one method TrailingSlashRedirect needs so tests can
+// fake it without standing up a real mux.
+type muxMatcher interface {
+	Handler(r *http.Request) (http.Handler, string)
 }
 
 // isCleanSameOriginPath reports whether target is safe to redirect a
