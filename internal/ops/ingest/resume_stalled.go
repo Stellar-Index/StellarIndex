@@ -54,7 +54,24 @@ import (
 // parallelism while live ingest is active).
 const stalledCursorSubPattern = `^(\d+)-(\d+):(.+)$`
 
+// dataGapGateTimeout bounds the data-derived gap-gate queries run
+// before resume-stalled acts. See [newDataGapGateContext] for why:
+// rootCtx has no deadline of its own.
+const dataGapGateTimeout = 10 * time.Minute
+
 var stalledCursorSubRE = regexp.MustCompile(stalledCursorSubPattern)
+
+// newDataGapGateContext bounds the data-gap gate queries (RLT-409):
+// rootCtx only cancels on SIGINT/SIGTERM, and
+// FindSorobanEventsLedgerGaps falls back to an unpruned SELECT
+// DISTINCT across the whole soroban_events hypertable whenever
+// ledger_ingest_log doesn't fully cover [0, tip] (see its doc
+// comment). Without a deadline that fallback can wedge resume-stalled
+// — an automated cursor-recovery path — indefinitely, with no
+// operator watching for a SIGINT to send.
+func newDataGapGateContext(rootCtx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(rootCtx, dataGapGateTimeout)
+}
 
 // stalledCursorPlan describes one cursor's remaining work. Produced
 // by parseStalledCursor + filtered by planResumeStalled before any
@@ -547,7 +564,9 @@ func resumeStalled(args []string) error {
 	if err != nil {
 		return fmt.Errorf("resolve tip for data-gap gate: %w", err)
 	}
-	dataGaps, err := store.FindSorobanEventsLedgerGaps(rootCtx, 0, int64(tipCursor.LastLedger), opts.dataGapMinSize)
+	gateCtx, gateCancel := newDataGapGateContext(rootCtx)
+	defer gateCancel()
+	dataGaps, err := store.FindSorobanEventsLedgerGaps(gateCtx, 0, int64(tipCursor.LastLedger), opts.dataGapMinSize)
 	if err != nil {
 		return fmt.Errorf("find data gaps for gate: %w", err)
 	}
@@ -558,7 +577,7 @@ func resumeStalled(args []string) error {
 	// out via --force-classic-cursors.
 	var classicGate classicGapGate
 	if !opts.forceClassic && anyPlanNeedsClassicGate(plans) {
-		classicGate, err = buildClassicGapGate(rootCtx, store, tipCursor.LastLedger, opts.dataGapMinSize)
+		classicGate, err = buildClassicGapGate(gateCtx, store, tipCursor.LastLedger, opts.dataGapMinSize)
 		if err != nil {
 			return fmt.Errorf("sdex data-gap gate: %w", err)
 		}
