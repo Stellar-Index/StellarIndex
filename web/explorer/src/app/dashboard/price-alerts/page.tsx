@@ -2,6 +2,7 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BellRing, Loader2, Pause, Play, Plus, Trash2 } from 'lucide-react';
+import Link from 'next/link';
 import { useCallback, useState } from 'react';
 
 import {
@@ -50,7 +51,8 @@ const DOCS_URL = 'https://docs.stellarindex.io';
  * alerts, a create form, an enable/disable toggle (PATCH), and
  * delete-with-confirm. A firing alert is delivered as a `price.alert`
  * webhook event to the account's subscribed webhooks — the empty state
- * and the delivery note below make that dependency explicit.
+ * and the delivery note below make that dependency explicit and link to
+ * /dashboard/webhooks, where one is registered.
  */
 export default function PriceAlertsPage() {
   return <AccountGate>{() => <PriceAlertsBody />}</AccountGate>;
@@ -221,8 +223,8 @@ function PriceAlertsBody() {
 
 // Alerts have no delivery of their own — they enqueue a `price.alert`
 // webhook to the account's subscribed webhooks. Surface that dependency
-// prominently so an operator doesn't create an alert and wonder why
-// nothing arrives.
+// prominently, with a link to the self-service page that registers one,
+// so an operator doesn't create an alert and wonder why nothing arrives.
 function DeliveryNote() {
   return (
     <Callout tone="info" title="How alerts are delivered">
@@ -230,7 +232,11 @@ function DeliveryNote() {
       <code className="bg-surface-subtle rounded-sm px-1 py-0.5 font-mono text-[12px]">
         price.alert
       </code>{' '}
-      event. Point a webhook at that event to receive alerts —{' '}
+      event.{' '}
+      <Link className="font-medium underline" href="/dashboard/webhooks">
+        Manage your webhooks
+      </Link>{' '}
+      to subscribe one — or{' '}
       <a
         className="font-medium underline"
         href={`${DOCS_URL}`}
@@ -238,8 +244,8 @@ function DeliveryNote() {
         rel="noopener noreferrer"
       >
         see the webhooks docs
-      </a>
-      .
+      </a>{' '}
+      for the delivery payload.
     </Callout>
   );
 }

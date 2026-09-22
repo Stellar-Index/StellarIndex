@@ -207,6 +207,10 @@ describe('sitemap', () => {
       'authenticated surface, noindex via dashboard/layout',
     ],
     ['/dashboard/usage', 'authenticated surface, noindex via dashboard/layout'],
+    [
+      '/dashboard/webhooks',
+      'authenticated surface, noindex via dashboard/layout',
+    ],
     // Unbounded per-entity long tail, served as a noindex shell.
     ['/accounts/[g]', 'per-account shell, noindex long tail'],
   ]);
