@@ -18,8 +18,9 @@ import (
 // Implementation: decode the op body and, keyed on the op type, collect ONLY
 // the fields that are genuine account addresses (payment/path-payment
 // destination, allow-trust / set-trust-line-flags trustor, clawback `from`,
-// account-merge / create-account destination, and muxed destinations resolved
-// to their underlying G-account).
+// account-merge / create-account destination, create-claimable-balance
+// claimant destinations, begin-sponsoring-future-reserves sponsorship
+// target, and muxed destinations resolved to their underlying G-account).
 // Opaque free-text fields (a manage_data name/value, a memo, a contract string
 // arg) are NEVER interpreted as participants even when they happen to spell a
 // valid G-strkey — a per-type allowlist is the only safe way to keep an
@@ -89,6 +90,22 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	case xdr.OperationTypeClawback:
 		op := body.MustClawbackOp()
 		add(muxedAddr(op.From))
+	case xdr.OperationTypeCreateClaimableBalance:
+		op := body.MustCreateClaimableBalanceOp()
+		for _, c := range op.Claimants {
+			v0, ok := c.GetV0()
+			if !ok {
+				continue
+			}
+			add(v0.Destination.Address())
+		}
+	case xdr.OperationTypeClaimClaimableBalance:
+		// The claim's only address-shaped field is the ClaimableBalanceId
+		// itself, not an account. The claimant is the op's own source
+		// account, already indexed via operations.source_account.
+	case xdr.OperationTypeBeginSponsoringFutureReserves:
+		op := body.MustBeginSponsoringFutureReservesOp()
+		add(op.SponsoredId.Address())
 	case xdr.OperationTypeInvokeHostFunction:
 		// Deliberately contributes no participants. A Soroban InvokeContract's
 		// call args AND its op.Auth SorobanAuthorizationEntry entries are both
