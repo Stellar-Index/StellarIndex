@@ -209,6 +209,19 @@ func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 	}
 
 	var sites []Site
+	// visited guards against re-walking a declaration's body twice: once
+	// because it is one of THIS file's own top-level FuncDecls (walked
+	// directly below) and again because some `go` statement also resolves
+	// a callee onto it. It is seeded with every decl this loop walks
+	// directly so recursion below never re-adds those sites.
+	visited := map[string]bool{}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		visited[shortPos(r.fset, fn.Pos())] = true
+	}
 	// Walk top-level declarations so each `go` statement knows the
 	// function it sits in — needed to type a method receiver from the
 	// enclosing signature.
@@ -222,11 +235,48 @@ func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 			if !ok {
 				return true
 			}
-			sites = append(sites, r.site(g, file, fn, self))
+			s, callee := r.site(g, file, fn, self)
+			sites = append(sites, s)
+			r.recurseIntoCallee(callee, visited, &sites)
 			return true
 		})
 	}
 	return sites, nil
+}
+
+// recurseIntoCallee is guardscan's answer to #558: a `go` statement whose
+// callee resolves to a declaration is checked for whether IT recovers, but
+// that declaration may itself start further goroutines — in another file
+// of the same package, or in an imported package — that this scanner would
+// otherwise never see because ScanFile only parses the one file it was
+// given. It walks the resolved body for its OWN `go` statements, resolving
+// and recursing into each of those in turn, attributing every site found
+// to the callee's own file and enclosing function.
+//
+// visited is keyed by "file:line" of the declaration (stable across the
+// several *token.FileSet values in play) and is seeded with every decl the
+// caller already walks directly, so a callee that happens to be one of
+// those decls is never re-added, and a recursive or mutually-recursive
+// spawn helper is only ever descended into once.
+func (r *resolver) recurseIntoCallee(callee *resolvedCallee, visited map[string]bool, sites *[]Site) {
+	if callee == nil || callee.decl.Body == nil {
+		return
+	}
+	key := shortPos(callee.fset, callee.decl.Pos())
+	if visited[key] {
+		return
+	}
+	visited[key] = true
+	ast.Inspect(callee.decl.Body, func(n ast.Node) bool {
+		g, ok := n.(*ast.GoStmt)
+		if !ok {
+			return true
+		}
+		s, nested := r.site(g, callee.file, callee.decl, callee.self)
+		*sites = append(*sites, s)
+		r.recurseIntoCallee(nested, visited, sites)
+		return true
+	})
 }
 
 // ─── resolution ─────────────────────────────────────────────────────
@@ -238,6 +288,20 @@ type pkgIndex struct {
 	// methods is keyed "TypeName.MethodName" with the receiver's
 	// pointer star stripped.
 	methods map[string]*ast.FuncDecl
+	// files maps each indexed decl back to the *ast.File it came from, so
+	// a recursive scan into that decl's body can resolve ITS imports.
+	files map[*ast.FuncDecl]*ast.File
+}
+
+// resolvedCallee carries what a recursive scan needs to look inside a
+// named callee's own body for further `go` statements: the declaration,
+// the file it lives in (for import resolution) and the package index it
+// belongs to (for resolving its own local calls).
+type resolvedCallee struct {
+	decl *ast.FuncDecl
+	file *ast.File
+	self *pkgIndex
+	fset *token.FileSet
 }
 
 type resolver struct {
@@ -247,7 +311,7 @@ type resolver struct {
 	modPath string
 }
 
-func (r *resolver) site(g *ast.GoStmt, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) Site {
+func (r *resolver) site(g *ast.GoStmt, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) (Site, *resolvedCallee) {
 	s := Site{
 		Line:   r.fset.Position(g.Pos()).Line,
 		Target: exprString(g.Call.Fun),
@@ -257,6 +321,7 @@ func (r *resolver) site(g *ast.GoStmt, file *ast.File, enclosing *ast.FuncDecl, 
 		s.Enclosing = enclosing.Name.Name
 	}
 
+	var callee *resolvedCallee
 	switch fun := g.Call.Fun.(type) {
 	case *ast.FuncLit:
 		s.Kind = KindFuncLit
@@ -268,13 +333,14 @@ func (r *resolver) site(g *ast.GoStmt, file *ast.File, enclosing *ast.FuncDecl, 
 		if !ok {
 			s.Kind = KindUnresolved
 			s.Reason = fmt.Sprintf("no declaration of %s() in package %s", fun.Name, self.dir)
-			return s
+			return s, nil
 		}
 		s.Kind = KindPackageFunc
 		s.body = decl.Body
 		s.Origin = shortPos(self.fset, decl.Pos())
+		callee = &resolvedCallee{decl: decl, file: self.files[decl], self: self, fset: self.fset}
 	case *ast.SelectorExpr:
-		r.resolveSelector(&s, fun, file, enclosing, self)
+		callee = r.resolveSelector(&s, fun, file, enclosing, self)
 	default:
 		s.Kind = KindUnresolved
 		s.Reason = fmt.Sprintf("unsupported callee expression %T", g.Call.Fun)
@@ -284,16 +350,17 @@ func (r *resolver) site(g *ast.GoStmt, file *ast.File, enclosing *ast.FuncDecl, 
 		s.Guard = r.guardIn(s.body)
 		s.Recovers = s.Guard != ""
 	}
-	return s
+	return s, callee
 }
 
-// resolveSelector handles `go pkg.F(…)` and `go recv.M(…)`.
-func (r *resolver) resolveSelector(s *Site, sel *ast.SelectorExpr, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) {
+// resolveSelector handles `go pkg.F(…)` and `go recv.M(…)`, returning the
+// resolved declaration (for recursive scanning) when one is found.
+func (r *resolver) resolveSelector(s *Site, sel *ast.SelectorExpr, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) *resolvedCallee {
 	x, ok := sel.X.(*ast.Ident)
 	if !ok {
 		s.Kind = KindUnresolved
 		s.Reason = fmt.Sprintf("receiver of .%s is an expression (%T), not a plain identifier", sel.Sel.Name, sel.X)
-		return
+		return nil
 	}
 
 	// Case 1: pkg.F — x names an import of this file.
@@ -302,18 +369,18 @@ func (r *resolver) resolveSelector(s *Site, sel *ast.SelectorExpr, file *ast.Fil
 		if err != nil {
 			s.Kind = KindUnresolved
 			s.Reason = err.Error()
-			return
+			return nil
 		}
 		decl, ok := idx.funcs[sel.Sel.Name]
 		if !ok {
 			s.Kind = KindUnresolved
 			s.Reason = fmt.Sprintf("no func %s in %s", sel.Sel.Name, importPath)
-			return
+			return nil
 		}
 		s.Kind = KindImportedFunc
 		s.body = decl.Body
 		s.Origin = shortPos(idx.fset, decl.Pos())
-		return
+		return &resolvedCallee{decl: decl, file: idx.files[decl], self: idx, fset: idx.fset}
 	}
 
 	// Case 2: recv.M — determine recv's type syntactically, then find
@@ -322,7 +389,7 @@ func (r *resolver) resolveSelector(s *Site, sel *ast.SelectorExpr, file *ast.Fil
 	if !ok {
 		s.Kind = KindUnresolved
 		s.Reason = fmt.Sprintf("cannot determine the type of %q syntactically", x.Name)
-		return
+		return nil
 	}
 	idx := self
 	if pkgAlias != "" {
@@ -330,24 +397,25 @@ func (r *resolver) resolveSelector(s *Site, sel *ast.SelectorExpr, file *ast.Fil
 		if !ok {
 			s.Kind = KindUnresolved
 			s.Reason = fmt.Sprintf("%s is not an import of this file", pkgAlias)
-			return
+			return nil
 		}
 		var err error
 		if idx, err = r.indexImport(importPath); err != nil {
 			s.Kind = KindUnresolved
 			s.Reason = err.Error()
-			return
+			return nil
 		}
 	}
 	decl, ok := idx.methods[typeName+"."+sel.Sel.Name]
 	if !ok {
 		s.Kind = KindUnresolved
 		s.Reason = fmt.Sprintf("no method %s.%s in %s", typeName, sel.Sel.Name, idx.dir)
-		return
+		return nil
 	}
 	s.Kind = KindImportedMethod
 	s.body = decl.Body
 	s.Origin = shortPos(idx.fset, decl.Pos())
+	return &resolvedCallee{decl: decl, file: idx.files[decl], self: idx, fset: idx.fset}
 }
 
 // typeOfIdent determines the declared type of a local identifier without a
@@ -521,6 +589,7 @@ func (r *resolver) indexDir(dir string) (*pkgIndex, error) {
 		fset:    token.NewFileSet(),
 		funcs:   map[string]*ast.FuncDecl{},
 		methods: map[string]*ast.FuncDecl{},
+		files:   map[*ast.FuncDecl]*ast.File{},
 	}
 	for _, e := range entries {
 		name := e.Name()
@@ -546,6 +615,7 @@ func (idx *pkgIndex) addDecls(f *ast.File) {
 		if !ok || fn.Body == nil {
 			continue
 		}
+		idx.files[fn] = f
 		if fn.Recv == nil || len(fn.Recv.List) == 0 {
 			idx.funcs[fn.Name.Name] = fn
 			continue
