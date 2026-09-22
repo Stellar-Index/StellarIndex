@@ -5,6 +5,42 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 
 import { Button, Callout, Container, EmptyState } from '@/components/ui';
 
+const CLIENT_ERRORS_ENDPOINT = '/client-errors';
+const MAX_FIELD_LENGTH = 500;
+
+/**
+ * Beacons a caught route error to the `client-errors` CF Pages function
+ * (web/explorer/functions/client-errors.js) so it lands in server-side
+ * logs instead of only the reporting user's own browser console, which
+ * nobody else ever reads. Best-effort: a reporting failure must never
+ * surface as a second crash on top of the one already being handled.
+ */
+function reportRouteError(
+  error: Error & { digest?: string },
+  section?: string,
+) {
+  try {
+    const payload = JSON.stringify({
+      message: (error?.message ?? '').slice(0, MAX_FIELD_LENGTH),
+      digest: error?.digest,
+      section,
+      path: window.location.pathname,
+    });
+    const blob = new Blob([payload], { type: 'application/json' });
+    const sent = navigator.sendBeacon?.(CLIENT_ERRORS_ENDPOINT, blob);
+    if (!sent) {
+      void fetch(CLIENT_ERRORS_ENDPOINT, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: payload,
+        keepalive: true,
+      }).catch(() => {});
+    }
+  } catch {
+    // Reporting is best-effort — must never throw out of error handling.
+  }
+}
+
 /**
  * RouteError — shared body for route-segment `error.tsx` boundaries.
  *
@@ -27,6 +63,7 @@ export function RouteError({
     // Keep the underlying error visible to debugging / error reporting —
     // the rendered boundary intentionally shows only a short summary.
     console.error(`[route-error]${section ? ` ${section}` : ''}`, error);
+    reportRouteError(error, section);
   }, [error, section]);
 
   return (
