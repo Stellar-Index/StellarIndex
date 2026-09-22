@@ -129,8 +129,9 @@ func TestCataloguePricesArePaidBeforeTheTwinMerge(t *testing.T) {
 	)
 	checked := 0
 	for _, file := range packageGoFiles(t) {
-		for _, fn := range funcNamesIn(t, file) {
-			calls := serverCallsIn(t, file, fn)
+		parsed := parseGoFile(t, file)
+		for _, fn := range funcNamesIn(parsed) {
+			calls := serverCallsInFile(parsed, fn)
 			priceAt := slices.Index(calls, prices)
 			statsAt := slices.Index(calls, stats)
 			if priceAt < 0 || statsAt < 0 {

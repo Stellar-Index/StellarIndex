@@ -164,6 +164,28 @@ func (s Site) SendsOn(chanName string) bool {
 // unresolvable ones; an error is returned only when path itself (or the
 // module it lives in) cannot be read.
 func ScanFile(path string, cfg Config) ([]Site, error) {
+	return NewScanner(cfg).ScanFile(path)
+}
+
+// Scanner scans many files while parsing each package it resolves into
+// only once; a per-file ScanFile re-parses the scanned file's whole
+// package every time, which is quadratic over a large package tree.
+// A Scanner is not safe for concurrent use.
+type Scanner struct {
+	cfg  Config
+	pkgs map[string]*pkgIndex // keyed by absolute directory
+	// parsedDirs counts package directories indexed, for tests.
+	parsedDirs int
+}
+
+// NewScanner returns a Scanner that checks bodies against cfg.Guards.
+func NewScanner(cfg Config) *Scanner {
+	return &Scanner{cfg: cfg, pkgs: map[string]*pkgIndex{}}
+}
+
+// ScanFile is the package-level ScanFile, sharing this Scanner's package
+// index across calls.
+func (sc *Scanner) ScanFile(path string) ([]Site, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 	if err != nil {
@@ -177,10 +199,9 @@ func ScanFile(path string, cfg Config) ([]Site, error) {
 	}
 	r := &resolver{
 		fset:    fset,
-		cfg:     cfg,
+		sc:      sc,
 		modRoot: modRoot,
 		modPath: modPath,
-		pkgs:    map[string]*pkgIndex{},
 	}
 	self, err := r.indexDir(dir)
 	if err != nil {
@@ -221,10 +242,9 @@ type pkgIndex struct {
 
 type resolver struct {
 	fset    *token.FileSet
-	cfg     Config
+	sc      *Scanner
 	modRoot string
 	modPath string
-	pkgs    map[string]*pkgIndex // keyed by directory
 }
 
 func (r *resolver) site(g *ast.GoStmt, file *ast.File, enclosing *ast.FuncDecl, self *pkgIndex) Site {
@@ -485,7 +505,11 @@ func (r *resolver) indexImport(importPath string) (*pkgIndex, error) {
 // indexDir parses every non-test .go file in dir and indexes its
 // package-level funcs and methods.
 func (r *resolver) indexDir(dir string) (*pkgIndex, error) {
-	if idx, ok := r.pkgs[dir]; ok {
+	key, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	if idx, ok := r.sc.pkgs[key]; ok {
 		return idx, nil
 	}
 	entries, err := os.ReadDir(dir)
@@ -509,7 +533,8 @@ func (r *resolver) indexDir(dir string) (*pkgIndex, error) {
 		}
 		idx.addDecls(f)
 	}
-	r.pkgs[dir] = idx
+	r.sc.pkgs[key] = idx
+	r.sc.parsedDirs++
 	return idx, nil
 }
 
@@ -539,7 +564,7 @@ func (idx *pkgIndex) addDecls(f *ast.File) {
 func (r *resolver) guardIn(body *ast.BlockStmt) string {
 	var guard string
 	defersAtOwnLevel(body, func(call *ast.CallExpr) bool {
-		for _, name := range r.cfg.Guards {
+		for _, name := range r.sc.cfg.Guards {
 			if matchesCallName(call.Fun, name) {
 				guard = name
 				return true
@@ -569,7 +594,7 @@ func (r *resolver) guardInLiteral(body *ast.BlockStmt) string {
 		if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "recover" {
 			recovers = true
 		}
-		for _, name := range r.cfg.Guards {
+		for _, name := range r.sc.cfg.Guards {
 			if matchesCallName(call.Fun, name) {
 				guard = name
 			}
