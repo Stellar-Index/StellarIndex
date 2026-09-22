@@ -5196,11 +5196,11 @@ export interface components {
         };
         /** @description Curated third-party label for a Stellar address, mirrored from the MIT-licensed stellar-expert/public-directory set. Display attribution only — listing is not endorsement and this is NOT a verification signal. Tags follow the upstream registry (exchange, anchor, issuer, wallet, custodian, sdf, memo-required, airdrop, malicious, unsafe, …); treat `malicious`/`unsafe` as warnings worth surfacing prominently. */
         DirectoryInfo: {
-            /** @description Human label */
+            /** @description Human label, e.g. "SDF Growth 3". */
             name: string;
             /** @description Domain the upstream set associates with the address; absent when none. */
             domain?: string;
-            /** @description Upstream tag registry values (always present */
+            /** @description Upstream tag registry values (always present, possibly empty). */
             tags: string[];
             /** @description Upstream set the label came from ("stellar-expert"). */
             source: string;
@@ -5234,7 +5234,7 @@ export interface components {
             fee_charged?: number;
             max_fee?: number;
             operation_count?: number;
-            /** @description Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain */
+            /** @description Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record). */
             successful?: boolean;
             /** @description Raw XDR TransactionResultCode (0 = success; negatives are failure reasons). */
             result_code?: number;
@@ -5252,14 +5252,14 @@ export interface components {
             tx_hash?: string;
             tx_index?: number;
             op_index?: number;
-            /** @description snake_case op type (e.g. payment */
+            /** @description snake_case op type (e.g. payment, manage_sell_offer). */
             type?: string;
             source_account?: string;
-            /** @description Decoded operation fields (amounts are strings */
+            /** @description Decoded operation fields (amounts are strings, ADR-0003). */
             fields?: {
                 [key: string]: unknown;
             };
-            /** @description Base64 body */
+            /** @description Base64 body, present only for op types not yet field-decoded. */
             raw_xdr?: string;
             /**
              * @description Whether this operation's PARENT transaction applied — the honesty
@@ -5317,7 +5317,7 @@ export interface components {
             topic_0?: string;
             /** @description Human-readable renderings of topics[1:] (topic_0 carries the symbol). Display format — lossy by design; addresses render as strkeys, i128 amounts as integers. */
             topics?: string[];
-            /** @description Human-readable rendering of the event data payload (display format */
+            /** @description Human-readable rendering of the event data payload (display format, truncated for large values). */
             data?: string;
         };
         /**
@@ -5657,9 +5657,9 @@ export interface components {
             base_asset: string;
             /** @description Canonical quote asset id. */
             quote_asset: string;
-            /** @description Decimal string */
+            /** @description Decimal string, raw integer at the base asset's scale. */
             base_amount: string;
-            /** @description Decimal string */
+            /** @description Decimal string, raw integer at the quote asset's scale. */
             quote_amount: string;
             /**
              * @description USD-equivalent volume as a decimal string, when the
@@ -5751,7 +5751,7 @@ export interface components {
          */
         AccountGraphInbound: {
             edges: components["schemas"]["AccountGraphEdge"][];
-            /** @description Exact number of inbound edges */
+            /** @description Exact number of inbound edges, independent of the cap. */
             total: number;
             /** @description True when `total` exceeds the served slice. */
             truncated: boolean;
@@ -5782,7 +5782,7 @@ export interface components {
          */
         AccountGraphSponsoredSide: {
             accounts: number;
-            /** @description Arrangements STARTED */
+            /** @description Arrangements STARTED, never arrangements in force. */
             sponsorships_started: number;
             /**
              * @description RevokeSponsorship operations this account was the SOURCE of.
@@ -5874,7 +5874,7 @@ export interface components {
             period: string;
             /**
              * Format: date-time
-             * @description First instant of the month
+             * @description First instant of the month, UTC.
              */
             period_start: string;
             /**
@@ -5898,7 +5898,7 @@ export interface components {
         AccountGraphHistoryTotals: {
             /** @description Distinct counterparties ever created or sponsored. */
             accounts: number;
-            /** @description Operations behind them — creations */
+            /** @description Operations behind them — creations, or arrangements started. */
             events: number;
             /** @description How many of `events` the points account for. */
             events_placed: number;
@@ -6029,9 +6029,9 @@ export interface components {
             holders: number;
             /** @description Decimal string in whole units (seven places for classic assets and pool shares; the contract's own smallest unit for a C… token). */
             balance: string;
-            /** @description The live USD rate used */
+            /** @description The live USD rate used, when one exists. */
             price_usd?: string;
-            /** @description balance × price_usd */
+            /** @description balance × price_usd, absent when unpriced. Never zero for an unpriced asset. */
             value_usd?: string;
         };
         /**
@@ -6138,15 +6138,15 @@ export interface components {
         AccountCohortPosition: {
             protocol: string;
             position_kind: string;
-            /** @description The venue contract (a pool */
+            /** @description The venue contract (a pool, a vault, a stake contract). */
             venue: string;
-            /** @description The position's asset */
+            /** @description The position's asset, when denominated in one (absent for venue shares). */
             asset?: string;
             /** @description A display label for `asset` where the lake can name it. */
             asset_label?: string;
             /** Format: int64 */
             holders: number;
-            /** @description The fold's own unit summed across holders — a magnitude */
+            /** @description The fold's own unit summed across holders — a magnitude, not a settlement figure. */
             amount: string;
         };
         /** @description When the cohort rollup last ran, and the lake tip it read to. */
@@ -14055,13 +14055,13 @@ export interface operations {
                                 /** @description Reserve underlying token (C-strkey). */
                                 asset?: string;
                                 decimals?: number;
-                                /** @description Total supplied */
+                                /** @description Total supplied, underlying token base units. */
                                 supplied?: string;
-                                /** @description Total borrowed */
+                                /** @description Total borrowed, underlying token base units. */
                                 borrowed?: string;
                                 supplied_usd?: string | null;
                                 borrowed_usd?: string | null;
-                                /** @description Borrowed/supplied */
+                                /** @description Borrowed/supplied, 0..100. */
                                 utilization_pct?: number;
                                 /** @description Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window. */
                                 borrow_apr?: number | null;
@@ -21200,7 +21200,7 @@ export interface operations {
                     "application/json": {
                         data?: {
                             contract_id?: string;
-                            /** @description Registry protocol this contract belongs to (blend */
+                            /** @description Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise. */
                             protocol?: string;
                             events?: components["schemas"]["ContractEvent"][];
                             /** @description Opaque cursor for the next (older) page; absent on the last page. */
@@ -21510,7 +21510,7 @@ export interface operations {
                                 value?: string;
                                 /** @description Backward-compatible alias, populated only on the usd basis (equals value there); omitted on native_xlm. */
                                 usd_value?: string;
-                                /** @description Provably unspendable burn address — master weight 0 */
+                                /** @description Provably unspendable burn address — master weight 0, all thresholds 0, no signers. The balance is real; no key can move it. */
                                 locked?: boolean;
                             }[];
                             /**
@@ -21660,7 +21660,7 @@ export interface operations {
                                 trustlines?: number;
                                 /** Format: int64 */
                                 trustline_holding_accounts?: number;
-                                /** @description Total XLM held by funded accounts */
+                                /** @description Total XLM held by funded accounts, stroops (ADR-0003 string). */
                                 xlm_held_stroops?: string;
                             };
                             balances: {
@@ -21787,7 +21787,7 @@ export interface operations {
                     "application/json": {
                         data?: {
                             creators: {
-                                /** @description 1-based position on the board */
+                                /** @description 1-based position on the board, by accounts_created descending. */
                                 rank: number;
                                 /** @description The funding account's G-strkey. */
                                 account: string;
@@ -21796,16 +21796,16 @@ export interface operations {
                                  * @description Successful CreateAccount operations this account was the source of. Immutable history.
                                  */
                                 accounts_created: number;
-                                /** @description Sum of starting balances paid */
+                                /** @description Sum of starting balances paid, stroops (ADR-0003 string). "0" is real — sponsored creations fund nothing. */
                                 funded_stroops: string;
                                 /**
                                  * Format: int64
-                                 * @description Created accounts that still exist
+                                 * @description Created accounts that still exist, as of computed_at.
                                  */
                                 live_accounts: number;
-                                /** @description Native XLM held by the surviving created set */
+                                /** @description Native XLM held by the surviving created set, stroops (ADR-0003 string). Point-in-time. */
                                 live_stroops: string;
-                                /** @description First ledger this creator created an account in */
+                                /** @description First ledger this creator created an account in, inside the response's coverage span. */
                                 first_ledger: number;
                                 /** @description Last such ledger. */
                                 last_ledger: number;
@@ -21932,13 +21932,13 @@ export interface operations {
                     "application/json": {
                         data?: {
                             sponsors: {
-                                /** @description 1-based position */
+                                /** @description 1-based position, by sponsorships_started descending. */
                                 rank: number;
                                 /** @description The sponsoring account's G-strkey. */
                                 account: string;
                                 /**
                                  * Format: int64
-                                 * @description Sponsorship arrangements this account began. History
+                                 * @description Sponsorship arrangements this account began. History, not a live count.
                                  */
                                 sponsorships_started: number;
                                 /**
@@ -21979,7 +21979,7 @@ export interface operations {
                                 thru_time: string;
                                 /**
                                  * Format: int64
-                                 * @description Transactions with more than one distinct sponsor
+                                 * @description Transactions with more than one distinct sponsor, excluded from attribution.
                                  */
                                 ambiguous_transactions: number;
                             };
