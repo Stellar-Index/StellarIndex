@@ -27,6 +27,15 @@ else
   ok "no dangling #1131 citation remains"
 fi
 
+# RSWP-094: #1134 was cited as the PR behind the cursor-guard behaviour
+# pins, but GitHub #1134 is an unrelated open issue (xdrjson decode-arm
+# coverage), not a PR, and never shipped this behaviour.
+if grep -q '1134' "$SMOKE"; then
+  bad "no dangling #1134 citation remains (GitHub #1134 is the unrelated xdrjson decode-arm issue)"
+else
+  ok "no dangling #1134 citation remains"
+fi
+
 # The route already ships (internal/api/v1/server.go registers GET
 # /.well-known/security.txt) so the smoke must assert it live, not sit
 # behind a commented-out "queued for promotion" line.
