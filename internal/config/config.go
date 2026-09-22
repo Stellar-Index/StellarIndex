@@ -274,6 +274,14 @@ type PricingGuardConfig struct {
 	// SubstanceWindowHours is the trailing measurement window.
 	SubstanceWindowHours int `toml:"substance_window_hours" doc:"Trailing measurement window in hours. 0 = pricingguard default (24)." default:"24"`
 
+	// FXCrossMaxAgeHours bounds the age of the forex snapshot's matched
+	// rate the /v1/price fiat-cross-rate and USD-anchored-fiat-cross
+	// fallbacks (ADR-0051) may serve. The in-memory forex Cache never
+	// expires on its own (T650), so without this bound a stalled forex
+	// worker would keep answering forever from its last good fetch,
+	// stamped with a fresh-looking observed_at.
+	FXCrossMaxAgeHours int `toml:"fx_cross_max_age_hours" doc:"Staleness budget in hours for the forex snapshot rate backing /v1/price's fiat-cross-rate and USD-anchored-fiat-cross fallbacks; older than this is refused rather than served. Mirrors aggregate.composite_reference.fx_max_age_hours (same fx_quotes staleness profile — daily buckets that pause over market closes). 0 = pricingguard default (76)." default:"76"`
+
 	// FiatPeggedClassicAssets maps a classic credit asset_key
 	// (canonical "CODE-ISSUER" wire form) to the ISO-4217 ticker of
 	// the fiat currency the OPERATOR declares it 1:1-pegged to (e.g.
@@ -306,6 +314,9 @@ func (pg PricingGuardConfig) validate() error {
 	}
 	if pg.SubstanceWindowHours < 0 {
 		return fmt.Errorf("%w: pricing_guard: substance_window_hours must be >= 0", ErrInvalidConfig)
+	}
+	if pg.FXCrossMaxAgeHours < 0 {
+		return fmt.Errorf("%w: pricing_guard: fx_cross_max_age_hours must be >= 0", ErrInvalidConfig)
 	}
 	// Declared fiat pegs: fail at load, loudly, like the
 	// usd_pegged_classic_assets sibling (TradesConfig.validate). A
@@ -340,6 +351,7 @@ func defaultPricingGuardConfig() PricingGuardConfig {
 		SubstanceMinBuckets:     20,
 		SubstanceMinSpanMinutes: 360,
 		SubstanceWindowHours:    24,
+		FXCrossMaxAgeHours:      76,
 	}
 }
 
