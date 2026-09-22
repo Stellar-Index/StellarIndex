@@ -1,0 +1,84 @@
+---
+# promtool unit tests for stellarindex_data_freshness_probe_frozen (T599),
+# which lives in data-freshness.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/data-freshness-probe-frozen_test.yml
+#
+# data-freshness.sh builds the whole textfile in a temp file and swaps it
+# in atomically at the end. A run that dies before that swap leaves the
+# PREVIOUS data_freshness.prom on disk; node_exporter keeps re-serving it
+# on every scrape with a fresh scrape timestamp, so every
+# stellarindex_data_freshness_* series stays PRESENT and
+# stellarindex_data_freshness_watchdog_silent's absent_over_time(...) never
+# trips. Same pathology, same fix shape, as config-assertions_test.yml:
+# node_textfile_mtime_seconds stops advancing the moment the timer stops
+# rewriting the file, independent of whether the stale gauges are still
+# being scraped.
+#
+# The "frozen" case below models exactly that: stellarindex_data_freshness_
+# stale stays present (so watchdog_silent cannot fire) while the file's
+# mtime stops advancing after t=60m — proving this alert is the one that
+# catches what watchdog_silent structurally cannot.
+
+rule_files:
+  - ../rules/data-freshness.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── the timer died: the .prom stopped being rewritten ────────────
+  # mtime tracks wall-clock (file rewritten every scrape) up to t=60m
+  # then FREEZES. stellarindex_data_freshness_stale stays present and 0
+  # (healthy-looking) the whole time — the exact frozen-but-present
+  # false negative watchdog_silent cannot see.
+  - interval: 1m
+    name: a dead data-freshness timer trips probe_frozen
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="data_freshness.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x60 3600+0x120'
+      - series: 'stellarindex_data_freshness_stale{domain="pricing",source="coingecko",instance="r1:9100",job="node_exporter"}'
+        values: '0+0x180'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_data_freshness_probe_frozen
+        exp_alerts:
+          - exp_labels:
+              file: data_freshness.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: data-freshness
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+              summary: "data-freshness.prom has not been rewritten in 45m — gauges may be frozen, not fresh"
+              description: |
+                data_freshness.prom's mtime is > 45m old (timer runs every
+                15 min). The stellarindex_data_freshness_* series are still
+                PRESENT — a dead run that exits before its atomic swap
+                leaves the last good file in place, so watchdog_silent's
+                absent_over_time cannot see this. Check
+                `systemctl status data-freshness.service data-freshness.timer`
+                and the file's mtime directly before trusting any
+                stellarindex_data_freshness_stale reading as current.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+
+      - eval_time: 150m
+        alertname: stellarindex_data_freshness_watchdog_silent
+        exp_alerts: []
+
+  # ── the timer is running: mtime keeps advancing ──────────────────
+  # The .prom is rewritten every scrape (every 1m here), so
+  # time()-mtime stays ≈0 and the alert must stay silent.
+  - interval: 1m
+    name: a live data-freshness timer never trips probe_frozen
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="data_freshness.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x180'
+      - series: 'stellarindex_data_freshness_stale{domain="pricing",source="coingecko",instance="r1:9100",job="node_exporter"}'
+        values: '0+0x180'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_data_freshness_probe_frozen
+        exp_alerts: []

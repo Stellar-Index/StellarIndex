@@ -195,6 +195,40 @@ groups:
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
 
+      # watchdog_silent above only sees ABSENCE. The script builds the
+      # whole textfile in a temp file and swaps it in atomically at the
+      # very end, so a run that dies before the swap leaves the PREVIOUS
+      # data_freshness.prom on disk — node_exporter keeps re-serving it
+      # with a fresh scrape timestamp, every stellarindex_data_freshness_*
+      # series stays present, and absent_over_time never trips (T599; the
+      # runbook has carried a manual mtime check for this exact case since
+      # Wave L / #319 with nothing automated behind it). node_exporter's
+      # own textfile-collector mtime tracks the file's real last-write
+      # time and freezes the moment the timer stops rewriting it, same
+      # pattern as stellarindex_config_assertions_stale (storage.yml).
+      - alert: stellarindex_data_freshness_probe_frozen
+        expr: |
+          time() - node_textfile_mtime_seconds{file="data_freshness.prom"} > 2700
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: data-freshness
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+          summary: "data-freshness.prom has not been rewritten in 45m — gauges may be frozen, not fresh"
+          description: |
+            data_freshness.prom's mtime is > 45m old (timer runs every
+            15 min). The stellarindex_data_freshness_* series are still
+            PRESENT — a dead run that exits before its atomic swap
+            leaves the last good file in place, so watchdog_silent's
+            absent_over_time cannot see this. Check
+            `systemctl status data-freshness.service data-freshness.timer`
+            and the file's mtime directly before trusting any
+            stellarindex_data_freshness_stale reading as current.
+
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/data-freshness-watchdog-silent.md
+
       - alert: stellarindex_served_value_drift
         expr: stellarindex_served_value_ok == 0
         for: 26h

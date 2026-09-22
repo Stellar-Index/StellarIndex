@@ -1,30 +1,33 @@
 ---
-title: Runbook — data-freshness watchdog silent
-last_verified: 2026-08-29
+title: Runbook — data-freshness watchdog silent / frozen
+last_verified: 2026-09-22
 status: current
 severity: P3
 ---
 
-# Runbook — `stellarindex_data_freshness_watchdog_silent`
+# Runbook — `stellarindex_data_freshness_watchdog_silent` / `stellarindex_data_freshness_probe_frozen`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_data_freshness_watchdog_silent` |
+| Alerts | `stellarindex_data_freshness_watchdog_silent` (series absent, `absent_over_time(...[45m])`), `stellarindex_data_freshness_probe_frozen` (series present but the file's mtime stopped advancing, `time() - node_textfile_mtime_seconds{file="data_freshness.prom"} > 2700`) |
 | Severity | **P3** (ticket) |
-| Detected by | `absent_over_time(stellarindex_data_freshness_stale[45m])` for > 15m |
-| Emitted by | the absence of `data-freshness.sh`'s textfile output (`configs/ansible/roles/archival-node/files/data-freshness.sh` → `/usr/local/sbin/data-freshness.sh`) |
+| Emitted by | `data-freshness.sh`'s textfile output (`configs/ansible/roles/archival-node/files/data-freshness.sh` → `/usr/local/sbin/data-freshness.sh`) |
 | Typical MTTR | 5–15 min |
 | Impact | The watchdog that backstops every other source's staleness (coingecko, sep1, the completeness verdict) is itself blind — drift could now go unnoticed. Meta-alert. |
 
-> **This alert can only see ABSENCE, not staleness.** The script builds the
-> whole textfile in a temp file and swaps it in atomically at the very end. If a
-> run dies before that swap, the PREVIOUS `data_freshness.prom` stays on disk
-> and node_exporter keeps re-serving it verbatim — the series are present, just
-> frozen, so `absent_over_time(...)` never trips. When you are triaging a
-> "everything looks suspiciously green" report, check the file's mtime, not
-> only the series:
+> **`watchdog_silent` can only see ABSENCE, not staleness.** The script builds
+> the whole textfile in a temp file and swaps it in atomically at the very
+> end. If a run dies before that swap, the PREVIOUS `data_freshness.prom`
+> stays on disk and node_exporter keeps re-serving it verbatim — the series
+> are present, just frozen, so `absent_over_time(...)` never trips on its
+> own. **`probe_frozen` (added T599) is the automated catch for exactly
+> this**: it watches the textfile-collector's own mtime for this file, which
+> stops advancing the moment the timer quits rewriting it, same pattern as
+> `stellarindex_config_assertions_stale` (`docs/operations/runbooks/config-assertion-failed.md`).
+> Before T599 this was a manual check only; now `probe_frozen` pages it.
+> The manual commands are still useful for triage:
 >
 > ```sh
 > ls -la --time-style=full-iso /var/lib/node_exporter/textfile_collector/data_freshness.prom
@@ -102,6 +105,9 @@ redeployed since, the old behaviour is still live — check the script on disk.
 
 ## Changelog
 
+- 2026-09-22 — added `stellarindex_data_freshness_probe_frozen` (T599):
+  the mtime-based automated alert for the frozen-but-present case this
+  runbook's banner previously told operators to check by hand.
 - 2026-08-29 — re-verified against HEAD (runbook Wave L, #319): the script
   reads `/etc/default/stellarindex` VERBATIM and must never be "fixed" by
   sourcing it; added the `PG_VERSION` note for the versioned psql path; added
