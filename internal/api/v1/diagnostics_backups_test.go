@@ -19,9 +19,13 @@ import (
 type fakeBackupMetrics struct {
 	samples map[string][]promSample
 	fail    map[string]bool
+	panicOn map[string]bool
 }
 
 func (f *fakeBackupMetrics) queryVector(_ context.Context, expr string) ([]promSample, error) {
+	if f.panicOn[expr] {
+		panic("simulated panic: " + expr)
+	}
 	if f.fail[expr] {
 		return nil, errors.New("prometheus down")
 	}
@@ -455,6 +459,99 @@ func TestHandleDiagnosticsBackups_EndToEnd(t *testing.T) {
 	_ = resp2.Body.Close()
 	if got := hits.Load(); got != before {
 		t.Errorf("second request re-queried Prometheus (%d → %d hits); want the 60 s in-process cache to serve it", before, got)
+	}
+}
+
+// TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed is the
+// regression proof for RLT-094's silent-degrade shape: a query
+// goroutine that panics must count toward `failed` (and so degrade
+// SourceStatus) exactly like a query that returned an error. Before
+// the fix, a panic left both results[i] and errs[i] at their zero
+// value, which buildBackupsSnapshot's failed-count loop reads as "the
+// query simply returned nothing" — SourceStatus stayed "ok" even
+// though one Prometheus query never actually ran.
+func TestBuildBackupsSnapshot_PanickingQueryCountsAsFailed(t *testing.T) {
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	src := &fakeBackupMetrics{
+		samples: map[string][]promSample{
+			promSnapshotLast: {sample(nil, float64(now.Add(-time.Hour).Unix()))},
+		},
+		panicOn: map[string]bool{promWALArchiveAge: true},
+	}
+	got := buildBackupsSnapshot(context.Background(), nil, src, now)
+	if got.SourceStatus != "degraded" {
+		t.Errorf("source_status = %q, want degraded — a panicking query must count toward `failed`, not read as an empty-but-successful vector", got.SourceStatus)
+	}
+}
+
+// blockingBackupMetrics answers every queryVector call only after
+// proceed is closed, then reports the ctx it was actually handed
+// (ctx.Err(), nil on a live ctx). It exists to observe WHICH context
+// a shared rebuild's Prometheus fan-out runs on.
+type blockingBackupMetrics struct {
+	proceed chan struct{}
+}
+
+func (b *blockingBackupMetrics) queryVector(ctx context.Context, _ string) ([]promSample, error) {
+	<-b.proceed
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, nil
+}
+
+// TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache
+// is the regression proof for RLT-094: handleDiagnosticsBackups ran
+// buildBackupsSnapshot's Prometheus fan-out on context.WithTimeout(r.Context(), ...)
+// — the ctx of whichever request happened to hold s.backups.mu when
+// the cache was stale. That build result is then cached and served to
+// EVERY request behind it, so if the triggering ("leader") request's
+// own client disconnected mid-flight, its canceled ctx failed every
+// query, and the resulting "unknown" snapshot was cached and handed
+// to a totally unrelated follower request whose own context was never
+// touched — the same shape as RLT-439 (CachedOracleReader.fetch).
+func TestHandleDiagnosticsBackups_LeaderCtxCancelDoesNotPoisonSharedCache(t *testing.T) {
+	proceed := make(chan struct{})
+	src := &blockingBackupMetrics{proceed: proceed}
+	srv := New(Options{BackupMetrics: src})
+
+	leaderCtx, cancelLeader := context.WithCancel(context.Background())
+	reqA := httptest.NewRequest(http.MethodGet, "/v1/diagnostics/backups", nil).WithContext(leaderCtx)
+	wA := httptest.NewRecorder()
+
+	doneA := make(chan struct{})
+	go func() {
+		srv.handleDiagnosticsBackups(wA, reqA)
+		close(doneA)
+	}()
+
+	// Cancel the LEADER's own request context, then release every
+	// query goroutine blocked on it — ordering (cancel before close)
+	// guarantees every queryVector call observes the canceled ctx if
+	// (and only if) the build still runs on it.
+	cancelLeader()
+	close(proceed)
+	<-doneA
+
+	// A second, unrelated request with its own live context must not
+	// inherit the leader's cancellation — it hits the now-populated
+	// cache built by the fan-out above.
+	reqB := httptest.NewRequest(http.MethodGet, "/v1/diagnostics/backups", nil)
+	wB := httptest.NewRecorder()
+	srv.handleDiagnosticsBackups(wB, reqB)
+
+	var envB struct {
+		Data json.RawMessage `json:"data"`
+	}
+	if err := json.NewDecoder(wB.Body).Decode(&envB); err != nil {
+		t.Fatal(err)
+	}
+	var docB map[string]any
+	if err := json.Unmarshal(envB.Data, &docB); err != nil {
+		t.Fatal(err)
+	}
+	if docB["source_status"] != "ok" {
+		t.Errorf("source_status = %v, want ok — the LEADER's own context cancellation must not poison the shared cache for an unrelated follower request", docB["source_status"])
 	}
 }
 

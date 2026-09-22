@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sort"
@@ -249,6 +250,17 @@ const backupClockSkewTolerance = time.Minute
 // a status page polling every 30 s from doubling the query load.
 const backupsCacheTTL = 60 * time.Second
 
+// backupsQueryBudget bounds a rebuild's Prometheus fan-out. It runs on
+// its own detached context (see handleDiagnosticsBackups), never on
+// the ctx of whichever request happened to trigger it — a rebuild is
+// shared, via s.backups.mu, with every request blocked behind it.
+const backupsQueryBudget = 3 * time.Second
+
+// errBackupsQueryPanicked is recorded in a query's error slot when its
+// goroutine panicked, so it counts toward `failed` like any other
+// query error. See buildBackupsSnapshot's fan-out.
+var errBackupsQueryPanicked = errors.New("backups snapshot: query panicked")
+
 // backupMetricsSource is the seam the backups diagnostics reads
 // Prometheus through. *PrometheusStatusBackend satisfies it; New()
 // derives it from Options.StatusBackend so production needs no extra
@@ -396,13 +408,18 @@ func buildBackupsSnapshot(ctx context.Context, logger *slog.Logger, src backupMe
 	for i, expr := range exprs {
 		go func(i int, expr string) {
 			defer wg.Done()
-			// Detached from the handler goroutine. On a panic this
-			// query's samples stay nil and its err stays nil — read
-			// below as "no samples", which degrades that one SLO row
-			// (the same as a query that returned nothing) rather than
-			// killing the process. The snapshot is rebuilt on its next
+			// A panicking query must count toward `failed` like any
+			// other query error: leaving errs[i] nil would read as "no
+			// samples" (the same as a legitimate empty vector) and let
+			// SourceStatus report "ok" even though this query never
+			// actually ran. The snapshot is rebuilt on its next
 			// refresh, so nothing is latched.
-			defer worker.Recover(logger, "api-backups-snapshot-query")
+			defer func() {
+				if rec := recover(); rec != nil {
+					worker.Report(logger, "api-backups-snapshot-query", rec)
+					errs[i] = errBackupsQueryPanicked
+				}
+			}()
 			results[i], errs[i] = src.queryVector(ctx, expr)
 		}(i, expr)
 	}
@@ -645,8 +662,14 @@ func (s *Server) handleDiagnosticsBackups(w http.ResponseWriter, r *http.Request
 	s.backups.mu.Lock()
 	defer s.backups.mu.Unlock()
 	if s.backups.builtAt.IsZero() || now.Sub(s.backups.builtAt) >= backupsCacheTTL {
-		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
-		s.backups.snap = buildBackupsSnapshot(ctx, s.logger, s.backupMetrics, now)
+		// Detached from r.Context(): this rebuild is shared with every
+		// request blocked on s.backups.mu behind it (the cache is
+		// updated once and read by all of them), so the triggering
+		// caller's own disconnect must not fail their queries too —
+		// the same shape as RLT-439 (CachedOracleReader.fetch running
+		// a shared fill inline on the leader's own ctx).
+		ctx, cancel := context.WithTimeout(context.Background(), backupsQueryBudget)
+		s.backups.snap = buildBackupsSnapshot(ctx, s.logger, s.backupMetrics, now) //nolint:contextcheck // intentional detach — the rebuild is shared via s.backups.mu; the triggering caller's own disconnect must not fail it for every request behind the lock
 		cancel()
 		s.backups.builtAt = now
 	}
