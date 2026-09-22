@@ -319,8 +319,8 @@ func TestRefreshPair_OnChainOracleReferences(t *testing.T) {
 	seen := map[string]bool{}
 	for _, o := range sink.records {
 		seen[o.Reference] = true
-		if o.OurPrice != 0.11 {
-			t.Errorf("observation %s OurPrice = %v, want 0.11", o.Reference, o.OurPrice)
+		if o.OurPrice != "0.11" {
+			t.Errorf("observation %s OurPrice = %q, want decimal string \"0.11\"", o.Reference, o.OurPrice)
 		}
 		if o.Firing {
 			t.Errorf("observation %s unexpectedly firing", o.Reference)

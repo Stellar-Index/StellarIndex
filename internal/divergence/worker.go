@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -520,12 +521,17 @@ func (s *Service) flushObservations(
 		}
 		deltaPct := (ourPrice - refPrice) / refPrice * 100.0
 		firing := absFloat(deltaPct) > s.threshold
+		// ADR-0003: the record's price/delta fields are decimal
+		// strings, not float64 — format at this boundary using the
+		// shortest round-trip representation (same idiom as
+		// api/v1.moneyStr) so RecordObservation never binds a raw
+		// float64 into a NUMERIC column.
 		if err := s.sink.RecordObservation(ctx, ObservationRecord{
 			Pair:       pair,
 			Reference:  refName,
-			OurPrice:   ourPrice,
-			RefPrice:   refPrice,
-			DeltaPct:   deltaPct,
+			OurPrice:   strconv.FormatFloat(ourPrice, 'f', -1, 64),
+			RefPrice:   strconv.FormatFloat(refPrice, 'f', -1, 64),
+			DeltaPct:   strconv.FormatFloat(deltaPct, 'f', -1, 64),
 			Firing:     firing,
 			ObservedAt: observedAt,
 		}); err != nil && s.logger != nil {

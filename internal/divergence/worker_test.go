@@ -3,6 +3,7 @@ package divergence_test
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -470,15 +471,23 @@ func TestRefreshPair_FiresObservationSink(t *testing.T) {
 		if !r.Firing {
 			t.Errorf("ref %s: Firing=false, want true (10%% delta exceeds 5%% threshold)", r.Reference)
 		}
-		if r.OurPrice != 1.10 {
-			t.Errorf("ref %s: OurPrice = %g, want 1.10", r.Reference, r.OurPrice)
+		// ADR-0003 (RLT-354): OurPrice/RefPrice/DeltaPct are decimal
+		// strings, never float64 — asserting exact strings (not just
+		// "parses to a float") pins the shortest-round-trip format
+		// the worker must emit, matching the read side's ::text cast.
+		if r.OurPrice != "1.1" {
+			t.Errorf("ref %s: OurPrice = %q, want decimal string \"1.1\"", r.Reference, r.OurPrice)
 		}
-		if r.RefPrice != 1.00 {
-			t.Errorf("ref %s: RefPrice = %g, want 1.00", r.Reference, r.RefPrice)
+		if r.RefPrice != "1" {
+			t.Errorf("ref %s: RefPrice = %q, want decimal string \"1\"", r.Reference, r.RefPrice)
 		}
 		// (1.10 - 1.00) / 1.00 * 100 = 10
-		if r.DeltaPct < 9.99 || r.DeltaPct > 10.01 {
-			t.Errorf("ref %s: DeltaPct = %g, want ~10", r.Reference, r.DeltaPct)
+		delta, err := strconv.ParseFloat(r.DeltaPct, 64)
+		if err != nil {
+			t.Fatalf("ref %s: DeltaPct = %q is not a decimal string: %v", r.Reference, r.DeltaPct, err)
+		}
+		if delta < 9.99 || delta > 10.01 {
+			t.Errorf("ref %s: DeltaPct = %q, want ~10", r.Reference, r.DeltaPct)
 		}
 	}
 }
