@@ -64,6 +64,12 @@ check "clean tree passes again after revert" ok
 echo "(#1108)" >> CHANGELOG.md
 check "a reintroduced '#1108' citation in CHANGELOG.md is caught" red
 git checkout -- CHANGELOG.md
+# §4 stale-reference check: coverage-matrix.md must not carry the dangling
+# "#1271" citation back in (RSWP-144 — #1271 resolves to a real but
+# unrelated open issue, not the PR the doc implies).
+echo "(#1271)" >> docs/architecture/coverage-matrix.md
+check "a reintroduced '#1271' citation in coverage-matrix.md is caught" red
+git checkout -- docs/architecture/coverage-matrix.md
 check "clean tree passes again after revert" ok
 
 cat > "$FIX2" <<'EOF'

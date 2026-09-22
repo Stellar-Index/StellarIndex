@@ -363,7 +363,7 @@ operator decision 2026-04-28.
 | - | ----------- | --- | ---- | ----- | ----------- | ------ | ---- | ---- |
 | X2.1 | `/v1/price` — closed-bucket VWAP, cross-region consistent | [ADR-0015](../adr/0015-last-closed-bucket-rate-serving.md) + [ADR-0018](../adr/0018-api-consistency-surfaces.md) | 7 | `internal/api/v1/price.go` | handler shipped (PR #180); CAGGs auto-refresh per `add_continuous_aggregate_policy` calls in migrations/0002. Closed-bucket guarantee holds end-to-end. | ✅ verified | 4 | ✅ 2026-05-10 — `/v1/price?asset=native&quote=fiat:USD` returns `{price, observed_at: closed-bucket end, window_seconds: 300}`. Cross-region byte-identical needs R2/R3 to verify. |
 | X2.2 | `/v1/price/tip` — rolling-window VWAP + last-good-price fallback | [ADR-0018](../adr/0018-api-consistency-surfaces.md) | 7 | `internal/api/v1/price_tip.go` | [ADR-0018](../adr/0018-api-consistency-surfaces.md); handler + tests shipped | ✅ verified | 4 | ⚠ 2026-06-12 probe F-B — the rolling-window path only fires for the literal `crypto:XLM` form; `asset=native` silently serves the closed-bucket *fallback* (`window_seconds=60`, minute-bucketed `observed_at`). Fallback mechanism itself works as designed; the alias gap is fixed in-tree awaiting deploy (commit `8fde6c84`). |
-| X2.3 | `/v1/observations` — raw per-source data | [ADR-0018](../adr/0018-api-consistency-surfaces.md) | 7 | `internal/api/v1/observations.go` | [ADR-0018](../adr/0018-api-consistency-surfaces.md); handler + tests shipped, `?source=` + `?aggregate=latest` | ✅ verified | 4 | ✅ 2026-06-12 probe — R-011 closed per documented fix (#1271): empty result now carries `flags.triangulated=true` as the explanation. ⚠ N-2: `/v1/history` on the same triangulated pair still returns a silent `[]` with `flags.triangulated=false` — sibling-surface inconsistency, still open. |
+| X2.3 | `/v1/observations` — raw per-source data | [ADR-0018](../adr/0018-api-consistency-surfaces.md) | 7 | `internal/api/v1/observations.go` | [ADR-0018](../adr/0018-api-consistency-surfaces.md); handler + tests shipped, `?source=` + `?aggregate=latest` | ✅ verified | 4 | ✅ 2026-06-12 probe — R-011 closed: empty result now carries `flags.triangulated=true` as the explanation. ⚠ N-2: `/v1/history` on the same triangulated pair still returns a silent `[]` with `flags.triangulated=false` — sibling-surface inconsistency, still open. |
 | X2.4 | URL discipline: query params MUST NOT change consistency contract | [ADR-0018](../adr/0018-api-consistency-surfaces.md) | 7 | OpenAPI lint + per-handler `reject*TierParams` (e.g. `internal/api/v1/observations.go::rejectObservationsTierParams`) | [ADR-0018](../adr/0018-api-consistency-surfaces.md) §"URL discipline"; `?granularity=` / `?window_seconds=` 400-rejection tests in each surface's `_test.go` | ✅ verified | 4 | 📦 code-only — verified by per-handler tests + OpenAPI lint in CI |
 | X2.5 | Forex factor snap rule for chained-fiat closed-bucket consistency | [ADR-0018](../adr/0018-api-consistency-surfaces.md) | 5 | `internal/aggregate/orchestrator/triangulate.go::legPrice`, `internal/storage/timescale/trades.go::FXQuoteAtOrBefore`, `internal/sources/external/registry.go::FXSources` | [ADR-0018](../adr/0018-api-consistency-surfaces.md) §"Forex factor handling" | ✅ verified | 2 | 📦 code-only — orchestrator path; consumer-visible only as `flags.triangulated=true` on chained pairs |
 | X2.6 | Streaming endpoints per surface (`/v1/price/stream`, `/v1/price/tip/stream`, `/v1/observations/stream`) | [ADR-0018](../adr/0018-api-consistency-surfaces.md) | 7 | `internal/api/v1/{price_stream,price_tip_stream,observations_stream}.go`, `internal/api/streaming` (Hub) | [ADR-0018](../adr/0018-api-consistency-surfaces.md); SSE + heartbeat + last-event-id resumption tests in each surface's `_test.go` | ✅ verified | 4 | ✅ 2026-05-10, re-confirmed 2026-06-12 probe — `/v1/price/stream` emits 3-window `price_update` events within ~1 s; `/v1/price/tip/stream` emits `tip_update` at ~5 s cadence. ⚠ F-B family: tip-stream payload `observed_at` is minute-bucketed (~99 s lag) even for `crypto:XLM` — fix in-tree commit `8fde6c84`. |
@@ -683,7 +683,7 @@ week lands.
 
 - **2026-05-11** — **All five 2026-05-10 ❌ rows have landing
   code fixes on `main`** (PRs #1261, #1262, #1263, #1264, #1265,
-  #1268, #1270, #1271 across the session). Headline
+  #1268, #1270 across the session). Headline
   resolutions:
   R-005 → #1261 (batch shares full /v1/price fallback chain),
   R-007 → #1262 (OHLC outlier filter, default 4σ),
@@ -693,7 +693,7 @@ week lands.
   surviving PR number for this entry; the one previously cited
   here now resolves to an unrelated live issue),
   R-016 → #1270 (asset SEP-1 backfill from known_issuers map),
-  R-011 → #1271 (observations triangulation hint on empty),
+  R-011 → observations triangulation hint on empty,
   R-021 → #1264 (handler-timeout helper recognises pq cancel),
   R-001/R-002 → #1268 (prewarm covers volume-desc + per-CEX).
   R-006 + R-009 remain operator config (#97, #119). The Prod

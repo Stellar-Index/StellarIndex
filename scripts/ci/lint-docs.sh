@@ -321,6 +321,11 @@ stale_patterns=(
                                   # the PR (RSWP-145); no PR exists for that
                                   # commit and #1272 is now a real, unrelated
                                   # live issue (dashboard webhook role gate)
+  "#1271\b"                      # dangling ref (RSWP-144) — coverage-matrix.md
+                                  # cited R-011's fix as "#1271", which now
+                                  # resolves to a real, unrelated open issue
+                                  # (price-alert freeze marker) rather than
+                                  # a 404
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
