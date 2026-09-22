@@ -504,9 +504,11 @@ func run(cfgPath string, dryRun bool) error {
 			MinSourcesForWarning: cfg.Divergence.MinSourcesForWarning,
 			PerReferenceTimeout: time.Duration(
 				cfg.Divergence.PerReferenceTimeoutSeconds) * time.Second,
-			ObservationSink: timescale.NewDivergenceSink(store),
-			Logger:          logger.With("component", "divergence"),
-			OnWarningFired:  divWarningHook,
+			ObservationSink: timescale.NewDivergenceSink(store,
+				timescale.WithDivergenceLedgerProvider(divergenceLedgerAdapter{cursors: store}),
+			),
+			Logger:         logger.With("component", "divergence"),
+			OnWarningFired: divWarningHook,
 		})
 		if err != nil {
 			return fmt.Errorf("divergence service: %w", err)
@@ -1788,6 +1790,41 @@ func (a baselineSinkAdapter) UpsertBaseline(
 		WindowEnd:   windowEnd,
 		Multi:       m,
 	})
+}
+
+// cursorGetter is the narrow seam divergenceLedgerAdapter depends
+// on — *timescale.Store satisfies it directly; tests substitute a
+// fake.
+type cursorGetter interface {
+	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
+}
+
+// divergenceLedgerTimeout bounds divergenceLedgerAdapter's per-
+// observation cursor read so a stalled database never blocks a
+// divergence observation insert.
+const divergenceLedgerTimeout = 2 * time.Second
+
+// divergenceLedgerAdapter satisfies timescale.LedgerProvider by
+// reading the live-ingest cursor (the same `ledgerstream` row
+// supplyChainCursorSource resolves from) so divergence_observations
+// rows carry a real observed_at_ledger. Before this seam existed,
+// NewDivergenceSink was constructed with no ledger provider and
+// observed_at_ledger was always 0 (T026).
+//
+// Fails open to ledger 0 on any read error (timeout, cold-start
+// ErrNotFound) — the same "unknown" sentinel NewDivergenceSink's own
+// nil-provider default uses, so a transient cursor-read failure
+// degrades an insert rather than blocking it.
+type divergenceLedgerAdapter struct{ cursors cursorGetter }
+
+func (a divergenceLedgerAdapter) LatestLedger() uint32 {
+	ctx, cancel := context.WithTimeout(context.Background(), divergenceLedgerTimeout)
+	defer cancel()
+	c, err := a.cursors.GetCursor(ctx, supplyChainCursorSource, "")
+	if err != nil {
+		return 0
+	}
+	return c.LastLedger
 }
 
 // defaultPairs is the v1 aggregator coverage set. XLM/BTC/ETH across
