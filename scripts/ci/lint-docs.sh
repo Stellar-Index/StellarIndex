@@ -334,6 +334,11 @@ stale_patterns=(
                                   # v6→v7 bump PR as #1353 (RSWP-147); that number
                                   # now resolves to an unrelated auto-filed
                                   # ci-health-bot issue, not the PR it named
+  "R-013.*#1265"                  # coverage-matrix.md's R-013 row cited #1265
+                                  # (RSWP-141); #1265 now resolves to an
+                                  # unrelated resolveTip completeness-clamp
+                                  # finding, not the chart truncated/
+                                  # data_starts_at PR the row implies
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \

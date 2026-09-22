@@ -84,6 +84,15 @@ check "a reintroduced '#1353' citation in remediation STATUS.md is caught" red
 git checkout -- docs/remediation-2026-07-01/STATUS.md
 check "clean tree passes again after revert" ok
 
+# §4 stale-reference check: docs/architecture/coverage-matrix.md must not
+# carry the "R-013 → #1265" citation back in (RSWP-141 — #1265 now
+# resolves to an unrelated resolveTip completeness-clamp finding, not the
+# chart truncated/data_starts_at PR the R-013 row implies).
+echo "R-013 → #1265" >> docs/architecture/coverage-matrix.md
+check "a reintroduced 'R-013 -> #1265' citation is caught" red
+git checkout -- docs/architecture/coverage-matrix.md
+check "clean tree passes again after revert" ok
+
 cat > "$FIX2" <<'EOF'
 ---
 title: "[SEV-2] fixture — aged incident, plain prose action item"
