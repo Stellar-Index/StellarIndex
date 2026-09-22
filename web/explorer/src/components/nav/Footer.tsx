@@ -16,6 +16,11 @@ import { CURRENT_NETWORK } from '@/lib/networks';
  * /embed/* routes render chrome-less; this returns null there
  * so iframe widgets aren't wrapped in the explorer footer.
  */
+// Label the API link with the host this build actually serves — on
+// testnet/futurenet the href already tracks CURRENT_NETWORK; the visible
+// text must too, or a reader on a non-mainnet build sees a mainnet hostname.
+const apiHost = CURRENT_NETWORK.apiBaseUrl.replace(/^https?:\/\//, '');
+
 export function Footer() {
   const pathname = usePathname();
   if (pathname?.startsWith('/embed/')) return null;
@@ -94,7 +99,7 @@ export function Footer() {
                 href={CURRENT_NETWORK.apiBaseUrl}
                 className="hover:text-ink-body font-mono"
               >
-                api.stellarindex.io
+                {apiHost}
               </a>
             </span>
             <a
