@@ -546,34 +546,44 @@ func (h *Handler) cohortPricer(ctx context.Context, eligible map[string]struct{}
 			miss[asset] = struct{}{}
 			return cohortPrice{}, false
 		}
-		if ctx.Err() != nil {
-			degraded = true
-			miss[asset] = struct{}{}
-			return cohortPrice{}, false
-		}
-		parsed, err := canonical.ParseAsset(asset)
-		if err != nil {
-			miss[asset] = struct{}{}
-			return cohortPrice{}, false
-		}
-		raw, ok := h.LookupUSDPrice(ctx, parsed)
+		p, ok := h.lookupCohortPrice(ctx, asset, &degraded)
 		if !ok {
-			if ctx.Err() != nil {
-				degraded = true
-			}
 			miss[asset] = struct{}{}
 			return cohortPrice{}, false
 		}
-		r, ok := new(big.Rat).SetString(strings.TrimSpace(raw))
-		if !ok || r.Sign() <= 0 {
-			miss[asset] = struct{}{}
-			return cohortPrice{}, false
-		}
-		p := cohortPrice{Text: raw, Rat: r}
 		cache[asset] = p
 		return p, true
 	}
 	return fn, &degraded
+}
+
+// lookupCohortPrice does the ctx-aware USD lookup and parse for asset,
+// split out of cohortPricer's closure so a canceled ctx, a bad canonical
+// id, a failed lookup, and a bad/non-positive rate are one flat set of
+// early returns instead of nested inside it. Sets *degraded when the
+// miss was caused by ctx expiry rather than a genuine no-price, per
+// cohortPricer's doc comment (RLT-194).
+func (h *Handler) lookupCohortPrice(ctx context.Context, asset string, degraded *bool) (cohortPrice, bool) {
+	if ctx.Err() != nil {
+		*degraded = true
+		return cohortPrice{}, false
+	}
+	parsed, err := canonical.ParseAsset(asset)
+	if err != nil {
+		return cohortPrice{}, false
+	}
+	raw, ok := h.LookupUSDPrice(ctx, parsed)
+	if !ok {
+		if ctx.Err() != nil {
+			*degraded = true
+		}
+		return cohortPrice{}, false
+	}
+	r, ok := new(big.Rat).SetString(strings.TrimSpace(raw))
+	if !ok || r.Sign() <= 0 {
+		return cohortPrice{}, false
+	}
+	return cohortPrice{Text: raw, Rat: r}, true
 }
 
 // cohortAssetKind classifies a canonical asset id the way the lake spells
