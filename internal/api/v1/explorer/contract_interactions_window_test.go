@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -91,5 +92,71 @@ func TestContractInteractions_QuantizesWindow(t *testing.T) {
 	if reader.calls != 1 {
 		t.Fatalf("reader calls after two same-rung requests = %d, want 1 "+
 			"(raw ?days= is not quantised, so the cache key is not shared)", reader.calls)
+	}
+}
+
+// failingTipReader embeds capReader but fails the tip read RecentLedgers
+// relies on, and counts ContractInteractions calls so the test can prove the
+// handler never reaches the reader with a genesis-wide floor.
+type failingTipReader struct {
+	*capReader
+	ixCalls int
+}
+
+func (r *failingTipReader) RecentLedgers(context.Context, int, uint32) ([]clickhouse.LedgerHeader, error) {
+	return nil, errors.New("clickhouse: connection reset")
+}
+
+func (r *failingTipReader) ContractInteractions(_ context.Context, _ string, _ int, since uint32) ([]clickhouse.ContractEdgeRow, uint32, error) {
+	r.ixCalls++
+	return nil, since, nil
+}
+
+// TestContractInteractions_TipReadFailureRefusesWindow is the RLT-099 / #581b
+// regression guard. windowFloorLedger must not fold a FAILED tip read into
+// the same 0 it returns for "genuinely no ledgers captured yet": the un-fixed
+// handler serves 200 OK with since_ledger=0 (an unbounded, genesis-wide scan)
+// on every ClickHouse tip-read error; the fixed handler refuses the request
+// instead of ever asking the reader to scan from ledger 0.
+func TestContractInteractions_TipReadFailureRefusesWindow(t *testing.T) {
+	reader := &failingTipReader{capReader: &capReader{probe: &deadlineProbe{}}}
+
+	var (
+		captured   ContractInteractionsView
+		gotProblem bool
+	)
+	h := &Handler{
+		Reader: reader,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		ParseLimit: func(_ http.ResponseWriter, _ *http.Request, def, _ int) (int, bool) {
+			return def, true
+		},
+		ClientAborted: func(*http.Request, error) bool { return false },
+		WriteProblem: func(w http.ResponseWriter, _ *http.Request, _, _ string, status int, _ string) {
+			gotProblem = true
+			w.WriteHeader(status)
+		},
+		WriteJSON: func(w http.ResponseWriter, data any, _ bool) {
+			if v, ok := data.(ContractInteractionsView); ok {
+				captured = v
+			}
+			w.WriteHeader(http.StatusOK)
+		},
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/contracts/"+validTestContract+"/interactions?days=30", nil)
+	r.SetPathValue("contract_id", validTestContract)
+	w := httptest.NewRecorder()
+	h.ContractInteractions(w, r)
+
+	if !gotProblem {
+		t.Fatalf("tip-read failure must be surfaced as a problem response, got 200 OK with body %+v", captured)
+	}
+	if w.Code == http.StatusOK {
+		t.Fatalf("status = %d, want a non-200 refusal on a failed tip read", w.Code)
+	}
+	if reader.ixCalls != 0 {
+		t.Fatalf("ContractInteractions called %d times, want 0 "+
+			"(a failed tip read must not fall through to a since=0 genesis-wide scan)", reader.ixCalls)
 	}
 }
