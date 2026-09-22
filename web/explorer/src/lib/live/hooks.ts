@@ -404,11 +404,17 @@ export function usePricePoll({
     // last price comes from /v1/pools, not this aggregator VWAP path).
     if (!CURRENT_NETWORK.pricing) return;
     let cancelled = false;
+    let inFlight = false;
     const controller = new AbortController();
     const tick = async () => {
       // A background tab has no reason to hold the poll open — skip the
       // fetch and pick back up (immediately) on the next visibilitychange.
       if (typeof document !== 'undefined' && document.hidden) return;
+      // The interval, the initial call and visibilitychange can all fire
+      // while a previous fetch is still pending — skip re-entrant ticks
+      // rather than letting responses race and clobber state out of order.
+      if (inFlight) return;
+      inFlight = true;
       try {
         const r = await fetch(
           `${API_BASE_URL}/v1/price?asset=${encodeURIComponent(asset)}&quote=${encodeURIComponent(quote)}`,
@@ -447,6 +453,8 @@ export function usePricePoll({
         });
       } catch {
         // Network blip, timeout, or unmount/dep-change abort — keep whatever we have.
+      } finally {
+        inFlight = false;
       }
     };
     void tick();
