@@ -3050,11 +3050,11 @@ paths:
                           properties:
                             asset:           { type: string, description: Reserve underlying token (C-strkey). }
                             decimals:        { type: integer }
-                            supplied:        { type: string, description: Total supplied, underlying token base units. }
-                            borrowed:        { type: string, description: Total borrowed, underlying token base units. }
+                            supplied:        { type: string, description: "Total supplied, underlying token base units." }
+                            borrowed:        { type: string, description: "Total borrowed, underlying token base units." }
                             supplied_usd:    { type: [string, "null"] }
                             borrowed_usd:    { type: [string, "null"] }
-                            utilization_pct: { type: number, description: Borrowed/supplied, 0..100. }
+                            utilization_pct: { type: number, description: "Borrowed/supplied, 0..100." }
                             borrow_apr:      { type: [number, "null"], description: "Borrow APR as a fraction (0.05 = 5%). Null when the reserve's rate-model config isn't in the captured contract-storage window." }
                             supply_apr:      { type: [number, "null"], description: "Supply APR as a fraction. Null when the rate-model config is uncaptured." }
                       as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state read is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
@@ -10413,7 +10413,7 @@ paths:
                     type: object
                     properties:
                       contract_id: { type: string }
-                      protocol: { type: string, description: Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise. }
+                      protocol: { type: string, description: "Registry protocol this contract belongs to (blend, soroswap, …) when attribution is known; absent otherwise." }
                       events: { type: array, items: { $ref: "#/components/schemas/ContractEvent" } }
                       next_cursor: { type: string, description: Opaque cursor for the next (older) page; absent on the last page. }
                       directory: { $ref: "#/components/schemas/DirectoryInfo" }
@@ -10737,7 +10737,7 @@ paths:
                             account_id: { type: string }
                             value: { type: string, description: "Ranked wealth in the ranked_by unit — USD dollars (2dp) or whole XLM (decimal string)." }
                             usd_value: { type: string, description: "Backward-compatible alias, populated only on the usd basis (equals value there); omitted on native_xlm." }
-                            locked: { type: boolean, description: Provably unspendable burn address — master weight 0, all thresholds 0, no signers. The balance is real; no key can move it. }
+                            locked: { type: boolean, description: "Provably unspendable burn address — master weight 0, all thresholds 0, no signers. The balance is real; no key can move it." }
                       as_of_ledger: { type: integer, format: int64, description: "Lake watermark this current-state ranking is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale." }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -10847,7 +10847,7 @@ paths:
                           accounts: { type: integer, format: int64 }
                           trustlines: { type: integer, format: int64 }
                           trustline_holding_accounts: { type: integer, format: int64 }
-                          xlm_held_stroops: { type: string, description: Total XLM held by funded accounts, stroops (ADR-0003 string). }
+                          xlm_held_stroops: { type: string, description: "Total XLM held by funded accounts, stroops (ADR-0003 string)." }
                       balances:
                         type: object
                         properties:
@@ -11000,13 +11000,13 @@ paths:
                           type: object
                           required: [rank, account, accounts_created, funded_stroops, live_accounts, live_stroops, first_ledger, last_ledger, first_created_at, last_created_at]
                           properties:
-                            rank: { type: integer, description: 1-based position on the board, by accounts_created descending. }
+                            rank: { type: integer, description: "1-based position on the board, by accounts_created descending." }
                             account: { type: string, description: The funding account's G-strkey. }
                             accounts_created: { type: integer, format: int64, description: Successful CreateAccount operations this account was the source of. Immutable history. }
-                            funded_stroops: { type: string, description: Sum of starting balances paid, stroops (ADR-0003 string). "0" is real — sponsored creations fund nothing. }
-                            live_accounts: { type: integer, format: int64, description: Created accounts that still exist, as of computed_at. }
-                            live_stroops: { type: string, description: Native XLM held by the surviving created set, stroops (ADR-0003 string). Point-in-time. }
-                            first_ledger: { type: integer, description: First ledger this creator created an account in, inside the response's coverage span. }
+                            funded_stroops: { type: string, description: "Sum of starting balances paid, stroops (ADR-0003 string). \"0\" is real — sponsored creations fund nothing." }
+                            live_accounts: { type: integer, format: int64, description: "Created accounts that still exist, as of computed_at." }
+                            live_stroops: { type: string, description: "Native XLM held by the surviving created set, stroops (ADR-0003 string). Point-in-time." }
+                            first_ledger: { type: integer, description: "First ledger this creator created an account in, inside the response's coverage span." }
                             last_ledger: { type: integer, description: Last such ledger. }
                             first_created_at: { type: string, format: date-time }
                             last_created_at: { type: string, format: date-time }
@@ -11156,9 +11156,9 @@ paths:
                           type: object
                           required: [rank, account, sponsorships_started, distinct_sponsored, revocations_issued, first_ledger, last_ledger, first_seen_at, last_seen_at]
                           properties:
-                            rank: { type: integer, description: 1-based position, by sponsorships_started descending. }
+                            rank: { type: integer, description: "1-based position, by sponsorships_started descending." }
                             account: { type: string, description: The sponsoring account's G-strkey. }
-                            sponsorships_started: { type: integer, format: int64, description: Sponsorship arrangements this account began. History, not a live count. }
+                            sponsorships_started: { type: integer, format: int64, description: "Sponsorship arrangements this account began. History, not a live count." }
                             distinct_sponsored: { type: integer, format: int64, description: Distinct accounts those arrangements covered. }
                             revocations_issued: { type: integer, format: int64, description: RevokeSponsorship operations sourced by this account. A LOWER BOUND on arrangements that ended. }
                             first_ledger: { type: integer }
@@ -11183,7 +11183,7 @@ paths:
                           thru_ledger: { type: integer }
                           from_time: { type: string, format: date-time }
                           thru_time: { type: string, format: date-time }
-                          ambiguous_transactions: { type: integer, format: int64, description: Transactions with more than one distinct sponsor, excluded from attribution. }
+                          ambiguous_transactions: { type: integer, format: int64, description: "Transactions with more than one distinct sponsor, excluded from attribution." }
                       computed_at: { type: string, format: date-time, description: Rollup cycle timestamp — the snapshot's real age. }
         "400": { $ref: "#/components/responses/BadRequest" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
@@ -12553,9 +12553,9 @@ components:
         treat `malicious`/`unsafe` as warnings worth surfacing prominently.
       required: [name, tags, source]
       properties:
-        name: { type: string, description: Human label, e.g. "SDF Growth 3". }
+        name: { type: string, description: "Human label, e.g. \"SDF Growth 3\"." }
         domain: { type: string, description: Domain the upstream set associates with the address; absent when none. }
-        tags: { type: array, items: { type: string }, description: Upstream tag registry values (always present, possibly empty). }
+        tags: { type: array, items: { type: string }, description: "Upstream tag registry values (always present, possibly empty)." }
         source: { type: string, description: Upstream set the label came from ("stellar-expert"). }
     Ledger:
       type: object
@@ -12585,7 +12585,7 @@ components:
         fee_charged: { type: integer }
         max_fee: { type: integer }
         operation_count: { type: integer }
-        successful: { type: boolean, description: Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record). }
+        successful: { type: boolean, description: "Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record)." }
         result_code: { type: integer, description: Raw XDR TransactionResultCode (0 = success; negatives are failure reasons). }
         result: { type: string, description: "Human-readable slug for result_code (e.g. tx_success, tx_failed, tx_insufficient_fee). Always present." }
         memo_type: { type: string, description: "Normalised: none|text|id|hash|return." }
@@ -12599,10 +12599,10 @@ components:
         tx_hash: { type: string }
         tx_index: { type: integer }
         op_index: { type: integer }
-        type: { type: string, description: snake_case op type (e.g. payment, manage_sell_offer). }
+        type: { type: string, description: "snake_case op type (e.g. payment, manage_sell_offer)." }
         source_account: { type: string }
-        fields: { type: object, additionalProperties: true, description: Decoded operation fields (amounts are strings, ADR-0003). }
-        raw_xdr: { type: string, description: Base64 body, present only for op types not yet field-decoded. }
+        fields: { type: object, additionalProperties: true, description: "Decoded operation fields (amounts are strings, ADR-0003)." }
+        raw_xdr: { type: string, description: "Base64 body, present only for op types not yet field-decoded." }
         transaction_successful:
           type: boolean
           description: |
@@ -12658,7 +12658,7 @@ components:
         event_type: { type: string }
         topic_0: { type: string }
         topics: { type: array, items: { type: string }, description: "Human-readable renderings of topics[1:] (topic_0 carries the symbol). Display format — lossy by design; addresses render as strkeys, i128 amounts as integers." }
-        data: { type: string, description: Human-readable rendering of the event data payload (display format, truncated for large values). }
+        data: { type: string, description: "Human-readable rendering of the event data payload (display format, truncated for large values)." }
     AccountTransactions:
       type: object
       description: |
@@ -12991,8 +12991,8 @@ components:
           description: The venue the trade executed on (sdex, aquarius, phoenix, comet).
         base_asset: { type: string, description: Canonical base asset id (native | CODE-ISSUER | C…). }
         quote_asset: { type: string, description: Canonical quote asset id. }
-        base_amount: { type: string, description: Decimal string, raw integer at the base asset's scale. }
-        quote_amount: { type: string, description: Decimal string, raw integer at the quote asset's scale. }
+        base_amount: { type: string, description: "Decimal string, raw integer at the base asset's scale." }
+        quote_amount: { type: string, description: "Decimal string, raw integer at the quote asset's scale." }
         usd_volume:
           type: string
           description: |
@@ -13082,7 +13082,7 @@ components:
         inferred from a short list.
       properties:
         edges: { type: array, items: { $ref: "#/components/schemas/AccountGraphEdge" } }
-        total: { type: integer, description: Exact number of inbound edges, independent of the cap. }
+        total: { type: integer, description: "Exact number of inbound edges, independent of the cap." }
         truncated: { type: boolean, description: True when `total` exceeds the served slice. }
       required: [edges, total, truncated]
     AccountGraphCreatedSide:
@@ -13110,7 +13110,7 @@ components:
         Nothing here is a live-state figure.
       properties:
         accounts: { type: integer }
-        sponsorships_started: { type: integer, description: Arrangements STARTED, never arrangements in force. }
+        sponsorships_started: { type: integer, description: "Arrangements STARTED, never arrangements in force." }
         revocations_issued:
           type: integer
           description: |
@@ -13201,7 +13201,7 @@ components:
         and no zero.
       properties:
         period: { type: string, description: "The month as YYYY-MM." }
-        period_start: { type: string, format: date-time, description: First instant of the month, UTC. }
+        period_start: { type: string, format: date-time, description: "First instant of the month, UTC." }
         new_accounts:
           type: integer
           description: |
@@ -13223,7 +13223,7 @@ components:
         entire history, not the returned points.
       properties:
         accounts: { type: integer, description: Distinct counterparties ever created or sponsored. }
-        events: { type: integer, description: Operations behind them — creations, or arrangements started. }
+        events: { type: integer, description: "Operations behind them — creations, or arrangements started." }
         events_placed: { type: integer, description: How many of `events` the points account for. }
         events_unplaced:
           type: integer
@@ -13361,8 +13361,8 @@ components:
         balance:
           type: string
           description: Decimal string in whole units (seven places for classic assets and pool shares; the contract's own smallest unit for a C… token).
-        price_usd: { type: string, description: The live USD rate used, when one exists. }
-        value_usd: { type: string, description: balance × price_usd, absent when unpriced. Never zero for an unpriced asset. }
+        price_usd: { type: string, description: "The live USD rate used, when one exists." }
+        value_usd: { type: string, description: "balance × price_usd, absent when unpriced. Never zero for an unpriced asset." }
       required: [asset, kind, holders, balance]
     AccountCohortValuation:
       type: object
@@ -13451,11 +13451,11 @@ components:
       properties:
         protocol: { type: string }
         position_kind: { type: string }
-        venue: { type: string, description: The venue contract (a pool, a vault, a stake contract). }
-        asset: { type: string, description: The position's asset, when denominated in one (absent for venue shares). }
+        venue: { type: string, description: "The venue contract (a pool, a vault, a stake contract)." }
+        asset: { type: string, description: "The position's asset, when denominated in one (absent for venue shares)." }
         asset_label: { type: string, description: A display label for `asset` where the lake can name it. }
         holders: { type: integer, format: int64 }
-        amount: { type: string, description: The fold's own unit summed across holders — a magnitude, not a settlement figure. }
+        amount: { type: string, description: "The fold's own unit summed across holders — a magnitude, not a settlement figure." }
       required: [protocol, position_kind, venue, holders, amount]
     AccountCohortCycle:
       type: object
