@@ -67,6 +67,9 @@ func (r *usdLegReader) RecentClosedSnapshots(
 }
 
 func brlCurrencies() *stubCurrenciesReader {
+	// UpdatedAt is "now" — these tests exercise the derivation itself,
+	// not the fx-cross staleness guard (see
+	// usd_anchored_fiat_cross_stale_test.go for that).
 	now := time.Now().UTC()
 	return &stubCurrenciesReader{
 		snap: &v1.CurrenciesSnapshot{

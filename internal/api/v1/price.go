@@ -1329,6 +1329,11 @@ func (s *Server) priceFallback(ctx context.Context, asset, quote canonical.Asset
 //     IS the answer, and crossing would loop),
 //   - the currencies reader isn't wired or hasn't warmed,
 //   - the quote currency carries no rate, or a non-positive one,
+//   - the FX leg (older of the snapshot publication time and the
+//     quote's own UpdatedAt) is older than [Server.fxCrossMaxAge] — a
+//     wedged or dead forex worker must not go on serving an ever-older
+//     BRL/JPY/… price forever with nothing but an operator alert to
+//     catch it,
 //   - the asset has no USD price at all.
 //
 // The second return is `withheld`, and it is the load-bearing part of
@@ -1370,7 +1375,7 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	// fxObservedAt is the FX leg's own freshness — the older of the
 	// snapshot's publication time and this ticker's own UpdatedAt (the
 	// same held-rate rule [tryFiatCrossRate] applies). An unboundedly
-	// stale rate must not serve at all (T650): [Cache.Latest] never
+	// stale rate must not serve at all (T650/T670): [Cache.Latest] never
 	// expires on its own, so without this bound a fx worker outage
 	// would keep answering forever from the last good fetch.
 	fxObservedAt := olderNonZero(fx.PublishedAt, rateUpdatedAt)
