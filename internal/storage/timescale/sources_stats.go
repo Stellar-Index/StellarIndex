@@ -40,7 +40,40 @@ type SourceStats struct {
 // SEP-41/SEP-41 swaps still contribute zero to the per-source
 // total — separate piece of work to wire per-token oracles.
 func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
-	const q = `
+	q := sourceStatsQuery()
+	rows, err := s.db.QueryContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: GetSourceStats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []SourceStats
+	for rows.Next() {
+		var ss SourceStats
+		if err := rows.Scan(
+			&ss.Source,
+			&ss.TradeCount24h,
+			&ss.VolumeUSD24h,
+			&ss.MarketsCount24h,
+		); err != nil {
+			return nil, fmt.Errorf("timescale: GetSourceStats scan: %w", err)
+		}
+		out = append(out, ss)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: GetSourceStats rows: %w", err)
+	}
+	return out, nil
+}
+
+// sourceStatsQuery builds GetSourceStats's query. canonBase/canonQuote
+// fold a market's two stored orientations (e.g. XLM/USDC and USDC/XLM)
+// into one per_pair group before the outer COUNT(*) turns groups into
+// markets_24h — see canonOrientSQL. Without this, a source that printed
+// the same market in both directions has its markets_24h inflated by
+// one per flipped pair.
+func sourceStatsQuery() string {
+	canonBase, canonQuote, _ := canonOrientSQL("base_asset", "quote_asset")
+	return `
 		WITH xlm_usd AS (
 		  SELECT vwap
 		    FROM prices_1m
@@ -76,8 +109,8 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 		       COUNT(*)::bigint         AS markets_24h
 		  FROM (
 		    SELECT source,
-		           base_asset,
-		           quote_asset,
+		           ` + canonBase + ` AS base_asset,
+		           ` + canonQuote + ` AS quote_asset,
 		           COUNT(*) AS pair_trades,
 		           SUM(
 		             CASE
@@ -92,33 +125,11 @@ func (s *Store) GetSourceStats(ctx context.Context) ([]SourceStats, error) {
 		           ) AS pair_volume
 		      FROM trades
 		     WHERE ts >= now() - INTERVAL '24 hours'
-		     GROUP BY source, base_asset, quote_asset
+		     GROUP BY source, ` + canonBase + `, ` + canonQuote + `
 		  ) per_pair
 		 GROUP BY source
 		 ORDER BY 2 DESC
 	`
-	rows, err := s.db.QueryContext(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: GetSourceStats: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out []SourceStats
-	for rows.Next() {
-		var ss SourceStats
-		if err := rows.Scan(
-			&ss.Source,
-			&ss.TradeCount24h,
-			&ss.VolumeUSD24h,
-			&ss.MarketsCount24h,
-		); err != nil {
-			return nil, fmt.Errorf("timescale: GetSourceStats scan: %w", err)
-		}
-		out = append(out, ss)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: GetSourceStats rows: %w", err)
-	}
-	return out, nil
 }
 
 // SourceVolumeBucket is one hour-resolution USD-volume datapoint

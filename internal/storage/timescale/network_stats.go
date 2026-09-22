@@ -51,23 +51,7 @@ type NetworkStats struct {
 // for distinct markets; one COUNT for classic_assets; one MAX for
 // the live cursor.
 func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
-	const q = `
-		SELECT
-		  (SELECT SUM(volume_usd)::text FROM prices_1m
-		    WHERE bucket >= now() - INTERVAL '24 hours'
-		      AND volume_usd IS NOT NULL)                      AS volume_24h_usd,
-		  (SELECT COUNT(*)::bigint FROM (
-		     SELECT DISTINCT base_asset, quote_asset FROM prices_1m
-		      WHERE bucket >= now() - INTERVAL '24 hours'
-		        AND volume_usd IS NOT NULL
-		   ) t)                                                AS markets_count_24h,
-		  (SELECT COUNT(*)::bigint FROM classic_assets)        AS assets_indexed,
-		  COALESCE(
-		    (SELECT MAX(last_ledger)::bigint FROM ingestion_cursors
-		      WHERE source <> 'backfill'),
-		    0
-		  )                                                    AS latest_ledger
-	`
+	q := networkStatsQuery()
 	var (
 		out    NetworkStats
 		volStr sql.NullString
@@ -85,4 +69,31 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 		out.Volume24hUSD = &v
 	}
 	return out, nil
+}
+
+// networkStatsQuery builds GetNetworkStats's query. canonBase/canonQuote
+// fold a market's two stored orientations (e.g. XLM/USDC and USDC/XLM)
+// into one row before counting distinct pairs — see canonOrientSQL.
+// Without this, a market that prices_1m recorded in both directions is
+// counted twice.
+func networkStatsQuery() string {
+	canonBase, canonQuote, _ := canonOrientSQL("base_asset", "quote_asset")
+	return `
+		SELECT
+		  (SELECT SUM(volume_usd)::text FROM prices_1m
+		    WHERE bucket >= now() - INTERVAL '24 hours'
+		      AND volume_usd IS NOT NULL)                      AS volume_24h_usd,
+		  (SELECT COUNT(*)::bigint FROM (
+		     SELECT DISTINCT ` + canonBase + ` AS base_asset, ` + canonQuote + ` AS quote_asset
+		       FROM prices_1m
+		      WHERE bucket >= now() - INTERVAL '24 hours'
+		        AND volume_usd IS NOT NULL
+		   ) t)                                                AS markets_count_24h,
+		  (SELECT COUNT(*)::bigint FROM classic_assets)        AS assets_indexed,
+		  COALESCE(
+		    (SELECT MAX(last_ledger)::bigint FROM ingestion_cursors
+		      WHERE source <> 'backfill'),
+		    0
+		  )                                                    AS latest_ledger
+	`
 }
