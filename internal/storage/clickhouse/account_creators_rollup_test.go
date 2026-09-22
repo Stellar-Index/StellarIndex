@@ -400,6 +400,41 @@ func TestCreatorsRollupJoinsOutsideTheWalk(t *testing.T) {
 	}
 }
 
+// TestCreatorsRollupLiveAccountsDedupeRecycledAddresses is the regression
+// guard for #541: account_creators_ops is one row per creation OPERATION,
+// so a creator that recycles one address (create -> merge -> create ...)
+// produces several rows sharing the same `created`. The board's
+// live_accounts/live_stroops must describe the SURVIVING SET — one row
+// per distinct (creator, created) pair — never the per-event population,
+// or a recycled address is counted, and its balance summed, once per
+// creation instead of once.
+func TestCreatorsRollupLiveAccountsDedupeRecycledAddresses(t *testing.T) {
+	board := creatorsRollupStatement(t, "account_creators_rollup_staging")
+
+	if !strings.Contains(board, "GROUP BY c.creator, c.created") {
+		t.Error("board does not collapse the live join to one row per (creator, created) pair " +
+			"before aggregating live_accounts/live_stroops; a recycled address is counted once per creation event")
+	}
+	if !strings.Contains(board, "uniqExactIf(created, is_live)") {
+		t.Error("live_accounts is not counted as a distinct-created-address aggregate " +
+			"(uniqExactIf over the deduped pairs); a recycled address inflates the count")
+	}
+	// The dedupe must be NESTED inside the live-join subquery, one level
+	// below its own outer per-creator aggregate: the join to the live
+	// account-entry population fans out one row per creation event, and
+	// only a GROUP BY on the pair BEFORE that outer aggregate collapses
+	// the fan-out before it reaches sum(live_stroops).
+	liveJoinAt := strings.Index(board, "uniqExactIf(created, is_live)")
+	dedupeAt := strings.Index(board, "GROUP BY c.creator, c.created")
+	outerGroupAt := strings.LastIndex(board, "GROUP BY creator")
+	if liveJoinAt == -1 || dedupeAt == -1 || outerGroupAt == -1 ||
+		!(liveJoinAt < dedupeAt && dedupeAt < outerGroupAt) {
+		t.Error("the (creator, created) dedupe must sit inside the live-join subquery, " +
+			"nested below its own outer per-creator GROUP BY, or the per-event fan-out " +
+			"survives into sum(live_stroops)")
+	}
+}
+
 // clampLedger guards the stats column's Int64 against values a ledger
 // sequence can never hold. Returning 0 routes them into the "warming"
 // branch instead of onto the wire as a coverage claim.
