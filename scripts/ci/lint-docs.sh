@@ -496,6 +496,11 @@ stale_patterns=(
                                   # fix; #1251 is now a real, unrelated open
                                   # issue (MEV arbitrage 2-venue guard /
                                   # USD-notional staleness), not that fix
+  "\(PR #1254\)"                 # dangling ref (RSWP-135) — CHANGELOG's
+                                  # explorer exchanges-chart error-state
+                                  # entry cited this as its shipping PR;
+                                  # #1254 is now a real, unrelated live issue
+                                  # (config-apply-gate refuted-arm gap)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
