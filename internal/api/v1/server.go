@@ -1882,7 +1882,7 @@ func (s *Server) Handler() http.Handler {
 	// the 308 carried no Access-Control-Allow-Origin, so a browser
 	// fetch of a trailing-slash URL died at the redirect — exactly
 	// as dead as the 404 this middleware exists to prevent.
-	stack = append(stack, middleware.TrailingSlashRedirect)
+	stack = append(stack, middleware.TrailingSlashRedirect(s.mux))
 	// RequestTimeout bounds every non-streaming request's context so
 	// EVERY handler inherits a deadline even when it forgets to wrap its
 	// own DB/ClickHouse read (C3-1/C3-2/P1, audit-2026-07-16).
