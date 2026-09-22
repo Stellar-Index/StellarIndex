@@ -3,9 +3,11 @@ import Link from 'next/link';
 
 import { buildFetchData, requireRows } from '@/lib/buildFetch';
 import {
+  formatBaseUnits,
   formatCompact,
   formatPairPrice,
   formatSubunitPrice,
+  scaleBaseUnits,
 } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { Container, Breadcrumbs } from '@/components/ui';
@@ -571,26 +573,14 @@ export default async function PairPage({ params }: { params: Params }) {
                         decimals /v1/history now resolves (the token
                         contract's declared decimals() for Soroban tokens),
                         falling back to 7 for native/classic/fiat where the
-                        field is omitted. */}
+                        field is omitted. formatBaseUnits divides via BigInt
+                        first (ADR-0003) so an i128-scale trade amount
+                        doesn't round through a Number()-then-divide. */}
                     <td className="text-ink-muted px-3 py-2 text-right tabular-nums">
-                      {t.base_amount
-                        ? (
-                            Number(t.base_amount) /
-                            10 ** (t.base_decimals ?? 7)
-                          ).toLocaleString('en-US', {
-                            maximumFractionDigits: 4,
-                          })
-                        : '—'}
+                      {formatBaseUnits(t.base_amount, t.base_decimals ?? 7)}
                     </td>
                     <td className="text-ink-muted px-3 py-2 text-right tabular-nums">
-                      {t.quote_amount
-                        ? (
-                            Number(t.quote_amount) /
-                            10 ** (t.quote_decimals ?? 7)
-                          ).toLocaleString('en-US', {
-                            maximumFractionDigits: 4,
-                          })
-                        : '—'}
+                      {formatBaseUnits(t.quote_amount, t.quote_decimals ?? 7)}
                     </td>
                   </tr>
                 ))}
@@ -781,7 +771,9 @@ function isUsdQuote(quote: string): boolean {
 // units, using the scale the API stated for it (F096). A bar that states
 // no scale renders as "—": the divisor is a property of the venues that
 // traded, so guessing one is how this panel came to overstate every
-// CEX-quoted pair tenfold. An em-dash is the honest answer.
+// CEX-quoted pair tenfold. An em-dash is the honest answer. Scaling goes
+// through scaleBaseUnits' BigInt-divide-first path (ADR-0003), not a bare
+// Number()-then-divide, so a volume above 2^53 doesn't round silently.
 function formatScaledAmount(
   raw: string,
   decimals: number | undefined,
@@ -790,9 +782,9 @@ function formatScaledAmount(
   if (decimals === undefined || !Number.isFinite(decimals) || decimals < 0) {
     return '—';
   }
-  const n = Number(raw);
-  if (!Number.isFinite(n)) return '—';
-  return formatQuoteAmount(n / 10 ** decimals, quote);
+  const n = scaleBaseUnits(raw, decimals);
+  if (n == null) return '—';
+  return formatQuoteAmount(n, quote);
 }
 
 function formatQuoteAmount(n: number, quote: string): string {
