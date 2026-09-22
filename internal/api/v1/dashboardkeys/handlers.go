@@ -127,7 +127,7 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // methods change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
-	idem := middleware.Idempotency(h.cfg.Logger, h.cfg.idempotency, sessionAccountSubject)
+	idem := middleware.Idempotency(h.cfg.idempotency, sessionAccountSubject)
 	mux.HandleFunc("GET /v1/dashboard/keys", h.HandleList)
 	mux.Handle("POST /v1/dashboard/keys", sameSite(idem(http.HandlerFunc(h.HandleCreate))))
 	mux.Handle("DELETE /v1/dashboard/keys/{id}", sameSite(http.HandlerFunc(h.HandleRevoke)))
