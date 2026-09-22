@@ -194,15 +194,32 @@ const LEDGER_FOLLOW_REFRESH_MS = 15_000;
  *
  * Keyed by `keyStr` rather than global, so panels following different
  * keys never throttle each other. The map holds one small entry per
- * distinct key, and the keys come from call sites in source — a bounded
- * set — so it does not grow with traffic or time.
+ * distinct key — but some call sites (AccountMovementsPanel) fold a
+ * runtime account id into the key, so the set of keys is NOT bounded by
+ * call sites alone: it grows with every distinct account a tab visits.
+ * `followKeyRefCount` below tracks how many mounted followers currently
+ * use each key, and the entry is evicted the moment that count hits
+ * zero, so the map's size tracks what's on screen, not lifetime traffic.
  */
 const lastFollowRefetchByKey = new Map<string, number>();
+
+/** Mounted-follower count per key — lets useLedgerFollow's cleanup evict
+ * `lastFollowRefetchByKey` entries only once nobody is watching that key
+ * anymore, instead of on every unmount of a possibly-shared key. */
+const followKeyRefCount = new Map<string, number>();
 
 /** Test hook: clear the shared throttle between cases. Mirrors
  * `resetStreamsForTest` in ./streams. */
 export function resetLedgerFollowThrottleForTest(): void {
   lastFollowRefetchByKey.clear();
+  followKeyRefCount.clear();
+}
+
+/** Test hook: current size of the throttle map, to prove it doesn't grow
+ * unboundedly as followers with distinct (e.g. id-bearing) keys mount and
+ * unmount (T306). */
+export function followThrottleSizeForTest(): number {
+  return lastFollowRefetchByKey.size;
 }
 
 /**
@@ -228,6 +245,24 @@ export function useLedgerFollow(
   // Serialise the key to a stable primitive so a fresh array literal
   // each render doesn't retrigger the effect; reconstruct inside.
   const keyStr = JSON.stringify(queryKey);
+
+  // Track this follower against the key's refcount, and evict the
+  // throttle entry once the last follower of it unmounts (or moves to a
+  // different key) — without this, an id-bearing key (an account page's
+  // G-strkey) leaves a permanent entry behind after every visit.
+  useEffect(() => {
+    followKeyRefCount.set(keyStr, (followKeyRefCount.get(keyStr) ?? 0) + 1);
+    return () => {
+      const remaining = (followKeyRefCount.get(keyStr) ?? 1) - 1;
+      if (remaining <= 0) {
+        followKeyRefCount.delete(keyStr);
+        lastFollowRefetchByKey.delete(keyStr);
+      } else {
+        followKeyRefCount.set(keyStr, remaining);
+      }
+    };
+  }, [keyStr]);
+
   useEffect(() => {
     // `enabled` lets a paginated panel follow the tip only on its first
     // page — a keyset walk into history must NOT be yanked back to the
