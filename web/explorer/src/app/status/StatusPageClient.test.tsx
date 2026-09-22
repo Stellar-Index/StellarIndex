@@ -623,6 +623,13 @@ describe('probeEndpoint body-shape check', () => {
     probe: { kind: 'get', path: '/v1/healthz' },
   };
 
+  const readyzEndpoint: PublicEndpoint = {
+    path: '/v1/readyz',
+    group: 'Health',
+    description: 'Readiness probe',
+    probe: { kind: 'get', path: '/v1/readyz' },
+  };
+
   it('reports error, not fast, for a 200 whose body is not a v1 envelope', async () => {
     vi.stubGlobal(
       'fetch',
@@ -655,5 +662,35 @@ describe('probeEndpoint body-shape check', () => {
     const result = await probeEndpoint(healthzEndpoint)();
 
     expect(result.kind).toBe('fast');
+  });
+
+  // RLT-468: computeReadyz (server.go) returns HTTP 200 with
+  // data.status="degraded" by design when a non-critical dependency
+  // fails (F-1275) — 503 is reserved for a critical failure. Reading
+  // `res.ok` alone can't distinguish that from a genuinely healthy
+  // readyz, so the badge used to render a green "fast"/"slow" tick
+  // for a degraded backend instead of a warning.
+  it('reports degraded, not fast, for a 200 readyz body reporting a non-critical failure', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: {
+                status: 'degraded',
+                uptime: '3h12m4s',
+                checks: [{ name: 'redis', ok: false, error: 'dial timeout' }],
+              },
+              as_of: '2026-01-01',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+
+    const result = await probeEndpoint(readyzEndpoint)();
+
+    expect(result.kind).toBe('degraded');
   });
 });
