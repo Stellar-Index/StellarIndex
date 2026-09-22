@@ -70,6 +70,7 @@ func TestSEP41_Compute_HappyPath(t *testing.T) {
 			AdminBalance:           bigInt(40_000_000),     //    4 sitting on admin
 			LockedAccountBalances:  bigInt(0),
 			LockedContractBalances: bigInt(0),
+			GenesisBaselineSeeded:  true,
 		},
 	}
 	c, err := supply.NewSEP41Computer(supply.Policy{}, reader)
@@ -211,8 +212,9 @@ func TestSEP41_Compute_GenesisBaselineMakesTotalPositive(t *testing.T) {
 // < boundary) into the Soroban-era totals (PG, ledger >= boundary) BEFORE
 // Compute runs, so the computer's guard operates purely on the already-folded
 // components — exactly what this exercises. A refactor that drops the
-// seeded-vs-unseeded distinction, lets a negative total through, or shifts a
-// positive total when a (zero) baseline is present regresses one of these rows.
+// seeded-vs-unseeded distinction, lets a negative total through, or lets an
+// UNSEEDED total of either sign publish instead of routing to the benign
+// missing-baseline outcome regresses one of these rows.
 func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 	asset := mustSoroban(t, validContractID)
 	// Both negative-total sentinels; a case's wantErr is one of these, and the
@@ -271,13 +273,16 @@ func TestSEP41_Compute_GenesisBaselineGuardMatrix(t *testing.T) {
 			wantTotal: bigInt(1_000_000_000),
 		},
 		{
-			// (d') the same token NOT seeded — identical published total.
-			// Proves the seeded flag alone never shifts a positive number.
-			name:      "d_prime_unseeded_positive_unchanged",
-			mint:      bigInt(1_000_000_000),
-			burn:      bigInt(0),
-			seeded:    false,
-			wantTotal: bigInt(1_000_000_000),
+			// (d') the same token NOT seeded — even though the Soroban-era-only
+			// total is positive, it's not the contract's lifetime total (T089):
+			// the pre-Soroban opening balance was never folded in. Must route to
+			// the same BENIGN missing-baseline outcome as a negative total, not
+			// publish a total that silently omits the unseeded baseline.
+			name:    "d_prime_unseeded_positive_missing_baseline",
+			mint:    bigInt(1_000_000_000),
+			burn:    bigInt(0),
+			seeded:  false,
+			wantErr: supply.ErrNegativeTotalMissingBaseline,
 		},
 	}
 	for _, tc := range cases {
@@ -338,6 +343,7 @@ func TestSEP41_Compute_LockedSetForwarded(t *testing.T) {
 			AdminBalance:           bigInt(0),
 			LockedAccountBalances:  bigInt(100),
 			LockedContractBalances: bigInt(50),
+			GenesisBaselineSeeded:  true,
 		},
 	}
 	policy := supply.Policy{
@@ -374,6 +380,7 @@ func TestSEP41_Compute_MaxSupplyOverride(t *testing.T) {
 		comps: supply.SEP41SupplyComponents{
 			MintTotal: bigInt(0), BurnTotal: bigInt(0), ClawbackTotal: bigInt(0),
 			AdminBalance: bigInt(0), LockedAccountBalances: bigInt(0), LockedContractBalances: bigInt(0),
+			GenesisBaselineSeeded: true,
 		},
 	}
 	policy := supply.Policy{
@@ -432,6 +439,7 @@ func TestSEP41_Compute_ZeroSupplyTokenIsValid(t *testing.T) {
 			AdminBalance:           bigInt(0),
 			LockedAccountBalances:  bigInt(0),
 			LockedContractBalances: bigInt(0),
+			GenesisBaselineSeeded:  true,
 		},
 	}
 	c, _ := supply.NewSEP41Computer(supply.Policy{}, reader)
