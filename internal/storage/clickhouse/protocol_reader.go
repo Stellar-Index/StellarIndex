@@ -120,23 +120,59 @@ func (r *ExplorerReader) LakeTipLedger(ctx context.Context) (uint32, error) {
 	return tip, nil
 }
 
-// LakeWatermark returns the lake's captured tip — the highest ledger_seq in
-// stellar.ledgers plus that ledger's close time (ADR-0041 Decision 4: lake
-// reads carry their watermark). API handlers surface the ledger as
+// lakeWatermarkGapWindow bounds how far below the raw max(ledger_seq)
+// LakeWatermark looks for a contiguity hole. The live dual-sink (LiveSink)
+// only drops ledgers NEAR the tip under buffer pressure, self-healed by the
+// ~10-minute ch-live-catchup timer (internal/config Config.ClickHouseLiveSink
+// doc); certifying the FULL genesis-to-tip range on every watermark refresh
+// would repeat the substrate audit's own CH query-memory-cap problem (see
+// substrateWindow) on a path the API caches and re-runs every
+// lakeWatermarkTTL. 10,000 ledgers (~14h at the ~5s close cadence) is many
+// multiples of both the catch-up heal time and ADR-0041 Decision 3's 1h page
+// threshold, so an unhealed hole cannot silently age out of the window.
+const lakeWatermarkGapWindow = 10_000
+
+// LakeWatermark returns the lake's CONTIGUOUS captured tip — the highest
+// ledger_seq with no hole between it and lakeWatermarkGapWindow ledgers
+// below the raw max — plus that ledger's close time (ADR-0041 Decision 4:
+// lake reads carry their watermark). API handlers surface the ledger as
 // `as_of_ledger` and compare the close time against now for the
-// `flags.stale` signal. Cheap (small ledgers table), but the API layer still
-// caches it (v1's lakeWatermarkTTL) so per-request reads never fan out to
-// ClickHouse.
+// `flags.stale` signal.
+//
+// Using the raw max(ledger_seq) here (as before) lets `as_of_ledger` point
+// PAST a live-sink drop: LiveSink is best-effort and silently drops whole
+// ledgers under buffer pressure, so the highest ledger_seq present is not
+// always the highest ledger CERTIFIED complete. A consumer trusting
+// `as_of_ledger` as "everything up to here is captured" would be wrong for
+// exactly the ledgers a hole is hiding. contiguousWatermarkOn (the same
+// query the real-time projector clamps reads to, ContiguousWatermark) finds
+// the true contiguous tip; the API layer still caches the result (v1's
+// lakeWatermarkTTL) so per-request reads never fan out to ClickHouse.
 func (r *ExplorerReader) LakeWatermark(ctx context.Context) (uint32, time.Time, error) {
-	var (
-		tip      uint32
-		closedAt time.Time
-	)
-	const q = `SELECT max(ledger_seq), max(close_time) FROM stellar.ledgers`
-	if err := r.conn.QueryRow(ctx, q).Scan(&tip, &closedAt); err != nil {
+	var rawTip uint32
+	if err := r.conn.QueryRow(ctx, `SELECT max(ledger_seq) FROM stellar.ledgers`).Scan(&rawTip); err != nil {
+		return 0, time.Time{}, fmt.Errorf("clickhouse: lake watermark: raw tip: %w", err)
+	}
+	if rawTip == 0 {
+		return 0, time.Time{}, nil
+	}
+	from := uint32(1)
+	if rawTip > lakeWatermarkGapWindow {
+		from = rawTip - lakeWatermarkGapWindow
+	}
+	wm, err := contiguousWatermarkOn(ctx, r.conn, from)
+	if err != nil {
 		return 0, time.Time{}, fmt.Errorf("clickhouse: lake watermark: %w", err)
 	}
-	return tip, closedAt, nil
+	if wm == 0 {
+		return 0, time.Time{}, nil
+	}
+	var closedAt time.Time
+	const closedAtQ = `SELECT max(close_time) FROM stellar.ledgers WHERE ledger_seq = ?`
+	if err := r.conn.QueryRow(ctx, closedAtQ, wm).Scan(&closedAt); err != nil {
+		return 0, time.Time{}, fmt.Errorf("clickhouse: lake watermark: close time at %d: %w", wm, err)
+	}
+	return wm, closedAt, nil
 }
 
 // ProtocolEventBreakdown returns the event-type distribution (topic[0] symbol →
