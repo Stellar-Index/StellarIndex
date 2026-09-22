@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Suspense } from 'react';
 import { ExternalLink } from 'lucide-react';
 
 import { Panel } from '@/components/reveal';
@@ -8,6 +9,7 @@ import { buildFetchData, failBuild } from '@/lib/buildFetch';
 import { SITE_OG_IMAGES, SITE_TWITTER_IMAGES } from '@/lib/seo';
 import type { paths } from '@/api/types';
 
+import { LendingPoolPathView } from './LendingPoolPathView';
 import { PoolReserves } from './PoolReserves';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -103,7 +105,7 @@ export async function generateStaticParams() {
     .map((p) => ({ pool: p.pool ?? '' }))
     .filter((p) => p.pool);
   const seen = new Set<string>();
-  const merged = [...fromAPI, ...curatedKeys].filter((p) => {
+  const merged = [...fromAPI, ...curatedKeys, { pool: 'shell' }].filter((p) => {
     if (seen.has(p.pool)) return false;
     seen.add(p.pool);
     return true;
@@ -117,6 +119,22 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { pool } = await params;
+  // T278: the runtime-fallback shell's baked HTML serves for ARBITRARY
+  // pools outside the build-time pre-render (see LendingPoolPathView),
+  // so its metadata must be generic rather than titled "shell", noindex
+  // (this one document answers 200 for every unmatched /lending/* path),
+  // and must declare its own empty `alternates` — omitting the key would
+  // inherit the root layout's canonical rather than clearing it (same
+  // F095 fix already applied to /assets/shell and /markets/shell).
+  if (pool.toLowerCase() === 'shell') {
+    return {
+      title: 'Lending pool',
+      description:
+        'Blend lending-pool detail, rendered live from the Stellar Index API.',
+      robots: { index: false, follow: true },
+      alternates: {},
+    };
+  }
   const label =
     BLEND_POOL_LABELS[pool]?.name ?? `${pool.slice(0, 6)}…${pool.slice(-6)}`;
   const canonical = `${CURRENT_NETWORK.explorerUrl}/lending/${pool}`;
@@ -175,6 +193,22 @@ async function fetchPool(
 
 export default async function LendingPoolPage({ params }: { params: Params }) {
   const { pool } = await params;
+  // T278: functions/lending/[[path]].js serves this same built HTML for
+  // any /lending/* pool id outside the pre-render set above — a pool
+  // deployed by the Blend factory between builds otherwise hard-404'd on
+  // the static host. Case-insensitive to match the sentinel every other
+  // long-tail shell accepts (assets/markets emit case variants of every
+  // real slug; lending pool ids are uppercase-only, so this only ever
+  // matches the literal sentinel).
+  if (pool.toLowerCase() === 'shell') {
+    return (
+      <Container className="space-y-6 py-8">
+        <Suspense fallback={null}>
+          <LendingPoolPathView />
+        </Suspense>
+      </Container>
+    );
+  }
   const { listed, row: data } = await fetchPool(pool);
   const label = BLEND_POOL_LABELS[pool];
   if (!data && !label) {
