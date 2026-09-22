@@ -28583,8 +28583,8 @@ rc.48 deploy to R1.
   `/dexes/{source}`, `/lending/{pool}`, `/convert/{from}/{to}`.
   Lets Google render the breadcrumb hierarchy under the title in
   search results (Home → Issuers → Circle, etc.). Same shape as
-  the existing JSON-LD on `/assets/{slug}` and `/markets/{pair}`
-  per #948 — expands SEO coverage from 3 → 9 detail pages.
+  the existing JSON-LD on `/assets/{slug}` and `/markets/{pair}` —
+  expands SEO coverage from 3 → 9 detail pages.
 
 ### Changed
 
