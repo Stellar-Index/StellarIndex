@@ -28018,7 +28018,7 @@ rc.48 deploy to R1.
   status.stellarindex.io" panel — operators investigating a
   user-reported "exchange page is broken" can now distinguish
   data gap from infra gap at a glance. Same silent-drop family
-  as the home-page fixes shipped in #1251. (PR #1254)
+  as the home-page fixes shipped earlier. (PR #1254)
 - **Kraken dust trades now use the typed `ErrDustTrade` sentinel**
   — extends the Coinbase / Binance / Bitstamp dust-filter pattern
   to Kraken. Before this PR the live `parse.go` path
