@@ -110,13 +110,31 @@ export function useLedgerStream(
   return frame ? { data: frame.data.data, receivedAt: frame.receivedAt } : null;
 }
 
+/** Subset of the server's envelope `flags` block that the tip stream
+ * actually populates (internal/api/v1/price_tip_stream.go's
+ * `tipStreamPayload`) — divergence/frozen verdicts a consumer needs to
+ * decide whether to trust or caveat a live tick. */
+export interface LiveTipFlags {
+  divergence_warning?: boolean;
+  divergence_checked?: boolean;
+  frozen?: boolean;
+  frozen_checked?: boolean;
+  single_source?: boolean;
+}
+
 /** Payload of a /v1/price/tip/stream `tip_update` frame — the same
  * flattened envelope as GET /v1/price/tip (ADR-0003: prices are
  * decimal STRINGS). */
 export interface LiveTip {
-  data: { price: string; price_type?: string; window_seconds?: number };
+  data: {
+    price: string;
+    price_type?: string;
+    window_seconds?: number;
+    observed_at?: string;
+  };
   as_of: string;
   sources?: string[];
+  flags?: LiveTipFlags;
 }
 
 /**
