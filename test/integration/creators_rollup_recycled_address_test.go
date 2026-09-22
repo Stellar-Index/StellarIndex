@@ -133,7 +133,7 @@ func TestCreatorsRollup_RecycledAddressCountsOnce(t *testing.T) {
 	var (
 		accountsCreated uint64
 		liveAccounts    uint64
-		liveStroops     int64
+		liveStroops     big.Int
 	)
 	const q = `SELECT accounts_created, live_accounts, live_stroops
 		FROM stellar.account_creators_rollup
@@ -153,7 +153,7 @@ func TestCreatorsRollup_RecycledAddressCountsOnce(t *testing.T) {
 	if liveAccounts != 1 {
 		t.Errorf("live_accounts = %d, want 1 (one surviving address recycled twice, not 2)", liveAccounts)
 	}
-	if liveStroops != balance {
-		t.Errorf("live_stroops = %d, want %d (the address's one true balance, not summed once per creation event)", liveStroops, balance)
+	if liveStroops.Cmp(big.NewInt(balance)) != 0 {
+		t.Errorf("live_stroops = %s, want %d (the address's one true balance, not summed once per creation event)", liveStroops.String(), balance)
 	}
 }
