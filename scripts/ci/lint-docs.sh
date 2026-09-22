@@ -522,6 +522,11 @@ stale_patterns=(
                                   # number that never existed; #1225 is now
                                   # a real, unrelated open issue (test-vacuity
                                   # residue across several endpoints)
+  "#1368\b"                      # dangling ref (RSWP-148) — STATUS.md's
+                                  # tooling-groups deferral cited this as a
+                                  # tracking issue before it existed; #1368
+                                  # is now a real, unrelated closed PR
+                                  # (W3 remediation slice 05)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
