@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 )
 
@@ -82,7 +84,14 @@ func ContiguousWatermark(ctx context.Context, addr string, from uint32) (uint32,
 		return 0, err
 	}
 	defer func() { _ = conn.Close() }()
+	return contiguousWatermarkOn(ctx, conn, from)
+}
 
+// contiguousWatermarkOn is [ContiguousWatermark]'s query, factored out to run
+// on a caller-owned connection instead of opening a fresh one — used by
+// ExplorerReader.LakeWatermark (ADR-0041 Decision 4), which already holds a
+// pooled conn and refreshes on a cache TTL, not per dial.
+func contiguousWatermarkOn(ctx context.Context, conn driver.Conn, from uint32) (uint32, error) {
 	// ch_max: highest ledger present in the lake.
 	// first_gap_start: the lowest missing ledger >= from (0 when there is none).
 	// min_present: the lowest ledger present >= from (0 when none is >= from).
