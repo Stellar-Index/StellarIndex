@@ -276,7 +276,10 @@ export function AssetSwap({
   const [edited, setEdited] = useState<'from' | 'to'>('from');
   const [picker, setPicker] = useState<'from' | 'to' | null>(null);
 
-  const fiatTokens = useFiatTokens();
+  // Fiat rates are only needed once the picker is open to offer them, so the
+  // batch fetch (and its 5-minute poll) stays off until then instead of
+  // running unconditionally for every swap-widget mount.
+  const fiatTokens = useFiatTokens(picker !== null);
 
   // The leg that still IS the page asset always reflects the live prop price;
   // any other leg uses its captured price. Deriving this at render keeps the
@@ -716,10 +719,10 @@ function TokenPicker({
 // ── Data ─────────────────────────────────────────────────────────────────
 // The forex batch → fiat SwapTokens (USD per unit is exactly what the batch
 // returns: 1 fiat:EUR = X USD). USD is prepended with price 1.
-function useFiatTokens(): SwapToken[] {
+function useFiatTokens(enabled: boolean): SwapToken[] {
   const fx = useQuery<SwapToken[]>({
     queryKey: ['/v1/price/batch', 'swapFiat'],
-    enabled: CURRENT_NETWORK.pricing,
+    enabled: enabled && CURRENT_NETWORK.pricing,
     queryFn: async () => {
       // GET /v1/price/batch caps at 100 asset_ids, so the list is split into
       // ≤100-id chunks fetched in parallel and merged. GET (not POST) keeps the
