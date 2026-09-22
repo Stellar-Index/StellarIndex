@@ -217,7 +217,11 @@ func runVerifyHashDBRange(ctx context.Context, cfgPath string, from, to uint32) 
 	}()
 
 	archiveCfg := pipeline.LedgerstreamConfig(cfg, cfg.Storage.S3BucketArchive)
-	outcome := hashDBVerifyPass(ctx, logger, verifyDB, archiveCfg, from, to)
+	// nil dedup set: this is a single explicit operator-run pass, not
+	// startHashDBVerifier's recurring overlapping sweep — see
+	// countNewDrift's doc for why the periodic path needs one and this
+	// one-off path doesn't.
+	outcome := hashDBVerifyPass(ctx, logger, verifyDB, archiveCfg, from, to, nil)
 	if outcome != sweepOutcomeOK {
 		return fmt.Errorf("verify-hashdb-range: sweep did not complete cleanly (outcome=%d) — see log for detail", outcome)
 	}
@@ -2303,6 +2307,15 @@ func startHashDBVerifier(
 	ctx, cancel := context.WithCancel(parent)
 	done := make(chan struct{})
 
+	// Q109: consecutive sweep ticks re-read an overlapping trailing
+	// window by construction (see the ticker comment below), so a
+	// still-drifted ledger is observed — and would otherwise be
+	// counted — on every tick it falls inside, not once. seenDrifted
+	// is this single goroutine's record of ledger sequences already
+	// tallied into HashdbDriftTotal, so the counter reflects distinct
+	// drifted ledgers rather than drift observations.
+	seenDrifted := make(map[uint32]struct{})
+
 	go func() {
 		defer close(done)
 		// RECOVER (#368 M4). The sweep re-marshals arbitrary archived
@@ -2321,7 +2334,7 @@ func startHashDBVerifier(
 		for {
 			select {
 			case <-ticker.C:
-				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, lastAppended, window)
+				hashDBVerifySweep(ctx, logger, verifyDB, lsCfg, lastAppended, window, seenDrifted)
 			case <-ctx.Done():
 				return
 			}
@@ -2354,6 +2367,7 @@ func hashDBVerifySweep(
 	lsCfg ledgerstream.Config,
 	lastAppended *atomic.Uint32,
 	window uint32,
+	seenDrifted map[uint32]struct{},
 ) {
 	tip := lastAppended.Load()
 	if tip <= hashDBVerifySafetyMargin {
@@ -2371,7 +2385,7 @@ func hashDBVerifySweep(
 		return
 	}
 
-	hashDBVerifyPass(ctx, logger, verifyDB, lsCfg, from, to)
+	hashDBVerifyPass(ctx, logger, verifyDB, lsCfg, from, to, seenDrifted)
 }
 
 // hashDBVerifyPass runs one bounded ADR-0016 verify pass over an explicit
@@ -2383,12 +2397,41 @@ func hashDBVerifySweep(
 // Before this split there was no way to verify or bootstrap an arbitrary
 // older range: the only entry point recomputed [from, to] itself from the
 // indexer's own live tip every tick.
+// countNewDrift returns how many of res's drifted ledgers have not
+// already been counted into HashdbDriftTotal, marking the new ones
+// seen in the process. seen is nil for a one-off, non-repeating pass
+// (runVerifyHashDBRange's CLI mode) — there every drifted ledger is
+// new by definition, so the raw count is returned unchanged. For the
+// periodic sweep (Q109), consecutive ticks re-read an overlapping
+// trailing window, so without dedup a still-drifted ledger inflates
+// the counter on every tick it remains inside the window.
+func countNewDrift(res archivecompleteness.HashDBVerifyResult, seen map[uint32]struct{}) int {
+	if seen == nil {
+		return res.Drifted
+	}
+	newly := 0
+	for _, seq := range res.DriftSeqs {
+		if _, ok := seen[seq]; !ok {
+			seen[seq] = struct{}{}
+			newly++
+		}
+	}
+	if excess := res.Drifted - len(res.DriftSeqs); excess > 0 {
+		// DriftSeqs is capped (MaxHashDBDriftSeqsReported); beyond the
+		// cap individual sequences aren't identifiable to dedupe, so
+		// count them raw rather than dropping a real drift signal.
+		newly += excess
+	}
+	return newly
+}
+
 func hashDBVerifyPass(
 	ctx context.Context,
 	logger *slog.Logger,
 	verifyDB *hashdb.DB,
 	lsCfg ledgerstream.Config,
 	from, to uint32,
+	seenDrifted map[uint32]struct{},
 ) hashDBVerifySweepOutcome {
 	// Stream STRICT: the shared live-tail config tolerates
 	// trailing-missing objects (a live reader racing galexie's upload
@@ -2428,7 +2471,7 @@ func hashDBVerifyPass(
 		// not suppress it.
 		obs.HashdbVerifyRunsTotal.WithLabelValues("drift").Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("drift").Observe(dur)
-		obs.HashdbDriftTotal.Add(float64(res.Drifted))
+		obs.HashdbDriftTotal.Add(float64(countNewDrift(res, seenDrifted)))
 		// Loud: this is the ledger-63332650-class incident — see
 		// docs/operations/runbooks/hashdb-drift-detected.md.
 		logger.Error("hashdb DRIFT DETECTED — upstream history rewritten or lake object corrupted",

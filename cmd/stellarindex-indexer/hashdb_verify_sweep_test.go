@@ -79,3 +79,60 @@ func TestClassifyHashDBVerifySweep_IncompleteWithoutError(t *testing.T) {
 		t.Fatalf("classifyHashDBVerifySweep() = %v, want sweepOutcomeIncomplete", got)
 	}
 }
+
+// TestCountNewDrift_DedupesAcrossOverlappingWindows is Q109: two
+// consecutive periodic sweeps whose trailing windows overlap (the
+// normal case — see startHashDBVerifier's ticker comment) both
+// observe the same still-drifted ledger. Without dedup, the second
+// sweep would re-add it to HashdbDriftTotal even though it is not a
+// newly discovered drifted ledger.
+func TestCountNewDrift_DedupesAcrossOverlappingWindows(t *testing.T) {
+	seen := make(map[uint32]struct{})
+
+	first := archivecompleteness.HashDBVerifyResult{
+		Drifted:   1,
+		DriftSeqs: []uint32{102},
+	}
+	if got := countNewDrift(first, seen); got != 1 {
+		t.Fatalf("countNewDrift(first sweep) = %d, want 1 (first observation)", got)
+	}
+
+	// Second tick's window overlaps the first and re-observes ledger
+	// 102 (still drifted) plus one genuinely new drifted ledger, 108.
+	second := archivecompleteness.HashDBVerifyResult{
+		Drifted:   2,
+		DriftSeqs: []uint32{102, 108},
+	}
+	if got := countNewDrift(second, seen); got != 1 {
+		t.Fatalf("countNewDrift(second sweep) = %d, want 1 — ledger 102 was already counted, only 108 is new", got)
+	}
+}
+
+// TestCountNewDrift_NilSeenCountsRaw pins the one-off
+// runVerifyHashDBRange CLI path: a single explicit pass has no
+// repeat-observation problem to dedupe, so the raw Drifted count
+// passes through unchanged.
+func TestCountNewDrift_NilSeenCountsRaw(t *testing.T) {
+	res := archivecompleteness.HashDBVerifyResult{
+		Drifted:   3,
+		DriftSeqs: []uint32{10, 11, 12},
+	}
+	if got := countNewDrift(res, nil); got != 3 {
+		t.Fatalf("countNewDrift(nil seen) = %d, want 3 (raw count)", got)
+	}
+}
+
+// TestCountNewDrift_ExcessBeyondCapCountsRaw pins the capped-DriftSeqs
+// edge case: Drifted can exceed len(DriftSeqs) once
+// MaxHashDBDriftSeqsReported is hit. The un-identifiable excess must
+// still be counted rather than silently dropped.
+func TestCountNewDrift_ExcessBeyondCapCountsRaw(t *testing.T) {
+	seen := make(map[uint32]struct{})
+	res := archivecompleteness.HashDBVerifyResult{
+		Drifted:   5,
+		DriftSeqs: []uint32{1, 2}, // capped sample, true count is 5
+	}
+	if got := countNewDrift(res, seen); got != 5 {
+		t.Fatalf("countNewDrift(capped) = %d, want 5 (2 identified + 3 excess)", got)
+	}
+}
