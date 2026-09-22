@@ -1,0 +1,149 @@
+---
+# promtool unit tests for three of the four staleness alerts added under
+# T586 — stellarindex_patroni_textfile_stale (storage.yml),
+# stellarindex_redis_sentinel_textfile_stale (cache.yml) and
+# stellarindex_keepalived_textfile_stale (infra.yml). The fourth,
+# stellarindex_ch_schema_drift_stale (a daily-cadence, 36h-threshold
+# alert), needs a coarser top-level evaluation_interval than these
+# 30s-cadence ones share — see ch-schema-drift-stale_test.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/textfile-staleness-t586_test.yml
+#
+# Same shape as config-assertions_test.yml (W5-mon): node_exporter
+# re-serves a textfile's last values on every scrape regardless of
+# whether the producer that writes it is still running, so a metric
+# reported BY the producer (e.g. stellarindex_patroni_running) cannot
+# see its own scraper die. Each case below freezes
+# node_textfile_mtime_seconds at t=60m (the timer stops rewriting the
+# file) while the producer's own gauge stays present and unchanged —
+# the exact pre-fix blind spot — and shows the alert fires once
+# time()-mtime crosses the threshold and holds past `for`.
+
+rule_files:
+  - ../rules/storage.yml
+  - ../rules/cache.yml
+  - ../rules/infra.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── patroni: 30s timer, storage.yml ───────────────────────────────
+  - interval: 1m
+    name: a dead patroni-textfile-scraper timer trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="patroni.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x60 3600+0x60'
+      - series: 'stellarindex_patroni_running{instance="r1:9100",job="node_exporter"}'
+        values: '1+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_patroni_textfile_stale
+        exp_alerts:
+          - exp_labels:
+              file: patroni.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/patroni-textfile-stale.md
+              summary: "patroni-textfile-scraper has not run for 10m on r1:9100"
+              description: |
+                patroni.prom has not been rewritten in 10+ minutes despite
+                a 30s timer. stellarindex_patroni_role and
+                stellarindex_patroni_running are reading a frozen file, not
+                live cluster state. `systemctl status
+                patroni-textfile-scraper.timer`.
+
+  - interval: 1m
+    name: a live patroni-textfile-scraper timer never trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="patroni.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x120'
+      - series: 'stellarindex_patroni_running{instance="r1:9100",job="node_exporter"}'
+        values: '1+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_patroni_textfile_stale
+        exp_alerts: []
+
+  # ── redis-sentinel: 30s timer, cache.yml ──────────────────────────
+  - interval: 1m
+    name: a dead redis-sentinel-textfile-scraper timer trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="redis_sentinel.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x60 3600+0x60'
+      - series: 'stellarindex_redis_sentinel_primary{instance="r1:9100",job="node_exporter"}'
+        values: '1+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_redis_sentinel_textfile_stale
+        exp_alerts:
+          - exp_labels:
+              file: redis_sentinel.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: cache
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/redis-sentinel-textfile-stale.md
+              summary: "redis-sentinel-textfile-scraper has not run for 10m on r1:9100"
+              description: |
+                redis_sentinel.prom has not been rewritten in 10+ minutes
+                despite a 30s timer. stellarindex_redis_sentinel_primary is
+                reading a frozen file, not live Sentinel state. `systemctl
+                status redis-sentinel-textfile-scraper.timer`.
+
+  - interval: 1m
+    name: a live redis-sentinel-textfile-scraper timer never trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="redis_sentinel.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x120'
+      - series: 'stellarindex_redis_sentinel_primary{instance="r1:9100",job="node_exporter"}'
+        values: '1+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_redis_sentinel_textfile_stale
+        exp_alerts: []
+
+  # ── keepalived: 30s timer, infra.yml ──────────────────────────────
+  - interval: 1m
+    name: a dead keepalived-textfile-scraper timer trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="keepalived.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x60 3600+0x60'
+      - series: 'stellarindex_haproxy_vip_owner{instance="r1:9100",job="node_exporter"}'
+        values: '1+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_keepalived_textfile_stale
+        exp_alerts:
+          - exp_labels:
+              file: keepalived.prom
+              instance: r1:9100
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/keepalived-textfile-stale.md
+              summary: "keepalived-textfile-scraper has not run for 10m on r1:9100"
+              description: |
+                keepalived.prom has not been rewritten in 10+ minutes
+                despite a 30s timer. stellarindex_haproxy_vip_owner is
+                reading a frozen file, not live VRRP state. `systemctl
+                status keepalived-textfile-scraper.timer`.
+
+  - interval: 1m
+    name: a live keepalived-textfile-scraper timer never trips stale
+    input_series:
+      - series: 'node_textfile_mtime_seconds{file="keepalived.prom",instance="r1:9100",job="node_exporter"}'
+        values: '0+60x120'
+      - series: 'stellarindex_haproxy_vip_owner{instance="r1:9100",job="node_exporter"}'
+        values: '1+0x120'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_keepalived_textfile_stale
+        exp_alerts: []

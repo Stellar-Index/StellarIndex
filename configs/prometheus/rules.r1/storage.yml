@@ -82,6 +82,31 @@ groups:
             are being held back until it catches up — look for saturation on
             the replica.
 
+      # T586: patroni-textfile-scraper.timer runs every 30s
+      # (OnUnitActiveSec=30s, patroni role 11-monitoring.yml) and
+      # node_exporter re-serves patroni.prom's last values on every
+      # scrape regardless of whether the timer is still alive — the
+      # same frozen-file class stellarindex_config_assertions_stale
+      # exists for above. stellarindex_patroni_role/_running alone
+      # cannot see a dead scraper, only a scraper that ran and
+      # reported. 10m tolerates ~20 missed 30s runs before paging.
+      - alert: stellarindex_patroni_textfile_stale
+        expr: time() - node_textfile_mtime_seconds{file="patroni.prom"} > 600
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/patroni-textfile-stale.md
+          summary: "patroni-textfile-scraper has not run for 10m on {{ $labels.instance }}"
+          description: |
+            patroni.prom has not been rewritten in 10+ minutes despite
+            a 30s timer. stellarindex_patroni_role and
+            stellarindex_patroni_running are reading a frozen file, not
+            live cluster state. `systemctl status
+            patroni-textfile-scraper.timer`.
+
       # F-1251 (audit-2026-05-12): lock-table headroom. The
       # 2026-05-06 SEV-3 hit `out of shared memory (53200)` when
       # the per-tx lock table saturated under concurrent ingest

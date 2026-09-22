@@ -357,3 +357,26 @@ groups:
 
             `systemctl status {{ $labels.name }}` then
             `journalctl -u {{ $labels.name }} --since -24h` for the cause.
+
+      # T586: keepalived-textfile-scraper.timer runs every 30s
+      # (OnUnitActiveSec=30s, haproxy role 07-monitoring.yml) and
+      # node_exporter re-serves keepalived.prom's last value on every
+      # scrape regardless of whether the timer is still alive — the
+      # same frozen-file class stellarindex_config_assertions_stale
+      # exists for. stellarindex_haproxy_vip_owner alone cannot see a
+      # dead scraper. 10m tolerates ~20 missed 30s runs before paging.
+      - alert: stellarindex_keepalived_textfile_stale
+        expr: time() - node_textfile_mtime_seconds{file="keepalived.prom"} > 600
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: infra
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/keepalived-textfile-stale.md
+          summary: "keepalived-textfile-scraper has not run for 10m on {{ $labels.instance }}"
+          description: |
+            keepalived.prom has not been rewritten in 10+ minutes
+            despite a 30s timer. stellarindex_haproxy_vip_owner is
+            reading a frozen file, not live VRRP state. `systemctl
+            status keepalived-textfile-scraper.timer`.
