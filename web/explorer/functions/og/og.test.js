@@ -27,7 +27,8 @@ vi.mock('workers-og', () => ({
   },
 }));
 
-const { onRequest, liveSubline, TYPE_LABEL } = await import('./[[path]].js');
+const { onRequest, liveSubline, TYPE_LABEL, resetUpstreamBreakerForTest } =
+  await import('./[[path]].js');
 
 function makeContext(pathname, env = {}) {
   return { request: new Request(`https://stellarindex.io${pathname}`), env };
@@ -90,6 +91,46 @@ describe('og function — id length bound (input-validation)', () => {
     expect(res.status).toBe(404);
     expect(fetchSpy).not.toHaveBeenCalled();
     fetchSpy.mockRestore();
+  });
+});
+
+describe('og function — 404 responses are cacheable (F101)', () => {
+  it('sets a public cache-control header on an unknown-type 404', async () => {
+    const res = await onRequest(makeContext('/og/bogus-type/whatever'));
+    expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toMatch(/public/);
+  });
+
+  it('sets a public cache-control header on an oversized-id 404', async () => {
+    const hugeId = 'a'.repeat(500);
+    const res = await onRequest(makeContext(`/og/assets/${hugeId}`));
+    expect(res.status).toBe(404);
+    expect(res.headers.get('cache-control')).toMatch(/public/);
+  });
+});
+
+describe('liveSubline — upstream circuit breaker (F101)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    resetUpstreamBreakerForTest();
+  });
+
+  it('stops calling a repeatedly-failing upstream after the failure threshold', async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('boom', { status: 500 }));
+    const id = 'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+
+    // Drive the breaker past its threshold with real upstream failures.
+    for (let i = 0; i < 5; i += 1) {
+      await liveSubline('markets', id);
+    }
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
+
+    // The next call should short-circuit: no further network call made.
+    const result = await liveSubline('markets', id);
+    expect(result).toBeNull();
+    expect(fetchSpy).toHaveBeenCalledTimes(5);
   });
 });
 

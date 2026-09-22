@@ -51,6 +51,38 @@ const MAX_ID_LENGTH = 160;
 // arbitrary attacker-controlled text (markup, whitespace, path traversal).
 const ASSET_LEG_RE = /^[A-Za-z0-9_:-]{1,80}$/;
 
+// F101: liveSubline's upstream fetch would otherwise run again on every
+// single markets-type request even while the upstream is down — a
+// per-isolate circuit breaker backs off instead of hammering it. Best
+// effort (state resets on isolate recycle), not a distributed limiter.
+const UPSTREAM_BREAKER_THRESHOLD = 5;
+const UPSTREAM_BREAKER_COOLDOWN_MS = 30_000;
+let upstreamFailures = 0;
+let upstreamOpenUntil = 0;
+
+function upstreamBreakerOpen() {
+  return Date.now() < upstreamOpenUntil;
+}
+
+function recordUpstreamOutcome(ok) {
+  if (ok) {
+    upstreamFailures = 0;
+    upstreamOpenUntil = 0;
+    return;
+  }
+  upstreamFailures += 1;
+  if (upstreamFailures >= UPSTREAM_BREAKER_THRESHOLD) {
+    upstreamOpenUntil = Date.now() + UPSTREAM_BREAKER_COOLDOWN_MS;
+  }
+}
+
+// Exported for unit tests only (functions/og/og.test.js) — resets the
+// in-module breaker state so one test's failures don't leak into another.
+export function resetUpstreamBreakerForTest() {
+  upstreamFailures = 0;
+  upstreamOpenUntil = 0;
+}
+
 // Exported for unit tests only (functions/og/og.test.js) — CF Pages only
 // invokes `onRequest`; these named exports have no runtime effect on it.
 export async function liveSubline(type, rawId) {
@@ -58,6 +90,7 @@ export async function liveSubline(type, rawId) {
     if (type === 'markets' && rawId.includes('~')) {
       const [base, quote] = rawId.split('~');
       if (!ASSET_LEG_RE.test(base) || !ASSET_LEG_RE.test(quote)) return null;
+      if (upstreamBreakerOpen()) return null;
       const r = await fetch(
         `https://api.stellarindex.io/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
         {
@@ -65,6 +98,7 @@ export async function liveSubline(type, rawId) {
           headers: { 'user-agent': 'stellarindex-og/1' },
         },
       );
+      recordUpstreamOutcome(r.ok);
       if (r.ok) {
         const p = (await r.json())?.data?.price;
         if (p != null) {
@@ -78,9 +112,23 @@ export async function liveSubline(type, rawId) {
       }
     }
   } catch {
+    recordUpstreamOutcome(false);
     /* fall through to label-only card */
   }
   return null;
+}
+
+// F101: a rejection is fully determined by the URL (unknown type / oversized
+// id never becomes valid), so the edge should serve it from cache instead of
+// re-running the gate on every repeat hit — same amplification risk the 200
+// path's cache-control already guards against.
+const NOT_FOUND_CACHE_CONTROL = 'public, max-age=60, s-maxage=3600';
+
+function notFound() {
+  return new Response('Not found', {
+    status: 404,
+    headers: { 'cache-control': NOT_FOUND_CACHE_CONTROL },
+  });
 }
 
 export async function onRequest(context) {
@@ -105,13 +153,13 @@ export async function onRequest(context) {
   // SEC-15: 404 unknown types before doing any work — 'home' is the only
   // pseudo-type without a TYPE_LABEL entry (the id-less site-wide card).
   if (type !== 'home' && !TYPE_LABEL.has(type)) {
-    return new Response('Not found', { status: 404 });
+    return notFound();
   }
 
   let rawId = parts.slice(1).join('/') || '';
   // input-validation: reject oversized ids before decode/fetch/render.
   if (rawId.length > MAX_ID_LENGTH) {
-    return new Response('Not found', { status: 404 });
+    return notFound();
   }
   // CS-009: decode the path segment AT MOST ONCE (the previous 2× loop
   // defeated the upstream ogImageFor encodeURIComponent, resurfacing raw
