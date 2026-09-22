@@ -569,11 +569,16 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	// `partial` is decided HERE, not read from the cached bucket: only a
-	// bucket covering today is still accumulating, and an entry computed
-	// before UTC midnight would otherwise keep flagging yesterday — by
-	// then a complete day — as partial.
-	today := time.Now().UTC().Truncate(24 * time.Hour)
+	// `partial` is READ from the cached bucket, never recomputed against
+	// wall-clock "today": ExplorerReader.NetworkThroughput already derives it
+	// from the query's own max(close_time) (day-ASC, only the last row can be
+	// partial), so it is correct for the day the data actually covers. A
+	// server-clock recompute here would re-derive the SAME thing the query
+	// already answered, and can get it wrong: a cached entry sliced past its
+	// TTL (or, cross-region, a peer whose clock has already rolled the day)
+	// would silently clear a bucket that is still genuinely incomplete —
+	// exactly the multi-region disagreement §2.6b's data-derived flag exists
+	// to prevent.
 	out := NetworkThroughputView{WindowDays: windowDays, Buckets: make([]ThroughputBucketV, len(buckets))}
 	for i, b := range buckets {
 		out.Buckets[i] = ThroughputBucketV{
@@ -582,7 +587,7 @@ func (h *Handler) NetworkThroughput(w http.ResponseWriter, r *http.Request) {
 			FeePool:         strconv.FormatInt(b.FeePool, 10),
 			TotalCoins:      strconv.FormatInt(b.TotalCoins, 10),
 			ProtocolVersion: b.ProtocolVersion,
-			Partial:         !b.Day.UTC().Before(today),
+			Partial:         b.Partial,
 		}
 	}
 	h.writeJSONAt(w, out, degraded, asOf)

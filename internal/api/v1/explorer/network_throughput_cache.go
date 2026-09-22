@@ -32,10 +32,12 @@ import (
 //     no ladder, no echo change. It also collapses the key space to 1:
 //     pre-fix an unauthenticated caller could walk ?window_days=1..365 and
 //     buy 365 distinct year-class scans (the C3-009 amplification shape).
-//   - `partial` is recomputed at SERVE time, not read from the cached
-//     bucket. Only a bucket covering today is partial; an entry that was
-//     computed before UTC midnight would otherwise keep flagging
-//     yesterday — a complete day — as still accumulating.
+//   - `partial` is READ from the cached bucket, not recomputed at serve
+//     time. ExplorerReader.NetworkThroughput derives it from the query's
+//     own max(close_time) — deterministic and data-derived, so a stale
+//     entry (or a cross-region peer whose wall clock disagrees near the
+//     UTC boundary) can never mislabel a bucket that is genuinely still
+//     incomplete, or genuinely complete, the other way.
 
 // networkThroughputTTL bounds how stale the cached series may be. The
 // panel is a DAILY aggregate over closed ledgers: every bucket but
