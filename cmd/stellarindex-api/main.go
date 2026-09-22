@@ -5241,6 +5241,51 @@ func prewarmLight(
 	// …and the SEPARATE /v1/assets listing, whose handler does the
 	// OPPOSITE arithmetic to /v1/coins above. See prewarmAssetListings.
 	prewarmAssetListings(assetsReaderCtx, logger, assetsReader, snaps)
+
+	// #37 fix: /v1/assets/native is the most-trafficked single-asset
+	// page (XLM is the explorer's default landing) and its
+	// GetNativeAssetRow hits the heavy `listAssetsBaseSelect`
+	// whole-asset-universe CTE — sub-200ms when cached, ~3s cold.
+	// Pre-fix, prewarmLight only ran ListAssetsExt; native's
+	// GetNativeAssetRow cache key (added by #24's per-asset SWR
+	// pass) was never touched → every native page-load cold-filled
+	// it (bouncing 1-3s on rapid retries as each #24 SWR entry
+	// fills incrementally). Drift-safe: this is the EXACT method
+	// the /v1/assets/native handler calls
+	// (asset_catalogue_extension.go GetNativeAssetRow path).
+	//
+	// Runs here, immediately after the other assetsReaderCtx calls
+	// above, rather than after the markets/pools/per-DEX/per-CEX
+	// loops below (T653): those loops run against the separate
+	// 5-minute mkCtx and can take most or all of assetsReaderCtx's
+	// 20s budget just by elapsed wall-clock time, so deferring the
+	// native/verified-asset warms until after them left this block
+	// racing an exhausted or near-exhausted timeout on a cold cache.
+	if _, err := assetsReader.GetNativeAssetRow(assetsReaderCtx); err != nil {
+		logger.Debug("prewarm native asset-catalogue row failed", "err", err)
+	}
+
+	// #37 extension (2026-05-20): every verified-currency canonical
+	// asset_id gets the same warm-cache treatment as native. Without
+	// this, /v1/assets/USDC-GA5Z…, /v1/assets/EURC-GDH…, etc. cold-
+	// fill the heavy `listAssetsBaseSelect` chain on every
+	// canonical-form request — measured 3.3s on r1 for USDC's
+	// canonical form. The slug-form path (/v1/assets/usdc) was
+	// already fast because the explorer happens to fan out to it,
+	// but programmatic clients (and the explorer's drill-out from
+	// market detail) navigate by canonical asset_id, which missed
+	// the warm slot. Drift-safe: GetAssetByAssetID is exactly what
+	// the handler calls (asset_catalogue_extension.go line 215).
+	// Errors logged at Debug — a transient miss is fine since the
+	// user request still fronts the cache.
+	for _, assetID := range verifiedAssetIDs {
+		prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, assetID)
+	}
+	// Native gets the same full fan-out treatment as verified assets.
+	// GetNativeAssetRow above warms the single asset-catalogue-row SWR slot; this
+	// covers the SIX OTHER readers /v1/assets/native fans out to.
+	prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, "native")
+
 	// Mirrors the most-trafficked /v1/markets, /v1/pools requests
 	// the explorer fires (default order, no source filter). Each limit
 	// is its own cache key under [v1.CachedMarketsReader.AllPools];
@@ -5324,42 +5369,6 @@ func prewarmLight(
 			logger.Debug("prewarm per-source markets failed", "source", src, "err", err)
 		}
 	}
-
-	// #37 fix: /v1/assets/native is the most-trafficked single-asset
-	// page (XLM is the explorer's default landing) and its
-	// GetNativeAssetRow hits the heavy `listAssetsBaseSelect`
-	// whole-asset-universe CTE — sub-200ms when cached, ~3s cold.
-	// Pre-fix, prewarmLight only ran ListAssetsExt; native's
-	// GetNativeAssetRow cache key (added by #24's per-asset SWR
-	// pass) was never touched → every native page-load cold-filled
-	// it (bouncing 1-3s on rapid retries as each #24 SWR entry
-	// fills incrementally). Drift-safe: this is the EXACT method
-	// the /v1/assets/native handler calls
-	// (asset_catalogue_extension.go GetNativeAssetRow path).
-	if _, err := assetsReader.GetNativeAssetRow(assetsReaderCtx); err != nil {
-		logger.Debug("prewarm native asset-catalogue row failed", "err", err)
-	}
-
-	// #37 extension (2026-05-20): every verified-currency canonical
-	// asset_id gets the same warm-cache treatment as native. Without
-	// this, /v1/assets/USDC-GA5Z…, /v1/assets/EURC-GDH…, etc. cold-
-	// fill the heavy `listAssetsBaseSelect` chain on every
-	// canonical-form request — measured 3.3s on r1 for USDC's
-	// canonical form. The slug-form path (/v1/assets/usdc) was
-	// already fast because the explorer happens to fan out to it,
-	// but programmatic clients (and the explorer's drill-out from
-	// market detail) navigate by canonical asset_id, which missed
-	// the warm slot. Drift-safe: GetAssetByAssetID is exactly what
-	// the handler calls (asset_catalogue_extension.go line 215).
-	// Errors logged at Debug — a transient miss is fine since the
-	// user request still fronts the cache.
-	for _, assetID := range verifiedAssetIDs {
-		prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, assetID)
-	}
-	// Native gets the same full fan-out treatment as verified assets.
-	// GetNativeAssetRow above warms the single asset-catalogue-row SWR slot; this
-	// covers the SIX OTHER readers /v1/assets/native fans out to.
-	prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, "native")
 
 	// /v1/issuers had NO prewarm at all, while CachedIssuersReader's TTL
 	// is 5 minutes — so the slot expired every 5 min and the next caller
