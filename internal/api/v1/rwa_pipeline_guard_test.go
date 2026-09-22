@@ -146,8 +146,9 @@ func TestDirectoryTagsPrecedeTheListingValuationArm(t *testing.T) {
 	)
 	checked := 0
 	for _, file := range packageGoFiles(t) {
-		for _, fn := range funcNamesIn(t, file) {
-			calls := serverCallsIn(t, file, fn)
+		parsed := parseGoFile(t, file)
+		for _, fn := range funcNamesIn(parsed) {
+			calls := serverCallsInFile(parsed, fn)
 			tagAt := slices.Index(calls, tags)
 			valAt := slices.Index(calls, valuation)
 			if tagAt < 0 || valAt < 0 {
@@ -188,14 +189,20 @@ func packageGoFiles(t *testing.T) []string {
 	return out
 }
 
-// funcNamesIn lists every function and method declared in one file.
-func funcNamesIn(t *testing.T, file string) []string {
+// parseGoFile parses one file of this package. Callers walking many
+// functions parse each file once: re-parsing per function made the
+// package-wide order guards quadratic under -race.
+func parseGoFile(t *testing.T, file string) *ast.File {
 	t.Helper()
-	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, file, nil, 0)
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 	if err != nil {
 		t.Fatalf("parse %s: %v", file, err)
 	}
+	return parsed
+}
+
+// funcNamesIn lists every function and method declared in one parsed file.
+func funcNamesIn(parsed *ast.File) []string {
 	var out []string
 	for _, decl := range parsed.Decls {
 		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Body != nil {
@@ -209,11 +216,11 @@ func funcNamesIn(t *testing.T, file string) []string {
 // method calls made in one function of one file in this package.
 func serverCallsIn(t *testing.T, file, fn string) []string {
 	t.Helper()
-	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, file, nil, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", file, err)
-	}
+	return serverCallsInFile(parseGoFile(t, file), fn)
+}
+
+// serverCallsInFile is serverCallsIn over an already-parsed file.
+func serverCallsInFile(parsed *ast.File, fn string) []string {
 	var out []string
 	for _, decl := range parsed.Decls {
 		fd, ok := decl.(*ast.FuncDecl)

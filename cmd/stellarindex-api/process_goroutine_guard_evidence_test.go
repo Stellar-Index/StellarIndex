@@ -71,10 +71,11 @@ func TestK012_EveryGoroutineInTheAPIProcessRecovers(t *testing.T) {
 	}
 
 	var checked, exemptListener int
+	scanner := guardscan.NewScanner(guardscan.Config{Guards: guards})
 	var unguarded []string
 
 	for _, path := range apiProcessGoFiles(t) {
-		sites, err := guardscan.ScanFile(path, guardscan.Config{Guards: guards})
+		sites, err := scanner.ScanFile(path)
 		if err != nil {
 			t.Fatalf("scan %s: %v", path, err)
 		}

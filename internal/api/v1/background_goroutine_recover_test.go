@@ -77,9 +77,10 @@ const apiGoroutineFloor = 40
 func TestAPIDetachedGoroutinesRecover(t *testing.T) {
 	var checked int
 	var unguarded []string
+	scanner := guardscan.NewScanner(guardscan.Config{Guards: apiGoroutineGuards})
 
 	for _, path := range apiPackageGoFiles(t) {
-		sites, err := guardscan.ScanFile(path, guardscan.Config{Guards: apiGoroutineGuards})
+		sites, err := scanner.ScanFile(path)
 		if err != nil {
 			t.Fatalf("scan %s: %v", path, err)
 		}
