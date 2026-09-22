@@ -3909,8 +3909,6 @@ func (s *Server) handleAssetMetadata(w http.ResponseWriter, r *http.Request) {
 // Falls back to `not_fetched` when no fetch-state reader is wired, which is
 // the pre-2026-09-16 answer and is the conservative direction: it claims
 // nothing about the issuer.
-//
-//nolint:gocyclo // linear field-overlay sequence; splitting would scatter the per-field nil checks across helpers.
 func (s *Server) sep1StatusForNoPayload(ctx context.Context, issuer string) string {
 	rd, ok := s.sep1Cache.(Sep1FetchStateReader)
 	if !ok {
@@ -3970,6 +3968,8 @@ func (s *Server) applySep1Overlay(ctx context.Context, detail *AssetDetail, asse
 // Every field is copied only when the issuer actually supplied it, so an
 // absent value leaves the row's own answer in place rather than overwriting it
 // with an empty string.
+//
+//nolint:gocyclo // linear field-overlay sequence; splitting would scatter the per-field nil checks across helpers.
 func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cached, match *timescale.IssuerSep1Currency) {
 	if name := strings.TrimSpace(sep.OrgName); name != "" {
 		detail.OrgName = &name
