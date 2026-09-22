@@ -414,6 +414,18 @@ func truncLendingID(id string) string {
 // r1's credit_* tables are empty until the sorocredit projector-replay runs
 // post-deploy. Amounts are USDC / token base units (per-asset decimals),
 // never USD (sorocredit has no published price).
+//
+// creditAmountUnitsNote and creditSettlementVolumeHint document the USDC
+// scale served in the block: sorocredit's USDC leg is the classic Stellar
+// asset's SAC wrapper, and every classic Stellar asset — including a SAC
+// wrapping one — is uniformly 7-decimal fixed point on-chain, never the
+// off-chain (e.g. Ethereum) 6-decimal USDC convention (AGENTS.md: "NEVER
+// assume off-chain amount scaling is uniform").
+const (
+	creditAmountUnitsNote      = "Amounts are in token base units (USDC settlements/withdrawals at 7-decimal USDC base units; statement amounts at the protocol's i128 scale) — NOT USD. sorocredit has no published price and never contributes to VWAP."
+	creditSettlementVolumeHint = "summed scheduled-settlement amount in 7-decimal USDC base units (NOT a liquidation/risk signal)"
+)
+
 func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBlock, error) {
 	a, err := s.CreditWindowAnalytics(ctx, windowDays)
 	if err != nil {
@@ -429,7 +441,7 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 		Notes: []string{
 			"Settlements are SCHEDULED settlements decoded from the on-wire \"Liquidation\" event — a single keeper settles published statements on a recurring schedule (~1:1 with statements). These are NOT distressed liquidations; do not read them as a risk/liquidation signal.",
 			"Open positions is a WINDOW-SCOPED proxy: positions opened in the window whose collateral child has no withdrawal (cash-out) observed in the window. It is not an all-time live-position count (the served tier is retention-scoped).",
-			"Amounts are in token base units (USDC settlements/withdrawals at 6-decimal USDC base units; statement amounts at the protocol's i128 scale) — NOT USD. sorocredit has no published price and never contributes to VWAP.",
+			creditAmountUnitsNote,
 		},
 	}
 
@@ -439,7 +451,7 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 		BespokeKPI{Label: fmt.Sprintf("Unique users (%dd)", windowDays), Value: strconv.FormatInt(a.UniqueUsers, 10), Hint: "distinct position owners (G-addresses)"},
 		BespokeKPI{Label: fmt.Sprintf("Statements published (%dd)", windowDays), Value: strconv.FormatInt(a.Statements, 10), Hint: "StatementPublished events (periodic per-position charge statements)"},
 		BespokeKPI{Label: fmt.Sprintf("Scheduled settlements (%dd)", windowDays), Value: strconv.FormatInt(a.Settlements, 10), Hint: "recurring keeper settlements of published statements — NOT distressed liquidations"},
-		BespokeKPI{Label: fmt.Sprintf("Settlement volume (%dd)", windowDays), Value: a.SettlementVolume.String(), Unit: "USDC-units", Hint: "summed scheduled-settlement amount in 6-decimal USDC base units (NOT a liquidation/risk signal)"},
+		BespokeKPI{Label: fmt.Sprintf("Settlement volume (%dd)", windowDays), Value: a.SettlementVolume.String(), Unit: "USDC-units", Hint: creditSettlementVolumeHint},
 		BespokeKPI{Label: fmt.Sprintf("Withdrawals (%dd)", windowDays), Value: strconv.FormatInt(a.Withdrawals, 10), Hint: "position cash-out events in the window"},
 	)
 	if !a.LatestActivity.IsZero() {
@@ -493,7 +505,7 @@ func (s *Store) bespokeCredit(ctx context.Context, windowDays int) (*BespokeBloc
 // series at the window's grain (hourly at 24h via bridgeSeriesGrain,
 // daily otherwise). Summing settled_amount is honest here — unlike the
 // mixed-asset Blend tables, every settlement's primary leg is the same
-// 6-decimal USDC unit (migration 0090).
+// 7-decimal USDC unit (migration 0090).
 func creditSettlementSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `

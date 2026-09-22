@@ -163,6 +163,28 @@ func TestCreditQueriesShape(t *testing.T) {
 	}
 }
 
+// TestCreditUSDCDecimalsAreClassicSevenNotOffChainSix guards the sorocredit
+// bespoke block's served decimal-scale documentation. sorocredit's USDC leg
+// is USDC's Stellar-classic SAC wrapper, and every classic Stellar asset —
+// including a SAC wrapping one — is uniformly 7-decimal fixed point
+// on-chain (see cmd/stellarindex-aggregator/main.go: "classic (7-decimal)
+// credit asset"), never the off-chain (e.g. Ethereum) 6-decimal USDC
+// convention. A consumer trusting a "6-decimal" hint would misread every
+// served settlement/withdrawal amount by 10x.
+func TestCreditUSDCDecimalsAreClassicSevenNotOffChainSix(t *testing.T) {
+	for name, note := range map[string]string{
+		"creditAmountUnitsNote":      creditAmountUnitsNote,
+		"creditSettlementVolumeHint": creditSettlementVolumeHint,
+	} {
+		if !strings.Contains(note, "7-decimal") {
+			t.Errorf("%s must document the classic Stellar 7-decimal USDC scale, got %q", name, note)
+		}
+		if strings.Contains(note, "6-decimal") {
+			t.Errorf("%s must not claim USDC's off-chain 6-decimal scale for an on-chain classic-asset amount, got %q", name, note)
+		}
+	}
+}
+
 // TestTruncLendingID guards the display truncation for pool labels
 // ("CAJJ…BXBD") and the pass-through of already-short ids.
 func TestTruncLendingID(t *testing.T) {
