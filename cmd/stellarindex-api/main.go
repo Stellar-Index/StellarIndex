@@ -5182,6 +5182,14 @@ func prewarmHeavy(
 	}
 }
 
+// assetsPrewarmBatchTimeout bounds each of the two independent
+// assetsReader batches in prewarmLight below: the /v1/coins + /v1/assets
+// listing warm, and the native + verified-asset detail fan-out. A var
+// rather than an inline constant so a test can substitute a short
+// deadline and exercise expiry deterministically without a real 20s
+// wait.
+var assetsPrewarmBatchTimeout = 20 * time.Second
+
 func prewarmLight(
 	ctx context.Context,
 	logger *slog.Logger,
@@ -5236,7 +5244,7 @@ func prewarmLight(
 	// hood — passing Limit=200 here warms a different cache key than
 	// the one the user request looks up. Mirror the listingLimit the
 	// handler actually uses.
-	assetsReaderCtx, assetsReaderCancel := context.WithTimeout(ctx, 20*time.Second)
+	assetsReaderCtx, assetsReaderCancel := context.WithTimeout(ctx, assetsPrewarmBatchTimeout)
 	defer assetsReaderCancel()
 	if _, err := assetsReader.ListAssetsExt(assetsReaderCtx, timescale.ListAssetsOptions{Limit: 199}); err != nil {
 		logger.Debug("prewarm asset-catalogue listing failed", "err", err)
@@ -5265,7 +5273,21 @@ func prewarmLight(
 	// 20s budget just by elapsed wall-clock time, so deferring the
 	// native/verified-asset warms until after them left this block
 	// racing an exhausted or near-exhausted timeout on a cold cache.
-	if _, err := assetsReader.GetNativeAssetRow(assetsReaderCtx); err != nil {
+	//
+	// It gets its OWN fresh deadline rather than reusing
+	// assetsReaderCtx (T661): that context's budget started ticking
+	// back at the /v1/coins warm above, and the listing warm's own
+	// calls (ListAssetsExt plus every entry in
+	// assetListingPrewarmOptions via prewarmAssetListings) can burn a
+	// meaningful chunk of it on a cold cache before this line even
+	// runs. Sharing one deadline across both batches means a slow
+	// listing warm silently no-ops this whole batch on context
+	// deadline exceeded (swallowed at Debug) — the cache reports
+	// healthy and the next /v1/assets/native or verified-asset request
+	// still pays the cold read.
+	assetDetailCtx, assetDetailCancel := context.WithTimeout(ctx, assetsPrewarmBatchTimeout)
+	defer assetDetailCancel()
+	if _, err := assetsReader.GetNativeAssetRow(assetDetailCtx); err != nil {
 		logger.Debug("prewarm native asset-catalogue row failed", "err", err)
 	}
 
@@ -5283,12 +5305,12 @@ func prewarmLight(
 	// Errors logged at Debug — a transient miss is fine since the
 	// user request still fronts the cache.
 	for _, assetID := range verifiedAssetIDs {
-		prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, assetID)
+		prewarmAssetDetail(assetDetailCtx, logger, assetsReader, assetID)
 	}
 	// Native gets the same full fan-out treatment as verified assets.
 	// GetNativeAssetRow above warms the single asset-catalogue-row SWR slot; this
 	// covers the SIX OTHER readers /v1/assets/native fans out to.
-	prewarmAssetDetail(assetsReaderCtx, logger, assetsReader, "native")
+	prewarmAssetDetail(assetDetailCtx, logger, assetsReader, "native")
 
 	// Mirrors the most-trafficked /v1/markets, /v1/pools requests
 	// the explorer fires (default order, no source filter). Each limit
