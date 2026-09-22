@@ -339,6 +339,13 @@ stale_patterns=(
                                   # unrelated resolveTip completeness-clamp
                                   # finding, not the chart truncated/
                                   # data_starts_at PR the row implies
+  "per #948"                      # dangling ref (RSWP-055) — CHANGELOG's
+                                  # "6 more detail surfaces" BreadcrumbList
+                                  # entry cited #948 as the issue behind the
+                                  # earlier assets/markets BreadcrumbList
+                                  # work; #948 now resolves to an unrelated
+                                  # live issue (ECB FX fallback), not the
+                                  # SEO work it named
   "#39\b"                         # dangling ref (RLT-411) — the
                                   # soroban_events decommission plan cited
                                   # "#39" as its tracking item; #39 is
