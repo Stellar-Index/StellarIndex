@@ -1377,6 +1377,11 @@ function EndpointMatrix({
 
 // EndpointProbeResult is the union of states the matrix renders.
 //   - 'fast' / 'slow' / 'down' come from a real fetch
+//   - 'degraded' is a 2xx whose envelope body reports `data.status
+//     === "degraded"` (RLT-468: /v1/readyz returns HTTP 200 by
+//     design when a non-critical dependency fails — see server.go
+//     computeReadyz's F-1275 comment — so `res.ok` alone can't tell
+//     a healthy readyz from a degraded one)
 //   - 'error' is a fetch that threw (network, abort, TLS)
 //   - 'static' is a non-probed endpoint (auth-gated, streaming);
 //     `label` is what to show in the badge ("auth req'd",
@@ -1386,22 +1391,39 @@ function EndpointMatrix({
 export type EndpointProbeResult =
   | { kind: 'fast'; latencyMs: number }
   | { kind: 'slow'; latencyMs: number }
+  | { kind: 'degraded'; latencyMs: number }
   | { kind: 'down'; latencyMs: number; status: number }
   | { kind: 'error'; latencyMs: number }
   | { kind: 'static'; label: 'requires-auth' | 'streaming' };
 
-// hasEnvelopeShape reads and parses the response body, returning true only
-// for a genuine v1 envelope (`{"data": ...}` — every 2xx handler writes one
-// via writeJSON, see internal/api/v1/envelope.go). A 2xx status alone isn't
-// proof the API answered: a WAF challenge page, a maintenance interstitial
-// or a misrouted edge response can all return 200 with an unrelated body,
-// and probeEndpoint used to report those as 'fast'.
-async function hasEnvelopeShape(res: Response): Promise<boolean> {
+// readEnvelope reads and parses the response body once, returning
+// whether it's a genuine v1 envelope (`{"data": ...}` — every 2xx
+// handler writes one via writeJSON, see internal/api/v1/envelope.go)
+// and, when present, the payload's own `data.status` string. A 2xx
+// status alone isn't proof the API answered healthily: a WAF
+// challenge page, a maintenance interstitial or a misrouted edge
+// response can all return 200 with an unrelated body (probeEndpoint
+// used to report those as 'fast'); and a genuine envelope's
+// `data.status` can itself be "degraded" on a 200 (readyz, F-1275).
+async function readEnvelope(
+  res: Response,
+): Promise<{ ok: boolean; dataStatus?: string }> {
   try {
     const body: unknown = await res.json();
-    return typeof body === 'object' && body !== null && 'data' in body;
+    if (typeof body !== 'object' || body === null || !('data' in body)) {
+      return { ok: false };
+    }
+    const data = (body as { data?: unknown }).data;
+    const dataStatus =
+      typeof data === 'object' &&
+      data !== null &&
+      'status' in data &&
+      typeof (data as { status?: unknown }).status === 'string'
+        ? (data as { status: string }).status
+        : undefined;
+    return { ok: true, dataStatus };
   } catch {
-    return false;
+    return { ok: false };
   }
 }
 
@@ -1440,7 +1462,7 @@ export function probeEndpoint(
       // A 200 with the wrong body (WAF page, interstitial) isn't a
       // live API — no point warming a connection to it and then
       // timing a second doomed request.
-      if (!(await hasEnvelopeShape(warm))) {
+      if (!(await readEnvelope(warm)).ok) {
         return { kind: 'error', latencyMs: -1 };
       }
     } catch {
@@ -1458,8 +1480,15 @@ export function probeEndpoint(
       if (!res.ok) {
         return { kind: 'down', latencyMs, status: res.status };
       }
-      if (!(await hasEnvelopeShape(res))) {
+      const envelope = await readEnvelope(res);
+      if (!envelope.ok) {
         return { kind: 'error', latencyMs };
+      }
+      // A 200 whose own body says "degraded" (readyz on a
+      // non-critical dependency failure) is not "fast" — surface it
+      // as a warning regardless of latency.
+      if (envelope.dataStatus === 'degraded') {
+        return { kind: 'degraded', latencyMs };
       }
       return latencyMs < PROBE_SLOW_MS
         ? { kind: 'fast', latencyMs }
@@ -1499,6 +1528,14 @@ function EndpointBadge({ probe }: { probe?: EndpointProbeResult }) {
       <Badge tone="warn" className="text-[10px]">
         <AlertTriangle className="h-3 w-3" />
         <span className="tnum">{Math.round(probe.latencyMs)}ms</span>
+      </Badge>
+    );
+  }
+  if (probe.kind === 'degraded') {
+    return (
+      <Badge tone="warn" className="text-[10px]">
+        <AlertTriangle className="h-3 w-3" />
+        degraded
       </Badge>
     );
   }
