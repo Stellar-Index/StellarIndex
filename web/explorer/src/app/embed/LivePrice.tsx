@@ -30,6 +30,7 @@ export function LivePrice({
 }) {
   const [price, setPrice] = useState(initial);
   const [asOf, setAsOf] = useState<string | null>(null);
+  const [withheld, setWithheld] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -38,13 +39,20 @@ export function LivePrice({
         const res = await fetch(
           `${API_BASE}/v1/price?asset=${encodeURIComponent(assetId)}&quote=${encodeURIComponent(quote)}`,
         );
-        if (!res.ok) return;
+        if (!res.ok) {
+          // 404/403: the API is deliberately withholding the price (not a
+          // network blip). Say so visibly — a tooltip alone left the
+          // build-time price looking live with no on-screen hint.
+          if (!cancelled) setWithheld(true);
+          return;
+        }
         const body = (await res.json()) as {
           data?: { price?: string; observed_at?: string };
         };
         if (!cancelled && body.data?.price) {
           setPrice(fmt(Number(body.data.price), format));
           setAsOf(body.data.observed_at ?? null);
+          setWithheld(false);
         }
       } catch {
         // keep the last known price — the widget must never blank
@@ -59,11 +67,24 @@ export function LivePrice({
   }, [assetId, format, quote]);
 
   return (
-    <span
-      className="font-mono text-2xl tabular-nums"
-      title={asOf ? `live VWAP · observed ${asOf}` : 'as baked at deploy'}
-    >
-      {price}
+    <span className="inline-flex items-baseline gap-1.5">
+      <span
+        className="font-mono text-2xl tabular-nums"
+        title={
+          withheld
+            ? 'live price unavailable — showing the price baked at deploy'
+            : asOf
+              ? `live VWAP · observed ${asOf}`
+              : 'as baked at deploy'
+        }
+      >
+        {price}
+      </span>
+      {withheld && (
+        <span className="font-mono text-[11px] text-ink-faint" role="status">
+          stale
+        </span>
+      )}
     </span>
   );
 }
