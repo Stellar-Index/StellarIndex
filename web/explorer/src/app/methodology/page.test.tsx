@@ -26,3 +26,40 @@ describe('MethodologyPage closed-bucket section', () => {
     expect(para).toHaveTextContent(/after v1\.0/i);
   });
 });
+
+// T276: the freeze-triggers list claimed a >50%-filtered-trades outlier
+// check, an all-exchange-source-class-collapse trigger, a >=2-oracle
+// cross-oracle-divergence trigger, and an operator "freeze a pair
+// manually" control. None of that exists: mapFreezeReason
+// (internal/storage/timescale/freeze_events.go) only ever labels a
+// Phase-1 ActionFreeze 'outlier_storm' or a phase2 decision
+// 'divergence', and stellarindex-ops registers only freeze-unfreeze
+// (end an escalated freeze), never a freeze-start command.
+describe('MethodologyPage freeze triggers', () => {
+  it('does not claim triggers or an operator control that do not exist in code', () => {
+    render(<MethodologyPage />);
+
+    expect(screen.queryByText(/Source-class collapse/i)).toBeNull();
+    expect(screen.queryByText(/Cross-oracle divergence/i)).toBeNull();
+    expect(screen.queryByText(/Operator-triggered/i)).toBeNull();
+    expect(
+      screen.queryByText(/50% of trades in the window/i),
+    ).toBeNull();
+    expect(
+      screen.queryByText(/freeze a pair manually/i),
+    ).toBeNull();
+  });
+
+  it('describes the actual single-source and statistical-divergence triggers, and the unfreeze-only operator control', () => {
+    render(<MethodologyPage />);
+
+    expect(screen.getByText('Single-source deviation')).toBeTruthy();
+    expect(screen.getByText('Statistical divergence')).toBeTruthy();
+    expect(
+      screen.getByText(/on-call cannot start one by hand/i),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/stellarindex-ops freeze-unfreeze/i),
+    ).toBeTruthy();
+  });
+});
