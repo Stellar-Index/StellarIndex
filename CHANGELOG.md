@@ -27658,7 +27658,7 @@ rc.48 deploy to R1.
   `/assets/`, `/price*` → `/markets/`, `/api/` →
   `api.stellarindex.io`, `/docs*` → `docs.stellarindex.io`
   (splat-preserved deep-link). 19 new rules in
-  `web/explorer/public/_redirects`. (PR #1232)
+  `web/explorer/public/_redirects`.
 - **`/llms.txt` for explorer** — llmstxt.org-spec discovery file
   for AI agents indexing the site. Single hand-curated markdown
   manifest pointing at the API surface, key endpoints, the
