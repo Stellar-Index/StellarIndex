@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   User,
   Wallet,
+  Webhook,
   Zap,
   type LucideIcon,
 } from 'lucide-react';
@@ -135,6 +136,7 @@ const ACCOUNT_GROUP: NavGroup = {
     },
     { href: '/dashboard/keys', label: 'API keys', icon: KeyRound },
     { href: '/dashboard/price-alerts', label: 'Price alerts', icon: BellRing },
+    { href: '/dashboard/webhooks', label: 'Webhooks', icon: Webhook },
     { href: '/dashboard/usage', label: 'Usage', icon: Gauge },
     { href: '/dashboard/settings', label: 'Settings', icon: Settings },
   ],

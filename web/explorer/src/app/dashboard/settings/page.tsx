@@ -1,6 +1,7 @@
 'use client';
 
 import { ArrowUpRight, Loader2, LogOut } from 'lucide-react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 
@@ -32,9 +33,9 @@ import { Passkeys } from './Passkeys';
 
 /**
  * /dashboard/settings — read-only profile, the current plan, and a
- * danger zone (sign out). Self-service mutations (rename / email
- * change / deletion) are honestly deferred to support. Ported from the
- * standalone dashboard.
+ * danger zone (sign out). Rename / email change / deletion are
+ * honestly deferred to support; webhook configuration is self-service
+ * at /dashboard/webhooks. Ported from the standalone dashboard.
  */
 export default function SettingsPage() {
   return <AccountGate>{(me) => <SettingsBody me={me} />}</AccountGate>;
@@ -56,15 +57,22 @@ function SettingsBody({ me }: { me: MeResponse }) {
         <DangerZone />
 
         <p className="text-ink-faint text-xs">
-          Need to change the email on file, rename the account, or configure
-          webhooks? Contact{' '}
+          Need to change the email on file or rename the account? Contact{' '}
           <a
             className="text-brand-700 font-medium hover:underline"
             href="mailto:support@stellarindex.io"
           >
             support@stellarindex.io
           </a>{' '}
-          until self-service controls ship.
+          until self-service controls ship. Webhooks are self-service — manage
+          them under{' '}
+          <Link
+            className="text-brand-700 font-medium hover:underline"
+            href="/dashboard/webhooks"
+          >
+            Webhooks
+          </Link>
+          .
         </p>
       </Section>
     </Container>

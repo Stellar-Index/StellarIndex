@@ -330,6 +330,70 @@ export async function deletePriceAlert(id: string): Promise<void> {
   );
 }
 
+// ─── Webhooks ──────────────────────────────────────────────────────
+
+// Wire shapes bound to the generated OpenAPI contract (src/api/types.ts,
+// `make web-generate-api`). The dashboard webhook surface
+// (`/v1/dashboard/webhooks`) is session-cookie authed like keys and
+// price-alerts above; price alerts and every other account event
+// (incident.sev1, anomaly.freeze, divergence.firing) deliver ONLY
+// through a webhook registered here.
+export type DashboardWebhook = components['schemas']['DashboardWebhook'];
+export type CreateWebhookRequest =
+  components['schemas']['CreateWebhookRequest'];
+export type CreateWebhookResponse =
+  components['schemas']['CreateWebhookResponse'];
+export type UpdateWebhookRequest =
+  components['schemas']['UpdateWebhookRequest'];
+
+interface WebhookListResponse {
+  webhooks: DashboardWebhook[];
+}
+
+/** GET /v1/dashboard/webhooks — every webhook on the session's account. */
+export async function listDashboardWebhooks(
+  signal?: AbortSignal,
+): Promise<DashboardWebhook[]> {
+  const r = await accountFetch<WebhookListResponse>('/dashboard/webhooks', {
+    signal,
+  });
+  return r.webhooks ?? [];
+}
+
+/**
+ * POST /v1/dashboard/webhooks — register a webhook; the signing secret
+ * is returned once, in the response, and never again.
+ */
+export async function createDashboardWebhook(
+  body: CreateWebhookRequest,
+): Promise<CreateWebhookResponse> {
+  return accountFetch<CreateWebhookResponse>('/dashboard/webhooks', {
+    method: 'POST',
+    body,
+  });
+}
+
+/**
+ * PATCH /v1/dashboard/webhooks/{id} — update any subset of fields
+ * (used for the enable/disable toggle). Omitted fields keep their value.
+ */
+export async function updateDashboardWebhook(
+  id: string,
+  body: UpdateWebhookRequest,
+): Promise<DashboardWebhook> {
+  return accountFetch<DashboardWebhook>(
+    `/dashboard/webhooks/${encodeURIComponent(id)}`,
+    { method: 'PATCH', body },
+  );
+}
+
+/** DELETE /v1/dashboard/webhooks/{id} — remove a webhook (idempotent). */
+export async function deleteDashboardWebhook(id: string): Promise<void> {
+  await accountFetch<void>(`/dashboard/webhooks/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}
+
 // ─── Staff: customer look-up ───────────────────────────────────────
 
 // Mirrors AdminLookupResponse (internal/api/v1/dashboardauth/handlers_admin.go).
