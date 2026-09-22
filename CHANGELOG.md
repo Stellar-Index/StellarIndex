@@ -55,6 +55,15 @@ against.
   than guess a replacement number; `scripts/ci/lint-docs.sh`'s
   stale-reference check now guards against it reappearing.
 
+- **docs / CHANGELOG — dangling `#975` citation in the rc.25
+  `/v1/currencies` entry corrected (RSWP-059):** the number was a stale
+  issue reference that has since been reused by an unrelated live issue
+  (a streaming-docs-vs-hub drift finding), so the citation no longer
+  pointed at a 404 — it pointed at real but unrelated content, which is
+  worse. Removed the citation rather than guess a replacement number;
+  `scripts/ci/lint-docs.sh`'s stale-reference check now guards against it
+  reappearing.
+
 - **sources — decoder hardening (Q072, RLT-115):** sorocredit counts a
   settlement whose amounts leg cannot be parsed in the new
   `stellarindex_source_amount_degraded_total{source,field}`; decoded rows
@@ -29221,7 +29230,7 @@ rc.48 deploy to R1.
 ## [v0.5.0-rc.25] — 2026-05-07
 
 ### Fixed
-- **`/v1/currencies` empty after rc.24** (#975). The Massive
+- **`/v1/currencies` empty after rc.24.** The Massive
   grouped-FX decoder failed the entire snapshot when a single
   row arrived with a non-string `T` field (Massive occasionally
   emits numeric / null tickers for half-listed pairs). Decode
