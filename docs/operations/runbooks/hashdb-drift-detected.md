@@ -7,9 +7,11 @@ severity: P3
 
 # Runbook — `stellarindex_hashdb_drift_detected`
 
-This runbook also covers the companion alert
-`stellarindex_hashdb_verify_failing` (same rule file, same
-underlying worker) — see [Companion alert](#companion-alert-hashdb_verify_failing)
+This runbook also covers the companion alerts
+`stellarindex_hashdb_verify_failing` and `stellarindex_hashdb_append_failing`
+(same rule file, same underlying worker) — see
+[Companion alert: hashdb_verify_failing](#companion-alert-hashdb_verify_failing)
+and [Companion alert: hashdb_append_failing](#companion-alert-hashdb_append_failing)
 below.
 
 ## At a glance
@@ -155,6 +157,27 @@ retries every `[hashdb].verify_interval_minutes` (default 60) with no
 operator action needed once the cause clears. If the error text
 points at a specific in-window object instead, escalate per the
 drift checklist above.
+
+## Companion alert: `hashdb_append_failing`
+
+Same rule file, `stellarindex_hashdb_append_total{outcome="error"}`
+dominating `{outcome="ok"}` over 15m, sustained 10 min. `hashdb.Append`
+runs once per ledger on the indexer's live LCM read loop and is
+deliberately failure-tolerant (an error logs + increments this counter
+and never stalls or fails ingest — see `recordHashdb`'s docstring in
+`cmd/stellarindex-indexer/main.go`), so this counter is the ONLY
+operator-visible signal that the write side has gone silent. Unlike
+`hashdb_verify_failing` (the periodic sweep can't check), this means
+the sweep has nothing recorded to check AGAINST: it will report
+Missing, not Drifted, for any ledger appended while this alert is
+firing, even if real drift occurred.
+
+Common causes: disk full or permission error on `[hashdb].path`, or an
+out-of-range ledger sequence (a hashdb file created for a different
+region/window). Diagnosis: `journalctl -u stellarindex-indexer | grep
+"hashdb.Append"` for the underlying error. Mitigation: fix the
+underlying disk/permission issue — Append retries on the next ledger
+with no operator action needed once the cause clears.
 
 ## Why not P1/P2?
 
