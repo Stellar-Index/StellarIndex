@@ -60,7 +60,7 @@ func TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm(t *testing.T) {
 	markets := v1.NewCachedMarketsReader(&recordingMarketsReader{log: newCallLog()}, 0)
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
-	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil)
+	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil)
 
 	if probe.nativeCtxErr != nil {
 		t.Fatalf("GetNativeAssetRow saw ctx.Err() = %v — the native asset-catalogue "+

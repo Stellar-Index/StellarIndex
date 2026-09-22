@@ -246,7 +246,7 @@ func runPrewarmLightForParity(t *testing.T) *callLog {
 	assets := v1.NewCachedAssetsReader(&stubAssetsReader{}, 0)
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
-	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil)
+	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil)
 	return log
 }
 
