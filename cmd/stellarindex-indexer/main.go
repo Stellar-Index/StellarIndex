@@ -2269,25 +2269,18 @@ func hashDBVerifySweep(
 	res := verifier.Result()
 	dur := time.Since(start).Seconds()
 
-	// Shutdown mid-walk: don't record any outcome — a partial sweep is
-	// neither clean nor failing, and stamping it "ok" would be the same
-	// vacuous-green lie the strict-stream change above removes.
-	if streamErr != nil && errors.Is(streamErr, context.Canceled) {
+	switch classifyHashDBVerifySweep(res, streamErr, from, to) {
+	case sweepOutcomeShutdown:
+		// Shutdown mid-walk with nothing found: don't record any
+		// outcome — a partial, driftless sweep is neither clean nor
+		// failing, and stamping it "ok" would be the same
+		// vacuous-green lie the strict-stream change above removes.
 		return
-	}
-
-	// A complete sweep observed every ledger in the window exactly
-	// once; anything short means the stream ended early without
-	// erroring, and "we couldn't check everything" must not read as
-	// clean.
-	observed := res.Verified + res.Drifted + res.Missing + res.OutOfRange
-	complete := observed == int(to-from)+1
-
-	switch {
-	case res.AnyDrift():
-		// Drift FIRST — even when the stream ALSO errored mid-walk,
-		// drift already tallied is the signal this detector exists
-		// for; the error arm must not suppress it.
+	case sweepOutcomeDrift:
+		// Drift FIRST — even when the stream ALSO errored (including
+		// a shutdown cancel) mid-walk, drift already tallied is the
+		// signal this detector exists for; an error or cancel must
+		// not suppress it.
 		obs.HashdbVerifyRunsTotal.WithLabelValues("drift").Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("drift").Observe(dur)
 		obs.HashdbDriftTotal.Add(float64(res.Drifted))
@@ -2300,17 +2293,22 @@ func hashDBVerifySweep(
 			"drifted_ledgers", res.DriftSeqs,
 			"stream_err", streamErr,
 		)
-	case streamErr != nil:
+	case sweepOutcomeError:
 		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
 		logger.Warn("hashdb verify sweep failed", "from", from, "to", to, "err", streamErr)
-	case !complete:
+	case sweepOutcomeIncomplete:
+		// A complete sweep observed every ledger in the window
+		// exactly once; anything short means the stream ended early
+		// without erroring, and "we couldn't check everything" must
+		// not read as clean.
+		observed := res.Verified + res.Drifted + res.Missing + res.OutOfRange
 		obs.HashdbVerifyRunsTotal.WithLabelValues("error").Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("error").Observe(dur)
 		logger.Warn("hashdb verify sweep incomplete — stream ended early without error",
 			"from", from, "to", to, "observed", observed, "expected", int(to-from)+1,
 		)
-	default:
+	default: // sweepOutcomeOK
 		obs.HashdbVerifyRunsTotal.WithLabelValues("ok").Inc()
 		obs.HashdbVerifyRunDurationSeconds.WithLabelValues("ok").Observe(dur)
 		logger.Info("hashdb verify sweep clean",
@@ -2318,6 +2316,42 @@ func hashDBVerifySweep(
 			"verified", res.Verified, "missing", res.Missing, "out_of_range", res.OutOfRange,
 		)
 	}
+}
+
+// hashDBVerifySweepOutcome is what a completed (or aborted)
+// hashDBVerifySweep pass amounts to. Split out from the switch itself
+// so the priority decision — drift outranks a shutdown cancel — is
+// unit-testable without driving a real ledgerstream walk.
+type hashDBVerifySweepOutcome int
+
+const (
+	sweepOutcomeShutdown hashDBVerifySweepOutcome = iota
+	sweepOutcomeDrift
+	sweepOutcomeError
+	sweepOutcomeIncomplete
+	sweepOutcomeOK
+)
+
+// classifyHashDBVerifySweep turns one sweep's verifier result and
+// stream error into the outcome hashDBVerifySweep records. Drift is
+// checked BEFORE the shutdown-cancel case: drift tallied before a
+// context.Canceled stream error is still drift and must not be
+// discarded as if the sweep found nothing.
+func classifyHashDBVerifySweep(res archivecompleteness.HashDBVerifyResult, streamErr error, from, to uint32) hashDBVerifySweepOutcome {
+	if res.AnyDrift() {
+		return sweepOutcomeDrift
+	}
+	if streamErr != nil && errors.Is(streamErr, context.Canceled) {
+		return sweepOutcomeShutdown
+	}
+	if streamErr != nil {
+		return sweepOutcomeError
+	}
+	observed := res.Verified + res.Drifted + res.Missing + res.OutOfRange
+	if observed != int(to-from)+1 {
+		return sweepOutcomeIncomplete
+	}
+	return sweepOutcomeOK
 }
 
 func startMetricsServer(obsCfg config.ObsConfig, logger *slog.Logger) *http.Server {
