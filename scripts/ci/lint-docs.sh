@@ -394,6 +394,11 @@ stale_patterns=(
                                   # both cited "#973"; #973 now resolves to
                                   # an unrelated live issue (dead-affordance/
                                   # IsReservedTLD), never the feature it named
+  "\(#975\)"                     # dangling ref (RSWP-059) — CHANGELOG's
+                                  # rc.25 /v1/currencies entry cited this
+                                  # as the tracking issue; #975 now
+                                  # resolves to an unrelated, currently-open
+                                  # streaming-docs-vs-hub drift finding
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
