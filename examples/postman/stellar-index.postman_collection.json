@@ -5207,7 +5207,7 @@
               "request": {
                 "name": "Current prices for up to 100 assets.",
                 "description": {
-                  "content": "Latest price for each id in `asset_ids` (comma-separated,\nmax 100; duplicates de-duplicated server-side). Assets with\nno observation are OMITTED from the response rather than\nfailing the batch — a caller asking for 5 assets and\ngetting 3 rows knows exactly which 2 lack data. The\nenvelope's `flags.stale` is the OR over per-row staleness.\nAbove 100 ids, use the POST form (up to 1000 in the body).\n",
+                  "content": "Latest price for each id in `asset_ids` (comma-separated,\nmax 100; duplicates de-duplicated server-side). Assets with\nno observation are OMITTED from the response rather than\nfailing the batch — a caller asking for 5 assets and\ngetting 3 rows knows exactly which 2 lack data. The\nenvelope's `flags.stale` is the OR over per-row staleness.\nAbove 100 ids, use the POST form (up to 1000 in the body).\n\n`pairs` is accepted as an alias for `asset_ids` (same\ncomma-separated form) for clients arriving via\ncross-endpoint extrapolation. Exactly one of `asset_ids` /\n`pairs` must be supplied; sending both is a 400.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -5222,10 +5222,19 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "(Required) Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\n",
+                        "content": "Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\nRequired unless `pairs` is supplied instead.\n",
                         "type": "text/plain"
                       },
                       "key": "asset_ids",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Alias for `asset_ids` (same comma-separated form).\nMutually exclusive with `asset_ids` — sending both is a\n400. Accepted for cross-endpoint compatibility with\nsites that call this kind of parameter \"pairs\";\n`asset_ids` is the canonical form.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "pairs",
                       "value": "<string>"
                     },
                     {
@@ -5266,10 +5275,19 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\n",
+                            "content": "Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\nRequired unless `pairs` is supplied instead.\n",
                             "type": "text/plain"
                           },
                           "key": "asset_ids",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Alias for `asset_ids` (same comma-separated form).\nMutually exclusive with `asset_ids` — sending both is a\n400. Accepted for cross-endpoint compatibility with\nsites that call this kind of parameter \"pairs\";\n`asset_ids` is the canonical form.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "pairs",
                           "value": "<string>"
                         },
                         {
@@ -5320,10 +5338,19 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\n",
+                            "content": "Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\nRequired unless `pairs` is supplied instead.\n",
                             "type": "text/plain"
                           },
                           "key": "asset_ids",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Alias for `asset_ids` (same comma-separated form).\nMutually exclusive with `asset_ids` — sending both is a\n400. Accepted for cross-endpoint compatibility with\nsites that call this kind of parameter \"pairs\";\n`asset_ids` is the canonical form.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "pairs",
                           "value": "<string>"
                         },
                         {
@@ -5374,10 +5401,19 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\n",
+                            "content": "Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\nRequired unless `pairs` is supplied instead.\n",
                             "type": "text/plain"
                           },
                           "key": "asset_ids",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Alias for `asset_ids` (same comma-separated form).\nMutually exclusive with `asset_ids` — sending both is a\n400. Accepted for cross-endpoint compatibility with\nsites that call this kind of parameter \"pairs\";\n`asset_ids` is the canonical form.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "pairs",
                           "value": "<string>"
                         },
                         {
@@ -5464,10 +5500,19 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\n",
+                            "content": "Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\nRequired unless `pairs` is supplied instead.\n",
                             "type": "text/plain"
                           },
                           "key": "asset_ids",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Alias for `asset_ids` (same comma-separated form).\nMutually exclusive with `asset_ids` — sending both is a\n400. Accepted for cross-endpoint compatibility with\nsites that call this kind of parameter \"pairs\";\n`asset_ids` is the canonical form.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "pairs",
                           "value": "<string>"
                         },
                         {
@@ -5518,10 +5563,19 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\n",
+                            "content": "Comma-separated canonical asset ids, max 100. Same strict\nform as `/v1/price?asset=` — short symbols are rejected.\nRequired unless `pairs` is supplied instead.\n",
                             "type": "text/plain"
                           },
                           "key": "asset_ids",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Alias for `asset_ids` (same comma-separated form).\nMutually exclusive with `asset_ids` — sending both is a\n400. Accepted for cross-endpoint compatibility with\nsites that call this kind of parameter \"pairs\";\n`asset_ids` is the canonical form.\n",
+                            "type": "text/plain"
+                          },
+                          "key": "pairs",
                           "value": "<string>"
                         },
                         {
