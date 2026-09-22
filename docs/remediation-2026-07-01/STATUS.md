@@ -153,7 +153,7 @@ pass on current main). Triaged:
   **majors**: `tailwindcss v3→v4` (ground-up rewrite, CSS-first config migration),
   `typescript 5→6`, `eslint 9→10`, `eslint-config-next 15→16`, `@types/node 22→26`.
   Needs its own migration + visual QA + the eslint flat-config move. PRs open with note.
-- **#1353 — actions/checkout v6→v7 (major).** build/lint/unit-tests pass with v7
+- **actions/checkout v6→v7 (major).** build/lint/unit-tests pass with v7
   (all use checkout → runner-compatible); earlier `web/status` failure was the
   Next-16 lint issue (now fixed on main). Rebased onto fixed main — merge once green.
 
