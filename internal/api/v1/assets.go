@@ -2421,7 +2421,17 @@ func (s *Server) handleExternalAssetList(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	entries := s.verifiedCurrencies.External()
-	if class := normaliseAssetClass(r.URL.Query().Get("asset_class")); class == "fiat" || class == "stablecoin" || class == "crypto" {
+	class := normaliseAssetClass(r.URL.Query().Get("asset_class"))
+	if !validAssetClass(class) {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/invalid-asset-class",
+			"Invalid asset_class", http.StatusBadRequest,
+			"asset_class must be one of fiat, stablecoin, crypto or all "+
+				"(blockchain, cryptocurrency and cryptocurrencies fold to "+
+				"crypto), or be omitted for the default listing.")
+		return
+	}
+	if class == "fiat" || class == "stablecoin" || class == "crypto" {
 		entries = filterCatalogueByClass(entries, currency.AssetClass(class))
 	}
 	caps := s.computeAllCatalogueMarketCaps(r.Context(), entries)
