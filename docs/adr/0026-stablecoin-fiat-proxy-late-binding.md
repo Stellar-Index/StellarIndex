@@ -14,6 +14,16 @@ superseded_by: null
 > unchanged. Current map (`internal/aggregate/stablecoin.go`):
 > USDT / USDC / DAI / PYUSD / USDP → USD; EURC / EUROC / EUROB → EUR;
 > MXNe → MXN.
+>
+> **Correction (2026-09-22).** The `api.peg_aliases` operator-config
+> mechanism described below (Decision, Consequences, "Operational
+> impact") was never implemented — no such config key exists in
+> `internal/config/config.go`. The peg list is, and always has been,
+> the compiled Go map above. Adding, removing or repointing a peg is
+> a code change to `internal/aggregate/stablecoin.go` plus a redeploy,
+> not a config edit + reload. Every reference to `api.peg_aliases`
+> below describes the original (unimplemented) design, not current
+> behaviour.
 
 > **Amendment (2026-09-22, RSWP-121).** Both "#1224" citations below
 > (Context intro, References → Implementation) no longer identify the
