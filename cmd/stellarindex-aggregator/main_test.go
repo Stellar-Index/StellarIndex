@@ -516,3 +516,43 @@ func TestBuildDivergenceReferences_AggregatorParity(t *testing.T) {
 		}
 	}
 }
+
+// fakeCursorGetter substitutes for *timescale.Store in
+// divergenceLedgerAdapter tests.
+type fakeCursorGetter struct {
+	cursor timescale.Cursor
+	err    error
+}
+
+func (f fakeCursorGetter) GetCursor(_ context.Context, source, sub string) (timescale.Cursor, error) {
+	if source != supplyChainCursorSource || sub != "" {
+		return timescale.Cursor{}, errors.New("unexpected source/sub")
+	}
+	return f.cursor, f.err
+}
+
+// TestDivergenceLedgerAdapter_LatestLedger guards T026(d): before
+// this seam existed, NewDivergenceSink got no ledger provider and
+// every divergence_observations row carried observed_at_ledger=0
+// regardless of the live cursor. The adapter must surface the real
+// ledgerstream cursor, not the always-0 default.
+func TestDivergenceLedgerAdapter_LatestLedger(t *testing.T) {
+	a := divergenceLedgerAdapter{cursors: fakeCursorGetter{
+		cursor: timescale.Cursor{LastLedger: 55555555},
+	}}
+	if got := a.LatestLedger(); got != 55555555 {
+		t.Fatalf("LatestLedger() = %d, want 55555555 (the live cursor, not the always-0 default)", got)
+	}
+}
+
+// TestDivergenceLedgerAdapter_LatestLedger_FailsOpenOnError covers
+// the cold-start / transient-failure path: a cursor read error must
+// degrade to the documented 0 sentinel, never propagate or panic.
+func TestDivergenceLedgerAdapter_LatestLedger_FailsOpenOnError(t *testing.T) {
+	a := divergenceLedgerAdapter{cursors: fakeCursorGetter{
+		err: timescale.ErrNotFound,
+	}}
+	if got := a.LatestLedger(); got != 0 {
+		t.Fatalf("LatestLedger() = %d, want 0 on cursor-read error", got)
+	}
+}
