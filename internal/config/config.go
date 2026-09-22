@@ -806,7 +806,7 @@ type RedstoneOracleConfig struct {
 // BandOracleConfig carries the mainnet Band StandardReference
 // address. Band's Stellar contract emits zero events — we observe
 // `relay()` / `force_relay()` InvokeContract calls via the
-// dispatcher's ContractCallDecoder interface (PR 168). See
+// dispatcher's ContractCallDecoder interface. See
 // docs/discovery/oracles/band.md.
 type BandOracleConfig struct {
 	StandardReferenceContract string `toml:"standard_reference_contract" doc:"Band Protocol StandardReference contract (C-prefix) on mainnet — CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M."`

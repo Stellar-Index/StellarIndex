@@ -54,7 +54,7 @@ linked design doc has the full detail.
 - **Band's Soroban contract emits zero events.** A conventional
   topic-match Decoder never fires on Band. We observe the
   `relay()` / `force_relay()` InvokeContract call instead via
-  the dispatcher's `ContractCallDecoder` interface (PR 168). Any
+  the dispatcher's `ContractCallDecoder` interface. Any
   future Soroban source that updates storage without publishing
   events plugs into the same hook — match by (contract_id,
   function_name), decode from op args.

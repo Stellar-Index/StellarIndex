@@ -468,6 +468,12 @@ stale_patterns=(
                                   # PR number that never existed; #1223 is
                                   # now a real, unrelated open issue (supply
                                   # reference-leg fixture test)
+  "PR #?168\b"                   # dangling ref (RSWP-043) — band.md and
+                                  # domain-traps.md's ContractCallDecoder
+                                  # cutover cited "PR 168" / "PR #168";
+                                  # #168 now resolves to an unrelated merged
+                                  # PR (volume_character rollup) — cite the
+                                  # landing commit instead
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
