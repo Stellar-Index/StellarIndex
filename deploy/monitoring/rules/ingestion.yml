@@ -1149,3 +1149,35 @@ groups:
             goroutine dump / strace before killing it — a hang here has
             recurred (galexie wedge, 2026-07-05) and the stack is the
             only evidence of which read blocked.
+
+      # ── T578: a job that ran to completion and FAILED had no alert ──
+      # `stellarindex_ops_job_last_exit_ok` was emitted since C6-020 but
+      # never selected by either tree. No `running == 1` guard — this is
+      # about the terminal state a finished run left, not a live process.
+      # See configs/prometheus/rules.r1/ingestion.yml for the full
+      # rationale + the matching R1 overlay.
+      - alert: stellarindex_ops_job_run_failed
+        expr: stellarindex_ops_job_last_exit_ok == 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: ingestion
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ops-job-stalled.md
+          summary: "ops job {{ $labels.ops_job }} exited with an error on its last run"
+          description: |
+            The job's textfile reports last_exit_ok=0: the most recent
+            run of this stellarindex-ops subcommand ended with a non-zero
+            exit, not a crash (a crash leaves running=1 forever and is
+            covered by heartbeat_stale instead). The range it was walking
+            is NOT confirmed complete.
+
+            Check the job's log for the failure, fix the underlying
+            cause, and re-run the same window — every backfill here is
+            idempotent, so re-running a covered range is free and leaving
+            the hole is not.
+
+            This value persists until the job's next run overwrites it,
+            same as heartbeat_stale — deliberate, so a failed run does
+            not go invisible just because nothing is currently running.

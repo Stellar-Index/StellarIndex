@@ -5,13 +5,13 @@ status: draft
 severity: P3
 ---
 
-# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress`
+# Runbook — `stellarindex_ops_job_heartbeat_stale` / `stellarindex_ops_job_no_progress` / `stellarindex_ops_job_run_failed`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_ops_job_heartbeat_stale` (P3 / ticket) — the process is GONE.<br>`stellarindex_ops_job_no_progress` (P3 / ticket) — the process is ALIVE and HUNG. |
+| Alerts | `stellarindex_ops_job_heartbeat_stale` (P3 / ticket) — the process is GONE.<br>`stellarindex_ops_job_no_progress` (P3 / ticket) — the process is ALIVE and HUNG.<br>`stellarindex_ops_job_run_failed` (P3 / ticket) — the last run FINISHED with a non-zero exit. |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/ingestion.yml` and the R1 overlay `configs/prometheus/rules.r1/ingestion.yml`. |
 | Source | node_exporter textfile written by `internal/ops/opsutil.JobHeartbeat`, at `/var/lib/node_exporter/textfile_collector/ops_job_<job>.prom`. |
 | Typical MTTR | Minutes to decide; the re-run itself is as long as the window. |
@@ -44,6 +44,15 @@ Hence:
   session that owned it closed.
 - **`no_progress`** = `running==1`, ticker fine, **both** counters flat for
   30 min → the process is up and **hung**.
+- **`run_failed`** = `last_exit_ok==0` → the process **exited cleanly on
+  its own, but with an error**. Unlike its two siblings this alert carries
+  no `running==1` guard: a clean exit sets `running=0`, which is exactly
+  what would silence the other two, so this is the only one of the three
+  that watches the FINISHED state rather than a live process. T578
+  (audit-2026-09-18): `last_exit_ok` had been emitted since C6-020 but no
+  rule in either tree ever selected it, so a job that ran to completion
+  and failed — a permanent backfill error, a `verify-contiguity` gap it
+  could not close — alerted nobody.
 
 `no_progress` needs both because for some jobs the completed-unit count is
 structurally zero for whole phases of a healthy run. `usd-volume-restamp
@@ -115,6 +124,11 @@ definition — from alerting eternally. Do not remove it.
    (`mc ls <alias>`), ClickHouse accepting queries
    (`clickhouse-client -q 'SELECT 1'`), and the ZFS pool not full
    (`stellarindex_zfs_pool_low_space`).
+5. **`run_failed`** → no process to find; the job already exited. Go
+   straight to its log (`journalctl -u <unit> --since -6h | tail -200`,
+   or the terminal output if it was run by hand) for the error it printed
+   before returning non-zero, then treat it as a normal remediation
+   below — the last `progress_cursor` value is how far it got.
 
 ## Remediation
 
@@ -339,6 +353,11 @@ both bear on what a stop actually achieves.
 
 ## Changelog
 
+- 2026-09-22 (T578) — added `stellarindex_ops_job_run_failed`: the
+  `last_exit_ok` gauge had been emitted since C6-020 with no rule
+  selecting it in either tree, so a job that ran to completion and
+  failed alerted nobody. Updated the at-a-glance table, "What these fire
+  on", and quick diagnosis.
 - 2026-09-04 — added "Stopping a wrapped job": stop by scope not by
   pattern, the wrapper's `TimeoutStopSec` bound (default `5min`,
   override `HEAVY_JOB_STOP_TIMEOUT`, validated with a 90 s floor) and
