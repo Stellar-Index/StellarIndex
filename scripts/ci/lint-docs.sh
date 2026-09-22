@@ -359,6 +359,12 @@ stale_patterns=(
                                   # live issue (explorer buildFetch bypass,
                                   # filed 2026-09-18), not the PR that
                                   # shipped the stats opt-in
+  "#854\b"                        # CHANGELOG's NetworkLivePanel entry cited
+                                  # this as the earlier network-strip fix
+                                  # (RSWP-052); #854 is now a real, unrelated
+                                  # live issue (Atom renderer CDATA/XSS), so
+                                  # the reference would resolve to the wrong
+                                  # thing instead of just dangling
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
