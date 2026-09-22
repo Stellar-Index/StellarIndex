@@ -238,6 +238,20 @@ func (c *DEXTVLCache) Snapshot() (map[string]ProtocolTVLView, time.Time) {
 	return c.snapshot, c.fetchedAt
 }
 
+// SnapshotAndTotal returns the per-protocol snapshot together with the
+// headline total from the SAME refresh cycle (RLT-235). Snapshot() and
+// Total() each take their own critical section, so a caller reading
+// both separately can straddle a Refresh() and pair one cycle's
+// per-protocol figures with a different cycle's total — the two are
+// written atomically under one Lock() in Refresh but were readable
+// non-atomically. Callers that publish both fields on the same response
+// (e.g. GET /v1/protocols) must use this instead of the two accessors.
+func (c *DEXTVLCache) SnapshotAndTotal() (map[string]ProtocolTVLView, *DEXTVLTotalView, time.Time) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.snapshot, c.total, c.fetchedAt
+}
+
 // Protocol returns one protocol's published view together with the
 // per-pool breakdown it was summed from, and whether the entry is a
 // carried-forward figure from an earlier cycle. ok=false when the
