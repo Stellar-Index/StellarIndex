@@ -22,10 +22,10 @@ const SourceName = "sdex"
 
 // Errors returned by the decode path.
 var (
-	// ErrUnknownClaimAtomType — a ClaimAtom.Type we don't yet
-	// decode (V0 on recent ledgers, or a future variant). Surfaced
-	// as a per-entry decode error so sustained-rate alerts fire
-	// when new claim types ship.
+	// ErrUnknownClaimAtomType — a ClaimAtom.Type outside the three
+	// known arms (OrderBook, LiquidityPool, V0 — all decoded, see
+	// decode.go). Surfaced as a per-entry decode error so
+	// sustained-rate alerts fire when a future claim type ships.
 	ErrUnknownClaimAtomType = errors.New("sdex: unknown ClaimAtom type")
 
 	// ErrMalformedClaimAtom — claim atom fields don't match the
