@@ -100,8 +100,19 @@ for a in "${ASSETS[@]}"; do
       (.liquidity_pools_amount // "0"),
       (.contracts_amount // "0") ] | @tsv' | tr '\t' ' ')
 
-  ours=$(curl -s --max-time 30 "${API_BASE}/v1/assets/${code}-${issuer}" \
-         | jq -r '(.data.total_supply // .total_supply) // empty')
+  # Same failure discipline as the Horizon fetch above: `curl -f` turns an
+  # HTTP >=400 from our own API into a non-zero exit instead of a non-JSON
+  # body that would otherwise make jq fail and, under `set -eo pipefail`,
+  # abort the whole run before it ever reaches the SKIP(no-data) branch below
+  # (F083).
+  ar=""
+  if ! ar=$(curl -sf --max-time 30 "${API_BASE}/v1/assets/${code}-${issuer}"); then
+    ar=""
+  fi
+  ours=""
+  if [ -n "$ar" ]; then
+    ours=$(printf '%s' "$ar" | jq -r '(.data.total_supply // .total_supply) // empty' 2>/dev/null || true)
+  fi
 
   if [ -z "${ours:-}" ] || [ -z "${tl:-}" ]; then
     printf '%-6s %14s %14s %14s %14s %16s %16s %9s  %s\n' \
