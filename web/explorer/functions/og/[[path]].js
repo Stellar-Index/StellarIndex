@@ -157,8 +157,14 @@ export async function onRequest(context) {
   return new ImageResponse(html, {
     width: 1200,
     height: 630,
+    // F087: workers-og builds its own headers object with a 'Cache-Control'
+    // key, then spreads this object in afterward — plain JS object keys are
+    // case-sensitive, so a differently-cased key here creates a SECOND
+    // property that survives into the Headers init and gets appended
+    // (not overridden), producing a doubled header value. Match the exact
+    // casing so this key overrides the library's default instead.
     headers: {
-      'cache-control': 'public, s-maxage=60, stale-while-revalidate=300',
+      'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300',
     },
   });
 }

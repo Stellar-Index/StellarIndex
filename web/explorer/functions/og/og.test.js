@@ -8,9 +8,21 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 
 vi.mock('workers-og', () => ({
+  // F087: mirrors workers-og@0.0.27's actual ImageResponse header
+  // construction (`{"Content-Type":...,"Cache-Control":<default>,
+  // ...opts.headers}`) so a caller that passes a differently-cased
+  // 'cache-control' key reproduces the same doubled-header defect here
+  // that it would against the real, WASM-only library.
   ImageResponse: class FakeImageResponse extends Response {
     constructor(_html, opts) {
-      super('fake-png-bytes', { status: 200, headers: opts?.headers });
+      super('fake-png-bytes', {
+        status: 200,
+        headers: {
+          'Content-Type': 'image/png',
+          'Cache-Control': 'public, immutable, no-transform, max-age=31536000',
+          ...opts?.headers,
+        },
+      });
     }
   },
 }));
@@ -58,6 +70,15 @@ describe('og function — type allowlist (SEC-08 / SEC-15)', () => {
   it('still renders a known type', async () => {
     const res = await onRequest(makeContext('/og/assets/usdc'));
     expect(res.status).toBe(200);
+  });
+});
+
+describe('og function — cache-control header (F087)', () => {
+  it('emits exactly the 60s edge policy, not doubled with the library default', async () => {
+    const res = await onRequest(makeContext('/og/assets/usdc'));
+    expect(res.headers.get('cache-control')).toBe(
+      'public, s-maxage=60, stale-while-revalidate=300',
+    );
   });
 });
 
