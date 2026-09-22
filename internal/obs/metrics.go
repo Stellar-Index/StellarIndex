@@ -278,6 +278,8 @@ func registerAppMetricsTail() {
 		SignupReaperRunsTotal,
 		SignupReaperRunDurationSeconds,
 		SignupReaperRowsDeletedTotal,
+		AccountRows,
+		APIKeyRows,
 
 		LoginCodeLockoutRows,
 		LoginCodeLockoutRowsDeletedTotal,
@@ -2188,6 +2190,36 @@ var SignupReaperRowsDeletedTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_signup_reaper_rows_deleted_total",
 		Help: "Cumulative speculative (signup-race) orphan accounts deleted by the reaper.",
+	},
+)
+
+// AccountRows — current row count of `accounts`, refreshed by every
+// signup-reaper sweep.
+//
+// POST /v1/register (ADR-0049) is public, anonymous-tier, and
+// deliberately friction-free: every accepted call mints a permanent
+// row, bounded only by the per-IP signup throttle (default 5/hour/IP,
+// shared with /v1/signup). The signup-reaper never deletes a
+// successful registration's rows — it reaps signup-race orphans only —
+// so this gauge is the sole per-deployment signal of registration
+// volume; without it the first sign of an abused registration path
+// would be the account/billing side effects, not a metric that names
+// the surface.
+var AccountRows = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_accounts_rows",
+		Help: "Rows in accounts. POST /v1/register is unauthenticated and durable, so sustained growth outside expected traffic is registration-path abuse, not necessarily legitimate signups.",
+	},
+)
+
+// APIKeyRows — current row count of `api_keys`, refreshed by every
+// signup-reaper sweep alongside [AccountRows]. Register mints exactly
+// one durable key per account (mintRegisterKey), so the two gauges
+// track the same growth from the credential side.
+var APIKeyRows = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_api_keys_rows",
+		Help: "Rows in api_keys. POST /v1/register mints one durable key per account, so this moves in lockstep with stellarindex_accounts_rows.",
 	},
 )
 
