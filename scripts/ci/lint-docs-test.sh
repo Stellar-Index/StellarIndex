@@ -70,6 +70,13 @@ git checkout -- CHANGELOG.md
 echo "(#1271)" >> docs/architecture/coverage-matrix.md
 check "a reintroduced '#1271' citation in coverage-matrix.md is caught" red
 git checkout -- docs/architecture/coverage-matrix.md
+# §4 stale-reference check: docs/remediation-2026-07-01/STATUS.md must not
+# carry the dangling "#1347" citation back in (RSWP-146 — #1347 resolves to
+# a real but unrelated issue about retiring a data source, not the
+# go-stellar-sdk v0.6 bump it was cited against).
+echo "(#1347)" >> docs/remediation-2026-07-01/STATUS.md
+check "a reintroduced '#1347' citation in STATUS.md is caught" red
+git checkout -- docs/remediation-2026-07-01/STATUS.md
 check "clean tree passes again after revert" ok
 
 cat > "$FIX2" <<'EOF'

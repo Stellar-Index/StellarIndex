@@ -144,7 +144,7 @@ pass on current main). Triaged:
   builds+typechecks+lints fine — migrated both apps' `lint` scripts to the ESLint
   CLI (commit `ff729b29`). Stopgap uses `ESLINT_USE_FLAT_CONFIG=false`; the flat-
   config migration rides with the deferred tooling-group below.
-- **Deferred #1347 — go-stellar-sdk v0.5→v0.6 (HELD).** VERSIONS.md mandates a
+- **Deferred — go-stellar-sdk v0.5→v0.6 (HELD).** VERSIONS.md mandates a
   compat pass; v0.6 breaks `datastore.GetFile` (now returns file size). Contained
   adaptation (`internal/ledgerstream/tiered.go` `GetFile`/`coldGetFile`,
   `tiered_test.go:43`, `cmd/stellarindex-ops/rehydrate_galexie_archive.go:157`) +

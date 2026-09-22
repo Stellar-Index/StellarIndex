@@ -326,6 +326,10 @@ stale_patterns=(
                                   # resolves to a real, unrelated open issue
                                   # (price-alert freeze marker) rather than
                                   # a 404
+  "#1347\b"                      # STATUS.md's go-stellar-sdk v0.6 bump cited
+                                  # #1347 before it existed (RSWP-146); #1347
+                                  # is now a real, unrelated issue about
+                                  # retiring a data source
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
@@ -340,6 +344,7 @@ for pattern in "${stale_patterns[@]}"; do
     docs/architecture/ \
     docs/operations/ \
     docs/development/ \
+    docs/remediation-2026-07-01/ \
     2>/dev/null | grep -v "node_modules\|_archive/\|discovery/" || true)
   if [ -n "$matches" ]; then
     err "Stale reference to '$pattern' in active docs:"
