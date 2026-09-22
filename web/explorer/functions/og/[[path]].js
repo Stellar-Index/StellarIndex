@@ -111,14 +111,19 @@ export function resetOgGatesForTest() {
 
 // Exported for unit tests only (functions/og/og.test.js) — CF Pages only
 // invokes `onRequest`; these named exports have no runtime effect on it.
-export async function liveSubline(type, rawId) {
+// `apiOrigin` is required rather than defaulted: each network's explorer
+// runs as its own Pages project on its own hostname ({network}.
+// stellarindex.io, bare for mainnet) with its own DNS-only API origin
+// (api.{that same hostname}), and onRequest derives it from the inbound
+// request — this function has no business guessing a network.
+export async function liveSubline(type, rawId, apiOrigin) {
   try {
     if (type === 'markets' && rawId.includes('~')) {
       const [base, quote] = rawId.split('~');
       if (!ASSET_LEG_RE.test(base) || !ASSET_LEG_RE.test(quote)) return null;
       if (upstreamBreakerOpen()) return null;
       const r = await fetch(
-        `https://api.stellarindex.io/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+        `${apiOrigin}/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
         {
           signal: AbortSignal.timeout(2500),
           headers: { 'user-agent': 'stellarindex-og/1' },
@@ -211,7 +216,12 @@ export async function onRequest(context) {
   const kicker = TYPE_LABEL.has(type)
     ? `Stellar Index · ${TYPE_LABEL.get(type)}`
     : 'Stellar Index';
-  const sub = await liveSubline(type, rawId);
+  // api.{hostname}: mirrors networks.ts's apiBaseUrl (api.stellarindex.io,
+  // api.testnet.stellarindex.io, api.futurenet.stellarindex.io) — every
+  // network's Pages project serves this same function under its own
+  // hostname, so the origin must come from the request, not a constant.
+  const apiOrigin = `https://api.${url.hostname}`;
+  const sub = await liveSubline(type, rawId, apiOrigin);
 
   // CS-009: HTML-escape every interpolated value. Unescaped attacker input
   // reaching satori markup lets an injected `<img src=…>` trigger an
@@ -236,7 +246,7 @@ export async function onRequest(context) {
         <div style="display:flex;font-size:76px;font-weight:700;line-height:1.05;">${esc(label)}</div>
         ${sub ? `<div style="display:flex;font-size:40px;color:#cdd6e6;margin-top:18px;">${esc(sub)}</div>` : ''}
       </div>
-      <div style="display:flex;font-size:26px;color:#8a93a6;">stellarindex.io</div>
+      <div style="display:flex;font-size:26px;color:#8a93a6;">${esc(url.hostname)}</div>
     </div>`;
 
   return new ImageResponse(html, {

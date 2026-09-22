@@ -39,6 +39,16 @@ vi.setConfig({ testTimeout: 30_000 });
 const SRC = join(__dirname, '..');
 
 /**
+ * Cloudflare Pages Functions (functions/) are a SEPARATE edge-function
+ * build — not bundled through Next, so they never pass through src/ — but a
+ * fetch() origin or rendered footer literal there bakes a mainnet
+ * hardcode into every deployment exactly like a src/ literal would. The
+ * guard missed this for a day: functions/og/[[path]].js hardcoded both the
+ * upstream price-fetch origin and the card's footer text.
+ */
+const FUNCTIONS_DIR = join(SRC, '..', 'functions');
+
+/**
  * Build-time config outside src/ that can ALSO bake a mainnet literal into
  * every bundle. next.config.mjs's `env` block is inlined by Next exactly like
  * a source literal — a default there (`?? 'https://api.stellarindex.io'`)
@@ -72,14 +82,15 @@ const ALLOWED = new Map<string, string>([
  * tests. Exempt them rather than forcing an indirection that would let the
  * assertion drift with the code it checks.
  */
-const isTest = (rel: string) => /\.test\.tsx?$/.test(rel);
+const isTest = (rel: string) => /\.test\.[jt]sx?$/.test(rel);
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === '.next') continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.(ts|tsx)$/.test(entry)) out.push(full);
+    // functions/ (Cloudflare Pages Functions) ships plain .js, not .ts/.tsx.
+    else if (/\.(ts|tsx|js|jsx)$/.test(entry)) out.push(full);
   }
   return out;
 }
@@ -99,7 +110,7 @@ function stripComments(src: string): string {
 
 function offenders(pattern: RegExp): string[] {
   const bad: string[] = [];
-  for (const file of [...walk(SRC), ...EXTRA_FILES]) {
+  for (const file of [...walk(SRC), ...walk(FUNCTIONS_DIR), ...EXTRA_FILES]) {
     const rel = relative(SRC, file).split('\\').join('/');
     if (ALLOWED.has(rel) || isTest(rel)) continue;
     const code = stripComments(readFileSync(file, 'utf8'));

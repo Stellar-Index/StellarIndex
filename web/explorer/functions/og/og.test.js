@@ -166,7 +166,11 @@ describe('liveSubline — asset-shape guard (SEC-15)', () => {
 
   it('does not call fetch when a leg contains markup/garbage', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    const result = await liveSubline('markets', '<img src=x>~native');
+    const result = await liveSubline(
+      'markets',
+      '<img src=x>~native',
+      'https://api.stellarindex.io',
+    );
     expect(result).toBeNull();
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -180,8 +184,38 @@ describe('liveSubline — asset-shape guard (SEC-15)', () => {
     const result = await liveSubline(
       'markets',
       'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      'https://api.stellarindex.io',
     );
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(result).toBe('1 XLM = 0.1235 USDC');
+  });
+});
+
+describe('og function — per-network API origin (network-hardcodes T283)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  // Each network (mainnet/testnet/futurenet) is a SEPARATE Pages project on
+  // its own hostname running this same function; the upstream price fetch
+  // must follow the request's hostname (api.{hostname}) rather than always
+  // hitting the mainnet API — a testnet card hardcoded to the mainnet API
+  // would fetch mainnet prices (or 404, since testnet runs no aggregator).
+  it('fetches the price from the REQUESTED network origin, not mainnet', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { price: '1.5' } }), {
+        status: 200,
+      }),
+    );
+    const res = await onRequest({
+      request: new Request(
+        'https://testnet.stellarindex.io/og/markets/native~usdc',
+      ),
+      env: {},
+    });
+    expect(res.status).toBe(200);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const requestedUrl = fetchSpy.mock.calls[0][0];
+    expect(String(requestedUrl)).toMatch(
+      /^https:\/\/api\.testnet\.stellarindex\.io\/v1\/price\?/,
+    );
   });
 });
