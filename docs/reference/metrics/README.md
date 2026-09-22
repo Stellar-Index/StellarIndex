@@ -528,6 +528,16 @@ Includes recovered decoder PANICS — see
 `stellarindex_decoder_panics_total` below, which is the strict subset
 of this counter that crashed rather than refused.
 
+### `stellarindex_source_amount_degraded_total`
+
+Counter, labels `source`, `field`.
+
+Decoded events whose money-bearing field could not be parsed, so the
+row was kept with that amount NULL. The row count still reconciles,
+so reconciliation cannot see this; non-zero means served volume for
+that source is silently under-reported. Emitted by sorocredit's
+settlement decoder (`field="settled_amount"`).
+
 ### `stellarindex_decoder_panics_total`
 
 Counter, label `source`.
