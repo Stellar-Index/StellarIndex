@@ -69,9 +69,13 @@
       # Managed by ansible (archival-node role / 16-prometheus-exporters.yml).
       # Sourced via the Debian-shipped systemd unit's `EnvironmentFile=`.
       REDIS_ADDR=redis://localhost:6379
-      # Listen on loopback only — nftables blocks external 9121
-      # access regardless, but defence-in-depth.
-      WEB_LISTEN_ADDRESS=127.0.0.1:9121
+      # The Debian unit's ExecStart is `prometheus-redis-exporter $ARGS` —
+      # it does not read WEB_LISTEN_ADDRESS, so the listen address must be
+      # passed as a CLI flag via ARGS (same pattern as node_exporter and
+      # local-prometheus in this role) or it silently falls back to :9121
+      # on all interfaces. Listen on loopback only — nftables blocks
+      # external 9121 access regardless, but defence-in-depth.
+      ARGS="--web.listen-address=127.0.0.1:9121"
 
 - name: Enable + start prometheus-redis-exporter
   ansible.builtin.systemd:
@@ -134,8 +138,13 @@
       # user (`prometheus`), matched to a same-named pg_monitor role
       # (created by the role task above); no password anywhere.
       DATA_SOURCE_NAME="user=prometheus host=/var/run/postgresql dbname=stellarindex sslmode=disable"
-      # Listen on loopback only — same defence-in-depth as redis_exporter.
-      PG_EXPORTER_WEB_LISTEN_ADDRESS=127.0.0.1:9187
+      # The Debian unit's ExecStart is `prometheus-postgres-exporter $ARGS` —
+      # it does not read PG_EXPORTER_WEB_LISTEN_ADDRESS, so the listen
+      # address must be passed as a CLI flag via ARGS (same pattern as
+      # node_exporter and local-prometheus in this role) or it silently
+      # falls back to :9187 on all interfaces. Listen on loopback only —
+      # same defence-in-depth as redis_exporter.
+      ARGS="--web.listen-address=127.0.0.1:9187"
   notify: Restart prometheus-postgres-exporter
 
 - name: Enable + start prometheus-postgres-exporter
