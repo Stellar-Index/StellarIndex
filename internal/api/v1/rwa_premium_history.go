@@ -104,7 +104,12 @@ const rwaPremiumHistoryTTL = 10 * time.Minute
 
 // rwaPremiumHistoryBudget bounds the two scans together, so a slow
 // store cannot hold a request open for the handler's whole budget.
-const rwaPremiumHistoryBudget = 20 * time.Second
+//
+// Tied to [maxHandlerBudget] rather than a separate literal, for the
+// same reason as [rwaHistoryBudget]: the handler reaches
+// buildRWAPremiumHistory synchronously on a cache miss, so a budget
+// past the blanket request deadline can never fire (RLT-043).
+const rwaPremiumHistoryBudget = maxHandlerBudget
 
 // rwaPremiumHistoryMaxPoints caps the served point count per series.
 const rwaPremiumHistoryMaxPoints = 4096
