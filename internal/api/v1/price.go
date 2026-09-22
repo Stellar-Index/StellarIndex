@@ -1105,8 +1105,8 @@ const priceReadFlightTimeout = 8 * time.Second
 // ONE upstream read instead of one each (HO-344).
 func (s *Server) readPriceWithAliasesServed(_ context.Context, reader PriceReader, asset, quote canonical.Asset) (PriceSnapshot, []string, bool, canonical.Asset, error) {
 	key := asset.String() + "/" + quote.String()
-	v, err, _ := s.priceReadFlight.Do(key, func() (any, error) {
-		fetchCtx, cancel := context.WithTimeout(context.Background(), priceReadFlightTimeout) //nolint:contextcheck // singleflight deliberately survives per-caller cancellation, see internal/metadata/cache.go
+	v, err, _ := s.priceReadFlight.Do(key, func() (any, error) { //nolint:contextcheck // singleflight deliberately survives per-caller cancellation, see internal/metadata/cache.go
+		fetchCtx, cancel := context.WithTimeout(context.Background(), priceReadFlightTimeout)
 		defer cancel()
 		snap, srcs, stale, served, err := s.readPriceWithAliasesServedOnce(fetchCtx, reader, asset, quote)
 		if err != nil {
