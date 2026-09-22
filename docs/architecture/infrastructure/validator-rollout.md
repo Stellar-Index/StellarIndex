@@ -1,7 +1,7 @@
 ---
 title: Validator Rollout — 1 → 3 Full Validators as one Tier-1 Organisation
 last_verified: 2026-05-03
-status: accepted — phased rollout described here is post-launch (Phase-3); the launch v1 ships archival-only, see [ADR-0004](../../adr/0004-tier1-validator-aspiration.md)
+status: superseded — the infrastructure shape (stretched Patroni, cross-region etcd) is superseded by [ADR-0050](../../adr/0050-multi-region-ha-architecture.md); the validator-operations sequence (key ceremonies, quorum-set phasing) below is still accepted; the launch v1 ships archival-only, see [ADR-0004](../../adr/0004-tier1-validator-aspiration.md)
 ---
 
 # Validator Rollout — 1 → 3, as one Tier-1 Org
@@ -137,9 +137,11 @@ muscle memory.
   it adds validator 1 to its "stellarindex org" sub-quorum.
 - Our quorum sub-quorum now has 2 members; SCP expects us to
   weight it as an org.
-- Application-layer: region R2 joins the Patroni cluster as sync
-  replica (per
-  [multi-region-topology.md §5](multi-region-topology.md#5-application-state--timescaledb-the-single-writer-layer)).
+- Application-layer: **superseded** — this doc previously said R2
+  joins a stretched Patroni cluster as sync replica; per
+  [ADR-0050](../../adr/0050-multi-region-ha-architecture.md) (Model B),
+  R2 instead runs independent per-region ingest with no cross-region
+  Postgres replication. See [multi-region-ha.md](../multi-region-ha.md).
 
 **Exit criteria (Phase C → Phase D):** same as Phase B, applied to
 validator 2.
@@ -147,8 +149,11 @@ validator 2.
 ### Phase D — Week 8: Deploy validator 3 in R3 (Singapore)
 
 - Same pattern as Phase C.
-- Application-layer: R3 joins Patroni as async replica. etcd grows
-  from 3 to 5 nodes (spanning the 3 regions).
+- Application-layer: **superseded** — this doc previously said R3
+  joins Patroni as an async replica with etcd growing to 5 nodes
+  across regions; per [ADR-0050](../../adr/0050-multi-region-ha-architecture.md)
+  R3 runs the same independent per-region ingest as R2, with no
+  stretched Patroni cluster or cross-region etcd.
 - Our org now has three validators in three regions with
   independent archives.
 
@@ -284,12 +289,15 @@ Design-time work that pays back at Phase C/D:
   our archive against SDF + LOBSTR + Satoshipay. At 3 validators
   it additionally compares our three archives against each other.
   Same script, different config.
-- **Application layer ships multi-region-ready.** Patroni +
-  Timescale + Redis all follow the multi-region-topology.md design
-  even when there's only 1 region. Standing up R2 is "join the
-  cluster", not "redesign the cluster."
+- **Application layer ships multi-region-ready.** **Superseded** —
+  this doc previously described Patroni + Timescale + Redis
+  following a stretched cross-region design; per
+  [ADR-0050](../../adr/0050-multi-region-ha-architecture.md) (Model B)
+  each region runs independent per-region ingest, no cross-region
+  Postgres replication. Standing up R2 is "deploy another independent
+  region", not "join a cluster."
 - **Runbooks are region-agnostic.** Runbook says "the affected
-  region's Patroni node"; works whether there are 1 or 3.
+  region's Postgres primary"; works whether there are 1 or 3 regions.
 
 ---
 
