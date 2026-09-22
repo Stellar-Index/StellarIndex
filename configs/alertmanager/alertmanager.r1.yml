@@ -87,9 +87,14 @@ route:
       repeat_interval: 1h
       continue: true
 
-    # SEV-1 — page operators. Currently routes to chat-page; wire
-    # PagerDuty in chat-page receiver below when integration_key is
-    # provisioned.
+    # SEV-1 — page operators, Discord only. That is the R1 design, not
+    # a pending TODO: the ansible template's chat-page receiver also
+    # renders an optional PagerDuty leg (alertmanager_pagerduty_key),
+    # but scripts/ci/check-alertmanager-parity.sh renders that variable
+    # empty on purpose and documents it as a deliberate multi-host-only
+    # extra — R1 is single-host, so Discord is the whole escalation
+    # path. Wire a pagerduty_configs block here (and update that gate's
+    # expected value) only if R1 itself needs PagerDuty paging.
     - matchers: [severity = "page"]
       receiver: chat-page
       continue: false
