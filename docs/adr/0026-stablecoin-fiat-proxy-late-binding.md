@@ -15,6 +15,17 @@ superseded_by: null
 > USDT / USDC / DAI / PYUSD / USDP → USD; EURC / EUROC / EUROB → EUR;
 > MXNe → MXN.
 
+> **Amendment (2026-09-22, RSWP-121).** Both "#1224" citations below
+> (Context intro, References → Implementation) no longer identify the
+> `/v1/vwap` + `/v1/twap` proxy fallback they describe. No PR #1224
+> has ever existed in this repo; GitHub has since assigned #1224 to a
+> real but unrelated open issue about `ClosedVWAPAtOrBefore`'s
+> closed-bucket bound, so a reader following the citation lands on
+> wrong content instead of a 404. The actual PR number for the
+> `/v1/vwap` + `/v1/twap` fallback does not survive in git history, so
+> the citation is not replaced with a guess. Treat both "#1224"
+> mentions below as historical record only, not a live reference.
+
 ## Context
 
 Most CEX and DEX trades quote against a USD stablecoin
