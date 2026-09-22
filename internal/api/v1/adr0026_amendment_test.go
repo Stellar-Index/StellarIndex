@@ -51,3 +51,49 @@ func TestADR0026PinsThe1224AmendmentNotice(t *testing.T) {
 		}
 	}
 }
+
+// TestADR0026PinsThe1225AmendmentNotice guards RSWP-122: ADR-0026's two
+// "PR #1225" citations (Context intro's PR list, References >
+// Implementation surface) no longer identify the SEP-40 oracle
+// endpoints proxy fallback they describe. No PR #1225 has ever existed
+// in this repo; GitHub has since assigned #1225 to a real but unrelated
+// open issue about test-vacuity residue across several endpoints, so a
+// reader following the citation lands on wrong content instead of a
+// 404 — worse than a dead link.
+//
+// Per docs/adr/README.md's amendment rule, the original ADR body is
+// left intact (both "#1225" mentions stay, as historical record) and
+// the correction lives in a dated Amendment blockquote. This test pins
+// that the blockquote exists and still calls out both the wrong
+// resolution and the unrelated target, so it can't be silently dropped
+// in a future edit of the doc.
+func TestADR0026PinsThe1225AmendmentNotice(t *testing.T) {
+	path := filepath.Join(repoRoot(t), "docs", "adr", "0026-stablecoin-fiat-proxy-late-binding.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	doc := string(b)
+
+	for _, want := range []string{
+		"Amendment (2026-09-22, RSWP-122)",
+		"No PR\n> #1225 has ever existed in this repo",
+		"test-vacuity residue",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s is missing amendment text %q; the dangling PR #1225 citation is no longer flagged as misdirecting a reader to an unrelated issue", path, want)
+		}
+	}
+
+	// The original citations must survive untouched (README.md's
+	// "amend, don't rewrite" rule) — the amendment explains them, it
+	// doesn't replace them.
+	for _, original := range []string{
+		"PRs #1217 / #1218 / #1224 / #1225 / #1226 (etc.) added",
+		"PR #1225 — SEP-40 oracle endpoints proxy fallback",
+	} {
+		if !strings.Contains(doc, original) {
+			t.Errorf("%s: original citation %q was rewritten or removed; ADR body text must only be amended, per docs/adr/README.md", path, original)
+		}
+	}
+}

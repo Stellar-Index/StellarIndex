@@ -512,6 +512,12 @@ stale_patterns=(
                                   # cited a PR number that doesn't exist;
                                   # #1230 has no corresponding PR or issue,
                                   # so the citation 404s outright
+  "#1225\b"                      # dangling ref (RSWP-122) — CHANGELOG's
+                                  # ADR-0026 summary and /v1/ohlc
+                                  # stablecoin-fallback entries cited a PR
+                                  # number that never existed; #1225 is now
+                                  # a real, unrelated open issue (test-vacuity
+                                  # residue across several endpoints)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
