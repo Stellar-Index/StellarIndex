@@ -9,10 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
@@ -601,6 +603,45 @@ func b64(t *testing.T, sv xdr.ScVal) string {
 func b64Symbol(t *testing.T, s string) string {
 	t.Helper()
 	return b64(t, symbolSV(s))
+}
+
+// TestDecode_Settlement_MalformedAmountCountsDegrade proves Q072's fix:
+// a Liquidation body whose amounts leg (data[2]) isn't a non-empty
+// Vec[i128] must still decode (nil error, row kept — see package doc)
+// but now increments obs.SourceAmountDegradedTotal{source="sorocredit",
+// field="settled_amount"} so the resulting NULL settled_amount is no
+// longer invisible.
+func TestDecode_Settlement_MalformedAmountCountsDegrade(t *testing.T) {
+	before := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
+
+	body := b64(t, vecSV(
+		contractAddrSV(t, contractStrkey(t, 0x01)),        // settler
+		vecSV(contractAddrSV(t, contractStrkey(t, 0x02))), // debt_assets (ok)
+		vecSV(), // amounts — empty Vec, the malformed shape
+	))
+	ev := events.Event{
+		LedgerClosedAt: "2026-07-06T00:00:00Z",
+		Topic: []string{
+			topicSymLiquidation,
+			b64(t, contractAddrSV(t, contractStrkey(t, 0x03))),
+			b64(t, stringSV("pos")),
+			b64(t, stringSV("stmt")),
+		},
+		Value: body,
+	}
+
+	out, err := decodeOne(&ev)
+	if err != nil {
+		t.Fatalf("decodeOne: %v", err)
+	}
+	if out.Amount != "" {
+		t.Fatalf("Amount = %q, want empty (malformed amounts leg)", out.Amount)
+	}
+
+	after := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
+	if after != before+1 {
+		t.Errorf("SourceAmountDegradedTotal{source=%q,field=%q} = %v, want %v (the degrade must be counted, not just noted in attrs)", SourceName, "settled_amount", after, before+1)
+	}
 }
 
 func split128(n *big.Int) (hi int64, lo uint64) {

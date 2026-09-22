@@ -7,6 +7,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
@@ -280,9 +281,11 @@ func decodeSettlement(e *events.Event) (decoded, error) {
 			amount = amt.String()
 		} else {
 			attrs["settled_amount_error"] = aerr.Error()
+			obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
 		}
 	} else {
 		attrs["settled_amount_error"] = "not a non-empty Vec"
+		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
 	}
 	return decoded{
 		CollateralContract: collateral,
