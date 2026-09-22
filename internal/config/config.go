@@ -99,8 +99,37 @@ func (hc HashDBConfig) validate() error {
 	if hc.VerifyIntervalMinutes < 0 {
 		return fmt.Errorf("hashdb: verify_interval_minutes must be >= 0, got %d", hc.VerifyIntervalMinutes)
 	}
+	// Above ~1 day between sweeps the periodic half of ADR-0016's
+	// drift detector stops meaningfully bounding how long a rewrite
+	// can go unnoticed — the incident this was built for was found
+	// within a day. 0 defers to the 60m library default, so it's
+	// exempt from the ceiling.
+	if hc.VerifyIntervalMinutes > maxHashDBVerifyIntervalMinutes {
+		return fmt.Errorf("hashdb: verify_interval_minutes must be <= %d (24h), got %d",
+			maxHashDBVerifyIntervalMinutes, hc.VerifyIntervalMinutes)
+	}
+	// Unbounded, VerifyWindowLedgers can exceed the chain's whole
+	// height: every tick then re-streams and re-hashes the ENTIRE
+	// archive from verifyDB.StartLedger() instead of a trailing
+	// window, hammering the live bucket on the same cadence meant for
+	// a ~day-sized re-check. 0 defers to the 20000 (~1 day) library
+	// default, so it's exempt from the ceiling.
+	if hc.VerifyWindowLedgers > maxHashDBVerifyWindowLedgers {
+		return fmt.Errorf("hashdb: verify_window_ledgers must be <= %d (~10 days), got %d",
+			maxHashDBVerifyWindowLedgers, hc.VerifyWindowLedgers)
+	}
 	return nil
 }
+
+// maxHashDBVerifyIntervalMinutes / maxHashDBVerifyWindowLedgers cap
+// HashDBConfig's two tuning knobs at roughly 10x their library
+// defaults (60m / 20000 ledgers, see defaultHashDBConfig) — enough
+// headroom for a slower region without letting a config typo turn
+// the periodic verify sweep into a rare, archive-wide re-read.
+const (
+	maxHashDBVerifyIntervalMinutes = 24 * 60
+	maxHashDBVerifyWindowLedgers   = 200000
+)
 
 // SignupReaperConfig gates the F-1255 speculative-account reaper
 // (internal/signupreaper). The reaper deletes orphan `accounts` rows

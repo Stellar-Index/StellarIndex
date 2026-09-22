@@ -9,6 +9,54 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
+// TestValidate_HashDBVerifyBoundsRejected — T130: HashDBConfig.validate
+// checked VerifyIntervalMinutes >= 0 but never bounded it above, and
+// never looked at VerifyWindowLedgers at all. Unbounded,
+// verify_window_ledgers can exceed the chain height, turning every
+// periodic sweep into a full-archive re-read on the interval meant for
+// a ~day-sized trailing window (see startHashDBVerifier /
+// hashDBVerifySweep in cmd/stellarindex-indexer/main.go). Like
+// HashDBConfig.validate's other checks, this doesn't wrap
+// ErrInvalidConfig (same family as SignupReaperConfig.validate /
+// PriceAlertsConfig.validate).
+func TestValidate_HashDBVerifyBoundsRejected(t *testing.T) {
+	cases := map[string]struct {
+		mut    func(*config.Config)
+		errSub string
+	}{
+		"verify interval minutes over 24h": {
+			func(c *config.Config) {
+				c.HashDB.Enabled = true
+				c.HashDB.Path = "/var/lib/stellarindex/hashdb.bin"
+				c.HashDB.VerifyIntervalMinutes = 24*60 + 1
+			},
+			"verify_interval_minutes",
+		},
+		"verify window ledgers over ceiling": {
+			func(c *config.Config) {
+				c.HashDB.Enabled = true
+				c.HashDB.Path = "/var/lib/stellarindex/hashdb.bin"
+				c.HashDB.VerifyWindowLedgers = 200001
+			},
+			"verify_window_ledgers",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			c := config.Default()
+			tc.mut(&c)
+			err := c.Validate()
+			if err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.errSub) {
+				t.Errorf("err = %v; want substring %q", err, tc.errSub)
+			}
+		})
+	}
+}
+
 func TestValidate_DefaultPasses(t *testing.T) {
 	// Default() MUST pass Validate — that's the "fresh install
 	// works" contract every binary depends on.
