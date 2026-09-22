@@ -2,12 +2,14 @@
 # govulncheck-gated.sh — govulncheck with a documented accepted-risk allowlist.
 #
 # The per-PR `vuln` job (.github/workflows/ci.yml) runs govulncheck as a hard
-# blocking gate. github.com/lib/pq@v1.12.3 — the Postgres driver (ADR-0006) —
-# carries a batch of disclosed, UNPATCHED vulns (v1.12.3 is already the latest
-# release; lib/pq is unmaintained), so bare `govulncheck ./...` reds every PR
-# with no way to land unrelated work. These lib/pq risks are all triggered by a
-# malicious/compromised PostgreSQL server or a pre-auth MITM, and stellarindex
-# only ever talks to its OWN Postgres over localhost — so they are accepted risks
+# blocking gate. github.com/lib/pq@v1.10.9 — an indirect dependency pulled in
+# by golang-migrate's postgres driver for schema migrations (the app's own
+# Postgres driver is github.com/jackc/pgx/v5, ADR-0006) — carries a batch of
+# disclosed, UNPATCHED vulns (lib/pq is unmaintained), so bare
+# `govulncheck ./...` reds every PR with no way to land unrelated work. These
+# lib/pq risks are all triggered by a malicious/compromised PostgreSQL server
+# or a pre-auth MITM, and stellarindex only ever talks to its OWN Postgres
+# over localhost — so they are accepted risks
 # (rationale + per-id justification live in scripts/ci/govulncheck-allow.txt).
 #
 # This wrapper keeps the gate SHARP while accepting exactly those reviewed vulns:
