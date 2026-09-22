@@ -39,6 +39,31 @@ func TestExplorer_Search_Classifies(t *testing.T) {
 	}
 }
 
+// TestExplorer_Search_AccountNotClaimedSupported is T174: classifySearch
+// routes every valid-format G-address to /v1/issuers/{g}, but that endpoint
+// only serves accounts that are actually issuers — most G-addresses aren't,
+// and hit a 404 there. The classifier has no lake read (it's pure strkey
+// shape matching), so it can't know whether this address is an issuer, and
+// must not claim Supported=true for a lookup it hasn't verified resolves.
+func TestExplorer_Search_AccountNotClaimedSupported(t *testing.T) {
+	base := explorerTestServer(t, &stubExplorerReader{})
+	q := "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	resp := mustGet(t, base+"/v1/search?q="+url.QueryEscape(q))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.SearchResultView `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if body.Data.Kind != "account" {
+		t.Fatalf("kind = %q, want %q", body.Data.Kind, "account")
+	}
+	if body.Data.Supported {
+		t.Errorf("Supported = true, want false: classifier cannot verify %q is an issuer before claiming its /v1/issuers/ href resolves", q)
+	}
+}
+
 func TestExplorer_Search_EmptyQuery400(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{})
 	if resp := mustGet(t, base+"/v1/search?q="); resp.StatusCode != http.StatusBadRequest {

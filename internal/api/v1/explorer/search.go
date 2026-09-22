@@ -54,10 +54,13 @@ func classifySearch(q string) SearchResultView {
 		res.Kind, res.Canonical, res.Href, res.Supported = "contract", q, "/v1/contracts/"+q+"/transfers", true
 
 	case canonical.IsAccountID(q):
-		// Issuer view is the available account surface today; full account
-		// state (balances/history) is ADR-0038 Phase B/C.
-		res.Kind, res.Canonical, res.Href, res.Supported = "account", q, "/v1/issuers/"+q, true
-		res.Note = "full account view (balances, history) is coming; showing issuer view"
+		// Issuer view is the only account surface today, but classification
+		// is a pure strkey-shape check with no lake read: most G-addresses
+		// are ordinary accounts, not issuers, and GET /v1/issuers/{g} 404s
+		// for them. Don't claim Supported=true for a lookup we haven't
+		// verified will resolve; leave the href as a hint only.
+		res.Kind, res.Canonical, res.Href, res.Supported = "account", q, "/v1/issuers/"+q, false
+		res.Note = "full account view isn't built yet; this may be an issuer — check the linked issuer view, which 404s if it isn't"
 
 	default:
 		if a, err := canonical.ParseAsset(q); err == nil {
