@@ -138,6 +138,39 @@ func TestCachedSourcesStatsReader_ErrorIsNotCached(t *testing.T) {
 	}
 }
 
+// TestCachedSourcesStatsReader_WaitersSeeLeaderError — RLT-097: when
+// the single-flight leader's upstream call errors, every goroutine
+// that waited on it must get that error back too, not a fabricated
+// cache "hit" of the stale/nil field. Before the fix, a waiter did
+// `<-ch` and unconditionally returned (c.stats, nil).
+func TestCachedSourcesStatsReader_WaitersSeeLeaderError(t *testing.T) {
+	wantErr := errors.New("timescale: query failed")
+	up := &fakeUpstream{statsDelay: 80 * time.Millisecond, statsErr: wantErr}
+	c := NewCachedSourcesStatsReader(up, 60*time.Second)
+
+	const n = 8
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			_, err := c.GetSourceStats(context.Background())
+			errs[idx] = err
+		}(i)
+	}
+	wg.Wait()
+
+	if got := up.statsCalls.Load(); got != 1 {
+		t.Fatalf("upstream called %d times under single-flight; want 1", got)
+	}
+	for i, err := range errs {
+		if err == nil {
+			t.Errorf("goroutine %d: got nil error; want the leader's upstream error surfaced", i)
+		}
+	}
+}
+
 // TestCachedSourcesStatsReader_HitMissCounter pins the
 // stellarindex_api_cache_ops_total{cache="sources_stats"} counter
 // for both ops on the wrapper. Same regression-guard rationale as
