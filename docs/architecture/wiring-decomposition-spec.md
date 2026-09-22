@@ -1,6 +1,6 @@
 ---
 title: Wiring decomposition — api main.go, Server options, ops CLI (D1)
-last_verified: 2026-07-02
+last_verified: 2026-09-22
 status: partially shipped — Unit 3 SHIPPED (2026-09-02 check); Units 1/2/4 not re-verified this pass
 ---
 
@@ -13,7 +13,7 @@ subcommand touches N fewer places".
 
 ## Unit 1 — extract `cmd/stellarindex-api`'s inline adapters
 
-`main.go` is 3,338 lines; its `run()` carries dozens of inline
+`main.go` is 5,941 lines; its `run()` carries dozens of inline
 adapter types (`storeAssetReader`, `cachedAssetReader`,
 `storeMarketsReader`, `cachedMarketsReader`, `storeHistoryReader`,
 `storeOracleReader`, `globalPriceReader`, ready-checkers, …).
