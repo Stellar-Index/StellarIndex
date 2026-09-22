@@ -144,6 +144,32 @@ func TestPriceAtAndPriceChangesHaveRequestBudgets(t *testing.T) {
 	}
 }
 
+// TestRWAHistoryBudgetsStayInsideTheRequestTimeout pins RLT-043 directly
+// against rwaHistoryBudget and rwaPremiumHistoryBudget, rather than
+// relying on the general walker above. Neither is spelled as a literal
+// context.WithTimeout(r.Context(), …): cachedRWAValueHistory and
+// cachedRWAPremiumHistory take a plain ctx parameter because they are
+// also invoked from the background prewarm in rwa.go, so the walker's
+// receiver-name check correctly does not match the call inside
+// buildRWAValueHistory / buildRWAPremiumHistory. Both are nonetheless
+// reachable synchronously off the request context — handleRWAHistory
+// calls cachedRWAValueHistory(r.Context()), whose leader branch runs
+// buildRWAValueHistory(ctx) inline on a cache miss — so they owe the
+// same ceiling every other handler budget does.
+func TestRWAHistoryBudgetsStayInsideTheRequestTimeout(t *testing.T) {
+	if rwaHistoryBudget > maxHandlerBudget {
+		t.Errorf("rwaHistoryBudget %s exceeds maxHandlerBudget %s (request timeout %s) — "+
+			"reachable synchronously from handleRWAHistory on a cache miss, so the blanket "+
+			"deadline fires first and this handler's own unavailable-response branch is unreachable",
+			rwaHistoryBudget, maxHandlerBudget, defaultRequestTimeout)
+	}
+	if rwaPremiumHistoryBudget > maxHandlerBudget {
+		t.Errorf("rwaPremiumHistoryBudget %s exceeds maxHandlerBudget %s (request timeout %s) — "+
+			"same reachability as rwaHistoryBudget, via handleRWAPremiumHistory",
+			rwaPremiumHistoryBudget, maxHandlerBudget, defaultRequestTimeout)
+	}
+}
+
 // budgetExemptions names the files whose request-derived
 // context.WithTimeout budget is legitimately not a handler budget, with
 // the reason. Keyed on the path suffix so it survives a move within the

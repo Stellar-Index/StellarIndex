@@ -92,7 +92,14 @@ const rwaHistoryTTL = 10 * time.Minute
 // rwaHistoryBudget is the assembly's own deadline. Both legs are scans;
 // this bounds them together so a slow lake cannot hold a request open
 // for the handler's whole budget.
-const rwaHistoryBudget = 20 * time.Second
+//
+// Tied to [maxHandlerBudget] rather than a separate literal: on a cache
+// miss handleRWAHistory reaches buildRWAValueHistory synchronously
+// (cachedRWAValueHistory's leader branch), so a budget past the
+// blanket request deadline can never fire — the middleware's timeout
+// answers first and this handler's own unavailable-response branch
+// never runs (RLT-043).
+const rwaHistoryBudget = maxHandlerBudget
 
 // rwaHistoryMaxPoints caps the served point count per series. The daily
 // grain over the longest window this API offers is a few thousand
