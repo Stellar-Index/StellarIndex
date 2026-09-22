@@ -6045,6 +6045,8 @@ export interface components {
             price_cap: number;
             /** @description The subset of `unpriced_holdings` never looked up because it fell outside `price_cap`. */
             unpriced_over_cap: number;
+            /** @description True when an in-cap price lookup was abandoned because the request's context expired mid-walk, not because the asset has no price — the counts above are then partial, not complete. Absent means false. */
+            degraded?: boolean;
             /** @enum {string} */
             basis: "live_vwap_current";
         };

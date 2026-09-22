@@ -186,6 +186,40 @@ func TestAccountCohortView_LabelsContractsBeforePricingSpendsTheBudget(t *testin
 	if v.Valuation.PricedHoldings != 0 || v.Valuation.UnpricedHoldings != 2 {
 		t.Errorf("priced/unpriced = %d/%d, want 0/2 (the price reader timed out)", v.Valuation.PricedHoldings, v.Valuation.UnpricedHoldings)
 	}
+	if !v.Valuation.Degraded {
+		t.Errorf("valuation.degraded = false, want true: these two holdings read as unpriced only because the " +
+			"context expired mid-walk (RLT-194), not because the price reader genuinely had no price for them")
+	}
+}
+
+// A cohort priced within its budget — no context expiry — must NOT be
+// reported degraded: Degraded distinguishes "the walk was cut short" from
+// the ordinary case of some holdings genuinely having no live price.
+func TestAccountCohortView_ValuationNotDegradedWhenPricingCompletesInBudget(t *testing.T) {
+	h := &Handler{
+		PricingEnabled: true,
+		LookupUSDPrice: func(_ context.Context, a canonical.Asset) (string, bool) {
+			if a.String() == "native" {
+				return "0.10", true
+			}
+			return "", false
+		},
+	}
+	at := time.Date(2026, 9, 17, 0, 0, 0, 0, time.UTC)
+	snap := clickhouse.AccountCohort{
+		Root: "GROOT", Relation: "created", Covered: true, Cycle: clickhouse.AccountCohortCycle{ComputedAt: at, TipLedger: 1},
+		Holdings: []clickhouse.AccountCohortHolding{
+			{Asset: "native", Holders: 9, Balance: big.NewInt(12_500_000_000)},
+			{Asset: cohortTestUSDC, Holders: 3, Balance: big.NewInt(4_000_000_000)},
+		},
+	}
+	v := h.accountCohortView(context.Background(), snap)
+	if v.Valuation.PricedHoldings != 1 || v.Valuation.UnpricedHoldings != 1 {
+		t.Fatalf("priced/unpriced = %d/%d, want 1/1", v.Valuation.PricedHoldings, v.Valuation.UnpricedHoldings)
+	}
+	if v.Valuation.Degraded {
+		t.Errorf("valuation.degraded = true, want false: nothing here timed out, USDC simply has no live price")
+	}
 }
 
 // Only the cohortPricedHoldingsCap largest holdings by balance are looked

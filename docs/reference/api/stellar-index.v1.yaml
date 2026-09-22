@@ -13359,6 +13359,7 @@ components:
         unpriced_holdings: { type: integer, description: "Holdings without a `value_usd` — no live price, or outside `price_cap`." }
         price_cap: { type: integer, description: "How many holdings, largest by balance, this endpoint prices per request." }
         unpriced_over_cap: { type: integer, description: "The subset of `unpriced_holdings` never looked up because it fell outside `price_cap`." }
+        degraded: { type: boolean, description: "True when an in-cap price lookup was abandoned because the request's context expired mid-walk, not because the asset has no price — the counts above are then partial, not complete. Absent means false." }
         basis: { type: string, enum: [live_vwap_current] }
       required: [priced_holdings, unpriced_holdings, price_cap, unpriced_over_cap, basis]
     AccountCohortFlows:
