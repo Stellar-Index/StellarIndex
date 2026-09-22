@@ -506,9 +506,13 @@ def by_endpoint(name):
 def scalar(name, default=None):
     for r in rows(name):
         try:
-            return float((r.get("value") or [None, None])[1])
+            v = float((r.get("value") or [None, None])[1])
         except (TypeError, ValueError):
             return default
+        # Prometheus's literal 'NaN'/'Inf' sample values parse cleanly via
+        # float() without raising, so a non-finite reading has to be caught
+        # here rather than relying on the except above.
+        return v if math.isfinite(v) else default
     return default
 
 
