@@ -474,6 +474,11 @@ stale_patterns=(
                                   # #168 now resolves to an unrelated merged
                                   # PR (volume_character rollup) — cite the
                                   # landing commit instead
+  "PR #1227"                     # dangling ref (RSWP-124) — CHANGELOG's
+                                  # CoinGecko backoff-floor entry cited a PR
+                                  # number that didn't exist yet; #1227 is
+                                  # now a real, unrelated live issue (supply
+                                  # policy SDFReserveAccounts strkey gap)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
