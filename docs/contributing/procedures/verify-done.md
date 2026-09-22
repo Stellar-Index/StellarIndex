@@ -33,7 +33,7 @@ onto main before):
 |---|---|
 | `openapi/*.yaml` | `make docs-api && make docs-postman && make web-generate-api` (ALL THREE) |
 | config struct tags | `make docs-config` |
-| `internal/obs/metrics.go` | `make docs-metrics` |
+| `internal/obs/metrics.go` | hand-edit `docs/reference/metrics/README.md` to match, then `make lint-docs` (`docs-metrics` is a documented no-op — Makefile:508) |
 | either Prometheus rule tree | `make monitoring-check` (promtool + dead-ref + tree-equivalence differ) |
 | `pkg/client` or spec response shapes | `go test ./pkg/client/` (the SDK↔spec contract gate) |
 | pipeline wiring (sink/registry/dispatcher) | `go test -run TestLockstep ./internal/pipeline/` |
