@@ -484,6 +484,12 @@ stale_patterns=(
                                   # cited a PR number that didn't exist yet;
                                   # #1232 is now a real, unrelated live issue
                                   # (Tier D verify-archive cron lock/watchdog gap)
+  "PR #1233"                     # dangling ref (RSWP-130) — CHANGELOG's
+                                  # HomeCurrencies/HomeTopMarkets "couldn't
+                                  # load" notice entry cited this as the
+                                  # /v1/markets panic fix; #1233 is now a
+                                  # real, unrelated open issue (galexie-
+                                  # archive-fill.sh / ORPHANS doc drift)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
