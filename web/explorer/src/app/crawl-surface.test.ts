@@ -9,6 +9,7 @@ import {
 import { generateMetadata as assetMetadata } from './assets/[slug]/page';
 import { metadata as contractMeta } from './contract/page';
 import { metadata as ledgerMeta } from './ledger/page';
+import { generateMetadata as poolMetadata } from './lending/[pool]/page';
 import { generateMetadata as pairMetadata } from './markets/[pair]/page';
 import { metadata as operationMeta } from './operation/page';
 import sitemap from './sitemap';
@@ -264,6 +265,24 @@ describe('long-tail shell metadata', () => {
         index: false,
       });
     }
+  });
+
+  /**
+   * T278: functions/lending/[[path]].js now serves /lending/shell/ for
+   * any pool id outside the build-time pre-render (same S1b pattern as
+   * /assets and /markets) — its baked metadata must stay generic and out
+   * of the index, and declare its own empty `alternates` (F095) rather
+   * than inheriting the root layout's canonical.
+   */
+  it('keeps the /lending shell out of the index and clears the canonical', async () => {
+    const meta = await poolMetadata({ params: Promise.resolve({ pool: 'shell' }) });
+    expect(meta.robots, '/lending/shell is indexable').toMatchObject({
+      index: false,
+    });
+    expect(meta, '/lending/shell must declare alternates itself').toHaveProperty(
+      'alternates',
+    );
+    expect(meta.alternates?.canonical).toBeUndefined();
   });
 
   /**
