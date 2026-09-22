@@ -3,7 +3,6 @@ package middleware
 import (
 	"bytes"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -126,10 +125,7 @@ func (rec *idempotencyRecorder) Write(b []byte) (int, error) {
 // 5xx must not be replayed, or a client who fixed the request (or
 // retried past a blip) would keep getting the frozen error for the
 // whole TTL.
-func Idempotency(logger *slog.Logger, store *IdempotencyStore, subjectKeyFn func(*http.Request) string) Middleware {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func Idempotency(store *IdempotencyStore, subjectKeyFn func(*http.Request) string) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rawKey := strings.TrimSpace(r.Header.Get(IdempotencyKeyHeader))

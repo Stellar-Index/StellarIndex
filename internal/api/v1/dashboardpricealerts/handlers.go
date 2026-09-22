@@ -78,7 +78,7 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
-	idem := middleware.Idempotency(h.cfg.Logger, h.cfg.idempotency, sessionAccountSubject)
+	idem := middleware.Idempotency(h.cfg.idempotency, sessionAccountSubject)
 	mux.HandleFunc("GET /v1/dashboard/price-alerts", h.HandleList)
 	mux.Handle("POST /v1/dashboard/price-alerts", sameSite(idem(http.HandlerFunc(h.HandleCreate))))
 	mux.Handle("PATCH /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleUpdate)))
