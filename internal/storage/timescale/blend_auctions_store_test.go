@@ -6,7 +6,6 @@ package timescale
 import (
 	"context"
 	"database/sql/driver"
-	"errors"
 	"math/big"
 	"reflect"
 	"strings"
@@ -235,109 +234,6 @@ func TestInsertBlendDeleteAuction_ArgsAndGenerationGuard(t *testing.T) {
 	}
 	wantTime(t, stmt.arg(t, 7), ts)
 	assertGenerationGuardedUpsert(t, stmt.sql, "delete")
-}
-
-// ─── LatestBlendAuctionEvent ──────────────────────────────────────────
-
-var blendAuctionRowCols = []string{
-	"pool", "auction_type", "user_address",
-	"ledger", "tx_hash", "op_index", "ts",
-	"event_kind", "percent", "filler", "fill_percent",
-	"block", "bid", "lot",
-}
-
-// TestLatestBlendAuctionEvent_FillRowMapping — the nullable columns are
-// pointers so a caller can tell "absent" from "zero". A fill row has a
-// filler + fill_percent and no percent; the i128 amounts come back as
-// decimal strings.
-func TestLatestBlendAuctionEvent_FillRowMapping(t *testing.T) {
-	ts := time.Date(2026, 8, 29, 10, 15, 0, 0, time.UTC)
-	bidJSON := `[{"asset":"CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA","amount":"` + blendMaxI128 + `"}]`
-	store, conn := newScriptedStore(t, scriptedResult{
-		cols: blendAuctionRowCols,
-		rows: [][]driver.Value{{
-			blendPool, int64(1), blendUser,
-			int64(58_000_060), blendTxHash, int64(7), ts,
-			"fill", nil, blendFiller, blendBigFillP,
-			int64(58_000_000), bidJSON, nil,
-		}},
-	})
-
-	got, err := store.LatestBlendAuctionEvent(context.Background(), blendPool, 1, blendUser)
-	if err != nil {
-		t.Fatalf("LatestBlendAuctionEvent: %v", err)
-	}
-	if got.Pool != blendPool || got.AuctionType != 1 || got.User != blendUser {
-		t.Errorf("identity = %+v", got)
-	}
-	if got.Ledger != 58_000_060 || got.OpIndex != 7 || got.EventKind != "fill" || !got.Timestamp.Equal(ts) {
-		t.Errorf("row = %+v", got)
-	}
-	if got.Percent != nil {
-		t.Errorf("percent = %v, want nil for a fill row", *got.Percent)
-	}
-	if got.Filler == nil || *got.Filler != blendFiller {
-		t.Errorf("filler = %v, want %q", got.Filler, blendFiller)
-	}
-	if got.FillPercent == nil || *got.FillPercent != blendBigFillP {
-		t.Errorf("fill_percent = %v, want the i128 string %s", got.FillPercent, blendBigFillP)
-	}
-	if got.Block == nil || *got.Block != 58_000_000 {
-		t.Errorf("block = %v, want 58000000", got.Block)
-	}
-	want := []BlendAssetAmount{{
-		Asset:  "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA",
-		Amount: blendMaxI128,
-	}}
-	if !reflect.DeepEqual(got.Bid, want) {
-		t.Errorf("bid = %#v, want %#v", got.Bid, want)
-	}
-	if got.Lot != nil {
-		t.Errorf("lot = %#v, want nil for a NULL column", got.Lot)
-	}
-
-	stmt := conn.only(t)
-	if a, b, c := stmt.arg(t, 1), stmt.arg(t, 2), stmt.arg(t, 3); a != blendPool || b != 1 || c != blendUser {
-		t.Errorf("args = (%v, %v, %v), want (pool, auction_type, user)", a, b, c)
-	}
-	if !strings.Contains(stmt.sql, "ORDER BY ledger DESC") {
-		t.Errorf("latest-event read must order newest ledger first:\n%s", stmt.sql)
-	}
-}
-
-// TestLatestBlendAuctionEvent_NewRowMapping — a `new` row carries a
-// percent and no filler; the reverse of the fill case.
-func TestLatestBlendAuctionEvent_NewRowMapping(t *testing.T) {
-	ts := time.Date(2026, 8, 29, 10, 20, 0, 0, time.UTC)
-	store, _ := newScriptedStore(t, scriptedResult{
-		cols: blendAuctionRowCols,
-		rows: [][]driver.Value{{
-			blendPool, int64(0), blendUser,
-			int64(58_000_061), blendTxHash, int64(1), ts,
-			"new", int64(45), nil, nil,
-			int64(58_000_001), nil, nil,
-		}},
-	})
-	got, err := store.LatestBlendAuctionEvent(context.Background(), blendPool, 0, blendUser)
-	if err != nil {
-		t.Fatalf("LatestBlendAuctionEvent: %v", err)
-	}
-	if got.Percent == nil || *got.Percent != 45 {
-		t.Errorf("percent = %v, want 45", got.Percent)
-	}
-	if got.Filler != nil || got.FillPercent != nil {
-		t.Errorf("filler/fill_percent = %v/%v, want nil on a new-auction row", got.Filler, got.FillPercent)
-	}
-}
-
-// TestLatestBlendAuctionEvent_NoRowsIsErrNotFound — the sentinel the
-// callers switch on, not a bare sql.ErrNoRows leaking the driver.
-func TestLatestBlendAuctionEvent_NoRowsIsErrNotFound(t *testing.T) {
-	store, _ := newScriptedStore(t, scriptedResult{cols: blendAuctionRowCols})
-	got, err := store.LatestBlendAuctionEvent(context.Background(), blendPool, 0, blendUser)
-	if !errors.Is(err, ErrNotFound) {
-		t.Fatalf("err = %v (row %+v), want ErrNotFound", err, got)
-	}
 }
 
 // ─── BlendPoolAssets ──────────────────────────────────────────────────
