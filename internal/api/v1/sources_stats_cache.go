@@ -28,14 +28,17 @@ type CachedSourcesStatsReader struct {
 	mu          sync.Mutex
 	stats       []timescale.SourceStats
 	statsAt     time.Time
+	statsErr    error
 	statsFlight chan struct{}
 
 	hist       []timescale.SourceVolumeBucket
 	histAt     time.Time
+	histErr    error
 	histFlight chan struct{}
 
 	hist7d       []timescale.SourceVolumeBucket
 	hist7dAt     time.Time
+	hist7dErr    error
 	hist7dFlight chan struct{}
 }
 
@@ -70,8 +73,12 @@ func (c *CachedSourcesStatsReader) GetSourceStats(ctx context.Context) ([]timesc
 		select {
 		case <-ch:
 			c.mu.Lock()
-			out := c.stats
+			out, refetchErr := c.stats, c.statsErr
 			c.mu.Unlock()
+			if refetchErr != nil {
+				obs.APICacheOpsTotal.WithLabelValues("sources_stats", "source_stats", "error").Inc()
+				return nil, refetchErr
+			}
 			obs.APICacheOpsTotal.WithLabelValues("sources_stats", "source_stats", "hit").Inc()
 			return out, nil
 		case <-ctx.Done():
@@ -88,6 +95,7 @@ func (c *CachedSourcesStatsReader) GetSourceStats(ctx context.Context) ([]timesc
 	rows, err := c.upstream.GetSourceStats(ctx)
 
 	c.mu.Lock()
+	c.statsErr = err
 	if err == nil {
 		c.stats = rows
 		c.statsAt = time.Now()
@@ -118,8 +126,12 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory24h(ctx context.Context
 		select {
 		case <-ch:
 			c.mu.Lock()
-			out := c.hist
+			out, refetchErr := c.hist, c.histErr
 			c.mu.Unlock()
+			if refetchErr != nil {
+				obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_24h", "error").Inc()
+				return nil, refetchErr
+			}
 			obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_24h", "hit").Inc()
 			return out, nil
 		case <-ctx.Done():
@@ -135,6 +147,7 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory24h(ctx context.Context
 	rows, err := c.upstream.GetSourceVolumeHistory24h(ctx)
 
 	c.mu.Lock()
+	c.histErr = err
 	if err == nil {
 		c.hist = rows
 		c.histAt = time.Now()
@@ -166,8 +179,12 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7d(ctx context.Context)
 		select {
 		case <-ch:
 			c.mu.Lock()
-			out := c.hist7d
+			out, refetchErr := c.hist7d, c.hist7dErr
 			c.mu.Unlock()
+			if refetchErr != nil {
+				obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_7d", "error").Inc()
+				return nil, refetchErr
+			}
 			obs.APICacheOpsTotal.WithLabelValues("sources_stats", "volume_history_7d", "hit").Inc()
 			return out, nil
 		case <-ctx.Done():
@@ -183,6 +200,7 @@ func (c *CachedSourcesStatsReader) GetSourceVolumeHistory7d(ctx context.Context)
 	rows, err := c.upstream.GetSourceVolumeHistory7d(ctx)
 
 	c.mu.Lock()
+	c.hist7dErr = err
 	if err == nil {
 		c.hist7d = rows
 		c.hist7dAt = time.Now()
