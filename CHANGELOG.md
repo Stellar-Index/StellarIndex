@@ -36563,7 +36563,7 @@ pipeline itself is what's being tested.
     (divergence-only, not VWAP).
   - ECB + Fed H.10 daily sanity anchors.
 
-- **PR 168 — Band decoder + ContractCallDecoder interface** (2026-04-24):
+- **Band decoder + ContractCallDecoder interface** (commit `ee0360da4`, 2026-04-24):
   Third oracle integration, and first source that doesn't emit
   events. Band's Soroban StandardReference contract publishes zero
   events on `relay()` / `force_relay()` (verified against pinned

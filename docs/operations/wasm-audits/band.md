@@ -58,7 +58,7 @@ Per AGENTS.md:
 > **Band's Soroban contract emits zero events.** A conventional
 > topic-match Decoder never fires on Band. We observe the
 > `relay()` / `force_relay()` InvokeContract call instead via
-> the dispatcher's `ContractCallDecoder` interface (PR 168). Any
+> the dispatcher's `ContractCallDecoder` interface. Any
 > future Soroban source that updates storage without publishing
 > events plugs into the same hook — match by (contract_id,
 > function_name), decode from op args.
@@ -229,7 +229,8 @@ Pre-Soroban ledgers can't host the contract.
   post-deploy window rule out signature drift across this range.
 - Live ingest health: 0 `ErrFunctionMismatch` / 0 type-extraction
   failures observed in production metrics since the
-  ContractCallDecoder hook landed (PR #168, 2026-04 cutover).
+  ContractCallDecoder hook landed (commit `ee0360da4`, "wire
+  band + comet + redstone decoders", 2026-04 cutover).
 
 ## Decision
 
