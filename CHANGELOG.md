@@ -29578,8 +29578,8 @@ roll forward verbatim.)
 
 ### Fixed
 - **Top markets + Markets table: defensive null-asset handling.**
-  Audit-and-harden pass after the home Recent-trades crash
-  (#879). Same `.startsWith()` pattern in `HomeTopMarkets`
+  Audit-and-harden pass after the home Recent-trades crash fix
+  below. Same `.startsWith()` pattern in `HomeTopMarkets`
   and `markets/MarketsTable` would have crashed on the same
   rare /v1/markets row with one side null. Both renderers now
   return "—" for null/undefined input. Embed and pair-detail
