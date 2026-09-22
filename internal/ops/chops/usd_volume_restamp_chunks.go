@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -275,6 +276,24 @@ type chunkRestampOptions struct {
 // run that gets near it should free space or narrow the window rather
 // than lean on this number.
 const chunkFreeSpaceHeadroom = 2.0
+
+// heavyMinDataKBDefault mirrors the run-heavy-job disk watchdog's DATA-POOL
+// floor default (configs/ansible/roles/archival-node/tasks/
+// 14-stellarindex-services.yml, HEAVY_MIN_DATA_KB) so a run that clears the
+// CLI's own headroom check cannot still be one the watchdog kills mid-chunk.
+const heavyMinDataKBDefault = 314572800 // 300 GiB, KB (watchdog's unit)
+
+// heavyMinDataFloorBytes reads the watchdog's own floor, HEAVY_MIN_DATA_KB,
+// so the two guards read one number instead of two that can drift apart.
+func heavyMinDataFloorBytes() uint64 {
+	kb := int64(heavyMinDataKBDefault)
+	if v := os.Getenv("HEAVY_MIN_DATA_KB"); v != "" {
+		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil && parsed >= 0 {
+			kb = parsed
+		}
+	}
+	return uint64(kb) * 1024
+}
 
 // runChunkRestamp is the `-chunks` walk, for whichever tier it is handed.
 // Called by usdVolumeRestamp once the shared window/flag/live-tail
@@ -920,6 +939,9 @@ func chunkRestampPreflight(ctx context.Context, store interface {
 	if largest > 0 {
 		p.Required = uint64(float64(largest) * chunkFreeSpaceHeadroom)
 	}
+	if floor := heavyMinDataFloorBytes(); floor > p.Required {
+		p.Required = floor
+	}
 	p.Path, p.PathErr = store.TradesDataVolumePath(ctx)
 	if p.PathErr == nil {
 		free := copts.FreeBytes
@@ -941,16 +963,35 @@ func chunkRestampPreflight(ctx context.Context, store interface {
 			"or check free space there yourself and pass -min-free-bytes N", p.PathErr)
 		return p
 	default:
-		p.Err = fmt.Errorf("cannot measure free space on %s (%v) — this host is not the database host; "+
-			"check free space there yourself and pass -min-free-bytes N", p.Path, p.MeasureErr)
+		p.Err = statfsHostMismatchErr(p.Path, p.MeasureErr)
 		return p
 	}
 	if have <= p.Required {
-		p.Err = fmt.Errorf("free space %s is not more than %s (%.1f x the chunk's uncompressed size, %s) — "+
+		p.Err = fmt.Errorf("free space %s is not more than %s (max of %.1fx the chunk's uncompressed size %s and the disk-watchdog floor) — "+
 			"decompressing that chunk could fill the data volume; free space or narrow the window",
 			p.describeHave(have), fmtBytes(int64(p.Required)), chunkFreeSpaceHeadroom, fmtBytes(p.Largest)) //nolint:gosec // Required derives from an int64
 	}
 	return p
+}
+
+// statfsHostMismatchErr turns a freeBytesOnPath failure into the operator
+// message for its errno class: ENOENT/ENOTDIR mean the path doesn't
+// resolve here (wrong host); EACCES/EPERM mean it does, just not for this
+// role; anything else is a transient statfs failure worth retrying. Before
+// this classified, every class printed "this host is not the database
+// host" — wrong for the permission and transient cases, which sent an
+// operator with the right host chasing a host that was never wrong.
+func statfsHostMismatchErr(path string, measureErr error) error {
+	switch {
+	case errors.Is(measureErr, syscall.ENOENT), errors.Is(measureErr, syscall.ENOTDIR):
+		return fmt.Errorf("cannot measure free space on %s (%v) — this host is not the database host; "+
+			"check free space there yourself and pass -min-free-bytes N", path, measureErr)
+	case errors.Is(measureErr, syscall.EACCES), errors.Is(measureErr, syscall.EPERM):
+		return fmt.Errorf("cannot measure free space on %s (%v) — this is the database host but this role cannot stat the path; "+
+			"run as a role that can, or pass -min-free-bytes N", path, measureErr)
+	default:
+		return fmt.Errorf("cannot measure free space on %s (%w) — transient statfs failure; retry, or pass -min-free-bytes N", path, measureErr)
+	}
 }
 
 // describeHave names the figure the verdict used and where it came from.
@@ -980,7 +1021,7 @@ func (p chunkPreflight) render() string {
 	if p.Err != nil {
 		verdict = "REFUSED"
 	}
-	fmt.Fprintf(&b, "            need > %s (%.1f x the largest chunk's uncompressed size; a guard, not a bound) — %s\n",
+	fmt.Fprintf(&b, "            need > %s (max of %.1fx the largest chunk's uncompressed size and the disk-watchdog floor; a guard, not a bound) — %s\n",
 		fmtBytes(int64(p.Required)), chunkFreeSpaceHeadroom, verdict) //nolint:gosec // Required derives from an int64
 	return b.String()
 }

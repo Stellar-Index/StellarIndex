@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -391,7 +392,7 @@ func TestXLMBaseChunkRestamp_DryRunPrintsThePlanAndTouchesNoChunk(t *testing.T) 
 		"_timescaledb_internal._hyper_1_2_chunk",
 		"compressed 10.5 GB total",
 		"pre-flight: free 4.6 TB on /var/lib/postgresql/data (measured; re-measured before every decompress)",
-		"need > 320.0 GB (2.0 x the largest chunk's uncompressed size; a guard, not a bound) — OK",
+		"need > 320.0 GB (max of 2.0x the largest chunk's uncompressed size and the disk-watchdog floor; a guard, not a bound) — OK",
 		"would restamp 2 row(s)",
 		"DRY RUN: would take session advisory lock hashtext('usd-volume-restamp:trades')",
 		"pause compression policy job 1000 on trades (scheduled=true, compress_after=168h0m0s)",
@@ -1352,5 +1353,69 @@ func TestChunkRestamp_ReportsChunkByteProgressThroughADecompressThatWritesNoRow(
 	want := fmt.Sprintf("stellarindex_ops_job_progress_bytes_total{ops_job=%q} %d\n", "usd-volume-restamp", wantMoved)
 	if !strings.Contains(string(body), want) {
 		t.Errorf("heartbeat does not publish the observed chunk movement (want %q):\n%s", want, body)
+	}
+}
+
+// fakeVolumePathStore is the minimal chunkRestampPreflight store seam: it
+// only needs to answer where the trades data volume lives.
+type fakeVolumePathStore struct {
+	path string
+	err  error
+}
+
+func (f fakeVolumePathStore) TradesDataVolumePath(context.Context) (string, error) {
+	return f.path, f.err
+}
+
+// The disk watchdog (run-heavy-job in the ansible role) kills ANY heavy
+// job once the shared ZFS pool drops under its own floor, regardless of
+// what this CLI's own headroom math decided. A run that only checked
+// 2x-the-largest-chunk could clear pre-flight and still get killed
+// mid-decompress. RLT-310: Required must be the max of the two, read from
+// the same HEAVY_MIN_DATA_KB the watchdog uses, so they cannot disagree.
+func TestChunkRestampPreflight_WatchdogFloorOverridesHeadroom(t *testing.T) {
+	t.Setenv("HEAVY_MIN_DATA_KB", "1048576") // 1 GiB floor, in KB
+	store := fakeVolumePathStore{path: "/data"}
+	const largest = 10 * 1024 * 1024 // 10 MiB chunk: headroom alone needs only 20 MiB
+	const free = 512 * 1024 * 1024   // 512 MiB free: clears headroom, well under the 1 GiB floor
+	copts := chunkRestampOptions{
+		FreeBytes: func(string) (uint64, error) { return free, nil },
+	}
+
+	p := chunkRestampPreflight(context.Background(), store, largest, copts)
+
+	wantRequired := uint64(1048576) * 1024 // the floor, in bytes
+	if p.Required != wantRequired {
+		t.Errorf("Required = %d bytes, want the watchdog floor %d bytes (headroom alone would have been %d)",
+			p.Required, wantRequired, uint64(largest*chunkFreeSpaceHeadroom))
+	}
+	if p.Err == nil {
+		t.Errorf("pre-flight passed with %d bytes free against a %d byte watchdog floor; want a refusal", free, wantRequired)
+	}
+}
+
+// Before RLT-310's fix, any freeBytesOnPath failure — permission denied on
+// the right host, a transient EIO, or a genuinely wrong host — printed the
+// same "this host is not the database host" line, sending an operator with
+// the right host and the wrong role chasing a host that was never wrong.
+func TestStatfsHostMismatchErr_ClassifiesErrno(t *testing.T) {
+	cases := []struct {
+		name       string
+		err        error
+		wantSubstr string
+	}{
+		{"ENOENT is wrong host", fmt.Errorf("statfs /data: %w", syscall.ENOENT), "this host is not the database host"},
+		{"ENOTDIR is wrong host", fmt.Errorf("statfs /data: %w", syscall.ENOTDIR), "this host is not the database host"},
+		{"EACCES is wrong role", fmt.Errorf("statfs /data: %w", syscall.EACCES), "cannot stat the path"},
+		{"EPERM is wrong role", fmt.Errorf("statfs /data: %w", syscall.EPERM), "cannot stat the path"},
+		{"EIO is transient", fmt.Errorf("statfs /data: %w", syscall.EIO), "transient statfs failure"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := statfsHostMismatchErr("/data", c.err)
+			if !strings.Contains(got.Error(), c.wantSubstr) {
+				t.Errorf("statfsHostMismatchErr(%v) = %q, want it to contain %q", c.err, got, c.wantSubstr)
+			}
+		})
 	}
 }
