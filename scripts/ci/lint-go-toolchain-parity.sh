@@ -121,11 +121,10 @@ fi
 # stayed on golang:1.25.13-trixie — and nothing caught it, because the
 # container is what `make prepush` runs, so a stale pin silently grades the
 # push with a different compiler than CI and production use.
-DOCKER_ROOT="${DOCKER_ROOT:-docker}"
 DOCKERFILES=()
 while IFS= read -r df; do
   DOCKERFILES+=("$df")
-done < <(find "$DOCKER_ROOT" -type f -iname '*Dockerfile*' 2>/dev/null | sort)
+done < <(find docker -type f -name 'Dockerfile*' 2>/dev/null | sort)
 
 if [[ "${#DOCKERFILES[@]}" -gt 0 ]]; then
   want="$(awk '/^toolchain[ \t]+go/ { sub(/^go/, "", $2); print $2; exit }' go.mod)"
