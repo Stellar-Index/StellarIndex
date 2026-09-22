@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 58 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 168 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 169 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -360,6 +360,7 @@ without anyone maintaining a list.
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_binary_version_skew` | `stellarindex_binary_version_skew` | > 0 for 45 m | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
 | `stellarindex_binary_version_probe_degraded` | `stellarindex_binary_version_probe_success` | == 0 for 2 h | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
+| `stellarindex_binary_version_probe_stale` | `stellarindex_binary_version_probe_success` | absent for 90 m, for 10 m | ticket | [binary-version-skew](runbooks/binary-version-skew.md) |
 
 Impact is indirect but one-way: `stellarindex-ops` backs the
 data-integrity gates (`verify-archive` tier-a/b, `archive-completeness`,

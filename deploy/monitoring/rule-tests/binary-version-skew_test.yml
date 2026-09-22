@@ -1,0 +1,76 @@
+---
+# promtool unit tests for stellarindex_binary_version_probe_stale (T561).
+#
+#   promtool test rules deploy/monitoring/rule-tests/binary-version-skew_test.yml
+#
+# T561: node_exporter re-serves a textfile's LAST written values on
+# every scrape whether or not the producer is still running. Before
+# this alert, stellarindex_binary_version_probe_success == 0 was the
+# only degraded-probe signal — but that requires the probe to have RUN
+# and reported failure. If stellarindex-binary-version-probe.timer
+# stops firing entirely, probe_success freezes at its last (likely
+# healthy) value forever and neither _skew nor _probe_degraded can see
+# it: the frozen-file-served-indefinitely class.
+#
+# PROVEN-RED: with the stellarindex_binary_version_probe_stale rule
+# removed (i.e. against the pre-fix binary-version-skew.yml),
+# "the timer dies and probe_success goes absent" reports 0 firing
+# alerts (FAIL) — nothing in the file reacts to the series disappearing.
+# The healthy case passes either way, so the outage case is the
+# non-vacuous one and it exercises the real alert's 90m window and 10m
+# `for`, not a mock.
+#
+# Deliberately lives OUTSIDE `deploy/monitoring/rules/` — see the sibling
+# rule-tests' header for why (promtool/lint-rule-structure.py glob that
+# directory expecting a top-level `groups:` key a test file lacks).
+
+rule_files:
+  - ../rules/binary-version-skew.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── timer dies: probe_success goes absent, the stale alert fires ──
+  # A healthy probe stamps probe_success=1 every 30 min; here it stamps
+  # for the first 5 minutes then the timer stops rewriting the textfile,
+  # so the series goes fully absent (not stale-but-present) from t=6m.
+  # Past the 90m window + 10m `for`, the alert must fire.
+  - interval: 1m
+    name: a dead probe timer drops probe_success and the stale alert fires
+    input_series:
+      - series: 'stellarindex_binary_version_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x5 _x140'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_binary_version_probe_stale
+        exp_alerts: []
+      - eval_time: 108m
+        alertname: stellarindex_binary_version_probe_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: deploy
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/binary-version-skew.md
+              summary: "Binary version-skew probe has not reported in 90m — the timer may be dead"
+              description: |
+                No stellarindex_binary_version_probe_success sample for 90+
+                minutes despite a 30-minute timer. The probe crashed before
+                writing its textfile, or
+                stellarindex-binary-version-probe.timer stopped firing —
+                either way, _skew and _probe_degraded are now reading a
+                frozen file and cannot detect drift or their own absence.
+                `systemctl status stellarindex-binary-version-probe.timer`
+                on the host.
+
+  # ── healthy: probe_success stays fresh every run — no page ──
+  - interval: 1m
+    name: a live probe reporting every run never pages
+    input_series:
+      - series: 'stellarindex_binary_version_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '1+0x200'
+    alert_rule_test:
+      - eval_time: 150m
+        alertname: stellarindex_binary_version_probe_stale
+        exp_alerts: []
