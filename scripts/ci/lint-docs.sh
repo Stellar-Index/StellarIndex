@@ -330,6 +330,10 @@ stale_patterns=(
                                   # #1347 before it existed (RSWP-146); #1347
                                   # is now a real, unrelated issue about
                                   # retiring a data source
+  "#1353"                        # remediation STATUS.md cited the actions/checkout
+                                  # v6→v7 bump PR as #1353 (RSWP-147); that number
+                                  # now resolves to an unrelated auto-filed
+                                  # ci-health-bot issue, not the PR it named
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \

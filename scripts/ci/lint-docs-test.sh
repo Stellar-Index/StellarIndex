@@ -76,6 +76,11 @@ git checkout -- docs/architecture/coverage-matrix.md
 # go-stellar-sdk v0.6 bump it was cited against).
 echo "(#1347)" >> docs/remediation-2026-07-01/STATUS.md
 check "a reintroduced '#1347' citation in STATUS.md is caught" red
+# RSWP-147: docs/remediation-2026-07-01/STATUS.md must not carry the
+# dangling "#1353" citation back in — #1353 now resolves to an
+# unrelated auto-filed ci-health-bot issue, not the checkout v7 PR.
+echo "#1353" >> docs/remediation-2026-07-01/STATUS.md
+check "a reintroduced '#1353' citation in remediation STATUS.md is caught" red
 git checkout -- docs/remediation-2026-07-01/STATUS.md
 check "clean tree passes again after revert" ok
 
