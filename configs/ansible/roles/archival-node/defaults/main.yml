@@ -1203,14 +1203,14 @@ internal_cidrs:
 stellarindex_api_listen_addr: "127.0.0.1:3000"
 
 # ───── Observability ─────────────────────────────────────────────────
-node_exporter_version:   "1.8.2"
+# node_exporter_version / node_exporter_release_sha256 (F-1291,
+# codex audit-2026-05-13) described a checksum-pinned tarball
+# download. The #33 cutover (2026-05-20, see 10-observability.yml)
+# replaced that with the Debian `prometheus-node-exporter` package,
+# installed unpinned so it picks up distro CVE fixes; no task reads
+# either var. Removed rather than left as a checksum that verifies
+# nothing.
 node_exporter_port:      9100
-# F-1291 (codex audit-2026-05-13): supply-chain checksum for the
-# node_exporter tarball. NOT defaulted here (per-arch + per-release);
-# 10-observability.yml asserts at role-start. Pull from the matching
-# SHA256SUMS line on
-# https://github.com/prometheus/node_exporter/releases/tag/v{{ node_exporter_version }}
-# node_exporter_release_sha256: <required; set in inventory>
 
 core_exporter_port:      9473
 
