@@ -461,3 +461,36 @@ func TestAdminLookup_MountedAsPostOnly(t *testing.T) {
 		t.Errorf("GET status = %d, want 405 — a GET mounting would put the email back in the URL", rec.Code)
 	}
 }
+
+// RLT-209: rate_limit_per_min_override / monthly_request_quota_override are
+// `required` in the OpenAPI AdminAccountView schema, and 0 is their
+// meaningful "inherit tier default" value — not an absent one. An
+// `omitempty` json tag drops the key entirely when the value is 0, which
+// breaks that contract for exactly the accounts on tier defaults (the
+// common case). This pins that the keys survive encoding at their
+// zero-value.
+func TestAdminAccountView_OverrideFieldsSurviveZeroValue(t *testing.T) {
+	v := AdminAccountView{
+		ID:     "acct-1",
+		Name:   "Acme",
+		Slug:   "acme",
+		Tier:   "free",
+		Status: "active",
+		// RateLimitPerMinOverride / MonthlyRequestQuotaOverride left at
+		// their zero value: "inherits tier default".
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, ok := m["rate_limit_per_min_override"]; !ok {
+		t.Errorf("rate_limit_per_min_override missing from JSON at zero value; OpenAPI marks it required, got %s", b)
+	}
+	if _, ok := m["monthly_request_quota_override"]; !ok {
+		t.Errorf("monthly_request_quota_override missing from JSON at zero value; OpenAPI marks it required, got %s", b)
+	}
+}

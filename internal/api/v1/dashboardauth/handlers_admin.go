@@ -26,9 +26,11 @@ type AdminAccountView struct {
 	CreatedAt       string `json:"created_at,omitempty"`
 	SuspendedReason string `json:"suspended_reason,omitempty"`
 	// RateLimitPerMinOverride / MonthlyRequestQuotaOverride are 0 when the
-	// account inherits its tier default.
-	RateLimitPerMinOverride     int   `json:"rate_limit_per_min_override,omitempty"`
-	MonthlyRequestQuotaOverride int64 `json:"monthly_request_quota_override,omitempty"`
+	// account inherits its tier default — 0 is a meaningful value, not an
+	// absent one, and both are `required` in the OpenAPI schema, so they
+	// must never be dropped by omitempty.
+	RateLimitPerMinOverride     int   `json:"rate_limit_per_min_override"`
+	MonthlyRequestQuotaOverride int64 `json:"monthly_request_quota_override"`
 }
 
 // AdminUserView is one user under the looked-up account.
