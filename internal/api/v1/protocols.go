@@ -711,7 +711,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	// carry a health signal, unlike the detail path.
 	events, _ := s.protocolEvents24h(ctx)
 	verdicts := s.protocolVerdicts(ctx)
-	tvls := s.protocolTVLs()
+	tvls, tvlTotal := s.protocolTVLsAndTotal()
 
 	view := ProtocolsView{Protocols: make([]ProtocolView, 0, len(protocolRegistry))}
 	var degraded []string
@@ -728,7 +728,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 		view.Protocols = append(view.Protocols, row)
 	}
 	view.TotalProtocols = len(view.Protocols)
-	view.TVLTotal = s.protocolTVLTotal()
+	view.TVLTotal = tvlTotal
 	view.CoverageNote = protocolsCoverageNote(degraded)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
@@ -1307,15 +1307,20 @@ func (s *Server) protocolTVLs() map[string]ProtocolTVLView {
 	return snap
 }
 
-// protocolTVLTotal reads the reconciled headline total, degrading to
-// nil (the tvl_total field stays absent) when the cache isn't wired or
-// hasn't completed its first refresh — the same degradation contract as
+// protocolTVLsAndTotal reads the per-protocol TVL snapshot together with
+// the reconciled headline total from the SAME refresh cycle (RLT-235):
+// reading them via two separate calls (Snapshot() then Total(), each
+// its own critical section) can straddle a concurrent Refresh() and
+// pair one cycle's per-protocol figures with a different cycle's total.
+// Both degrade to nil when the cache isn't wired or hasn't completed
+// its first background refresh — the same degradation contract as
 // every other dynamic join on this directory.
-func (s *Server) protocolTVLTotal() *DEXTVLTotalView {
+func (s *Server) protocolTVLsAndTotal() (map[string]ProtocolTVLView, *DEXTVLTotalView) {
 	if s.dexTVL == nil {
-		return nil
+		return nil, nil
 	}
-	return s.dexTVL.Total()
+	snap, total, _ := s.dexTVL.SnapshotAndTotal()
+	return snap, total
 }
 
 // attachProtocolTVL joins the snapshot's TVL entry (if any) onto a
