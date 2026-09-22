@@ -26,6 +26,16 @@ superseded_by: null
 > the citation is not replaced with a guess. Treat both "#1224"
 > mentions below as historical record only, not a live reference.
 
+> **Amendment (2026-09-22, RSWP-122).** The two "PR #1225" citations
+> below (Context intro's PR list, References → Implementation surface)
+> no longer identify a SEP-40 oracle endpoints proxy fallback. No PR
+> #1225 has ever existed in this repo; GitHub has since assigned #1225
+> to a real but unrelated open issue about test-vacuity residue across
+> several endpoints. The actual PR number for the SEP-40 fallback does
+> not survive in git history, so the citation is not replaced with a
+> guess. Treat both "#1225" mentions below as historical record only,
+> not a live reference.
+
 ## Context
 
 Most CEX and DEX trades quote against a USD stablecoin

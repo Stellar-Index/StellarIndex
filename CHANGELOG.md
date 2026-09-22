@@ -27730,7 +27730,7 @@ rc.48 deploy to R1.
   (`docs/adr/0026-stablecoin-fiat-proxy-late-binding.md`).
   Records the implicit-from-the-start policy that a flurry
   of API-side fallback PRs (#1217 / #1218 / #1219 / #1224 /
-  #1225 / #1226) each instantiated. Captures: the
+  #1226) each instantiated. Captures: the
   late-binding-vs-eager-rewrite tradeoff (depeg detection,
   per-stablecoin signal preservation, reversibility), the
   default peg list (USDT/USDC/PYUSD/EUROC/EUROB/MXNe), the
@@ -28114,7 +28114,7 @@ rc.48 deploy to R1.
   asset detail page request. New `ohlcTradesWithStablecoinFallback`
   helper walks the operator's classic USD pegs in priority order;
   first peg with non-empty trades wins. Response carries
-  `flags.triangulated=true`. (PR #1225)
+  `flags.triangulated=true`.
 - **`/v1/vwap` and `/v1/twap` now apply the same X/fiat:USD →
   X/<peg> stablecoin-fiat proxy fallback** as `/v1/price` (#1217)
   and `/v1/chart` (#1015). Pre-fix, `/v1/vwap?base=native&quote=fiat:USD`
