@@ -23,17 +23,21 @@
 # preserves the slug, query string, and any tab=... fragment.
 /coins/*  /assets/:splat  301
 
-# Unified /currencies/{slug} crypto friendly aliases. Source of
-# truth: web/explorer/src/app/currencies/[ticker]/slugs.ts —
-# CRYPTO_FRIENDLY_TO_BACKEND. Keep both lists in sync.
+# Unified /currencies/{slug} crypto friendly aliases. `/currencies/*`
+# isn't a page in this tree at all (no src/app/currencies route) — these
+# aliases exist only as _redirects entries.
 #
-# CF Pages _redirects does NOT auto-match trailing-slash variants;
-# we list both `/currencies/foo` and `/currencies/foo/` because
-# Next.js's static export emits trailing-slash URLs by default
-# (e.g. internal links from Link href="/currencies/usd-coin/"),
-# and the bare form is what an external-share or typed URL hits.
+# CF Pages _redirects does NOT auto-match trailing-slash variants, and
+# this site has no live Next.js server to add one: next.config.mjs
+# defaults to `output: 'export'` (static export served directly by
+# Cloudflare Pages), so `trailingSlash: true` only shapes the URLs Next
+# itself generates at build time — it issues no runtime 308 for a typed
+# or externally-shared bare-form request. The table below lists the
+# trailing-slash form (matching Next's own generated links); the single
+# catch-all rule after it (T247) normalizes any bare-form request onto
+# that form instead of doubling every entry here (CF's free-plan
+# ~100-rule cap, see the fiat de-dup section below).
 # Crypto /currencies/ aliases — assets-unification.
-# Trailing-slash only (next.js 308 handles bare form).
 /currencies/xlm/  /assets/XLM/  301
 /currencies/usdc/  /assets/USDC/  301
 /currencies/eurc/  /assets/EURC/  301
@@ -45,10 +49,11 @@
 
 # Fiat currencies — assets-unification (R-018). Each entry maps
 # /currencies/{friendly}/ and /currencies/{iso}/ to the
-# canonical /assets/{friendly}/. trailing-slash form only —
-# next.config.mjs's trailingSlash:true 308-redirects the bare
-# form before _redirects evaluates. Cap _redirects below CF's
-# free-plan ~100-rule limit (R-018 finish-up).
+# canonical /assets/{friendly}/. Trailing-slash form only — see the
+# catch-all rule at the end of this block (T247) for the bare form. Cap
+# _redirects below CF's free-plan ~100-rule limit (R-018 finish-up), which
+# is exactly why the bare form is one shared rule rather than a doubled
+# per-slug table.
 /currencies/us-dollar/  /external/assets/us-dollar/  301
 /currencies/usd/  /external/assets/us-dollar/  301
 /currencies/euro/  /external/assets/euro/  301
@@ -87,6 +92,19 @@
 /currencies/sek/  /external/assets/swedish-krona/  301
 /currencies/norwegian-krone/  /external/assets/norwegian-krone/  301
 /currencies/nok/  /external/assets/norwegian-krone/  301
+
+# T247: bare-form fallback for the whole /currencies/* alias set above.
+# There is no live Next.js server (static export) to 308 a request like
+# `/currencies/xlm` onto `/currencies/xlm/` the way the removed comments
+# here used to claim, so without this it 404s on Cloudflare Pages. This
+# one rule normalizes any bare-form, single-segment request onto the
+# trailing-slash form, which then re-matches its specific slug rule above
+# (two redirect hops, same destination) — covering every current and
+# future /currencies/* alias without doubling the per-slug table. `:slug`
+# (not `*`) deliberately matches only a path with no trailing slash: a
+# splat would also re-match already-trailing-slash / unmapped paths and
+# loop, growing an extra slash each hop instead of 404ing cleanly.
+/currencies/:slug  /currencies/:slug/  301
 
 # Fiat de-duplication (2026-08-24 operator ruling): a fiat currency is an
 # external (non-Stellar) asset, so its ONE detail page is
