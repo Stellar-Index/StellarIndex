@@ -1356,13 +1356,20 @@ func (s *Server) tryUSDAnchoredFiatCross(
 		return PriceSnapshot{}, nil, false, false
 	}
 	var rate float64
+	var rateAt time.Time
 	for _, c := range fx.Currencies {
 		if c.Ticker == quote.Code {
 			rate = c.RateUSD
+			rateAt = c.UpdatedAt
 			break
 		}
 	}
 	if rate <= 0 {
+		return PriceSnapshot{}, nil, false, false
+	}
+	// Fail closed on a stale rate rather than silently deriving a price
+	// from it (fxCrossRateMaxAge) — see its doc comment.
+	if rateAt.IsZero() || time.Since(rateAt) > fxCrossRateMaxAge {
 		return PriceSnapshot{}, nil, false, false
 	}
 
@@ -1441,6 +1448,22 @@ func (s *Server) resolveUSDLeg(
 // Matches the label [tryFiatCrossRate] already uses, so one source name
 // covers every FX-derived value on the price surface.
 const fxSourceName = "massive"
+
+// fxCrossRateMaxAge bounds how old the in-memory forex rate backing a
+// derived cross-rate ([Server.tryUSDAnchoredFiatCross],
+// [Server.tryFiatCrossRate]) may be before it is treated as no rate at
+// all, mirroring the trailing-7-day ceiling [declaredPegFXMaxAge]
+// (assets.go) already applies to the fx_quotes-backed peg fill — same
+// fx staleness discipline, same bound: a stale rate presented as
+// current is worse than no price.
+//
+// The forex worker's own per-ticker hold ([maxHeldRateAge] in the
+// forex package) only prunes a stale ticker out of the NEXT
+// successfully-built snapshot; a refresh that errors before installing
+// one leaves the cached snapshot — and its PublishedAt/UpdatedAt —
+// aging with nothing bounding it. This is the read-site backstop for
+// that case.
+const fxCrossRateMaxAge = 7 * 24 * time.Hour
 
 // appendFXSource adds the FX feed to the USD leg's own sources without
 // dropping them: a customer auditing a BRL price needs to see both the
@@ -2171,6 +2194,14 @@ func (s *Server) tryFiatCrossRate(asset, quote canonical.Asset) (PriceSnapshot, 
 			return PriceSnapshot{}, nil, false
 		}
 		rateQuote = 1
+	}
+	// Fail closed on a stale rate rather than silently deriving a price
+	// from it (fxCrossRateMaxAge) — see its doc comment. observedAt
+	// already reflects the older of the two legs, so this one check
+	// covers both a dead worker (stale PublishedAt) and a held ticker
+	// past its own bound (stale per-leg UpdatedAt).
+	if time.Since(observedAt) > fxCrossRateMaxAge {
+		return PriceSnapshot{}, nil, false
 	}
 	// Cross-rate = rate_usd[Y] / rate_usd[X], computed as exact big.Rat
 	// rather than float64 division (INV-2 / ADR-0003 — no float64

@@ -1375,12 +1375,13 @@ func (s *stubCurrenciesReader) Latest() *v1.CurrenciesSnapshot { return s.snap }
 // this isn't a direct on-chain trade.
 func TestPrice_FiatCrossRate_EURUSD(t *testing.T) {
 	reader := &stubPriceReader{err: v1.ErrPriceNotFound}
+	now := time.Now().UTC()
 	currencies := &stubCurrenciesReader{
 		snap: &v1.CurrenciesSnapshot{
 			Currencies: []v1.CurrencyEntry{
-				{Ticker: "EUR", Name: "Euro", RateUSD: 0.92},
+				{Ticker: "EUR", Name: "Euro", RateUSD: 0.92, UpdatedAt: now},
 			},
-			PublishedAt: time.Unix(1_770_000_000, 0).UTC(),
+			PublishedAt: now,
 		},
 	}
 	srv := v1.New(v1.Options{Prices: reader, Currencies: currencies})

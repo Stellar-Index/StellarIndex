@@ -67,13 +67,14 @@ func (r *usdLegReader) RecentClosedSnapshots(
 }
 
 func brlCurrencies() *stubCurrenciesReader {
+	now := time.Now().UTC()
 	return &stubCurrenciesReader{
 		snap: &v1.CurrenciesSnapshot{
 			Currencies: []v1.CurrencyEntry{
-				{Ticker: "BRL", Name: "Brazilian real", RateUSD: brlRateUSD},
-				{Ticker: "JPY", Name: "Japanese yen", RateUSD: 147.2},
+				{Ticker: "BRL", Name: "Brazilian real", RateUSD: brlRateUSD, UpdatedAt: now},
+				{Ticker: "JPY", Name: "Japanese yen", RateUSD: 147.2, UpdatedAt: now},
 			},
-			PublishedAt: time.Unix(1_770_000_000, 0).UTC(),
+			PublishedAt: now,
 		},
 	}
 }
