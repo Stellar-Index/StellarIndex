@@ -21,10 +21,17 @@ pass=0
 fail=0
 asserts=0
 
-check() { # check <desc> <want-exit> <root>
-  local desc="$1" want="$2" root="$3" got
+# Fixture-only invocations must not be entangled with the real repo's
+# docker/ dir (its container-pin drift is exercised separately below);
+# point DOCKER_ROOT at an empty dir so those checks isolate workflow
+# parsing from container-pin parity.
+EMPTY_DOCKER_ROOT="$TMP/no-docker-here"
+mkdir -p "$EMPTY_DOCKER_ROOT"
+
+check() { # check <desc> <want-exit> <root> [docker-root]
+  local desc="$1" want="$2" root="$3" docker_root="${4:-$EMPTY_DOCKER_ROOT}" got
   asserts=$((asserts + 1))
-  bash "$LINT" "$root" >/dev/null 2>&1
+  DOCKER_ROOT="$docker_root" bash "$LINT" "$root" >/dev/null 2>&1
   got=$?
   if [ "$got" -eq "$want" ]; then
     echo "  ok   $desc"
@@ -109,8 +116,28 @@ check "empty root, no workflow files -> FAIL (vacuous)" 1 "$TMP/empty"
 mk nosetup ci.yml "      - run: echo hello"
 check "workflow with no setup-go step at all -> FAIL (vacuous)" 1 "$TMP/nosetup"
 
-# ── the repo's own workflow tree is clean ────────────────────────────
-check "repo's own .github/workflows/ passes" 0 ".github/workflows"
+# ── container-pin glob must match Dockerfiles that don't START with
+# "Dockerfile" (e.g. stellarindex-foo.Dockerfile), not just docker/Dockerfile
+# and docker/verify/Dockerfile (RLT-045: `-name 'Dockerfile*'` missed these). ─
+GOMOD_TOOLCHAIN="$(awk '/^toolchain[ \t]+go/ { sub(/^go/, "", $2); print $2; exit }' go.mod)"
+
+mkdir -p "$TMP/dockerbad"
+printf 'FROM golang:9.9.9-alpine@sha256:%040d AS builder\n' 0 > "$TMP/dockerbad/stellarindex-fixture.Dockerfile"
+check "suffix-named Dockerfile with a mismatched pin -> FAIL (glob must find it)" 1 "$TMP/good" "$TMP/dockerbad"
+
+mkdir -p "$TMP/dockergood"
+printf 'FROM golang:%s-alpine@sha256:%040d AS builder\n' "$GOMOD_TOOLCHAIN" 0 > "$TMP/dockergood/stellarindex-fixture.Dockerfile"
+check "suffix-named Dockerfile with a matching pin -> pass" 0 "$TMP/good" "$TMP/dockergood"
+
+# ── the repo's own workflow tree is clean, but the container-pin check
+# runs against the real docker/ dir regardless of ROOTS. Six
+# stellarindex-*.Dockerfile files there pin golang:1.27-alpine while
+# go.mod resolves to 1.26.8 (RLT-045): a `find docker -name 'Dockerfile*'`
+# glob only ever matched docker/verify/Dockerfile, so the drift on the six
+# `stellarindex-*.Dockerfile` files went undetected. With the glob fixed
+# to `-iname '*Dockerfile*'` the gate now catches it and must FAIL here
+# until those pins are corrected with a real digest lookup.
+check "repo's own .github/workflows/ passes, but docker/ container pins are out of parity (RLT-045)" 1 ".github/workflows" "docker"
 
 echo
 echo "lint-go-toolchain-parity-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
