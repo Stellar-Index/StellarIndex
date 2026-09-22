@@ -26,9 +26,25 @@ type stubPriceReader struct {
 	// (no observations) — matches the production reader's contract.
 	recent map[string][]v1.PriceSnapshot
 	err    error
+
+	// calls counts LatestPrice invocations (HO-344 coalescing check).
+	calls int32
+	// startedCh, if non-nil, is signaled on entry to every LatestPrice
+	// call; releaseCh, if non-nil, is read before the call returns —
+	// together they hold N concurrent calls open at once so a test can
+	// observe whether they collapsed onto one upstream read.
+	startedCh chan struct{}
+	releaseCh chan struct{}
 }
 
 func (r *stubPriceReader) LatestPrice(_ context.Context, a, q canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	atomic.AddInt32(&r.calls, 1)
+	if r.startedCh != nil {
+		r.startedCh <- struct{}{}
+	}
+	if r.releaseCh != nil {
+		<-r.releaseCh
+	}
 	if r.err != nil {
 		return v1.PriceSnapshot{}, nil, false, r.err
 	}
@@ -1644,5 +1660,60 @@ func TestPrice_StablecoinProxy_GateAllEmpty_FastMiss(t *testing.T) {
 	// never touched once the gate reports it empty.
 	if n := reader.latestCalls["native/"+peg.String()]; n != 0 {
 		t.Errorf("peg pair native/%s walked %d times, want 0 (gate must skip it)", peg.String(), n)
+	}
+}
+
+// TestPrice_ConcurrentRequests_Coalesced is the HO-344 regression: a
+// burst of concurrent requests for the SAME pair must collapse onto one
+// upstream LatestPrice call, not drive one per request.
+func TestPrice_ConcurrentRequests_Coalesced(t *testing.T) {
+	snap := v1.PriceSnapshot{
+		AssetID:    "native",
+		Quote:      "fiat:USD",
+		Price:      "0.1242",
+		PriceType:  "last_trade",
+		ObservedAt: v1.WireTime(time.Unix(1745000000, 0).UTC()),
+	}
+	const n = 8
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{"native/fiat:USD": snap},
+		sources:   map[string][]string{"native/fiat:USD": {"sdex"}},
+		startedCh: make(chan struct{}, n),
+		releaseCh: make(chan struct{}),
+	}
+	srv := v1.New(v1.Options{Prices: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+			if resp.StatusCode != http.StatusOK {
+				t.Errorf("status = %d, want 200", resp.StatusCode)
+			}
+		}()
+	}
+
+	// Drain startedCh for a bounded window: a coalesced handler lets
+	// exactly one call reach the reader (the rest wait inside the
+	// coalescing layer, never signaling startedCh); an uncoalesced
+	// handler lets all n reach it almost immediately. Either way the
+	// window settles well before it elapses on localhost.
+	deadline := time.After(200 * time.Millisecond)
+drain:
+	for {
+		select {
+		case <-reader.startedCh:
+		case <-deadline:
+			break drain
+		}
+	}
+	close(reader.releaseCh)
+	wg.Wait()
+
+	if got := atomic.LoadInt32(&reader.calls); got != 1 {
+		t.Errorf("LatestPrice calls = %d, want 1 (n=%d identical concurrent requests should coalesce onto one upstream read)", got, n)
 	}
 }

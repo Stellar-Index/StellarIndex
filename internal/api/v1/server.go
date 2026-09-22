@@ -199,6 +199,13 @@ type Server struct {
 	lakeWMFetched  time.Time
 	lakeWMNextTry  time.Time
 	lakeWMFlight   singleflight.Group
+	// priceReadFlight coalesces concurrent readPriceWithAliasesServed
+	// calls for the same (asset, quote) pair onto one upstream read —
+	// HO-344: /v1/price, /v1/oracle/lastprice and /v1/oracle/x_last_price
+	// each drove their own DB round trip per request with nothing
+	// deduplicating a burst of identical requests for a hot pair. See
+	// readPriceWithAliasesServed in price.go.
+	priceReadFlight singleflight.Group
 	// Cached top-N native (CAP-38) liquidity-pool listing — a
 	// whole-`liquidity_pool`-prefix lake scan (~40k pools) ranked in
 	// Go; cached so the listing endpoint doesn't re-scan per request
