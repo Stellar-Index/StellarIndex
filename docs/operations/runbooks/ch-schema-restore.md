@@ -449,10 +449,13 @@ more to the point, rather than leaving the previous run's `divergent 0`
 on the floor for node_exporter to serve indefinitely, which would be the
 same false clean by a slower route.
 
-The alert rules themselves are not yet in
-`deploy/monitoring/rules/storage.yml` — the producer ships first; wiring
-the rules (including one on `_intent_converged == 0`) is a follow-up in
-that file.
+The alert rules are wired in `deploy/monitoring/rules/storage.yml` (and
+its `configs/prometheus/rules.r1/` mirror): `stellarindex_ch_schema_drift_detected`
+(`_divergent > 0`), `stellarindex_ch_schema_drift_not_converged`
+(`_intent_converged == 0`), and `stellarindex_ch_schema_drift_stale` — the
+staleness guard, since node_exporter re-serves this textfile's
+last-written values forever if `ch-schema-drift.timer` stops firing, and
+the other two alerts read a frozen verdict from that state indefinitely.
 
 Self-test: `configs/ansible/roles/archival-node/files/ch-schema-drift-test.sh` (hermetic, no
 ClickHouse required — mutates a ClickHouse-rendered fixture one attribute
