@@ -2044,6 +2044,26 @@ regularly — investigate the `/v1/auth/callback` provisioning path
 (F-1255), separate from the reaper's own health (which the `runs_total`
 `error` outcome + `signup_reaper_failing` alert cover).
 
+### `stellarindex_accounts_rows`
+
+Gauge, unlabelled. Refreshed by every signup-reaper sweep
+(`internal/signupreaper`).
+
+Rows in `accounts`. `POST /v1/register` is unauthenticated and every
+accepted call mints a permanent row, bounded only by the per-IP signup
+throttle; the reaper deletes signup-race orphans only, never a
+successful registration. So this gauge is the per-deployment signal of
+registration volume: sustained growth outside expected traffic is
+registration-path abuse, not necessarily legitimate signups.
+
+### `stellarindex_api_keys_rows`
+
+Gauge, unlabelled. Refreshed alongside `stellarindex_accounts_rows`.
+
+Rows in `api_keys`. Register mints exactly one durable key per account,
+so this moves in lockstep with `stellarindex_accounts_rows` and tracks
+the same growth from the credential side.
+
 ### `stellarindex_login_code_lockout_rows`
 
 Gauge, unlabelled. Refreshed by every retention sweep
