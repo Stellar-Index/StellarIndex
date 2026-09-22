@@ -305,6 +305,24 @@ func TestAssetMetadataRouteWorks(t *testing.T) {
 // /v1/coins removed (no production consumers); deprecation-header
 // test deleted along with the routes.
 
+// TestExternalAssetList_InvalidClass_400s — RLT-210: an unrecognised
+// asset_class must reject with 400, not silently fall through to the
+// unfiltered listing (the sibling /v1/assets?asset_class= path already
+// 400s via validAssetClass; /v1/external/assets was missing the gate).
+func TestExternalAssetList_InvalidClass_400s(t *testing.T) {
+	cat := newTestCatalogue(t)
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: cat,
+		GlobalPrice:        &stubGlobalPriceReader{},
+	})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/external/assets?asset_class=bogus")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("asset_class=bogus status = %d, want 400", resp.StatusCode)
+	}
+}
+
 // TestAssetGet_StellarExternalGate pins the LC-001 detail split: an external
 // asset (fiat) 404s on /v1/assets/{slug}, and a Stellar asset (usdc) 404s on
 // /v1/external/assets/{slug}. No redirect — each lives on exactly one path.
