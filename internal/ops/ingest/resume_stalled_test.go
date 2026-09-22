@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"context"
 	"reflect"
 	"strings"
 	"testing"
@@ -749,4 +750,28 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// TestNewDataGapGateContext_HasDeadline is the RLT-409 regression: the
+// data-gap gate queries (FindSorobanEventsLedgerGaps / the classic
+// gate) must run under a bounded context, not the raw SIGINT/SIGTERM
+// rootCtx, because the unpruned fallback scan they can take can wedge
+// resume-stalled indefinitely with no deadline to bound it.
+func TestNewDataGapGateContext_HasDeadline(t *testing.T) {
+	rootCtx := context.Background()
+	if _, ok := rootCtx.Deadline(); ok {
+		t.Fatal("test setup: rootCtx unexpectedly already has a deadline")
+	}
+
+	gateCtx, cancel := newDataGapGateContext(rootCtx)
+	defer cancel()
+
+	deadline, ok := gateCtx.Deadline()
+	if !ok {
+		t.Fatal("newDataGapGateContext must return a context with a deadline; the data-gap gate query would otherwise be unbounded (RLT-409)")
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 || remaining > dataGapGateTimeout {
+		t.Fatalf("gate context deadline out of expected bound: remaining=%s want (0, %s]", remaining, dataGapGateTimeout)
+	}
 }
