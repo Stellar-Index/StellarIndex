@@ -399,6 +399,11 @@ stale_patterns=(
                                   # as the tracking issue; #975 now
                                   # resolves to an unrelated, currently-open
                                   # streaming-docs-vs-hub drift finding
+  "PR #1198"                     # dangling ref (RSWP-113) — CHANGELOG's
+                                  # coins/sources_stats cache-ops entry cited
+                                  # a PR number that didn't exist yet;
+                                  # #1198 is now a real, unrelated live issue
+                                  # (trim-galexie-archive delete-key drift)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
