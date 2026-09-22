@@ -142,6 +142,7 @@ signal lands.
 | `stellarindex_timescale_disk_warning` | same | < 20 % | ticket | [db-disk-full](runbooks/db-disk-full.md) |
 | `stellarindex_config_assertion_failed` | a load-bearing guard config (rsyslog suppress / journald cap / CH-logs-on-ZFS / nft 443 / redis cap / supply reserves) is missing or reverted — hourly config-assertions.sh producer | ==0 for 65m | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
 | `stellarindex_config_assertions_stale` | the config-assertions producer itself went silent (>2h without fresh textfile output) | for 30m | ticket | [config-assertion-failed](runbooks/config-assertion-failed.md) |
+| `stellarindex_patroni_textfile_stale` | `time() - node_textfile_mtime_seconds{file="patroni.prom"}` — patroni-textfile-scraper.timer (30s) went silent | > 10 min, for 5 min | ticket | [patroni-textfile-stale](runbooks/patroni-textfile-stale.md) |
 | `stellarindex_node_root_disk_filling_fast` | predict_linear 10m trend on root avail reaching 0 within 30 min (AND avail < 50%) — the log-flood early warning (the 2026-06-11 class fills root in ~5 min, faster than the static page can be acted on) | trend < 0 for 2m | page | [node-root-disk-filling-fast](runbooks/node-root-disk-filling-fast.md) |
 | `stellarindex_node_root_disk_full` | same expr on `mountpoint="/"` (distinct from DB vol — root FS holds /var/log + /tmp + /var/cache) | < 10 % | page | [node-root-disk-full](runbooks/node-root-disk-full.md) |
 | `stellarindex_node_root_disk_warning` | same | < 20 % | ticket | [node-root-disk-warning](runbooks/node-root-disk-warning.md) |
@@ -186,6 +187,7 @@ signal lands.
 | `stellarindex_redis_memory_saturated` | `redis_memory_used_bytes / redis_memory_max_bytes * 100` | > 90 % for > 5 min | ticket | [redis-memory](runbooks/redis-memory.md) |
 | `stellarindex_redis_evictions_high` | `rate(redis_evicted_keys_total[5m])` | > 100/s | ticket | [redis-memory](runbooks/redis-memory.md) |
 | `stellarindex_redis_replication_broken` | `redis_connected_slaves` per master | < expected for > 2 min | ticket | [redis-replication](runbooks/redis-replication.md) |
+| `stellarindex_redis_sentinel_textfile_stale` | `time() - node_textfile_mtime_seconds{file="redis_sentinel.prom"}` — redis-sentinel-textfile-scraper.timer (30s) went silent | > 10 min, for 5 min | ticket | [redis-sentinel-textfile-stale](runbooks/redis-sentinel-textfile-stale.md) |
 | `stellarindex_redis_writes_blocked` | `redis_rdb_last_bgsave_status` per master (also surfaces as `MISCONF` errors in client logs) | == 0 for > 60 s | page | [redis-write-blocked-disk-full](runbooks/redis-write-blocked-disk-full.md) |
 
 ## API plane alerts
@@ -586,6 +588,7 @@ auto-unfreeze at all. Rules in
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_host_down` | `up` for any host | == 0 for > 2 min | ticket | [host-down](runbooks/host-down.md) |
+| `stellarindex_keepalived_textfile_stale` | `time() - node_textfile_mtime_seconds{file="keepalived.prom"}` — keepalived-textfile-scraper.timer (30s) went silent | > 10 min, for 5 min | ticket | [keepalived-textfile-stale](runbooks/keepalived-textfile-stale.md) |
 | `stellarindex_host_cpu_high` | `100 - (avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100)` | > 90 % for > 10 min | informational | [host-cpu-high](runbooks/host-cpu-high.md) |
 | `stellarindex_host_memory_high` | `(node_memory_MemTotal_bytes - node_memory_MemAvailable_bytes) / node_memory_MemTotal_bytes * 100` | > 90 % for > 10 min | informational | [host-memory-high](runbooks/host-memory-high.md) |
 | `stellarindex_zfs_pool_degraded` | `node_zfs_pool_state{state=~"DEGRADED|FAULTED|UNAVAIL"}` | any, for > 60 s | page | [zfs-degraded](runbooks/zfs-degraded.md) |
