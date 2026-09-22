@@ -27,6 +27,14 @@ against.
   the existing JSON-LD on `/assets/{slug}` and `/markets/{pair}` —
   expands SEO coverage from 3 → 9 detail pages.
 
+- **docs / CHANGELOG — dangling ref (RSWP-136) — CHANGELOG's default
+  Chainlink feed map entry cited an internal PR number from before it
+  existed as a real GitHub issue; that number is now a live, unrelated
+  issue (`lint-doc-links` silently skipping undecodable markdown
+  files), so the citation silently resolved to the wrong thing instead
+  of 404ing. Dropped the citation; `scripts/ci/lint-docs.sh`'s
+  stale-reference check now guards against it reappearing.
+
 - **docs / CHANGELOG — dangling PR 845 citation in the rc.21
   `/sources` 24h-trade-count entry corrected (RSWP-050):** the entry
   credited its `?include=stats` opt-in to that PR number twice; the
@@ -28145,7 +28153,7 @@ rc.48 deploy to R1.
   these on Ethereum mainnet at audit time. Closes the code-side
   half of operator action #119; the operator no longer needs to
   hand-paste contract addresses into `r1.toml` to unblock
-  Chainlink cross-checks on the default pair set. (PR #1255)
+  Chainlink cross-checks on the default pair set.
 - **Nil-pointer panic in markets/coins single-flight cache** —
   caught on r1 production (2026-05-10 15:36 UTC, GET `/v1/markets`).
   When the leader's upstream call failed under single-flight,
