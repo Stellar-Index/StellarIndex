@@ -295,8 +295,8 @@ expect_status 404 "asset not found"      "/v1/assets/AAAA-GA5ZSEJYB37JRC5AVCIA5M
 #   /v1/observations?source=fakesrc 400 (#1164)
 #   /v1/oracle/latest?source=fakesrc 400 (#1168)
 #   /metrics 404 from public host (#1172 + binary loopback gate #1207)
-#   /v1/markets?asset=USDC 400 invalid-asset-id (#1189)
-#   /v1/markets?source=binance&asset=native 400 conflicting-filters (#1189)
+#   /v1/markets?asset=USDC 400 invalid-asset-id
+#   /v1/markets?source=binance&asset=native 400 conflicting-filters
 #   /v1/pools?asset=USDC 400 invalid-asset-id (#1190)
 #   /v1/pools?asset=native&base=native 400 conflicting-filters (#1190)
 #
