@@ -75,5 +75,5 @@ topic shape must NOT match (this is the gate working).
 
 ## 4. Finish
 
-CHANGELOG entry in the same commit; `docs/protocols/<name>.md` page;
-then run **docs/contributing/procedures/verify-done.md**.
+`docs/protocols/<name>.md` page; then run
+**docs/contributing/procedures/verify-done.md**.

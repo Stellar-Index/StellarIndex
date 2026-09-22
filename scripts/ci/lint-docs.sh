@@ -226,9 +226,9 @@ fi
 #
 #   A shipped migration's UP body is immutable; its DOWN body and its
 #   header COMMENTS may be corrected through the baseline-refresh path
-#   (lint-migration-immutability --write) with a CHANGELOG line;
-#   anything stored in the database (COMMENT ON, defaults) needs a new
-#   migration.
+#   (lint-migration-immutability --write) and said so in the commit
+#   message; anything stored in the database (COMMENT ON, defaults)
+#   needs a new migration.
 #
 # A `--` line above BEGIN; is not executed, so correcting one cannot
 # make an applied database diverge from a fresh one — and the checksum

@@ -177,7 +177,6 @@ If it doesn't, that's a CI failure.
    verify they match.
 4. Bump the API minor version if the change is additive, major
    if breaking.
-5. CHANGELOG entry under `[Unreleased]`.
 
 ### "Cut a release" / "Deploy to the reference deployment"
 
