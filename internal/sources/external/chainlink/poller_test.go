@@ -335,6 +335,78 @@ func TestPollOnce_emitsOracleUpdate(t *testing.T) {
 	}
 }
 
+// TestPollOnce_projectFailureDoesNotStrandRound is the RNC26
+// regression: a project() failure occurring AFTER decode/resolveDecimals
+// have already succeeded (here, an Invert quotient that floors to zero
+// because the raw answer exceeds 10^(2*decimals)) must not mark the
+// round emitted. If it does, a later, otherwise-healthy poll of the
+// SAME round (on-chain answer corrected, roundId unchanged) silently
+// produces zero updates forever — the feed is wedged until process
+// restart even though nothing is actually wrong with it anymore.
+func TestPollOnce_projectFailureDoesNotStrandRound(t *testing.T) {
+	t.Parallel()
+	const feedAddr = "0x5f4eC3Df9cbd43714FE2740f5E3616155c5b8419"
+	updatedAt := uint64(1767225600)
+
+	// First answer is decode-valid (positive) but, once inverted at
+	// 8-dec scale (10^16 / answer), floors to zero because answer
+	// exceeds 10^16 — project()'s post-invert non-positive guard
+	// refuses it. The SAME roundId later reports a healthy answer
+	// that inverts to a positive price.
+	answer := big.NewInt(200_000_000_000_000_000) // 2e17 > 1e16 → quotient floors to 0
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req struct {
+			Method string            `json:"method"`
+			Params []json.RawMessage `json:"params"`
+		}
+		_ = json.Unmarshal(body, &req)
+		var call struct {
+			Data string `json:"data"`
+		}
+		if len(req.Params) > 0 {
+			_ = json.Unmarshal(req.Params[0], &call)
+		}
+		if call.Data == SelDecimals {
+			fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":"%s"}`, decimalsReturn(8))
+			return
+		}
+		respBody := buildLatestRoundDataReturn(t, 100, answer, 0, updatedAt, 100)
+		fmt.Fprintf(w, `{"jsonrpc":"2.0","id":1,"result":"%s"}`, respBody)
+	}))
+	defer srv.Close()
+
+	pair := canonical.Pair{
+		Base:  canonical.Asset{Type: canonical.AssetCrypto, Code: "EUR"},
+		Quote: canonical.Asset{Type: canonical.AssetFiat, Code: "USD"},
+	}
+	p := NewPoller(srv.URL, map[string]FeedSpec{
+		pair.String(): {Address: feedAddr, Decimals: 8, Invert: true},
+	})
+
+	// First poll: round 100 inverts to zero → project() refuses it.
+	// Zero updates, an error surfaced.
+	_, updates, err := p.PollOnce(context.Background(), []canonical.Pair{pair})
+	if err == nil {
+		t.Fatal("PollOnce with an inverts-to-zero answer returned nil error, want project failure surfaced")
+	}
+	if len(updates) != 0 {
+		t.Fatalf("len(updates) = %d, want 0 on the failing poll", len(updates))
+	}
+
+	// Feed corrects itself: SAME roundId (100), an answer that
+	// inverts to a positive price.
+	answer = big.NewInt(20_000_000) // 1e16 / 2e7 = 5e8, positive
+	_, updates, err = p.PollOnce(context.Background(), []canonical.Pair{pair})
+	if err != nil {
+		t.Fatalf("PollOnce after correction: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("len(updates) = %d, want 1 — round 100 must still be emittable after the earlier project() failure (RNC26)", len(updates))
+	}
+}
+
 // TestProject_invert covers the Invert flag path — a feed that
 // publishes EUR/USD reused as USD/EUR.
 func TestProject_invert(t *testing.T) {

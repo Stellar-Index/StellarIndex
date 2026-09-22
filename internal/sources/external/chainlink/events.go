@@ -213,18 +213,15 @@ func newRoundCache() *roundCache {
 //
 // nil roundID is treated as zero (defensive — decode never produces
 // a nil, but a future caller passing nil shouldn't panic here).
+// Combines wouldEmit (poller.go) + commitEmit (poller.go): kept for
+// callers (and tests) that don't need the two steps split apart. The
+// production poll path uses the split form so a failure between the
+// check and the round actually being built can't strand the round
+// (RNC26).
 func (c *roundCache) shouldEmit(feedAddr string, roundID *big.Int) bool {
-	if roundID == nil {
-		roundID = new(big.Int)
-	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	prev, ok := c.last[feedAddr]
-	if ok && roundID.Cmp(prev) <= 0 {
+	if !c.wouldEmit(feedAddr, roundID) {
 		return false
 	}
-	// Store a copy so a later mutation of the caller's *big.Int can't
-	// corrupt the cached high-water mark.
-	c.last[feedAddr] = new(big.Int).Set(roundID)
+	c.commitEmit(feedAddr, roundID)
 	return true
 }

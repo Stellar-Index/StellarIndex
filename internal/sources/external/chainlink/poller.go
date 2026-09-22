@@ -166,15 +166,28 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 				results <- result{err: err, pair: pair}
 				return
 			}
-			if !p.Cache.shouldEmit(rnd.FeedAddress, rnd.RoundID) {
+			if !p.Cache.wouldEmit(rnd.FeedAddress, rnd.RoundID) {
 				// Already emitted this round (or a newer one) — no-op.
 				return
 			}
 			u, err := p.project(pair, spec, rnd)
 			if err != nil {
+				// Do NOT mark the round emitted: a project() failure
+				// (unresolved decimals, malformed answer, non-positive
+				// post-invert price) can be transient, but the round id
+				// only changes on-chain when the feed publishes a new
+				// answer. Committing here before the row is ever built
+				// would permanently wedge the feed at this round until
+				// process restart, even though the identical round
+				// would project cleanly on a later tick (RNC26).
 				results <- result{err: err, pair: pair, round: rnd}
 				return
 			}
+			// Commit the dedup high-water mark only now that the update
+			// has actually been built — the earliest point a failure
+			// downstream of this line can no longer cause silent,
+			// permanent data loss for this round (RNC26).
+			p.Cache.commitEmit(rnd.FeedAddress, rnd.RoundID)
 			results <- result{update: u, pair: pair, round: rnd}
 		}(pr, spec)
 	}
@@ -302,6 +315,48 @@ func (p *Poller) project(pair canonical.Pair, spec FeedSpec, rnd Round) (canonic
 		Decimals:   decimals,
 		Observer:   "",
 	}, nil
+}
+
+// wouldEmit peeks whether (feedAddr, roundID) is newer than the last
+// committed round, WITHOUT mutating the cache. Split from the old
+// combined shouldEmit so a caller can decide to skip fetching/
+// projecting an already-seen round before doing any of that work,
+// while deferring the actual commit until the update built from this
+// round has survived every failure point that would otherwise strand
+// it (RNC26 — see commitEmit).
+func (c *roundCache) wouldEmit(feedAddr string, roundID *big.Int) bool {
+	if roundID == nil {
+		roundID = new(big.Int)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prev, ok := c.last[feedAddr]
+	return !ok || roundID.Cmp(prev) > 0
+}
+
+// commitEmit marks (feedAddr, roundID) as emitted. Callers MUST only
+// call this after the canonical.OracleUpdate for this round has been
+// successfully built (project succeeded) — never before. Marking
+// earlier (the old shouldEmit behaviour) meant a project() failure
+// (unresolved decimals, malformed answer, non-positive post-invert
+// price) permanently wedged the feed at that round: the on-chain
+// round id only advances when the feed itself publishes a new
+// answer, so a later, otherwise-healthy poll of the SAME round would
+// silently produce nothing until process restart reset the in-memory
+// cache (RNC26).
+func (c *roundCache) commitEmit(feedAddr string, roundID *big.Int) {
+	if roundID == nil {
+		roundID = new(big.Int)
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	prev, ok := c.last[feedAddr]
+	if ok && roundID.Cmp(prev) <= 0 {
+		return
+	}
+	// Store a copy so a later mutation of the caller's *big.Int can't
+	// corrupt the cached high-water mark.
+	c.last[feedAddr] = new(big.Int).Set(roundID)
 }
 
 // syntheticTxHash derives a deterministic 64-char hex tx_hash from
