@@ -35,37 +35,59 @@ import (
 //
 // This compares the HANDLER struct, which is the source of truth, to
 // the spec.
+//
+// handlerSpecFieldPairs is every (spec schema, handler struct) pair this
+// guard reconciles. It started as a single hardcoded pair (Asset /
+// AssetDetail) — that covered the field display_decimals shipped invisible
+// on, but left every other response struct with the same blind spot. Add a
+// pair here whenever a new top-level response struct is introduced.
+var handlerSpecFieldPairs = []struct {
+	schema string
+	typ    reflect.Type
+}{
+	{"Asset", reflect.TypeOf(AssetDetail{})},
+	{"AssetSupply", reflect.TypeOf(AssetSupply{})},
+	{"TradeRow", reflect.TypeOf(TradeRow{})},
+	{"OHLCBar", reflect.TypeOf(OHLCBar{})},
+	{"Price", reflect.TypeOf(PriceSnapshot{})},
+}
+
 func TestHandlerResponseFieldsAreDocumented(t *testing.T) {
-	props := specSchemaProps(t, "Asset")
-	if len(props) == 0 {
-		t.Fatal("resolved no properties for the Asset schema — the lookup is " +
-			"broken, and a check with an empty subject set passes forever")
-	}
+	for _, pair := range handlerSpecFieldPairs {
+		pair := pair
+		t.Run(pair.schema, func(t *testing.T) {
+			props := specSchemaProps(t, pair.schema)
+			if len(props) == 0 {
+				t.Fatalf("resolved no properties for the %s schema — the lookup is "+
+					"broken, and a check with an empty subject set passes forever", pair.schema)
+			}
 
-	got := structJSONTags(reflect.TypeOf(AssetDetail{}))
-	if len(got) == 0 {
-		t.Fatal("AssetDetail exposed no json tags — the reflection walk is broken")
-	}
+			got := structJSONTags(pair.typ)
+			if len(got) == 0 {
+				t.Fatalf("%s exposed no json tags — the reflection walk is broken", pair.typ.Name())
+			}
 
-	// Fields the handler serves that the spec does not document. This is
-	// the direction that hid display_decimals: a consumer cannot ask for
-	// what it has never been told exists.
-	var undocumented []string
-	for f := range got {
-		if !props[f] && handlerFieldSpecExceptions[f] == "" {
-			undocumented = append(undocumented, f)
-		}
-	}
-	sort.Strings(undocumented)
-	if len(undocumented) > 0 {
-		t.Errorf("AssetDetail serves field(s) the OpenAPI spec does not document: %v\n"+
-			"A server field absent from the spec is invisible to pkg/client, to the "+
-			"explorer's generated types, and to every downstream consumer — and the "+
-			"SDK-vs-spec gate cannot see it, because that reconciles two derived "+
-			"artifacts which agree when BOTH are missing the field. Document it in "+
-			"openapi/stellar-index.v1.yaml (and regenerate), or record it in "+
-			"handlerFieldSpecExceptions with the reason it is deliberately internal.",
-			undocumented)
+			// Fields the handler serves that the spec does not document. This is
+			// the direction that hid display_decimals: a consumer cannot ask for
+			// what it has never been told exists.
+			var undocumented []string
+			for f := range got {
+				if !props[f] && handlerFieldSpecExceptions[f] == "" {
+					undocumented = append(undocumented, f)
+				}
+			}
+			sort.Strings(undocumented)
+			if len(undocumented) > 0 {
+				t.Errorf("%s serves field(s) the OpenAPI spec does not document: %v\n"+
+					"A server field absent from the spec is invisible to pkg/client, to the "+
+					"explorer's generated types, and to every downstream consumer — and the "+
+					"SDK-vs-spec gate cannot see it, because that reconciles two derived "+
+					"artifacts which agree when BOTH are missing the field. Document it in "+
+					"openapi/stellar-index.v1.yaml (and regenerate), or record it in "+
+					"handlerFieldSpecExceptions with the reason it is deliberately internal.",
+					pair.typ.Name(), undocumented)
+			}
+		})
 	}
 }
 
