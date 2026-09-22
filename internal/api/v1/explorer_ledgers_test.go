@@ -444,9 +444,12 @@ func TestExplorer_LedgerDetail_InvalidSeq(t *testing.T) {
 }
 
 func TestExplorer_LedgerTransactions(t *testing.T) {
-	reader := &stubExplorerReader{txs: []clickhouse.TxSummary{
-		{Seq: 42, TxHash: "tx1", TxIndex: 0, SourceAccount: "GABC", FeeCharged: 100, OperationCount: 2, Successful: true, MemoType: "text", Memo: "hi"},
-	}}
+	reader := &stubExplorerReader{
+		ledgers: []clickhouse.LedgerHeader{{Seq: 42, TxCount: 1}},
+		txs: []clickhouse.TxSummary{
+			{Seq: 42, TxHash: "tx1", TxIndex: 0, SourceAccount: "GABC", FeeCharged: 100, OperationCount: 2, Successful: true, MemoType: "text", Memo: "hi"},
+		},
+	}
 	base := explorerTestServer(t, reader)
 	resp := mustGet(t, base+"/v1/ledgers/42/transactions")
 	if resp.StatusCode != http.StatusOK {
@@ -461,6 +464,38 @@ func TestExplorer_LedgerTransactions(t *testing.T) {
 	}
 	if !body.Data.Transactions[0].Successful || body.Data.Transactions[0].Memo != "hi" {
 		t.Errorf("tx fields = %+v", body.Data.Transactions[0])
+	}
+	if body.Data.Total != 1 || body.Data.Truncated {
+		t.Errorf("total/truncated = %d/%v, want 1/false", body.Data.Total, body.Data.Truncated)
+	}
+}
+
+// TestExplorer_LedgerTransactions_Truncated pins the T172 fix: when a
+// ledger's header reports more transactions than the page-size cap
+// returned, the response must say so — the caller previously had no way
+// to distinguish a genuinely short ledger from a silently truncated one.
+func TestExplorer_LedgerTransactions_Truncated(t *testing.T) {
+	reader := &stubExplorerReader{
+		ledgers: []clickhouse.LedgerHeader{{Seq: 42, TxCount: 5}},
+		txs: []clickhouse.TxSummary{
+			{Seq: 42, TxHash: "tx1", TxIndex: 0, SourceAccount: "GABC", FeeCharged: 100, OperationCount: 1, Successful: true},
+			{Seq: 42, TxHash: "tx2", TxIndex: 1, SourceAccount: "GABD", FeeCharged: 100, OperationCount: 1, Successful: true},
+		},
+	}
+	base := explorerTestServer(t, reader)
+	resp := mustGet(t, base+"/v1/ledgers/42/transactions?limit=2")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.LedgerTransactionsView `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if body.Data.Total != 5 {
+		t.Errorf("total = %d, want 5 (ledger header tx_count)", body.Data.Total)
+	}
+	if !body.Data.Truncated {
+		t.Errorf("truncated = false, want true (2 of 5 returned)")
 	}
 }
 
