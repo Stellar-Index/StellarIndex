@@ -196,7 +196,7 @@ CLEAN 2026-09-17** — `supply verify-rollup` on r1: "OK: 45 checkpoint(s) recon
 with the authoritative re-sum (0 drift, tolerance 0)"; no reset is needed and
 the item is closed on that evidence, **W5.6**
 (`contract_events_daily` v2 — the branch is not even on origin), **W5.7 /
-W5.8** (CEX dust delete, galexie trim, `soroban_events` decommission #39 —
+W5.8** (CEX dust delete, galexie trim, `soroban_events` decommission #803 —
 destructive, should be last), **W8-9b**, **W8-10a**, **W8-12**, **#340**
 items 6-9, **#349-#352** (correctly labelled post-v1), **#372**, the decks,
 the CoinGecko Pro purchase, enabling hashdb, and IP rotation. **HA / R2+R3
@@ -500,7 +500,7 @@ condition is being suppressed.
   done.**
 - **W5.2 (dfees) is COMPLETE.** This document says so in one place and
   "genuinely unstarted" in another; the first is right. **W5.8** has the same
-  self-contradiction and #39 is open.
+  self-contradiction and #803 is open.
 - **#371 F2 is complete, not metric-only.** `stellarindex_dependency_up` is
   exported and `stellarindex_dependency_down` is a page rule in BOTH trees
   with a runbook. An audit nearly re-filed this as a high because ClickHouse
@@ -1394,7 +1394,7 @@ land WITH the rebuild.
 
 **W5.7 — [C]** CEX dust DELETE (#68); monthly galexie trim timer enable.
 
-**W5.8 — [C]** ClickHouse Phase 8 `soroban_events` decommission (#39) —
+**W5.8 — [C]** ClickHouse Phase 8 `soroban_events` decommission (#803) —
 destructive, LAST, enumerate live readers first.
 
 **Sequencing rule (unchanged, still binding):** one heavy job at a time under
@@ -4585,7 +4585,7 @@ are obsolete — repo has been public since 2026-07-03):
   documented accepted risk with tested restore ([DECIDE] — the standing
   recommendation: R1 + one warm standby bootstrapping from the verified
   snapshot, post-launch). R1 is NOT hardware-upgradeable — never propose drives.
-- CH Phase 8 `soroban_events` decommission (#39 — destructive, LAST;
+- CH Phase 8 `soroban_events` decommission (#803 — destructive, LAST;
   enumerate live readers first), monthly galexie trim timer, `/v1/tx`
   10.2B tx_hash_index backfill, contract_events_daily v2 swap
   (`feat/ced-v2-rebuild` branch — land WITH the rebuild), CEX dust DELETE

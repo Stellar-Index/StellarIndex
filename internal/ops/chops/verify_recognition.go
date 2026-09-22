@@ -83,7 +83,7 @@ func verifyRecognition(args []string) error {
 	// asserting recognition coverage over a window it read nothing from.
 	// Reachable for any pre-Soroban range and for every range once
 	// soroban_events is retention-dropped or decommissioned (BACKLOG
-	// #39). Same fail-closed posture verify-hashchain already takes
+	// #803). Same fail-closed posture verify-hashchain already takes
 	// (cold audit 2026-08-04).
 	if len(samples) == 0 {
 		return fmt.Errorf(

@@ -339,6 +339,12 @@ stale_patterns=(
                                   # unrelated resolveTip completeness-clamp
                                   # finding, not the chart truncated/
                                   # data_starts_at PR the row implies
+  "#39\b"                         # dangling ref (RLT-411) — the
+                                  # soroban_events decommission plan cited
+                                  # "#39" as its tracking item; #39 is
+                                  # merged PR "fix: restore main to green",
+                                  # not an issue. #803 is the real
+                                  # tracking issue.
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \

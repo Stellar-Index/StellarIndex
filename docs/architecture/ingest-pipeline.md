@@ -43,7 +43,7 @@ internal/pipeline/sink.go  ← fans each decoded item to its destination:
     │     substrate that proves "100% coverage" (ADR-0033).
     │
     ├─► soroban_events landing zone (ADR-0029, Postgres) ── raw Soroban events.
-    │     LEGACY FALLBACK ONLY, decommission-pending (BACKLOG #39).
+    │     LEGACY FALLBACK ONLY, decommission-pending (BACKLOG #803).
     │
     │   THE PROJECTOR'S READ SOURCE IS THE CLICKHOUSE `contract_events` LAKE
     │   BY DEFAULT — storage.clickhouse_projector_source, default true
@@ -335,7 +335,7 @@ in a per-source poll loop.
   `soroban_events` raw landing zone. It is the projector's **legacy
   fallback** read source only; the default is the ClickHouse lake
   (`clickhouse_projector_source`, `internal/config/config.go:943`) and
-  decommissioning the landing zone is BACKLOG #39.
+  decommissioning the landing zone is BACKLOG #803.
 - [ADR-0031](../adr/0031-data-derived-coverage-signal.md) /
   [ADR-0032](../adr/0032-per-source-tables-as-projections.md) —
   data-derived coverage + per-source tables as projections; the

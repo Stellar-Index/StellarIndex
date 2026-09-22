@@ -101,7 +101,7 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 	//
 	// Caveat carried from the sibling call sites: preseedFactoryChildren
 	// walks the Postgres soroban_events landing zone, which is
-	// decommission-pending (#39); a CH-native preseed is the durable fix
+	// decommission-pending (#803); a CH-native preseed is the durable fix
 	// for all four callers.
 	for _, src := range cat {
 		if len(src.factories) == 0 {
