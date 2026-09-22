@@ -92,6 +92,68 @@ func (p *Poller) PollInterval() time.Duration {
 	return p.Interval
 }
 
+// pollResult is one feed's outcome for a single PollOnce tick.
+type pollResult struct {
+	update canonical.OracleUpdate
+	err    error
+	pair   canonical.Pair
+	round  Round
+}
+
+// pollFeed resolves decimals, fetches the latest round and, if it's
+// new, projects and commits it. ok=false means "already emitted this
+// round" (no-op, nothing for the caller to report) — that's the one
+// path PollOnce's fan-in must NOT receive a result for, matching its
+// pre-extraction behaviour exactly.
+//
+// An unrecovered panic here would kill the whole process; a price
+// feed that silently stops reporting is the failure mode this
+// source's error accounting exists to make visible, so recover and
+// report it as a failed result instead of letting it vanish.
+func (p *Poller) pollFeed(ctx context.Context, logger *slog.Logger, pair canonical.Pair, spec FeedSpec) (res pollResult, ok bool) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			worker.Report(logger, "external-chainlink-feed-poll", rec)
+			res = pollResult{err: fmt.Errorf("chainlink feed poll panicked: %v", rec), pair: pair}
+			ok = true
+		}
+	}()
+	// Scale first: the on-chain decimals() verified against the
+	// configured value (decimals.go). A disagreeing or unknown
+	// scale refuses the feed before its price is read.
+	dec, err := p.resolveDecimals(ctx, pair, spec)
+	if err != nil {
+		return pollResult{err: err, pair: pair}, true
+	}
+	spec.Decimals = dec
+	rnd, err := p.fetchLatest(ctx, pair, spec)
+	if err != nil {
+		return pollResult{err: err, pair: pair}, true
+	}
+	if !p.Cache.wouldEmit(rnd.FeedAddress, rnd.RoundID) {
+		// Already emitted this round (or a newer one) — no-op.
+		return pollResult{}, false
+	}
+	u, err := p.project(pair, spec, rnd)
+	if err != nil {
+		// Do NOT mark the round emitted: a project() failure
+		// (unresolved decimals, malformed answer, non-positive
+		// post-invert price) can be transient, but the round id
+		// only changes on-chain when the feed publishes a new
+		// answer. Committing here before the row is ever built
+		// would permanently wedge the feed at this round until
+		// process restart, even though the identical round
+		// would project cleanly on a later tick (RNC26).
+		return pollResult{err: err, pair: pair, round: rnd}, true
+	}
+	// Commit the dedup high-water mark only now that the update has
+	// actually been built — the earliest point a failure downstream
+	// of this line can no longer cause silent, permanent data loss
+	// for this round (RNC26).
+	p.Cache.commitEmit(rnd.FeedAddress, rnd.RoundID)
+	return pollResult{update: u, pair: pair, round: rnd}, true
+}
+
 // PollOnce implements external.Poller. For each pair in `pairs`,
 // look up the feed in FeedMap, call latestRoundData(), and emit
 // one OracleUpdate if the round is new. Returns updates, never
@@ -109,19 +171,12 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		logger = slog.Default()
 	}
 
-	type result struct {
-		update canonical.OracleUpdate
-		err    error
-		pair   canonical.Pair
-		round  Round
-	}
-
 	conc := p.Concurrency
 	if conc <= 0 {
 		conc = 8
 	}
 	sem := make(chan struct{}, conc)
-	results := make(chan result, len(pairs))
+	results := make(chan pollResult, len(pairs))
 
 	var wg sync.WaitGroup
 	for _, pr := range pairs {
@@ -138,57 +193,9 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		go func(pair canonical.Pair, spec FeedSpec) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			// An unrecovered panic in ANY goroutine kills the whole
-			// process. Report the panicking feed as a failed one rather
-			// than letting it vanish from `updates`: a price feed that
-			// silently stops reporting is the failure mode this source's
-			// error accounting exists to make visible.
-			defer func() {
-				if rec := recover(); rec != nil {
-					worker.Report(logger, "external-chainlink-feed-poll", rec)
-					results <- result{
-						err:  fmt.Errorf("chainlink feed poll panicked: %v", rec),
-						pair: pair,
-					}
-				}
-			}()
-			// Scale first: the on-chain decimals() verified against the
-			// configured value (decimals.go). A disagreeing or unknown
-			// scale refuses the feed before its price is read.
-			dec, err := p.resolveDecimals(ctx, pair, spec)
-			if err != nil {
-				results <- result{err: err, pair: pair}
-				return
+			if res, ok := p.pollFeed(ctx, logger, pair, spec); ok {
+				results <- res
 			}
-			spec.Decimals = dec
-			rnd, err := p.fetchLatest(ctx, pair, spec)
-			if err != nil {
-				results <- result{err: err, pair: pair}
-				return
-			}
-			if !p.Cache.wouldEmit(rnd.FeedAddress, rnd.RoundID) {
-				// Already emitted this round (or a newer one) — no-op.
-				return
-			}
-			u, err := p.project(pair, spec, rnd)
-			if err != nil {
-				// Do NOT mark the round emitted: a project() failure
-				// (unresolved decimals, malformed answer, non-positive
-				// post-invert price) can be transient, but the round id
-				// only changes on-chain when the feed publishes a new
-				// answer. Committing here before the row is ever built
-				// would permanently wedge the feed at this round until
-				// process restart, even though the identical round
-				// would project cleanly on a later tick (RNC26).
-				results <- result{err: err, pair: pair, round: rnd}
-				return
-			}
-			// Commit the dedup high-water mark only now that the update
-			// has actually been built — the earliest point a failure
-			// downstream of this line can no longer cause silent,
-			// permanent data loss for this round (RNC26).
-			p.Cache.commitEmit(rnd.FeedAddress, rnd.RoundID)
-			results <- result{update: u, pair: pair, round: rnd}
 		}(pr, spec)
 	}
 	go func() {
