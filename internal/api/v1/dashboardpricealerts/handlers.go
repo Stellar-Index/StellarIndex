@@ -34,6 +34,12 @@ type Config struct {
 	// the production default) fall back to
 	// [platform.Tier.MaxPriceAlerts]. Non-positive values are ignored.
 	AlertQuotas map[platform.Tier]int
+
+	// idempotency backs the optional Idempotency-Key header on
+	// HandleCreate (T284): a client that retries a create after a
+	// timeout gets the original response replayed instead of
+	// registering a second alert. Lazily initialized by validate().
+	idempotency *middleware.IdempotencyStore
 }
 
 func (c *Config) validate() error {
@@ -45,6 +51,9 @@ func (c *Config) validate() error {
 	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if c.idempotency == nil {
+		c.idempotency = middleware.NewIdempotencyStore(0)
 	}
 	return nil
 }
@@ -69,10 +78,24 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
+	idem := middleware.Idempotency(h.cfg.Logger, h.cfg.idempotency, sessionAccountSubject)
 	mux.HandleFunc("GET /v1/dashboard/price-alerts", h.HandleList)
-	mux.Handle("POST /v1/dashboard/price-alerts", sameSite(http.HandlerFunc(h.HandleCreate)))
+	mux.Handle("POST /v1/dashboard/price-alerts", sameSite(idem(http.HandlerFunc(h.HandleCreate))))
 	mux.Handle("PATCH /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleUpdate)))
 	mux.Handle("DELETE /v1/dashboard/price-alerts/{id}", sameSite(http.HandlerFunc(h.HandleDelete)))
+}
+
+// sessionAccountSubject scopes an Idempotency-Key to the caller's
+// account, so two different customers who happen to pick the same
+// literal key string never share a cache entry. Empty when no
+// session is attached — [middleware.Idempotency] treats that as
+// "don't dedupe this request".
+func sessionAccountSubject(r *http.Request) string {
+	sc, ok := dashboardauth.SessionFromContext(r.Context())
+	if !ok {
+		return ""
+	}
+	return sc.Account.ID.String()
 }
 
 // priceAlertDTO is the wire shape the dashboard reads.

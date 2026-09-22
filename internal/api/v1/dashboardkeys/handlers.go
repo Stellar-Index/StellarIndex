@@ -64,6 +64,12 @@ type Config struct {
 	// ignored — a deployment can raise or lower a tier's quota but
 	// not disable key creation through this seam.
 	KeyQuotas map[platform.Tier]int
+
+	// idempotency backs the optional Idempotency-Key header on
+	// HandleCreate (T284): a client that retries a mint after a
+	// timeout gets the original response replayed instead of minting
+	// a second key. Lazily initialized by validate().
+	idempotency *middleware.IdempotencyStore
 }
 
 // CacheInvalidator is the subset of
@@ -83,6 +89,9 @@ func (c *Config) validate() error {
 	}
 	if c.Now == nil {
 		c.Now = func() time.Time { return time.Now().UTC() }
+	}
+	if c.idempotency == nil {
+		c.idempotency = middleware.NewIdempotencyStore(0)
 	}
 	return nil
 }
@@ -118,9 +127,23 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // methods change nothing.
 func (h *Handlers) Mount(mux *http.ServeMux) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
+	idem := middleware.Idempotency(h.cfg.Logger, h.cfg.idempotency, sessionAccountSubject)
 	mux.HandleFunc("GET /v1/dashboard/keys", h.HandleList)
-	mux.Handle("POST /v1/dashboard/keys", sameSite(http.HandlerFunc(h.HandleCreate)))
+	mux.Handle("POST /v1/dashboard/keys", sameSite(idem(http.HandlerFunc(h.HandleCreate))))
 	mux.Handle("DELETE /v1/dashboard/keys/{id}", sameSite(http.HandlerFunc(h.HandleRevoke)))
+}
+
+// sessionAccountSubject scopes an Idempotency-Key to the caller's
+// account, so two different customers who happen to pick the same
+// literal key string never share a cache entry. Empty when no
+// session is attached — [middleware.Idempotency] treats that as
+// "don't dedupe this request".
+func sessionAccountSubject(r *http.Request) string {
+	sc, ok := dashboardauth.SessionFromContext(r.Context())
+	if !ok {
+		return ""
+	}
+	return sc.Account.ID.String()
 }
 
 // keyDTO is the wire shape the dashboard reads. The plaintext is
