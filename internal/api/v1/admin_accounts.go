@@ -56,6 +56,13 @@ type AdminAccountView struct {
 	SuspendedReason             string `json:"suspended_reason,omitempty"`
 	RateLimitPerMinOverride     int    `json:"rate_limit_per_min_override"`
 	MonthlyRequestQuotaOverride int64  `json:"monthly_request_quota_override"`
+	// EffectiveRateLimitPerMin / EffectiveMonthlyQuota are the tier
+	// ceiling with the override folded in — what the account ACTUALLY
+	// gets. GH-1074: this surface fetched both overrides and rendered
+	// neither the raw values nor what they resolve to; kept in step
+	// with the dashboardauth staff-lookup projection this mirrors.
+	EffectiveRateLimitPerMin int   `json:"effective_rate_limit_per_min"`
+	EffectiveMonthlyQuota    int64 `json:"effective_monthly_quota"`
 }
 
 func adminAccountView(a platform.Account) AdminAccountView {
@@ -69,6 +76,8 @@ func adminAccountView(a platform.Account) AdminAccountView {
 		SuspendedReason:             a.SuspendedReason,
 		RateLimitPerMinOverride:     a.RateLimitPerMinOverride,
 		MonthlyRequestQuotaOverride: a.MonthlyRequestQuotaOverride,
+		EffectiveRateLimitPerMin:    a.EffectiveRateLimitPerMin(),
+		EffectiveMonthlyQuota:       a.EffectiveMonthlyQuota(),
 	}
 	if !a.CreatedAt.IsZero() {
 		v.CreatedAt = a.CreatedAt.UTC().Format(time.RFC3339)
