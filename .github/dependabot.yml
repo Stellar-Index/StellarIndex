@@ -62,9 +62,11 @@ updates:
   # F-1207 (codex audit-2026-05-12): npm/pnpm ecosystems for the
   # Next.js apps. Without these, Dependabot doesn't surface
   # next.js / typescript / react security advisories — operators
-  # have to run `pnpm audit` manually. The CI gate
-  # (`pnpm audit --audit-level high`) catches new advisories on
-  # PR; Dependabot opens the bump PR proactively.
+  # have to run `pnpm audit` manually. The CI gate is the
+  # trivy pnpm-lock.yaml scan in ci.yml's `web-explorer` job
+  # (`pnpm audit --audit-level high` enforced nothing from
+  # 2026-07-15 on and was replaced — see ci.yml's DEP-F1 comment);
+  # Dependabot opens the bump PR proactively.
   #
   # `package-ecosystem: npm` is Dependabot's identifier for the
   # whole JS-ecosystem family (npm + yarn + pnpm). It reads
