@@ -211,8 +211,9 @@ PURITY_RULES = [
 # local packages matching `forbid`, unless the file also matches an
 # `exempt_importers` prefix. Complements PURITY_RULES (which pin a
 # package's maximum dependency set); these forbid specific upward /
-# sideways edges per the D8 dependency-direction map
-# (docs/maintainability-audit-2026-07-01/D8-dependency-direction.md).
+# sideways edges enforcing storage-below-compute: storage is the
+# persistence tier below compute, and this file's L/storage-below-
+# compute rule enforces it.
 # Known-legacy violations are grandfathered via lint-imports.baseline
 # and must shrink monotonically.
 LAYERING_RULES = [

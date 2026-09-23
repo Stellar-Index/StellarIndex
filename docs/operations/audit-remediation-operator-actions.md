@@ -315,5 +315,8 @@ contractid-aware, gate `Matches()` on `reg.Has(contractID)`).
   already DNS+TLS live; this is the go-live decision + comms).
 
 ---
-_Each item cross-references its CS-###/finding in `docs/audit-2026-06-30/` or
-`docs/maintainability-audit-2026-07-01/`. Code-side fixes tracked in the commit log._
+_Each item cross-references its CS-###/finding in
+https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit-2026-06-30
+or
+https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/maintainability-audit-2026-07-01.
+Code-side fixes tracked in the commit log._

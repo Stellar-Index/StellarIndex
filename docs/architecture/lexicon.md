@@ -8,8 +8,8 @@ status: binding
 
 **One word per concept.** This is the codification pass of the
 2026-07-01 maintainability audit's D2 dimension
-(`docs/maintainability-audit-2026-07-01/D2-naming-lexicon.md`): the
-canonical term for every domain concept, the deviations that exist
+(https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/maintainability-audit-2026-07-01/D2-naming-lexicon.md):
+the canonical term for every domain concept, the deviations that exist
 today (with file:symbol pointers), and the migration rule.
 
 ## The migration rule
@@ -98,8 +98,6 @@ package plural/singular mix (`events`/`incidents` vs
 
 ## Related
 
-- `docs/maintainability-audit-2026-07-01/D2-naming-lexicon.md` — the
-  audit evidence + M0/M1/M2 grading behind this lexicon.
 - [engineering-standards.md](../engineering-standards.md) — the "Go
   idioms" section (D6 companion to this doc).
 - `docs/architecture/coins-to-assets-migration.md` — the completed

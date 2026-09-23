@@ -8,9 +8,9 @@
 // `wasm-history-merge-jsonl`, `extract-wasm-from-galexie`.
 //
 // wasm-history/extract-wasm-from-galexie live here rather than in
-// internal/ops/discovery (the maintainability-audit-2026-07-01 target
-// list groups "Soroban discovery / WASM tracking" together) because
-// they're genuinely code-coupled with verify-archive: verify_archive.go
+// internal/ops/discovery (discovery groups Soroban discovery / WASM
+// tracking together) because they're genuinely code-coupled with
+// verify-archive: verify_archive.go
 // declares the wasm-history JSON output types (wasmRange,
 // contractHistory, wasmContractState, storageChange,
 // contractStorageHistory, codeUpload) that wasm_history.go builds, and

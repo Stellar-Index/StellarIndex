@@ -22,8 +22,7 @@ import (
 // audit_log table from migration 0027. The audit trail is the
 // append-only record of every privileged action (key.mint,
 // plan.upgrade, session.revoke, staff tier changes) and was
-// completely untested at every layer (audit-2026-06-14 A20 /
-// maintainability-audit-2026-07-01 D10). One container per test,
+// completely untested at every layer. One container per test,
 // matching the storage-test convention.
 func TestAuditStore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
