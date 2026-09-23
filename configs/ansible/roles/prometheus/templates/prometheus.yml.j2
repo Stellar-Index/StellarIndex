@@ -107,6 +107,63 @@ scrape_configs:
           service: redis
 {% endif %}
 
+  # ── Data-tier exporters ──────────────────────────────────────
+  # The rule tree synced from deploy/monitoring/rules/ selects these
+  # job names (storage.yml, backup-offsite.yml, clickhouse.yml, and
+  # meta.yml's exporter-down pages); 01-preflight.yml refuses a run
+  # whose inventory would leave any of them undefined.
+{% if 'postgres_cluster' in groups and groups['postgres_cluster'] %}
+  - job_name: "postgres_exporter"
+    scrape_interval: {{ prometheus_default_scrape_interval }}
+    static_configs:
+      - targets:
+{% for h in groups['postgres_cluster'] %}
+          - "{{ hostvars[h].ansible_host }}:9187"
+{% endfor %}
+        labels:
+          service: postgres
+
+  - job_name: "pgbackrest_exporter"
+    scrape_interval: {{ prometheus_default_scrape_interval }}
+    static_configs:
+      - targets:
+{% for h in groups['postgres_cluster'] %}
+          - "{{ hostvars[h].ansible_host }}:9854"
+{% endfor %}
+        labels:
+          service: pgbackrest
+{% endif %}
+
+{% if 'clickhouse_cluster' in groups and groups['clickhouse_cluster'] %}
+  # clickhouse-server's own endpoint (no exporter process).
+  - job_name: "clickhouse"
+    scrape_interval: {{ prometheus_default_scrape_interval }}
+    static_configs:
+      - targets:
+{% for h in groups['clickhouse_cluster'] %}
+          - "{{ hostvars[h].ansible_host }}:9363"
+{% endfor %}
+        labels:
+          service: clickhouse
+{% endif %}
+
+{% if 'minio_cluster' in groups and groups['minio_cluster'] %}
+  # The bearer token is operator-minted (`mc admin prometheus generate`),
+  # as on r1; `promtool check config` rejects the render until it exists.
+  # Procedure: docs/operations/runbooks/minio-metrics-403.md
+  - job_name: "minio"
+    scrape_interval: {{ prometheus_default_scrape_interval }}
+    metrics_path: /minio/v2/metrics/cluster
+    bearer_token_file: /etc/prometheus/minio.token
+    static_configs:
+      - targets:
+{% for h in groups['minio_cluster'] %}
+          - "{{ hostvars[h].ansible_host }}:9000"
+{% endfor %}
+        labels:
+          service: minio
+{% endif %}
+
   # ── node_exporter on every host in inventory ─────────────────
   # Picked up via the textfile collector — Patroni's textfile
   # scraper deposits stellarindex_patroni_role / _running there;
@@ -118,7 +175,7 @@ scrape_configs:
     static_configs:
       - targets:
 {% set ns = namespace(hosts=[]) %}
-{% for group in ['prometheus_pair', 'stellarindex_api', 'stellarindex_aggregator', 'stellarindex_indexer', 'haproxy_lb', 'redis_cluster', 'postgres_cluster'] %}
+{% for group in ['prometheus_pair', 'stellarindex_api', 'stellarindex_aggregator', 'stellarindex_indexer', 'haproxy_lb', 'redis_cluster', 'postgres_cluster', 'clickhouse_cluster', 'minio_cluster'] %}
 {%   if group in groups %}
 {%     for h in groups[group] %}
 {%       if hostvars[h].ansible_host not in ns.hosts %}
