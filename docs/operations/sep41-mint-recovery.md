@@ -202,7 +202,7 @@ supply source and `-write`, and let the tool reset the folds:
 
 ```sh
 # One window of <= 2,000,000 ledgers; loop FROM/TO exactly as in step 2.
-/usr/local/sbin/run-heavy-job.sh sep41-recover \
+/usr/local/sbin/run-heavy-job.sh sep41-mint-recover \
   stellarindex-ops ch-rebuild \
     -config /etc/stellarindex.toml \
     -ch-addr 127.0.0.1:9300 \
