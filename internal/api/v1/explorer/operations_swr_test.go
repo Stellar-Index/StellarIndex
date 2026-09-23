@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -302,5 +303,58 @@ func TestSliceOperationsView_RecomputesCursorFromRetainedRows(t *testing.T) {
 	// limit >= available rows: served whole, cursor untouched.
 	if whole := sliceOperationsView(full, 10); len(whole.Operations) != 3 || whole.NextCursor != full.NextCursor {
 		t.Errorf("over-limit slice = %+v, want the view unchanged", whole)
+	}
+}
+
+// F062: a NEVER-COMPUTED cache (cold path) must single-flight, exactly like
+// the stale-entry path already does. Pre-fix, operationsDirectory's cold
+// branch fell through to an inline `buildOperationsDirectory` call bound to
+// EACH request's own context — so a burst of concurrent first-page
+// requests arriving before the cache ever filled (a caller sweeping
+// `?limit=` on a cold process, worst case) bought one full lake read PER
+// REQUEST instead of sharing the one the SWR comments already promise
+// ("Only a never-computed entry blocks").
+func TestOperationsDirectory_ColdCacheSingleFlightsConcurrentFirstPageRequests(t *testing.T) {
+	// Built directly on newProbeHandler (not newOpsDirHandler): its default
+	// WriteJSON/WriteJSONAt only write the status header, with no shared
+	// mutable capture state — required here since requests run genuinely
+	// concurrently and a shared capture struct would race under -race.
+	reader := &opsDirReader{capReader: &capReader{probe: &deadlineProbe{}}}
+	reader.seq.Store(63_000_000)
+	h := newProbeHandler(reader, nil)
+	reader.block = make(chan struct{}) // hold the one allowed read open
+
+	// Concurrent first-page requests — the real-world shape is a caller
+	// sweeping `?limit=` before the cache has ever filled; each accepted
+	// value slices the SAME warm entry (K053), so they must also share the
+	// one read that fills it.
+	const n = 5
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := range n {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			codes[i] = getOperations(t, h).Code
+		}(i)
+	}
+
+	// Let every goroutine reach the single-flight wait before releasing the
+	// one read the fix should have coalesced them onto.
+	waitForCalls(t, reader, 1)
+	time.Sleep(50 * time.Millisecond)
+	if got := reader.calls.Load(); got != 1 {
+		t.Fatalf("cold burst triggered %d lake reads before release, want 1 (single-flight defeated)", got)
+	}
+	close(reader.block)
+	wg.Wait()
+
+	for i, code := range codes {
+		if code != http.StatusOK {
+			t.Errorf("request %d status = %d, want 200", i, code)
+		}
+	}
+	if got := reader.calls.Load(); got != 1 {
+		t.Errorf("cold ?limit= sweep made %d lake reads, want 1 (single-flighted cold fill)", got)
 	}
 }

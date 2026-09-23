@@ -604,34 +604,41 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The first page (no cursor) is the hot, cacheable path — same for every
-	// caller between ledgers regardless of the requested limit. Serve it
-	// from the SWR cache whenever an entry exists: fresh as-is (sliced to
-	// the caller's limit), stale with flags.stale + its real as_of while a
-	// detached rebuild runs. Only a never-computed entry falls through to
-	// the inline read below.
-	firstPage := !cur.IsSet()
-	if firstPage {
-		if e, hit, fresh := h.opsDir.get(); hit {
-			if !fresh {
-				h.refreshOpsDirectory() //nolint:contextcheck // intentional detach — see refreshOpsDirectory
-			}
-			h.writeJSONAt(w, sliceOperationsView(e.view, limit), !fresh, e.cachedAt)
-			return
-		}
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), explorerReadTimeout)
 	defer cancel()
 
-	// A never-computed first page fills the cache at the CEILING
-	// (opsDirMaxLimit), not at the caller's own limit, so the entry it
-	// leaves behind can serve every accepted limit by slicing (K053).
-	fetchLimit := limit
-	if firstPage {
-		fetchLimit = opsDirMaxLimit
+	// The first page (no cursor) is the hot, cacheable path — same for every
+	// caller between ledgers regardless of the requested limit. Serve it
+	// from the SWR cache: fresh as-is (sliced to the caller's limit), stale
+	// with flags.stale + its real as_of while a detached rebuild runs, and a
+	// never-computed cache single-flighted through opsDirCached — a burst of
+	// concurrent first-page requests (e.g. a caller sweeping `?limit=`)
+	// before the entry has ever filled now shares ONE lake read instead of
+	// each request paying for its own (F062).
+	if !cur.IsSet() {
+		view, asOf, degraded, err := h.opsDirCached(ctx)
+		if err != nil {
+			if h.ClientAborted(r, err) {
+				return
+			}
+			if retryableColdMiss(ctx, err) {
+				h.Logger.Warn("explorer operations directory deadline/saturation on cold cache", "err", err)
+				h.writeRetryable(w, r, err, "https://api.stellarindex.io/errors/operations-timeout",
+					"Operations query timed out")
+				return
+			}
+			h.Logger.Error("explorer operations directory failed", "err", err)
+			h.WriteProblem(w, r, "https://api.stellarindex.io/errors/internal",
+				"Internal error", http.StatusInternalServerError, "")
+			return
+		}
+		h.writeJSONAt(w, sliceOperationsView(view, limit), degraded, asOf)
+		return
 	}
-	out, err := h.buildOperationsDirectory(ctx, fetchLimit, cur)
+
+	// Cursor pages are unique per request (never cached) and cheaper (they
+	// skip the op-type stats), so they're built inline on the request path.
+	out, err := h.buildOperationsDirectory(ctx, limit, cur)
 	if err != nil {
 		if h.ClientAborted(r, err) {
 			return
@@ -659,11 +666,40 @@ func (h *Handler) operationsDirectory(w http.ResponseWriter, r *http.Request) {
 			"Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	if firstPage {
-		h.opsDir.put(out) // warm the cache with the assembled max-page view
-		out = sliceOperationsView(out, limit)
-	}
 	h.WriteJSON(w, out, false)
+}
+
+// opsDirCached serves the cached max-page first-page view. A fresh entry is
+// served as-is; a stale entry is served (degraded=true) while a detached
+// refresh runs; a stone-cold (never-computed) cache single-flights the fill
+// through refreshOpsDirectory and waits on it up to ctx's own deadline — the
+// same shape assetHoldersCached uses for its stone-cold branch — so
+// concurrent first-page requests landing before the entry has ever filled
+// share ONE detached lake read instead of each triggering its own (F062:
+// the cold path previously fell through to an inline, unshared read per
+// request, so a limit sweep defeated the cache on its first pass).
+func (h *Handler) opsDirCached(ctx context.Context) (view OperationsView, asOf time.Time, degraded bool, err error) {
+	if e, hit, fresh := h.opsDir.get(); hit {
+		if !fresh {
+			h.refreshOpsDirectory() //nolint:contextcheck // intentional detach — see refreshOpsDirectory
+		}
+		return e.view, e.cachedAt, !fresh, nil
+	}
+	// Stone-cold: wait for the detached compute, bounded by OUR deadline
+	// only — the compute itself is not (see refreshAssetHolders).
+	fl := h.refreshOpsDirectory() //nolint:contextcheck // intentional detach — a request that times out must not kill the fill
+	select {
+	case <-fl.done:
+		if e, hit, _ := h.opsDir.get(); hit {
+			return e.view, e.cachedAt, false, nil
+		}
+		if fl.err != nil {
+			return OperationsView{}, time.Time{}, false, fl.err
+		}
+		return OperationsView{}, time.Time{}, false, errRefreshFailed
+	case <-ctx.Done():
+		return OperationsView{}, time.Time{}, false, ctx.Err()
+	}
 }
 
 // sliceOperationsView truncates a directory page cached/fetched at
@@ -712,24 +748,26 @@ func (h *Handler) buildOperationsDirectory(ctx context.Context, limit int, cur c
 }
 
 // refreshOpsDirectory kicks ONE detached rebuild of the max-page first page
-// (a no-op while a flight is already up). Detached for the reason every
-// sibling refresher is: bound to the request deadline, a slow rebuild dies
-// with the request and the entry never gets any younger, so the NEXT
-// visitor pays the same wait.
+// (a no-op while a flight is already up) and returns the flight to
+// optionally wait on — a stone-cold caller (opsDirCached) waits on it;
+// a stale-entry refresh fires it and moves on. Detached for the reason
+// every sibling refresher is: bound to the request deadline, a slow
+// rebuild dies with the request and the entry never gets any younger, so
+// the NEXT visitor pays the same wait.
 //
 // Bounded by the shared refresh gate under its own class. The cache holds
 // exactly one entry now (K053), so the gate's only job here is capping how
 // long one rebuild may run against the shared pool; on saturation we skip
 // and keep serving the stale entry — never queue.
-func (h *Handler) refreshOpsDirectory() {
+func (h *Handler) refreshOpsDirectory() *keyFlight {
 	fl, owner := h.opsDir.flight.begin(opsDirFlightKey)
 	if !owner {
-		return
+		return fl
 	}
 	gate := h.detachedGate()
 	if !gate.TryAcquireClass("ops_directory") {
 		h.opsDir.flight.end(opsDirFlightKey, fl, errRefreshSaturated)
-		return
+		return fl
 	}
 	go func() {
 		defer gate.ReleaseClass("ops_directory")
@@ -756,4 +794,5 @@ func (h *Handler) refreshOpsDirectory() {
 		}
 		h.opsDir.put(out)
 	}()
+	return fl
 }

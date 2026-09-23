@@ -388,6 +388,14 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 			switch tc.name {
 			case "AssetHolders":
 				wantBudget = assetHoldersRefreshTimeout
+			case "OperationsDirectory":
+				// F062: the never-computed first page is now single-flighted
+				// through refreshOpsDirectory, which runs the fill DETACHED
+				// on its own budget (like every sibling cold-path here) so a
+				// burst of concurrent first-page requests shares the one
+				// read instead of each paying for its own — still bounded,
+				// just not request-scoped.
+				wantBudget = opsDirRefreshTimeout
 			case "ContractDetail":
 				// First page is SWR'd (route-sweep 2026-07-30): the cold
 				// compute runs DETACHED on the shared contract-detail
