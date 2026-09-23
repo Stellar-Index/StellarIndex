@@ -158,6 +158,10 @@ type wedgeHarness struct {
 	window  uint32
 	tracker poisonTracker
 	wedge   wedgeTracker
+	// lake is the source's CH lake connection, nil unless a test sets it
+	// (e.g. a CH feed-switch watermark test); cycleOneSource only reads it
+	// when proj.chAddr is non-empty.
+	lake *sourceLake
 }
 
 func newWedgeHarness(t *testing.T, name string, rows []sorobanevents.Row, tip uint32, sink func(ev consumer.Event) error) *wedgeHarness {
@@ -186,7 +190,7 @@ func (h *wedgeHarness) cycle() {
 }
 
 func (h *wedgeHarness) cycleCtx(ctx context.Context) {
-	h.proj.cycleOneSource(ctx, h.src, &h.window, &h.tracker, &h.wedge, nil)
+	h.proj.cycleOneSource(ctx, h.src, &h.window, &h.tracker, &h.wedge, h.lake)
 }
 
 // ledgerEchoDecoder matches every row and emits one consumer.Event carrying

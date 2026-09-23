@@ -216,7 +216,9 @@ Gauge, labels `source`.
 
 Distance (in ledgers) between the projector's per-source cursor
 and the live ledgerstream tip at the end of the last cycle. 0 =
-caught up. Drives the `stellarindex_projector_lag_high` alert (P3
+caught up. Measured against the ledgerstream tip even when the
+ClickHouse lake watermark clamps the scan, so a source held at a lake
+hole shows rising lag. Drives the `stellarindex_projector_lag_high` alert (P3
 ticket: > 256 ledgers sustained 10 min). See ADR-0032.
 
 ### `stellarindex_projector_runs_total`
@@ -224,7 +226,10 @@ ticket: > 256 ledgers sustained 10 min). See ADR-0032.
 Counter, labels `source`, `outcome`.
 
 Per-cycle outcome counter. Outcomes: `ok` (cursor advanced, nothing
-dropped), `idle` (caught up, no rows in scan range), `error` (scan /
+dropped), `idle` (caught up, no rows in scan range), `watermark_held`
+(empty scan range because the ClickHouse lake's contiguous watermark is
+below ledgers ledgerstream already holds — a lake hole, not a catch-up),
+`error` (scan /
 cursor read / cursor write failed; cursor not advanced — retried next
 cycle), `sink_retry` (a sink write held the cursor below a ledger for
 retry), `decode_degraded` (the cursor advanced but at least one
