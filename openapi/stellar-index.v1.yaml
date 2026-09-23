@@ -5227,7 +5227,7 @@ paths:
                     properties:
                       data:
                         type: object
-                        required: [sources, recognition, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources]
+                        required: [sources, recognition, complete_sources, lake_complete_sources, total_sources, network, not_applicable_sources, unverified_sources]
                         properties:
                           sources:
                             type: array
@@ -5382,7 +5382,11 @@ paths:
                               exclusion as `complete_sources`.
                           total_sources:
                             type: integer
-                            description: Always equals `sources.length`. Excludes system audit axes — see `recognition`.
+                            description: >-
+                              Every source the audit is expected to publish a verdict for on this
+                              network: `sources.length` plus `unverified_sources.length`, so a source
+                              with no verdict still counts in the denominator. Excludes system audit
+                              axes (see `recognition`) and `not_applicable_sources`.
                           network:
                             type: string
                             enum: [pubnet, testnet, futurenet]
@@ -5396,6 +5400,19 @@ paths:
                             description: >-
                               Sources that do not exist on this network — excluded from `sources`
                               and from every total. Always empty on pubnet.
+                            items:
+                              type: object
+                              required: [source, reason]
+                              properties:
+                                source: { type: string }
+                                reason: { type: string }
+                          unverified_sources:
+                            type: array
+                            description: >-
+                              Sources the audit is expected to cover on this network that have no
+                              verdict row: their first audit never completed, or the row was
+                              cleared. Counted in `total_sources`, never in `complete_sources` or
+                              `lake_complete_sources`. Empty when every expected source has a verdict.
                             items:
                               type: object
                               required: [source, reason]

@@ -77,6 +77,51 @@ func TestHandleCoverageVerdicts_Happy(t *testing.T) {
 	}
 }
 
+// TestHandleCoverageVerdicts_SourceWithoutVerdictCountsInDenominator pins
+// #607: a source the audit is expected to cover but which has no verdict row
+// (its first audit failed, or the row was cleared) must count in
+// total_sources, so the headline reads 1 of 2, not 1 of 1. A pubnet-only
+// source on a test net stays out of both.
+func TestHandleCoverageVerdicts_SourceWithoutVerdictCountsInDenominator(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	snaps := []timescale.CompletenessSnapshot{{
+		Source: "sdex", Genesis: 2, Tip: 63_000_000, Watermark: 63_000_000,
+		CoveragePct: 1, Complete: true, LakeComplete: true,
+		SubstrateOK: true, RecognitionOK: true, ProjectionOK: true, ComputedAt: now,
+	}}
+	read := func(network string) v1.CoverageVerdictsView {
+		srv := v1.New(v1.Options{
+			Network:            network,
+			CompletenessReader: &stubCompletenessReader{snaps: snaps},
+			AuditedSources:     []string{"sdex", "soroswap"},
+		})
+		resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/coverage")
+		var env struct {
+			Data v1.CoverageVerdictsView `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return env.Data
+	}
+
+	d := read("pubnet")
+	if d.CompleteSources != 1 || d.TotalSources != 2 {
+		t.Fatalf("headline = %d of %d, want 1 of 2 — soroswap has no verdict and must not vanish from the denominator", d.CompleteSources, d.TotalSources)
+	}
+	if len(d.UnverifiedSources) != 1 || d.UnverifiedSources[0].Source != "soroswap" || d.UnverifiedSources[0].Reason == "" {
+		t.Fatalf("unverified_sources = %+v, want soroswap with a reason", d.UnverifiedSources)
+	}
+	if len(d.Sources) != 1 {
+		t.Errorf("sources = %+v, want only the real sdex verdict — no fabricated row", d.Sources)
+	}
+
+	d = read("testnet")
+	if d.TotalSources != 1 || len(d.UnverifiedSources) != 0 {
+		t.Errorf("testnet: total = %d, unverified = %+v; soroswap does not exist there and belongs in neither", d.TotalSources, d.UnverifiedSources)
+	}
+}
+
 // TestHandleCoverageVerdicts_LakeCompleteDecouplesFromComplete pins
 // the ADR-0033/0034 two-axis verdict wire mapping (decision brief
 // notes/DECISION-genesis-complete-verdict-2026-07-16.md, Option B): a

@@ -16246,7 +16246,7 @@ export interface operations {
                             complete_sources: number;
                             /** @description Count of SOURCES with lake_complete=true (lake/archive axis). Same exclusion as `complete_sources`. */
                             lake_complete_sources: number;
-                            /** @description Always equals `sources.length`. Excludes system audit axes — see `recognition`. */
+                            /** @description Every source the audit is expected to publish a verdict for on this network: `sources.length` plus `unverified_sources.length`, so a source with no verdict still counts in the denominator. Excludes system audit axes (see `recognition`) and `not_applicable_sources`. */
                             total_sources: number;
                             /**
                              * @description The Stellar network this deployment serves. Protocol sources are anchored to pubnet contract identities (ADR-0035); on a test net they do not exist and are listed in `not_applicable_sources` instead of being counted incomplete.
@@ -16255,6 +16255,11 @@ export interface operations {
                             network: "pubnet" | "testnet" | "futurenet";
                             /** @description Sources that do not exist on this network — excluded from `sources` and from every total. Always empty on pubnet. */
                             not_applicable_sources: {
+                                source: string;
+                                reason: string;
+                            }[];
+                            /** @description Sources the audit is expected to cover on this network that have no verdict row: their first audit never completed, or the row was cleared. Counted in `total_sources`, never in `complete_sources` or `lake_complete_sources`. Empty when every expected source has a verdict. */
+                            unverified_sources: {
                                 source: string;
                                 reason: string;
                             }[];

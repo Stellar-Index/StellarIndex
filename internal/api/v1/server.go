@@ -230,6 +230,7 @@ type Server struct {
 	cursors                 CursorsReader
 	coverageReader          SourceCoverageReader
 	completenessReader      CompletenessReader
+	auditedSources          []string
 	protocolContractsReader ProtocolContractsReader
 	protocolStats           ProtocolStatsReader
 	protocolActivity        ProtocolActivityReader
@@ -1042,6 +1043,12 @@ type Options struct {
 	// them absent (UI falls back to the gap_free coverage signal).
 	CompletenessReader CompletenessReader
 
+	// AuditedSources is completeness.AuditedSources(cfg): the sources the
+	// audit is expected to publish a verdict for. /v1/coverage counts an
+	// applicable one with no verdict row in total_sources, as
+	// unverified_sources. Nil disables that join.
+	AuditedSources []string
+
 	// ProtocolContracts, when non-nil, backs the contract registry
 	// (instance lists + counts) on /v1/protocols*. Production wiring
 	// is timescale.Store directly (ListProtocolContracts). Nil keeps
@@ -1716,6 +1723,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 // together so the pillar's wiring stays a single auditable block.
 func applyProtocolOptions(s *Server, opts Options) {
 	s.completenessReader = opts.CompletenessReader
+	s.auditedSources = opts.AuditedSources
 	s.protocolContractsReader = opts.ProtocolContracts
 	s.protocolStats = opts.ProtocolStats
 	s.protocolActivity = opts.ProtocolActivity
