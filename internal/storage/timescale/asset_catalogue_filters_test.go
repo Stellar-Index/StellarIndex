@@ -95,6 +95,28 @@ func TestBuildAssetsQuery_QFilter(t *testing.T) {
 	}
 }
 
+// TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters pins F175: `q`
+// is a caller-supplied literal, not a pattern, so a client sending its
+// own `%` or `_` must match those characters literally rather than
+// have them act as SQL LIKE wildcards once wrapped in `%...%`. Before
+// the fix, `q="A_B"` (typed to search for the three literal characters
+// "A_B") matched any row with "A", any single character, then "B" —
+// e.g. "AxB" — which is not what the caller searched for.
+func TestBuildAssetsQuery_QFilterEscapesLikeMetacharacters(t *testing.T) {
+	t.Parallel()
+	sql, args := mustBuildAssetsQuery(t, 50, "", "", "", "A_B%C", "", AssetsOrderObservationCountDesc)
+	if len(args) != 2 {
+		t.Fatalf("expected 2 args (pattern, limit); got %v", args)
+	}
+	want := `%A\_B\%C%`
+	if args[0] != want {
+		t.Errorf("q=%q must bind the LIKE-escaped pattern %q so its own `_`/`%%` match literally; got %q", "A_B%C", want, args[0])
+	}
+	if !strings.Contains(sql, "ESCAPE '\\'") {
+		t.Errorf("q predicate must declare an ESCAPE clause so the bound backslash-escapes take effect; got:\n%s", sql)
+	}
+}
+
 // TestBuildAssetsQuery_QFilterMatchesSorobanContractID pins RLT-023: a
 // Soroban-native row has NULL code/slug/issuer (see the discovered-
 // contract arm of listAssetsBaseSelect), so the q predicate's slug leg
