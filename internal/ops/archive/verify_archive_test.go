@@ -4,7 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -212,5 +216,98 @@ func TestPeerArchiveTip(t *testing.T) {
 	t.Cleanup(dead.Close)
 	if _, ok := peerArchiveTip(client, []string{dead.URL}); ok {
 		t.Error("peerArchiveTip: ok = true for a peer that never answered")
+	}
+}
+
+// TestDefaultTier1Peers_AllHTTPS is the RLT-308 regression: Tier D
+// exists to detect on-path forks across the archive network, so a
+// plaintext http:// entry in defaultTier1Peers is forgeable by
+// exactly the class of attacker the tier is meant to catch.
+func TestDefaultTier1Peers_AllHTTPS(t *testing.T) {
+	t.Parallel()
+	for _, p := range defaultTier1Peers {
+		if !strings.HasPrefix(p, "https://") {
+			t.Errorf("defaultTier1Peers contains a non-https URL: %s", p)
+		}
+	}
+}
+
+// TestVerifyArchive_PeersTier_HonoursFromLastVerified is the RLT-308
+// regression for the Tier D wiring bug: `-tier peers -from-last-
+// verified` must sample checkpoints from the incremental watermark
+// (effectiveFrom), not from the raw -from flag (default 2, i.e.
+// checkpoint 63 at genesis). Before the fix, verifyArchivePeers was
+// always called with uint32(*from), so -from-last-verified was
+// silently ignored for Tier D.
+func TestVerifyArchive_PeersTier_HonoursFromLastVerified(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(wd, "..", "..", "..", "configs", "example.toml")
+	if _, statErr := os.Stat(cfgPath); statErr != nil {
+		t.Skipf("example.toml not at %s: %v", cfgPath, statErr)
+	}
+
+	var mu sync.Mutex
+	var seenSeqs []uint32
+	newPeer := func() string {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			base := filepath.Base(r.URL.Path) // history-XXXXXXXX.json
+			hex := strings.TrimSuffix(strings.TrimPrefix(base, "history-"), ".json")
+			seq64, parseErr := strconv.ParseUint(hex, 16, 32)
+			if parseErr != nil {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			mu.Lock()
+			seenSeqs = append(seenSeqs, uint32(seq64))
+			mu.Unlock()
+			_, _ = fmt.Fprintf(w, `{"currentLedger":%d,"currentBuckets":[]}`, seq64)
+		}))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+	peerA, peerB := newPeer(), newPeer()
+
+	// Prior state: Tier D already verified up to ledger 60,000,000.
+	// -from-last-verified with -safety-overlap 0 must therefore start
+	// sampling at 60,000,001, nowhere near genesis (checkpoint 63).
+	stateFile := filepath.Join(t.TempDir(), "state.json")
+	priorState := VerifyArchiveState{
+		Tiers: map[string]VerifyArchiveTierState{
+			"peers": {LastVerifiedLedger: 60_000_000, LastVerifiedAt: time.Now()},
+		},
+	}
+	if err := writeVerifyArchiveState(stateFile, priorState); err != nil {
+		t.Fatalf("writeVerifyArchiveState: %v", err)
+	}
+
+	args := []string{
+		"-config", cfgPath,
+		"-bucket", "test-bucket",
+		"-tier", "peers",
+		"-from-last-verified",
+		"-state-file", stateFile,
+		"-safety-overlap", "0",
+		"-peers", peerA + "," + peerB,
+		"-peer-samples", "1",
+		"-to", "60000200",
+	}
+	if err := verifyArchive(args); err != nil {
+		t.Fatalf("verifyArchive: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seenSeqs) == 0 {
+		t.Fatal("no peer was queried")
+	}
+	for _, seq := range seenSeqs {
+		if seq <= 60_000_000 {
+			t.Errorf("Tier D queried checkpoint %d — -from-last-verified was ignored "+
+				"(raw -from=%d/checkpoint 63 would have been sampled instead of the "+
+				"incremental watermark)", seq, 2)
+		}
 	}
 }
