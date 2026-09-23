@@ -1,6 +1,7 @@
 package sushiswap_v3
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -319,8 +320,8 @@ func TestDecode_GatedPoolWithNoTokenMappingFailsClosed(t *testing.T) {
 		t.Fatal("the DB-warmed pool was not gated in")
 	}
 	out, err := d.Decode(ev)
-	if err != nil {
-		t.Fatalf("Decode: %v", err)
+	if !errors.Is(err, ErrUnknownPool) {
+		t.Fatalf("Decode err = %v, want ErrUnknownPool — the gap must be visible via the decode-error counter, not silent", err)
 	}
 	if len(out) != 0 {
 		t.Fatalf("got %d events, want 0 — a pool with no token mapping must fail closed", len(out))
