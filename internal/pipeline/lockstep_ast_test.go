@@ -77,7 +77,11 @@ func funcDecl(t *testing.T, f *ast.File, name string) *ast.FuncDecl {
 }
 
 // caseTypeNames extracts the `pkg.Type` names listed across all case
-// clauses of the FIRST type-switch inside fn.
+// clauses of every type-switch inside fn, including ones nested inside
+// another switch's case body — a switch found at any depth still
+// yields its own cases (GH-1209: the old "return false" after the
+// first match stopped descent into that switch's children, which hid
+// a type-switch nested inside one of its case bodies).
 func caseTypeNames(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
@@ -99,12 +103,77 @@ func caseTypeNames(t *testing.T, fn *ast.FuncDecl) map[string]bool {
 				}
 			}
 		}
-		return false // first type-switch only
+		return true
 	})
 	if len(out) == 0 {
 		t.Fatalf("no type-switch cases found in %s", fn.Name.Name)
 	}
 	return out
+}
+
+// caseBodyPersists reports, per `pkg.Type` case label collected by
+// [caseTypeNames] on the SAME fn, whether that case clause's body
+// contains a call shaped like a real persist arm: a `persist*` helper
+// or a `store.<Method>(...)` call anywhere in its subtree (covering
+// the `if err := store.Insert…; err != nil { … }` guard shape used by
+// the router/defindex cases). GH-1209: caseTypeNames alone only proves
+// the TYPE LABEL is listed, which `case X: return nil` also satisfies
+// — silently dropping the event while every lockstep guard stays
+// green (the F-1316 shape).
+func caseBodyPersists(t *testing.T, fn *ast.FuncDecl) map[string]bool {
+	t.Helper()
+	out := map[string]bool{}
+	ast.Inspect(fn, func(n ast.Node) bool {
+		sw, ok := n.(*ast.TypeSwitchStmt)
+		if !ok {
+			return true
+		}
+		for _, stmt := range sw.Body.List {
+			cc, ok := stmt.(*ast.CaseClause)
+			if !ok {
+				continue
+			}
+			persists := bodyCallsPersist(cc.Body)
+			for _, expr := range cc.List {
+				if sel, ok := expr.(*ast.SelectorExpr); ok {
+					if pkg, ok := sel.X.(*ast.Ident); ok {
+						name := pkg.Name + "." + sel.Sel.Name
+						out[name] = out[name] || persists
+					}
+				}
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// bodyCallsPersist reports whether stmts (a case clause's body)
+// contains, anywhere in its subtree, a call to a `persist*` helper or
+// a `store.<Method>(...)` call — the two shapes every real HandleEvent
+// arm uses (see sink.go's handleEvent).
+func bodyCallsPersist(stmts []ast.Stmt) bool {
+	found := false
+	for _, stmt := range stmts {
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			switch callee := call.Fun.(type) {
+			case *ast.Ident:
+				if strings.HasPrefix(callee.Name, "persist") {
+					found = true
+				}
+			case *ast.SelectorExpr:
+				if id, ok := callee.X.(*ast.Ident); ok && id.Name == "store" {
+					found = true
+				}
+			}
+			return true
+		})
+	}
+	return found
 }
 
 // importPathByIdent maps local package idents (soroswap, blend_backstop,
@@ -216,13 +285,19 @@ func TestLockstep_ProjectedEventsHavePersistArms(t *testing.T) {
 	// HandleEvent is the exported one-line wrapper over it (REL-08 split
 	// it out so an infra RETRY can suppress the once-per-event source
 	// counters). The guard walks the switch wherever it lives.
-	handle := caseTypeNames(t, funcDecl(t, sink, "handleEvent"))
+	handleFn := funcDecl(t, sink, "handleEvent")
+	handle := caseTypeNames(t, handleFn)
+	persists := caseBodyPersists(t, handleFn)
 	projected := caseTypeNames(t, funcDecl(t, sink, "IsProjectedEvent"))
 	trades := caseTypeNames(t, funcDecl(t, sink, "tradeFromEvent"))
 
 	for _, typ := range sortedKeys(projected) {
 		if !handle[typ] {
 			t.Errorf("IsProjectedEvent lists %s but HandleEvent has no persist arm — projected rows for it are silently dropped", typ)
+			continue
+		}
+		if !persists[typ] {
+			t.Errorf("IsProjectedEvent lists %s and HandleEvent has a case for it, but the case body never calls a persist helper or store method — the arm drops the event instead of writing it (F-1316 class)", typ)
 		}
 	}
 	for _, typ := range sortedKeys(trades) {
@@ -361,11 +436,16 @@ func TestLockstep_EveryConsumerEventHasSinkArm(t *testing.T) {
 	sink := parseFile(t, fset, "sink.go")
 	// See TestLockstep_ProjectedEventsHavePersistArms: the dispatch
 	// type-switch lives in the unexported handleEvent body.
-	handle := caseTypeNames(t, funcDecl(t, sink, "handleEvent"))
+	handleFn := funcDecl(t, sink, "handleEvent")
+	handle := caseTypeNames(t, handleFn)
+	persists := caseBodyPersists(t, handleFn)
 
 	all := allSourceEventTypes(t)
 	for _, full := range sortedKeys(all) {
 		if handle[full] {
+			if !persists[full] {
+				t.Errorf("%s has a case in sink.go HandleEvent but its body never calls a persist helper or store method — the arm is present but drops the event instead of writing it (pipeline sink type-switch trap, #56, F-1316 class)", full)
+			}
 			continue
 		}
 		if _, allowed := notSunkEvents[full]; allowed {

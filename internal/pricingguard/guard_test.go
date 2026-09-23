@@ -333,14 +333,19 @@ func TestGuardServedVWAP1mConfidence_ValidatedBucketIsConfident(t *testing.T) {
 	if served.VWAP != candidate.VWAP || lowConfidence || substituted {
 		t.Fatalf("validated bucket must be confident and unsubstituted, byte-identical; got served=%s lowConfidence=%v substituted=%v", served.VWAP, lowConfidence, substituted)
 	}
-	// Thin (but non-empty) history is still a validated centre → confident.
-	// (5.0 vs. the steady 1.0 baseline may itself be rejected as an
-	// outlier — substituted is orthogonal to lowConfidence here, only
-	// lowConfidence is this case's claim.)
-	served, lowConfidence, _ = GuardServedVWAP1mConfidence(context.Background(), store, nil, testPair(t), mkRow(0, "5.0"))
-	_ = served
-	if lowConfidence {
-		t.Fatal("thin-but-non-empty baseline must be confident (lowConfidence=false)")
+	// Thin (but non-empty, < guardMinSamples) history is still a
+	// validated centre → confident, AND the candidate must actually be
+	// served unchanged (accepted within the wider thin band), not
+	// silently swapped for last-known-good. GH-1210: the previous
+	// fixture reused the 12-row POPULATED store here (not thin at all —
+	// guardMinSamples is 5) and discarded both `served` and
+	// `substituted`, so neither the accept/reject decision nor the
+	// served value was ever checked; only a genuinely thin store
+	// exercises [aggregate]'s wider thin-history band.
+	thinStore := fakeTrailing{rows: steadyRows(3)}
+	served, lowConfidence, substituted = GuardServedVWAP1mConfidence(context.Background(), thinStore, nil, testPair(t), mkRow(0, "5.0"))
+	if served.VWAP != "5.0" || lowConfidence || substituted {
+		t.Fatalf("thin-but-non-empty baseline must accept an in-band candidate confidently and unsubstituted; got served=%s lowConfidence=%v substituted=%v", served.VWAP, lowConfidence, substituted)
 	}
 	// A transient fetch error fails open WITHOUT flagging stale (unchanged
 	// posture — a DB blip must not mark every price low-confidence) and
