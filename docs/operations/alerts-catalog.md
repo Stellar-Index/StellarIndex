@@ -13,7 +13,9 @@ runbook").
 Every row is a Prometheus / AlertManager rule. The `Runbook` column
 links to `docs/operations/runbooks/<name>.md`; a missing runbook
 fails `scripts/ci/lint-docs.sh` section 9 (runbook-url check,
-enforced 2026-04-23 onward).
+enforced 2026-04-23 onward). A cell's first link is the page the
+rule's own `runbook_url` opens (`scripts/ci/lint-alerts-catalog.py`
+enforces it); any per-alert detail page follows it.
 
 **Shape of each alert:**
 

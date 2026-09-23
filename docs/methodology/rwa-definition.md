@@ -1235,7 +1235,11 @@ which is a finding a failed read has not earned.
   that. On the CONTRACT arm that second source now exists, under the
   asymmetric rule
   [C2 states](#two-ways-to-satisfy-it-and-why-they-are-not-the-same-shape);
-  the classic arm still has one.
+  the classic arm still has one, reached two ways — the issuer listed
+  directly, or through the
+  [sibling route](#the-sibling-route-and-the-assumption-it-rests-on).
+  The sibling route admits more accounts but adds no second party: it
+  still rests on the same directory having listed the entity.
 - **Arm 2 is only as wide as the curated binding set.** It can admit
   nothing this repository has not already bound to a named instrument at
   the [three-part evidence bar](#c4--real-world-instrument), so growing
