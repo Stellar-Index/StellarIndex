@@ -83,23 +83,23 @@ func TestDefaultPairs_GoldenSet(t *testing.T) {
 	}
 }
 
-// TestParsePairsYAML_RejectsUnknownField guards F007/K035: a
-// misspelled key in an asset spec (e.g. "clas" for "class") must fail
-// the load loudly instead of silently leaving Class at its zero value,
+// TestParsePairsYAML_RejectsUnknownField guards F007/K035: an unknown
+// key in an asset spec (e.g. "klass" instead of "class") must fail the
+// load loudly instead of silently leaving Class at its zero value,
 // which would fall through to an "unknown asset class" error only
 // deep inside asset() — or worse, be misread as intentional.
 func TestParsePairsYAML_RejectsUnknownField(t *testing.T) {
 	bad := []byte(`pairs:
   - symbol: FOOBAR
-    base: { code: FOO, clas: crypto }
+    base: { code: FOO, klass: crypto }
     quote: { code: BAR, class: crypto }
 `)
 	_, err := parsePairsYAML(bad)
 	if err == nil {
-		t.Fatal("parsePairsYAML: nil err, want error rejecting unknown field clas")
+		t.Fatal("parsePairsYAML: nil err, want error rejecting unknown field klass")
 	}
-	if !strings.Contains(err.Error(), "clas") {
-		t.Errorf("err = %q, want it to name the unknown field clas", err)
+	if !strings.Contains(err.Error(), "klass") {
+		t.Errorf("err = %q, want it to name the unknown field klass", err)
 	}
 }
 
