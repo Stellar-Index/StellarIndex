@@ -12,9 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
-// Migration 0165 (migrations/0165_twap_notional_floor.up.sql) puts 0115's
+// Migration 0166 (migrations/0166_twap_notional_floor.up.sql) puts 0115's
 // $0.01 notional floor on the TWAP chain. TWAP is equal-weight twice over —
-// per trade in prices_1m, per minute in twap_1h / twap_1d — so before 0165 a
+// per trade in prices_1m, per minute in twap_1h / twap_1d — so before 0166 a
 // 2-stroop crumb at an absurd price counted as much as a $1,000 fill, and a
 // minute holding only that crumb counted as much as a minute of real trading.
 //
@@ -30,7 +30,7 @@ const (
 	dustUSD  = "0.0000003"
 )
 
-// The operator re-materialisation recipe from 0165's header, run verbatim:
+// The operator re-materialisation recipe from 0166's header, run verbatim:
 // windowed, forced, prices_1m before the TWAP views built on it.
 var twapFloorRefreshRecipe = []string{
 	"CALL refresh_continuous_aggregate('prices_1m', now() - INTERVAL '7 days', now(), force => true)",

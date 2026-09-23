@@ -1,11 +1,13 @@
--- 0165 down — restore 0147's prices_1m and 0126's twap_1h / twap_1d
+-- 0166 down — restore 0147's prices_1m and 0126's twap_1h / twap_1d
 -- (unfloored twap, no notional_* columns), re-attaching 0156's
--- retention policy disarmed as the up does. Leaves the three views
--- EMPTY; re-materialise per the up migration's header.
+-- retention policy disarmed as the up does. prices_1m's refresh policy
+-- keeps 0165's widened 15-minute start_offset — this migration only
+-- undoes 0166's own notional-floor columns, not 0165's fix. Leaves the
+-- three views EMPTY; re-materialise per the up migration's header.
 
 BEGIN;
 
-CREATE TEMP TABLE _0165d_prev_matonly ON COMMIT DROP AS
+CREATE TEMP TABLE _0166d_prev_matonly ON COMMIT DROP AS
 SELECT view_name, materialized_only
   FROM timescaledb_information.continuous_aggregates
  WHERE view_schema = 'public'
@@ -57,7 +59,7 @@ CREATE INDEX prices_1m_pair_bucket_idx ON prices_1m (base_asset, quote_asset, bu
 
 SELECT add_continuous_aggregate_policy(
     'prices_1m',
-    start_offset      => INTERVAL '5 minutes',
+    start_offset      => INTERVAL '15 minutes',
     end_offset        => INTERVAL '30 seconds',
     schedule_interval => INTERVAL '30 seconds'
 );
@@ -144,7 +146,7 @@ DO $do$
 DECLARE
     v record;
 BEGIN
-    FOR v IN SELECT * FROM _0165d_prev_matonly LOOP
+    FOR v IN SELECT * FROM _0166d_prev_matonly LOOP
         EXECUTE format(
             'ALTER MATERIALIZED VIEW %I SET (timescaledb.materialized_only = %L)',
             v.view_name, v.materialized_only);
