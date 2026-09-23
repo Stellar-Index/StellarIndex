@@ -161,7 +161,8 @@ func (s *Server) handleIssuersList(w http.ResponseWriter, r *http.Request) {
 			// after pool retries exhausted, or a network EOF. These
 			// are infrastructure transients that a retry would succeed
 			// on — surface 503 so sla-probe doesn't book it as a
-			// permanent availability failure. #34 residual.
+			// permanent availability failure. Same clientAborted
+			// residual as the client-abort branch above.
 			s.logger.Warn("issuers list: transient storage error", "err", err)
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/issuers-transient",
@@ -310,8 +311,14 @@ func (s *Server) handleIssuer(w http.ResponseWriter, r *http.Request) {
 	// enrich, which then REFILLED the cleared home_domain straight
 	// from the scammer's own on-chain field. Auth flags stay — they
 	// are objective account state, not identity claims.
+	//
+	// SEP1Payload is suppressed alongside HomeDomain/OrgName: it is the
+	// raw stellar.toml JSONB those two fields are extracted FROM, so
+	// leaving it populated re-served the same impersonated org_name/
+	// home_domain the two assignments above were clearing.
 	if detailReason != "" && !row.OrgVerified {
 		out.HomeDomain, out.OrgName = "", ""
+		out.SEP1Payload = nil
 	}
 	for _, a := range assets {
 		out.Assets = append(out.Assets, IssuedAsset{

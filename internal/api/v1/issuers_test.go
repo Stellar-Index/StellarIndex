@@ -175,7 +175,8 @@ func TestHandleIssuersList_ReaderError500(t *testing.T) {
 	}
 }
 
-// TestHandleIssuersList_ClientAbortedNo500 — regression for #34. When
+// TestHandleIssuersList_ClientAbortedNo500 — regression for the
+// clientAborted guard. When
 // the inbound request is canceled mid-flight (concurrent callers /
 // the sla-probe / a browser navigating away), the driver surfaces the
 // canceled ListIssuers query as SQLSTATE 57014. That is a client
@@ -302,6 +303,48 @@ func TestHandleIssuer_HappyPath_WithAssets(t *testing.T) {
 	a := env.Data.Assets[0]
 	if a.Code != "USDC" || a.ObservationCount != 41610623 {
 		t.Errorf("asset = %+v", a)
+	}
+}
+
+// TestHandleIssuer_ScamSuppressesSEP1Payload — S-010 suppression must
+// clear SEP1Payload alongside HomeDomain/OrgName. Pre-fix the raw
+// stellar.toml JSONB (which carries the same impersonated org_name/
+// home_domain the two string fields were cleared of) was still
+// served verbatim, so a client decoding sep1_payload recovered the
+// exact identity the suppression exists to hide.
+func TestHandleIssuer_ScamSuppressesSEP1Payload(t *testing.T) {
+	const counterfeiter = "GBYBVWOOVC4EJVRIF4HMWG5B7POLCS7JRPY5KYR3BCLEK24IJQOGUARD"
+	reader := &stubIssuersReader{
+		row: timescale.IssuerRow{
+			GStrkey:     counterfeiter,
+			HomeDomain:  "lobstr.co",
+			OrgName:     "LOBSTR",
+			OrgVerified: false,
+			SEP1Payload: []byte(`{"DOCUMENTATION":{"ORG_NAME":"LOBSTR"}}`),
+		},
+	}
+	srv := v1.New(v1.Options{Issuers: reader})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/issuers/"+counterfeiter)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.Issuer `json:"data"`
+	}
+	body, _ := readAll(resp)
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&env); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	if env.Data.ScamReason == "" {
+		t.Fatal("fixture g_strkey didn't trip the scam gate — test no longer exercises S-010")
+	}
+	if env.Data.HomeDomain != "" || env.Data.OrgName != "" {
+		t.Errorf("suppression didn't clear HomeDomain/OrgName: %+v", env.Data)
+	}
+	if len(env.Data.SEP1Payload) != 0 {
+		t.Errorf("SEP1Payload = %s, want cleared — the raw toml still embeds the impersonated identity", env.Data.SEP1Payload)
 	}
 }
 
