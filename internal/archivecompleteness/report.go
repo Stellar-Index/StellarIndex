@@ -61,7 +61,8 @@ type CrossAnchorReportSection struct {
 }
 
 // PrimaryReportSection is the per-archive section for the primary
-// galexie-archive scan. PR A leaves this nil; PR B fills it.
+// galexie-archive scan. Not implemented: no code in this package
+// populates it, so [Report.Primary] is always nil today.
 type PrimaryReportSection struct {
 	BucketName   string `json:"bucket_name"`
 	Expected     int    `json:"expected"`
