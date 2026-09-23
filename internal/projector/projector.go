@@ -233,6 +233,17 @@ type Projector struct {
 	// soroban_events read.
 	chAddr string
 
+	// wmMu guards wmReader: the pooled ClickHouse connection resolveTip
+	// reuses for every ContiguousWatermark poll (T360 — dialing fresh per
+	// call is wasteful on the projector's per-Interval cadence, one dial
+	// per active source per cycle). Opened lazily on first use rather than
+	// eagerly in SetClickHouseSource (which runs before a context exists)
+	// and retried on failure rather than cached with sync.Once, so a
+	// transient dial failure at startup does not latch forever (the same
+	// C1-048 shape schema_probe.go's TransientErrorDoesNotLatch fixed).
+	wmMu     sync.Mutex
+	wmReader *clickhouse.WatermarkReader
+
 	// cursorMu guards lastCursor: the last cursor position each source
 	// observed at the top of its cycle, published by cycleOneSource and
 	// read by the single replay-window watcher. Keeping it in memory is
@@ -1371,6 +1382,25 @@ func recoverWindow(current uint32) uint32 {
 	return next
 }
 
+// watermarkReader lazily opens (once) and returns the pooled ClickHouse
+// connection resolveTip polls ContiguousWatermark on. A failed open is not
+// cached — the next call retries — so a ClickHouse outage at process start
+// self-heals once it clears, instead of latching resolveTip onto an error
+// forever.
+func (p *Projector) watermarkReader(ctx context.Context) (*clickhouse.WatermarkReader, error) {
+	p.wmMu.Lock()
+	defer p.wmMu.Unlock()
+	if p.wmReader != nil {
+		return p.wmReader, nil
+	}
+	r, err := clickhouse.NewWatermarkReader(ctx, p.chAddr)
+	if err != nil {
+		return nil, err
+	}
+	p.wmReader = r
+	return p.wmReader, nil
+}
+
 // resolveTip returns the upper scan bound for one cycle. The base
 // bound is the live ledgerstream cursor's last_ledger — the same
 // approach as the gap detector (gap_detector.go::resolveGapDetectorTip)
@@ -1393,7 +1423,11 @@ func (p *Projector) resolveTip(ctx context.Context, from uint32) (uint32, error)
 	}
 	tip := c.LastLedger
 	if p.chAddr != "" {
-		wm, werr := clickhouse.ContiguousWatermark(ctx, p.chAddr, from)
+		reader, rerr := p.watermarkReader(ctx)
+		if rerr != nil {
+			return 0, fmt.Errorf("ch watermark conn: %w", rerr)
+		}
+		wm, werr := reader.ContiguousWatermark(ctx, from)
 		if werr != nil {
 			return 0, fmt.Errorf("ch watermark: %w", werr)
 		}
