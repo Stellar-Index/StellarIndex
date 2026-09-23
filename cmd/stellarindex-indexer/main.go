@@ -275,22 +275,6 @@ func run(cfgPath string, dryRun bool) error {
 	defer cancel()
 	logger.Info("storage connected")
 
-	// Resilience-ping goroutine. Probes the *sql.DB pool every
-	// 60 s and emits `stellarindex_postgres_ping_total` +
-	// `stellarindex_postgres_ping_failure_streak`. This is the
-	// observability signal for F-0151 (2026-05-26 cascade left
-	// dead conns in the pool for ~14 h after postgres@15-main
-	// recovered); the actual reconnect path is the pool's
-	// `PoolConnMaxLifetime` safety-net, which forces a re-dial
-	// every 30 min regardless of liveness. The two together
-	// cap a cascade-gap at the lifetime interval AND surface it
-	// to alerting in minutes.
-	postgresPingStop, postgresPingDone := watchPostgresPing(rootCtx, store, logger.With("component", "postgres-ping"))
-	defer func() {
-		postgresPingStop()
-		<-postgresPingDone
-	}()
-
 	// USD-volume quote spec — wires on-chain DEX trades into
 	// usd_volume population per launch-readiness L2.2 phase 1.
 	// Operator declares which classic credits they trust as
@@ -346,43 +330,6 @@ func run(cfgPath string, dryRun bool) error {
 	// than letting it fall back to slog.Default().
 	disp.SetLogger(logger)
 
-	// ─── Router attribution sweeper (migration 0025 Phase B) ────
-	// Periodically tags recent same-tx soroswap `trades` rows with
-	// routed_via='soroswap-router' by joining against
-	// soroswap_router_swaps. A trailing-window sweep (not an inline
-	// UPDATE at router-persist time) because the pair-level trades
-	// are written by the projector, which races the dispatcher's
-	// router-call persist — see internal/pipeline/routedvia.go.
-	// Gated on the router source being enabled: without its decoder
-	// no new soroswap_router_swaps rows appear, so there is nothing
-	// to sweep.
-	if routerEnabled(cfg.Ingestion.EnabledSources) {
-		routedViaStop, routedViaDone := startRoutedViaTagger(rootCtx, store, logger.With("component", "routed-via-tagger"))
-		defer func() {
-			routedViaStop()
-			<-routedViaDone
-		}()
-		logger.Info("routed-via attribution sweeper started")
-	}
-
-	// AMM signer attribution — back-tags trades.signer from the lake
-	// (migration 0150). Gated on an AMM source being enabled (no AMM
-	// trades otherwise → nothing to tag). See internal/pipeline/signer.go.
-	if ammSignerEnabled(cfg.Ingestion.EnabledSources) {
-		chAddr := cfg.Storage.ClickHouseAddr
-		if chAddr == "" {
-			chAddr = "127.0.0.1:9300"
-		}
-		signerStop, signerDone := startSignerTagger(rootCtx, chAddr,
-			cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword,
-			store, logger.With("component", "signer-tagger"))
-		defer func() {
-			signerStop()
-			<-signerDone
-		}()
-		logger.Info("AMM signer attribution sweeper started")
-	}
-
 	// ─── Supply observers (opt-in via [supply] watched-sets) ──────
 	// L2.12a wire-up complete: accounts (Algorithm 1, XLM),
 	// trustlines / claimable / liquidity_pools / sac_balances
@@ -427,6 +374,74 @@ func run(cfgPath string, dryRun bool) error {
 	// (F-1320/R-002/CS-102 tail); when it isn't, we must NOT advance a
 	// watermark for an observer that isn't running.
 	accountObserverActive := len(cfg.Supply.SDFReserveAccounts) > 0
+
+	// ─── Starting ledger + dry-run exit ────────────────────────
+	// Dry-run exits before ANY background worker starts: the attribution
+	// taggers UPDATE trades on their first pass and the decoder-stats
+	// flusher writes on shutdown (TestDryRunExitsBeforeBackgroundWorkers).
+	from, err := resolveStartLedger(rootCtx, store, cfg.Ingestion.BackfillFromLedger)
+	if err != nil {
+		return fmt.Errorf("resolve start ledger: %w", err)
+	}
+	logger.Info("starting ledger resolved", "from", from)
+
+	if dryRun {
+		logger.Info("dry-run complete — exiting")
+		return nil
+	}
+
+	// Resilience-ping goroutine. Probes the *sql.DB pool every
+	// 60 s and emits `stellarindex_postgres_ping_total` +
+	// `stellarindex_postgres_ping_failure_streak`. This is the
+	// observability signal for F-0151 (2026-05-26 cascade left
+	// dead conns in the pool for ~14 h after postgres@15-main
+	// recovered); the actual reconnect path is the pool's
+	// `PoolConnMaxLifetime` safety-net, which forces a re-dial
+	// every 30 min regardless of liveness. The two together
+	// cap a cascade-gap at the lifetime interval AND surface it
+	// to alerting in minutes.
+	postgresPingStop, postgresPingDone := watchPostgresPing(rootCtx, store, logger.With("component", "postgres-ping"))
+	defer func() {
+		postgresPingStop()
+		<-postgresPingDone
+	}()
+
+	// ─── Router attribution sweeper (migration 0025 Phase B) ────
+	// Periodically tags recent same-tx soroswap `trades` rows with
+	// routed_via='soroswap-router' by joining against
+	// soroswap_router_swaps. A trailing-window sweep (not an inline
+	// UPDATE at router-persist time) because the pair-level trades
+	// are written by the projector, which races the dispatcher's
+	// router-call persist — see internal/pipeline/routedvia.go.
+	// Gated on the router source being enabled: without its decoder
+	// no new soroswap_router_swaps rows appear, so there is nothing
+	// to sweep.
+	if routerEnabled(cfg.Ingestion.EnabledSources) {
+		routedViaStop, routedViaDone := startRoutedViaTagger(rootCtx, store, logger.With("component", "routed-via-tagger"))
+		defer func() {
+			routedViaStop()
+			<-routedViaDone
+		}()
+		logger.Info("routed-via attribution sweeper started")
+	}
+
+	// AMM signer attribution — back-tags trades.signer from the lake
+	// (migration 0150). Gated on an AMM source being enabled (no AMM
+	// trades otherwise → nothing to tag). See internal/pipeline/signer.go.
+	if ammSignerEnabled(cfg.Ingestion.EnabledSources) {
+		chAddr := cfg.Storage.ClickHouseAddr
+		if chAddr == "" {
+			chAddr = "127.0.0.1:9300"
+		}
+		signerStop, signerDone := startSignerTagger(rootCtx, chAddr,
+			cfg.Storage.ClickHouseServingUser, cfg.Storage.ClickHouseServingPassword,
+			store, logger.With("component", "signer-tagger"))
+		defer func() {
+			signerStop()
+			<-signerDone
+		}()
+		logger.Info("AMM signer attribution sweeper started")
+	}
 
 	// ─── Decoder-stats periodic flush ────────────────────────────
 	// Snapshots dispatcher.Stats() every 5 min and writes per-source
@@ -585,18 +600,6 @@ func run(cfgPath string, dryRun bool) error {
 
 	setSourceEnabled(cfg.Ingestion.EnabledSources, true)
 	defer setSourceEnabled(cfg.Ingestion.EnabledSources, false)
-
-	// ─── Starting ledger ───────────────────────────────────────
-	from, err := resolveStartLedger(rootCtx, store, cfg.Ingestion.BackfillFromLedger)
-	if err != nil {
-		return fmt.Errorf("resolve start ledger: %w", err)
-	}
-	logger.Info("starting ledger resolved", "from", from)
-
-	if dryRun {
-		logger.Info("dry-run complete — exiting")
-		return nil
-	}
 
 	// ─── Metrics HTTP endpoint ──────────────────────────────────
 	metricsSrv := startMetricsServer(cfg.Obs, logger)
