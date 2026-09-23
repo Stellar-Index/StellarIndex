@@ -54,16 +54,21 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	}
 
 	endpoint := s.restBase() + fmt.Sprintf(ohlcPathTemplate, symbol)
-	startSec := from.Unix()
-	endSec := to.Unix()
-	var out []canonical.Trade
+	return backfillOHLC(ctx, endpoint, symbol, pair, from.Unix(), to.Unix(), stepSec)
+}
 
+// backfillOHLC walks [startSec, endSec) one page at a time. Only `start`
+// is sent: Bitstamp honours `end` over `start` when both are present,
+// so a pinned `end` would return the same last page on every request.
+func backfillOHLC(ctx context.Context, endpoint, symbol string, pair canonical.Pair, startSec, endSec int64, stepSec int) ([]canonical.Trade, error) {
+	step := int64(stepSec)
+	var out []canonical.Trade
 	for startSec < endSec {
+		limit := min(int64(bitstampMaxLimit), (endSec-startSec+step-1)/step)
 		q := url.Values{}
 		q.Set("step", strconv.Itoa(stepSec))
-		q.Set("limit", strconv.Itoa(bitstampMaxLimit))
+		q.Set("limit", strconv.FormatInt(limit, 10))
 		q.Set("start", strconv.FormatInt(startSec, 10))
-		q.Set("end", strconv.FormatInt(endSec, 10))
 
 		candles, err := fetchBitstampOHLC(ctx, endpoint, q)
 		if err != nil {
@@ -72,30 +77,42 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 		if len(candles) == 0 {
 			break
 		}
-
-		for _, c := range candles {
-			trade, err := bitstampCandleToTrade(c, symbol, pair, stepSec)
-			if err != nil {
-				continue
-			}
-			out = append(out, trade)
-		}
-
-		// Advance: one step past the last candle's open time.
-		lastTs, err := strconv.ParseInt(candles[len(candles)-1].Timestamp, 10, 64)
+		lastTs, err := appendPageTrades(&out, candles, symbol, pair, startSec, endSec, stepSec)
 		if err != nil {
-			return nil, fmt.Errorf("bitstamp.Backfill: parse candle timestamp: %w", err)
+			return nil, err
 		}
-		next := lastTs + int64(stepSec)
-		if next <= startSec {
-			break
-		}
-		startSec = next
-		if len(candles) < bitstampMaxLimit {
+		startSec = lastTs + step
+		if int64(len(candles)) < limit {
 			break
 		}
 	}
 	return out, nil
+}
+
+// appendPageTrades converts the page's in-range candles and returns the
+// last candle's open time. A candle before the requested start means the
+// venue ignored the cursor; that fails loudly rather than truncating.
+func appendPageTrades(out *[]canonical.Trade, candles []bitstampCandle, symbol string, pair canonical.Pair, startSec, endSec int64, stepSec int) (int64, error) {
+	var lastTs int64
+	for _, c := range candles {
+		ts, err := strconv.ParseInt(c.Timestamp, 10, 64)
+		if err != nil {
+			return 0, fmt.Errorf("bitstamp.Backfill: parse candle timestamp: %w", err)
+		}
+		if ts < startSec {
+			return 0, fmt.Errorf("bitstamp.Backfill: venue returned candle %d before requested start %d; pagination cursor not honoured", ts, startSec)
+		}
+		lastTs = ts
+		if ts >= endSec {
+			continue
+		}
+		trade, err := bitstampCandleToTrade(c, symbol, pair, stepSec)
+		if err != nil {
+			continue
+		}
+		*out = append(*out, trade)
+	}
+	return lastTs, nil
 }
 
 // restBase returns the REST URL, falling back to production when
