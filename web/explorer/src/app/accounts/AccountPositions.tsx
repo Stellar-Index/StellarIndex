@@ -149,6 +149,11 @@ export function AccountPositions({ id }: { id: string }) {
     enabled: assetIds.length > 0 && CURRENT_NETWORK.pricing,
     retry: false,
     staleTime: 30_000,
+    // RLT-387: a `staleTime` alone only re-fetches on the visitor's next
+    // interaction — an open tab's valuation goes stale and stays stale.
+    // Same live-refresh interval as the converter's identical
+    // `/v1/price/batch` read (ConvertLive.tsx's useConvertRate).
+    refetchInterval: 60_000,
     queryFn: async () => {
       const env = await apiGet<PriceBatchEnvelope>('/v1/price/batch', {
         asset_ids: assetIds.join(','),

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -84,6 +84,30 @@ function renderPanel() {
 }
 
 describe('AccountPositions price envelope', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // RLT-387: the /v1/price/batch query had staleTime only, no
+  // refetchInterval — an open tab's valuation never updated again
+  // without the visitor navigating away and back. It must poll live,
+  // the same as the converter's identical batch read.
+  it('re-fetches the price batch on a live interval, not staleTime alone', async () => {
+    stubApi();
+    vi.useFakeTimers();
+    renderPanel();
+
+    const callCount = () =>
+      vi.mocked(apiGet).mock.calls.filter((c) => c[0] === '/v1/price/batch')
+        .length;
+
+    await vi.waitFor(() => expect(callCount()).toBe(1));
+
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    await vi.waitFor(() => expect(callCount()).toBeGreaterThan(1));
+  });
+
   it('labels a peg-valued holding rather than presenting it as a market price', async () => {
     stubApi();
     renderPanel();
