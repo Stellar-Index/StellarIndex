@@ -178,6 +178,35 @@ func TestStats_snapshotsAreImmutable(t *testing.T) {
 	}
 }
 
+// fakeUnknownContractReporter is a Decoder that also implements the
+// UnknownContractDrops() int duck-typed interface, mirroring
+// soroswap.Decoder / sushiswap_v3.Decoder (GH-1307).
+type fakeUnknownContractReporter struct {
+	fakeDecoder
+	drops int
+}
+
+func (f *fakeUnknownContractReporter) UnknownContractDrops() int { return f.drops }
+
+// TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface pins
+// GH-1307: a decoder that drops a fully decoded event for want of a
+// contract-identity mapping (returning (nil, nil), so the dispatcher's
+// own DecodeErrors counter never sees it) must still surface through
+// Stats() so internal/pipeline can wire it to a metric. Before the
+// fix, Stats() had no UnknownContractDrops collection at all.
+func TestStats_UnknownContractDropsSurfacedViaDuckTypedInterface(t *testing.T) {
+	dec := &fakeUnknownContractReporter{
+		fakeDecoder: fakeDecoder{name: "soroswap", topic0: "T"},
+		drops:       2,
+	}
+	disp := New(dec)
+
+	stats := disp.Stats()
+	if got := stats.UnknownContractDrops["soroswap"]; got != 2 {
+		t.Errorf("Stats().UnknownContractDrops[%q] = %d, want 2", "soroswap", got)
+	}
+}
+
 // ─── OpDecoder dispatch ──────────────────────────────────────────
 
 type fakeOpDecoder struct {

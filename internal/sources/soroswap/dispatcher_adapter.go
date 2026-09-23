@@ -72,10 +72,24 @@ type Decoder struct {
 	// implementation should still avoid blocking the caller for long.
 	onNewPair func(pairStrkey, token0Strkey, token1Strkey string)
 
-	// Counters surfaced for test assertions. Production wiring
-	// maps them to obs.SourceOrphanEventsTotal /
-	// SourceDecodeErrorsTotal in PR 165d.
+	// evictedOrphans counts swap-without-sync evictions ONLY — the
+	// real loss class: a swap the buffer never saw a partner for.
+	// evictedBareSync counts sync-without-swap evictions, which
+	// deposit/withdraw/skim manufacture on every call (README Q2)
+	// and are expected LP-traffic noise, not lost trades. Splitting
+	// them keeps evictedOrphans legible: on a venue with heavy LP
+	// traffic a single undifferentiated counter sits permanently in
+	// the thousands and a real lost swap adds 1 to a number nobody
+	// can read (GH-1308).
+	//
+	// evictedOrphans is read by internal/dispatcher via the
+	// EvictedOrphans() duck-typed interface and wired to
+	// obs.SourceOrphanEventsTotal (internal/pipeline/processor.go).
+	// skippedUnknownPair is read via UnknownContractDrops() and
+	// wired to obs.SourceDecodeErrorsTotal — see [GH-1307] on
+	// [Decoder.UnknownContractDrops].
 	evictedOrphans     int
+	evictedBareSync    int
 	skippedUnknownPair int
 	// skippedNonDirectional counts completed swap+sync pairs whose
 	// swap carried no cross-token exchange (ErrNonDirectionalSwap) —
@@ -298,7 +312,17 @@ func (d *Decoder) absorbEvent(ev *events.Event, kind string, closedAt time.Time)
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	completed, evicted := d.buf.absorb(ev, kind, closedAt)
-	d.evictedOrphans += len(evicted)
+	for _, p := range evicted {
+		// An evicted entry is always missing exactly one side (a
+		// complete pair is removed from the buffer, never aged out).
+		// Swap==nil means a bare sync — deposit/withdraw/skim traffic
+		// (README Q2), not a lost trade.
+		if p.Swap == nil {
+			d.evictedBareSync++
+			continue
+		}
+		d.evictedOrphans++
+	}
 	return completed
 }
 
@@ -400,12 +424,24 @@ func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
 	return out, nil
 }
 
-// EvictedOrphans is the count of swap-only (no matching sync) or
-// sync-only (no matching swap) buffer entries dropped by age-out.
+// EvictedOrphans is the count of swap-only (no matching sync) buffer
+// entries dropped by age-out — a real lost trade. Excludes bare-sync
+// evictions (see [Decoder.EvictedBareSync]); GH-1308.
 func (d *Decoder) EvictedOrphans() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.evictedOrphans
+}
+
+// EvictedBareSync is the count of sync-only (no matching swap) buffer
+// entries dropped by age-out. Deposits, withdrawals and skims each
+// emit a sync with no preceding swap (README Q2) — expected LP
+// traffic, not a lost trade. Kept separate from [Decoder.EvictedOrphans]
+// so that counter stays a legible loss signal (GH-1308).
+func (d *Decoder) EvictedBareSync() int {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+	return d.evictedBareSync
 }
 
 // SkippedUnknownPair is the count of completed swap+sync pairs
@@ -414,6 +450,15 @@ func (d *Decoder) SkippedUnknownPair() int {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 	return d.skippedUnknownPair
+}
+
+// UnknownContractDrops implements the dispatcher's duck-typed
+// reporter interface (mirrors [Decoder.EvictedOrphans]) so a
+// completed swap dropped for want of a pair-token mapping is
+// surfaced to obs.SourceDecodeErrorsTotal instead of vanishing with
+// no error, log or metric (GH-1307).
+func (d *Decoder) UnknownContractDrops() int {
+	return d.SkippedUnknownPair()
 }
 
 // SkippedNonDirectional is the count of completed swap+sync pairs

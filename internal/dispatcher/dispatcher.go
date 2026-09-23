@@ -668,10 +668,18 @@ type Stats struct {
 	// claimed. The denominator of "decoder error rate" the
 	// decoder_stats_5m hypertable carries; without it, errors are an
 	// uninterpretable count rather than a rate.
-	EventsSeen    map[string]int
-	DecodeErrors  map[string]int
-	OrphanEvents  map[string]int
-	UnmatchedHits int
+	EventsSeen   map[string]int
+	DecodeErrors map[string]int
+	OrphanEvents map[string]int
+	// UnknownContractDrops is the per-source count of a fully decoded
+	// event dropped because its contract (pair/pool) had no token
+	// mapping in the decoder's registry — a lost trade, not a decode
+	// error, but with no other signal (GH-1307). Collected the same
+	// way as OrphanEvents: a duck-typed interface, since the drop
+	// happens inside Decode with a nil error and the dispatcher's own
+	// DecodeErrors counter never sees it.
+	UnknownContractDrops map[string]int
+	UnmatchedHits        int
 	// TxReadErrors counts malformed transactions skipped during
 	// ProcessLedger. Operators reading the snapshot can spot a
 	// sustained climb that would otherwise be invisible (the bad
@@ -726,19 +734,24 @@ func (d *Dispatcher) Stats() Stats {
 	d.statsMu.Unlock()
 
 	orphanCopied := map[string]int{}
+	unknownContractCopied := map[string]int{}
 	for _, dec := range d.decoders {
-		reporter, ok := dec.(interface{ EvictedOrphans() int })
-		if !ok {
-			continue
+		if reporter, ok := dec.(interface{ EvictedOrphans() int }); ok {
+			if n := reporter.EvictedOrphans(); n > 0 {
+				orphanCopied[dec.Name()] = n
+			}
 		}
-		if n := reporter.EvictedOrphans(); n > 0 {
-			orphanCopied[dec.Name()] = n
+		if reporter, ok := dec.(interface{ UnknownContractDrops() int }); ok {
+			if n := reporter.UnknownContractDrops(); n > 0 {
+				unknownContractCopied[dec.Name()] = n
+			}
 		}
 	}
 	return Stats{
 		EventsSeen:           seenCopied,
 		DecodeErrors:         decodeCopied,
 		OrphanEvents:         orphanCopied,
+		UnknownContractDrops: unknownContractCopied,
 		UnmatchedHits:        unmatched,
 		TxReadErrors:         txReadErrs,
 		TxEventReadErrors:    txEventReadErrs,
