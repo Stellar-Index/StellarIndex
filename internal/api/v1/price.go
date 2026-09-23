@@ -1270,7 +1270,7 @@ func normalizeRawRatioStringWithLookup(value string, base, quote canonical.Asset
 //     declared classic USD-pegs (catches the case where the
 //     aggregator's [aggregate].enable_stablecoin_fiat_proxy isn't
 //     enabled but trades.usd_pegged_classic_assets is — the same
-//     fix the chart handler ships per #98 / PR #1015).
+//     fix the chart handler ships — see chart.go's chartStablecoinFallback).
 //  3. Fiat-vs-fiat cross-rate from the forex snapshot
 //     (always returns triangulated=true since the value is derived).
 //
@@ -1579,7 +1579,7 @@ type proxyPairGate interface {
 //     [trades].usd_pegged_classic_assets allow-list in priority order
 //     ([Server.walkUSDPegs]); the first peg whose asset/<peg> pair has a
 //     non-stale Timescale row wins. Same shape as chart.go's
-//     chartStablecoinFallback (#98 / PR #1015) — without it,
+//     chartStablecoinFallback — without it,
 //     /v1/price?asset=native&quote=fiat:USD 404s out-of-the-box on every
 //     fresh deployment, which is the most-basic possible query against
 //     the canonical price endpoint.
