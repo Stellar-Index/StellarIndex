@@ -213,14 +213,18 @@ tests:
               component: api
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
-              summary: "SDEX order-book maintenance failing (load or advance errors 30+ min)"
+              summary: "SDEX order-book maintenance failing (load, advance or verify errors 30+ min)"
               description: |
-                The live order book's lake reads (initial load or the 60s
-                incremental advance) have been failing for 30+ minutes.
-                If load_error: /v1/sdex/orderbook is serving 503 warming
-                problems. If advance_error: the book serves increasingly
-                stale depth with an honest as_of_ledger. Check ClickHouse
-                health and the ledger_entry_changes partition layout first.
+                The live order book's lake reads (initial load, the 60s
+                incremental advance, or the quarantine removal probe) have
+                been failing for 30+ minutes. If load_error:
+                /v1/sdex/orderbook is serving 503 warming problems. If
+                advance_error: the book serves increasingly stale depth with
+                an honest as_of_ledger. If verify_error: quarantined offers
+                stay withheld (ask_offers_withheld / bid_offers_withheld
+                non-zero) and stellarindex_sdex_orderbook_pending_offers
+                stops draining. Check ClickHouse health and the
+                ledger_entry_changes partition layout first.
 
   # ── v0.21.4: a healthy order book is SILENT ──────────────────────
   - interval: 1m
@@ -234,6 +238,80 @@ tests:
     alert_rule_test:
       - eval_time: 60m
         alertname: stellarindex_sdex_orderbook_maintain_failing
+        exp_alerts: []
+
+  # ── the quarantine removal probe failing every tick tickets ──────
+  # Advance is healthy but VerifyPending errors: the pending set never
+  # drains and its offers stay withheld from every served book.
+  - interval: 1m
+    name: sustained sdex order-book verify errors ticket
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="verify_error"}'
+        values: '0+1x120'
+      - series: 'stellarindex_sdex_orderbook_maintain_total{job="stellarindex_api",instance="r1:8080",outcome="advance_ok"}'
+        values: '0+1x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_maintain_failing
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+              summary: "SDEX order-book maintenance failing (load, advance or verify errors 30+ min)"
+              description: |
+                The live order book's lake reads (initial load, the 60s
+                incremental advance, or the quarantine removal probe) have
+                been failing for 30+ minutes. If load_error:
+                /v1/sdex/orderbook is serving 503 warming problems. If
+                advance_error: the book serves increasingly stale depth with
+                an honest as_of_ledger. If verify_error: quarantined offers
+                stay withheld (ask_offers_withheld / bid_offers_withheld
+                non-zero) and stellarindex_sdex_orderbook_pending_offers
+                stops draining. Check ClickHouse health and the
+                ledger_entry_changes partition layout first.
+
+  # ── a crossed served book tickets; a brief blip does not ─────────
+  - interval: 1m
+    name: sustained crossed sdex order book tickets
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_crossed_pairs{job="stellarindex_api",instance="r1:8080"}'
+        values: '0x5 1x120'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_sdex_orderbook_crossed_book
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_crossed_book
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sdex-orderbook-maintain-failing.md
+              summary: "SDEX order book serving 1 crossed pair(s) for 30+ min"
+              description: |
+                The served /v1/sdex/orderbook book has at least one asset
+                pair whose best bid is strictly above its best ask, which a
+                resting on-chain book cannot be. Phantom offers are being
+                served on that pair. The API logs the pair ids on the
+                "sdex order book crossed-pair count changed" line; chase the
+                missing removal as a ledger_entry_changes coverage gap.
+
+  - interval: 1m
+    name: uncrossed sdex order book stays silent
+    input_series:
+      - series: 'stellarindex_sdex_orderbook_crossed_pairs{job="stellarindex_api",instance="r1:8080"}'
+        values: '0x120'
+
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_sdex_orderbook_crossed_book
         exp_alerts: []
 
   # ══ stellarindex_customer_webhook_mark_errors (#368 M6) ═══════════

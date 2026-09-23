@@ -78,14 +78,15 @@ func TestSDEXOrderBookCache_LoadAdvanceAndVersionDiscipline(t *testing.T) {
 	if err := c.Advance(context.Background()); err != nil {
 		t.Fatalf("pre-load Advance: %v", err)
 	}
-	if _, _, _, _, ready := c.snapshotPair("native", usdc); ready {
+	if _, ready := c.snapshotMarket("native", usdc); ready {
 		t.Fatal("cache must not be ready before Load")
 	}
 
 	if err := c.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	asks, bids, cursor, _, ready := c.snapshotPair("native", usdc)
+	snap, ready := c.snapshotMarket("native", usdc)
+	asks, bids, cursor := snap.asks, snap.bids, snap.cursor
 	if !ready || cursor != 10 {
 		t.Fatalf("ready=%v cursor=%d, want true/10", ready, cursor)
 	}
@@ -113,7 +114,8 @@ func TestSDEXOrderBookCache_LoadAdvanceAndVersionDiscipline(t *testing.T) {
 	if reader.lastFrom != 10 {
 		t.Errorf("Advance queried from ledger %d, want 10", reader.lastFrom)
 	}
-	asks, bids, cursor, _, _ = c.snapshotPair("native", usdc)
+	snap, _ = c.snapshotMarket("native", usdc)
+	asks, bids, cursor = snap.asks, snap.bids, snap.cursor
 	if cursor != 12 {
 		t.Errorf("cursor = %d, want 12", cursor)
 	}
@@ -129,7 +131,7 @@ func TestSDEXOrderBookCache_LoadAdvanceAndVersionDiscipline(t *testing.T) {
 	if err := c.Advance(context.Background()); err == nil {
 		t.Fatal("Advance should surface the read error")
 	}
-	if asks, _, _, _, _ := c.snapshotPair("native", usdc); len(asks) != 1 {
+	if snap, _ := c.snapshotMarket("native", usdc); len(snap.asks) != 1 {
 		t.Error("book must be unchanged after a failed Advance")
 	}
 }
@@ -272,7 +274,8 @@ func TestSDEXOrderBookCache_ZombieQuarantineAndVerify(t *testing.T) {
 
 	// Quarantine: only the trusted ask is served; the intra-0 offers are
 	// pending; the served book is NOT crossed (the zombie is unserved).
-	asks, bids, _, _, _ := c.snapshotPair("native", usdc)
+	snap, _ := c.snapshotMarket("native", usdc)
+	asks, bids := snap.asks, snap.bids
 	if len(asks) != 1 || len(bids) != 0 {
 		t.Fatalf("post-Load asks/bids = %d/%d, want 1/0 (intra-0 offers quarantined)", len(asks), len(bids))
 	}
@@ -291,7 +294,8 @@ func TestSDEXOrderBookCache_ZombieQuarantineAndVerify(t *testing.T) {
 	if len(reader.lastRefs) != 2 {
 		t.Fatalf("verify probed %d refs, want 2", len(reader.lastRefs))
 	}
-	asks, bids, _, _, _ = c.snapshotPair("native", usdc)
+	snap, _ = c.snapshotMarket("native", usdc)
+	asks, bids = snap.asks, snap.bids
 	if len(asks) != 1 || len(bids) != 1 {
 		t.Fatalf("post-verify asks/bids = %d/%d, want 1/1 (zombie dead, resting restored)", len(asks), len(bids))
 	}
@@ -309,6 +313,29 @@ func TestSDEXOrderBookCache_ZombieQuarantineAndVerify(t *testing.T) {
 	}
 	if reader.lastRefs != nil {
 		t.Error("empty quarantine must not probe the lake")
+	}
+}
+
+// TestCrossedPairCount_TouchingIsNotCrossed pins the tripwire to the
+// on-chain invariant: a PASSIVE offer rests against an opposite offer at
+// exactly the inverse price (a 1:1 stablecoin maker is the common case),
+// so a touching book is legal and must read 0 or the alert on this gauge
+// fires forever. Only best bid > best ask is impossible on a resting book.
+func TestCrossedPairCount_TouchingIsNotCrossed(t *testing.T) {
+	const usdc = "USDC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	touching := map[string]clickhouse.LiveOffer{
+		"ask": bookOffer("ask", 1, 100, "native", usdc, 1, 2, 5<<32|1),
+		"bid": bookOffer("bid", 2, 100, usdc, "native", 2, 1, 5<<32|2), // bid 0.5 == ask 0.5
+	}
+	if got := crossedPairs(touching); len(got) != 0 {
+		t.Errorf("touching book crossed = %v, want none", got)
+	}
+	crossed := map[string]clickhouse.LiveOffer{
+		"ask": touching["ask"],
+		"bid": bookOffer("bid", 2, 100, usdc, "native", 19, 10, 5<<32|2), // bid 10/19 ≈ 0.526 > 0.5
+	}
+	if got := crossedPairs(crossed); len(got) != 1 || got[0] != usdc+"/native" {
+		t.Errorf("strictly crossed book = %v, want [%s/native]", got, usdc)
 	}
 }
 
@@ -330,6 +357,9 @@ func TestSDEXOrderBookCache_AdvanceSupersedesPendingAndCrossedGauge(t *testing.T
 	if err := c.Load(context.Background()); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
+	if snap, _ := c.snapshotMarket("native", usdc); snap.withheldBids != 1 {
+		t.Errorf("post-Load withheld bids = %d, want 1", snap.withheldBids)
+	}
 
 	// A live change for the suspect key supersedes its quarantined
 	// pre-load state: here a fresh, CROSSING bid (sells USDC at 1.25
@@ -345,6 +375,9 @@ func TestSDEXOrderBookCache_AdvanceSupersedesPendingAndCrossedGauge(t *testing.T
 	if got := testutil.ToFloat64(obs.SDEXOrderBookPendingOffers); got != 0 {
 		t.Errorf("pending gauge = %v, want 0 (Advance resolves the suspect)", got)
 	}
+	if snap, _ := c.snapshotMarket("native", usdc); snap.withheldBids != 0 || len(c.withheld) != 0 {
+		t.Errorf("post-Advance withheld bids = %d (markets %v), want 0", snap.withheldBids, c.withheld)
+	}
 	if got := testutil.ToFloat64(obs.SDEXOrderBookCrossedPairs); got != 1 {
 		t.Errorf("crossed gauge = %v, want 1 (served book bid 0.8 vs ask 0.5)", got)
 	}
@@ -353,7 +386,8 @@ func TestSDEXOrderBookCache_AdvanceSupersedesPendingAndCrossedGauge(t *testing.T
 	if err := c.VerifyPending(context.Background(), 10); err != nil {
 		t.Fatalf("VerifyPending: %v", err)
 	}
-	_, bids, _, _, _ := c.snapshotPair("native", usdc)
+	snap, _ := c.snapshotMarket("native", usdc)
+	bids := snap.bids
 	if len(bids) != 1 || bids[0].Version != 63_000_002<<32 {
 		t.Fatalf("bids = %+v, want only the Advance-applied version", bids)
 	}

@@ -3748,10 +3748,14 @@ probes per tick).
 
 Gauge.
 
-Asset pairs whose SERVED order book is crossed (best bid >= best
+Asset pairs whose SERVED order book is crossed (best bid > best
 ask). Stellar's DEX executes crossing offers at submission, so a
 resting book can never be crossed on-chain — this is the book's
-data-quality invariant and it should read 0. Any sustained non-zero
+data-quality invariant and it should read 0. A touching book (best
+bid == best ask) is not counted: a PASSIVE offer legally rests against
+an opposite offer at exactly the inverse price. Alerted by
+`stellarindex_sdex_orderbook_crossed_book` (30 min); the API log line
+"sdex order book crossed-pair count changed" names the pairs. Any sustained non-zero
 value means phantom offers are being served: the founding case
 (2026-07-31) was 4.7-year-dead XLM/USDC bids kept "live" by
 ReplacingMergeTree version ties on intra-less backfill rows, serving
