@@ -110,8 +110,12 @@ func assetPath(path []xdr.Asset) []string {
 	return out
 }
 
-// changeTrustAsset renders a change-trust line: a regular asset, or a marker
-// for a liquidity-pool-share trustline.
+// changeTrustAsset renders a change-trust line: a regular asset, or a
+// liquidity-pool-share trustline as "pool:<hex>" — the SAME spelling
+// TrustLineAssetID already uses for a live pool-share trustline, computed
+// from the op's own AssetA/AssetB/Fee via the SDK's canonical pool-id
+// derivation (the identical hash the network itself keys the pool by), so a
+// change_trust op and the resulting trustline never disagree on the id.
 func changeTrustAsset(c xdr.ChangeTrustAsset) string {
 	switch c.Type {
 	case xdr.AssetTypeAssetTypeNative:
@@ -131,11 +135,43 @@ func changeTrustAsset(c xdr.ChangeTrustAsset) string {
 		}
 		return code + "-" + an.Issuer.Address()
 	case xdr.AssetTypeAssetTypePoolShare:
-		return "liquidity_pool_share"
+		return poolShareLine(c.MustLiquidityPool())
 	default:
 		return "unknown_asset"
 	}
 }
+
+// poolShareLine derives a change-trust pool-share line's "pool:<hex>" id from
+// its constituent-asset parameters. ok=false (rendered as "unknown_asset")
+// only for a liquidity-pool type the SDK's own NewPoolId doesn't recognise —
+// currently none; a forward-compat guard, not a live path.
+func poolShareLine(params xdr.LiquidityPoolParameters) string {
+	cp, ok := params.GetConstantProduct()
+	if !ok {
+		return "unknown_asset"
+	}
+	id, err := xdr.NewPoolId(cp.AssetA, cp.AssetB, cp.Fee)
+	if err != nil {
+		return "unknown_asset"
+	}
+	return "pool:" + hex.EncodeToString(id[:])
+}
+
+// claimableBalanceIDHex renders a ClaimableBalanceId's V0 hash as lowercase
+// hex — the same encoding claimable_balance_seed.go and the
+// claimable_balances source use for this id everywhere else in the lake.
+// ok=false for a union arm without a V0 hash (none exist yet; forward-compat
+// guard, mirrors assetCode's refuse-rather-than-guess discipline).
+func claimableBalanceIDHex(id xdr.ClaimableBalanceId) (string, bool) {
+	if id.V0 == nil {
+		return "", false
+	}
+	return hex.EncodeToString((*id.V0)[:]), true
+}
+
+// poolIDHex renders a liquidity-pool id as lowercase hex — the same encoding
+// TrustLineAssetID uses after its "pool:" prefix.
+func poolIDHex(id xdr.PoolId) string { return hex.EncodeToString(id[:]) }
 
 // price renders an xdr.Price (rational N/D) as a {n,d} object.
 func price(p xdr.Price) map[string]any {

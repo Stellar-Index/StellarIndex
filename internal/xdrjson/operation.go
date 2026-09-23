@@ -137,6 +137,8 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 		f["buying"] = assetID(op.Buying)
 		f["amount"] = amount(int64(op.Amount))
 		f["price"] = price(op.Price)
+	case xdr.OperationTypeSetOptions:
+		fillSetOptionsFields(b.MustSetOptionsOp(), f)
 	case xdr.OperationTypeChangeTrust:
 		op := b.MustChangeTrustOp()
 		f["line"] = changeTrustAsset(op.Line)
@@ -155,7 +157,12 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 		f["destination"] = muxedAddr(b.MustDestination())
 	case xdr.OperationTypeManageData:
 		op := b.MustManageDataOp()
+		// name is XDR string64 — opaque bytes, not guaranteed UTF-8.
+		// name_base64 is the lossless companion (mirrors value_base64 below);
+		// encoding/json would otherwise silently replace invalid bytes in
+		// name with U+FFFD.
 		f["name"] = string(op.DataName)
+		f["name_base64"] = base64Bytes([]byte(op.DataName))
 		if op.DataValue != nil {
 			f["value_base64"] = base64Bytes([]byte(*op.DataValue))
 		}
@@ -167,8 +174,203 @@ func fillOpFields(b xdr.OperationBody, f map[string]any) { //nolint:gocyclo,funl
 		f["from"] = op.From.Address()
 		f["asset"] = assetID(op.Asset)
 		f["amount"] = amount(int64(op.Amount))
+	case xdr.OperationTypeCreateClaimableBalance:
+		op := b.MustCreateClaimableBalanceOp()
+		f["asset"] = assetID(op.Asset)
+		f["amount"] = amount(int64(op.Amount))
+		f["claimants"] = claimantsFields(op.Claimants)
+	case xdr.OperationTypeClaimClaimableBalance:
+		op := b.MustClaimClaimableBalanceOp()
+		if id, ok := claimableBalanceIDHex(op.BalanceId); ok {
+			f["balance_id"] = id
+		}
+	case xdr.OperationTypeClawbackClaimableBalance:
+		op := b.MustClawbackClaimableBalanceOp()
+		if id, ok := claimableBalanceIDHex(op.BalanceId); ok {
+			f["balance_id"] = id
+		}
+	case xdr.OperationTypeBeginSponsoringFutureReserves:
+		op := b.MustBeginSponsoringFutureReservesOp()
+		f["sponsored_id"] = op.SponsoredId.Address()
+	case xdr.OperationTypeRevokeSponsorship:
+		fillRevokeSponsorshipFields(b.MustRevokeSponsorshipOp(), f)
+	case xdr.OperationTypeLiquidityPoolDeposit:
+		op := b.MustLiquidityPoolDepositOp()
+		f["liquidity_pool_id"] = poolIDHex(op.LiquidityPoolId)
+		f["max_amount_a"] = amount(int64(op.MaxAmountA))
+		f["max_amount_b"] = amount(int64(op.MaxAmountB))
+		f["min_price"] = price(op.MinPrice)
+		f["max_price"] = price(op.MaxPrice)
+	case xdr.OperationTypeLiquidityPoolWithdraw:
+		op := b.MustLiquidityPoolWithdrawOp()
+		f["liquidity_pool_id"] = poolIDHex(op.LiquidityPoolId)
+		f["amount"] = amount(int64(op.Amount))
+		f["min_amount_a"] = amount(int64(op.MinAmountA))
+		f["min_amount_b"] = amount(int64(op.MinAmountB))
 	case xdr.OperationTypeInvokeHostFunction:
 		fillInvokeHostFunction(b.MustInvokeHostFunctionOp(), f)
+	case xdr.OperationTypeExtendFootprintTtl:
+		op := b.MustExtendFootprintTtlOp()
+		f["extend_to"] = uint32(op.ExtendTo)
+	case xdr.OperationTypeRestoreFootprint:
+		// The op body carries only the (currently always-void) extension
+		// point — the restored read-write footprint lives in the envelope's
+		// SorobanTransactionData, outside DecodeOperationBody's scope. Real,
+		// not fabricated: a future protocol version that adds data here
+		// extends this arm rather than needing a new one.
+		op := b.MustRestoreFootprintOp()
+		f["ext"] = int32(op.Ext.V)
+	}
+}
+
+// fillSetOptionsFields decodes a set_options body. Every field is optional —
+// an account only sets what it's changing — so each is emitted only when
+// present; a bare re-signing set_options with everything nil legitimately
+// decodes to nothing and falls back to raw_xdr like any other empty body.
+func fillSetOptionsFields(op xdr.SetOptionsOp, f map[string]any) {
+	if op.InflationDest != nil {
+		f["inflation_dest"] = op.InflationDest.Address()
+	}
+	if op.ClearFlags != nil {
+		f["clear_flags"] = uint32(*op.ClearFlags)
+	}
+	if op.SetFlags != nil {
+		f["set_flags"] = uint32(*op.SetFlags)
+	}
+	if op.MasterWeight != nil {
+		f["master_weight"] = uint32(*op.MasterWeight)
+	}
+	if op.LowThreshold != nil {
+		f["low_threshold"] = uint32(*op.LowThreshold)
+	}
+	if op.MedThreshold != nil {
+		f["med_threshold"] = uint32(*op.MedThreshold)
+	}
+	if op.HighThreshold != nil {
+		f["high_threshold"] = uint32(*op.HighThreshold)
+	}
+	if op.HomeDomain != nil {
+		f["home_domain"] = string(*op.HomeDomain)
+	}
+	if op.Signer != nil {
+		addr, _ := op.Signer.Key.GetAddress()
+		f["signer"] = map[string]any{"key": addr, "weight": uint32(op.Signer.Weight)}
+	}
+}
+
+// claimantsFields renders a create_claimable_balance op's claimant list: the
+// destination account and the predicate tree gating when it can claim.
+func claimantsFields(cs []xdr.Claimant) []map[string]any {
+	out := make([]map[string]any, 0, len(cs))
+	for _, c := range cs {
+		v0, ok := c.GetV0()
+		if !ok {
+			continue
+		}
+		out = append(out, map[string]any{
+			"destination": v0.Destination.Address(),
+			"predicate":   claimPredicateFields(v0.Predicate),
+		})
+	}
+	return out
+}
+
+// claimPredicateFields renders one node of a claim predicate tree. Recursive:
+// and/or/not carry nested predicates.
+func claimPredicateFields(p xdr.ClaimPredicate) map[string]any {
+	switch p.Type {
+	case xdr.ClaimPredicateTypeClaimPredicateUnconditional:
+		return map[string]any{"type": "unconditional"}
+	case xdr.ClaimPredicateTypeClaimPredicateAnd:
+		return map[string]any{"type": "and", "predicates": claimPredicateList(p.MustAndPredicates())}
+	case xdr.ClaimPredicateTypeClaimPredicateOr:
+		return map[string]any{"type": "or", "predicates": claimPredicateList(p.MustOrPredicates())}
+	case xdr.ClaimPredicateTypeClaimPredicateNot:
+		m := map[string]any{"type": "not"}
+		if inner := p.MustNotPredicate(); inner != nil {
+			m["predicate"] = claimPredicateFields(*inner)
+		}
+		return m
+	case xdr.ClaimPredicateTypeClaimPredicateBeforeAbsoluteTime:
+		return map[string]any{"type": "before_absolute_time", "abs_before": strconv.FormatInt(int64(p.MustAbsBefore()), 10)}
+	case xdr.ClaimPredicateTypeClaimPredicateBeforeRelativeTime:
+		return map[string]any{"type": "before_relative_time", "rel_before": strconv.FormatInt(int64(p.MustRelBefore()), 10)}
+	default:
+		return map[string]any{"type": "unknown"}
+	}
+}
+
+func claimPredicateList(ps []xdr.ClaimPredicate) []map[string]any {
+	out := make([]map[string]any, len(ps))
+	for i, p := range ps {
+		out[i] = claimPredicateFields(p)
+	}
+	return out
+}
+
+// fillRevokeSponsorshipFields decodes a revoke_sponsorship body: either a
+// ledger-entry key (the sponsored entry) or a signer (account + key being
+// de-sponsored).
+func fillRevokeSponsorshipFields(op xdr.RevokeSponsorshipOp, f map[string]any) {
+	switch op.Type {
+	case xdr.RevokeSponsorshipTypeRevokeSponsorshipLedgerEntry:
+		f["sponsorship_type"] = "ledger_entry"
+		fillLedgerKeyFields(op.MustLedgerKey(), f)
+	case xdr.RevokeSponsorshipTypeRevokeSponsorshipSigner:
+		s := op.MustSigner()
+		f["sponsorship_type"] = "signer"
+		f["account_id"] = s.AccountId.Address()
+		if addr, err := s.SignerKey.GetAddress(); err == nil {
+			f["signer_key"] = addr
+		}
+	}
+}
+
+// fillLedgerKeyFields identifies the sponsored ledger entry for the six
+// classic entry types (account/trustline/offer/data/claimable-balance/
+// liquidity-pool). The three Soroban-only key types (contract data/code,
+// config setting, TTL) are sponsorable but rendered by type name only — their
+// identifying fields are contract-storage keys, not accounts.
+func fillLedgerKeyFields(lk xdr.LedgerKey, f map[string]any) {
+	switch lk.Type {
+	case xdr.LedgerEntryTypeAccount:
+		f["account_id"] = lk.Account.AccountId.Address()
+	case xdr.LedgerEntryTypeTrustline:
+		f["account_id"] = lk.TrustLine.AccountId.Address()
+		f["asset"] = TrustLineAssetID(lk.TrustLine.Asset)
+	case xdr.LedgerEntryTypeOffer:
+		f["seller_id"] = lk.Offer.SellerId.Address()
+		f["offer_id"] = strconv.FormatInt(int64(lk.Offer.OfferId), 10)
+	case xdr.LedgerEntryTypeData:
+		f["account_id"] = lk.Data.AccountId.Address()
+		f["name"] = string(lk.Data.DataName)
+	case xdr.LedgerEntryTypeClaimableBalance:
+		if id, ok := claimableBalanceIDHex(lk.ClaimableBalance.BalanceId); ok {
+			f["balance_id"] = id
+		}
+	case xdr.LedgerEntryTypeLiquidityPool:
+		f["liquidity_pool_id"] = poolIDHex(lk.LiquidityPool.LiquidityPoolId)
+	default:
+		f["ledger_entry_type"] = ledgerEntryTypeName(lk.Type)
+	}
+}
+
+// ledgerEntryTypeName maps the three Soroban-only ledger-entry types a
+// revoke_sponsorship can target to the explorer's snake_case vocabulary —
+// same discipline as opTypeName: controlled, not derived from the SDK's
+// CamelCase enum string.
+func ledgerEntryTypeName(t xdr.LedgerEntryType) string {
+	switch t {
+	case xdr.LedgerEntryTypeContractData:
+		return "contract_data"
+	case xdr.LedgerEntryTypeContractCode:
+		return "contract_code"
+	case xdr.LedgerEntryTypeConfigSetting:
+		return "config_setting"
+	case xdr.LedgerEntryTypeTtl:
+		return "ttl"
+	default:
+		return fmt.Sprintf("unknown_%d", int(t))
 	}
 }
 
@@ -214,13 +416,27 @@ func fillInvokeHostFunction(op xdr.InvokeHostFunctionOp, f map[string]any) {
 // AuthInvocation is one node of a Soroban AUTHORIZATION tree — the nested
 // SorobanAuthorizedInvocation structure carried in an InvokeHostFunction op's
 // auth entries. Exported so the API view can type it; a create-contract
-// authorization has Kind "create_contract" and no function/args.
+// authorization has Kind "create_contract" and no function/args. Credentials
+// is set only on the root of each tree — a sub-invocation's authorization is
+// implied by its parent's, the XDR carries none of its own.
 type AuthInvocation struct {
 	Kind           string           `json:"kind"` // invoke_contract | create_contract
 	ContractID     string           `json:"contract_id,omitempty"`
 	FunctionName   string           `json:"function_name,omitempty"`
 	Args           []string         `json:"args,omitempty"`
+	Credentials    *AuthCredentials `json:"credentials,omitempty"`
 	SubInvocations []AuthInvocation `json:"sub_invocations,omitempty"`
+}
+
+// AuthCredentials describes who authorized one auth entry's root invocation:
+// the op's own source account, or a separate address (which may be a
+// different signer entirely — e.g. a relayer-submitted transaction carrying
+// a user's signed auth entry, GH-1138).
+type AuthCredentials struct {
+	Kind                      string `json:"kind"` // source_account | address
+	Address                   string `json:"address,omitempty"`
+	Nonce                     string `json:"nonce,omitempty"`
+	SignatureExpirationLedger uint32 `json:"signature_expiration_ledger,omitempty"`
 }
 
 // authInvocationTree builds the authorized-invocation forest from an op's auth
@@ -231,9 +447,42 @@ func authInvocationTree(auth []xdr.SorobanAuthorizationEntry) []AuthInvocation {
 	}
 	out := make([]AuthInvocation, 0, len(auth))
 	for i := range auth {
-		out = append(out, buildAuthInvocation(&auth[i].RootInvocation))
+		node := buildAuthInvocation(&auth[i].RootInvocation)
+		node.Credentials = authCredentialsFields(auth[i].Credentials)
+		out = append(out, node)
 	}
 	return out
+}
+
+// authCredentialsFields renders the SorobanCredentials for one auth entry's
+// root. source_account carries nothing further (the op's own source signed
+// it); the address variants (including the V2 and delegated forms) carry the
+// authorizing address, its nonce, and its signature-expiration ledger.
+func authCredentialsFields(c xdr.SorobanCredentials) *AuthCredentials {
+	switch c.Type {
+	case xdr.SorobanCredentialsTypeSorobanCredentialsSourceAccount:
+		return &AuthCredentials{Kind: "source_account"}
+	case xdr.SorobanCredentialsTypeSorobanCredentialsAddress:
+		return addressCredentialsFields(c.MustAddress())
+	case xdr.SorobanCredentialsTypeSorobanCredentialsAddressV2:
+		return addressCredentialsFields(c.MustAddressV2())
+	case xdr.SorobanCredentialsTypeSorobanCredentialsAddressWithDelegates:
+		return addressCredentialsFields(c.MustAddressWithDelegates().AddressCredentials)
+	default:
+		return nil
+	}
+}
+
+// addressCredentialsFields renders the common shape shared by the address,
+// address-v2, and address-with-delegates SorobanCredentials variants.
+func addressCredentialsFields(a xdr.SorobanAddressCredentials) *AuthCredentials {
+	addr, _ := contractAddress(a.Address)
+	return &AuthCredentials{
+		Kind:                      "address",
+		Address:                   addr,
+		Nonce:                     strconv.FormatInt(int64(a.Nonce), 10),
+		SignatureExpirationLedger: uint32(a.SignatureExpirationLedger),
+	}
 }
 
 // buildAuthInvocation renders one SorobanAuthorizedInvocation node + its
