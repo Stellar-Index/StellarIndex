@@ -2680,6 +2680,8 @@ paths:
                       data:
                         type: array
                         items: { $ref: "#/components/schemas/PoolRow" }
+                      pagination: { $ref: "#/components/schemas/Pagination" }
+                    # pagination is OMITTED on the final page (no more rows).
                     required: [data]
         "400": { $ref: "#/components/responses/BadRequest" }
         "429": { $ref: "#/components/responses/RateLimited" }
@@ -18643,9 +18645,10 @@ components:
               items:
                 type: object
                 properties:
+                  asset:     { type: string }
                   price:     { type: string }
                   timestamp: { type: string, format: date-time }
-                required: [price, timestamp]
+                required: [asset, price, timestamp]
           required: [data]
 
     # Account
