@@ -354,6 +354,29 @@ against.
   verdict: a checked verdict under another spelling of the asset wins,
   and only when none exists is `divergence_warning=true,
   divergence_checked=false` served.
+- **auth — operator-minted keys inherit the identifier's monthly
+  ceiling (#1239):** only `POST /v1/account/keys` carried a monthly
+  ceiling onto the key it minted; `POST /v1/admin/keys` and
+  `stellarindex-ops mint-key` build their request without one, so a key
+  an operator minted for a metered customer's identifier was persisted
+  with `monthly_quota: 0` — unmetered, while billing the same
+  per-account counter as the customer's capped keys. The inheritance now
+  lives in the Redis key store's `Create`, which the admin, CLI,
+  self-service and signup mint paths all call: a request without a
+  ceiling takes the most generous ceiling the identifier's existing
+  Redis credentials carry, so a mint can neither lift nor tighten the
+  plan, and a new identifier (or one already holding a live unmetered
+  key) still mints without one. A read failure fails the mint. The
+  `key.mint` audit row and the CLI's audit output now record the
+  ceiling issued. The rotation-resets-the-counter half of #1239 was
+  already closed by per-account metering (RLT-404). Still open: the
+  store sees only Redis records, so an account whose ceiling exists
+  only in Postgres (no Redis mirror or child key) still gets an
+  unmetered operator-minted key; and a self-service child of a
+  Postgres-backed key is written to Redis with its parent's resolved
+  ceiling and read back without the account override cascade, so a
+  later change to that override, up or down, does not reach it.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

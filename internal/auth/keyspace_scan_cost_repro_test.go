@@ -92,7 +92,7 @@ func (c *commandCounter) snapshot() map[string]int {
 // THE FIX. Both issuance writers (Create, CreateWithSecret) write the
 // record and its entries in the `apikey-index:v1` hash as one atomic
 // step, and the four lookups read that hash. Records that predate the
-// index are covered by a build the first lookup runs — ONE walk per
+// index are covered by a build the first reader runs — ONE walk per
 // index lifetime, which the "index is built once" subtest pins. The
 // fixture makes one of the caller's two keys such a legacy record, so
 // the numbers below also prove the build makes old keys reachable.
@@ -109,6 +109,20 @@ func TestKeyLookupsDoNotWalkTheKeyspace(t *testing.T) {
 
 	ctx := context.Background()
 	store := NewRedisAPIKeyStore(rdb)
+
+	// The caller owns exactly two keys. The first is a LEGACY record:
+	// written raw, the way a binary that predates the index wrote it
+	// before any index existed, so only a build can make it reachable.
+	const owner = "account:caller"
+	legacy := APIKeyRecord{KeyID: "kid_legacy0000000001", Identifier: owner, Tier: TierAPIKey, PermissionsAll: true}
+	legacyBody, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatalf("marshal legacy record: %v", err)
+	}
+	legacyRecordKey := cachekeys.APIKey(hashAPIKey("legacy-fixture-not-a-credential")).String()
+	if err := rdb.Set(ctx, legacyRecordKey, legacyBody, 0).Err(); err != nil {
+		t.Fatalf("seed legacy record: %v", err)
+	}
 
 	// The victim deployment: other customers' credentials plus the
 	// unrelated families that share the DB.
@@ -127,30 +141,23 @@ func TestKeyLookupsDoNotWalkTheKeyspace(t *testing.T) {
 		}
 	}
 
-	// The caller owns exactly two keys. The first is a LEGACY record:
-	// written raw, the way a binary that predates the index wrote it,
-	// so nothing in the index knows it until a build runs.
-	const owner = "account:caller"
-	legacy := APIKeyRecord{KeyID: "kid_legacy0000000001", Identifier: owner, Tier: TierAPIKey, PermissionsAll: true}
-	legacyBody, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatalf("marshal legacy record: %v", err)
-	}
-	legacyRecordKey := cachekeys.APIKey(hashAPIKey("legacy-fixture-not-a-credential")).String()
-	if err := rdb.Set(ctx, legacyRecordKey, legacyBody, 0).Err(); err != nil {
-		t.Fatalf("seed legacy record: %v", err)
-	}
 	minted, _, err := store.Create(ctx, CreateAPIKeyRequest{Identifier: owner, Tier: TierAPIKey})
 	if err != nil {
 		t.Fatalf("seed own key: %v", err)
 	}
 	ownKeyIDs := []string{legacy.KeyID, minted.KeyID}
 
-	// The index is built by the first lookup that finds it absent, and
+	// The index is built by the first reader that finds it absent — the
+	// first issuance, which reads the owner's monthly ceiling — and
 	// never again: the walk is a one-time migration cost, not a
-	// per-request one. (On the unfixed code both calls walk.)
+	// per-request one. (On the unfixed code every lookup walks.)
+	seedScans := counter.snapshot()["scan"]
 	t.Run("index is built once", func(t *testing.T) {
-		for call, wantScans := range []int{1, 0} {
+		if seedScans != 1 {
+			t.Errorf("seeding %d keys issued %d SCAN command(s), want exactly 1 (the one index build)",
+				foreignKeys+1, seedScans)
+		}
+		for call, wantScans := range []int{0, 0} {
 			counter.reset()
 			if _, err := store.ListKeysForIdentifier(ctx, "account:nobody"); err != nil {
 				t.Fatalf("warm-up lookup %d: %v", call, err)

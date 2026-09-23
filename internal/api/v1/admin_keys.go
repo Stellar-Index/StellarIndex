@@ -110,8 +110,7 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	// `scopes: []` here and mint itself a full-access operator key,
 	// with the audit row as the only signal. ClampMintScopes' own doc
 	// calls itself "the single chokepoint every mint path funnels
-	// through"; until now that held for the customer path alone
-	// (security review A-2, 2026-09-17).
+	// through"; this call is what makes that true for the admin path.
 	scopes, problem := middleware.ClampMintScopes(subject, req.Scopes)
 	if problem != "" {
 		writeProblem(w, r,
@@ -155,8 +154,8 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		"minted_key_id", rec.KeyID,
 		"tier", req.Tier,
 		"scopes", req.Scopes,
-		"reason", reason)
-	s.recordAdminKeyMintAudit(r, subject, req, rec.KeyID, reason)
+		"monthly_quota", rec.MonthlyQuota, "reason", reason)
+	s.recordAdminKeyMintAudit(r, subject, req, rec, reason)
 
 	writeEnvelopeStatus(w, http.StatusCreated, Envelope{
 		Data: KeyCreated{
@@ -361,11 +360,14 @@ func parseAdminCreateKeyRequest(w http.ResponseWriter, r *http.Request) (adminCr
 // mint (audit-log unavailability must not break staff workflows,
 // same contract as platform.AuditStore.Append documents).
 func (s *Server) recordAdminKeyMintAudit(
-	r *http.Request, actor auth.Subject, req adminCreateKeyRequest, mintedKeyID, reason string,
+	r *http.Request, actor auth.Subject, req adminCreateKeyRequest, minted auth.APIKeyRecord, reason string,
 ) {
 	if s.audit == nil {
 		return
 	}
+	mintedKeyID := minted.KeyID
+	// monthly_quota is the ceiling the store resolved, not a request
+	// field: the admin body carries none, so record what was issued.
 	meta, err := json.Marshal(map[string]any{
 		"actor_key_id":       actor.KeyID,
 		"actor_identifier":   actor.Identifier,
@@ -374,6 +376,7 @@ func (s *Server) recordAdminKeyMintAudit(
 		"label":              req.Label,
 		"scopes":             req.Scopes,
 		"rate_limit_per_min": req.RateLimitPerMin,
+		"monthly_quota":      minted.MonthlyQuota,
 		"reason":             reason,
 	})
 	if err != nil {
