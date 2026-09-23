@@ -37,7 +37,7 @@ func (*Decoder) Name() string { return SourceName }
 
 // GatedContractSet returns every contract whose events Matches can
 // accept — the tightest sound contract-id prefilter for a lake read
-// over this decoder. The projector uses it as Source.ContractIDs.
+// over this decoder. The projector reads it every cycle as Source.ContractIDsFunc.
 //
 // It is not an optimisation here, it is what makes a catch-up window
 // affordable: this source's own symbols are `deposit`, `withdraw` and

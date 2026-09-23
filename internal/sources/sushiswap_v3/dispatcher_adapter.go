@@ -85,7 +85,7 @@ func (*Decoder) Name() string { return SourceName }
 
 // GatedContractSet returns the factory trust roots plus every registered
 // pool — the tightest sound contract-id prefilter for a lake read over
-// this decoder. The projector uses it as Source.ContractIDs so a
+// this decoder. The projector reads it every cycle as Source.ContractIDsFunc so a
 // far-behind catch-up window never streams the CAP-67 firehose: this
 // protocol emits `mint` and `burn`, which are 33% and 12% of all pubnet
 // contract events, so the topic-exclusion the other DEX sources use would

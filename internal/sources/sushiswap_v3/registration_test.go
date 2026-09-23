@@ -55,14 +55,14 @@ func TestRegistration_ProjectorBuildsTheSource(t *testing.T) {
 	// `burn` symbols are 33% and 12% of all pubnet contract events — a
 	// far-behind catch-up window would stream the CAP-67 firehose and
 	// wedge the source.
-	if len(got.ContractIDs) == 0 {
+	if len(got.PrefilterContractIDs()) == 0 {
 		t.Fatal("projector source has no contract-id prefilter")
 	}
-	if !slices.Contains(got.ContractIDs, sushiswap_v3.MainnetFactory) {
+	if !slices.Contains(got.PrefilterContractIDs(), sushiswap_v3.MainnetFactory) {
 		t.Error("the prefilter omits the factory — no new pool could ever register")
 	}
 	for pool := range sushiswap_v3.MainnetPools {
-		if !slices.Contains(got.ContractIDs, pool) {
+		if !slices.Contains(got.PrefilterContractIDs(), pool) {
 			t.Errorf("the prefilter omits curated pool %s", pool)
 		}
 	}
