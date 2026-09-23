@@ -24,6 +24,7 @@ thresholds) live under `scenarios/lib/`.
 | `scenarios/05-streaming.js` | SSE connection ramp + sustain | 99 % of clients receive their first event < 1 s after subscribe |
 | `scenarios/06-mixed-realistic.js` | the canonical proof scenario | p95 < 200 ms across the weighted mix; error rate < 0.1 %; sustained 10 min |
 | `scenarios/07-catalogue-browse.js` | showcase hot path (`/v1/assets`, `/v1/issuers`, `/v1/markets`, `/v1/diagnostics/cursors`) | p95 < 200 ms on lookups, p95 < 300 ms on `/v1/markets` (GROUP BY); error rate < 0.1 %; 5 min |
+| `scenarios/08-explorer-lake.js` | ClickHouse lake read path: every `explorerHandler` route (`/v1/ledgers`, `/v1/tx`, `/v1/contracts`, `/v1/accounts/{g}/movements`, `/graph/cohort`, …); fixtures discovered from the target in `setup()` | per endpoint: lookups p95 < 500 ms / p99 < 2 s, scans p95 < 2 s / p99 < 8 s (the read deadline); error rate < 0.1 %; 5 min at 30 rps. Bars are provisional until a measured staging run |
 | `scenarios/99-spike.js` | brief 10× burst absorption | recovery to baseline p95 within 2 min of spike end |
 
 ## Running
@@ -91,7 +92,8 @@ for f in scenarios/01-price-hot-path.js \
          scenarios/03-history.js \
          scenarios/04-batch.js \
          scenarios/06-mixed-realistic.js \
-         scenarios/07-catalogue-browse.js; do
+         scenarios/07-catalogue-browse.js \
+         scenarios/08-explorer-lake.js; do
   echo "== $f =="
   k6 run --vus 1 --iterations 1 \
     --no-thresholds \
