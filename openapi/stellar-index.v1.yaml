@@ -7773,7 +7773,7 @@ paths:
     get:
       operationId: getAccountUsage
       tags: [account]
-      summary: Daily per-endpoint request counters for the authenticated key.
+      summary: Daily per-endpoint request counters for the authenticated caller.
       description: |
         Returns per-day, per-endpoint-family usage rows for the
         authenticated caller over the trailing 30 days: one row per

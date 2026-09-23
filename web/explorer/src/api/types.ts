@@ -3160,7 +3160,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Daily per-endpoint request counters for the authenticated key.
+         * Daily per-endpoint request counters for the authenticated caller.
          * @description Returns per-day, per-endpoint-family usage rows for the
          *     authenticated caller over the trailing 30 days: one row per
          *     (date, endpoint) with `requests` (every non-429 response,
