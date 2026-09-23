@@ -38,6 +38,26 @@ mkdir -p "$ROOT/scripts/ci" \
          "$ROOT/configs/healthchecks"
 cp "$SRC" "$ROOT/scripts/ci/lint-metric-refs.sh"
 
+# Each rule tree is linted against the scrape config it ships beside, so
+# every fixture root needs both. The fixture jobs mirror the real naming
+# split: underscores in the multi-host template, hyphens on r1.
+seed_scrape_configs() { # <root>
+  mkdir -p "$1/configs/ansible/roles/prometheus/templates"
+  cat > "$1/configs/ansible/roles/prometheus/templates/prometheus.yml.j2" <<'J2'
+scrape_configs:
+  - job_name: "stellarindex_api"
+{% if 'stellarindex_aggregator' in groups %}
+  - job_name: "stellarindex_aggregator"
+{% endif %}
+J2
+  cat > "$1/configs/prometheus/prometheus.r1.yml" <<'R1'
+scrape_configs:
+  - job_name: stellarindex-api
+  - job_name: stellarindex-aggregator
+R1
+}
+seed_scrape_configs "$ROOT"
+
 # Rule file: three refs — one backed by a real emitter, one backed only
 # by comments, one that appears only inside a `#` comment in the expr.
 cat > "$ROOT/deploy/monitoring/rules/fixture.yml" <<'YML'
@@ -159,6 +179,7 @@ mkdir -p "$CLEAN/scripts/ci" \
          "$CLEAN/internal" \
          "$CLEAN/configs/healthchecks"
 cp "$SRC" "$CLEAN/scripts/ci/lint-metric-refs.sh"
+seed_scrape_configs "$CLEAN"
 cat > "$CLEAN/deploy/monitoring/rules/fixture.yml" <<'YML'
 groups:
   - name: fixture
@@ -200,6 +221,7 @@ mkdir -p "$ALERTED/scripts/ci" \
          "$ALERTED/internal" \
          "$ALERTED/configs/healthchecks"
 cp "$SRC" "$ALERTED/scripts/ci/lint-metric-refs.sh"
+seed_scrape_configs "$ALERTED"
 cat > "$ALERTED/deploy/monitoring/rules/fixture.yml" <<'YML'
 groups:
   - name: fixture
@@ -221,6 +243,82 @@ if grep -q "UNALERTED (advisory): 'stellarindex_fixture_alerted_total'" <<<"$ALE
   fail=$((fail + 1))
 else
   echo "ok: an alerted metric is not reported UNALERTED"; pass=$((pass + 1))
+fi
+
+# 8. job= selectors bind to the scrape config of the SAME tree. A
+# multi-host rule carrying r1's hyphenated job name matches no series
+# there and is silently dead; an absent_over_time(up{job=...}) over an
+# undefined job fires forever.
+JOBS="$TMP/jobs-repo"
+mkdir -p "$JOBS/scripts/ci" \
+         "$JOBS/deploy/monitoring/rules" \
+         "$JOBS/configs/prometheus/rules.r1" \
+         "$JOBS/internal" \
+         "$JOBS/configs/healthchecks"
+cp "$SRC" "$JOBS/scripts/ci/lint-metric-refs.sh"
+seed_scrape_configs "$JOBS"
+cat > "$JOBS/internal/jobs.go" <<'GO'
+package internal
+
+var _ = struct{ Name string }{
+	Name: "stellarindex_fixture_job_last_success_unix",
+}
+GO
+cat > "$JOBS/deploy/monitoring/rules/fixture.yml" <<'YML'
+groups:
+  - name: fixture
+    rules:
+      # a job="ghost_in_comment" named only in a comment is not a selector
+      - alert: HyphenOnMultiHost
+        expr: (time() - stellarindex_fixture_job_last_success_unix{job="stellarindex-aggregator"}) > 1800
+      - alert: UnderscoreOnMultiHost
+        expr: (time() - stellarindex_fixture_job_last_success_unix{job="stellarindex_aggregator"}) > 1800
+      - alert: RegexWithUndefinedJob
+        expr: |
+          up{job=~"stellarindex_api|minio_fixture_missing"} == 0
+          or absent_over_time(up{job!="negated_is_not_a_reference"}[5m]) == 1
+          or up{ops_job="ch-backfill-label-not-job"} == 0
+        annotations:
+          description: stellarindex_fixture_job_last_success_unix{job="annotation_not_expr"}
+YML
+cat > "$JOBS/configs/prometheus/rules.r1/fixture.yml" <<'YML'
+groups:
+  - name: fixture
+    rules:
+      - alert: HyphenOnR1
+        expr: (time() - stellarindex_fixture_job_last_success_unix{job="stellarindex-aggregator"}) > 1800
+      - alert: UnderscoreOnR1
+        expr: (time() - stellarindex_fixture_job_last_success_unix{job="stellarindex_aggregator"}) > 1800
+YML
+JOBS_OUT="$(bash "$JOBS/scripts/ci/lint-metric-refs.sh" 2>&1)"
+JOBS_STATUS=$?
+expect_job() { # <name> <tree-file> <job> <present|absent>
+  local hit=0
+  grep -qF "DEAD-JOB: $2 selects job=\"$3\"" <<<"$JOBS_OUT" && hit=1
+  if { [ "$4" = present ] && [ "$hit" -eq 0 ]; } || { [ "$4" = absent ] && [ "$hit" -eq 1 ]; }; then
+    echo "FAIL: $1 — expected DEAD-JOB for '$3' in $2 to be $4" >&2
+    printf '%s\n' "$JOBS_OUT" | sed 's/^/    /' >&2
+    fail=$((fail + 1)); return
+  fi
+  echo "ok: $1"; pass=$((pass + 1))
+}
+M=deploy/monitoring/rules/fixture.yml
+R=configs/prometheus/rules.r1/fixture.yml
+expect_job 'r1 hyphenated job on the multi-host tree is dead' "$M" stellarindex-aggregator present
+expect_job 'multi-host job defined under a jinja guard resolves' "$M" stellarindex_aggregator absent
+expect_job 'an undefined alternative inside job=~ is dead' "$M" minio_fixture_missing present
+expect_job 'a defined alternative inside job=~ resolves' "$M" stellarindex_api absent
+expect_job 'a job named only in a comment is not a selector' "$M" ghost_in_comment absent
+expect_job 'a negated job matcher is not a reference' "$M" negated_is_not_a_reference absent
+expect_job 'an ops_job label is not a job selector' "$M" ch-backfill-label-not-job absent
+expect_job 'annotation text is not an expr' "$M" annotation_not_expr absent
+expect_job 'r1 hyphenated job on the r1 tree resolves' "$R" stellarindex-aggregator absent
+expect_job 'multi-host underscored job on the r1 tree is dead' "$R" stellarindex_aggregator present
+if [ "$JOBS_STATUS" -eq 0 ]; then
+  echo "FAIL: a dead job selector must fail the gate (exit=0)" >&2
+  fail=$((fail + 1))
+else
+  echo "ok: a dead job selector fails the gate"; pass=$((pass + 1))
 fi
 
 echo "----"
