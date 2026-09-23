@@ -17,10 +17,23 @@ exercise cadence pinned in
 | Quarterly chaos | every quarter | ~2 h | yes (staging only) | drill writeup |
 | Annual DR | every year | ~4 h | yes (production failover) | drill writeup |
 
-Each drill produces a writeup in this directory with the same
+Each drill logs a row in the **Drill log** below with the same
 action-item discipline as a postmortem. Action items go to the
 issue tracker with owners + due dates and feed back into the
 playbook + relevant runbooks.
+
+## Drill log
+
+| Date | Tier | Scenario | Outcome | Open action items |
+| --- | --- | --- | --- | --- |
+| 2026-04-30 | SEV-1 tabletop | Timescale primary failover ([writeup](2026-04-sev1-timescale-failover.md)) | ran solo (1 participant, not the 3-person minimum) | Quarterly chaos drill running `drop_chunks` on staging; Patroni-driven failover scenario script; 3-person tabletop after launch |
+| 2026-04-30 | SEV-2 tabletop | Soroswap decoder regression ([writeup](2026-04-sev2-soroswap-decode-regression.md)) | ran solo (1 participant, not the 3-person minimum) | Per-source decode-error ratio alert; stellar-core release-notes watcher; wire `stellarindex-ops backfill -source` end-to-end + integration test; 3-person tabletop with state-transition rehearsal |
+
+The two writeups above stay in this directory until their open
+items are filed as GitHub issues or checked off — a doc rewrite
+can't do that. Once retired, replace the writeup link in its row
+with a permalink to the last version and keep the row (history of
+what ran + when).
 
 ## Layout
 
@@ -32,7 +45,9 @@ docs/operations/drills/
 │   ├── sev1-anomaly-freeze-stuck.md         (aggregator — stuck freeze marker)
 │   ├── sev2-source-decoder-regression.md    (ingest — protocol upgrade)
 │   └── sev2-redis-sentinel-failover.md      (cache tier — master swap)
-└── YYYY-MM-<short-name>.md              one writeup per executed drill
+└── YYYY-MM-<short-name>.md              writeup, kept until its action
+                                          items are filed/done, then folded
+                                          into the Drill log above
 ```
 
 Pick scenarios so a launch readiness drill cycle covers all
@@ -76,9 +91,9 @@ The simplest tier. Tests the playbook itself, not the systems.
    criteria* aloud and the team scores how well the walk-through
    matched. Scribe records the scores.
 
-5. **Action items + writeup** (within 24 h). Drill leader files
-   the writeup and opens issues for each action item with the
-   `drill-action` label.
+5. **Action items + log row** (within 24 h). Drill leader files
+   the writeup, opens issues for each action item with the
+   `drill-action` label, and adds a row to the Drill log above.
 
 ## Chaos drill protocol (the "quarterly")
 

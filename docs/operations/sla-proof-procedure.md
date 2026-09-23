@@ -129,7 +129,8 @@ Before kicking off the run:
 
 Normally you do not run this by hand at all —
 [`sla-proof-weekly.yml`](../../.github/workflows/sla-proof-weekly.yml)
-does, every Sunday at 02:00 UTC, and commits the report. Run something by
+does, every Sunday at 02:00 UTC, and commits the report — pruning all but
+the newest four dated reports in the same commit. Run something by
 hand only for an off-cadence proof (a pre-launch or post-incident one).
 
 ### The weekly proof, off-cadence
@@ -351,8 +352,9 @@ runs Sundays at 02:00 UTC and is what actually keeps the feed alive.
 - **It consults the decision core with `SLA_EVIDENCE_SOURCE=probe`**, so
   the absence of a k6 load target — which it does not use and will not
   have — cannot report it red.
-- **It renders and commits the report itself**, through the contents API
-  with the job token; the checkout stays `persist-credentials: false`, so
+- **It renders and commits the report itself, and prunes all but the
+  newest four in the same commit**, through the Git Data API with the
+  job token; the checkout stays `persist-credentials: false`, so
   no step in a job that already carries an ssh key also carries a push
   token. Failing to retain a measurement the run actually took is itself
   a failure and reddens the run.
@@ -400,10 +402,11 @@ exist. What it kept:
   incomplete (rc 2). It asks with `SLA_EVIDENCE_SOURCE=k6`, so it is
   answered about the load target and not about the probe source, which
   would otherwise let a dispatch start k6 with nowhere to point.
-- **It renders and commits the report itself.**
+- **It renders and commits the report itself, and prunes all but the
+  newest four in the same commit.**
   [`scripts/ci/render-sla-proof.sh`](../../scripts/ci/render-sla-proof.sh)
   turns the export into `docs/operations/sla-proof-<end-date>.md`, and
-  the run commits it through the contents API with the job token (no
+  the run commits it through the Git Data API with the job token (no
   credentialed checkout; every checkout in that workflow stays
   `persist-credentials: false`). Failing to retain a measurement the run
   actually took is itself a failure and reddens the run.

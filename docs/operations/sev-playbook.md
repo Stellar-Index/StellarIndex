@@ -322,7 +322,24 @@ review meets on Mondays and triages the open ones.
 owner and a due date.** "No action needed" is a valid bucket but
 must be stated explicitly.
 
-### 6.3 Blameless policy
+### 6.3 Retired postmortems
+
+`docs/operations/postmortems/` keeps **one file per open incident**
+(§6.1) — it is not an archive. Once a postmortem is `status:
+resolved` **and** every action item is either done or names a
+tracking GitHub issue, delete the file and append one line to the
+log below (date retired, slug, one-line cause, permalink to the
+file's last version at the SHA it was removed). If any action item
+is still open with no issue number, the postmortem stays — "no
+action needed" is only a valid close if stated explicitly (§6.2).
+
+**Retired:**
+
+| Retired | Slug | Cause | Last version |
+| ------- | ---- | ----- | ------------ |
+| — | — | — | (none yet — both current postmortems still have open, unfiled action items; see their files) |
+
+### 6.4 Blameless policy
 
 Postmortems focus on **system failures**, not individual errors.
 The question is never "who pushed the bad deploy" but "why did
@@ -334,7 +351,7 @@ Concretely: no postmortem section names an individual. Action
 items are framed around the system change that'd prevent a
 recurrence.
 
-### 6.4 Credential/PII exposure incidents
+### 6.5 Credential/PII exposure incidents
 
 A redaction-class fix — one that stops a credential or PII value
 from being written to the log store, e.g. `7843f129` (customer
@@ -387,8 +404,9 @@ If all oncall unreachable for > 30 min during a SEV-1:
   the drill walks through it end-to-end on a controlled-loss
   simulation.
 
-Drills produce a short writeup in `docs/operations/drills/` with
-the same action-item discipline as postmortems.
+Drills log a row — date, tier, scenario, outcome, open action
+items — in [`drills/README.md`](drills/README.md), with the same
+action-item discipline as postmortems.
 
 ---
 
