@@ -94,14 +94,14 @@ curl -s http://indexer:9464/metrics | grep insert_errors_total
       run gap-detection then backfill the affected range:
       ```sh
       # 1. Identify the lagging cursor + the (from, to) range
-      stellarindex-ops detect-gaps -config /etc/stellarindex/config.toml \
+      stellarindex-ops detect-gaps -config /etc/stellarindex.toml \
           -threshold 50
       # 2. Backfill the named range. -dry-run first to see scope.
-      stellarindex-ops backfill -config /etc/stellarindex/config.toml \
+      stellarindex-ops backfill -config /etc/stellarindex.toml \
           -from <FIRST_LEDGER> -to <LAST_LEDGER> \
           -source <SOURCE_NAME> -dry-run
       # 3. Drop -dry-run to commit.
-      stellarindex-ops backfill -config /etc/stellarindex/config.toml \
+      stellarindex-ops backfill -config /etc/stellarindex.toml \
           -from <FIRST_LEDGER> -to <LAST_LEDGER> \
           -source <SOURCE_NAME> -resume
       ```

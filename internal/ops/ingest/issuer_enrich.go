@@ -40,7 +40,8 @@ func issuerEnrich(args []string) error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	ctx := context.Background()
+	ctx, cancel := opsutil.SignalContext()
+	defer cancel()
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 	if err != nil {
 		return fmt.Errorf("postgres: %w", err)
@@ -50,6 +51,7 @@ func issuerEnrich(args []string) error {
 	if err != nil {
 		return fmt.Errorf("clickhouse: %w", err)
 	}
+	defer func() { _ = er.Close() }()
 
 	ids, err := loadIssuerGStrkeys(ctx, store)
 	if err != nil {

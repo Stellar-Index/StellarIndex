@@ -102,6 +102,52 @@ func TestReconcileSkippedNeverAssertsOK(t *testing.T) {
 	}
 }
 
+// TestServedFetchErrorIsNotAZeroRelErr — our own surface failing to answer
+// is a failed check, not a measured perfect match: it must render ok=0 and
+// no rel_err sample, never rel_err 0.
+func TestServedFetchErrorIsNotAZeroRelErr(t *testing.T) {
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "down", http.StatusInternalServerError)
+	}))
+	t.Cleanup(api.Close)
+	check := servedValueCheck{
+		name: "probe", tolerance: 0.005,
+		served: servedSupplyField("native", "total_supply", 0),
+		truth:  func(context.Context, *http.Client) (float64, error) { return 100, nil },
+	}
+	results := runChecksForTest(context.Background(), api.URL, []servedValueCheck{check})
+	if results[0].ok || results[0].skipped {
+		t.Fatalf("served fetch error must be a failed check, got ok=%v skipped=%v", results[0].ok, results[0].skipped)
+	}
+	body := renderServedValueProm(results, nil, time.Unix(1_751_000_000, 0))
+	if strings.Contains(body, `stellarindex_served_value_rel_err{check="probe"}`) {
+		t.Errorf("served fetch error must not emit a rel_err sample:\n%s", body)
+	}
+	if !strings.Contains(body, `stellarindex_served_value_ok{check="probe"} 0`) {
+		t.Errorf("served fetch error must emit ok=0:\n%s", body)
+	}
+}
+
+// TestServedValueLastRunOnlyWhenAVerdictWasReached —served_value_check_stale keys on
+// last_run_unix, so an all-skipped run (every truth source dark, nothing
+// verified) must not refresh it; a run with any verdict must.
+func TestServedValueLastRunOnlyWhenAVerdictWasReached(t *testing.T) {
+	const lastRun = "stellarindex_served_value_last_run_unix 1751000000"
+	now := time.Unix(1_751_000_000, 0)
+	dark := servedValueResult{name: "dark", relErr: math.NaN(), skipped: true}
+	darkList := &reserveListResult{skipped: true}
+
+	if body := renderServedValueProm([]servedValueResult{dark}, darkList, now); strings.Contains(body, lastRun) {
+		t.Errorf("all-skipped run must not refresh last_run_unix:\n%s", body)
+	}
+	if body := renderServedValueProm([]servedValueResult{dark, {name: "a", relErr: 0.5}}, nil, now); !strings.Contains(body, lastRun) {
+		t.Errorf("a run with a failed verdict must refresh last_run_unix:\n%s", body)
+	}
+	if body := renderServedValueProm([]servedValueResult{dark}, &reserveListResult{}, now); !strings.Contains(body, lastRun) {
+		t.Errorf("a verified reserve-list check must refresh last_run_unix:\n%s", body)
+	}
+}
+
 // runChecksForTest mirrors runServedValueChecks with an injected
 // check table.
 func runChecksForTest(ctx context.Context, apiBase string, checks []servedValueCheck) []servedValueResult {

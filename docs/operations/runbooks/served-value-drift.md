@@ -30,8 +30,10 @@ after the supply chain has refreshed for the day); the units are
 ansible-managed and installed only where the ground truth is pubnet.
 This alert means a served value sat outside its tolerance for two
 consecutive runs. The companion `_check_stale` alert means the
-harness itself is dark — timer dead, run crashing, or the timer
-never installed at all, which is why it carries an
+harness itself is dark — timer dead, run crashing, every run
+skipping every check (`last_run_unix` only advances on a run that
+reached a verdict), or the timer never installed at all, which is
+why it carries an
 `absent_over_time` arm as well as a staleness one.
 
 `_unit_failed` is the fourth, and it is the unit's exit status

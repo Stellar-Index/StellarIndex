@@ -140,7 +140,7 @@ Per-source replay (gen-stamped writers; PK-stable so idempotent):
 ```
 # -write is mandatory: ch-rebuild defaults to dry-run (count only),
 # internal/ops/chops/ch_rebuild.go:129.
-stellarindex-ops ch-rebuild -config /etc/stellarindex/stellarindex.toml \
+stellarindex-ops ch-rebuild -config /etc/stellarindex.toml \
   -sources reflector-dex,reflector-cex,reflector-fx,redstone -from <G> -to <TIP> -write
   # genesis per reconciliation_catalogue.go: dex 50_644_229, cex 50_644_239, fx 56_733_481, redstone 58_758_722
 stellarindex-ops ch-rebuild -config … -contract-calls -contracts <BAND_STANDARD_REFERENCE_C> -from <G_band> -to <TIP> -write

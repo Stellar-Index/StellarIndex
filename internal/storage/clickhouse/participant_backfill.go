@@ -71,7 +71,7 @@ func operationParticipantRows(bodyB64, opSource string, ledger uint32, closeTime
 // scanned + wrote (or, in dry-run, WOULD write).
 type ParticipantBackfillStats struct {
 	OpsScanned   uint64 // operation rows read from stellar.operations
-	Participants uint64 // non-source participant rows written (or would-write in dry-run)
+	Participants uint64 // non-source participant rows derived; all written (or would-write in dry-run) only when the run returned nil
 	DecodeErrors uint64 // op bodies that failed to decode (soft-skipped)
 }
 
