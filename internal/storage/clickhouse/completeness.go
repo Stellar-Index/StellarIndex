@@ -139,6 +139,36 @@ func contiguousWatermarkOn(ctx context.Context, conn driver.Conn, from uint32) (
 	return watermark(from, uint32(chMax), uint32(firstGap), uint32(minPresent)), nil
 }
 
+// WatermarkReader holds one pooled connection for repeated
+// ContiguousWatermark reads (T360). ContiguousWatermark itself dials a
+// fresh connection and tears it down on every call — fine for an
+// occasional read, but a caller that polls it on a cadence (the
+// real-time projector, every [Interval]) pays a full dial for a query
+// that is otherwise cheap once a source has caught up. Open once per
+// process lifetime and reuse; safe for concurrent use, the same
+// guarantee any driver.Conn gives.
+type WatermarkReader struct {
+	conn driver.Conn
+}
+
+// NewWatermarkReader opens the pooled connection.
+func NewWatermarkReader(ctx context.Context, addr string) (*WatermarkReader, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	return &WatermarkReader{conn: conn}, nil
+}
+
+// ContiguousWatermark is [ContiguousWatermark] on the reader's pooled
+// connection instead of a fresh dial per call.
+func (w *WatermarkReader) ContiguousWatermark(ctx context.Context, from uint32) (uint32, error) {
+	return contiguousWatermarkOn(ctx, w.conn, from)
+}
+
+// Close releases the pooled connection.
+func (w *WatermarkReader) Close() error { return w.conn.Close() }
+
 // LakeMinLedger returns the lowest ledger_seq present in stellar.ledgers
 // (0 when the lake is empty). It is the lower edge ContiguousWatermark
 // cannot see past: a derive that resumes from BELOW it asks for a ledger
