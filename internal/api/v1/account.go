@@ -63,12 +63,22 @@ type AccountUser struct {
 }
 
 // AccountInfo is the magic-link-session caller's parent account.
+//
+// RateLimitPerMin / MonthlyRequestQuota are the EFFECTIVE (resolved)
+// values, not the tier ceiling — GH-1074: a partner account comped
+// below the tier ceiling by [platform.Account.RateLimitPerMinOverride]
+// was invisible here, so every plan surface showed the ceiling as if
+// it were the customer's limit. [platform.Account.EffectiveRateLimitPerMin]
+// / [platform.Account.EffectiveMonthlyQuota] fold the override in the
+// same direction the auth-time cascade does (internal/auth/apikey_postgres.go).
 type AccountInfo struct {
-	ID     string `json:"id"`
-	Name   string `json:"name,omitempty"`
-	Slug   string `json:"slug,omitempty"`
-	Tier   string `json:"tier,omitempty"`
-	Status string `json:"status,omitempty"`
+	ID                  string `json:"id"`
+	Name                string `json:"name,omitempty"`
+	Slug                string `json:"slug,omitempty"`
+	Tier                string `json:"tier,omitempty"`
+	Status              string `json:"status,omitempty"`
+	RateLimitPerMin     int    `json:"rate_limit_per_min,omitempty"`
+	MonthlyRequestQuota int64  `json:"monthly_request_quota,omitempty"`
 }
 
 // SessionInfo is the wire-shape projection of a magic-link
@@ -89,6 +99,10 @@ type SessionInfo struct {
 	AccountSlug   string
 	AccountTier   string
 	AccountStatus string
+	// AccountRateLimitPerMin / AccountMonthlyRequestQuota are the
+	// EFFECTIVE (override-resolved) budgets — see [AccountInfo].
+	AccountRateLimitPerMin     int
+	AccountMonthlyRequestQuota int64
 }
 
 // SessionPeeker reads the magic-link session bound to the request
@@ -247,11 +261,13 @@ func (s *Server) handleAccountMe(w http.ResponseWriter, r *http.Request) {
 					LastLoginAt:     WireTime(sess.LastLoginAt),
 				},
 				AccountInfo: &AccountInfo{
-					ID:     sess.AccountID,
-					Name:   sess.AccountName,
-					Slug:   sess.AccountSlug,
-					Tier:   sess.AccountTier,
-					Status: sess.AccountStatus,
+					ID:                  sess.AccountID,
+					Name:                sess.AccountName,
+					Slug:                sess.AccountSlug,
+					Tier:                sess.AccountTier,
+					Status:              sess.AccountStatus,
+					RateLimitPerMin:     sess.AccountRateLimitPerMin,
+					MonthlyRequestQuota: sess.AccountMonthlyRequestQuota,
 				},
 			}
 			writeJSON(w, out, Flags{})

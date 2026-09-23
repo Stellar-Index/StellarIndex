@@ -127,6 +127,9 @@ function ProfileCard({ me }: { me: MeResponse }) {
 function PlanCard({ me }: { me: MeResponse }) {
   const tier = me.account?.tier ?? me.tier;
   const ceiling = tierCeiling(tier);
+  // Effective (override-resolved) limit — GH-1074. Session callers carry
+  // it on `account`; API-key callers already get it at the top level.
+  const rateLimit = me.account?.rate_limit_per_min ?? me.rate_limit_per_min ?? ceiling;
   const status = me.account?.status ?? 'active';
   const isPartner = ['partner', 'enterprise'].includes(
     (tier ?? '').toLowerCase(),
@@ -148,10 +151,15 @@ function PlanCard({ me }: { me: MeResponse }) {
             {tierLabel(tier)}
           </div>
           <div className="tnum text-ink-muted mt-1 text-sm">
-            {ceiling !== null
-              ? `${fmtInt(ceiling)} requests / minute`
+            {rateLimit !== null
+              ? `${fmtInt(rateLimit)} requests / minute`
               : 'Custom rate limits'}
           </div>
+          {rateLimit !== null && ceiling !== null && rateLimit !== ceiling && (
+            <div className="tnum text-ink-faint mt-0.5 text-xs">
+              Plan ceiling: {fmtInt(ceiling)} requests / minute
+            </div>
+          )}
         </div>
         {isPartner ? (
           <ButtonLink href="mailto:sales@stellarindex.io" variant="secondary">

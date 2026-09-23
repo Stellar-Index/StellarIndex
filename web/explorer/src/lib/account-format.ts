@@ -69,7 +69,14 @@ export function tierLabel(tier: string | null | undefined): string {
   return titleCase(tier);
 }
 
-/** The per-minute rate ceiling for a tier, or null if unknown. */
+/**
+ * The per-minute rate CEILING for a tier, or null if unknown. This is
+ * NOT necessarily what an account is actually limited to: a staff
+ * override (`account.rate_limit_per_min` on the /v1/account/me
+ * response) can sit below this ceiling for a comped partner. Prefer
+ * the account payload's own `rate_limit_per_min` where present;
+ * fall back to this only when that field is absent (GH-1074).
+ */
 export function tierCeiling(tier: string | null | undefined): number | null {
   if (!tier) return null;
   return TIER_RATE_CEILING[tier.toLowerCase()] ?? null;

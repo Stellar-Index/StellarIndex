@@ -117,3 +117,52 @@ func TestTierLadders(t *testing.T) {
 		}
 	}
 }
+
+// TestAccountEffectiveRateLimitPerMin pins GH-1074: a partner account
+// comped BELOW the tier ceiling must read its comped limit, not the
+// ceiling — the override is a floor that only ever RAISES the
+// effective limit above the tier default, so a low override (a
+// customer's actual paid-for limit) still reports the higher tier
+// ceiling if this regresses to "always show the ceiling".
+func TestAccountEffectiveRateLimitPerMin(t *testing.T) {
+	cases := []struct {
+		name     string
+		tier     Tier
+		override int
+		want     int
+	}{
+		{"free, no override", TierFree, 0, 1000},
+		{"partner, no override: ceiling", TierPartner, 0, 100_000},
+		{"partner, override below ceiling: still the ceiling (override only raises)", TierPartner, 5000, 100_000},
+		{"free, override above tier default: raised to the override", TierFree, 50_000, 50_000},
+	}
+	for _, c := range cases {
+		a := Account{Tier: c.tier, RateLimitPerMinOverride: c.override}
+		if got := a.EffectiveRateLimitPerMin(); got != c.want {
+			t.Errorf("%s: EffectiveRateLimitPerMin() = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestAccountEffectiveMonthlyQuota pins GH-1074's quota half: the
+// override is a ceiling that only ever LOWERS the effective quota
+// below the tier default.
+func TestAccountEffectiveMonthlyQuota(t *testing.T) {
+	cases := []struct {
+		name     string
+		tier     Tier
+		override int64
+		want     int64
+	}{
+		{"free, no override", TierFree, 0, 1_000_000},
+		{"partner, no override: ceiling", TierPartner, 0, 1_000_000_000},
+		{"partner, override below ceiling: lowered to the override", TierPartner, 200_000, 200_000},
+		{"free, override above tier default: stays at the ceiling (override only lowers)", TierFree, 5_000_000, 1_000_000},
+	}
+	for _, c := range cases {
+		a := Account{Tier: c.tier, MonthlyRequestQuotaOverride: c.override}
+		if got := a.EffectiveMonthlyQuota(); got != c.want {
+			t.Errorf("%s: EffectiveMonthlyQuota() = %d, want %d", c.name, got, c.want)
+		}
+	}
+}

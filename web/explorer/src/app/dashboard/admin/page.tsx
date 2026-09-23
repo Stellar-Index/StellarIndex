@@ -13,6 +13,7 @@ import {
   CardBody,
   Container,
   Input,
+  Mono,
   PageHeader,
   Section,
   Table,
@@ -23,6 +24,7 @@ import {
   THead,
   TR,
 } from '@/components/ui';
+import { fmtInt } from '@/lib/account-format';
 
 import { AccountGate } from '../AccountGate';
 
@@ -55,7 +57,7 @@ function AdminBody({ me }: { me: MeResponse }) {
         <PageHeader
           eyebrow="Internal"
           title="Staff cockpit"
-          description="Customer look-up by email or account slug. Tier overrides and incident tooling ship in Phase 1.5."
+          description="Customer look-up by email or account slug. Tier overrides are set via the admin API; incident tooling ships in Phase 1.5."
           actions={
             <Badge tone="brand" dot>
               Staff access
@@ -76,10 +78,17 @@ function AdminBody({ me }: { me: MeResponse }) {
                   Tier overrides
                 </div>
                 <p className="text-ink-muted mt-1 text-sm">
-                  Manually adjust an account tier or rate-limit ceiling.
+                  View an account&apos;s overrides via Customer look-up below.
+                  Setting them is API-only today —{' '}
+                  <Mono
+                    value="PATCH /v1/admin/accounts/{id}"
+                    copy={false}
+                    className="text-[12px]"
+                  />
+                  ; no form here yet.
                 </p>
               </div>
-              <Badge tone="neutral">Coming in Phase 1.5</Badge>
+              <Badge tone="neutral">API only</Badge>
             </CardBody>
           </Card>
           <Card flat>
@@ -109,7 +118,7 @@ type LookupState =
   | { kind: 'idle' }
   | { kind: 'loading' }
   | { kind: 'ok'; result: AdminLookupResult }
-  | { kind: 'error'; message: string };
+  | { kind: 'error'; title: string; message: string };
 
 function CustomerLookup() {
   const [q, setQ] = useState('');
@@ -126,13 +135,20 @@ function CustomerLookup() {
       const result = await adminLookup(query);
       setState({ kind: 'ok', result });
     } catch (err) {
-      const message =
-        err instanceof ApiError
-          ? err.status === 404
-            ? 'No matching customer.'
-            : (err.detail ?? `${err.status} ${err.message}`)
-          : 'Look-up failed.';
-      setState({ kind: 'error', message });
+      // GH-1074: every non-404 error (rate-limited, 5xx, network) used to
+      // render under a "Not found" title, which reads as "this customer
+      // doesn't exist" when the actual failure is unrelated to the query.
+      if (err instanceof ApiError && err.status === 404) {
+        setState({ kind: 'error', title: 'Not found', message: 'No matching customer.' });
+      } else if (err instanceof ApiError) {
+        setState({
+          kind: 'error',
+          title: 'Look-up failed',
+          message: err.detail ?? `${err.status} ${err.message}`,
+        });
+      } else {
+        setState({ kind: 'error', title: 'Look-up failed', message: 'Look-up failed.' });
+      }
     }
   }
 
@@ -157,7 +173,7 @@ function CustomerLookup() {
         </form>
 
         {state.kind === 'error' && (
-          <Callout tone="bad" title="Not found">
+          <Callout tone="bad" title={state.title}>
             {state.message}
           </Callout>
         )}
@@ -201,6 +217,28 @@ function LookupResult({ result }: { result: AdminLookupResult }) {
             <Badge tone={a.status === 'active' ? 'ok' : 'bad'}>
               {a.status}
             </Badge>
+          </div>
+        </div>
+        <div>
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+            Rate limit
+          </div>
+          <div className="text-ink-body tnum mt-0.5 font-mono">
+            {fmtInt(a.effective_rate_limit_per_min)}
+            {(a.rate_limit_per_min_override ?? 0) > 0 && (
+              <span className="text-ink-faint"> (overridden)</span>
+            )}
+          </div>
+        </div>
+        <div>
+          <div className="text-ink-muted text-[11px] tracking-wider uppercase">
+            Monthly quota
+          </div>
+          <div className="text-ink-body tnum mt-0.5 font-mono">
+            {fmtInt(a.effective_monthly_quota)}
+            {(a.monthly_request_quota_override ?? 0) > 0 && (
+              <span className="text-ink-faint"> (overridden)</span>
+            )}
           </div>
         </div>
       </div>
