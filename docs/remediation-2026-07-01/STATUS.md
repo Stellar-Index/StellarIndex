@@ -1,7 +1,7 @@
 ---
 title: Audit remediation — status
 date: 2026-07-01
-scope: correctness/security audit (docs/audit-2026-06-30) + maintainability audit (docs/maintainability-audit-2026-07-01)
+scope: correctness/security audit (https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit-2026-06-30) + maintainability audit (docs/maintainability-audit-2026-07-01)
 ---
 
 # Remediation status
@@ -100,7 +100,7 @@ data-gated, or are large enough to warrant their own focused change + review.
   logic-audit item. The API already has a `reference_only` flag; the full split
   (a dedicated `/v1/external/*` surface + explorer nav restructure + which assets
   belong where) is a SemVer-affecting product-design change. Needs your call on the
-  target IA before I build it. Plan: `docs/audit-2026-06-30/` (Audit-2).
+  target IA before I build it. Plan: [`docs/audit-2026-06-30/`](https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit-2026-06-30) (Audit-2).
 - **CS-026 — decoder contract-gating for phoenix/aquarius/defindex/comet.** Requires
   seeding factory/pool contract IDs (`seed-protocol-contracts`) + per-source WASM
   audits before flipping gates; data-gated, not a pure code change. Comet needs a
@@ -186,4 +186,4 @@ Every code fix built + its package tests passed at commit time; `bash
 scripts/dev/verify.sh` run before the batch pushes. Explorer changes `tsc`-clean.
 Tailwind v4 additionally spot-checked by rendering the homepage + styleguide.
 
-¹ Register note (2026-07-02): this row was originally logged as CS-008, colliding with the cold-audit's CS-008 (tenant isolation in handlers, Low — 01-cold-system-findings.md). Re-IDed here as CS-008-ssrf; the findings doc keeps the original.
+¹ Register note (2026-07-02): this row was originally logged as CS-008, colliding with the cold-audit's CS-008 (tenant isolation in handlers, Low — [01-cold-system-findings.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit-2026-06-30/01-cold-system-findings.md)). Re-IDed here as CS-008-ssrf; the findings doc keeps the original.
