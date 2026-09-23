@@ -177,6 +177,28 @@ against.
   refreshed). The 0150 register row records the operator step for its
   in-transaction `trades_signer_idx` build.
 
+- **ops — ClickHouse maintenance and Phase-D backfill scripts stop
+  reporting success on failure (#794):** `recompress-lec.sh` and
+  `recompress-others.sh` now call ClickHouse with `--fail-with-body`,
+  check every query, and exit non-zero without a `DONE`/`*_COMPLETE`
+  line when an `OPTIMIZE` or a partition is skipped or fails.
+  `recompress-others.sh` reads each table's own
+  `max_bytes_to_merge_at_max_space_in_pool` before raising it to 500 GB
+  and restores that value (or `RESET SETTING` when it was unset) on
+  success, failure and TERM/INT/HUP, instead of pinning a hardcoded
+  150 GiB. `phaseD-backfill.sh` and `phaseD-range.sh` stop non-zero after
+  `PHASED_MAX_ATTEMPTS` (default 3) consecutive failures of one window
+  instead of retrying it every 30 s forever. `lake-dedup-driver.sh`
+  refuses any table argument outside the six lake tables it is for,
+  since the name is spliced into SQL and the log path.
+  `scripts/ops/ch-maintenance-fail-closed-test.sh` pins all of it and
+  runs in `verify.sh` with the lake-dedup and D3 rebuild self-tests.
+
+- **docs / D3 runbook — reproject from v1's floor, not 38,000,000
+  (#793):** the launch plan's D3 step now computes the reproject start
+  from `min(ledger_seq)` of the served `ledger_entries_current` and says
+  that `cutover` refuses a v2 that does not cover v1.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

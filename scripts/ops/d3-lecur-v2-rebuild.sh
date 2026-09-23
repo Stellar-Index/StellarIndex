@@ -27,7 +27,8 @@
 #   rollback-precutover       drop v2 + its MV (v1 never stopped serving)
 #
 # Heavy phases (reproject) run under the wrapper:
-#   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject 38000000 63700000
+#   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject <v1-floor> <tip>
+# where <v1-floor> = SELECT min(ledger_seq) FROM stellar.ledger_entries_current.
 set -euo pipefail
 
 # Optional ops-user credentials (STELLARINDEX_CLICKHOUSE_OPS_USER/_PASSWORD,
@@ -155,7 +156,7 @@ reproject)
   # still logged "complete" — and a lower range after a higher one is the
   # normal order here, not a corner case: phaseD-backfill.sh walks
   # [54000000,63050000] and only then [2,38000000]. TO is deliberately NOT
-  # part of the key — the runbook invokes `reproject 38000000 <tip>` with a
+  # part of the key — the runbook invokes `reproject <v1-floor> <tip>` with a
   # tip that moves between runs, and a TO-keyed file would restart the whole
   # window every time the tip advanced.
   PROG="$STATE_DIR/reproject-progress.from-$FROM"
@@ -208,9 +209,8 @@ cutover)
   # deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql: "the
   # min(ledger_seq) currently in stellar.ledger_entries_current preserves
   # today's coverage floor; going lower additionally closes that floor".
-  # The launch plan's `reproject 38000000 <tip>` therefore RAISES the floor
-  # whenever v1 already reaches below 38,000,000, and nothing here would
-  # have noticed. Refusal is the default; D3_FORCE_CUTOVER=yes is the same
+  # A window started at a fixed 38,000,000 therefore RAISES the floor
+  # whenever v1 already reaches below it (Phase D fills [2,38000000]). Refusal is the default; D3_FORCE_CUTOVER=yes is the same
   # explicit acknowledgement finalize and rollback-precutover demand.
   read -r V1C V1MIN V1MAX <<< "$(coverage_of ledger_entries_current)"
   read -r V2C V2MIN V2MAX <<< "$(coverage_of ledger_entries_current_v2)"

@@ -30,6 +30,9 @@
 #      a nonzero rc.
 #   5. the ordinary success path (no failures injected) still completes,
 #      processes every candidate partition, and reports the right count.
+#   6. the <table> argument is spliced into SQL and the log path, so any
+#      name outside the lake tables the driver is for is refused before
+#      a single statement is issued.
 #
 # Run: bash deploy/clickhouse/lake-dedup-driver-test.sh
 set -uo pipefail
@@ -241,6 +244,17 @@ else
   bad "two clean candidate partitions ⇒ dup_removed not as expected"
   sed 's/^/       /' "$LOG"
 fi
+
+# ── 6. the table argument is spliced into SQL: only lake tables pass ──
+for bad_table in 'transactions GROUP BY 1; DROP TABLE stellar.ledgers --' '../../etc/cron.d/x' 'ledger_entries_current'; do
+  run bad_table -- "$bad_table"
+  if [ "$RC" -ne 0 ] && [ ! -s "$LOG_STMT" ]; then
+    ok "table '$bad_table' ⇒ refused before any statement reached ClickHouse"
+  else
+    bad "table '$bad_table' ⇒ exit $RC, statements issued:"
+    sed 's/^/       /' "$LOG_STMT"
+  fi
+done
 
 echo "----"
 echo "lake-dedup-driver-test: $pass passed, $fail failed"

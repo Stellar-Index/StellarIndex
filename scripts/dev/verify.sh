@@ -589,6 +589,9 @@ lane_d() { # everything else
     echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
     echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
+    echo "=== ClickHouse maintenance + Phase-D failure-path self-test ===" && bash scripts/ops/ch-maintenance-fail-closed-test.sh
+    echo "=== Lake-dedup driver self-test ===" && bash deploy/clickhouse/lake-dedup-driver-test.sh
+    echo "=== D3 current-state rebuild self-test (cutover coverage gate) ===" && bash scripts/ops/d3-lecur-v2-rebuild-test.sh
     # Prometheus rule files. Graceful-skip when promtool isn't
     # installed locally — CI installs it explicitly. The Makefile
     # target hard-fails on missing promtool; verify.sh wraps it with

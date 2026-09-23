@@ -4,27 +4,52 @@
 # disk-guarded. Skips degraded partitions (Phase D overwrites them) and the live
 # tip (new inserts already land ZSTD). Idempotent: re-running just re-OPTIMIZEs
 # (cheap no-op on already-ZSTD partitions). Resumable: safe to restart.
+# RECOMPRESS_COMPLETE is logged, and the exit is 0, only when every partition
+# was rewritten; a failed query or a skipped partition exits non-zero.
 set -uo pipefail
-LOG=/var/log/recompress-lec.log
+LOG="${RECOMPRESS_LOG:-/var/log/recompress-lec.log}"
 FLOOR_KB=524288000   # 500 GiB abort floor
-CH(){ curl -sS 'http://localhost:8123/' --data-binary "$1"; }
+# ClickHouse reports an exception as HTTP 500 with the message in the body;
+# without --fail-with-body curl exits 0 and the error reads as a result.
+CH(){ curl -sS --fail-with-body 'http://localhost:8123/' --data-binary "$1"; }
+log(){ echo "$(date -u +%FT%TZ) $*" >> "$LOG"; }
+# num <label> <sql> — print the query's single numeric result, or log why not and fail.
+num(){
+  local out
+  if ! out=$(CH "$2" 2>&1); then log "ABORT $1 query failed: $out"; return 1; fi
+  case "$out" in ''|*[!0-9]*) log "ABORT $1='$out' is not a number"; return 1 ;; esac
+  printf '%s' "$out"
+}
 
-PARTS=$(CH "SELECT partition FROM system.parts WHERE database='stellar' AND table='ledger_entry_changes' AND active AND toUInt32(partition) BETWEEN 38 AND 53 GROUP BY partition ORDER BY sum(bytes_on_disk) DESC")
-echo "$(date -u +%FT%TZ) RECOMPRESS_START order:$(echo $PARTS | tr '\n' ' ')" >> "$LOG"
+if ! PARTS=$(CH "SELECT partition FROM system.parts WHERE database='stellar' AND table='ledger_entry_changes' AND active AND toUInt32(partition) BETWEEN 38 AND 53 GROUP BY partition ORDER BY sum(bytes_on_disk) DESC" 2>&1); then
+  log "ABORT partition-list query failed: $PARTS"; exit 1
+fi
+log "RECOMPRESS_START order:$(echo "$PARTS" | tr '\n' ' ')"
 
+skipped=0
 for p in $PARTS; do
+  case "$p" in *[!0-9]*) log "ABORT partition id '$p' is not numeric"; exit 1 ;; esac
   avail=$(df --output=avail -k /var/lib/clickhouse | tail -1 | tr -d ' ')
-  case "$avail" in ''|*[!0-9]*) echo "$(date -u +%FT%TZ) p$p SKIP df-glitch" >> "$LOG"; sleep 30; continue ;; esac
+  case "$avail" in ''|*[!0-9]*) log "p$p SKIP df-glitch"; skipped=$((skipped + 1)); sleep 30; continue ;; esac
   if [ "$avail" -lt "$FLOOR_KB" ]; then
-    echo "$(date -u +%FT%TZ) ABORT <500GiB free (${avail}KiB) before p$p" >> "$LOG"; exit 1
+    log "ABORT <500GiB free (${avail}KiB) before p$p"; exit 1
   fi
-  before=$(CH "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='stellar' AND table='ledger_entry_changes' AND active AND partition='$p'")
-  echo "$(date -u +%FT%TZ) p$p START before=${before}B avail=${avail}KiB" >> "$LOG"
-  CH "OPTIMIZE TABLE stellar.ledger_entry_changes PARTITION ID '$p' FINAL" >> "$LOG" 2>&1
+  before=$(num "p$p before" "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='stellar' AND table='ledger_entry_changes' AND active AND partition='$p'") || exit 1
+  log "p$p START before=${before}B avail=${avail}KiB"
+  if ! CH "OPTIMIZE TABLE stellar.ledger_entry_changes PARTITION ID '$p' FINAL" >> "$LOG" 2>&1; then
+    log "p$p FAILED: OPTIMIZE returned an error (logged above) — aborting; re-run to resume"; exit 1
+  fi
   # belt-and-suspenders: wait out any lingering merge on this partition
-  while [ "$(CH "SELECT count() FROM system.merges WHERE database='stellar' AND table='ledger_entry_changes' AND partition_id='$p'")" != "0" ]; do sleep 20; done
-  after=$(CH "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='stellar' AND table='ledger_entry_changes' AND active AND partition='$p'")
-  tip=$(CH "SELECT max(ledger_seq) FROM stellar.ledgers")
-  echo "$(date -u +%FT%TZ) p$p DONE after=${after}B saved=$(( (before - after) / 1073741824 ))GiB live_tip=${tip}" >> "$LOG"
+  while :; do
+    merging=$(num "p$p merges" "SELECT count() FROM system.merges WHERE database='stellar' AND table='ledger_entry_changes' AND partition_id='$p'") || exit 1
+    [ "$merging" = 0 ] && break
+    sleep 20
+  done
+  after=$(num "p$p after" "SELECT sum(bytes_on_disk) FROM system.parts WHERE database='stellar' AND table='ledger_entry_changes' AND active AND partition='$p'") || exit 1
+  tip=$(num "live tip" "SELECT max(ledger_seq) FROM stellar.ledgers") || exit 1
+  log "p$p DONE after=${after}B saved=$(( (before - after) / 1073741824 ))GiB live_tip=${tip}"
 done
-echo "$(date -u +%FT%TZ) RECOMPRESS_COMPLETE" >> "$LOG"
+if [ "$skipped" -gt 0 ]; then
+  log "RECOMPRESS_INCOMPLETE skipped=$skipped partition(s) — re-run to cover them"; exit 1
+fi
+log "RECOMPRESS_COMPLETE"
