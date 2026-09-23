@@ -71,14 +71,15 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 				return
 			}
 			deadlineFired := new(atomic.Bool)
-			r = r.WithContext(context.WithValue(r.Context(), readDeadlineKey{}, deadlineFired))
+			reqCtx := r.Context()
+			r = r.WithContext(context.WithValue(reqCtx, readDeadlineKey{}, deadlineFired))
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			units := &usageUnits{n: 1}
 			// endpointFamily reads the dispatched copy: its r.Pattern
 			// fallback is set on the request the mux actually received.
 			inner := r.WithContext(context.WithValue(r.Context(), usageUnitsKey{}, units))
 			next.ServeHTTP(rec, inner)
-			subject, ok := auth.SubjectFrom(r.Context())
+			subject, ok := auth.SubjectFrom(reqCtx)
 			if !ok {
 				return
 			}
@@ -110,7 +111,7 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			// wire, so it holds for every store wired here today; a driver
 			// that ignored ctx would block the request goroutine for its own
 			// timeout instead.
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), postResponseWriteTimeout)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), postResponseWriteTimeout)
 			defer cancel()
 			n := units.get()
 			if billableClass(class, deadlineFired.Load()) {
