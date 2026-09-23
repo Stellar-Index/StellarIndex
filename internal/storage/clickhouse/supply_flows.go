@@ -184,19 +184,6 @@ func assembleTokenSupply(contractID, mintS, burnS, clawbackS string, flows uint6
 	}
 }
 
-// SupplyForContract returns a token's current supply by summing its
-// supply_flows directly — always current (the dual-sink feeds the table in real
-// time), no rollup refresh. Opens a connection per call; for a hot path (the
-// API) hold a [SupplyReader] instead.
-func SupplyForContract(ctx context.Context, addr, contractID string) (TokenSupply, error) {
-	conn, err := openRead(ctx, addr)
-	if err != nil {
-		return TokenSupply{}, err
-	}
-	defer func() { _ = conn.Close() }()
-	return querySupply(ctx, conn, contractID)
-}
-
 // SupplyReader is a persistent ClickHouse connection for serving per-token
 // supply from supply_flows on a request hot path (the API). Construct once at
 // startup, reuse across requests, Close at shutdown.
