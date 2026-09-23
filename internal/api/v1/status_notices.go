@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -248,16 +249,20 @@ func (s *Server) handleAdminStatusNoticeResolve(w http.ResponseWriter, r *http.R
 	writeJSON(w, statusNoticeView(resolved), Flags{})
 }
 
+// noticeBodyMaxBytes admits a maximal notice — title 200 + body 5000 code
+// points at up to 4 UTF-8 bytes each — plus JSON framing.
+const noticeBodyMaxBytes = 32 << 10
+
 // parseCreateNoticeRequest reads + validates the create body. ok=false
 // means a problem+json was already written.
 func parseCreateNoticeRequest(w http.ResponseWriter, r *http.Request) (adminCreateNoticeRequest, bool) {
 	var req adminCreateNoticeRequest
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 8*1024))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, noticeBodyMaxBytes))
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/body-too-large",
 			"Request body too large", http.StatusBadRequest,
-			"/v1/admin/status-notices body must be under 8 KiB")
+			"/v1/admin/status-notices body must be under 32 KiB")
 		return req, false
 	}
 	if len(body) > 0 {
@@ -269,14 +274,14 @@ func parseCreateNoticeRequest(w http.ResponseWriter, r *http.Request) (adminCrea
 			return req, false
 		}
 	}
-	if req.Title == "" || len(req.Title) > 200 {
+	if req.Title == "" || utf8.RuneCountInString(req.Title) > 200 {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-title",
 			"Title is required", http.StatusBadRequest,
 			"title must be 1–200 characters")
 		return req, false
 	}
-	if req.Body == "" || len(req.Body) > 5000 {
+	if req.Body == "" || utf8.RuneCountInString(req.Body) > 5000 {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-notice-body",
 			"Body is required", http.StatusBadRequest,

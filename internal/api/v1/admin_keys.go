@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -317,7 +318,7 @@ func parseAdminCreateKeyRequest(w http.ResponseWriter, r *http.Request) (adminCr
 			"identifier names the owner reference the minted key authenticates as")
 		return req, false
 	}
-	if req.Label == "" || len(req.Label) > 128 {
+	if req.Label == "" || utf8.RuneCountInString(req.Label) > 128 {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/missing-label",
 			"Label is required", http.StatusBadRequest,

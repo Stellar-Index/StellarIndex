@@ -256,10 +256,12 @@ paths:
           description: The lake is reachable — route lake traffic here.
           content:
             application/json:
+              schema: { $ref: "#/components/schemas/LakeHealthEnvelope" }
               example:
                 data:
                   status: ok
                 as_of: '2026-08-21T22:40:00Z'
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
         "503":
           description: |
             The lake is unreachable (`data.status` = `lake-unready`) or
@@ -274,11 +276,13 @@ paths:
             ping error is logged by the API server.
           content:
             application/json:
+              schema: { $ref: "#/components/schemas/LakeHealthEnvelope" }
               example:
                 data:
                   status: lake-unready
                   detail: "clickhouse ping failed — see the API server log for the underlying error"
                 as_of: '2026-08-21T22:40:00Z'
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
 
   /version:
     get:
@@ -5568,31 +5572,13 @@ paths:
                             required: [contracts, event_kinds]
                             properties:
                               bespoke:
-                                type: object
-                                additionalProperties: true
+                                allOf: [{ $ref: "#/components/schemas/ProtocolBespoke" }]
                                 description: |
-                                  Per-category analytics block (dex / amm /
-                                  lending / yield / oracle / bridge — see
-                                  internal/api/v1/protocols.go ProtocolBespoke).
-                                  Top-level keys vary by protocol category;
-                                  documented as a free-form object because the
-                                  per-category sub-shapes evolve with each
-                                  protocol integration (spec'd loosely on
-                                  purpose, board #33 — x-stability:
+                                  Per-category analytics block. Absent when no bespoke reader is
+                                  wired or the category has none yet. The fixed top-level shape is
+                                  typed; the labels, series names and table titles inside it vary by
+                                  protocol category and evolve with each integration (x-stability:
                                   experimental per ADR-0042 applies).
-
-                                  Shared sub-shapes: `kpis` (label/value/
-                                  unit/hint cards), `series` (named
-                                  {date, value} time-series; values are
-                                  numeric STRINGS — ADR-0003), `tables`
-                                  (title/columns/rows), `notes` (caveat
-                                  lines), and — since 1.15.0 —
-                                  `breakdowns`: named composition datasets
-                                  for donut/pie rendering
-                                  ({title, unit, rows: [{label, value,
-                                  count}]}, value-sorted descending;
-                                  e.g. CCTP's "Inflows by source chain" /
-                                  "Outflows by destination chain").
                               contracts:
                                 type: array
                                 description: |
@@ -14060,6 +14046,97 @@ components:
 
     # One protocol-directory row (/protocols and the base of
     # /protocols/{name}'s detail view).
+    ProtocolBespoke:
+      type: object
+      description: |
+        Per-category protocol analytics (`GET /v1/protocols/{name}`
+        `data.bespoke`). Every value the server renders is a STRING it
+        formatted itself; numeric values are decimal strings (ADR-0003).
+      properties:
+        category:
+          type: string
+          description: Metric family, e.g. `dex`, `lending`, `yield`, `oracle`, `bridge`.
+        kpis:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeKPI" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeSeries" }
+        breakdowns:
+          type: array
+          description: Named composition datasets for donut/pie rendering, value-sorted descending.
+          items: { $ref: "#/components/schemas/BespokeBreakdown" }
+        tables:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeTable" }
+        notes:
+          type: array
+          description: Caveat / provenance lines rendered under the block.
+          items: { type: string }
+      required: [category]
+
+    BespokeKPI:
+      type: object
+      description: One headline metric card. `value` is pre-formatted; `unit` is advisory.
+      properties:
+        label: { type: string }
+        value: { type: string }
+        unit:  { type: string }
+        hint:  { type: string }
+      required: [label, value]
+
+    BespokeSeries:
+      type: object
+      description: A named time-series for a chart.
+      properties:
+        name:   { type: string }
+        unit:   { type: string }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeSeriesPoint" }
+      required: [name, points]
+
+    BespokeSeriesPoint:
+      type: object
+      properties:
+        date:  { type: string }
+        value: { type: string, description: "Decimal string (ADR-0003)." }
+      required: [date, value]
+
+    BespokeBreakdown:
+      type: object
+      description: A named composition dataset, window-scoped.
+      properties:
+        title: { type: string }
+        unit:  { type: string }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeBreakdownRow" }
+      required: [title, rows]
+
+    BespokeBreakdownRow:
+      type: object
+      properties:
+        label: { type: string }
+        value: { type: string, description: "Decimal string (ADR-0003)." }
+        count: { type: integer, format: int64, description: "Contributing transfers/events." }
+      required: [label, value, count]
+
+    BespokeTable:
+      type: object
+      description: A named top-N table; the server formats every cell.
+      properties:
+        title:   { type: string }
+        columns:
+          type: array
+          items: { type: string }
+        rows:
+          type: array
+          items:
+            type: array
+            items: { type: string }
+      required: [title, columns, rows]
+
     ProtocolRow:
       type: object
       required:
@@ -16656,6 +16733,30 @@ components:
             data: { $ref: "#/components/schemas/ReadyResponse" }
           required: [data]
 
+    # /livez/lake body (enveloped). See server.go computeLivezLake.
+    LakeHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, lake-unready, lake-absent]
+          description: |
+            `ok` (HTTP 200) when the ClickHouse checker pinged;
+            `lake-unready` (503) when the ping failed; `lake-absent`
+            (503) when no lake is wired.
+        detail:
+          type: string
+          description: Fixed operator hint; present only on a 503. Never the driver error.
+      required: [status]
+
+    LakeHealthEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/LakeHealth" }
+          required: [data]
+
     VersionResponse:
       allOf:
         - { $ref: "#/components/schemas/EnvelopeMeta" }
@@ -18656,13 +18757,11 @@ components:
       type: object
       properties:
         user:
-          type: object
-          additionalProperties: true
-          description: "Magic-link session caller's user info (id, email, display_name, role, is_staff, …) — present on cookie-session /v1/account/me responses only (account.go AccountUser)."
+          allOf: [{ $ref: "#/components/schemas/AccountUser" }]
+          description: "Magic-link session caller's user info — present on cookie-session /v1/account/me responses only."
         account:
-          type: object
-          additionalProperties: true
-          description: "Session caller's parent account (id, name, slug, tier, status) — present on cookie-session responses only (account.go AccountInfo)."
+          allOf: [{ $ref: "#/components/schemas/AccountInfo" }]
+          description: "Session caller's parent account — present on cookie-session responses only."
         key_id:           { type: string }
         label:            { type: string }
         key_prefix:
@@ -18682,6 +18781,38 @@ components:
             endpoints; never issued to a public caller.
         rate_limit_per_min: { type: integer }
         created_at:       { type: string, format: date-time }
+
+    AccountUser:
+      type: object
+      description: The magic-link session caller (a dashboard user).
+      properties:
+        id:           { type: string, format: uuid }
+        email:        { type: string }
+        display_name: { type: string }
+        role:
+          type: string
+          enum: [owner, admin, billing, member, viewer]
+          description: The user's role on the parent account.
+        is_staff:     { type: boolean, description: "Operator staff flag — gates the staff dashboard." }
+        email_verified_at: { type: string, format: date-time }
+        last_login_at:     { type: string, format: date-time }
+      required: [id, email, is_staff]
+
+    AccountInfo:
+      type: object
+      description: The session caller's parent account.
+      properties:
+        id:     { type: string, format: uuid }
+        name:   { type: string }
+        slug:   { type: string }
+        tier:
+          type: string
+          description: |
+            The stored account tier: `free` or `partner`, or a legacy
+            pre-free-platform value (`starter`, `pro`, `business`,
+            `enterprise`) still present on older rows.
+        status: { type: string, enum: [active, suspended, closed] }
+      required: [id]
 
     AccountEnvelope:
       allOf:
@@ -18737,34 +18868,36 @@ components:
               items: { $ref: "#/components/schemas/UsageRow" }
           required: [data]
 
+    KeyCreated:
+      type: object
+      properties:
+        key_id:     { type: string }
+        plaintext:  { type: string, description: "Shown once. Store it now." }
+        key_prefix:
+          type: string
+          description: |
+            First 12 characters of the plaintext (e.g.
+            `sip_4f9c1d8b`). Safe to display in logs and
+            dashboards; customers use it to identify
+            which key matches a row in their secret
+            manager. Same value also returned by GET
+            `/v1/account/keys`.
+        label:      { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+          description: |
+            Capability scopes the key was minted with.
+            Absent/empty = full access (the pre-scopes
+            posture).
+      required: [key_id, plaintext, label]
+
     KeyCreatedEnvelope:
       allOf:
         - { $ref: "#/components/schemas/EnvelopeMeta" }
         - type: object
           properties:
-            data:
-              type: object
-              properties:
-                key_id:     { type: string }
-                plaintext:  { type: string, description: "Shown once. Store it now." }
-                key_prefix:
-                  type: string
-                  description: |
-                    First 12 characters of the plaintext (e.g.
-                    `sip_4f9c1d8b`). Safe to display in logs and
-                    dashboards; customers use it to identify
-                    which key matches a row in their secret
-                    manager. Same value also returned by GET
-                    `/v1/account/keys`.
-                label:      { type: string }
-                scopes:
-                  type: array
-                  items: { type: string }
-                  description: |
-                    Capability scopes the key was minted with.
-                    Absent/empty = full access (the pre-scopes
-                    posture).
-              required: [key_id, plaintext, label]
+            data: { $ref: "#/components/schemas/KeyCreated" }
           required: [data]
 
     AdminAccountView:

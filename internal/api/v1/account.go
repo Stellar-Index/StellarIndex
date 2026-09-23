@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -166,7 +167,7 @@ type KeyCreated struct {
 	KeyID     string   `json:"key_id"`
 	Plaintext string   `json:"plaintext"`
 	KeyPrefix string   `json:"key_prefix,omitempty"`
-	Label     string   `json:"label,omitempty"`
+	Label     string   `json:"label"`
 	Scopes    []string `json:"scopes,omitempty"`
 }
 
@@ -605,7 +606,7 @@ func parseCreateKeyRequest(w http.ResponseWriter, r *http.Request) (createKeyReq
 			"the new key needs a label so the customer can identify it later")
 		return req, false
 	}
-	if len(req.Label) > 128 {
+	if utf8.RuneCountInString(req.Label) > 128 {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/label-too-long",
 			"Label too long", http.StatusBadRequest,
