@@ -368,23 +368,51 @@ for b in ${manifest_set}; do
   else printf '%s\t-\n' \"\$b\"; fi
 done"
     if sidecars="$(ssh_read "$sidecar_script")" && [ -n "$sidecars" ]; then
-        candidates=""
         while IFS=$'\t' read -r bin ver; do
             [ -n "$bin" ] || continue
             live_pairs+=("${bin}=${ver}")
-            [ "$bin" = stellarindex-migrate ] && continue
-            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' <<<"$ver" && candidates="${candidates}${ver}"$'\n'
         done <<<"$(tr -d '\r' <<<"$sidecars")"
+    else
+        block "could not read the deployed-versions sidecars on ${HOST}; deploy.yml FAILS CLOSED on exactly this read rather than falling back"
+    fi
+
+    # The config-apply baseline itself, byte-for-byte deploy.yml's "Capture
+    # the host's live version" step: EVERY deployed-versions sidecar FILE
+    # PRESENT on the host, not just the binaries ${manifest_set} currently
+    # deploys there. deploy-one-binary.yml writes the sidecar before the
+    # restart, so a binary excluded from this region's deployable set (a
+    # unit disabled, masked, or off) can still have a sidecar from an
+    # earlier deploy, and deploy.yml's baseline still counts it. Scoping
+    # this read to manifest_set — as section 2's per-binary table correctly
+    # does for ITS purpose — silently dropped that sidecar and could report
+    # "nothing outstanding" on a range the gate itself fails (#556).
+    # shellcheck disable=SC2016  # single-quoted on purpose: this is
+    # evaluated by the REMOTE shell, byte-for-byte deploy.yml's own
+    # baseline snippet, and must not expand locally.
+    baseline_remote='d=/var/lib/stellarindex/deployed-versions;
+            [ -d "$d" ] || exit 0;
+            for f in "$d"/stellarindex-*; do
+              [ -e "$f" ] || continue;
+              case "$f" in *stellarindex-migrate) continue ;; esac;
+              awk 1 "$f" || exit 3;
+            done;
+            exit 0'
+    if baseline_raw="$(ssh_read "$baseline_remote")"; then
+        candidates=""
+        while IFS= read -r ver; do
+            [ -n "$ver" ] || continue
+            grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$' <<<"$ver" && candidates="${candidates}${ver}"$'\n'
+        done <<<"$(tr -d '\r' <<<"$baseline_raw")"
         if [ -n "$candidates" ]; then
             # printf '%s', not a here-string: <<< appends a newline of its
             # own, and the resulting blank line sorts FIRST under -V, so the
             # baseline came back empty and silently fell through to ancestry.
             sorted="$(printf '%s' "$candidates" | sort -V)"
             BASELINE="$(sed -n '1p' <<<"$sorted")"
-            baseline_source="host sidecars (lowest across binaries, migrate excluded)"
+            baseline_source="host sidecars (lowest across every deployed binary, migrate excluded)"
         fi
     else
-        block "could not read the deployed-versions sidecars on ${HOST}; deploy.yml FAILS CLOSED on exactly this read rather than falling back"
+        block "could not read the deployed-versions sidecars on ${HOST} for the config-apply baseline; deploy.yml FAILS CLOSED on exactly this read rather than falling back"
     fi
 fi
 
