@@ -314,6 +314,50 @@ func TestCrossCheckRefresher_FullWrapStillAlertsOnMismatch(t *testing.T) {
 	}
 }
 
+// TestCrossCheckRefresher_PartialWrapEscrowExceedsSacFires is the leg-2
+// regression test (GH-1207): since the 2026-08-05 leg-1 downgrade to
+// diagnostic-only, leg 2 (classic.SACWrappedStroops ≤ sac.TotalSupply)
+// is the ONLY direction that can raise
+// stellarindex_supply_cross_check_divergence_stroops, yet every other
+// partial-wrap fixture in this file leaves SACWrappedStroops nil, so
+// CrossCheckSubsetBound's leg 2 never evaluates (SubsetBoundChecked
+// stays false) through this refresher's production entry point. A
+// classic snapshot recording more escrowed-in-SAC stroops than the
+// SAC's own total_supply is impossible under correct accounting and
+// MUST page.
+func TestCrossCheckRefresher_PartialWrapEscrowExceedsSacFires(t *testing.T) {
+	t.Parallel()
+	reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
+		"USDC:G...": {
+			AssetKey:          "USDC:G...",
+			TotalSupply:       big.NewInt(100_000_000_000),
+			SACWrappedStroops: big.NewInt(100_000_000_010),
+		},
+		"CCONTRACT": {AssetKey: "CCONTRACT", TotalSupply: big.NewInt(100_000_000_000)},
+	}}
+	emitter := &captureEmitter{}
+	r, _ := supply.NewCrossCheckRefresher(
+		[]supply.CrossCheckPair{{ClassicKey: "USDC:G...", SACKey: "CCONTRACT", WrapClass: supply.WrapClassPartial}},
+		reader, emitter, newSilentLogger(),
+	)
+	got := r.Tick(context.Background())
+	if len(got) != 1 || got[0].Kind != supply.CrossCheckOutcomeOver {
+		t.Fatalf("Tick: got %#v, want one Over (escrow exceeding sac_total must page)", got)
+	}
+	if !got[0].Result.SubsetBoundChecked {
+		t.Fatal("SubsetBoundChecked = false, want true: leg 2 must have evaluated")
+	}
+	if got[0].Result.EscrowExcessStroops == nil || got[0].Result.EscrowExcessStroops.Cmp(big.NewInt(10)) != 0 {
+		t.Fatalf("escrow excess stroops: got %v, want 10", got[0].Result.EscrowExcessStroops)
+	}
+	if len(emitter.divergences) != 1 || emitter.divergences[0].Stroops != 10 {
+		t.Fatalf("emitted divergence: got %v, want 10", emitter.divergences)
+	}
+	if len(emitter.outcomes) != 1 || emitter.outcomes[0].Kind != supply.CrossCheckOutcomeOver {
+		t.Fatalf("outcomes: %v, want one over", emitter.outcomes)
+	}
+}
+
 // TestCrossCheckRefresher_MissingSnapshot — no rows yet for either
 // side → "missing_snapshot" outcome and NO gauge update (the
 // bootstrap state must not look like "checked, agreed").

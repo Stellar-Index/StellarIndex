@@ -54,9 +54,9 @@ import (
 // Guarding the template text rather than a plan is deliberate, for the
 // reason [TestBothDirectionReadersUseUnionNotOr] gives: it needs no
 // database, so a regression fails in the unit suite instead of surfacing
-// as production latency. The behaviour-level counterpart — that the plan
-// really does stop reading at the 24-hour boundary — is
-// TestPairMarket_DoesNotScanTheWholeRecencyWindow in test/integration.
+// as production latency. The behaviour-level counterpart — that the
+// served values are correct at the 24-hour / recency-window boundaries —
+// is TestPairMarket_BothDirectionsAndWindowBoundaries in test/integration.
 func TestPairMarketQueryShape(t *testing.T) {
 	q := pairMarketQuery
 
@@ -116,6 +116,20 @@ func TestPairMarketQueryShape(t *testing.T) {
 		t.Error("pairMarketQuery computes count_24h as a FILTER over a wider scan. " +
 			"Bind the 24-hour predicate into the scan itself so the planner reads " +
 			"only the last day's chunks")
+	}
+	// Every non-$1 branch (count_24h x2, vol_24h_usd x2, last_price x2)
+	// must carry its own 24-hour bound. $1/$2/$3 checks above prove the
+	// $1 branches are the ONLY 14-day reads; this proves the other six
+	// are each individually bounded rather than one of them silently
+	// reading unbounded (worse than the 14-day scan this guard replaced)
+	// or riding the 14-day window back in.
+	if n := strings.Count(q, "NOW() - INTERVAL '24 hours'"); n != 6 {
+		t.Errorf("pairMarketQuery has %d \"NOW() - INTERVAL '24 hours'\" bounds, want "+
+			"6 — one on each of count_24h's two directions, vol_24h_usd's two "+
+			"directions and last_price's two directions. Fewer means a branch lost "+
+			"its bound (an unbounded prices_1m/trades walk); more means a bound was "+
+			"duplicated onto a branch that should stay a $1 recency-window probe."+
+			"\n\nquery:\n%s", n, q)
 	}
 
 	// ── determinism: the last_price sort needs a total order ──

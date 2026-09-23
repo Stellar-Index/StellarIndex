@@ -307,13 +307,31 @@ func TestRejectAggregatorOutliers(t *testing.T) {
 	})
 
 	t.Run("always_keeps_at_least_one", func(t *testing.T) {
-		// A pathological 3-way split still yields a non-empty survivor
-		// set (the median centre is always a survivor).
+		// A pathological 3-way split (1, 1000, 1000000 — a 1000x low
+		// print and a 1000x high print either side of the median) still
+		// yields a non-empty survivor set (the median centre is always
+		// a survivor), AND — GH-1211 — the survivor set must actually
+		// exclude both divergent prints, not just be non-empty: a
+		// downward-blind band would let the 1000x-low print "a" survive
+		// alongside the median while only trimming the high side, which
+		// `len(kept) == 0` can never distinguish from the correct
+		// symmetric reject.
 		rows := []canonical.OracleUpdate{
 			mkAggRow("a", 100, 2), mkAggRow("b", 100000, 2), mkAggRow("c", 100000000, 2),
 		}
-		if kept := rejectAggregatorOutliers(rows); len(kept) == 0 {
+		kept := rejectAggregatorOutliers(rows)
+		if len(kept) == 0 {
 			t.Fatal("rejectAggregatorOutliers must never fail closed to zero survivors")
+		}
+		got := sourceSet(kept)
+		if got["a"] {
+			t.Errorf("kept = %v, want the 1000x-low print (a) dropped along with the 1000x-high print (c)", got)
+		}
+		if got["c"] {
+			t.Errorf("kept = %v, want the 1000x-high print (c) dropped", got)
+		}
+		if !got["b"] {
+			t.Errorf("kept = %v, want the median source (b) to survive", got)
 		}
 	})
 }
