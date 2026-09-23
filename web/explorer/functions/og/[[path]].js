@@ -1,4 +1,4 @@
-import { ImageResponse } from 'workers-og';
+import { ImageResponse, loadGoogleFont } from 'workers-og';
 
 // Dynamic OG card generator (SEO plan D7). GET /og/{type}/{id} → a 1200×630 PNG
 // (satori + resvg-wasm on CF Pages Functions), edge-cached. Market cards carry
@@ -126,6 +126,68 @@ export function resetOgGatesForTest() {
   upstreamFailures = 0;
   upstreamOpenUntil = 0;
   rateLimitBuckets = new Map();
+  cardFont = null;
+}
+
+// T246: with no `fonts` option workers-og fetches Google Fonts inside its
+// lazy PNG stream with no timeout, after a 200 + public Cache-Control is
+// already committed. Load the same default font here, bounded, once per
+// isolate; a failure is not memoized so the next request retries.
+const FONT_TIMEOUT_MS = 3000;
+let cardFont = null; // Promise<ArrayBuffer> | null
+
+function loadCardFont() {
+  if (!cardFont) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error('og font load timed out')),
+        FONT_TIMEOUT_MS,
+      );
+    });
+    cardFont = Promise.race([
+      loadGoogleFont({ family: 'Bitter', weight: 600 }),
+      timeout,
+    ]).finally(() => clearTimeout(timer));
+    cardFont.catch(() => {
+      cardFont = null;
+    });
+  }
+  return cardFont;
+}
+
+// Buffers the render so a font or satori/resvg failure is catchable here
+// instead of erroring the body of an already-sent, edge-cacheable 200.
+async function renderCard(html) {
+  const fontData = await loadCardFont();
+  const res = new ImageResponse(html, {
+    width: 1200,
+    height: 630,
+    fonts: [{ name: 'Bitter', data: fontData, weight: 600, style: 'normal' }],
+    // F087: workers-og builds its own headers object with a 'Cache-Control'
+    // key, then spreads this object in afterward — plain JS object keys are
+    // case-sensitive, so a differently-cased key here creates a SECOND
+    // property that survives into the Headers init and gets appended
+    // (not overridden), producing a doubled header value. Match the exact
+    // casing so this key overrides the library's default instead.
+    headers: {
+      'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300',
+    },
+  });
+  const png = await res.arrayBuffer();
+  return new Response(png, { status: res.status, headers: res.headers });
+}
+
+// Falls back to the site-wide static card; no-store so a transient font or
+// render outage is not pinned at the edge or by a link-preview crawler.
+function staticCardFallback(requestUrl) {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      location: new URL('/og.png', requestUrl).toString(),
+      'cache-control': 'no-store',
+    },
+  });
 }
 
 // Exported for unit tests only (functions/og/og.test.js) — CF Pages only
@@ -268,17 +330,10 @@ export async function onRequest(context) {
       <div style="display:flex;font-size:26px;color:#8a93a6;">${esc(url.hostname)}</div>
     </div>`;
 
-  return new ImageResponse(html, {
-    width: 1200,
-    height: 630,
-    // F087: workers-og builds its own headers object with a 'Cache-Control'
-    // key, then spreads this object in afterward — plain JS object keys are
-    // case-sensitive, so a differently-cased key here creates a SECOND
-    // property that survives into the Headers init and gets appended
-    // (not overridden), producing a doubled header value. Match the exact
-    // casing so this key overrides the library's default instead.
-    headers: {
-      'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300',
-    },
-  });
+  try {
+    return await renderCard(html);
+  } catch (err) {
+    console.error('og render failed', err);
+    return staticCardFallback(request.url);
+  }
 }
