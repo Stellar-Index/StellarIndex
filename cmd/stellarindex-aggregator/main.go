@@ -617,6 +617,60 @@ func run(cfgPath string, dryRun bool) error {
 		Logger:           logger,
 	})
 
+	// ─── Fallible startup constructors ───────────────────────────
+	// Built here, before the dry-run early-return, so a config that
+	// opens every connection above but can't construct one of these
+	// fails -dry-run instead of only surfacing at a real start (T184:
+	// changesummary.New, the ClickHouse close-time reader, and the
+	// supply / cross-check refresher builders all used to run after
+	// the dry-run check).
+	changeSummaryWorker, err := changesummary.New(
+		changeSummaryPriceSource{store: store},
+		changeSummarySink{store: store},
+		buildChangeSummaryEntities(pairs),
+		logger.With("component", "change-summary"),
+		changesummary.Options{Interval: 5 * time.Minute},
+	)
+	if err != nil {
+		return fmt.Errorf("change-summary worker init: %w", err)
+	}
+
+	var supplyRefresherBindings []supplyRefresherBinding
+	var ccRefresher *supply.CrossCheckRefresher
+	if cfg.Supply.AggregatorRefreshEnabled {
+		// Close-time source for the snapshot ObservedAt (audit M4-callers):
+		// each refresh stamps the snapshot ledger's REAL close_time from the
+		// ClickHouse lake, never the wall-clock write-time. Required for the
+		// aggregator supply-refresh path — without an authoritative close-time
+		// source a re-derive would corrupt point-in-time supply queries, so we
+		// fail closed at startup rather than silently fall back to time.Now().
+		if cfg.Storage.ClickHouseAddr == "" {
+			return errors.New("supply aggregator refresh requires storage.clickhouse_addr (source of the ledger close time stamped as snapshot ObservedAt) — set it or disable [supply] aggregator_refresh_enabled")
+		}
+		supplyCloseTimes, err := clickhouse.NewExplorerReader(rootCtx, cfg.Storage.ClickHouseAddr)
+		if err != nil {
+			return fmt.Errorf("supply refresher close-time reader: %w", err)
+		}
+		defer func() { _ = supplyCloseTimes.Close() }()
+
+		supplyRefresherBindings, err = buildSupplyRefreshers(cfg, store, supplyCloseTimes, logger.With("component", "supply-refresh"))
+		if err != nil {
+			return fmt.Errorf("supply refresher init: %w", err)
+		}
+
+		// Cross-check refresher reads the snapshots the per-asset
+		// refreshers above produce and emits the
+		// supply_cross_check_divergence_stroops gauge so the
+		// supply.yml alert can fire on real divergence per
+		// ADR-0011. No-op when the ∩ of [supply].sac_wrappers and
+		// the watched-sets is empty (operator hasn't declared any
+		// classic ↔ SAC pairs).
+		ccRefresher, err = buildCrossCheckRefresher(cfg, store, logger.With("component", "supply-cross-check"))
+		if err != nil {
+			return fmt.Errorf("supply cross-check refresher init: %w", err)
+		}
+	}
+
 	if dryRun {
 		logger.Info("dry-run complete — exiting")
 		return nil
@@ -661,16 +715,7 @@ func run(cfgPath string, dryRun bool) error {
 	// list view + delta strip on the explorer reads in O(1) rather
 	// than re-scanning prices_1m per request. See
 	// migrations/0022 + Phase 3 of the explorer implementation plan.
-	changeSummaryWorker, err := changesummary.New(
-		changeSummaryPriceSource{store: store},
-		changeSummarySink{store: store},
-		buildChangeSummaryEntities(pairs),
-		logger.With("component", "change-summary"),
-		changesummary.Options{Interval: 5 * time.Minute},
-	)
-	if err != nil {
-		return fmt.Errorf("change-summary worker init: %w", err)
-	}
+	// Constructed above (before the dry-run check); started here.
 	refresherWG.Add(1)
 	go func() {
 		defer worker.Recover(logger, "change-summary")
@@ -773,26 +818,10 @@ func run(cfgPath string, dryRun bool) error {
 			}()
 		}
 
-		// Close-time source for the snapshot ObservedAt (audit M4-callers):
-		// each refresh stamps the snapshot ledger's REAL close_time from the
-		// ClickHouse lake, never the wall-clock write-time. Required for the
-		// aggregator supply-refresh path — without an authoritative close-time
-		// source a re-derive would corrupt point-in-time supply queries, so we
-		// fail closed at startup rather than silently fall back to time.Now().
-		if cfg.Storage.ClickHouseAddr == "" {
-			return errors.New("supply aggregator refresh requires storage.clickhouse_addr (source of the ledger close time stamped as snapshot ObservedAt) — set it or disable [supply] aggregator_refresh_enabled")
-		}
-		supplyCloseTimes, err := clickhouse.NewExplorerReader(rootCtx, cfg.Storage.ClickHouseAddr)
-		if err != nil {
-			return fmt.Errorf("supply refresher close-time reader: %w", err)
-		}
-		defer func() { _ = supplyCloseTimes.Close() }()
-
-		bindings, err := buildSupplyRefreshers(cfg, store, supplyCloseTimes, logger.With("component", "supply-refresh"))
-		if err != nil {
-			return fmt.Errorf("supply refresher init: %w", err)
-		}
-		for _, b := range bindings {
+		// The close-time reader, supply refreshers and cross-check
+		// refresher are constructed above (before the dry-run check);
+		// started here.
+		for _, b := range supplyRefresherBindings {
 			refresherWG.Add(1)
 			go func(binding supplyRefresherBinding) {
 				defer worker.Recover(logger, "supply-refresh")
@@ -801,17 +830,6 @@ func run(cfgPath string, dryRun bool) error {
 			}(b)
 		}
 
-		// Cross-check refresher reads the snapshots the per-asset
-		// refreshers above produce and emits the
-		// supply_cross_check_divergence_stroops gauge so the
-		// supply.yml alert can fire on real divergence per
-		// ADR-0011. No-op when the ∩ of [supply].sac_wrappers and
-		// the watched-sets is empty (operator hasn't declared any
-		// classic ↔ SAC pairs).
-		ccRefresher, err := buildCrossCheckRefresher(cfg, store, logger.With("component", "supply-cross-check"))
-		if err != nil {
-			return fmt.Errorf("supply cross-check refresher init: %w", err)
-		}
 		if ccRefresher != nil {
 			refresherWG.Add(1)
 			go func() {
