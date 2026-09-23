@@ -33,13 +33,22 @@ const holdersRollupLockPath = "/var/lib/stellarindex/ch-holders-rollup.lock"
 // systemd's own single-instance guarantee only covers the FIRST —
 // `stellarindex-ops ch-holders-rollup` run by hand from a shell bypasses
 // it entirely. See acquireHoldersRollupLock for the failure that closes.
+//
+// Fail-closed DRY RUN by default (opsutil.WriteGate): without -write
+// this reports the recompute it would run and takes no lock, opens no
+// connection. The holders-rollup systemd unit passes -write explicitly.
 func chHoldersRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-holders-rollup", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	lockPath := fs.String("lock-file", holdersRollupLockPath,
 		"path to the exclusive advisory lock serializing this run against the 30-minute timer or a second concurrent invocation")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if !gate.Banner() {
+		fmt.Fprintln(os.Stderr, "ch-holders-rollup: DRY RUN — would recompute every asset's top-500 holders board + holder count and EXCHANGE it live; pass -write to apply")
+		return nil
 	}
 
 	unlock, err := acquireHoldersRollupLock(*lockPath)

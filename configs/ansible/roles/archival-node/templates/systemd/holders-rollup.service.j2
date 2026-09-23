@@ -25,6 +25,7 @@ Environment=EXTRA_FLAGS=
 
 ExecStart=/usr/local/bin/stellarindex-ops ch-holders-rollup \
   -ch-addr ${CH_ADDR} \
+  -write \
   ${EXTRA_FLAGS}
 
 # De-privileged, same shape as the sibling oneshots (CS-118/CS-119).
