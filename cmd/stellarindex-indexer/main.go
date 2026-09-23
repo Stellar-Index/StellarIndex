@@ -2230,10 +2230,14 @@ func openOrCreateHashDB(path string, startLedger uint32) (*hashdb.DB, error) {
 // ingest problem — it must never stall or fail the pipeline that
 // actually serves customer data.
 func recordHashdb(hdb *hashdb.DB, lcm sdkxdr.LedgerCloseMeta, logger *slog.Logger, lastAppended *atomic.Uint32) {
-	start := time.Now()
 	seq := lcm.LedgerSequence()
 
 	raw, err := lcm.MarshalBinary()
+	// Timed region starts AFTER the multi-megabyte LedgerCloseMeta
+	// marshal — HashdbAppendDurationSeconds documents itself as the
+	// latency of the O(1) positional WriteAt, not of serializing the
+	// whole ledger.
+	start := time.Now()
 	if err == nil {
 		h := hashdb.Hash(raw)
 		// Verify-then-Append-on-ErrMissing (hashdb.Verify's own
