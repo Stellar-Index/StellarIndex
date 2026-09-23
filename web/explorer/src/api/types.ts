@@ -5223,8 +5223,10 @@ export interface components {
             /** @description XLM stroops as a string (exceeds 2^53). */
             total_coins?: string;
             fee_pool?: string;
-            base_fee?: number;
-            base_reserve?: number;
+            /** @description Base fee per operation in stroops, as a decimal string. */
+            base_fee?: string;
+            /** @description Base reserve in stroops, as a decimal string. */
+            base_reserve?: string;
         };
         /** @description Transaction summary (in ledger + tx listings). */
         TxSummary: {
@@ -5234,8 +5236,10 @@ export interface components {
             close_time?: string;
             index?: number;
             source_account?: string;
-            fee_charged?: number;
-            max_fee?: number;
+            /** @description Fee charged in stroops, as a decimal string. */
+            fee_charged?: string;
+            /** @description Maximum fee bid in stroops, as a decimal string. */
+            max_fee?: string;
             operation_count?: number;
             /** @description Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record). */
             successful?: boolean;
@@ -20837,8 +20841,8 @@ export interface operations {
                      *             "soroban_event_count": 1105,
                      *             "total_coins": "1054439020873472865",
                      *             "fee_pool": "100768724524038",
-                     *             "base_fee": 100,
-                     *             "base_reserve": 5000000
+                     *             "base_fee": "100",
+                     *             "base_reserve": "5000000"
                      *           },
                      *           {
                      *             "sequence": 63316165,
@@ -20851,8 +20855,8 @@ export interface operations {
                      *             "soroban_event_count": 708,
                      *             "total_coins": "1054439020873472865",
                      *             "fee_pool": "100768720236504",
-                     *             "base_fee": 100,
-                     *             "base_reserve": 5000000
+                     *             "base_fee": "100",
+                     *             "base_reserve": "5000000"
                      *           }
                      *         ],
                      *         "next_before": 63316165
@@ -20909,8 +20913,8 @@ export interface operations {
                      *         "soroban_event_count": 1105,
                      *         "total_coins": "1054439020873472865",
                      *         "fee_pool": "100768724524038",
-                     *         "base_fee": 100,
-                     *         "base_reserve": 5000000
+                     *         "base_fee": "100",
+                     *         "base_reserve": "5000000"
                      *       },
                      *       "as_of": "2026-07-03T22:39:59.693177604Z",
                      *       "flags": {
@@ -20970,8 +20974,8 @@ export interface operations {
                      *             "close_time": "2026-07-03T22:37:01Z",
                      *             "index": 0,
                      *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fee_charged": 600,
-                     *             "max_fee": 120000,
+                     *             "fee_charged": "600",
+                     *             "max_fee": "120000",
                      *             "operation_count": 6,
                      *             "successful": false,
                      *             "result_code": -1,
@@ -21032,8 +21036,8 @@ export interface operations {
                      *         "close_time": "2026-07-03T22:37:01Z",
                      *         "index": 0,
                      *         "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *         "fee_charged": 600,
-                     *         "max_fee": 120000,
+                     *         "fee_charged": "600",
+                     *         "max_fee": "120000",
                      *         "operation_count": 6,
                      *         "successful": false,
                      *         "result_code": -1,
@@ -22276,8 +22280,8 @@ export interface operations {
                      *             "close_time": "2026-07-03T21:02:29Z",
                      *             "index": 7,
                      *             "source_account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
-                     *             "fee_charged": 200,
-                     *             "max_fee": 13935,
+                     *             "fee_charged": "200",
+                     *             "max_fee": "13935",
                      *             "operation_count": 1,
                      *             "successful": true,
                      *             "result_code": 1,
