@@ -2477,7 +2477,7 @@ export interface paths {
          *     `/v1/sources`, and `/v1/diagnostics/cursors`. Returns
          *     total trailing-24h USD volume, count of pairs that
          *     recorded volume in 24h, total `classic_assets` row count,
-         *     latest live ledger across all non-backfill sources, and
+         *     latest ledger across the live cursor namespaces, and
          *     the count of registered exchange-class sources.
          *
          *     Computed from a single SQL query over `prices_1m`,
@@ -16861,7 +16861,7 @@ export interface operations {
                             markets_count_24h: number;
                             /** @description Total rows in classic_assets. */
                             assets_indexed: number;
-                            /** @description Max last_ledger across non-backfill sources. */
+                            /** @description Max last_ledger across the live cursor namespaces (`ledgerstream`, `projector`); one-shot job cursors are excluded. */
                             latest_ledger: number;
                             /**
                              * @description Count of `class=exchange` sources REGISTERED in

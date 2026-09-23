@@ -39,10 +39,9 @@ type NetworkStats struct {
 	// was "assets that have traded at least once" wearing the label
 	// "what we know about".
 	AssetsIndexed int64
-	// LatestLedger: max(ingestion_cursors.last_ledger) across
-	// non-backfill sources. Mirrors what the diagnostics page
-	// surfaces; included here so the home strip doesn't need a
-	// separate /v1/diagnostics/cursors call.
+	// LatestLedger: max(ingestion_cursors.last_ledger) across the live
+	// cursor namespaces ([LiveCursorSources]). A one-shot job's shard
+	// cursor marks the end of a historical range, not the live tip.
 	LatestLedger int64
 }
 
@@ -56,7 +55,7 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 		out    NetworkStats
 		volStr sql.NullString
 	)
-	if err := s.db.QueryRowContext(ctx, q).Scan(
+	if err := s.db.QueryRowContext(ctx, q, liveCursorSources).Scan(
 		&volStr,
 		&out.MarketsCount24h,
 		&out.AssetsIndexed,
@@ -92,7 +91,7 @@ func networkStatsQuery() string {
 		  (SELECT COUNT(*)::bigint FROM classic_assets)        AS assets_indexed,
 		  COALESCE(
 		    (SELECT MAX(last_ledger)::bigint FROM ingestion_cursors
-		      WHERE source <> 'backfill'),
+		      WHERE source = ANY($1)),
 		    0
 		  )                                                    AS latest_ledger
 	`

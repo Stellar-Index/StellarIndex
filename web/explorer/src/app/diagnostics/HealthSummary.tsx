@@ -3,11 +3,12 @@
 import { useMemo } from 'react';
 
 import { useCursors, type Cursor } from '@/api/hooks';
+import { isLiveCursorSource } from '@/lib/cursors';
 
 /**
  * HealthSummary — top-of-page aggregate health card on
  * /diagnostics. Computes:
- *   - Number of unique live sources (ie. excluding `backfill`)
+ *   - Number of unique live sources (see LIVE_CURSOR_SOURCES)
  *   - Median lag across live cursors (p50)
  *   - Worst lag across live cursors (p99-equivalent on small-N)
  *   - Highest live ledger across all sources
@@ -71,7 +72,7 @@ interface Summary {
 }
 
 function computeSummary(cursors: Cursor[]): Summary {
-  const live = cursors.filter((c) => c.source !== 'backfill');
+  const live = cursors.filter((c) => isLiveCursorSource(c.source));
   const lags = live
     .map((c) => c.lag_seconds)
     .filter((n) => Number.isFinite(n) && n >= 0)
