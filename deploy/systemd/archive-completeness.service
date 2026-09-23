@@ -51,6 +51,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/archive-completeness
+EnvironmentFile=-/etc/default/stellarindex-ops
 # ARCHIVE_TO is computed at start time from the indexer cursor —
 # compute-archive-to.sh writes ARCHIVE_TO=<n> here. This file is loaded
 # LAST so it wins over /etc/default/archive-completeness.

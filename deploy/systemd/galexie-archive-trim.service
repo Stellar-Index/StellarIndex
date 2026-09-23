@@ -45,6 +45,7 @@ User=root
 # start entirely (matches archive-completeness.service).
 ExecStartPre=/usr/local/sbin/compute-trim-cutoff.sh
 EnvironmentFile=-/run/galexie-archive-trim.env
+EnvironmentFile=-/etc/default/stellarindex-ops
 
 # --verify-upstream is the default per the trim binary but spelled
 # out here so the unit file documents the safety guarantee. --commit

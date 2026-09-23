@@ -42,6 +42,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 EnvironmentFile=-/etc/default/supply-snapshot
+EnvironmentFile=-/etc/default/stellarindex-ops
 
 # Sensible defaults. Operators override via /etc/default/supply-snapshot.
 Environment=CONFIG_PATH=/etc/stellarindex.toml

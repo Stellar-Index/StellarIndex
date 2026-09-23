@@ -64,6 +64,10 @@ var nonServingCmds = map[string]bool{
 // (09-minio.yml) and that the reference units share with batch jobs.
 const opsEnvFileBase = "stellarindex-ops"
 
+// opsBinary matches a unit whose ExecStart runs the ops CLI directly —
+// such a unit IS the batch tier and must resolve to ops_batch (#113).
+var opsBinary = map[string]bool{"stellarindex-ops": true}
+
 type systemdUnit struct {
 	rel     string // repo-relative path, for messages
 	name    string // unit name without the .j2 suffix
@@ -111,6 +115,19 @@ func TestOpsBatchIdentityNeverReachesLiveDaemons(t *testing.T) {
 					"  It sources %v, and the ops-batch pair is templated into /etc/default/%s, so every ClickHouse connection this daemon opens would run at the LOW-priority ops_batch tier — the inverse of the 2026-08-28 r1 incident (#243, #292).\n"+
 					"  Fix: add `UnsetEnvironment=%s %s` to the unit's [Service] section (or stop sourcing the batch env file).",
 					u.rel, auth, want, u.envFile, opsEnvFileBase, OpsUserEnv, OpsPasswordEnv)
+			}
+		case u.runsAnyOf(opsBinary):
+			// A unit that runs the ops CLI directly IS the batch tier —
+			// it MUST resolve to ops_batch, whether or not it currently
+			// sources the file (#113: 13 ansible rollup/sync units ran
+			// stellarindex-ops without ever sourcing the ops env file
+			// and so stayed at CH `default`/serving priority).
+			batchChecked = append(batchChecked, u.rel)
+			want := clickhouse.Auth{Database: "stellar", Username: opsUser, Password: opsPass}
+			if auth != want {
+				t.Errorf("%s runs stellarindex-ops directly but would authenticate as %+v, want %+v.\n"+
+					"  Fix: add `EnvironmentFile=-/etc/default/%s` to the unit's [Service] section.",
+					u.rel, auth, want, opsEnvFileBase)
 			}
 		case u.sourcesOpsEnvFile():
 			batchChecked = append(batchChecked, u.rel)
