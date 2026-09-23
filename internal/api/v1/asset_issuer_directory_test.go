@@ -12,6 +12,7 @@ package v1_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -236,5 +237,84 @@ func TestAssetList_IssuerDirectoryTags_BatchedNoN1(t *testing.T) {
 	}
 	if n := atomic.LoadInt64(&dir.oneCalls); n != 0 {
 		t.Errorf("directory single-lookup calls = %d, want 0 (must not N+1 per row)", n)
+	}
+}
+
+// TestAssetGet_DirectoryReadFailure_WithholdsPrice — RLT-089. A failed
+// directory read means nobody checked the issuer for a scam flag, so the
+// detail page must not publish the price it would have withheld had the
+// read answered. The labels stay omitted: a failed read accuses no one.
+func TestAssetGet_DirectoryReadFailure_WithholdsPrice(t *testing.T) {
+	down := &stubDirectoryReader{err: errors.New("account_directory: connection refused")}
+	srv, aud := audDetailServer(t, v1.Options{Directory: down})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/assets/"+aud.String())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (a directory outage must not fail the asset view)", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.AssetDetail `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if env.Data.PriceUSD != nil {
+		t.Errorf("price_usd = %q, want withheld — the scam check did not run", *env.Data.PriceUSD)
+	}
+	if len(env.Data.IssuerDirectoryTags) != 0 {
+		t.Errorf("issuer_directory_tags = %v, want omitted", env.Data.IssuerDirectoryTags)
+	}
+}
+
+// TestAssetList_DirectoryReadFailure_WithholdsPrice — RLT-089, listing
+// side. The batch read failing used to skip the stamp+suppress loop for
+// the whole page; every issuer-bearing row must be withheld instead.
+func TestAssetList_DirectoryReadFailure_WithholdsPrice(t *testing.T) {
+	aud, err := canonical.NewClassicAsset("AUD", scamAUDIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	other, err := canonical.NewClassicAsset("USDC", testUSDCIssuer)
+	if err != nil {
+		t.Fatalf("NewClassicAsset: %v", err)
+	}
+	list := func(t *testing.T, dir *stubDirectoryReader) []v1.AssetDetail {
+		t.Helper()
+		assetsReader := &listStub{
+			stubAssetsReaderExt: &stubAssetsReaderExt{},
+			rows: []timescale.AssetRow{
+				{AssetID: aud.String(), Code: "AUD", IssuerGStrkey: scamAUDIssuer, PriceUSD: sptr("0.65")},
+				{AssetID: other.String(), Code: "USDC", IssuerGStrkey: testUSDCIssuer, PriceUSD: sptr("1.00")},
+			},
+		}
+		srv := v1.New(v1.Options{Assets: &stubAssetReader{}, AssetsReader: assetsReader, Directory: dir})
+		resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/assets")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		var env struct {
+			Data []v1.AssetDetail `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(env.Data) != 2 {
+			t.Fatalf("rows = %d, want 2", len(env.Data))
+		}
+		return env.Data
+	}
+
+	// Instrument check: an answering directory with no entries leaves
+	// both rows priced, so a nil below is the refusal, not the fixture.
+	for _, r := range list(t, &stubDirectoryReader{}) {
+		if r.PriceUSD == nil {
+			t.Fatalf("precondition: %s unpriced with a healthy, empty directory", r.Code)
+		}
+	}
+	for _, r := range list(t, &stubDirectoryReader{err: errors.New("account_directory: connection refused")}) {
+		if r.PriceUSD != nil {
+			t.Errorf("%s price_usd = %q, want withheld — the page's scam check did not run", r.Code, *r.PriceUSD)
+		}
 	}
 }

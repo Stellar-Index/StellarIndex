@@ -722,7 +722,11 @@ func (s *Server) fillContractDirectoryTags(ctx context.Context, rows []AssetDeta
 	}
 	found, err := s.directory.DirectoryEntriesByAddresses(ctx, addrs)
 	if err != nil {
-		s.logger.Warn("rwa contract directory batch lookup failed", "n", len(addrs), "err", err)
+		s.logger.Warn("rwa contract directory batch lookup failed — withholding pricing",
+			"n", len(addrs), "err", err)
+		for i := range rows {
+			withholdUncheckedIssuerPricing(&rows[i])
+		}
 		return
 	}
 	for i := range rows {

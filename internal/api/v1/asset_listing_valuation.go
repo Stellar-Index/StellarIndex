@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
-	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
@@ -566,7 +565,7 @@ func (s *Server) listingValuationCandidate(row *AssetDetail) bool {
 	if row.IssuerScamReason != "" {
 		return false
 	}
-	if pricingguard.IsDirectoryScamFlagged(row.IssuerDirectoryTags) {
+	if issuerPricingWithheld(row) {
 		return false
 	}
 	if row.UnverifiedTickerCollision {

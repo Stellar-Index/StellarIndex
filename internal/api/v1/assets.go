@@ -421,6 +421,9 @@ type AssetDetail struct {
 	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
 	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
 	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
+	// issuerDirectoryUnchecked: the directory read for this issuer failed,
+	// so the absence of a scam tag proves nothing and pricing is withheld.
+	issuerDirectoryUnchecked bool
 
 	// VolumeCharacter classifies the asset's trailing-window trade
 	// volume by account structure (wash-and-scam-signals design §2):
@@ -3371,11 +3374,11 @@ func (s *Server) handleAssetGet(w http.ResponseWriter, r *http.Request) {
 	s.applyAssetExtensionFields(r.Context(), &detail, parsed)
 
 	// Curated third-party issuer label (account_directory, migration
-	// 0136) — additive issuer_directory_{tags,domain,name}. DISPLAY-ONLY
-	// (see asset_directory_tags.go): runs AFTER every price/gate overlay
-	// and is never read by pricing/verification, so it cannot move
-	// price_usd or any gate. Best-effort; a nil reader / unlisted issuer
-	// / lookup failure just omits the fields.
+	// 0136) — additive issuer_directory_{tags,domain,name}. Runs AFTER
+	// every price/gate overlay; only suppressScamIssuerPricing below reads
+	// its answer. A nil reader / unlisted issuer omits the fields; a
+	// lookup failure omits them AND withholds pricing (see
+	// asset_directory_tags.go).
 	s.applyIssuerDirectoryTags(r.Context(), &detail)
 
 	// Volume-character overlay (design §2) — trailing-window account-
@@ -4861,6 +4864,9 @@ func carryTwinIssuerVerdict(dst *AssetDetail, twin AssetDetail) {
 		dst.IssuerDirectoryTags = twin.IssuerDirectoryTags
 		dst.IssuerDirectoryDomain = twin.IssuerDirectoryDomain
 		dst.IssuerDirectoryName = twin.IssuerDirectoryName
+	}
+	if twin.issuerDirectoryUnchecked {
+		dst.issuerDirectoryUnchecked = true
 	}
 	suppressScamIssuerPricing(dst)
 }

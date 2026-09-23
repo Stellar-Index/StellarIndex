@@ -36,10 +36,13 @@ import (
 //
 // Raw trade surfaces stay visible.
 //
-// Best-effort: a nil reader, an unlisted issuer (the common case), or a
-// lookup failure just leaves the fields omitted and never fails the asset
-// response — a directory outage must not take the asset surface down with
-// it (the suppression fails OPEN too, and so does the ranking demotion).
+// Best-effort for the LABELS: a nil reader, an unlisted issuer (the common
+// case), or a lookup failure leaves the fields omitted and never fails the
+// asset response. The price suppression is not best-effort: a failed lookup
+// means nobody checked for a scam flag, so the rows it covered are marked
+// issuerDirectoryUnchecked and their dollar figures withheld exactly as a
+// flagged row's are. A nil reader (no directory wired) still prices
+// normally, and the SQL ranking demotion still fails open.
 
 // stampIssuerDirectory copies one curated directory label onto the
 // detail. Tags are set only when non-empty so an unlabelled entry
@@ -59,7 +62,9 @@ func (s *Server) applyIssuerDirectoryTags(ctx context.Context, detail *AssetDeta
 	}
 	e, ok, err := s.directory.DirectoryEntryByAddress(ctx, *detail.Issuer)
 	if err != nil {
-		s.logger.Warn("asset issuer directory lookup failed", "issuer", *detail.Issuer, "err", err)
+		s.logger.Warn("asset issuer directory lookup failed — withholding pricing",
+			"issuer", *detail.Issuer, "err", err)
+		detail.issuerDirectoryUnchecked = true
 		return
 	}
 	if !ok {
@@ -93,12 +98,16 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 	}
 	found, err := s.directory.DirectoryEntriesByAddresses(ctx, addrs)
 	if err != nil {
-		s.logger.Warn("asset listing directory batch lookup failed", "n", len(addrs), "err", err)
-		return
+		s.logger.Warn("asset listing directory batch lookup failed — withholding pricing",
+			"n", len(addrs), "err", err)
 	}
 	for i := range rows {
 		iss := rows[i].Issuer
-		if iss == nil {
+		if iss == nil || *iss == "" {
+			continue
+		}
+		if err != nil {
+			withholdUncheckedIssuerPricing(&rows[i])
 			continue
 		}
 		if e, ok := found[*iss]; ok {
@@ -106,6 +115,19 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 			suppressScamIssuerPricing(&rows[i])
 		}
 	}
+}
+
+// withholdUncheckedIssuerPricing marks a row whose directory lookup failed
+// and withholds its dollar figures: an unanswered read is not "no tags".
+func withholdUncheckedIssuerPricing(d *AssetDetail) {
+	d.issuerDirectoryUnchecked = true
+	suppressScamIssuerPricing(d)
+}
+
+// issuerPricingWithheld reports whether the row may publish no dollar
+// figure because its issuer is scam-flagged or could not be checked.
+func issuerPricingWithheld(d *AssetDetail) bool {
+	return d.issuerDirectoryUnchecked || pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags)
 }
 
 // suppressScamIssuerPricing withholds an asset's published PRICE claim on
@@ -117,11 +139,11 @@ func (s *Server) fillIssuerDirectoryTags(ctx context.Context, rows []AssetDetail
 // chain fact) and the scam warning fields are kept. This is the
 // payload-side twin of the reader-seam pricingguard.ScamGate (which
 // withholds /v1/price and every reader-backed surface); together they
-// ensure a scam issuer publishes neither a price nor a market cap. Fails
-// OPEN — an unlisted/untagged issuer is left untouched. Idempotent +
-// nil-safe.
+// ensure a scam issuer publishes neither a price nor a market cap. An
+// unlisted/untagged issuer is left untouched; one whose lookup failed is
+// withheld (issuerDirectoryUnchecked). Idempotent + nil-safe.
 func suppressScamIssuerPricing(d *AssetDetail) {
-	if d == nil || !pricingguard.IsDirectoryScamFlagged(d.IssuerDirectoryTags) {
+	if d == nil || !issuerPricingWithheld(d) {
 		return
 	}
 	d.PriceUSD = nil
