@@ -56,7 +56,7 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 		out    NetworkStats
 		volStr sql.NullString
 	)
-	if err := s.db.QueryRowContext(ctx, q).Scan(
+	if err := s.db.QueryRowContext(ctx, q, aliasFoldArg()).Scan(
 		&volStr,
 		&out.MarketsCount24h,
 		&out.AssetsIndexed,
@@ -75,7 +75,8 @@ func (s *Store) GetNetworkStats(ctx context.Context) (NetworkStats, error) {
 // fold a market's two stored orientations (e.g. XLM/USDC and USDC/XLM)
 // into one row before counting distinct pairs — see canonOrientSQL.
 // Without this, a market that prices_1m recorded in both directions is
-// counted twice.
+// counted twice. Each leg is alias-folded ($1, aliasFoldArg) first so a
+// market's SDEX and Soroban spellings count once.
 func networkStatsQuery() string {
 	canonBase, canonQuote, _ := canonOrientSQL()
 	return `
@@ -85,9 +86,9 @@ func networkStatsQuery() string {
 		      AND volume_usd IS NOT NULL)                      AS volume_24h_usd,
 		  (SELECT COUNT(*)::bigint FROM (
 		     SELECT DISTINCT ` + canonBase + ` AS base_asset, ` + canonQuote + ` AS quote_asset
-		       FROM prices_1m
-		      WHERE bucket >= now() - INTERVAL '24 hours'
-		        AND volume_usd IS NOT NULL
+		       FROM (` + aliasFoldedSelect("prices_1m", 1) + `
+		              WHERE bucket >= now() - INTERVAL '24 hours'
+		                AND volume_usd IS NOT NULL) folded
 		   ) t)                                                AS markets_count_24h,
 		  (SELECT COUNT(*)::bigint FROM classic_assets)        AS assets_indexed,
 		  COALESCE(

@@ -1,6 +1,7 @@
 package timescale
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -55,4 +56,35 @@ func canonOrientSQL() (canonBase, canonQuote, flipped string) {
 	canonBase = fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", flipped, qcol, bcol)
 	canonQuote = fmt.Sprintf("(CASE WHEN %s THEN %s ELSE %s END)", flipped, bcol, qcol)
 	return canonBase, canonQuote, flipped
+}
+
+// aliasFoldSQL folds the asset column col onto its canonical alias form
+// (the XLM SAC and crypto:XLM onto native, a configured SAC onto its
+// classic asset) through the JSON object bound at placeholder $idx — see
+// [aliasFoldArg]. A market is one market whichever venue spelling printed
+// it, so a group key must be folded BEFORE [canonOrientSQL] orients it:
+// orienting alone leaves an SDEX row and its Soroban twin as two markets.
+func aliasFoldSQL(col string, idx int) string {
+	return fmt.Sprintf("COALESCE($%d::text::jsonb ->> %s, %s)", idx, col, col)
+}
+
+// aliasFoldArg is the value bound to [aliasFoldSQL]'s placeholder:
+// [canonical.AllAliasForms] as a JSON object, resolved per call so it
+// reflects the registry installed at binary start-up.
+func aliasFoldArg() string {
+	// A map[string]string always marshals; there is no error to handle.
+	b, _ := json.Marshal(canonical.AllAliasForms())
+	return string(b)
+}
+
+// aliasFoldedSelect renders `SELECT <folded base_asset>, <folded
+// quote_asset>, cols... FROM rel`: the relation a [canonOrientSQL] group
+// reads so its key is alias-folded (see [aliasFoldSQL]).
+func aliasFoldedSelect(rel string, idx int, cols ...string) string {
+	sel := aliasFoldSQL("base_asset", idx) + " AS base_asset, " +
+		aliasFoldSQL("quote_asset", idx) + " AS quote_asset"
+	for _, c := range cols {
+		sel += ", " + c
+	}
+	return "SELECT " + sel + " FROM " + rel
 }
