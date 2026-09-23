@@ -213,7 +213,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	// pre-flight here is paid directly in time-to-first-byte. Then switch
 	// to SSE.
 	var gen streaming.Generator
-	firstEv, _ := s.tipStreamEvent(preflightCtx, &gen, asset, first, firstSources)
+	firstEv, _ := s.tipStreamEvent(preflightCtx, &gen, asset, quote, first, firstSources)
 
 	// Two producer shapes (RT-1, audit 2026-08-04 "tip stream = 6 DB
 	// queries/s PER CONNECTION"):
@@ -408,7 +408,7 @@ func (s *Server) runTipStreamProducer(
 			// The event's divergence lookup runs inside this per-tick
 			// budget but on its own shorter one, so a stalled verdict
 			// store cannot push the emission past its window.
-			ev, ok := s.tipStreamEvent(tickCtx, gen, asset, snap, sources)
+			ev, ok := s.tipStreamEvent(tickCtx, gen, asset, quote, snap, sources)
 			cancel()
 			if !ok {
 				continue
@@ -441,14 +441,14 @@ func (s *Server) runTipStreamProducer(
 // See [Server.tipStreamFlags]. Returns (_, false) on JSON-marshal failure
 // (which would mean a programming error in PriceSnapshot — caller
 // skips emit so the stream stays alive).
-func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, asset canonical.Asset, snap PriceSnapshot, sources []string) (streaming.Event, bool) {
+func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, asset, quote canonical.Asset, snap PriceSnapshot, sources []string) (streaming.Event, bool) {
 	// Flags first, THEN the timestamp. as_of describes the event being
 	// emitted, so it is taken after the last step that can delay the
 	// emission. Stamped inline in the literal below it was evaluated
 	// before the divergence lookup (Go orders calls in a composite
 	// literal left to right), so a slow lookup published an as_of that
 	// was already up to a whole sub-budget stale when it went on the wire.
-	flags := s.tipStreamFlags(ctx, asset, sources)
+	flags := s.tipStreamFlags(ctx, asset, quote, sources)
 	payload := tipStreamPayload{
 		Data:    snap,
 		AsOf:    WireTime(time.Now().UTC()),
@@ -481,10 +481,10 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 // room is a stalled store, whereas both expiring together is the tick or
 // the client going away, which is not news about the verdict store and
 // is not logged.
-func (s *Server) tipStreamFlags(ctx context.Context, asset canonical.Asset, sources []string) Flags {
+func (s *Server) tipStreamFlags(ctx context.Context, asset, quote canonical.Asset, sources []string) Flags {
 	lookupCtx, cancel := context.WithTimeout(ctx, tipStreamDivergenceBudget)
 	defer cancel()
-	flags := s.tipFlags(lookupCtx, asset, sources)
+	flags := s.tipFlags(lookupCtx, asset, quote, sources)
 	if lookupCtx.Err() == nil || ctx.Err() != nil {
 		return flags
 	}

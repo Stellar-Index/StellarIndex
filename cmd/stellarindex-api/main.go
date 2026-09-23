@@ -2640,8 +2640,19 @@ func newDivergenceAdapter(svc *divergence.Service, cfgMinSources int) divergence
 // divergence.NewService for an unset/invalid min_sources_for_warning.
 const defaultDivergenceMinSources = 2
 
-func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (firing, checked bool, err error) {
-	cached, found, err := a.svc.LookupCached(ctx, asset)
+// DivergenceFiringFor reads the cached verdict for the EXACT (asset,
+// quote) pair — never another quote of the same base. GH-1045: the
+// prior implementation called LookupCached(asset), which ORs every
+// quote's WarningFired together, so a diverging XLM/GBP flagged a
+// clean XLM/USD response. A pair that fails to construct (asset ==
+// quote — callers should never reach this, since parsing already
+// rejects an identity price) reports unchecked rather than panicking.
+func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, err error) {
+	pair, perr := canonical.NewPair(asset, quote)
+	if perr != nil {
+		return false, false, nil
+	}
+	cached, found, err := a.svc.LookupCachedPair(ctx, pair)
 	if err != nil {
 		return false, false, err
 	}
@@ -2660,9 +2671,8 @@ func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canoni
 	//
 	// This can only move the flag true→false (the safe direction: "we
 	// don't know" instead of a false all-clear). It can never produce the
-	// incoherent (warning=true, checked=false) pair: LookupCached prefers
-	// a firing pair as the representative row, and a firing pair
-	// necessarily met the quorum.
+	// incoherent (warning=true, checked=false) pair: a below-quorum
+	// RefreshPair write never sets WarningFired true in the first place.
 	return cached.WarningFired, cached.SuccessCount >= a.minSources, nil
 }
 

@@ -646,3 +646,31 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Cach
 	agg.WarningFired = warning
 	return agg, true, nil
 }
+
+// LookupCachedPair reads the cached divergence result for exactly one
+// (base, quote) pair — the quote-specific counterpart to [Service.LookupCached],
+// which ORs every quote of the base together. A caller serving a value
+// for a SPECIFIC quote (the API's per-pair read paths) must use this:
+// ORing in another quote's verdict attaches a warning computed against
+// a market the served value never touched (GH-1045 — a GBP divergence
+// warning was shown on a clean USD price because LookupCached folded
+// every quote of the base into one flag).
+//
+// Returns (_, false, nil) on a cache miss (no key written yet, or the
+// entry TTL'd out) — same posture as LookupCached. Read/decode errors
+// are surfaced rather than swallowed, also matching LookupCached.
+func (s *Service) LookupCachedPair(ctx context.Context, pair canonical.Pair) (CachedResult, bool, error) {
+	key := cachekeys.Divergence(pair)
+	raw, err := s.cache.Get(ctx, key.String()).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return CachedResult{}, false, nil
+	}
+	if err != nil {
+		return CachedResult{}, false, fmt.Errorf("divergence: cache get %s: %w", key, err)
+	}
+	var cached CachedResult
+	if err := json.Unmarshal(raw, &cached); err != nil {
+		return CachedResult{}, false, fmt.Errorf("divergence: unmarshal cached result: %w", err)
+	}
+	return cached, true, nil
+}

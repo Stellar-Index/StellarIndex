@@ -208,9 +208,10 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 		aggregate.ResolveDecimals(s.nonstandardDecimals, base),
 		aggregate.ResolveDecimals(s.nonstandardDecimals, quote))
 
-	// Cross-reference verdict, keyed on the BASE like the price surfaces
-	// (lookupDivergenceFlag); unconsulted here until now, a CS-087 false.
-	firing, checked := s.lookupDivergenceFlag(r.Context(), base)
+	// Cross-reference verdict, keyed on the requested (base, quote) pair
+	// like the price surfaces (lookupDivergenceFlag) — quote-specific
+	// (GH-1045), never ORed across the base's other quotes.
+	firing, checked := s.lookupDivergenceFlag(r.Context(), base, quote)
 	writeJSON(w, VWAPResult{
 		From:             WireTime(from),
 		To:               WireTime(to),

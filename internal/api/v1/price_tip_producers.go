@@ -476,7 +476,7 @@ func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, a
 			}
 			return
 		}
-		if ev, ok := s.tipStreamEvent(tickCtx, &gen, asset, snap, sources); ok {
+		if ev, ok := s.tipStreamEvent(tickCtx, &gen, asset, quote, snap, sources); ok {
 			s.hub.Publish(key.topic(), ev.Type, ev.Data)
 		}
 	}
