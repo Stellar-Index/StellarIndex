@@ -54,7 +54,7 @@ func (a assetSpec) asset() (canonical.Asset, error) {
 }
 
 // parsePairsYAML decodes a pairs.yaml document with strict field
-// checking, so a misspelled or renamed key (e.g. "clas" for "class")
+// checking, so an unknown or renamed key (e.g. "klass" for "class")
 // fails the load instead of silently dropping to the zero value.
 // Pulled out of DefaultPairs so it's testable against arbitrary
 // bytes, not just the embedded file.
