@@ -225,10 +225,13 @@ stellarindex-ops verify-archive -config /etc/stellarindex.toml \
   -tier archivist -archivist-bin rs-stellar-archivist
 ```
 
-Run occasionally (monthly?) to make sure the mirror hasn't rotted on
-disk. Also the right command to run immediately before kicking off a
-backfill, just to catch any disk corruption before we build an hour
-of replay work on top of it. Long-running — gated by
+**Not scheduled by anything** — no unit, timer, cron or ansible task
+invokes `-tier archivist` (tracked in
+[#726](https://github.com/Stellar-Index/StellarIndex/issues/726)).
+Run it by hand; there is no cadence to rely on until that issue lands
+automation. It is still the right command to run immediately before
+kicking off a backfill, to catch disk corruption before building an
+hour of replay work on top of it. Long-running — gated by
 `-archivist-timeout` (default 30 min).
 
 ## Tuning — when 60 ledgers/sec isn't enough
