@@ -102,6 +102,24 @@ against.
   published target has no matching alert threshold or a probe family is
   selected by no rule.
 
+- **auth / notify — one canonical spelling per inbox (#736):**
+  `/v1/auth/login` and `/v1/auth/verify-code` now reduce the email
+  through `notify.CanonicalRecipient` (the `mail.ParseAddress` addr-spec
+  `/v1/signup` and `/v1/register` already used) instead of a hand-rolled
+  `@`/`.` check. `"x" <a@b.com>` used to be stored, mailed and
+  provisioned as a separate account from `a@b.com`, and
+  `a@b.com,c@d.com` passed the gate. `notify` now refuses any
+  `Message.To` element that is not already canonical. Signup and
+  register additionally reject addresses over 254 bytes and dotless
+  domains, as login always did.
+
+- **notify — a client disconnect no longer aborts transactional mail
+  (#735):** `ResendSender.Send` runs the provider POST on a context
+  detached from the caller's cancellation, bounded by its own 10 s
+  timeout. A login or signup request aborted after its token row or
+  reservation was written used to cancel the send and count it as
+  `result="failed"`.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

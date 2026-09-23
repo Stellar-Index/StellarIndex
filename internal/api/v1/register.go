@@ -13,13 +13,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/mail"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/signupreaper"
 )
@@ -397,7 +397,7 @@ func (s *Server) parseAndValidateRegister(w http.ResponseWriter, r *http.Request
 
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Email != "" {
-		addr, err := mail.ParseAddress(req.Email)
+		canon, err := notify.CanonicalRecipient(req.Email)
 		if err != nil {
 			writeProblem(w, r,
 				"https://api.stellarindex.io/errors/invalid-email",
@@ -405,10 +405,7 @@ func (s *Server) parseAndValidateRegister(w http.ResponseWriter, r *http.Request
 				"the email field could not be parsed as a valid address (omit it entirely if you don't want a contact address on file)")
 			return registerRequest{}, false
 		}
-		// Keep the parsed addr-spec, not the raw input — same
-		// display-name-form normalisation as /v1/signup (cold audit
-		// 2026-08-03), even though nothing here is keyed on it.
-		req.Email = strings.ToLower(strings.TrimSpace(addr.Address))
+		req.Email = canon
 	}
 
 	return req, true

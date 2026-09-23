@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/mail"
+	"strings"
 )
 
 // Message is the transactional-email envelope every Sender
-// accepts. To/From are addresses ("Name <addr@example>" or
-// just "addr@example"); HTML and Text are both honoured by
+// accepts. From may carry a display name ("Name <addr@example>");
+// each To element must be a bare [CanonicalRecipient] address,
+// which validate enforces. HTML and Text are both honoured by
 // Resend (multipart) — when only one is set the other is
 // auto-derived where supported.
 type Message struct {
@@ -99,13 +102,54 @@ func IsUnconfigured(s Sender) bool {
 	return false
 }
 
+// maxRecipientLen is the RFC 5321 §4.5.3.1.3 path limit less the
+// angle brackets.
+const maxRecipientLen = 254
+
+// ErrInvalidRecipient is returned by [CanonicalRecipient] for input
+// that is not exactly one deliverable mailbox.
+var ErrInvalidRecipient = errors.New("notify: invalid recipient address")
+
+// CanonicalRecipient reduces raw user input to the one spelling of a
+// single mailbox that every mail-keyed store and every Message.To uses:
+// the lowercased RFC 5322 addr-spec, stripped of any display name or
+// angle brackets. Without it `"x" <a@b.com>` and `a@b.com` are distinct
+// accounts, signup identities and throttle keys for one inbox.
+func CanonicalRecipient(raw string) (string, error) {
+	addr, err := mail.ParseAddress(strings.ToLower(strings.TrimSpace(raw)))
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrInvalidRecipient, err)
+	}
+	out := strings.ToLower(strings.TrimSpace(addr.Address))
+	if len(out) > maxRecipientLen {
+		return "", fmt.Errorf("%w: longer than %d bytes", ErrInvalidRecipient, maxRecipientLen)
+	}
+	at := strings.LastIndexByte(out, '@')
+	if at <= 0 || !strings.Contains(out[at+1:], ".") {
+		return "", fmt.Errorf("%w: domain has no dot", ErrInvalidRecipient)
+	}
+	// A quoted local part (`"a b"@c.com`) unquotes to a string that no
+	// longer parses; refuse it rather than store an unsendable spelling.
+	if again, err := mail.ParseAddress(out); err != nil || again.Address != out {
+		return "", fmt.Errorf("%w: address does not round-trip", ErrInvalidRecipient)
+	}
+	return out, nil
+}
+
 // validate runs the common checks every concrete Sender does
 // before hitting the wire. Centralised so the four error
 // shapes (missing To, missing Subject, empty body, malformed
-// From) stay consistent across drivers.
+// From) stay consistent across drivers. Every To element must
+// already be in [CanonicalRecipient] form, so no caller can store
+// one spelling of an inbox and mail another.
 func validate(m Message) error {
 	if len(m.To) == 0 {
 		return errors.Join(ErrInvalidMessage, errors.New("recipient list is empty"))
+	}
+	for _, to := range m.To {
+		if canon, err := CanonicalRecipient(to); err != nil || canon != to {
+			return errors.Join(ErrInvalidMessage, errors.New("recipient is not a canonical single address"))
+		}
 	}
 	if m.Subject == "" {
 		return errors.Join(ErrInvalidMessage, errors.New("subject is empty"))

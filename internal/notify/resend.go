@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+// sendTimeout bounds one provider POST independently of the caller's
+// context, which [ResendSender.Send] detaches from.
+const sendTimeout = 10 * time.Second
+
 // ResendSender ships transactional email through Resend's REST
 // API (https://resend.com/docs/api-reference/emails/send-email).
 //
@@ -41,7 +45,7 @@ func NewResendSender(apiKey string) (*ResendSender, error) {
 	}
 	return &ResendSender{
 		APIKey:  apiKey,
-		Client:  &http.Client{Timeout: 10 * time.Second},
+		Client:  &http.Client{Timeout: sendTimeout},
 		BaseURL: "https://api.resend.com",
 	}, nil
 }
@@ -84,6 +88,10 @@ type resendErrorResp struct {
 // NewResendSender) fails with ErrNotConfigured before the wire: a
 // blank bearer can only ever be rejected, and the honest name for
 // that state is "not configured", not "provider rejected".
+//
+// The POST runs detached from ctx's cancellation: callers send after
+// their side effects are durable (token row, signup reservation), so a
+// client disconnect must not abort delivery and be counted as failed.
 func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 	if !r.MailConfigured() {
 		return ErrNotConfigured
@@ -109,6 +117,8 @@ func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 		return fmt.Errorf("notify: marshal: %w", err)
 	}
 
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendTimeout)
+	defer cancel()
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		r.BaseURL+"/emails", bytes.NewReader(body))
 	if err != nil {
