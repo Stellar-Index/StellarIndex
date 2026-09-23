@@ -1500,7 +1500,7 @@ func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer
 		if !ok {
 			return // ctx cancelled while waiting to retry
 		}
-		live.Start()
+		live.Start() //nolint:contextcheck // lifecycle call: Start takes no ctx by design, see LiveSink.add's per-op context.Background()
 		sink.Store(live)
 		// G20-06: log the EFFECTIVE address (post-fallback), not the raw
 		// possibly-empty cfg value — the operator may have enabled the
@@ -1510,7 +1510,7 @@ func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer
 		// stellarindex_ch_live_sink_ledgers_total delta on a short interval, so a
 		// CH write stall (buffered climbing past written) or a bounded-drop
 		// surfaces in Prometheus, not just the shutdown log line.
-		metricsStop, metricsDone := watchCHLiveSink(live, logger)
+		metricsStop, metricsDone := watchCHLiveSink(live, logger) //nolint:contextcheck // watchCHLiveSink deliberately uses context.Background(), not parent — see its doc (#368 LOW): the last flush must survive the same SIGTERM that cancels ctx
 		<-ctx.Done()
 		// Order matters: drain the sink FIRST, then stop the watcher.
 		// The watcher's exit path runs one final flush, so stopping it
@@ -1518,7 +1518,7 @@ func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer
 		// deltas into Prometheus. The previous (inline) order stopped
 		// the watcher before Stop() had moved a single counter, leaving
 		// those deltas in the log line below and nowhere else (#368 LOW).
-		live.Stop()
+		live.Stop() //nolint:contextcheck // lifecycle call: Stop takes no ctx by design and must drain/flush even though ctx is already cancelled
 		metricsStop()
 		<-metricsDone
 		logger.Info("ch live-sink drained on shutdown",

@@ -116,7 +116,7 @@ func Auth(opts AuthOptions) Middleware {
 				// key/token can't be retried without bound. Server-misconfig
 				// 503s (ErrNotImplemented) don't count against the caller.
 				if opts.FailedAuthLimiter != nil && isCredentialRejection(err) {
-					if throttled, retryAfter := takeFailedAuth(r, opts.FailedAuthLimiter); throttled {
+					if throttled, retryAfter := takeFailedAuth(r, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
 						writeAuthThrottleProblem(w, retryAfter)
 						return
 					}
