@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Stellar-Index/StellarIndex/internal/pii"
 
@@ -828,6 +829,14 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		return fmt.Errorf("mint session token: %w", err)
 	}
 
+	// CF-IPCountry is normally a 2-letter ISO code (or "XX"/"T1"/"EU"),
+	// but it's a client-reachable header like the UA — sanitise it the
+	// same way rather than writing it to Postgres text unbounded and
+	// untreated. Read once; empty is expected (and safe) when Cloudflare
+	// isn't fronting the request.
+	const maxGeoLen = 8
+	geo := safeText(r.Header.Get("CF-IPCountry"), maxGeoLen)
+
 	sess, err := h.cfg.Users.CreateSession(r.Context(), platform.Session{
 		UserID:       user.ID,
 		TokenHash:    tokenHash,
@@ -835,8 +844,8 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 		IPFirstSeen:  clientIP(r),
 		IPLastSeen:   clientIP(r),
 		UserAgent:    truncateUA(r.UserAgent()),
-		GeoFirstSeen: r.Header.Get("CF-IPCountry"), // safe to leave empty when CF isn't fronting
-		GeoLastSeen:  r.Header.Get("CF-IPCountry"),
+		GeoFirstSeen: geo,
+		GeoLastSeen:  geo,
 	})
 	if err != nil {
 		return fmt.Errorf("create session: %w", err)
@@ -1144,15 +1153,17 @@ func clientIP(r *http.Request) net.IP {
 	return net.ParseIP(host)
 }
 
-func truncateUA(ua string) string {
-	const maxUALen = 256
-	// CS-071: the UA is rendered verbatim into the plaintext magic-link
-	// email body, so a client-supplied CR/LF (or other control char) could
-	// inject arbitrary lines ("URGENT: account compromised — call …") into a
-	// trusted, DKIM-signed, branded email. Strip control characters before
-	// it reaches the template. (The HTML variant is html/template-escaped;
-	// this closes the plaintext gap.)
-	ua = strings.Map(func(rr rune) rune {
+// safeText sanitises a client-supplied string before it reaches a
+// Postgres text column: strips control characters (a client-supplied
+// CR/LF could inject arbitrary lines into the plaintext login email,
+// CS-071) and truncates by RUNES rather than bytes, so truncation can
+// never cut a multi-byte codepoint in half and hand Postgres invalid
+// UTF-8, which Postgres refuses. Byte-slicing did exactly that here;
+// passkeyDisplayName (passkey.go) fixed the identical bug earlier and
+// documents why — this is the same fix, generalised to every
+// client-string-to-Postgres-text site in the package.
+func safeText(s string, maxRunes int) string {
+	s = strings.Map(func(rr rune) rune {
 		if rr == '\t' {
 			return ' '
 		}
@@ -1160,11 +1171,21 @@ func truncateUA(ua string) string {
 			return -1 // drop CR, LF, and other control chars
 		}
 		return rr
-	}, ua)
-	if len(ua) <= maxUALen {
-		return ua
+	}, s)
+	if utf8.RuneCountInString(s) > maxRunes {
+		s = string([]rune(s)[:maxRunes])
 	}
-	return ua[:maxUALen]
+	return s
+}
+
+func truncateUA(ua string) string {
+	const maxUALen = 256
+	// CS-071: the UA is rendered verbatim into the plaintext magic-link
+	// email body, so a client-supplied CR/LF (or other control char) could
+	// inject arbitrary lines ("URGENT: account compromised — call …") into a
+	// trusted, DKIM-signed, branded email. (The HTML variant is
+	// html/template-escaped; this closes the plaintext gap.)
+	return safeText(ua, maxUALen)
 }
 
 // slugFromEmail derives an account slug from the local part of
