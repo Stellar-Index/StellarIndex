@@ -148,6 +148,13 @@ var TradesCAGGs = []CAGGSpec{
 	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour},
 }
 
+// CAGGsOnPrices1m are the [TradesCAGGs] views materialised FROM
+// prices_1m rather than from `trades`. Migration 0156's retention drops
+// prices_1m chunks without an invalidation, so refreshing one of these
+// over minute rows that were dropped and not force-rebuilt deletes its
+// history. TestTradesCAGGsMatchCatalog holds the list to the schema.
+var CAGGsOnPrices1m = []string{"twap_1h", "twap_1d"}
+
 // allowedCAGGViews is the strict allow-list of view names accepted by
 // RefreshContinuousAggregate, derived from [TradesCAGGs]. Required
 // because we string-format the view name into the SQL — the
@@ -313,6 +320,35 @@ func (s *Store) RefreshContinuousAggregate(ctx context.Context, viewName string,
 // an unbounded refresh is the defect this bound exists to remove, so
 // there is deliberately no "0 disables it" arm.
 func (s *Store) RefreshContinuousAggregateWithTimeout(ctx context.Context, viewName string, from, to time.Time, timeout time.Duration) error {
+	return s.refreshCAGG(ctx, viewName, from, to, timeout, false)
+}
+
+// RefreshContinuousAggregateForced is [Store.RefreshContinuousAggregate]
+// with `force => true`: the whole window is recomputed from the source,
+// not only the ranges the invalidation log names. A retention drop logs
+// no invalidation (migration 0156), so over a dropped range only the
+// forced form restores rows.
+func (s *Store) RefreshContinuousAggregateForced(ctx context.Context, viewName string, from, to time.Time) error {
+	return s.refreshCAGG(ctx, viewName, from, to, CAGGRefreshTimeout(to.Sub(from)), true)
+}
+
+// Prices1mRetentionArmed reports whether migration 0156's retention
+// policy on prices_1m is scheduled. It matches on the view name, as that
+// migration requires; no policy reads as not armed.
+func (s *Store) Prices1mRetentionArmed(ctx context.Context) (bool, error) {
+	var armed bool
+	err := s.db.QueryRowContext(ctx, `
+		SELECT coalesce(bool_or(scheduled), false)
+		  FROM timescaledb_information.jobs
+		 WHERE proc_name = 'policy_retention'
+		   AND hypertable_name = 'prices_1m'`).Scan(&armed)
+	if err != nil {
+		return false, fmt.Errorf("timescale: Prices1mRetentionArmed: %w", err)
+	}
+	return armed, nil
+}
+
+func (s *Store) refreshCAGG(ctx context.Context, viewName string, from, to time.Time, timeout time.Duration, force bool) error {
 	if !allowedCAGGViews[viewName] {
 		return fmt.Errorf("timescale: RefreshContinuousAggregate: unknown view %q", viewName)
 	}
@@ -328,7 +364,11 @@ func (s *Store) RefreshContinuousAggregateWithTimeout(ctx context.Context, viewN
 	// untyped placeholder fails with `42P18: could not determine
 	// data type of parameter $1`. Caught live 2026-05-14 on the
 	// first real backfill that exercised this path.
-	q := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1::timestamptz, $2::timestamptz)`, viewName)
+	forceArg := ""
+	if force {
+		forceArg = ", force => true"
+	}
+	q := fmt.Sprintf(`CALL refresh_continuous_aggregate('%s', $1::timestamptz, $2::timestamptz%s)`, viewName, forceArg)
 	// Retry on 55P03 (concurrent refresh) — Timescale serializes
 	// refresh of the same CAGG, but it does so by REJECTING the
 	// loser immediately rather than blocking it, so two callers

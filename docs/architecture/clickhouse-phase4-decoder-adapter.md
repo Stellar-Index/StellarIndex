@@ -219,6 +219,10 @@ Five rules bound the DELETE, and the script's header is their source of truth:
    this far, so a window whose trades were rewritten is followed by
    `trades-cagg-refresh` over it: all of `timescale.TradesCAGGs` in order
    (`twap_*` after `prices_1m`), padded so the edge buckets are refreshed too.
+   `prices_1m` is forced (`force => true`) over a window containing every
+   `twap_*` window, and the twaps are forced after it, because migration 0156's
+   retention drops minute rows without an invalidation. While that policy is
+   armed the twaps are refused and the refresh fails, so disarm it first.
    A separate `$STALE` file gets `lo hi` before such a DELETE and loses it only
    after the refresh succeeds; every run refreshes its `$STALE` lines (after its
    dirty windows) before anything else.
