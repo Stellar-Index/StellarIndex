@@ -1,0 +1,92 @@
+name: chaos-nightly
+
+# T430: test/chaos/ (Task #75, Wave 1) has existed since it shipped but was
+# never wired into any CI job — grep of .github/workflows/*.yml for 'chaos'
+# returned zero matches. The design note (docs/architecture/
+# chaos-suite-design-note.md, "Open questions" #1) explicitly decided
+# against per-PR runs on cost grounds but settled on "nightly is enough" —
+# that decision was never implemented, so the suite has been running
+# nowhere and catching nothing since it was written.
+#
+# Schedule: nightly at 03:17 UTC (off-peak, offset from the hour so it
+# doesn't stack with other crons). Also `workflow_dispatch` for on-demand
+# runs during a SEV drill or regression investigation, matching
+# k6-weekly.yml's manual-dispatch shape.
+#
+# The compile/lint leg (`test-chaos-check`, shellcheck-only) runs on every
+# PR touching the suite and needs no docker stack, so a broken scenario is
+# caught at review time rather than at 03:17 UTC.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'
+  pull_request:
+    paths:
+      - 'test/chaos/**'
+      - 'Makefile'
+      - '.github/workflows/chaos-nightly.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  scenario-lint:
+    name: chaos scenario shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Lint chaos scenarios
+        run: make test-chaos-check
+
+  chaos-run:
+    name: nightly chaos suite (dev stack)
+    # Deliberately no `needs: scenario-lint` — same reasoning as
+    # k6-weekly.yml's sla-run job: a shellcheck nit must not skip the one
+    # nightly signal that the failure-mode behaviour itself still holds.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start dev stack
+        run: |
+          make dev
+          make db-migrate-up
+
+      - name: Build and start the API
+        run: |
+          go build -o bin/stellarindex-api ./cmd/stellarindex-api
+          ./bin/stellarindex-api -config configs/example.toml &
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000/v1/healthz && exit 0
+            sleep 1
+          done
+          echo "::error::API never became healthy" >&2
+          exit 1
+
+      - name: Run chaos suite
+        run: ./test/chaos/run.sh
+
+      - name: Upload chaos reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: chaos-reports-${{ github.run_id }}
+          path: test/chaos/reports/
+          if-no-files-found: warn
+
+      - name: Teardown dev stack
+        if: always()
+        run: make dev-teardown

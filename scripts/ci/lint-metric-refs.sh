@@ -10,6 +10,15 @@
 # That is exactly how backups could silently stop with zero paging
 # (the F-1329 finding).
 #
+# This is the alert->producer direction only. The reverse direction
+# (a metric emitted but never selected by any rule) is reported as an
+# ADVISORY pass below, not enforced: most metrics are intentionally
+# dashboard-only or exploratory, so a hard fail there would need a
+# per-metric exception list the size of the metric registry. The
+# advisory pass exists so an operator can spot an accidental gap (a
+# metric that SHOULD have paged and doesn't) without turning every
+# unalerted gauge into a required build-time decision (T456).
+#
 # Scope + conservatism:
 #   - Only `stellarindex_*` tokens are enforced. node_/pg_/redis_/
 #     pgbackrest_ metrics come from third-party exporters whose full
@@ -96,6 +105,7 @@ KNOWN_INERT=(
 # Third-party exporter metrics intentionally referenced by exprs. Listed
 # for documentation only (the lint enforces stellarindex_* exclusively),
 # so a future reader knows these are expected-external, not typos.
+# shellcheck disable=SC2034 # documentation-only array, not read by the script
 EXTERNAL_OK=(
   pg_up pg_replication_lag_seconds pg_locks_count pg_settings_max_locks_per_transaction
   pg_settings_max_connections pg_stat_activity_count
@@ -226,10 +236,68 @@ for tok in "${KNOWN_INERT[@]}"; do
   fi
 done
 
+# Metrics deliberately emitted with no alert (dashboards, capacity
+# tracking, exploratory counters). Keep in lockstep with reality: a
+# metric that gains a real alert should be dropped from here, not left
+# lying (the same drift the STALE-INERT check guards on the other list).
+UNALERTED_OK=(
+)
+
+# Producer -> alert direction (advisory, does not affect exit code).
+# Builds the set of alerted tokens ONCE (a single pass over each rule
+# file in RULE_DIRS, unioned), then checks every emitted token for
+# membership in that set — O(rule_files) + O(emitted_tokens), not
+# O(rule_files * emitted_tokens). Re-parsing every rule file per emitted
+# token made a full-repo run take 66s+; this collapses it back down.
+declare -A ALERTED_SET
+while IFS= read -r tok; do
+  [[ -z "$tok" ]] && continue
+  ALERTED_SET["$tok"]=1
+done < <(
+  for dir in "${RULE_DIRS[@]}"; do
+    [[ -d "$dir" ]] || continue
+    while IFS= read -r -d '' f; do
+      extract_expr_tokens "$f"
+    done < <(find "$dir" -maxdepth 1 -name '*.yml' -print0)
+  done
+)
+
+is_alerted() {
+  [[ -n "${ALERTED_SET[$1]:-}" ]]
+}
+
+# Collects every stellarindex_* token that appears as a literal on a
+# non-comment line of an emitter file or inline ansible probe.
+collect_emitted_tokens() {
+  local f
+  while IFS= read -r f; do
+    [[ "$f" == "$self_rel" ]] && continue
+    strip_comments "$f" | grep -oE 'stellarindex_[a-zA-Z0-9_]+'
+  done < <(grep -rlE --include="*.go" --include="*.sh" --include="*.prom" \
+    'stellarindex_' "${EMITTER_PATHS[@]}" 2>/dev/null)
+  while IFS= read -r f; do
+    [[ "$f" == "$self_rel" ]] && continue
+    sed -E 's:#.*$::' "$f" | grep -oE 'stellarindex_[a-zA-Z0-9_]+'
+  done < <(grep -rlE --include="*.yml" --include="*.yaml" \
+    'stellarindex_' "${ANSIBLE_TASK_PATHS[@]}" 2>/dev/null)
+}
+
+unalerted=0
+while IFS= read -r tok; do
+  [[ -z "$tok" ]] && continue
+  in_list "$tok" "${UNALERTED_OK[@]}" && continue
+  is_alerted "$tok" && continue
+  echo "UNALERTED (advisory): '$tok' is emitted but no rule expr references it yet."
+  unalerted=$((unalerted + 1))
+done < <(collect_emitted_tokens | sort -u)
+
 if [[ "$dead" -eq 0 ]]; then
   echo "lint-metric-refs: OK — every stellarindex_* expr token resolves to an emitter or a documented KNOWN_INERT entry."
 else
   echo "lint-metric-refs: FAIL — $dead dead/stale metric reference(s)." >&2
+fi
+if [[ "$unalerted" -gt 0 ]]; then
+  echo "lint-metric-refs: $unalerted stellarindex_* metric(s) have no alert reference (advisory only, does not fail the gate)."
 fi
 # exit 1, NOT exit "$dead": the shell truncates the status mod 256, so
 # exactly 256 dead references exited 0 (proven with a 128-alert x 2-tree

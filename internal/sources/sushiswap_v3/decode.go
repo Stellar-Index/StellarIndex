@@ -54,11 +54,11 @@ var (
 func sdkDecodeSwapFields(valueB64 string) (SwapFields, error) {
 	body, err := scval.Parse(valueB64)
 	if err != nil {
-		return SwapFields{}, fmt.Errorf("parse body: %w", err)
+		return SwapFields{}, fmt.Errorf("%w: parse body: %w", ErrMalformedPayload, err)
 	}
 	entries, err := scval.AsMap(body)
 	if err != nil {
-		return SwapFields{}, fmt.Errorf("body not a Map: %w", err)
+		return SwapFields{}, fmt.Errorf("%w: body not a Map: %w", ErrMalformedPayload, err)
 	}
 
 	var out SwapFields
@@ -71,58 +71,46 @@ func sdkDecodeSwapFields(valueB64 string) (SwapFields, error) {
 	} {
 		sv, err := scval.MustMapField(entries, field.name)
 		if err != nil {
-			return SwapFields{}, fmt.Errorf("SwapEvent.%s: %w", field.name, err)
+			return SwapFields{}, fmt.Errorf("%w: SwapEvent.%s: %w", ErrMalformedPayload, field.name, err)
 		}
 		amt, err := scval.AsAmountFromI128(sv)
 		if err != nil {
-			return SwapFields{}, fmt.Errorf("SwapEvent.%s: %w", field.name, err)
+			return SwapFields{}, fmt.Errorf("%w: SwapEvent.%s: %w", ErrMalformedPayload, field.name, err)
 		}
 		*field.dst = amt
 	}
 
-	liqSv, err := scval.MustMapField(entries, "liquidity")
+	sv, err := scval.MustMapField(entries, "recipient")
 	if err != nil {
-		return SwapFields{}, fmt.Errorf("SwapEvent.liquidity: %w", err)
+		return SwapFields{}, fmt.Errorf("%w: SwapEvent.recipient: %w", ErrMalformedPayload, err)
 	}
-	if out.Liquidity, err = scval.AsAmountFromU128(liqSv); err != nil {
-		return SwapFields{}, fmt.Errorf("SwapEvent.liquidity: %w", err)
+	addr, err := scval.AsAddressStrkey(sv)
+	if err != nil {
+		return SwapFields{}, fmt.Errorf("%w: SwapEvent.recipient: %w", ErrMalformedPayload, err)
 	}
+	out.Recipient = addr
 
+	// liquidity, sqrt_price_x96, tick, and sender are decoded best-effort:
+	// decodeSwap never reads them — only Amount0, Amount1, and Recipient
+	// feed a trade (see decodeSwap below) — so a parse failure on one of
+	// these must not drop an otherwise-good, price-forming swap. A field
+	// that fails to parse is left at its zero value rather than failing
+	// the whole decode.
+	//
 	// sqrt_price_x96 is a U256 (a Q64.96 fixed-point square root of the
 	// price), not an i128 — it routinely exceeds 2^96 and must keep full
 	// width. Carried, never floated.
-	sqrtSv, err := scval.MustMapField(entries, "sqrt_price_x96")
-	if err != nil {
-		return SwapFields{}, fmt.Errorf("SwapEvent.sqrt_price_x96: %w", err)
+	if liqSv, err := scval.MustMapField(entries, "liquidity"); err == nil {
+		out.Liquidity, _ = scval.AsAmountFromU128(liqSv)
 	}
-	if out.SqrtPriceX96, err = scval.AsAmountFromU256(sqrtSv); err != nil {
-		return SwapFields{}, fmt.Errorf("SwapEvent.sqrt_price_x96: %w", err)
+	if sqrtSv, err := scval.MustMapField(entries, "sqrt_price_x96"); err == nil {
+		out.SqrtPriceX96, _ = scval.AsAmountFromU256(sqrtSv)
 	}
-
-	tickSv, err := scval.MustMapField(entries, "tick")
-	if err != nil {
-		return SwapFields{}, fmt.Errorf("SwapEvent.tick: %w", err)
+	if tickSv, err := scval.MustMapField(entries, "tick"); err == nil {
+		out.Tick, _ = scval.AsI32(tickSv)
 	}
-	if out.Tick, err = scval.AsI32(tickSv); err != nil {
-		return SwapFields{}, fmt.Errorf("SwapEvent.tick: %w", err)
-	}
-
-	for _, field := range []struct {
-		name string
-		dst  *string
-	}{
-		{"sender", &out.Sender},
-		{"recipient", &out.Recipient},
-	} {
-		sv, err := scval.MustMapField(entries, field.name)
-		if err != nil {
-			return SwapFields{}, fmt.Errorf("SwapEvent.%s: %w", field.name, err)
-		}
-		addr, err := scval.AsAddressStrkey(sv)
-		if err != nil {
-			return SwapFields{}, fmt.Errorf("SwapEvent.%s: %w", field.name, err)
-		}
-		*field.dst = addr
+	if senderSv, err := scval.MustMapField(entries, "sender"); err == nil {
+		out.Sender, _ = scval.AsAddressStrkey(senderSv)
 	}
 
 	return out, nil

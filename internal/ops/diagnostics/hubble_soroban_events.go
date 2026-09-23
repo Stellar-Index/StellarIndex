@@ -24,7 +24,7 @@ import (
 // specified set of contract IDs, with an optional topic[0]/topic[1]
 // filter.
 //
-// Why this exists. The SDEX hubble-check (#172, #183) queries
+// Why this exists. The SDEX hubble-check (see hubble_check.go) queries
 // `history_trades`, which doesn't cover Soroban DEXes — Hubble has
 // no decoded view of Soroswap/Aquarius/Phoenix/Comet swaps; their
 // events sit raw in `history_contract_events`. So decoder-coverage

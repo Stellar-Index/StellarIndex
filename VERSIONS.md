@@ -14,7 +14,7 @@ that reference them.
 | `stellar/stellar-galexie` | `72ee2a965e7ece1cf55246808c793d85b95c0261` | 2026-08-27 | `galexie-v28.0.1` | Runtime binary — we run Galexie alongside our code, not link as a library. Pinned in `configs/ansible/roles/archival-node/defaults/main.yml` (`galexie_version`). 2026-09-13: bumped v28.0.0 -> v28.0.1 ahead of the mainnet P28 activation ledger (2026-09-16); same protocol major, so this is a point upgrade, not a protocol cutover. SHA and date are the galexie-v28.0.1 tag commit; the built binary reports `stellar-galexie v0.0.0-20260827205142-72ee2a965e7e`, stamped from a real build on r1 rather than computed offline (audit deps F-002). Prior v28.0.0 commit was `a94b31e18ce4` (2026-08-14); v26.0.0 was `6dec23e2` (2026-04-01). |
 | `stellar/rs-stellar-archivist` | `a6a25033dc2dd1783314ff5b009123e6bfc00e7a` | 2026-04-20 | (no tag yet) | Runtime binary — we call it from scripts. Pin SHA since no tag. |
 | `stellar/stellar-rpc` | `99a61f337b66635ba6f9d70d2403ee5faed1d7c1` | 2026-04-07 | (no tag visible locally) | Removed from r1 on 2026-04-23 — kept ONLY for the `stellarindex-ops rpc-probe` operator diagnostic that dials remote public endpoints; not on the data path. |
-| `stellar/go-stellar-sdk` | `dd844ab32ac8bef7984c76ad1e59c2209a4aacc5` | 2026-07-01 | `v0.6.0` | **Go library — direct dep.** SHA is the `v0.6.0` tag commit (go.mod pins `v0.6.0`). Compat pass done 2026-07-01: v0.6 changed `datastore.DataStore.GetFile` to return `(io.ReadCloser, int64, error)` (adds object size); adapted `internal/ledgerstream/tiered.go` (+test) + `cmd/stellarindex-ops/rehydrate_galexie_archive.go` (size threaded through, unused). Full `go build ./...` + unit suite green (SCVal/XDR decoding + ingest path unchanged). Prior `v0.5.0` SHA was `475bbd9a`. |
+| `stellar/go-stellar-sdk` | `83d77301a1966946cc5864856b08694b5a82c662` | 2026-08-20 | `v0.7.3` | **Go library — direct dep.** SHA is the `v0.7.3` tag commit (go.mod pins `v0.7.3`). Compat pass done 2026-07-01 at `v0.6.0`: v0.6 changed `datastore.DataStore.GetFile` to return `(io.ReadCloser, int64, error)` (adds object size); adapted `internal/ledgerstream/tiered.go` (+test) + `cmd/stellarindex-ops/rehydrate_galexie_archive.go` (size threaded through, unused). Full `go build ./...` + unit suite green (SCVal/XDR decoding + ingest path unchanged). Prior `v0.6.0` SHA was `dd844ab3`; `v0.5.0` SHA was `475bbd9a`. |
 | `withObsrvr/stellar-extract` | `e3658ced9023bc30f0e19871987dd50270dfe192` | 2026-04-20 | `v0.1.2` | **Reference only — not a dep today.** We evaluated it for SDEX trade extraction but implemented that path against the SDK directly (`internal/sources/sdex/decode.go`). Kept as the reference fixture source per AGENTS.md. |
 | `stellar/stellar-etl` | `427d2e2565c8cc98c7a2fbc65305a314c114aa33` | 2026-04-09 | `v2.8.18` | Reference implementation + test-fixture source. Not a dep. |
 | `withObsrvr/cdp-pipeline-workflow` | `741ac3d206be99dd22589b1ed4c6aa082f76c904` | 2026-04-16 | (no tag) | Not a dep. Reference only; contains verified bugs. |
@@ -43,7 +43,7 @@ module github.com/Stellar-Index/StellarIndex
 go 1.26.0
 
 require (
-    github.com/stellar/go-stellar-sdk v0.6.0
+    github.com/stellar/go-stellar-sdk v0.7.3
     // + our own deps (timescale driver, redis client, echo/chi, prometheus, etc.)
 )
 ```
@@ -105,7 +105,7 @@ the repo SHA is how the source that produced that hash was verified):
 | Band (StandardReference) | `CCQXWMZV…3NFBGG5M` | (band hash) |
 | Reflector — DEX | `CALI2BYU…OB2PLE6M` | (reflector hash) |
 | Reflector — External CEX/DEX | `CAFJZQWS…JLN34DLN` | (reflector hash) |
-| Reflector — Fiat FX | `CBKGPWGK…KOMJRN63` | (reflector hash) |
+| Reflector — Fiat FX | `CBKGPWGK…4DXMCJZC` | (reflector hash) |
 
 Full address tables live in the per-protocol verification pages
 under `docs/protocols/`.

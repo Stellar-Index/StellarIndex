@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -465,6 +466,38 @@ func TestRealDecoder_DEXRowQuotedInUSD_SelfPriceSanity(t *testing.T) {
 // Small helper — &zeroContractAddress(t) isn't addressable since it's
 // a function return.
 func ptrScAddr(a xdr.ScAddress) *xdr.ScAddress { return &a }
+
+// TestVERSIONSMd_FiatFXAddressMatchesRealContract pins VERSIONS.md's
+// abbreviated Reflector Fiat FX row against the real contract ID this
+// package's fixtures decode against (docs/protocols/reflector.md:36
+// and the ContractID literals above). VERSIONS.md drifted to a stale
+// suffix (…KOMJRN63) while both the protocol doc and these tests kept
+// the real address — catch that class of drift here instead of
+// relying on someone diffing the table by eye.
+func TestVERSIONSMd_FiatFXAddressMatchesRealContract(t *testing.T) {
+	const realContractID = "CBKGPWGKSKZF52CFHMTRR23TBWTPMRDIYZ4O2P5VS65BMHYH4DXMCJZC"
+	wantPrefix := realContractID[:8]
+	wantSuffix := realContractID[len(realContractID)-8:]
+
+	raw, err := os.ReadFile("../../../VERSIONS.md")
+	if err != nil {
+		t.Fatalf("read VERSIONS.md: %v", err)
+	}
+	var row string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "Reflector — Fiat FX") {
+			row = line
+			break
+		}
+	}
+	if row == "" {
+		t.Fatal("VERSIONS.md has no \"Reflector — Fiat FX\" row to check")
+	}
+	if !strings.Contains(row, wantPrefix) || !strings.Contains(row, wantSuffix) {
+		t.Errorf("VERSIONS.md Reflector Fiat FX row = %q, want it to contain prefix %q and suffix %q (real contract %s)",
+			row, wantPrefix, wantSuffix, realContractID)
+	}
+}
 
 // contractAddressFromStrkey builds an xdr.ScAddress (Contract) from a
 // C-strkey so tests can encode a specific on-chain contract (e.g. the

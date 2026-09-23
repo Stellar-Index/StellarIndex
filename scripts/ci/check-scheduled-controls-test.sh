@@ -741,10 +741,19 @@ fi
 # are a typo and a rename. Both are cheap to catch here — no API, no
 # token, on every PR — and expensive to catch live, where the marker
 # just silently stops applying and the control quietly reverts to being
-# reported as an ordinary broken one. The step is matched IN FULL, the
-# same way the gate matches it, so this cannot pass on a prefix.
+# reported as an ordinary broken one. This calls the gate's OWN
+# declares_step (extracted straight from $CHECK, not re-implemented) so
+# the two can never drift apart: a fix to how the gate matches a step
+# is proven here on the next run, not re-derived a second time.
+#
+# Swept over BOTH extensions the gate itself sweeps (check-scheduled-
+# controls.sh's workflow loop matches *.yml AND *.yaml) — a marker in a
+# .yaml file would otherwise never be checked here while still being
+# honored live.
+eval "$(sed -n '/^declares_step() {/,/^}/p' "$CHECK")"
+
 marker_files="$(grep -lE '^[[:space:]]*#[[:space:]]*scheduled-control:[[:space:]]*reports-by-failing' \
-  .github/workflows/*.yml 2>/dev/null || true)"
+  .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null || true)"
 marker_n=0
 marker_bad=""
 while IFS= read -r mf; do
@@ -756,29 +765,58 @@ while IFS= read -r mf; do
     marker_bad="${marker_bad} ${mf}(unparseable — the step name must be double-quoted)"
     continue
   fi
-  if ! awk -v want="$claimed" '
-        { line = $0
-          sub(/^[[:space:]]+/, "", line); sub(/^-[[:space:]]*/, "", line)
-          if (line ~ /^#/) next
-          if (line !~ /^name[[:space:]]*:/) next
-          sub(/^name[[:space:]]*:[[:space:]]*/, "", line)
-          sub(/[[:space:]]+$/, "", line)
-          gsub(/^["'"'"']|["'"'"']$/, "", line)
-          if (line == want) found = 1 }
-        END { exit(found ? 0 : 1) }' "$mf"; then
+  if ! declares_step "$mf" "$claimed"; then
     marker_bad="${marker_bad} ${mf}(no step named \"${claimed}\")"
   fi
 done <<EOF
 $marker_files
 EOF
+# Anti-vacuity: a marker regex that stops matching, or a tree with the
+# marker removed out from under this test, must fail — not report a
+# clean sweep over zero markers. The repo carries at least one today
+# (ansible-drift.yml, #502).
 asserts=$((asserts + 1))
-if [ -z "$marker_bad" ]; then
+if [ "$marker_n" -lt 1 ]; then
+  echo "FAIL: found 0 reports-by-failing marker(s) in .github/workflows — the marker regex or the tree moved; this is not a clean result" >&2
+  fail=$((fail + 1))
+elif [ -z "$marker_bad" ]; then
   echo "ok: ${marker_n} reports-by-failing marker(s) in .github/workflows each name a step that exists"
   pass=$((pass + 1))
 else
   echo "FAIL: reports-by-failing marker(s) do not name a real step:${marker_bad}" >&2
   echo "    The marker must read: # scheduled-control: reports-by-failing \"<exact name: of the verdict step>\"" >&2
   echo "    A marker that names no real step is void — the control silently reverts to being reported as an ordinary broken one." >&2
+  fail=$((fail + 1))
+fi
+
+# ── declares_step is anchored under steps:, not any name: line ──────
+# RLT-030: an unanchored scan matches a job's own `name:`, the
+# workflow's top-level `name:`, and a `with:` input called `name:`
+# (e.g. upload-artifact) — any of which would let a marker claim a step
+# that does not exist. Pinned directly against a fixture built to
+# collide on exactly those three shapes.
+cat > "$TMP/anchor.yml" <<'YAML'
+name: Top Level Name
+
+jobs:
+  build:
+    name: Job Name Only
+    steps:
+      - name: Real Step
+        run: echo hi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Artifact Input Name
+YAML
+asserts=$((asserts + 1))
+if declares_step "$TMP/anchor.yml" "Real Step" &&
+   ! declares_step "$TMP/anchor.yml" "Job Name Only" &&
+   ! declares_step "$TMP/anchor.yml" "Top Level Name" &&
+   ! declares_step "$TMP/anchor.yml" "Artifact Input Name"; then
+  echo "ok: declares_step matches a real step but not a job name, workflow name or a with: input"
+  pass=$((pass + 1))
+else
+  echo "FAIL: declares_step matched something other than a step under steps: — a marker could claim a job/workflow name or a with: input as if it were a step" >&2
   fail=$((fail + 1))
 fi
 

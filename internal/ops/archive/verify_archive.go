@@ -379,7 +379,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 
 	// Tier D (multi-peer checkpoint diff). Independent of LCM walk.
 	if doPeers {
-		if err := verifyArchivePeers(uint32(*from), uint32(*to), *peerList, *peerSamples); err != nil {
+		if err := verifyArchivePeers(effectiveFrom, uint32(*to), *peerList, *peerSamples); err != nil {
 			return err
 		}
 	}
@@ -758,7 +758,7 @@ var defaultTier1Peers = []string{
 	"https://stellar-history-de-fra.satoshipay.io",
 	"https://stellar-history-usc.franklintempleton.com/azuscshf401",
 	"https://alpha-history.validator.stellar.creit.tech",
-	"http://history.stellar.org/prd/core-live/core_live_001",
+	"https://history.stellar.org/prd/core-live/core_live_001",
 	"https://stellar-full-history1.bdnodes.net",
 }
 

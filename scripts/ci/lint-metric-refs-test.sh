@@ -147,6 +147,82 @@ run
 expect_absent 'ansible inline content: block counts as an emitter' 'stellarindex_fixture_ansible_inline_total'
 expect_present 'a metric named only in an ansible COMMENT stays dead' 'stellarindex_fixture_ansible_comment_total'
 
+# 6. Producer -> alert direction (advisory, T456). A metric emitted with
+# a real Name: literal but referenced by NO rule expr must be reported
+# as UNALERTED, without affecting the pass/fail exit status. Uses its
+# own clean fixture tree (steps 1-5 already carry real DEAD-REFs, which
+# would confound a gate-exit-code assertion here).
+CLEAN="$TMP/clean-repo"
+mkdir -p "$CLEAN/scripts/ci" \
+         "$CLEAN/deploy/monitoring/rules" \
+         "$CLEAN/configs/prometheus/rules.r1" \
+         "$CLEAN/internal" \
+         "$CLEAN/configs/healthchecks"
+cp "$SRC" "$CLEAN/scripts/ci/lint-metric-refs.sh"
+cat > "$CLEAN/deploy/monitoring/rules/fixture.yml" <<'YML'
+groups:
+  - name: fixture
+    rules:
+      - alert: Unrelated
+        expr: up == 1
+YML
+cat > "$CLEAN/internal/unalerted.go" <<'GO'
+package internal
+
+var _ = struct{ Name string }{
+	Name: "stellarindex_fixture_unalerted_total",
+}
+GO
+CLEAN_OUT="$(bash "$CLEAN/scripts/ci/lint-metric-refs.sh" 2>&1)"
+CLEAN_STATUS=$?
+if ! grep -q "UNALERTED (advisory): 'stellarindex_fixture_unalerted_total'" <<<"$CLEAN_OUT"; then
+  echo "FAIL: emitted-but-unalerted metric should be reported as UNALERTED advisory" >&2
+  printf '%s\n' "$CLEAN_OUT" | sed 's/^/    /' >&2
+  fail=$((fail + 1))
+else
+  echo "ok: emitted-but-unalerted metric reported as UNALERTED advisory"; pass=$((pass + 1))
+fi
+if [ "$CLEAN_STATUS" -ne 0 ]; then
+  echo "FAIL: an UNALERTED advisory finding must not fail the gate (exit=$CLEAN_STATUS)" >&2
+  printf '%s\n' "$CLEAN_OUT" | sed 's/^/    /' >&2
+  fail=$((fail + 1))
+else
+  echo "ok: UNALERTED advisory does not fail the gate"; pass=$((pass + 1))
+fi
+
+# 7. A metric that IS alerted must not be reported as UNALERTED, proving
+# the ALERTED_SET built once from RULE_DIRS actually catches a real
+# reference (not just an absence of false positives from test 6).
+ALERTED="$TMP/alerted-repo"
+mkdir -p "$ALERTED/scripts/ci" \
+         "$ALERTED/deploy/monitoring/rules" \
+         "$ALERTED/configs/prometheus/rules.r1" \
+         "$ALERTED/internal" \
+         "$ALERTED/configs/healthchecks"
+cp "$SRC" "$ALERTED/scripts/ci/lint-metric-refs.sh"
+cat > "$ALERTED/deploy/monitoring/rules/fixture.yml" <<'YML'
+groups:
+  - name: fixture
+    rules:
+      - alert: FixtureAlerted
+        expr: stellarindex_fixture_alerted_total > 0
+YML
+cat > "$ALERTED/internal/alerted.go" <<'GO'
+package internal
+
+var _ = struct{ Name string }{
+	Name: "stellarindex_fixture_alerted_total",
+}
+GO
+ALERTED_OUT="$(bash "$ALERTED/scripts/ci/lint-metric-refs.sh" 2>&1)"
+if grep -q "UNALERTED (advisory): 'stellarindex_fixture_alerted_total'" <<<"$ALERTED_OUT"; then
+  echo "FAIL: a metric referenced by a rule expr must not be reported UNALERTED" >&2
+  printf '%s\n' "$ALERTED_OUT" | sed 's/^/    /' >&2
+  fail=$((fail + 1))
+else
+  echo "ok: an alerted metric is not reported UNALERTED"; pass=$((pass + 1))
+fi
+
 echo "----"
 echo "lint-metric-refs-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]
