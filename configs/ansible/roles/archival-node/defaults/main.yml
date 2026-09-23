@@ -357,9 +357,8 @@ postgres_user_stellarindex:  "stellarindex"
 # postgres_pass_stellarindex ← set in ansible-vault secrets file
 
 # ───── ClickHouse schema + state snapshot (ADR-0043 §2.1) ─────────────
-# The lake's only backup, by design: ADR-0043 rejects a multi-TiB copy
-# of derived data (the raw ledgers already live in two independent
-# archives) and protects the METADATA instead — SHOW CREATE for every
+# The lake's METADATA backup (the rows are ch_lake_backup_* below, ADR-0043
+# §2.4) — SHOW CREATE for every
 # stellar.* table/view, the partition + changed-settings inventory, and
 # the ch-backfill / ingestion cursor state. Megabytes a day. Losing the
 # DDL is what turns a re-derive from "run the script" into archaeology.
@@ -391,6 +390,31 @@ ch_schema_snapshot_retain_days: 90
 # loudly as on a failing push.
 ch_schema_snapshot_mc_target: ""
 ch_schema_snapshot_offsite_ack: false
+
+# ───── ClickHouse lake DATA backup (ADR-0043 §2.4) ─────────────────────
+# Native BACKUP DATABASE into an off-site s3_plain disk: a full every
+# ch_lake_backup_full_interval_days, daily incrementals on top of it.
+# The units install on every host with a ClickHouse; the backup itself
+# runs only once ch_lake_backup_s3_endpoint is set. Until then the run
+# reports configured=0 and stellarindex_ch_lake_backup_stale tickets the
+# host. Restore: docs/operations/runbooks/ch-lake-backup.md.
+ch_lake_backup_enabled: true
+ch_lake_backup_database: "stellar"
+ch_lake_backup_disk: "si_lake_backup"
+# s3_plain endpoint INCLUDING bucket and prefix, trailing slash, e.g.
+# "https://<account>.r2.cloudflarestorage.com/stellarindex-ch-lake/r1/".
+ch_lake_backup_s3_endpoint: ""
+ch_lake_backup_s3_region: "auto"
+# ch_lake_backup_s3_key / ch_lake_backup_s3_key_secret ← ansible-vault
+ch_lake_backup_state_dir: "/var/lib/stellarindex/ch-lake-backup"
+ch_lake_backup_full_interval_days: 28
+# Chains kept after a new full succeeds. 1 = only the newest, the same
+# lean off-site posture as pgbackrest_repo2_retention_full (#298); the
+# old chain is removed only once the new full is BACKUP_CREATED.
+ch_lake_backup_retain_chains: 1
+# Bytes/s ClickHouse may read for a backup — 100 MiB/s keeps a full of the
+# lake (~2 days) off the serving path's disks. 0 = unlimited.
+ch_lake_backup_max_bandwidth: 104857600
 
 # ───── ClickHouse schema DRIFT check (C6-008 / C6-003) ────────────────
 # The other half of the snapshot: compares deploy/clickhouse/tier1_schema.sql

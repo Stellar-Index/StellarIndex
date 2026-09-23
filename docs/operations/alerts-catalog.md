@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 187 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 188 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -169,6 +169,7 @@ signal lands.
 | `stellarindex_pgbackrest_backup_unit_failed` | `node_systemd_unit_state{name="pgbackrest-backup.service",state="failed"}` | == 1 for 5 min | ticket | [backup-failed](runbooks/backup-failed.md) |
 | `stellarindex_ch_schema_snapshot_stale` | `time() - stellarindex_ch_schema_snapshot_last_success_unix` (or `absent_over_time(...[36h])` — never / every-run-failed) | > 36 h, or series absent 36 h, for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_snapshot_offsite_stale` | `time() - stellarindex_ch_schema_snapshot_offsite_last_success_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…offsite_last_success_unix[72h])` — ungated: a never-configured off-site is as loud as a failing push, and the alert names the host) | > 72 h since the last push, or no push inside 72 h on a host that has a local snapshot (never pushed / no target ever configured there), for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
+| `stellarindex_ch_lake_backup_stale` | `time() - stellarindex_ch_lake_backup_last_success_unix` (or, per host, `stellarindex_ch_schema_snapshot_last_success_unix unless on (instance) max_over_time(…lake_backup_last_success_unix[96h])` — a host with a lake and no data backup, including one with no backup disk configured) | > 96 h since the last successful lake backup, or none inside 96 h, for ≥ 1 h | ticket | [ch-lake-backup](runbooks/ch-lake-backup.md) |
 | `stellarindex_ch_schema_snapshot_unit_failed` | `node_systemd_unit_state{name="ch-schema-snapshot.service",state="failed"}` | == 1 for 5 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_drift_detected` | `stellarindex_ch_schema_drift_divergent` | > 0 for ≥ 30 min | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |
 | `stellarindex_ch_schema_drift_not_converged` | `stellarindex_ch_schema_drift_intent_converged` | == 0 for ≥ 30 min (intent vs. host release could not be compared) | ticket | [ch-schema-restore](runbooks/ch-schema-restore.md) |

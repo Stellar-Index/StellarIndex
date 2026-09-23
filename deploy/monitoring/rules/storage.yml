@@ -1029,6 +1029,42 @@ groups:
             configured but pushing — check the `mc` alias/credentials
             and the remote's quota.
 
+      # The lake's DATA backup (scripts/ops/ch-lake-backup.sh, ADR-0043
+      # §2.4). Same absent-series shape as the snapshot alerts above: the
+      # stamp is written only by a successful run, so never-configured,
+      # never-succeeded and every-run-failing are an ABSENT series, which
+      # the `time() - x` arm alone can never fire on. PER HOST: the second
+      # arm takes every host with a lake (it carries the schema snapshot's
+      # stamp) and drops those with a data backup inside the window. 96 h,
+      # not 36: a full of the lake runs ~2 days at the default bandwidth
+      # cap, and the incrementals it delays must not ticket.
+      - alert: stellarindex_ch_lake_backup_stale
+        expr: |
+          (time() - stellarindex_ch_lake_backup_last_success_unix) > 96 * 3600
+          or
+          (
+            stellarindex_ch_schema_snapshot_last_success_unix
+            unless on (instance)
+            max_over_time(stellarindex_ch_lake_backup_last_success_unix[96h])
+          )
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
+          summary: "ClickHouse lake has no data backup younger than 96 h on {{ $labels.instance }}"
+          description: |
+            No ch-lake-backup run has completed on this host in 96 h, or
+            none ever has. Without one the lake's only recovery path is a
+            re-derive from the Galexie archive (~1–2 weeks) instead of a
+            restore (hours). `stellarindex_ch_lake_backup_configured`
+            splits the cases: 0 = no off-site disk configured (set
+            ch_lake_backup_s3_endpoint + the vault key pair and re-apply
+            the role), 1 = configured but failing —
+            `journalctl -u ch-lake-backup.service -n 100`.
+
       # Causal, early signal for both snapshot alerts above (same shape
       # as pgbackrest_backup_unit_failed): the unit is Type=oneshot with
       # no OnFailure, so a failed run otherwise surfaces only 36 h later.

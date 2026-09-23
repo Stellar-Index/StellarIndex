@@ -1,0 +1,31 @@
+<!-- Rendered by Ansible (18-pgbackrest-backup.yml). The off-site disk
+     scripts/ops/ch-lake-backup.sh backs the lake up into (ADR-0043 §2.4).
+
+     s3_plain: objects are written under their own names with no local
+     metadata, so a backup is readable from a fresh host that holds
+     nothing but this file.
+
+     skip_access_check: a new disk is probed at server start, and a
+     rejected credential would then keep the LAKE from starting. The
+     backup run reports a bad credential instead (BACKUP_FAILED, then
+     stellarindex_ch_lake_backup_stale).
+
+     SECRETS: the key pair is vault-sourced; the file is 0640
+     root:clickhouse and the task that writes it is no_log. -->
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <{{ ch_lake_backup_disk | default('si_lake_backup') }}>
+                <type>s3_plain</type>
+                <endpoint>{{ ch_lake_backup_s3_endpoint }}</endpoint>
+                <access_key_id>{{ ch_lake_backup_s3_key }}</access_key_id>
+                <secret_access_key>{{ ch_lake_backup_s3_key_secret }}</secret_access_key>
+                <region>{{ ch_lake_backup_s3_region | default('auto') }}</region>
+                <skip_access_check>true</skip_access_check>
+            </{{ ch_lake_backup_disk | default('si_lake_backup') }}>
+        </disks>
+    </storage_configuration>
+    <backups>
+        <allowed_disk>{{ ch_lake_backup_disk | default('si_lake_backup') }}</allowed_disk>
+    </backups>
+</clickhouse>

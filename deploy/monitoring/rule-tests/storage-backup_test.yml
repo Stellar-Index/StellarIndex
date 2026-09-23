@@ -608,3 +608,118 @@ tests:
                 offsite push failed). The staleness alerts catch the
                 consequence 36 h / 72 h later; this is the causal signal.
                 `journalctl -u ch-schema-snapshot.service -n 50`.
+
+  # ═══ stellarindex_ch_lake_backup_stale (ADR-0043 §2.4) ═══════════════
+
+  # (RED) a lake with no data backup configured: the script writes only
+  # configured=0, so the stamp is ABSENT. Fires per host off the schema
+  # snapshot's stamp.
+  - interval: 1h
+    name: lake backup never configured — stale ticket fires
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_lake_backup_configured{job="node_exporter", instance="r1:9100"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_lake_backup_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
+              summary: "ClickHouse lake has no data backup younger than 96 h on r1:9100"
+              description: |
+                No ch-lake-backup run has completed on this host in 96 h, or
+                none ever has. Without one the lake's only recovery path is a
+                re-derive from the Galexie archive (~1–2 weeks) instead of a
+                restore (hours). `stellarindex_ch_lake_backup_configured`
+                splits the cases: 0 = no off-site disk configured (set
+                ch_lake_backup_s3_endpoint + the vault key pair and re-apply
+                the role), 1 = configured but failing —
+                `journalctl -u ch-lake-backup.service -n 100`.
+
+  # (RED) configured but the last success is > 96 h old.
+  - interval: 1h
+    name: lake backup stamp older than 96 h — stale ticket fires
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_lake_backup_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_lake_backup_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
+              summary: "ClickHouse lake has no data backup younger than 96 h on r1:9100"
+              description: |
+                No ch-lake-backup run has completed on this host in 96 h, or
+                none ever has. Without one the lake's only recovery path is a
+                re-derive from the Galexie archive (~1–2 weeks) instead of a
+                restore (hours). `stellarindex_ch_lake_backup_configured`
+                splits the cases: 0 = no off-site disk configured (set
+                ch_lake_backup_s3_endpoint + the vault key pair and re-apply
+                the role), 1 = configured but failing —
+                `journalctl -u ch-lake-backup.service -n 100`.
+
+  # (RED) one host backing up must not hide another that is not.
+  - interval: 1h
+    name: lake backup — a healthy host does not mask an unprotected one
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r2:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_lake_backup_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+    alert_rule_test:
+      - eval_time: 100h
+        alertname: stellarindex_ch_lake_backup_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r2:9100
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
+              summary: "ClickHouse lake has no data backup younger than 96 h on r2:9100"
+              description: |
+                No ch-lake-backup run has completed on this host in 96 h, or
+                none ever has. Without one the lake's only recovery path is a
+                re-derive from the Galexie archive (~1–2 weeks) instead of a
+                restore (hours). `stellarindex_ch_lake_backup_configured`
+                splits the cases: 0 = no off-site disk configured (set
+                ch_lake_backup_s3_endpoint + the vault key pair and re-apply
+                the role), 1 = configured but failing —
+                `journalctl -u ch-lake-backup.service -n 100`.
+
+  # Healthy, including a 3-day full: the stamp ages to 72 h and refreshes.
+  - interval: 1h
+    name: lake backup through a multi-day full — silent
+    input_series:
+      - series: 'stellarindex_ch_schema_snapshot_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0+3600x200'
+      - series: 'stellarindex_ch_lake_backup_last_success_unix{job="node_exporter", instance="r1:9100"}'
+        values: '0x72 259200x128'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: stellarindex_ch_lake_backup_stale
+        exp_alerts: []
+      - eval_time: 150h
+        alertname: stellarindex_ch_lake_backup_stale
+        exp_alerts: []

@@ -296,6 +296,92 @@
     # check-mode guard — see the pgBackRest timer note above.
     - not (ansible_check_mode and ch_schema_snapshot_units is changed)
 
+# ─── ClickHouse lake DATA backup (ADR-0043 §2.4) ─────────────────────
+# The snapshot above keeps the lake's DDL; this keeps its rows. Here and
+# not in 08-clickhouse.yml because 08 is never imported on r1
+# (run_clickhouse is false there by design) — gated instead on the fact
+# every other CH-config task uses. The units install whether or not a
+# target exists: an unconfigured run reports configured=0 so the gap is
+# ticketed by host rather than invisible. ClickHouse re-reads config.d
+# on its own, so a new or changed disk needs no server restart.
+- name: Refuse a lake-backup target without its credentials
+  ansible.builtin.assert:
+    that:
+      - ch_lake_backup_s3_key | default('') != ''
+      - ch_lake_backup_s3_key_secret | default('') != ''
+    fail_msg: >-
+      ch_lake_backup_s3_endpoint is set but ch_lake_backup_s3_key /
+      ch_lake_backup_s3_key_secret are not (both come from ansible-vault).
+    quiet: true
+  no_log: true
+  when:
+    - ch_lake_backup_enabled | default(true) | bool
+    - clickhouse_config_tasks_enabled | default(false) | bool
+    - ch_lake_backup_s3_endpoint | default('') != ''
+
+- name: Install the ClickHouse lake-backup disk (off-site s3_plain)
+  ansible.builtin.template:
+    src: clickhouse-lake-backup-disk.xml.j2
+    dest: "{{ clickhouse_server_config_dir }}/config.d/si-lake-backup.xml"
+    owner: root
+    group: clickhouse
+    mode: "0640"
+  diff: false
+  no_log: true
+  when:
+    - ch_lake_backup_enabled | default(true) | bool
+    - clickhouse_config_tasks_enabled | default(false) | bool
+    - ch_lake_backup_s3_endpoint | default('') != ''
+
+- name: Install the ClickHouse lake-backup script
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../scripts/ops/ch-lake-backup.sh"
+    dest: /usr/local/bin/ch-lake-backup.sh
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - ch_lake_backup_enabled | default(true) | bool
+    - clickhouse_config_tasks_enabled | default(false) | bool
+
+- name: Ensure the ClickHouse lake-backup state directory exists
+  ansible.builtin.file:
+    path: "{{ ch_lake_backup_state_dir | default('/var/lib/stellarindex/ch-lake-backup') }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  when:
+    - ch_lake_backup_enabled | default(true) | bool
+    - clickhouse_config_tasks_enabled | default(false) | bool
+
+- name: Install ClickHouse lake-backup systemd units
+  ansible.builtin.template:
+    src: "systemd/{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - ch-lake-backup.service
+    - ch-lake-backup.timer
+  register: ch_lake_backup_units
+  when:
+    - ch_lake_backup_enabled | default(true) | bool
+    - clickhouse_config_tasks_enabled | default(false) | bool
+
+- name: Enable + start the ClickHouse lake-backup timer
+  ansible.builtin.systemd:
+    name: ch-lake-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: "{{ ch_lake_backup_units is changed }}"
+  when:
+    - ch_lake_backup_enabled | default(true) | bool
+    - clickhouse_config_tasks_enabled | default(false) | bool
+    # check-mode guard — see the pgBackRest timer note above.
+    - not (ansible_check_mode and ch_lake_backup_units is changed)
+
 # ─── ClickHouse schema DRIFT check (C6-008 / C6-003) ─────────────────
 # The snapshot above records what the live schema IS. Nothing recorded
 # whether it is what the repo SAYS it should be. Tier-1 lake DDL is

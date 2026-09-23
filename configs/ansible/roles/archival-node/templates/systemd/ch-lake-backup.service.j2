@@ -1,0 +1,55 @@
+# systemd unit: ClickHouse lake DATA backup (ADR-0043 §2.4).
+#
+# Rendered by Ansible. Runs scripts/ops/ch-lake-backup.sh — native
+# BACKUP DATABASE {{ ch_lake_backup_database | default('stellar') }} into the
+# `{{ ch_lake_backup_disk | default('si_lake_backup') }}` disk that
+# clickhouse-lake-backup-disk.xml.j2 declares. With no disk configured the
+# run only reports configured=0, which stellarindex_ch_lake_backup_stale
+# tickets by host.
+
+[Unit]
+Description=Stellar Index — ClickHouse lake data backup (ADR-0043 §2.4)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
+After=clickhouse-server.service network-online.target
+Wants=clickhouse-server.service
+
+StartLimitIntervalSec=1h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+Environment=CH_DATABASE={{ ch_lake_backup_database | default('stellar') }}
+Environment=STATE_DIR={{ ch_lake_backup_state_dir | default('/var/lib/stellarindex/ch-lake-backup') }}
+Environment=FULL_INTERVAL_DAYS={{ ch_lake_backup_full_interval_days | default(28) }}
+Environment=RETAIN_CHAINS={{ ch_lake_backup_retain_chains | default(1) }}
+Environment=MAX_BANDWIDTH={{ ch_lake_backup_max_bandwidth | default(104857600) }}
+{% if ch_lake_backup_s3_endpoint | default('') != '' %}
+Environment=BACKUP_DISK={{ ch_lake_backup_disk | default('si_lake_backup') }}
+{% endif %}
+ExecStart=/usr/local/bin/ch-lake-backup.sh
+# Root: clickhouse-disks (the chain prune) reads the server config, which
+# holds the backup disk's credentials at mode 0640 root:clickhouse.
+User=root
+
+# The server does the reading and uploading; this process only polls. The
+# bandwidth cap (MAX_BANDWIDTH, bytes/s) is what keeps a full off the
+# serving path's disks.
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+# A full of the multi-TiB lake at the default 100 MiB/s cap is ~2 days;
+# incrementals are minutes. Bound it well above a full so a wedged run
+# fails (and the staleness alert fires) instead of pinning the timer.
+TimeoutStartSec=4d
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths={{ ch_lake_backup_state_dir | default('/var/lib/stellarindex/ch-lake-backup') }} /var/lib/node_exporter/textfile_collector
+
+[Install]
+WantedBy=multi-user.target

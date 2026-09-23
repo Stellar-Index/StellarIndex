@@ -1,7 +1,7 @@
 ---
 title: Off-site (S3) backup plan
 last_verified: 2026-08-29
-status: §2 (Postgres → pgBackRest repo2/S3) LIVE on r1 2026-08-29; §1/§3/§4 proposed
+status: §2 (Postgres → pgBackRest repo2/S3) LIVE on r1 2026-08-29; §4 (ClickHouse lake) mechanism committed 2026-09-23, awaiting its off-site target; §1/§3 proposed
 severity: P1
 ---
 
@@ -79,6 +79,9 @@ Small, high-value, non-re-derivable. A daily job tars `/etc/stellarindex*`, `/et
 
 ### 4. ClickHouse lake → S3 (high) — full, incremental, for RTO
 Back up the full lake so recovery is a **restore (~hours)**, not a re-walk (~weeks).
+
+> **Status (2026-09-23, #859): mechanism COMMITTED, not yet running on r1.** ADR-0043 §2.4 adopts this stream. What shipped differs from the bullets below in one respect: it uses ClickHouse's native `BACKUP DATABASE` (full every 28 days, daily incrementals via `base_backup`) into an `s3_plain` disk declared in config.d, not `clickhouse-backup` — no third-party binary, and the credentials stay out of query text. `scripts/ops/ch-lake-backup.sh` + `ch-lake-backup.timer`, installed by `18-pgbackrest-backup.yml`; restore in [`runbooks/ch-lake-backup.md`](runbooks/ch-lake-backup.md). It backs nothing up until `ch_lake_backup_s3_endpoint` and the vault key pair are set; until then `stellarindex_ch_lake_backup_stale` tickets the host. The CH leg of the restore drill (last bullet of *Cross-cutting*) is still open.
+
 - Tool: **`clickhouse-backup`** (S3-native, part-level **incremental** — after the first ~7 TiB full, dailies are only the new parts ~10–20 GiB). It freezes parts for a consistent snapshot; no downtime.
 - Do the **first full backup AFTER the Phase A ZSTD recompress** (backs up ~7 TiB not ~8.6, and the parts are already in their final codec).
 - Restore = provision CH → `clickhouse-backup restore_remote <name>` → `verify-lake`/`verify-contiguity`/`reconcile-balances` as the acceptance gate.

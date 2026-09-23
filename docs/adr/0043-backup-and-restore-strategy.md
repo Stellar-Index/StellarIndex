@@ -119,6 +119,31 @@ partition scheme (1M-ledger partitions, old partitions ~immutable)
 makes incrementals cheap. That decision needs the drill's throughput
 number first; do not pre-buy storage on a guess.
 
+> **§2 amended 2026-09-23 (#859): the REVISIT condition above is met.**
+> The re-derive this section relies on is measured at ~80 ledgers/s,
+> i.e. ~9 days for `ledger_entry_changes` alone and ~1–2 weeks for the
+> whole lake (`docs/operations/off-site-backup-plan.md`, RTO table),
+> against hours for a restore. `off-site-backup-plan.md` rates that
+> unacceptable for a production API, and `multi-region-ha.md` §5 already
+> plans an off-site copy of the derived lake. So:
+>
+> 4. **Data backup (§2.4):** `scripts/ops/ch-lake-backup.sh`, installed
+>    by the archival-node role (`18-pgbackrest-backup.yml`) as a daily
+>    `ch-lake-backup.timer`. ClickHouse's native `BACKUP DATABASE`
+>    writes into an off-site `s3_plain` disk declared in config.d: a full
+>    every 28 days, daily incrementals on top of it, and the previous
+>    chain removed only after the new full is `BACKUP_CREATED`. Native
+>    BACKUP rather than `clickhouse-backup`: it needs no third-party
+>    binary, and the credentials stay in server config instead of a
+>    query text. Restore: `docs/operations/runbooks/ch-lake-backup.md`.
+>
+> As with repo2 in §1, the code does nothing until an operator
+> provides the bucket and key pair (`ch_lake_backup_s3_endpoint` + vault).
+> Until then `stellarindex_ch_lake_backup_stale` tickets every host that
+> has a lake, so the unfunded gap is visible rather than assumed.
+> §2.1 (DDL snapshot) and §2.2 (re-derive drill) stand: the re-derive is
+> still the recovery when no backup chain survives.
+
 ### 3. Drill logging is append-only evidence
 
 Every drill run appends to `docs/operations/drills/` (date, repo
