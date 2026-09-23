@@ -12,10 +12,12 @@
 //     to anchor each checkpoint against SDF's signed view.
 //
 // Both must be structurally complete for the API's downstream
-// integrity guarantees to hold. The package implements all three
-// ADR-0017 modes (check / fix / verify), driven by the
+// integrity guarantees to hold. The package implements the
+// ADR-0017 modes driven by the
 // `stellarindex-ops archive-completeness <mode>` subcommand and
-// the `archive-completeness.{service,timer}` systemd units.
+// the `archive-completeness.{service,timer}` systemd units, but
+// today only the cross-anchor archive is enforced — see "Modes"
+// below.
 //
 //   - [CrossAnchorChecker.Check] — read-only scan of the cross-
 //     anchor archive's `ledger/XX/YY/ZZ/ledger-XXYYZZWW.xdr.gz`
@@ -26,11 +28,13 @@
 //     fetcher that downloads missing bytes back into place) and
 //     `verify` (chain-link + checkpoint-anchor integrity check).
 //
-// # Modes (all shipped)
+// # Modes
 //
-//  1. `check` — read-only scan (cross-anchor + primary).
-//     Cross-anchor is a native Go filesystem walk; primary is via
-//     shell-out to `galexie detect-gaps`.
+//  1. `check` — read-only scan. Cross-anchor is a native Go
+//     filesystem walk and is shipped. The primary (galexie-archive)
+//     scan is NOT implemented: [Report.Primary] is always left nil
+//     and no code in this package shells out to `galexie
+//     detect-gaps` or anything else to populate it.
 //  2. `fix` — fetches missing files via the multi-source fallback
 //     chain (SDF mainnet → AWS public-blockchain → peers).
 //  3. `verify` — chain-link + checkpoint-anchor verification of
