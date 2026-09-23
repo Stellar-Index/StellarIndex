@@ -48,7 +48,7 @@ reads) for the affected ledger range until catch-up completes.
 ```sh
 # Is CH alive + how far behind is the lake tail?
 curl -s 'http://127.0.0.1:8123/' --data-binary 'SELECT max(ledger_seq) FROM stellar.ledgers'
-sudo -u postgres psql -d stellarindex -c "SELECT last_ledger FROM ingest_cursors WHERE name='ledgerstream'"
+sudo -u postgres psql -d stellarindex -c "SELECT last_ledger FROM ingestion_cursors WHERE source='ledgerstream'"
 
 # Drop rate + sink outcome mix
 curl -s localhost:9464/metrics | grep ch_live_sink_ledgers_total

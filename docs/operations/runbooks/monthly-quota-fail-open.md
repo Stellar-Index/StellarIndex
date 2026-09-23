@@ -72,8 +72,12 @@ one's is money.
 - **Redis down / degraded** → follow the Redis recovery path. The
   middleware self-heals on the first successful read and the alert clears
   within ~10 min of the last bypass.
-- **AUTH drift** → re-sync the password into `/etc/stellarindex.toml`
-  (`storage.redis_url`) and `systemctl restart stellarindex-api`.
+- **AUTH drift** → the API's Redis password is the
+  `STELLARINDEX_REDIS_PASSWORD` environment override (config field
+  `[storage] redis_password_env`), not a hand-edited TOML value. Re-sync it
+  in the unit's `EnvironmentFile` (`/etc/default/stellarindex`) to Redis's
+  `requirepass` (ansible `redis_password`), then
+  `systemctl restart stellarindex-api`.
 - **Eviction** → confirm `maxmemory-policy`; the usage counters must not
   be in an evictable class. This is a config fix on Redis, not on the API.
 - **After recovery**, decide whether any customer materially exceeded

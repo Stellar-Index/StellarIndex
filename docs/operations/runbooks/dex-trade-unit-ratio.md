@@ -102,10 +102,15 @@ frequent equal-value fills is the known false-positive pattern below.
       ships instead of a wrong one).
 - [ ] Step 4 — after the decoder fix ships, purge the corrupted rows for
       the affected range and re-derive the source's history from the
-      ClickHouse lake (ADR-0034): `stellarindex-ops ch-rebuild -source
-      <name>` for non-projected sources, or `stellarindex-ops
-      projector-replay -source <name> -from <ledger> -write` for projected
-      ones. Don't merge fixed and corrupted rows for the same range.
+      ClickHouse lake (ADR-0034). Non-projected sources use `ch-rebuild`
+      over the purged range — `stellarindex-ops ch-rebuild -config
+      /etc/stellarindex.toml -from <ledger> -to <ledger> -sources sdex -sdex
+      -write` for SDEX, or `-sources <name> -contract-calls` for a
+      ContractCall source. Always pass `-sources`: without it the run
+      re-derives every event-based source over the range. Projected sources use `stellarindex-ops
+      projector-replay -config /etc/stellarindex.toml -source <name> -from
+      <ledger> -write`. Which side a source is on:
+      [the replay decision rule](../../architecture/ingest-pipeline.md#the-replay-decision-rule). Don't merge fixed and corrupted rows for the same range.
 - [ ] Verification:
       `increase(stellarindex_dex_trade_unit_ratio_total{source="<source>"}[30m])`
       drops back under the 25-count / 50%-of-flow thresholds and

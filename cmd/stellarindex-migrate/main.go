@@ -42,18 +42,25 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 )
 
-func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
-	fs := flag.NewFlagSet("stellarindex-migrate", flag.ContinueOnError)
+// newFlagSet declares the tool's whole flag surface; runbook invocations
+// are tested against it.
+func newFlagSet() (fs *flag.FlagSet, dsn, dir *string, yes, iKnow *bool) {
+	fs = flag.NewFlagSet("stellarindex-migrate", flag.ContinueOnError)
 	// The flag package prints its own parse errors — the rejected
 	// argument included, verbatim — to the FlagSet's output before it
 	// returns them. Nothing this tool is given may be echoed, so it is
 	// discarded and [parseArgv] composes the diagnostic instead.
 	fs.SetOutput(io.Discard)
-	dsn := fs.String("dsn", "", "Postgres DSN (overrides STELLARINDEX_POSTGRES_DSN env)")
-	dir := fs.String("migrations", "migrations", "Path to the migrations directory")
-	yes := fs.Bool("yes", false, "skip the interactive confirmation for 'down' (required when stdin is not a TTY)")
-	iKnow := fs.Bool("i-know", false, "acknowledge that 'down' runs down.sql against the target database and may be irreversible (required for every 'down')")
+	dsn = fs.String("dsn", "", "Postgres DSN (overrides STELLARINDEX_POSTGRES_DSN env)")
+	dir = fs.String("migrations", "migrations", "Path to the migrations directory")
+	yes = fs.Bool("yes", false, "skip the interactive confirmation for 'down' (required when stdin is not a TTY)")
+	iKnow = fs.Bool("i-know", false, "acknowledge that 'down' runs down.sql against the target database and may be irreversible (required for every 'down')")
 	fs.Usage = func() { printUsage(fs) }
+	return fs, dsn, dir, yes, iKnow
+}
+
+func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduce linearity
+	fs, dsn, dir, yes, iKnow := newFlagSet()
 
 	args := parseArgv(fs, os.Args[1:])
 

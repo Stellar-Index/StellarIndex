@@ -46,7 +46,7 @@ The rule fires on `rate(...[5m]) > 0` sustained `for: 10m`, so:
 2. **Does this alert fire ALONE (Redis healthy)?** Then the failure is
    inside the limiter's own path, not the store's availability. Likely
    causes, in order:
-   - **AUTH**: `storage.redis_url` password rotated on one side only.
+   - **AUTH**: Redis password (`STELLARINDEX_REDIS_PASSWORD`) rotated on one side only.
      `journalctl -u stellarindex-api | grep -i 'ratelimit\|redis'` shows
      `NOAUTH` / `WRONGPASS`.
    - **Key namespace / eviction policy**: a `maxmemory-policy` of
@@ -65,8 +65,12 @@ The rule fires on `rate(...[5m]) > 0` sustained `for: 10m`, so:
 - **Redis down** → follow the Redis recovery path; the limiter
   self-heals on the first successful command and the alert clears
   within ~10 min of the last bypass.
-- **AUTH drift** → re-sync the password into `/etc/stellarindex.toml`
-  (`storage.redis_url`) and `systemctl restart stellarindex-api`.
+- **AUTH drift** → the API's Redis password is the
+  `STELLARINDEX_REDIS_PASSWORD` environment override (config field
+  `[storage] redis_password_env`), not a hand-edited TOML value. Re-sync it
+  in the unit's `EnvironmentFile` (`/etc/default/stellarindex`) to Redis's
+  `requirepass` (ansible `redis_password`), then
+  `systemctl restart stellarindex-api`.
 - **Sustained abuse while open** → the limiter cannot help. Apply the
   block at the edge (Caddy/HAProxy) for the offending source, per
   [api-latency](api-latency.md)'s traffic-shedding section, until

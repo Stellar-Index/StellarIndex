@@ -141,7 +141,7 @@ sentinel, and a re-run re-admits it, so the repair is
 **3a. SAC balances — use the full-history variant:**
 
 ```
-stellarindex-ops supply-seed-sac -config /etc/stellarindex.toml -full-history
+stellarindex-ops supply seed-sac-balances -config /etc/stellarindex.toml -full-history -write
 ```
 
 `-full-history` switches the read to
@@ -157,7 +157,7 @@ i.e. the un-repaired projection. Do not use the default variant here.
 **3b. Account balances — projection-dependent, no escape hatch:**
 
 ```
-stellarindex-ops supply-seed -config /etc/stellarindex.toml
+stellarindex-ops supply seed-observations -config /etc/stellarindex.toml -write
 ```
 
 `LatestAccountEntrySeed` reads `stellar.ledger_entries_current FINAL` and
@@ -226,8 +226,9 @@ GROUP BY key_xdr;
   continuously rather than once per walk-version bump.
 - **Do not re-run the change-replay re-derive "harder".** It is deterministic;
   the second run computes the same position the guard already rejected.
-- **Do not run `supply-seed` (accounts) before the projection rebuild has
-  verified**, and **do not run `supply-seed-sac` without `-full-history`**
+- **Do not run `supply seed-observations` (accounts) before the projection
+  rebuild has verified**, and **do not run `supply seed-sac-balances` without
+  `-full-history`**
   here. Both read `ledger_entries_current FINAL`; seeding a stale value at
   `MaxUint32` is permanent.
 - **Do not treat a reproject as a projection repair.** The projection is
@@ -261,7 +262,7 @@ GROUP BY key_xdr;
 
 ## Residual risk
 
-`supply-seed` / `supply-seed-sac` seed CURRENT state only — one row per key
+`supply seed-observations` / `supply seed-sac-balances` seed CURRENT state only — one row per key
 at its latest change's ledger. There is no tool today that emits a per-ledger
 historical final state for a range, so a historical observation repair over a
 window is specified here but not yet executable end to end. The served-supply

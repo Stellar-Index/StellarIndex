@@ -29,7 +29,7 @@ the query; caused two wrong conclusions once). ClickHouse: HTTP
 ```sh
 # FIRST hypothesis every time: is the next ledger object even in the bucket?
 ssh root@136.243.90.96 'mc stat local/galexie-live/... <cursor+1 object>'   # frozen-cursor diagnostic
-ssh root@136.243.90.96 'sudo -u postgres psql -d stellarindex -c "SELECT name, last_ledger, updated_at FROM ingest_cursors ORDER BY updated_at DESC LIMIT 5"'
+ssh root@136.243.90.96 'sudo -u postgres psql -d stellarindex -c "SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors ORDER BY last_updated DESC LIMIT 5"'
 ```
 
 - Cursor advancing but trades frozen while CEX fresh → the 2026-06-01

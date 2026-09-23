@@ -46,7 +46,7 @@ journalctl -u stellarindex-api --since -30min | grep -i "usage rollup"
 
 - `sink_error` + missing table → migration 0071 didn't apply on
   this deployment. Run the migrator (deploy.yml auto-applies;
-  manual: `stellarindex-migrate -dir /usr/local/share/stellarindex/migrations up`).
+  manual: `stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up`).
 - Redis / Postgres down → follow the respective infra runbook;
   this alert clears itself on the next successful sweep (the
   worker retries forever, sweeping today + yesterday, and the

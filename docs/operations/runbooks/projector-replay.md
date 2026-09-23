@@ -95,8 +95,10 @@ stellarindex-ops projector-replay -config /etc/stellarindex.toml \
 Source names match the projector registry
 (`internal/projector/registry.go`):
 `aquarius`, `soroswap`, `phoenix`, `comet`, `blend`, `cctp`, `rozo`,
-`defindex`, `soroswap-skim`, `sep41_transfers`, `sep41_supply`,
+`defindex`, `sep41_transfers`, `sep41_supply`,
 `reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`.
+(Soroswap skim rows replay under `soroswap`; there is no soroswap-skim
+projector source.)
 
 Spelling matters and the list above is not exhaustive — the registry is
 the authority. The `sep41_*` and `blend_*` sources are **underscored**
