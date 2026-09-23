@@ -15,6 +15,27 @@ against.
 
 ## [Unreleased]
 
+- **api — `/v1/price/stream` spec and comments described a frame nobody
+  emits (GH-751):** the example showed `as_of` 42 s after
+  `observed_at` and a `flags` object on the 300 s series; the aggregator
+  stamps each event with the closed bucket's end and the bridge emits it
+  as both timestamps, without flags. The example, the description (the
+  window each event covers, and that a 3600/86400 series advances once
+  per minute as overlapping trailing windows) and the redispub comments
+  now match the wire, and a test pins the example to the bridged frame.
+
+- **api — `/v1/changes` served the open minute and ungated prices
+  (GH-757):** the change-summary read admitted the in-progress
+  `prices_1m` bucket (`bucket < now`), so a fat-finger print in the
+  filling minute became `current_value` and, through the upsert's
+  GREATEST/LEAST ratchet, a permanent ATH/ATL. It now reads closed
+  buckets only (in SQL and again in the worker), refuses to upsert a
+  newest point with no positive price, and the handler withholds the
+  row with the `price-withheld` problem whenever `/v1/price` would
+  withhold the market (flagged issuer, or below the substance floor).
+  A new guard fails on any pair-bound `prices_1m` read without a
+  closed-bucket predicate.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

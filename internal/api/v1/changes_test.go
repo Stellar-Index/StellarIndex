@@ -296,8 +296,10 @@ func TestHandleChangeSummary_HappyPath_Coin(t *testing.T) {
 func TestHandleChangeSummary_NullableFieldsOmitted(t *testing.T) {
 	reader := &stubChangeSummaryReader{
 		row: timescale.ChangeSummaryRow{
-			EntityType:   "coin",
-			EntityID:     "FRESH",
+			EntityType: "coin",
+			// A canonical id, as the worker writes: an id naming no
+			// market cannot be vetted and is withheld.
+			EntityID:     "native",
 			RefreshedAt:  time.Now().UTC(),
 			CurrentValue: 1.0,
 			// H1/H24/D7/D30/ATH/ATL all nil — fresh asset

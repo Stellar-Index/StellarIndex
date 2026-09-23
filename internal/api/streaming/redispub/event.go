@@ -36,7 +36,8 @@ type ClosedBucketEvent struct {
 	// big.Rat precision the JSON `number` type would lose.
 	ValueDecimal string `json:"value_decimal"`
 
-	// ObservedAt is the bucket-end timestamp the aggregator
-	// attributed to this VWAP. RFC 3339 UTC.
+	// ObservedAt is the end of the closed 1-minute bucket the
+	// aggregator computed this VWAP at; the VWAP covers
+	// [ObservedAt-WindowSeconds, ObservedAt). RFC 3339 UTC.
 	ObservedAt time.Time `json:"observed_at"`
 }

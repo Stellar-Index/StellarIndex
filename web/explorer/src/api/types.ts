@@ -875,7 +875,16 @@ export interface paths {
          *     - Events carry the `/v1/price` envelope shape (`data` +
          *       `as_of`); `flags` / `sources` are present only when the
          *       publishing path evaluated them — absent flags mean "not
-         *       evaluated", never "fresh".
+         *       evaluated", never "fresh". The aggregator's 300 / 3600 /
+         *       86400 series carry neither.
+         *     - `observed_at` and `as_of` are both the END of the closed
+         *       1-minute bucket the event was computed at, so they are
+         *       equal on every event. `price` is the VWAP over
+         *       `[observed_at - window_seconds, observed_at)`. A series
+         *       advances once per closed minute, so consecutive events on
+         *       a 3600 or 86400 series are overlapping trailing windows,
+         *       not disjoint buckets: identify an event by
+         *       `(window_seconds, observed_at)`, and never sum them.
          *     - URL discipline: `?granularity=` returns 400 — bucket series
          *       are selected by `window_seconds`; use
          *       `/v1/history/since-inception` for chart granularities.
@@ -1866,7 +1875,17 @@ export interface paths {
          *     every list view + price card on the showcase site
          *     (data-inventory §6.1). Refreshed every 5 minutes by the
          *     change-summary worker; stale rows (>10 min) indicate the
-         *     worker is lagging.
+         *     worker is lagging. Every value is computed from CLOSED
+         *     1-minute buckets only (ADR-0015): the minute still filling
+         *     never becomes `current_value` or an ATH/ATL.
+         *
+         *     The `*_value` and ATH/ATL fields are aggregated price claims,
+         *     so they are withheld exactly when `/v1/price` withholds the
+         *     market: a 404 `price-withheld` problem when the issuer on
+         *     either leg is directory-flagged or the market is below the
+         *     serve floor. For a `coin` row the floor is met when any of
+         *     the asset's plausible backing markets (vs XLM, vs USD, vs a
+         *     declared USD peg) clears it.
          *
          *     Returns 404 when the worker hasn't computed a row yet (fresh
          *     deployment, newly-added entity, bounded history, or an entity
@@ -12869,13 +12888,13 @@ export interface operations {
                     /**
                      * @example id: 0198a4203f100001
                      *     event: price_update
-                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:42.881Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:00Z"}
                      *
                      *     :keepalive
                      *
                      *     id: 0198a4203f100002
                      *     event: price_update
-                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00.417Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00Z"}
                      */
                     "text/event-stream": string;
                 };

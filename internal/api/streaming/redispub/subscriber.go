@@ -138,18 +138,11 @@ func (s *Subscriber) handleMessage(payload []byte) {
 	// attacker-injected extra fields in the raw payload are dropped
 	// here.
 	//
-	// as_of is whatever ObservedAt the Publisher was handed — for the
-	// production wiring (orchestrator.Tick), that is the tick's un-
-	// truncated wallclock `now`, NOT a fixed calendar-aligned bucket
-	// boundary (RNC34, re-derived 2026-09-18): refreshPairWindow computes
-	// a ROLLING window ending at `now`, unlike the CAGG-backed 1-minute
-	// closed buckets ADR-0015 describes. It is deterministic in the sense
-	// that a given published event carries one fixed timestamp, but it is
-	// NOT the same value two independently-clocked regions would compute
-	// for "the same" window — ADR-0015's byte-identical property holds
-	// for the Timescale closed-bucket surfaces (/v1/price et al.), not for
-	// this Redis-cache bridge. Contrast streampublish/publisher.go, whose
-	// ObservedAt IS a true closed-1m-bucket end read from prices_1m.
+	// as_of is ObservedAt: the end of the closed 1-minute bucket the
+	// orchestrator decided the window at (refreshPairWindow), over
+	// [ObservedAt-window, ObservedAt). Deriving it from the event rather
+	// than the local clock keeps every subscriber's payload byte-identical
+	// (ADR-0015), as streampublish does for its 60 s series.
 	sanitized, err := json.Marshal(closedBucketEnvelope{
 		Data: closedBucketWireData{
 			AssetID:       ev.Asset,
@@ -209,11 +202,10 @@ const (
 	observedAtFutureSkew = 5 * time.Minute
 
 	// observedAtMaxAge bounds how stale a closed-bucket event may be.
-	// ObservedAt tracks ~now for every window (it is the orchestrator's
-	// publish-time wallclock, not the window's start — see the "as_of"
-	// note in handleMessage), so even the 24h window lands near real
-	// time; a day of slack absorbs delivery lag without admitting an
-	// ancient replayed price.
+	// ObservedAt is the window's END — the last closed minute, not the
+	// window's start — so even the 24h window lands within a minute of
+	// real time; a day of slack absorbs delivery lag without admitting
+	// an ancient replayed price.
 	observedAtMaxAge = 24 * time.Hour
 )
 

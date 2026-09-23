@@ -16,6 +16,7 @@ package changesummary
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"sort"
@@ -67,10 +68,11 @@ type Row struct {
 }
 
 // PriceSource is the read seam — what the worker queries to compute
-// deltas. Implemented by timescale.Store via TimedVWAPsForPair1m.
+// deltas. Implemented by timescale.Store via TimedVWAPs1mForChangeSummary.
 //
-// The worker passes a window of [from, to] and expects the source
-// to return (timestamp, value) tuples ordered oldest-first.
+// The worker passes a window of [from, to) and expects the source to
+// return CLOSED buckets only (ADR-0015), ordered oldest-first, each
+// timestamped by its bucket end.
 type PriceSource interface {
 	TimedVWAPs1m(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]TimedValue, error)
 }
@@ -209,11 +211,30 @@ func (w *Worker) refreshOne(ctx context.Context, ent Entity, from, now time.Time
 	if err != nil {
 		return err
 	}
+	series = closedPoints(series, now)
 	if len(series) == 0 {
-		return errors.New("no observations in window")
+		return errors.New("no closed observations in window")
+	}
+	// The newest point becomes current_value and seeds the ATH/ATL fold;
+	// the upsert ratchets those with GREATEST/LEAST, so a 0 from an
+	// unparseable value would pin atl_value to 0 permanently.
+	newest := series[len(series)-1].Value
+	if v, err := strconv.ParseFloat(newest, 64); err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+		return fmt.Errorf("newest closed point %q is not a positive price", newest)
 	}
 	row := computeSummary(ent, series, now)
 	return w.sink.UpsertChangeSummary(ctx, row)
+}
+
+// closedPoints drops any trailing point whose bucket ends after now: that
+// bucket is still filling, and ADR-0015 never publishes it. The source
+// already filters on the database clock; this holds the worker to its own.
+func closedPoints(series []TimedValue, now time.Time) []TimedValue {
+	end := len(series)
+	for end > 0 && series[end-1].At.After(now) {
+		end--
+	}
+	return series[:end]
 }
 
 // computeSummary derives the full Row from a sorted (oldest-first)

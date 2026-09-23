@@ -204,7 +204,12 @@ func nullFloat(n sql.NullFloat64) *float64 {
 }
 
 // timedVWAPs1mForChangeSummaryQuery reads both stored orientations of
-// the pair over [from, to), oldest-first.
+// the pair over the CLOSED buckets in [from, to), oldest-first.
+//
+// Closed per ADR-0015: a bucket is admitted only once it has ended by
+// both the caller's `to` and the database clock, so the in-progress
+// minute never becomes current_value or a ratcheted ath/atl (the upsert
+// keeps GREATEST/LEAST for good). Sargable form, as in aggregates.go.
 //
 // Both directions for the same reason every other pair-bound CAGG read
 // does it (see [dirVWAP] and TestCAGGPairReadsFoldBothDirections): the
@@ -226,13 +231,13 @@ const timedVWAPs1mForChangeSummaryQuery = `
 		      FROM prices_1m
 		     WHERE base_asset = $1 AND quote_asset = $2
 		       AND bucket >= $3
-		       AND bucket <  $4
+		       AND bucket <= LEAST($4::timestamptz, now()) - INTERVAL '1 minute'
 		    UNION ALL
 		    SELECT bucket, base_asset, vwap, volume, trade_count, sources
 		      FROM prices_1m
 		     WHERE base_asset = $2 AND quote_asset = $1
 		       AND bucket >= $3
-		       AND bucket <  $4
+		       AND bucket <= LEAST($4::timestamptz, now()) - INTERVAL '1 minute'
 		  ) u
 		 ORDER BY bucket ASC, base_asset ASC
 	`

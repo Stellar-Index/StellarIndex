@@ -242,7 +242,84 @@ func (s *Server) handleChangeSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.changeSummaryWithheld(w, r, row) {
+		return
+	}
 	writeJSON(w, s.changeSummaryResponse(row), Flags{})
+}
+
+// changeSummaryGateSurface labels this surface on the withholding metrics.
+const changeSummaryGateSurface = "change_summary"
+
+// changeSummaryWithheld applies /v1/price's withholding verdict to a stored
+// row and writes the withheld problem when it fires. Every value on the row
+// is an aggregated price claim for the row's market — current_value, the
+// window values and the ATH/ATL — so a market /v1/price refuses to price
+// must not be priced here either. Decided at read time, like the decimals
+// scale: a verdict (a newly flagged issuer, a market gone thin) must take
+// effect on rows the worker wrote before it.
+//
+// A "pair" row names its market exactly. A "coin" row names only the base
+// (the worker does not record which configured pair it read), so the
+// substance side asks the listing's single-asset question — does ANY
+// plausible backing market clear the floor — and the scam side asks about
+// the base. An id that does not parse names no market that can be vetted,
+// and is withheld rather than served unvetted.
+func (s *Server) changeSummaryWithheld(w http.ResponseWriter, r *http.Request, row timescale.ChangeSummaryRow) bool {
+	base, quote, ok := changeSummaryLegs(row.EntityType, row.EntityID)
+	if !ok {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/change-summary-not-found",
+			"Change summary not found", http.StatusNotFound,
+			"The stored change summary does not name a market this deployment can vet.")
+		return true
+	}
+	ctx := r.Context()
+	if s.writeIfScamWithheld(w, r, base, quote, changeSummaryGateSurface) {
+		return true
+	}
+	if s.substance == nil {
+		return false
+	}
+	var allowed bool
+	if row.EntityType == "coin" {
+		allowed = s.listingPriceAllowed(ctx, base)
+	} else {
+		allowed = s.substance.Allowed(ctx, base, quote, changeSummaryGateSurface)
+	}
+	if !allowed {
+		writePriceWithheldProblem(w, r, base, quote, PriceWithheldSubstance)
+		return true
+	}
+	return false
+}
+
+// changeSummaryLegs returns the market a stored row's absolute values are
+// priced in, read from the STORED entity id — what the worker keyed the row
+// on, never what the caller typed:
+//
+//   - "pair": the id IS the source pair (`base/quote`).
+//   - "coin": the id is the base asset only. The worker computes a coin row
+//     off the first configured aggregator pair for that base and does not
+//     record which, so the quote leg is taken as [defaultPriceQuote].
+//     Recording the source pair on the row would remove the assumption and
+//     needs a schema change.
+func changeSummaryLegs(entityType, entityID string) (base, quote canonical.Asset, ok bool) {
+	switch entityType {
+	case "pair":
+		pair, err := canonical.ParsePair(entityID)
+		if err != nil {
+			return canonical.Asset{}, canonical.Asset{}, false
+		}
+		return pair.Base, pair.Quote, true
+	case "coin":
+		asset, err := canonical.ParseAsset(entityID)
+		if err != nil {
+			return canonical.Asset{}, canonical.Asset{}, false
+		}
+		return asset, defaultPriceQuote, true
+	}
+	return canonical.Asset{}, canonical.Asset{}, false
 }
 
 // changeSummaryResponse projects a stored row onto the wire shape,
@@ -301,37 +378,15 @@ func (s *Server) changeSummaryResponse(row timescale.ChangeSummaryRow) ChangeSum
 // to scale (the overwhelmingly common case — callers then format the
 // stored float exactly as before).
 //
-// The legs come from the STORED entity id, which is what the worker keyed
-// the row on, never from what the caller typed:
-//
-//   - "pair": the id IS the source pair (`base/quote`), so both legs are
-//     known and the factor is exact.
-//   - "coin": the id is the base asset only. The worker computes a coin
-//     row off the first configured aggregator pair for that base and does
-//     not record which, so the quote leg is taken as the standard scale.
-//     That is exact for every quote a coin row is realistically computed
-//     against (XLM, a classic or SAC-wrapped stablecoin, a fiat or global
-//     ticker — none of which can be non-7dp); recording the source pair on
-//     the row would remove the assumption and needs a schema change.
-//
+// The legs are [changeSummaryLegs]'. For a "coin" row the assumed quote is
+// the standard scale, which is exact for every quote a coin row is
+// realistically computed against (XLM, a classic or SAC-wrapped
+// stablecoin, a fiat or global ticker — none of which can be non-7dp).
 // An id that does not parse names nothing the confirmed table could hold,
 // so it scales by nothing.
 func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
-	var base, quote canonical.Asset
-	switch entityType {
-	case "pair":
-		pair, err := canonical.ParsePair(entityID)
-		if err != nil {
-			return nil
-		}
-		base, quote = pair.Base, pair.Quote
-	case "coin":
-		asset, err := canonical.ParseAsset(entityID)
-		if err != nil {
-			return nil
-		}
-		base, quote = asset, defaultPriceQuote
-	default:
+	base, quote, ok := changeSummaryLegs(entityType, entityID)
+	if !ok {
 		return nil
 	}
 	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, base)
