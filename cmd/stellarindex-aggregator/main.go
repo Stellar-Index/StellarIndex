@@ -243,6 +243,18 @@ func run(cfgPath string, dryRun bool) error {
 	}()
 	logger.Info("storage connected")
 
+	// One aggregator per database. Deferred before cancel so the lock is held
+	// through the drain; a dry-run takes none so it can run beside the daemon.
+	var instanceLock *timescale.InstanceLock
+	if !dryRun {
+		instanceLock, err = store.HoldInstanceLock(rootCtx, timescale.AggregatorInstanceLockName, cancel, logger.With("component", "instance-lock"))
+		if err != nil {
+			cancel()
+			return instanceLockRefusal(err)
+		}
+		defer releaseInstanceLock(instanceLock, logger)
+	}
+
 	// ─── Redis ───────────────────────────────────────────────────
 	// Required for the aggregator — no useful pre-compute without
 	// a cache to write to. redisclient.Build picks Sentinel mode
@@ -1159,7 +1171,23 @@ func run(cfgPath string, dryRun bool) error {
 	// Wait for the baseline + supply goroutines to honour rootCtx
 	// cancellation.
 	refresherWG.Wait()
-	return nil
+	return instanceLock.Lost()
+}
+
+// instanceLockRefusal names the other aggregator as the reason not to start.
+func instanceLockRefusal(err error) error {
+	if errors.Is(err, timescale.ErrInstanceLockHeld) {
+		return fmt.Errorf("refusing to start: another stellarindex-aggregator is running against this database: %w", err)
+	}
+	return fmt.Errorf("instance lock: %w", err)
+}
+
+func releaseInstanceLock(l *timescale.InstanceLock, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := l.Release(ctx); err != nil {
+		logger.Warn("instance lock release", "err", err)
+	}
 }
 
 // supplyRefresherBinding pairs a [supply.Refresher] with the
