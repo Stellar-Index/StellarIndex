@@ -19,10 +19,14 @@ const sep10UnavailableType = "https://api.stellarindex.io/errors/sep10-unavailab
 // flow exists — /sdk, the getting-started guide, the SDK's godoc, the
 // spec — and every one of those now says it is off here. This is the
 // one surface that answers a caller who did not read them, so it has
-// to stand on its own: WHY the route refuses (no signing seed, so
-// there is nothing to sign a challenge with — not an outage, not a
-// bad request), and WHAT TO DO INSTEAD (an API key, which is the
-// credential this deployment actually verifies).
+// to stand on its own: WHY the route refuses (no working validator —
+// a deployment posture, not an outage or a bad request), and WHAT TO
+// DO INSTEAD (an API key, which is the credential this deployment
+// actually verifies). It names no single cause because the handler
+// cannot know one: resolveSEP10Validator installs the Noop for ANY
+// construction failure, so it lists every prerequisite and points at
+// the startup log, which carries the real error (not echoed here: the
+// route is public).
 //
 // The four call sites used to carry two different strings, the
 // terser of which said only "no SEP-10 validator wired" — a
@@ -37,12 +41,14 @@ const sep10UnavailableType = "https://api.stellarindex.io/errors/sep10-unavailab
 // auth_mode. A deployment verifies sip_* keys or SEP-10 JWTs, never
 // both, and an operator who reads this as "turn it on as well" would
 // break every existing key holder.
-const sep10UnavailableDetail = "no SEP-10 validator is wired on this deployment: " +
-	"no server signing seed is configured, so there is nothing to sign a challenge with. " +
+const sep10UnavailableDetail = "no SEP-10 validator is wired on this deployment, " +
+	"so it cannot issue or verify SEP-10 challenges; this is a deployment posture, not an outage. " +
 	"Authenticate with an API key instead (Authorization: Bearer sip_…) — see https://stellarindex.io/sdk. " +
-	"Enabling SEP-10 is an operator action: set STELLARINDEX_SEP10_SEED and STELLARINDEX_SEP10_JWT_SECRET " +
-	"on a deployment with Redis, and switch auth_mode to sep10 — which turns sip_* API keys OFF, " +
-	"since a deployment verifies one credential type or the other, never both."
+	"Enabling SEP-10 is an operator action. It needs a server signing seed (S… secret seed) in " +
+	"STELLARINDEX_SEP10_SEED, a JWT secret of at least 32 bytes in STELLARINDEX_SEP10_JWT_SECRET, " +
+	"web_auth_domain and home_domain set, and Redis for the replay guard; the API's startup log line " +
+	"\"sep10 validator not wired\" names the one that failed. Then switch auth_mode to sep10 — which " +
+	"turns sip_* API keys OFF, since a deployment verifies one credential type or the other, never both."
 
 // writeSEP10Unavailable answers the 503 that says SEP-10 is not
 // offered here.

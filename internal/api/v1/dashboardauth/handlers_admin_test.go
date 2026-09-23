@@ -14,6 +14,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
@@ -447,7 +448,7 @@ func TestAdminLookup_QueryStringIsNotAnInputChannel(t *testing.T) {
 func TestAdminLookup_MountedAsPostOnly(t *testing.T) {
 	rig := newTestRig(t)
 	mux := http.NewServeMux()
-	rig.h.Mount(mux)
+	rig.h.Mount(mux, middleware.NewPublicRoutes())
 
 	if _, pattern := mux.Handler(httptest.NewRequest(http.MethodPost,
 		"/v1/account/admin/lookup", nil)); pattern != "POST /v1/account/admin/lookup" {
