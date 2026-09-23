@@ -215,8 +215,9 @@ const (
 	// the oracle arm — nobody independent measured it — and stronger
 	// than nothing in the one way that matters: the value is prescribed
 	// by an authorised prospectus and published daily by the issuer.
-	// Taken only when neither an oracle binding nor a listing price
-	// exists for the row.
+	// Taken only when neither an oracle binding nor a usable listing
+	// price (positive, parseable, inside the reference bound) exists
+	// for the row.
 	RWAReferenceProspectusCNAV = "prospectus_constant_nav"
 )
 
@@ -654,9 +655,10 @@ func rwaApplyReference(
 		// Neither an oracle nor the listing directory prices this pair,
 		// but its prospectus may: a CNAV share class bound in
 		// rwa.ConstantNAV is valued at the NAV its fund rules fix, under
-		// its own provenance. A listing price, when one exists, still
-		// wins — it is an observation, this is a rule.
-		if listing.PriceUSD == "" {
+		// its own provenance. A listing price wins only when it is a
+		// VALUATION the listing arm would serve — a third party's zero,
+		// garbage or expired row must not erase the prospectus figure.
+		if _, refusal := rwaListingPrice(listing, notFound, now); refusal != "" {
 			if cnav, ok := rwa.ConstantNAV(a.Code, a.Issuer); ok {
 				rwaApplyConstantNAVReference(a, cnav, now)
 				return
@@ -805,26 +807,9 @@ func rwaApplyContractReference(a *RWAAsset, entry timescale.ListingEntry, now ti
 // different question. Substituting one for the other would publish a
 // figure while suppressing the finding that refused it.
 func rwaApplyListingReference(a *RWAAsset, entry timescale.ListingEntry, notFound string, now time.Time) {
-	// An address no listing named. The original refusal, unchanged, and
-	// still the right one: no source binds this address to a price.
-	if entry.PriceUSD == "" {
-		rwaRefuseReference(a, notFound)
-		return
-	}
-	price := ratFromOptionalString(&entry.PriceUSD)
-	if price == nil || price.Sign() <= 0 {
-		// Not a valuation. Refused rather than multiplied, the same way
-		// the oracle path refuses a non-positive net asset value.
-		rwaRefuseReference(a, RWAPremiumReferenceNotPositive)
-		return
-	}
-	// The storage reader enforces the price bound in SQL, so a row that
-	// arrives here is already inside it. Re-checked on the OBSERVATION
-	// anyway, for the reason the oracle path re-checks its own: the
-	// bound this surface documents has to hold however the row reached
-	// it, not only on the path that was expected to deliver it.
-	if entry.PricedAt.IsZero() || now.Sub(entry.PricedAt) > rwaReferenceMaxAge {
-		rwaRefuseReference(a, RWAPremiumReferenceExpired)
+	price, refusal := rwaListingPrice(entry, notFound, now)
+	if refusal != "" {
+		rwaRefuseReference(a, refusal)
 		return
 	}
 	a.Reference = &RWAReference{
@@ -844,6 +829,32 @@ func rwaApplyListingReference(a *RWAAsset, entry timescale.ListingEntry, notFoun
 	// R-C, on the new arm. The reference is published and the premium
 	// is not, and the status says which kind of figure refused it.
 	a.Premium = RWAPremium{Status: RWAPremiumReferenceNotOracle}
+}
+
+// rwaListingPrice resolves a listing row to the positive price the
+// listing arm serves, or to the refusal it reports instead. The CNAV
+// precedence gate and the arm share it so they cannot disagree about
+// what counts as a listing valuation.
+func rwaListingPrice(entry timescale.ListingEntry, notFound string, now time.Time) (*big.Rat, string) {
+	// An address no listing named. The original refusal, unchanged, and
+	// still the right one: no source binds this address to a price.
+	if entry.PriceUSD == "" {
+		return nil, notFound
+	}
+	price := ratFromOptionalString(&entry.PriceUSD)
+	if price == nil || price.Sign() <= 0 {
+		// Not a valuation. Refused rather than multiplied, the same way
+		// the oracle path refuses a non-positive net asset value.
+		return nil, RWAPremiumReferenceNotPositive
+	}
+	// The storage reader enforces the price bound in SQL, so a row that
+	// arrives here is already inside it. Re-checked on the OBSERVATION
+	// anyway: the bound this surface documents has to hold however the
+	// row reached it, not only on the path expected to deliver it.
+	if entry.PricedAt.IsZero() || now.Sub(entry.PricedAt) > rwaReferenceMaxAge {
+		return nil, RWAPremiumReferenceExpired
+	}
+	return price, ""
 }
 
 // rwaListingReferencesOf indexes the admitted contract members' listing

@@ -101,3 +101,53 @@ func TestRWAApplyReference_ProspectusConstantNAV_StaleAfterReviewBy(t *testing.T
 		}
 	}
 }
+
+// A listing row that is not a usable valuation — zero, negative,
+// unparseable or past the reference bound — must not suppress the
+// prospectus NAV: precedence asks whether the listing IS a valuation, not
+// whether the directory published a string. A pair the prospectus does
+// not bind still reports the listing arm's specific refusal.
+func TestRWAApplyReference_UnusableListingPriceFallsToConstantNAV(t *testing.T) {
+	const issuer = "GD5J73EKK5IYL5XS3FBTHHX7CZIYRP7QXDL57XFWGC2WVYWT326OBXRP"
+	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
+	supply := "566742721191613"
+	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
+	fresh := now.Add(-time.Hour)
+	cases := []struct {
+		name      string
+		entry     timescale.ListingEntry
+		unboundAs string
+	}{
+		{"zero", timescale.ListingEntry{PriceUSD: "0", PricedAt: fresh}, RWAPremiumReferenceNotPositive},
+		{"zero decimal", timescale.ListingEntry{PriceUSD: "0.000", PricedAt: fresh}, RWAPremiumReferenceNotPositive},
+		{"negative", timescale.ListingEntry{PriceUSD: "-1", PricedAt: fresh}, RWAPremiumReferenceNotPositive},
+		{"unparseable", timescale.ListingEntry{PriceUSD: "n/a", PricedAt: fresh}, RWAPremiumReferenceNotPositive},
+		{"expired", timescale.ListingEntry{PriceUSD: "0.99", PricedAt: now.Add(-rwaReferenceMaxAge - time.Second)}, RWAPremiumReferenceExpired},
+		{"undated", timescale.ListingEntry{PriceUSD: "0.99"}, RWAPremiumReferenceExpired},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := tc.entry
+			entry.Source, entry.ListingID = "listing", "x"
+
+			a := &RWAAsset{AssetID: "gBENJI-" + issuer, Code: "gBENJI", Issuer: issuer, CirculatingSupply: &supply, Decimals: 7}
+			rwaApplyReference(a, snap, nil, map[string]timescale.ListingEntry{a.AssetID: entry}, now)
+			if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV || a.Reference.PriceUSD != "1.00" {
+				t.Fatalf("reference = %+v (valuation status %q), want the prospectus CNAV at 1.00", a.Reference, a.ReferenceValuation.Status)
+			}
+			if a.ReferenceValuation.ValueUSD == nil || *a.ReferenceValuation.ValueUSD != "56674272.12" {
+				t.Errorf("reference valuation = %+v, want 56674272.12", a.ReferenceValuation)
+			}
+			if a.Premium.Status != RWAPremiumReferenceNotOracle {
+				t.Errorf("premium = %+v, want the not-an-oracle status", a.Premium)
+			}
+
+			const other = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+			u := &RWAAsset{AssetID: "gBENJI-" + other, Code: "gBENJI", Issuer: other, CirculatingSupply: &supply, Decimals: 7}
+			rwaApplyReference(u, snap, nil, map[string]timescale.ListingEntry{u.AssetID: entry}, now)
+			if u.Reference != nil || u.ReferenceValuation.Status != tc.unboundAs || u.Premium.Status != tc.unboundAs {
+				t.Errorf("unbound pair: reference = %+v, valuation %q, premium %q; want no reference and %q", u.Reference, u.ReferenceValuation.Status, u.Premium.Status, tc.unboundAs)
+			}
+		})
+	}
+}
