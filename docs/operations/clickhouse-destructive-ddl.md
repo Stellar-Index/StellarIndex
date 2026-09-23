@@ -96,6 +96,15 @@ stopping `clickhouse-server`), or clone it and `ATTACH` the table's parts
 from the clone for a single-table restore. The schema half is covered by
 [runbooks/ch-schema-restore.md](runbooks/ch-schema-restore.md).
 
+A single-table restore can bring `stellar.ledgers` back before
+`stellar.contract_events`. `compute-completeness -ch` compares every
+Soroban-era `contract_events` partition's row count against the
+`soroban_event_count` its `ledgers` rows record. Any partition with fewer
+rows than recorded fails `substrate_ok` and `recognition_ok` for every
+event-reading source whose range it touches. The check reads active-part
+row counts, so it catches a missing or short partition. It does not catch
+a partial loss that is masked by the same number of unmerged duplicates.
+
 ## Related
 
 - [clickhouse-ops-batch-profile.md](clickhouse-ops-batch-profile.md) —

@@ -365,6 +365,16 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 			subScanFrom = uint32(*fromLedger) //nolint:gosec // ledger seq fits uint32
 		}
 	}
+	// The event table recognition and projection read, censused against
+	// ledgers over the whole Soroban era every run — including -skip-substrate
+	// and -from runs, whose carried prefix is exactly where a dropped partition
+	// hides (eventCensusLoss).
+	var evCensus []clickhouse.EventCensusShortfall
+	if *useCH {
+		if evCensus, err = clickhouse.EventCensusShortfalls(ctx, *chAddr, sorobanEraGenesis, tip); err != nil {
+			return fmt.Errorf("contract_events census (failing closed — cannot certify the event table recognition and projection read): %w", err)
+		}
+	}
 
 	// Prior verdicts (INV-5). An INCREMENTAL run (-from) reconciles only a
 	// SUFFIX of each source's served range, so it may CONFIRM or DOWNGRADE the
@@ -439,7 +449,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		var detail []string
 
 		// Claim 1: substrate continuity + hash chain over [genesis, tip].
-		var substrateOK bool
+		var substrateOK, eventsShort bool
 		if *useCH {
 			// Scan THIS source's own [genesis,tip] (memoised per floor — see
 			// substrateForGenesis); it's this source's problem only if the
@@ -513,6 +523,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 					detail = append(detail, d)
 				}
 			}
+			if p, short, d := eventCensusLoss(src, genesis, evCensus); short {
+				substrateOK, eventsShort = false, true
+				problems = append(problems, p)
+				detail = append(detail, d)
+			}
 		} else {
 			subGaps, err := store.FindLedgerIngestGaps(ctx, genesis, tip)
 			if err != nil {
@@ -539,7 +554,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// members folded into ownerOf above — W1-flowcompleteness-1).
 		recOK, recProblems := sourceRecognitionOK(genesis, tip, recBySource[src.name], *skipRecognition, priorRec[src.name])
 		problems = append(problems, recProblems...)
-		detail = append(detail, recognitionClaim(recOK, *skipRecognition))
+		recDetail := recognitionClaim(recOK, *skipRecognition)
+		if eventsShort {
+			recOK, recDetail = false, "recognition: not certifiable — the contract_events it scans are short of what stellar.ledgers records (see substrate)"
+		}
+		detail = append(detail, recDetail)
 
 		// Substrate∧recognition watermark drives COVERAGE — coverage means "did
 		// we capture every event" (substrate is the proof). Projection is a
@@ -1574,6 +1593,37 @@ func substrateFloorLoss(genesis, subScanFrom, floorProblem uint32, floorHasProbl
 			"but this run scanned only [%d,tip] and substrateClaim carried [%d,%d] as clean "+
 			"(archive/DROP PARTITION below the carried floor) — re-run without -from to re-seed substrate from genesis",
 		genesis, subScanFrom, genesis, subScanFrom-1)
+}
+
+// readsContractEvents reports whether the source's recognition and projection
+// axes read stellar.contract_events. sdex (the op census) and the event-less
+// ContractCall sources (band, soroswap-router) read stellar.operations instead.
+func (src reconSource) readsContractEvents() bool {
+	return !src.census && src.callDec == nil
+}
+
+// eventCensusLoss is the per-source verdict on the lake-wide contract_events
+// census (clickhouse.EventCensusShortfalls): the first short partition that
+// reaches into [genesis, ∞) fails the source, at max(first event ledger,
+// genesis) so ComputeWatermark cannot drop it as below genesis. Substrate
+// proves stellar.ledgers only; without this a dropped or unrestored event
+// partition left lake_complete and recognition_ok true over events nobody
+// read. Pure.
+func eventCensusLoss(src reconSource, genesis uint32, shortfalls []clickhouse.EventCensusShortfall) (uint32, bool, string) {
+	if !src.readsContractEvents() {
+		return 0, false, ""
+	}
+	for _, s := range shortfalls {
+		if (uint64(s.Partition)+1)*1_000_000 <= uint64(genesis) {
+			continue
+		}
+		p := max(s.FirstEventLedger, genesis)
+		return p, true, fmt.Sprintf(
+			"substrate: stellar.contract_events partition %d holds %d row(s) but stellar.ledgers records %d event(s) there (first at ledger %d) — "+
+				"the event table recognition and projection read is short; neither lake_complete nor recognition is certifiable over it",
+			s.Partition, s.Present, s.Expected, s.FirstEventLedger)
+	}
+	return 0, false, ""
 }
 
 // lakeCoverageProblem is the NUMERIC twin of [substrateClaim]: it returns the
