@@ -5,7 +5,7 @@
 # Why this exists: on 2026-07-27 the explorer's core routes
 # (/v1/accounts/{addr}, /v1/ledgers, /v1/contracts) were found returning
 # 503 in production — invisible to every existing check, because
-# r1-smoke.sh covers 13 hand-picked GETs and the SLA probe covers the
+# r1-smoke.sh covers a hand-picked set of GETs and the SLA probe covers the
 # pricing path. Neither touches the explorer. A per-route sweep is the
 # only thing that catches a whole subsystem being dark.
 #
