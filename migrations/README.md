@@ -113,7 +113,13 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
    production rollback lever, and this repo does not auto-run
    `migrate down` on a failed deploy (down-migrations can be
    data-destructive, and the pipeline has no way to know whether
-   anything already depends on what it would be reverting).
+   anything already depends on what it would be reverting). A down
+   that narrows a CHECK therefore REFUSES (`DO $$ … RAISE EXCEPTION`,
+   as 0070's down does) while an offending row exists; it never
+   `DELETE`s it. `scripts/ci/lint-migrations.sh` pass 5 fails any
+   down-side `DELETE`/`TRUNCATE` not marked
+   `-- lint-down-delete:ok <reason>` (the seed downs 0032/0033/0104,
+   which remove only their own seed rows).
 
 ## Amending a shipped migration
 

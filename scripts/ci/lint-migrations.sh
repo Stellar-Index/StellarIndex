@@ -2,7 +2,7 @@
 # Migration lint: money-column (ADR-0003) + file integrity (audit C4-7)
 # + register completeness (wave-D PS-01) + ClickHouse money-column.
 #
-# Four passes, all gating (exit non-zero on any violation):
+# Five passes, all gating (exit non-zero on any violation):
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
 #      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
@@ -14,6 +14,8 @@
 #   4. ClickHouse money-column — the lake DDL under deploy/clickhouse/
 #      must never hold a monetary column in Float32/Float64 (ADR-0003
 #      applied to the substrate; see the pass for the type rule).
+#   5. down-delete — no *.down.sql DELETEs/TRUNCATEs rows silently; a
+#      narrowing down refuses with a RAISE EXCEPTION guard instead.
 #
 # ── register-completeness detail ──
 #
@@ -284,7 +286,37 @@ while IFS= read -r entry; do
 done <<<"$ch_float_baseline"
 echo "lint-migrations: ClickHouse money pass inspected ${ch_files} file(s) under ${CH_DIR}."
 
+# ── pass 5: downs never delete rows silently (#357 F1, #595) ───────
+# A down that narrows a CHECK must REFUSE while offending rows exist
+# (`DO $$ … IF EXISTS … RAISE EXCEPTION … $$`, see 0070's down), not
+# DELETE them: a rollback past it would otherwise discard production
+# rows and report success. Any executable DELETE/TRUNCATE in a down is a
+# violation unless its line carries `-- lint-down-delete:ok <reason>`
+# (e.g. removing only the seed row the matching up inserted).
+del_re='^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE)\b'
+down_files=0
+for f in migrations/*.down.sql; do
+  [ -e "$f" ] || continue
+  down_files=$((down_files + 1))
+  hits=$(grep -nEi "$del_re" "$f" | grep -viE -- '-- *lint-down-delete:ok +[^ ]' || true)
+  if [ -n "$hits" ]; then
+    echo "lint-migrations ❌ ${f}: down deletes rows silently — refuse with a RAISE EXCEPTION guard instead (see 0070's down):" >&2
+    indent "$hits" >&2
+    fail=1
+  fi
+  stale=$(grep -nEi -- '-- *lint-down-delete:ok' "$f" | grep -vEi "^[0-9]+:${del_re#^}" || true)
+  if [ -n "$stale" ]; then
+    echo "lint-migrations ❌ ${f}: stale lint-down-delete:ok marker (line is not a DELETE/TRUNCATE) — remove it:" >&2
+    indent "$stale" >&2
+    fail=1
+  fi
+done
+if [ "$down_files" -eq 0 ]; then
+  echo "lint-migrations ❌ no migrations/*.down.sql found — the down-delete pass cannot pass vacuously" >&2
+  fail=1
+fi
+
 if [ "$fail" -eq 0 ]; then
-  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money)."
+  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money + down-delete, ${down_files} downs)."
 fi
 exit "$fail"

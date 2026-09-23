@@ -2,7 +2,7 @@
 
 BEGIN;
 
-DELETE FROM routers
+DELETE FROM routers -- lint-down-delete:ok removes only the seed rows this migration's up inserted
  WHERE contract_id IN (
        'CDB2WMKQQNVZMEBY7Q7GZ5C7E7IAFSNMZ7GGVD6WKTCEWK7XOIAVZSAP',
        'CC5CE6MWISDXT3MLNQ7R3FVILFVFEIH3COWGH45GJKL6BD2ZHF7F7JVI',

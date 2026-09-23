@@ -118,6 +118,44 @@ func TestDetectArbitrage_DoubledLegSingleVenueRejected(t *testing.T) {
 	}
 }
 
+// A path payment USDC → XLM → AQUA whose first hop fills two resting
+// offers is three trades (one per claim atom) over three assets, but
+// only two hops — no cycle. Parallel claim atoms must not count as
+// extra cycle edges, on one venue or with the second hop elsewhere.
+func TestDetectArbitrage_MultiOfferHopPathNotCycle(t *testing.T) {
+	cases := map[string][]canonical.Trade{
+		"all sdex": {
+			trade(t, "sdex", 1<<8|0, "GPAYER", usdc, "native"),
+			trade(t, "sdex", 1<<8|1, "GPAYER", usdc, "native"),
+			trade(t, "sdex", 1<<8|2, "GPAYER", "native", aqua),
+		},
+		"second hop on another venue": {
+			trade(t, "sdex", 1<<8|0, "GPAYER", usdc, "native"),
+			trade(t, "sdex", 1<<8|1, "GPAYER", usdc, "native"),
+			trade(t, "soroswap", 2, "GPAYER", "native", aqua),
+		},
+	}
+	for name, trades := range cases {
+		if got := DetectArbitrage(trades, nil); len(got) != 0 {
+			t.Errorf("%s: multi-offer path payment flagged as arb: %+v", name, got)
+		}
+	}
+}
+
+// Cross-venue 2-asset arb whose first leg fills two offers is still
+// one cycle: parallel atoms collapse, the two venues' hops remain.
+func TestDetectArbitrage_MultiOfferCrossVenueCycle(t *testing.T) {
+	trades := []canonical.Trade{
+		trade(t, "sdex", 1<<8|0, "GARB", "native", usdc),
+		trade(t, "sdex", 1<<8|1, "GARB", "native", usdc),
+		trade(t, "soroswap", 2, "GARB", usdc, "native"),
+	}
+	got := DetectArbitrage(trades, nil)
+	if len(got) != 1 || len(got[0].Legs) != 3 {
+		t.Fatalf("got %+v, want one candidate carrying all 3 legs", got)
+	}
+}
+
 // A single trade can't be a cycle; off-chain (ledger 0) is excluded.
 func TestDetectArbitrage_SingleAndOffChainExcluded(t *testing.T) {
 	single := []canonical.Trade{trade(t, "soroswap", 1, "GARB", "native", usdc)}

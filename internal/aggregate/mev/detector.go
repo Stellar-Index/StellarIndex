@@ -101,12 +101,14 @@ func (c Candidate) DedupKey() string {
 // per atomic-arbitrage cycle found. Trades are grouped by (tx_hash,
 // taker) — a cycle must be a single actor inside a single transaction.
 //
-// A group is a cycle when its trade graph (assets = nodes, trades =
-// edges) has at least as many edges as nodes (a connected graph with
-// edges ≥ nodes contains a cycle; a tree has edges = nodes−1). To
-// exclude a degenerate same-venue round-trip, a 2-asset cycle must
-// span ≥2 distinct venues; ≥3-asset cycles (triangular+) are accepted
-// on any venues.
+// A group is a cycle when its hop graph (assets = nodes, distinct
+// (venue, unordered asset pair) hops = edges) has at least as many
+// edges as nodes (a graph with edges ≥ nodes contains a cycle; a
+// forest has edges ≤ nodes−1). Trades collapse to hops first because
+// SDEX emits one trade per claim atom: a hop that fills two offers is
+// two trades but one edge. A 2-asset cycle therefore spans ≥2 venues
+// by construction; ≥3-asset cycles (triangular+) are accepted on any
+// venues.
 //
 // usdVolume[i] is the optional USD notional of trades[i] (parallel
 // slice; nil or short → no notional). It's summed across a cycle's
@@ -153,6 +155,7 @@ func DetectArbitrage(trades []canonical.Trade, usdVolume []string) []Candidate {
 func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int) (Candidate, bool) {
 	assetSet := map[string]struct{}{}
 	sourceSet := map[string]struct{}{}
+	hopSet := map[string]struct{}{}
 	legs := make([]Leg, 0, len(idxs))
 	for _, i := range idxs {
 		t := trades[i]
@@ -161,6 +164,7 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 		assetSet[base] = struct{}{}
 		assetSet[quote] = struct{}{}
 		sourceSet[t.Source] = struct{}{}
+		hopSet[hopKey(t.Source, base, quote)] = struct{}{}
 		legs = append(legs, Leg{
 			Source:      t.Source,
 			Base:        base,
@@ -172,21 +176,15 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 	}
 
 	nNodes := len(assetSet)
-	nEdges := len(legs)
-	// Cycle condition: edges ≥ nodes in the connected leg graph. (The
-	// legs share an actor + tx and a cycle of trades is necessarily
-	// connected, so a global edges ≥ nodes test is sufficient here.)
-	if nEdges < nNodes {
+	// Cycle condition on the hop graph, not the trade multigraph:
+	// parallel claim-atom trades of one hop are not extra edges.
+	if len(hopSet) < nNodes {
 		return Candidate{}, false
 	}
-	// Reject a degenerate single-venue round-trip: either the classic
-	// 2-asset case, or a larger graph that padded a real cycle with a
-	// redundant extra leg on a pair it already covers (nEdges > nNodes
-	// — a genuine minimal cycle always has nEdges == nNodes). Without
-	// the nEdges>nNodes arm, a 3+ node tree/path payment that doubles
-	// one pair's leg on a single venue still cleared the nEdges>=nNodes
-	// cycle test and skipped the venue check entirely.
-	if (nNodes <= 2 || nEdges > nNodes) && len(sourceSet) < 2 {
+	// Conservative single-venue rejection, kept on the raw leg count: a
+	// 2-asset round-trip, or a single-venue group with more legs than
+	// assets, is not published as arbitrage.
+	if (nNodes <= 2 || len(legs) > nNodes) && len(sourceSet) < 2 {
 		return Candidate{}, false
 	}
 
@@ -207,6 +205,15 @@ func buildArbCandidate(trades []canonical.Trade, usdVolume []string, idxs []int)
 		NotionalUSD:      sumUSD(usdVolume, idxs),
 	}
 	return c, true
+}
+
+// hopKey names one hop edge: a venue plus an unordered asset pair, so
+// fills in either direction on the same venue share the edge.
+func hopKey(source, a, b string) string {
+	if b < a {
+		a, b = b, a
+	}
+	return source + "\x00" + a + "\x00" + b
 }
 
 func sortedKeys(m map[string]struct{}) []string {

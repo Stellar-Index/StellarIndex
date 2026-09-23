@@ -244,6 +244,77 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMEVKindDownsRefuseWithData pins that the 0074 and 0067 downs,
+// which narrow mev_events_kind_check, refuse while a row of the kind
+// they remove exists, and leave that row in place — instead of
+// deleting every detected oracle_sandwich / arbitrage event silently.
+func TestMEVKindDownsRefuseWithData(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	applyMigrationsUpTo(t, dsn, 74)
+	insertMEVEvent(t, ctx, db, "oracle_sandwich")
+	assertDownRefused(t, ctx, db, dsn, 74, 73, "0074_mev_new_kinds.down.sql", "oracle_sandwich")
+
+	// Explicit deletion is the documented way through.
+	if _, err := db.ExecContext(ctx, `DELETE FROM mev_events WHERE kind = 'oracle_sandwich'`); err != nil {
+		t.Fatalf("delete oracle_sandwich: %v", err)
+	}
+	applyMigrationsUpTo(t, dsn, 73)
+
+	insertMEVEvent(t, ctx, db, "arbitrage")
+	assertDownRefused(t, ctx, db, dsn, 73, 66, "0067_mev_arbitrage_dedup.down.sql", "arbitrage")
+}
+
+func insertMEVEvent(t *testing.T, ctx context.Context, db *sql.DB, kind string) {
+	t.Helper()
+	if _, err := db.ExecContext(ctx, `INSERT INTO mev_events
+		(detected_at, detected_at_ledger, kind, tx_hashes, detail)
+		VALUES (now(), 1, $1, ARRAY['ab'], '{}'::jsonb)`, kind); err != nil {
+		t.Fatalf("insert %s mev_event: %v", kind, err)
+	}
+}
+
+// assertDownRefused migrates from `from` down to `to`, requires the
+// failure to come from the named down file, and requires the row of
+// `kind` to have survived. It then forces the version back to `from`
+// so the schema_migrations row is clean for the next step.
+func assertDownRefused(t *testing.T, ctx context.Context, db *sql.DB, dsn string, from, to uint, file, kind string) {
+	t.Helper()
+	_, thisFile, _, _ := runtime.Caller(0)
+	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+	m, err := migrate.New("file://"+migrationsDir, dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	err = m.Migrate(to)
+	_, _ = m.Close()
+	if err == nil || !strings.Contains(err.Error(), file) || !strings.Contains(err.Error(), "LOUD") {
+		t.Fatalf("migrate %d -> %d with a %s row: err = %v, want the %s guard to refuse", from, to, kind, err, file)
+	}
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM mev_events WHERE kind = $1`, kind).Scan(&n); err != nil {
+		t.Fatalf("count %s rows: %v", kind, err)
+	}
+	if n != 1 {
+		t.Fatalf("%s rows after refused down = %d, want 1 (the down deleted data)", kind, n)
+	}
+	f, err := migrate.New("file://"+migrationsDir, dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	defer func() { _, _ = f.Close() }()
+	if err := f.Force(int(from)); err != nil {
+		t.Fatalf("force %d: %v", from, err)
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────
 
 func assertTableExists(t *testing.T, db *sql.DB, ctx context.Context, name string) {
