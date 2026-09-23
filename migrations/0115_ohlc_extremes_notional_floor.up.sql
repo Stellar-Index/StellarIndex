@@ -34,11 +34,12 @@
 -- Applied to all four extremes, not just high/low: `first_price` /
 -- `last_price` are the served OHLC open/close and a dust print that
 -- happens to be first or last in the bucket pins them exactly the same
--- way. VWAP, TWAP, volume, volume_usd, trade_count and sources are
+-- way. VWAP, volume, volume_usd, trade_count and sources are
 -- DELIBERATELY unfiltered — those are census/weighted quantities where
 -- a crumb contributes ~0 by construction, and filtering them would
 -- change volume semantics (a $0.00000027 fill is still a trade that
--- happened).
+-- happened). TWAP was left unfiltered here on the same argument, which
+-- is false for an equal-weight mean; migration 0165 floors it.
 --
 -- ─── Why $0.01, and why a size floor rather than a price band ──────────
 -- Operator DECISION, 2026-07-22 (see the finding, "DECISION"): filter on

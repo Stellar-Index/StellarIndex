@@ -188,12 +188,12 @@ func TestTWAPPointsInRange_CoverageWeightedUnion(t *testing.T) {
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
 	script := []scriptedResult{{
-		cols: []string{"bucket", "base_asset", "twap", "sample_count", "volume_usd"},
+		cols: []string{"bucket", "base_asset", "twap", "sample_count", "notional_sample_count", "volume_usd"},
 		rows: [][]driver.Value{
 			// flipped USDC/XLM: stored 2 → oriented 0.5, coverage 50
-			{bucket, pair.Quote.String(), "2", int64(50), "1000.00"},
+			{bucket, pair.Quote.String(), "2", int64(50), int64(50), "1000.00"},
 			// XLM/USDC: stored 0.6, coverage 5
-			{bucket, pair.Base.String(), "0.6", int64(5), "2000.00"},
+			{bucket, pair.Base.String(), "0.6", int64(5), int64(5), "2000.00"},
 		},
 	}}
 	store, conn := newScriptedStore(t, script...)
@@ -243,9 +243,9 @@ func TestTWAPPointsInRange_FlippedOnlyBucketIsServed(t *testing.T) {
 	bucket := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 
 	script := []scriptedResult{{
-		cols: []string{"bucket", "base_asset", "twap", "sample_count", "volume_usd"},
+		cols: []string{"bucket", "base_asset", "twap", "sample_count", "notional_sample_count", "volume_usd"},
 		rows: [][]driver.Value{
-			{bucket, pair.Quote.String(), "4", int64(7), "500.00"},
+			{bucket, pair.Quote.String(), "4", int64(7), int64(7), "500.00"},
 		},
 	}}
 	store, _ := newScriptedStore(t, script...)
@@ -263,5 +263,32 @@ func TestTWAPPointsInRange_FlippedOnlyBucketIsServed(t *testing.T) {
 	}
 	if pts[0].VolumeUSD == nil || *pts[0].VolumeUSD != "500.00" {
 		t.Errorf("flipped-only volume_usd = %v, want 500.00", pts[0].VolumeUSD)
+	}
+}
+
+// Migration 0165 floors the TWAP chain at $0.01 of notional with a
+// COALESCE fallback, so a direction holding only dust keeps an unfloored
+// twap. When the other direction cleared the floor the fallback row must not
+// enter the merge: here a dust-only flipped minute at 0.001 (oriented 1000)
+// would otherwise pull a clean 5 up to (5·1 + 1000·1)/2 = 502.5.
+func TestCombineDirTWAP_DropsFallbackDirectionWhenAnotherClearedTheFloor(t *testing.T) {
+	got, ok := combineDirTWAP([]dirTWAP{
+		{twapText: "5", sampleCount: 1, notionalCount: 1, flipped: false},
+		{twapText: "0.001", sampleCount: 1, notionalCount: 0, flipped: true},
+	})
+	if !ok {
+		t.Fatal("combineDirTWAP returned ok=false for a bucket with a floored direction")
+	}
+	if !ratNear(t, got, big.NewRat(5, 1), big.NewRat(1, 1_000_000_000)) {
+		t.Errorf("combined TWAP = %s, want 5 — the dust-only direction's fallback twap leaked into the merge", got)
+	}
+
+	// Neither direction cleared the floor: both fallbacks merge as before.
+	got, ok = combineDirTWAP([]dirTWAP{
+		{twapText: "5", sampleCount: 1, flipped: false},
+		{twapText: "0.001", sampleCount: 1, flipped: true},
+	})
+	if !ok || !ratNear(t, got, big.NewRat(1005, 2), big.NewRat(1, 1_000_000_000)) {
+		t.Errorf("all-fallback TWAP = %s (ok=%v), want 502.5 — with no floored direction both must merge", got, ok)
 	}
 }
