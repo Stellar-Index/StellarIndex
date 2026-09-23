@@ -126,13 +126,17 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
           />
           <Field label="Close time" value={formatTimestamp(l.close_time)} />
           <Field label="Protocol" mono value={String(l.protocol_version)} />
+          {/* Two bases: the tx/op counts are the whole tx set (failed txs
+              included), events exist only for applied txs. Say which. */}
           <Field
             label="Transactions"
             value={(l.tx_count ?? 0).toLocaleString('en-US')}
+            sub="tx set · incl. failed"
           />
           <Field
             label="Operations"
             value={(l.op_count ?? 0).toLocaleString('en-US')}
+            sub="tx set · incl. ops of failed txs"
           />
           <Field
             label="Soroban events"
@@ -141,6 +145,7 @@ export function LedgerView({ seq: seqProp }: { seq?: string } = {}) {
                 ? formatCompact(l.soroban_event_count ?? 0)
                 : '0'
             }
+            sub="successful txs only"
           />
           <Field
             label="Total coins"

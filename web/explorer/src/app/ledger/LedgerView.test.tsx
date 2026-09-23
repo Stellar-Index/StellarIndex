@@ -88,3 +88,26 @@ describe('LedgerView total_coins caption', () => {
     expect(cell).not.toHaveTextContent('burn');
   });
 });
+
+describe('LedgerView count basis captions', () => {
+  // tx_count/op_count cover the whole tx set, failed txs included, while
+  // soroban_event_count covers applied txs only: each figure states its basis.
+  it('labels which counts include failed transactions', async () => {
+    routeApi();
+    renderView();
+    const cellFor = async (label: string) => {
+      const dts = await screen.findAllByText(label);
+      const dt = dts.find((el) => el.tagName === 'DT');
+      return dt!.parentElement!.querySelector('dd')!;
+    };
+    expect(await cellFor('Transactions')).toHaveTextContent(
+      'tx set · incl. failed',
+    );
+    expect(await cellFor('Operations')).toHaveTextContent(
+      'tx set · incl. ops of failed txs',
+    );
+    expect(await cellFor('Soroban events')).toHaveTextContent(
+      'successful txs only',
+    );
+  });
+});

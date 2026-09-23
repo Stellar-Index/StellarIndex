@@ -3,7 +3,6 @@ package xdrjson
 import (
 	"sort"
 
-	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -54,7 +53,7 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 		case canonical.IsAccountID(candidate):
 			g = candidate
 		case canonical.IsMuxedAccount(candidate):
-			resolved, ok := muxedToAccountID(candidate)
+			resolved, ok := canonical.MuxedAccountID(candidate)
 			if !ok {
 				return
 			}
@@ -119,19 +118,4 @@ func ParticipantAccounts(bodyB64 string) ([]string, error) {
 
 	sort.Strings(out)
 	return out, nil
-}
-
-// muxedToAccountID converts an M-strkey to its underlying G-strkey (the first
-// 32 bytes of the 40-byte muxed payload are the ed25519 key). ok=false on a
-// malformed M-strkey.
-func muxedToAccountID(m string) (string, bool) {
-	raw, err := strkey.Decode(strkey.VersionByteMuxedAccount, m)
-	if err != nil || len(raw) < 32 {
-		return "", false
-	}
-	g, err := strkey.Encode(strkey.VersionByteAccountID, raw[:32])
-	if err != nil {
-		return "", false
-	}
-	return g, true
 }

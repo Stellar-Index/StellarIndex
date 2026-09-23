@@ -41256,7 +41256,7 @@
                 {
                   "disabled": false,
                   "description": {
-                    "content": "(Required) Tx hash, ledger seq, G-account, C-contract, or asset id.",
+                    "content": "(Required) Tx hash, ledger seq, G-account, M-muxed account (resolved to its underlying G in `canonical`), C-contract, or asset id.",
                     "type": "text/plain"
                   },
                   "key": "q",
@@ -41290,7 +41290,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "(Required) Tx hash, ledger seq, G-account, C-contract, or asset id.",
+                        "content": "(Required) Tx hash, ledger seq, G-account, M-muxed account (resolved to its underlying G in `canonical`), C-contract, or asset id.",
                         "type": "text/plain"
                       },
                       "key": "q",
@@ -41334,7 +41334,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "(Required) Tx hash, ledger seq, G-account, C-contract, or asset id.",
+                        "content": "(Required) Tx hash, ledger seq, G-account, M-muxed account (resolved to its underlying G in `canonical`), C-contract, or asset id.",
                         "type": "text/plain"
                       },
                       "key": "q",

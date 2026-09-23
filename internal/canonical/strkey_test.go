@@ -85,6 +85,21 @@ func TestValidateAccountID_ErrorWrapsSentinel(t *testing.T) {
 	}
 }
 
+// SEP-23 test vector: the M-strkey for GA7QYNF7...SGZ with muxed id 0.
+func TestMuxedAccountID_ResolvesUnderlyingAccount(t *testing.T) {
+	const m = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK"
+	const want = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	got, ok := MuxedAccountID(m)
+	if !ok || got != want {
+		t.Fatalf("MuxedAccountID(%q) = (%q, %v), want (%q, true)", m, got, ok, want)
+	}
+	for _, bad := range []string{want, mutateLastChar(m), "", "not-a-strkey"} {
+		if g, ok := MuxedAccountID(bad); ok {
+			t.Errorf("MuxedAccountID(%q) = (%q, true), want ok=false", bad, g)
+		}
+	}
+}
+
 // mutateLastChar swaps the final character with an adjacent valid
 // base32 character so the result is the same length + prefix but a
 // different payload — guaranteed to fail CRC verification.

@@ -12124,7 +12124,7 @@ paths:
         Single-box search: detects the kind of `q` by its shape and returns the
         canonical detail endpoint to route to. Pure classification (no lake read).
       parameters:
-        - { name: q, in: query, required: true, description: "Tx hash, ledger seq, G-account, C-contract, or asset id.", schema: { type: string } }
+        - { name: q, in: query, required: true, description: "Tx hash, ledger seq, G-account, M-muxed account (resolved to its underlying G in `canonical`), C-contract, or asset id.", schema: { type: string } }
       responses:
         "200":
           description: Classified query.
@@ -12579,9 +12579,9 @@ components:
         hash: { type: string, description: Hex-encoded ledger hash. }
         prev_hash: { type: string }
         protocol_version: { type: integer }
-        tx_count: { type: integer }
-        op_count: { type: integer }
-        soroban_event_count: { type: integer }
+        tx_count: { type: integer, description: "Transactions in the ledger's tx set, INCLUDING failed ones (fee-charged but not applied). Each transaction's `successful` flag (GET /v1/ledgers/{seq}/transactions) distinguishes applied from failed." }
+        op_count: { type: integer, description: "Operations across every transaction in the tx set, INCLUDING those in failed transactions (Horizon's tx_set_operation_count, not its applied operation_count)." }
+        soroban_event_count: { type: integer, description: "Contract events emitted by SUCCESSFUL transactions only: a failed transaction's events are rolled back by the protocol, so this count has a different basis from tx_count/op_count." }
         total_coins: { type: string, description: XLM stroops as a string (exceeds 2^53). }
         fee_pool: { type: string }
         base_fee: { type: integer }
