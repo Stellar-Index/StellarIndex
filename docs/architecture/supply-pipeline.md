@@ -85,7 +85,7 @@ sources per the ingest-pipeline contract:
 
 | Observer | Hook | Watched-set config | Backs |
 |----------|------|--------------------|-------|
-| `internal/sources/accounts` | `LedgerEntryChangeDecoder` | `[supply] sdf_reserve_accounts` (XLM) + per-issuer for metadata | Algorithm 1 + metadata overlay |
+| `internal/sources/accounts` | `LedgerEntryChangeDecoder` | `[supply] sdf_reserve_accounts` (the SDF reserve list only — every entry is subtracted from circulating supply) | Algorithm 1; the metadata overlay reads the same rows but has no watched-set key of its own |
 | `internal/sources/trustlines` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Algorithm 2 trustline component |
 | `internal/sources/claimable_balances` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Algorithm 2 claimable component |
 | `internal/sources/liquidity_pools` | `LedgerEntryChangeDecoder` | `[supply] watched_classic_assets` | Algorithm 2 LP-reserve component |

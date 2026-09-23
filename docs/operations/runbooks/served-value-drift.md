@@ -38,8 +38,9 @@ why it carries an
 
 `_unit_failed` is the fourth, and it is the unit's exit status
 rather than any gauge. The tool exits non-zero on three different
-conditions — a drifted check, a run where every truth source was
-dark, and a crash — so this ticket is deliberately NOT the
+conditions — a drifted check (value or list), a run where every
+served-VALUE truth source was dark (a verified reserve-list check
+does not count: it verifies no served number), and a crash — so this ticket is deliberately NOT the
 catch-all `stellarindex_systemd_unit_failed` (which would open it
 15 minutes into a third-party outage). It rides out one bad day and
 fires only when two consecutive runs left the unit failed. When it
@@ -123,10 +124,16 @@ SDF publishes it, we do not exclude it — we OVER-state circulating.
 UNDER-state. Both are emitted only when both sides were read and
 diffed. A dark or reshaped source emits
 `stellarindex_served_value_skipped{check="sdf_reserve_list"}=1` and
-NO drift gauge (absence is honest, as for `served_value_ok`), which
-`_persistently_skipped` tickets after two runs. An unreadable config
-file is OUR side and fails the run instead (`_unit_failed` after two
-runs).
+NO drift gauge. Reshaped includes ONE table row outside the
+`key: "G…"` grammar (a nested object, a spread, a computed value): the
+parse fails whole rather than returning the rows around it. A diff
+that would retire more than three configured accounts at once is
+refused the same way — its journal line still names them — because
+that is likelier a moved table than a real retirement. Either way
+there is no drift gauge (absence is honest, as for
+`served_value_ok`), which `_persistently_skipped` tickets after two
+runs. An unreadable config file is OUR side and fails the run
+instead (`_unit_failed` after two runs).
 
 ```sh
 # The verdict, with account ids (the journal keeps the last runs):
@@ -145,9 +152,15 @@ grep '^sdf_reserve_accounts' /etc/stellarindex.toml | grep -o 'G[A-Z2-7]\{55\}' 
 comm -3 /tmp/published /tmp/configured   # col 1 = missing, col 2 = extra
 ```
 
-**Mitigate.** Fix is config, not code. First confirm the change
-upstream (the stellar/dashboard commit that edited `accounts`) — a
-genuine edit is a methodology change worth a CHANGELOG line. Then
+**Mitigate.** Fix is config, not code — but only for an account the
+upstream diff actually changed. First find the stellar/dashboard
+commit that edited `accounts` and confirm every `extra` account was
+commented out or deleted there, and every `missing` one added. An
+account that is still a live row upstream is a parser defect, not a
+retirement: file it and leave the config alone, because deleting a
+reserve account from the list adds its whole balance to circulating
+supply. A genuine edit is a methodology change worth a CHANGELOG
+line. Then
 update BOTH lists in
 `configs/ansible/roles/archival-node/defaults/main.yml`
 (`stellarindex_sdf_reserve_accounts` and the paired
