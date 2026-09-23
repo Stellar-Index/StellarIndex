@@ -305,4 +305,13 @@ func TestAdminAccountGet_Happy(t *testing.T) {
 	if env.Data.Slug != "acme" || env.Data.RateLimitPerMinOverride != 9000 {
 		t.Errorf("view = %+v", env.Data)
 	}
+	// GH-1074: the operator surface must resolve the override the same
+	// way platform.Account's cascade does (free-tier ceiling 1000,
+	// raised to the 9000 override), not merely echo it back raw.
+	if env.Data.EffectiveRateLimitPerMin != 9000 {
+		t.Errorf("EffectiveRateLimitPerMin = %d, want 9000", env.Data.EffectiveRateLimitPerMin)
+	}
+	if env.Data.EffectiveMonthlyQuota != 1_000_000 {
+		t.Errorf("EffectiveMonthlyQuota = %d, want 1000000 (free-tier ceiling; no quota override set)", env.Data.EffectiveMonthlyQuota)
+	}
 }
