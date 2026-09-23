@@ -335,23 +335,45 @@ reporting_step_of() {
   printf '%s' "${hits%%$'\n'*}"
 }
 
-# <workflow file> <step name> → 0 when a real step carries exactly that
-# name. Exact, not substring: a marker that matched a prefix could be
-# satisfied by an unrelated step, and the point of naming the step is
-# that deleting it invalidates the claim. Comment lines are skipped so
-# the marker cannot satisfy itself.
+# <workflow file> <step name> → 0 when a real STEP (under some job's
+# steps:) carries exactly that name. Exact, not substring: a marker that
+# matched a prefix could be satisfied by an unrelated step, and the
+# point of naming the step is that deleting it invalidates the claim.
+# Comment lines are skipped so the marker cannot satisfy itself.
+#
+# Anchored under steps:, not "any name: line" — a bare `name:` scan also
+# matches a job's own `name:`, the workflow's top-level `name:`, and a
+# `with:` input called `name:` (e.g. upload-artifact), any of which
+# would let a marker claim a step that does not exist.
 declares_step() {
   awk -v want="$2" '
+    function indent_of(s,   n) { n = s; sub(/[^ ].*$/, "", n); return length(n) }
     {
-      line = $0
-      sub(/^[[:space:]]+/, "", line)
-      sub(/^-[[:space:]]*/, "", line)
-      if (line ~ /^#/) next
-      if (line !~ /^name[[:space:]]*:/) next
-      sub(/^name[[:space:]]*:[[:space:]]*/, "", line)
-      sub(/[[:space:]]+$/, "", line)
-      gsub(/^["'"'"']|["'"'"']$/, "", line)
-      if (line == want) found = 1
+      ind = indent_of($0)
+      trimmed = $0
+      sub(/^[[:space:]]+/, "", trimmed)
+      if (trimmed ~ /^#/) next
+
+      if (trimmed ~ /^steps:[[:space:]]*$/) {
+        have_steps = 1; steps_indent = ind; item_col = -1
+        next
+      }
+      if (have_steps && ind <= steps_indent && trimmed != "") {
+        have_steps = 0; item_col = -1
+      }
+      if (!have_steps) next
+
+      if (trimmed ~ /^-[[:space:]]/) {
+        item_col = ind + 2
+        sub(/^-[[:space:]]*/, "", trimmed)
+      } else if (item_col < 0 || ind != item_col) {
+        next
+      }
+      if (trimmed !~ /^name[[:space:]]*:/) next
+      sub(/^name[[:space:]]*:[[:space:]]*/, "", trimmed)
+      sub(/[[:space:]]+$/, "", trimmed)
+      gsub(/^["'"'"']|["'"'"']$/, "", trimmed)
+      if (trimmed == want) found = 1
     }
     END { exit(found ? 0 : 1) }
   ' "$1"
