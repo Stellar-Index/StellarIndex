@@ -28,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
@@ -56,12 +57,15 @@ const explorerReadTimeout = 8 * time.Second
 //
 // A 1:1 mirror of v1's handlerTimedOut (internal/api/v1/envelope.go), which
 // this package cannot import — v1.Server embeds a *Handler from here, so the
-// import would cycle (see the package doc). Keep the two in sync.
+// import would cycle (see the package doc). Keep the two in sync — including
+// recording a true verdict for usage metering, which makes the read billable.
 func readTimedOut(callCtx context.Context, err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
+	timedOut := errors.Is(err, context.DeadlineExceeded) ||
+		callCtx.Err() == context.DeadlineExceeded
+	if timedOut {
+		middleware.MarkReadDeadline(callCtx)
 	}
-	return callCtx.Err() == context.DeadlineExceeded
+	return timedOut
 }
 
 // retryableColdMiss reports whether a cold-path SWR-cache error is the
@@ -148,6 +152,8 @@ func lakeUnreachable(err error) bool {
 // 503"), and every explorer route ALREADY declares 503 in
 // openapi/stellar-index.v1.yaml — so this needs no new wire shape.
 func (h *Handler) writeReadTimeout(w http.ResponseWriter, r *http.Request, typeURL, title string) {
+	// Also reached by a driver i/o timeout, which readTimedOut does not see.
+	middleware.MarkReadDeadline(r.Context())
 	h.WriteProblem(w, r, typeURL, title, http.StatusServiceUnavailable,
 		"the ClickHouse lake read didn't return within the "+explorerReadTimeout.String()+
 			" explorer read budget; retry shortly")

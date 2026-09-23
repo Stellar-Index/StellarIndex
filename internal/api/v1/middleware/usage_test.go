@@ -242,6 +242,51 @@ func TestUsageTracker_ThrottledExcludedFromLegacyTotal(t *testing.T) {
 	}
 }
 
+// TestUsageTracker_ReadDeadlineMark — a 5xx answered after a server-side
+// read deadline fired is billable (the read spent its budget); the mark never
+// makes a 429 billable, and outside the tracker it is a harmless no-op.
+func TestUsageTracker_ReadDeadlineMark(t *testing.T) {
+	middleware.MarkReadDeadline(context.Background())
+
+	for _, tc := range []struct {
+		status int
+		want   int64
+	}{
+		{http.StatusServiceUnavailable, 1},
+		{http.StatusInternalServerError, 1},
+		{http.StatusTooManyRequests, 0},
+	} {
+		mr := miniredis.RunT(t)
+		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		counter := usage.New(rdb)
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /v1/price", func(w http.ResponseWriter, r *http.Request) {
+			middleware.MarkReadDeadline(r.Context())
+			w.WriteHeader(tc.status)
+		})
+		stamp := func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				s := auth.Subject{Tier: auth.TierAPIKey, KeyID: "kid_rd"}
+				next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), s)))
+			})
+		}
+		h := middleware.Chain(mux, stamp, middleware.UsageTracker(counter, nil))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/price", nil))
+
+		got, err := counter.MonthToDate(context.Background(), "key:kid_rd")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != tc.want {
+			t.Errorf("status %d with deadline mark: billable = %d, want %d", tc.status, got, tc.want)
+		}
+		if n := detailCounts(t, counter, "key:kid_rd"); len(n) != 1 {
+			t.Errorf("status %d: detail rows = %v, want exactly one", tc.status, n)
+		}
+		_ = rdb.Close()
+	}
+}
+
 // TestUsageTracker_UnmatchedRouteBuckets — a 404 on an unregistered
 // path buckets under the bounded "unmatched" family, never the raw
 // path.
