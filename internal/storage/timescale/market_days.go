@@ -119,6 +119,32 @@ type MarketDay struct {
 //
 // An empty `assets` or `quotes` returns (nil, nil) — no keys is not a
 // query. Closed buckets only (ADR-0015).
+//
+// dailyMarketDaysQuery is hoisted to package level (rather than an
+// in-function `const q`) so its sargability can be pinned by a
+// query-shape test the way [closedVWAPAtOrBeforeQueryTemplate] and
+// [recentClosedVWAP1mForPairQuery] already are — an in-function query
+// is invisible to those guards however careful the author (RLT-042).
+const dailyMarketDaysQuery = `
+        SELECT time_bucket('1 day', bucket)                                     AS day,
+               base_asset,
+               (sum(vwap * volume) / sum(volume))::text                         AS vwap,
+               COALESCE(sum(volume_usd), 0)::text                               AS volume_usd,
+               count(DISTINCT bucket)                                           AS hours,
+               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0) AS span_seconds,
+               COALESCE(sum(trade_count), 0)                                    AS trades
+          FROM prices_1h
+         WHERE base_asset  = ANY($1)
+           AND quote_asset = ANY($2)
+           AND bucket <= now() - INTERVAL '1 hour'
+           AND bucket >= $3
+           AND bucket <= $4
+           AND vwap IS NOT NULL
+           AND volume > 0
+         GROUP BY day, base_asset
+         ORDER BY day ASC, base_asset ASC
+    `
+
 func (s *Store) DailyMarketDays(
 	ctx context.Context,
 	assets, quotes []canonical.Asset,
@@ -139,26 +165,7 @@ func (s *Store) DailyMarketDays(
 	// at the SESSION timezone, so a server whose TimeZone is not UTC
 	// would cut days somewhere other than midnight UTC — and the two
 	// legs of a premium would then be bucketed on different clocks.
-	const q = `
-        SELECT time_bucket('1 day', bucket)                                     AS day,
-               base_asset,
-               (sum(vwap * volume) / sum(volume))::text                         AS vwap,
-               COALESCE(sum(volume_usd), 0)::text                               AS volume_usd,
-               count(DISTINCT bucket)                                           AS hours,
-               COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0) AS span_seconds,
-               COALESCE(sum(trade_count), 0)                                    AS trades
-          FROM prices_1h
-         WHERE base_asset  = ANY($1)
-           AND quote_asset = ANY($2)
-           AND bucket + INTERVAL '1 hour' <= now()
-           AND bucket >= $3
-           AND bucket <= $4
-           AND vwap IS NOT NULL
-           AND volume > 0
-         GROUP BY day, base_asset
-         ORDER BY day ASC, base_asset ASC
-    `
-	rows, err := s.db.QueryContext(ctx, q, baseKeys, quoteKeys, from.UTC(), to.UTC())
+	rows, err := s.db.QueryContext(ctx, dailyMarketDaysQuery, baseKeys, quoteKeys, from.UTC(), to.UTC())
 	if err != nil {
 		return nil, fmt.Errorf("timescale: DailyMarketDays: %w", err)
 	}
