@@ -238,6 +238,13 @@ against.
   `soroban_event_count` recorded in `stellar.ledgers`. A short partition
   fails `substrate_ok` and `recognition_ok` for each event-reading source
   whose range it touches.
+- **migrations — `usage_daily` retained 12 months (#1282):** migration
+  0167 attaches a 12-month retention policy to the per-account usage
+  rollups, which 0071 kept forever while their Redis source expires at
+  35 days. Same horizon as `api_usage_events` (0027); armed on apply,
+  and drops nothing yet because the table dates from 2026-07. The
+  usage-rollup-backfill tests now name the package that runs them.
+
 - **api — `/v1/account/usage` gains `billable` (#1278):** each row now
   carries the request units the monthly quota counts (ok + 4xx),
   derived identically on the per-endpoint rollup shape and the legacy

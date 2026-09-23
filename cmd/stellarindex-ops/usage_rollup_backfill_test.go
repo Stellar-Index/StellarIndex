@@ -13,6 +13,10 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
 
+// These tests run with `go test ./cmd/stellarindex-ops/ -run UsageRollup`
+// and the worker's with `go test ./internal/usage/`; internal/ops holds
+// no usage code, so `./internal/ops/... -run 'Usage|Rollup'` runs nothing.
+
 // recordingUsageSink stands in for *timescale.Store at the exact
 // usage.RollupSink seam the production wiring uses.
 type recordingUsageSink struct {

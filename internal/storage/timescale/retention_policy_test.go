@@ -173,6 +173,9 @@ func TestRetentionPolicies_AreExactlyTheDeclaredSet(t *testing.T) {
 		// next test pins. 0166 rebuilds prices_1m and re-attaches the
 		// same policy (TestPrices1mRetention_0166ReattachesTheSamePolicy).
 		"prices_1m": "0166_twap_notional_floor.up.sql",
+		// Per-account usage rollups, 12 months (0167) — the same
+		// horizon as api_usage_events. Served for 30 days only.
+		"usage_daily": "0167_usage_daily_retention.up.sql",
 	}
 
 	held := retentionLedger(t)
