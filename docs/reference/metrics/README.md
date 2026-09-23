@@ -2472,9 +2472,23 @@ tied to the (small, slow-moving) set of scam-flagged issuers that are
 also actively traded. The gate FAILS OPEN — a directory-reader error
 does NOT withhold — so a drop to zero while flagged issuers still
 trade can mean the gate is failing open (the local directory table is
-unreachable); the paired `scam pricing gate: directory lookup failed`
-warn log is the corroborating signal. Verdicts are cached ~60s per
-issuer. Dashboard-only, no alert rule.
+unreachable); `stellarindex_scam_gate_lookup_failures_total` counts
+that directly. Verdicts are cached ~60s per issuer. Dashboard-only, no
+alert rule.
+
+### `stellarindex_scam_gate_lookup_failures_total`
+
+Counter, label `surface` (same set as
+`stellarindex_price_serve_scam_withheld_total`).
+
+Fires once per scam-pricing gate consultation whose `account_directory`
+lookup errored, so the gate FAILED OPEN and the price was served
+unguarded. Failed lookups are not cached, so during a directory outage
+this rises with request traffic. A cancelled client request is not
+counted.
+
+Alert: `stellarindex_scam_gate_fail_open` →
+[scam-gate-fail-open](../../operations/runbooks/scam-gate-fail-open.md).
 
 ## Supply derivation (aggregator binary)
 

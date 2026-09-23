@@ -89,8 +89,7 @@ func (s *Server) handleTWAP(w http.ResponseWriter, r *http.Request) {
 	// config docs and the withheld problem's own guidance text all
 	// promise /v1/ohlc stays visible. Gating there would make our own
 	// error message's escape-hatch advice a lie.
-	if scamWithheld(r.Context(), s.scam, base, quote, "twap") {
-		writePriceWithheldProblem(w, r, base, quote, PriceWithheldScamIssuer)
+	if s.writeIfScamWithheld(w, r, base, quote, "twap") {
 		return
 	}
 

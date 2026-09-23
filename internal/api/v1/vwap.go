@@ -109,8 +109,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// config docs and the withheld problem's own guidance text all
 	// promise /v1/ohlc stays visible. Gating there would make our own
 	// error message's escape-hatch advice a lie.
-	if scamWithheld(r.Context(), s.scam, base, quote, "vwap") {
-		writePriceWithheldProblem(w, r, base, quote, PriceWithheldScamIssuer)
+	if s.writeIfScamWithheld(w, r, base, quote, "vwap") {
 		return
 	}
 

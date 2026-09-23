@@ -437,6 +437,31 @@ groups:
             store. If this fires ALONE, suspect the usage-counter key
             namespace or an eviction policy rather than Redis availability.
 
+      # The scam-pricing gate fails OPEN on an account_directory lookup
+      # error — correct, because failing closed would blank every price
+      # on a DB blip — but while it is open every directory-flagged
+      # issuer is priced at 200 on every gated surface.
+      # lint-tripwire-window:sustained: a continuing fail-open window is actionable, one failover blip is not
+      - alert: stellarindex_scam_gate_fail_open
+        expr: sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/scam-gate-fail-open.md
+          summary: "Scam-pricing gate is FAILING OPEN on {{ $labels.surface }} ({{ $value | humanize }} lookups/s serving unguarded)"
+          description: |
+            The scam-pricing gate could not read account_directory and
+            served the price unguarded, continuously for the last 5
+            minutes. Directory-flagged issuers are being priced on this
+            surface for the duration.
+
+            Check the Postgres readyz probe first. If Postgres is healthy,
+            look for lock contention from directory-sync or pool
+            exhaustion in the gate's WARN line.
+
       # C3-067 (audit-2026-07-23): every privileged mutation on the admin
       # surfaces appends its audit row best-effort. The mutation
       # has already committed by then, so swallowing the error is right —

@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 58 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 181 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 183 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -568,6 +568,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_signup_reaper_failing` | `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(...{outcome="ok"}[6h])` | sustained 30 min | ticket | [signup-reaper-failing](runbooks/signup-reaper-failing.md) |
 | `stellarindex_ratelimit_fail_open` | `sum(rate(stellarindex_ratelimit_fail_open_total[5m]))` | > 0 for ≥ 10 min (rate limiter bypassing on a Redis error) | ticket | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_monthly_quota_fail_open` | `sum(rate(stellarindex_monthly_quota_fail_open_total[5m]))` | > 0 for ≥ 10 min (metered-spend ceiling bypassing on a counter read error) | ticket | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |
+| `stellarindex_scam_gate_fail_open` | `sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m]))` | > 0 for ≥ 5 min (scam-pricing gate serving directory-flagged issuers' prices on an `account_directory` lookup error) | ticket | [scam-gate-fail-open](runbooks/scam-gate-fail-open.md) |
 | `stellarindex_admin_audit_write_failing` | `sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h]))` | > 0 for ≥ 5 min (a privileged mutation committed with no durable audit row) | ticket | [admin-audit-write-failing](runbooks/admin-audit-write-failing.md) |
 | `stellarindex_login_code_lockout_table_growing` | `stellarindex_login_code_lockout_rows` **or** `increase(stellarindex_login_code_lockout_errors_total{op="status_check"}[1h])` | rows > 10000, **or** any fail-open, for ≥ 30 min (a table an unauthenticated caller keys, or the code-brute-force bound not being enforced) | ticket | [login-code-lockout-table-growing](runbooks/login-code-lockout-table-growing.md) |
 | `stellarindex_auth_reaper_stalled` | `time() - stellarindex_auth_reaper_last_sweep_unix{reaper}` vs `3 × stellarindex_auth_reaper_interval_seconds{reaper}` | a reaper (login_code / magic_link / signup) has not completed a sweep for > 3× its cadence, for ≥ 15 min (its rows gauge is frozen, not healthy) | ticket | [auth-reaper-stalled](runbooks/auth-reaper-stalled.md) |

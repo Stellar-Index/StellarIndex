@@ -213,6 +213,12 @@ func registerAppMetricsTail() {
 		// Prometheus exporter of its own.
 		DependencyUp,
 
+		// Scam-gate directory-lookup fail-open counter (GH-732), registered
+		// here rather than beside its PriceServeScamWithheldTotal neighbour
+		// in [registerAppMetrics] for the same funlen reason as
+		// SourceUnrepresentableSymbolsTotal below.
+		ScamGateLookupFailuresTotal,
+
 		// Source-family counter (#291). It belongs beside
 		// SourceUnknownSymbolsTotal in [registerAppMetrics] and is
 		// registered here only because that function already sat exactly
@@ -3293,11 +3299,26 @@ var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
 // reserve legs refused a USD valuation). A non-zero rate here
 // with no matching directory change can indicate the gate mis-firing;
 // a sudden drop to zero while flagged issuers still trade can indicate
-// the gate failing open (see the paired warn log).
+// the gate failing open — counted directly by ScamGateLookupFailuresTotal.
 var PriceServeScamWithheldTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_scam_withheld_total",
 		Help: "Aggregated price serves withheld by the scam-pricing gate (directory-flagged issuer), labelled by serving surface.",
+	},
+	[]string{"surface"},
+)
+
+// ScamGateLookupFailuresTotal — count of scam-pricing gate consultations
+// whose account_directory lookup errored, so the gate FAILED OPEN and the
+// price was served unguarded (internal/pricingguard.ScamGate). Failures
+// are not cached, so during a directory outage this rises with request
+// traffic. Labelled by the same `surface` constants as
+// PriceServeScamWithheldTotal. Any sustained rate means directory-flagged
+// issuers are being priced; alert: stellarindex_scam_gate_fail_open.
+var ScamGateLookupFailuresTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_scam_gate_lookup_failures_total",
+		Help: "Scam-pricing gate directory lookups that failed, so the price was served unguarded (fail-open), labelled by serving surface.",
 	},
 	[]string{"surface"},
 )

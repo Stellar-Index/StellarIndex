@@ -517,8 +517,8 @@ func PriceWithheldAt(
 	return PriceWithholdingAt(ctx, substance, scam, base, quote, at, surface) != NotWithheld
 }
 
-// PriceWithholdingAt is [PriceWithheldAt] reporting which gate fired;
-// see [PriceWithholding] for the precedence.
+// PriceWithholdingAt is [PriceWithheldAt] reporting which gate fired,
+// in the same scam-first order as [PriceWithholding].
 func PriceWithholdingAt(
 	ctx context.Context,
 	substance *SubstanceGate,
@@ -527,7 +527,7 @@ func PriceWithholdingAt(
 	at time.Time,
 	surface string,
 ) Withholding {
-	return WithholdingFor(substance.AllowedAt(ctx, base, quote, at, surface), scam.WithheldPair(ctx, base, quote, surface))
+	return WithholdingFor(scam.WithheldPair(ctx, base, quote, surface), substance.AllowedAt(ctx, base, quote, at, surface))
 }
 
 func (g *SubstanceGate) clock() time.Time {

@@ -116,6 +116,9 @@ const closedStreamGateBudget = tipStreamTickTimeout
 // the asset was refused (F002/K001). The fold over legs belongs inside
 // pricingguard, never hand-written at a call site.
 //
+// The scam gate is asked first so a pair both gates refuse is reported
+// under the flag, not as a thin market (see [writePriceWithheldProblem]).
+//
 // Nil gates (operator disabled [pricing_guard]) withhold nothing.
 func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) pricingguard.Withholding {
 	if s.substance == nil && s.scam == nil {
