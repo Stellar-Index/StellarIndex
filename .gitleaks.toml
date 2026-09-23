@@ -43,9 +43,6 @@ paths = [
   '''internal/sources/sushiswap_v3/fixtures_test\.go''',
   '''internal/sources/cctp/governance_test\.go''',
   '''internal/sources/cctp/full_census_test\.go''',
-  # Listing-sync address-form test table (also rule-scoped at the end of
-  # this file, for the same 8.30-vs-8.21 reason).
-  '''internal/ops/ingest/listing_sync_test\.go''',
   # Lake-derived base64-XDR golden fixtures (public on-chain event
   # bodies) for the blend_backstop decoder-bug-fix audit (2026-07-09).
   # ALSO rule-scoped below; duplicated for the same reason as the cctp
@@ -332,10 +329,4 @@ paths = [
 description = "Test-only Stellar C-strkeys (the pool contract and the two token contracts it trades) plus a transaction hash and base64 XDR golden bodies, all pulled directly from the raw lake. Every one is a public on-chain identifier that anyone can read off the ledger, and the whole point of the fixtures is that they are the real bytes the decoder must handle. The entropy rule reads a 56-character base32 contract id as a generic key."
 paths = [
   '''internal/sources/sushiswap_v3/fixtures_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar C-strkey and G-strkey fixtures in the listing-sync address-form table (a contract id, a classic CODE-GISSUER pair, an issuer account, a one-character-short contract id). Every one is a public ledger identifier or a deliberately malformed copy of one; the table exists to prove the parser classifies each form. The entropy rule reads the 56-character base32 ids as generic keys; nothing here pairs with a private key."
-paths = [
-  '''internal/ops/ingest/listing_sync_test\.go''',
 ]
