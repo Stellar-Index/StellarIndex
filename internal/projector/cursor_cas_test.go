@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
@@ -142,5 +143,50 @@ func TestCycle_FirstCycleSeedDoesNotOverwriteARowThatAppeared(t *testing.T) {
 	h2.cycle()
 	if got := h2.store.cursor(); got != 120 {
 		t.Fatalf("plain first-cycle seed: cursor = %d, want 120", got)
+	}
+}
+
+// ctxStore refuses a cursor write on a done context, as pgx's ExecContext
+// does; the base fake ignores ctx and so cannot see which one the write used.
+type ctxStore struct{ *fakeStore }
+
+func (s ctxStore) AdvanceCursorFrom(ctx context.Context, source, sub string, expected timescale.CursorRead, newLast uint32) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if _, ok := ctx.Deadline(); !ok {
+		return false, fmt.Errorf("fake: cursor write carries no deadline")
+	}
+	return s.fakeStore.AdvanceCursorFrom(ctx, source, sub, expected, newLast)
+}
+
+// TestCycle_SpentBudgetStillCommitsDurableProgress is finding T066: a cycle
+// whose sink writes commit ledger 101 and then exhaust PerSourceTimeout (102
+// fails with DeadlineExceeded) must still advance the cursor to 101. The
+// write used to run on the expired cycle context, so it failed and the
+// committed work was re-projected, identically, on every later cycle.
+func TestCycle_SpentBudgetStillCommitsDurableProgress(t *testing.T) {
+	const source = "t066-spent-budget-commit"
+	rows := []sorobanevents.Row{lakeRow(101, 1), lakeRow(102, 2)}
+	h := newWedgeHarness(t, source, rows, 2000, func(ev consumer.Event) error {
+		if ev.(ledgerEvent).ledger == 101 {
+			return nil // landed before the budget ran out
+		}
+		return context.DeadlineExceeded
+	})
+	h.proj.store = ctxStore{h.store}
+
+	// A parent already past its deadline gives a cycleCtx born expired; the
+	// fake stream ignores ctx, so the scan completes and only the sink and
+	// the cursor write can observe the spent budget.
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	h.cycleCtx(expired)
+
+	if got := h.store.cursor(); got != 101 {
+		t.Fatalf("cursor = %d, want 101 (ledger 101 committed; a spent cycle budget must not discard it)", got)
+	}
+	if want := uint32(BatchLimit / 2); h.window != want {
+		t.Fatalf("window = %d, want %d (a budget-exhausted cycle keeps its sink-side shrink even when it commits)", h.window, want)
 	}
 }
