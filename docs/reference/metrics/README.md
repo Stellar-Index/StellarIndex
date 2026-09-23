@@ -2621,7 +2621,7 @@ not updated for that leg. Also carried in the freeze reason as
 
 ### `stellarindex_aggregator_composite_freeze_suppressed_total`
 
-Counter, no labels.
+Counter, labels `pair`, `window`.
 
 Phase-2 freeze fires (the 3-signal AND held on a single-venue bucket)
 that were NOT engaged because the current-bucket composite reference
@@ -2629,7 +2629,10 @@ corroborated the move. Every increment is a bucket that would have
 frozen before 2026-08-29; read it next to
 `stellarindex_anomaly_freeze_engaged_total` when judging whether
 `tolerance_bps` is too loose. Log line: `phase2 freeze suppressed:
-composite reference corroborates the move`.
+composite reference corroborates the move`. Alerted on by
+`stellarindex_aggregator_composite_freeze_suppression_dominant`
+(`deploy/monitoring/rules/freeze-lifecycle.yml`) when the suppression
+rate materially exceeds the engaged rate.
 
 ### `stellarindex_divergence_refresh_total`
 

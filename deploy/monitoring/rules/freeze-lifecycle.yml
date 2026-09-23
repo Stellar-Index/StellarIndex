@@ -26,13 +26,76 @@
 # zero-seeded at process start (F-0033), so `increase()` reads a real
 # zero rather than "no data" before the first event.
 #
-# Cardinality: all three metrics are unlabelled by pair. Per-pair
-# identity lives in the `freeze:<asset>:<quote>` Redis marker's
-# `state` object (fired_at / hold_until / extensions_used /
+# Cardinality: the three lifecycle metrics above are unlabelled by
+# pair. Per-pair identity lives in the `freeze:<asset>:<quote>` Redis
+# marker's `state` object (fired_at / hold_until / extensions_used /
 # escalated) and in the aggregator's WARN+ERROR log lines. The
 # marker is the triage entry point for every rule below.
+#
+# One more producer belongs in this file even though it never engages
+# the ladder above: `stellarindex_aggregator_composite_freeze_suppressed_total`
+# (internal/aggregate/orchestrator/phase2_freeze.go, labelled `pair`,
+# `window`) counts a phase-2 3-signal-AND fire that was DISARMED
+# because the current-bucket composite reference corroborated the
+# move (composite_reference.go, 2026-08-29) — a freeze that, before
+# that mechanism shipped, would have entered the ladder this file
+# alerts on. It is a lifecycle input, not a lifecycle stage: read it
+# next to `stellarindex_anomaly_freeze_engaged_total` below.
 
 groups:
+  - name: stellarindex.composite_freeze_suppression
+    interval: 1m
+    rules:
+
+      # ─── P3: suppression is outrunning engagement ──────────────
+      #
+      # `docs/operations/v1-launch-plan.md`'s D1 verification already
+      # reads `stellarindex_aggregator_composite_freeze_suppressed_total
+      # > 0` as proof the mechanism is alive; this rule is the same
+      # question asked continuously. A suppression rate that stays
+      # BELOW the engaged rate is the mechanism doing its narrow job
+      # (removing the occasional false single-venue fire). A
+      # suppression rate that materially EXCEEDS engagement means the
+      # composite reference is now disarming more phase-2 fires than
+      # are getting through — either `tolerance_bps` is too loose, or
+      # the allow-listed targets are seeing sustained market-wide
+      # moves that keep re-corroborating a signal the 3-signal AND
+      # still thinks looks manipulated.
+      - alert: stellarindex_aggregator_composite_freeze_suppression_dominant
+        expr: |
+          sum(rate(stellarindex_aggregator_composite_freeze_suppressed_total[1h]))
+            > 2 * sum(rate(stellarindex_anomaly_freeze_engaged_total[1h]))
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+          summary: "Composite-reference corroboration is suppressing more phase-2 freezes than engage (P3)"
+          description: |
+            Over the last hour, phase-2 freeze fires suppressed by
+            current-bucket composite-reference corroboration
+            (`stellarindex_aggregator_composite_freeze_suppressed_total`)
+            ran at more than 2x the rate of freezes that actually
+            engaged (`stellarindex_anomaly_freeze_engaged_total`),
+            sustained for 30 minutes.
+
+            This is not itself a customer-facing fault — a suppressed
+            fire serves the fresh, composite-corroborated price
+            exactly as intended. It is a signal that the balance
+            between the two has shifted: check
+            `stellarindex_aggregator_composite_corroboration{verdict="corroborated"}`
+            per pair (allow-listed via `[aggregate.composite_reference]
+            targets`) against `..._leg_sources` / `..._leg_dispersion_bps`
+            to see whether `tolerance_bps` needs tightening or a
+            leg's `min_leg_sources`/`leg_dispersion_bps` is letting a
+            weak reference corroborate too easily. The suppression
+            log line (`phase2 freeze suppressed: composite reference
+            corroborates the move`) carries the pair and the reason
+            string that would have fired.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
+
   - name: stellarindex.freeze_lifecycle
     interval: 30s
     rules:

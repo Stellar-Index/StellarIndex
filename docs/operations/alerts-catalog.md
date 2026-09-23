@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 58 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 178 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 179 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -520,6 +520,7 @@ auto-unfreeze at all. Rules in
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
+| `stellarindex_aggregator_composite_freeze_suppression_dominant` | `stellarindex_aggregator_composite_freeze_suppressed_total` vs `stellarindex_anomaly_freeze_engaged_total` | suppression rate > 2x engaged rate over 1h, sustained 30m — composite-reference corroboration is disarming more phase-2 fires than are getting through | ticket | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
 | `stellarindex_anomaly_freeze_escalated` | `stellarindex_anomaly_freeze_escalated_total` | increase > 0 over 15m — a freeze exhausted the 4-extension ladder and will NOT auto-unfreeze | page | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_extension_rate` | `stellarindex_anomaly_freeze_extensions_total` | increase >= 3 over 1h, sustained 10m — freezes are climbing toward escalation | ticket | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_active` | `stellarindex_anomaly_freeze_active` | > 0 for 5m — informational "N (pair, window) freezes held right now" | informational | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
