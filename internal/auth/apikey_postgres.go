@@ -204,6 +204,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		AllowPermissions:    convertPermissionEntries(pgKey.Permissions.Allow),
 		DenyPermissions:     convertPermissionEntries(pgKey.Permissions.Deny),
 		MonthlyQuota:        monthlyQuota,
+		ExpiresAt:           pgKey.ExpiresAt,
 	}
 
 	// 3. Cache write-back. Best-effort; a write failure doesn't
@@ -283,6 +284,7 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 		AllowPermissions:    rec.AllowPermissions,
 		DenyPermissions:     rec.DenyPermissions,
 		MonthlyQuota:        rec.MonthlyQuota,
+		ExpiresAt:           rec.ExpiresAt,
 	}, true, nil
 }
 

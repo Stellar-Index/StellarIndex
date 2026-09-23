@@ -722,3 +722,30 @@ func TestPostgresValidator_ActiveDecisionMatchesPlatformIsActive(t *testing.T) {
 		})
 	}
 }
+
+// TestPostgresValidator_SubjectCarriesExpiry — both the Postgres read and
+// the cache hit surface the key's expiry on the Subject, which
+// auth.ChildKeyRequest copies onto a self-service child.
+func TestPostgresValidator_SubjectCarriesExpiry(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	v, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys: keys, Accounts: accounts, Cache: rdb, CacheTTL: 5 * time.Minute,
+	})
+	plaintext := "sip_time_boxed"
+	acct := seedActiveAccount(accounts, "time-boxed")
+	rec := seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 100)
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Truncate(time.Second)
+	rec.ExpiresAt = expiresAt
+	keys.byID[rec.ID] = rec
+	keys.byHash[hexHashOf(plaintext)] = rec
+
+	for _, pass := range []string{"postgres read", "cache hit"} {
+		sub, err := v.Lookup(context.Background(), plaintext)
+		if err != nil {
+			t.Fatalf("%s: lookup: %v", pass, err)
+		}
+		if !sub.ExpiresAt.Equal(expiresAt) {
+			t.Errorf("%s: Subject.ExpiresAt = %v, want %v", pass, sub.ExpiresAt, expiresAt)
+		}
+	}
+}

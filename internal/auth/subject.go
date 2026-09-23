@@ -154,6 +154,12 @@ type Subject struct {
 	// 403 with a clear message pointing at the verify endpoint.
 	// Without the middleware, the field is informational only.
 	EmailVerifiedAt time.Time
+
+	// ExpiresAt — when the presented API key stops authenticating. Zero
+	// means the credential never expires (and for anonymous / SEP-10
+	// subjects, which have no key record). [ChildKeyRequest] copies it so
+	// a time-boxed key cannot mint itself a permanent successor.
+	ExpiresAt time.Time
 }
 
 // SubjectPermissionEntry mirrors platform.KeyPermissionEntry so

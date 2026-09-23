@@ -75,7 +75,8 @@ type CreateAPIKeyRequest struct {
 	// (RLT-404, reverification 2026-09-18).
 	MonthlyQuota int64
 
-	// ExpiresAt — zero means never.
+	// ExpiresAt — zero means never. The self-service rotation path sets
+	// it to the caller's own expiry via [ChildKeyRequest].
 	ExpiresAt time.Time
 
 	// EmailVerifiedAt — zero means the key has not (yet) passed the
@@ -86,6 +87,25 @@ type CreateAPIKeyRequest struct {
 	// not of one record, and there is no path that can verify a
 	// non-signup KeyID after the fact. Signup leaves it zero.
 	EmailVerifiedAt time.Time
+}
+
+// ChildKeyRequest builds the mint request for a key that parent delegates
+// to itself (POST /v1/account/keys). It is the one place every delegated
+// dimension is copied, so a field added to [CreateAPIKeyRequest] is pinned
+// by TestChildKeyRequest_InheritsEveryField instead of silently minting
+// as zero — zero means "unlimited" for quota and "never" for expiry.
+// scopes must already be clamped to parent's own (middleware.ClampMintScopes).
+func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKeyRequest {
+	return CreateAPIKeyRequest{
+		Identifier:      parent.Identifier,
+		Label:           label,
+		Tier:            parent.Tier,
+		Scopes:          scopes,
+		RateLimitPerMin: parent.RateLimitPerMin,
+		MonthlyQuota:    parent.MonthlyQuota,
+		ExpiresAt:       parent.ExpiresAt,
+		EmailVerifiedAt: parent.EmailVerifiedAt,
+	}
 }
 
 // RedisAPIKeyStore implements [APIKeyStore] against the same
