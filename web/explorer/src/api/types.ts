@@ -4368,8 +4368,13 @@ export interface paths {
          *     the wabt toolchain is installed on the server, otherwise empty with the
          *     reason in `source_note`. The response never 503s on missing tooling.
          *
+         *     `ttl` is the contract instance entry's liveness at the lake watermark. An
+         *     `archived` instance cannot be invoked until it is restored; `source_note`
+         *     then leads with `ARCHIVED:` — the wasm shown is its last executable.
+         *
          *     The wasm for a content-addressed hash is immutable, so the response is
-         *     cached for a day (`Cache-Control: public, max-age=86400`).
+         *     cached for a day (`Cache-Control: public, max-age=86400`) — five minutes
+         *     (`max-age=300`) when it carries a `ttl` verdict, which is not immutable.
          *
          *     404 when the contract's wasm can't be assembled from the captured
          *     `ledger_entry_changes` window — the contract-instance or contract-code
@@ -5193,6 +5198,24 @@ export interface components {
              * @description Last successful sign-in with this passkey; absent when never used.
              */
             last_used_at?: string;
+        };
+        /** @description TTL liveness of a contract's instance ledger entry, judged against the lake watermark. Absent when the lake holds no TTL row for the instance or no watermark is available. */
+        ContractTTL: {
+            /**
+             * Format: int64
+             * @description Newest liveUntilLedgerSeq recorded for the instance entry.
+             */
+            live_until: number;
+            /**
+             * @description `archived` once as_of_ledger passes live_until — the contract cannot be invoked until its instance is restored.
+             * @enum {string}
+             */
+            state: "live" | "archived";
+            /**
+             * Format: int64
+             * @description Lake watermark ledger the verdict was judged at.
+             */
+            as_of_ledger: number;
         };
         /** @description Curated third-party label for a Stellar address, mirrored from the MIT-licensed stellar-expert/public-directory set. Display attribution only — listing is not endorsement and this is NOT a verification signal. Tags follow the upstream registry (exchange, anchor, issuer, wallet, custodian, sdf, memo-required, airdrop, malicious, unsafe, …); treat `malicious`/`unsafe` as warnings worth surfacing prominently. */
         DirectoryInfo: {
@@ -21233,6 +21256,15 @@ export interface operations {
                                     active_ledgers?: number;
                                 }[];
                             };
+                            /**
+                             * @description `false` (still 200, as on `/accounts/{account_id}`) when the lake holds no
+                             *     evidence the contract was ever deployed — no events, no activity, no
+                             *     captured instance entry or TTL row: "no such contract / not yet
+                             *     captured". Absent when the instance read failed and no event evidence
+                             *     decides it.
+                             */
+                            exists?: boolean;
+                            ttl?: components["schemas"]["ContractTTL"];
                         };
                     };
                 };
@@ -21321,8 +21353,9 @@ export interface operations {
                             wat?: string;
                             /** @description wasm-decompile pseudocode (C-like, NOT Rust); absent when wabt isn't installed. */
                             decompiled?: string;
-                            /** @description Provenance + any degraded-stage explanation. */
+                            /** @description Provenance + any degraded-stage explanation; leads with `ARCHIVED:` when the instance's TTL has lapsed. */
                             source_note: string;
+                            ttl?: components["schemas"]["ContractTTL"];
                         };
                     };
                 };

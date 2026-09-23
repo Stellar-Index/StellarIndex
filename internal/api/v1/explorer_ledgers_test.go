@@ -23,6 +23,8 @@ type stubExplorerReader struct {
 	contractEvents []clickhouse.ContractActivityRow
 	wasm           clickhouse.ContractWasmInfo
 	wasmErr        error
+	instance       clickhouse.ContractInstanceState
+	instanceErr    error
 	directory      []clickhouse.ContractDirectoryRow
 	interactions   []clickhouse.ContractEdgeRow
 	codeHistory    []clickhouse.ContractCodeVersion
@@ -154,6 +156,10 @@ func (s *stubExplorerReader) ContractEventsRecent(_ context.Context, _ string, _
 
 func (s *stubExplorerReader) ContractWasm(_ context.Context, _ string) (clickhouse.ContractWasmInfo, error) {
 	return s.wasm, s.wasmErr
+}
+
+func (s *stubExplorerReader) ContractInstanceState(_ context.Context, _ string) (clickhouse.ContractInstanceState, error) {
+	return s.instance, s.instanceErr
 }
 
 func (s *stubExplorerReader) RecentContracts(_ context.Context, _ int, _ uint32) ([]clickhouse.ContractDirectoryRow, error) {

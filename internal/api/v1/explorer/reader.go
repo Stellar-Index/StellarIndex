@@ -235,6 +235,9 @@ type ExplorerReader interface {
 	EventsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.EventSummary, error)
 	ContractEventsRecent(ctx context.Context, contractID string, limit int, cur clickhouse.ContractEventsCursor) ([]clickhouse.ContractActivityRow, error)
 	ContractWasm(ctx context.Context, contractID string) (clickhouse.ContractWasmInfo, error)
+	// ContractInstanceState is the instance entry's existence evidence and
+	// newest TTL live_until, backing the contract routes' exists + ttl.
+	ContractInstanceState(ctx context.Context, contractID string) (clickhouse.ContractInstanceState, error)
 	RecentContracts(ctx context.Context, limit int, sinceLedger uint32) ([]clickhouse.ContractDirectoryRow, error)
 	// ContractInteractions returns the edges plus the EFFECTIVE window
 	// floor, which may be newer than the requested sinceLedger: a busy
