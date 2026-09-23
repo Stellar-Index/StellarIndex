@@ -34,8 +34,7 @@ func TestGetLedgers_decodesResponse(t *testing.T) {
 				{
 					"hash":            "abcd",
 					"sequence":        100,
-					"closeTimestamp":  1772000000,
-					"protocolVersion": 23,
+					"ledgerCloseTime": "1772000000",
 				},
 			},
 			"latestLedger": 200,
@@ -57,6 +56,15 @@ func TestGetLedgers_decodesResponse(t *testing.T) {
 	}
 	if len(got.Ledgers) != 1 {
 		t.Fatalf("got %d ledgers, want 1", len(got.Ledgers))
+	}
+	if got.Ledgers[0].Hash != "abcd" {
+		t.Errorf("Ledgers[0].Hash = %q, want %q", got.Ledgers[0].Hash, "abcd")
+	}
+	if got.Ledgers[0].Sequence != 100 {
+		t.Errorf("Ledgers[0].Sequence = %d, want 100", got.Ledgers[0].Sequence)
+	}
+	if got.Ledgers[0].LedgerCloseTime != "1772000000" {
+		t.Errorf("Ledgers[0].LedgerCloseTime = %q, want %q", got.Ledgers[0].LedgerCloseTime, "1772000000")
 	}
 }
 
