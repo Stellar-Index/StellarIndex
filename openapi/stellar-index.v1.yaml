@@ -11172,7 +11172,7 @@ paths:
                         properties:
                           sponsors: { type: integer, format: int64 }
                           sponsorships_started: { type: integer, format: int64 }
-                          distinct_sponsored: { type: integer, format: int64 }
+                          distinct_sponsored: { type: integer, format: int64, description: "Distinct accounts sponsored across the WHOLE board, counted once each even if sponsored by more than one sponsor. NOT a sum of the per-row distinct_sponsored figures, which over-counts any account with multiple sponsors." }
                           revocations_issued: { type: integer, format: int64 }
                       coverage:
                         type: object
