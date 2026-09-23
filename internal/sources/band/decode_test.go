@@ -495,8 +495,12 @@ func TestDecodeRelay_FutureResolveTimeBeyondContractWindowClampsToClose(t *testi
 		offset    time.Duration
 		wantClose bool
 	}{
-		"within window (30m)":       {30 * time.Minute, false},
-		"just inside window (59m)":  {59 * time.Minute, false},
+		"within window (30m)":      {30 * time.Minute, false},
+		"just inside window (59m)": {59 * time.Minute, false},
+		"last accepted second":     {time.Hour - time.Second, false},
+		// relay() applies only while resolve_time < close + 3600, so
+		// the edge itself is a rejected (no-op) relay.
+		"exactly at window edge":    {time.Hour, true},
 		"beyond window (2h)":        {2 * time.Hour, true},
 		"far beyond, inside helper": {23 * time.Hour, true},
 	} {
