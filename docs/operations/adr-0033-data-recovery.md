@@ -117,11 +117,35 @@ so re-backfilling **without** deleting first would create duplicates (old
 raw-op rows + new fanned-out rows for the same trade). So **delete-then-replay**,
 scoped per source + range:
 
+`ledger` is the correctness predicate. The `ts` bound is there only for
+chunk exclusion: `trades` is partitioned on `ts` (migrations/0001), so a
+`ledger`-only DELETE touches, and decompresses, every chunk in the table.
+Paste the `ts` bounds in as literals. A `ledger_ingest_log` subquery
+returns NULL when an endpoint row is missing, and the DELETE then
+matches nothing and still reports success.
+
 ```sql
--- one source + bounded range at a time; verify the range first
-DELETE FROM trades
+-- one source + bounded range at a time; verify the range first.
+-- 1. Resolve the ts bounds. Expect exactly 2 rows; stop if either is missing.
+SELECT ledger_seq, ledger_close_time
+  FROM ledger_ingest_log
+ WHERE ledger_seq IN (<from>, <to>);
+
+-- 2. Count what the DELETE must remove (ledger predicate only).
+SELECT count(*) FROM trades
  WHERE source IN ('aquarius','comet','soroswap','phoenix')
    AND ledger BETWEEN <from> AND <to>;
+
+-- 3. Delete. trades.ts is the ledger close time, so the inclusive
+--    bounds from step 1 cover every row in the ledger range.
+BEGIN;
+DELETE FROM trades
+ WHERE source IN ('aquarius','comet','soroswap','phoenix')
+   AND ledger BETWEEN <from> AND <to>
+   AND ts >= '<from_close_time>'::timestamptz
+   AND ts <= '<to_close_time>'::timestamptz;
+-- DELETE n must equal step 2's count. If it does not, ROLLBACK.
+COMMIT;
 ```
 > ⚠️ **The replay step used to be `stellarindex-ops backfill -source
 > aquarius,comet,soroswap,phoenix`. That combination deletes your rows
