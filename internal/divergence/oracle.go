@@ -141,12 +141,13 @@ func (r *OracleReference) Name() string { return r.source }
 
 // LookupPrice implements [Reference].
 //
-// Pair mapping: both sides of the pair are expanded through
-// [oracleAssetKeys] — XLM's dual identity (`native` on-chain form vs
-// the abstract `crypto:XLM` ticker the CEX-class oracles publish
-// under) is the one translation applied; every other asset must
-// match its canonical string exactly. Which pairs each oracle
-// actually covers falls out of the stored rows:
+// Pair mapping: both sides of the pair are expanded through the alias
+// registry ([canonical.AssetAliasStrings]) — XLM's three forms (`native`,
+// the `crypto:XLM` ticker the CEX-class oracles publish under, and the
+// SAC C-address reflector-dex publishes under) plus every configured
+// classic↔SAC pair; any other asset must match its canonical string
+// exactly. Which pairs each oracle actually covers falls out of the
+// stored rows:
 //
 //   - reflector-dex   — Soroban token assets quoted in fiat:USD (the
 //     DEX oracle's base is the USDC SAC, stamped as
@@ -161,7 +162,7 @@ func (r *OracleReference) Name() string { return r.source }
 // (information for the operator, not a degradation).
 func (r *OracleReference) LookupPrice(ctx context.Context, pair canonical.Pair, observedAt time.Time) (float64, error) {
 	u, err := r.reader.LatestOracleObservation(ctx,
-		r.source, oracleAssetKeys(pair.Base), oracleAssetKeys(pair.Quote))
+		r.source, canonical.AssetAliasStrings(pair.Base), canonical.AssetAliasStrings(pair.Quote))
 	if err != nil {
 		return 0, fmt.Errorf("oracle %s: read latest observation for %s: %w",
 			r.source, pair.String(), err)
@@ -197,24 +198,6 @@ func (r *OracleReference) LookupPrice(ctx context.Context, pair canonical.Pair, 
 			r.source, pair.String(), u.Price.String())
 	}
 	return scaleOracleAmount(u.Price.BigInt(), int(u.Decimals))
-}
-
-// oracleAssetKeys returns the canonical asset-key strings an oracle
-// row may carry for the given asset. XLM's dual identity is the one
-// expansion (same translation the v1 handler applies when reading
-// oracle_updates — see timescale.LatestOracleUpdatesForAssets):
-// Reflector-CEX / Band publish XLM under the abstract `crypto:XLM`
-// ticker while our on-chain pairs use the protocol `native` form.
-func oracleAssetKeys(a canonical.Asset) []string {
-	key := a.String()
-	switch key {
-	case "native":
-		return []string{key, "crypto:XLM"}
-	case "crypto:XLM":
-		return []string{key, "native"}
-	default:
-		return []string{key}
-	}
 }
 
 // scaleOracleAmount divides raw by 10^decimals via big.Rat and

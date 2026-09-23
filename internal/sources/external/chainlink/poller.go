@@ -60,8 +60,16 @@ type Poller struct {
 	decimals *decimalsCache
 
 	// now is the injectable clock for the decimals() refresh / retry
-	// cadence. nil → time.Now.
+	// cadence and the updatedAt future-skew guard. nil → time.Now.
 	now func() time.Time
+}
+
+// clock returns the poller's injectable wall clock (time.Now when unset).
+func (p *Poller) clock() time.Time {
+	if p.now != nil {
+		return p.now()
+	}
+	return time.Now()
 }
 
 // NewPoller builds a Poller with sensible defaults. Caller supplies
@@ -255,7 +263,7 @@ func (p *Poller) fetchLatest(ctx context.Context, pair canonical.Pair, spec Feed
 	if err != nil {
 		return Round{}, fmt.Errorf("eth_call %s: %w", pair.String(), err)
 	}
-	rnd, err := decodeLatestRoundData(rawHex, spec.Address)
+	rnd, err := decodeLatestRoundData(rawHex, spec.Address, p.clock())
 	if err != nil {
 		return Round{}, fmt.Errorf("decode %s: %w", pair.String(), err)
 	}

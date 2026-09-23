@@ -208,7 +208,7 @@ func (p *Poller) emitChunkLogs(
 ) (int, error) {
 	n := 0
 	for _, entry := range logs {
-		rnd, err := decodeAnswerUpdatedLog(entry)
+		rnd, err := decodeAnswerUpdatedLog(entry, p.clock())
 		if err != nil {
 			logger.Warn("chainlink backfill decode skip",
 				"source", SourceName,

@@ -157,21 +157,21 @@ func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 	reader := &fakeOracleReader{row: oracleRow(t, divergence.OracleSourceReflectorCEX, "11000000000000", 14, now)}
 	ref := newOracleRef(t, divergence.OracleSourceReflectorCEX, reader, time.Hour)
 
-	// native base expands to include crypto:XLM.
+	// native base expands to crypto:XLM and the XLM SAC.
 	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), now); err != nil {
 		t.Fatalf("LookupPrice: %v", err)
 	}
 	if reader.gotSource != divergence.OracleSourceReflectorCEX {
 		t.Errorf("source = %q, want reflector-cex", reader.gotSource)
 	}
-	if got := strings.Join(reader.gotBaseKeys, ","); got != "native,crypto:XLM" {
-		t.Errorf("base keys = %q, want native,crypto:XLM", got)
+	if got, want := strings.Join(reader.gotBaseKeys, ","), "native,crypto:XLM,"+canonical.XLMSacContractID; got != want {
+		t.Errorf("base keys = %q, want %q", got, want)
 	}
 	if got := strings.Join(reader.gotQuoteKeys, ","); got != "fiat:USD" {
 		t.Errorf("quote keys = %q, want fiat:USD", got)
 	}
 
-	// crypto:XLM base expands to include native.
+	// crypto:XLM base expands to native and the XLM SAC.
 	xlm, err := canonical.ParseAsset("crypto:XLM")
 	if err != nil {
 		t.Fatalf("parse crypto:XLM: %v", err)
@@ -183,8 +183,8 @@ func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 	if _, err := ref.LookupPrice(context.Background(), canonical.Pair{Base: xlm, Quote: usd}, now); err != nil {
 		t.Fatalf("LookupPrice crypto:XLM: %v", err)
 	}
-	if got := strings.Join(reader.gotBaseKeys, ","); got != "crypto:XLM,native" {
-		t.Errorf("base keys = %q, want crypto:XLM,native", got)
+	if got, want := strings.Join(reader.gotBaseKeys, ","), "crypto:XLM,native,"+canonical.XLMSacContractID; got != want {
+		t.Errorf("base keys = %q, want %q", got, want)
 	}
 
 	// Non-XLM assets don't expand.
@@ -197,6 +197,60 @@ func TestOracleReference_PairMapping_XLMDualIdentity(t *testing.T) {
 	}
 	if got := strings.Join(reader.gotBaseKeys, ","); got != "fiat:EUR" {
 		t.Errorf("base keys = %q, want fiat:EUR", got)
+	}
+}
+
+// TestOracleReference_BaseKeysCoverEveryAliasFamily is the guard against
+// a hand-rolled key expander drifting from the alias registry: for every
+// member of every installed family (the XLM baseline plus a configured
+// classic↔SAC pair), the keys bound for that member must include the
+// whole family. reflector-dex publishes XLM only under its SAC
+// C-address, so a native-keyed read that omits the SAC can never match
+// a reflector-dex row.
+func TestOracleReference_BaseKeysCoverEveryAliasFamily(t *testing.T) {
+	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	const usdcSACContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	reg, err := canonical.NewAliasRegistry(map[string]string{usdcSACContract: usdcClassic})
+	if err != nil {
+		t.Fatalf("NewAliasRegistry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+
+	families := [][]string{
+		{"native", "crypto:XLM", canonical.XLMSacContractID},
+		{usdcClassic, usdcSACContract},
+	}
+	for form, canon := range canonical.AllAliasForms() {
+		families = append(families, []string{form, canon})
+	}
+
+	now := time.Now().UTC()
+	usd, err := canonical.ParseAsset("fiat:USD")
+	if err != nil {
+		t.Fatalf("parse USD: %v", err)
+	}
+	reader := &fakeOracleReader{row: oracleRow(t, divergence.OracleSourceReflectorDEX, "20000000000000", 14, now)}
+	ref := newOracleRef(t, divergence.OracleSourceReflectorDEX, reader, time.Hour)
+	for _, family := range families {
+		for _, member := range family {
+			base, err := canonical.ParseAsset(member)
+			if err != nil {
+				t.Fatalf("parse %q: %v", member, err)
+			}
+			if _, err := ref.LookupPrice(context.Background(), canonical.Pair{Base: base, Quote: usd}, now); err != nil {
+				t.Fatalf("LookupPrice %s/USD: %v", member, err)
+			}
+			bound := make(map[string]bool, len(reader.gotBaseKeys))
+			for _, k := range reader.gotBaseKeys {
+				bound[k] = true
+			}
+			for _, want := range family {
+				if !bound[want] {
+					t.Errorf("base keys for %s = %v, missing alias %s", member, reader.gotBaseKeys, want)
+				}
+			}
+		}
 	}
 }
 

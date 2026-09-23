@@ -64,13 +64,21 @@ type OracleReader interface {
 // derivation (internal/xdrjson, ADR-0013): a contract that IS native
 // XLM's or a verified asset's Stellar Asset Contract denotes that
 // asset, so it inherits the classic key and then faces the same gate.
-// An arbitrary C-address derives to nothing and keeps only its own key.
+// A C-address in neither the verified set nor the alias registry keeps
+// only its own key.
 //
-// Returned slice always includes the original asset; subsequent
+// Every form is first expanded through the alias registry
+// ([canonical.AssetAliases]) — the same expander the divergence path
+// binds — so `native` also reaches reflector-dex's XLM rows, which are
+// keyed only by the XLM SAC C-address, and a configured classic↔SAC pair
+// is answered under both forms. The verified-ticker grant is layered on
+// top for this serving path only.
+//
+// Returned slice always includes the original asset first; subsequent
 // entries are best-effort translations the storage layer's
 // `WHERE asset = ANY($1)` filter unions over.
 func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
-	candidates := []canonical.Asset{a}
+	candidates := canonical.AssetAliases(a)
 
 	// SAC wrapper → the native/classic asset it provably wraps.
 	if a.Type == canonical.AssetSoroban {
@@ -78,16 +86,8 @@ func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 		if !ok {
 			return candidates
 		}
-		candidates = append(candidates, wrapped)
+		candidates = appendAssetsUnique(candidates, canonical.AssetAliases(wrapped)...)
 		a = wrapped
-	}
-
-	// `native` → also try `crypto:XLM`.
-	if a.Type == canonical.AssetNative {
-		if x, err := canonical.ParseAsset("crypto:XLM"); err == nil {
-			candidates = append(candidates, x)
-		}
-		return candidates
 	}
 
 	// Verified classic credit asset → also try `crypto:<TICKER>` so the
@@ -96,10 +96,27 @@ func (s *Server) oracleAssetCandidates(a canonical.Asset) []canonical.Asset {
 	// track (the ANY($1) filter just yields zero rows for that key).
 	if ticker, ok := s.verifiedTickerFor(a); ok {
 		if x, err := canonical.ParseAsset("crypto:" + ticker); err == nil {
-			candidates = append(candidates, x)
+			candidates = appendAssetsUnique(candidates, x)
 		}
 	}
 	return candidates
+}
+
+// appendAssetsUnique appends each of add not already in dst, by canonical string.
+func appendAssetsUnique(dst []canonical.Asset, add ...canonical.Asset) []canonical.Asset {
+	for _, a := range add {
+		dup := false
+		for _, d := range dst {
+			if d.String() == a.String() {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			dst = append(dst, a)
+		}
+	}
+	return dst
 }
 
 // verifiedTickerFor returns the global crypto ticker a CLASSIC asset is
