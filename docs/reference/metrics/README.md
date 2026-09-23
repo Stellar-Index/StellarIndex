@@ -710,20 +710,35 @@ respecting a backoff window.
 
 ### `stellarindex_cex_stream_disconnect_total`
 
-Counter, labels `source`, `reason` ∈ {reset, broken_pipe, timeout, dial, server_requested, other}.
+Counter, labels `source`, `reason` ∈ {stall, reset, broken_pipe, timeout, dial, server_requested, subscription_rejected, other}.
 
-Per-source, per-reason count of CEX WebSocket stream disconnects from
-the Binance and Bitstamp streaming sources. `reset` is the most common
-on r1 (Binance proactively recycles connections every 6–12 min); a
-sustained rate of `dial` or `timeout` means the venue is unreachable
-or our keepalive isn't recovering the socket. Combined with
-`stellarindex_external_poller_last_success_unix` (when the streamer
-emits trades the runner forwards to the poller's success channel),
-operators can distinguish "stream churning but data flowing" from
-"stream stuck and we're losing the venue". F-0029 (audit-2026-05-27)
-fix landed alongside this metric — bounded 5–60 s exponential backoff
-with a healthy-connection reset path, plus TCP keepalive on the
-dialer.
+Per-source, per-reason count of CEX WebSocket stream disconnects.
+Every streaming source (binance, bitstamp, coinbase, kraken) runs
+through the shared `wsclient.Loop` and increments this. `stall` is the
+half-open-socket detector firing (venue stopped answering pings —
+operationally the most important reason, since the connection looks
+alive to TCP but is dead); `reset` is the most common on r1 (Binance
+proactively recycles connections every 6–12 min); a sustained rate of
+`dial` or `timeout` means the venue is unreachable or our keepalive
+isn't recovering the socket; `subscription_rejected` is coinbase
+refusing the subscribe frame, usually a config bug. Combined with
+`stellarindex_cex_stream_last_trade_unix`, operators can distinguish
+"stream churning but data flowing" from "stream stuck and we're
+losing the venue" — `stellarindex_external_poller_last_success_unix`
+is the poller-side gauge and carries no streamer's source label.
+F-0029 (audit-2026-05-27) fix landed alongside this metric — bounded
+5–60 s exponential backoff with a healthy-connection reset path, plus
+TCP keepalive on the dialer.
+
+### `stellarindex_cex_stream_last_trade_unix`
+
+Gauge, label `source`.
+
+UNIX-seconds timestamp of the most recent trade forwarded from a CEX
+WebSocket streamer to the sink. Zero / unset when the streamer has
+forwarded no trade since process start. Streamer analogue of
+`stellarindex_external_poller_last_success_unix`; use
+`time() - <gauge>` to alert on a stream that's connected but silent.
 
 ### `stellarindex_external_poller_last_success_unix`
 
@@ -903,8 +918,8 @@ wicks on the served `/v1/ohlc` API while carrying ~zero real volume.
 When to look: a non-trivial rate here is expected and healthy (it's the
 noise we're filtering out). A sudden drop to zero for a normally-dusty
 venue (e.g. `coinbase`) can mean the streamer wedged — cross-check
-`stellarindex_external_poller_last_success_unix` / the CEX stream
-disconnect counter.
+`stellarindex_cex_stream_last_trade_unix` / the CEX stream disconnect
+counter.
 
 ### `stellarindex_discovery_dropped_hits_total`
 

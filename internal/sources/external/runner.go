@@ -407,6 +407,7 @@ func forwardTrades(
 				obs.ExternalDustDroppedTotal.WithLabelValues(source).Inc()
 				continue
 			}
+			obs.CEXStreamLastTradeUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
 			select {
 			case <-ctx.Done():
 				return
