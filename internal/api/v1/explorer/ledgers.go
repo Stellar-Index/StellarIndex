@@ -10,9 +10,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
-// LedgerView is the wire shape for a ledger header (ADR-0038). total_coins and
-// fee_pool are XLM stroops as decimal STRINGS — they exceed 2^53 so a JSON
-// number would lose precision (ADR-0003).
+// LedgerView is the wire shape for a ledger header (ADR-0038). Every stroop
+// amount (total_coins, fee_pool, base_fee, base_reserve) is a decimal STRING,
+// never a JSON number (ADR-0003).
 type LedgerView struct {
 	Sequence          uint32 `json:"sequence"`
 	CloseTime         string `json:"close_time"`
@@ -24,8 +24,8 @@ type LedgerView struct {
 	SorobanEventCount uint32 `json:"soroban_event_count"`
 	TotalCoins        string `json:"total_coins"`
 	FeePool           string `json:"fee_pool"`
-	BaseFee           uint32 `json:"base_fee"`
-	BaseReserve       uint32 `json:"base_reserve"`
+	BaseFee           string `json:"base_fee"`
+	BaseReserve       string `json:"base_reserve"`
 }
 
 func ledgerView(l clickhouse.LedgerHeader) LedgerView {
@@ -40,22 +40,22 @@ func ledgerView(l clickhouse.LedgerHeader) LedgerView {
 		SorobanEventCount: l.SorobanEventCount,
 		TotalCoins:        strconv.FormatInt(l.TotalCoins, 10),
 		FeePool:           strconv.FormatInt(l.FeePool, 10),
-		BaseFee:           l.BaseFee,
-		BaseReserve:       l.BaseReserve,
+		BaseFee:           strconv.FormatUint(uint64(l.BaseFee), 10),
+		BaseReserve:       strconv.FormatUint(uint64(l.BaseReserve), 10),
 	}
 }
 
 // TxSummaryView is the wire shape for a transaction summary (in ledger + tx
-// listings). fee_charged/max_fee fit a JSON number (they're capped well below
-// 2^53). Memo is already decoded; memo_type carries the discriminant.
+// listings). fee_charged/max_fee are stroops as decimal strings (ADR-0003).
+// Memo is already decoded; memo_type carries the discriminant.
 type TxSummaryView struct {
 	Hash           string `json:"hash"`
 	Ledger         uint32 `json:"ledger"`
 	CloseTime      string `json:"close_time"`
 	Index          uint32 `json:"index"`
 	SourceAccount  string `json:"source_account"`
-	FeeCharged     int64  `json:"fee_charged"`
-	MaxFee         int64  `json:"max_fee"`
+	FeeCharged     string `json:"fee_charged"`
+	MaxFee         string `json:"max_fee"`
 	OperationCount uint16 `json:"operation_count"`
 	Successful     bool   `json:"successful"`
 	ResultCode     int32  `json:"result_code"`
@@ -74,8 +74,8 @@ func txSummaryView(t clickhouse.TxSummary) TxSummaryView {
 		CloseTime:      t.CloseTime.UTC().Format(time.RFC3339),
 		Index:          t.TxIndex,
 		SourceAccount:  t.SourceAccount,
-		FeeCharged:     t.FeeCharged,
-		MaxFee:         t.MaxFee,
+		FeeCharged:     strconv.FormatInt(t.FeeCharged, 10),
+		MaxFee:         strconv.FormatInt(t.MaxFee, 10),
 		OperationCount: t.OperationCount,
 		Successful:     t.Successful,
 		ResultCode:     t.ResultCode,

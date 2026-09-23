@@ -151,6 +151,13 @@ verified-correct implementation in
 >   escapes today are `sdex_offer_events.price_n/price_d` — Stellar's
 >   protocol-defined int32 rational pair; the money value is the
 >   sibling NUMERIC `price`.
+> - **`internal/canonical/wire_money_guard_test.go`** — a go/ast walk
+>   over every non-test file under `internal/api/` that fails on a
+>   struct field whose JSON name contains a monetary word (fee/reserve/
+>   amount/balance/stroops/coins, unless a count or rate word such as
+>   `bps`/`count`/`entries` marks it as not an amount), whose Go type
+>   marshals to a JSON number, and whose tag lacks `,string`. It covers
+>   named response structs only, not `map[string]any` payloads.
 
 - **CI grep-lint — `scripts/ci/lint-i128.sh` (built 2026-07-01, wired into
   `make verify`).** Fast Go-side first line of defence: rejects

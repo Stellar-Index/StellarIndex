@@ -96,21 +96,19 @@ export type SearchKind = NonNullable<SearchResult['kind']>;
 // total_coins (~1.05e18 stroops) is ~117× past 2^53, so parsing a
 // string amount through Number() loses precision (ADR-0003). We
 // BigInt-divide the integer stroop string instead; the Number()
-// fast-path is reserved for values that arrive as JS numbers (fees,
-// base_reserve — all provably < 2^53).
+// fast-path is reserved for callers passing a JS number.
 const STROOPS_PER_XLM = 10_000_000n;
 
 export function stroopsToXlm(raw: string | number | null | undefined): string {
   if (raw == null || raw === '') return '—';
 
-  // Integer stroop strings (total_coins / fee_pool) — divide with
+  // Integer stroop strings (every API stroop amount) — divide with
   // BigInt so we never round a >15-digit amount through Number().
   if (typeof raw === 'string' && /^-?\d+$/.test(raw.trim())) {
     return bigStroopsToXlm(BigInt(raw.trim()));
   }
 
-  // JS-number amounts are capped well below 2^53 by the API (fees,
-  // base_reserve) — the float path is exact for them.
+  // Non-integer or JS-number input: the float path, exact below 2^53.
   let n: number;
   try {
     n = typeof raw === 'number' ? raw : Number(raw);
