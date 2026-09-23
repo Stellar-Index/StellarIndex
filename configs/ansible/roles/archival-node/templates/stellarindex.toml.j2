@@ -26,11 +26,11 @@ deployment = "{{ region_deployment | default('production') }}"
 [stellar]
 network             = "{{ stellar_network }}"
 core_http_endpoint  = "http://127.0.0.1:11626"
-# Local, unkeyed node on r1 — if an environment ever points this at a
-# hosted third-party stellar-rpc instead, treat the URL as a secret
-# (some providers embed an API key in the path/query, same caveat as
-# external.chainlink's rpc_url below).
-rpc_endpoints       = ["http://127.0.0.1:8000"]
+# Public, unkeyed per-network endpoint (defaults/main.yml): this role runs no
+# stellar-rpc, so a loopback URL here is dead and detect-gaps cannot read the
+# tip. A keyed provider URL is a secret (same caveat as external.chainlink's
+# rpc_url below).
+rpc_endpoints       = {{ stellar_rpc_endpoints | to_json }}
 history_archive_url = "{{ stellar_history_archive_url }}"
 # Era boundaries — pubnet ledger numbers, or genesis (1) on test nets so
 # the SEP-41 supply / CAP-67 movements feeds don't floor above the whole
@@ -102,10 +102,9 @@ adapter_contract = "CA526Y2NQWGWVVQ7RFFPGAZMU66PSYJ3UC2MTVAV4ZU7OM5BOPHDXUSG"
 standard_reference_contract = "CCQXWMZVM3KRTXTUPTN53YHL272QGKF32L7XEDNZ2S6OSUFK3NFBGG5M"
 
 {# seed_rpc_endpoint is a PUBLIC third-party RPC on purpose, and must NOT be
-   repointed at stellar.rpc_endpoints (127.0.0.1:8000): this role deploys no
-   stellar-rpc (removed from r1 2026-04-23, tasks deleted 2026-05-22 — see
-   defaults/main.yml), so nothing listens there and nothing on the host can
-   answer simulateTransaction. compute-completeness / verify-reconciliation
+   repointed at a loopback address: this role deploys no stellar-rpc (removed
+   from r1 2026-04-23, tasks deleted 2026-05-22 — see defaults/main.yml), so
+   nothing on the host can answer simulateTransaction. compute-completeness / verify-reconciliation
    fail CLOSED on a seed error (RLT-416), so a dead endpoint here stops the
    nightly pass for every source. Transient failures of the public endpoint
    are absorbed by the seed's bounded per-call retry
