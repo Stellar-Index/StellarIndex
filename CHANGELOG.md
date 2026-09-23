@@ -20388,7 +20388,7 @@ Tested against Stellar protocol v23.
   an empty series ("a follow-up can implement cross-currency
   triangulation on read").
 - **`/v1/price/at` stablecoin-proxy fallback**: the closed-1m-VWAP
-  CAGG point lookup gains the #1217-family X/fiat:USD → X/⟨peg⟩
+  CAGG point lookup gains the stablecoin-fiat-proxy-family X/fiat:USD → X/⟨peg⟩
   retry (the CAGG sibling the vwap.go raw-trades fallback doc
   deferred to "a separate PR"): when the literal pair + aliases
   have no bucket at-or-before `ts`, each operator-declared
@@ -27711,7 +27711,7 @@ rc.48 deploy to R1.
   `VWAPResult`, `TWAPResult`, `Pool`. Five tests pin happy-path
   round-trips, query-param shape, and required-field validation.
   Supersedes the stale PR #1124 (whose branch had drifted into
-  conflict). (PR #1226)
+  conflict).
 - **HSTS on the explorer + status site** — both surfaces were
   missing `Strict-Transport-Security`, leaving them vulnerable
   to a downgrade-protocol-stripping attack on first visit.
@@ -27736,8 +27736,8 @@ rc.48 deploy to R1.
   aggregator policy, not eager ingest normalisation**
   (`docs/adr/0026-stablecoin-fiat-proxy-late-binding.md`).
   Records the implicit-from-the-start policy that a flurry
-  of API-side fallback PRs (#1217 / #1218 / #1219 / #1224 /
-  #1226) each instantiated. Captures: the
+  of API-side fallback PRs (internal tracking numbers that
+  never resolved to real PRs) each instantiated. Captures: the
   late-binding-vs-eager-rewrite tradeoff (depeg detection,
   per-stablecoin signal preservation, reversibility), the
   default peg list (USDT/USDC/PYUSD/EUROC/EUROB/MXNe), the
@@ -28007,13 +28007,13 @@ rc.48 deploy to R1.
   the operator's classic USD pegs in priority order; first peg
   with non-empty closed buckets wins. Response carries
   `flags.triangulated=true` so the wire shape is honest about the
-  derivation. (PR #1224)
+  derivation.
 - **F2 fields on `/v1/assets/{id}` (`market_cap_usd`, `fdv_usd`,
   `change_24h_pct`) now populate via the same X/fiat:USD →
-  X/<peg> stablecoin-fiat proxy fallback that #1217 added to
+  X/<peg> stablecoin-fiat proxy fallback already shipped for
   `/v1/price`**. The F2 path's `lookupUSDPrice` and the binary's
   `storeChange24hReader` both bypass the v1 handler's
-  `priceFallback`, so even with #1217 deployed every asset on
+  `priceFallback`, so even with that fallback deployed every asset on
   Stellar mainnet had `market_cap_usd / fdv_usd / change_24h_pct`
   silently null — the steady-state because nothing on-chain ever
   quotes in fiat:USD. `lookupUSDPrice` now calls the existing
@@ -28113,8 +28113,8 @@ rc.48 deploy to R1.
   error-skip branch absorbs it. Caught from r1 production logs
   on 2026-05-10 — XLMUSD trades flooding the indexer ERROR log.
 - **`/v1/ohlc` now applies the same X/fiat:USD → X/<peg> stablecoin
-  fallback** as `/v1/price` (#1217), `/v1/chart` (#1015), and the
-  vwap+twap pair (#1219). Pre-fix, `/v1/ohlc?base=native&quote=fiat:USD`
+  fallback** as `/v1/price`, `/v1/chart` (#1015), and the
+  vwap+twap pair below. Pre-fix, `/v1/ohlc?base=native&quote=fiat:USD`
   404'd "no trades in window" out-of-the-box on every fresh
   deployment. the spec §3 names `/v1/ohlc` as a launch-blocker
   for the asset-detail surface, so this gap was visible to every
@@ -28123,7 +28123,7 @@ rc.48 deploy to R1.
   first peg with non-empty trades wins. Response carries
   `flags.triangulated=true`.
 - **`/v1/vwap` and `/v1/twap` now apply the same X/fiat:USD →
-  X/<peg> stablecoin-fiat proxy fallback** as `/v1/price` (#1217)
+  X/<peg> stablecoin-fiat proxy fallback** as `/v1/price`
   and `/v1/chart` (#1015). Pre-fix, `/v1/vwap?base=native&quote=fiat:USD`
   and `/v1/twap?base=native&quote=fiat:USD` both 404'd "no trades
   in window" out-of-the-box because no on-chain trades quote in
@@ -28132,14 +28132,14 @@ rc.48 deploy to R1.
   order; first non-empty result wins. Response carries
   `flags.triangulated=true` so wire shape is honest about the
   derivation. Same opt-in shape (empty allow-list still 404s);
-  non-USD fiat quotes skip the fallback. (PR #1219)
+  non-USD fiat quotes skip the fallback.
 - **`/v1/oracle/lastprice` and `/v1/oracle/x_last_price` get the
   same X/fiat:USD → X/<peg> stablecoin-fiat proxy fallback** as
-  `/v1/price` (#1217). Pre-fix, the SEP-40 passthrough surface
+  `/v1/price`. Pre-fix, the SEP-40 passthrough surface
   inherited the same out-of-the-box 404 mode: an on-chain
   integrator drop-in-replacing `lastprice(native)` against XLM
   got 404 even though `/v1/coins/native` showed $0.16 cleanly.
-  Same intent as #1217 — keep the SEP-40 surface and the
+  Same intent as the `/v1/price` fallback above -- keep the SEP-40 surface and the
   closed-bucket surface consistent in coverage so an integrator
   switching between them sees the same set of "available" pairs.
   Two new tests pin the lastprice + x_last_price branches.
@@ -28175,7 +28175,7 @@ rc.48 deploy to R1.
   caches the err for in-flight waiters but doesn't TTL-cache it
   for new callers — same semantics as before, minus the panic.
 - **`/v1/price/tip?asset=X&quote=fiat:USD` gets the same
-  stablecoin-fiat proxy fallback as `/v1/price`** (#1217). Tip
+  stablecoin-fiat proxy fallback as `/v1/price`**. Tip
   was 404'ing on the same shape — `tipWindowVWAP →
   PriceReader.LatestPrice → tryRedisVWAPFallback → tryFiatCrossRate`
   with no peg-rewrite branch — so a customer reading the
@@ -28183,7 +28183,6 @@ rc.48 deploy to R1.
   404 as `/v1/price`. Now slots `tryStablecoinFiatProxy` between
   the Redis cache layer and the fiat-cross-rate fallback in
   `computeTip`. Same opt-in shape (empty allow-list still 404s).
-  (PR #1218)
 - **`/v1/price?asset=X&quote=fiat:USD` now serves via classic-USDC
   peg fallback at handler read time**, mirroring the `/v1/chart`
   fallback shipped in #1015 (task #98). Same root cause: the
@@ -28201,7 +28200,6 @@ rc.48 deploy to R1.
   Response carries `flags.triangulated=true` and the wire `quote`
   field echoes the user's request (`fiat:USD`), not the proxy
   peg. Opt-in shape preserved — empty allow-list still 404s.
-  (PR #1217)
 - **Indexer now WARNs at boot when `[supply]` watched-sets are all
   empty**, instead of silently registering zero supply observers.
   This was the silent-failure mode behind r1's

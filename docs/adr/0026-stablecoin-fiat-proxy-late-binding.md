@@ -46,6 +46,16 @@ superseded_by: null
 > guess. Treat both "#1225" mentions below as historical record only,
 > not a live reference.
 
+> **Amendment (2026-09-23, RSWP-123).** The two "#1226" citations
+> below (Context intro's PR list, References → Implementation surface)
+> no longer identify the `/v1/ohlc` proxy fallback they describe.
+> GitHub has since assigned #1226 to a real but unrelated merged PR
+> (the `pkg/client` `VWAP`/`TWAP`/`Pools` SDK methods), not the
+> `/v1/ohlc` fallback. The actual PR number for the `/v1/ohlc`
+> fallback does not survive in git history, so the citation is not
+> replaced with a guess. Treat both "#1226" mentions below as
+> historical record only, not a live reference.
+
 ## Context
 
 Most CEX and DEX trades quote against a USD stablecoin

@@ -522,6 +522,33 @@ stale_patterns=(
                                   # number that never existed; #1225 is now
                                   # a real, unrelated open issue (test-vacuity
                                   # residue across several endpoints)
+  "#1226\b"                      # dangling ref (RSWP-123) — CHANGELOG's
+                                  # ADR-0026 summary entry and its
+                                  # `pkg/client` VWAP/TWAP/Pools SDK entry
+                                  # both cited this; #1226 is now a real,
+                                  # unrelated merged PR (the SDK methods
+                                  # PR itself), not the /v1/ohlc fallback
+                                  # ADR-0026 attributes it to
+  "#1217\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
+                                  # stablecoin-fiat-proxy rollout entries
+                                  # (/v1/price, F2 fields, /v1/ohlc,
+                                  # /v1/oracle/lastprice, /v1/price/tip)
+                                  # cited an internal tracking number that
+                                  # never resolved to a real PR
+  "#1218\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
+                                  # /v1/price/tip stablecoin-fiat-proxy
+                                  # entry cited an internal tracking number
+                                  # that never resolved to a real PR
+  "#1219\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
+                                  # /v1/vwap + /v1/twap and /v1/ohlc
+                                  # stablecoin-fiat-proxy entries cited an
+                                  # internal tracking number that never
+                                  # resolved to a real PR
+  "#1224\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
+                                  # /v1/oracle/prices and /v1/assets F2
+                                  # stablecoin-fiat-proxy entries cited an
+                                  # internal tracking number that never
+                                  # resolved to a real PR
   "#1368\b"                      # dangling ref (RSWP-148) — STATUS.md's
                                   # tooling-groups deferral cited this as a
                                   # tracking issue before it existed; #1368
