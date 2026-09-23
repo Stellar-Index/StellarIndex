@@ -313,7 +313,7 @@ type LPReserveObservation struct {
 
 // InsertLPReserveObservation — keyed on (pool_id, asset_key).
 // One change to a pool produces TWO row writes (one per asset
-// side); the observer in Task #65 emits both.
+// side); the LP-reserve observer (liquidity_pools, Task #55) emits both.
 func (s *Store) InsertLPReserveObservation(ctx context.Context, o LPReserveObservation) error {
 	if o.PoolID == "" {
 		return errors.New("timescale: InsertLPReserveObservation: PoolID is empty")

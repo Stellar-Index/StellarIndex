@@ -24,7 +24,7 @@
 //     AccountEntry observer (Task #54) already covers XLM holders.
 //   - Pool-share trustlines (TrustLineAsset.LiquidityPoolId) —
 //     LP shares aren't classic-asset trustlines; their reserves
-//     come from the LP-reserve observer (Task #65).
+//     come from the LP-reserve observer (liquidity_pools, Task #55).
 //   - Credit alphanum4 / alphanum12 — Algorithm 2 source. This
 //     observer covers them.
 package trustlines
