@@ -1309,6 +1309,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			"sink_poison_rows_held", sinkPoisonHeld,
 			"sink_quarantined", sinkQuarantined,
 			"lag_ledgers", tip-commitTo,
+			"last_seen_ledger", lastSeenLedger,
 			"elapsed", time.Since(start).Round(time.Millisecond),
 		)
 	}
