@@ -8,10 +8,8 @@ import (
 	"log/slog"
 	"math/big"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
-	"syscall"
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/iterator"
@@ -114,7 +112,7 @@ func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
 	logger := opsutil.MkBackfillLogger() // re-uses the ops-style stderr text logger from backfill.go

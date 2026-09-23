@@ -1,14 +1,11 @@
 package ingest
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -104,7 +101,7 @@ func findDataGaps(args []string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	rootCtx, cancel := opsutil.SignalContext()
 	defer cancel()
 
 	store, err := timescale.Open(rootCtx, cfg.Storage.PostgresDSN)

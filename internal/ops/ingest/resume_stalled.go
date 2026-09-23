@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -518,7 +516,7 @@ func resumeStalled(args []string) error {
 		return err
 	}
 
-	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	rootCtx, cancel := opsutil.SignalContext()
 	defer cancel()
 
 	logger := opsutil.MkBackfillLogger()

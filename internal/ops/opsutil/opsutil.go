@@ -158,16 +158,27 @@ func PrintWriteBanner(write bool) bool {
 // long-running passes (backfill-router, tag-routed-via, the ch-*
 // ClickHouse walkers) can flush a final checkpoint and exit cleanly.
 // Pulled out so callers can defer cancel() right after the call site.
+//
+// The handler is unregistered on the first signal (and by cancel), so a
+// second SIGINT / SIGTERM gets the default action and kills a wedged flush.
 func SignalContext() (context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithCancel(context.Background())
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-sig
-		fmt.Fprintln(os.Stderr, "stellarindex-ops: signal received, flushing checkpoint + exiting...")
+	stop := func() {
+		signal.Stop(sig)
 		cancel()
+	}
+	go func() {
+		select {
+		case <-sig:
+			signal.Stop(sig)
+			fmt.Fprintln(os.Stderr, "stellarindex-ops: signal received, flushing checkpoint + exiting (signal again to force)...")
+			cancel()
+		case <-ctx.Done():
+		}
 	}()
-	return ctx, cancel
+	return ctx, stop
 }
 
 // SplitCSV splits a comma-separated flag value into trimmed,

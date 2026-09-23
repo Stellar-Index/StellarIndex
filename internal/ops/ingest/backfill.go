@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
@@ -182,7 +180,7 @@ func backfill(args []string) error {
 		return nil
 	}
 
-	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	rootCtx, cancel := opsutil.SignalContext()
 	defer cancel()
 
 	logger := opsutil.MkBackfillLogger()

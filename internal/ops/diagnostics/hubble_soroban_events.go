@@ -7,9 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/signal"
 	"sort"
-	"syscall"
 
 	"cloud.google.com/go/bigquery"
 	"google.golang.org/api/iterator"
@@ -98,7 +96,7 @@ func hubbleSorobanEvents(args []string) error {
 		return fmt.Errorf("-output must be one of json|total|csv; got %q", *output)
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
 	bqClient, err := bigquery.NewClient(ctx, *project)
