@@ -33,8 +33,13 @@
 #   3. This gate refuses the merge until that step has happened.
 #
 # Repository policy half of F-1216 (allowed_actions=selected,
-# require_sha_pinning) is configured via the GitHub admin UI; this
-# script enforces the workflow-side discipline.
+# require_sha_pinning) is meant to be set via the GitHub admin UI, but
+# as of 2026-09-23 it is NOT: `gh api repos/<owner>/<repo>/actions/permissions`
+# returns `allowed_actions: "all"`, `sha_pinning_required: false` on this
+# repo. See the CS-097 entry in
+# docs/operations/audit-remediation-operator-actions.md for the operator
+# steps to close that gap. This script enforces only the workflow-side
+# discipline (the `uses:` lines below); it cannot enforce the repo setting.
 #
 # Usage:
 #   bash scripts/ci/lint-actions-pinning.sh              # .github/workflows

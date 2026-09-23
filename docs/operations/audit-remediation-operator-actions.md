@@ -1,6 +1,6 @@
 ---
 title: Audit remediation — items requiring operator (human) action
-last_verified: 2026-07-26
+last_verified: 2026-09-23
 status: living — populated as remediation proceeds
 ---
 
@@ -20,16 +20,28 @@ these wait for you.
 > alerts on regressions of the load-bearing subset.
 
 ## Repo / CI settings (highest leverage — one setting unlocks every guard)
-- [x] **Branch-protect `main` + require status checks** (CS-097) — DONE 2026-07-02
-  via two repo rulesets: `main-integrity` (force-push + deletion blocked for
-  everyone, no bypass) and `main-required-checks` (the 12 core CI jobs are
-  required status checks; **repository admins bypass** so the live-in-development
-  direct-push workflow keeps working — the push-triggered CI run on main remains
-  the tripwire for that path). CS-098's self-editable-allowlist bypass is closed
-  by `scripts/ci/lint-baseline-growth.sh` (baselines are shrink-only; growth
-  needs an explicit `Baseline-Growth:` commit trailer). **Optional tightening
-  left to you:** remove the admin bypass when the team is >1 / post-launch, and
-  enable Dependabot security alerts if not already on.
+- [ ] **Branch-protect `main` + require status checks** (CS-097) — NOT DONE, re-verified
+  2026-09-23: `GET /repos/Stellar-Index/StellarIndex/branches/main/protection` returns
+  404 ("Branch not protected") and `GET .../rulesets` returns `[]` — the two rulesets
+  this entry previously claimed (`main-integrity`, `main-required-checks`) do not exist
+  on the live repo. `GET .../actions/permissions` also shows `allowed_actions: "all"`,
+  `sha_pinning_required: false`, contradicting the "configured via the GitHub admin UI"
+  claim in `scripts/ci/lint-actions-pinning.sh`'s header comment (fixed alongside this
+  entry). Either this was never actually applied, or it was applied and then reverted
+  outside the repo — the 2026-07-02 `[x]` was wrong either way. **Action needed:**
+  1. GitHub → Settings → Rules → Rulesets: recreate `main-integrity` (block force-push
+     + deletion for everyone, no bypass) and `main-required-checks` (require the core
+     CI jobs as status checks; repository admins may bypass so the direct-push-to-main
+     workflow keeps working).
+  2. GitHub → Settings → Actions → General: set "Allow \<owner\> actions and reusable
+     workflows" + "Require actions to be pinned to a full-length commit SHA" (or
+     equivalent `allowed_actions=selected` + `sha_pinning_required=true` via
+     `gh api --method PUT repos/Stellar-Index/StellarIndex/actions/permissions`).
+  3. Re-run the two `gh api` calls above and confirm they no longer 404/return empty
+     before checking this box again.
+  CS-098's self-editable-allowlist bypass is still closed by
+  `scripts/ci/lint-baseline-growth.sh` (baselines are shrink-only; growth needs an
+  explicit `Baseline-Growth:` commit trailer) — that part is unaffected by this gap.
 
 ## Accounts / secrets (launch-blocking, operator-only)
 - [ ] **Buy CoinGecko Pro** → set `COINGECKO_API_KEY` on r1 + restart indexer (P0-3).
