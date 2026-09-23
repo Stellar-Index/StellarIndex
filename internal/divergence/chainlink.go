@@ -444,7 +444,7 @@ func decodeChainlinkRoundData(hexStr string) (*big.Int, time.Time, error) {
 	if !updatedRaw.IsInt64() {
 		return nil, time.Time{}, fmt.Errorf("updatedAt overflows int64: %s", updatedRaw.String())
 	}
-	return answer, time.Unix(updatedRaw.Int64(), 0).UTC(), nil
+	return answer, time.Unix(updatedRaw.Int64(), 0).UTC(), nil // i128:ok updatedAt unix seconds, IsInt64 range-checked above
 }
 
 // decodeChainlinkInt256 parses a 0x-prefixed hex string returned by
@@ -487,11 +487,8 @@ func scaleChainlinkAnswer(answer *big.Int, decimals int) (float64, error) {
 	if decimals < 0 || decimals > 38 {
 		return 0, fmt.Errorf("decimals %d out of range [0, 38]", decimals)
 	}
-	if decimals == 0 {
-		return float64(answer.Int64()), nil
-	}
 	div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
 	q := new(big.Rat).SetFrac(answer, div)
-	f, _ := q.Float64()
+	f, _ := q.Float64() // i128:ok reference price for a percentage cross-check; one correctly-rounded conversion of the exact ratio
 	return f, nil
 }

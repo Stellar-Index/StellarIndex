@@ -201,7 +201,7 @@ func parseHexUint(s string) (uint64, error) {
 	if !v.IsUint64() {
 		return 0, fmt.Errorf("overflows uint64: %s", v.String())
 	}
-	return v.Uint64(), nil
+	return v.Uint64(), nil // i128:ok IsUint64 range-checked above
 }
 
 // decodeRoundID reads a big-endian byte slice (the 10-byte uint80

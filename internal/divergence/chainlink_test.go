@@ -212,6 +212,27 @@ func TestChainlink_ScaleAnswer(t *testing.T) {
 	}
 }
 
+// TestChainlink_ScaleAnswerZeroDecimalsAboveInt64 pins the zero-decimals
+// path to the same exact conversion as every other scale: an int256
+// answer beyond int64 must not wrap through big.Int.Int64().
+func TestChainlink_ScaleAnswerZeroDecimalsAboveInt64(t *testing.T) {
+	answer := new(big.Int).Lsh(big.NewInt(1), 70)
+	got, err := scaleChainlinkAnswer(answer, 0)
+	if err != nil {
+		t.Fatalf("scale: %v", err)
+	}
+	if want := 1180591620717411303424.0; got != want {
+		t.Errorf("scaleChainlinkAnswer(2^70, 0) = %v, want %v", got, want)
+	}
+	neg, err := scaleChainlinkAnswer(new(big.Int).Neg(answer), 0)
+	if err != nil {
+		t.Fatalf("scale negative: %v", err)
+	}
+	if want := -1180591620717411303424.0; neg != want {
+		t.Errorf("scaleChainlinkAnswer(-2^70, 0) = %v, want %v", neg, want)
+	}
+}
+
 func TestChainlink_Name(t *testing.T) {
 	r := NewChainlinkReference(ChainlinkOptions{})
 	if r.Name() != "chainlink" {

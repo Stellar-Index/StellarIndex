@@ -203,8 +203,8 @@ func decodeDecimals(rawHex string) (uint8, error) {
 		return 0, fmt.Errorf("%w: decimals() expected 32 bytes, got %d", ErrMalformedResult, len(b))
 	}
 	v := new(big.Int).SetBytes(b)
-	if !v.IsInt64() || v.Int64() < 1 || v.Int64() > 255 {
+	if !v.IsInt64() || v.Int64() < 1 || v.Int64() > 255 { // i128:ok IsInt64 range-checked first; decimals() is 1..255
 		return 0, fmt.Errorf("%w: decimals() %s outside uint8 range 1..255", ErrMalformedResult, v.String())
 	}
-	return uint8(v.Int64()), nil
+	return uint8(v.Int64()), nil // i128:ok range-checked 1..255 above
 }

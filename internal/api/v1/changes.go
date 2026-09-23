@@ -358,7 +358,7 @@ func scaledMoneyStr(v float64, scale *big.Rat) string {
 		// NaN / ±Inf have no decimal to scale; print them as before.
 		return moneyStr(v)
 	}
-	f, _ := r.Mul(r, scale).Float64()
+	f, _ := r.Mul(r, scale).Float64() // i128:ok v is already float64 upstream (#602); the Rat only applies the decimals scale exactly
 	return moneyStr(f)
 }
 

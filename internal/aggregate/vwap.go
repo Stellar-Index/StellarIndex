@@ -130,7 +130,7 @@ func SourceContributions(trades []canonical.Trade) []SourceContribution {
 		// One correctly-rounded conversion of the exact ratio. Rounding
 		// numerator and denominator to float64 first is lossy above 2^53
 		// — every Soroban quote volume — and lands the weight ulps off.
-		weight, _ := new(big.Rat).SetFrac(a.quote, totalQuote).Float64()
+		weight, _ := new(big.Rat).SetFrac(a.quote, totalQuote).Float64() // i128:ok per-source contribution share in [0,1]; one correctly-rounded conversion of the exact ratio
 		out = append(out, SourceContribution{
 			Source:      source,
 			Weight:      weight,

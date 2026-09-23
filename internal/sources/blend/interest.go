@@ -141,7 +141,7 @@ func SupplyRate(borrowRate, util *big.Int, bstopRate uint32) *big.Int {
 func rate7ToFloat(rate *big.Int) float64 {
 	f := new(big.Float).SetInt(rate)
 	f.Quo(f, new(big.Float).SetInt(scalar7))
-	v, _ := f.Float64()
+	v, _ := f.Float64() // i128:ok 7-decimal rate fraction, not an amount
 	return v
 }
 

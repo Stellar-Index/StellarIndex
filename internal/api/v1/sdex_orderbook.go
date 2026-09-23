@@ -614,8 +614,8 @@ func aggregateOrderBookSide(offers []clickhouse.LiveOffer, invert bool, depth in
 		if invert {
 			n, d = d, n
 		}
-		price := new(big.Rat).SetFrac64(n, d) // reduced by big.Rat
-		key := [2]int64{price.Num().Int64(), price.Denom().Int64()}
+		price := new(big.Rat).SetFrac64(n, d)                       // reduced by big.Rat
+		key := [2]int64{price.Num().Int64(), price.Denom().Int64()} // i128:ok reduced n/d of an int32 XDR price always fits int64
 		lvl := levels[key]
 		if lvl == nil {
 			lvl = &bookLevel{price: price, base: new(big.Rat), quote: new(big.Rat)}
@@ -656,7 +656,7 @@ func aggregateOrderBookSide(offers []clickhouse.LiveOffer, invert bool, depth in
 		cumQuote.Add(cumQuote, lvl.quote)
 		out = append(out, SDEXOrderBookLevelView{
 			Price:          lvl.price.FloatString(7),
-			PriceR:         SDEXPriceRatView{N: lvl.price.Num().Int64(), D: lvl.price.Denom().Int64()},
+			PriceR:         SDEXPriceRatView{N: lvl.price.Num().Int64(), D: lvl.price.Denom().Int64()}, // i128:ok reduced n/d of an int32 XDR price always fits int64
 			BaseAmount:     new(big.Rat).Quo(lvl.base, stroops).FloatString(7),
 			QuoteAmount:    new(big.Rat).Quo(lvl.quote, stroops).FloatString(7),
 			CumBaseAmount:  new(big.Rat).Quo(cumBase, stroops).FloatString(7),

@@ -202,8 +202,8 @@ func decodeChainlinkDecimals(hexStr string) (int, error) {
 		return 0, fmt.Errorf("decimals result: want 32 bytes, got %d", len(raw))
 	}
 	v := new(big.Int).SetBytes(raw)
-	if !v.IsInt64() || v.Int64() < 1 || v.Int64() > 255 {
+	if !v.IsInt64() || v.Int64() < 1 || v.Int64() > 255 { // i128:ok IsInt64 range-checked first; decimals() is 1..255
 		return 0, fmt.Errorf("decimals result %s outside uint8 range 1..255", v.String())
 	}
-	return int(v.Int64()), nil
+	return int(v.Int64()), nil // i128:ok range-checked 1..255 above
 }

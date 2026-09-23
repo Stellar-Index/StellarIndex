@@ -385,7 +385,7 @@ func utilizationPct(netSuppliedStr, netBorrowedStr string) *float64 {
 		return nil
 	}
 	ratio := new(big.Rat).Quo(borrowed, supplied)
-	pct, _ := new(big.Rat).Mul(ratio, big.NewRat(100, 1)).Float64()
-	pct = float64(int64(pct*100+0.5)) / 100 // round to 2dp
+	pct, _ := new(big.Rat).Mul(ratio, big.NewRat(100, 1)).Float64() // i128:ok utilisation percentage, not an amount
+	pct = float64(int64(pct*100+0.5)) / 100                         // round to 2dp
 	return &pct
 }

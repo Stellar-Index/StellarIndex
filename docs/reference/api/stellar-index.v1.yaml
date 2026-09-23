@@ -13663,7 +13663,11 @@ components:
             signature in `X-StellarIndex-Signature` (prefixed `sha256=`)
             and the signing time in `X-StellarIndex-Timestamp`. See
             `CreateWebhookResponse.secret` for the exact construction —
-            the timestamp is part of the signed message.
+            the timestamp is part of the signed message. Every delivery
+            also carries `X-StellarIndex-Event` (the event type, one of
+            `events`, for routing before the body is parsed) and
+            `X-StellarIndex-Delivery-Id`. `X-StellarIndex-Event` is not
+            signed; the body's `event` field is the authenticated copy.
         events:
           type: array
           description: |

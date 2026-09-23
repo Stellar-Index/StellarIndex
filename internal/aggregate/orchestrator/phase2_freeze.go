@@ -179,7 +179,7 @@ func releaseCorroborated(c confidenceComputation, candidate *big.Rat, ref compos
 		return true
 	}
 	if crossOracleMedian := c.CrossOracleMedian; crossOracleMedian > 0 && candidate != nil {
-		cand, _ := candidate.Float64()
+		cand, _ := candidate.Float64() // i128:ok candidate price for a percentage agreement compare, not served
 		if cand > 0 {
 			pct := math.Abs(cand-crossOracleMedian) / crossOracleMedian * 100
 			if pct <= releaseAgreementMaxPct {

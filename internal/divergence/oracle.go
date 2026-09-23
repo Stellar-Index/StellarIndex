@@ -215,6 +215,6 @@ func scaleOracleAmount(raw *big.Int, decimals int) (float64, error) {
 		return 0, fmt.Errorf("decimals %d out of range [0, 38]", decimals)
 	}
 	div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
-	f, _ := new(big.Rat).SetFrac(raw, div).Float64()
+	f, _ := new(big.Rat).SetFrac(raw, div).Float64() // i128:ok reference price for a percentage cross-check; one correctly-rounded conversion of the exact ratio
 	return f, nil
 }

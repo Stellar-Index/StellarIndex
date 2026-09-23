@@ -2075,7 +2075,7 @@ func usdVolumeForPairPerTrade(pair canonical.Pair, batch []canonical.Trade, clas
 			scales[decimals] = scale
 		}
 		rat := new(big.Rat).SetFrac(amt, scale)
-		v, _ := rat.Float64()
+		v, _ := rat.Float64() // i128:ok per-trade USD volume for the MinUSDVolume floor gate, not served
 		perTrade[batch[i].ID()] = v
 		total += v
 	}
