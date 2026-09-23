@@ -695,7 +695,7 @@ const (
 )
 
 // swrAssetByIDUpstream is a race-safe configurable GetAssetByAssetID
-// stub for the generic swr[T] tests (#24): atomic call counter, an
+// stub for the generic swr[T] tests (385d564e8): atomic call counter, an
 // optional hold that parks a call until the test releases it, and an
 // atomic "fail on call >= 2" toggle (deterministic by call number →
 // no mid-test field mutation, so `go test -race` is clean under the
@@ -727,8 +727,8 @@ func (s *swrAssetByIDUpstream) GetAssetByAssetID(ctx context.Context, assetID st
 // generic swr[T] via the now-cached GetAssetByAssetID: every one of
 // 20 concurrent reads of an expired entry is served THE STALE ROW
 // while EXACTLY ONE single-flighted background refresh runs, and the
-// row that refresh returns is what replaces it — the #24 fix for
-// /v1/assets/{id}.
+// row that refresh returns is what replaces it — the 385d564e8 fix
+// for /v1/assets/{id}.
 //
 // What a stale read is served is a value, so it is asserted as one.
 // The stub used to echo the asset id and nothing else, so the row
