@@ -681,3 +681,35 @@ func TestRefresher_MaxDormantComponentLedgersZeroDisablesHorizon(t *testing.T) {
 		t.Errorf("inserter.calls=%d want 1", inserter.calls)
 	}
 }
+
+// Both freshness bounds are inclusive: a gap equal to the threshold is
+// fresh, and an anchor frozen for exactly the dormancy horizon is still
+// dormant. One ledger past either bound rejects.
+func TestRefresher_StaleComponentBoundsAreInclusive(t *testing.T) {
+	const minComp = 50_000_000
+	tick := func(r *Refresher, ledgers *mutableLedgers, gap uint32) OutcomeKind {
+		ledgers.ledger = minComp + gap
+		return r.Tick(context.Background()).Kind
+	}
+	newRefresher := func() (*Refresher, *mutableLedgers) {
+		ledgers := &mutableLedgers{observedAt: time.Unix(1_770_000_000, 0).UTC()}
+		return NewRefresher(ledgers, dynComputer{assetKey: "XLM", minComponentLedger: minComp},
+			&stubInserter{}, discardLogger(),
+			WithStaleComponentLedgers(1000), WithMaxDormantComponentLedgers(2000)), ledgers
+	}
+
+	r, ledgers := newRefresher()
+	if got := tick(r, ledgers, 1000); got != OutcomeKindOK {
+		t.Errorf("gap == threshold: kind=%s want %s", got, OutcomeKindOK)
+	}
+	r, ledgers = newRefresher()
+	if got := tick(r, ledgers, 1001); got != OutcomeKindStaleComponent {
+		t.Errorf("gap == threshold+1 on cold start: kind=%s want %s", got, OutcomeKindStaleComponent)
+	}
+	if got := tick(r, ledgers, 2000); got != OutcomeKindDormant {
+		t.Errorf("frozen for exactly the horizon: kind=%s want %s", got, OutcomeKindDormant)
+	}
+	if got := tick(r, ledgers, 2001); got != OutcomeKindStaleComponent {
+		t.Errorf("frozen one ledger past the horizon: kind=%s want %s", got, OutcomeKindStaleComponent)
+	}
+}

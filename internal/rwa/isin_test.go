@@ -51,6 +51,17 @@ func TestIsISIN(t *testing.T) {
 		{"L12900381208", false, "second prefix character is not a letter"},
 		{"LU290038120X", false, "check position is not a digit"},
 		{"LU-900381208", false, "non-alphanumeric in the body"},
+		// Unicode case folding must not manufacture an ISIN: these
+		// upper-case to US0378331005 and IE00B4L5Y983, but the served
+		// anchor_asset would be the non-ASCII string nobody can look up.
+		{"Uſ0378331005", false, "long s (U+017F) is not the letter S"},
+		{"ıE00B4L5Y983", false, "dotless i (U+0131) is not the letter I"},
+		{"IE00B4L5Y983", true, "the ASCII original of the case above"},
+		{"DE0007164600", true, "check digit 0: the mod-10 complement wraps to 0, not 10"},
+		{"au000000bhp4", true, "a lower-case 'a' folds like every other letter"},
+		// Luhn-valid bodies, so only the prefix rule can refuse them.
+		{"L12900381204", false, "second prefix character is a digit, check digit valid"},
+		{"1U2900381202", false, "first prefix character is a digit, check digit valid"},
 	} {
 		if got := IsISIN(tc.in); got != tc.want {
 			t.Errorf("IsISIN(%q) = %v, want %v — %s", tc.in, got, tc.want, tc.why)

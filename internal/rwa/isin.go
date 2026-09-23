@@ -27,8 +27,8 @@ import "strings"
 // The check digit is Luhn over the digit expansion of the alphanumeric
 // body (A=10 … Z=35), per ISO 6166.
 func IsISIN(s string) bool {
-	s = strings.ToUpper(strings.TrimSpace(s))
-	if len(s) != 12 {
+	s, ok := upperASCII12(s)
+	if !ok {
 		return false
 	}
 	// Prefix: two letters. 'XS' and other supranational prefixes are
@@ -73,4 +73,20 @@ func IsISIN(s string) bool {
 		double = !double
 	}
 	return (10-sum%10)%10 == digits[len(digits)-1]
+}
+
+// upperASCII12 trims s and upper-cases ASCII letters only, reporting
+// whether 12 bytes remain. strings.ToUpper would fold U+017F and U+0131
+// onto 'S' and 'I', accepting a string no ISIN lookup resolves.
+func upperASCII12(s string) (string, bool) {
+	b := []byte(strings.TrimSpace(s))
+	if len(b) != 12 {
+		return "", false
+	}
+	for i, ch := range b {
+		if ch >= 'a' && ch <= 'z' {
+			b[i] = ch - ('a' - 'A')
+		}
+	}
+	return string(b), true
 }
