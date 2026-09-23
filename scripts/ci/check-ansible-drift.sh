@@ -281,11 +281,15 @@ detail_for() {
 # when every non-allowed changed task it could follow is comment-only.
 #
 # "Comment-only" is decided on EFFECTIVE lines: every removed and added
-# line is stripped of a trailing comment and trailing whitespace, blank
-# and comment-only lines are dropped, and the task is comment-only iff
-# the removed effective lines and the added effective lines are the same
-# multiset. A value that changes, a line that appears or disappears,
-# stays drift whatever else is in the hunk.
+# line is stripped of a trailing comment (leading whitespace too, unless
+# the file's indentation is itself semantic — see indent_semantic()
+# below), blank and comment-only lines are dropped, and the task is
+# comment-only iff the removed effective lines and the added effective
+# lines form the same ORDERED sequence. A value that changes, a line
+# that appears or disappears, or two unchanged lines that swap order,
+# stays drift whatever else is in the hunk — a per-line multiset compare
+# would pass a reordering of two substantive lines as "comment-only"
+# even when neither line contains a comment.
 #
 # What counts as a comment is decided PER FILE, from the host path on the
 # hunk's `--- before: <path>` line (#519). The first version stripped
@@ -321,18 +325,29 @@ awk '
     if (path ~ /\.(go|ts|js)$/) return "//"
     return ""
   }
-  function effective(body, mk) {
+  # indent_semantic(path) — true for file types where leading whitespace
+  # is part of the effective configuration (YAML/J2 render to YAML,
+  # Python), so stripping it before compare would fold an indentation
+  # change — e.g. a list item promoted out from under its parent key —
+  # into "comment-only".
+  function indent_semantic(path) {
+    return (path ~ /\.(j2|ya?ml|py)$/) ? 1 : 0
+  }
+  function effective(body, mk, keep_indent) {
     if (mk != "") sub("(^|[[:space:]])" mk ".*$", "", body)
-    sub(/^[[:space:]]+/, "", body); sub(/[[:space:]]+$/, "", body)
+    if (!keep_indent) sub(/^[[:space:]]+/, "", body)
+    sub(/[[:space:]]+$/, "", body)
     return body
   }
-  /^TASK \[/            { task = strip($0); handler[task] = 0; marker = ""; next }
-  /^RUNNING HANDLER \[/ { task = strip($0); handler[task] = 1; marker = ""; next }
-  /^PLAY RECAP/         { task = ""; marker = ""; next }
+  /^TASK \[/            { task = strip($0); handler[task] = 0; marker = ""; indent = 0; next }
+  /^RUNNING HANDLER \[/ { task = strip($0); handler[task] = 1; marker = ""; indent = 0; next }
+  /^PLAY RECAP/         { task = ""; marker = ""; indent = 0; next }
   /^--- before: / {
     if (task != "") {
       hunks[task]++
-      marker = marker_for(substr($0, 13))
+      path = substr($0, 13)
+      marker = marker_for(path)
+      indent = indent_semantic(path)
       if (marker == "") substantive[task] = 1
     }
     next
@@ -340,17 +355,20 @@ awk '
   /^(\+\+\+ after: |@@ )/ { next }
   /^[-+]/ {
     if (task == "") next
-    body = effective(substr($0, 2), marker)
+    body = effective(substr($0, 2), marker, indent)
     if (body == "") next
-    if (substr($0, 1, 1) == "-") minus[task, body]++; else plus[task, body]++
-    keys[task, body] = 1
+    # Ordered sequence, not a multiset: two unchanged lines that merely
+    # swap position must stay drift, and a per-line count compare cannot
+    # tell that apart from an actual reorder-free edit.
+    if (substr($0, 1, 1) == "-") minus_seq[task] = minus_seq[task] SUBSEP body
+    else plus_seq[task] = plus_seq[task] SUBSEP body
+    seqtask[task] = 1
     next
   }
   /^changed: \[/ { if (task != "") { changed[task] = 1 } next }
   END {
-    for (k in keys) {
-      split(k, kv, SUBSEP)
-      if (minus[k] != plus[k]) substantive[kv[1]] = 1
+    for (t in seqtask) {
+      if (minus_seq[t] != plus_seq[t]) substantive[t] = 1
     }
     for (t in changed) {
       if (handler[t]) print t > HANDLERS

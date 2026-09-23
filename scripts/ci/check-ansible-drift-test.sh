@@ -301,6 +301,29 @@ run "$(
 )" "$BASELINE_3"
 expect 'a # comment change in a .yml is comment-only' 0 'comment text only'
 
+# ── RLT-200: leading-whitespace strip and multiset compare ──
+# Two unrelated lines that merely swap order (no comment involved at
+# all) must stay drift: a per-line-count compare cannot tell a genuine
+# reorder from a no-op, because both sides contain the same lines.
+run "$(
+  printf 'TASK [archival-node : Template disable-thp.service] ***********\n'
+  printf -- '--- before: /etc/systemd/system/disable-thp.service\n+++ after: /tmp/disable-thp.service.j2\n@@ -1,2 +1,2 @@\n-ExecStart=/bin/sh -c '"'"'echo never > /sys/kernel/mm/transparent_hugepage/enabled'"'"'\n-ExecStop=/bin/sh -c '"'"'echo always > /sys/kernel/mm/transparent_hugepage/enabled'"'"'\n+ExecStop=/bin/sh -c '"'"'echo always > /sys/kernel/mm/transparent_hugepage/enabled'"'"'\n+ExecStart=/bin/sh -c '"'"'echo never > /sys/kernel/mm/transparent_hugepage/enabled'"'"'\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'two lines that swap order (no comment) is still drift' 1 'Template disable-thp.service'
+
+# YAML indentation is semantic: a list item promoted out from under its
+# parent key by losing two leading spaces is a real change even though
+# the tokens are byte-identical once leading whitespace is stripped.
+run "$(
+  printf 'TASK [archival-node : Template alerts.yml] ***********\n'
+  printf -- '--- before: /etc/prometheus/rules/alerts.yml\n+++ after: /tmp/alerts.yml.j2\n@@ -1,2 +1,2 @@\n-  - alert: A\n-    expr: up == 0\n+- alert: A\n+  expr: up == 0\n\n'
+  printf 'changed: [r1]\n\n'
+  recap 1
+)" "$BASELINE_3"
+expect 'losing leading indentation in a .yml is drift, not comment-only' 1 'Template alerts.yml'
+
 # pre_tasks have no `<role> : ` prefix; entries are the bare name either way.
 run "$(
   printf 'TASK [Confirm Ubuntu 22.04 or 24.04 LTS] ********************\nchanged: [r1]\n\n'
