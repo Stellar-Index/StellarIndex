@@ -30,7 +30,16 @@ type AccountsListView struct {
 	// wedged sink makes it stale — pairs with `flags.stale`. Omitted
 	// when no watermark reader is wired.
 	AsOfLedger uint32 `json:"as_of_ledger,omitempty"`
+	// LowerBound is always true: each Value counts only the holding domains
+	// CoverageNote names, so it can under-state an account, never over-state it.
+	LowerBound   bool   `json:"lower_bound"`
+	CoverageNote string `json:"coverage_note"`
 }
+
+// accountsWealthCoverageNote names what the wealth ranking excludes.
+const accountsWealthCoverageNote = "Ranked on classic holdings only: the account entry's native XLM, " +
+	"plus, on the usd basis, trustline balances of USD-priced assets. Claimable balances, " +
+	"liquidity-pool shares and Soroban contract balances (including SAC balances) are not counted."
 
 type AccountWealthRow struct {
 	AccountID string `json:"account_id"`
@@ -106,7 +115,10 @@ func (h *Handler) AccountsList(w http.ResponseWriter, r *http.Request) {
 	// FINAL scan that was the residual 6-8s of /v1/accounts latency once the
 	// ranking itself was cached (site-audit S3).
 	wmLedger, stale, _ := h.LakeWatermark(ctx)
-	out := AccountsListView{RankedBy: basis, Accounts: make([]AccountWealthRow, len(ranked)), AsOfLedger: wmLedger}
+	out := AccountsListView{
+		RankedBy: basis, Accounts: make([]AccountWealthRow, len(ranked)), AsOfLedger: wmLedger,
+		LowerBound: true, CoverageNote: accountsWealthCoverageNote,
+	}
 	// priced_assets is a USD-basis notion; on the native-XLM basis nothing is
 	// USD-priced, so report 0 rather than the "native" fallback key count.
 	if basis != clickhouse.WealthBasisNative {
@@ -250,18 +262,25 @@ func (h *Handler) priceableAssetIDs() []string {
 // Balances are strings (ADR-0003 — stroop amounts past 2^53 lose precision as
 // JSON numbers).
 type AccountStateView struct {
-	AccountID     string             `json:"account_id"`
-	Exists        bool               `json:"exists"`
-	Balance       string             `json:"balance,omitempty"`
-	SeqNum        string             `json:"seq_num,omitempty"`
-	NumSubentries uint32             `json:"num_subentries,omitempty"`
-	Flags         uint32             `json:"flags,omitempty"`
-	HomeDomain    string             `json:"home_domain,omitempty"`
-	Thresholds    *AccountThresholds `json:"thresholds,omitempty"`
-	Signers       []AccountSignerV   `json:"signers,omitempty"`
-	Trustlines    []TrustlineV       `json:"trustlines,omitempty"`
-	Offers        []OfferV           `json:"offers,omitempty"`
-	LastLedger    uint32             `json:"last_modified_ledger,omitempty"`
+	AccountID string `json:"account_id"`
+	Exists    bool   `json:"exists"`
+	Balance   string `json:"balance,omitempty"`
+	SeqNum    string `json:"seq_num,omitempty"`
+	// Pointers so a live account's zero counts and flags are served while an
+	// exists:false body stays empty.
+	NumSubentries *uint32 `json:"num_subentries,omitempty"`
+	Flags         *uint32 `json:"flags,omitempty"`
+	NumSponsoring *uint32 `json:"num_sponsoring,omitempty"`
+	NumSponsored  *uint32 `json:"num_sponsored,omitempty"`
+	// Native XLM liabilities in stroops; selling_liabilities is locked by offers.
+	BuyingLiabilities  string             `json:"buying_liabilities,omitempty"`
+	SellingLiabilities string             `json:"selling_liabilities,omitempty"`
+	HomeDomain         string             `json:"home_domain,omitempty"`
+	Thresholds         *AccountThresholds `json:"thresholds,omitempty"`
+	Signers            []AccountSignerV   `json:"signers,omitempty"`
+	Trustlines         []TrustlineV       `json:"trustlines,omitempty"`
+	Offers             []OfferV           `json:"offers,omitempty"`
+	LastLedger         uint32             `json:"last_modified_ledger,omitempty"`
 	// AsOfLedger is the lake watermark this state read is fresh to
 	// (ADR-0041 Decision 4) — the highest ledger the ClickHouse lake had
 	// captured at serve time, NOT the account's last-modified ledger.
@@ -271,7 +290,21 @@ type AccountStateView struct {
 	// (directory.go) — display attribution, not verification. Omitted
 	// when the address isn't listed or no directory reader is wired.
 	Directory *DirectoryInfoV `json:"directory,omitempty"`
+	// CoverageNote declares the holding domains this view serves, so a
+	// missing claimable or contract balance is not read as a zero one.
+	CoverageNote string `json:"coverage_note,omitempty"`
 }
+
+// accountStateCoverageNote is the holding scope of a live account's view.
+const accountStateCoverageNote = "Classic holdings only: native XLM, trustlines (liquidity-pool " +
+	"shares carry kind \"pool_share\") and offers. Claimable balances and Soroban contract " +
+	"balances (including SAC balances) are not included."
+
+// Trustline kinds: a single-asset balance, or a liquidity-pool share.
+const (
+	trustlineKindAsset     = "asset"
+	trustlineKindPoolShare = "pool_share"
+)
 
 type AccountThresholds struct {
 	Master byte `json:"master"`
@@ -286,10 +319,15 @@ type AccountSignerV struct {
 }
 
 type TrustlineV struct {
-	Asset   string `json:"asset"`
-	Balance string `json:"balance"`
-	Limit   string `json:"limit"`
-	Flags   uint32 `json:"flags"`
+	Asset string `json:"asset"`
+	// Kind is "asset" or "pool_share" (asset "pool:<hex>", a claim on a
+	// pool's two reserves rather than a balance of one asset).
+	Kind               string `json:"kind"`
+	Balance            string `json:"balance"`
+	Limit              string `json:"limit"`
+	Flags              uint32 `json:"flags"`
+	BuyingLiabilities  string `json:"buying_liabilities"`
+	SellingLiabilities string `json:"selling_liabilities"`
 }
 
 type OfferV struct {
@@ -356,33 +394,49 @@ func (h *Handler) AccountState(w http.ResponseWriter, r *http.Request) {
 	// away) is exactly where a label helps most.
 	out.Directory = h.directoryFor(ctx, g)
 	if st.Exists {
-		out.Balance = strconv.FormatInt(st.Balance, 10)
-		out.SeqNum = strconv.FormatInt(st.SeqNum, 10)
-		out.NumSubentries = st.NumSubEntries
-		out.Flags = st.Flags
-		out.HomeDomain = st.HomeDomain
-		out.Thresholds = &AccountThresholds{Master: st.MasterWeight, Low: st.ThreshLow, Med: st.ThreshMed, High: st.ThreshHigh}
-		out.LastLedger = st.LastModifiedLedger
-		for _, sg := range st.Signers {
-			out.Signers = append(out.Signers, AccountSignerV{Key: sg.Key, Weight: sg.Weight})
-		}
-		for _, t := range st.Trustlines {
-			out.Trustlines = append(out.Trustlines, TrustlineV{
-				Asset: t.Asset, Balance: strconv.FormatInt(t.Balance, 10),
-				Limit: strconv.FormatInt(t.Limit, 10), Flags: t.Flags,
-			})
-		}
-		for _, o := range st.Offers {
-			out.Offers = append(out.Offers, OfferV{
-				OfferID: o.OfferID, Selling: o.Selling, Buying: o.Buying,
-				Amount: strconv.FormatInt(o.Amount, 10), PriceN: o.PriceN, PriceD: o.PriceD,
-			})
-		}
+		fillAccountStateView(&out, st)
 	}
 	// snapStale: the served state came from an expired cache entry while a
 	// detached refresh runs (whale-account stale-serve, route-sweep
 	// 2026-07-30) — surfaced on the same flags.stale the watermark uses.
 	h.WriteJSON(w, out, stale || snapStale)
+}
+
+// fillAccountStateView renders a live account's state onto the wire view.
+func fillAccountStateView(out *AccountStateView, st clickhouse.AccountState) {
+	out.Balance = strconv.FormatInt(st.Balance, 10)
+	out.SeqNum = strconv.FormatInt(st.SeqNum, 10)
+	out.NumSubentries = &st.NumSubEntries
+	out.Flags = &st.Flags
+	out.NumSponsoring = &st.NumSponsoring
+	out.NumSponsored = &st.NumSponsored
+	out.BuyingLiabilities = strconv.FormatInt(st.BuyingLiabilities, 10)
+	out.SellingLiabilities = strconv.FormatInt(st.SellingLiabilities, 10)
+	out.HomeDomain = st.HomeDomain
+	out.Thresholds = &AccountThresholds{Master: st.MasterWeight, Low: st.ThreshLow, Med: st.ThreshMed, High: st.ThreshHigh}
+	out.LastLedger = st.LastModifiedLedger
+	out.CoverageNote = accountStateCoverageNote
+	for _, sg := range st.Signers {
+		out.Signers = append(out.Signers, AccountSignerV{Key: sg.Key, Weight: sg.Weight})
+	}
+	for _, t := range st.Trustlines {
+		kind := trustlineKindAsset
+		if t.PoolShare {
+			kind = trustlineKindPoolShare
+		}
+		out.Trustlines = append(out.Trustlines, TrustlineV{
+			Asset: t.Asset, Kind: kind, Balance: strconv.FormatInt(t.Balance, 10),
+			Limit: strconv.FormatInt(t.Limit, 10), Flags: t.Flags,
+			BuyingLiabilities:  strconv.FormatInt(t.BuyingLiabilities, 10),
+			SellingLiabilities: strconv.FormatInt(t.SellingLiabilities, 10),
+		})
+	}
+	for _, o := range st.Offers {
+		out.Offers = append(out.Offers, OfferV{
+			OfferID: o.OfferID, Selling: o.Selling, Buying: o.Buying,
+			Amount: strconv.FormatInt(o.Amount, 10), PriceN: o.PriceN, PriceD: o.PriceD,
+		})
+	}
 }
 
 // AssetHoldersView is the wire response for GET /v1/assets/{asset_id}/holders.
