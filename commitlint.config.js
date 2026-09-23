@@ -1,7 +1,8 @@
 // commitlint — enforces conventional commits across the repo.
 //
-// We're a Go project but this config has zero Go-specific constraints;
-// commitlint runs in CI via a small action and local hook.
+// We're a Go project but this config has zero Go-specific constraints.
+// Not currently wired into CI or a local hook; the integrator runs
+// `commitlint --from <base> --to HEAD` by hand on remediation branches.
 // Pattern borrowed from loop-app/commitlint.config.js with our own
 // type + scope enumerations.
 
@@ -70,6 +71,8 @@ export default {
         'adr',
         'infra',
         'security',
+        'changelog',
+        'explorer',
       ],
     ],
     'subject-max-length': [2, 'always', 72],
