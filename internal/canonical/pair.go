@@ -83,12 +83,17 @@ func (p Pair) EqualEitherWay(q Pair) bool {
 func ParsePair(s string) (Pair, error) {
 	// Splitting on "/" is subtle: classic assets use "-" internally,
 	// Soroban contracts have no separator, and native is literal.
-	// The first "/" after the base part is the pair separator.
-	// Strategy: scan left-to-right looking for a "/" that could be
-	// the separator — i.e., any "/" that isn't inside a known token.
-	// The asset grammar in docs/reference/api-design.md §3 forbids
-	// "/" inside any asset form, so a simple split on the first "/"
-	// from the right works too. We use strings.LastIndex for clarity.
+	// Every mapped asset form (native / classic / soroban / fiat: /
+	// crypto: / rwa:) is "/"-free per docs/reference/api-design.md
+	// §3, but AssetOracleRaw ([validateRawSymbol]) is deliberately
+	// permissive and does allow "/" (real RedStone feed_ids like
+	// "SolvBTC.BBN_FUNDAMENTAL/USD" carry one). A raw asset can never
+	// be a valid pair leg — [Pair.Validate] rejects any unmapped
+	// asset — so splitting from the right is still correct: it finds
+	// the separator between a "/"-bearing base and its quote, and any
+	// string where the quote side itself contains "/" fails to parse
+	// as an asset and is rejected downstream regardless.
+	// strings.LastIndex is used for clarity.
 	idx := strings.LastIndex(s, "/")
 	if idx <= 0 || idx == len(s)-1 {
 		return Pair{}, fmt.Errorf("%w: %q is not a valid pair (expected BASE/QUOTE)",
