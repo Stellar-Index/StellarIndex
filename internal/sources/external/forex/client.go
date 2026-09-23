@@ -77,12 +77,6 @@ func (c *Client) WithBase(base string) *Client {
 	return &cp
 }
 
-// HasAPIKey reports whether the client was constructed with a
-// non-empty API key. Callers can use this to skip the worker
-// altogether when running unconfigured (e.g. local dev without
-// MASSIVE_API_KEY exported).
-func (c *Client) HasAPIKey() bool { return c.apiKey != "" }
-
 // LatestUSDRates returns the current USD-base rate map plus the
 // publication date the upstream stamped on the snapshot. Map keys
 // are lower-case ISO-4217 currency codes (eur, jpy, gbp, …);
