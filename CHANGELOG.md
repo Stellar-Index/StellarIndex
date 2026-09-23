@@ -220,6 +220,15 @@ against.
   contract in the pass. The rows already poisoned on r1 still need one
   re-run of the seed after deploy (docs/operations/v1-launch-plan.md
   §2.6).
+- **completeness — `contract_events` census on `-ch` (#806):** the
+  substrate axis proved only `stellar.ledgers`, while recognition and
+  projection read `stellar.contract_events`. A dropped or unrestored event
+  partition therefore still published `lake_complete: true` and
+  `recognition_ok: true`. Every run now compares each Soroban-era
+  `contract_events` partition's active row count with the
+  `soroban_event_count` recorded in `stellar.ledgers`. A short partition
+  fails `substrate_ok` and `recognition_ok` for each event-reading source
+  whose range it touches.
 
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose

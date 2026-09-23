@@ -1736,3 +1736,35 @@ func TestProjectionFloor_CleanPriorKeepsTheCheapResume(t *testing.T) {
 		t.Errorf("failing-prior floor = %d, want genesis %d — a red source has no verified ground to resume from", got, sushiGenesis)
 	}
 }
+
+// TestEventCensusLoss pins #806's per-source verdict on the contract_events
+// census: a short partition inside an event-reading source's range fails it at
+// the first affected ledger (never below its genesis); a short partition wholly
+// below its genesis, or a source that reads stellar.operations rather than
+// contract_events, is untouched.
+func TestEventCensusLoss(t *testing.T) {
+	short := []clickhouse.EventCensusShortfall{
+		{Partition: 50, FirstEventLedger: 50_457_424, Expected: 40, Present: 0},
+		{Partition: 62, FirstEventLedger: 62_000_010, Expected: 9, Present: 3},
+	}
+	soroswapSrc := reconSource{name: "soroswap"}
+	p, lost, d := eventCensusLoss(soroswapSrc, 50_746_266, short)
+	if !lost || p != 50_746_266 || !strings.Contains(d, "partition 50") {
+		t.Errorf("soroswap = (%d, %v, %q), want the straddling partition 50 to fail it at its genesis 50746266", p, lost, d)
+	}
+	cctpSrc := reconSource{name: "cctp"}
+	if p, lost, _ := eventCensusLoss(cctpSrc, 62_146_641, short); !lost || p != 62_146_641 {
+		t.Errorf("cctp = (%d, %v), want partition 62 to fail it at genesis 62146641 (partition 50 lies wholly below)", p, lost)
+	}
+	late := reconSource{name: "late"}
+	if _, lost, _ := eventCensusLoss(late, 63_000_000, short); lost {
+		t.Error("a source whose genesis is above every short partition must not fail")
+	}
+	sdexSrc := reconSource{name: "sdex", census: true}
+	if _, lost, _ := eventCensusLoss(sdexSrc, 2, short); lost {
+		t.Error("sdex reads stellar.operations, not contract_events; the event census must not fail it")
+	}
+	if _, lost, _ := eventCensusLoss(soroswapSrc, 50_746_266, nil); lost {
+		t.Error("no shortfall must not fail any source")
+	}
+}

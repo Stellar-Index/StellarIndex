@@ -395,3 +395,125 @@ func watermark(from, chMax, firstGap, minPresent uint32) uint32 {
 	}
 	return firstGap - 1
 }
+
+// eventCensusPartitionWidth mirrors `PARTITION BY intDiv(ledger_seq, 1000000)`
+// on both stellar.ledgers and stellar.contract_events (tier1_schema.sql): the
+// census compares the two tables at the granularity partition DDL acts on.
+const eventCensusPartitionWidth = 1_000_000
+
+// EventCensusShortfall is one stellar.contract_events partition holding fewer
+// rows than stellar.ledgers says that partition's ledgers emitted.
+type EventCensusShortfall struct {
+	// Partition is intDiv(ledger_seq, 1_000_000).
+	Partition uint32
+	// FirstEventLedger is the lowest ledger in the partition whose
+	// soroban_event_count is non-zero.
+	FirstEventLedger uint32
+	// Expected is Σ soroban_event_count over the partition's ledgers
+	// (deduplicated per ledger); Present is the active-part row count of the
+	// contract_events partition.
+	Expected uint64
+	Present  uint64
+}
+
+// EventCensusShortfalls cross-checks stellar.contract_events against
+// stellar.ledgers per partition, over the partitions [from, to] touches.
+//
+// SubstrateProblem proves only stellar.ledgers, and the "ledgers is written
+// LAST" argument (ContiguousWatermark) holds for ingest alone: a DROP/REPLACE
+// PARTITION, or a restore that brings ledgers back before contract_events
+// (docs/operations/clickhouse-destructive-ddl.md), leaves ledgers contiguous
+// and hash-chained over an event table that is empty. extractEvents increments
+// soroban_event_count exactly when it appends a contract_events row, so a
+// partition holding fewer rows than its ledgers declare has lost events.
+//
+// Present counts active-part rows (system.parts). Unmerged ReplacingMergeTree
+// duplicates can only raise it, so duplication never reports a false
+// shortfall; the converse residual is that a partial loss masked by as many
+// unmerged duplicates in the same partition goes undetected. Expected is read
+// BEFORE present: the sink flushes contract_events before ledgers, so a batch
+// landing between the two reads can only raise present.
+func EventCensusShortfalls(ctx context.Context, addr string, from, to uint32) ([]EventCensusShortfall, error) {
+	if from > to {
+		return nil, nil
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = conn.Close() }()
+	expected, err := eventCensusExpected(ctx, conn, from-from%eventCensusPartitionWidth, to)
+	if err != nil {
+		return nil, err
+	}
+	present, err := eventCensusPresent(ctx, conn)
+	if err != nil {
+		return nil, err
+	}
+	return censusShortfalls(expected, present), nil
+}
+
+func eventCensusExpected(ctx context.Context, conn driver.Conn, lo, hi uint32) ([]EventCensusShortfall, error) {
+	const q = `
+		SELECT toUInt32(intDiv(ledger_seq, 1000000)) AS p,
+		       toUInt64(sum(cnt)),
+		       toUInt32(minIf(ledger_seq, cnt > 0))
+		FROM (
+			SELECT ledger_seq, argMax(soroban_event_count, ingested_at) AS cnt
+			FROM stellar.ledgers WHERE ledger_seq BETWEEN ? AND ?
+			GROUP BY ledger_seq
+		)
+		GROUP BY p HAVING sum(cnt) > 0
+		ORDER BY p`
+	rows, err := conn.Query(ctx, q, lo, hi)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: event census expected [%d,%d]: %w", lo, hi, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []EventCensusShortfall
+	for rows.Next() {
+		var s EventCensusShortfall
+		if err := rows.Scan(&s.Partition, &s.Expected, &s.FirstEventLedger); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan event census expected: %w", err)
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
+func eventCensusPresent(ctx context.Context, conn driver.Conn) (map[uint32]uint64, error) {
+	const q = `
+		SELECT toUInt32(partition) AS p, toUInt64(sum(rows))
+		FROM system.parts
+		WHERE database = 'stellar' AND table = 'contract_events' AND active
+		GROUP BY p`
+	rows, err := conn.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("clickhouse: event census present: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	out := make(map[uint32]uint64)
+	for rows.Next() {
+		var p uint32
+		var n uint64
+		if err := rows.Scan(&p, &n); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan event census present: %w", err)
+		}
+		out[p] = n
+	}
+	return out, rows.Err()
+}
+
+// censusShortfalls keeps each expected partition whose present row count falls
+// short of it; a partition absent from present (dropped, or never restored)
+// reads as 0 rows. Pure.
+func censusShortfalls(expected []EventCensusShortfall, present map[uint32]uint64) []EventCensusShortfall {
+	var out []EventCensusShortfall
+	for _, e := range expected {
+		e.Present = present[e.Partition]
+		if e.Present < e.Expected {
+			out = append(out, e)
+		}
+	}
+	return out
+}
