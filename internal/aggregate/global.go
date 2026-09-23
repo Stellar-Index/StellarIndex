@@ -453,10 +453,9 @@ func pow10(n int) *big.Int {
 // aggregator we wire today (CG=8, CMC=8). Returns a decimal string
 // + the latest observation timestamp + ok=true on success.
 //
-// ok=false when the input has zero rows or every row's price scales
-// to zero/negative (defensive — InsertOracleUpdate validates the
-// CHECK constraint already, but we don't want a future schema
-// relaxation to crash this path).
+// ok=false when the input has zero rows, no row has a positive price,
+// or the mean is below one unit at 14 dp — a positive price rendered
+// as "0.00000000000000" is not a price, so the tier misses instead.
 func averageAggregatorPrices(rows []canonical.OracleUpdate) (string, time.Time, bool) {
 	if len(rows) == 0 {
 		return "", time.Time{}, false
@@ -464,7 +463,10 @@ func averageAggregatorPrices(rows []canonical.OracleUpdate) (string, time.Time, 
 	const commonDecimals = 14
 	target := new(big.Int).Exp(big.NewInt(10), big.NewInt(commonDecimals), nil)
 
-	sum := new(big.Int)
+	// Exact rational sum of the real prices: a row published above 14 dp
+	// is not truncated before it is averaged, so the one rounding below
+	// is the only one.
+	sum := new(big.Rat)
 	var latest time.Time
 	contributed := 0
 	for i := range rows {
@@ -472,23 +474,7 @@ func averageAggregatorPrices(rows []canonical.OracleUpdate) (string, time.Time, 
 		if u.Price.BigInt() == nil || u.Price.BigInt().Sign() <= 0 {
 			continue
 		}
-		// Scale u.Price (at u.Decimals) up to commonDecimals.
-		// scaled = price × 10^(commonDecimals - decimals) when
-		// commonDecimals > decimals (the typical case).
-		// When decimals > commonDecimals, we'd truncate — reject by
-		// not scaling down (returns precision-equivalent result
-		// after careful rounding, which we don't need today since
-		// no aggregator publishes at > 14dp).
-		diff := int(commonDecimals) - int(u.Decimals)
-		scaled := new(big.Int).Set(u.Price.BigInt())
-		if diff > 0 {
-			factor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(diff)), nil)
-			scaled.Mul(scaled, factor)
-		} else if diff < 0 {
-			factor := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-diff)), nil)
-			scaled.Quo(scaled, factor)
-		}
-		sum.Add(sum, scaled)
+		sum.Add(sum, new(big.Rat).SetFrac(u.Price.BigInt(), pow10(int(u.Decimals))))
 		contributed++
 		if u.Timestamp.After(latest) {
 			latest = u.Timestamp
@@ -498,10 +484,13 @@ func averageAggregatorPrices(rows []canonical.OracleUpdate) (string, time.Time, 
 		return "", time.Time{}, false
 	}
 
-	// Average over the contributors. We use integer arithmetic to
-	// preserve precision: avg_scaled = sum / contributed. Then
-	// render as a decimal string at `commonDecimals` precision.
-	avgScaled := new(big.Int).Quo(sum, big.NewInt(int64(contributed)))
+	// avg_scaled = ⌊sum · 10^14 / contributed⌋ (all operands positive,
+	// so Quo truncation is floor).
+	sum.Mul(sum, new(big.Rat).SetFrac(target, big.NewInt(int64(contributed))))
+	avgScaled := new(big.Int).Quo(sum.Num(), sum.Denom())
+	if avgScaled.Sign() <= 0 {
+		return "", time.Time{}, false
+	}
 	return formatScaledDecimal(avgScaled, target, commonDecimals), latest, true
 }
 

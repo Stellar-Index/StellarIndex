@@ -347,6 +347,25 @@ func TestAverageAggregatorPrices_RejectsZeroPrices(t *testing.T) {
 	}
 }
 
+// A source published above 14 dp must not be truncated before it is
+// averaged, and a positive mean below 1e-14 must miss rather than serve
+// "0.00000000000000" as a price.
+func TestAverageAggregatorPrices_AboveCommonDecimals(t *testing.T) {
+	row := func(src string, price int64, dec uint8) canonical.OracleUpdate {
+		return canonical.OracleUpdate{Source: src, Timestamp: time.Now(), Price: canonical.NewAmount(big.NewInt(price)), Decimals: dec}
+	}
+
+	// (1.5e-14 + 0.5e-14) / 2 = 1e-14 exactly.
+	avg, _, ok := averageAggregatorPrices([]canonical.OracleUpdate{row("a", 15, 15), row("b", 5, 15)})
+	if !ok || avg != "0.00000000000001" {
+		t.Fatalf("avg = (%q, %v), want (\"0.00000000000001\", true)", avg, ok)
+	}
+
+	if avg, _, ok := averageAggregatorPrices([]canonical.OracleUpdate{row("a", 1, 20)}); ok {
+		t.Fatalf("a 1e-20 mean rendered as %q with ok=true; want ok=false", avg)
+	}
+}
+
 // aliasAwareReader returns a VWAP keyed by the exact base form, so a
 // test can prove tryVWAPTier loops the asset aliases. Only the base
 // listed in `byBase` returns a hit; every other form misses.
