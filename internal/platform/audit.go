@@ -19,8 +19,11 @@ const (
 	ActorWebhook ActorKind = "webhook" // inbound webhook (e.g. Alertmanager)
 )
 
-// AuditEntry is a single row in audit_log. Append-only; never
-// updated or deleted (except by the offline retention archiver).
+// AuditEntry is a single row in audit_log. Append-only: the store
+// never issues an UPDATE or DELETE against it.
+//
+// No retention/archival job exists yet, so today "append-only" means
+// rows live forever, not just "until archived".
 type AuditEntry struct {
 	ID          uuid.UUID
 	AccountID   uuid.UUID // zero for system-level actions not tied to an account
@@ -46,7 +49,9 @@ type AuditQuery struct {
 }
 
 // AuditStore appends + reads audit rows. Append is fire-and-
-// forget; the dashboard reads via List with a 90d window.
+// forget. List is not wired into any dashboard or API route today;
+// its only caller is the integration suite, and operators read
+// audit_log with SQL rather than through List.
 type AuditStore interface {
 	// Append writes one row. Errors are logged by the caller
 	// but don't fail the underlying action — audit-log

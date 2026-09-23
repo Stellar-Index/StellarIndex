@@ -298,6 +298,8 @@ echo "=== SLA-evidence decision-core + k6-weekly wiring self-test ===" && ./scri
 echo "=== SLA proof renderer self-test ===" && ./scripts/ci/render-sla-proof-test.sh
 echo "=== SLA proof from probe-aggregate self-test ===" && bash scripts/ops/sla-proof-from-probe-test.sh
 echo "=== deploy/systemd authority ===" && bash ./scripts/ci/lint-deploy-systemd-authority.sh
+echo "=== systemd flag-hatch word-split ===" && ./scripts/ci/lint-systemd-flag-hatch.sh
+echo "=== systemd flag-hatch word-split self-test ===" && ./scripts/ci/lint-systemd-flag-hatch-test.sh
 echo "=== Textfile-collector exposition ===" && ./scripts/ci/lint-textfile-exposition.sh
 echo "=== Textfile-collector exposition self-test ===" && ./scripts/ci/lint-textfile-exposition-test.sh
 echo "=== Ansible task lint (pipefail/bash, secret-on-argv) ===" && ./scripts/ci/lint-ansible-tasks.sh

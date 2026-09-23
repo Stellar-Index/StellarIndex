@@ -209,8 +209,8 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 // as XLM (right magnitude, wrong quote). We stamp fiat:USD rather
 // than crypto:USDC so all three variants share one quote
 // representation and the /v1/oracle divergence path — which compares
-// against our USD VWAP and does NOT translate USDC→USD in
-// oracleAssetKeys (internal/divergence/oracle.go) — matches the
+// against our USD VWAP and does NOT translate USDC→USD when expanding
+// oracle keys (internal/divergence/oracle.go) — matches the
 // stored rows. The aggregator's stablecoin map already treats USDC
 // as USD, so this loses no information. Existing rows need a
 // projector-replay to pick up the corrected quote.

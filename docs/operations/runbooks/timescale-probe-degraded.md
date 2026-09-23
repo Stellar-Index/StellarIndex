@@ -51,7 +51,8 @@ it. Each arm maps to one of those shapes.
   expects** (see root cause 7). The alert names the query in the summary;
   the journal distinguishes the two.
 - `stellarindex_timescale_probe_rows{query=…} == 0` — that query
-  succeeded and returned nothing.
+  succeeded and returned nothing. `job_errors` publishes no rows gauge:
+  an empty `timescaledb_information.job_errors` is the healthy state.
 - `time() - stellarindex_timescale_probe_last_run_unix > 600` — the file
   has not been rewritten for ten ticks. The per-query metrics beside it
   will look perfectly healthy; they are frozen.

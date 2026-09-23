@@ -100,7 +100,7 @@ Positional safety (DAT-03) is already true in all three decoders: reflector inde
 
 | Reader | File | Keying | Disposition |
 |---|---|---|---|
-| Divergence `OracleReference.LookupPrice` | `internal/divergence/oracle.go` via `LatestOracleObservation` | exact canonical strings (`oracleAssetKeys`) | **safe by keying**; add defensive `!IsMapped() → ErrAssetUnsupported` |
+| Divergence `OracleReference.LookupPrice` | `internal/divergence/oracle.go` via `LatestOracleObservation` | exact canonical strings (`canonical.AssetAliasStrings`) | **safe by keying**; add defensive `!IsMapped() → ErrAssetUnsupported` |
 | Confidence `CrossOracleFactor` | `orchestrator/confidence.go lookupCrossOracle` | divergence cache | safe (derived) |
 | Phase-2 freeze `CrossOracleMedian` | `orchestrator/phase2_freeze.go:168` | divergence cache | safe (derived) |
 | `/v1/oracle/latest` | `api/v1/oracle.go handleOracleLatest` → `LatestOracleUpdatesForAssets` | `asset = ANY(candidates)` | safe by keying; **must be updated** to emit `mapped` and to accept an explicit `asset=raw:…` query |

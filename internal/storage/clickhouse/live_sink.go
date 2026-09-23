@@ -96,6 +96,12 @@ func NewLiveSink(ctx context.Context, addr string, opts LiveSinkOptions) (*LiveS
 	}
 	// flushEvery large so Add buffers; the worker's ticker drives flushes at
 	// FlushInterval (real-time at the low live rate; batched under burst).
+	// The decode-at-ingest supply path writes stellar.supply_flows in every
+	// flush; ensure it exists (idempotent) before Open's schema check, which
+	// refuses a lake missing any table Flush writes to.
+	if err := EnsureSupplyFlowsTable(ctx, addr); err != nil {
+		return nil, err
+	}
 	sink, err := Open(ctx, addr, 1000)
 	if err != nil {
 		return nil, err
@@ -103,12 +109,6 @@ func NewLiveSink(ctx context.Context, addr string, opts LiveSinkOptions) (*LiveS
 	// G12-01: cap the underlying Sink's in-memory buffers so a sustained CH
 	// outage can't grow the heap unbounded on the shared r1 host.
 	sink.SetMaxBufferLedgers(opts.MaxBufferLedgers)
-	// The decode-at-ingest supply path writes stellar.supply_flows in every
-	// flush; ensure it exists before the worker starts (idempotent).
-	if err := EnsureSupplyFlowsTable(ctx, addr); err != nil {
-		_ = sink.Close(ctx)
-		return nil, err
-	}
 	return &LiveSink{
 		sink:     sink,
 		logger:   logger,

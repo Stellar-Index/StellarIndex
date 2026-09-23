@@ -242,6 +242,9 @@ func TestOracleLatest_negativePricePreservesSign(t *testing.T) {
 // observations by the global crypto ticker, not by the per-network
 // `native` form. Without this the endpoint returns an empty array
 // even though Reflector publishes XLM continuously.
+// TestOracleLatest_NativeExpandsToCryptoXLM pins the full XLM family:
+// reflector-dex publishes XLM only under the XLM SAC C-address, so a
+// `native` query that omits it hides that oracle's reading.
 func TestOracleLatest_NativeExpandsToCryptoXLM(t *testing.T) {
 	reader := &stubOracleReader{}
 	srv := v1.New(v1.Options{Oracle: reader})
@@ -251,7 +254,7 @@ func TestOracleLatest_NativeExpandsToCryptoXLM(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
-	wantKeys := []string{"native", "crypto:XLM"}
+	wantKeys := []string{"native", "crypto:XLM", canonical.XLMSacContractID}
 	if len(reader.lastAssets) != len(wantKeys) {
 		t.Fatalf("lastAssets = %+v, want %+v", reader.lastAssets, wantKeys)
 	}
@@ -296,6 +299,52 @@ func TestOracleLatest_ClassicExpandsToCryptoTicker(t *testing.T) {
 	for i, k := range wantKeys {
 		if reader.lastAssets[i] != k {
 			t.Errorf("lastAssets[%d] = %q, want %q", i, reader.lastAssets[i], k)
+		}
+	}
+}
+
+// TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily is the guard
+// against a hand-rolled expander drifting from the alias registry: with a
+// configured classic↔SAC pair installed, querying ANY member of ANY
+// installed family must bind the whole family, whichever form the
+// oracle stored it under.
+func TestOracleLatest_EveryAliasFamilyMemberCoversItsFamily(t *testing.T) {
+	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	const usdcSACContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	reg, err := canonical.NewAliasRegistry(map[string]string{usdcSACContract: usdcClassic})
+	if err != nil {
+		t.Fatalf("NewAliasRegistry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+
+	cat, err := currency.LoadEmbedded()
+	if err != nil {
+		t.Fatalf("LoadEmbedded: %v", err)
+	}
+	reader := &stubOracleReader{}
+	srv := v1.New(v1.Options{Oracle: reader, VerifiedCurrencies: cat})
+	tsrv := httpTestServer(t, srv)
+
+	families := [][]string{
+		{"native", "crypto:XLM", canonical.XLMSacContractID},
+		{usdcClassic, usdcSACContract},
+	}
+	for _, family := range families {
+		for _, member := range family {
+			resp := mustGet(t, tsrv.URL+"/v1/oracle/latest?asset="+member)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("?asset=%s status = %d", member, resp.StatusCode)
+			}
+			bound := make(map[string]bool, len(reader.lastAssets))
+			for _, k := range reader.lastAssets {
+				bound[k] = true
+			}
+			for _, want := range family {
+				if !bound[want] {
+					t.Errorf("?asset=%s bound %v, missing alias %s", member, reader.lastAssets, want)
+				}
+			}
 		}
 	}
 }

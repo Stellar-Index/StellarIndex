@@ -94,7 +94,7 @@ chmod +x "$PROBE"
 
 # ─── stubs ──────────────────────────────────────────────────────────
 #
-# runuser stub: answers the three queries by matching their distinctive
+# runuser stub: answers the five queries by matching their distinctive
 # SQL, driven by $SCENARIO. Fails or empties one query at a time so the
 # blast radius of a single failure is observable.
 mkdir -p "$TMP/bin" "$TMP/textfile"
@@ -108,6 +108,7 @@ for a in "$@"; do
 done
 kind=other
 case "$sql" in
+  *job_errors*)                          kind=job_errors ;;
   *pg_blocking_pids*)                    kind=lock_convoy ;;
   *policy_refresh_continuous_aggregate*) kind=cagg ;;
   *policy_compression*)                  kind=compression ;;
@@ -164,21 +165,33 @@ case "$kind" in
 oracle_prices_1m|1788598600|30}\n" ;;
   compression) printf 'trades|3\nfx_quotes|0\n' ;;
   jobs)        printf 'policy_compression|trades|1001|0\npolicy_retention|-|1002|2\n' ;;
+  # `-At` prints err_message verbatim: a quote, a backslash, a pipe and a
+  # brace arrive raw, and a newline in the text starts an output line
+  # that is NOT a new record.
+  job_errors)  printf '%s\n' "${JOB_ERRORS_ROWS:-$JOB_ERRORS_DEFAULT}" ;;
   *)           echo "runuser stub: unmatched sql" >&2; exit 9 ;;
 esac
 exit 0
 SH
 chmod +x "$TMP/bin/runuser"
+export JOB_ERRORS_DEFAULT='1001|policy_compression|trades|could not compress "_hyper_1_42_chunk" at C:\tmp\x | lock held
+DETAIL: {"retry": 3}
+1002|policy_retention|-|canceling statement due to statement timeout'
+# The label values the probe must render from that reply: escaped per the
+# exposition format, braces swapped for parentheses (6e shows why a brace
+# in a label is refused).
+REASON_1001='could not compress \"_hyper_1_42_chunk\" at C:\\tmp\\x | lock held\nDETAIL: (\"retry\": 3)'
+REASON_1002='canceling statement due to statement timeout'
 export PATH="$TMP/bin:$PATH"
 export TEXTFILE_DIR="$TMP/textfile"
 PROM="$TEXTFILE_DIR/timescale_jobs.prom"
 
-# run <fail-queries> <empty-queries> [convoy-row] [cagg-rows] — one probe
-# run; sets $RC and leaves the probe's stderr in $ERR.
+# run <fail-queries> <empty-queries> [convoy-row] [cagg-rows] [job-errors]
+# — one probe run; sets $RC and leaves the probe's stderr in $ERR.
 run() {
   rm -f "$PROM"
   ERR="$(FAIL_QUERIES="$1" EMPTY_QUERIES="$2" LOCK_CONVOY_ROW="${3:-}" CAGG_ROWS="${4:-}" \
-    bash "$PROBE" 2>&1 >/dev/null)"
+    JOB_ERRORS_ROWS="${5:-}" bash "$PROBE" 2>&1 >/dev/null)"
   RC=$?
 }
 
@@ -188,6 +201,10 @@ metric() {
 }
 
 has_family() { grep -qE "^$1\{" "$PROM"; }
+
+# has_line <exact-line> — the file carries that line byte-for-byte; for
+# label values with spaces, which `metric`'s first-field match cannot see.
+has_line() { grep -qFx -- "$1" "$PROM"; }
 
 # ─── assertion helpers ──────────────────────────────────────────────
 #
@@ -227,6 +244,7 @@ for qname in cagg_refresh compression job_stats; do
   eq 1 "$(metric "stellarindex_timescale_probe_query_ok{query=\"$qname\"}")" "clean run: query_ok $qname = 1"
   eq 2 "$(metric "stellarindex_timescale_probe_rows{query=\"$qname\"}")" "clean run: rows $qname = 2"
 done
+eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_errors"}')" "clean run: query_ok job_errors = 1"
 matches '^1[0-9]{9}$' "$(metric stellarindex_timescale_probe_last_run_unix)" "clean run stamps last_run_unix"
 
 # 0644, atomic: node_exporter runs unprivileged and SILENTLY skips a
@@ -297,10 +315,10 @@ refutes "an empty result emits no compression series" \
   has_family stellarindex_timescale_chunks_overdue_compression
 
 # ─── 4. every query failing still stamps the run ────────────────────
-run "cagg compression jobs lock_convoy" ""
+run "cagg compression jobs lock_convoy job_errors" ""
 matches '^1[0-9]{9}$' "$(metric stellarindex_timescale_probe_last_run_unix)" "a fully-failing run still stamps last_run_unix"
 zeros=$(grep -c '^stellarindex_timescale_probe_query_ok{.*} 0$' "$PROM")
-eq 4 "$zeros" "a fully-failing run reports all four queries as 0"
+eq 5 "$zeros" "a fully-failing run reports all five queries as 0"
 
 # ─── 5. the file parses as Prometheus text ──────────────────────────
 #
@@ -425,6 +443,55 @@ eq "$sentinel_before" "$(cat "$PROM")" "…and the previously-published file is 
 matches 'refusing to publish' "$ERR" "…and says why, on stderr"
 leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'timescale_jobs.prom' | wc -l | tr -d ' ')
 eq 0 "$leftovers" "…and leaves no half-written temp file behind"
+
+# ─── 7. the job failure reason ──────────────────────────────────────
+#
+# stellarindex_timescale_job_failures_total says a job is failing, never
+# why. The reason rides on an info gauge, and err_message is free text
+# written by whatever failed: every character the exposition format or
+# this probe's own validator treats specially has to come through as a
+# valid label value, or one bad error message costs the WHOLE file.
+
+# 7a. The realistic reply: quote, backslash, pipe, a newline inside the
+#     text, and a brace — each escaped, the second line kept in the SAME
+#     series rather than read as a record, and the next job intact.
+run "" ""
+eq 0 "$RC" "a job_errors reply with special characters completes the run"
+parses "…and still produces a parseable file"
+holds "the reason reaches the file with \" \\ newline escaped and | kept" \
+  has_line "stellarindex_timescale_job_last_failure_reason_info{job_id=\"1001\",proc=\"policy_compression\",hypertable=\"trades\",reason=\"$REASON_1001\"} 1"
+holds "…and the next job's reason is its own series, untouched" \
+  has_line "stellarindex_timescale_job_last_failure_reason_info{job_id=\"1002\",proc=\"policy_retention\",hypertable=\"-\",reason=\"$REASON_1002\"} 1"
+eq 2 "$(grep -c '^stellarindex_timescale_job_last_failure_reason_info{' "$PROM")" \
+  "…and the continuation line is not a series of its own"
+eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_errors"}')" \
+  "a multi-line error message is not a malformed reply"
+
+# 7b. No failing job is the HEALTHY state. It must not look like the
+#     blind state the degraded alert's rows arm exists for, so this query
+#     publishes query_ok and never a rows gauge.
+run "" "job_errors"
+eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_errors"}')" "an empty job_errors keeps query_ok 1"
+eq "" "$(metric 'stellarindex_timescale_probe_rows{query="job_errors"}')" \
+  "an empty job_errors publishes no rows gauge for probe_degraded to read as 0"
+refutes "an empty job_errors emits no reason series" \
+  has_family stellarindex_timescale_job_last_failure_reason_info
+parses "an empty job_errors still produces a parseable file"
+
+# 7c. A failing job_errors query reports itself and costs nothing else.
+run "job_errors" ""
+eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_errors"}')" "a failing job_errors query reports query_ok 0"
+holds "…and does not cost the job-failure counter" has_family stellarindex_timescale_job_failures_total
+
+# 7d. A line before any record (a command tag) is not a continuation of
+#     anything: dropped, reported, and the real record after it survives.
+run "" "" "" "" "SET
+1002|policy_retention|-|canceling statement due to statement timeout"
+eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_errors"}')" \
+  "a stray line ahead of the records reports query_ok 0"
+holds "…and the record after it survives intact" \
+  has_line "stellarindex_timescale_job_last_failure_reason_info{job_id=\"1002\",proc=\"policy_retention\",hypertable=\"-\",reason=\"$REASON_1002\"} 1"
+refutes "…and the tag never reaches the file" grep -q 'SET' "$PROM"
 
 printf 'timescale-jobs-probe-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

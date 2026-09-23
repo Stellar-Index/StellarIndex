@@ -259,9 +259,8 @@ func TestKeyIndex_IssuanceAfterReadyNeedsNoWalk(t *testing.T) {
 
 	second, _ := f.mint(t, owner)
 	mirrored := MirroredKey{
-		Plaintext:  "sip_" + strings.Repeat("ab", 32),
-		KeyID:      "kid_mirrored01",
-		Identifier: owner,
+		Plaintext: "sip_" + strings.Repeat("ab", 32),
+		Record:    APIKeyRecord{KeyID: "kid_mirrored01", Identifier: owner},
 	}
 	if err := f.store.CreateWithSecret(context.Background(), mirrored); err != nil {
 		t.Fatalf("CreateWithSecret: %v", err)
@@ -269,7 +268,7 @@ func TestKeyIndex_IssuanceAfterReadyNeedsNoWalk(t *testing.T) {
 
 	f.counter.reset()
 	got := listedKeyIDs(t, f.store, owner)
-	if !sameKeyIDs(got, first.KeyID, second.KeyID, mirrored.KeyID) {
+	if !sameKeyIDs(got, first.KeyID, second.KeyID, mirrored.Record.KeyID) {
 		t.Fatalf("list = %v, want all three keys", got)
 	}
 	if n := f.counter.snapshot()["scan"]; n != 0 {

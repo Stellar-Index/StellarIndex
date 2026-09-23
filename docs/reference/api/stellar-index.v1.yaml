@@ -3331,7 +3331,7 @@ paths:
                           properties:
                             asset_id:           { type: string }
                             quote_id:           { type: string }
-                            reference:          { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band] }
+                            reference:          { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
                             observed_at:        { type: string, format: date-time }
                             observed_at_ledger: { type: integer, format: int64 }
                             our_price:          { type: string }
@@ -3366,7 +3366,7 @@ paths:
         or the triple has no observations in the window.
       parameters:
         - { name: pair, in: query, required: true, description: "`<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`.", schema: { type: string } }
-        - { name: reference, in: query, required: true, description: "External reference to plot against.", schema: { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band] } }
+        - { name: reference, in: query, required: true, description: "External reference to plot against.", schema: { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] } }
         - { name: days, in: query, description: "Trailing window; whitelisted to 1, 7 or 30 (default 7).", schema: { type: integer, enum: [1, 7, 30], default: 7 } }
       responses:
         "200":
@@ -3406,7 +3406,7 @@ paths:
                     properties:
                       asset_id:       { type: string }
                       quote_id:       { type: string }
-                      reference:      { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band] }
+                      reference:      { type: string, enum: [chainlink, coingecko, reflector-cex, reflector-fx, reflector-dex, redstone, band, synthetic-usd-cross] }
                       days:           { type: integer }
                       bucket_seconds:
                         type: integer
@@ -15924,7 +15924,9 @@ components:
         behind them are private. The curator's arithmetic over inputs
         this index cannot read: no per-asset breakdown, no price, no
         market, nothing verified here. Absent when nothing published is
-        inside its recognition bound.
+        inside its recognition bound, or when `executed_at` is more than
+        7 days old: the curator's own query has not run in a week,
+        however recently this index read its result.
       required: [total_usd, as_of, executed_at, by_subclass, series, source]
       properties:
         total_usd:
@@ -15940,6 +15942,12 @@ components:
           description: |
             When the curator's query last ran (RFC 3339). The figure is
             as fresh as this, not as fresh as this index's read of it.
+        stale:
+          type: boolean
+          description: |
+            True when `executed_at` is more than 48 hours old: the
+            figure is still served, but the curator's own query has not
+            run since. Absent (false) otherwise.
         by_subclass:
           type: array
           description: The latest month's total split by the curator's own subclass labels, largest first. Empty when the curator publishes no split for that month.

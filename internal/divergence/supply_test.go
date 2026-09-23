@@ -88,13 +88,14 @@ func TestStellarDashboardReference_PrefersExplicitField(t *testing.T) {
 	// says (34,000,000,000), so a regression that deletes the explicit
 	// branch and falls through to the derived formula changes the
 	// asserted value instead of leaving it coincidentally correct.
-	const body = `{"totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000","circulatingSupply":"34000000000"}`
+	const body = `{"updatedAt":"2026-07-07T01:06:15.982Z","totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000","circulatingSupply":"34000000000"}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, body)
 	}))
 	defer srv.Close()
 
-	ref := NewStellarDashboardReference(StellarDashboardOptions{BaseURL: srv.URL})
+	fixedNow := time.Date(2026, 7, 7, 1, 30, 0, 0, time.UTC)
+	ref := NewStellarDashboardReference(StellarDashboardOptions{BaseURL: srv.URL, NowFn: func() time.Time { return fixedNow }})
 	got, err := ref.LookupCirculatingSupply(context.Background(), canonical.NativeAsset())
 	if err != nil {
 		t.Fatalf("LookupCirculatingSupply: %v", err)
@@ -156,6 +157,45 @@ func TestSupplyReferences_StalenessGate(t *testing.T) {
 	})
 }
 
+// TestSupplyReferences_MissingPublicationTimeFailsClosed — a supply
+// figure whose upstream publication time is absent or unparseable has
+// unverifiable freshness and must read as "reference unavailable",
+// matching the CoinGecko price reference's missing-last_updated_at arm.
+// A /lumens body that drops or renames updatedAt must not disarm the
+// staleness gate and let a frozen upstream drive the divergence alert.
+func TestSupplyReferences_MissingPublicationTimeFailsClosed(t *testing.T) {
+	now := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	const dashComponents = `"totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000"`
+	cases := []struct {
+		name      string
+		coingecko bool
+		body      string
+	}{
+		{"dashboard_missing_updatedAt", false, `{` + dashComponents + `}`},
+		{"dashboard_renamed_updatedAt", false, `{"updated_at":"` + now.Format(time.RFC3339) + `",` + dashComponents + `}`},
+		{"dashboard_unparseable_updatedAt", false, `{"updatedAt":"yesterday",` + dashComponents + `}`},
+		{"coingecko_missing_last_updated", true, `{"market_data":{"circulating_supply":34066264765.0}}`},
+		{"coingecko_unparseable_last_updated", true, `{"market_data":{"circulating_supply":34066264765.0,"last_updated":"1710000000"}}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+			nowFn := func() time.Time { return now }
+			var ref SupplyReference = NewStellarDashboardReference(StellarDashboardOptions{BaseURL: srv.URL, NowFn: nowFn})
+			if tc.coingecko {
+				ref = NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{BaseURL: srv.URL, NowFn: nowFn})
+			}
+			got, err := ref.LookupCirculatingSupply(context.Background(), canonical.NativeAsset())
+			if !errors.Is(err, ErrSupplyUnavailable) {
+				t.Fatalf("LookupCirculatingSupply = (%g, %v), want ErrSupplyUnavailable (freshness unverifiable)", got, err)
+			}
+		})
+	}
+}
+
 func TestStellarDashboardReference_NonXLMUnsupported(t *testing.T) {
 	ref := NewStellarDashboardReference(StellarDashboardOptions{BaseURL: "http://unused.invalid"})
 	_, err := ref.LookupCirculatingSupply(context.Background(),
@@ -181,7 +221,7 @@ func TestStellarDashboardReference_RateLimitedDegrades(t *testing.T) {
 // ─── CoinGecko supply reference ──────────────────────────────────────
 
 func TestCoinGeckoSupplyReference_ParsesMarketData(t *testing.T) {
-	const body = `{"id":"stellar","market_data":{"circulating_supply":34066264765.0,"total_supply":50001786839.0}}`
+	const body = `{"id":"stellar","market_data":{"circulating_supply":34066264765.0,"total_supply":50001786839.0,"last_updated":"2026-07-07T01:06:15.982Z"}}`
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -189,7 +229,8 @@ func TestCoinGeckoSupplyReference_ParsesMarketData(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ref := NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{BaseURL: srv.URL})
+	fixedNow := time.Date(2026, 7, 7, 1, 30, 0, 0, time.UTC)
+	ref := NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{BaseURL: srv.URL, NowFn: func() time.Time { return fixedNow }})
 	got, err := ref.LookupCirculatingSupply(context.Background(), canonical.NativeAsset())
 	if err != nil {
 		t.Fatalf("LookupCirculatingSupply: %v", err)

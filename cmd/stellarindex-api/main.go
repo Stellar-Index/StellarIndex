@@ -1515,6 +1515,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		},
 	})
 
+	// Shared tip-stream producer ceiling. The config defaults equal the
+	// registry's built-in ones, so behaviour changes only on opt-in.
+	apiSrv.SetMaxTipProducers(cfg.API.Streaming.MaxTipProducers)
+	apiSrv.SetMaxTipProducersPerCaller(cfg.API.Streaming.MaxTipProducersPerCaller)
+
 	// Prewarm the classic circulating-supply cache OUT OF BAND. It backs
 	// market-cap enrichment on /v1/assets, and its backing full-table GROUP BY
 	// outlives the request timeout — so a cold fill on the request path costs

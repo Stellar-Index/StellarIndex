@@ -79,7 +79,7 @@ ExecStart=/usr/local/sbin/run-heavy-job.sh asset-registry-backfill \
   -limit ${LIMIT} \
   -timeout ${RUN_TIMEOUT} \
   -write \
-  ${EXTRA_FLAGS}
+  $EXTRA_FLAGS
 
 # NOT de-privileged, unlike the sibling oneshots: run-heavy-job.sh only
 # creates its systemd-run scope (the memory cap and the disk watchdog) for

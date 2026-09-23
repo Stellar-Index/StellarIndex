@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // MirroredKey is an already-minted credential being written into the
@@ -18,53 +20,76 @@ import (
 // cannot serve that path because it GENERATES the secret; mirroring
 // requires writing the caller's secret verbatim so one plaintext
 // validates on either backend.
+//
+// Record is the full validator record, not a caller-shaped subset: every
+// gate the record can express (scopes, expiry, IP/referer allowlists,
+// permission entries) is written as given, so a mirror can never widen a
+// key. Build it from a management row with [APIKeyRecordFromPlatform].
 type MirroredKey struct {
 	// Plaintext is the caller-generated secret (`sip_<64hex>`). The
 	// store writes only its SHA-256; the plaintext is never persisted.
 	Plaintext string
-	// KeyID must match the management row's id so revocation and
-	// listings line up across the two stores.
-	KeyID string
-	// Identifier is the owner reference — use [AccountIdentifier].
-	Identifier string
-	Label      string
-	// RateLimitPerMin: zero means the tier default.
-	RateLimitPerMin int
-	// MonthlyQuota is the per-key monthly request cap. MUST be set
-	// explicitly: the quota middleware treats <= 0 as "unmetered" and
-	// short-circuits (middleware/monthly_quota.go), so omitting this
-	// silently ships an UNLIMITED key — the register endpoint's
-	// response and the public docs both advertise a cap, and the
-	// mirrored record is what the deployed validator actually reads.
-	// (Audit 2026-08-13 F1: this field did not exist, and every
-	// registered key was unmetered in production.)
-	MonthlyQuota int64
+	// Record is written verbatim except KeyPrefix (always derived from
+	// Plaintext), a zero Tier (defaults to [TierAPIKey]) and a zero
+	// CreatedAt (stamped now). KeyID must match the management row's id
+	// so revocation and listings line up across the two stores.
+	Record APIKeyRecord
+}
+
+// APIKeyRecordFromPlatform maps a Postgres management row onto the Redis
+// validator record field-for-field, so the mirrored key enforces exactly
+// the gates the management row carries. identifier is the owner reference
+// ([AccountIdentifier] of the account slug).
+//
+// k.MonthlyQuota must already be resolved: on the management row 0 means
+// "inherit from plan", but the Redis record reads 0 as UNMETERED (the
+// quota middleware short-circuits at <= 0), so a zero is refused rather
+// than silently shipping an uncapped key.
+func APIKeyRecordFromPlatform(k platform.APIKey, identifier string) (APIKeyRecord, error) {
+	if k.MonthlyQuota <= 0 {
+		return APIKeyRecord{}, fmt.Errorf("auth: APIKeyRecordFromPlatform: key %q has unresolved monthly quota %d; resolve the plan cap before mirroring", k.ID, k.MonthlyQuota)
+	}
+	return APIKeyRecord{
+		KeyID:            k.ID,
+		Identifier:       identifier,
+		Label:            k.Name,
+		KeyPrefix:        k.KeyPrefix,
+		Tier:             pgTierToAuthTier(k.Tier),
+		Scopes:           k.Scopes,
+		RateLimitPerMin:  k.RateLimitPerMin,
+		CreatedAt:        k.CreatedAt,
+		ExpiresAt:        k.ExpiresAt,
+		RevokedAt:        k.RevokedAt,
+		IPAllowlist:      encodeIPAllowlist(k.IPAllowlist),
+		RefererAllowlist: k.RefererAllowlist,
+		PermissionsAll:   k.Permissions.All,
+		AllowPermissions: convertPermissionEntries(k.Permissions.Allow),
+		DenyPermissions:  convertPermissionEntries(k.Permissions.Deny),
+		MonthlyQuota:     k.MonthlyQuota,
+	}, nil
 }
 
 // CreateWithSecret writes an already-minted credential into the Redis
-// validator store. Same record shape and key layout as
-// [RedisAPIKeyStore.Create] — including PermissionsAll, without which
-// the permission middleware 403s every request from the key.
+// validator store, with the same key layout as [RedisAPIKeyStore.Create].
+// Permissions are the record's own: PermissionsAll=false with no allow
+// entries is the permission middleware's closed posture (403 everything).
 func (s *RedisAPIKeyStore) CreateWithSecret(ctx context.Context, k MirroredKey) error {
 	switch {
 	case k.Plaintext == "":
 		return errors.New("auth: CreateWithSecret: Plaintext is required")
-	case k.KeyID == "":
+	case k.Record.KeyID == "":
 		return errors.New("auth: CreateWithSecret: KeyID is required")
-	case k.Identifier == "":
+	case k.Record.Identifier == "":
 		return errors.New("auth: CreateWithSecret: Identifier is required")
 	}
 
-	rec := APIKeyRecord{
-		KeyID:           k.KeyID,
-		Identifier:      k.Identifier,
-		Label:           k.Label,
-		KeyPrefix:       keyPrefix(k.Plaintext),
-		Tier:            TierAPIKey,
-		RateLimitPerMin: k.RateLimitPerMin,
-		MonthlyQuota:    k.MonthlyQuota,
-		CreatedAt:       s.now().UTC(),
-		PermissionsAll:  true,
+	rec := k.Record
+	rec.KeyPrefix = keyPrefix(k.Plaintext)
+	if rec.Tier == "" {
+		rec.Tier = TierAPIKey
+	}
+	if rec.CreatedAt.IsZero() {
+		rec.CreatedAt = s.now().UTC()
 	}
 	body, err := json.Marshal(rec)
 	if err != nil {

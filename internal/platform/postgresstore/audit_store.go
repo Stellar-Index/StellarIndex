@@ -20,8 +20,9 @@ import (
 //
 // Append is the load-bearing operation — every privileged action
 // (key.mint, plan.upgrade, session.revoke, …) lands one row. List
-// powers the dashboard's audit-trail surface + the operator's
-// staff-mode "across everything" view.
+// reads back the same rows (with account / actor-kind / action /
+// time-window filters); no dashboard or API route calls it yet — it
+// has no non-test caller, only the integration suite.
 //
 // All writes are fire-and-forget from the caller's perspective:
 // audit-log unavailability never blocks customer / staff workflows
@@ -90,8 +91,7 @@ func (a *AuditStore) AppendBatch(ctx context.Context, entries []platform.AuditEn
 }
 
 // List returns rows matching the query, ordered ts DESC. Limit
-// defaults to 100 when zero, capped at 1000 (the dashboard paginates;
-// the staff console asks for narrower windows).
+// defaults to 100 when zero, capped at 1000.
 func (a *AuditStore) List(ctx context.Context, q platform.AuditQuery) ([]platform.AuditEntry, error) {
 	limit := q.Limit
 	if limit <= 0 {

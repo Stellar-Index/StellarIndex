@@ -31,6 +31,7 @@ cat > "$FAKEBIN/psql" <<'EOF'
 for a in "$@"; do
   case "$a" in
     *"SHOW max_worker_processes"*) echo "${FAKE_PG_MAX_WORKER_PROCESSES:-}"; exit 0 ;;
+    *"SHOW idle_in_transaction_session_timeout"*) echo "${FAKE_PG_IDLE_IN_TXN_TIMEOUT:-}"; exit 0 ;;
   esac
 done
 exit 1
@@ -41,11 +42,14 @@ echo x > "$TMP/pgpass"
 pass=0
 fail=0
 
-# run <conf-value> <live-value> — one gate invocation; sets OUT to the
-# emitted .prom file's content.
+# run <conf-value> <live-value> [idle-conf-value] [idle-live-value] —
+# one gate invocation; sets OUT to the emitted .prom file's content.
+# idle-* default to the correct 30min pair so callers pinning only the
+# max_worker_processes shape don't also spuriously fail the idle-in-transaction checks.
 run() {
-  local conf="$1" live="$2"
+  local conf="$1" live="$2" idle_conf="${3:-30min}" idle_live="${4:-30min}"
   printf 'max_worker_processes      = %s\n' "$conf" > "$TMP/postgresql.conf"
+  [ "$idle_conf" = "ABSENT" ] || printf 'idle_in_transaction_session_timeout = %s\n' "$idle_conf" >> "$TMP/postgresql.conf"
   rm -rf "$TMP/out"
   mkdir -p "$TMP/out"
   PATH="$FAKEBIN:$PATH" \
@@ -53,6 +57,7 @@ run() {
     PG_CONF_FILE="$TMP/postgresql.conf" \
     PG_PASSWORD_FILE="$TMP/pgpass" \
     FAKE_PG_MAX_WORKER_PROCESSES="$live" \
+    FAKE_PG_IDLE_IN_TXN_TIMEOUT="$idle_live" \
     bash "$GATE" >/dev/null 2>&1
   OUT="$(cat "$TMP/out/config_assertions.prom" 2>/dev/null)"
 }
@@ -90,6 +95,26 @@ expect_metric 'restart pending -> live catches the gap' pg_max_worker_processes_
 # Reverted file (an ansible run without the fix, or a hand revert).
 run 8 8
 expect_metric 'reverted file -> codified catches it' pg_max_worker_processes_codified 0
+
+# idle_in_transaction_session_timeout, same codified-vs-applied
+# pairing. Unlike max_worker_processes this GUC is reload-only, so
+# "codified but not live" means the reload never ran, not "awaiting a
+# restart" — pinned here as its own case rather than folded into the
+# name above.
+run 32 32 30min 30min
+expect_metric 'idle timeout applied -> codified ok' pg_idle_in_transaction_timeout_codified 1
+expect_metric 'idle timeout applied -> live ok' pg_idle_in_transaction_timeout_live 1
+
+# Rendered but never reloaded: the file says 30min, the running server
+# is still on whatever it booted with (0 = disabled, Postgres's own
+# default).
+run 32 32 30min 0
+expect_metric 'idle timeout codified, reload pending -> codified still ok' pg_idle_in_transaction_timeout_codified 1
+expect_metric 'idle timeout codified, reload pending -> live catches the gap' pg_idle_in_transaction_timeout_live 0
+
+# The unfixed shape: the GUC is absent from the file entirely.
+run 32 32 ABSENT 0
+expect_metric 'idle timeout absent from file -> codified catches it' pg_idle_in_transaction_timeout_codified 0
 
 echo
 echo "config-assertions-test: ${pass} passed, ${fail} failed"

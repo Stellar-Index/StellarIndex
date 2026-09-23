@@ -53,6 +53,7 @@ type AnomaliesView struct {
 	Daily []DailyReasonCountV `json:"daily"`
 }
 
+// ReasonCountV is one (reason, count) cell of AnomaliesView.ReasonTally.
 type ReasonCountV struct {
 	Reason string `json:"reason"`
 	Count  int64  `json:"count"`

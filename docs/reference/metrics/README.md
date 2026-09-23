@@ -1715,6 +1715,26 @@ Publisher and this Subscriber — investigate if non-zero).
 valid topic to route to; message dropped). All paths log; only
 the `ok` path forwards.
 
+### `stellarindex_api_tip_producers`
+
+Gauge. Shared `/v1/price/tip/stream` producers currently registered,
+running or lingering. Look at it when tip streams are refused or API
+database load climbs: it is bounded by
+`api.streaming.max_tip_producers`, and a count that climbs while SSE
+connections do not is an abort-loop flood minting detached producers.
+
+### `stellarindex_api_tip_producers_refused_total`
+
+Counter, label `reason` (`caller_quota` / `global_ceiling`).
+
+Tip-stream producer mints refused. `caller_quota` rising means one
+client (IPv4 address or IPv6 /64) is enumerating the key space against
+`api.streaming.max_tip_producers_per_caller`; `global_ceiling` rising
+means the registry is full at `api.streaming.max_tip_producers`, either
+from a distributed flood or because the deployment has outgrown the
+ceiling. Existing producers are always joinable; only new ones are
+refused.
+
 ### `stellarindex_api_cors_decisions_total`
 
 Counter, label `outcome` (`no_origin` / `allowed_origin` /

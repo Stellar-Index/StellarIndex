@@ -216,12 +216,14 @@ const DefaultSupplyMaxAge = 24 * time.Hour
 // upstream publication time. Unlike the price path (which threads the
 // bucket-end observedAt through [Compare]) the [SupplyReference]
 // interface carries no comparison time, so each reference gates against
-// its own injected clock. A zero publishedAt no-ops (the upstream
-// didn't report a timestamp) — we only reject a figure we can PROVE is
-// stale.
+// its own injected clock. A zero publishedAt (timestamp missing or
+// unparseable) fails closed like the CoinGecko price reference's
+// missing last_updated_at: an unverifiable figure is excluded, never
+// served as fresh.
 func supplyStaleness(now func() time.Time, maxAge time.Duration, refName string, publishedAt time.Time) error {
 	if publishedAt.IsZero() {
-		return nil
+		return fmt.Errorf("%w: %s returned no parseable publication time (freshness unverifiable)",
+			ErrSupplyUnavailable, refName)
 	}
 	if maxAge <= 0 {
 		maxAge = DefaultSupplyMaxAge
@@ -546,7 +548,7 @@ func (r *StellarDashboardReference) LookupCirculatingSupply(ctx context.Context,
 
 	// CS-089 staleness gate: a frozen `/lumens` upstream must read as
 	// "reference unavailable", never drive a supply divergence. A
-	// missing/unparseable updatedAt no-ops (zero time).
+	// missing/unparseable updatedAt fails closed too.
 	if err := supplyStaleness(r.nowFn, r.maxAge, r.Name(), parseUpstreamTime(parsed.UpdatedAt)); err != nil {
 		return 0, err
 	}
@@ -741,7 +743,8 @@ func (c *CoinGeckoSupplyReference) LookupCirculatingSupply(ctx context.Context, 
 		return 0, fmt.Errorf("%w: coingecko circulating_supply non-positive for %q", ErrSupplyUnavailable, cgID)
 	}
 	// CS-089 staleness gate: a frozen CoinGecko supply must read as
-	// "reference unavailable". Missing last_updated no-ops (zero time).
+	// "reference unavailable". A missing/unparseable last_updated fails
+	// closed too.
 	if err := supplyStaleness(c.nowFn, c.maxAge, c.Name(), parseUpstreamTime(parsed.MarketData.LastUpdated)); err != nil {
 		return 0, err
 	}
@@ -750,8 +753,8 @@ func (c *CoinGeckoSupplyReference) LookupCirculatingSupply(ctx context.Context, 
 
 // parseUpstreamTime parses an RFC 3339 upstream timestamp (the shape
 // both `/lumens`.updatedAt and `/coins/{id}`.market_data.last_updated
-// use), returning the zero time on empty/unparseable input so the
-// staleness gate no-ops rather than rejecting a usable figure.
+// use), returning the zero time on empty/unparseable input, which
+// [supplyStaleness] rejects as unverifiable.
 func parseUpstreamTime(s string) time.Time {
 	if s == "" {
 		return time.Time{}

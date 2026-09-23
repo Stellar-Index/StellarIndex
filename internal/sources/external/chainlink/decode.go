@@ -24,17 +24,38 @@ import (
 // purposes the round is uniquely identified by RoundID + the feed
 // address; answeredInRound adds no information for ingestion.
 // maxPlausibleUpdatedAtUnix caps the feed-reported updatedAt (Unix
-// seconds). Real Chainlink rounds carry a recent block timestamp
-// (~1.7e9); anything past ~year 2286 is garbage. Critically, a value
-// that exceeds the int64 / timestamptz range would wrap NEGATIVE in the
-// int64() cast (→ far-past time) or land beyond Postgres's timestamptz
-// max and overflow the oracle_updates INSERT — the class guarded across
-// the band / reflector / redstone decoders. Chainlink data comes from a
-// trusted feed via trusted RPC, so this is defence-in-depth, but it
-// reaches the same timestamptz column with no downstream clamp.
+// seconds) before any clock comparison. A value that exceeds the
+// int64 / timestamptz range would wrap NEGATIVE in the int64() cast
+// (→ far-past time) or overflow the oracle_updates INSERT; bounding the
+// raw u64 first keeps every later cast provably in range, even if the
+// poller's own clock is broken.
 const maxPlausibleUpdatedAtUnix = 10_000_000_000 // ~year 2286
 
-func decodeLatestRoundData(rawHex, feedAddress string) (Round, error) {
+// maxUpdatedAtFutureSkew is how far past the poller's own clock a
+// feed-reported updatedAt may sit. Unlike the band / reflector /
+// redstone decoders, Chainlink input is not ledger-anchored, so the
+// poller clock is the only present-time anchor. A future-dated row is
+// refused rather than clamped: it would otherwise win every "latest"
+// read for the pair and drive the staleness gauge negative until the
+// wall clock caught up. Ethereum block timestamps never lead real
+// time, so this only has to absorb host clock skew.
+const maxUpdatedAtFutureSkew = 5 * time.Minute
+
+// checkUpdatedAt validates a raw feed-reported updatedAt against the
+// absolute ceiling and against now+maxUpdatedAtFutureSkew.
+func checkUpdatedAt(updatedAt uint64, now time.Time) error {
+	if updatedAt == 0 || updatedAt > maxPlausibleUpdatedAtUnix {
+		return fmt.Errorf("%w: out-of-range updatedAt %d", ErrMalformedResult, updatedAt)
+	}
+	limit := now.Add(maxUpdatedAtFutureSkew).Unix()
+	if limit < 0 || updatedAt > uint64(limit) {
+		return fmt.Errorf("%w: updatedAt %d is past poller clock %d + %s",
+			ErrFutureUpdatedAt, updatedAt, now.Unix(), maxUpdatedAtFutureSkew)
+	}
+	return nil
+}
+
+func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, error) {
 	bytes, err := hexBytes(rawHex)
 	if err != nil {
 		return Round{}, fmt.Errorf("%w: latestRoundData hex: %w", ErrMalformedResult, err)
@@ -69,8 +90,8 @@ func decodeLatestRoundData(rawHex, feedAddress string) (Round, error) {
 	// authoritative timestamp).
 	// updatedAt — uint256 in word 3.
 	updatedAt := bigEndianUint64(bytes[120:128])
-	if updatedAt == 0 || updatedAt > maxPlausibleUpdatedAtUnix {
-		return Round{}, fmt.Errorf("%w: feed=%s round=%d out-of-range updatedAt %d", ErrMalformedResult, feedAddress, roundID, updatedAt)
+	if err := checkUpdatedAt(updatedAt, now); err != nil {
+		return Round{}, fmt.Errorf("feed=%s round=%d: %w", feedAddress, roundID, err)
 	}
 	// answeredInRound — uint80 in word 4 (ignored).
 
@@ -92,7 +113,7 @@ func decodeLatestRoundData(rawHex, feedAddress string) (Round, error) {
 //
 // One log row → one Round suitable for canonical.OracleUpdate
 // projection (same as decodeLatestRoundData).
-func decodeAnswerUpdatedLog(entry LogEntry) (Round, error) {
+func decodeAnswerUpdatedLog(entry LogEntry, now time.Time) (Round, error) {
 	if len(entry.Topics) < 3 {
 		return Round{}, fmt.Errorf("%w: AnswerUpdated expected ≥3 topics, got %d", ErrMalformedResult, len(entry.Topics))
 	}
@@ -129,8 +150,8 @@ func decodeAnswerUpdatedLog(entry LogEntry) (Round, error) {
 		return Round{}, fmt.Errorf("%w: AnswerUpdated.data expected 32 bytes (one uint256), got %d", ErrMalformedResult, len(dataBytes))
 	}
 	updatedAt := bigEndianUint64(dataBytes[24:32])
-	if updatedAt == 0 || updatedAt > maxPlausibleUpdatedAtUnix {
-		return Round{}, fmt.Errorf("%w: %s round=%d out-of-range updatedAt %d", ErrMalformedResult, entry.Address, roundID, updatedAt)
+	if err := checkUpdatedAt(updatedAt, now); err != nil {
+		return Round{}, fmt.Errorf("%s round=%d: %w", entry.Address, roundID, err)
 	}
 
 	return Round{

@@ -1272,6 +1272,14 @@ jobs:
         # scp-ing units from this directory, so an undeclared orphan is
         # a live footgun — it starts, and nothing reconciles it.
         run: ./scripts/ci/lint-deploy-systemd-authority.sh
+      - name: lint-systemd-flag-hatch
+        # #1231: `${EXTRA_FLAGS}` in a direct-exec ExecStart= is ONE argv
+        # token (systemd.service(5)), so `EXTRA_FLAGS="-limit 100"` failed
+        # the Go flag parser on every tick of twelve units. Bare `$VAR`
+        # word-splits; only an `sh -c` unit may use the brace form.
+        run: ./scripts/ci/lint-systemd-flag-hatch.sh
+      - name: lint-systemd-flag-hatch self-test
+        run: ./scripts/ci/lint-systemd-flag-hatch-test.sh
 
       - name: lint-textfile-exposition
         # r1 2026-09-10: the TimescaleDB probe ran

@@ -238,6 +238,28 @@ pg_max_worker_processes_live() {
 }
 assert_cmd pg_max_worker_processes_live pg_max_worker_processes_live
 
+# ── Postgres idle-in-transaction reaper ───────────────────────────────
+# Same codified-vs-applied pairing as max_worker_processes above, for
+# the GUC that is the only thing that ever terminates a session an app
+# bug left BEGIN'd and abandoned: idle_in_transaction_session_timeout
+# is a reload-only setting (no restart needed, unlike
+# max_worker_processes), so in steady state both checks should agree
+# quickly — a codified-but-not-live gap here means "reload never ran"
+# rather than "awaiting the next maintenance restart".
+assert_grep pg_idle_in_transaction_timeout_codified \
+  "$PG_CONF_FILE" \
+  '^idle_in_transaction_session_timeout[[:space:]]*=[[:space:]]*30min'
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+pg_idle_in_transaction_timeout_live() {
+  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
+  local live
+  live=$(PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
+    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
+    "SHOW idle_in_transaction_session_timeout;" 2>/dev/null)
+  [[ "$live" == "30min" ]]
+}
+assert_cmd pg_idle_in_transaction_timeout_live pg_idle_in_transaction_timeout_live
+
 # ── tx_hash_index parity probe (explorer 404 authority, 2026-08-01) ──
 # GET /v1/tx/{hash} treats a stellar.tx_hash_index MISS as an
 # AUTHORITATIVE not-found (the bloom-scan fallback for index misses was

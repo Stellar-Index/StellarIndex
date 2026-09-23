@@ -76,7 +76,7 @@ ExecStart=/usr/local/bin/stellarindex-ops curated-rwa-sync \
   -timeout ${RUN_TIMEOUT} \
   -write \
   -textfile /var/lib/node_exporter/textfile_collector/curated_rwa_sync.prom \
-  ${EXTRA_FLAGS}
+  $EXTRA_FLAGS
 
 # De-privileged, same shape as directory-sync and sep1-refresh
 # (CS-118/CS-119): reads config, talks HTTPS to one third party, writes

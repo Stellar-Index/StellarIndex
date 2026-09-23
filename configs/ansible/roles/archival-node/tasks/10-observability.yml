@@ -1211,9 +1211,13 @@
 
       # Accumulated in $HEALTH and appended as one block at the end, so
       # each family carries a single HELP/TYPE header.
+      health_ok() {
+        # health_ok <query-label> <ok>
+        printf 'stellarindex_timescale_probe_query_ok{query="%s"} %s\n' "$1" "$2" >> "$HEALTH"
+      }
       health() {
         # health <query-label> <ok> <rows-emitted>
-        printf 'stellarindex_timescale_probe_query_ok{query="%s"} %s\n' "$1" "$2" >> "$HEALTH"
+        health_ok "$1" "$2"
         printf 'stellarindex_timescale_probe_rows{query="%s"} %s\n' "$1" "$3" >> "$HEALTH"
       }
 
@@ -1463,6 +1467,73 @@
       done <<< "$Q_OUT" >> "$TMP"
       [ "$bad" -eq 0 ] || Q_OK=0
       health job_stats "$Q_OK" "$rows"
+
+      # The failure counter says a job is failing, never WHY. The most
+      # recent job_errors message rides on a separate info gauge (value
+      # always 1, the stellarindex_binary_version_info shape): as a label
+      # on the counter it would change that series' identity with every
+      # new error text and reset increase() under the climbing alert.
+      {
+        echo "# HELP stellarindex_timescale_job_last_failure_reason_info Most recent timescaledb_information.job_errors message for a job that has failed at least once (value always 1)."
+        echo "# TYPE stellarindex_timescale_job_last_failure_reason_info gauge"
+      } >> "$TMP"
+
+      # label_escape <text> — free text as a label value: \ " and newline
+      # escaped per the exposition format, other control characters
+      # flattened, and braces swapped for parentheses because the
+      # validator below refuses any label that carries one.
+      label_escape() {
+        local s="$1" bs=\\
+        s=${s//"$bs"/"$bs$bs"}
+        s=${s//'"'/'\"'}
+        s=${s//$'\n'/'\n'}
+        s=${s//[[:cntrl:]]/' '}
+        s=${s//'{'/'('}
+        s=${s//'}'/')'}
+        printf '%s' "$s"
+      }
+
+      # job_error_line <job_id|proc|hypertable|reason> — reason is split
+      # off by position, not by read, so a pipe inside it survives.
+      job_error_line() {
+        local jid="${1%%|*}" rest="${1#*|}" proc ht
+        proc="${rest%%|*}"
+        rest="${rest#*|}"
+        ht="${rest%%|*}"
+        rest="${rest#*|}"
+        printf 'stellarindex_timescale_job_last_failure_reason_info{job_id="%s",proc="%s",hypertable="%s",reason="%s"} 1\n' \
+          "$jid" "$(label_escape "$proc")" "$(label_escape "$ht")" "$(label_escape "${rest:-unknown}")"
+      }
+
+      # err_message is printed verbatim by -At, so a newline in it starts
+      # an output line that is not a record. A record is a line opening
+      # with `<job_id>|<proc>|<hypertable>|`; any other line continues the
+      # message before it, and one with no message before it is a reply
+      # this loop does not understand.
+      q "SELECT DISTINCT ON (je.job_id)
+                je.job_id, j.proc_name, COALESCE(j.hypertable_name,'-'),
+                left(je.err_message, 200)
+         FROM timescaledb_information.job_errors je
+         JOIN timescaledb_information.jobs j USING (job_id)
+         ORDER BY je.job_id, je.finish_time DESC"
+      rec_re='^[0-9]+[|][^|]*[|][^|]*[|]'
+      rec=""
+      bad=0
+      while IFS= read -r line; do
+        if [[ "$line" =~ $rec_re ]]; then
+          [ -z "$rec" ] || job_error_line "$rec"
+          rec="$line"
+        elif [ -n "$rec" ]; then
+          rec+=$'\n'"$line"
+        elif [ -n "$line" ]; then
+          bad=$((bad + 1))
+        fi
+      done <<< "$Q_OUT" >> "$TMP"
+      [ -z "$rec" ] || job_error_line "$rec" >> "$TMP"
+      [ "$bad" -eq 0 ] || Q_OK=0
+      # No failing job is the healthy state, so this query publishes no
+      # rows gauge for the degraded alert's rows == 0 arm to misread.
+      health_ok job_errors "$Q_OK"
 
       # ── The probe's own health ────────────────────────────────────
       #

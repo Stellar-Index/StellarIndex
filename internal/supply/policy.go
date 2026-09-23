@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
 // LockedSet is the operator-configurable list of accounts/contracts
@@ -139,13 +141,30 @@ func validateDistinctNonEmpty(label string, items []string) []error {
 	return errs
 }
 
+// validateStrkeys applies [validateDistinctNonEmpty] and additionally
+// rejects any entry that is not a CRC-valid strkey of the expected
+// version: a typo'd or wrong-kind address matches no holder, so its
+// balance silently contributes 0 to the exclusion and circulating
+// supply is overstated with no error.
+func validateStrkeys(label, kind string, valid func(string) bool, items []string) []error {
+	errs := validateDistinctNonEmpty(label, items)
+	for i, v := range items {
+		if v != "" && !valid(v) {
+			errs = append(errs, fmt.Errorf(
+				"supply: %s[%d] %q is not a valid %s strkey — it would match no holder and exclude nothing",
+				label, i, v, kind))
+		}
+	}
+	return errs
+}
+
 // Validate checks the policy for structural problems. Returns
 // joined errors when multiple problems exist. Cheap; runs at
 // process start after YAML load.
 func (p Policy) Validate() error {
 	var errs []error
 
-	errs = append(errs, validateDistinctNonEmpty("SDFReserveAccounts", p.SDFReserveAccounts)...)
+	errs = append(errs, validateStrkeys("SDFReserveAccounts", "G", canonical.IsAccountID, p.SDFReserveAccounts)...)
 
 	for assetKey, override := range p.MaxSupplyOverrides {
 		if override == "" {
@@ -157,10 +176,10 @@ func (p Policy) Validate() error {
 	}
 
 	for assetKey, locked := range p.PerAsset {
-		errs = append(errs, validateDistinctNonEmpty(
-			fmt.Sprintf("PerAsset[%q].Accounts", assetKey), locked.Accounts)...)
-		errs = append(errs, validateDistinctNonEmpty(
-			fmt.Sprintf("PerAsset[%q].Contracts", assetKey), locked.Contracts)...)
+		errs = append(errs, validateStrkeys(
+			fmt.Sprintf("PerAsset[%q].Accounts", assetKey), "G", canonical.IsAccountID, locked.Accounts)...)
+		errs = append(errs, validateStrkeys(
+			fmt.Sprintf("PerAsset[%q].Contracts", assetKey), "C", canonical.IsContractID, locked.Contracts)...)
 	}
 
 	return errors.Join(errs...)

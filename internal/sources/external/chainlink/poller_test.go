@@ -66,7 +66,7 @@ func TestDecodeLatestRoundData_happy(t *testing.T) {
 	updatedAt := uint64(1767225600)
 	rawHex := buildLatestRoundDataReturn(t, 42, answer, 0, updatedAt, 42)
 
-	rnd, err := decodeLatestRoundData(rawHex, "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c")
+	rnd, err := decodeLatestRoundData(rawHex, "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", decodeTestNow)
 	if err != nil {
 		t.Fatalf("decodeLatestRoundData: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestDecodeLatestRoundData_outOfRangeUpdatedAt(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rawHex := buildLatestRoundDataReturn(t, 1, big.NewInt(100), 0, updatedAt, 1)
-			_, err := decodeLatestRoundData(rawHex, "0xabc")
+			_, err := decodeLatestRoundData(rawHex, "0xabc", decodeTestNow)
 			if !errors.Is(err, ErrMalformedResult) {
 				t.Errorf("err = %v, want ErrMalformedResult (out-of-range updatedAt must be rejected, not wrapped)", err)
 			}
@@ -112,7 +112,7 @@ func TestDecodeLatestRoundData_outOfRangeUpdatedAt(t *testing.T) {
 func TestDecodeLatestRoundData_negativeAnswer(t *testing.T) {
 	t.Parallel()
 	rawHex := buildLatestRoundDataReturn(t, 1, big.NewInt(-100), 0, 1767225600, 1)
-	_, err := decodeLatestRoundData(rawHex, "0xabc")
+	_, err := decodeLatestRoundData(rawHex, "0xabc", decodeTestNow)
 	if !errors.Is(err, ErrNonPositivePrice) {
 		t.Errorf("err = %v, want ErrNonPositivePrice", err)
 	}
@@ -125,7 +125,7 @@ func TestDecodeLatestRoundData_negativeAnswer(t *testing.T) {
 func TestDecodeLatestRoundData_zeroUpdatedAt(t *testing.T) {
 	t.Parallel()
 	rawHex := buildLatestRoundDataReturn(t, 1, big.NewInt(100), 0, 0, 1)
-	_, err := decodeLatestRoundData(rawHex, "0xabc")
+	_, err := decodeLatestRoundData(rawHex, "0xabc", decodeTestNow)
 	if !errors.Is(err, ErrMalformedResult) {
 		t.Errorf("err = %v, want ErrMalformedResult", err)
 	}
@@ -136,7 +136,7 @@ func TestDecodeLatestRoundData_zeroUpdatedAt(t *testing.T) {
 // AggregatorV3Interface.
 func TestDecodeLatestRoundData_wrongLength(t *testing.T) {
 	t.Parallel()
-	_, err := decodeLatestRoundData("0xdeadbeef", "0xabc")
+	_, err := decodeLatestRoundData("0xdeadbeef", "0xabc", decodeTestNow)
 	if !errors.Is(err, ErrMalformedResult) {
 		t.Errorf("err = %v, want ErrMalformedResult", err)
 	}
@@ -209,7 +209,7 @@ func TestRoundCache_phaseRollover_resumesEmission(t *testing.T) {
 func TestDecodeLatestRoundData_phaseBits(t *testing.T) {
 	t.Parallel()
 	raw := buildProxyRoundDataReturn(t, 2, 1, big.NewInt(2_500_00000000), 1767225600)
-	rnd, err := decodeLatestRoundData(raw, "0xabc")
+	rnd, err := decodeLatestRoundData(raw, "0xabc", decodeTestNow)
 	if err != nil {
 		t.Fatalf("decode: %v", err)
 	}

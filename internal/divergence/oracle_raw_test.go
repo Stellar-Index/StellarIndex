@@ -121,10 +121,10 @@ func TestDivergenceNeverAsksTheOracleForARawKey(t *testing.T) {
 	}
 }
 
-// TestOracleAssetKeysNeverSynthesisesARawKey guards the one place in
-// this package that BUILDS keys rather than passing them through. Its
-// XLM dual-form aliasing is exactly the kind of expansion that could
-// grow a raw arm later without anyone noticing the layer violation.
+// TestOracleAssetKeysNeverSynthesisesARawKey guards the expander this
+// package binds its oracle keys through (the alias registry). Its alias
+// families are exactly the kind of expansion that could grow a raw arm
+// later without anyone noticing the layer violation.
 func TestOracleAssetKeysNeverSynthesisesARawKey(t *testing.T) {
 	native, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.NewFiatAsset("USD")
@@ -134,13 +134,13 @@ func TestOracleAssetKeysNeverSynthesisesARawKey(t *testing.T) {
 	}
 
 	for _, a := range []canonical.Asset{native, usd, xlm} {
-		keys := oracleAssetKeys(a)
+		keys := canonical.AssetAliasStrings(a)
 		if len(keys) == 0 {
-			t.Errorf("oracleAssetKeys(%s) returned no keys", a.String())
+			t.Errorf("AssetAliasStrings(%s) returned no keys", a.String())
 		}
 		for _, k := range keys {
 			if strings.HasPrefix(k, "raw:") {
-				t.Errorf("oracleAssetKeys(%s) synthesised the raw key %q", a.String(), k)
+				t.Errorf("AssetAliasStrings(%s) synthesised the raw key %q", a.String(), k)
 			}
 		}
 	}

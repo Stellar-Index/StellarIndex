@@ -592,7 +592,7 @@ func TestValidate_CoreHTTPEndpointOptional(t *testing.T) {
 // (internal/supply/config_reader.go) — see that type's doc.
 func TestValidate_SDFReserveAccountObserverOnlyAccepted(t *testing.T) {
 	c := config.Default()
-	c.Supply.SDFReserveAccounts = []string{"GABBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}
+	c.Supply.SDFReserveAccounts = []string{"GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"}
 	c.Supply.ReserveBalancesStroops = nil
 	if err := c.Validate(); err != nil {
 		t.Fatalf("Validate: %v (observer-only SDF reserve account must be accepted without a static balance entry)", err)
@@ -615,6 +615,24 @@ func TestValidate_SDFReserveAccountMalformedRejected(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "sdf_reserve_accounts") {
 		t.Errorf("err = %v; want substring %q", err, "sdf_reserve_accounts")
+	}
+}
+
+// TestValidate_SDFReserveAccountBadChecksumRejected — an entry with the
+// right prefix, length and alphabet but a wrong CRC (one character
+// flipped) matches no on-chain account, so its reserve balance would
+// contribute 0 and overstate XLM circulating supply with a clean boot.
+func TestValidate_SDFReserveAccountBadChecksumRejected(t *testing.T) {
+	const reserveAccount = "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"
+	flipped := reserveAccount[:20] + "A" + reserveAccount[21:]
+	c := config.Default()
+	c.Supply.SDFReserveAccounts = []string{reserveAccount, flipped}
+	err := c.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted a reserve account with a bad strkey checksum")
+	}
+	if !strings.Contains(err.Error(), "sdf_reserve_accounts[1]") {
+		t.Errorf("err = %v; want it to name sdf_reserve_accounts[1]", err)
 	}
 }
 

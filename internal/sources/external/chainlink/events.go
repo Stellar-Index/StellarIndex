@@ -176,6 +176,11 @@ var (
 	// drop those rather than write a row that would fail
 	// `oracle_updates`'s `CHECK (price > 0)`.
 	ErrNonPositivePrice = errors.New("chainlink: non-positive answer")
+
+	// ErrFutureUpdatedAt — the feed reported an updatedAt ahead of the
+	// poller's clock (beyond a small skew allowance). Refused so a
+	// future-dated row can never pin itself as the pair's latest.
+	ErrFutureUpdatedAt = errors.New("chainlink: updatedAt ahead of poller clock")
 )
 
 // roundCache is the per-feed dedup memory: last roundId we emitted

@@ -95,10 +95,7 @@ func (p *Poller) resolveDecimals(ctx context.Context, pair canonical.Pair, spec 
 	if logger == nil {
 		logger = slog.Default()
 	}
-	now := time.Now()
-	if p.now != nil {
-		now = p.now()
-	}
+	now := p.clock()
 	key := strings.ToLower(spec.Address)
 	cache := p.decimals
 

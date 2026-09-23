@@ -53,6 +53,11 @@ type RWACuratedDirectoryReader interface {
 // rebuild it rides alongside.
 const rwaCuratedSnapshotTTL = 10 * time.Minute
 
+// rwaCuratedReadBudget bounds one refresh read. The read is detached
+// from the triggering request and runs under the cache mutex every /rwa
+// request queues on, so it needs a deadline of its own.
+const rwaCuratedReadBudget = 5 * time.Second
+
 type rwaCurated struct {
 	byAddress map[string]timescale.CuratedRWAEntry
 	census    timescale.CuratedRWACensus
@@ -74,15 +79,28 @@ type rwaCuratedCache struct {
 // rwaCuratedSnapshot fails CLOSED like every other snapshot on this
 // surface: a failed read yields an unavailable snapshot and is cached as
 // such, never the last good one.
+//
+// The read runs on a context DETACHED from the caller's request, so the
+// request that triggers a refresh cannot poison the shared cache by
+// disconnecting mid-read, and under its own deadline, so a hung read
+// cannot hold the mutex indefinitely. The TTL is stamped only once the
+// read has returned.
 func (s *Server) rwaCuratedSnapshot(ctx context.Context) rwaCurated {
+	return s.rwaCuratedSnapshotWithin(ctx, rwaCuratedReadBudget)
+}
+
+func (s *Server) rwaCuratedSnapshotWithin(ctx context.Context, budget time.Duration) rwaCurated {
 	s.rwaCuratedSnap.mu.Lock()
 	defer s.rwaCuratedSnap.mu.Unlock()
 	if !s.rwaCuratedSnap.at.IsZero() && time.Since(s.rwaCuratedSnap.at) < rwaCuratedSnapshotTTL {
 		return s.rwaCuratedSnap.snap
 	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
+	defer cancel()
+	snap := s.readRWACurated(rctx)
+	s.rwaCuratedSnap.snap = snap
 	s.rwaCuratedSnap.at = time.Now()
-	s.rwaCuratedSnap.snap = s.readRWACurated(ctx)
-	return s.rwaCuratedSnap.snap
+	return snap
 }
 
 func (s *Server) readRWACurated(ctx context.Context) rwaCurated {
@@ -151,6 +169,17 @@ type RWACuratedPublishedPoint struct {
 	ValueUSD string `json:"value_usd"`
 }
 
+// rwaCuratedPublishedStaleAfter is the executed_at age past which a
+// published total is labelled `stale`. executed_at is the curator's
+// clock; observed_at only proves our own sync ran. 48h mirrors the
+// storage layer's curatedRWARecognitionMaxAge.
+const rwaCuratedPublishedStaleAfter = 48 * time.Hour
+
+// rwaCuratedPublishedMaxAge is the executed_at age past which a
+// published total is not served at all; it matches the sibling
+// directory table's curatedRWAPriceMaxAge.
+const rwaCuratedPublishedMaxAge = 7 * 24 * time.Hour
+
 // RWACuratedPublished is what the curator PUBLISHES: the headline
 // monthly RWA market-cap total its public dashboard queries last
 // computed, that month's split by the curator's own subclass labels,
@@ -167,6 +196,10 @@ type RWACuratedPublished struct {
 	ExecutedAt WireTime                   `json:"executed_at"`
 	BySubclass []RWACuratedPublishedSplit `json:"by_subclass"`
 	Series     []RWACuratedPublishedPoint `json:"series"`
+	// Stale marks a published total whose ExecutedAt is older than
+	// [rwaCuratedPublishedStaleAfter]: the curator's own query has not
+	// moved in a while, even though this index's read of it is fresh.
+	Stale bool `json:"stale,omitempty"`
 	// Source names the curator's public queries the figures were read
 	// from, e.g. "dune query 6961845 / 6961847".
 	Source string `json:"source"`
@@ -346,7 +379,7 @@ func rwaApplyCuratorReference(a *RWAAsset, e timescale.CuratedRWAEntry, now time
 
 // ─── summary ────────────────────────────────────────────────────────
 
-func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string) *RWACuratedSummary {
+func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string, now time.Time) *RWACuratedSummary {
 	out := &RWACuratedSummary{
 		Curator: rwaCuratorDune,
 		Basis:   rwaCuratedBasisProse,
@@ -360,7 +393,7 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string) 
 		out.Census.ObservedAt = &t
 	}
 	if snap.wired {
-		out.Published = rwaCuratedPublishedBlock(snap.published, verifiedRef)
+		out.Published = rwaCuratedPublishedBlock(snap.published, verifiedRef, now)
 	}
 	switch {
 	case !snap.wired:
@@ -421,8 +454,16 @@ func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (*big.Rat, bool) {
 // stored decimal re-rendered at 2dp through big.Rat, never a float; the
 // series and the split are served in the order the reader returned them
 // (oldest month first; largest subclass first).
-func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *string) *RWACuratedPublished {
+//
+// A total whose ExecutedAt is past [rwaCuratedPublishedMaxAge] is not
+// served at all — the curator's own clock, not this index's sync
+// health, has gone stale for too long. Between that and
+// [rwaCuratedPublishedStaleAfter] it is served labelled `stale: true`.
+func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *string, now time.Time) *RWACuratedPublished {
 	if p == nil {
+		return nil
+	}
+	if p.ExecutedAt.IsZero() || now.Sub(p.ExecutedAt) > rwaCuratedPublishedMaxAge {
 		return nil
 	}
 	total := ratFromOptionalString(&p.TotalUSD)
@@ -435,6 +476,7 @@ func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *str
 		ExecutedAt: WireTime(p.ExecutedAt),
 		BySubclass: make([]RWACuratedPublishedSplit, 0, len(p.BySubclass)),
 		Series:     make([]RWACuratedPublishedPoint, 0, len(p.Series)),
+		Stale:      now.Sub(p.ExecutedAt) > rwaCuratedPublishedStaleAfter,
 		Source:     "dune query " + strconv.FormatInt(p.SourceQuery, 10),
 	}
 	if p.SplitSourceQuery != 0 && p.SplitSourceQuery != p.SourceQuery {
@@ -466,5 +508,5 @@ func (s *Server) attachRWACurated(r *http.Request, view *RWAAssetsView, now time
 	members := rwaCuratedMembership(snap, view.Assets)
 	rows, _ := s.rwaCuratedRows(r.Context(), members, now)
 	view.CuratedAssets = rows
-	view.Curated = rwaCuratedSummarise(snap, rows, view.Summary.ReferenceValuation.ValueUSD)
+	view.Curated = rwaCuratedSummarise(snap, rows, view.Summary.ReferenceValuation.ValueUSD, now)
 }

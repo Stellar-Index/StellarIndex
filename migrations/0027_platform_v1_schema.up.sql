@@ -330,11 +330,14 @@ CREATE INDEX invites_pending_idx ON invites (expires_at)
 
 -- ─── 10. audit_log ─────────────────────────────────────────────────
 --
--- Every user / staff / system action. Append-only; no UPDATE or
--- DELETE except the retention policy.
+-- Every user / staff / system action. Append-only: no code path
+-- issues an UPDATE or DELETE against this table.
 --
--- 12-month online retention; older rows archived to S3 by an
--- offline job (separate concern, not in this migration).
+-- No retention/archival job exists (as of this writing, none has
+-- been built anywhere in the tree): rows accumulate indefinitely.
+-- 12-month online retention + S3 archival was the original design
+-- intent but is not implemented; treat that as aspirational until an
+-- offline job actually lands.
 
 CREATE TABLE audit_log (
     id              uuid PRIMARY KEY DEFAULT uuid_generate_v4(),

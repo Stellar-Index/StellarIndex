@@ -165,3 +165,80 @@ func TestPolicyValidate_rejectsNegativeOverrideAndDuplicates(t *testing.T) {
 		}
 	})
 }
+
+// TestPolicyValidate_rejectsNonStrkeyEntries — a reserve or locked-set
+// entry that is not a CRC-valid strkey of the right version matches no
+// on-chain holder, so its balance silently contributes 0 to the
+// exclusion and circulating supply is overstated with a clean boot.
+func TestPolicyValidate_rejectsNonStrkeyEntries(t *testing.T) {
+	const (
+		reserveAccount = "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"
+		lockedContract = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+		assetKey       = "AQUA:GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	)
+	// One base32 character flipped: right prefix and length, bad CRC.
+	badChecksumAccount := reserveAccount[:20] + "A" + reserveAccount[21:]
+	badChecksumContract := lockedContract[:20] + "A" + lockedContract[21:]
+	if badChecksumAccount == reserveAccount || badChecksumContract == lockedContract {
+		t.Fatal("fixture mutation is a no-op")
+	}
+
+	cases := []struct {
+		name    string
+		policy  supply.Policy
+		wantSub string
+	}{
+		{
+			"reserve account bad checksum",
+			supply.Policy{SDFReserveAccounts: []string{reserveAccount, badChecksumAccount}},
+			"SDFReserveAccounts[1]",
+		},
+		{
+			"reserve account truncated",
+			supply.Policy{SDFReserveAccounts: []string{reserveAccount[:55]}},
+			"SDFReserveAccounts[0]",
+		},
+		{
+			"reserve account is a contract id",
+			supply.Policy{SDFReserveAccounts: []string{lockedContract}},
+			"SDFReserveAccounts[0]",
+		},
+		{
+			"locked account bad checksum",
+			supply.Policy{PerAsset: map[string]supply.LockedSet{assetKey: {Accounts: []string{badChecksumAccount}}}},
+			`PerAsset["` + assetKey + `"].Accounts[0]`,
+		},
+		{
+			"locked contract bad checksum",
+			supply.Policy{PerAsset: map[string]supply.LockedSet{assetKey: {Contracts: []string{badChecksumContract}}}},
+			`PerAsset["` + assetKey + `"].Contracts[0]`,
+		},
+		{
+			"locked contract is an account id",
+			supply.Policy{PerAsset: map[string]supply.LockedSet{assetKey: {Contracts: []string{reserveAccount}}}},
+			`PerAsset["` + assetKey + `"].Contracts[0]`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.policy.Validate()
+			if err == nil {
+				t.Fatal("Validate accepted a non-strkey entry — it resolves to no holder and overstates circulating supply")
+			}
+			if !strings.Contains(err.Error(), tc.wantSub) {
+				t.Errorf("err = %v; want it to name %q", err, tc.wantSub)
+			}
+		})
+	}
+
+	valid := supply.Policy{
+		SDFReserveAccounts: []string{reserveAccount},
+		PerAsset: map[string]supply.LockedSet{assetKey: {
+			Accounts:  []string{reserveAccount},
+			Contracts: []string{lockedContract},
+		}},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("Validate rejected CRC-valid strkeys: %v", err)
+	}
+}

@@ -261,6 +261,9 @@ serves them under a **third arm**, apart from the two verified ones:
   the published total minus this index's verified reference total,
   signed. The curator's arithmetic over inputs this index cannot see:
   no per-asset breakdown reaches it, so no row in it can be checked.
+  `executed_at` is the curator's clock, not this index's sync: past 48
+  hours the block carries `stale: true`, and past 7 days it is not
+  served at all.
 - `curated.status: published_totals` says exactly that state: the
   totals answered and no per-asset row is readable.
 - `curated_assets[]` and the three-figure comparison

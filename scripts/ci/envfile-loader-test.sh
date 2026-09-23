@@ -179,7 +179,7 @@ elif grep -qE 'source /etc/default/stellarindex-ops' <<<"$cron"; then
 elif grep -q '%' <<<"$cron"; then
   bad "tier-D cron job contains '%' — cron turns it into a newline"
 else
-  inner="${cron#bash -c \'}"; inner="${inner%; /usr/local/bin/stellarindex-ops verify-archive*}"
+  inner="${cron#bash -c \'}"; inner="${inner%%; /usr/local/*}"
   inner="${inner//\/etc\/default\/stellarindex-ops/$TMP/env}"
   posix_check "tier-D cron" "$inner"
 fi

@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,5 +166,52 @@ func TestAuditAppend_ValidationRejectsEmpty(t *testing.T) {
 	}
 	if err := a.AppendBatch(ctx, batch); err == nil {
 		t.Error("AppendBatch with an invalid entry: want error, got nil")
+	}
+}
+
+// TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader (T158): the
+// AuditStore struct doc must not claim List "powers the dashboard's
+// audit-trail surface" — grep across the tree finds zero non-test
+// callers of List, and admin_keys.go's AuditSink (the only thing
+// wired into API handlers) exposes just Append.
+func TestAuditStoreDocDoesNotClaimUnbuiltDashboardReader(t *testing.T) {
+	src, err := os.ReadFile("audit_store.go")
+	if err != nil {
+		t.Fatalf("read audit_store.go: %v", err)
+	}
+	text := string(src)
+	if strings.Contains(text, "powers the dashboard's audit-trail surface") {
+		t.Error(`audit_store.go doc still claims List "powers the dashboard's audit-trail surface"; no dashboard or API route calls List`)
+	}
+	if !strings.Contains(text, "no dashboard or API route calls it yet") {
+		t.Error("audit_store.go's AuditStore doc should say plainly that List isn't wired into any dashboard/API route")
+	}
+	for _, invented := range []string{"staff/ops tooling", "staff console", "the dashboard paginates"} {
+		if strings.Contains(text, invented) {
+			t.Errorf("audit_store.go names %q as a List reader; List has no non-test caller", invented)
+		}
+	}
+}
+
+// TestMigration0027AuditLogCommentDoesNotClaimImplementedRetention
+// (T337): migration 0027's audit_log header comment must not
+// present 12-month/S3 retention as current behavior — no
+// retention/archival job exists anywhere in the tree (no DELETE or
+// purge statement touches audit_log, and no archiver code exists in
+// migrations/, scripts/, configs/, internal/, cmd/ or deploy/).
+func TestMigration0027AuditLogCommentDoesNotClaimImplementedRetention(t *testing.T) {
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed")
+	}
+	migPath := filepath.Join(filepath.Dir(thisFile), "..", "..", "..",
+		"migrations", "0027_platform_v1_schema.up.sql")
+	src, err := os.ReadFile(migPath)
+	if err != nil {
+		t.Fatalf("read migration 0027: %v", err)
+	}
+	text := string(src)
+	if !strings.Contains(text, "No retention/archival job exists") {
+		t.Error("migration 0027's audit_log header comment should say plainly that no retention/archival job exists yet, not present it as current behavior")
 	}
 }
