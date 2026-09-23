@@ -89,12 +89,16 @@ groups:
           component: external-poller
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/fx-feed-stale.md
-          summary: "active fiat-FX feed has written no fx_quote in 6+ h"
+          summary: "active fiat-FX feed has committed no fresh upstream rate in 6+ h"
           description: |
             The freshest stellarindex_external_fx_last_quote_unix across
             all FX sources is > 6 h stale for > 15 min. The active feed
             (`massive`, the internal/sources/external/forex worker in the API
-            binary) has stopped committing fx_quotes rows. Every
+            binary) has stopped committing fresh upstream rates. The
+            gauge ignores the synthetic USD=1.0 anchor row and
+            carried-forward history bars, which are rewritten every
+            refresh even when the upstream gave nothing usable (all
+            rates unnamed, non-finite or band-refused). Every
             fiat-quoted pair (XLM/EUR, XLM/GBP, …) is still priced off the
             last-good fx_quotes row via the 7-day forex-snap lookback, so
             there is NO customer impact yet — but it will silently break

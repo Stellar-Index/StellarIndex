@@ -795,9 +795,11 @@ Gauge, label `source`.
 UNIX-seconds timestamp of the most recent successful `fx_quotes` WRITE
 from the active fiat-FX feed (`massive`, the `internal/sources/external/forex`
 worker in the API binary). Advances ONLY when `InsertFXQuoteBatch`
-commits a non-empty batch — a failed write or an empty snapshot
-(upstream returned no usable rates) leaves the prior stamp untouched, so
-a wedged-but-erroring worker cannot keep the feed looking fresh.
+commits a batch carrying at least one fresh upstream rate — a failed
+write, or a batch holding only the synthetic USD=1.0 anchor row and
+carried-forward history bars (upstream returned no usable rates), leaves
+the prior stamp untouched, so neither a wedged-but-erroring worker nor a
+feed answering with nothing usable can keep the feed looking fresh.
 
 Deliberately SEPARATE from `stellarindex_external_poller_last_success_unix`:
 `massive` does not run under the `external.Connector` poller framework

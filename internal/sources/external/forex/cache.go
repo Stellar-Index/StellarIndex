@@ -79,6 +79,10 @@ func (c *Cache) Set(s *Snapshot) {
 	c.snapshot.Store(s)
 }
 
+// anchorTicker is the base currency buildSnapshot synthesises at 1.0;
+// its row carries no upstream information.
+const anchorTicker = "USD"
+
 // buildSnapshot merges a raw rates map + names map into the public
 // Currency slice. Excludes USD itself from the per-currency rate
 // list (rate=1.0 is implied), excludes any code without a name,
@@ -104,7 +108,7 @@ func buildSnapshot(rates map[string]float64, names map[string]string, publishedA
 		usdName = "US Dollar"
 	}
 	out = append(out, Currency{
-		Ticker:   "USD",
+		Ticker:   anchorTicker,
 		Name:     toTitle(usdName),
 		RateUSD:  1.0,
 		UpdateAt: publishedAt,
@@ -118,7 +122,7 @@ func buildSnapshot(rates map[string]float64, names map[string]string, publishedA
 			continue
 		}
 		ticker := strings.ToUpper(code)
-		if ticker == "USD" {
+		if ticker == anchorTicker {
 			continue
 		}
 		out = append(out, Currency{

@@ -1525,7 +1525,7 @@ var ChainlinkFeedDecimalsVerifyFailedTotal = prometheus.NewCounterVec(
 var ExternalFXLastQuoteUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_external_fx_last_quote_unix",
-		Help: "UNIX seconds of the most recent successful fx_quotes write per FX source (currently `massive`). Reset-proof liveness for the active fiat-FX feed the triangulation forex-snap depends on; only advances on a committed non-empty batch.",
+		Help: "UNIX seconds of the most recent successful fx_quotes write per FX source (currently `massive`). Reset-proof liveness for the active fiat-FX feed the triangulation forex-snap depends on; only advances on a committed batch carrying a fresh upstream rate (not the synthetic USD anchor or carried-forward history).",
 	},
 	[]string{"source"},
 )
