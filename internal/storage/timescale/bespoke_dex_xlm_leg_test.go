@@ -82,3 +82,72 @@ func TestDexWindowKPIQueryLongWindowUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// TestDexWindowKPIQuery24hReportsUnvaluedXLM — dexXLMLegUSD COALESCEs a
+// missing XLM/USD vwap to 0, and the anchor outage that empties xlm_usd is
+// the one that parks volume in the XLM legs. The 24h KPI query must
+// therefore also return the XLM it could not value, so the block can
+// serve the figure as a lower bound instead of a silent total.
+func TestDexWindowKPIQuery24hReportsUnvaluedXLM(t *testing.T) {
+	q := dexWindowKPIQuery(1)
+	if !strings.Contains(q, "(SELECT vwap FROM xlm_usd) IS NULL") {
+		t.Error("24h window KPI must detect an empty XLM/USD vwap CTE")
+	}
+	if !strings.Contains(q, dexXLMLegUnvalued) {
+		t.Error("24h window KPI must select the unvalued XLM leg (dexXLMLegUnvalued)")
+	}
+	assertDEXNumericSafe(t, "24h window KPI", q)
+}
+
+// TestDexVolumeKPIHintAnchorOutage — on an anchor outage the 24h volume
+// KPI is the priced leg only; its hint must say lower bound and name the
+// excluded XLM, never claim the XLM legs are valued.
+func TestDexVolumeKPIHintAnchorOutage(t *testing.T) {
+	h := dexVolumeKPIHint(1, "30.0000000")
+	if !strings.Contains(h, "LOWER BOUND") || !strings.Contains(h, "excludes 30.0000000 XLM") {
+		t.Errorf("anchor-outage hint must be a named lower bound, got %q", h)
+	}
+	if strings.Contains(h, "at the current XLM/USD vwap") {
+		t.Errorf("anchor-outage hint must not claim the XLM legs are valued, got %q", h)
+	}
+	if h := dexVolumeKPIHint(1, ""); strings.Contains(h, "LOWER BOUND") || !strings.Contains(h, "XLM/USD vwap") {
+		t.Errorf("anchored 24h hint must describe the XLM-valued leg, got %q", h)
+	}
+	if h := dexVolumeKPIHint(7, "30.0000000"); strings.Contains(h, "XLM") {
+		t.Errorf("7d hint has no XLM leg to disclose, got %q", h)
+	}
+}
+
+// TestDexUSDValuationNoteAnchorOutage — the block note is the served
+// statement of derivation; on an outage it must not say the XLM legs are
+// valued.
+func TestDexUSDValuationNoteAnchorOutage(t *testing.T) {
+	n := dexUSDValuationNote(1, "30.0000000")
+	if strings.Contains(n, "additionally value") {
+		t.Errorf("anchor-outage note must not claim the XLM legs are valued, got %q", n)
+	}
+	for _, want := range []string{"30.0000000 XLM", "NOT valued", "lower bounds"} {
+		if !strings.Contains(n, want) {
+			t.Errorf("anchor-outage note must contain %q, got %q", want, n)
+		}
+	}
+}
+
+// TestDexAvgTradeHint24hIsUnaugmented — the average divides the raw
+// trades.usd_volume sum, not the XLM-augmented 24h volume KPI beside it,
+// so neither its hint nor the block note may present it as that KPI ÷
+// trades.
+func TestDexAvgTradeHint24hIsUnaugmented(t *testing.T) {
+	for _, days := range []int{1, 7} {
+		h := dexAvgTradeHint(days)
+		if strings.Contains(h, "window USD volume") || !strings.Contains(h, "usd_volume of priced trades") {
+			t.Errorf("%dd avg hint must name its usd_volume-only numerator, got %q", days, h)
+		}
+	}
+	if h := dexAvgTradeHint(1); !strings.Contains(h, "excludes the XLM-denominated legs") {
+		t.Errorf("24h avg hint must disclose it omits the XLM leg, got %q", h)
+	}
+	if n := dexUSDValuationNote(1, ""); !strings.Contains(n, "average trade size") {
+		t.Errorf("24h note must name the average trade size as usd_volume-only, got %q", n)
+	}
+}
