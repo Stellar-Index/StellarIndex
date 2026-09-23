@@ -179,11 +179,13 @@ rows, so filtering `+"`base_asset = $%s AND quote_asset = $%s`"+` alone
 drops every row in which the market traded only the other way.
 Silent: the response looks well-formed, there is just less of it.
 
-Fix it the way its siblings do — read both orientations and fold them
-per ROW, on the row's own base_asset:
+Fix it the way its siblings do — read both orientations, one UNION ALL
+arm each (never one OR; see TestPairReadsNeverFoldDirectionsWithOr),
+and fold them per ROW, on the row's own base_asset:
 
-    WHERE ((base_asset = $%s AND quote_asset = $%s)
-        OR (base_asset = $%s AND quote_asset = $%s))
+    WHERE base_asset = $%s AND quote_asset = $%s
+    UNION ALL
+    … WHERE base_asset = $%s AND quote_asset = $%s
 
 On a CAGG that is combineDirVWAP via scanCombinedVwap1mRows, selecting
 base_asset and volume so the Go combine can weight and invert the
@@ -220,4 +222,93 @@ func indent(s string) string {
 		lines[i] = "    " + strings.TrimSpace(l)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// pairKeySetFilter matches a batch read that selects pairs by their
+// stored `base|quote` key text, which names ONE orientation per key.
+var pairKeySetFilter = regexp.MustCompile(
+	`\(\s*(?:\w+\.)?base_asset\s*\|\|\s*'\|'\s*\|\|\s*(?:\w+\.)?quote_asset\s*\)\s*=\s*ANY`)
+
+// TestBatchPairReadsFoldBothDirections is the set-keyed twin of
+// TestCAGGPairReadsFoldBothDirections, which sees only `$N`-bound
+// pairs. The /v1/markets sparkline selected prices_1m rows by
+// `(base_asset || '|' || quote_asset) = ANY($1)` with keys taken from
+// the listing's canonical rows, so a market stored only the other way
+// round matched nothing and drew 24 zero bars beside a non-zero
+// volume_24h_usd. Match each requested pair in both orientations
+// instead (a join per direction, UNION ALL'd).
+func TestBatchPairReadsFoldBothDirections(t *testing.T) {
+	t.Parallel()
+
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		for name, q := range declSQL(t, f) {
+			if directionedTable.MatchString(q) && pairKeySetFilter.MatchString(q) {
+				t.Errorf("%s: %s selects %s rows by their stored `base|quote` key, "+
+					"which reads ONE orientation of each requested pair; a market "+
+					"stored only the other way round reads as empty. Join the "+
+					"request set once per direction and UNION ALL the arms.",
+					f, name, directionedTable.FindString(q))
+			}
+		}
+	}
+}
+
+// orientationDisjunction matches a pair read that folds the two stored
+// orientations with one OR, in either conjunct order, bound or joined:
+// `(base_asset = $1 AND quote_asset = $2) OR (base_asset = $2 AND …)`.
+var orientationDisjunction = regexp.MustCompile(
+	`(?i)\bOR\s*\(\s*(?:\w+\.)?(?:base_asset\s*=\s*\S+\s+AND\s+(?:\w+\.)?quote_asset|` +
+		`quote_asset\s*=\s*\S+\s+AND\s+(?:\w+\.)?base_asset)\s*=`)
+
+// TestPairReadsNeverFoldDirectionsWithOr is the package-wide, list-free
+// half of TestBothDirectionReadersUseUnionNotOr: every declaration in
+// every non-test file, inline Sprintf builders included, not a hand-kept
+// set of templates. The composite pair indexes cover ONE (base, quote)
+// equality, so a disjunction of two is answered by a BitmapOr at best or
+// by a bucket-index walk that filters the pair afterwards — the 10683 ms
+// vs 3.6 ms empty-pair plan measured on r1. Fold the directions as two
+// single-direction UNION ALL arms instead.
+func TestPairReadsNeverFoldDirectionsWithOr(t *testing.T) {
+	t.Parallel()
+
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	scanned := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		for name, q := range declSQL(t, f) {
+			// Not directionedTable: several readers interpolate the CAGG
+			// name (`FROM prices_%[1]s`), and the disjunction is specific
+			// enough to need no table gate.
+			if !strings.Contains(q, "FROM") {
+				continue
+			}
+			scanned++
+			if m := orientationDisjunction.FindString(q); m != "" {
+				t.Errorf("%s: %s folds both stored orientations with an OR (%q).\n\n"+
+					"Read each direction in its own arm — `base_asset = $1 AND "+
+					"quote_asset = $2` UNION ALL `base_asset = $2 AND quote_asset = $1` "+
+					"— so each arm is one index equality and an empty pair is an "+
+					"immediate miss.", f, name, m)
+			}
+			if m := nonSargableBucketRe.FindString(q); m != "" {
+				t.Errorf("%s: %s applies a function to the indexed bucket column (%q). "+
+					"Put the interval on the RHS: `bucket <= now() - INTERVAL …`", f, name, m)
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("no declaration holds a FROM clause — the scan has gone vacuous")
+	}
 }

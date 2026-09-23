@@ -221,12 +221,20 @@ func nullFloat(n sql.NullFloat64) *float64 {
 const timedVWAPs1mForChangeSummaryQuery = `
 		SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
 		       COALESCE(trade_count, 0), sources
-		  FROM prices_1m
-		 WHERE ((base_asset = $1 AND quote_asset = $2)
-		     OR (base_asset = $2 AND quote_asset = $1))
-		   AND bucket >= $3
-		   AND bucket <  $4
-		 ORDER BY bucket ASC
+		  FROM (
+		    SELECT bucket, base_asset, vwap, volume, trade_count, sources
+		      FROM prices_1m
+		     WHERE base_asset = $1 AND quote_asset = $2
+		       AND bucket >= $3
+		       AND bucket <  $4
+		    UNION ALL
+		    SELECT bucket, base_asset, vwap, volume, trade_count, sources
+		      FROM prices_1m
+		     WHERE base_asset = $2 AND quote_asset = $1
+		       AND bucket >= $3
+		       AND bucket <  $4
+		  ) u
+		 ORDER BY bucket ASC, base_asset ASC
 	`
 
 // TimedVWAPs1m is a thin adapter so [changesummary.PriceSource] is

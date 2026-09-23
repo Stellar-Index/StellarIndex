@@ -149,21 +149,10 @@ func TestBothDirectionReadersKeepSargableBucketBound(t *testing.T) {
 // the pair test as a post-index FILTER, so proving an empty pair empty
 // walks every chunk — the 10682.994 ms vs 3.610 ms measured above.
 //
-// Deliberately NOT subjects, and why the rule excludes them by shape
-// rather than by name:
-//   - point reads (`bucket = (SELECT …)`) and the LIMIT 1 existence
-//     gate emit no bucket ordering, so the bucket-index plan that
-//     causes the walk is not available to them;
-//   - PairMarketSubstance aggregates an unordered window bounded by a
-//     literal TIMESTAMPTZ lower bound (plan-time chunk exclusion), and
-//     pair_market_substance_test.go pins its shape separately.
-//
-// Known sibling OUTSIDE this file, deliberately not swept here:
-// change_summary.go's timedVWAPs1mForChangeSummaryQuery carries the
-// same OR fold with ORDER BY bucket ASC. It is worker-driven with
-// mandatory [from, to) bind bounds rather than anon-reachable and
-// unbounded, and it sits outside this change's file set — it needs its
-// own change, not a silent one here.
+// Unordered reads (point reads, the LIMIT 1 existence gate, the
+// substance sums) are not subjects of THIS test's ordering checks; the
+// OR fold itself is banned for every read in every file by
+// TestPairReadsNeverFoldDirectionsWithOr.
 
 // pairFoldFwd / pairFoldRev are the two single-direction predicates a
 // both-orientations read must contain.

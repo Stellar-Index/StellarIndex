@@ -1368,8 +1368,13 @@ const closedVWAPAtOrBeforeQueryTemplate = `
           FROM %[1]s
          WHERE bucket = (SELECT b FROM latest)
            AND bucket >= TIMESTAMPTZ '%[3]s'
-           AND ((base_asset = $1 AND quote_asset = $2)
-             OR (base_asset = $2 AND quote_asset = $1))
+           AND base_asset = $1 AND quote_asset = $2
+        UNION ALL
+        SELECT base_asset, vwap::text AS vwap, COALESCE(volume, 0)::text AS volume
+          FROM %[1]s
+         WHERE bucket = (SELECT b FROM latest)
+           AND bucket >= TIMESTAMPTZ '%[3]s'
+           AND base_asset = $2 AND quote_asset = $1
     )
     SELECT (SELECT b FROM latest), base_asset, vwap, volume
       FROM r
@@ -1550,12 +1555,19 @@ const latestVWAPGateWindow = 14 * 24 * time.Hour
 // makes a populated pair short-circuit at the first matching row (one
 // recent chunk) rather than scanning the window.
 const recentClosedVWAP1mExistsTemplate = `
-        SELECT 1
-          FROM prices_1m
-         WHERE ((base_asset = $1 AND quote_asset = $2)
-             OR (base_asset = $2 AND quote_asset = $1))
-           AND bucket <= now() - INTERVAL '1 minute'
-           %[1]s
+        SELECT 1 FROM (
+            (SELECT 1 FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2
+                AND bucket <= now() - INTERVAL '1 minute'
+                %[1]s
+              LIMIT 1)
+            UNION ALL
+            (SELECT 1 FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1
+                AND bucket <= now() - INTERVAL '1 minute'
+                %[1]s
+              LIMIT 1)
+        ) u
          LIMIT 1
     `
 
@@ -1649,8 +1661,14 @@ const latestClosedVWAP1mTemplate = `
               FROM prices_1m
              WHERE bucket = (SELECT b FROM latest)
                %[1]s
-               AND ((base_asset = $1 AND quote_asset = $2)
-                 OR (base_asset = $2 AND quote_asset = $1))
+               AND base_asset = $1 AND quote_asset = $2
+            UNION ALL
+            SELECT base_asset, vwap::text AS vwap, COALESCE(volume, 0)::text AS volume,
+                   COALESCE(trade_count, 0) AS tc, sources
+              FROM prices_1m
+             WHERE bucket = (SELECT b FROM latest)
+               %[1]s
+               AND base_asset = $2 AND quote_asset = $1
         )
         SELECT (SELECT b FROM latest), base_asset, vwap, volume, tc, sources
           FROM r
@@ -2389,11 +2407,17 @@ func (s *Store) PairMarketSubstance(ctx context.Context, p canonical.Pair, windo
                COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0)
           FROM (
             SELECT bucket, sum(volume_usd) AS bucket_usd
-              FROM prices_1m
-             WHERE ((base_asset = $1 AND quote_asset = $2)
-                 OR (base_asset = $2 AND quote_asset = $1))
-               AND bucket <= now() - INTERVAL '1 minute'
-               %[1]s
+              FROM (
+                SELECT bucket, volume_usd FROM prices_1m
+                 WHERE base_asset = $1 AND quote_asset = $2
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   %[1]s
+                UNION ALL
+                SELECT bucket, volume_usd FROM prices_1m
+                 WHERE base_asset = $2 AND quote_asset = $1
+                   AND bucket <= now() - INTERVAL '1 minute'
+                   %[1]s
+              ) d
              GROUP BY bucket
           ) b
     `, lower) //nolint:gosec // G201: see note above
@@ -2462,12 +2486,19 @@ func (s *Store) PairMarketSubstanceAt(
                COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0)
           FROM (
             SELECT bucket, sum(volume_usd) AS bucket_usd
-              FROM prices_%[1]s
-             WHERE ((base_asset = $1 AND quote_asset = $2)
-                 OR (base_asset = $2 AND quote_asset = $1))
-               AND bucket <= now() - INTERVAL '%[2]s'
-               AND bucket <= TIMESTAMPTZ '%[3]s'
-               AND bucket >= TIMESTAMPTZ '%[4]s'
+              FROM (
+                SELECT bucket, volume_usd FROM prices_%[1]s
+                 WHERE base_asset = $1 AND quote_asset = $2
+                   AND bucket <= now() - INTERVAL '%[2]s'
+                   AND bucket <= TIMESTAMPTZ '%[3]s'
+                   AND bucket >= TIMESTAMPTZ '%[4]s'
+                UNION ALL
+                SELECT bucket, volume_usd FROM prices_%[1]s
+                 WHERE base_asset = $2 AND quote_asset = $1
+                   AND bucket <= now() - INTERVAL '%[2]s'
+                   AND bucket <= TIMESTAMPTZ '%[3]s'
+                   AND bucket >= TIMESTAMPTZ '%[4]s'
+              ) d
              GROUP BY bucket
           ) b
     `, string(g), g.closedBucketInterval(), upper.Format(layout), lower.Format(layout)) //nolint:gosec // G201: see note above
