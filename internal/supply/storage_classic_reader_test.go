@@ -20,6 +20,7 @@ type fakeClassicStore struct {
 	claimableSum *big.Int
 	lpSum        *big.Int
 	sacSum       *big.Int
+	sacObserved  bool
 	// per-(account, asset) trustline lookup; key is "account:assetKey".
 	// Used for issuer balance + LockedSet.Accounts.
 	trustlinePerAccount map[string]*big.Int
@@ -50,6 +51,10 @@ func (f *fakeClassicStore) SumLPReservesAtOrBefore(_ context.Context, _ string, 
 
 func (f *fakeClassicStore) SumSACBalancesAtOrBefore(_ context.Context, _ string, _ uint32) (*big.Int, error) {
 	return f.sacSum, nil
+}
+
+func (f *fakeClassicStore) SACBalanceObservationsExist(_ context.Context, _ string, _ uint32) (bool, error) {
+	return f.sacObserved, nil
 }
 
 func (f *fakeClassicStore) TrustlineBalanceForAccountAtOrBefore(_ context.Context, accountID, assetKey string, _ uint32) (*big.Int, error) {
@@ -94,6 +99,7 @@ func TestStorageClassicSupplyReader_HappyPath(t *testing.T) {
 		claimableSum: big.NewInt(50),
 		lpSum:        big.NewInt(20),
 		sacSum:       big.NewInt(30),
+		sacObserved:  true,
 	}
 	r := NewStorageClassicSupplyReader(store, ClassicSupplyReaderOptions{})
 
@@ -122,6 +128,32 @@ func TestStorageClassicSupplyReader_HappyPath(t *testing.T) {
 	}
 	if got.LockedContractBalances.Sign() != 0 {
 		t.Errorf("LockedContractBalances=%s want 0 (empty LockedSet)", got.LockedContractBalances)
+	}
+	if !got.SACObserved {
+		t.Error("SACObserved = false, want true — the store reported a real observation")
+	}
+}
+
+// TestStorageClassicSupplyReader_SACObservedFalsePropagates — RLT-248:
+// a zero SAC sum with no backing observation (SumSACBalancesAtOrBefore's
+// COALESCE-to-zero) must come through as SACObserved=false, not get
+// conflated with a genuine zero reading.
+func TestStorageClassicSupplyReader_SACObservedFalsePropagates(t *testing.T) {
+	store := &fakeClassicStore{
+		trustlineSum: big.NewInt(1000),
+		claimableSum: big.NewInt(0),
+		lpSum:        big.NewInt(0),
+		sacSum:       big.NewInt(0),
+		sacObserved:  false,
+	}
+	r := NewStorageClassicSupplyReader(store, ClassicSupplyReaderOptions{})
+
+	got, err := r.ClassicSupplyAt(context.Background(), mustClassic(t, "USDC", tIssuer), LockedSet{}, 100)
+	if err != nil {
+		t.Fatalf("ClassicSupplyAt: %v", err)
+	}
+	if got.SACObserved {
+		t.Error("SACObserved = true, want false — the store reported no observation")
 	}
 }
 

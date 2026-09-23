@@ -37,8 +37,21 @@ type ClassicSupplyComponents struct {
 
 	// SACWrapped is Σ contract_data balance for the asset's SAC
 	// wrapper, when the asset has a Stellar-Asset-Contract
-	// deployment. Zero when no SAC is deployed.
+	// deployment. Zero when no SAC is deployed OR when SACObserved is
+	// false (the reader's SQL COALESCEs a missing sum to zero either
+	// way — see SACObserved for the disambiguator).
 	SACWrapped *big.Int
+
+	// SACObserved is true when the reader found at least one real
+	// SAC-balance observation for this asset at-or-before the read
+	// ledger, as distinct from SACWrapped==0 meaning "no observation
+	// exists at all". [ClassicComputer.Compute] uses this to decide
+	// whether [Supply.SACWrappedStroops] is populated or left nil
+	// (RLT-248): without it, a COALESCE-to-zero sum was
+	// indistinguishable from a genuine zero reading, so the CS-087
+	// escrow-bound gate in [CrossCheckSubsetBound] was always
+	// evaluated even when nothing had actually been observed.
+	SACObserved bool
 
 	// IssuerBalance is the amount the issuer is currently holding
 	// (typically zero — the canonical "I'm not on my own
@@ -199,9 +212,24 @@ func (c *ClassicComputer) Compute(ctx context.Context, asset canonical.Asset, le
 		// the folded total structurally cannot express. Defensive copy:
 		// the returned Supply must not alias the reader's component,
 		// which a caller could otherwise mutate under us.
-		SACWrappedStroops:  new(big.Int).Set(comps.SACWrapped),
+		//
+		// nil unless SACObserved (RLT-248): a COALESCE-to-zero sum with
+		// no real observation must surface as the CS-087 "unchecked"
+		// state, not as a false green "escrow ≤ minted" pass.
+		SACWrappedStroops:  sacWrappedStroops(comps),
 		MinComponentLedger: comps.MinComponentLedger,
 	}, nil
+}
+
+// sacWrappedStroops derives [Supply.SACWrappedStroops] from the
+// reader's components: a defensive copy of SACWrapped when the reader
+// actually observed a SAC balance for this asset, nil otherwise. See
+// [ClassicSupplyComponents.SACObserved] and CS-087 in crosscheck.go.
+func sacWrappedStroops(comps ClassicSupplyComponents) *big.Int {
+	if !comps.SACObserved {
+		return nil
+	}
+	return new(big.Int).Set(comps.SACWrapped)
 }
 
 // validateClassicComponents catches a misbehaving reader returning
