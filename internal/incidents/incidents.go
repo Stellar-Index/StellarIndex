@@ -175,7 +175,9 @@ func parseSource(name, raw string) (Incident, error) {
 	}
 
 	var fm rawFrontmatter
-	if err := yaml.Unmarshal([]byte(frontYAML), &fm); err != nil {
+	dec := yaml.NewDecoder(strings.NewReader(frontYAML))
+	dec.KnownFields(true) // reject a misspelled/renamed key instead of silently dropping it
+	if err := dec.Decode(&fm); err != nil {
 		return Incident{}, fmt.Errorf("yaml: %w", err)
 	}
 

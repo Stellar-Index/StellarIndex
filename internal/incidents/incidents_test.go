@@ -164,6 +164,30 @@ body
 	}
 }
 
+// TestParseSource_RejectsUnknownFrontmatterField guards F007/K035: a
+// misspelled frontmatter key (e.g. "sevority" for "severity") must fail
+// the post loudly instead of silently parsing with severity/status left
+// at their zero value and the post publishing with missing data.
+func TestParseSource_RejectsUnknownFrontmatterField(t *testing.T) {
+	t.Parallel()
+
+	const src = `---
+title: Test
+sevority: SEV-1
+status: investigating
+started_at: 2026-05-06T10:00:00Z
+---
+body
+`
+	_, err := parseSource("2026-05-06-x.md", src)
+	if err == nil {
+		t.Fatal("parseSource: nil err, want error rejecting unknown field sevority")
+	}
+	if !strings.Contains(err.Error(), "sevority") {
+		t.Errorf("err = %q, want it to name the unknown field sevority", err)
+	}
+}
+
 // TestLoad_RedisDiskFullPostmortem_NoDanglingPRRefs — the 2026-05-10
 // post used to cite "PR #1228" and "PR #1229" for its two follow-up
 // items. Neither PR exists in this repo (max issue/PR is far below
