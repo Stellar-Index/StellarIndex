@@ -553,17 +553,28 @@ func sdkDecodeAddress(sv scval.ScVal) (string, error) {
 // PriceData always changes — so the op's value-changed feed-keyed
 // writes must equal the feed_ids set exactly (order-insensitive;
 // feed_ids are duplicate-free by the decodeWritePrices gate). A
-// mismatch refuses the whole event (ErrStateWriteFeedMismatch): the
-// claimed names are uncorroborated by what the contract actually
-// stored, and a positional zip onto them would be exactly the
-// misattribution this file exists to prevent. When no keys were
-// plumbed (stellar-rpc fixtures, non-opted readers) the positional zip
-// stands alone, as before — absence is "unknown", not "no writes".
+// mismatch does not trust the positional zip (that would be exactly
+// the misattribution this file exists to prevent) but, like the
+// unequal-arity class below, falls back to payload-median alignment
+// (attributeSubset) before refusing: the payload's own bijection check
+// is independent of the state-write claim, so a mismatch there merely
+// forces the fallback the rest of this file already relies on, never a
+// guess. Only when the fallback ALSO fails to produce a unique
+// alignment is the event refused (ErrStateWriteFeedMismatch) — the
+// claimed names are uncorroborated by both what the contract stored
+// and what it signed. When no keys were plumbed (stellar-rpc fixtures,
+// non-opted readers) the positional zip stands alone, as before —
+// absence is "unknown", not "no writes".
 func resolveFeedAttribution(prices []priceDataDecoded, feedIDs []string, e *events.Event) ([]string, error) {
 	if len(feedIDs) == len(prices) {
 		if len(e.StateWriteKeys) > 0 {
 			written := writtenFeedSet(e.StateWriteKeys, e.ContractID)
 			if !feedSetEqual(feedIDs, written) {
+				if payload, perr := payloadFromOpArgs(e.OpArgs); perr == nil {
+					if attributed, aerr := attributeSubset(prices, feedIDs, payload); aerr == nil {
+						return attributed, nil
+					}
+				}
 				return nil, fmt.Errorf("%w: %d feed_ids vs %d changed feed keys",
 					ErrStateWriteFeedMismatch, len(feedIDs), len(written))
 			}
