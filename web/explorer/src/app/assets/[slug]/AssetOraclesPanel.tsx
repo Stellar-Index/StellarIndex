@@ -220,6 +220,26 @@ export function AssetOraclesPanel({
     );
   }
 
+  // RLT-387: the oracle-class registry (Reflector/Band/RedStone/Chainlink)
+  // never legitimately answers empty — it is this panel's own coverage
+  // list, not a fact about one asset. A 200 with zero rows is the
+  // registry unable to answer, same as registry.isError above; without it
+  // `oracleNames` is empty, `rows` empties for EVERY asset regardless of
+  // `latest.data`, and the per-asset "no oracle publishes a price" copy
+  // would misstate a registry outage as a coverage fact.
+  if (registry.data?.length === 0) {
+    return (
+      <Panel
+        headingLevel={headingLevel}
+        title="Oracle feeds"
+        source={example}
+        bodyClassName="text-sm text-ink-muted"
+      >
+        Oracle feeds unavailable right now — retry shortly.
+      </Panel>
+    );
+  }
+
   if (rows.length === 0) {
     return (
       <Panel

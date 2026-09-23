@@ -233,6 +233,26 @@ describe('AssetOraclesPanel', () => {
       expect(screen.queryByText('coingecko')).not.toBeInTheDocument();
       expect(screen.queryByText('band')).not.toBeInTheDocument();
     });
+
+    // RLT-387: a 200 with zero oracle-class sources is the registry
+    // itself failing to answer, not a fact about this asset — the
+    // registry is this panel's own coverage list, so it is never
+    // legitimately empty. Must read the same as registry.isError, NOT
+    // fall through to the per-asset "nobody publishes it" copy.
+    it('says unavailable, not absent, when the oracle-class registry answers empty', async () => {
+      mockApi({ latest: [BAND, REFLECTOR], sources: [] });
+      renderPanel();
+
+      await waitFor(() =>
+        expect(
+          screen.getByText(/Oracle feeds unavailable right now/),
+        ).toBeInTheDocument(),
+      );
+      expect(
+        screen.queryByText('No oracle publishes a price for this asset'),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByText('band')).not.toBeInTheDocument();
+    });
   });
 
   // The #336 gate: an asset that merely BORROWS a verified currency's
