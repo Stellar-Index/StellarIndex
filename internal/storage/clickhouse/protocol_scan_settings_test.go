@@ -88,6 +88,21 @@ func TestProtocolEventBreakdownQuery_WindowIsOptionalAndBound(t *testing.T) {
 	}
 }
 
+// TestProtocolContractActivityQuery_ExcludesPartialDay — the per-contract
+// roster reader must share the complete-days-only bound its siblings
+// (protocolEventBreakdownQuery, protocolDailyActivityQuery) already carry.
+// Without it, a contract's roster count includes the still-accumulating
+// current day and wobbles on every re-read as more events land — the same
+// UXP-16 phantom-cliff class those siblings are bounded against.
+func TestProtocolContractActivityQuery_ExcludesPartialDay(t *testing.T) {
+	if !strings.Contains(protocolContractActivityQuery, "close_time < toStartOfDay(now())") {
+		t.Errorf("protocolContractActivityQuery lost its complete-days-only bound — "+
+			"the per-contract roster would include the current partial day, "+
+			"unlike protocolEventBreakdownQuery and protocolDailyActivityQuery:\n%s",
+			protocolContractActivityQuery)
+	}
+}
+
 // TestProtocolRawScanQueries_NoExplorerScanSettings — a guard against the
 // plausible-but-measured-wrong "fix".
 //
