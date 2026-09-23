@@ -1,12 +1,17 @@
 package cachekeys_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // usdcIssuer is the Circle USDC issuer — reused as a realistic G-address
@@ -102,12 +107,33 @@ func TestRateLimitKey(t *testing.T) {
 
 func TestRateLimitKey_MatchesRatelimitPackagePrefix(t *testing.T) {
 	// Consistency check: internal/ratelimit builds "rl:<escape(key)>:<bucket>"
-	// directly; this package mirrors that shape. If someone changes
-	// either side, this test highlights the drift.
+	// directly, atomically, inside Bucket.Charge (internal/ratelimit/bucket.go);
+	// this package mirrors that shape for read-only callers. A hardcoded
+	// "rl:" prefix assertion here would pass even if the two sides drifted
+	// (e.g. the bucket formula's window division changed), so this drives
+	// a real *ratelimit.Bucket against miniredis and diffs the ACTUAL key
+	// it wrote against cachekeys.RateLimitKey's output, mirroring the
+	// key-visibility technique internal/ratelimit/bucket_test.go already
+	// uses for its own WithKeyPrefix coverage.
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
 	now := time.Unix(1_750_000_000, 0).UTC()
-	k := cachekeys.RateLimitKey("x", now, time.Minute)
-	if !strings.HasPrefix(k.String(), "rl:") {
-		t.Errorf("RateLimitKey must use rl: prefix, got %q", k.String())
+	subject := "2001:db8::1"
+	b := ratelimit.New(rdb, 5, time.Minute, ratelimit.WithClock(func() time.Time { return now }))
+	if _, err := b.Take(context.Background(), subject); err != nil {
+		t.Fatalf("Bucket.Take: %v", err)
+	}
+
+	keys := mr.Keys()
+	if len(keys) != 1 {
+		t.Fatalf("expected exactly one key written by Bucket.Take, got %v", keys)
+	}
+	want := keys[0]
+	got := cachekeys.RateLimitKey(subject, now, time.Minute).String()
+	if got != want {
+		t.Errorf("cachekeys.RateLimitKey drifted from internal/ratelimit's actual write: got %q, want %q (the real key Bucket.Take wrote)", got, want)
 	}
 }
 
