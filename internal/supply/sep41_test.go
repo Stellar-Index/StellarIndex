@@ -420,6 +420,28 @@ func TestSEP41_Compute_RejectsNilComponents(t *testing.T) {
 	}
 }
 
+// A -1 in any running sum is refused, not folded in: a negative burn or
+// clawback would otherwise INFLATE total supply and pass the sign check.
+func TestSEP41_Compute_RejectsEachNegativeComponent(t *testing.T) {
+	asset := mustSoroban(t, validContractID)
+	for _, field := range []string{"Mint", "Burn", "Clawback", "Admin", "LockedAccount", "LockedContract"} {
+		comps := supply.SEP41SupplyComponents{
+			MintTotal: bigInt(100), BurnTotal: bigInt(0), ClawbackTotal: bigInt(0),
+			AdminBalance: bigInt(0), LockedAccountBalances: bigInt(0), LockedContractBalances: bigInt(0),
+			GenesisBaselineSeeded: true,
+		}
+		*map[string]**big.Int{
+			"Mint": &comps.MintTotal, "Burn": &comps.BurnTotal, "Clawback": &comps.ClawbackTotal,
+			"Admin": &comps.AdminBalance, "LockedAccount": &comps.LockedAccountBalances,
+			"LockedContract": &comps.LockedContractBalances,
+		}[field] = bigInt(-1)
+		c, _ := supply.NewSEP41Computer(supply.Policy{}, &stubSEP41Reader{comps: comps})
+		if got, err := c.Compute(context.Background(), asset, 1, time.Now()); err == nil {
+			t.Errorf("%s = -1 accepted: total=%s circulating=%s", field, got.TotalSupply, got.CirculatingSupply)
+		}
+	}
+}
+
 // TestSEP41_Compute_ZeroSupplyTokenIsValid — a fully-burned token
 // (mint == burn) reports total=0 / circulating=0, NOT an error.
 // Distinct from the negative-total case.
