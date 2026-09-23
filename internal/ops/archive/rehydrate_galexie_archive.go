@@ -7,8 +7,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/support/datastore"
@@ -75,7 +73,7 @@ func rehydrateGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,fu
 
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 
-	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	rootCtx, cancel := opsutil.SignalContext()
 	defer cancel()
 
 	hot, err := datastore.NewDataStore(rootCtx, datastore.DataStoreConfig{

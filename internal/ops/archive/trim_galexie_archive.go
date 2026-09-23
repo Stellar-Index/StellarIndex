@@ -9,12 +9,10 @@ import (
 	"math"
 	"net/url"
 	"os"
-	"os/signal"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -24,6 +22,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/support/datastore"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 )
 
@@ -115,7 +114,7 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		)
 	}
 
-	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	rootCtx, cancel := opsutil.SignalContext()
 	defer cancel()
 
 	hot, err := datastore.NewDataStore(rootCtx, datastore.DataStoreConfig{
