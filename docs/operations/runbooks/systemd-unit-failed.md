@@ -43,7 +43,7 @@ been reading its output since it stopped?"**
 ```sh
 systemctl status <unit>
 journalctl -u <unit> --since -24h --no-pager | tail -50
-systemctl list-timers <unit%.service>.timer   # is the timer even enabled?
+systemctl list-timers <unit>.timer            # is the timer even enabled?
 ```
 
 Then, per unit class:
