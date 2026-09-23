@@ -51,7 +51,8 @@ func (deadAnomalyReader) CountFiringFreezes(context.Context) (int64, error) {
 // the explorer's writeReadTimeout) and it is the rule the sla-probe
 // scores availability_pct on: a 500 books a permanent failure for a
 // condition a retry would have cleared, which is what made the 500 on
-// /v1/issuers the sole SLA-harness blocker in #34.
+// /v1/issuers the sole SLA-harness blocker before the clientAborted
+// guard shipped.
 func newAnomaliesServer() *Server {
 	return &Server{
 		anomalies: deadAnomalyReader{},
