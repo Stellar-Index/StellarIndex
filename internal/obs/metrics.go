@@ -2939,6 +2939,9 @@ var AggregatorStreamPublishTotal = prometheus.NewCounterVec(
 //     API host's clock. Every event lands here when the API host lags
 //     the aggregator: a clock-skew fault, not a wire-format one.
 //   - "stale_observed_at" — observed_at more than 24 h old. Dropped.
+//   - "duplicate" — valid, but its topic already fanned out this bucket
+//     or a newer one; dropped. A sustained rate means more than one
+//     aggregator is publishing on the channel.
 //
 // Seeded by redispub.NewSubscriber, so only a process that wires a
 // subscriber exports it.

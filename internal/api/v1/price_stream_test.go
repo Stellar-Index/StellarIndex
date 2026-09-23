@@ -3,6 +3,7 @@ package v1_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -266,6 +267,128 @@ func TestPriceStream_AliasSubscriptionReceivesCryptoXLMPublishes(t *testing.T) {
 	frame := readPriceStreamFrame(t, br, 2*time.Second)
 	if !strings.Contains(frame, `data: {"price":"0.17"}`) {
 		t.Fatalf("native subscriber missed the crypto:XLM publish; frame = %q", frame)
+	}
+}
+
+// closedFrame is the envelope the redispub subscriber fans out.
+func closedFrame(assetID, price string, at time.Time) []byte {
+	return []byte(`{"data":{"asset_id":"` + assetID + `","quote":"fiat:USD","price":"` + price +
+		`","price_type":"vwap","observed_at":"` + at.Format(time.RFC3339) +
+		`","window_seconds":300},"as_of":"` + at.Format(time.RFC3339) + `"}`)
+}
+
+// openClosedStream opens /v1/price/stream for (asset, fiat:USD) and
+// returns a reader positioned after the subscription has registered.
+func openClosedStream(t *testing.T, hub *streaming.Hub, asset string) *bufio.Reader {
+	t.Helper()
+	srv := v1.New(v1.Options{Hub: hub})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	t.Cleanup(cancel)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+		ts.URL+"/v1/price/stream?asset="+asset+"&quote=fiat:USD", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	t.Cleanup(func() { _ = resp.Body.Close() })
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	time.Sleep(50 * time.Millisecond)
+	return bufio.NewReader(resp.Body)
+}
+
+// framesUntil reads frames until one carries sentinel and returns the
+// asset_id/price of each, in order.
+func framesUntil(t *testing.T, br *bufio.Reader, sentinel string) []string {
+	t.Helper()
+	var got []string
+	for {
+		frame := readPriceStreamFrame(t, br, 2*time.Second)
+		if frame == "" {
+			t.Fatalf("stream ended before the sentinel frame; got %v", got)
+		}
+		var body struct {
+			Data struct {
+				AssetID string `json:"asset_id"`
+				Price   string `json:"price"`
+			} `json:"data"`
+		}
+		for _, line := range strings.Split(frame, "\n") {
+			if rest, ok := strings.CutPrefix(line, "data: "); ok {
+				if err := json.Unmarshal([]byte(rest), &body); err != nil {
+					t.Fatalf("frame data: %v (%q)", err, rest)
+				}
+			}
+		}
+		got = append(got, body.Data.AssetID+"@"+body.Data.Price)
+		if body.Data.Price == sentinel {
+			return got
+		}
+	}
+}
+
+// TestPriceStream_OneSeriesPerConnection is the #752 regression. The
+// aggregator prices XLM as both `native` (SDEX) and `crypto:XLM` (CEX),
+// and publishes each on its own topic every bucket. A connection
+// subscribes to both spellings, so pre-fix it received two price_update
+// frames per bucket from two independent series — a sawtooth between
+// SDEX and CEX prices. It must follow ONE series: the caller's own
+// spelling first, the order /v1/price?window= reads the cache in.
+func TestPriceStream_OneSeriesPerConnection(t *testing.T) {
+	bucket := time.Now().UTC().Truncate(time.Minute)
+	cases := []struct {
+		asset, preferred, other string
+	}{
+		{"native", "native", "crypto:XLM"},
+		{"crypto:XLM", "crypto:XLM", "native"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.asset, func(t *testing.T) {
+			hub := streaming.NewHub(0)
+			br := openClosedStream(t, hub, tc.asset)
+			usd, _ := canonical.ParseAsset("fiat:USD")
+			pref, _ := canonical.ParseAsset(tc.preferred)
+			other, _ := canonical.ParseAsset(tc.other)
+			prefTopic := v1.PriceStreamTopic(pref, usd, 300)
+			otherTopic := v1.PriceStreamTopic(other, usd, 300)
+
+			hub.Publish(prefTopic, "price_update", closedFrame(tc.preferred, "0.10", bucket))
+			hub.Publish(otherTopic, "price_update", closedFrame(tc.other, "0.20", bucket))
+			hub.Publish(otherTopic, "price_update", closedFrame(tc.other, "0.21", bucket.Add(time.Minute)))
+			hub.Publish(prefTopic, "price_update", closedFrame(tc.preferred, "0.11", bucket.Add(time.Minute)))
+			hub.Publish(prefTopic, "price_update", closedFrame(tc.preferred, "0.12", bucket.Add(2*time.Minute)))
+
+			got := strings.Join(framesUntil(t, br, "0.12"), ",")
+			want := tc.preferred + "@0.10," + tc.preferred + "@0.11," + tc.preferred + "@0.12"
+			if got != want {
+				t.Fatalf("frames = %s, want %s — the %s series must not interleave", got, want, tc.other)
+			}
+		})
+	}
+}
+
+// TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet — the other half
+// of the #752 contract: once the preferred spelling has published nothing
+// for cachekeys.VWAPMaxAge, /v1/price?window= serves the alias key, and
+// so does the stream (the zero-frames fix must survive series selection).
+func TestPriceStream_FallsBackWhenPreferredSeriesGoesQuiet(t *testing.T) {
+	bucket := time.Now().UTC().Truncate(time.Minute)
+	hub := streaming.NewHub(0)
+	br := openClosedStream(t, hub, "native")
+	usd, _ := canonical.ParseAsset("fiat:USD")
+	cryptoXLM, _ := canonical.ParseAsset("crypto:XLM")
+
+	hub.Publish(v1.PriceStreamTopic(canonical.NativeAsset(), usd, 300), "price_update",
+		closedFrame("native", "0.10", bucket))
+	hub.Publish(v1.PriceStreamTopic(cryptoXLM, usd, 300), "price_update",
+		closedFrame("crypto:XLM", "0.20", bucket.Add(6*time.Minute)))
+
+	got := strings.Join(framesUntil(t, br, "0.20"), ",")
+	if want := "native@0.10,crypto:XLM@0.20"; got != want {
+		t.Fatalf("frames = %s, want %s", got, want)
 	}
 }
 

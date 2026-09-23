@@ -2,9 +2,12 @@ package redispub
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -27,8 +30,9 @@ type RedisPublisher interface {
 // Goroutine-safe: fields are read-only after construction; the
 // underlying RedisPublisher is concurrent-safe by contract.
 type Publisher struct {
-	cache   RedisPublisher
-	channel string
+	cache    RedisPublisher
+	channel  string
+	producer string
 }
 
 // NewPublisher constructs a Publisher writing to the given Redis
@@ -40,12 +44,27 @@ func NewPublisher(cache RedisPublisher, channel string) (*Publisher, error) {
 	if channel == "" {
 		channel = DefaultChannel
 	}
-	return &Publisher{cache: cache, channel: channel}, nil
+	return &Publisher{cache: cache, channel: channel, producer: newProducerID()}, nil
+}
+
+// newProducerID returns host-pid-random: stable for the process, and
+// distinct across a restart overlap on the same host.
+func newProducerID() string {
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		host = "unknown"
+	}
+	var nonce [4]byte
+	_, _ = rand.Read(nonce[:]) // crypto/rand.Read never returns an error
+	return fmt.Sprintf("%s-%d-%s", host, os.Getpid(), hex.EncodeToString(nonce[:]))
 }
 
 // Channel returns the Redis channel this Publisher writes to.
 // Useful in startup logs and matching the Subscriber's channel.
 func (p *Publisher) Channel() string { return p.channel }
+
+// ProducerID returns the id stamped on every event this Publisher sends.
+func (p *Publisher) ProducerID() string { return p.producer }
 
 // PublishClosedBucket implements
 // `orchestrator.StreamPublisher.PublishClosedBucket`. JSON-marshals
@@ -65,6 +84,7 @@ func (p *Publisher) PublishClosedBucket(
 		WindowSeconds: int64(window / time.Second),
 		ValueDecimal:  valueDecimal,
 		ObservedAt:    observedAt.UTC(),
+		ProducerID:    p.producer,
 	}
 	body, err := json.Marshal(ev)
 	if err != nil {

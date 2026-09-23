@@ -15,7 +15,7 @@ import (
 
 // subscribeOutcomes is every outcome label the subscriber can emit. A
 // responder reading `malformed` must not be looking at a clock-skew drop.
-var subscribeOutcomes = []string{"ok", "decode_error", "malformed", "future_observed_at", "stale_observed_at"}
+var subscribeOutcomes = []string{"ok", "decode_error", "malformed", "future_observed_at", "stale_observed_at", "duplicate"}
 
 // TestNewSubscriber_SeedsEveryOutcome pins that a wired subscriber
 // exports every outcome at zero before its first message, so a rule can

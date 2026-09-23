@@ -9,10 +9,12 @@ import (
 	"math/big"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
@@ -36,13 +38,33 @@ type Hub interface {
 // topic key is `closed:<asset>/<quote>` — same format as
 // `internal/api/v1.PriceStreamTopic`.
 //
-// Goroutine-safe: fields are read-only after construction.
+// Goroutine-safe: the per-topic dedupe state is mutex-guarded; every
+// other field is read-only after construction.
 type Subscriber struct {
 	cache   RedisSubscriber
 	channel string
 	hub     Hub
 	logger  *slog.Logger
+
+	mu         sync.Mutex
+	forwarded  map[string]topicMark // topic -> newest bucket fanned out
+	lastDupLog time.Time
 }
+
+// topicMark is the newest bucket a topic has fanned out, and who sent it.
+type topicMark struct {
+	observedAt time.Time
+	producer   string
+}
+
+// forwardedPruneAt is the topic count at which marks older than
+// observedAtMaxAge are swept; validateEvent rejects anything that old,
+// so a swept mark can no longer admit a duplicate.
+const forwardedPruneAt = 4096
+
+// duplicateProducerLogEvery rate-limits the two-producers warning: with
+// two aggregators live every (pair, window) bucket arrives twice.
+const duplicateProducerLogEvery = time.Minute
 
 // NewSubscriber constructs a Subscriber bound to the given Redis
 // channel + Hub. Empty channel falls back to [DefaultChannel].
@@ -65,7 +87,38 @@ func NewSubscriber(cache RedisSubscriber, channel string, hub Hub, logger *slog.
 	for _, o := range subscribeOutcomes {
 		obs.APIStreamSubscribeTotal.WithLabelValues(o)
 	}
-	return &Subscriber{cache: cache, channel: channel, hub: hub, logger: logger}, nil
+	return &Subscriber{
+		cache: cache, channel: channel, hub: hub, logger: logger,
+		forwarded: make(map[string]topicMark),
+	}, nil
+}
+
+// claim reports whether ev is the first event for its bucket on topic,
+// recording it if so. A repeat of the newest bucket (a second aggregator,
+// a restart overlap) or an older one (a delayed or replayed message) is
+// refused, so each topic carries one frame per bucket, in order.
+func (s *Subscriber) claim(topic string, ev *ClosedBucketEvent, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev, seen := s.forwarded[topic]
+	if seen && !ev.ObservedAt.After(prev.observedAt) {
+		if ev.ProducerID != prev.producer && now.Sub(s.lastDupLog) >= duplicateProducerLogEvery {
+			s.lastDupLog = now
+			s.logger.Warn("redispub: a second producer published a bucket already forwarded — more than one aggregator is publishing on this channel",
+				"channel", s.channel, "topic", topic,
+				"forwarded_producer", prev.producer, "duplicate_producer", ev.ProducerID)
+		}
+		return false
+	}
+	if len(s.forwarded) >= forwardedPruneAt {
+		for t, m := range s.forwarded {
+			if m.observedAt.Before(now.Add(-observedAtMaxAge)) {
+				delete(s.forwarded, t)
+			}
+		}
+	}
+	s.forwarded[topic] = topicMark{observedAt: ev.ObservedAt, producer: ev.ProducerID}
+	return true
 }
 
 // Outcome labels for [obs.APIStreamSubscribeTotal]. Each rejection
@@ -76,10 +129,12 @@ const (
 	outcomeMalformed        = "malformed"
 	outcomeFutureObservedAt = "future_observed_at"
 	outcomeStaleObservedAt  = "stale_observed_at"
+	outcomeDuplicate        = "duplicate"
 )
 
 var subscribeOutcomes = []string{
 	outcomeOK, outcomeDecodeError, outcomeMalformed, outcomeFutureObservedAt, outcomeStaleObservedAt,
+	outcomeDuplicate,
 }
 
 // Sentinels validateEvent wraps so handleMessage can label the drop by
@@ -160,7 +215,8 @@ func (s *Subscriber) Run(ctx context.Context) error {
 // missing/future/stale timestamp is dropped, not fanned out — and
 // (2) fan out a re-marshal of the VALIDATED struct rather than the raw
 // incoming bytes, so injected extra JSON fields cannot ride along to
-// clients.
+// clients. A bucket already fanned out on its topic is dropped (see
+// [Subscriber.claim]).
 func (s *Subscriber) handleMessage(payload []byte) {
 	var ev ClosedBucketEvent
 	if err := json.Unmarshal(payload, &ev); err != nil {
@@ -168,11 +224,17 @@ func (s *Subscriber) handleMessage(payload []byte) {
 		s.logger.Warn("redispub: decode message", "err", err, "payload_len", len(payload))
 		return
 	}
-	if err := validateEvent(&ev, time.Now()); err != nil {
+	now := time.Now()
+	if err := validateEvent(&ev, now); err != nil {
 		outcome := rejectionOutcome(err)
 		obs.APIStreamSubscribeTotal.WithLabelValues(outcome).Inc()
 		s.logger.Warn("redispub: rejected event (failed validation)",
 			"outcome", outcome, "err", err, "asset", ev.Asset, "quote", ev.Quote)
+		return
+	}
+	topic := topicForPair(ev.Asset, ev.Quote, ev.WindowSeconds)
+	if !s.claim(topic, &ev, now) {
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeDuplicate).Inc()
 		return
 	}
 	// Fan out the DOCUMENTED envelope shape built from the validated
@@ -188,6 +250,8 @@ func (s *Subscriber) handleMessage(payload []byte) {
 	// [ObservedAt-window, ObservedAt). Deriving it from the event rather
 	// than the local clock keeps every subscriber's payload byte-identical
 	// (ADR-0015), as streampublish does for its 60 s series.
+	// It is also the dedupe key in [Subscriber.claim]: refreshPairWindow
+	// publishes once per closed bucket.
 	sanitized, err := json.Marshal(closedBucketEnvelope{
 		Data: closedBucketWireData{
 			AssetID:       ev.Asset,
@@ -206,7 +270,6 @@ func (s *Subscriber) handleMessage(payload []byte) {
 		s.logger.Warn("redispub: re-marshal validated event", "err", err)
 		return
 	}
-	topic := topicForPair(ev.Asset, ev.Quote, ev.WindowSeconds)
 	s.hub.Publish(topic, "price_update", sanitized)
 	obs.APIStreamSubscribeTotal.WithLabelValues(outcomeOK).Inc()
 }
@@ -270,6 +333,15 @@ func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 	if ev.Asset == "" || ev.Quote == "" {
 		return errors.New("empty asset or quote")
 	}
+	if err := validateCanonicalAsset("asset", ev.Asset); err != nil {
+		return err
+	}
+	if err := validateCanonicalAsset("quote", ev.Quote); err != nil {
+		return err
+	}
+	if ev.Asset == ev.Quote {
+		return fmt.Errorf("asset and quote are both %q", ev.Asset)
+	}
 	if ev.WindowSeconds <= 0 || ev.WindowSeconds > maxWindowSeconds {
 		return fmt.Errorf("window_seconds %d out of range", ev.WindowSeconds)
 	}
@@ -285,6 +357,21 @@ func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 	}
 	if _, err := parseValueDecimal(ev.ValueDecimal); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateCanonicalAsset rejects a leg that is not an asset id in its
+// canonical spelling. Asset and Quote are echoed to clients as asset_id /
+// quote and form the Hub topic key, so anything canonical.Asset.String()
+// could not have produced is forged.
+func validateCanonicalAsset(field, raw string) error {
+	a, err := canonical.ParseAsset(raw)
+	if err != nil {
+		return fmt.Errorf("%s %q is not a canonical asset: %w", field, raw, err)
+	}
+	if a.String() != raw {
+		return fmt.Errorf("%s %q is not in canonical form (want %q)", field, raw, a.String())
 	}
 	return nil
 }

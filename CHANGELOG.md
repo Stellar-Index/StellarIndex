@@ -120,6 +120,29 @@ against.
   reservation was written used to cancel the send and count it as
   `result="failed"`.
 
+- **api / price stream — one series per connection, one frame per
+  bucket (#752):** the aggregator prices XLM as both `native` (SDEX)
+  and `crypto:XLM` (CEX) and publishes each on its own topic, and
+  `/v1/price/stream` subscribes to every alias spelling, so with a CEX
+  connector enabled a client got two `price_update` frames per bucket
+  from two independent series. Each connection now follows one series:
+  the caller's own spelling first, falling back to an alias only once
+  the preferred one has published nothing for `cachekeys.VWAPMaxAge`,
+  the read order and horizon of `/v1/price?window=`. Closed-bucket
+  events now carry a `producer_id`, and the API subscriber forwards
+  one event per (topic, bucket end), dropping a second aggregator's
+  copy or a late older bucket (counted as
+  `stellarindex_api_stream_subscribe_total{outcome="duplicate"}` and
+  logged with both producer ids).
+
+- **api / price stream — closed-bucket events must name canonical
+  assets (#754):** the Redis→Hub subscriber now parses `asset` and
+  `quote` with `canonical.ParseAsset` and requires the canonical
+  spelling, and rejects a self-pair. A forged event on the channel
+  previously had any non-empty string echoed to SSE clients as
+  `asset_id` and used as the Hub topic key; it is now counted as
+  `malformed` and dropped.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was
