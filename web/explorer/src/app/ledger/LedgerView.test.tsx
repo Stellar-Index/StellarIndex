@@ -42,8 +42,8 @@ const LEDGER = {
   prev_hash: 'b'.repeat(64),
   close_time: '2026-08-28T00:00:00Z',
   protocol_version: 23,
-  base_fee: 100,
-  base_reserve: 5_000_000,
+  base_fee: '100',
+  base_reserve: '5000000',
   total_coins: '1054439020873472865', // ~105.4B XLM
   fee_pool: '104692050458598',
   tx_count: 1,
@@ -109,5 +109,14 @@ describe('LedgerView count basis captions', () => {
     expect(await cellFor('Soroban events')).toHaveTextContent(
       'successful txs only',
     );
+  });
+});
+
+describe('LedgerView stroop fields', () => {
+  it('renders the string base_fee and base_reserve the API serves', async () => {
+    routeApi();
+    renderView();
+    expect(await screen.findByText('100 stroops')).toBeInTheDocument();
+    expect(screen.getByText('0.5 XLM')).toBeInTheDocument();
   });
 });

@@ -439,6 +439,13 @@ against.
   from one place. A partner comped to 5,000/min now reads 5,000, not
   100,000; the tier number is labelled "Plan ceiling". Login no longer
   byte-truncates a User-Agent into invalid UTF-8 (GH-1303).
+- **api — explorer stroop fees are strings (breaking wire change):**
+  `base_fee` and `base_reserve` on ledger views and `fee_charged` and
+  `max_fee` on transaction summaries (`/v1/ledgers*`, `/v1/tx/{hash}`,
+  account transactions) are now decimal strings, like `total_coins`
+  and `fee_pool` beside them (ADR-0003). A new test fails any
+  `internal/api` response field with a monetary JSON name that
+  marshals as a number.
 
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose

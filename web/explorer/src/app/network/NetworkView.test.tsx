@@ -43,7 +43,7 @@ const TIP = {
   sequence: 60_000_000,
   close_time: new Date().toISOString(),
   protocol_version: 23,
-  base_fee: 100,
+  base_fee: '100',
   total_coins: '1054439020873472865', // ~105.4B XLM, counts the 2019 burn
   fee_pool: '104692050458598',
   tx_count: 1,

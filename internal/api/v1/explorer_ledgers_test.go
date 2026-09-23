@@ -441,6 +441,44 @@ func TestExplorer_LedgerDetail_FoundAndNotFound(t *testing.T) {
 	}
 }
 
+// Stroop fees and reserves are money: on the wire they are decimal
+// strings like total_coins beside them, never JSON numbers (ADR-0003).
+func TestExplorer_LedgerAndTxFeesAreWireStrings(t *testing.T) {
+	reader := &stubExplorerReader{
+		ledgers: []clickhouse.LedgerHeader{{Seq: 42, TxCount: 1, BaseFee: 100, BaseReserve: 5_000_000}},
+		txs: []clickhouse.TxSummary{
+			{Seq: 42, TxHash: "tx1", SourceAccount: "GABC", FeeCharged: 9_007_199_254_740_993, MaxFee: 120_000, OperationCount: 1, Successful: true},
+		},
+	}
+	base := explorerTestServer(t, reader)
+
+	var ledger struct {
+		Data map[string]any `json:"data"`
+	}
+	mustDecode(t, mustGet(t, base+"/v1/ledgers/42"), &ledger)
+	for field, want := range map[string]string{"base_fee": "100", "base_reserve": "5000000"} {
+		if got, ok := ledger.Data[field].(string); !ok || got != want {
+			t.Errorf("ledger %s = %#v, want the string %q", field, ledger.Data[field], want)
+		}
+	}
+
+	var txs struct {
+		Data struct {
+			Transactions []map[string]any `json:"transactions"`
+		} `json:"data"`
+	}
+	mustDecode(t, mustGet(t, base+"/v1/ledgers/42/transactions"), &txs)
+	if len(txs.Data.Transactions) != 1 {
+		t.Fatalf("transactions = %+v", txs.Data.Transactions)
+	}
+	tx := txs.Data.Transactions[0]
+	for field, want := range map[string]string{"fee_charged": "9007199254740993", "max_fee": "120000"} {
+		if got, ok := tx[field].(string); !ok || got != want {
+			t.Errorf("tx %s = %#v, want the string %q", field, tx[field], want)
+		}
+	}
+}
+
 func TestExplorer_LedgerDetail_InvalidSeq(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{})
 	resp := mustGet(t, base+"/v1/ledgers/notanumber")

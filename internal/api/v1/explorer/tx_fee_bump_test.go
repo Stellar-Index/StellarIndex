@@ -104,14 +104,14 @@ func TestTxDetail_FeeBumpByInnerHash(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
-	if got.Hash != feeBumpOuterHash || got.MaxFee != 20_000 || got.FeeCharged != 2_000 {
-		t.Fatalf("hash/max_fee/fee_charged = %s/%d/%d, want outer hash / 20000 / 2000", got.Hash, got.MaxFee, got.FeeCharged)
+	if got.Hash != feeBumpOuterHash || got.MaxFee != "20000" || got.FeeCharged != "2000" {
+		t.Fatalf("hash/max_fee/fee_charged = %s/%s/%s, want outer hash / 20000 / 2000", got.Hash, got.MaxFee, got.FeeCharged)
 	}
 	fb := got.FeeBump
 	if fb == nil {
 		t.Fatal("fee_bump absent on a fee-bump transaction")
 	}
-	if fb.FeeAccount != feeBumpPayer || fb.InnerHash != feeBumpInnerHash || fb.InnerMaxFee != 100 {
+	if fb.FeeAccount != feeBumpPayer || fb.InnerHash != feeBumpInnerHash || fb.InnerMaxFee != "100" {
 		t.Fatalf("fee_bump = %+v, want payer / inner hash / inner max fee 100", *fb)
 	}
 	if fb.InnerResultCode == nil || *fb.InnerResultCode != int32(xdr.TransactionResultCodeTxFailed) || fb.InnerResult != "tx_failed" {
@@ -129,7 +129,7 @@ func TestTxDetail_FeeBumpByInnerHash(t *testing.T) {
 // and carries no fee_bump object.
 func TestTxSummaryView_NotFeeBump(t *testing.T) {
 	v := txSummaryView(clickhouse.TxSummary{TxHash: feeBumpOuterHash, MaxFee: 300, FeeCharged: 100})
-	if v.MaxFee != 300 || v.FeeBump != nil {
-		t.Fatalf("plain tx view = max_fee %d fee_bump %+v, want 300 / nil", v.MaxFee, v.FeeBump)
+	if v.MaxFee != "300" || v.FeeBump != nil {
+		t.Fatalf("plain tx view = max_fee %s fee_bump %+v, want 300 / nil", v.MaxFee, v.FeeBump)
 	}
 }
