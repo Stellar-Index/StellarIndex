@@ -2650,7 +2650,7 @@ const defaultDivergenceMinSources = 2
 func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, err error) {
 	pair, perr := canonical.NewPair(asset, quote)
 	if perr != nil {
-		return false, false, nil
+		return false, false, nil //nolint:nilerr // intentional: an unconstructible pair reports unchecked
 	}
 	cached, found, err := a.svc.LookupCachedPair(ctx, pair)
 	if err != nil {
