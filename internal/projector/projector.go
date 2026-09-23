@@ -828,6 +828,17 @@ func (p *Projector) commitCursor(ctx context.Context, source string, read timesc
 // defect is fixed. What the cursor advance buys is that the OTHER rows of a
 // sole-writer domain keep flowing meanwhile.
 //
+// freshSourceFloor is the first ledger a brand-new projected source (no
+// cursor row yet) scans from in CH feed-switch mode. Every net's lake begins
+// at ledger 2 (genesis is never exported), so an empty-lake lakeMin of 0
+// floors at 1 rather than 0 — ledger 0 does not exist, and [watermark]
+// underflows on it (RLT-154 / GH #623). Mirrors ch-cap67-movements'
+// resolveStart for the same reason: ContiguousWatermark treats a `from` the
+// lake does not hold as a boundary hole and stalls the source there forever.
+func freshSourceFloor(lakeMin uint32) uint32 {
+	return max(1, lakeMin)
+}
+
 // cycleOneSource is intentionally a single linear cycle: read cursor → resolve
 // durable tip → scan the window → classify each event's sink outcome (decode
 // soft-fail / transient-hold / permanent-skip) → advance the cursor only to the
@@ -863,6 +874,23 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// [refreshReplayWindows]). Recorded from the READ, not the
 		// commit, so a held cursor keeps reporting its true position.
 		p.recordCursor(src.Name, cursor.LastLedger)
+	} else if p.chAddr != "" {
+		// Fresh source (no cursor row yet) in CH feed-switch mode: clamp the
+		// floor up to the lake's first present ledger, mirroring
+		// ch-cap67-movements' resolveStart. ContiguousWatermark treats a
+		// `from` the lake does not hold as a boundary hole and answers
+		// from-1 — at fromLedger==0 that underflows uint32 to 4294967295,
+		// which resolveTip reads as "the lake is complete forever" and the
+		// clamp becomes a permanent no-op for exactly this caller (RLT-154 /
+		// GH #623). Every net's lake begins at ledger 2 (genesis is never
+		// exported), so 0 is never a real floor either way.
+		lakeMin, lerr := clickhouse.LakeMinLedger(cycleCtx, p.chAddr)
+		if lerr != nil {
+			p.logger.Warn("projector: lake min ledger failed", "source", src.Name, "err", lerr)
+			obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
+			return
+		}
+		fromLedger = freshSourceFloor(lakeMin)
 	}
 
 	// Upper bound: live tip from ledgerstream. Without a tip we
