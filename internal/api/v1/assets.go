@@ -1336,10 +1336,19 @@ func (s *Server) fillMarketCapsFromSupply(ctx context.Context, rows []AssetDetai
 	if len(precise) == 0 && len(broad) == 0 && len(lake) == 0 {
 		return
 	}
+	// Bounded once for the whole page, not per row (tokenMetadataReadTimeout
+	// is a PER-CALL budget and a listing can carry many Soroban rows) — same
+	// shape as rwaContractMetadataBudget for the contract-only surface.
+	dctx, cancel := context.WithTimeout(ctx, listingDecimalsLockstepBudget)
+	defer cancel()
 	for i := range rows {
-		s.fillRowMarketCap(&rows[i], precise, lake, broad, sourceCounts)
+		s.fillRowMarketCap(dctx, &rows[i], precise, lake, broad, sourceCounts)
 	}
 }
+
+// listingDecimalsLockstepBudget bounds the total time [fillMarketCapsFromSupply]
+// spends on live lake decimals() reads across an entire listing page.
+const listingDecimalsLockstepBudget = 5 * time.Second
 
 // preciseSupplyReader is the optional seam [Server.latestPreciseSupply] reads
 // the ADR-0011 supply observer through. Named rather than inlined at the type
@@ -1396,6 +1405,7 @@ func (s *Server) latestPreciseSupply(ctx context.Context) map[string]timescale.S
 // circulating_supply is a raw fact (not a valuation), so it still surfaces,
 // matching the detail path's populateSupplyFields.
 func (s *Server) fillRowMarketCap(
+	ctx context.Context,
 	row *AssetDetail,
 	precise map[string]timescale.SupplyObservation,
 	lake, broad map[string]string,
@@ -1411,7 +1421,19 @@ func (s *Server) fillRowMarketCap(
 	// Before ANY branch below publishes the supply: every one of them
 	// stamps a smallest-unit figure the row's `decimals` has to be able
 	// to scale, whether or not a cap goes out beside it.
-	s.applyConfirmedListingDecimals(row)
+	s.applyConfirmedListingDecimals(ctx, row)
+	if row.MarketCapDecimalsMismatch {
+		// Lockstep refusal — mirrors populateMarketCap's on the detail
+		// path (assets_f2.go): the price behind row.PriceUSD was
+		// normalised through the nonstandard_decimals_assets projection
+		// while row.Decimals just got overwritten with a DISAGREEING
+		// live lake reading. Dividing supply on one scale by a price
+		// normalised on the other is wrong by a power of ten with both
+		// inputs looking plausible — a null with a reason beats it.
+		// circulating_supply is still a raw fact and still serves.
+		stampCirculatingSupply(row, circ, basis)
+		return
+	}
 	// Unverified ticker collision (stampListingCollisions runs before
 	// this fill on both listing variants): a look-alike of a verified
 	// currency must not publish price × supply as a headline valuation
@@ -1476,9 +1498,37 @@ func (s *Server) fillRowMarketCap(
 // passed to the cap, so the published divisor is the one the published cap
 // was computed with, and the smallest-unit circulating_supply beside it
 // scales to the right number of whole tokens.
-func (s *Server) applyConfirmedListingDecimals(row *AssetDetail) {
-	if confirmed, flagged := s.nonstandardDecimals.Lookup(row.AssetID); flagged {
+//
+// GH-1009: the confirmed projection alone isn't enough — it is seeded by the
+// aggregator's decimals-guard sweep and lags a freshly-observed or
+// not-yet-DEX-traded Soroban token, which served the listing's default 7
+// beside a detail page that read the lake directly and got the true scale
+// (a live 10x-off market cap for exactly that gap). So for a Soroban asset
+// this also attempts the SAME bounded live lake read [Server.applyTokenDecimals]
+// makes on the detail path, and applies the SAME lockstep refusal on
+// disagreement — see that function's doc for the full outcome table.
+func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDetail) {
+	confirmed, hasConfirmed := s.nonstandardDecimals.Lookup(row.AssetID)
+	if hasConfirmed {
 		row.Decimals = confirmed
+	}
+	if row.Type != string(canonical.AssetSoroban) {
+		return
+	}
+	lake, lakeKnown := s.lakeTokenDecimals(ctx, row.AssetID)
+	if !lakeKnown {
+		return
+	}
+	row.Decimals = lake
+	if (hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals) {
+		row.MarketCapDecimalsMismatch = true
+		// GH-1059: the request path drives this counter's inputs on the
+		// listing page too (any Soroban row a client can page to), so it
+		// is labelled by site+outcome only — see
+		// obs.NonstandardDecimalsLockstepMismatchTotal's doc for why an
+		// unbounded per-asset label on a request-driven site is the
+		// cardinality defect, not a feature, of the counter it mirrors.
+		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_listing", "").Inc()
 	}
 }
 
@@ -3492,7 +3542,15 @@ func (s *Server) applyTokenDecimals(ctx context.Context, detail *AssetDetail, a 
 	detail.Decimals = lake
 	if (hasConfirmed && confirmed != lake) || (!hasConfirmed && lake != aggregate.StandardDecimals) {
 		detail.MarketCapDecimalsMismatch = true
-		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_detail", a.ContractID).Inc()
+		// GH-1059: asset_detail is REQUEST-driven (any Soroban contract id a
+		// client asks for), unlike guard_reconcile which only walks the
+		// bounded, operator-curated set already confirmed in the
+		// projection table. A per-asset label here mints one Prometheus
+		// series per distinct contract the lake has ever captured metadata
+		// for — permanent, unbounded growth as the ecosystem grows — so
+		// this site is labelled by site+outcome only; correlate the
+		// offending contract from the WARN log line below instead.
+		obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_detail", "").Inc()
 		s.logger.Warn("token decimals resolvers disagree; refusing market cap for this request",
 			"contract_id", a.ContractID, "lake_decimals", lake,
 			"projection_decimals", confirmed, "projection_row", hasConfirmed)

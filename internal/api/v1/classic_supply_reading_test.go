@@ -254,7 +254,7 @@ func TestFillRowMarketCap_PublishesTheBasisItUsed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s := &Server{minMarketCapVolumeUSD: 1000}
 			row := AssetDetail{AssetID: asset, Code: "FOO", Decimals: 7, PriceUSD: &price}
-			s.fillRowMarketCap(&row, tc.precise, tc.lake, tc.broad, map[string]int{asset: 5})
+			s.fillRowMarketCap(context.Background(), &row, tc.precise, tc.lake, tc.broad, map[string]int{asset: 5})
 			if row.CirculatingSupply == nil {
 				t.Fatal("circulating_supply not published")
 			}

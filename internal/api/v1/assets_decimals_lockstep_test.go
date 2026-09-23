@@ -71,8 +71,11 @@ func lockstepGet(t *testing.T, srv *v1.Server) string {
 	return body
 }
 
+// GH-1059: the asset_detail site is request-driven (any contract id a
+// client asks for), so the counter no longer carries the contract id as a
+// label — only the bounded guard_reconcile site does.
 func assetDetailMismatchVal() float64 {
-	return testutil.ToFloat64(obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_detail", flaggedAsset))
+	return testutil.ToFloat64(obs.NonstandardDecimalsLockstepMismatchTotal.WithLabelValues("asset_detail", ""))
 }
 
 // The projection says 9 (so the price is normalised ×100 → 4132) but the
