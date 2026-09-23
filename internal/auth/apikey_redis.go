@@ -514,6 +514,21 @@ func (v *RedisAPIKeyValidator) storeStatus(slug string, status platform.AccountS
 	v.statusMu.Lock()
 	defer v.statusMu.Unlock()
 	v.statusCache[slug] = cachedAccountStatus{status: status, at: at}
+	v.evictStaleStatusLocked(at)
+}
+
+// evictStaleStatusLocked drops every statusCache entry older than
+// statusMaxStale. Past that bound accountActive never reads an entry
+// again (the ride-out gate refuses it), so retaining it only grows the
+// map for the lifetime of the process with no cache-hit benefit —
+// Q183/T150 (reverification 2026-09-18): the cache had no eviction of
+// any kind, only a staleness check on read. Called with statusMu held.
+func (v *RedisAPIKeyValidator) evictStaleStatusLocked(now time.Time) {
+	for slug, cached := range v.statusCache {
+		if now.Sub(cached.at) > v.statusMaxStale {
+			delete(v.statusCache, slug)
+		}
+	}
 }
 
 // HashAPIKey returns the hex-encoded SHA-256 of key. Exposed for
