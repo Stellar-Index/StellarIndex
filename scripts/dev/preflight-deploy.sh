@@ -101,7 +101,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 
-[ -n "$REGION" ] && [ -n "$VERSION" ] || { usage; exit 2; }
+if [ -z "$REGION" ] || [ -z "$VERSION" ]; then usage; exit 2; fi
 
 rule() { printf '\n── %s\n' "$1"; }
 block() { BLOCKERS+=("$1"); }
