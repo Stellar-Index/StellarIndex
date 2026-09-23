@@ -236,9 +236,8 @@ func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName]
 // rows written: one minute bucket per (pair-direction, minute) that
 // traded, bounded above by the chunk's own trade count, against
 // ≤ 937 buckets per pair for the five coarse rungs over 30 days.
-// Measured density on r1 (docs/operations/notes/
-// 2026-08-22-price-p95-tail-post-0147.md): prices_1m accrued 14.5M
-// rows between 2026-07-16 and that note's date, ≈392k rows/day, so a
+// Measured on r1 2026-08-22: prices_1m accrued 14.5M
+// rows between 2026-07-16 and that date, ≈392k rows/day, so a
 // 30-day range materialises order-of-10M minute buckets. Those rows
 // are exactly what the surfaces listed above read.
 //

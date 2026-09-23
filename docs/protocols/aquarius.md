@@ -254,7 +254,7 @@ never decoded in the first place).
 The 2026-08-01 first full-range `compute-completeness` verdict surfaced
 two long-standing artifact classes; both are root-caused with lake-byte
 evidence in
-[docs/operations/evidence/2026-08-02-aquarius-artifact-classes.md](../operations/evidence/2026-08-02-aquarius-artifact-classes.md):
+[docs/operations/evidence/2026-08-02-aquarius-artifact-classes.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-08-02-aquarius-artifact-classes.md):
 
 1. **41 blind (undecodable-but-matched) events** = 40 zero-amount dust
    swaps (`bought=0` — now a recognized decode no-op, `ErrZeroAmountTrade`)

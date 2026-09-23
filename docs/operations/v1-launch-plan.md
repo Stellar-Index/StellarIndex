@@ -1817,7 +1817,7 @@ one — they are lead-time items, not sequenced work.
   sources; public `/v1/coverage` serves it (17 sources, 0 incomplete,
   two-axis details per source). The dirty-window hardening cleared its
   first production window in the same verdict line. Evidence:
-  `evidence/2026-08-01-completeness-17of17.md`. The completeness
+  [2026-08-01-completeness-17of17.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-08-01-completeness-17of17.md). The completeness
   go-live gate row is CLOSED. Remaining gate rows are operator-only
   (paging→SEV drill, security posture, DR decision, announcement).
 
@@ -1850,7 +1850,7 @@ one — they are lead-time items, not sequenced work.
   own long-standing backlog — 41 old-WASM blind events + 482
   over-projected trade rows from an older decoder era — queued as
   the next per-source unit on the proven playbook; NOT a regression.
-  Evidence: `evidence/2026-08-01-completeness-16of17-and-ac2.md`.
+  Evidence: [2026-08-01-completeness-16of17-and-ac2.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-08-01-completeness-16of17-and-ac2.md).
   **AC2 final framing**: SLA scenario PASSES huge (0 fails, p95
   37.1ms); the 400-VU mixed stress scenario consistently lands p95
   ~5s / 4.4% across two differently-conditioned runs = the honest
@@ -1879,7 +1879,7 @@ one — they are lead-time items, not sequenced work.
 
 - 2026-07-31 ~22:30Z — 🏁 **TAIL CHAIN DONE: soroswap taker coverage
   100.00% (554,221/554,221).** Full evidence:
-  `evidence/2026-07-31-taker-coverage-and-verify.md`. Verify came
+  [2026-07-31-taker-coverage-and-verify.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-31-taker-coverage-and-verify.md). Verify came
   back 15/17 with every gap root-caused same-day: redstone (known —
   v0.21.8), soroswap 20 skim legacy twins (event_index=0 pre-
   discriminator rows vs the replay's true-index rows, the CCTP
@@ -1982,7 +1982,7 @@ one — they are lead-time items, not sequenced work.
   the live decoder) are a PROVABLY ambiguous class — a single
   surviving price matching TWO feeds' signer medians, where order
   adds nothing. The verifier refuses by design (honest-blind beats
-  misattributed). Evidence: `evidence/2026-07-31-completeness-verdicts.md`.
+  misattributed). Evidence: [2026-07-31-completeness-verdicts.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-31-completeness-verdicts.md).
   **The exact closure is designed, not hacked**: the adapter's
   write_prices STORES each accepted feed — the tx's ledger-entry
   write keys name the accepted feed set exactly. Plumbing state-write
@@ -2094,7 +2094,7 @@ one — they are lead-time items, not sequenced work.
   binary are ephemeral, remove post-run.
 
 - 2026-07-30 ~12:30Z — 🏁 **ROUTE GATE CLOSED: 0×5xx across all 94
-  routes** (evidence: `evidence/2026-07-30-route-sweep-zero.md`),
+  routes** (evidence: [2026-07-30-route-sweep-zero.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-route-sweep-zero.md)),
   taken deliberately under replay saturation minutes after a restart.
   The closing move came from the maintainer's architectural instinct ("don't we
   have near-instant access to balances?"): account trustline/offer
@@ -2126,7 +2126,7 @@ one — they are lead-time items, not sequenced work.
 
 - 2026-07-30 ~02:20Z — ✅ **usd_volume history FULLY CLEAN: 13.3M rows
   re-stamped, all 66 dirty days re-verify at 0 violations** (evidence
-  updated in `2026-07-30-verify-usd-volume-30d.md`). The path found its
+  updated in [2026-07-30-verify-usd-volume-30d.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-verify-usd-volume-30d.md)). The path found its
   final form after three course-corrections: the general
   `ch-rebuild -sdex` route measured ~47h (620 rows/s into compressed
   chunks) and was killed for a scoped SQL identity UPDATE — valid
@@ -2142,7 +2142,7 @@ one — they are lead-time items, not sequenced work.
 
 - 2026-07-30 ~02:30Z — ✅ **verify-usd-volume CALIBRATED — the prove-it
   battery's last unfiled non-paging row** (evidence:
-  `evidence/2026-07-30-verify-usd-volume-30d.md`). First 30-day
+  [2026-07-30-verify-usd-volume-30d.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-verify-usd-volume-30d.md)). First 30-day
   production run: **current pipeline EXACT — 7 consecutive clean days
   (07-23→07-29)**; the 7,973 violations are bounded entirely to
   [06-30, 07-22] — the pre-peg-identity stamping era, ~+0.7% drift on
@@ -2156,7 +2156,7 @@ one — they are lead-time items, not sequenced work.
   acceptance = a full-span verify-usd-volume at 0 violations.
 
 - 2026-07-30 ~01:40Z — ✅ **SUPPLY GATE CLOSED: 8/8 vs Horizon** (evidence
-  filed: `evidence/2026-07-30-supply-reconcile-8of8.md`). The chain
+  filed: [2026-07-30-supply-reconcile-8of8.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-supply-reconcile-8of8.md)). The chain
   completed 23:27Z: re-seed landed 47,093 rows / 38/38 wrappers (USDC's
   46,035 dormant holders restored — the class six scan-era attempts
   couldn't seed). First reconcile read +1.07% FAIL — refresher snapshot
@@ -2537,7 +2537,7 @@ one — they are lead-time items, not sequenced work.
   pass).
 
 - 2026-07-29 ~05:50Z — 🏆 **SUPPLY GATE: 7/8 PASS**
-  (`evidence/2026-07-29-supply-reconcile-post-fixes.md`): **PHO +157% →
+  ([2026-07-29-supply-reconcile-post-fixes.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-29-supply-reconcile-post-fixes.md)): **PHO +157% →
   −0.0002%** (phantom rows were the whole error), EURC/KALE back inside
   tolerance (CS-102, as predicted), AQUA +0.16% WITHOUT the seed. Sole
   FAIL = USDC +1.12% — expected: the approved delete removed its 48,505
@@ -2593,7 +2593,7 @@ one — they are lead-time items, not sequenced work.
   1. **reconcile-balances 50/50: 0 MISMATCHES** (37 matched, 13
      merged-or-absent = accounts deleted on-chain, 0 errors) vs the
      19/50 (38%) pre-ordinal baseline — filed as
-     `evidence/2026-07-29-reconcile-balances-50.md`. The C2-4c tie
+     [2026-07-29-reconcile-balances-50.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-29-reconcile-balances-50.md). The C2-4c tie
      ambiguity is fixed end-to-end.
   2. **`supply_refresh_error_dominant` (was 39-40 firing) is GONE** —
      the CS-102 anchor fixes are working on live traffic.
@@ -2696,7 +2696,7 @@ one — they are lead-time items, not sequenced work.
   again), ETA ~00:00–01:00Z. No INBOX answers yet. — 📁 **Evidence pack STARTED (`evidence/`) + two
   alert dispositions + D3 un-stalled verdict.**
 
-  1. **`docs/operations/evidence/` created** — index (gates → artifacts →
+  1. **[`docs/operations/evidence/`](https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence) created** — index (gates → artifacts →
      honest gap list) + 4 filed artifacts: route-sweep pre-deploy
      baseline (full output this time, exit=21), soak-gate record,
      CS-102 red/green proof, supply-vs-Horizon baseline with the 3 FAILs
@@ -3861,14 +3861,14 @@ the spec, so the wire-freeze prerequisite is met).
 
 
 - [x] ✅ **Supply trustworthy** — DONE 2026-07-30: full reconcile vs
-      Horizon **8/8 PASS** (evidence `2026-07-30-supply-reconcile-8of8.md`);
+      Horizon **8/8 PASS** (evidence [2026-07-30-supply-reconcile-8of8.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-supply-reconcile-8of8.md));
       the claimable seed, SAC full-history seed, and dormancy-anchor fix
       all landed. Residual: `supply_cross_check_divergence` ×3 (PHO/BLND/
       EURC, partial_wrap) dispositioned — our values Horizon-verified;
       external references count wrapped supply differently. Pre-launch:
       convert dispositions to annotated silences.
 - [x] ✅ **Completeness green — 17/17, DONE 2026-08-01 08:33Z, first
-      time ever** (evidence `2026-08-01-completeness-17of17.md`).
+      time ever** (evidence [2026-08-01-completeness-17of17.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-08-01-completeness-17of17.md)).
       Every source `complete=t` AND `lake_complete=t`, publicly served
       on `/v1/coverage`, with no carried claims — the final three
       (redstone/soroswap/aquarius) re-verified full-range within 24h
@@ -4489,7 +4489,7 @@ cold tier; rehydrate needs 2.2's archivewriter fix first.
 </details>
 
 ### 2.6 Prove correctness (Phase E — the go-live evidence pack)
-**Artifacts now FILE under [`evidence/`](evidence/README.md)** (index
+**Artifacts now FILE under [`evidence/`](https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence)** (index
 started 2026-07-28 with 4 artifacts + the honest gap list — first time
 in three plan generations the files actually exist).
 Run the confidence-campaign E-gate end to end and FILE the artifacts:
