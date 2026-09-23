@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -421,19 +422,90 @@ func TestHandleLogout_TolersInvalidCookieValue(t *testing.T) {
 
 func TestSlugFromEmail(t *testing.T) {
 	cases := map[string]string{
-		"alice@example.com":  "alice",
-		"ash.francis@x.com":  "ash-francis",
-		"BIG.CAPS@y.com":     "big-caps",
-		"under_score@y.com":  "under-score",
-		"plus+tag@y.com":     "plustag",
-		"only-symbols@y.com": "only-symbols",
-		"":                   "user",
-		"@nothing":           "user",
+		"alice@example.com":                  "alice",
+		"ash.francis@x.com":                  "ash-francis",
+		"BIG.CAPS@y.com":                     "big-caps",
+		"under_score@y.com":                  "under-score",
+		"plus+tag@y.com":                     "plustag",
+		"only-symbols@y.com":                 "only-symbols",
+		"":                                   "user",
+		"@nothing":                           "user",
+		strings.Repeat("a", 64) + "@x.com":   strings.Repeat("a", 63),
+		strings.Repeat("b", 62) + ".c@x.com": strings.Repeat("b", 62),
+		"--" + strings.Repeat("d", 70) + "@x.com": strings.Repeat("d", 63),
+		strings.Repeat("_", 70) + "@x.com":        "user",
 	}
 	for in, want := range cases {
 		if got := slugFromEmail(in); got != want {
 			t.Errorf("slugFromEmail(%q) = %q, want %q", in, got, want)
 		}
+		if got := slugFromEmail(in); !fakeAccountSlugRE.MatchString(got) {
+			t.Errorf("slugFromEmail(%q) = %q violates the accounts slug CHECK", in, got)
+		}
+	}
+}
+
+// TestSignupNewUser_LongEmailFitsAccountConstraints: any address
+// looksLikeEmail admits must provision an account; a derived slug or
+// name past the accounts CHECK bounds was a permanent 500.
+func TestSignupNewUser_LongEmailFitsAccountConstraints(t *testing.T) {
+	cases := map[string]string{
+		"64-char local part":  strings.Repeat("a", 64) + "@example.com",
+		"254-char address":    strings.Repeat("b", 60) + "@" + strings.Repeat("c", 189) + ".com",
+		"hyphen at slug edge": strings.Repeat("d", 62) + ".e" + strings.Repeat("f", 10) + "@example.com",
+	}
+	for name, email := range cases {
+		t.Run(name, func(t *testing.T) {
+			if !looksLikeEmail(email) {
+				t.Fatalf("fixture %q rejected by looksLikeEmail", email)
+			}
+			r := newTestRig(t)
+			user, err := r.h.signupNewUser(context.Background(), email)
+			if err != nil {
+				t.Fatalf("signupNewUser(%d-byte email): %v", len(email), err)
+			}
+			acct := r.accounts.byID[user.AccountID]
+			if acct.BillingEmail != email {
+				t.Errorf("BillingEmail = %q, want the full address", acct.BillingEmail)
+			}
+			if want := email[:min(len(email), platform.MaxAccountNameLen)]; acct.Name != want {
+				t.Errorf("Name = %q, want %q", acct.Name, want)
+			}
+		})
+	}
+}
+
+// TestSignupNewUser_SlugCollisionRetryFitsConstraint: the collision
+// retry appends "-xxxx"; on a maximum-length slug that suffix must not
+// push it past the CHECK bound.
+func TestSignupNewUser_SlugCollisionRetryFitsConstraint(t *testing.T) {
+	r := newTestRig(t)
+	local := strings.Repeat("g", platform.MaxAccountSlugLen)
+	taken := strings.Repeat("g", platform.MaxAccountSlugLen)
+	if _, err := r.accounts.Create(context.Background(), platform.Account{
+		Name: "squatter", Slug: taken, Tier: platform.TierFree, Status: platform.AccountActive,
+	}); err != nil {
+		t.Fatalf("seed colliding account: %v", err)
+	}
+	user, err := r.h.signupNewUser(context.Background(), local+"@example.com")
+	if err != nil {
+		t.Fatalf("signupNewUser after slug collision: %v", err)
+	}
+	slug := r.accounts.byID[user.AccountID].Slug
+	if len(slug) != platform.MaxAccountSlugLen || !strings.HasPrefix(slug, strings.Repeat("g", 58)+"-") {
+		t.Errorf("retry slug = %q, want 58 g's + \"-\" + 4 hex", slug)
+	}
+}
+
+func TestAccountNameFromEmail_RuneBoundary(t *testing.T) {
+	email := strings.Repeat("é", 150) + "@" + strings.Repeat("h", 100) + ".com"
+	got := accountNameFromEmail(email)
+	if !utf8.ValidString(got) || utf8.RuneCountInString(got) != platform.MaxAccountNameLen {
+		t.Errorf("accountNameFromEmail: valid=%v runes=%d, want valid and %d",
+			utf8.ValidString(got), utf8.RuneCountInString(got), platform.MaxAccountNameLen)
+	}
+	if !strings.HasPrefix(email, got) {
+		t.Errorf("accountNameFromEmail is not a prefix of the address")
 	}
 }
 
