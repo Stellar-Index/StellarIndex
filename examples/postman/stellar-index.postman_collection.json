@@ -14897,7 +14897,7 @@
                     {
                       "disabled": false,
                       "description": {
-                        "content": "(Required) External reference to plot against. (This can only be one of chainlink,coingecko,reflector-cex,reflector-fx,reflector-dex,redstone,band)",
+                        "content": "(Required) External reference to plot against. (This can only be one of chainlink,coingecko,reflector-cex,reflector-fx,reflector-dex,redstone,band,synthetic-usd-cross)",
                         "type": "text/plain"
                       },
                       "key": "reference",
@@ -14950,7 +14950,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) External reference to plot against. (This can only be one of chainlink,coingecko,reflector-cex,reflector-fx,reflector-dex,redstone,band)",
+                            "content": "(Required) External reference to plot against. (This can only be one of chainlink,coingecko,reflector-cex,reflector-fx,reflector-dex,redstone,band,synthetic-usd-cross)",
                             "type": "text/plain"
                           },
                           "key": "reference",
@@ -14985,7 +14985,7 @@
                       "value": "application/json"
                     }
                   ],
-                  "body": "{\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote_id\": \"<string>\",\n    \"reference\": \"reflector-cex\",\n    \"days\": \"<integer>\",\n    \"bucket_seconds\": \"<integer>\",\n    \"threshold_pct\": \"<number>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      }\n    ]\n  }\n}",
+                  "body": "{\n  \"data\": {\n    \"asset_id\": \"<string>\",\n    \"quote_id\": \"<string>\",\n    \"reference\": \"reflector-fx\",\n    \"days\": \"<integer>\",\n    \"bucket_seconds\": \"<integer>\",\n    \"threshold_pct\": \"<number>\",\n    \"points\": [\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      },\n      {\n        \"t\": \"<dateTime>\",\n        \"delta_pct\": \"<string>\",\n        \"our_price\": \"<string>\",\n        \"ref_price\": \"<string>\",\n        \"firing\": \"<boolean>\"\n      }\n    ]\n  }\n}",
                   "cookie": [],
                   "_postman_previewlanguage": "json"
                 },
@@ -15013,7 +15013,7 @@
                         {
                           "disabled": false,
                           "description": {
-                            "content": "(Required) External reference to plot against. (This can only be one of chainlink,coingecko,reflector-cex,reflector-fx,reflector-dex,redstone,band)",
+                            "content": "(Required) External reference to plot against. (This can only be one of chainlink,coingecko,reflector-cex,reflector-fx,reflector-dex,redstone,band,synthetic-usd-cross)",
                             "type": "text/plain"
                           },
                           "key": "reference",

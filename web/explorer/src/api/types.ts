@@ -14334,7 +14334,7 @@ export interface operations {
                                 asset_id?: string;
                                 quote_id?: string;
                                 /** @enum {string} */
-                                reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
+                                reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
                                 /** Format: date-time */
                                 observed_at?: string;
                                 /** Format: int64 */
@@ -14358,7 +14358,7 @@ export interface operations {
                 /** @description `<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`. */
                 pair: string;
                 /** @description External reference to plot against. */
-                reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
+                reference: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
                 /** @description Trailing window; whitelisted to 1, 7 or 30 (default 7). */
                 days?: 1 | 7 | 30;
             };
@@ -14414,7 +14414,7 @@ export interface operations {
                             asset_id?: string;
                             quote_id?: string;
                             /** @enum {string} */
-                            reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band";
+                            reference?: "chainlink" | "coingecko" | "reflector-cex" | "reflector-fx" | "reflector-dex" | "redstone" | "band" | "synthetic-usd-cross";
                             days?: number;
                             /** @description Downsampling bucket width. Each point is the last observation inside its bucket; render the series at this resolution, not as raw ticks. */
                             bucket_seconds?: number;
