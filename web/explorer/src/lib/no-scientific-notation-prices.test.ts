@@ -28,7 +28,7 @@ const priceRenderFiles = [
   '../app/assets/[slug]/page.tsx',
   '../app/assets/[slug]/AssetSwap.tsx',
   '../app/assets/[slug]/LiquidityTabPanel.tsx',
-  '../app/external/assets/[slug]/page.tsx',
+  '../app/external/assets/[slug]/ExternalAssetDetailView.tsx',
   '../app/sources/[name]/page.tsx',
   '../app/accounts/AccountPositions.tsx',
 ];
