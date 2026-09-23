@@ -47,8 +47,8 @@
 //	                   asset-alias loop (native ↔ crypto:XLM), the
 //	                   stablecoin-fiat proxy (ADR-0026) and the fiat
 //	                   cross-rate synthesis behind it. `?window=N` switches
-//	                   to the aggregator's continuously-published rolling
-//	                   VWAP for that window — still not a tip read.
+//	                   to the aggregator's VWAP for that window, ending at
+//	                   the last closed minute — still not a tip read.
 //	/v1/price/tip      Rolling [now-5s, now) VWAP, escalating to 30 s when
 //	                   the short window is empty, then falling back to the
 //	                   same LatestPrice snapshot. No cross-region guarantee.

@@ -138,6 +138,7 @@ func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRef
 	}
 	// Tick 2: XLM/GBP jumps to 0.12 (+50%, z≈50, single venue).
 	setTrades(sc.legPriceT2, 12_000_000, now.Add(-10*time.Second))
+	nextBucket(o)
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}
@@ -153,6 +154,7 @@ func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRef
 
 	// Tick 3: the print PERSISTS at 0.12.
 	setTrades(sc.legPriceT2, 12_000_000, now.Add(-5*time.Second))
+	nextBucket(o)
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 3: %v", err)
 	}
@@ -803,6 +805,7 @@ func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *
 
 	// Tick 2: the target gains a SECOND venue → not evaluated at all.
 	setTrades([]string{"soroswap", "aquarius"}, now.Add(-5*time.Second))
+	nextBucket(o)
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}

@@ -69,6 +69,7 @@ func TestTick_LongWindowVWAP_StopsServingAfterTheSilenceGrace(t *testing.T) {
 
 	// And a live aggregator keeps it alive: one more tick re-publishes
 	// the key, so the bound costs nothing while the writer is running.
+	nextBucket(o)
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("Tick after grace: %v", err)
 	}

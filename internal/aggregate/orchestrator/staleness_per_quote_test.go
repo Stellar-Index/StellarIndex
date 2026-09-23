@@ -236,6 +236,10 @@ type compositeStalenessHarness struct {
 	direct, target canonical.Pair
 }
 
+// liveFXObservedAt is an FX quote an hour before the harness clock: well
+// inside the snap's freshness budget.
+var liveFXObservedAt = time.Date(2026, 3, 1, 11, 0, 0, 0, time.UTC)
+
 func newCompositeStalenessHarness(t *testing.T, fx FXStore, minRouteConfidence float64) *compositeStalenessHarness {
 	t.Helper()
 	btc, usd, eur := mustCrypto(t, "BTC"), mustFiat(t, "USD"), mustFiat(t, "EUR")
@@ -282,7 +286,7 @@ func (h *compositeStalenessHarness) tick(t *testing.T, outcome string) float64 {
 // quote, it dragged crypto:BTC to 600 with it — a permanent false page
 // for a healthy asset (F067, second writer).
 func TestTick_CompositeServedPairReadsFresh(t *testing.T) {
-	fx := &fakeFXStore{quote: new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)), source: "exchangeratesapi"}
+	fx := &fakeFXStore{quote: new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)), source: "exchangeratesapi", observedAt: liveFXObservedAt}
 	h := newCompositeStalenessHarness(t, fx, 0)
 
 	if ok := h.tick(t, "ok"); ok != 1 {
@@ -311,7 +315,7 @@ func TestTick_CompositeServedPairReadsFresh(t *testing.T) {
 // refuses to publish, has written no VWAP key, so the gauge must keep
 // climbing for a target with no direct trades.
 func TestTick_CompositeThatDoesNotPublishStillClimbs(t *testing.T) {
-	liveFX := &fakeFXStore{quote: new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)), source: "exchangeratesapi"}
+	liveFX := &fakeFXStore{quote: new(big.Rat).SetFrac(big.NewInt(90), big.NewInt(100)), source: "exchangeratesapi", observedAt: liveFXObservedAt}
 	for _, tc := range []struct {
 		name    string
 		fx      FXStore

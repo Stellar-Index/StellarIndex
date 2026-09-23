@@ -77,6 +77,7 @@ func TestTriangulate_FrozenLegStaysRefusedOnATickItsWindowIsEmpty(t *testing.T) 
 	// has most of ten minutes left.
 	o.store = &mockStore{}
 	before := testutil.ToFloat64(obs.AggregatorTriangulationsTotal.WithLabelValues(outcomeFrozenLeg))
+	nextBucket(o)
 	if err := o.Tick(ctx); err != nil {
 		t.Fatalf("Tick 2: %v", err)
 	}

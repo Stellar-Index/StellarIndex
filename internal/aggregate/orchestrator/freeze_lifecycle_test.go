@@ -229,7 +229,7 @@ func TestFreezeLifecycle_SingleCleanBucketDoesNotRelease(t *testing.T) {
 
 	// Bucket 1: single-source manipulated print → freeze fires.
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if !f.state().Active() {
 		t.Fatal("setup: manipulated single-source bucket did not freeze")
 	}
@@ -241,7 +241,7 @@ func TestFreezeLifecycle_SingleCleanBucketDoesNotRelease(t *testing.T) {
 	// source_count = 2 breaks the 3-signal AND, so the pre-lifecycle
 	// code published this bucket.
 	f.feed(t, manipQuoteAmount, "soroswap", "phoenix")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 
 	if got := f.served(t); got != lkgFormatted {
 		t.Errorf("a single second-source bucket released the freeze and published %q; "+
@@ -278,7 +278,7 @@ func TestFreezeLifecycle_HoldSurvivesAHealthyBucket(t *testing.T) {
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if !f.state().Active() {
 		t.Fatal("setup: freeze did not fire")
 	}
@@ -288,12 +288,12 @@ func TestFreezeLifecycle_HoldSurvivesAHealthyBucket(t *testing.T) {
 	// the calm streak; the second settled bucket does. Both must stay
 	// refused (the hold is active either way).
 	f.feed(t, lkgQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if got := f.state().UnfreezeStreak; got != 0 {
 		t.Errorf("UnfreezeStreak = %d on the transition bucket, want 0 (it is a jump)", got)
 	}
 	f.feed(t, lkgQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 
 	if got := f.served(t); got != lkgFormatted {
 		t.Errorf("served %q during the hold", got)
@@ -324,7 +324,7 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if !f.state().Active() {
 		t.Fatal("setup: freeze did not fire")
 	}
@@ -332,14 +332,14 @@ func TestFreezeLifecycle_AutoUnfreezeAfterTwoHealthyBucketsPastTheHold(t *testin
 	// Settling bucket first: the return TO the healthy level is itself a
 	// jump tick-over-tick and must not count toward the streak.
 	f.feed(t, lkgQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	// Two settled healthy buckets, the second landing after the initial
 	// hold (corroborated → 30 minutes) has expired.
 	f.tick(t, freeze.DefaultInitialHold+time.Minute)
 	if !f.state().Active() {
 		t.Fatal("released at expiry on a streak of one — the ADR wants two consecutive")
 	}
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 
 	if f.state().Active() {
 		t.Fatalf("still frozen after two consecutive healthy buckets past the hold: %+v", f.state())
@@ -373,7 +373,7 @@ func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
 	f := newFreezeFixture(t)
 
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if !f.state().Active() {
 		t.Fatal("setup: freeze did not fire")
 	}
@@ -383,9 +383,9 @@ func TestFreezeLifecycle_NoLensMeansNoAutoRelease(t *testing.T) {
 	// 10-minute) hold. Without a lens the streak must stay at zero and
 	// the freeze must hold.
 	f.feed(t, lkgQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	f.tick(t, freeze.DefaultUncorroboratedInitialHold+time.Minute)
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 
 	if !f.state().Active() {
 		t.Fatal("a pair with no corroborating lens auto-released — an uncorroboratable " +
@@ -439,7 +439,7 @@ func TestFreezeLifecycle_ExtendsThenEscalates(t *testing.T) {
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 
 	// Walk the ladder: each step lands just past the current hold. The
 	// seeded divergence result means a lens WAS consulted, so the freeze
@@ -475,8 +475,8 @@ func TestFreezeLifecycle_ExtendsThenEscalates(t *testing.T) {
 	// An escalated freeze does NOT auto-unfreeze: ADR-0019 holds it
 	// "until manual unfreeze", however healthy the pair now looks.
 	f.feed(t, lkgQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
+	f.tick(t, closedBucket)
 	f.tick(t, freeze.DefaultExtension+time.Minute)
 	if !f.state().Active() {
 		t.Error("escalated freeze auto-unfroze; ADR-0019 requires operator action")
@@ -515,7 +515,7 @@ func TestFreezeLifecycle_CorroborationScalesInitialHold(t *testing.T) {
 			}
 		}
 		f.feed(t, manipQuoteAmount, "soroswap")
-		f.tick(t, 30*time.Second)
+		f.tick(t, closedBucket)
 		if !f.state().Active() {
 			t.Fatal("setup: freeze did not fire")
 		}
@@ -554,7 +554,7 @@ func TestFreezeLifecycle_CorroborationScalesInitialHold(t *testing.T) {
 func TestFreezeLifecycle_MarkerTTLCoversTheHold(t *testing.T) {
 	f := newFreezeFixture(t)
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 
 	if len(f.marker.marks) != 1 {
 		t.Fatalf("marker written %d times, want 1", len(f.marker.marks))
@@ -586,7 +586,7 @@ func TestFreezeLifecycle_OperatorOverrideReleases(t *testing.T) {
 	before := testutil.ToFloat64(obs.AnomalyFreezeReleasedTotal.WithLabelValues("operator"))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if !f.state().Active() {
 		t.Fatal("setup: freeze did not fire")
 	}
@@ -594,7 +594,7 @@ func TestFreezeLifecycle_OperatorOverrideReleases(t *testing.T) {
 	// Operator clears the marker out of band, mid-hold.
 	f.marker.present = false
 
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if f.state().Active() {
 		t.Fatalf("in-memory ladder survived the operator override: %+v", f.state())
 	}
@@ -619,7 +619,7 @@ func TestFreezeLifecycle_OperatorOverrideReleases(t *testing.T) {
 func TestFreezeLifecycle_RehydratesLadderAcrossRestart(t *testing.T) {
 	f := newFreezeFixture(t)
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	f.tick(t, freeze.DefaultUncorroboratedInitialHold+time.Minute) // one extension
 	if got := f.state().ExtensionsUsed; got != 1 {
 		t.Fatalf("setup: ExtensionsUsed = %d, want 1", got)
@@ -640,7 +640,7 @@ func TestFreezeLifecycle_RehydratesLadderAcrossRestart(t *testing.T) {
 	restarted.clock = func() time.Time { return f.now }
 	f.orch = restarted
 
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 
 	st := restarted.freezeStates[f.stateKey()]
 	if !st.Active() {
@@ -834,7 +834,7 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 
 	// Tick 1: manipulated print on BOTH windows → both freeze.
 	feed(manipQuoteAmount, manipQuoteAmount)
-	tick(30 * time.Second)
+	tick(closedBucket)
 	if !orch.freezeStates[shortKey].Active() || !orch.freezeStates[longKey].Active() {
 		t.Fatalf("setup: both windows should freeze (short=%v long=%v)",
 			orch.freezeStates[shortKey].Active(), orch.freezeStates[longKey].Active())
@@ -851,7 +851,7 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 	// the confidence leg). The short window's FIRST healthy bucket is
 	// a jump vs the shadow comparator and settles the level.
 	feed(lkgQuoteAmount, manipQuoteAmount)
-	tick(30 * time.Second)
+	tick(closedBucket)
 	// Tick past the 30-minute corroborated hold: short earns
 	// streak=1 (held), long keeps firing on a fresh swing — both
 	// still frozen.
@@ -867,7 +867,7 @@ func TestFreezeLifecycle_SiblingWindowReleaseKeepsLongWindowFrozen(t *testing.T)
 	// Tick 3: the short window's SECOND consecutive healthy bucket →
 	// it auto-releases. The long window swings again and stays frozen.
 	feed(lkgQuoteAmount, manipQuoteAmount*2)
-	tick(30 * time.Second)
+	tick(closedBucket)
 
 	// The short window releases in both the buggy and fixed code — that
 	// is not the defect.
@@ -911,7 +911,7 @@ func TestFreezeLifecycle_OperatorOverrideReleasesAllWindows(t *testing.T) {
 	longKey := pair.String() + ":" + longWindow.String()
 
 	feed(manipQuoteAmount, manipQuoteAmount)
-	tick(30 * time.Second)
+	tick(closedBucket)
 	if !orch.freezeStates[shortKey].Active() || !orch.freezeStates[longKey].Active() {
 		t.Fatal("setup: both windows should be frozen")
 	}
@@ -921,7 +921,7 @@ func TestFreezeLifecycle_OperatorOverrideReleasesAllWindows(t *testing.T) {
 	marker.present = false
 
 	feed(manipQuoteAmount, manipQuoteAmount)
-	tick(30 * time.Second)
+	tick(closedBucket)
 
 	if orch.freezeStates[shortKey].Active() {
 		t.Error("operator override left the short window frozen")
@@ -943,7 +943,7 @@ func TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes(t *testing.T) {
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1242))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if got := testutil.ToFloat64(obs.AnomalyFreezeActive); got != 1 {
 		t.Errorf("AnomalyFreezeActive = %v while one pair is frozen, want 1", got)
 	}
@@ -951,9 +951,9 @@ func TestFreezeLifecycle_ActiveGaugeTracksHeldFreezes(t *testing.T) {
 	// Settle the level (the first healthy bucket is a jump vs the shadow
 	// comparator), then two calm buckets past the hold release.
 	f.feed(t, lkgQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	f.tick(t, freeze.DefaultInitialHold+time.Minute)
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if f.state().Active() {
 		t.Fatal("setup: expected release")
 	}
@@ -1055,7 +1055,7 @@ func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
 
 	// Bucket 1: a manipulated single-source spike → Phase 1 freezes.
 	feed(manipQuoteAmount)
-	tick(30 * time.Second)
+	tick(closedBucket)
 	if !o.freezeStates[stateKey].Active() {
 		t.Fatal("setup: manipulated single-source bucket did not enter a Phase 1 freeze")
 	}
@@ -1139,7 +1139,7 @@ func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 	seedDivergence(t, f, agreeingLens(f.pair, 0.1242, 0.1317))
 
 	f.feed(t, manipQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if !f.state().Active() {
 		t.Fatal("setup: freeze did not fire")
 	}
@@ -1148,7 +1148,7 @@ func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 	// jump tick-over-tick (manip → drifted), so it may not start the calm
 	// streak — that is correct. It must still be refused (hold active).
 	f.feed(t, driftedQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 	if !f.state().Active() {
 		t.Fatal("released inside the initial hold — the hold must be served first")
 	}
@@ -1158,7 +1158,7 @@ func TestFreezeLifecycle_AutoUnfreezeAtANewStablePriceLevel(t *testing.T) {
 	f.feed(t, driftedQuoteAmount, "soroswap")
 	f.tick(t, freeze.DefaultInitialHold+time.Minute)
 	f.feed(t, driftedQuoteAmount, "soroswap")
-	f.tick(t, 30*time.Second)
+	f.tick(t, closedBucket)
 
 	if f.state().Active() {
 		t.Fatalf("still frozen after the market held a NEW stable level for two "+
