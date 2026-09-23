@@ -16,7 +16,7 @@
 //
 // Relationship to the other FX packages under internal/sources/external/
 // (maintainability-audit-2026-07-01 D1 M0-1, "FX-into-external fold",
-// BACKLOG #47): this package and its sibling [frankfurter] predate the
+// ROADMAP #47): this package and its sibling [frankfurter] predate the
 // [external.Connector] framework and keep their own bespoke worker /
 // FXQuoteWriter seam rather than implementing Streamer/Poller/Backfiller.
 // forex ("massive" in [external.Registry]) is the ACTIVE feed, run as a

@@ -16,7 +16,7 @@
 // Folded from internal/sources/frankfurter/ into
 // internal/sources/external/frankfurter/ alongside its sibling
 // internal/sources/external/forex/ (maintainability-audit-2026-07-01
-// D1 M0-1 "FX-into-external fold", BACKLOG #47) — see the package doc
+// D1 M0-1 "FX-into-external fold", ROADMAP #47) — see the package doc
 // on forex for the fuller reconciliation note against external/ecb
 // (also ECB-backed, but a Connector-framework poller wired into the
 // indexer, not a one-shot historical-backfill client run from
