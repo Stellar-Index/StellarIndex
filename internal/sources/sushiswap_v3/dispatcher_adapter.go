@@ -185,8 +185,17 @@ func (d *Decoder) emitTrade(ev events.Event) ([]consumer.Event, error) {
 
 	tokens, known := d.poolTokensFor(ev.ContractID)
 	if !known {
+		// Gated in (the DB warm admitted this pool) but no token
+		// mapping yet — the creation event hasn't been replayed since
+		// restart. Fail closed (no invented assets) but, unlike
+		// ErrNonDirectionalSwap below, this gap must be VISIBLE: return
+		// the sentinel so the dispatcher's decode-error counter (and
+		// obs.SourceDecodeErrorsTotal) surfaces it, same idiom as
+		// redstone's ErrMissingOpArgs. Silently returning nil here
+		// would make a swap-coverage gap indistinguishable from a
+		// protocol with nothing left to decode.
 		d.bumpUnknownPool()
-		return nil, nil
+		return nil, ErrUnknownPool
 	}
 
 	trade, err := decodeSwap(
