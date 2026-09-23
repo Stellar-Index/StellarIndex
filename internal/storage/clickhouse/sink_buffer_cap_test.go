@@ -3,6 +3,8 @@ package clickhouse
 import (
 	"context"
 	"errors"
+	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -72,10 +74,24 @@ func TestSinkBufferCapUnboundedByDefault(t *testing.T) {
 type fakeOrderConn struct {
 	driver.Conn
 	tables []string
+
+	// failTable, when set, makes that table's batch fail: at PrepareBatch if
+	// failAtPrepare, otherwise at Send. It models a partial flush.
+	failTable     string
+	failAtPrepare bool
 }
 
+var errInjected = errors.New("injected clickhouse failure")
+
 func (c *fakeOrderConn) PrepareBatch(_ context.Context, query string, _ ...driver.PrepareBatchOption) (driver.Batch, error) {
-	c.tables = append(c.tables, tableFromInsert(query))
+	table := tableFromInsert(query)
+	c.tables = append(c.tables, table)
+	if table == c.failTable {
+		if c.failAtPrepare {
+			return nil, errInjected
+		}
+		return fakeBatch{sendErr: errInjected}, nil
+	}
 	return fakeBatch{}, nil
 }
 
@@ -98,19 +114,17 @@ func tableFromInsert(query string) string {
 // under test.
 type fakeBatch struct {
 	driver.Batch
+	sendErr error
 }
 
 func (fakeBatch) Append(...any) error { return nil }
-func (fakeBatch) Send() error         { return nil }
+func (b fakeBatch) Send() error       { return b.sendErr }
 
-// TestSinkFlushOrderLedgersLast pins the K074 invariant declared in the
-// "ORDERING IS LOAD-BEARING" comment on Flush: stellar.ledgers must be the
-// LAST table flushed, after every table the completeness watermark
-// (ContiguousWatermark) depends on, so a present ledgers row is a valid
-// per-ledger commit marker. It observes the REAL PrepareBatch call order
-// Flush issues, not a hand-maintained mirror of it.
-func TestSinkFlushOrderLedgersLast(t *testing.T) {
-	conn := &fakeOrderConn{}
+// fullSink returns a Sink over conn with one row buffered in every table, and
+// fails the test if any slice buffer on Sink is left empty — so a buffer added
+// later cannot dodge the flush-order tests by being skipped-when-empty.
+func fullSink(t *testing.T, conn driver.Conn) *Sink {
+	t.Helper()
 	s := &Sink{conn: conn}
 	s.ledgers = []LedgerRow{{LedgerSeq: 1}}
 	s.txs = []TransactionRow{{}}
@@ -120,6 +134,25 @@ func TestSinkFlushOrderLedgersLast(t *testing.T) {
 	s.events = []ContractEventRow{{}}
 	s.changes = []LedgerEntryChangeRow{{}}
 	s.supplyFlows = []SupplyFlowRow{{}}
+
+	v := reflect.ValueOf(s).Elem()
+	for i := 0; i < v.NumField(); i++ {
+		if f := v.Field(i); f.Kind() == reflect.Slice && f.Len() == 0 {
+			t.Fatalf("Sink buffer %q is empty in fullSink; populate it so its flush is ordered against ledgers", v.Type().Field(i).Name)
+		}
+	}
+	return s
+}
+
+// TestSinkFlushOrderLedgersLast pins the K074 invariant declared in the
+// "ORDERING IS LOAD-BEARING" comment on Flush: stellar.ledgers must be the
+// LAST table flushed, after every table the completeness watermark
+// (ContiguousWatermark) depends on, so a present ledgers row is a valid
+// per-ledger commit marker. It observes the REAL PrepareBatch call order
+// Flush issues, not a hand-maintained mirror of it.
+func TestSinkFlushOrderLedgersLast(t *testing.T) {
+	conn := &fakeOrderConn{}
+	s := fullSink(t, conn)
 
 	if err := s.Flush(context.Background()); err != nil {
 		t.Fatalf("Flush: unexpected error %v", err)
@@ -135,6 +168,38 @@ func TestSinkFlushOrderLedgersLast(t *testing.T) {
 	for i, table := range conn.tables[:len(conn.tables)-1] {
 		if table == "ledgers" {
 			t.Fatalf("ledgers flushed at position %d of %d (before other tables); ledgers must be LAST", i, len(conn.tables))
+		}
+	}
+}
+
+// TestSinkFlushPartialFailureWritesNoCommitMarker pins the other half of the
+// commit-marker invariant: when any other table's batch fails, Flush must stop
+// before stellar.ledgers, return the error and keep every buffer for the retry.
+// Ordering alone does not give this — a Flush that collected errors and carried
+// on would still write ledgers last, and ContiguousWatermark would then read a
+// ledger whose events or changes never landed as complete.
+func TestSinkFlushPartialFailureWritesNoCommitMarker(t *testing.T) {
+	baseline := &fakeOrderConn{}
+	if err := fullSink(t, baseline).Flush(context.Background()); err != nil {
+		t.Fatalf("baseline Flush: %v", err)
+	}
+	for _, table := range baseline.tables {
+		if table == "ledgers" {
+			continue
+		}
+		for _, atPrepare := range []bool{false, true} {
+			conn := &fakeOrderConn{failTable: table, failAtPrepare: atPrepare}
+			s := fullSink(t, conn)
+			err := s.Flush(context.Background())
+			if !errors.Is(err, errInjected) {
+				t.Fatalf("fail %s (atPrepare=%v): Flush = %v, want the injected error", table, atPrepare, err)
+			}
+			if slices.Contains(conn.tables, "ledgers") {
+				t.Fatalf("fail %s (atPrepare=%v): Flush still wrote stellar.ledgers %v, a commit marker for a ledger whose %s never landed", table, atPrepare, conn.tables, table)
+			}
+			if got := s.BufferedLedgers(); got != 1 {
+				t.Fatalf("fail %s (atPrepare=%v): BufferedLedgers = %d, want 1 (buffers kept for retry)", table, atPrepare, got)
+			}
 		}
 	}
 }
