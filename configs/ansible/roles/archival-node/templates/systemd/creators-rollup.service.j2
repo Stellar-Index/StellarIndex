@@ -31,7 +31,7 @@ Environment=EXTRA_FLAGS=
 ExecStart=/usr/local/bin/stellarindex-ops ch-creators-rollup \
   -ch-addr ${CH_ADDR} \
   -config ${CONFIG_PATH} \
-  ${EXTRA_FLAGS}
+  $EXTRA_FLAGS
 
 # De-privileged, same shape as the sibling oneshots (CS-118/CS-119).
 User=stellarindex

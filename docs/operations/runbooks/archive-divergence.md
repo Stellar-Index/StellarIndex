@@ -57,7 +57,8 @@ severity: P1
 >
 > # 2. Prime BOTH producers once, one at a time — they share
 > #    run-heavy-job.sh's "verify-archive" singleton lock, so a
-> #    concurrent start just fails on the lock. This is also what
+> #    concurrent start just fails on the lock (Tier D's cron
+> #    takes its own "verify-archive-tier-d" lock instead). This is also what
 > #    puts the zero baseline on disk BEFORE the first nightly run
 > #    (blind spot 2 below), so do not skip it. A non-zero exit here
 > #    is itself a finding: read the journal.
@@ -122,8 +123,11 @@ There is no "history-scanner job". The real producers are:
 - **Tier B** — checkpoint cross-check against the local
   archivist mirror (`verify-archive-tier-b.{service,timer}`).
 - **Tier D** — weekly multi-peer sampling: root cron, Sunday
-  04:23 (`-tier peers -peer-samples 50`, output to journald tag
-  `stellarindex-tier-d`). **Still metric-less** — Tier D runs
+  10:23 (`-tier peers -peer-samples 50`, output to journald tag
+  `stellarindex-tier-d`), under `run-heavy-job.sh` with its OWN
+  lock, `verify-archive-tier-d` — it does not share the tier A/B
+  `verify-archive` lock, so a tier A/B run never skips it and it
+  never skips them. **Still metric-less** — Tier D runs
   outside the systemd units that carry `-textfile-output`, so a
   Tier D divergence pages nobody. Read the journal.
 

@@ -58,7 +58,7 @@ ExecStart=/usr/local/bin/stellarindex-ops issuer-flags \
   -batch ${BATCH} \
   -timeout ${RUN_TIMEOUT} \
   -write \
-  ${EXTRA_FLAGS}
+  $EXTRA_FLAGS
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is
 # created by 04-users.yml (CS-119). Reads config + ClickHouse, writes

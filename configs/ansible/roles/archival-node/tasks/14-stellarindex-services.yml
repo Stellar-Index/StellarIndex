@@ -1211,6 +1211,15 @@
 #
 # -from follows the sibling units (verify-archive-tier-a/-b,
 # archive-completeness): the node's hot floor when it has one, else 2.
+#
+# Runs under run-heavy-job.sh like every other archive walk: singleton
+# lock, the 20G MemoryMax scope and the disk watchdog. The lock name is
+# its own (`verify-archive-tier-d`), not tier A/B's `verify-archive`: a
+# multi-hour tier-A bootstrap walk would otherwise swallow the weekly
+# fork check with an exit-0 "skipping this fire". Sunday 10:23 keeps it
+# clear of the nightly heavy band (02:17 archive-completeness through
+# 06:00 ch-supply, incl. tier A 03:23 and tier B 04:37). Both pinned by
+# scripts/ci/verify-archive-tier-d-test.sh.
 
 - name: Install Tier D verify-archive weekly cron
   ansible.builtin.cron:
@@ -1218,13 +1227,14 @@
     cron_file: stellarindex-verify-archive-tier-d
     user: root
     minute: "23"
-    hour: "4"
-    weekday: "0"   # Sunday morning
+    hour: "10"
+    weekday: "0"   # Sunday, after the nightly heavy-job band
     # The -ops file is read VERBATIM (systemd EnvironmentFile syntax is not
     # shell — `source` would expand `$` / split on `;` inside a secret;
     # deploy-ansible-secrets-5). No `%` here: cron turns it into a newline.
     job: >-
       bash -c 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
+      /usr/local/sbin/run-heavy-job.sh verify-archive-tier-d
       /usr/local/bin/stellarindex-ops verify-archive
       -config /etc/stellarindex.toml
       -tier peers

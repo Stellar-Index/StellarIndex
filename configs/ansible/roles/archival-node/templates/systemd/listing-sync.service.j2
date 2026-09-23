@@ -53,7 +53,7 @@ ExecStart=/usr/local/bin/stellarindex-ops listing-sync \
   -config ${CONFIG_PATH} \
   -timeout ${RUN_TIMEOUT} \
   -write \
-  ${EXTRA_FLAGS}
+  $EXTRA_FLAGS
 
 # De-privileged, same shape as directory-sync and sep1-refresh
 # (CS-118/CS-119): reads config, fetches two HTTPS bodies, writes

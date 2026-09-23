@@ -57,7 +57,7 @@ ExecStart=/usr/local/bin/stellarindex-ops ch-cap67-movements \
   -window ${WINDOW} \
   -floor-ledger ${FLOOR_LEDGER} \
   -write \
-  ${EXTRA_FLAGS}
+  $EXTRA_FLAGS
 
 # Crash-safe daemon: on any non-graceful exit, restart and resume from
 # the persisted watermark. RestartSec avoids a hot crash-loop against a

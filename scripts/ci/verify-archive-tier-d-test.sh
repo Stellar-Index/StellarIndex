@@ -25,7 +25,12 @@
 #   3. `-from` is never below 2 (ledger 1 has no predecessor);
 #   4. the flags the cron passes still exist in verify_archive.go, and
 #      `-to` is still an fs.Uint — if either changes, premise (2) needs
-#      re-deriving rather than silently drifting.
+#      re-deriving rather than silently drifting;
+#   5. (#1232) the walk runs under run-heavy-job.sh — lock, MemoryMax scope,
+#      disk watchdog — with a lock name of its own (sharing tier A/B's
+#      would let a long tier-A run swallow the weekly check), and starts
+#      outside the nightly band of daily heavy-job timers (first start to
+#      last start + 2h), derived from the role's templates.
 #
 # ROLE_TASKS / OPS_ARCHIVE_SRC point the gate at a fixture copy (used for
 # the red-proof against the pre-fix task file).
@@ -36,6 +41,7 @@ cd "$(dirname "$0")/../.." || exit 1
 ROLE_TASKS="${ROLE_TASKS:-$PWD/configs/ansible/roles/archival-node/tasks}"
 OPS_ARCHIVE_SRC="${OPS_ARCHIVE_SRC:-$PWD/internal/ops/archive/verify_archive.go}"
 TASK_FILE="$ROLE_TASKS/14-stellarindex-services.yml"
+ROLE_SYSTEMD="${ROLE_SYSTEMD:-$PWD/configs/ansible/roles/archival-node/templates/systemd}"
 
 pass=0; fail=0
 ok()  { pass=$((pass + 1)); echo "  ok   — $1"; }
@@ -175,6 +181,84 @@ else
   else
     bad "peerArchiveTip is gone — an omitted -to may no longer mean 'up to the peers' tips'"
   fi
+fi
+
+# ── 5. host protection: heavy-job wrapper, own lock, off the nightly band ─
+heavy_ok=0
+"$PY" - "$TASK_FILE" "$ROLE_SYSTEMD" <<'PY_HEAVY_EOF' || heavy_ok=1
+import glob
+import os
+import re
+import sys
+
+import yaml
+
+TASK_NAME = "Install Tier D verify-archive weekly cron"
+WRAPPER = "/usr/local/sbin/run-heavy-job.sh"
+MARGIN_MIN = 120
+
+cron = None
+for task in yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or []:
+    if isinstance(task, dict) and task.get("name") == TASK_NAME:
+        cron = task.get("ansible.builtin.cron") or {}
+if not cron or not cron.get("job"):
+    print(f"  FAIL — task {TASK_NAME!r} not found; this gate must not pass vacuously")
+    sys.exit(1)
+failures = 0
+job = " ".join(cron["job"].split())
+
+# Lock names the tier A/B units take, and the daily heavy-job start times.
+sibling_locks, starts = set(), []
+for svc in glob.glob(os.path.join(sys.argv[2], "*.service.j2")):
+    m = re.search(r"^ExecStart=" + re.escape(WRAPPER) + r"\s+(\S+)",
+                  open(svc, encoding="utf-8").read(), re.M)
+    if not m:
+        continue
+    if os.path.basename(svc).startswith("verify-archive-tier-"):
+        sibling_locks.add(m.group(1))
+    timer = svc.replace(".service.j2", ".timer.j2")
+    if os.path.exists(timer):
+        for hh, mm in re.findall(r"^OnCalendar=\*-\*-\* (\d\d):(\d\d)",
+                                 open(timer, encoding="utf-8").read(), re.M):
+            starts.append(int(hh) * 60 + int(mm))
+if not sibling_locks or not starts:
+    print("  FAIL — no tier A/B heavy-job lock or daily heavy timer found; gate would be vacuous")
+    sys.exit(1)
+
+m = re.search(re.escape(WRAPPER) + r"\s+(\S+)\s+/usr/local/bin/stellarindex-ops verify-archive", job)
+if not m:
+    print("  FAIL — Tier D runs stellarindex-ops verify-archive without run-heavy-job.sh: "
+          "no singleton lock, no MemoryMax scope, no disk watchdog")
+    failures += 1
+elif m.group(1) in sibling_locks:
+    print(f"  FAIL — Tier D takes lock {m.group(1)!r}, shared with tier A/B; a long tier-A "
+          "run would skip the weekly fork check with exit 0")
+    failures += 1
+else:
+    print(f"  ok   — Tier D runs under run-heavy-job.sh with its own lock {m.group(1)!r}")
+
+try:
+    at = int(str(cron.get("hour"))) * 60 + int(str(cron.get("minute")))
+except ValueError:
+    print(f"  FAIL — cron hour/minute {cron.get('hour')!r}:{cron.get('minute')!r} is not a single time")
+    sys.exit(1)
+lo, hi = min(starts), max(starts) + MARGIN_MIN
+
+
+def hhmm(t):
+    return f"{t // 60:02d}:{t % 60:02d}"
+
+
+verdict = "inside" if lo <= at <= hi else "outside"
+print(f"  {'FAIL' if verdict == 'inside' else 'ok  '} — Tier D starts {hhmm(at)}, "
+      f"{verdict} the nightly heavy band {hhmm(lo)}-{hhmm(hi)}")
+failures += verdict == "inside"
+sys.exit(1 if failures else 0)
+PY_HEAVY_EOF
+if [ "$heavy_ok" -eq 0 ]; then
+  ok "Tier D is host-protected by run-heavy-job.sh and scheduled off the heavy band"
+else
+  bad "Tier D bypasses run-heavy-job.sh, shares tier A/B's lock, or starts in the heavy band"
 fi
 
 echo
