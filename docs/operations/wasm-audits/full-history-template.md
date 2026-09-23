@@ -8,9 +8,11 @@ status: template — applied to each source as v2 audit lands
 
 This template documents the structural shape each source's audit
 doc takes once the v2 full-instance WASM history walk lands. The
-v1 audits (2026-04-29, PRs #263–#270) captured each
-factory/router/oracle's WASM history + each currently-deployed
-pool/pair contract's *current* WASM. The v2 follow-up adds:
+v1 audits (2026-04-29 — see each source's
+`wasm-audits/<source>.md` "Ratified 2026-04-29" section for the
+flipping commit) captured each factory/router/oracle's WASM
+history + each currently-deployed pool/pair contract's *current*
+WASM. The v2 follow-up adds:
 
 1. **Per-instance upgrade history.** Each pool/pair's full WASM
    timeline (every `update_current_contract_wasm` event observed

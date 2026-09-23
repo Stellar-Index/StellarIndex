@@ -609,6 +609,16 @@ stale_patterns=(
                                   # asset_key label; #314 is now a real,
                                   # unrelated merged PR (integration-suite
                                   # 4-way sharding)
+  "PRs #263(–|-)#270"             # dangling ref (RSWP-045/RSWP-046) —
+                                  # full-history-template.md's v1-audit
+                                  # paragraph cited this range; #263 now
+                                  # resolves to an unrelated asset-registry
+                                  # dedupe fix and #270 to an unrelated
+                                  # pgBackRest/CH-snapshot alert fix, not
+                                  # the eight per-source WASM audit PRs.
+                                  # Alternation (not `.`) because the
+                                  # en-dash is 3 UTF-8 bytes and CI's grep
+                                  # runs C locale
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
