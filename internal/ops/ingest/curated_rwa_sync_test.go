@@ -556,3 +556,80 @@ func TestCuratedRWAClient_FollowsASameOriginRedirect(t *testing.T) {
 		t.Errorf("key at the same-origin hop = %q, want it carried", gotKey)
 	}
 }
+
+// redirectHops builds the via chain net/http passes CheckRedirect after n
+// requests to rawURL.
+func redirectHops(t *testing.T, n int, rawURL string) []*http.Request {
+	t.Helper()
+	via := make([]*http.Request, n)
+	for i := range via {
+		r, err := http.NewRequest(http.MethodGet, rawURL, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		via[i] = r
+	}
+	return via
+}
+
+// assertKeyedRedirectPolicy pins the CheckRedirect a keyed client was
+// built with: no scheme downgrade, no port or host change, and Go's
+// ten-hop cap, which a custom CheckRedirect otherwise drops.
+func assertKeyedRedirectPolicy(t *testing.T, check func(*http.Request, []*http.Request) error) {
+	t.Helper()
+	if check == nil {
+		t.Fatal("CheckRedirect is nil; the key would follow any redirect")
+	}
+	const origin = "https://api.example.test/x"
+	cases := []struct {
+		name    string
+		target  string
+		hops    int
+		wantErr string
+	}{
+		{"https to http downgrade", "http://api.example.test/x", 1, "refusing to follow a redirect"},
+		{"port change", "https://api.example.test:8443/x", 1, "refusing to follow a redirect"},
+		{"host change", "https://elsewhere.example.test/x", 1, "refusing to follow a redirect"},
+		{"same origin at the cap", origin, 10, "stopped after 10 redirects"},
+		{"same origin under the cap", origin, 9, ""},
+	}
+	for _, tc := range cases {
+		req, err := http.NewRequest(http.MethodGet, tc.target, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = check(req, redirectHops(t, tc.hops, origin))
+		switch {
+		case tc.wantErr == "" && err != nil:
+			t.Errorf("%s: err = %v, want the hop followed", tc.name, err)
+		case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func TestCuratedRWAClient_RedirectPolicy(t *testing.T) {
+	assertKeyedRedirectPolicy(t, newCuratedRWAClient("https://api.dune.com", "k-secret").http.CheckRedirect)
+}
+
+// TestCuratedRWAClient_StopsASelfRedirectLoop — a same-origin 302 to
+// itself must end at the hop cap, not re-send the key until the 90 s
+// client timeout.
+func TestCuratedRWAClient_StopsASelfRedirectLoop(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, r.URL.Path, http.StatusFound)
+	}))
+	t.Cleanup(srv.Close)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := newCuratedRWAClient(srv.URL, "k-secret").get(ctx, curatedRWATestResultsPath)
+	if err == nil || !strings.Contains(err.Error(), "stopped after 10 redirects") {
+		t.Fatalf("err = %v, want the loop stopped at the hop cap", err)
+	}
+	if got := hits.Load(); got != 10 {
+		t.Errorf("origin saw %d keyed requests, want 10", got)
+	}
+}
