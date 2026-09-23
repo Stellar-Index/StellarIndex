@@ -870,7 +870,8 @@ var IngestGapDetectorLastSuccessUnix = prometheus.NewGaugeVec(
 // ProjectorLagLedgers is how far behind tip each projector source
 // currently is, in ledgers. The projector reads soroban_events
 // (raw) and writes per-source classifier tables; this gauge =
-// tip - last_projected_ledger. ADR-0032.
+// ledgerstream tip - last_projected_ledger, measured against the
+// ledgerstream tip even when the CH lake watermark clamps the scan. ADR-0032.
 //
 // Steady-state value is 0-few-ledgers when the projector is
 // keeping up. A sustained > 1000 value means the projector is
@@ -880,22 +881,25 @@ var IngestGapDetectorLastSuccessUnix = prometheus.NewGaugeVec(
 var ProjectorLagLedgers = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_projector_lag_ledgers",
-		Help: "Per-source projector lag in ledgers (tip - last_projected). 0 = caught up. Sustained > 1000 = falling behind.",
+		Help: "Per-source projector lag in ledgers (ledgerstream tip - last_projected). 0 = caught up. Sustained > 1000 = falling behind.",
 	},
 	[]string{"source"},
 )
 
 // ProjectorRunsTotal counts projector cycle outcomes per source.
-// `outcome` ∈ {ok, error, idle, sink_retry, decode_degraded}; rate is
+// `outcome` ∈ {ok, error, idle, watermark_held, sink_retry, decode_degraded}; rate is
 // the alive-check (zero rate sustained 5+ minutes means the source's
 // loop wedged). `decode_degraded` (DATA-6 / NS-2) marks a cycle that
 // advanced the cursor but dropped at least one decode-failed row — a
 // clean-looking advance that is NOT "ok"; a sustained per-source
 // decode_error rate on those cycles is a decoder regression.
+// `watermark_held` is an empty scan because the CH lake's contiguous
+// watermark sits below ledgers ledgerstream already holds (a lake hole),
+// as opposed to `idle`, which is genuinely caught up.
 var ProjectorRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_runs_total",
-		Help: "Per-source projector cycle outcomes (ok, error, idle, sink_retry, decode_degraded). Rate goes to zero if the source's loop has wedged.",
+		Help: "Per-source projector cycle outcomes (ok, error, idle, watermark_held, sink_retry, decode_degraded). Rate goes to zero if the source's loop has wedged.",
 	},
 	[]string{"source", "outcome"},
 )

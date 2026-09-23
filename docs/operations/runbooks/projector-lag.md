@@ -62,6 +62,22 @@ If the projector cursor isn't moving at all, jump to `Mitigation`. If
 it's moving but slower than the live tip, this is honest catch-up after
 an outage — let it run unless lag exceeds a few hours.
 
+**Held at a lake hole.** In the ClickHouse read mode the scan is clamped to
+the lake's contiguous-completeness watermark, so a missing lake ledger stops
+the source there on purpose (reading past it would lose that ledger's
+events). Such a cycle counts as `outcome="watermark_held"`, not `idle`, and
+the lag gauge still measures against the ledgerstream tip, so it grows:
+
+```promql
+sum by (source) (increase(stellarindex_projector_runs_total{outcome="watermark_held"}[15m]))
+```
+
+Non-zero means the lake has a hole, not the projector: the log line `held at
+the lake's contiguous watermark` names the `watermark` ledger, and every
+source that has reached it stops at the same one. Heal the lake with the `ch-live-catchup` timer
+([ch-live-sink-drops](ch-live-sink-drops.md)); the projector resumes on its
+own once the watermark moves. Do not rewind the projector cursor for this.
+
 ## Mitigation (≤ 15 min)
 
 - [ ] Step 1 — check that the dispatcher's per-source sink is still
@@ -155,6 +171,11 @@ an outage — let it run unless lag exceeds a few hours.
   projection).
 
 ## Changelog
+
+- 2026-09-23 — T062: a cycle held at the ClickHouse lake watermark is now
+  `runs_total{outcome="watermark_held"}` and reports its real lag against the
+  ledgerstream tip. It used to count as `idle` with lag 0, so a stalled
+  watermark never reached this alert; added the diagnosis step above.
 
 - 2026-08-29 — re-verified against HEAD (runbook Wave L, #319): the read
   source is the ClickHouse `contract_events` lake by DEFAULT
