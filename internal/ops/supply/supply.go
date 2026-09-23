@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 	"text/tabwriter"
@@ -691,23 +692,42 @@ func runSupplyCrossCheck(
 		return fmt.Errorf("CrossCheckForClass(%s): %w", wrapClass, err)
 	}
 
-	fmt.Println("─── CROSS-CHECK RESULT ───")
-	fmt.Printf("  wrap_class:           %s\n", result.WrapClass)
-	fmt.Printf("  primary_total:        %s\n", result.ClassicTotal.String())
-	fmt.Printf("  counterpart_total:    %s\n", result.SACTotal.String())
-	fmt.Printf("  divergence_stroops:   %s\n", result.DivergenceStroops.String())
-	if result.WithinTolerance {
-		fmt.Printf("  status:               WITHIN TOLERANCE ✓ (≤ %s stroop per ADR-0011)\n",
+	return reportCrossCheck(os.Stdout, result, primaryKey)
+}
+
+// errCrossCheckUnchecked is returned when a partial-wrap result carries
+// no escrow leg: DivergenceStroops is then 0 by construction, so a green
+// status would certify a check that compared nothing (ADR-0011 CS-087).
+var errCrossCheckUnchecked = errors.New("cross-check inconclusive — escrow leg not evaluated (classic snapshot has no sac_wrapped_stroops)")
+
+// reportCrossCheck prints result and returns non-nil unless the check
+// both ran and passed.
+func reportCrossCheck(w io.Writer, result supply.CrossCheckResult, primaryKey string) error {
+	_, _ = fmt.Fprintln(w, "─── CROSS-CHECK RESULT ───")
+	_, _ = fmt.Fprintf(w, "  wrap_class:           %s\n", result.WrapClass)
+	_, _ = fmt.Fprintf(w, "  primary_total:        %s\n", result.ClassicTotal.String())
+	_, _ = fmt.Fprintf(w, "  counterpart_total:    %s\n", result.SACTotal.String())
+	_, _ = fmt.Fprintf(w, "  divergence_stroops:   %s\n", result.DivergenceStroops.String())
+	unchecked := result.WrapClass == supply.WrapClassPartial && !result.SubsetBoundChecked
+	switch {
+	case !result.WithinTolerance:
+		_, _ = fmt.Fprintf(w, "  status:               OVER TOLERANCE ✗ — investigate per supply-cross-check-divergence runbook\n")
+		_, _ = fmt.Fprintf(w, "  alert label:          classic_key=\"%s\"\n", primaryKey)
+		_, _ = fmt.Fprintln(w, "  next action:          stellarindex-ops supply audit <asset> -history-hours 24 to identify when divergence appeared")
+	case unchecked:
+		_, _ = fmt.Fprintln(w, "  status:               UNCHECKED ? — escrow leg not evaluated; the classic snapshot carries no sac_wrapped_stroops, so divergence 0 verifies nothing")
+		_, _ = fmt.Fprintln(w, "  next action:          wait for a classic snapshot recorded after migration 0117, then re-run")
+	default:
+		_, _ = fmt.Fprintf(w, "  status:               WITHIN TOLERANCE ✓ (≤ %s stroop per ADR-0011)\n",
 			supply.CrossCheckTolerance.String())
-	} else {
-		fmt.Printf("  status:               OVER TOLERANCE ✗ — investigate per supply-cross-check-divergence runbook\n")
-		fmt.Printf("  alert label:          classic_key=\"%s\"\n", primaryKey)
-		fmt.Println("  next action:          stellarindex-ops supply audit <asset> -history-hours 24 to identify when divergence appeared")
 	}
-	fmt.Println()
+	_, _ = fmt.Fprintln(w)
 
 	if !result.WithinTolerance {
 		return errors.New("cross-check failed — divergence exceeds 1 stroop tolerance")
+	}
+	if unchecked {
+		return errCrossCheckUnchecked
 	}
 	return nil
 }

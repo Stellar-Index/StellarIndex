@@ -283,7 +283,11 @@ below is the generic path.
       ```
       Output prints both snapshots + the cross-check delta. Exit
       code is non-zero on out-of-tolerance; chain
-      `|| operator-escalate` if scripting.
+      `|| operator-escalate` if scripting. It is also non-zero with
+      `status: UNCHECKED` when a partial-wrap pair's classic snapshot
+      carries no `sac_wrapped_stroops`: the escrow leg did not run, so
+      divergence 0 verifies nothing. That is not a divergence; re-run
+      once a newer classic snapshot has been recorded.
 
 - [ ] **Replay the affected range.** Per-algorithm replay
       subcommands aren't shipped yet — the operator path today is
