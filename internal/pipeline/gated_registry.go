@@ -39,8 +39,9 @@ type GatedMeta struct {
 	Genesis     uint32 // earliest factory deploy ledger; lower bound for the walk
 	// CuratedSet is the in-code curated child set for sources with NO
 	// factory namespace (ADR-0040 §1 mechanism 3 — comet,
-	// blend_emitter, upshift). It is the source's whole trust root:
-	// there are no creation events to walk, so nothing discovers these
+	// blend_emitter, upshift), and for a factory-declared source whose
+	// creation events are untrusted and never admit a child (defindex).
+	// It is the source's whole trust root: nothing discovers these
 	// contracts at runtime. GatedRegistryOptions seeds it into every
 	// warmed registry and (on the indexer path) reconciles it into
 	// protocol_contracts with provenance factory_id = CuratedFactoryID;
@@ -188,9 +189,15 @@ var gatedSources = map[string]GatedMeta{
 		// a newly-verified vault OR strategy without a redeploy. A new
 		// strategy first appearing after the curated freeze fail-closes
 		// into an ADR-0033 recognition gap until an operator seeds it.
+		//
+		// Because the decoder never calls reg.Seed, CuratedSet is the
+		// ONLY writer of defindex's protocol_contracts rows: the warm
+		// reconcile and seed-protocol-contracts both upsert it. Factories
+		// stay declared — they gate the factory's own create/n_fee events.
 		Factories:   defindex.MainnetFactories,
 		CreationSym: "create",
 		Genesis:     55_484_403, // earliest factory create event (CAVP2QLP…)
+		CuratedSet:  defindex.MainnetGatedSet(),
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return defindex.NewDecoder(opts...) },
 	},
 }
@@ -226,8 +233,9 @@ func GatedFactories(source string) []string { return gatedSources[source].Factor
 const CuratedFactoryID = "curated"
 
 // curatedReconcileTimeout caps the warm-time curated reconcile. It writes
-// at most len(CuratedSet) single-row upserts (today: 1-2 per source) and
-// must never be able to hold up indexer boot.
+// at most len(CuratedSet) single-row upserts (today: 1-2 per source, ~100
+// for defindex, and only for rows the table lacks) and must never be able
+// to hold up indexer boot.
 const curatedReconcileTimeout = 10 * time.Second
 
 // protocolContractStore is the `protocol_contracts` seam the gated-registry
@@ -238,6 +246,12 @@ const curatedReconcileTimeout = 10 * time.Second
 // are provable without a database.
 type protocolContractStore interface {
 	LoadProtocolContracts(ctx context.Context, source string) ([]string, error)
+	ProtocolContractUpserter
+}
+
+// ProtocolContractUpserter is the protocol_contracts write seam
+// [SeedCuratedContracts] needs; *timescale.Store implements it.
+type ProtocolContractUpserter interface {
 	UpsertProtocolContract(ctx context.Context, source, contractID, factoryID string, firstLedger uint32) error
 }
 
@@ -258,7 +272,7 @@ type protocolContractStore interface {
 // this seam exists to end.
 func SeedCuratedContracts(
 	ctx context.Context,
-	store *timescale.Store,
+	store ProtocolContractUpserter,
 	source string,
 	meta GatedMeta,
 	have []string,
@@ -268,7 +282,7 @@ func SeedCuratedContracts(
 
 func seedCuratedContracts(
 	ctx context.Context,
-	store protocolContractStore,
+	store ProtocolContractUpserter,
 	source string,
 	meta GatedMeta,
 	have []string,
@@ -409,15 +423,16 @@ func gatedRegistryOptions(
 			"children", len(ids), "curated", len(meta.CuratedSet),
 			"gated", len(seed), "reconciled", reconciled)
 
-		// A gated source with an EMPTY gate drops every event it sees,
-		// and every upstream signal (cursor advancing, lake complete,
-		// decoder linked in) still looks healthy. Curated sources can no
-		// longer reach this state; a factory-anchored one can, before its
-		// genesis walk has run, so say so at WARN with the remedy in the
-		// line rather than leaving `children=0` to be read as normal.
+		// Only a factory-anchored source without a curated set reaches
+		// this, before its genesis walk has run. Its gate is then just
+		// whatever the decoder seeds from code (nothing, for blend), so a
+		// child missing from that is dropped while every upstream signal
+		// looks healthy. The remedy works because such a decoder admits
+		// children from creation events — see
+		// TestGatedSources_everySourceHasAProtocolContractsWriter.
 		if len(seed) == 0 {
-			logger.Warn("gated registry warmed with an EMPTY contract gate — "+
-				"every event for this source will be dropped until it is seeded",
+			logger.Warn("gated registry warmed with NO protocol_contracts children — "+
+				"events from any child the decoder's in-code seed lacks are dropped until it is seeded",
 				"source", source, "factories", meta.Factories,
 				"remedy", "stellarindex-ops seed-protocol-contracts -source "+source)
 		}

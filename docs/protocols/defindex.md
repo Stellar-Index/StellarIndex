@@ -398,14 +398,17 @@ extension) + `projector-replay`.
 
 1. Deploy the gated build (the in-code seed is the trust root for BOTH
    vaults and strategies).
-   `seed-protocol-contracts -source defindex` walks the factories'
-   `create` events and is a **no-op for both layers**: the vault's own
-   address is not in the body, and the body's
-   `assets[].strategies[].address` field is attacker-controlled and is
-   **no longer auto-seeded** (removed 2026-08-25, W8 6c). Re-running it
-   is safe (idempotent upsert) but discovers nothing; new vaults AND new
-   strategies are admitted via the curated in-code seed or a manually
-   verified `protocol_contracts` row.
+   The indexer's gated-registry warm writes that curated set
+   (`GatedMeta.CuratedSet`) into `protocol_contracts` with
+   `factory_id = 'curated'` on boot, so the protocol roster and the
+   explorer's contract attribution need no operator step.
+   `seed-protocol-contracts -source defindex` upserts the same curated
+   set, then walks the factories' `create` events — a walk that admits
+   nothing for either layer: the vault's own address is not in the
+   body, and the body's `assets[].strategies[].address` field is
+   attacker-controlled and is **not auto-seeded** (W8 6c). New vaults
+   AND new strategies are admitted by extending the curated in-code
+   seed or by a manually verified `protocol_contracts` row.
 2. Re-derive: `projector-replay -source defindex -from 57056338` (under
    `run-heavy-job.sh`). Replay is upsert-only, so ALSO delete the flagged
    contracts' rows.

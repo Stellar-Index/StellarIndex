@@ -3,12 +3,19 @@ package pipeline
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
 )
 
 // fakeProtocolContractStore is an in-memory protocol_contracts double.
@@ -316,12 +323,11 @@ func (h *capturingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
 
 func (h *capturingHandler) WithGroup(string) slog.Handler { return h }
 
-// TestGatedRegistryOptions_emptyGateWarns covers the case no in-code seed
-// can fix: a FACTORY-anchored source whose genesis walk has not run holds
-// an empty gate and drops every event while every upstream signal (cursor
-// advancing, lake complete, decoder linked into the binary) still reads
-// healthy. Its children are discovered from creation events, so there is
-// nothing in code to seed them with — the only available answer is to
+// TestGatedRegistryOptions_emptyGateWarns covers a FACTORY-anchored source
+// with no curated set whose genesis walk has not run: the warm hands its
+// decoder no children, so any child outside the decoder's own in-code seed
+// is dropped while every upstream signal still reads healthy. Its children
+// are discovered from creation events — the only available answer is to
 // stop `children=0` reading as normal.
 func TestGatedRegistryOptions_emptyGateWarns(t *testing.T) {
 	var factoryAnchored []string
@@ -359,4 +365,117 @@ func TestGatedRegistryOptions_emptyGateWarns(t *testing.T) {
 			t.Errorf("%s warned about an empty gate, but its curated set is seeded from code", name)
 		}
 	}
+}
+
+// TestGatedRegistryOptions_defindexRosterReconciled pins that the indexer
+// warm writes DeFindex's in-code trust root into protocol_contracts. Its
+// factory is permissionless, so its decoder deliberately never admits a
+// child from a `create` event: nothing but this reconcile can populate
+// the roster that GET /v1/protocols/defindex and the explorer's contract
+// attribution read, and without it the empty-gate WARN fires at every
+// fresh boot naming a CLI walk that seeds nothing.
+func TestGatedRegistryOptions_defindexRosterReconciled(t *testing.T) {
+	meta, ok := gatedSources[defindex.SourceName]
+	if !ok {
+		t.Fatal("defindex is not a gated source")
+	}
+	h := &capturingHandler{}
+	store := &fakeProtocolContractStore{rows: map[string][]string{}}
+	if _, err := gatedRegistryOptions(context.Background(), store, slog.New(h), context.Background(), true); err != nil {
+		t.Fatalf("gatedRegistryOptions: %v", err)
+	}
+
+	got := map[string]upsertCall{}
+	for _, u := range store.upserts {
+		if u.source == defindex.SourceName {
+			got[u.contractID] = u
+		}
+	}
+	want := defindex.MainnetGatedSet()
+	if len(got) != len(want) {
+		t.Errorf("reconciled %d defindex row(s), want all %d curated vaults + strategies", len(got), len(want))
+	}
+	for _, id := range want {
+		u, ok := got[id]
+		if !ok {
+			t.Errorf("curated defindex contract %s not written to protocol_contracts", id)
+			continue
+		}
+		if u.factoryID != CuratedFactoryID || u.firstLedger != meta.Genesis {
+			t.Errorf("%s written as (factory %q, first_ledger %d), want (%q, %d)",
+				id, u.factoryID, u.firstLedger, CuratedFactoryID, meta.Genesis)
+		}
+	}
+	for _, r := range h.records {
+		if r.source == defindex.SourceName && r.level >= slog.LevelWarn {
+			t.Errorf("defindex warm logged %q at %s; its gate is its curated set, never empty", r.msg, r.level)
+		}
+	}
+}
+
+// TestGatedSources_everySourceHasAProtocolContractsWriter guards against
+// the next source shaped like DeFindex was: gated, factory-declared, and
+// with no writer of protocol_contracts at all. Rows come from exactly two
+// places — GatedMeta.CuratedSet (warm reconcile, seed CLI) or the decoder
+// admitting a child via reg.Seed (live hook, seed CLI factory walk).
+func TestGatedSources_everySourceHasAProtocolContractsWriter(t *testing.T) {
+	for name, meta := range gatedSources {
+		if len(meta.CuratedSet) > 0 {
+			continue
+		}
+		if !decoderSelfRegisters(t, filepath.Join("..", "sources", name)) {
+			t.Errorf("%s declares no CuratedSet and its decoder never calls reg.Seed — "+
+				"nothing ever writes its protocol_contracts rows", name)
+		}
+	}
+}
+
+// decoderSelfRegisters reports whether a non-test file in dir calls
+// `<x>.reg.Seed(…)` or `reg.Seed(…)`, which fires the protocol_contracts hook.
+func decoderSelfRegisters(t *testing.T, dir string) bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read decoder package %s: %v", dir, err)
+	}
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		if callsRegSeed(f) {
+			return true
+		}
+	}
+	return false
+}
+
+func callsRegSeed(f *ast.File) bool {
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Seed" {
+			return true
+		}
+		switch recv := sel.X.(type) {
+		case *ast.SelectorExpr:
+			found = recv.Sel.Name == "reg"
+		case *ast.Ident:
+			found = recv.Name == "reg"
+		}
+		return !found
+	})
+	return found
 }

@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"github.com/Stellar-Index/StellarIndex/internal/domain"
 )
 
 func TestIsInfraError(t *testing.T) {
@@ -50,5 +52,60 @@ func TestIsInfraError(t *testing.T) {
 				t.Errorf("IsInfraError(%v) = %v; want %v", tc.err, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestIsPermanentDataError_sorobanEventsValidation pins that a row
+// InsertSorobanEventsBatch's own pre-SQL shape check rejects is
+// classified PERMANENT. The check is deterministic, so an unclassified
+// error there made the raw-event AsyncSink re-send the identical batch
+// forever and stall the landing zone behind one malformed row, instead of
+// bisecting to that row and counting it lost.
+func TestIsPermanentDataError_sorobanEventsValidation(t *testing.T) {
+	valid := func() domain.SorobanEventRow {
+		return domain.SorobanEventRow{
+			Ledger:        1,
+			TxHash:        make([]byte, 32),
+			ContractID:    "CBSORBANEVENTSVALIDATIONFIXTUREAAAAAAAAAAAAAAAAAAAAAAAAA",
+			ContractIDHex: make([]byte, 32),
+			Topic0XDR:     []byte{1},
+			BodyXDR:       []byte{1},
+		}
+	}
+	cases := []struct {
+		name   string
+		mutate func(r *domain.SorobanEventRow)
+	}{
+		{"short TxHash", func(r *domain.SorobanEventRow) { r.TxHash = r.TxHash[:5] }},
+		{"empty ContractID", func(r *domain.SorobanEventRow) { r.ContractID = "" }},
+		{"short ContractIDHex", func(r *domain.SorobanEventRow) { r.ContractIDHex = nil }},
+		{"empty Topic0XDR", func(r *domain.SorobanEventRow) { r.Topic0XDR = nil }},
+		{"empty BodyXDR", func(r *domain.SorobanEventRow) { r.BodyXDR = nil }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bad := valid()
+			tc.mutate(&bad)
+			// Validation runs before any pool use, so a zero Store is
+			// enough to exercise the shipped error path.
+			err := (&Store{}).InsertSorobanEventsBatch(context.Background(),
+				[]domain.SorobanEventRow{valid(), bad})
+			if err == nil {
+				t.Fatal("InsertSorobanEventsBatch accepted a malformed row")
+			}
+			if !IsPermanentDataError(err) {
+				t.Errorf("IsPermanentDataError(%v) = false, want true: a deterministic "+
+					"validation reject must be isolated, not retried forever", err)
+			}
+			if !IsPermanentDataError(fmt.Errorf("flush: %w", err)) {
+				t.Error("the classification must survive wrapping")
+			}
+		})
+	}
+
+	// Only the positively-identified sentinel is permanent: an
+	// unrecognised plain error keeps the retry-and-alert default.
+	if IsPermanentDataError(errors.New("timescale: InsertSorobanEventsBatch: row 0 empty BodyXDR")) {
+		t.Error("an unwrapped look-alike error must stay transient")
 	}
 }
