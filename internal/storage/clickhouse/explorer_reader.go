@@ -538,6 +538,12 @@ type TxSummary struct {
 	ResultCode     int32
 	MemoType       string
 	Memo           string
+	// Fee-bump outer layer; FeeAccount is "" on a non-fee-bump tx and on a
+	// fee bump ingested before the columns existed.
+	InnerTxHash     string
+	FeeAccount      string
+	FeeBumpFee      int64
+	InnerResultCode int32
 }
 
 const ledgerCols = `ledger_seq, close_time, ledger_hash, prev_hash, protocol_version,
@@ -749,8 +755,7 @@ func (r *ExplorerReader) LedgerTransactions(ctx context.Context, seq uint32, lim
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	const q = `SELECT ledger_seq, close_time, tx_hash, tx_index, source_account,
-		fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo
+	const q = `SELECT ` + txCols + `
 		FROM stellar.transactions FINAL WHERE ledger_seq = ? ORDER BY tx_index ASC LIMIT ?`
 	rows, err := r.conn.Query(ctx, q, seq, limit)
 	if err != nil {
@@ -1221,7 +1226,8 @@ func (r *ExplorerReader) OperationsByLedger(ctx context.Context, seq uint32, lim
 }
 
 const txCols = `ledger_seq, close_time, tx_hash, tx_index, source_account,
-	fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo`
+	fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo,
+	inner_tx_hash, fee_account, fee_bump_fee, inner_result_code`
 
 // ExplorerCursor is a composite keyset position for the descending explorer
 // listings that can hold MANY rows per ledger (contract events, account
@@ -2044,12 +2050,13 @@ func (r *ExplorerReader) txByHashIndexed(ctx context.Context, hash string) (tx T
 // prefix predicate (PARTITION BY intDiv(ledger_seq, 1000000), ORDER BY
 // (ledger_seq, tx_index)), so FINAL only ever merges the handful of parts
 // that touch this one ledger — the same "single-row point read stays cheap
-// under FINAL" reasoning as LedgerBySeq / CloseTimeForLedger above. tx_hash
-// is globally unique, so at most one row can match.
+// under FINAL" reasoning as LedgerBySeq / CloseTimeForLedger above. A hash
+// is a tx's outer hash or a fee bump's inner hash, each globally unique, so at
+// most one row can match.
 func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash string) (TxSummary, bool, error) {
 	q := `SELECT ` + txCols + ` FROM stellar.transactions FINAL
-		WHERE ledger_seq = ? AND tx_hash = ?`
-	rows, err := r.conn.Query(ctx, q, seq, hash)
+		WHERE ledger_seq = ? AND (tx_hash = ? OR inner_tx_hash = ?)`
+	rows, err := r.conn.Query(ctx, q, seq, hash, hash)
 	if err != nil {
 		return TxSummary{}, false, fmt.Errorf("clickhouse: tx %s in ledger %d: %w", hash, seq, err)
 	}
@@ -2090,23 +2097,40 @@ func (r *ExplorerReader) txByLedgerAndHash(ctx context.Context, seq uint32, hash
 //
 // found=false when the hash is unknown (step 1 comes up empty).
 func (r *ExplorerReader) txByHashScan(ctx context.Context, hash string) (TxSummary, bool, error) {
-	const seqQ = `SELECT ledger_seq FROM stellar.transactions WHERE tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`
+	for _, seqQ := range txSeqScanQueries {
+		seq, ok, err := r.txSeqByScan(ctx, seqQ, hash)
+		if err != nil {
+			return TxSummary{}, false, err
+		}
+		if ok {
+			return r.txByLedgerAndHash(ctx, seq, hash)
+		}
+	}
+	return TxSummary{}, false, nil
+}
+
+// txSeqScanQueries are txByHashScan's step-1 probes: the outer hash, then a
+// fee bump's inner hash (its own bloom skip-index, idx_tx_inner_hash — one
+// OR-ed predicate would prune on neither index).
+var txSeqScanQueries = [...]string{
+	`SELECT ledger_seq FROM stellar.transactions WHERE tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`,
+	`SELECT ledger_seq FROM stellar.transactions WHERE inner_tx_hash = ? ORDER BY ingested_at DESC LIMIT 1`,
+}
+
+func (r *ExplorerReader) txSeqByScan(ctx context.Context, seqQ, hash string) (uint32, bool, error) {
 	rows, err := r.conn.Query(ctx, seqQ, hash)
 	if err != nil {
-		return TxSummary{}, false, fmt.Errorf("clickhouse: tx %s: %w", hash, err)
+		return 0, false, fmt.Errorf("clickhouse: tx %s: %w", hash, err)
 	}
+	defer func() { _ = rows.Close() }()
 	if !rows.Next() {
-		err := rows.Err()
-		_ = rows.Close()
-		return TxSummary{}, false, err
+		return 0, false, rows.Err()
 	}
 	var seq uint32
-	scanErr := rows.Scan(&seq)
-	_ = rows.Close()
-	if scanErr != nil {
-		return TxSummary{}, false, fmt.Errorf("clickhouse: scan tx %s ledger: %w", hash, scanErr)
+	if err := rows.Scan(&seq); err != nil {
+		return 0, false, fmt.Errorf("clickhouse: scan tx %s ledger: %w", hash, err)
 	}
-	return r.txByLedgerAndHash(ctx, seq, hash)
+	return seq, true, nil
 }
 
 // OperationsByTx returns a transaction's operations, ledger-scoped (so
@@ -2128,27 +2152,35 @@ func (r *ExplorerReader) OperationsByTx(ctx context.Context, seq uint32, hash st
 	return scanOps(rows)
 }
 
-// OperationResultsByTx returns op_index → result_code for a transaction
+// OperationResultsByTx returns op_index → result for a transaction
 // (ledger-scoped; operation_results is ORDER BY (ledger_seq, tx_hash, op_index)
 // so this is a primary-key point lookup).
-func (r *ExplorerReader) OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]int32, error) {
-	const q = `SELECT op_index, result_code FROM stellar.operation_results
+func (r *ExplorerReader) OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]OpResult, error) {
+	const q = `SELECT op_index, result_code, result_xdr FROM stellar.operation_results
 		WHERE ledger_seq = ? AND tx_hash = ?`
 	rows, err := r.conn.Query(ctx, q, seq, hash)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: tx %s op results: %w", hash, err)
 	}
 	defer func() { _ = rows.Close() }()
-	out := map[uint32]int32{}
+	out := map[uint32]OpResult{}
 	for rows.Next() {
 		var idx uint32
-		var code int32
-		if err := rows.Scan(&idx, &code); err != nil {
+		var res OpResult
+		if err := rows.Scan(&idx, &res.Code, &res.ResultXDR); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan op result: %w", err)
 		}
-		out[idx] = code
+		out[idx] = res
 	}
 	return out, rows.Err()
+}
+
+// OpResult is one stellar.operation_results row: the OUTER code, plus the
+// full base64 OperationResult whose op-type-specific inner code says why an
+// op_inner operation failed.
+type OpResult struct {
+	Code      int32
+	ResultXDR string
 }
 
 // TxOutcome is a transaction's applied verdict + result code. It stamps the
@@ -2681,7 +2713,8 @@ func scanTxSummaries(rows driver.Rows) ([]TxSummary, error) {
 		var t TxSummary
 		var ok uint8
 		if err := rows.Scan(&t.Seq, &t.CloseTime, &t.TxHash, &t.TxIndex, &t.SourceAccount,
-			&t.FeeCharged, &t.MaxFee, &t.OperationCount, &ok, &t.ResultCode, &t.MemoType, &t.Memo); err != nil {
+			&t.FeeCharged, &t.MaxFee, &t.OperationCount, &ok, &t.ResultCode, &t.MemoType, &t.Memo,
+			&t.InnerTxHash, &t.FeeAccount, &t.FeeBumpFee, &t.InnerResultCode); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan tx: %w", err)
 		}
 		t.Successful = ok != 0

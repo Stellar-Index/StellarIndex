@@ -32,11 +32,11 @@ func (r *txCoverageReader) OperationsByTx(context.Context, uint32, string) ([]cl
 	return nil, nil
 }
 
-func (r *txCoverageReader) OperationResultsByTx(context.Context, uint32, string) (map[uint32]int32, error) {
+func (r *txCoverageReader) OperationResultsByTx(context.Context, uint32, string) (map[uint32]clickhouse.OpResult, error) {
 	if r.resultsErr != nil {
 		return nil, r.resultsErr
 	}
-	return map[uint32]int32{}, nil
+	return map[uint32]clickhouse.OpResult{}, nil
 }
 
 func (r *txCoverageReader) EventsByTx(context.Context, uint32, string) ([]clickhouse.EventSummary, error) {

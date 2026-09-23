@@ -75,6 +75,8 @@ func (h *Handler) TxDetail(w http.ResponseWriter, r *http.Request) {
 			"no transaction with that hash in the indexed range")
 		return
 	}
+	// A fee bump found by its inner hash: its rows are keyed on the outer one.
+	hash = tx.TxHash
 
 	ops, err := h.Reader.OperationsByTx(ctx, tx.Seq, hash)
 	if err != nil {
@@ -164,8 +166,9 @@ func txCoverageNote(resultsFailed, eventsFailed bool) string {
 // buildTxOpViews decodes a transaction's operations, stamps each with its
 // parent transaction's success (so a failed tx's operations are unambiguously
 // marked, not masquerading as applied), and attaches each op's result code +
-// human slug (when known).
-func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]int32, txSuccessful bool, txResultCode int32) []OpView {
+// human slug (when known), plus the op-type-specific inner slug of an op_inner
+// operation.
+func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]clickhouse.OpResult, txSuccessful bool, txResultCode int32) []OpView {
 	out := make([]OpView, len(ops))
 	// One immutable bool shared by every op — they all belong to this tx and
 	// share its outcome.
@@ -175,10 +178,11 @@ func buildTxOpViews(ops []clickhouse.OpRow, results map[uint32]int32, txSuccessf
 		ov := opView(o)
 		ov.TransactionSuccessful = &txOK
 		ov.TransactionResult = txResult
-		if code, ok := results[o.OpIndex]; ok {
-			c := code
+		if res, ok := results[o.OpIndex]; ok {
+			c := res.Code
 			ov.ResultCode = &c
-			ov.Result = xdrjson.OpResultName(code)
+			ov.Result = xdrjson.OpResultName(c)
+			ov.InnerResult, _ = xdrjson.OpInnerResultName(res.ResultXDR)
 		}
 		out[i] = ov
 	}

@@ -101,6 +101,7 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 	feeCharged, _ := tx.FeeCharged()
 
 	sm := extractSorobanMetering(tx)
+	fb := extractFeeBump(tx)
 	ext.Txs = append(ext.Txs, TransactionRow{
 		LedgerSeq:      seq,
 		CloseTime:      closeTime,
@@ -124,6 +125,11 @@ func extractTx(ext *LedgerExtract, tx ingest.LedgerTransaction, seq uint32, clos
 		SorobanNonrefundFee:   sm.NonRefundableFee,
 		SorobanRefundableFee:  sm.RefundableFee,
 		SorobanRentFee:        sm.RentFee,
+
+		InnerTxHash:     fb.InnerTxHash,
+		FeeAccount:      fb.FeeAccount,
+		FeeBumpFee:      fb.Fee,
+		InnerResultCode: fb.InnerResultCode,
 	})
 	ext.Ledger.TxCount++
 
@@ -177,6 +183,34 @@ func extractSorobanMetering(tx ingest.LedgerTransaction) sorobanMetering {
 		m.RentFee = int64(ext.RentFeeCharged)
 	}
 	return m
+}
+
+// feeBump is a fee-bump envelope's outer layer; zero for any other envelope.
+type feeBump struct {
+	InnerTxHash     string
+	FeeAccount      string
+	Fee             int64
+	InnerResultCode int32
+}
+
+// extractFeeBump reads the outer layer of a fee-bump transaction. The SDK's
+// Account()/MaxFee() answer for the INNER tx on a fee bump, so the payer, its
+// bid, the inner hash (what the submitter's SDK returned) and the inner
+// failure reason exist nowhere else in the row. The inner hash and code come
+// from the result's InnerResultPair, which core emits with both
+// tx_fee_bump_inner_* codes.
+func extractFeeBump(tx ingest.LedgerTransaction) feeBump {
+	if !tx.Envelope.IsFeeBump() || tx.Envelope.FeeBump == nil {
+		return feeBump{}
+	}
+	payerID := tx.Envelope.FeeBumpAccount().ToAccountId()
+	payer, _ := payerID.GetAddress()
+	fb := feeBump{FeeAccount: payer, Fee: tx.Envelope.FeeBumpFee()}
+	if pair, ok := tx.Result.Result.Result.GetInnerResultPair(); ok {
+		fb.InnerTxHash = hex.EncodeToString(pair.TransactionHash[:])
+		fb.InnerResultCode = int32(pair.Result.Result.Code)
+	}
+	return fb
 }
 
 // sorobanDataFromEnvelope returns the tx's SorobanTransactionData, unwrapping a

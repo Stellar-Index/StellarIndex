@@ -176,6 +176,10 @@ type OpView struct {
 	// TxSummaryView.Result / GET /v1/tx/{hash}); this is per-operation structural
 	// detail. Empty when ResultCode is nil.
 	Result string `json:"result,omitempty"`
+	// InnerResult names an op_inner operation's op-type-specific outcome
+	// (e.g. "payment_underfunded", "payment_success") — which operation of a
+	// tx_failed transaction failed, and why. Empty when Result is not op_inner.
+	InnerResult string `json:"inner_result,omitempty"`
 }
 
 // opViewLight is the summary shape for the network-wide operations directory:

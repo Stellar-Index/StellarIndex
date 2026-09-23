@@ -20,8 +20,11 @@ import (
 // is an operator-run backfill (not a per-request path) and FINAL is bounded
 // by the SAME `ledger_seq >= ? AND ledger_seq <= ?` window predicate that
 // already caps this function's per-iteration work — no new full-scan.
+// The ARRAY JOIN indexes a fee bump's inner hash beside its outer one, the
+// backfill twin of tx_hash_index_inner_mv.
 const txHashIndexBackfillQuery = `INSERT INTO stellar.tx_hash_index (tx_hash, ledger_seq, tx_index)
-	SELECT tx_hash, ledger_seq, tx_index FROM stellar.transactions FINAL
+	SELECT h, ledger_seq, tx_index FROM stellar.transactions FINAL
+	ARRAY JOIN arrayFilter(x -> x != '', [tx_hash, inner_tx_hash]) AS h
 	WHERE ledger_seq >= ? AND ledger_seq <= ?`
 
 // BackfillTxHashIndex fills stellar.tx_hash_index (the hash-ordered

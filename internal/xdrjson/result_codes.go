@@ -2,6 +2,9 @@ package xdrjson
 
 import (
 	"fmt"
+	"reflect"
+	"strings"
+	"unicode"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -24,8 +27,9 @@ import (
 // whole transaction did not apply and why. The per-operation code is structural
 // detail: for a txFAILED, an operation that itself failed structurally carries
 // op_bad_auth / op_no_source_account / …; an operation whose outcome is in its
-// inner (op-type-specific) result carries op_inner, with the transaction-level
-// reason remaining the authoritative headline.
+// inner (op-type-specific) result carries op_inner, and OpInnerResultName
+// names that inner outcome (e.g. payment_underfunded) — tx_failed alone does
+// not say which operation failed or why.
 
 // txResultNames maps every transaction result code to its slug. Keyed by the
 // xdr typed constant so the compiler pins each entry to a real enum member;
@@ -55,7 +59,7 @@ var txResultNames = map[xdr.TransactionResultCode]string{
 
 // opResultNames maps every OUTER operation result code to its slug. When the
 // code is op_inner the operation was applied and its outcome lives in the
-// op-type-specific inner result; the transaction-level reason is authoritative.
+// op-type-specific inner result (OpInnerResultName).
 var opResultNames = map[xdr.OperationResultCode]string{
 	xdr.OperationResultCodeOpInner:             "op_inner",
 	xdr.OperationResultCodeOpBadAuth:           "op_bad_auth",
@@ -85,4 +89,67 @@ func OpResultName(code int32) string {
 		return s
 	}
 	return fmt.Sprintf("op_unknown(%d)", code)
+}
+
+// OpInnerResultName returns the slug of an op_inner operation's
+// op-type-specific result code, decoded from the stored base64
+// OperationResult (stellar.operation_results.result_xdr): e.g.
+// "payment_underfunded", "invoke_host_function_trapped". ok=false when the
+// outer code is not op_inner (there is no inner result) or the XDR does not
+// decode. The slug is the SDK enum name minus its type prefix, snake_cased,
+// so every op type's codes are covered without a hand-kept table; an unnamed
+// (newer) code falls back to "<result type>_unknown(<n>)".
+func OpInnerResultName(resultXDR string) (string, bool) {
+	var res xdr.OperationResult
+	if err := xdr.SafeUnmarshalBase64(resultXDR, &res); err != nil {
+		return "", false
+	}
+	if res.Code != xdr.OperationResultCodeOpInner || res.Tr == nil {
+		return "", false
+	}
+	return opInnerCodeSlug(*res.Tr)
+}
+
+// opInnerCodeSlug names the code of tr's active arm. Every arm points at a
+// result union discriminated by its Code field, so one reflective walk covers
+// all op types.
+func opInnerCodeSlug(tr xdr.OperationResultTr) (string, bool) {
+	arm, ok := tr.ArmForSwitch(int32(tr.Type))
+	if !ok {
+		return "", false
+	}
+	inner := reflect.ValueOf(tr).FieldByName(arm)
+	if !inner.IsValid() || inner.Kind() != reflect.Pointer || inner.IsNil() {
+		return "", false
+	}
+	code := inner.Elem().FieldByName("Code")
+	if !code.IsValid() || code.Kind() != reflect.Int32 {
+		return "", false
+	}
+	named, ok := code.Interface().(fmt.Stringer)
+	if !ok {
+		return "", false
+	}
+	typeName := code.Type().Name() // e.g. PaymentResultCode
+	name := named.String()
+	if !strings.HasPrefix(name, typeName) || len(name) == len(typeName) {
+		return fmt.Sprintf("%s_unknown(%d)", snakeCase(strings.TrimSuffix(typeName, "Code")), code.Int()), true
+	}
+	return snakeCase(strings.TrimPrefix(name, typeName)), true
+}
+
+// snakeCase lowers a CamelCase SDK identifier: "PaymentUnderfunded" →
+// "payment_underfunded".
+func snakeCase(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if unicode.IsUpper(r) {
+			if i > 0 {
+				b.WriteByte('_')
+			}
+			r = unicode.ToLower(r)
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }

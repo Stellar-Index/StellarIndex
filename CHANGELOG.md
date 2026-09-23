@@ -15,6 +15,20 @@ against.
 
 ## [Unreleased]
 
+- **explorer / lake — fee-bump transactions and per-op failure reasons
+  (#1063):** `stellar.transactions` gains `inner_tx_hash`, `fee_account`,
+  `fee_bump_fee` and `inner_result_code`, and a second materialized view
+  indexes a fee bump's inner hash in `stellar.tx_hash_index`.
+  `GET /v1/tx/{hash}` now resolves the inner hash. Transaction summaries
+  carry a `fee_bump` object (payer, inner hash, inner fee bid, inner
+  result), and `max_fee` on a fee bump is the payer's bid, which bounds
+  `fee_charged`. Each `op_inner` operation in the tx detail now carries
+  `inner_result`, decoded from the stored result XDR (e.g.
+  `payment_underfunded`). **Deploy ordering:** apply
+  `deploy/clickhouse/transactions_fee_bump.sql` before the indexer and
+  api binaries. Columns fill going forward only, so a historical fee bump
+  has no `fee_bump` object until its range is re-derived.
+
 - **clickhouse — `contract_instance_changes` keyed per transaction
   (T356/T377):** the instance timeline behind
   `/v1/contracts/{id}/code-history` and the wasm-hash lookup was

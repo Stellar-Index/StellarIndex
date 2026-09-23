@@ -140,7 +140,7 @@ func (r *capReader) OperationsByTx(ctx context.Context, _ uint32, _ string) ([]c
 	return nil, nil
 }
 
-func (r *capReader) OperationResultsByTx(ctx context.Context, _ uint32, _ string) (map[uint32]int32, error) {
+func (r *capReader) OperationResultsByTx(ctx context.Context, _ uint32, _ string) (map[uint32]clickhouse.OpResult, error) {
 	r.probe.record(ctx)
 	return nil, nil
 }

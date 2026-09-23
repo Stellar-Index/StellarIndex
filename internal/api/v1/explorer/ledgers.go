@@ -66,9 +66,42 @@ type TxSummaryView struct {
 	Result   string `json:"result"`
 	MemoType string `json:"memo_type,omitempty"`
 	Memo     string `json:"memo,omitempty"`
+	// FeeBump is present on a fee-bump transaction: Hash is then the OUTER
+	// hash, SourceAccount the inner tx's source, and MaxFee the fee payer's
+	// bid — the bound FeeCharged is held to. Absent on a fee bump ingested
+	// before the lake captured the outer layer; its Result still reads
+	// tx_fee_bump_inner_success / tx_fee_bump_inner_failed.
+	FeeBump *FeeBumpView `json:"fee_bump,omitempty"`
+}
+
+// FeeBumpView is a fee bump's outer layer and the inner transaction it wraps.
+// The inner fields are absent when the result carried no inner result pair.
+type FeeBumpView struct {
+	FeeAccount      string `json:"fee_account"`
+	InnerHash       string `json:"inner_hash,omitempty"`
+	InnerMaxFee     int64  `json:"inner_max_fee"`
+	InnerResultCode *int32 `json:"inner_result_code,omitempty"`
+	InnerResult     string `json:"inner_result,omitempty"`
 }
 
 func txSummaryView(t clickhouse.TxSummary) TxSummaryView {
+	v := txSummaryBase(t)
+	if t.FeeAccount == "" {
+		return v
+	}
+	fb := &FeeBumpView{FeeAccount: t.FeeAccount, InnerMaxFee: t.MaxFee}
+	if t.InnerTxHash != "" {
+		code := t.InnerResultCode
+		fb.InnerHash = t.InnerTxHash
+		fb.InnerResultCode = &code
+		fb.InnerResult = xdrjson.TxResultName(code)
+	}
+	v.MaxFee = t.FeeBumpFee
+	v.FeeBump = fb
+	return v
+}
+
+func txSummaryBase(t clickhouse.TxSummary) TxSummaryView {
 	return TxSummaryView{
 		Hash:           t.TxHash,
 		Ledger:         t.Seq,

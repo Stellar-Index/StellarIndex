@@ -225,7 +225,7 @@ type ExplorerReader interface {
 	BlendPoolReserves(ctx context.Context, pool string, assets []string, configs map[string]blend.ReserveConfig) ([]clickhouse.BlendReserveState, error)
 	TransactionByHash(ctx context.Context, hash string) (clickhouse.TxSummary, bool, error)
 	OperationsByTx(ctx context.Context, seq uint32, hash string) ([]clickhouse.OpRow, error)
-	OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]int32, error)
+	OperationResultsByTx(ctx context.Context, seq uint32, hash string) (map[uint32]clickhouse.OpResult, error)
 	// TxOutcomesByHash batch-reads parent-transaction outcomes (applied verdict
 	// + result code) keyed by tx_hash, so the operation list views can mark a
 	// failed transaction's operations FAILED rather than show them as applied.
