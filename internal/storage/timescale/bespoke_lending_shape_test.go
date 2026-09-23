@@ -123,7 +123,7 @@ func TestLendingPerPoolSeriesQueryShape(t *testing.T) {
 // distinct-pool tallies.
 func TestLendingAllTimeKPIQueryShape(t *testing.T) {
 	q := lendingAllTimeKPIQuery()
-	if strings.Contains(q, "$1") || strings.Contains(q, "interval") {
+	if strings.Contains(q, "$1") || sqlContainsFold(q, "interval") {
 		t.Error("all-time KPIs must not be window-bounded")
 	}
 	assertLendingCountsNotAmountSums(t, "all-time KPIs", q)
@@ -155,7 +155,7 @@ func TestCreditQueriesShape(t *testing.T) {
 	}
 
 	kpi := creditAllTimePositionsKPIQuery()
-	if strings.Contains(kpi, "$1") || strings.Contains(kpi, "interval") {
+	if strings.Contains(kpi, "$1") || sqlContainsFold(kpi, "interval") {
 		t.Error("all-time position KPIs must not be window-bounded")
 	}
 	if !strings.Contains(kpi, "DISTINCT owner") || !strings.Contains(kpi, "credit_positions") {

@@ -32,6 +32,9 @@ type fakeClassicStore struct {
 	// wantErrMinLedger makes MinClassicComponentLedger fail, exercising
 	// the fail-permissive freshness-gate path (F-1236 / W6-sweep-1).
 	wantErrMinLedger bool
+	// minLedger is returned by MinClassicComponentLedger when
+	// wantErrMinLedger is false; defaults to 0 (gate-skip).
+	minLedger uint32
 }
 
 func (f *fakeClassicStore) SumTrustlineBalancesAtOrBefore(_ context.Context, _ string, _ uint32) (*big.Int, error) {
@@ -79,7 +82,7 @@ func (f *fakeClassicStore) MinClassicComponentLedger(_ context.Context, _ string
 	if f.wantErrMinLedger {
 		return 0, errors.New("min-component-ledger boom")
 	}
-	return 0, nil
+	return f.minLedger, nil
 }
 
 func mustClassic(t *testing.T, code, issuer string) canonical.Asset {
@@ -154,6 +157,30 @@ func TestStorageClassicSupplyReader_SACObservedFalsePropagates(t *testing.T) {
 	}
 	if got.SACObserved {
 		t.Error("SACObserved = true, want false — the store reported no observation")
+	}
+}
+
+// TestStorageClassicSupplyReader_MinLedgerPropagates pins F-1236 on the
+// success path: a non-zero MinClassicComponentLedger from storage must
+// reach ClassicSupplyComponents.MinComponentLedger unchanged. Every other
+// test in this file leaves minLedger at its zero value (gate-skip), so
+// none of them can catch a reader that drops the field on the floor.
+func TestStorageClassicSupplyReader_MinLedgerPropagates(t *testing.T) {
+	store := &fakeClassicStore{
+		trustlineSum: big.NewInt(1000),
+		claimableSum: big.NewInt(0),
+		lpSum:        big.NewInt(0),
+		sacSum:       big.NewInt(0),
+		minLedger:    54_321,
+	}
+	r := NewStorageClassicSupplyReader(store, ClassicSupplyReaderOptions{})
+	asset := mustClassic(t, "USDC", tIssuer)
+	got, err := r.ClassicSupplyAt(context.Background(), asset, LockedSet{}, 100_000)
+	if err != nil {
+		t.Fatalf("ClassicSupplyAt: %v", err)
+	}
+	if got.MinComponentLedger != 54_321 {
+		t.Errorf("MinComponentLedger=%d want 54321 (must propagate the storage anchor, not gate-skip)", got.MinComponentLedger)
 	}
 }
 

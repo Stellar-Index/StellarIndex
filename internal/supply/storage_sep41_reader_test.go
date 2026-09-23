@@ -18,6 +18,9 @@ type fakeSEP41Store struct {
 	holderLookupErr error
 	genesisSeeded   bool
 	genesisErr      error
+	// minLedger is returned by MinSEP41ComponentLedger; defaults to 0
+	// (gate-skip).
+	minLedger uint32
 }
 
 func (f *fakeSEP41Store) SEP41KindTotalsAtOrBefore(_ context.Context, _ string, _ uint32) (SEP41KindTotals, error) {
@@ -38,9 +41,9 @@ func (f *fakeSEP41Store) SACBalanceForContractAtOrBefore(_ context.Context, hold
 	return big.NewInt(0), nil
 }
 
-// MinSEP41ComponentLedger — fake returns 0 (gate-skip) by default.
+// MinSEP41ComponentLedger — fake returns minLedger (0 = gate-skip by default).
 func (f *fakeSEP41Store) MinSEP41ComponentLedger(_ context.Context, _ string, _ uint32) (uint32, error) {
-	return 0, nil
+	return f.minLedger, nil
 }
 
 // SEP41GenesisBaselineSeeded — fake returns the configured flag (default
@@ -94,6 +97,31 @@ func TestStorageSEP41SupplyReader_HappyPath(t *testing.T) {
 	}
 	if got.LockedContractBalances.Sign() != 0 {
 		t.Errorf("LockedContractBalances=%s want 0 (empty LockedSet)", got.LockedContractBalances)
+	}
+}
+
+// TestStorageSEP41SupplyReader_MinLedgerPropagates pins F-1236 on the
+// success path: a non-zero MinSEP41ComponentLedger from storage must reach
+// SEP41SupplyComponents.MinComponentLedger unchanged. Every other test in
+// this file leaves minLedger at its zero value (gate-skip), so none of
+// them can catch a reader that drops the field on the floor.
+func TestStorageSEP41SupplyReader_MinLedgerPropagates(t *testing.T) {
+	store := &fakeSEP41Store{
+		totals: SEP41KindTotals{
+			Mint:     big.NewInt(10_000),
+			Burn:     big.NewInt(2_000),
+			Clawback: big.NewInt(500),
+		},
+		minLedger: 98_765,
+	}
+	r := NewStorageSEP41SupplyReader(store)
+	asset := mustSorobanAsset(t, tContract)
+	got, err := r.SEP41SupplyAt(context.Background(), asset, LockedSet{}, 100_000)
+	if err != nil {
+		t.Fatalf("SEP41SupplyAt: %v", err)
+	}
+	if got.MinComponentLedger != 98_765 {
+		t.Errorf("MinComponentLedger=%d want 98765 (must propagate the storage anchor, not gate-skip)", got.MinComponentLedger)
 	}
 }
 

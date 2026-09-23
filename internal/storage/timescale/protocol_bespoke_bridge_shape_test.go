@@ -177,7 +177,7 @@ func TestCCTPAggregateQueriesShape(t *testing.T) {
 	}
 
 	cum := cctpCumulativeNetInflowQuery()
-	if strings.Contains(cum, "$1") || strings.Contains(cum, "interval") {
+	if strings.Contains(cum, "$1") || sqlContainsFold(cum, "interval") {
 		t.Error("cumulative net-inflow series is an ALL-TIME chart and must not be window-bounded")
 	}
 	assertCCTPNumericSafe(t, cum)

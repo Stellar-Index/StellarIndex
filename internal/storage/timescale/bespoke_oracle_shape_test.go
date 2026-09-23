@@ -119,7 +119,7 @@ func TestOracleKPIQueriesShape(t *testing.T) {
 	assertOracleCountsAndTimestampsOnly(t, "window KPIs", w)
 
 	a := oracleAllTimeKPIQuery()
-	if strings.Contains(a, "interval") || strings.Contains(a, "$2") {
+	if sqlContainsFold(a, "interval") || strings.Contains(a, "$2") {
 		t.Error("all-time KPI query must not be window-bounded (it is the retained-history total)")
 	}
 	if !strings.Contains(a, "count(*)") || !strings.Contains(a, "min(ts)") {
