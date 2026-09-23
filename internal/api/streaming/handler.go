@@ -36,14 +36,9 @@ var rejectedStreams int64
 // cap. Pass <= 0 to disable. Call once at startup.
 func SetMaxConcurrentStreams(n int64) { atomic.StoreInt64(&maxConcurrentStreams, n) }
 
-// ActiveStreams reports the current number of open SSE connections (for
-// diagnostics / a gauge).
-func ActiveStreams() int64 { return atomic.LoadInt64(&activeStreams) }
-
 // StreamsRejected reports the cumulative number of SSE connections
 // refused by the concurrency caps (global or per-IP) since process
-// start — the counter that makes a connection flood visible, next to
-// the [ActiveStreams] gauge.
+// start — the counter that makes a connection flood visible.
 func StreamsRejected() int64 { return atomic.LoadInt64(&rejectedStreams) }
 
 // TryAcquireStreamSlot reserves one connection slot against the
@@ -112,7 +107,7 @@ func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok boo
 // acquireGlobalStreamSlot reserves one slot against
 // [maxConcurrentStreams] (CS-013), so a connection flood can't exhaust
 // FDs/goroutines. A cap of <= 0 disables the ceiling but still counts
-// the stream, so [ActiveStreams] stays truthful.
+// the stream, so activeStreams stays truthful.
 func acquireGlobalStreamSlot() (release func(), ok bool) {
 	if limit := atomic.LoadInt64(&maxConcurrentStreams); limit > 0 {
 		if atomic.AddInt64(&activeStreams, 1) > limit {

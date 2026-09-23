@@ -39,6 +39,6 @@
 // map regardless. A topic with a live subscriber is never reaped.
 // Connections are admitted against the concurrency caps BEFORE they
 // can allocate a topic (see [Stream]), so a refused client never
-// leaves one behind. [Hub.TopicCount], [Hub.TopicsReaped],
-// [ActiveStreams] and [StreamsRejected] expose the bounds.
+// leaves one behind. [Hub.TopicCount], [Hub.TopicsReaped], and
+// [StreamsRejected] expose the bounds.
 package streaming
