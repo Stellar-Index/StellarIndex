@@ -60,7 +60,7 @@ var (
 
 // feedRegistry maps each EXACT on-chain feed_id() string to the
 // canonical (base, quote) pair it prices — the 32 RedStone Stellar
-// mainnet feeds: 19 captured on-chain 2026-05-22 (#53; see
+// mainnet feeds: 19 captured on-chain 2026-05-22 (ecc289c6; see
 // ADR-0028), 11 from the 2026-07-24 relayer expansion (ledger
 // 63624934 — unknown ids were skipped fail-closed, ~5,600 events
 // dropped, until the expansion block below landed), and USDT0 added
@@ -77,10 +77,10 @@ var (
 // write_prices(updater, feed_ids, payload) — which is NOT always the
 // display name. EUROC's feed_id is `EUROC/EUR`; BENJI's is
 // `BENJI_ETHEREUM_FUNDAMENTAL`. Matching a plain-ticker allow-list
-// against these silently dropped 5 feeds (the pre-#53 bug — EUROC
+// against these silently dropped 5 feeds (the pre-ecc289c6 bug — EUROC
 // among them never decoded).
 //
-// Pre-#53 this was `canonical.IsKnownCrypto(feedID)`; an explicit
+// Pre-ecc289c6 this was `canonical.IsKnownCrypto(feedID)`; an explicit
 // registry is required because (a) feed_id ≠ ticker for 5 feeds and
 // (b) the quote currency is per-feed, not a global USD assumption.
 // earnUSDCVaultContract is the Gami earnUSDC vault on Stellar — a
@@ -217,7 +217,7 @@ var feedRegistry = map[string]feedEntry{
 // for a feed_id outside the registry — RedStone deploying a feed
 // beyond the registered set surfaces here (as the 2026-07-24
 // expansion did); the decoder skips + counts it, the same graceful
-// per-feed skip as the pre-#53 unknown path.
+// per-feed skip as the pre-ecc289c6 unknown path.
 func lookupFeed(feedID string) (entry feedEntry, ok bool) {
 	entry, ok = feedRegistry[feedID]
 	return entry, ok
