@@ -238,6 +238,14 @@ against.
   `soroban_event_count` recorded in `stellar.ledgers`. A short partition
   fails `substrate_ok` and `recognition_ok` for each event-reading source
   whose range it touches.
+- **api — `/v1/account/usage` gains `billable` (#1278):** each row now
+  carries the request units the monthly quota counts (ok + 4xx),
+  derived identically on the per-endpoint rollup shape and the legacy
+  per-day shape. `requests` includes 5xx on the rollup shape but not
+  on the legacy one, so it never reconciled with a quota 429's
+  `month_to_date`; the spec now says to sum `billable` for that.
+  Additive field; `pkg/client.UsageRow` gains `Billable`.
+
 - **api — monthly quota meters price lookups, not HTTP calls (#1275):**
   `/v1/price/batch` now advances the monthly-quota counter and the
   per-endpoint usage counters by one request unit per de-duplicated

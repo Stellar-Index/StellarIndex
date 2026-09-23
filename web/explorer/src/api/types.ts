@@ -3151,12 +3151,20 @@ export interface paths {
          * Daily per-endpoint request counters for the authenticated key.
          * @description Returns per-day, per-endpoint-family usage rows for the
          *     authenticated caller over the trailing 30 days: one row per
-         *     (date, endpoint) with `requests` (allowed traffic),
-         *     `errors` (4xx excluding 429, plus 5xx), and `throttled`
-         *     (429 rejections — tallied separately and never counted
-         *     against monthly quota). `endpoint` is the route PATTERN
-         *     (e.g. `/v1/assets/{asset_id}`), never a raw URL.
-         *     Sum `requests` grouped by `date` for daily totals.
+         *     (date, endpoint) with `requests` (every non-429 response,
+         *     5xx included), `billable` (the request units the monthly
+         *     quota counts), `errors` (4xx excluding 429, plus 5xx), and
+         *     `throttled` (429 rejections — tallied separately and never
+         *     counted against monthly quota). `endpoint` is the route
+         *     PATTERN (e.g. `/v1/assets/{asset_id}`), never a raw URL.
+         *     Counts are request units: one per request, except
+         *     `/v1/price/batch`, which counts one per distinct asset id.
+         *
+         *     Reconciling with the quota: sum `billable` over the current
+         *     UTC month. That is the `month_to_date` a monthly-quota 429
+         *     reports, on either response shape below. Do not sum
+         *     `requests` for this — it includes 5xx responses on the
+         *     per-endpoint shape, and those never consume quota.
          *
          *     Throttling attribution: a 429 is rejected BEFORE the router
          *     resolves a route, so throttled counts are reported under the
@@ -3175,7 +3183,11 @@ export interface paths {
          *     Fallback shape: deployments where the rollup table has no
          *     rows yet (or Postgres is absent) degrade to the legacy
          *     per-day rows — one row per date with `endpoint` omitted
-         *     and `errors`/`throttled` zero. Redis-less deployments
+         *     and `errors`/`throttled` zero. That store holds only the
+         *     billable total, so on these rows `requests` equals
+         *     `billable` and excludes 5xx; the same shape fills any day
+         *     the rollup worker missed inside a per-endpoint response.
+         *     `billable` means the same thing on both shapes. Redis-less deployments
          *     return an empty array; the absence of the backend is
          *     reflected on /v1/readyz under `checks` (NOT `/v1/healthz`
          *     — the per-dependency `checks` field is `/readyz`-only; the
@@ -10713,17 +10725,26 @@ export interface components {
              */
             endpoint?: string;
             /**
-             * @description Allowed requests (all responses except 429). Throttled
-             *     calls are reported separately and never eat quota.
+             * @description Request units for every response except 429, 5xx
+             *     included. Throttled calls are reported separately and
+             *     never eat quota.
              *
-             *     On the legacy fallback shape (`endpoint` omitted) this
-             *     column is the BILLABLE counter the monthly quota is
-             *     enforced against, so it also excludes platform-caused
-             *     5xx responses: an outage on our side must not consume
-             *     the quota you paid for. Those responses are still
-             *     reported under `errors`.
+             *     On the legacy fallback shape (`endpoint` omitted) the
+             *     store holds only the billable total, so this column
+             *     equals `billable` and excludes 5xx. Use `billable`, not
+             *     this column, to reconcile against the monthly quota.
              */
             requests?: number;
+            /**
+             * @description Request units the monthly quota counts: 2xx/3xx and
+             *     4xx-except-429 responses. 429s and platform-caused 5xx
+             *     never consume quota (an outage on our side must not use
+             *     up the quota you paid for); both are still reported
+             *     under `throttled` / `errors`. Same meaning on both
+             *     response shapes: summed over the current UTC month it is
+             *     the `month_to_date` a monthly-quota 429 reports.
+             */
+            billable?: number;
             /** @description 4xx (excluding 429) + 5xx responses. */
             errors?: number;
             /** @description 429 rejections (rate-limit and monthly-quota). Reported under the `unmatched` endpoint, not the caller's target route — the rejection happens before the router resolves a pattern. */
@@ -18473,6 +18494,7 @@ export interface operations {
                      *           "date": "2026-07-01",
                      *           "endpoint": "/v1/price",
                      *           "requests": 18234,
+                     *           "billable": 18230,
                      *           "errors": 12,
                      *           "throttled": 0
                      *         },
@@ -18480,6 +18502,7 @@ export interface operations {
                      *           "date": "2026-07-02",
                      *           "endpoint": "/v1/price",
                      *           "requests": 20117,
+                     *           "billable": 20117,
                      *           "errors": 3,
                      *           "throttled": 0
                      *         },
@@ -18487,6 +18510,7 @@ export interface operations {
                      *           "date": "2026-07-02",
                      *           "endpoint": "unmatched",
                      *           "requests": 0,
+                     *           "billable": 0,
                      *           "errors": 0,
                      *           "throttled": 41
                      *         },
@@ -18494,6 +18518,7 @@ export interface operations {
                      *           "date": "2026-07-02",
                      *           "endpoint": "/v1/assets/{asset_id}",
                      *           "requests": 512,
+                     *           "billable": 512,
                      *           "errors": 0,
                      *           "throttled": 0
                      *         }

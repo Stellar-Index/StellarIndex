@@ -36,7 +36,7 @@ func TestAccountUsage_RollupBackfillsMissingDay(t *testing.T) {
 		switch r.Date {
 		case "2026-07-01":
 			gotBackfill = true
-			want := v1.UsageRow{Date: "2026-07-01", Requests: 12}
+			want := v1.UsageRow{Date: "2026-07-01", Requests: 12, Billable: 12}
 			if r != want {
 				t.Errorf("backfilled row = %+v, want %+v", r, want)
 			}

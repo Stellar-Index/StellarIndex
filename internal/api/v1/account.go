@@ -105,21 +105,23 @@ type SessionPeeker interface {
 // carries one row per (day, endpoint family) with Endpoint set to
 // the route pattern (e.g. "/v1/assets/{asset_id}") and the
 // errors / throttled columns filled: errors = 4xx (excluding 429)
-// + 5xx responses, throttled = 429 rate-limit rejections. Note
-// `requests` counts ALLOWED traffic only (throttled requests are
-// tallied separately and never eat monthly quota).
+// + 5xx responses, throttled = 429 rate-limit rejections, and
+// `requests` = every non-429 outcome, 5xx included.
 //
 // On the fallback path (rollup reader unwired or not yet swept)
 // rows degrade to the legacy shape: one row per day, Endpoint
-// empty, errors/throttled zero. Clients sum `requests` grouped by
-// `date` for daily totals in either shape. That legacy column is
-// the BILLABLE counter the monthly quota enforces against, so it
-// additionally excludes platform-caused 5xx responses (COR-05) —
-// see middleware.billableClass.
+// empty, errors/throttled zero. The legacy store only holds the
+// billable total, so there `requests` excludes 5xx as well.
+//
+// `billable` is the one column with the same meaning on both paths:
+// the request units the monthly quota counts (ok + 4xx; never 429 or
+// 5xx, see middleware.billableClass). Sum it by `date` to reconcile
+// against a quota 429's `month_to_date`.
 type UsageRow struct {
 	Date      string `json:"date"`               // YYYY-MM-DD
 	Endpoint  string `json:"endpoint,omitempty"` // route pattern; empty on the legacy fallback
 	Requests  int    `json:"requests"`
+	Billable  int    `json:"billable"`
 	Errors    int    `json:"errors"`
 	Throttled int    `json:"throttled"`
 }
@@ -133,7 +135,8 @@ type UsageReader interface {
 }
 
 // UsageDay mirrors usage.Day on the v1 boundary. Date is
-// YYYY-MM-DD UTC; Requests is the daily INCR count.
+// YYYY-MM-DD UTC; Requests is the day's BILLABLE request-unit total
+// (the MonthlyQuota counter — 429 and 5xx never reach it).
 type UsageDay struct {
 	Date     string
 	Requests int64
@@ -149,12 +152,14 @@ type UsageRollupReader interface {
 }
 
 // UsageEndpointDay is one (day, endpoint) aggregate on the v1
-// boundary. Requests counts allowed traffic (all non-429 outcomes);
-// Errors is 4xx (excl. 429) + 5xx; Throttled is 429s.
+// boundary. Requests counts all non-429 outcomes, 5xx included;
+// Billable is ok + 4xx — what the monthly quota counts; Errors is
+// 4xx (excl. 429) + 5xx; Throttled is 429s.
 type UsageEndpointDay struct {
 	Date      string // YYYY-MM-DD UTC
 	Endpoint  string // route pattern
 	Requests  int64
+	Billable  int64
 	Errors    int64
 	Throttled int64
 }
@@ -390,6 +395,7 @@ func (s *Server) readUsageRollup(r *http.Request, key string) ([]UsageRow, bool)
 			Date:      d.Date,
 			Endpoint:  d.Endpoint,
 			Requests:  int(d.Requests),
+			Billable:  int(d.Billable),
 			Errors:    int(d.Errors),
 			Throttled: int(d.Throttled),
 		}
@@ -420,10 +426,7 @@ func (s *Server) backfillMissingUsageDays(r *http.Request, key string, present m
 		if _, ok := present[d.Date]; ok {
 			continue
 		}
-		backfilled = append(backfilled, UsageRow{
-			Date:     d.Date,
-			Requests: int(d.Requests),
-		})
+		backfilled = append(backfilled, legacyUsageRow(d))
 	}
 	return backfilled
 }
@@ -443,12 +446,19 @@ func (s *Server) readUsageLegacy(r *http.Request, key string) []UsageRow {
 	}
 	out := make([]UsageRow, len(days))
 	for i, d := range days {
-		out[i] = UsageRow{
-			Date:     d.Date,
-			Requests: int(d.Requests),
-		}
+		out[i] = legacyUsageRow(d)
 	}
 	return out
+}
+
+// legacyUsageRow renders one legacy per-day total. That counter is the
+// billable one, so it is both `requests` and `billable` on this path.
+func legacyUsageRow(d UsageDay) UsageRow {
+	return UsageRow{
+		Date:     d.Date,
+		Requests: int(d.Requests),
+		Billable: int(d.Requests),
+	}
 }
 
 // handleAccountKeysCreate serves POST /v1/account/keys.
