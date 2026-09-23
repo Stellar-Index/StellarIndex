@@ -133,12 +133,6 @@ func skipInSink(ev consumer.Event, mode SinkMode) bool {
 // via the supplied store. Returns when ctx is canceled and the
 // channel has been drained, or when the channel is closed.
 //
-// One goroutine drains; per-event work is sequential. Throughput is
-// bounded by InsertTrade / InsertOracleUpdate latency. If that ever
-// becomes the bottleneck, the right fix is per-pair sharding inside
-// the store, not parallel sinks here — sequential ordering keeps the
-// trades hypertable's per-(source, pair, ts) uniqueness sane.
-//
 // Cursor-vs-channel safety: callers (the indexer's pipeline + the
 // backfill subcommand) advance their per-source cursor AFTER
 // ProcessLedger enqueues events to `in`, but BEFORE this sink
@@ -170,9 +164,9 @@ func skipInSink(ev consumer.Event, mode SinkMode) bool {
 // channel — each receive consumes one element atomically. The
 // PostgreSQL pool (PoolMaxOpenConns = 25) carries the concurrent
 // writes; each goroutine claims a connection per flush, releases
-// it after, so a small worker pool of 4 fits comfortably under the
-// pool ceiling alongside the aggregator + api binaries on the same
-// host.
+// it after, so a worker pool of [PersistWorkers] fits comfortably
+// under the pool ceiling alongside the aggregator + api binaries on
+// the same host.
 //
 // Per-event ordering within a source is NOT preserved across workers
 // (a later event can flush before an earlier one). The trades
