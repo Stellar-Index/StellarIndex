@@ -95,8 +95,32 @@ fi
 
 rc=0
 
-# 1. Heal holes below CH_MAX. leadInFrame's (CURRENT ROW .. 1 FOLLOWING) frame
-#    returns the last row's own value, so there is no spurious trailing gap.
+# 1. Heal holes below CH_MAX, in two arms that together mirror the Go
+#    ContiguousWatermark (internal/storage/clickhouse/completeness.go) the
+#    projector clamps on — any hole it can stall at must be one this finds.
+#
+#  1a. The FLOOR hole. The interior scan below only sees a jump between two
+#      present ledgers, so a hole starting AT LIVE_ERA_FROM (the cutover band
+#      below the dual-sink's first write) is invisible to it: every present
+#      ledger sits above it and {first, first+1, …} is contiguous. MIN_PRESENT
+#      is ContiguousWatermark's min_present arm; 0 means nothing at or above
+#      the floor is present yet, which the tip-extend in step 2 covers.
+MIN_PRESENT=$(CH -q "SELECT ifNull(min(ledger_seq), 0) FROM stellar.ledgers WHERE ledger_seq >= ${LIVE_ERA_FROM}")
+FLOOR_GAP=
+case "$MIN_PRESENT" in
+  *[!0-9]*|'')
+    echo "$(date -u) ch-live-catchup: could not resolve the lowest ledger >= $LIVE_ERA_FROM (got '$MIN_PRESENT'); a floor hole would go unhealed" >&2
+    rc=1
+    ;;
+  *)
+    if [ "$MIN_PRESENT" -gt "$LIVE_ERA_FROM" ]; then
+      FLOOR_GAP=$(printf '%s\t%s' "$LIVE_ERA_FROM" "$((MIN_PRESENT - 1))")
+    fi
+    ;;
+esac
+
+#  1b. INTERIOR holes. leadInFrame's (CURRENT ROW .. 1 FOLLOWING) frame
+#      returns the last row's own value, so there is no spurious trailing gap.
 GAPS=$(CH -q "
   SELECT gap_start, gap_end FROM (
     SELECT ledger_seq + 1 AS gap_start, nxt - 1 AS gap_end
@@ -111,6 +135,9 @@ GAPS=$(CH -q "
   )
   ORDER BY gap_start
   FORMAT TSV" 2>/dev/null)
+if [ -n "$FLOOR_GAP" ]; then
+  GAPS=$(printf '%s\n%s' "$FLOOR_GAP" "$GAPS")
+fi
 if [ -n "$GAPS" ]; then
   NGAPS=$(printf '%s\n' "$GAPS" | wc -l | tr -d '[:space:]')
   echo "$(date -u) ch-live-catchup: healing $NGAPS hole(s) in [$LIVE_ERA_FROM,$CH_MAX]"

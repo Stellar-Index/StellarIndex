@@ -213,5 +213,68 @@ else
   sed 's/^/       /' "$TMP/out.floor.valid"
 fi
 
+# ─── ch-live-catchup heals the FLOOR hole, not just interior ones ───
+#
+# Third contract. The projector clamps on ContiguousWatermark, which
+# stalls a source whose cursor sits in a hole AT the scan floor (its
+# min_present arm). The script's interior-only leadInFrame scan could
+# not see that hole — the cutover band [LIVE_ERA_FROM, first live
+# ledger) — so the stall waited forever on a heal that never came.
+#
+# The lake stub answers by query shape for a fixed ledger set and the
+# ops stub records every ch-backfill range the script asks for.
+mkdir -p "$TMP/lake/bin"
+cat > "$TMP/lake/bin/clickhouse-client" <<'STUB'
+#!/usr/bin/env bash
+q="${*: -1}"
+case "$q" in
+  *leadInFrame*)       [ -n "$LAKE_GAPS" ] && printf '%b\n' "$LAKE_GAPS" ;;
+  *"min(ledger_seq)"*) [ "$LAKE_MIN" = fail ] && exit 1; echo "$LAKE_MIN" ;;
+  *"max(ledger_seq)"*) echo "$LAKE_MAX" ;;
+  *) echo "unexpected query: $q" >&2; exit 1 ;;
+esac
+STUB
+cat > "$TMP/lake/bin/psql" <<'STUB'
+#!/usr/bin/env bash
+echo "$LAKE_TIP"
+STUB
+cat > "$TMP/lake/bin/ops" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$OPS_REC"
+STUB
+chmod +x "$TMP/lake/bin/"*
+
+# catchup_heals <label> <min> <interior gaps> <expected rc> <expected ranges…>
+# Floor 100, lake max 120, indexer tip 120; ranges are "from-to".
+catchup_heals() {
+  local label="$1" min="$2" gaps="$3" want_rc="$4" rc got want
+  shift 4
+  local rec="$TMP/ops.heal.$label"; : > "$rec"
+  env -u STELLARINDEX_CLICKHOUSE_OPS_USER -u STELLARINDEX_CLICKHOUSE_OPS_PASSWORD \
+      -u CLICKHOUSE_USER -u CLICKHOUSE_PASSWORD \
+      PATH="$TMP/lake/bin:$PATH" OPS="$TMP/lake/bin/ops" OPS_REC="$rec" \
+      STELLARINDEX_POSTGRES_DSN=postgres://stub LIVE_ERA_FROM=100 \
+      LAKE_MAX=120 LAKE_TIP=120 LAKE_MIN="$min" LAKE_GAPS="$gaps" \
+      bash "$OPS_DIR/ch-live-catchup.sh" >"$TMP/out.heal.$label" 2>&1
+  rc=$?
+  got="$(sed -n 's/^ch-backfill .*-from \([0-9]*\) -to \([0-9]*\) .*/\1-\2/p' "$rec" | tr '\n' ' ')"
+  want="$(printf '%s ' "$@")"
+  if [ "$got" = "$want" ] && [ "$rc" -eq "$want_rc" ]; then
+    ok "ch-live-catchup.sh: $label ⇒ heals '${want% }' (rc $rc)"
+  else
+    bad "ch-live-catchup.sh: $label ⇒ expected heals '${want% }' rc $want_rc, got '${got% }' rc $rc"
+    sed 's/^/       /' "$TMP/out.heal.$label"
+  fi
+}
+
+# Present {105..110, 113..120}: floor hole [100,104] AND interior [111,112].
+catchup_heals floor-hole 105 '111\t112' 0 100-104 111-112
+# Floor hole with no interior hole at all — the scan used to say "no holes".
+catchup_heals floor-hole-only 105 '' 0 100-104
+# Floor present: interior-only behaviour is unchanged.
+catchup_heals floor-present 100 '111\t112' 0 111-112
+# The floor probe itself failing must not read as "no floor hole".
+catchup_heals floor-probe-fails fail '111\t112' 1 111-112
+
 echo "ch-ops-user-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

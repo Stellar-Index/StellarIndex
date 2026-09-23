@@ -103,7 +103,8 @@ func contiguousWatermarkOn(ctx context.Context, conn driver.Conn, from uint32) (
 	// internally contiguous, so first_gap_start comes back 0 as if the lake were
 	// complete from `from`. min_present exposes exactly that boundary hole — when
 	// it exceeds `from`, `from` is missing (see watermark, which stalls at from-1
-	// so the projector never scans past the missing ledger).
+	// so the projector never scans past the missing ledger). The healer,
+	// scripts/ops/ch-live-catchup.sh, carries both arms too — change them together.
 	//
 	// The leadInFrame frame (CURRENT ROW .. 1 FOLLOWING) returns the current
 	// row's own value for the last row in the partition, so the final ledger
