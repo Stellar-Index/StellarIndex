@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode/utf8"
+
+	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
 // MaxResponseBytes caps how much we will read off the wire per call.
@@ -146,6 +148,20 @@ func (e *ResponseDecodeError) Error() string {
 // Unwrap returns the underlying encoding/json error.
 func (e *ResponseDecodeError) Unwrap() error { return e.Err }
 
+// redactedTransportError wraps a transport-level error (from
+// http.Client.Do) with a message that has had the request URL
+// scrubbed, while still unwrapping to the original error so callers
+// classifying by type — e.g. soroswap's retry logic doing
+// errors.As(err, &net.Error{}) — keep working. Only the *text* is
+// redacted; the *[url.Error] (and whatever it wraps) stays reachable.
+type redactedTransportError struct {
+	msg string
+	err error
+}
+
+func (e *redactedTransportError) Error() string { return e.msg }
+func (e *redactedTransportError) Unwrap() error { return e.err }
+
 // newHTTPStatusError builds the error for a status >= 400. The body is
 // decoded on a best-effort basis only to recover an error envelope; a
 // body that is empty, not JSON, or JSON of another shape still yields
@@ -186,7 +202,19 @@ func (c *Client) call(ctx context.Context, method string, params any, result any
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("stellarrpc: %s: %w", method, err)
+		// RPCEndpoints is a generic []string (config.go's
+		// stellar.rpc_endpoints) — nothing stops an operator pointing it
+		// at a keyed third-party provider the way divergence's Chainlink
+		// endpoint is. A raw %w wrap would put the *url.Error's full URL
+		// (any embedded key included) in logs, so scrub it the same way
+		// the Chainlink clients do (RedactURLError, shared to avoid a
+		// second hand-rolled copy that only covers one caller) — but keep
+		// unwrapping to the real error, since soroswap's retry logic
+		// classifies transport failures via errors.As(err, &net.Error{}).
+		return &redactedTransportError{
+			msg: fmt.Sprintf("stellarrpc: %s: %s", method, externalchainlink.RedactURLError(err, c.endpoint)),
+			err: err,
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 

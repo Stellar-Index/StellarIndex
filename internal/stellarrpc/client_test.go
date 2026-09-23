@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -341,6 +342,44 @@ func TestResponseSizeCap(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceeded") {
 		t.Errorf("error should mention cap: %v", err)
+	}
+}
+
+// errTransport always fails the round trip with a fixed error —
+// simulates a dial/reset failure so c.http.Do returns a *url.Error.
+type errTransport struct{ err error }
+
+func (t errTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, t.err
+}
+
+func TestTransportErrorRedactsKeyedEndpoint(t *testing.T) {
+	// stellar.rpc_endpoints (config.go) is a generic []string an
+	// operator can point at a keyed third-party stellar-rpc provider,
+	// the same shape divergence's Chainlink RPC uses. A raw %w wrap of
+	// http.Client.Do's *url.Error would put the whole URL — API key
+	// included — into every transport-failure log line.
+	const secret = "topsecret-provider-token-1234567890"
+	endpoint := "https://rpc.example.invalid/v2/" + secret
+	c := rpc.New(endpoint, rpc.WithHTTPClient(&http.Client{
+		Transport: errTransport{err: errors.New("dial tcp: connection refused")},
+		Timeout:   2 * time.Second,
+	}))
+
+	_, err := c.LatestLedger(context.Background())
+	if err == nil {
+		t.Fatal("expected a transport error, got nil")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("error leaked the secret-bearing endpoint: %v", err)
+	}
+
+	// Must still unwrap to a net.Error — soroswap's retryableSimulateErr
+	// classifies transport failures this way, and losing the chain
+	// would silently stop retrying every dial/reset/timeout.
+	var ne net.Error
+	if !errors.As(err, &ne) {
+		t.Errorf("error %q no longer unwraps to net.Error", err)
 	}
 }
 

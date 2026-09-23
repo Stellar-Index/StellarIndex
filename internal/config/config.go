@@ -852,7 +852,7 @@ type RegionConfig struct {
 type StellarConfig struct {
 	Network           string   `toml:"network" doc:"Network passphrase name — pubnet / testnet / futurenet." default:"pubnet"`
 	CoreHTTPEndpoint  string   `toml:"core_http_endpoint" doc:"stellar-core admin HTTP (used for liveness)." default:"http://127.0.0.1:11626"`
-	RPCEndpoints      []string `toml:"rpc_endpoints" doc:"stellar-rpc endpoints for getEvents/getLedgers. Tried in order on failover." default:"[\"http://127.0.0.1:8000\"]"`
+	RPCEndpoints      []string `toml:"rpc_endpoints" doc:"stellar-rpc endpoints for getEvents/getLedgers. Tried in order on failover. Default is a local, unkeyed node; a hosted third-party endpoint may embed an API key in the URL path/query — treat that value as a secret, same as chainlink's rpc_url." default:"[\"http://127.0.0.1:8000\"]"`
 	HistoryArchiveURL string   `toml:"history_archive_url" doc:"Public history archive (SDF or ours) for backfill catchup." default:"https://history.stellar.org/prd/core-live/core_live_001"`
 
 	// SorobanGenesisLedger and MovementsFloorLedger are the two

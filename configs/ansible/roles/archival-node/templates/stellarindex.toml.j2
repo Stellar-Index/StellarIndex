@@ -26,6 +26,10 @@ deployment = "{{ region_deployment | default('production') }}"
 [stellar]
 network             = "{{ stellar_network }}"
 core_http_endpoint  = "http://127.0.0.1:11626"
+# Local, unkeyed node on r1 — if an environment ever points this at a
+# hosted third-party stellar-rpc instead, treat the URL as a secret
+# (some providers embed an API key in the path/query, same caveat as
+# external.chainlink's rpc_url below).
 rpc_endpoints       = ["http://127.0.0.1:8000"]
 history_archive_url = "{{ stellar_history_archive_url }}"
 # Era boundaries — pubnet ledger numbers, or genesis (1) on test nets so
