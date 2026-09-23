@@ -1,10 +1,12 @@
 package phoenix
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
@@ -35,6 +37,9 @@ type Decoder struct {
 	// obs.SourceOrphanEventsTotal in the per-ledger stats path
 	// (internal/pipeline/processor.go).
 	evictedOrphans int
+	// carried holds rescued trades from a Decode call that failed on its
+	// own event; the next successful Decode emits them.
+	carried []consumer.Event
 	// reg gates Matches() on contract identity (ADR-0035/0040).
 	reg *contractid.Registry
 }
@@ -155,27 +160,41 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
+	out, err := d.decodeAction(a, &ev, fieldTopic, closedAt)
+	if err != nil {
+		return nil, err
+	}
+	if len(d.carried) > 0 {
+		out = append(d.carried, out...)
+		d.carried = nil
+	}
+	return out, nil
+}
+
+// decodeAction routes one event to its per-action decoder. Assumes d.mu
+// is held by Decode.
+func (d *Decoder) decodeAction(a action, ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	switch a {
 	case actionSwap:
-		return d.decodeSwapEvent(&ev, fieldTopic, closedAt)
+		return d.decodeSwapEvent(ev, fieldTopic, closedAt)
 	case actionSwapMap:
-		return d.decodeSwapMapEvent(&ev, closedAt)
+		return d.decodeSwapMapEvent(ev, closedAt)
 	case actionProvideLiquidity:
-		return d.decodeProvideLiquidityEvent(&ev, fieldTopic, closedAt)
+		return d.decodeProvideLiquidityEvent(ev, fieldTopic, closedAt)
 	case actionWithdrawLiquidity:
-		return d.decodeWithdrawLiquidityEvent(&ev, fieldTopic, closedAt)
+		return d.decodeWithdrawLiquidityEvent(ev, fieldTopic, closedAt)
 	case actionBond:
-		return d.decodeStakeEvent(&ev, fieldTopic, closedAt, true)
+		return d.decodeStakeEvent(ev, fieldTopic, closedAt, true)
 	case actionUnbond:
-		return d.decodeStakeEvent(&ev, fieldTopic, closedAt, false)
+		return d.decodeStakeEvent(ev, fieldTopic, closedAt, false)
 	case actionWithdrawRewards:
-		return d.decodeWithdrawRewardsEvent(&ev, fieldTopic, closedAt)
+		return d.decodeWithdrawRewardsEvent(ev, fieldTopic, closedAt)
 	case actionDistributeRewards:
-		return d.decodeDistributeRewardsEvent(&ev, closedAt)
+		return d.decodeDistributeRewardsEvent(ev, closedAt)
 	case actionInitialize:
-		return decodeInitializeEvent(&ev, fieldTopic, closedAt)
+		return decodeInitializeEvent(ev, fieldTopic, closedAt)
 	case actionAdmin:
-		return decodeAdminEvent(&ev, fieldTopic, closedAt)
+		return decodeAdminEvent(ev, fieldTopic, closedAt)
 	case actionCreatePool:
 		// Handled above, before the lock. Enumerated so `exhaustive`
 		// keeps covering the action enum.
@@ -214,8 +233,26 @@ func (d *Decoder) seedAnnouncedPool(ev *events.Event) error {
 // 8-event String path — there is no correlation buffer: decode and
 // emit immediately. Assumes d.mu is held by Decode.
 func (d *Decoder) decodeSwapMapEvent(ev *events.Event, closedAt time.Time) ([]consumer.Event, error) {
-	trade, err := decodeSwapMap(ev, closedAt)
+	return tradeOrNoOp(decodeSwapMap(ev, closedAt))
+}
+
+// isNotATrade reports a swap that decoded FULLY but maps to zero rows:
+// a zero leg or a self-pair. Returning it as an error would count it
+// undecodable and fail the source's ADR-0033 verdict closed forever
+// (the INV-3 trap — comet's dispatcher_adapter.go states the rule).
+// Indeterminate parse failures keep the error path.
+func isNotATrade(err error) bool {
+	return errors.Is(err, ErrZeroAmountSwap) || errors.Is(err, canonical.ErrPairMismatch)
+}
+
+// tradeOrNoOp turns a decodeSwap / decodeSwapMap result into Decode's
+// return shape: one TradeEvent, a recognised no-op (nil, nil), or the
+// decode error.
+func tradeOrNoOp(trade canonical.Trade, err error) ([]consumer.Event, error) {
 	if err != nil {
+		if isNotATrade(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	return []consumer.Event{TradeEvent{Trade: trade}}, nil
@@ -229,14 +266,30 @@ func (d *Decoder) decodeSwapMapEvent(ev *events.Event, closedAt time.Time) ([]co
 
 func (d *Decoder) decodeSwapEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {
 	completed, evicted, err := d.buf.absorb(ev, fieldTopic, closedAt)
-	// Sweep-time rescue (sources-decode audit 2026-08-04, finding 1):
-	// an aged-out group whose decode-consumed slots are all present is a
-	// pre-upgrade 7-event swap (that era never sends ActualReceived /
-	// SpreadAmount / ReferralFee), not an orphan — decode and emit it.
-	// Only genuinely under-filled groups count as orphans. Decode
-	// failures on a rescued group fall through to the orphan count
-	// rather than failing the CURRENT event, which is unrelated to the
-	// swept group.
+	out := d.rescueEvicted(evicted)
+	if err == nil && completed != nil {
+		var cur []consumer.Event
+		cur, err = tradeOrNoOp(decodeSwap(completed))
+		out = append(out, cur...)
+	}
+	if err != nil {
+		// Every Decode caller discards the outputs of an erroring call, so
+		// the rescued trades — complete, and unrelated to this event —
+		// ride out on the next successful Decode instead.
+		d.carried = append(d.carried, out...)
+		return nil, err
+	}
+	return out, nil
+}
+
+// rescueEvicted decodes the swap groups the buffer aged or rotated out
+// (sources-decode audit 2026-08-04, finding 1): a group whose
+// decode-consumed slots are all present is a pre-upgrade 7-event swap
+// (that era never sends ActualReceived / SpreadAmount / ReferralFee) or
+// the first of two same-pool swaps in one op, not an orphan. Only
+// under-filled or undecodable groups count as orphans; a recognised
+// no-op is neither a trade nor an orphan.
+func (d *Decoder) rescueEvicted(evicted []RawSwap) []consumer.Event {
 	var out []consumer.Event
 	for i := range evicted {
 		if !evicted[i].Decodable() {
@@ -244,23 +297,14 @@ func (d *Decoder) decodeSwapEvent(ev *events.Event, fieldTopic string, closedAt 
 			continue
 		}
 		trade, derr := decodeSwap(&evicted[i])
-		if derr != nil {
+		switch {
+		case derr == nil:
+			out = append(out, TradeEvent{Trade: trade})
+		case !isNotATrade(derr):
 			d.evictedOrphans++
-			continue
 		}
-		out = append(out, TradeEvent{Trade: trade})
 	}
-	if err != nil {
-		return out, err
-	}
-	if completed == nil {
-		return out, nil
-	}
-	trade, err := decodeSwap(completed)
-	if err != nil {
-		return out, err
-	}
-	return append(out, TradeEvent{Trade: trade}), nil
+	return out
 }
 
 func (d *Decoder) decodeProvideLiquidityEvent(ev *events.Event, fieldTopic string, closedAt time.Time) ([]consumer.Event, error) {

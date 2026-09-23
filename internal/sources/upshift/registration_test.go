@@ -55,7 +55,7 @@ func TestRegistration_ProjectorBuildsTheSource(t *testing.T) {
 	// prefilter a far-behind catch-up window streams the CAP-67 firehose,
 	// of which `transfer` alone is the large majority.
 	for _, vault := range upshift.MainnetGatedSet() {
-		if !slices.Contains(got.ContractIDs, vault) {
+		if !slices.Contains(got.PrefilterContractIDs(), vault) {
 			t.Errorf("the prefilter omits curated vault %s — its events would never be read", vault)
 		}
 	}

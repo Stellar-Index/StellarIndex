@@ -2,10 +2,12 @@ package phoenix
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
@@ -321,14 +323,18 @@ func decodeAnnouncedPool(e *events.Event) (string, error) {
 // Field mapping (per Q3):
 //   - Trade.Pair.Base    = asset parsed from SellToken event body
 //   - Trade.Pair.Quote   = asset parsed from BuyToken event body
-//   - Trade.BaseAmount   = OfferAmount (base sold by the taker)
+//   - Trade.BaseAmount   = OfferAmount (base sold by the taker). The
+//     pool's do_swap prices compute_swap off offer_amount BEFORE the
+//     transfer, so return/offer is the executed price even when a
+//     fee-on-transfer sell token makes ActualReceived smaller; that
+//     divergence is surfaced, not stored (noteReceivedDivergence).
 //   - Trade.QuoteAmount  = ReturnAmount — the buy_token amount the
 //     taker actually receives. Verified against the pool contract's
 //     do_swap: `return_amount` is `compute_swap.return_amount`, already
 //     net of protocol commission + referral fee, and is exactly the
 //     amount transferred to the sender. NOT ActualReceived: the pool
 //     emits "actual received amount" as the INPUT it received of
-//     sell_token (== OfferAmount), so using it made every Phoenix trade
+//     sell_token (== OfferAmount for a fee-less token), so using it made every Phoenix trade
 //     base==quote and corrupted all Phoenix prices (Q3).
 //   - Trade.Taker        = sender address
 func decodeSwap(r *RawSwap) (canonical.Trade, error) {
@@ -360,20 +366,26 @@ func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	// QuoteAmount is the OUTPUT the taker received of buy_token =
 	// return_amount (net of fees; see the doc comment above). The
 	// "actual received amount" field is the INPUT the pool received of
-	// sell_token (== offer_amount) — using it made base==quote.
+	// sell_token (== offer_amount for a fee-less token) — using it made
+	// base==quote.
 	returned, err := decodeI128(r.ReturnAmount.Value)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("return_amount: %w", err)
 	}
 
-	if offer.Sign() <= 0 || returned.Sign() <= 0 {
-		return canonical.Trade{}, fmt.Errorf("%w: non-positive amount (offer %s / return %s)",
-			ErrMalformedPayload, offer, returned)
+	if err := checkSwapAmounts(offer, returned); err != nil {
+		return canonical.Trade{}, err
 	}
 
 	pair, err := canonical.NewPair(sellToken, buyToken)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("pair: %w", err)
+	}
+
+	if r.ActualReceived != nil {
+		if received, rerr := decodeI128(r.ActualReceived.Value); rerr == nil {
+			noteReceivedDivergence(r.Pool, r.TxHash, r.Ledger, offer, received)
+		}
 	}
 
 	return canonical.Trade{
@@ -392,6 +404,36 @@ func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 	}, nil
 }
 
+// checkSwapAmounts rejects a negative leg as malformed (indeterminate)
+// and a zero leg as ErrZeroAmountSwap: a determinate dust swap that
+// projects no row.
+func checkSwapAmounts(offer, returned canonical.Amount) error {
+	if offer.Sign() < 0 || returned.Sign() < 0 {
+		return fmt.Errorf("%w: negative amount (offer %s / return %s)",
+			ErrMalformedPayload, offer, returned)
+	}
+	if offer.Sign() == 0 || returned.Sign() == 0 {
+		return fmt.Errorf("%w: offer %s / return %s", ErrZeroAmountSwap, offer, returned)
+	}
+	return nil
+}
+
+// mapFieldActualReceived is the Map-schema spelling of FieldActualReceived.
+const mapFieldActualReceived = "actual_received_amount"
+
+// noteReceivedDivergence surfaces a swap whose pool-received sell amount
+// differs from offer_amount (a fee-on-transfer sell token) without changing
+// the stored base leg, which stays offer_amount (see decodeSwap's doc).
+func noteReceivedDivergence(pool, txHash string, ledger uint32, offer, received canonical.Amount) {
+	if received.Equal(offer) {
+		return
+	}
+	obs.AMMSwapReceivedDivergenceTotal.WithLabelValues(SourceName).Inc()
+	slog.Warn("phoenix: swap actual received amount differs from offer_amount",
+		"pool", pool, "ledger", ledger, "tx_hash", txHash,
+		"offer_amount", offer.String(), "actual_received", received.String())
+}
+
 // decodeSwapMap decodes the NEWER single-event Phoenix swap schema
 // (Q5): one ScvSymbol("swap") event whose body is an ScvMap keyed by
 // underscore-spelled Symbols. Unlike decodeSwap this needs NO
@@ -400,7 +442,8 @@ func decodeSwap(r *RawSwap) (canonical.Trade, error) {
 // Field mapping is IDENTICAL to decodeSwap: BaseAmount = offer_amount
 // (base sold), QuoteAmount = return_amount (buy_token the taker
 // received, net of fees — NOT actual_received_amount, which the pool
-// emits as the INPUT it received of sell_token, == offer_amount).
+// emits as the INPUT it received of sell_token; a divergence from
+// offer_amount is surfaced by noteReceivedDivergence, not stored).
 // Decode is by Map-field name (contract-schema-evolution.md), so extra
 // / reordered fields don't break us.
 func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error) {
@@ -455,9 +498,8 @@ func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error
 		return canonical.Trade{}, fmt.Errorf("return_amount: %w", err)
 	}
 
-	if offer.Sign() <= 0 || returned.Sign() <= 0 {
-		return canonical.Trade{}, fmt.Errorf("%w: non-positive amount (offer %s / return %s)",
-			ErrMalformedPayload, offer, returned)
+	if err := checkSwapAmounts(offer, returned); err != nil {
+		return canonical.Trade{}, err
 	}
 
 	sellToken, err := canonical.NewSorobanAsset(sellAddr)
@@ -471,6 +513,10 @@ func decodeSwapMap(ev *events.Event, closedAt time.Time) (canonical.Trade, error
 	pair, err := canonical.NewPair(sellToken, buyToken)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("pair: %w", err)
+	}
+
+	if received, rerr := amount(mapFieldActualReceived); rerr == nil {
+		noteReceivedDivergence(ev.ContractID, ev.TxHash, ev.Ledger, offer, received)
 	}
 
 	return canonical.Trade{

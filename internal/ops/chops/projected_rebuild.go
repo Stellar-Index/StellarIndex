@@ -750,7 +750,7 @@ func runProjectedRebuildWorker(ctx context.Context, sched *windowScheduler, opts
 		}
 		var windowRead, windowEmitted, windowInsertErrs int64
 		werr := clickhouse.StreamContractEventsFiltered(ctx, opts.ChAddr, w.From, w.To,
-			opts.Source.ContractIDs, opts.Source.Topic0Syms, opts.Source.ExcludeTopic0Syms,
+			opts.Source.PrefilterContractIDs(), opts.Source.Topic0Syms, opts.Source.ExcludeTopic0Syms,
 			false,                           // no FINAL: idempotent downstream writes absorb any duplicate (matches the live projector's CH feed-switch mode)
 			true,                            // withOpArgs: mirrors the live projector, which routes every source uniformly (redstone needs it; the window is bounded so the wide column is cheap)
 			opts.Source.NeedsStateWriteKeys, // mirrors the live projector: redstone's exact subset attribution reads written contract-data keys
