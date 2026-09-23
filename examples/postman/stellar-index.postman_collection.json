@@ -34949,7 +34949,7 @@
                   "request": {
                     "name": "Customer dashboard — begin a passkey (WebAuthn) sign-in.",
                     "description": {
-                      "content": "Returns the WebAuthn credential-request options the browser\npasses to `navigator.credentials.get()`. Usernameless\n(discoverable credential): no email is asked for, so the\nendpoint reveals nothing to an anonymous caller.\n\n`userVerification` is `required`: the authenticator must\nverify the user (biometric / PIN) for the assertion to be\naccepted, so a passkey sign-in is never possession-only.\n\nSets an HMAC-signed, HttpOnly ceremony cookie\n(`stellarindex_passkey_ceremony`) binding the challenge to\nthis browser; `/auth/passkey/finish-login` requires it. The\nchallenge is valid for 5 minutes — enforced server-side, not\nmerely by the cookie's `Max-Age` — and is single-use.\n",
+                      "content": "Returns the WebAuthn credential-request options the browser\npasses to `navigator.credentials.get()`. Usernameless\n(discoverable credential): no email is asked for, so the\nendpoint reveals nothing to an anonymous caller.\n\n`userVerification` is `required`: the authenticator must\nverify the user (biometric / PIN) for the assertion to be\naccepted, so a passkey sign-in is never possession-only.\n\nSets an HMAC-signed, HttpOnly ceremony cookie\n(`stellarindex_passkey_ceremony`) binding the challenge to\nthis browser; `/auth/passkey/finish-login` requires it. The\nchallenge is valid for 5 minutes — enforced server-side, not\nmerely by the cookie's `Max-Age` — and is single-use.\n\nCapped per client IP (IPv6: per /64) at 20 calls per minute,\nindependently of the anonymous rate limit; past the cap the\ncall returns 429 with `Retry-After` and issues no challenge.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -35050,6 +35050,78 @@
                         {
                           "key": "Content-Type",
                           "value": "application/problem+json"
+                        }
+                      ],
+                      "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                      "cookie": [],
+                      "_postman_previewlanguage": "json"
+                    },
+                    {
+                      "name": "Rate-limit quota exhausted. See `Retry-After` header.",
+                      "originalRequest": {
+                        "url": {
+                          "path": [
+                            "auth",
+                            "passkey",
+                            "begin-login"
+                          ],
+                          "host": [
+                            "{{baseUrl}}"
+                          ],
+                          "query": [],
+                          "variable": []
+                        },
+                        "header": [
+                          {
+                            "key": "Accept",
+                            "value": "application/problem+json"
+                          }
+                        ],
+                        "method": "POST",
+                        "body": {}
+                      },
+                      "status": "Too Many Requests",
+                      "code": 429,
+                      "header": [
+                        {
+                          "key": "Content-Type",
+                          "value": "application/problem+json"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Seconds until the caller can retry.",
+                            "type": "text/plain"
+                          },
+                          "key": "Retry-After",
+                          "value": "<integer>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Request budget for the caller's tier in the current fixed window (per-key override applied when one is set).",
+                            "type": "text/plain"
+                          },
+                          "key": "X-RateLimit-Limit",
+                          "value": "<integer>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Requests left in the current window AFTER this request. 0 means the next request in this window will be 429'd.",
+                            "type": "text/plain"
+                          },
+                          "key": "X-RateLimit-Remaining",
+                          "value": "<integer>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). All three X-RateLimit-* headers ride every response the rate limiter evaluates — 2xx included, not just 429s — but are absent on deployments running without a rate limiter and on requests served fail-open during a Redis outage.",
+                            "type": "text/plain"
+                          },
+                          "key": "X-RateLimit-Reset",
+                          "value": "<integer>"
                         }
                       ],
                       "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",

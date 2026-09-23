@@ -25,6 +25,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // EmailLocker serialises first-login provisioning per email so
@@ -146,6 +147,10 @@ type Config struct {
 	// explorer and the api subdomain share the session cookie on
 	// credentialed cross-origin requests.
 	CookieDomain string
+
+	// passkeyBeginLimiter caps anonymous begin-login ceremonies per
+	// client IP; installed by validate(), never configurable off.
+	passkeyBeginLimiter *ratelimit.LocalFixedWindowCounter
 }
 
 // validate fills in defaults and rejects unworkable configs.
@@ -185,6 +190,9 @@ func (c *Config) validate() error {
 	// after the Now default: the guard expires records on that clock.
 	if c.PasskeyCeremonyGuard == nil {
 		c.PasskeyCeremonyGuard = newInProcessPasskeyCeremonyGuard(c.Now)
+	}
+	if c.passkeyBeginLimiter == nil {
+		c.passkeyBeginLimiter = ratelimit.NewLocalFixedWindowCounter(passkeyBeginLoginWindow, c.Now)
 	}
 	if c.DashboardBaseURL == "" {
 		return errors.New("dashboardauth: DashboardBaseURL is required")

@@ -108,6 +108,12 @@ func RemoteIP(r *http.Request) string {
 	return remoteIPFor(r)
 }
 
+// RemoteIPThrottleKey is the exported form of [remoteIPPrefixFor]: the
+// /64-masked throttle identity for handler-level per-IP caps.
+func RemoteIPThrottleKey(r *http.Request) string {
+	return remoteIPPrefixFor(r)
+}
+
 func requestCameViaTrustedProxy(peer string) bool {
 	addr, err := netip.ParseAddr(peer)
 	if err != nil {

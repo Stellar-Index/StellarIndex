@@ -4001,6 +4001,10 @@ export interface paths {
          *     this browser; `/auth/passkey/finish-login` requires it. The
          *     challenge is valid for 5 minutes — enforced server-side, not
          *     merely by the cookie's `Max-Age` — and is single-use.
+         *
+         *     Capped per client IP (IPv6: per /64) at 20 calls per minute,
+         *     independently of the anonymous rate limit; past the cap the
+         *     call returns 429 with `Retry-After` and issues no challenge.
          */
         post: operations["beginPasskeyLogin"];
         delete?: never;
@@ -20572,6 +20576,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            429: components["responses"]["RateLimited"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

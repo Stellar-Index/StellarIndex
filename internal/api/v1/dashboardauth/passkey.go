@@ -50,6 +50,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -58,6 +59,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -78,6 +80,17 @@ const passkeyCeremonyTTL = 5 * time.Minute
 // TTL expiry under a still-valid challenge, which would refuse a
 // legitimate sign-in for no security gain.
 const passkeyCeremonyReserveSlack = time.Minute
+
+// passkeyBeginLoginMaxPerIP per passkeyBeginLoginWindow caps anonymous
+// begin-login calls per client IP (/64 for IPv6). Each begin reserves
+// its ceremony for passkeyCeremonyTTL+slack in the shared allkeys-lru
+// Redis, so under the anonymous request ceiling alone one IP could hold
+// tens of thousands of live reservations; this bounds it to ~120 per
+// API instance. A human sign-in needs one begin per attempt.
+const (
+	passkeyBeginLoginMaxPerIP = 20
+	passkeyBeginLoginWindow   = time.Minute
+)
 
 // passkeyCeremonyDomain domain-separates the ceremony-cookie HMAC
 // from the login-code HMAC that shares the server secret.
@@ -591,6 +604,9 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 // revealed — the authenticator picks the account, so this endpoint
 // leaks nothing an anonymous caller didn't already have.
 func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.allowPasskeyBeginLogin(w, r) {
+		return
+	}
 	wa, err := h.webAuthn()
 	if err != nil {
 		h.cfg.Logger.Error("webauthn config", "err", err)
@@ -630,6 +646,25 @@ func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(assertion)
+}
+
+// allowPasskeyBeginLogin enforces the per-IP begin-login cap, writing
+// the refusal itself. It runs before any ceremony is minted, so a
+// throttled call writes nothing to the ceremony guard's store.
+func (h *Handlers) allowPasskeyBeginLogin(w http.ResponseWriter, r *http.Request) bool {
+	limiter := h.cfg.passkeyBeginLimiter
+	if limiter == nil {
+		// Only reachable by bypassing NewHandlers; refuse rather than run uncapped.
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return false
+	}
+	if limiter.Allow(middleware.RemoteIPThrottleKey(r), passkeyBeginLoginMaxPerIP) {
+		return true
+	}
+	h.cfg.Logger.Warn("passkey begin-login throttled", "ip", clientIP(r).String())
+	w.Header().Set("Retry-After", strconv.Itoa(int(passkeyBeginLoginWindow/time.Second)))
+	writeProblem(w, http.StatusTooManyRequests, "too many passkey sign-in attempts; retry later", r.URL.Path)
+	return false
 }
 
 // HandlePasskeyFinishLogin verifies the assertion and mints the same
