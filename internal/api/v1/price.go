@@ -1975,7 +1975,7 @@ func (s *Server) crossDeclaredPegThroughXLM(
 // [canonical.AssetAliases] documents — the literal input comes first
 // even when it IS the SAC form. Departing from it is an open MAINTAINER
 // decision, recorded as residual R1 of
-// docs/audit/d7-thin-pool-third-alias-vwap-review-2026-09-04.md §7,
+// docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md §7,
 // which raises it for the quote walk. This leg leans on that decision
 // for the base walk and does not settle it: if R1 is decided the other
 // way, this walk becomes literal-first and the two spellings read

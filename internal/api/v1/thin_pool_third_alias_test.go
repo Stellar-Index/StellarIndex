@@ -242,7 +242,7 @@ func TestPrice_ThinPoolThirdAlias_FiatProxyWalksClassicPegsOnly(t *testing.T) {
 // sides is asking about that pool, and gets that pool's own price, its
 // own sources, and no alias fallback ahead of it. The thin-market gates
 // that then apply are the reader's (substance, trailing-baseline guard,
-// freshness) — documented in docs/audit/d7-thin-pool-third-alias-vwap-review-2026-09-04.md.
+// freshness) — documented in docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md.
 func TestPrice_ThinPoolThirdAlias_SACKeyedRequestServesTheNamedPool(t *testing.T) {
 	installPegAliasRegistry(t)
 	fx := newThinPoolFixture(t, pegAliasAquaClassic, pegAliasUSDCClassic, pegAliasAquaSAC, pegAliasUSDCSAC)

@@ -32,3 +32,5 @@ Related, non-public references:
 - [Per-protocol verification pages](../protocols/README.md) — which
   sources feed the exchange class, and the contract-identity gating
   (ADR-0035) that makes each trade trustworthy.
+- [d7-thin-pool-third-alias-vwap-review-2026-09-04.md](d7-thin-pool-third-alias-vwap-review-2026-09-04.md)
+  — internal audit of every alias-walking price read path; residuals R1-R8.

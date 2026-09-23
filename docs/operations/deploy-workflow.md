@@ -215,7 +215,7 @@ step 9) restores only the **binary**. It never runs `migrate down`.
 So if a binary fails its health probe and rolls back, the database is
 left on the **new** schema while the **old** binary runs again —
 "atomic rollback" covers the binary, not the schema (CS-099,
-`docs/audit-2026-06-30/01-cold-system-findings.md`).
+[docs/audit-2026-06-30/01-cold-system-findings.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit-2026-06-30/01-cold-system-findings.md)).
 
 **This is intentional, not a gap.** Auto-running `migrate down` on a
 production rollback would be actively unsafe: down-migrations can be

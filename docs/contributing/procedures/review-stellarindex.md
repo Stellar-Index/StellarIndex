@@ -102,5 +102,6 @@ read the original when unsure.
 
 Report findings with file:line + the concrete failing scenario, most
 severe first; name what you verified as GOOD (prevents
-re-litigation) — the audit corpus format in docs/audit-2026-06-30 is
+re-litigation) — the audit corpus format in
+[docs/audit-2026-06-30](https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit-2026-06-30) is
 the model.

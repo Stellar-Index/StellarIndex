@@ -268,7 +268,7 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // C-address instead of `CODE-ISSUER` — on /v1/price, /v1/vwap,
 // /v1/twap, /v1/price/tip and /v1/chart alike, since every consultation
 // passes the raw requested asset straight through
-// (docs/audit/d7-thin-pool-third-alias-vwap-review-2026-09-04.md, R8).
+// (docs/methodology/d7-thin-pool-third-alias-vwap-review-2026-09-04.md, R8).
 // Resolving HERE rather than at each caller is what makes the
 // consultations agree: a new price surface inherits it — and now so
 // does the quote leg, which the SAC bypass would otherwise re-open one
