@@ -10,10 +10,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// PriceAuthority labels which fallback tier produced a global-view
-// price. Surfaces verbatim on `/v1/assets/{slug}.price_authority`
-// (R-018 Phase 1.4); consumers downgrade trust on the second and
-// third tiers vs the first.
+// PriceAuthority labels what produced a global-view price. Surfaces
+// verbatim on `/v1/assets/{slug}.price_authority` (R-018 Phase 1.4).
+// The first three are the tiers of [ComputeGlobalPrice]; consumers
+// downgrade trust on the second and third vs the first. The rest label
+// prices served outside that ladder and are never `vwap_native`.
 type PriceAuthority string
 
 const (
@@ -37,6 +38,18 @@ const (
 	// resort tier; only fires when neither direct VWAP nor
 	// aggregator coverage exists for the pair.
 	AuthorityTriangulated PriceAuthority = "triangulated"
+
+	// AuthorityReferenceRate is a published FX reference rate (the daily
+	// ECB series in fx_quotes), not a traded VWAP.
+	AuthorityReferenceRate PriceAuthority = "reference_rate"
+
+	// AuthorityIdentity is a price true by definition (USD in USD).
+	AuthorityIdentity PriceAuthority = "identity"
+
+	// AuthorityOnChainListing is the per-Stellar-asset listing price
+	// (/v1/assets) served as a Stellar-only token's headline. It carries
+	// no trade-count floor and no observation time.
+	AuthorityOnChainListing PriceAuthority = "onchain_listing"
 )
 
 // GlobalPriceResult is the output of [ComputeGlobalPrice]. Carries
@@ -107,17 +120,23 @@ type GlobalPriceOptions struct {
 	// (within CG's typical update cadence; observations older
 	// than this are stale enough to trust less than the next tier).
 	MaxAggregatorAge time.Duration
+
+	// MaxVWAPAge is the VWAP tier's freshness ceiling. A VWAP older than
+	// this yields to a fresh aggregator or triangulated price and is
+	// served only when neither exists. Zero means no freshness check.
+	MaxVWAPAge time.Duration
 }
 
 // DefaultGlobalPriceOptions returns the conservative defaults: 5
 // trades to clear the VWAP threshold, 5-minute triangulation
-// window, 10-minute aggregator-freshness ceiling. Callers can
-// override per-deployment via config (Phase 1.4 wires this).
+// window, 10-minute freshness ceiling on both the VWAP and the
+// aggregator tier, so tier order decides only between current prices.
 func DefaultGlobalPriceOptions() GlobalPriceOptions {
 	return GlobalPriceOptions{
 		VWAPMinTradeCount:   5,
 		TriangulationWindow: 5 * time.Minute,
 		MaxAggregatorAge:    10 * time.Minute,
+		MaxVWAPAge:          10 * time.Minute,
 	}
 }
 
@@ -129,10 +148,12 @@ var ErrNoPrice = errors.New("aggregate: no global price available")
 // the first tier whose data satisfies its threshold:
 //
 //  1. `vwap_native` — wins when LatestVWAP returns a row with
-//     trade_count >= VWAPMinTradeCount.
+//     trade_count >= VWAPMinTradeCount observed within MaxVWAPAge.
 //  2. `aggregator_avg` — wins when LatestAggregatorPrices returns
 //     >= 1 fresh observation (within MaxAggregatorAge).
 //  3. `triangulated` — wins when LookupTriangulated returns ok.
+//  4. a VWAP that cleared the floor but not MaxVWAPAge, labelled
+//     `vwap_native` with its own (old) AsOf.
 //
 // Returns ErrNoPrice when every tier comes up empty. Reader errors
 // other than "no rows" are propagated — a transient storage failure
@@ -151,10 +172,12 @@ func ComputeGlobalPrice(
 	}
 
 	// Tier 1 — direct VWAP from prices_1m.
-	if res, hit, err := tryVWAPTier(ctx, base, quote, reader, opts); err != nil {
+	res, stale, err := tryVWAPTier(ctx, base, quote, reader, opts)
+	if err != nil {
 		return GlobalPriceResult{}, err
-	} else if hit {
-		return res, nil
+	}
+	if res != nil {
+		return *res, nil
 	}
 
 	// Tier 2 — average across aggregator-class sources.
@@ -171,15 +194,20 @@ func ComputeGlobalPrice(
 		return res, nil
 	}
 
+	if stale != nil {
+		return *stale, nil
+	}
 	return GlobalPriceResult{}, ErrNoPrice
 }
 
+// tryVWAPTier returns the first alias's VWAP that clears the trade floor
+// and MaxVWAPAge, else nil plus the first that cleared only the floor.
 func tryVWAPTier(
 	ctx context.Context,
 	base, quote canonical.Asset,
 	reader GlobalPriceReader,
 	opts GlobalPriceOptions,
-) (GlobalPriceResult, bool, error) {
+) (fresh, stale *GlobalPriceResult, err error) {
 	// F-1340 (G14-04): loop the base's canonical aliases, mirroring
 	// the API's readPriceWithAliases. XLM has two canonical forms —
 	// `native` (SDEX-emitted) and `crypto:XLM` (CEX-emitted). The
@@ -191,23 +219,26 @@ func tryVWAPTier(
 	for _, b := range assetAliases(base) {
 		vwap, asOf, tradeCount, sources, ok, err := reader.LatestVWAP(ctx, b, quote)
 		if err != nil {
-			return GlobalPriceResult{}, false, fmt.Errorf("aggregate: VWAP lookup: %w", err)
+			return nil, nil, fmt.Errorf("aggregate: VWAP lookup: %w", err)
 		}
-		if !ok {
+		if !ok || tradeCount < opts.VWAPMinTradeCount {
 			continue
 		}
-		if tradeCount < opts.VWAPMinTradeCount {
-			continue
-		}
-		return GlobalPriceResult{
+		res := &GlobalPriceResult{
 			Price:      vwap,
 			Authority:  AuthorityVWAPNative,
 			Sources:    sources,
 			AsOf:       asOf,
 			TradeCount: tradeCount,
-		}, true, nil
+		}
+		if opts.MaxVWAPAge <= 0 || asOf.After(time.Now().Add(-opts.MaxVWAPAge)) {
+			return res, nil, nil
+		}
+		if stale == nil {
+			stale = res
+		}
 	}
-	return GlobalPriceResult{}, false, nil
+	return nil, stale, nil
 }
 
 // assetAliases is the aggregate spelling of [canonical.AssetAliases].

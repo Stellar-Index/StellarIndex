@@ -9690,19 +9690,27 @@ export interface components {
             /** @description USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead. */
             price_usd?: string | null;
             /**
-             * @description Which tier of the fallback chain produced `price_usd`.
+             * @description What produced `price_usd`. The first three are the tiers of the
+             *     fallback chain, in trust order; each of the first two is held to
+             *     a 10-minute freshness ceiling, and a VWAP past it is served (with
+             *     its own `price_as_of`) only when no fresher tier has a price.
              *     - `vwap_native`: our own VWAP across exchange-class trades.
              *     - `aggregator_avg`: average across CG / CMC / CryptoCompare.
              *     - `triangulated`: derived via bridge currency (X_USD ≈
              *       X_BTC × BTC_USD or similar).
+             *     - `reference_rate`: a published FX reference rate (daily ECB
+             *       series) for a non-USD fiat.
+             *     - `identity`: USD, 1 by definition.
+             *     - `onchain_listing`: a Stellar-only token's per-asset listing
+             *       price; no trade-count floor and no `price_as_of`.
              * @enum {string}
              */
-            price_authority?: "vwap_native" | "aggregator_avg" | "triangulated";
+            price_authority?: "vwap_native" | "aggregator_avg" | "triangulated" | "reference_rate" | "identity" | "onchain_listing";
             /** @description Contributor venue / aggregator names — for transparency. */
             price_sources?: string[];
             /**
              * Format: date-time
-             * @description Observation timestamp of the served price.
+             * @description Observation timestamp of the served price. Null when price_usd is null, and under price_authority onchain_listing.
              */
             price_as_of?: string | null;
             /** @description Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source). */

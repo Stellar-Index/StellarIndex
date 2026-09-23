@@ -1294,7 +1294,7 @@ type GlobalAssetView struct {
 	// the fallback chain produced a price (typically a Stellar-only
 	// token whose price isn't aggregated at the global level).
 	PriceUSD       *string    `json:"price_usd,omitempty"`
-	PriceAuthority string     `json:"price_authority,omitempty"` // "vwap_native" | "aggregator_avg" | "triangulated"
+	PriceAuthority string     `json:"price_authority,omitempty"` // "vwap_native" | "aggregator_avg" | "triangulated" | "reference_rate" | "identity" | "onchain_listing"
 	PriceSources   []string   `json:"price_sources,omitempty"`
 	PriceAsOf      *time.Time `json:"price_as_of,omitempty"`
 

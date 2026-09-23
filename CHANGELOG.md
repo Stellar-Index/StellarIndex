@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+- **api — global price ladder freshness and honest authority labels:**
+  `/v1/external/assets/{slug}`'s `vwap_native` tier now has a 10-minute
+  freshness ceiling like `aggregator_avg`; an older VWAP yields to a
+  fresh aggregator or triangulated price and is served (with its own
+  `price_as_of`) only when neither exists. `price_authority` gains
+  `reference_rate` (fiat FX rates), `identity` (USD) and
+  `onchain_listing` (Stellar-only listing prices), which were all
+  stamped `vwap_native`. The fiat price is the stored NUMERIC
+  `inverse_usd` text instead of a float64 rendering, on the detail,
+  listing market-cap and market-cap chart paths.
+
 - **api — explorer stroop fees are strings (breaking wire change):**
   `base_fee` and `base_reserve` on ledger views and `fee_charged` and
   `max_fee` on transaction summaries (`/v1/ledgers*`, `/v1/tx/{hash}`,
