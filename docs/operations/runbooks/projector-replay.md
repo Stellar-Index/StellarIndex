@@ -29,6 +29,9 @@ throughput, same decoders + same idempotent writes. See
 `internal/ops/chops/projected_rebuild.go`'s doc comment for the
 one-writer contract between the two tools (they must never run
 concurrently against overlapping history for the same source).
+`projected-rebuild` exits non-zero when a run held any window
+(un-checkpointed after failed inserts — re-run to retry it) or
+permanently dropped any trade; the summary it prints says which.
 
 ## Why this exists
 

@@ -256,9 +256,19 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		Logger:  logger,
 	})
 	printProjectedRebuildSummary(*sourceName, fromLedger, toLedger, *write, result)
+	return projectedRebuildOutcome(result, runErr, ctx.Err() != nil)
+}
 
+// errProjectedRebuildIncomplete marks a run that finished without a fatal
+// error but did not land every row.
+var errProjectedRebuildIncomplete = errors.New("projected-rebuild: run did not land every row")
+
+// projectedRebuildOutcome maps a finished run to the command's exit status.
+// The loss report goes to stdout, but a caller that reads only the exit code
+// (a script, a `&&` chain) must not see success for a run that lost rows.
+func projectedRebuildOutcome(r ProjectedRebuildResult, runErr error, interrupted bool) error {
 	if runErr != nil {
-		if ctx.Err() != nil {
+		if interrupted {
 			// SIGINT/SIGTERM mid-run — not a failure; the completed
 			// windows are checkpointed (if -write) and a re-run with
 			// -resume picks up the rest.
@@ -266,6 +276,10 @@ func projectedRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen //
 			return nil
 		}
 		return fmt.Errorf("projected-rebuild: %w", runErr)
+	}
+	if r.WindowsHeld > 0 || r.PermanentDrops > 0 {
+		return fmt.Errorf("%w: %d window(s) held after %d insert error(s), %d trade(s) permanently dropped — see the summary above",
+			errProjectedRebuildIncomplete, r.WindowsHeld, r.InsertErrors, r.PermanentDrops)
 	}
 	return nil
 }
