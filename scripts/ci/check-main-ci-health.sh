@@ -20,9 +20,14 @@
 #                     GitHub API's {"workflow_runs":[...]} — used for
 #                     offline tests instead of calling gh.
 #
-# Exit code: 0 = healthy (main green, or not enough signal to fault),
-#            1 = RED beyond threshold. A human-readable report is printed
-#            to stdout in both cases.
+# Exit code: 0 = healthy (main green, or completed runs exist but none
+#            carry a health signal yet — e.g. cancelled-only),
+#            1 = RED beyond threshold, OR UNKNOWN (the API returned zero
+#            runs at all for the configured workflow/branch — treated as
+#            a fault rather than silently read as healthy, since it is
+#            the same shape a wrong CI_WORKFLOW_FILE/CI_HEALTH_BRANCH
+#            produces). A human-readable report is printed to stdout in
+#            all cases.
 set -euo pipefail
 
 CI_WORKFLOW_FILE="${CI_WORKFLOW_FILE:-ci.yml}"
@@ -42,15 +47,30 @@ JQ_FILTER='.workflow_runs[]
   | @tsv'
 
 if [ -n "${CI_HEALTH_FIXTURE:-}" ]; then
-  runs="$(jq -r "$JQ_FILTER" "$CI_HEALTH_FIXTURE")"
+  api_json="$(cat "$CI_HEALTH_FIXTURE")"
 else
-  runs="$(gh api \
-    "repos/${GH_REPO}/actions/workflows/${CI_WORKFLOW_FILE}/runs?branch=${CI_HEALTH_BRANCH}&status=completed&per_page=30" \
-    --jq "$JQ_FILTER")"
+  api_json="$(gh api \
+    "repos/${GH_REPO}/actions/workflows/${CI_WORKFLOW_FILE}/runs?branch=${CI_HEALTH_BRANCH}&status=completed&per_page=30")"
 fi
 
+# Raw count BEFORE the health-signal filter. A 200 response with a
+# genuinely empty `workflow_runs` array is indistinguishable, from the
+# filtered result alone, from a misconfigured CI_WORKFLOW_FILE/
+# CI_HEALTH_BRANCH (a wrong workflow file or a typo'd branch name still
+# gets a 200 with zero matches, not an error) — "probed nothing" must
+# not read the same as "probed and it's green". Only when the API
+# handed back SOME completed runs (just none with an actionable
+# conclusion — e.g. cancelled-only) is an empty `runs` a genuine "no
+# signal yet, not faulted".
+raw_count="$(jq -r '.workflow_runs | length' <<<"$api_json")"
+runs="$(jq -r "$JQ_FILTER" <<<"$api_json")"
+
 if [ -z "$runs" ]; then
-  echo "ci-health: no completed '${CI_WORKFLOW_FILE}' runs on '${CI_HEALTH_BRANCH}' with a health signal — nothing to assess."
+  if [ "$raw_count" -eq 0 ]; then
+    echo "ci-health: UNKNOWN — zero '${CI_WORKFLOW_FILE}' runs at all came back for '${CI_HEALTH_BRANCH}'. This is indistinguishable from a misconfigured CI_WORKFLOW_FILE/CI_HEALTH_BRANCH and is NOT treated as healthy."
+    exit 1
+  fi
+  echo "ci-health: no completed '${CI_WORKFLOW_FILE}' runs on '${CI_HEALTH_BRANCH}' with a health signal (found ${raw_count} completed run(s), none actionable) — nothing to assess."
   exit 0
 fi
 

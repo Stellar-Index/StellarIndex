@@ -55,11 +55,17 @@ expect() {
 run '{"workflow_runs":[{"conclusion":"success","created_at":"'"$(now_iso 1)"'","html_url":"u","head_sha":"aaaaaaa"}]}'
 expect 'latest run green → healthy' 0 'HEALTHY'
 
-run '{"workflow_runs":[]}'
-expect 'no runs at all → nothing to assess (not faulted)' 0 'nothing to assess'
-
 run '{"workflow_runs":[{"conclusion":"cancelled","created_at":"'"$(now_iso 1)"'","html_url":"u","head_sha":"aaaaaaa"}]}'
 expect 'only a cancelled run (no health signal) → nothing to assess' 0 'nothing to assess'
+
+# ── UNKNOWN shape (K017): zero runs AT ALL, not merely zero with a
+#    health signal, must NOT read as healthy — it is the same 200-with-
+#    empty-array response a misconfigured CI_WORKFLOW_FILE/
+#    CI_HEALTH_BRANCH produces, so "probed nothing" cannot pass silently
+#    the way "probed and it's green" does. ────────────────────────────
+
+run '{"workflow_runs":[]}'
+expect 'zero runs at all → UNKNOWN, not read as healthy' 1 'UNKNOWN'
 
 # One red run, well under both thresholds.
 run '{"workflow_runs":[{"conclusion":"failure","created_at":"'"$(now_iso 1)"'","html_url":"u","head_sha":"aaaaaaa"},{"conclusion":"success","created_at":"'"$(now_iso 2)"'","html_url":"u","head_sha":"bbbbbbb"}]}' 3 6
