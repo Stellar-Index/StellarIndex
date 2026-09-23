@@ -33,6 +33,9 @@ MANIFEST="$TMP/manifest"
 pass=0
 fail=0
 
+# shellcheck source=scripts/ci/lib/test-expect.sh
+. "$PWD/scripts/ci/lib/test-expect.sh"
+
 reset()    { rm -rf "$MIG"; mkdir -p "$MIG"; }
 put()      { printf '%s\n' "$2" > "$MIG/$1"; }               # put <name> <sql>
 snapshot() { MIGRATIONS_DIR="$MIG" MIGRATION_IMMUTABILITY_MANIFEST="$MANIFEST" \
@@ -42,25 +45,6 @@ run() {  # run the gate in check mode against the fixture tree + baseline
   OUT="$(MIGRATIONS_DIR="$MIG" MIGRATION_IMMUTABILITY_MANIFEST="$MANIFEST" \
            bash "$LINT" 2>&1)"
   RC=$?
-}
-
-# expect <name> <want-rc> <want-substring-or-empty>
-expect() {
-  local name="$1" want_rc="$2" want_sub="${3:-}"
-  if [ "$RC" -ne "$want_rc" ]; then
-    echo "FAIL: $name — exit $RC, want $want_rc" >&2
-    printf '%s\n' "$OUT" | sed 's/^/    /' >&2
-    fail=$((fail + 1))
-    return
-  fi
-  if [ -n "$want_sub" ] && ! grep -q -- "$want_sub" <<<"$OUT"; then
-    echo "FAIL: $name — output missing '$want_sub'" >&2
-    printf '%s\n' "$OUT" | sed 's/^/    /' >&2
-    fail=$((fail + 1))
-    return
-  fi
-  echo "ok: $name"
-  pass=$((pass + 1))
 }
 
 # Baseline fixture: two migrations, frozen.

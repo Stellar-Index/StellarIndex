@@ -28,6 +28,9 @@ trap 'rm -rf "$TMP"' EXIT
 pass=0
 fail=0
 
+# shellcheck source=scripts/ci/lib/test-expect.sh
+. "$PWD/scripts/ci/lib/test-expect.sh"
+
 # run <fixture-sql> <baseline-content> [extra args…] → sets RC + OUT
 run() {
   local sql="$1" baseline="$2"; shift 2
@@ -38,25 +41,6 @@ run() {
   OUT="$(MIGRATIONS_DIR="$TMP/migrations" MIGRATION_COMPAT_BASELINE="$TMP/baseline" \
     bash "$LINT" "$@" 2>&1)"
   RC=$?
-}
-
-# expect <name> <want-rc> <want-substring-or-empty>
-expect() {
-  local name="$1" want_rc="$2" want_sub="${3:-}"
-  if [ "$RC" -ne "$want_rc" ]; then
-    echo "FAIL: $name — exit $RC, want $want_rc" >&2
-    printf '%s\n' "$OUT" | sed 's/^/    /' >&2
-    fail=$((fail + 1))
-    return
-  fi
-  if [ -n "$want_sub" ] && ! grep -q -- "$want_sub" <<<"$OUT"; then
-    echo "FAIL: $name — output missing '$want_sub'" >&2
-    printf '%s\n' "$OUT" | sed 's/^/    /' >&2
-    fail=$((fail + 1))
-    return
-  fi
-  echo "ok: $name"
-  pass=$((pass + 1))
 }
 
 # 1. Each destructive class fires with its own label.
