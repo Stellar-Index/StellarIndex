@@ -25,6 +25,10 @@ func chInstanceBackfill(args []string) error {
 	from := fs.Uint("from", 2, "first ledger (inclusive; resume point from a previous run's output)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current lake tip)")
 	window := fs.Uint("window", 2_000_000, "ledgers per INSERT…SELECT window")
+	table := fs.String("table", clickhouse.ContractInstanceChangesTable,
+		"target table in the stellar database: "+clickhouse.ContractInstanceChangesTable+
+			", or "+clickhouse.ContractInstanceChangesV2Table+
+			" during deploy/clickhouse/contract_instance_changes_tx_key.sql")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -47,9 +51,9 @@ func chInstanceBackfill(args []string) error {
 		return fmt.Errorf("-to (%d) is below -from (%d)", last, *from)
 	}
 
-	fmt.Fprintf(os.Stderr, "ch-instance-backfill: filling stellar.contract_instance_changes for ledgers %d..%d (window %d) on %s\n",
-		*from, last, *window, *chAddr)
-	return clickhouse.BackfillContractInstanceChanges(ctx, *chAddr, uint32(*from), last, uint32(*window),
+	fmt.Fprintf(os.Stderr, "ch-instance-backfill: filling stellar.%s for ledgers %d..%d (window %d) on %s\n",
+		*table, *from, last, *window, *chAddr)
+	return clickhouse.BackfillContractInstanceChangesInto(ctx, *chAddr, *table, uint32(*from), last, uint32(*window),
 		func(format string, a ...any) {
 			fmt.Fprintf(os.Stderr, "ch-instance-backfill: "+format+"\n", a...)
 		})

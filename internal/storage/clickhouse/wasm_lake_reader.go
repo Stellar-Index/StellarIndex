@@ -301,14 +301,15 @@ const contractCodeHistoryMaxRows = 10_000
 // ledger_entry_changes (ORDER BY leads with ledger_seq), so this predicate
 // is scan-shaped over the changes history — the pin bounds its thread
 // fan-out (route-sweep 2026-07-29: /v1/contracts/{id}/code-history was in
-// the 8s 503 class).
+// the 8s 503 class). Same-ledger order is intra_ledger_seq first, as in
+// contractCodeHistoryIndexedQuery: change_index restarts per transaction.
 const contractCodeHistoryQuery = `SELECT ledger_seq, close_time, entry_xdr FROM (
-			SELECT ledger_seq, close_time, entry_xdr, change_index, ingested_at
+			SELECT ledger_seq, close_time, entry_xdr, intra_ledger_seq, change_index, ingested_at
 			FROM stellar.ledger_entry_changes
 			WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
-			ORDER BY ledger_seq DESC, change_index DESC, ingested_at DESC
+			ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC, ingested_at DESC
 			LIMIT ?
-		) ORDER BY ledger_seq ASC, change_index ASC, ingested_at ASC` + explorerScanSettings
+		) ORDER BY ledger_seq ASC, intra_ledger_seq ASC, change_index ASC, ingested_at ASC` + explorerScanSettings
 
 // ContractCodeHistory returns a contract's WASM-hash timeline — the contract's
 // "change over time" (ADR-0038 Phase C): every distinct executable the
@@ -387,7 +388,23 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 // order matches the collapse loop, and the same newest-preserving cap as
 // the legacy scan bounds pathological instance-storage churn: the inner
 // select keeps the NEWEST rows, the outer re-sorts ascending.
+//
+// change_index restarts per TRANSACTION, so it cannot order two
+// transactions' writes in one ledger; intra_ledger_seq (the per-LEDGER walk
+// position) does, and change_index then only breaks ties inside one tx and
+// on legacy rows whose intra_ledger_seq is still 0.
 const contractCodeHistoryIndexedQuery = `SELECT ledger_seq, close_time, wasm_hash FROM (
+			SELECT ledger_seq, close_time, wasm_hash, intra_ledger_seq, change_index
+			FROM stellar.contract_instance_changes
+			WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
+			ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC
+			LIMIT ?
+		) ORDER BY ledger_seq ASC, intra_ledger_seq ASC, change_index ASC`
+
+// contractCodeHistoryIndexedQueryOldKey serves a table still on the
+// pre-intra_ledger_seq shape (instanceChangesTxKeyed false) until its
+// rebuild cut-over.
+const contractCodeHistoryIndexedQueryOldKey = `SELECT ledger_seq, close_time, wasm_hash FROM (
 			SELECT ledger_seq, close_time, wasm_hash, change_index
 			FROM stellar.contract_instance_changes
 			WHERE contract_hash = ? AND is_sac = 0 AND wasm_hash != ''
@@ -395,14 +412,29 @@ const contractCodeHistoryIndexedQuery = `SELECT ledger_seq, close_time, wasm_has
 			LIMIT ?
 		) ORDER BY ledger_seq ASC, change_index ASC`
 
+// contractWasmHashIndexedQuery reads the ledger-final instance write; the
+// order is contractCodeHistoryIndexedQuery's, newest first.
+const contractWasmHashIndexedQuery = `SELECT is_sac, wasm_hash FROM stellar.contract_instance_changes
+		  WHERE contract_hash = ?
+		  ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC
+		  LIMIT 1`
+
+const contractWasmHashIndexedQueryOldKey = `SELECT is_sac, wasm_hash FROM stellar.contract_instance_changes
+		  WHERE contract_hash = ?
+		  ORDER BY ledger_seq DESC, change_index DESC
+		  LIMIT 1`
+
 // contractCodeHistoryIndexed is ContractCodeHistory's fast path over the
 // keyed index: no XDR decode (the MV/backfill already extracted the
 // executable verdict), collapse of consecutive identical hashes in Go —
 // which also absorbs RMT pre-merge duplicate keys, since a duplicate row
 // carries the same hash as its neighbour.
 func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, error) {
-	rows, err := r.conn.Query(ctx, contractCodeHistoryIndexedQuery,
-		hex.EncodeToString(cid[:]), contractCodeHistoryMaxRows)
+	q := contractCodeHistoryIndexedQuery
+	if !r.instanceChangesTxKeyed(ctx) {
+		q = contractCodeHistoryIndexedQueryOldKey
+	}
+	rows, err := r.conn.Query(ctx, q, hex.EncodeToString(cid[:]), contractCodeHistoryMaxRows)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: contract code history (indexed): %w", err)
 	}
@@ -437,12 +469,11 @@ func (r *ExplorerReader) contractCodeHistoryIndexed(ctx context.Context, cid xdr
 // to the legacy current-state read on a miss. ErrContractIsSAC mirrors
 // the legacy path's verdict.
 func (r *ExplorerReader) contractWasmHashIndexed(ctx context.Context, cid xdr.Hash) (xdr.Hash, bool, error) {
-	rows, err := r.conn.Query(ctx,
-		`SELECT is_sac, wasm_hash FROM stellar.contract_instance_changes
-		  WHERE contract_hash = ?
-		  ORDER BY ledger_seq DESC, change_index DESC
-		  LIMIT 1`,
-		hex.EncodeToString(cid[:]))
+	q := contractWasmHashIndexedQuery
+	if !r.instanceChangesTxKeyed(ctx) {
+		q = contractWasmHashIndexedQueryOldKey
+	}
+	rows, err := r.conn.Query(ctx, q, hex.EncodeToString(cid[:]))
 	if err != nil {
 		return xdr.Hash{}, false, fmt.Errorf("clickhouse: instance index wasm hash: %w", err)
 	}

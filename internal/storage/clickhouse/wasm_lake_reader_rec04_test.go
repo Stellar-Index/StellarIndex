@@ -41,6 +41,9 @@ func TestContractWasmHash_PartialIndexMissFallsBackToLegacy(t *testing.T) {
 			// Availability probe: the index EXISTS and is non-empty
 			// (some other contract has been backfilled) -> "usable".
 			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		case strings.Contains(q, "SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes"):
+			// Key-shape probe: the tx-keyed table.
+			return &stubRows{}, nil
 		case strings.Contains(q, "contract_instance_changes") && strings.Contains(q, "is_sac"):
 			// Per-contract lookup: THIS contract's instance write has not
 			// been backfilled yet -> zero rows (a PARTIAL-coverage miss,

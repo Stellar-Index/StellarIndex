@@ -15,6 +15,24 @@ against.
 
 ## [Unreleased]
 
+- **clickhouse — `contract_instance_changes` keyed per transaction
+  (T356/T377):** the instance timeline behind
+  `/v1/contracts/{id}/code-history` and the wasm-hash lookup was
+  `ORDER BY (contract_hash, ledger_seq, change_index)`, and `change_index`
+  restarts on every transaction, so two transactions writing one
+  contract's instance in the same ledger merged into one row — a
+  same-ledger upgrade could vanish and the survivor was the last insert,
+  not the ledger-final executable. The key is now
+  `(contract_hash, ledger_seq, tx_hash, change_index)`; the MV and
+  backfill carry `tx_hash` and `intra_ledger_seq`, and the indexed reads
+  (and the legacy `ledger_entry_changes` scan) order a ledger's writes by
+  `intra_ledger_seq`. Against a table still on the old key the reader
+  probes the shape and keeps the old order instead of failing. **r1 needs
+  the operator migration** `deploy/clickhouse/contract_instance_changes_tx_key.sql`
+  (side table, `ch-instance-backfill -table contract_instance_changes_v2`
+  to genesis, rename cut-over, API restart); `CREATE IF NOT EXISTS` does
+  not re-key the existing table.
+
 - **api — `/v1/price/stream` spec and comments described a frame nobody
   emits (GH-751):** the example showed `as_of` 42 s after
   `observed_at` and a `flags` object on the 300 s series; the aggregator

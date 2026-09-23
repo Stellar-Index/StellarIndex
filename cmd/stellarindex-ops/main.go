@@ -916,7 +916,7 @@ Subcommands:
                           history so substrate continuity + hash-chain
                           checks cover [genesis, tip]. Idempotent
                           (ON CONFLICT DO UPDATE); checkpoints for resume.
-  ch-instance-backfill    -ch-addr ADDR [-from N] [-to N] [-window N]
+  ch-instance-backfill    -ch-addr ADDR [-from N] [-to N] [-window N] [-table NAME]
                           One-time historical fill of
                           stellar.contract_instance_changes (the keyed
                           instance-executable timeline behind fast

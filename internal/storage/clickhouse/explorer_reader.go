@@ -277,6 +277,14 @@ type ExplorerReader struct {
 	// unavailable.
 	instanceChangesProbe schemaProbe
 
+	// instanceKeyProbe probes whether stellar.contract_instance_changes has
+	// the tx-keyed shape (tx_hash + intra_ledger_seq columns). A table
+	// created before it — r1 until deploy/clickhouse/
+	// contract_instance_changes_tx_key.sql cuts over — has neither, and the
+	// intra_ledger_seq-ordered reads would 500 on it, so they fall back to
+	// the change_index order there.
+	instanceKeyProbe schemaProbe
+
 	// censusProbe probes stellar.contracts_census_daily (the day-keyed
 	// per-contract event counts, deploy/clickhouse/
 	// contracts_census_daily.sql). Present + non-empty → RecentContracts
@@ -1746,6 +1754,13 @@ func (r *ExplorerReader) contractLedgersIndexAvailable(ctx context.Context) bool
 func (r *ExplorerReader) instanceChangesIndexAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.instanceChangesProbe,
 		`SELECT ledger_seq FROM stellar.contract_instance_changes LIMIT 1`, true)
+}
+
+// instanceChangesTxKeyed reports whether stellar.contract_instance_changes
+// carries tx_hash + intra_ledger_seq (see instanceKeyProbe).
+func (r *ExplorerReader) instanceChangesTxKeyed(ctx context.Context) bool {
+	return r.probeSchema(ctx, &r.instanceKeyProbe,
+		`SELECT tx_hash, intra_ledger_seq FROM stellar.contract_instance_changes LIMIT 1`, false)
 }
 
 // censusAvailable reports whether stellar.contracts_census_daily is

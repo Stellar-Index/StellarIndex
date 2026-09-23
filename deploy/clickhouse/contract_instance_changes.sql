@@ -21,8 +21,8 @@
 -- ContractCodeHistory and the ContractWasm hash resolution pay it.
 --
 -- THE INDEX: one narrow row per captured instance-entry WRITE, keyed
--- (contract, ledger, change_index), carrying just the decoded verdict:
--- SAC or wasm + which hash. The wire layout makes the MV extraction a
+-- (contract, ledger, tx_hash, change_index), carrying just the decoded
+-- verdict: SAC or wasm + which hash. The wire layout makes the MV extraction a
 -- pair of fixed-offset substrings (byte-verified 2026-08-09 against
 -- go-stellar-sdk marshalling, all three shapes):
 --
@@ -39,9 +39,30 @@
 -- so a busy contract contributes many rows — but each is ~90 bytes vs
 -- the multi-KB entry_xdr, and readers collapse to distinct executables.
 --
--- REPLAY-SAFE: no counts; identical (contract, ledger, change_index)
--- keys re-inserted by re-derives/overlapping backfills collapse in the
--- RMT (the migration-0059 double-count class does not apply).
+-- THE KEY: change_index restarts at 0 on every TRANSACTION
+-- (extract_entry_changes.go), so two transactions in one ledger writing
+-- the same contract's instance share it — keyed on it alone, the RMT
+-- merged them into one row. (tx_hash, change_index) is the change's
+-- identity: unique within a ledger, stable across re-ingest and across
+-- dispatcher.EntryWalkVersion renumbering, and populated on legacy rows
+-- whose intra_ledger_seq is still 0. intra_ledger_seq is carried but NOT
+-- keyed — it is the READ order (ledger_seq, intra_ledger_seq,
+-- change_index), which puts the ledger-final write last; keying on it
+-- would stop a renumbering re-derive from replacing the rows it
+-- supersedes. Legacy rows (intra_ledger_seq 0) order across
+-- transactions only by change_index until ledger_entry_changes is
+-- re-derived; seed rows (4294967295) are ledger-final by construction.
+--
+-- REPLAY-SAFE: no counts; identical (contract, ledger, tx_hash,
+-- change_index) keys re-inserted by re-derives/overlapping backfills
+-- collapse in the RMT (the migration-0059 double-count class does not
+-- apply).
+--
+-- EXISTING DEPLOYMENTS: r1 created this table under the old
+-- (contract, ledger, change_index) key, and CREATE IF NOT EXISTS is a
+-- no-op against it. ORDER BY cannot change in place — run
+-- deploy/clickhouse/contract_instance_changes_tx_key.sql (side table,
+-- genesis backfill, rename cut-over).
 --
 -- OPERATOR CONTRACT (same as contract_active_ledgers): presence +
 -- non-empty = readers TRUST it, including per-contract emptiness
@@ -61,21 +82,25 @@ CREATE TABLE IF NOT EXISTS stellar.contract_instance_changes
 (
     contract_hash FixedString(64),  -- lower-hex 32-byte contract id
     ledger_seq    UInt32,
-    change_index  UInt32,
+    tx_hash       String DEFAULT '', -- '' on snapshot/seed rows
+    change_index  UInt32,           -- per-TRANSACTION position
+    intra_ledger_seq UInt32 DEFAULT 0, -- per-LEDGER walk position
     close_time    DateTime('UTC'),
     is_sac        UInt8,            -- executable type: 0 = wasm, 1 = SAC
     wasm_hash     String,           -- lower-hex, '' when is_sac = 1
     ingested_at   DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-ORDER BY (contract_hash, ledger_seq, change_index);
+ORDER BY (contract_hash, ledger_seq, tx_hash, change_index);
 
 CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.contract_instance_changes_mv
 TO stellar.contract_instance_changes AS
 SELECT
     lower(hex(substring(tryBase64Decode(key_xdr), 9, 32)))  AS contract_hash,
     ledger_seq,
+    tx_hash,
     change_index,
+    intra_ledger_seq,
     close_time,
     toUInt8(substring(tryBase64Decode(entry_xdr), 61, 4) = unhex('00000001')) AS is_sac,
     if(substring(tryBase64Decode(entry_xdr), 61, 4) = unhex('00000000'),
