@@ -561,18 +561,13 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
 		return fmt.Errorf("stream: %w", streamErr)
 	}
-	if ctx.Err() != nil {
-		// Graceful shutdown (SIGINT): streamErr is context.Canceled (or
-		// the last ledger just finished as cancellation landed).
-		// Checkpoint whatever fully drained and stop HERE rather than
-		// falling through to the CAGG-refresh block below: `ctx` is
-		// already dead, so a Postgres refresh call against it would
-		// just fail spuriously — and per DAT-09/REL-08 that failure
-		// must not block checkpointing ledgers that DID fully commit.
-		// A subsequent resume re-walks the remainder and performs its
-		// own CAGG refresh before its own checkpoint.
-		checkpointBackfillChunk(logger, store, cursorSub, lastFullyEnqueued, startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
-		return nil                                                                      //nolint:nilerr // deliberate: a graceful ctx-cancel (streamErr may be context.Canceled here) is a clean shutdown, not a chunk failure — matches the pre-existing behaviour this function has always had for SIGINT
+	if ierr := backfillChunkInterrupted(ctx.Err(), chunk, lastFullyEnqueued); ierr != nil {
+		// Graceful shutdown (SIGINT/SIGTERM): checkpoint what fully
+		// drained and stop HERE — `ctx` is dead, so the CAGG refresh
+		// below would fail spuriously. The chunk is NOT complete, so it
+		// fails the run; see backfillChunkInterrupted.
+		checkpointBackfillChunk(logger, store, cursorSub, interruptedCheckpoint(chunk, lastFullyEnqueued), startFrom) //nolint:contextcheck // deliberately does NOT use the caller's ctx — see checkpointBackfillChunk's doc comment (F-1318)
+		return ierr
 	}
 
 	// F-0159: report BOTH the chunk's range size and the count of
@@ -708,6 +703,31 @@ func backfillChunkCoverage(chunk chunkRange, startFrom uint32, walked uint64, bu
 		)
 	}
 	return nil
+}
+
+// backfillChunkInterrupted fails a chunk whose walk was stopped by
+// SIGINT/SIGTERM (ctxErr != nil). An interrupted chunk has not had its
+// CAGGs refreshed and usually has not walked its range, so returning nil
+// let `backfill` log "backfill complete" and exit 0 on a partial range.
+func backfillChunkInterrupted(ctxErr error, chunk chunkRange, lastFullyEnqueued uint32) error {
+	if ctxErr == nil {
+		return nil
+	}
+	return fmt.Errorf(
+		"backfill chunk [%d,%d] interrupted before completion (last fully drained ledger %d; 0 = none): %w — "+
+			"the range is NOT complete and no CAGG refresh ran; re-run with -resume",
+		chunk.from, chunk.to, lastFullyEnqueued, ctxErr,
+	)
+}
+
+// interruptedCheckpoint caps an interrupted chunk's checkpoint below
+// chunk.to: a cursor at chunk.to makes -resume short-circuit the chunk as
+// complete, skipping the CAGG refresh the interruption prevented.
+func interruptedCheckpoint(chunk chunkRange, lastFullyEnqueued uint32) uint32 {
+	if lastFullyEnqueued >= chunk.to && chunk.to > 0 {
+		return chunk.to - 1
+	}
+	return lastFullyEnqueued
 }
 
 // checkpointBackfillChunk durably advances the backfill cursor to
