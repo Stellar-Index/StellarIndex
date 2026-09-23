@@ -4915,6 +4915,9 @@ func (sessionPeekerAdapter) SessionFromContext(ctx context.Context) (v1.SessionI
 		AccountSlug:     sc.Account.Slug,
 		AccountTier:     string(sc.Account.Tier),
 		AccountStatus:   string(sc.Account.Status),
+		// GH-1074: effective (override-resolved), not the tier ceiling.
+		AccountRateLimitPerMin:     sc.Account.EffectiveRateLimitPerMin(),
+		AccountMonthlyRequestQuota: sc.Account.EffectiveMonthlyQuota(),
 	}, true
 }
 

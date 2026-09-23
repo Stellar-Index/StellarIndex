@@ -263,6 +263,36 @@ type Account struct {
 	MonthlyRequestQuotaOverride int64 // 0 = inherit tier default
 }
 
+// EffectiveRateLimitPerMin returns the per-minute rate limit actually
+// enforced for this account: the tier ceiling, raised by
+// RateLimitPerMinOverride when the override is set higher (the
+// override is a FLOOR — see [Tier.MaxRateLimitPerMin]). Mirrors the
+// per-key cascade in internal/auth/apikey_postgres.go's Validate, so
+// the account-level view and the auth-time cascade agree on what
+// "effective" means; GH-1074 (a partner comped below the tier ceiling
+// otherwise reads the ceiling as their limit and gets 429s at a
+// fraction of it).
+func (a Account) EffectiveRateLimitPerMin() int {
+	limit := a.Tier.MaxRateLimitPerMin()
+	if a.RateLimitPerMinOverride > limit {
+		limit = a.RateLimitPerMinOverride
+	}
+	return limit
+}
+
+// EffectiveMonthlyQuota returns the monthly request quota actually
+// enforced for this account: the tier ceiling, lowered by
+// MonthlyRequestQuotaOverride when the override is set and below it
+// (the override is a CEILING — see [Tier.MaxMonthlyQuota]). Mirrors
+// the per-key cascade in internal/auth/apikey_postgres.go's Validate.
+func (a Account) EffectiveMonthlyQuota() int64 {
+	quota := a.Tier.MaxMonthlyQuota()
+	if a.MonthlyRequestQuotaOverride > 0 && a.MonthlyRequestQuotaOverride < quota {
+		quota = a.MonthlyRequestQuotaOverride
+	}
+	return quota
+}
+
 // AccountStore is the persistence boundary for [Account].
 //
 // Implementations: PostgresAccountStore (Week 1, this PR ships

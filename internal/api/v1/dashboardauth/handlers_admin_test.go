@@ -495,3 +495,47 @@ func TestAdminAccountView_OverrideFieldsSurviveZeroValue(t *testing.T) {
 		t.Errorf("monthly_request_quota_override missing from JSON at zero value; OpenAPI marks it required, got %s", b)
 	}
 }
+
+// TestAdminAccountView_EffectiveLimits — GH-1074: the staff cockpit
+// fetched rate_limit_per_min_override / monthly_request_quota_override
+// but had no way to see what they actually RESOLVE to without doing the
+// tier-ceiling math by hand. adminAccountView must fold the override in
+// the same direction platform.Account's cascade does: the rate limit
+// override only ever raises above the ceiling, the quota override only
+// ever lowers below it.
+func TestAdminAccountView_EffectiveLimits(t *testing.T) {
+	cases := []struct {
+		name      string
+		acct      platform.Account
+		wantRate  int
+		wantQuota int64
+	}{
+		{
+			name:      "partner comped below the tier ceiling",
+			acct:      platform.Account{Tier: platform.TierPartner, RateLimitPerMinOverride: 5000, MonthlyRequestQuotaOverride: 200_000},
+			wantRate:  100_000, // override is a floor: 5000 < 100_000 ceiling, ceiling wins
+			wantQuota: 200_000, // override is a ceiling: 200_000 < 1_000_000_000 ceiling, override wins
+		},
+		{
+			name:      "free account raised above its default",
+			acct:      platform.Account{Tier: platform.TierFree, RateLimitPerMinOverride: 50_000},
+			wantRate:  50_000,
+			wantQuota: 1_000_000,
+		},
+		{
+			name:      "no override: tier ceiling both ways",
+			acct:      platform.Account{Tier: platform.TierFree},
+			wantRate:  1000,
+			wantQuota: 1_000_000,
+		},
+	}
+	for _, c := range cases {
+		v := adminAccountView(c.acct)
+		if v.EffectiveRateLimitPerMin != c.wantRate {
+			t.Errorf("%s: EffectiveRateLimitPerMin = %d, want %d", c.name, v.EffectiveRateLimitPerMin, c.wantRate)
+		}
+		if v.EffectiveMonthlyQuota != c.wantQuota {
+			t.Errorf("%s: EffectiveMonthlyQuota = %d, want %d", c.name, v.EffectiveMonthlyQuota, c.wantQuota)
+		}
+	}
+}

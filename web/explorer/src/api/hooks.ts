@@ -262,6 +262,12 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
     slug?: string;
     tier?: string;
     status?: string;
+    // Effective (override-resolved) budgets, not the tier ceiling —
+    // GH-1074. account.go's AccountInfo folds
+    // platform.Account.RateLimitPerMinOverride /
+    // MonthlyRequestQuotaOverride in before serving these.
+    rate_limit_per_min?: number;
+    monthly_request_quota?: number;
   };
   // spec'd since board #33; local narrowing retained: the spec enum ("anonymous" | "apikey" | "partner") omits
   // the platform account tiers the dashboard session flow reports

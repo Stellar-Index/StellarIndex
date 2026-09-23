@@ -126,7 +126,7 @@ function MetricStrip({ me, keys }: { me: MeResponse; keys: APIKey[] | null }) {
     .filter((d): d is string => Boolean(d))
     .sort()
     .at(-1);
-  const ceiling = tierCeiling(tier);
+  const rateLimit = accountEffectiveRateLimit(me);
 
   return (
     <StatGrid cols={4}>
@@ -154,7 +154,7 @@ function MetricStrip({ me, keys }: { me: MeResponse; keys: APIKey[] | null }) {
         <Stat
           icon={<Activity className="h-3.5 w-3.5" />}
           label="Rate limit"
-          value={ceiling !== null ? fmtInt(ceiling) : '—'}
+          value={rateLimit !== null ? fmtInt(rateLimit) : '—'}
           sub="requests / min"
         />
       </StatCell>
@@ -322,7 +322,7 @@ function GettingStarted({
 
 function PlanCard({ me }: { me: MeResponse }) {
   const tier = accountTier(me);
-  const ceiling = tierCeiling(tier);
+  const rateLimit = accountEffectiveRateLimit(me);
   const status = me.account?.status ?? 'active';
   const isPartner = ['partner', 'enterprise'].includes(
     (tier ?? '').toLowerCase(),
@@ -337,8 +337,8 @@ function PlanCard({ me }: { me: MeResponse }) {
               {tierLabel(tier)}
             </div>
             <div className="text-ink-muted mt-0.5 text-sm">
-              {ceiling !== null
-                ? `${fmtInt(ceiling)} req/min`
+              {rateLimit !== null
+                ? `${fmtInt(rateLimit)} req/min`
                 : 'Custom limits'}
             </div>
           </div>
@@ -429,6 +429,19 @@ function QuickLinks() {
 // populates the top-level `tier`.
 function accountTier(me: MeResponse): string | undefined {
   return me.account?.tier ?? me.tier;
+}
+
+// accountEffectiveRateLimit reads the EFFECTIVE (override-resolved)
+// rate limit — session callers get it from `account.rate_limit_per_min`
+// (account.go's AccountInfo, GH-1074); API-key callers already get it
+// at the top level (the auth cascade resolves the override into
+// subject.RateLimitPerMin before the response is built). Falls back to
+// the tier ceiling only against an older API build that predates
+// either field.
+function accountEffectiveRateLimit(me: MeResponse): number | null {
+  return (
+    me.account?.rate_limit_per_min ?? me.rate_limit_per_min ?? tierCeiling(accountTier(me))
+  );
 }
 
 function firstName(me: MeResponse): string {

@@ -156,6 +156,51 @@ func TestAccountMe_Authenticated(t *testing.T) {
 	}
 }
 
+// TestAccountMe_SessionEffectiveLimits — GH-1074: a magic-link session
+// caller's /v1/account/me must serve the EFFECTIVE (override-resolved)
+// rate limit and monthly quota, not the tier ceiling. Pre-fix,
+// AccountInfo carried no such field at all — a partner account comped
+// below the tier ceiling was indistinguishable from one sitting at it.
+func TestAccountMe_SessionEffectiveLimits(t *testing.T) {
+	srv := v1.New(v1.Options{
+		Auth: fakeAuthMiddleware(auth.Subject{}),
+		SessionPeeker: &fakeSessionPeeker{ok: true, info: v1.SessionInfo{
+			AccountID:                  "acct-1",
+			AccountSlug:                "acme",
+			AccountTier:                "partner",
+			AccountStatus:              "active",
+			AccountRateLimitPerMin:     100_000,
+			AccountMonthlyRequestQuota: 200_000,
+		}},
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/v1/account/me")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.Account `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Data.AccountInfo == nil {
+		t.Fatal("AccountInfo is nil")
+	}
+	if env.Data.AccountInfo.RateLimitPerMin != 100_000 {
+		t.Errorf("AccountInfo.RateLimitPerMin = %d, want 100000 (the effective limit, not the ceiling)", env.Data.AccountInfo.RateLimitPerMin)
+	}
+	if env.Data.AccountInfo.MonthlyRequestQuota != 200_000 {
+		t.Errorf("AccountInfo.MonthlyRequestQuota = %d, want 200000 (the effective quota, an override below the tier ceiling)", env.Data.AccountInfo.MonthlyRequestQuota)
+	}
+}
+
 // TestAccountUsage_EmptyList — the counter store is not yet wired,
 // so the handler returns an empty UsageRow array. The wire shape
 // is locked: clients can integrate today and continue working when
