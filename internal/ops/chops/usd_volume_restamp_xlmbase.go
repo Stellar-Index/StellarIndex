@@ -508,8 +508,8 @@ func (r *xlmBaseRestampRun) printResumeHint(cfgPath string, failed, to time.Time
 func (r *xlmBaseRestampRun) printReport(from, to time.Time) {
 	s := r.totals
 	days := int(to.Sub(from).Hours()/24) + 1
-	fmt.Printf("\n=== usd-volume-restamp REPORT — tier xlm-base — [%s, %s] (%d day(s)) ===\n",
-		from.Format(time.DateOnly), to.Format(time.DateOnly), days)
+	fmt.Printf("\n=== usd-volume-restamp REPORT — tier %s — [%s, %s] (%d day(s)) ===\n",
+		r.tier, from.Format(time.DateOnly), to.Format(time.DateOnly), days)
 	fmt.Printf("scanned (%s, derive_generation <= %d)   %d\n", r.scanLabel, r.maxGen, s.Scanned)
 	fmt.Printf("  a leg is USD-pegged (EXACT tier, `-tier exact` owns these)   %d\n", s.QuotePegged)
 	fmt.Printf("  outside this tier's source/leg scope                         %d\n", s.NotDEX)
