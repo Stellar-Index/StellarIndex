@@ -441,7 +441,7 @@ func (w *Worker) refreshOnce(ctx context.Context) {
 		"published_at", publishedAt,
 	)
 
-	w.writeBatch(ctx, res.batch)
+	w.writeBatch(ctx, res)
 }
 
 // maxHeldRateAge bounds how long [servedSnapshot] keeps serving a rate
@@ -471,6 +471,19 @@ type guardResult struct {
 	refuted map[string]bool
 	// history is the dated bars the band admitted, per ticker.
 	history map[string][]HistoryPoint
+}
+
+// freshQuotes counts the upstream current rates this refresh committed.
+// The synthetic anchor and carried-forward history bars are excluded:
+// both are written on every refresh whether or not the feed answered.
+func (r guardResult) freshQuotes() int {
+	n := 0
+	for ticker, ok := range r.current {
+		if ok && ticker != anchorTicker {
+			n++
+		}
+	}
+	return n
 }
 
 // servedSnapshot builds the snapshot the cache installs from the raw
@@ -564,7 +577,7 @@ func (w *Worker) persistSnapshot(ctx context.Context, snap *Snapshot) {
 	if w.writer == nil || snap == nil {
 		return
 	}
-	w.writeBatch(ctx, w.guardSnapshot(snap).batch)
+	w.writeBatch(ctx, w.guardSnapshot(snap))
 }
 
 // guardSnapshot runs the sanity band over one raw snapshot and returns
@@ -649,10 +662,11 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 
 // writeBatch persists one guarded batch to fx_quotes and stamps the
 // feed's liveness metrics. Safe to call with a nil writer (no-op).
-func (w *Worker) writeBatch(ctx context.Context, batch []FXQuote) {
+func (w *Worker) writeBatch(ctx context.Context, res guardResult) {
 	if w.writer == nil {
 		return
 	}
+	batch := res.batch
 	if err := w.writer.InsertFXQuoteBatch(ctx, batch); err != nil {
 		if errors.Is(err, context.Canceled) {
 			return
@@ -686,15 +700,15 @@ func (w *Worker) writeBatch(ctx context.Context, batch []FXQuote) {
 	// insert must not make the feed look productive.
 	obs.SourceEventsTotal.WithLabelValues(w.sourceLabel()).Add(float64(len(batch)))
 
-	// Stamp the FX-feed liveness gauge ONLY on a committed non-empty
-	// write. An empty batch (upstream returned no usable rates) or a
-	// failed InsertFXQuoteBatch (returned above) deliberately leaves the
-	// prior stamp untouched so a wedged-but-erroring worker cannot keep
-	// the feed looking fresh. The staleness of this gauge is what the
-	// stellarindex_external_fx_feed_stale alert keys off — it catches a
-	// dry fiat-FX feed BEFORE the 7-day fx_snap lookback expires and
-	// fiat-quoted pairs silently break.
-	if len(batch) > 0 {
+	// Stamp the FX-feed liveness gauge ONLY when the committed write
+	// carried at least one upstream current rate. A failed insert
+	// (returned above), or a batch holding only the synthetic USD anchor
+	// and carried-forward history bars, leaves the prior stamp untouched:
+	// those rows are written every refresh even when every upstream rate
+	// was dropped, so they would keep a dead feed looking fresh. The
+	// stellarindex_external_fx_feed_stale alert keys off this gauge's
+	// staleness, BEFORE the 7-day fx_snap lookback expires.
+	if res.freshQuotes() > 0 {
 		obs.ExternalFXLastQuoteUnix.WithLabelValues(w.sourceLabel()).Set(float64(time.Now().Unix()))
 	}
 }

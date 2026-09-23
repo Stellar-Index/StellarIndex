@@ -135,6 +135,82 @@ func TestPersistSnapshot_nilWriterIsNoop(t *testing.T) {
 	}
 }
 
+// TestPersistSnapshot_syntheticUSDAnchorDoesNotStamp pins that the
+// liveness gauge measures the UPSTREAM, not the worker. buildSnapshot
+// always prepends the USD=1.0 anchor and the band re-accepts an exact
+// 1.0 forever, so a refresh whose every upstream rate was dropped
+// (unnamed, non-finite, refused) still commits a one-row batch. That row
+// is true by definition and says nothing about the feed.
+func TestPersistSnapshot_syntheticUSDAnchorDoesNotStamp(t *testing.T) {
+	const sentinel = 45.0
+	obs.ExternalFXLastQuoteUnix.WithLabelValues("massive").Set(sentinel)
+
+	fake := &fakeFXWriter{}
+	w := &Worker{writer: fake, logger: discardLogger()}
+	now := time.Now().UTC()
+	// "eur" has no name, so buildSnapshot drops it: the snapshot is the
+	// anchor alone, the shape a names/rates mismatch produces.
+	snap := buildSnapshot(map[string]float64{"eur": 0.92}, map[string]string{}, now, now, nil, nil)
+	if len(snap.Currencies) != 1 || snap.Currencies[0].Ticker != "USD" {
+		t.Fatalf("fixture: want the USD anchor alone, got %+v", snap.Currencies)
+	}
+
+	for i := 0; i < 3; i++ {
+		w.persistSnapshot(context.Background(), snap)
+	}
+
+	if fake.gotRows != 1 {
+		t.Fatalf("writer saw %d rows, want the 1 anchor row still persisted", fake.gotRows)
+	}
+	if got := fxGauge(); got != sentinel {
+		t.Fatalf("liveness gauge = %v, want %v unchanged — the synthetic USD anchor is not an upstream quote", got, sentinel)
+	}
+}
+
+// TestPersistSnapshot_carriedHistoryWithoutCurrentDoesNotStamp: history
+// bars are fetched once a day and re-written every refresh from the
+// worker's carry-forward, so they prove nothing about the feed this
+// hour. Only a committed current upstream rate stamps.
+func TestPersistSnapshot_carriedHistoryWithoutCurrentDoesNotStamp(t *testing.T) {
+	const sentinel = 46.0
+	obs.ExternalFXLastQuoteUnix.WithLabelValues("massive").Set(sentinel)
+
+	fake := &fakeFXWriter{}
+	w := &Worker{writer: fake, logger: discardLogger()}
+	now := time.Now().UTC()
+	history := map[string][]HistoryPoint{"EUR": {
+		{Date: now.AddDate(0, 0, -2), RateUSD: 0.92},
+		{Date: now.AddDate(0, 0, -1), RateUSD: 0.921},
+	}}
+	snap := buildSnapshot(map[string]float64{}, map[string]string{}, now, now, history, nil)
+
+	w.persistSnapshot(context.Background(), snap)
+
+	if fake.gotRows < 2 {
+		t.Fatalf("fixture: writer saw %d rows, want the history bars persisted", fake.gotRows)
+	}
+	if got := fxGauge(); got != sentinel {
+		t.Fatalf("liveness gauge = %v, want %v unchanged — carried-forward history is not a fresh quote", got, sentinel)
+	}
+}
+
+// TestPersistSnapshot_realQuoteBesideAnchorStamps is the positive half
+// on the shipped shape: the anchor plus one named upstream rate.
+func TestPersistSnapshot_realQuoteBesideAnchorStamps(t *testing.T) {
+	obs.ExternalFXLastQuoteUnix.WithLabelValues("massive").Set(47)
+
+	w := &Worker{writer: &fakeFXWriter{}, logger: discardLogger()}
+	now := time.Now().UTC()
+	snap := buildSnapshot(map[string]float64{"eur": 0.92}, map[string]string{"eur": "euro"}, now, now, nil, nil)
+
+	before := time.Now().Unix()
+	w.persistSnapshot(context.Background(), snap)
+
+	if got := fxGauge(); got < float64(before) {
+		t.Fatalf("liveness gauge = %v, want >= %d (a committed upstream quote must stamp)", got, before)
+	}
+}
+
 func enabledGauge() float64 {
 	return testutil.ToFloat64(obs.SourceEnabled.WithLabelValues(fxSource))
 }

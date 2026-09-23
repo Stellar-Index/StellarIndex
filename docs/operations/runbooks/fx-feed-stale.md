@@ -37,9 +37,11 @@ Two properties combined to make a dead feed invisible:
 On 2026-07-07 the feed was found silent for ~4h (last `fx_quote`
 19:17 UTC, zero poller logs) with **no alert**. The
 `stellarindex_external_fx_last_quote_unix{source}` gauge + these alerts
-close that gap: the gauge advances only on a committed non-empty
-`fx_quotes` write, so its staleness is a true liveness signal for the
-feed, fireable long before the 7-day cliff.
+close that gap: the gauge advances only on a committed `fx_quotes`
+write carrying at least one fresh upstream rate — the synthetic
+USD=1.0 anchor row and carried-forward history bars, rewritten on every
+refresh, do not count — so its staleness is a true liveness signal for
+the feed, fireable long before the 7-day cliff.
 
 ## Symptoms
 
