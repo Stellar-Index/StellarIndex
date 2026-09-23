@@ -86,6 +86,13 @@ redis_addr         = "127.0.0.1:6379"
 # redis_sentinel_addrs = ["cache-01.internal:26379", "cache-02.internal:26379", "cache-03.internal:26379"]
 # redis_master_name    = "stellarindex-r1-cache"
 
+# redis_closed_bucket_channel (RLT-347). Redis pub/sub channel the
+# aggregator's closed-bucket VWAP publisher writes to and the API's
+# subscriber listens on. Empty (default) uses redispub.DefaultChannel
+# (stellarindex:closed-bucket:v1). Set only when multiple deployments
+# share one Redis and need partitioned streams.
+# redis_closed_bucket_channel = "stellarindex:closed-bucket:v1"
+
 s3_endpoint        = "http://127.0.0.1:9000"
 s3_region          = "r1"
 s3_bucket_archive  = "galexie-archive"
