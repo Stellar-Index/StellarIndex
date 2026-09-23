@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 func validOracle() c.OracleUpdate {
@@ -60,7 +63,7 @@ func TestOracle_Validate_errors(t *testing.T) {
 		"negative conf":     func(u *c.OracleUpdate) { u.Confidence = -0.1 },
 		"conf > 1":          func(u *c.OracleUpdate) { u.Confidence = 1.5 },
 		"NaN conf":          func(u *c.OracleUpdate) { u.Confidence = math.NaN() },
-		// Observer, when present, MUST be a valid G-strkey.
+		// Observer, when present, MUST be a valid address strkey.
 		"short observer": func(u *c.OracleUpdate) { u.Observer = "GSHORT" },
 		"bad observer": func(u *c.OracleUpdate) {
 			u.Observer = "NOTG" + "A" + "BCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVW"
@@ -83,6 +86,46 @@ func TestOracle_Validate_errors(t *testing.T) {
 			// silently; this check catches that regression too.
 			if !errors.Is(err, c.ErrInvalidOracle) {
 				t.Errorf("err %v does not wrap ErrInvalidOracle", err)
+			}
+		})
+	}
+}
+
+// TestOracle_Validate_observerAcceptsEveryAddressKind pins GH-598: Band
+// and Redstone stamp Observer from scval.AsAddressStrkey, so Validate
+// must accept every strkey kind that decoder can return — a contract
+// relayer (C…) must not fail the whole batch as an insert error.
+func TestOracle_Validate_observerAcceptsEveryAddressKind(t *testing.T) {
+	var key xdr.Uint256
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	hash := xdr.Hash(key)
+	contract := xdr.ContractId(hash)
+	pool := xdr.PoolId(hash)
+	addrs := map[string]xdr.ScAddress{
+		"account": {Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &xdr.AccountId{
+			Type: xdr.PublicKeyTypePublicKeyTypeEd25519, Ed25519: &key,
+		}},
+		"contract": {Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contract},
+		"muxed": {Type: xdr.ScAddressTypeScAddressTypeMuxedAccount, MuxedAccount: &xdr.MuxedEd25519Account{
+			Id: 7, Ed25519: key,
+		}},
+		"claimable_balance": {Type: xdr.ScAddressTypeScAddressTypeClaimableBalance, ClaimableBalanceId: &xdr.ClaimableBalanceId{
+			Type: xdr.ClaimableBalanceIdTypeClaimableBalanceIdTypeV0, V0: &hash,
+		}},
+		"liquidity_pool": {Type: xdr.ScAddressTypeScAddressTypeLiquidityPool, LiquidityPoolId: &pool},
+	}
+	for name, addr := range addrs {
+		t.Run(name, func(t *testing.T) {
+			observer, err := scval.AsAddressStrkey(xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr})
+			if err != nil {
+				t.Fatalf("AsAddressStrkey: %v", err)
+			}
+			u := validOracle()
+			u.Observer = observer
+			if err := u.Validate(); err != nil {
+				t.Fatalf("Validate rejected decoder-produced observer %q: %v", observer, err)
 			}
 		})
 	}

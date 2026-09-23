@@ -10356,7 +10356,7 @@ export interface components {
             decimals: number;
             /** @description 0 means unreported, not zero-confidence. */
             confidence?: number;
-            /** @description G-strkey of the publishing account; empty when unknown. */
+            /** @description Strkey of the publishing relayer — an account (G…) or, when the relayer is a contract, a C… address; empty when unknown. */
             observer?: string;
             /** @description false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query. */
             mapped: boolean;

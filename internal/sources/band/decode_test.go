@@ -166,6 +166,50 @@ func TestDecodeRelay_HappyPath(t *testing.T) {
 	}
 }
 
+// TestDecodeRelay_ContractRelayerValidates pins GH-598: `relay` declares
+// `from` as a Soroban Address, so the relayer may be a contract. Every
+// decoded update must still pass OracleUpdate.Validate — the check the
+// store runs before INSERT — or the whole batch's prices are lost.
+func TestDecodeRelay_ContractRelayerValidates(t *testing.T) {
+	raw, err := strkey.Decode(strkey.VersionByteContract, adapterC)
+	if err != nil {
+		t.Fatalf("decode adapter strkey: %v", err)
+	}
+	var cid xdr.ContractId
+	copy(cid[:], raw)
+	addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &cid}
+	fromBytes, err := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal from: %v", err)
+	}
+	args := []string{
+		base64.StdEncoding.EncodeToString(fromBytes),
+		encodeSymbolRatesArg(t, []struct {
+			Symbol string
+			Rate   uint64
+		}{{"BTC", 78_313_029_743}, {"ETH", 3_500_000_000_000}}),
+		encodeU64Arg(t, 1_745_000_000),
+		encodeU64Arg(t, 1),
+	}
+	const txHash = "cafebabecafebabecafebabecafebabecafebabecafebabecafebabecafebabe"
+	updates, err := decodeRelayArgs(FnRelay, args, adapterC,
+		52_000_000, txHash, 0, "", "", time.Now())
+	if err != nil {
+		t.Fatalf("decodeRelayArgs: %v", err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 updates, got %d", len(updates))
+	}
+	for i, u := range updates {
+		if u.Observer != adapterC {
+			t.Errorf("updates[%d].Observer = %q want contract relayer %q", i, u.Observer, adapterC)
+		}
+		if err := u.Validate(); err != nil {
+			t.Errorf("updates[%d].Validate() = %v; a contract relayer must not reject the price", i, err)
+		}
+	}
+}
+
 // TestDecodeRelay_FarFutureResolveTimeClampsToClose confirms that a
 // sentinel / garbage far-future resolve_time (the same overflow
 // class as the soroswap-router deadline_ts) falls back to the ledger

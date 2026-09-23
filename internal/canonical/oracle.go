@@ -94,15 +94,18 @@ type OracleUpdate struct {
 	Confidence float64 `json:"confidence,omitempty"`
 
 	// Observer is an optional attribution — for on-chain oracle
-	// events the transaction submitter; useful for auditing
-	// Reflector relayers.
+	// events the relayer or transaction submitter. Band's `relay` and
+	// Redstone's `write_prices` take the relayer as a Soroban
+	// `Address`, so it may be a contract (C…) as well as an account.
 	Observer string `json:"observer,omitempty"`
 }
 
-// ID returns the stable identifier used as primary key in the
-// `oracle_updates` hypertable and the dedup key across regions.
+// ID returns the observation's logical identity and the dedup key across
+// regions. Format: `<source>:<ledger>:<tx_hash>:<op_index>`.
 //
-// Format: `<source>:<ledger>:<tx_hash>:<op_index>`.
+// It is NOT the `oracle_updates` primary key: the hypertable's key also
+// carries `ts` (its partition column), so the table does not enforce this
+// identity — a re-derive that moves `ts` or `op_index` adds a second row.
 func (u OracleUpdate) ID() string {
 	return fmt.Sprintf("%s:%d:%s:%d", u.Source, u.Ledger, u.TxHash, u.OpIndex)
 }
@@ -149,12 +152,11 @@ func (u OracleUpdate) Validate() error {
 	if math.IsNaN(u.Confidence) || u.Confidence < 0 || u.Confidence > 1 {
 		return fmt.Errorf("%w: confidence %f out of [0,1]", ErrInvalidOracle, u.Confidence)
 	}
-	// Observer is optional (off-chain sources synthesise it empty),
-	// but when present it MUST be a valid G-strkey. Empty string
-	// is NOT a valid G-strkey so we can't call validateAccountID
-	// unconditionally.
+	// Observer is optional (off-chain sources synthesise it empty).
+	// When present it may be any address a Soroban `Address` argument
+	// decodes to: attribution must never be the reason a price is lost.
 	if u.Observer != "" {
-		if err := validateAccountID(u.Observer); err != nil {
+		if err := validateAddress(u.Observer); err != nil {
 			return fmt.Errorf("%w: observer: %w", ErrInvalidOracle, err)
 		}
 	}

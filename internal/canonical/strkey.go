@@ -91,6 +91,16 @@ func validateAccountID(s string) error {
 	return nil
 }
 
+// validateAddress accepts any valid Stellar address strkey — the full
+// codomain of a Soroban `Address` (scval.AsAddressStrkey): G, C, M, B or L.
+func validateAddress(s string) error {
+	if !IsAnyHolder(s) {
+		return fmt.Errorf("%w: %q is not a valid Stellar address strkey (G/C/M/B/L with a valid CRC)",
+			ErrInvalidStrkey, s)
+	}
+	return nil
+}
+
 // validateContractID is the contract-address analogue of validateAccountID.
 func validateContractID(s string) error {
 	if !IsContractID(s) {
