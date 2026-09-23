@@ -106,18 +106,25 @@ jobs:
         #   the two deploy workflows must share ONE approval posture —
         #   pre-fix this one lacked the arm, so the repo-wide
         #   DEPLOY_APPROVAL_RELAXED=true phase variable let r1 binaries
-        #   deploy unattended while the explorer hard-failed.
+        #   deploy unattended while the explorer hard-failed. The
+        #   relaxation also requires a still-future
+        #   DEPLOY_APPROVAL_RELAXED_UNTIL (K079): open-ended relaxation
+        #   never re-alarms.
         if: github.event.inputs.environment == 'production'
         env:
           GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
           ENV_NAME: explorer-${{ github.event.inputs.environment }}
           REPO: ${{ github.repository }}
           APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
+          APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
         run: |
           set -euo pipefail
-          if [ "${APPROVAL_RELAXED:-}" = "true" ]; then
-            echo "::warning::deploy-approval-gate RELAXED (pre-production, DEPLOY_APPROVAL_RELAXED=true). Deploying '${ENV_NAME}' WITHOUT human approval. RE-ARM before production launch: delete the DEPLOY_APPROVAL_RELAXED repo variable and configure the '${ENV_NAME}' environment Required-reviewers rule."
+          relax_rc=0
+          bash scripts/ci/check-deploy-relax.sh "$ENV_NAME" || relax_rc=$?
+          if [ "$relax_rc" -eq 0 ]; then
             exit 0
+          elif [ "$relax_rc" -eq 1 ]; then
+            exit 1
           fi
           if ! gh api "repos/${REPO}/environments/${ENV_NAME}" > env-protection.json; then
             echo "::error::Could not read the '${ENV_NAME}' environment protection config. Refusing to deploy on an unverified approval gate. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."

@@ -182,8 +182,11 @@ jobs:
         # so the operator deploys autonomously (a self-approved gate is
         # theatre — see the master plan §0). The relaxation is honest,
         # visible, and FAIL-CLOSED by default: it is OFF unless the repo
-        # variable DEPLOY_APPROVAL_RELAXED is explicitly set to "true".
-        # Unset / a fresh clone / any other value ⇒ the gate ENFORCES.
+        # variable DEPLOY_APPROVAL_RELAXED is explicitly set to "true"
+        # AND DEPLOY_APPROVAL_RELAXED_UNTIL is a still-future ISO-8601
+        # date (K079: without an expiry the relaxation can be flipped on
+        # once and forgotten forever). Unset / a fresh clone / any other
+        # value ⇒ the gate ENFORCES.
         # ► RE-ARM BEFORE PRODUCTION LAUNCH: delete the repo variable
         #   (gh variable delete DEPLOY_APPROVAL_RELAXED) AND configure the
         #   r1 environment's Required-reviewers rule (Settings →
@@ -194,11 +197,15 @@ jobs:
           REGION: ${{ inputs.region }}
           REPO: ${{ github.repository }}
           APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
+          APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
         run: |
           set -euo pipefail
-          if [ "${APPROVAL_RELAXED:-}" = "true" ]; then
-            echo "::warning::deploy-approval-gate RELAXED (pre-production, DEPLOY_APPROVAL_RELAXED=true). Deploying to '${REGION}' WITHOUT human approval. RE-ARM before production launch: delete the DEPLOY_APPROVAL_RELAXED repo variable and configure the '${REGION}' environment Required-reviewers rule."
+          relax_rc=0
+          bash scripts/ci/check-deploy-relax.sh "$REGION" || relax_rc=$?
+          if [ "$relax_rc" -eq 0 ]; then
             exit 0
+          elif [ "$relax_rc" -eq 1 ]; then
+            exit 1
           fi
           if ! gh api "repos/${REPO}/environments/${REGION}" > env-protection.json; then
             echo "::error::Could not read the '${REGION}' environment protection config. Refusing to deploy on an unverified approval gate. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."
