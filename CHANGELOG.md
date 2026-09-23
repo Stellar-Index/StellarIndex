@@ -769,6 +769,20 @@ against.
   sites is now enforced by `TestRawPrices1mReadersPassTheGuard`, which
   fails when a function under `cmd/` calls a raw `prices_1m` store read
   without a guard entry point or is missing from the list. (#1150)
+- **ops / `ch-rebuild-projected.sh` left every trades aggregate on the
+  pre-repair rows (#782):** the script rewrites `trades` over `[50M, 62.894M]`
+  and refreshed none of the twelve continuous aggregates built on it, whose
+  refresh policies look back at most three months. New `stellarindex-ops
+  trades-cagg-refresh -from N -to N` refreshes all of `timescale.TradesCAGGs`
+  in order over the time span of the trades now in the ledger range, padded
+  by half each view's minimum window so the buckets holding the range's first
+  and last rows are refreshed too (Timescale refreshes only whole buckets).
+  The script runs it after every window whose re-derive touched trades, and
+  records the obligation in `$STALE` before the DELETE so a failed refresh or
+  re-derive is retried first by the next run. Pinned by
+  `ch_rebuild_projected_script_caggs_test.go` (executes the script),
+  `trades_cagg_refresh_test.go`, and on TimescaleDB by
+  `TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange`.
 - **docs / ADR index had no completeness check (T543):**
   `docs/adr/README.md`'s Index table topped out at ADR-0050 though
   ADR-0051 (USD-anchored fiat derivation, landed 2026-08-31) already

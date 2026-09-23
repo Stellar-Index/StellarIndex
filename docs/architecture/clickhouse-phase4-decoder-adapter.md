@@ -181,11 +181,11 @@ update → no collision), so their clean-slate is a harmless no-op.
 source-filtered; protocol tables by ledger), then `stellarindex-ops ch-rebuild
 -write -sources <projected>`. Scoped ≤ 62.894 M so the **live tail (> 62.894 M)
 the indexer is still writing stays untouched**; the delete/rebuild range never
-overlaps the indexer's current writes, so ingestion keeps running. After it
-completes, refresh the CAGGs over the rebuilt time range (they materialise from
-`trades`).
+overlaps the indexer's current writes, so ingestion keeps running. Each window
+that rewrote `trades` is then followed by `stellarindex-ops trades-cagg-refresh
+-from LO -to HI` (rule 5).
 
-Four rules bound the DELETE, and the script's header is their source of truth:
+Five rules bound the DELETE, and the script's header is their source of truth:
 
 1. **Ask first.** Each window runs `ch-rebuild -write -preflight` for the same
    range and sources *before* its DELETE — the same BackfillSafe / live-cursor /
@@ -214,6 +214,14 @@ Four rules bound the DELETE, and the script's header is their source of truth:
    on purpose (#408): one obligation per routine window would point the next
    nightly at ~12.9 M ledgers × 8 un-prefiltered sources and time every source's
    verdict out, which is worse than the stale claim it would fix.
+5. **Never leave the aggregates on the old rows.** Every continuous aggregate
+   over `trades` has a refresh policy that looks back minutes to months, never
+   this far, so a window whose trades were rewritten is followed by
+   `trades-cagg-refresh` over it: all of `timescale.TradesCAGGs` in order
+   (`twap_*` after `prices_1m`), padded so the edge buckets are refreshed too.
+   A separate `$STALE` file gets `lo hi` before such a DELETE and loses it only
+   after the refresh succeeds; every run refreshes its `$STALE` lines (after its
+   dirty windows) before anything else.
 
 **Forward-correctness dependency.** The live indexer (rc.107) still writes
 mis-keyed projected data forward (it lacks the `event_index` collision fix). The

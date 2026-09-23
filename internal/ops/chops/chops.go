@@ -53,6 +53,10 @@ func Run(args []string) error {
 	if fn, ok := verifierVerb(args[0]); ok {
 		return fn(args[1:])
 	}
+	// Re-materialises served aggregates; rewrites no lake, trade or event row.
+	if args[0] == tradesCAGGRefreshVerb {
+		return tradesCAGGRefresh(args[1:])
+	}
 	return fmt.Errorf("internal/ops/chops: unknown subcommand %q", args[0])
 }
 
