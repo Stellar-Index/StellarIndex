@@ -177,6 +177,10 @@ func decodeLiquidityPoolDeposit(ledger uint32, closedAt time.Time, txHash string
 		// zero-reserve "before" is valid, not a fidelity gap.
 		before = xdr.LiquidityPoolEntryConstantProduct{}
 	}
+	if negativeReserve(before, after) {
+		return nil, fmt.Errorf("%w: negative pool reserve (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
 	deltaA := after.ReserveA - before.ReserveA
 	deltaB := after.ReserveB - before.ReserveB
 	if deltaA <= 0 || deltaB <= 0 {
@@ -233,6 +237,10 @@ func decodeLiquidityPoolWithdraw(ledger uint32, closedAt time.Time, txHash strin
 		// "entry-changes unavailable" fidelity alarm at the caller.
 		after = xdr.LiquidityPoolEntryConstantProduct{}
 	}
+	if negativeReserve(before, after) {
+		return nil, fmt.Errorf("%w: negative pool reserve (ledger %d tx %s op %d)",
+			ErrMalformedMovement, ledger, txHash, opIndex)
+	}
 	deltaA := before.ReserveA - after.ReserveA
 	deltaB := before.ReserveB - after.ReserveB
 	if deltaA < 0 || deltaB < 0 || (deltaA == 0 && deltaB == 0) {
@@ -259,6 +267,17 @@ func decodeLiquidityPoolWithdraw(ledger uint32, closedAt time.Time, txHash strin
 			before.Params.AssetB, deltaB, "", fromAddr, poolIDHex))
 	}
 	return movements, nil
+}
+
+// negativeReserve reports a reserve core can never produce; rejecting it
+// also keeps the int64 reserve deltas from wrapping into a positive leg.
+func negativeReserve(sides ...xdr.LiquidityPoolEntryConstantProduct) bool {
+	for _, s := range sides {
+		if s.ReserveA < 0 || s.ReserveB < 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // liquidityPoolLeg builds one leg of a two-leg LiquidityPoolDeposit/
