@@ -77,7 +77,7 @@ type DecodedOp struct {
 // by the caller since it lives outside the body in the lake.
 func DecodeOperationBody(bodyB64 string) (DecodedOp, error) {
 	var body xdr.OperationBody
-	if err := xdr.SafeUnmarshalBase64(bodyB64, &body); err != nil {
+	if err := scval.UnmarshalBase64(bodyB64, &body); err != nil {
 		return DecodedOp{}, fmt.Errorf("xdrjson: unmarshal op body: %w", err)
 	}
 	d := DecodedOp{Type: OpTypeName(body.Type), Fields: map[string]any{}}

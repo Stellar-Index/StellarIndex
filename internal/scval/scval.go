@@ -64,10 +64,21 @@ var (
 // can distinguish wire-level problems from schema problems.
 func Parse(b64 string) (xdr.ScVal, error) {
 	var sv xdr.ScVal
-	if err := xdr.SafeUnmarshalBase64(b64, &sv); err != nil {
+	if err := UnmarshalBase64(b64, &sv); err != nil {
 		return xdr.ScVal{}, fmt.Errorf("%w: %w", ErrScValDecode, err)
 	}
 	return sv, nil
+}
+
+// UnmarshalBase64 base64-decodes b64 and XDR-decodes exactly one value into
+// dest. Prefer it to xdr.SafeUnmarshalBase64, whose consumed-length check
+// counts base64 characters and so misses trailing bytes in the final quantum.
+func UnmarshalBase64(b64 string, dest any) error {
+	raw, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return err
+	}
+	return xdr.SafeUnmarshal(raw, dest)
 }
 
 // ParseBytes is the raw-bytes twin of [Parse] — XDR-unmarshals a
@@ -75,9 +86,10 @@ func Parse(b64 string) (xdr.ScVal, error) {
 // event body arrives as an ScVal::Bytes wrapping an XDR-encoded
 // struct (see redstone.sdkDecodeBody); they call [AsBytes] first,
 // then pass the raw bytes through here to get the inner ScVal.
+// Like Parse, it rejects bytes left over after the value.
 func ParseBytes(raw []byte) (xdr.ScVal, error) {
 	var sv xdr.ScVal
-	if err := sv.UnmarshalBinary(raw); err != nil {
+	if err := xdr.SafeUnmarshal(raw, &sv); err != nil {
 		return xdr.ScVal{}, fmt.Errorf("%w: %w", ErrScValDecode, err)
 	}
 	return sv, nil
@@ -132,8 +144,8 @@ func DecodeScVecToArgs(b []byte) ([]string, error) {
 	if len(b) == 0 {
 		return nil, nil
 	}
-	var sv xdr.ScVal
-	if err := sv.UnmarshalBinary(b); err != nil {
+	sv, err := ParseBytes(b)
+	if err != nil {
 		return nil, fmt.Errorf("unmarshal scval: %w", err)
 	}
 	if sv.Type != xdr.ScValTypeScvVec {
