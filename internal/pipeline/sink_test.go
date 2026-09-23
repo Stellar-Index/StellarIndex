@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,9 +19,11 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 )
 
 // fakeEvent is a consumer.Event that hits the sink's default
@@ -517,5 +520,99 @@ func TestBlendEmitterUnlockTime_farFutureHonoured(t *testing.T) {
 	want := time.Unix(2_000_000_000, 0).UTC()
 	if got := blendEmitterUnlockTime(raw); !got.Equal(want) {
 		t.Errorf("blendEmitterUnlockTime(%d) = %v, want %v", raw, got, want)
+	}
+}
+
+// persistCall is what the recording event persister saw for one event.
+type persistCall struct {
+	ctx        context.Context
+	countEvent bool
+}
+
+// entriesBumpReachesStore reports whether bumpEntryCount under ctx would
+// write source_entry_counts: with a nil store, reaching the store panics.
+func entriesBumpReachesStore(ctx context.Context) (reached bool) {
+	defer func() {
+		if recover() != nil {
+			reached = true
+		}
+	}()
+	bumpEntryCount(ctx, discardLogger(), nil, "entries-probe")
+	return false
+}
+
+// TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector pins GH-1021:
+// under SinkModeSkipSoleWriter (persist_per_source=true) the dispatcher and
+// the projector both persist every un-promoted projected event, and both
+// used to count it — doubling the `entries` column and
+// stellarindex_source_events_total for every projected source. The
+// dispatcher's copy must count nothing; events only it writes (sdex, band)
+// and every event under SinkModeAll (no projector) still count once.
+func TestPersistWorker_Phase3ParallelWriteCountsOnlyInProjector(t *testing.T) {
+	cases := []struct {
+		name          string
+		mode          SinkMode
+		wantProjected bool
+	}{
+		{"phase3_parallel", SinkModeSkipSoleWriter, false},
+		{"no_projector", SinkModeAll, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			soroswapBefore := counter(t, obs.SourceEventsTotal, soroswap.SourceName)
+			sdexBefore := counter(t, obs.SourceEventsTotal, sdex.SourceName)
+
+			var mu sync.Mutex
+			calls := map[string]persistCall{}
+			ep := func(ctx context.Context, ev consumer.Event, countEvent bool) error {
+				mu.Lock()
+				defer mu.Unlock()
+				calls[ev.EventKind()] = persistCall{ctx: ctx, countEvent: countEvent}
+				return nil
+			}
+			tw := &fakeTradeStore{}
+			tw.healthy.Store(true)
+
+			in := make(chan consumer.Event, 4)
+			in <- soroswap.TradeEvent{Trade: mkTrade(soroswap.SourceName, 1)}
+			in <- sdex.TradeEvent{Trade: mkTrade(sdex.SourceName, 2)}
+			in <- aquarius.KillEvent{}
+			in <- band.UpdateEvent{}
+			close(in)
+			persistWorker(context.Background(), discardLogger(), ep, tw, in, tc.mode, 1, nil)
+
+			if got := tw.landedCount(); got != 2 {
+				t.Fatalf("trades landed = %d, want 2 (the parallel write must still land)", got)
+			}
+			wantSoroswap := 0.0
+			if tc.wantProjected {
+				wantSoroswap = 1
+			}
+			if d := counter(t, obs.SourceEventsTotal, soroswap.SourceName) - soroswapBefore; d != wantSoroswap {
+				t.Errorf("source_events_total{soroswap} delta = %v, want %v", d, wantSoroswap)
+			}
+			if d := counter(t, obs.SourceEventsTotal, sdex.SourceName) - sdexBefore; d != 1 {
+				t.Errorf("source_events_total{sdex} delta = %v, want 1", d)
+			}
+
+			kill, ok := calls[aquarius.KillEvent{}.EventKind()]
+			if !ok {
+				t.Fatal("aquarius kill event never reached the persister")
+			}
+			if kill.countEvent != tc.wantProjected {
+				t.Errorf("aquarius countEvent = %v, want %v", kill.countEvent, tc.wantProjected)
+			}
+			if got := entriesBumpReachesStore(kill.ctx); got != tc.wantProjected {
+				t.Errorf("aquarius entries bump reaches source_entry_counts = %v, want %v", got, tc.wantProjected)
+			}
+			bandCall, ok := calls[band.UpdateEvent{}.EventKind()]
+			if !ok {
+				t.Fatal("band update never reached the persister")
+			}
+			if !bandCall.countEvent || !entriesBumpReachesStore(bandCall.ctx) {
+				t.Errorf("band (dispatcher-only) countEvent = %v, entries counted = %v; want both true",
+					bandCall.countEvent, entriesBumpReachesStore(bandCall.ctx))
+			}
+		})
 	}
 }
