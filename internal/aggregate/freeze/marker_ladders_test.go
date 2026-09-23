@@ -55,9 +55,11 @@ func TestMarkHoldForWindow_KeepsEachWindowsLadderApart(t *testing.T) {
 	asset, quote := nativeUSD(t)
 	ctx := context.Background()
 
-	fired := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	// Relative to now: a ladder past its hold plus the grace is no
+	// longer one the marker carries.
+	fired := time.Now().UTC()
 	shortState := ladderState(fired, 0)
-	longState := ladderState(fired.Add(-time.Hour), 3)
+	longState := ladderState(fired.Add(-10*time.Minute), 3)
 
 	if err := w.MarkHoldForWindow(ctx, asset, quote, shortWindow, "0.124200000000",
 		ladderDecision(), shortState, time.Hour); err != nil {
@@ -258,7 +260,7 @@ func TestRetireWindowLadder_LeavesTheMarkerAndTheSibling(t *testing.T) {
 	ctx := context.Background()
 	key := cachekeys.Freeze(asset, quote).String()
 
-	fired := time.Date(2026, 7, 25, 12, 0, 0, 0, time.UTC)
+	fired := time.Now().UTC()
 	for _, tc := range []struct {
 		window time.Duration
 		state  freeze.State

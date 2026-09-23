@@ -60,8 +60,8 @@ type Marker struct {
 
 	// Ladders is the ADR-0019 lifecycle PER aggregation window, keyed by
 	// the canonical [time.Duration] label ("5m0s", "1h0m0s", "24h0m0s").
-	// Authoritative when [Marker.Windowed]; a window with no entry owns
-	// no ladder.
+	// Authoritative when [Marker.Windowed]; a window with no entry, or
+	// whose entry fails [LadderStillLive], owns no ladder.
 	//
 	// The marker's key is (asset, quote) because its PRESENCE is the
 	// single flag the API serves as `flags.frozen` for the whole pair —
@@ -285,6 +285,17 @@ type Writer struct {
 	// ladderGrace is how far past a durable hold's expiry the ladder is
 	// still honoured on a marker miss — see [WithLadderStore].
 	ladderGrace time.Duration
+	// clock is the time every ladder-liveness read and marker stamp is
+	// taken at; nil is the wall clock. See [WithClock].
+	clock func() time.Time
+}
+
+// now is the writer's clock: the injected one, else the wall clock.
+func (w *Writer) now() time.Time {
+	if w.clock != nil {
+		return w.clock()
+	}
+	return time.Now()
 }
 
 // NewWriter constructs a Writer. ttl=0 falls back to
@@ -313,6 +324,13 @@ func NewWriter(cache RedisCache, ttl time.Duration, opts ...WriterOption) (*Writ
 
 // WriterOption tunes a Writer at construction time.
 type WriterOption func(*Writer)
+
+// WithClock sets the clock [LadderStillLive] and the marker stamps are
+// read against, so a caller driving the lifecycle on its own clock (the
+// orchestrator's Signal.Now) judges a ladder's hold on that same clock.
+func WithClock(clock func() time.Time) WriterOption {
+	return func(w *Writer) { w.clock = clock }
+}
 
 // WithEventSink wires the durable freeze-event mirror. Pass
 // `internal/storage/timescale.FreezeEventSink` in production; tests
@@ -457,7 +475,7 @@ func (w *Writer) markHold(
 	}
 	key := cachekeys.Freeze(asset, quote)
 	label := windowLabel(window)
-	now := time.Now()
+	now := w.now()
 	windowed, ladders, unowned, prior := w.mergeLadders(ctx, asset, quote, label, state)
 	marker := Marker{
 		AssetID:       asset.String(),
@@ -754,7 +772,7 @@ func (w *Writer) durableSiblingHeld(ctx context.Context, asset, quote canonical.
 	if !ok {
 		return false, nil
 	}
-	now := time.Now()
+	now := w.now()
 	for window, st := range stored {
 		if window != own && LadderStillLive(st, w.ladderGrace, now) {
 			return true, nil
@@ -764,15 +782,16 @@ func (w *Writer) durableSiblingHeld(ctx context.Context, asset, quote canonical.
 }
 
 // siblingLadderHeld reports whether `marker` records a freeze for any
-// window other than `own`: an owned ladder that is still active, or an
-// unowned one that is still live (owner unknown, so it may be a sibling's).
+// window other than `own`: a still-live owned ladder, or a still-live
+// unowned one (owner unknown, so it may be a sibling's).
 func (w *Writer) siblingLadderHeld(marker Marker, own string) bool {
+	now := w.now()
 	for label, st := range marker.Ladders {
-		if label != own && st.Active() {
+		if label != own && LadderStillLive(st, w.ladderGrace, now) {
 			return true
 		}
 	}
-	return LadderStillLive(marker.UnownedLadder, w.ladderGrace, time.Now())
+	return LadderStillLive(marker.UnownedLadder, w.ladderGrace, now)
 }
 
 // mergeLadders computes the per-window ladder map for the marker about
@@ -805,6 +824,7 @@ func (w *Writer) mergeLadders(
 ) (bool, map[string]State, State, *Marker) {
 	key := cachekeys.Freeze(asset, quote)
 	marker, ok, err := w.readMarker(ctx, key)
+	now := w.now()
 	ladders := map[string]State{}
 	windowed := false
 	var unowned State
@@ -828,7 +848,12 @@ func (w *Writer) mergeLadders(
 	case marker.Windowed:
 		windowed = true
 		for k, v := range marker.Ladders {
-			ladders[k] = v
+			// A window that stopped reaching the freeze step (dropped
+			// under the USD-volume floor) never retires its own ladder;
+			// past its hold plus the grace nobody is advancing it.
+			if LadderStillLive(v, w.ladderGrace, now) {
+				ladders[k] = v
+			}
 		}
 		unowned = marker.UnownedLadder
 	default:
@@ -837,7 +862,7 @@ func (w *Writer) mergeLadders(
 		// every window until each has claimed its own.
 		unowned = marker.State
 	}
-	if !LadderStillLive(unowned, w.ladderGrace, time.Now()) {
+	if !LadderStillLive(unowned, w.ladderGrace, now) {
 		// Nobody is advancing an unowned snapshot; once its own hold
 		// plus the grace has passed it describes no running freeze.
 		unowned = State{}
@@ -938,7 +963,7 @@ func (w *Writer) liveDurableLadders(ctx context.Context, asset, quote canonical.
 	if err != nil || !ok {
 		return ladders, State{}
 	}
-	now := time.Now()
+	now := w.now()
 	for window, st := range stored {
 		if label := windowLabel(window); label != "" && LadderStillLive(st, w.ladderGrace, now) {
 			ladders[label] = st
@@ -1105,10 +1130,10 @@ func (w *Writer) loadState(ctx context.Context, asset, quote canonical.Asset, wi
 		// it falls back to a still-live ladder the pair holds with no
 		// recorded owner, and to the zero State when there is none.
 		// See the doc comment above.
-		if st, owned := marker.Ladders[label]; owned {
+		if st, owned := marker.Ladders[label]; owned && LadderStillLive(st, w.ladderGrace, w.now()) {
 			return st, true, nil
 		}
-		if LadderStillLive(marker.UnownedLadder, w.ladderGrace, time.Now()) {
+		if LadderStillLive(marker.UnownedLadder, w.ladderGrace, w.now()) {
 			return marker.UnownedLadder, true, nil
 		}
 		return State{}, true, nil
@@ -1140,7 +1165,7 @@ func (w *Writer) loadDurableLadder(ctx context.Context, asset, quote canonical.A
 	if err != nil || !ok {
 		return State{}, false, nil //nolint:nilerr // documented above: degrade to the pre-0119 answer, never invent a freeze
 	}
-	if !LadderStillLive(st, w.ladderGrace, time.Now()) {
+	if !LadderStillLive(st, w.ladderGrace, w.now()) {
 		// Inactive, or the hold lapsed while nobody was refreshing it (the
 		// aggregator was down longer than this freeze's own hold). Same
 		// answer as before 0119 — do not resurrect it.
@@ -1178,7 +1203,7 @@ func (w *Writer) loadDurableWindowLadder(
 	if err != nil || !ok {
 		return State{}, false, nil //nolint:nilerr // as loadDurableLadder: degrade to the pre-0119 answer, never invent a freeze
 	}
-	now := time.Now()
+	now := w.now()
 	if own, held := stored[window]; held && LadderStillLive(own, w.ladderGrace, now) {
 		obs.AnomalyFreezeLadderRehydratedTotal.Inc()
 		return own, true, nil
