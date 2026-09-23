@@ -107,4 +107,27 @@ describe('AccountRelationStanding', () => {
     renderPanel();
     expect(await screen.findByText(/warming/i)).toBeInTheDocument();
   });
+
+  // The generated types call both fields required, but the panel reads a
+  // wire it does not control: a skewed or partial deployment can serve a
+  // body with no board in it. That is a board not yet built — not an
+  // address with no row on it, and not a reason to blank the page.
+  it('calls a body that carries no board warming instead of crashing', async () => {
+    apiGet.mockResolvedValue({ data: {} });
+    renderPanel();
+    expect(await screen.findByText(/warming/i)).toBeInTheDocument();
+    expect(screen.queryByText(/holds no row on the/i)).not.toBeInTheDocument();
+  });
+
+  it('still ranks the address when the body carries no totals', async () => {
+    apiGet.mockResolvedValue({
+      data: {
+        sponsors: sponsors.data.sponsors,
+        computed_at: sponsors.data.computed_at,
+      },
+    });
+    renderPanel(OTHER);
+    expect(await screen.findByText('#1')).toBeInTheDocument();
+    expect(screen.queryByText(/of .* sponsors/)).not.toBeInTheDocument();
+  });
 });
