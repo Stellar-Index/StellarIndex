@@ -339,18 +339,11 @@ func walkWindowed(ctx context.Context, plan windowPlan, from, to time.Time, fetc
 		seen    map[string]struct{}
 	)
 	for start := from; start.Before(to); {
-		end := start.Add(plan.size)
-		if end.After(to) {
-			end = to
-		}
+		end, fetchFrom := windowBounds(plan, from, to, start)
 		if start.After(from) {
 			if err := waitPace(ctx, plan.pace); err != nil {
 				return windowStopError(start, end, written, append(faults, err))
 			}
-		}
-		fetchFrom := start.Add(-plan.overlap)
-		if fetchFrom.Before(from) {
-			fetchFrom = from
 		}
 		trades, err := fetch(ctx, fetchFrom, end)
 		if err != nil {
@@ -371,6 +364,20 @@ func walkWindowed(ctx context.Context, plan windowPlan, from, to time.Time, fetc
 		start = end
 	}
 	return errors.Join(faults...)
+}
+
+// windowBounds returns the window starting at start, clamped to to, and
+// the fetch start that re-reads plan.overlap before it, clamped to from.
+func windowBounds(plan windowPlan, from, to, start time.Time) (end, fetchFrom time.Time) {
+	end = start.Add(plan.size)
+	if end.After(to) {
+		end = to
+	}
+	fetchFrom = start.Add(-plan.overlap)
+	if fetchFrom.Before(from) {
+		fetchFrom = from
+	}
+	return end, fetchFrom
 }
 
 // dropSeen removes trades already handed to the sink by the previous
