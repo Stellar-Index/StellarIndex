@@ -34,6 +34,7 @@ architecture / labels).
 | S-021 ✅ | P3 | sidebar vs footer naming | Same routes, different names: /dexes = "AMM Pools" (sidebar) vs "DEXes" (footer); /exchanges = "External Markets" vs "Exchanges"; footer "Pricing" under About = API plans, reads as price data; footer "Account" column holds non-account items (Widgets/Methodology/Research) | IA naming pass | E | open |
 | S-022 ✅ | P2 | /issuers/{beyond top-100} | Only the top-100 issuers are pre-rendered and there is NO CF function shell for issuers — any other issuer linked from search/asset pages hard-404s | UI/infra (add functions/issuers shell like accounts/contracts) | B | open |
 | S-023 ✅ | P3 | /dexes/sdex framing | SDEX (an order book) rendered through the shared pools table, framed as "pools observed" | UI copy/framing | E | open |
+| S-024 ✅ | P0 | explorer deploys (CF Pages) | Every deploy silently failed for 9 days while the site served a stale build — no error surfaced anywhere | UI/infra: Cloudflare Pages' 20,000-file cap, hit by the Next 15→16 segment-prefetch file count; root-caused and superseded by ADR-0044 (`docs/adr/0044-explorer-edge-rendering.md`) | B | open |
 | S-008 | P3 | site-wide | (placeholder for the consistency-grid findings — dates, amounts, addresses, names) | — | E | open |
 
 ## Same-day incident notes (2026-07-03, related operational state)
