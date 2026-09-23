@@ -699,6 +699,17 @@ stellar_history_archive_urls:
   futurenet: "http://history.stellar.org/dev/core-futurenet/core_futurenet_001"
 stellar_history_archive_url: "{{ stellar_history_archive_urls[stellar_network] | default(stellar_history_archive_urls['pubnet']) }}"
 
+# stellar.rpc_endpoints for the ops CLIs that need a network tip or a
+# simulateTransaction (detect-gaps, seed/verify fallbacks). This role deploys
+# no stellar-rpc (see the note above run_minio), so a loopback URL here is dead: use the
+# network's public, unkeyed endpoint. No pubnet fallback — a wrong-network tip
+# is worse than a failed render. Override in inventory if a local rpc returns.
+stellar_rpc_endpoints_by_network:
+  pubnet:    ["https://mainnet.sorobanrpc.com"]
+  testnet:   ["https://soroban-testnet.stellar.org"]
+  futurenet: ["https://rpc-futurenet.stellar.org"]
+stellar_rpc_endpoints: "{{ stellar_rpc_endpoints_by_network[stellar_network] }}"
+
 # The FULL SDF archive set per network (001/002/003), per
 # https://developers.stellar.org/docs/networks. `stellar_history_archive_url`
 # above stays single-valued (the archivist mirror + galexie-append probe want

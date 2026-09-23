@@ -27,6 +27,7 @@ func detectGaps(args []string) error {
 	fs := flag.NewFlagSet("detect-gaps", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	threshold := fs.Uint("threshold", 100, "Ledgers of lag that count as a gap")
+	rpcOverride := fs.String("rpc", "", "stellar-rpc endpoint URL for the network tip (overrides stellar.rpc_endpoints[0])")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -42,13 +43,15 @@ func detectGaps(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 
-	// Pick the first RPC endpoint to query for tip. Failover across
-	// the full list is the long-running binaries' job; this is a
-	// one-shot probe and we keep it simple.
-	if len(cfg.Stellar.RPCEndpoints) == 0 {
-		return fmt.Errorf("stellar.rpc_endpoints is empty")
+	// One-shot probe: no failover, just -rpc or the first configured endpoint.
+	endpoint := *rpcOverride
+	if endpoint == "" && len(cfg.Stellar.RPCEndpoints) > 0 {
+		endpoint = cfg.Stellar.RPCEndpoints[0]
 	}
-	rpc := stellarrpc.New(cfg.Stellar.RPCEndpoints[0], stellarrpc.WithTimeout(5*time.Second))
+	if endpoint == "" {
+		return fmt.Errorf("no RPC endpoint — set -rpc or stellar.rpc_endpoints")
+	}
+	rpc := stellarrpc.New(endpoint, stellarrpc.WithTimeout(5*time.Second))
 	tip, err := rpc.LatestLedger(ctx)
 	if err != nil {
 		return fmt.Errorf("rpc: %w", err)

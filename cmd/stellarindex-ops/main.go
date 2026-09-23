@@ -312,7 +312,7 @@ Subcommands:
                           incident, not garbage. Check what a shard still
                           owes with resume-stalled -dry-run first: a reaped
                           row deletes the resume point, never data.
-  detect-gaps -config PATH [-threshold N]
+  detect-gaps -config PATH [-threshold N] [-rpc URL]
                           Report sources lagging more than N ledgers (default 100)
                           behind the stellar-rpc network tip. Exit code 1 if any
                           source is lagging.
