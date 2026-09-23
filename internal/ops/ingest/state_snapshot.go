@@ -16,6 +16,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
@@ -109,7 +110,8 @@ func stateSnapshot(args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	ctx, cancel := opsutil.SignalContext()
+	defer cancel()
 	arch, err := historyarchive.Connect(url, historyarchive.ArchiveOptions{
 		NetworkPassphrase: passphrase,
 		ConnectOptions:    storage.ConnectOptions{Context: ctx, UserAgent: "stellarindex-ops/state-snapshot"},

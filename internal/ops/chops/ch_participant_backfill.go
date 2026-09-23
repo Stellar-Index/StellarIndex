@@ -70,13 +70,24 @@ func chParticipantBackfill(args []string) error {
 			fmt.Fprintf(os.Stderr, "ch-participant-backfill: "+format+"\n", a...)
 		})
 
+	fmt.Fprintln(os.Stderr, participantBackfillSummary(stats, dryRun, berr))
+	return berr
+}
+
+// participantBackfillSummary is the run's final stderr line. Participants
+// counts rows derived at scan time, so it is only a written count on a
+// clean run; a failed run says so and defers to the error's resume point.
+func participantBackfillSummary(stats clickhouse.ParticipantBackfillStats, dryRun bool, berr error) string {
+	if berr != nil {
+		return fmt.Sprintf("ch-participant-backfill: FAILED — scanned %d ops, derived %d participant rows, not all confirmed written (%d decode-errors); re-run from the -from resume point in the error",
+			stats.OpsScanned, stats.Participants, stats.DecodeErrors)
+	}
 	verb := "wrote"
 	if dryRun {
 		verb = "would write"
 	}
-	fmt.Fprintf(os.Stderr, "ch-participant-backfill: done — scanned %d ops, %s %d participant rows (%d decode-errors)\n",
+	return fmt.Sprintf("ch-participant-backfill: done — scanned %d ops, %s %d participant rows (%d decode-errors)",
 		stats.OpsScanned, verb, stats.Participants, stats.DecodeErrors)
-	return berr
 }
 
 // resolveParticipantTo resolves the inclusive upper ledger. A non-zero toFlag is

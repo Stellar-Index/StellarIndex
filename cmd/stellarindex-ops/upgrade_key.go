@@ -41,9 +41,8 @@ func upgradeKey(args []string) error {
 	fs := flag.NewFlagSet("upgrade-key", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	keyID := fs.String("key-id", "", "KeyID of the API key to upgrade (kid_… prefix). Get this from /v1/account/me or the signup response (required)")
-	rateLimit := fs.Int("rate-limit-per-min", 0, "New per-minute rate-limit budget. 0 means tier default. (required, supply -1 for 'reset to default')")
+	rateLimit := fs.Int("rate-limit-per-min", 0, "New per-minute rate-limit budget, >= 0; 0 resets to the tier default (required)")
 	hasRateLimit := false
-	fs.Visit(func(*flag.Flag) {})
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

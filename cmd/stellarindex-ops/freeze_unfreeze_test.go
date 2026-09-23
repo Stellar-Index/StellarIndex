@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -162,6 +163,28 @@ func TestFreezeUnfreeze_RequiresPairOrList(t *testing.T) {
 	err := freezeUnfreeze([]string{"-config", "/nonexistent/stellarindex.toml"})
 	if err == nil || !strings.Contains(err.Error(), "-asset and -quote are required") {
 		t.Errorf("expected the missing-pair refusal, got: %v", err)
+	}
+}
+
+// TestFreezeUnfreeze_UnconfiguredRedisIsAnErrorNotAPanic — redis_addr is
+// optional config, and redisclient.Build returns nil for it. The command
+// ADR-0019 names as the exit from an escalated freeze must report that
+// misconfiguration, not die on a nil Close. The DSN points at a closed
+// port, so the refusal must also come before any Postgres connect.
+func TestFreezeUnfreeze_UnconfiguredRedisIsAnErrorNotAPanic(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
+	body := "[stellar]\nnetwork = \"pubnet\"\n\n[storage]\npostgres_dsn = \"postgres://u:p@127.0.0.1:1/db?connect_timeout=1\"\nredis_addr = \"\"\n"
+	if err := os.WriteFile(cfgPath, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-config", cfgPath, "-list"},
+		{"-config", cfgPath, "-asset", "native", "-quote", "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", "-reason", "test"},
+	} {
+		err := freezeUnfreeze(args)
+		if err == nil || !strings.Contains(err.Error(), "redis is not configured") {
+			t.Errorf("freezeUnfreeze(%v): want the redis-not-configured refusal, got: %v", args, err)
+		}
 	}
 }
 

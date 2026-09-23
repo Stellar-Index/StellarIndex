@@ -130,6 +130,10 @@ func substrateForGenesis(ctx context.Context, scan substrateScanner, cache map[u
 // it actually covered is stated in the verdict detail, so `complete=true`
 // is a claim about exactly what was reconciled and nothing more
 // (DAT-09/N-F2 + INV-5; see targetScope and projectionClaim).
+//
+// Exit status reports whether the pass ran, not the verdict: an incomplete
+// verdict alerts via stellarindex_completeness_incomplete. A per-source error
+// aborts the pass, leaving later sources' prior verdicts (with their own tip).
 func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo // linear computor; one block per claim.
 	fs := flag.NewFlagSet("compute-completeness", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")

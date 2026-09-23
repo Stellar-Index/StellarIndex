@@ -54,8 +54,8 @@ import (
 //
 // Empty -textfile prints the gauges to stdout (operator spot-run).
 // Empty -config skips the reserve-list check (a spot-run off-host has
-// no node config to diff). Exit code = number of failed checks
-// (cron/Healthchecks-friendly).
+// no node config to diff). Exits 1 when any check failed or every check
+// was skipped (see servedValuesExitError), 0 otherwise.
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
@@ -212,7 +212,9 @@ func reconcileOneCheck(ctx context.Context, c *http.Client, apiBase string, chk 
 	truth, tErr := chk.truth(ctx, c)
 	switch {
 	case sErr != nil:
+		// Failed, not measured: a 0 rel_err would read as a perfect match.
 		r.note = "served fetch: " + sErr.Error()
+		r.relErr = math.NaN()
 	case tErr != nil:
 		r.skipped = true
 		r.note = "truth fetch failed (skipped): " + tErr.Error()
@@ -242,7 +244,7 @@ func renderServedValueProm(results []servedValueResult, list *reserveListResult,
 	b.line("# TYPE stellarindex_served_value_ok gauge")
 	b.line("# HELP stellarindex_served_value_skipped 1 when a check could not run because its independent truth source was unavailable (availability, not a served-value verdict).")
 	b.line("# TYPE stellarindex_served_value_skipped gauge")
-	b.line("# HELP stellarindex_served_value_last_run_unix When verify-served-values last completed.")
+	b.line("# HELP stellarindex_served_value_last_run_unix When verify-served-values last completed a run that reached at least one verdict. NOT emitted when every check was skipped.")
 	b.line("# TYPE stellarindex_served_value_last_run_unix gauge")
 	b.line("# HELP stellarindex_sdf_reserve_list_drift Accounts by which supply.sdf_reserve_accounts differs from the reserve list SDF publishes (stellar/dashboard common/lumens.js): kind=missing are published but not configured, kind=extra are configured but no longer published. NOT emitted when the published list was unreachable (see served_value_skipped{check=sdf_reserve_list}) or the config was unreadable.")
 	b.line("# TYPE stellarindex_sdf_reserve_list_drift gauge")
@@ -287,8 +289,26 @@ func renderServedValueProm(results []servedValueResult, list *reserveListResult,
 			b.line(fmt.Sprintf(`stellarindex_sdf_reserve_list_drift{kind=%q} %d`, "extra", len(list.drift.extra)))
 		}
 	}
-	b.line(fmt.Sprintf("stellarindex_served_value_last_run_unix %d", now.Unix()))
+	// The staleness alert keys on this, so a run that reached no verdict
+	// must not refresh it.
+	if servedValuesReachedVerdict(results, list) {
+		b.line(fmt.Sprintf("stellarindex_served_value_last_run_unix %d", now.Unix()))
+	}
 	return b.String()
+}
+
+// servedValuesReachedVerdict reports whether any check produced a pass or
+// fail verdict rather than a truth-source skip.
+func servedValuesReachedVerdict(results []servedValueResult, list *reserveListResult) bool {
+	if list != nil && !list.skipped {
+		return true
+	}
+	for _, r := range results {
+		if !r.skipped {
+			return true
+		}
+	}
+	return false
 }
 
 type jsonSafeBuilder struct{ s string }
