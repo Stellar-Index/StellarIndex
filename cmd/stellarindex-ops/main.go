@@ -316,13 +316,16 @@ Subcommands:
                           Report sources lagging more than N ledgers (default 100)
                           behind the stellar-rpc network tip. Exit code 1 if any
                           source is lagging.
-  ch-cap67-movements -ch-addr ADDR [-from N] [-to N] [-window N] [-dry-run]
+  ch-cap67-movements -ch-addr ADDR [-from N] [-to N] [-window N] [-max-decode-errors N] [-dry-run]
                           Derive post-P23 account movements (ALL assets,
                           native XLM included) from the lake's CAP-67
                           transfer events into stellar.account_movements
                           (provenance cap67_derived). Resumes from
                           stellar.cap67_movements_watermark; a 5-min timer
                           keeps it following the tip. Inventory #1.
+                          A one-shot run exits non-zero when more transfer
+                          events failed to decode than -max-decode-errors
+                          (default 0); -follow logs them per window.
   ch-holders-rollup -ch-addr ADDR
                           Recompute every asset's top-500 holders board +
                           holder count into staging and atomically exchange
@@ -991,7 +994,7 @@ Subcommands:
                           an explicit -from (resume point) / -to bound.
                           Prints a resume point per window; serialize it and
                           run under the root-<2G watchdog on r1.
-  ch-participant-backfill [-ch-addr H:P] [-from N] [-to N] [-window N] [-dry-run]
+  ch-participant-backfill [-ch-addr H:P] [-from N] [-to N] [-window N] [-max-decode-errors N] [-dry-run]
                           Fill stellar.operation_participants (the non-source
                           side of ADR-0038 Phase B account history) for
                           HISTORICAL ledgers by re-deriving participants from
@@ -1003,6 +1006,8 @@ Subcommands:
                           resumable (idempotent ReplacingMergeTree), prints a
                           resume point per window. -dry-run counts what WOULD
                           be written. Run under run-heavy-job.sh on r1.
+                          Exits non-zero when more op bodies failed to
+                          decode than -max-decode-errors (default 0).
   classic-movements-backfill -from N -to N [-window N] [-ch-addr H:P] [-resume] [-write] [-verify]
                           ADR-0047, all four phases, RETARGETED by ADR-0048
                           D2 to ClickHouse: reconstruct pre-P23 classic
