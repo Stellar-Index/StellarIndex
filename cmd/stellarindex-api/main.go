@@ -930,7 +930,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		"seeded", seeded, "requested", requested,
 		"max_age", assetsListingSeedMaxAge.String())
 
-	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, cachedIssuersReader, verifiedAssetIDs, listingSnapshots, cachedNetworkStats)
+	// StellarIssued(), not All(): the unified listing's catalogue phase
+	// (serveCatalogueUnifiedPage) only ever serves Stellar-issued entries
+	// (LC-001 split), so that is the count its classic "remaining" fill
+	// is computed against — see catalogueFillPrewarmOptions.
+	go prewarmCaches(rootCtx, logger.With("component", "prewarm"), cachedSourcesStats, cachedMarketsReader, cachedAssetsReader, cachedIssuersReader, verifiedAssetIDs, listingSnapshots, cachedNetworkStats, len(verifiedCurrencies.StellarIssued()))
 
 	// TLS cert expiry self-probe (F-0051, audit-2026-05-26). Public
 	// TLS is fronted by Caddy + Let's Encrypt with auto-renewal 30d
@@ -5109,6 +5113,7 @@ func prewarmCaches(
 	verifiedAssetIDs []string,
 	snaps *assetsListingSnapshots,
 	networkStats *v1.CachedNetworkStatsReader,
+	catalogueLen int,
 ) {
 	defer recoverBackgroundWorker(logger, "prewarm-caches")
 	heavyCadence := 5 * time.Minute
@@ -5141,7 +5146,7 @@ func prewarmCaches(
 	go func() {
 		defer warm.Done()
 		defer recoverBackgroundWorker(logger, "prewarm-light-initial")
-		prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps, networkStats)
+		prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps, networkStats, catalogueLen)
 	}()
 	go func() {
 		defer warm.Done()
@@ -5162,7 +5167,7 @@ func prewarmCaches(
 		case <-heavyTick.C:
 			prewarmHeavy(ctx, logger, stats)
 		case <-lightTick.C:
-			prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps, networkStats)
+			prewarmLight(ctx, logger, markets, assetsReader, issuers, verifiedAssetIDs, snaps, networkStats, catalogueLen)
 		}
 	}
 }
@@ -5210,6 +5215,7 @@ func prewarmLight(
 	verifiedAssetIDs []string,
 	snaps *assetsListingSnapshots,
 	networkStats *v1.CachedNetworkStatsReader,
+	catalogueLen int,
 ) {
 	// 5-min ceiling on the whole prewarm cycle. Pre-2026-05-14 this
 	// was 60s shared across ~25 sequential calls — when the first
@@ -5264,7 +5270,7 @@ func prewarmLight(
 
 	// …and the SEPARATE /v1/assets listing, whose handler does the
 	// OPPOSITE arithmetic to /v1/coins above. See prewarmAssetListings.
-	prewarmAssetListings(assetsReaderCtx, logger, assetsReader, snaps)
+	prewarmAssetListings(assetsReaderCtx, logger, assetsReader, snaps, catalogueLen)
 
 	// #37 fix: /v1/assets/native is the most-trafficked single-asset
 	// page (XLM is the explorer's default landing) and its
@@ -5571,20 +5577,68 @@ var assetListingPrewarmLimits = []int{1, 5, 10, 50, 100, 500}
 // nothing has re-observed.
 func prewarmAssetListings(
 	ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader,
-	snaps *assetsListingSnapshots,
+	snaps *assetsListingSnapshots, catalogueLen int,
 ) {
 	if assetsReader == nil {
 		return
 	}
 	for _, opts := range assetListingPrewarmOptions() {
-		rows, observedAt, _, err := assetsReader.ListAssetsExtAt(ctx, opts)
-		if err != nil {
-			logger.Debug("prewarm assets listing failed",
-				"limit", opts.Limit, "order", opts.Order, "err", err)
+		warmAssetListingOptions(ctx, logger, assetsReader, snaps, opts)
+	}
+	// T279: the unified (asset_class=all) landing page's catalogue phase
+	// (serveCatalogueUnifiedPage) fills any shortfall below the user's
+	// limit from the classic phase with Limit=(userLimit-catalogueLen)+
+	// AssetsListOverfetchBy, Order=Volume24hUSDDesc always — a DIFFERENT
+	// cache key than the userLimit+1 set above the moment the catalogue
+	// is non-empty (it is: ~45 rows). Mirror that arithmetic so the
+	// landing page's first load actually lands on a warmed slot instead
+	// of a phantom one.
+	for _, opts := range catalogueFillPrewarmOptions(catalogueLen) {
+		warmAssetListingOptions(ctx, logger, assetsReader, snaps, opts)
+	}
+}
+
+// warmAssetListingOptions runs and persists one prewarm variant. Split out
+// so [prewarmAssetListings] can drive both the direct-handler cache keys
+// (assetListingPrewarmOptions) and the unified-listing catalogue-fill keys
+// (catalogueFillPrewarmOptions) through the same read+persist path.
+func warmAssetListingOptions(
+	ctx context.Context, logger *slog.Logger, assetsReader *v1.CachedAssetsReader,
+	snaps *assetsListingSnapshots, opts timescale.ListAssetsOptions,
+) {
+	rows, observedAt, _, err := assetsReader.ListAssetsExtAt(ctx, opts)
+	if err != nil {
+		logger.Debug("prewarm assets listing failed",
+			"limit", opts.Limit, "order", opts.Order, "err", err)
+		return
+	}
+	snaps.save(ctx, opts, rows, observedAt)
+}
+
+// catalogueFillPrewarmOptions is the classic-phase cache key the unified
+// listing's catalogue-fill call (serveCatalogueUnifiedPage) actually
+// requests for each userLimit in assetListingPrewarmLimits, given a
+// catalogue of catalogueLen rows. Skips a userLimit the catalogue alone
+// satisfies (remaining <= 0) — that page never reaches the classic phase.
+//
+// Kept separate from assetListingPrewarmOptions (same "testable without a
+// database" reasoning as that function's own doc) rather than folded into
+// it: the two mirror two DIFFERENT handlers' arithmetic and collapsing
+// them would make a future drift in either one indistinguishable from the
+// other in a diff.
+func catalogueFillPrewarmOptions(catalogueLen int) []timescale.ListAssetsOptions {
+	out := make([]timescale.ListAssetsOptions, 0, len(assetListingPrewarmLimits))
+	for _, userLimit := range assetListingPrewarmLimits {
+		remaining := userLimit - catalogueLen
+		if remaining <= 0 {
 			continue
 		}
-		snaps.save(ctx, opts, rows, observedAt)
+		out = append(out, timescale.ListAssetsOptions{
+			Limit: remaining + v1.AssetsListOverfetchBy,  // mirror fetchClassicUnifiedRows
+			Order: timescale.AssetsOrderVolume24hUSDDesc, // fetchClassicUnifiedRows never varies this
+		})
 	}
+	return out
 }
 
 // assetListingPrewarmOptions is the exact set of cache keys to warm.
