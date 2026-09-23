@@ -69,7 +69,7 @@ union, OR an inner union whose own code is a failure) decodes to
 | --- | --- | --- | --- |
 | `LiquidityPoolDeposit` | `OperationTypeLiquidityPoolDeposit` | `liquidity_pool_deposit` | 2 rows/op (leg_index 0/1, one per pool asset) |
 | `LiquidityPoolWithdraw` | `OperationTypeLiquidityPoolWithdraw` | `liquidity_pool_withdraw` | 2 rows/op (leg_index 0/1) |
-| `AllowTrust` / `SetTrustLineFlags` (CAP-0038 edge only) | `OperationTypeAllowTrust` / `OperationTypeSetTrustLineFlags` | `liquidity_pool_withdraw` | 0 rows (common case) or 2 rows (revocation-triggered liquidation) |
+| `AllowTrust` / `SetTrustLineFlags` (CAP-0038 edge only) | `OperationTypeAllowTrust` / `OperationTypeSetTrustLineFlags` | `liquidity_pool_withdraw` + `claimable_balance_create` | 0 rows (common case) or 4 rows (revocation-triggered liquidation: one `liquidity_pool_withdraw` at leg_index 0/1 and one `claimable_balance_create` at leg_index 2/3, one pair per pool asset) |
 
 `LiquidityPoolDeposit`/`Withdraw` results are bare success codes with
 zero data fields (research §2 path (c)) — the only ground truth is
@@ -81,9 +81,11 @@ an account holding LP-share trustlines mixing the revoked asset
 auto-redeems those shares into two new `ClaimableBalanceEntry` rows,
 detectable ONLY by consulting entry changes at that op's index (the
 op body alone can't tell you whether the trustor actually held a
-matching position) — modelled as `movement_kind='liquidity_pool_withdraw'`
-rows with `attributes.revocation=true` since it IS functionally a
-forced withdrawal, just routed through escrow. See `entrychanges.go`
+matching position) — modelled as a `movement_kind='liquidity_pool_withdraw'`
+row per created balance (it IS functionally a forced withdrawal, just
+routed through escrow) PLUS a `claimable_balance_create` row for the
+same balance, so a later claim/clawback against it resolves; both
+carry `attributes.revocation=true`. See `entrychanges.go`
 and Q6 for the full design, including why an empty entry-changes
 group means something different for LP deposit/withdraw
 (unconditionally unavailable) than for the CAP-0038 check (the

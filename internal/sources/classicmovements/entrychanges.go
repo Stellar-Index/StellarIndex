@@ -372,14 +372,14 @@ func liquidityPoolConstantProduct(e *xdr.LedgerEntry) (xdr.LiquidityPoolEntryCon
 // "can't tell, fidelity is absent" — see this file's package-level
 // doc comment.
 //
-// Emits movement_kind='liquidity_pool_withdraw' rows (one per created
-// ClaimableBalanceEntry, i.e. one per pool asset — always two for a
-// real CAP-0038 event, since it's a two-asset pool) rather than a
-// dedicated kind: functionally this IS a forced LP withdrawal, just
-// routed through escrow instead of directly to the trustor. Attributes
-// marks provenance explicitly (revocation=true, trigger_op_type,
-// claimable_balance_id) so a reader can distinguish this from an
-// ordinary voluntary withdrawal.
+// Emits TWO rows per created ClaimableBalanceEntry (one per pool asset,
+// so four for a real two-asset CAP-0038 event): a
+// movement_kind='liquidity_pool_withdraw' row (functionally a forced LP
+// withdrawal, routed through escrow) at leg_index 0..n-1, and a
+// 'claimable_balance_create' row for the same balance at leg_index
+// n..2n-1 so a later claim/clawback resolves. Both carry
+// revocation=true, trigger_op_type and balance_id so a reader can
+// distinguish them from voluntary withdrawals and explicit creates.
 //
 // FromAddress is the Trustor (the account whose position was
 // liquidated) — NOT ctx.TxSource (typically the issuer submitting

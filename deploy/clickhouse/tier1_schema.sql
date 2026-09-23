@@ -631,11 +631,13 @@ SELECT tx_hash, ledger_seq, tx_index FROM stellar.transactions;
 --   liquidity_pool_deposit / liquidity_pool_withdraw
 --     -> 2 rows per op (1 row per pool-asset leg x 2 legs; the other side of
 --        every leg is always the pool itself, which has no G-account address)
---   liquidity_pool_withdraw (CAP-0038 auto-liquidation edge, Phase 4,
---   attributes.revocation=true)
---     -> 1 row per created ClaimableBalanceEntry (trustor known, destination
---        escrow unknown) -- 2 for a real liquidation (every classic AMM pool
---        has exactly two assets)
+--   CAP-0038 auto-liquidation edge (Phase 4, attributes.revocation=true):
+--   liquidity_pool_withdraw + claimable_balance_create
+--     -> 2 rows per created ClaimableBalanceEntry: one liquidity_pool_withdraw
+--        and one claimable_balance_create for the same balance, each 1 row
+--        (trustor known, destination escrow unknown; direction='sent') -- 4
+--        for a real liquidation (every classic AMM pool has exactly two
+--        assets)
 --
 -- Engine: ReplacingMergeTree(ingested_at), same idempotent-re-derivation
 -- convention as every table above (see this file's header) — re-running an
