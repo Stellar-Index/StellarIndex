@@ -97,3 +97,18 @@ func TestCensusStagingTableIsPerRunOnly(t *testing.T) {
 		t.Fatalf("privateStagingTable() = %q, want contracts_census_daily_staging_<16 hex>", name)
 	}
 }
+
+// TestCensusDayInsertNamesItsColumns pins censusDayInsert to an EXPLICIT
+// target column list, in the exact order stellar.contracts_census_daily
+// (contracts_census_daily.sql) declares them. A positional INSERT here
+// would depend on the SELECT's alias order matching the table's ALTER
+// history forever (GH-1169); naming the columns makes a future column
+// added to either side fail loudly instead of silently swapping values.
+func TestCensusDayInsertNamesItsColumns(t *testing.T) {
+	stmt := censusDayInsert("contracts_census_daily_staging_test")
+	want := `INSERT INTO stellar.contracts_census_daily_staging_test (day, contract_id, events, last_ledger, last_seen)`
+	if !strings.Contains(strings.Join(strings.Fields(stmt), " "), want) {
+		t.Fatalf("censusDayInsert does not name its target columns in the declared table order:\n got: %s\nwant substring: %s",
+			strings.Join(strings.Fields(stmt), " "), want)
+	}
+}
