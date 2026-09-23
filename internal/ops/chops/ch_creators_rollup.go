@@ -63,18 +63,8 @@ func chCreatorsRollup(args []string) error {
 // creatorsBoundary resolves the creation arms' boundary ledger: the
 // config's stellar.movements_floor_ledger when a config is given and sets
 // one, else the pubnet P23 boundary. Mirrors ch-cohort-rollup's config
-// load (config.LoadWithEnv) so the unit's CONFIG_PATH serves both.
-//
-// The resolved value is then sanity-checked against the lake's actual
-// floor (RLT-191): previously this returned a configured or fallback
-// number with no check at all, so a mistyped or stale
-// stellar.movements_floor_ledger silently split the two creation arms in
-// the wrong place instead of erroring — the classic arm scans nothing
-// below a boundary the lake never reaches, and every creation lands on
-// the CAP-67 arm whether or not that is where the chain's representation
-// actually changed. da5f8a0a4 fixed exactly this shape for the untouched
-// DEFAULT (pubnet's constant against a reset test net); an operator
-// override was never guarded.
+// load (config.LoadWithEnv) so the unit's CONFIG_PATH serves both. The
+// result is checked against the lake's tip (see [validateCreatorsBoundary]).
 func creatorsBoundary(ctx context.Context, chAddr, cfgPath string) (uint32, error) {
 	boundary := clickhouse.P23BoundaryLedger
 	if cfgPath != "" {
@@ -86,25 +76,28 @@ func creatorsBoundary(ctx context.Context, chAddr, cfgPath string) (uint32, erro
 			boundary = cfg.Stellar.MovementsFloorLedger
 		}
 	}
-	lakeMin, err := clickhouse.LakeMinLedger(ctx, chAddr)
+	lakeTip, err := clickhouse.MaxLedger(ctx, chAddr)
 	if err != nil {
-		return 0, fmt.Errorf("creators boundary: read lake min ledger: %w", err)
+		return 0, fmt.Errorf("creators boundary: read lake tip: %w", err)
 	}
-	if err := validateCreatorsBoundary(boundary, lakeMin); err != nil {
+	if err := validateCreatorsBoundary(boundary, lakeTip); err != nil {
 		return 0, err
 	}
 	return boundary, nil
 }
 
-// validateCreatorsBoundary is [creatorsBoundary]'s bounds check, factored
-// out as a pure function for testing without a live ClickHouse. lakeMin==0
-// (an empty lake) skips the check — there is nothing to derive yet either
-// way, the same convention the projector's fresh-source floor uses.
-func validateCreatorsBoundary(boundary, lakeMin uint32) error {
-	if lakeMin > 0 && boundary < lakeMin {
-		return fmt.Errorf("creators boundary ledger %d is below the lake's first ledger %d — "+
-			"stellar.movements_floor_ledger is misconfigured (the classic arm would scan nothing)",
-			boundary, lakeMin)
+// validateCreatorsBoundary rejects a boundary above the lake's tip: a chain
+// that never reached its boundary (pubnet's P23 ledger on a reset test net)
+// hands every ledger to the classic arm, which looks for create_account
+// movements that chain never wrote, so the board comes back silently empty.
+// A boundary at or below the
+// lake's first ledger is valid — a test net's movements_floor_ledger is 1,
+// every ledger post-P23. lakeTip==0 (an empty lake) has nothing to split.
+func validateCreatorsBoundary(boundary, lakeTip uint32) error {
+	if lakeTip > 0 && boundary > lakeTip {
+		return fmt.Errorf("creators boundary ledger %d is above the lake's tip %d: "+
+			"this chain has not reached it — set stellar.movements_floor_ledger for this network "+
+			"(1 on a reset testnet/futurenet)", boundary, lakeTip)
 	}
 	return nil
 }
