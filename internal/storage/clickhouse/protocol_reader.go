@@ -377,15 +377,21 @@ func (r *ExplorerReader) ProtocolDailyActivity(ctx context.Context, contractIDs 
 
 // protocolContractActivityQuery — FINAL and the row ceiling are load-bearing
 // for the reasons on protocolEventBreakdownQuery / protocolRawScanRowCeiling.
+// Complete days only, for the same reason as protocolDailyActivityQuery: the
+// current (partial) day's roster counts would otherwise wobble down on every
+// re-read as more of the day accumulates (the UXP-16 phantom-cliff class).
 const protocolContractActivityQuery = `SELECT contract_id, count() AS c, max(close_time) AS last_seen
 		FROM stellar.contract_events FINAL
 		WHERE contract_id IN (?) AND event_type = 'contract' AND ledger_seq >= ?
+		  AND close_time < toStartOfDay(now())
 		GROUP BY contract_id ORDER BY c DESC LIMIT 1000` + protocolRawScanRowCeiling
 
 // ProtocolContractActivity returns per-contract event counts + last-seen for a
 // protocol's roster, scoped to sinceLedger forward (>0 required — bounding by
 // ledger_seq prunes partitions; an all-time scan over the 12B-row table blows
-// the 30s read budget for active protocols). Descending by event count.
+// the 30s read budget for active protocols). Complete days only (see the
+// UXP-16 comment on protocolContractActivityQuery). Descending by event
+// count.
 func (r *ExplorerReader) ProtocolContractActivity(ctx context.Context, contractIDs []string, sinceLedger uint32) ([]ProtocolContractActivity, error) {
 	if len(contractIDs) == 0 {
 		return nil, nil
