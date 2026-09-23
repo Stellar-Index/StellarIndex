@@ -470,6 +470,7 @@ func run(cfgPath string, dryRun bool) error {
 	discoverySink := discovery.NewAsyncSink(discoveryRecorderAdapter{s: store}, discovery.AsyncSinkOptions{
 		BufferSize:    1024,
 		RecordTimeout: 2 * time.Second,
+		DrainTimeout:  pipeline.DiscoveryDrainBudget,
 		Logger:        logger.With("component", "discovery"),
 	})
 	discoverySink.Start()
@@ -503,6 +504,7 @@ func run(cfgPath string, dryRun bool) error {
 		BatchSize:        1000,
 		FlushInterval:    time.Second,
 		WriteTimeout:     10 * time.Second,
+		DrainGrace:       pipeline.RawEventDrainBudget,
 		Logger:           logger.With("component", "soroban-events"),
 	})
 	rawEventSink.Start()
@@ -1490,7 +1492,10 @@ func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer
 		ok := retryUntil(ctx, logger, "ch live-sink: ClickHouse unavailable",
 			chLiveSinkDialMinBackoff, chLiveSinkDialMaxBackoff,
 			func(ctx context.Context) error {
-				l, err := clickhouse.NewLiveSink(ctx, chAddr, clickhouse.LiveSinkOptions{Logger: logger})
+				l, err := clickhouse.NewLiveSink(ctx, chAddr, clickhouse.LiveSinkOptions{
+					StopTimeout: pipeline.CHLiveSinkStopBudget,
+					Logger:      logger,
+				})
 				if err != nil {
 					return err
 				}

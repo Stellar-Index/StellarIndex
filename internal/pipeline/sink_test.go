@@ -8,6 +8,8 @@ import (
 	"io"
 	"log/slog"
 	"math"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -168,6 +170,97 @@ func TestShutdownDeadline_MainUsesConstant(t *testing.T) {
 	})
 	if !found {
 		t.Error("cmd/stellarindex-indexer/main.go does not build its shutdown context from pipeline.ShutdownDeadline — the sink derives its drain budgets from that constant, so a literal here silently re-opens CON-10 (drain budget > process deadline ⇒ the undrained-ledger-range ERROR never fires)")
+	}
+}
+
+// TestIndexerStopTimeout_UnitsCoverDrainBudgets — CON-10 lifted to the
+// process (#1018). main drains the ClickHouse live sink, the
+// soroban-events sink and the discovery sink AFTER the ShutdownDeadline
+// window, so the unit's TimeoutStopSec must cover their sum; at systemd's
+// 90s default a slow ClickHouse plus a slow Postgres got SIGKILLed
+// mid-drain, silently discarding the buffers the drains exist to save.
+func TestIndexerStopTimeout_UnitsCoverDrainBudgets(t *testing.T) {
+	sum := ShutdownDeadline + CHLiveSinkStopBudget + RawEventDrainBudget + DiscoveryDrainBudget
+	if IndexerStopTimeout <= sum {
+		t.Errorf("IndexerStopTimeout %v leaves no margin over the summed drain budgets %v", IndexerStopTimeout, sum)
+	}
+	for _, unit := range []string{
+		repoDir("deploy", "systemd", "stellarindex-indexer.service"),
+		repoDir("configs", "ansible", "roles", "archival-node", "templates", "systemd", "stellarindex-indexer.service.j2"),
+	} {
+		got, ok := unitTimeoutStopSec(t, unit)
+		if !ok {
+			t.Errorf("%s sets no TimeoutStopSec — systemd's 90s default is below IndexerStopTimeout %v and SIGKILLs mid-drain", unit, IndexerStopTimeout)
+			continue
+		}
+		if got < IndexerStopTimeout {
+			t.Errorf("%s TimeoutStopSec=%v < IndexerStopTimeout %v — SIGKILL lands mid-drain", unit, got, IndexerStopTimeout)
+		}
+	}
+}
+
+// unitTimeoutStopSec returns the unit's TimeoutStopSec. Only the
+// seconds/minutes spellings are accepted; anything else fails the test
+// rather than being guessed at.
+func unitTimeoutStopSec(t *testing.T, path string) (time.Duration, bool) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		v, ok := strings.CutPrefix(strings.TrimSpace(line), "TimeoutStopSec=")
+		if !ok {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		if n, err := strconv.Atoi(v); err == nil {
+			return time.Duration(n) * time.Second, true
+		}
+		d, err := time.ParseDuration(strings.Replace(v, "min", "m", 1))
+		if err != nil {
+			t.Fatalf("%s: unparseable TimeoutStopSec=%q: %v", path, v, err)
+		}
+		return d, true
+	}
+	return 0, false
+}
+
+// TestShutdownBudgets_MainWiresConstants — the sum above only bounds the
+// real drains if main passes each budget into its sink. A literal (or
+// omitting the field and inheriting the sink's default) lets the two
+// drift apart exactly as CON-10's 90s-vs-30s did.
+func TestShutdownBudgets_MainWiresConstants(t *testing.T) {
+	fset := token.NewFileSet()
+	main := parseFile(t, fset, repoDir("cmd", "stellarindex-indexer", "main.go"))
+	want := map[string]string{
+		"DrainTimeout": "DiscoveryDrainBudget",
+		"DrainGrace":   "RawEventDrainBudget",
+		"StopTimeout":  "CHLiveSinkStopBudget",
+	}
+	found := map[string]bool{}
+	ast.Inspect(main, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		sel, ok := kv.Value.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "pipeline" && want[key.Name] == sel.Sel.Name {
+			found[key.Name] = true
+		}
+		return true
+	})
+	for field, constant := range want {
+		if !found[field] {
+			t.Errorf("cmd/stellarindex-indexer/main.go does not set %s: pipeline.%s — the unit's TimeoutStopSec is sized from that constant, so the sink's real drain is unbounded by it", field, constant)
+		}
 	}
 }
 

@@ -36,9 +36,16 @@ import (
 // goroutines (the dispatcher itself is single-threaded but the
 // indexer may run multiple dispatchers in the future).
 type AsyncSink struct {
-	rec     Recorder
-	logger  *slog.Logger
-	timeout time.Duration
+	rec          Recorder
+	logger       *slog.Logger
+	timeout      time.Duration
+	drainTimeout time.Duration
+
+	// drainCtx parents every Record call; Stop cancels it once
+	// drainTimeout has elapsed so the shutdown drain has an absolute
+	// deadline instead of RecordTimeout per buffered hit.
+	drainCtx    context.Context
+	drainCancel context.CancelFunc
 
 	ch       chan Hit
 	stopOnce sync.Once
@@ -84,6 +91,12 @@ type AsyncSinkOptions struct {
 	// fails the record (logged) rather than holding up the queue.
 	RecordTimeout time.Duration
 
+	// DrainTimeout bounds the whole shutdown drain in [AsyncSink.Stop].
+	// Default 10 seconds. Hits still buffered when it expires are
+	// abandoned and counted in DroppedCount; discovery is best-effort
+	// and a contract re-appears on its next event.
+	DrainTimeout time.Duration
+
 	// Logger is used for warn/error lines from the worker. nil
 	// falls through to slog.Default().
 	Logger *slog.Logger
@@ -99,17 +112,25 @@ func NewAsyncSink(rec Recorder, opts AsyncSinkOptions) *AsyncSink {
 	if timeout <= 0 {
 		timeout = 2 * time.Second
 	}
+	drainTimeout := opts.DrainTimeout
+	if drainTimeout <= 0 {
+		drainTimeout = 10 * time.Second
+	}
 	logger := opts.Logger
 	if logger == nil {
 		logger = slog.Default()
 	}
+	drainCtx, drainCancel := context.WithCancel(context.Background()) //nolint:gosec // G118 false positive: drainCancel is stored and called from Stop
 	return &AsyncSink{
-		rec:     rec,
-		logger:  logger,
-		timeout: timeout,
-		ch:      make(chan Hit, opts.BufferSize),
-		done:    make(chan struct{}),
-		seen:    make(map[string]struct{}),
+		rec:          rec,
+		logger:       logger,
+		timeout:      timeout,
+		drainTimeout: drainTimeout,
+		drainCtx:     drainCtx,
+		drainCancel:  drainCancel,
+		ch:           make(chan Hit, opts.BufferSize),
+		done:         make(chan struct{}),
+		seen:         make(map[string]struct{}),
 	}
 }
 
@@ -169,10 +190,15 @@ func (s *AsyncSink) Push(hit Hit) {
 }
 
 // Stop closes the input channel and waits for the worker to finish
-// draining. Pending records that fit within the worker's per-record
-// timeout are flushed; any that error are logged. Idempotent.
+// draining, for at most DrainTimeout: the indexer's systemd stop
+// timeout is sized from that bound (pipeline.IndexerStopTimeout), so an
+// unbounded drain would be SIGKILLed along with every sink draining
+// after it. Idempotent.
 func (s *AsyncSink) Stop() {
 	s.stopOnce.Do(func() {
+		timer := time.AfterFunc(s.drainTimeout, s.drainCancel)
+		defer timer.Stop()
+		defer s.drainCancel()
 		// Mark stopped BEFORE closing so a concurrent Push can never
 		// reach the send — see [AsyncSink.Push].
 		s.mu.Lock()
@@ -225,8 +251,22 @@ func (s *AsyncSink) run() {
 	// first and done still closes: a contained panic must not leave Stop
 	// blocked forever on a worker that is already gone.
 	defer worker.Recover(s.logger, "discovery-async-sink-drain")
+	abandoned := 0
+	defer func() {
+		if abandoned > 0 {
+			s.logger.Warn("discovery: drain deadline reached — buffered hits abandoned",
+				"abandoned", abandoned, "drain_timeout", s.drainTimeout.String())
+		}
+	}()
 	for hit := range s.ch {
-		ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+		if s.drainCtx.Err() != nil {
+			s.mu.Lock()
+			s.dropped++
+			s.mu.Unlock()
+			abandoned++
+			continue
+		}
+		ctx, cancel := context.WithTimeout(s.drainCtx, s.timeout)
 		if err := s.rec.Record(ctx, hit); err != nil {
 			// Count the write failure (audit-2026-07-16 C4-3) — previously
 			// this was a log-only path, so a recorder outage silently

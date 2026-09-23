@@ -397,3 +397,47 @@ func TestAsyncSink_PushRacingStopDoesNotPanic(t *testing.T) {
 		wg.Wait() // a panic in any goroutine fails the test process
 	}
 }
+
+// stallRecorder models a Postgres stall: every Record blocks until its
+// ctx ends.
+type stallRecorder struct{ calls atomic.Int64 }
+
+func (r *stallRecorder) Record(ctx context.Context, _ discovery.Hit) error {
+	r.calls.Add(1)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (r *stallRecorder) IsKnown(_ context.Context, _ string) (bool, error) { return false, nil }
+
+// TestAsyncSink_StopBoundedByDrainTimeout — #1018. Stop used to drain
+// every buffered hit at RecordTimeout each (1024 × 2s ≈ 34 min in
+// production) with no overall deadline, so under a Postgres stall it
+// outlived the indexer's systemd stop timeout and was SIGKILLed.
+func TestAsyncSink_StopBoundedByDrainTimeout(t *testing.T) {
+	const hits = 40
+	rec := &stallRecorder{}
+	s := discovery.NewAsyncSink(rec, discovery.AsyncSinkOptions{
+		BufferSize:    hits,
+		RecordTimeout: 500 * time.Millisecond,
+		DrainTimeout:  200 * time.Millisecond,
+	})
+	s.Start()
+	for i := 0; i < hits; i++ {
+		s.Push(discovery.Hit{ContractID: fmt.Sprintf("C%02d", i), EventType: "transfer"})
+	}
+
+	start := time.Now()
+	s.Stop()
+	elapsed := time.Since(start)
+
+	// Unbounded, this drain takes hits × RecordTimeout = 20s.
+	if elapsed > 3*time.Second {
+		t.Fatalf("Stop took %v; want it bounded by DrainTimeout (200ms), not hits × RecordTimeout", elapsed)
+	}
+	// Every hit is accounted for: attempted (and failed) or abandoned as dropped.
+	calls := uint64(rec.calls.Load())
+	if dropped := s.DroppedCount(); dropped == 0 || calls+dropped != hits {
+		t.Errorf("attempted %d + dropped %d != %d pushed (want abandoned hits counted as dropped)", calls, dropped, hits)
+	}
+}

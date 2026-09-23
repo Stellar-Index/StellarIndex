@@ -23,6 +23,11 @@ type LiveSinkOptions struct {
 	FlushInterval time.Duration
 	// WriteTimeout caps one flush (default 30s).
 	WriteTimeout time.Duration
+	// StopTimeout bounds the whole of [LiveSink.Stop] — the in-flight
+	// flush, the drain, the final flush and Close together (default
+	// WriteTimeout). Ledgers still unflushed when it expires are logged
+	// and left to ch-live-catchup.
+	StopTimeout time.Duration
 	// MaxBufferLedgers caps how many ledgers the underlying Sink holds in
 	// memory before it starts BOUNDED-DROPPING incoming extracts during a
 	// sustained ClickHouse outage (G12-01; default 4096). The channel
@@ -57,10 +62,16 @@ type LiveSinkOptions struct {
 // hole below it — so an unhealed drop stalls the projector at the hole rather
 // than silently losing the dropped ledger's events.
 type LiveSink struct {
-	sink    *Sink
-	logger  *slog.Logger
-	timeout time.Duration
-	flush   time.Duration
+	sink        *Sink
+	logger      *slog.Logger
+	timeout     time.Duration
+	stopTimeout time.Duration
+	flush       time.Duration
+
+	// base parents every CH operation; Stop cancels it when stopTimeout
+	// elapses, which is what makes the shutdown drain bounded.
+	base       context.Context
+	baseCancel context.CancelFunc
 
 	ch       chan LedgerExtract
 	stopOnce sync.Once
@@ -109,15 +120,29 @@ func NewLiveSink(ctx context.Context, addr string, opts LiveSinkOptions) (*LiveS
 	// G12-01: cap the underlying Sink's in-memory buffers so a sustained CH
 	// outage can't grow the heap unbounded on the shared r1 host.
 	sink.SetMaxBufferLedgers(opts.MaxBufferLedgers)
+	return newLiveSink(sink, logger, opts), nil
+}
+
+// newLiveSink wires a LiveSink around an already-open Sink. opts must
+// already carry NewLiveSink's defaults for BufferSize/FlushInterval/WriteTimeout.
+func newLiveSink(sink *Sink, logger *slog.Logger, opts LiveSinkOptions) *LiveSink {
+	stopTimeout := opts.StopTimeout
+	if stopTimeout <= 0 {
+		stopTimeout = opts.WriteTimeout
+	}
+	base, baseCancel := context.WithCancel(context.Background()) //nolint:gosec // G118 false positive: baseCancel is stored and called from Stop
 	return &LiveSink{
-		sink:     sink,
-		logger:   logger,
-		timeout:  opts.WriteTimeout,
-		flush:    opts.FlushInterval,
-		ch:       make(chan LedgerExtract, opts.BufferSize),
-		stopping: make(chan struct{}),
-		done:     make(chan struct{}),
-	}, nil
+		sink:        sink,
+		logger:      logger,
+		timeout:     opts.WriteTimeout,
+		stopTimeout: stopTimeout,
+		flush:       opts.FlushInterval,
+		base:        base,
+		baseCancel:  baseCancel,
+		ch:          make(chan LedgerExtract, opts.BufferSize),
+		stopping:    make(chan struct{}),
+		done:        make(chan struct{}),
+	}
 }
 
 // Start launches the drain worker. Call once.
@@ -165,7 +190,7 @@ func (l *LiveSink) run() {
 }
 
 func (l *LiveSink) add(ext LedgerExtract) {
-	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
+	ctx, cancel := context.WithTimeout(l.base, l.timeout)
 	defer cancel()
 	if err := l.sink.Add(ctx, ext); err != nil {
 		// G12-01: a full buffer is a bounded DROP (heals via ch-live-catchup),
@@ -188,7 +213,7 @@ func (l *LiveSink) add(ext LedgerExtract) {
 }
 
 func (l *LiveSink) doFlush() {
-	ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
+	ctx, cancel := context.WithTimeout(l.base, l.timeout)
 	defer cancel()
 	// Snapshot how many ledgers are about to be flushed so a success can
 	// credit `written` accurately (Flush clears the buffer on success).
@@ -201,15 +226,26 @@ func (l *LiveSink) doFlush() {
 	l.add64(&l.written, pending)
 }
 
-// Stop signals shutdown, drains the buffer + final flush, closes the CH conn.
-// Idempotent.
+// Stop signals shutdown, drains the buffer + final flush, closes the CH conn,
+// all within StopTimeout: the indexer's systemd stop timeout is sized from
+// that bound (pipeline.IndexerStopTimeout). Idempotent.
 func (l *LiveSink) Stop() {
 	l.stopOnce.Do(func() {
+		timer := time.AfterFunc(l.stopTimeout, l.baseCancel)
+		defer timer.Stop()
+		defer l.baseCancel()
 		close(l.stopping)
 		<-l.done
-		ctx, cancel := context.WithTimeout(context.Background(), l.timeout)
+		ctx, cancel := context.WithTimeout(l.base, l.timeout)
 		defer cancel()
-		_ = l.sink.Close(ctx)
+		// Close retries the flush, so a failure here means rows never
+		// reached the lake; ch-live-catchup re-derives them.
+		pending := l.sink.BufferedLedgers()
+		if err := l.sink.Close(ctx); err != nil {
+			l.bump(&l.errored)
+			l.logger.Warn("clickhouse live-sink: shutdown flush or close failed — unflushed ledgers left to ch-live-catchup",
+				"err", err, "unflushed_ledgers", pending, "stop_timeout", l.stopTimeout.String())
+		}
 	})
 }
 
