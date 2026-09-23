@@ -9,6 +9,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // Tip-surface tunables per ADR-0018.
@@ -106,7 +107,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 
 	snapshot, sources, err := s.computeTip(r.Context(), asset, quote, window)
 	if errors.Is(err, ErrPriceWithheld) {
-		writePriceWithheldProblemReason(w, r, asset, quote, priceWithheldReason(err))
+		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(err))
 		return
 	}
 	if errors.Is(err, ErrPriceNotFound) {
@@ -188,12 +189,12 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// Timing this out on the emit path would republish an
 	// attacker-authored rate the 2026-08-04 incident class made these
 	// gates for, so a slow gate correctly costs the emission instead.
-	if s.substance != nil && !s.substance.Allowed(ctx, asset, quote, "tip") {
-		return PriceSnapshot{}, nil, newPriceWithheld(PriceWithheldSubstance)
-	}
+	//
 	// Scam-issuer gate: same posture as the substance gate on this
 	// surface — a directory-scam-flagged issuer's live tip is still an
-	// aggregated price claim we decline to publish.
+	// aggregated price claim we decline to publish. Both are folded by
+	// [withheldBy], so a flagged issuer on a thin market is reported as
+	// flagged rather than as merely thin.
 	//
 	// Asked about BOTH legs, via [scamWithheld], because the withholding
 	// decision is a property of the MARKET rather than of whichever leg
@@ -204,8 +205,8 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// inverted, and it was served at 200, unauthenticated, live, off the
 	// flagged issuer's own trades, while `?asset=<FLAGGED>` 404'd
 	// (F002/K001). One call, both legs, folded inside pricingguard.
-	if scamWithheld(ctx, s.scam, asset, quote, "tip") {
-		return PriceSnapshot{}, nil, newPriceWithheld(PriceWithheldScamIssuer)
+	if w := withheldBy(ctx, s.substance, s.scam, asset, quote, "tip"); w != pricingguard.NotWithheld {
+		return PriceSnapshot{}, nil, PriceWithheldError(w)
 	}
 	// Which alias combinations the window merges, and which it holds back
 	// until every other read has missed, is [tipMergePairs].

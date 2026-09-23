@@ -87,7 +87,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 	// surface is the LAST place a substanceless price belongs: its
 	// consumers are oracle integrators.
 	if errors.Is(err, ErrPriceWithheld) {
-		writePriceWithheldProblem(w, r, asset, defaultPriceQuote)
+		writePriceWithheldProblem(w, r, asset, defaultPriceQuote, priceWithheldReason(err))
 		return
 	}
 	// viaFallback mirrors handlePrice: normalizeRawPriceSnapshot below
@@ -117,7 +117,7 @@ func (s *Server) handleOracleLastPrice(w http.ResponseWriter, r *http.Request) {
 		// different answers, and only the withheld problem names the raw
 		// surfaces where the data IS available.
 		if !ok && withheld {
-			writePriceWithheldProblem(w, r, asset, defaultPriceQuote)
+			writePriceWithheldProblem(w, r, asset, defaultPriceQuote, PriceWithheldUnattributed)
 			return
 		}
 		// F-1339 (G2-02): every fallback degradation is below the
@@ -245,7 +245,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 		// historical snapshot series is still an aggregated price
 		// claim per bucket.
 		if errors.Is(err, ErrPriceWithheld) {
-			writePriceWithheldProblem(w, r, asset, defaultPriceQuote)
+			writePriceWithheldProblem(w, r, asset, defaultPriceQuote, priceWithheldReason(err))
 			return
 		}
 		if handlerTimedOut(ctx, err) {
@@ -404,7 +404,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 	// Substance-gated pair: withheld beats the fallback chain — same
 	// rationale as handleOracleLastPrice above.
 	if errors.Is(err, ErrPriceWithheld) {
-		writePriceWithheldProblem(w, r, base, quote)
+		writePriceWithheldProblem(w, r, base, quote, priceWithheldReason(err))
 		return
 	}
 	// viaFallback mirrors handlePrice / handleOracleLastPrice: the M2
@@ -425,7 +425,7 @@ func (s *Server) handleOracleXLastPrice(w http.ResponseWriter, r *http.Request) 
 		snapshot, sources, triangulated, ok, withheld = s.priceFallback(ctx, base, quote)
 		// MSP-06, as above.
 		if !ok && withheld {
-			writePriceWithheldProblem(w, r, base, quote)
+			writePriceWithheldProblem(w, r, base, quote, PriceWithheldUnattributed)
 			return
 		}
 		// F-1339 (G2-02): fallback responses surface flags.stale=true

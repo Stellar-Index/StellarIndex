@@ -176,7 +176,7 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, ErrPriceWithheld) {
 		// Substance-gated pair: the stream cannot start — same verdict
 		// and problem type as the request endpoint.
-		writePriceWithheldProblem(w, r, asset, quote)
+		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(err))
 		return
 	}
 	if errors.Is(err, ErrPriceNotFound) {

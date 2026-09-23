@@ -3575,7 +3575,7 @@ func (g globalPriceReader) LatestVWAP(ctx context.Context, base, quote canonical
 	// degrade to "no data" here — the caller falls through to its
 	// aggregator tier, whose orchestrator applies its own min-USD-volume
 	// floor.
-	if priceWithheld(ctx, g.substance, g.scam, base, quote, "asset_headline") {
+	if priceWithheld(ctx, g.substance, g.scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
 		return "", time.Time{}, 0, nil, false, nil
 	}
 	// Same raw-CAGG serving-sanity guard as /v1/price
@@ -3624,7 +3624,7 @@ func (g globalPriceReader) LookupTriangulated(ctx context.Context, base, quote c
 	// it can be answered — tier 1, and the per-asset listing gate behind
 	// the on-chain fallback. Same split /v1/twap, /v1/vwap and
 	// /v1/price's cache-backed fallback chain make.
-	if priceWithheld(ctx, nil, g.scam, base, quote, "asset_headline") {
+	if priceWithheld(ctx, nil, g.scam, base, quote, "asset_headline") != pricingguard.NotWithheld {
 		return "", time.Time{}, false, nil
 	}
 	val, isTri, found, err := g.tri.LookupTriangulatedVWAP(ctx, base, quote, window)
@@ -3829,7 +3829,7 @@ const defaultVWAPFreshness = 15 * time.Minute
 // TestWithholdingGatesAreSpelledOnlyAtTheChokepoint fails if a future
 // call site spells either gate out again.
 //
-// The expression itself now lives in pricingguard.PriceWithheld: the
+// The expression itself now lives in pricingguard.PriceWithholding: the
 // aggregator's price-alert evaluator serves customer webhooks off the
 // same closed VWAP buckets and had NO copy of the scam half at all, so
 // one binary-local chokepoint was one chokepoint short (F002/K001).
@@ -3838,6 +3838,10 @@ const defaultVWAPFreshness = 15 * time.Minute
 //
 // Both gates are nil-receiver safe (nil == allow-everything), so an
 // operator who disabled [pricing_guard] keeps today's behaviour.
+//
+// It returns WHICH gate fired, and a reader seam hands that to
+// v1.PriceWithheldError so the response names the real cause: a
+// flagged issuer's market must not be described as merely thin.
 //
 // A seam that serves the price AS OF a past instant says so with
 // [asOfInstant], and the thin-market half is then measured over the
@@ -3852,15 +3856,15 @@ func priceWithheld(
 	base, quote canonical.Asset,
 	surface string,
 	opts ...withholdingOption,
-) bool {
+) pricingguard.Withholding {
 	var q withholdingQuery
 	for _, opt := range opts {
 		opt(&q)
 	}
 	if q.pointInTime {
-		return pricingguard.PriceWithheldAt(ctx, substance, scam, base, quote, q.at, surface)
+		return pricingguard.PriceWithholdingAt(ctx, substance, scam, base, quote, q.at, surface)
 	}
-	return pricingguard.PriceWithheld(ctx, substance, scam, base, quote, surface)
+	return pricingguard.PriceWithholding(ctx, substance, scam, base, quote, surface)
 }
 
 // withholdingQuery is what a seam may tell the chokepoint about the
@@ -3979,7 +3983,7 @@ func (g dexTVLValueGate) ValueWithheld(ctx context.Context, asset canonical.Asse
 		if asset.Equal(quote) {
 			continue // degenerate identity pair
 		}
-		if !priceWithheld(ctx, g.substance, g.scam, asset, quote, dexTVLGateSurface) {
+		if priceWithheld(ctx, g.substance, g.scam, asset, quote, dexTVLGateSurface) == pricingguard.NotWithheld {
 			return false
 		}
 	}
@@ -4075,8 +4079,8 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 		// whose entire history (baseline included) is attacker-authored
 		// (2026-08-04 valuation incident). ErrPriceWithheld deliberately
 		// bypasses the handler's fallback chain — see its doc comment.
-		if priceWithheld(ctx, r.substance, r.scam, asset, quote, "price_read") {
-			return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
+		if withheld := priceWithheld(ctx, r.substance, r.scam, asset, quote, "price_read"); withheld != pricingguard.NotWithheld {
+			return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(withheld)
 		}
 		served, lowConfidence, substituted := pricingguard.GuardServedVWAP1mConfidence(ctx, r.s, r.logger, pair, row)
 		// CS-017: the bucket closes at Bucket+1min; flag stale when that
@@ -4142,8 +4146,8 @@ func (r storePriceReader) LatestPrice(ctx context.Context, asset, quote canonica
 	// complaint — silently also published a directory-flagged issuer's
 	// last trade as its price, reversing a separate owner-level trust
 	// decision the operator never touched (wave-D MSP-07).
-	if priceWithheld(ctx, r.substance, r.scam, asset, quote, "price_read") {
-		return v1.PriceSnapshot{}, nil, false, v1.ErrPriceWithheld
+	if withheld := priceWithheld(ctx, r.substance, r.scam, asset, quote, "price_read"); withheld != pricingguard.NotWithheld {
+		return v1.PriceSnapshot{}, nil, false, v1.PriceWithheldError(withheld)
 	}
 	// decimals=7 matches Stellar's default stroop scale. A future
 	// revision reads per-asset decimals from internal/metadata.
@@ -4171,8 +4175,8 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	// Thin-market substance gate: a snapshot SERIES is an aggregated
 	// price claim per bucket, and the SEP-40 oracle surface is the last
 	// place a substanceless market's rate belongs.
-	if priceWithheld(ctx, r.substance, r.scam, asset, quote, "oracle") {
-		return nil, v1.ErrPriceWithheld
+	if withheld := priceWithheld(ctx, r.substance, r.scam, asset, quote, "oracle"); withheld != pricingguard.NotWithheld {
+		return nil, v1.PriceWithheldError(withheld)
 	}
 	out := make([]v1.PriceSnapshot, len(rows))
 	for i, row := range rows {
@@ -6032,8 +6036,8 @@ type storePriceAtReader struct {
 func (r storePriceAtReader) PriceAt(
 	ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration,
 ) (string, time.Time, int, error) {
-	if priceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "price_at", asOfInstant(ts)) {
-		return "", time.Time{}, 0, v1.ErrPriceWithheld
+	if withheld := priceWithheld(ctx, r.substance, r.scam, pair.Base, pair.Quote, "price_at", asOfInstant(ts)); withheld != pricingguard.NotWithheld {
+		return "", time.Time{}, 0, v1.PriceWithheldError(withheld)
 	}
 	row, err := r.s.ClosedVWAPAtOrBefore(ctx, pair, ts, maxStaleness)
 	if err != nil {

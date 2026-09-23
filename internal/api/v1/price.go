@@ -17,6 +17,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -159,6 +160,10 @@ const (
 	// (e.g. the USD leg an FX cross is composed from) was itself
 	// withheld, and the verdict propagated to the derived pair.
 	PriceWithheldUpstreamLeg PriceWithheldReason = "upstream_leg"
+	// PriceWithheldUnattributed: a withholding verdict that arrived
+	// without its cause (a folded bool, or a bare ErrPriceWithheld).
+	// Its wording claims neither cause.
+	PriceWithheldUnattributed PriceWithheldReason = "unattributed"
 )
 
 // withheldError pairs ErrPriceWithheld with the reason it fired for.
@@ -175,16 +180,40 @@ func newPriceWithheld(reason PriceWithheldReason) error {
 	return &withheldError{reason: reason}
 }
 
-// priceWithheldReason extracts the reason err carries, or "" when err
-// is the bare sentinel — e.g. a reader-backed gate wired outside this
-// package (PriceReader implementations) that has not adopted
-// newPriceWithheld yet.
+// PriceWithheldError is the ErrPriceWithheld a reader returns for a
+// pricingguard verdict, carrying which gate fired to the response.
+func PriceWithheldError(w pricingguard.Withholding) error {
+	return newPriceWithheld(withheldReasonFor(w))
+}
+
+func withheldReasonFor(w pricingguard.Withholding) PriceWithheldReason {
+	switch w {
+	case pricingguard.WithheldFlaggedIssuer:
+		return PriceWithheldScamIssuer
+	case pricingguard.WithheldThinMarket:
+		return PriceWithheldSubstance
+	case pricingguard.NotWithheld:
+	}
+	return PriceWithheldUnattributed
+}
+
+// withheldBy folds the server's two gate seams into one verdict, with
+// pricingguard's precedence: the substance gate is asked first (its
+// metric is unchanged), the scam gate always, and a flagged issuer wins.
+// Nil gates withhold nothing.
+func withheldBy(ctx context.Context, substance PriceSubstanceGate, scam PriceScamGate, asset, quote canonical.Asset, surface string) pricingguard.Withholding {
+	substanceAllowed := substance == nil || substance.Allowed(ctx, asset, quote, surface)
+	return pricingguard.WithholdingFor(substanceAllowed, scamWithheld(ctx, scam, asset, quote, surface))
+}
+
+// priceWithheldReason extracts the reason err carries, or
+// [PriceWithheldUnattributed] when err is the bare sentinel.
 func priceWithheldReason(err error) PriceWithheldReason {
 	var e *withheldError
 	if errors.As(err, &e) {
 		return e.reason
 	}
-	return ""
+	return PriceWithheldUnattributed
 }
 
 // PriceSubstanceGate is the serving-side thin-market gate seam.
@@ -261,45 +290,36 @@ func scamWithheld(ctx context.Context, gate PriceScamGate, base, quote canonical
 }
 
 // writePriceWithheldProblem is the single serializer for the withheld
-// verdict so every surface emits the identical problem type + wording.
-// Kept as the reason-less form so the several other v1 handlers that
-// call it (chart, oracle_sep40, price_stream, price_tip_stream, twap,
-// vwap) keep compiling and keep today's behaviour unchanged — widening
-// all of THEM to a reason is a separate, wider-blast-radius change.
-func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset) {
-	writePriceWithheldProblemReason(w, r, asset, quote, "")
-}
-
-// writePriceWithheldProblemReason is [writePriceWithheldProblem] with
-// the discriminator threaded through: the detail varies with reason so
-// integrators reading the body see the gate that actually fired rather
-// than one generic sentence for every cause (T683). reason == "" (a
-// reader-backed gate that has not adopted [newPriceWithheld] yet) keeps
-// the historical substance-gate wording, which was already the
-// majority case.
-func writePriceWithheldProblemReason(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, reason PriceWithheldReason) {
-	pair := asset.String() + " / " + quote.String()
-	const guidance = " — read the raw market via /v1/observations, /v1/ohlc or /v1/history and apply your own judgement"
-	// Default covers both PriceWithheldSubstance and "" (a reader-backed
-	// gate that has not adopted [newPriceWithheld] yet) — the historical
-	// substance-gate wording, which was already the majority case.
-	title := "Price withheld — market too thin to aggregate"
-	detail := "trades exist for " + pair +
-		" but trailing market activity is below the serve floor, so no aggregated price is published" + guidance
-	switch reason {
-	case PriceWithheldScamIssuer:
-		title = "Price withheld — issuer flagged"
-		detail = "a directory-flagged issuer is on one leg of " + pair +
-			", so no aggregated price is published" + guidance
-	case PriceWithheldUpstreamLeg:
-		title = "Price withheld — upstream leg withheld"
-		detail = "the price used to derive " + pair + " depends on a leg that is itself withheld" + guidance
-	case PriceWithheldSubstance, "":
-		// default wording set above.
-	}
+// verdict: one problem type (clients branch on it), wording chosen by
+// the gate that fired. Only the thin-market verdict points the reader
+// at the raw surfaces to judge the market themselves — a flagged
+// issuer's trades are not a price signal to recompute, and a verdict
+// whose cause is unknown or inherited may be exactly that.
+func writePriceWithheldProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, reason PriceWithheldReason) {
+	title, detail := priceWithheldWording(asset.String()+" / "+quote.String(), reason)
 	writeProblem(w, r,
 		"https://api.stellarindex.io/errors/price-withheld",
 		title, http.StatusNotFound, detail)
+}
+
+func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detail string) {
+	switch reason {
+	case PriceWithheldSubstance:
+		return "Price withheld — market too thin to aggregate",
+			"trades exist for " + pair +
+				" but trailing market activity is below the serve floor, so no aggregated price is published" +
+				" — read the raw market via /v1/observations, /v1/ohlc or /v1/history and apply your own judgement"
+	case PriceWithheldScamIssuer:
+		return "Price withheld — issuer flagged",
+			"a directory-flagged issuer is on one leg of " + pair +
+				", so no price is published for this market and its trades should not be used to derive one"
+	case PriceWithheldUpstreamLeg:
+		return "Price withheld — upstream leg withheld",
+			"the price used to derive " + pair + " depends on a leg that is itself withheld, so no price is published"
+	case PriceWithheldUnattributed:
+	}
+	return "Price withheld",
+		"a serving-side gate (thin market or flagged issuer) declined to publish a price for " + pair
 }
 
 // writeNoPriceProblem emits the correct 404 for an exhausted price
@@ -310,19 +330,16 @@ func writePriceWithheldProblemReason(w http.ResponseWriter, r *http.Request, ass
 // stablecoin-proxy leg's withheld verdict was swallowed by the same
 // bare `continue` that skips an inactive peg, so this path always said
 // "no price data" — "we have none" — when the truth could be "we have
-// one and decline to publish it" (wave-D MSP-06). The withheld body
-// names /v1/observations, /v1/ohlc and /v1/history, where the data IS
-// available; a not-found tells the customer to look nowhere.
+// one and decline to publish it" (wave-D MSP-06); a not-found tells the
+// customer there is nothing to look for.
 //
 // Extracted rather than inlined so handlePrice stays under the
 // gocognit ceiling.
 func writeNoPriceProblem(w http.ResponseWriter, r *http.Request, asset, quote canonical.Asset, withheld bool) {
 	if withheld {
-		// priceFallback's chain folds scam + upstream-leg withholding
-		// into one bool with no reason attached (a separate, simpler
-		// mechanism from the ErrPriceWithheld sites above) — reason
-		// unknown here, so this keeps the historical substance wording.
-		writePriceWithheldProblemReason(w, r, asset, quote, "")
+		// priceFallback folds its legs' verdicts into one bool, so the
+		// cause is unknown here.
+		writePriceWithheldProblem(w, r, asset, quote, PriceWithheldUnattributed)
 		return
 	}
 	writeProblem(w, r,
@@ -686,7 +703,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// the same substanceless market through a side door. Distinct 404
 	// type so integrators can branch (see ErrPriceWithheld).
 	if errors.Is(err, ErrPriceWithheld) {
-		writePriceWithheldProblemReason(w, r, asset, quote, priceWithheldReason(err))
+		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(err))
 		return
 	}
 	triangulated := false
@@ -3257,7 +3274,7 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 	// reads under alias spellings of the SAME market, so the requested
 	// pair is the right subject for the verdict.
 	if scamWithheld(r.Context(), s.scam, asset, quote, "price_read") {
-		writePriceWithheldProblemReason(w, r, asset, quote, PriceWithheldScamIssuer)
+		writePriceWithheldProblem(w, r, asset, quote, PriceWithheldScamIssuer)
 		return
 	}
 	for _, a := range assetAliases(asset) {

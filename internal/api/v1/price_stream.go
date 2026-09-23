@@ -7,6 +7,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
 
 // PriceStreamTopic returns the Hub topic key for closed-bucket events
@@ -116,16 +117,13 @@ const closedStreamGateBudget = tipStreamTickTimeout
 // pricingguard, never hand-written at a call site.
 //
 // Nil gates (operator disabled [pricing_guard]) withhold nothing.
-func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) bool {
+func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) pricingguard.Withholding {
 	if s.substance == nil && s.scam == nil {
-		return false
+		return pricingguard.NotWithheld
 	}
 	ctx, cancel := context.WithTimeout(ctx, closedStreamGateBudget)
 	defer cancel()
-	if s.substance != nil && !s.substance.Allowed(ctx, asset, quote, closedStreamGateSurface) {
-		return true
-	}
-	return scamWithheld(ctx, s.scam, asset, quote, closedStreamGateSurface)
+	return withheldBy(ctx, s.substance, s.scam, asset, quote, closedStreamGateSurface)
 }
 
 // forwardClosedStream bridges the Hub subscription onto the SSE writer
@@ -166,7 +164,7 @@ func (s *Server) forwardClosedStream(
 			if !open {
 				return
 			}
-			if s.closedStreamWithheld(ctx, asset, quote) {
+			if s.closedStreamWithheld(ctx, asset, quote) != pricingguard.NotWithheld {
 				continue
 			}
 			select {
@@ -265,8 +263,8 @@ func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 	// Withholding pre-flight, while a non-200 status can still be set:
 	// once the SSE headers go out it is too late to say 404. Same verdict
 	// and same problem type as /v1/price and /v1/price/tip/stream.
-	if s.closedStreamWithheld(r.Context(), asset, quote) {
-		writePriceWithheldProblem(w, r, asset, quote)
+	if withheld := s.closedStreamWithheld(r.Context(), asset, quote); withheld != pricingguard.NotWithheld {
+		writePriceWithheldProblem(w, r, asset, quote, withheldReasonFor(withheld))
 		return
 	}
 

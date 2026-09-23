@@ -213,7 +213,7 @@ func (s *Server) seriesWithheldForScam(w http.ResponseWriter, r *http.Request, p
 	if !scamWithheld(r.Context(), s.scam, pair.Base, pair.Quote, surface) {
 		return false
 	}
-	writePriceWithheldProblem(w, r, pair.Base, pair.Quote)
+	writePriceWithheldProblem(w, r, pair.Base, pair.Quote, PriceWithheldScamIssuer)
 	return true
 }
 
