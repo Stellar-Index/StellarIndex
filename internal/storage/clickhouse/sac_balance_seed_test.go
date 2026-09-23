@@ -219,10 +219,38 @@ func TestSACBalanceSeedFromRow_WrongContractSkipped(t *testing.T) {
 	}
 }
 
-// TestSACBalanceSeedFromRow_RemovedSkipped — a removed current-state row
-// (holder's balance entry deleted) is skipped: it holds nothing.
-func TestSACBalanceSeedFromRow_RemovedSkipped(t *testing.T) {
+// TestSACBalanceSeedFromRow_RemovedEmitsTombstone — a removed current-state
+// row (holder's balance entry deleted) is emitted as a retraction
+// (IsRemoval=true, Balance=0), not silently skipped: skipping it would leave
+// any prior served-tier observation for that holder stale forever.
+func TestSACBalanceSeedFromRow_RemovedEmitsTombstone(t *testing.T) {
 	contract := mustContractScAddr(t, seedSAC)
+	key := seedBalanceKey(t, seedHolder)
+	keyXDR := mustKeyXDR(t, contract, key)
+
+	seed, matched, err := sacBalanceSeedFromRow(keyXDR, "", "removed", seedLedger, time.Now().UTC(), seedWatched())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !matched {
+		t.Fatal("matched=false for a removed watched Balance entry; want a tombstone")
+	}
+	if !seed.IsRemoval {
+		t.Error("IsRemoval=false for a removed entry; want true")
+	}
+	if seed.Balance == nil || seed.Balance.Sign() != 0 {
+		t.Errorf("Balance=%v for a removed entry; want 0", seed.Balance)
+	}
+	if seed.Holder != seedHolder {
+		t.Errorf("Holder=%q want %q (a tombstone must still identify who to retract)", seed.Holder, seedHolder)
+	}
+}
+
+// TestSACBalanceSeedFromRow_RemovedUnwatchedSkipped — a removed entry whose
+// key belongs to a contract outside the watched set is still just a skip:
+// there is nothing watched to retract.
+func TestSACBalanceSeedFromRow_RemovedUnwatchedSkipped(t *testing.T) {
+	contract := mustContractScAddr(t, otherSAC) // not in seedWatched()
 	key := seedBalanceKey(t, seedHolder)
 	keyXDR := mustKeyXDR(t, contract, key)
 
@@ -231,7 +259,7 @@ func TestSACBalanceSeedFromRow_RemovedSkipped(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if matched {
-		t.Error("matched=true for a removed entry; want skip")
+		t.Error("matched=true for a removed entry on an unwatched contract; want skip")
 	}
 }
 
@@ -370,8 +398,10 @@ func TestSACSeedReducer_LatestLedgerWins(t *testing.T) {
 // TestSACSeedReducer_SameLedgerRemovalWins is the C2-4 case, now on the Go
 // side: one key changed TWICE in ONE ledger — live at the lower
 // intra_ledger_seq, removed at the higher. The removal is the genuine latest
-// state, so nothing may be emitted. Getting this backwards resurrects a
-// deleted balance into the SAC supply seed (the exact 2026-07-16 finding).
+// state, so the emitted seed must be a retraction (IsRemoval=true,
+// Balance=0), never the stale live balance. Getting this backwards
+// resurrects a deleted balance into the SAC supply seed (the exact
+// 2026-07-16 finding).
 func TestSACSeedReducer_SameLedgerRemovalWins(t *testing.T) {
 	keyXDR := seedKeyFor(t)
 	ct := time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -386,8 +416,12 @@ func TestSACSeedReducer_SameLedgerRemovalWins(t *testing.T) {
 	if err := r.offer(keyXDR, seedEntryFor(t, 100_000_000, ledger), "updated", ct, seedOrd(ledger, 41, "aa", 0, 1)); err != nil {
 		t.Fatalf("offer live: %v", err)
 	}
-	if got := collectSeeds(t, r); len(got) != 0 {
-		t.Errorf("emitted %d seed(s) for a key whose latest same-ledger change is 'removed' — the deleted balance was RESURRECTED: %+v", len(got), got)
+	got := collectSeeds(t, r)
+	if len(got) != 1 {
+		t.Fatalf("emitted %d seed(s), want exactly 1 retraction: %+v", len(got), got)
+	}
+	if !got[0].IsRemoval || got[0].Balance.Sign() != 0 {
+		t.Errorf("emitted %+v — the deleted balance was RESURRECTED instead of retracted", got[0])
 	}
 }
 
@@ -406,8 +440,12 @@ func TestSACSeedReducer_SameLedgerRemovalWinsOnChangeIndex(t *testing.T) {
 	if err := r.offer(keyXDR, "", "removed", ct, seedOrd(ledger, 0, "aa", 0, 2)); err != nil {
 		t.Fatalf("offer removal: %v", err)
 	}
-	if got := collectSeeds(t, r); len(got) != 0 {
-		t.Errorf("emitted %d seed(s); the change_index=2 removal is the latest change: %+v", len(got), got)
+	got := collectSeeds(t, r)
+	if len(got) != 1 {
+		t.Fatalf("emitted %d seed(s), want exactly 1 retraction: %+v", len(got), got)
+	}
+	if !got[0].IsRemoval || got[0].Balance.Sign() != 0 {
+		t.Errorf("emitted %+v; the change_index=2 removal is the latest change and must retract, not resurrect", got[0])
 	}
 }
 

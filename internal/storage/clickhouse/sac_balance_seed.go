@@ -1,7 +1,9 @@
 package clickhouse
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -46,9 +48,15 @@ type SACBalanceSeed struct {
 	ContractID string    // SAC-wrapper contract C-strkey
 	AssetKey   string    // operator-mapped classic asset_key (CODE:ISSUER)
 	Holder     string    // balance owner strkey (G… / C… / …)
-	Balance    *big.Int  // current balance, stroops (i128 — never truncated, ADR-0003)
-	LedgerSeq  uint32    // the current-state row's ledger (the entry's last-modified ledger)
+	Balance    *big.Int  // current balance, stroops (i128 — never truncated, ADR-0003); zero when IsRemoval
+	LedgerSeq  uint32    // the entry's last-modified ledger; for a tombstone, the removal or archival ledger
 	CloseTime  time.Time // close time of that ledger (UTC)
+
+	// IsRemoval marks a tombstone: the Balance entry left live state, either
+	// removed (at the removal ledger) or TTL-archived (at liveUntil+1). Same
+	// meaning as the live observer's Observation.IsRemoval, so a served row
+	// retracts identically whichever path wrote it.
+	IsRemoval bool
 
 	// keyXDR is the row's base64 LedgerKey, carried so the seed's Soroban
 	// TTL liveness can be resolved before emission. Unexported: it is
@@ -83,12 +91,13 @@ type SACBalanceSeed struct {
 // non-watched contracts and non-Balance keys before the value-bearing
 // entry_xdr is decoded at all.
 //
-// Removed entries (change_type='removed') are skipped — a deleted
-// Balance entry holds nothing. Matches the account-seed reader's
-// posture: a corrupt XDR on a WATCHED Balance entry is a hard error
-// (the caller is about to persist into the served tier; silently
-// dropping it would masquerade as "holder holds nothing" — the exact
-// under-count this seed exists to fix).
+// Removed and TTL-archived watched Balance entries are emitted as tombstones
+// (IsRemoval=true, Balance=0), not skipped, so they retract any prior
+// served-tier observation for that holder. Matches the account-seed reader's
+// posture: a corrupt XDR on a WATCHED Balance entry is a hard error (the
+// caller is about to persist into the served tier; silently dropping it would
+// masquerade as "holder holds nothing" — the exact under-count this seed
+// exists to fix).
 func StreamSACBalanceSeeds(ctx context.Context, addr string, watched map[string]string, fn func(SACBalanceSeed) error) error {
 	if len(watched) == 0 {
 		return errors.New("clickhouse: StreamSACBalanceSeeds: empty watched SAC-wrapper set")
@@ -179,8 +188,8 @@ func streamCurrentStateSeeds(
 	return flush()
 }
 
-// emitLiveSeeds resolves each buffered seed's Soroban liveness and passes only
-// the live ones to fn.
+// emitLiveSeeds resolves each buffered seed's Soroban liveness and passes it to
+// fn, retracting the archived ones.
 //
 // Soroban archives a contract_data entry when its TTL lapses, but
 // ledger_entries_current keeps the archived value forever — so "present in
@@ -188,8 +197,10 @@ func streamCurrentStateSeeds(
 // value writes a balance that left the ledger years ago; that is the whole of
 // PHO's +157% vs Horizon (2026-07-28).
 //
-// Fails OPEN, exactly like the full-history path: only a positively-resolved,
-// lapsed TTL drops a seed. See [ClassifyTTLLiveness].
+// An archived key is emitted as a tombstone at its archival ledger rather than
+// dropped: a served row written while it was live (an earlier seed pass, or the
+// live observer before a pre-eviction archival) would otherwise stay the
+// holder's latest observation forever. Fails OPEN — see [resolveSACArchivals].
 func emitLiveSeeds(
 	ctx context.Context,
 	conn driver.Conn,
@@ -197,21 +208,124 @@ func emitLiveSeeds(
 	asOfLedger uint32,
 	fn func(SACBalanceSeed) error,
 ) error {
-	keys := make([]string, 0, len(seeds))
+	lastWrite := make(map[string]uint32, len(seeds))
 	for _, s := range seeds {
-		keys = append(keys, s.keyXDR)
+		if !s.IsRemoval {
+			lastWrite[s.keyXDR] = s.LedgerSeq
+		}
 	}
-	liveness, err := ClassifyTTLLiveness(ctx, conn, keys, asOfLedger)
+	archivals, err := resolveSACArchivals(ctx, conn, lastWrite, asOfLedger)
 	if err != nil {
 		return err
 	}
 	for _, s := range seeds {
-		if liveness[s.keyXDR] == TTLArchived {
-			continue
+		if a, archived := archivals[s.keyXDR]; archived {
+			s.IsRemoval = true
+			s.Balance = big.NewInt(0)
+			s.LedgerSeq = a.ledger
+			s.CloseTime = a.closeTime.UTC()
 		}
 		if err := fn(s); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// sacArchival is where an archived Balance entry left live ledger state: the
+// ledger after its liveUntilLedgerSeq, and that ledger's close time.
+type sacArchival struct {
+	ledger    uint32
+	closeTime time.Time
+}
+
+// resolveSACArchivals returns, for each key of lastWrite (key_xdr → ledger of
+// the entry's latest write) whose Soroban TTL lapsed before asOfLedger, the
+// ledger at which it was archived.
+//
+// The tombstone belongs at the ARCHIVAL ledger, never at the last write: the
+// seed is written at timescale.SeedIntraLedgerSeq, so a tombstone at the
+// last-write ledger would overwrite the genuine observation there and zero the
+// holder across [lastWrite, archival) in every historical read.
+//
+// Fails open like [ClassifyTTLLiveness]. A live_until below the entry's own
+// last write cannot be true (a write needs a live entry), so it is stale TTL
+// data rather than proof of archival and the key is left live.
+func resolveSACArchivals(ctx context.Context, conn driver.Conn, lastWrite map[string]uint32, asOfLedger uint32) (map[string]sacArchival, error) {
+	out := make(map[string]sacArchival)
+	if len(lastWrite) == 0 {
+		return out, nil
+	}
+	keys := make([]string, 0, len(lastWrite))
+	for k := range lastWrite {
+		keys = append(keys, k)
+	}
+	liveUntil, err := resolveTTLLiveUntil(ctx, conn, keys)
+	if err != nil {
+		return nil, err
+	}
+	archivedAt := make(map[string]uint32)
+	ledgers := make([]uint32, 0)
+	for k, lu := range liveUntil {
+		if ttlVerdict(lu, asOfLedger) != TTLArchived || lu < lastWrite[k] {
+			continue
+		}
+		archivedAt[k] = lu + 1 // lu < asOfLedger, so no overflow
+		ledgers = append(ledgers, lu+1)
+	}
+	closeTimes, err := ledgerCloseTimes(ctx, conn, ledgers)
+	if err != nil {
+		return nil, err
+	}
+	for k, at := range archivedAt {
+		ct, ok := closeTimes[at]
+		if !ok {
+			// Archival ledgers lie below the lake tip, which is contiguous
+			// (ADR-0034); a missing row is a lake hole, and inventing an
+			// observed_at for the tombstone would be worse than stopping.
+			return nil, fmt.Errorf("clickhouse: sac seed: archival ledger %d has no stellar.ledgers row", at)
+		}
+		out[k] = sacArchival{ledger: at, closeTime: ct}
+	}
+	return out, nil
+}
+
+// ledgerCloseTimes reads the close time of each ledger in seqs from
+// stellar.ledgers in [ttlLivenessBatchSize] chunks. Absent ledgers are absent
+// from the result.
+func ledgerCloseTimes(ctx context.Context, conn driver.Conn, seqs []uint32) (map[uint32]time.Time, error) {
+	out := make(map[uint32]time.Time, len(seqs))
+	for start := 0; start < len(seqs); start += ttlLivenessBatchSize {
+		end := min(start+ttlLivenessBatchSize, len(seqs))
+		if err := ledgerCloseTimesBatch(ctx, conn, seqs[start:end], out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+func ledgerCloseTimesBatch(ctx context.Context, conn driver.Conn, seqs []uint32, out map[uint32]time.Time) error {
+	const q = `SELECT ledger_seq, any(close_time)
+		FROM stellar.ledgers
+		WHERE ledger_seq IN (?)
+		GROUP BY ledger_seq`
+	rows, err := conn.Query(ctx, q, seqs)
+	if err != nil {
+		return fmt.Errorf("clickhouse: ledger close times: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var (
+			seq uint32
+			ct  time.Time
+		)
+		if err := rows.Scan(&seq, &ct); err != nil {
+			return fmt.Errorf("clickhouse: ledger close times scan: %w", err)
+		}
+		out[seq] = ct
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("clickhouse: ledger close times stream: %w", err)
 	}
 	return nil
 }
@@ -342,13 +456,13 @@ func StreamSACBalanceSeedsFullHistory(ctx context.Context, addr string, watched 
 	}
 	// Liveness is judged at the lake's own tip: the seed reconstructs CURRENT
 	// state, so an entry archived before that tip is not part of it.
-	dropped, err := red.dropArchived(ctx, conn, maxLedger)
+	retracted, err := red.retractArchived(ctx, conn, maxLedger)
 	if err != nil {
 		return err
 	}
-	if dropped > 0 {
-		slog.InfoContext(ctx, "sac seed: dropped archived contract_data entries",
-			"dropped", dropped, "kept", len(red.best), "as_of_ledger", maxLedger)
+	if retracted > 0 {
+		slog.InfoContext(ctx, "sac seed: retracted archived contract_data entries",
+			"retracted", retracted, "distinct_keys", len(red.best), "as_of_ledger", maxLedger)
 	}
 	return red.emit(fn)
 }
@@ -668,7 +782,7 @@ func newSACSeedReducer(watched map[string]string) *sacSeedReducer {
 // on change_type before decoding anything because the server had already picked
 // the single global winner per key; here a removal seen in window N must still
 // suppress a live balance seen in window N-1, so removals are tracked like any
-// other change and dropped at emit time.
+// other change and turned into a tombstone (IsRemoval=true) at emit time.
 func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime time.Time, ord lakeEntryChangeOrder) error {
 	if prev, seen := r.best[keyXDR]; seen {
 		if !ord.after(prev.order) {
@@ -697,9 +811,10 @@ func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime ti
 	return nil
 }
 
-// dropArchived removes keys whose Soroban entry has been ARCHIVED (its TTL
-// lapsed at or before asOfLedger) from the reduction, returning how many it
-// dropped. Call it after the window walk and before [sacSeedReducer.emit].
+// retractArchived replaces the winner of every key whose Soroban entry has
+// been ARCHIVED (its TTL lapsed before asOfLedger) with a removal at the
+// archival ledger, returning how many it retracted. Call it after the window
+// walk and before [sacSeedReducer.emit].
 //
 // Without this the seed reconstructs "the newest contract_data row for this
 // key" and calls it current state — but the lake keeps an archived entry's
@@ -708,34 +823,32 @@ func (r *sacSeedReducer) offer(keyXDR, entryXDR, changeType string, closeTime ti
 // +156.9% against Horizon, entirely from 39 seeded holders archived since
 // 2024-11/2025-03, while the live observer's rows matched Horizon to 0.009%.
 //
-// Only a positively-resolved, lapsed TTL drops a key — see
-// [ClassifyTTLLiveness], which fails open. A key whose liveness cannot be
-// established is KEPT, because the seed's legitimate purpose is recovering
-// dormant-but-live balances the live observer never saw (AQUA's), and
-// over-dropping would silently understate supply.
-func (r *sacSeedReducer) dropArchived(ctx context.Context, conn driver.Conn, asOfLedger uint32) (int, error) {
-	keys := make([]string, 0, len(r.best))
+// Retracting rather than deleting also clears a balance an earlier seed pass
+// (or the live observer, before a pre-eviction archival) already served; the
+// tombstone sits at the archival ledger so history before it is untouched.
+// Only a positively-resolved, lapsed TTL retracts a key — see
+// [resolveSACArchivals]; an unresolved key is kept, because the seed exists to
+// recover dormant-but-live balances (AQUA's) and over-retracting would
+// silently understate supply.
+func (r *sacSeedReducer) retractArchived(ctx context.Context, conn driver.Conn, asOfLedger uint32) (int, error) {
+	lastWrite := make(map[string]uint32, len(r.best))
 	for k, w := range r.best {
-		if w.changeType == "removed" {
-			continue // already suppressed at emit; no TTL to resolve
+		if w.changeType != "removed" {
+			lastWrite[k] = w.order.ledgerSeq
 		}
-		keys = append(keys, k)
 	}
-	if len(keys) == 0 {
-		return 0, nil
-	}
-	liveness, err := ClassifyTTLLiveness(ctx, conn, keys, asOfLedger)
+	archivals, err := resolveSACArchivals(ctx, conn, lastWrite, asOfLedger)
 	if err != nil {
 		return 0, err
 	}
-	dropped := 0
-	for k, verdict := range liveness {
-		if verdict == TTLArchived {
-			delete(r.best, k)
-			dropped++
+	for k, a := range archivals {
+		r.best[k] = sacSeedWinner{
+			order:      lakeEntryChangeOrder{ledgerSeq: a.ledger},
+			changeType: "removed",
+			closeTime:  a.closeTime,
 		}
 	}
-	return dropped, nil
+	return len(archivals), nil
 }
 
 // emit decodes each key's final winner and hands the survivors to fn, in
@@ -788,26 +901,51 @@ func sacWatchedBalanceKey(keyXDR string, watched map[string]string) (bool, error
 	return scval.IsSEP41BalanceKey(lk.ContractData.Key), nil
 }
 
+// watchedKeyDecodeErr classifies a current-state key_xdr that failed to
+// decode. The scan is unscoped, so the key is attributed with the same raw
+// byte match the full-history SQL applies before any row reaches Go
+// ([sacWatchedContractNeedles]): only a key carrying a WATCHED contract id is
+// lake corruption worth failing the seed for. Any other undecodable key is
+// skipped like any other non-watched row, so one bad row elsewhere in the
+// network cannot abort the seed.
+func watchedKeyDecodeErr(keyXDR string, watched map[string]string, decodeErr error) error {
+	raw, err := base64.StdEncoding.DecodeString(keyXDR)
+	if err != nil {
+		return nil
+	}
+	for strk := range watched {
+		id, err := strkey.Decode(strkey.VersionByteContract, strk)
+		if err == nil && bytes.Contains(raw, id) {
+			return fmt.Errorf("clickhouse: decode contract_data key_xdr (watched contract %s): %w", strk, decodeErr)
+		}
+	}
+	return nil
+}
+
 // sacBalanceSeedFromRow decodes one ledger_entries_current contract_data
 // row into a SACBalanceSeed. Split from the query for testability
 // (mirrors accountSeedFromRow).
 //
 // Returns matched=false (no error) for rows the seed intentionally
-// skips: a removed entry, a non-Balance contract-storage key, or a
-// Balance entry belonging to a contract outside the watched set. Returns
-// an error only for a WATCHED Balance entry whose key/value fails to
-// decode — that is real lake corruption worth failing the seed for.
+// skips: a non-Balance contract-storage key, or any key (decodable or not)
+// belonging to a contract outside the watched set. Returns an error only for
+// a WATCHED contract's live key, or a WATCHED Balance entry's value, that
+// fails to decode — that is real lake corruption worth failing the seed for.
+//
+// A removed entry on a WATCHED Balance key is a tombstone (IsRemoval=true,
+// Balance=0) at the removal ledger, so the served tier retracts the holder
+// instead of keeping its last nonzero observation.
 func sacBalanceSeedFromRow(keyXDR, entryXDR, changeType string, ledgerSeq uint32, closeTime time.Time, watched map[string]string) (SACBalanceSeed, bool, error) {
-	if changeType == "removed" {
-		return SACBalanceSeed{}, false, nil
-	}
-
 	// Decode the LedgerKey first (cheap): it carries the contract id +
 	// the storage key, enough to reject non-watched contracts and
 	// non-Balance keys before touching the value-bearing entry_xdr.
 	var lk xdr.LedgerKey
 	if err := xdr.SafeUnmarshalBase64(keyXDR, &lk); err != nil {
-		return SACBalanceSeed{}, false, fmt.Errorf("clickhouse: decode contract_data key_xdr: %w", err)
+		if changeType == "removed" {
+			// Same as the full-history reducer's offer: no holder to retract.
+			return SACBalanceSeed{}, false, nil
+		}
+		return SACBalanceSeed{}, false, watchedKeyDecodeErr(keyXDR, watched, err)
 	}
 	if lk.Type != xdr.LedgerEntryTypeContractData || lk.ContractData == nil {
 		return SACBalanceSeed{}, false, nil // defensive: SQL already scopes to contract_data
@@ -826,6 +964,18 @@ func sacBalanceSeedFromRow(keyXDR, entryXDR, changeType string, ledgerSeq uint32
 	holder, err := scval.HolderFromBalanceKey(lk.ContractData.Key)
 	if err != nil {
 		return SACBalanceSeed{}, false, fmt.Errorf("clickhouse: sac balance holder (contract %s ledger %d): %w", contractID, ledgerSeq, err)
+	}
+
+	if changeType == "removed" {
+		return SACBalanceSeed{
+			ContractID: contractID,
+			AssetKey:   assetKey,
+			Holder:     holder,
+			Balance:    big.NewInt(0),
+			LedgerSeq:  ledgerSeq,
+			CloseTime:  closeTime.UTC(),
+			IsRemoval:  true,
+		}, true, nil
 	}
 
 	// The amount lives only in entry_xdr (the LedgerKey has no Val). A

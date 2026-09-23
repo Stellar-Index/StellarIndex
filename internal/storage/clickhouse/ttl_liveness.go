@@ -132,7 +132,35 @@ const (
 // 48,505 seeded holders), far past what one IN list should carry, so the work
 // is split into [ttlLivenessBatchSize] chunks.
 func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string, asOfLedger uint32) (map[string]TTLLiveness, error) {
+	liveUntil, err := resolveTTLLiveUntil(ctx, conn, keyXDRs)
+	if err != nil {
+		return nil, err
+	}
 	out := make(map[string]TTLLiveness, len(keyXDRs))
+	for _, k := range keyXDRs {
+		out[k] = ttlVerdict(liveUntil[k], asOfLedger)
+	}
+	return out, nil
+}
+
+// ttlVerdict classifies one resolved liveUntilLedgerSeq against asOfLedger. A
+// zero (absent, or a literal stored 0) proves nothing: fail-open says UNKNOWN.
+func ttlVerdict(liveUntil, asOfLedger uint32) TTLLiveness {
+	switch {
+	case liveUntil == 0:
+		return TTLUnknown
+	case liveUntil < asOfLedger:
+		return TTLArchived
+	default:
+		return TTLLive
+	}
+}
+
+// resolveTTLLiveUntil returns the latest parsed liveUntilLedgerSeq for each
+// base64 LedgerKey in keyXDRs that has a nonzero TTL row. Keys with no row, a
+// zero row, or an undecodable key are absent from the result.
+func resolveTTLLiveUntil(ctx context.Context, conn driver.Conn, keyXDRs []string) (map[string]uint32, error) {
+	out := make(map[string]uint32, len(keyXDRs))
 	if len(keyXDRs) == 0 {
 		return out, nil
 	}
@@ -144,7 +172,7 @@ func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string
 		if end > len(keyXDRs) {
 			end = len(keyXDRs)
 		}
-		if err := classifyTTLLivenessBatch(ctx, conn, keyXDRs[start:end], asOfLedger, out); err != nil {
+		if err := resolveTTLLiveUntilBatch(ctx, conn, keyXDRs[start:end], out); err != nil {
 			return nil, err
 		}
 	}
@@ -190,19 +218,18 @@ func ttlLivenessBatchQuery(placeholders []string) string {
 	)
 }
 
-// classifyTTLLivenessBatch resolves one bounded chunk of keys into out.
-func classifyTTLLivenessBatch(ctx context.Context, conn driver.Conn, keyXDRs []string, asOfLedger uint32, out map[string]TTLLiveness) error {
+// resolveTTLLiveUntilBatch resolves one bounded chunk of keys into out.
+func resolveTTLLiveUntilBatch(ctx context.Context, conn driver.Conn, keyXDRs []string, out map[string]uint32) error {
 	// hash -> the key(s) it governs. Distinct keys cannot collide under
 	// sha256, but the same key may legitimately appear twice in the input.
 	byHash := make(map[string][]string, len(keyXDRs))
 	args := make([]any, 0, len(keyXDRs))
 	placeholders := make([]string, 0, len(keyXDRs))
 	for _, k := range keyXDRs {
-		out[k] = TTLUnknown
 		h, err := TTLKeyHash(k)
 		if err != nil {
 			// An undecodable key cannot be proven archived. Leave it
-			// TTLUnknown so the caller keeps it.
+			// unresolved (TTLUnknown) so the caller keeps it.
 			continue
 		}
 		if _, seen := byHash[h]; !seen {
@@ -235,12 +262,8 @@ func classifyTTLLivenessBatch(ctx context.Context, conn driver.Conn, keyXDRs []s
 		if liveUntil == 0 {
 			continue
 		}
-		verdict := TTLLive
-		if liveUntil < asOfLedger {
-			verdict = TTLArchived
-		}
 		for _, k := range byHash[strings.ToLower(keyHash)] {
-			out[k] = verdict
+			out[k] = liveUntil
 		}
 	}
 	if err := rows.Err(); err != nil {
