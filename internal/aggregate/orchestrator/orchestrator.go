@@ -6,9 +6,11 @@
 //
 // Scope:
 //
-//   - Rolling-window VWAP per pair. Three windows are the built-in
-//     default (5m, 1h, 24h via [DefaultWindows]); operators
-//     override via `[aggregate].windows` in TOML.
+//   - VWAP per pair over each window ending at the last closed minute
+//     (ADR-0015), so the window advances one closed bucket at a time.
+//     Three windows are the built-in default (5m, 1h, 24h via
+//     [DefaultWindows]); operators override via `[aggregate].windows`
+//     in TOML.
 //   - Class-filtered single-tier aggregation by default
 //     (ClassExchange-only); operators flip
 //     `[aggregate].disable_class_filter` to opt out and pull
@@ -57,6 +59,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/confidence"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -666,6 +669,37 @@ var DefaultWindows = []time.Duration{
 	24 * time.Hour,
 }
 
+// closedBucket is the aggregator's closed-bucket granularity: every
+// window ends at the last closed boundary of this size (ADR-0015 — serve
+// the last closed bucket, never an in-progress one). One minute is the
+// served tier's closed bucket, the SSE observed_at cadence, and the return
+// granularity ADR-0019's freeze baselines are calibrated at, so successive
+// scored buckets are one baseline step apart for every window size.
+const closedBucket = time.Minute
+
+// decidedBucket is the outcome of the first evaluation of one closed
+// bucket for one (pair, window); see [Orchestrator.refreshPairWindow].
+type decidedBucket struct {
+	end time.Time
+	// published is nil when the bucket was held (frozen, empty, below
+	// the volume floor).
+	published *publishedBucket
+	// frozen records that the bucket was refused by a freeze, so a
+	// replaying tick keeps the leg out of triangulation (MNY-22).
+	frozen       bool
+	compositeRef *compositeReference
+}
+
+// publishedBucket is what a published closed bucket wrote, kept so a
+// replaying tick republishes the scored value rather than a re-fetch.
+type publishedBucket struct {
+	value  string
+	score  confidence.Score
+	confOK bool
+	edge   aggregate.Quote
+	leg    legRef
+}
+
 // DefaultInterval is the built-in tick cadence. 30s matches the
 // Redis price-key TTL of 60s with headroom for missed ticks;
 // higher-frequency aggregation is a follow-up once the API's
@@ -808,6 +842,12 @@ type Orchestrator struct {
 	// stamping triangulateAll's own wall-clock read (F067). Zero outside
 	// a Tick. Same single-Tick-at-a-time invariant as frozenThisTick.
 	tickNow time.Time
+
+	// decidedBuckets holds, per `pair:window` stateKey, the outcome of
+	// the last closed bucket that was decided, so a later tick inside the
+	// same bucket replays it instead of scoring it a second time. Same
+	// single-Tick-at-a-time invariant as prevVWAPs, so no lock is needed.
+	decidedBuckets map[string]decidedBucket
 
 	// tickEdgeQuotes accumulates, per window, the priced-pair VWAPs of
 	// the CURRENT tick as router edge inputs (aggregate.Quote). The
@@ -954,6 +994,7 @@ func New(store Store, cache Cache, cfg Config) *Orchestrator {
 		lastWriteAt:     make(map[string]time.Time, len(cfg.Pairs)),
 		lastComposites:  make(map[string]compositeSample, len(cfg.Triangulations)*max(len(cfg.Windows), 1)),
 		freezeStates:    make(map[string]freeze.State, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
+		decidedBuckets:  make(map[string]decidedBucket, len(cfg.Pairs)*max(len(cfg.Windows), 1)),
 		refreshOrder:    refreshOrder(cfg),
 		clock:           time.Now,
 	}
@@ -1247,24 +1288,63 @@ func (o *Orchestrator) emitStalenessGauges(now time.Time) {
 	}
 }
 
-// refreshPairWindow computes VWAP for one (pair, window) and
-// writes it to Redis. ErrNoTrades is a normal-path outcome (the
-// window was empty for this pair) and not propagated as an error.
-func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2 window-scoped composite-meta fix; a coherent VWAP unit
+// refreshPairWindow computes VWAP for one (pair, window) over the window
+// ending at the last CLOSED bucket boundary (ADR-0015) and writes it to
+// Redis. The first tick to see a bucket closed decides it — scores it,
+// steps the freeze lifecycle, publishes or holds; a later tick inside the
+// same bucket replays that decision instead of scoring the same data
+// again, so every scored step is exactly one closed bucket apart.
+// ErrNoTrades is a normal-path outcome (the window was empty for this
+// pair) and not propagated as an error.
+func (o *Orchestrator) refreshPairWindow(
 	ctx context.Context,
 	pair canonical.Pair,
 	window time.Duration,
 	now time.Time,
 ) error {
-	from := now.Add(-window)
+	bucketEnd := now.Truncate(closedBucket)
+	stateKey := pair.String() + ":" + window.String()
+	if prior, ok := o.decidedBuckets[stateKey]; ok && prior.end.Equal(bucketEnd) {
+		return o.replayDecidedBucket(ctx, pair, window, prior, now)
+	}
+	pub, err := o.decideBucket(ctx, pair, window, bucketEnd, now)
+	if err != nil {
+		// Undecided: the next tick retries this bucket from scratch.
+		return err
+	}
+	_, frozen := o.frozenThisTick[frozenTickKey(pair, window)]
+	d := decidedBucket{end: bucketEnd, published: pub, frozen: frozen}
+	if ref, ok := o.currentCompositeReference(pair, window); ok {
+		d.compositeRef = &ref
+	}
+	if o.decidedBuckets == nil {
+		o.decidedBuckets = make(map[string]decidedBucket)
+	}
+	o.decidedBuckets[stateKey] = d
+	return nil
+}
+
+// decideBucket is the first evaluation of one closed bucket: fetch
+// [bucketEnd-window, bucketEnd), filter, VWAP, the Phase 1 and Phase 2
+// freeze steps, and — when the bucket clears them — the publish. Returns
+// the published bucket, or nil when the bucket was held (frozen, empty,
+// or below the volume floor).
+func (o *Orchestrator) decideBucket(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	bucketEnd time.Time,
+	now time.Time,
+) (*publishedBucket, error) {
+	from := bucketEnd.Add(-window)
 	// `_` here is the pre-filter USD total. F-1260 (codex audit-
 	// 2026-05-12) moved the MinUSDVolume gate to a survivor-only sum
 	// computed below from `tradeUSD`, so the pre-filter scalar isn't
 	// the gate input anymore. Kept on the return value for backwards
 	// compatibility with future callers + lint readability.
-	trades, _, tradeUSD, err := o.fetchForTarget(ctx, pair, from, now)
+	trades, _, tradeUSD, err := o.fetchForTarget(ctx, pair, from, bucketEnd)
 	if err != nil {
-		return fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
+		return nil, fmt.Errorf("fetch %s %v: %w", pair.String(), window, err)
 	}
 	preFilter := len(trades)
 	if !o.cfg.DisableClassFilter {
@@ -1302,7 +1382,7 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 		o.emptyWindows++
 		o.mu.Unlock()
 		obs.AggregatorEmptyWindowsTotal.Inc()
-		return nil
+		return nil, nil
 	}
 
 	// F-1260 (codex audit-2026-05-12): sum USD across the SURVIVOR
@@ -1313,7 +1393,7 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// sets out, so the input it evaluates must be the survivor set.
 	survivorUSD := survivorUSDVolume(trades, tradeUSD)
 	if o.dropForMinUSDVolume(pair, trades, survivorUSD) {
-		return nil
+		return nil, nil
 	}
 
 	vwap, err := o.computeNormalizedVWAP(trades, pair)
@@ -1323,9 +1403,9 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 			o.emptyWindows++
 			o.mu.Unlock()
 			obs.AggregatorEmptyWindowsTotal.Inc()
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
+		return nil, fmt.Errorf("vwap %s %v: %w", pair.String(), window, err)
 	}
 
 	o.flushContributions(ctx, pair, window, trades, tradeUSD)
@@ -1343,7 +1423,7 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 		// Freeze: evaluateAndMaybeFreeze has already refreshed the LKG
 		// VWAP key's TTL (F-1345). Skip the cache write so the prior
 		// bucket's value keeps serving.
-		return nil
+		return nil, nil
 	}
 
 	// Phase 2 (ADR-0019): compute confidence, then advance the freeze
@@ -1396,18 +1476,76 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 		// return (and a post-restart frozen pair becomes scorable
 		// from its second bucket instead of stalling unscored).
 		o.frozenPrevVWAPs[stateKey] = vwap
-		return nil
+		return nil, nil
 	}
 	// Published (or released this tick): the shadow's job is done.
 	delete(o.frozenPrevVWAPs, stateKey)
 
-	// Cache write VWAP. Aggregator writers stay in big.Rat / big.Int
-	// land; API readers parse the string back to a decimal. Float
-	// encoding is prohibited on this path per ADR-0003.
-	value := formatRatFixed(vwap, 12)
+	// Aggregator writers stay in big.Rat / big.Int land; API readers
+	// parse the string back to a decimal. Float encoding is prohibited
+	// on this path per ADR-0003.
+	pub := &publishedBucket{
+		value:  formatRatFixed(vwap, 12),
+		score:  conf.Score,
+		confOK: confOK,
+		// Only a published bucket becomes a router edge / reference leg:
+		// frozen, dropped, empty and below-floor buckets returned above,
+		// which is how a dust pair stays out of the cross-rate graph
+		// (INV-11).
+		edge: newEdgeQuote(pair, vwap, conf, confOK, trades),
+		leg:  o.newLegRef(pair, vwap, trades),
+	}
+	if err := o.publishDirect(ctx, pair, window, pub, now); err != nil {
+		return nil, err
+	}
+
+	// Update the prev-VWAP comparator slot ONLY on successful
+	// publish. Frozen buckets do not advance THIS slot — but they do
+	// advance frozenPrevVWAPs above, which is what mid-freeze scoring
+	// compares against; keeping the pinned value here as the sole
+	// comparator was the auto-unfreeze ratchet (see frozenPrevVWAPs).
+	o.prevVWAPs[stateKey] = vwap
+
+	// The SSE closed-bucket contract (ADR-0015, openapi price/stream)
+	// promises byte-identical payloads across every subscriber on the same
+	// (asset, quote, window) — including cross-region — so the event is
+	// stamped with the bucket it covers, not the tick's jittered clock.
+	// Published once per bucket: a replaying tick does not re-emit it.
+	o.publishToStream(ctx, pair, window, pub.value, bucketEnd)
+	return pub, nil
+}
+
+// publishDirect writes a decided bucket's direct VWAP to the shared value
+// key and records the per-tick state the triangulation pass reads. Shared
+// by the deciding tick and every replaying tick of the same bucket, so the
+// replay republishes exactly what was scored.
+func (o *Orchestrator) publishDirect(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	pub *publishedBucket,
+	now time.Time,
+) error {
+	// W1-flow-price-serve-2: this DIRECT value is about to own the shared
+	// VWAP key, so any "triangulated" provenance marker a prior composite
+	// left on it must go FIRST, and the publish is refused if it cannot.
+	// The API serves the Redis fallback only when that marker is present,
+	// so a direct (possibly thin, single-source) value landing under a
+	// stale marker is served as a deep-market composite; with a failed
+	// clear that lasted until the marker's TTL. Clearing first makes the
+	// non-atomic window fail-safe, as publishComposite's qualifiers-first
+	// order does (R-2): a reader between the two writes sees the old value
+	// unlabelled, which the API refuses rather than mislabels. A confident
+	// same-tick triangulation re-stamps the marker in publishComposite.
+	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
+	if err := o.cache.Del(ctx, provKey.String()).Err(); err != nil {
+		obs.AggregatorVWAPCacheWriteErrorsTotal.Inc()
+		return fmt.Errorf("redis del %s: %w", provKey, err)
+	}
+
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
 	ttl := cachekeys.VWAPTTL(window)
-	if err := o.cache.Set(ctx, key.String(), value, ttl).Err(); err != nil {
+	if err := o.cache.Set(ctx, key.String(), pub.value, ttl).Err(); err != nil {
 		// Bump the error counter so operators can alert on
 		// `rate(...vwap_cache_write_errors_total[5m]) > 0`. Without
 		// this counter, the May-10 incident class (Redis BGSAVE
@@ -1419,46 +1557,15 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 		return fmt.Errorf("redis set %s: %w", key, err)
 	}
 
-	// W1-flow-price-serve-2: this DIRECT value now owns the shared VWAP
-	// key. Clear any stale "triangulated" provenance marker a PRIOR
-	// tick's composite left on it, so LookupTriangulatedVWAP cannot serve
-	// this (possibly thin, single-source) direct price mislabeled as a
-	// robust deep-market composite with the prior composite's
-	// diverged/rerouted flags. The direct refresh runs BEFORE
-	// triangulateAll each tick, so a confident same-tick triangulation
-	// re-stamps the marker in publishComposite; a non-confident tick
-	// leaves it absent, which the API reads as isTriangulated=false.
-	// Best-effort: a failed clear only reverts to the prior (buggy)
-	// behaviour — never worth blocking the value publish.
-	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
-	if err := o.cache.Del(ctx, provKey.String()).Err(); err != nil {
-		o.logger.Debug("aggregator: direct-refresh provenance clear failed",
-			"pair", pair.String(), "window", window.String(), "err", err)
-	}
-
 	// Cache write confidence (only on successful publish — frozen
 	// buckets must NOT carry a stale score forward). Best-effort:
 	// confidence enrichment, never a publish-blocking signal.
-	if confOK {
-		o.cacheConfidence(ctx, pair, window, conf.Score)
+	if pub.confOK {
+		o.cacheConfidence(ctx, pair, window, pub.score)
 	}
 
-	// Update the prev-VWAP comparator slot ONLY on successful
-	// publish. Frozen buckets do not advance THIS slot — but they do
-	// advance frozenPrevVWAPs above, which is what mid-freeze scoring
-	// compares against; keeping the pinned value here as the sole
-	// comparator was the auto-unfreeze ratchet (see frozenPrevVWAPs).
-	o.prevVWAPs[stateKey] = vwap
-
-	// Contribute this published pair as a router edge for the
-	// triangulation pass later in THIS tick. Only successfully-published
-	// windows reach here — a frozen / dropped / empty / below-floor
-	// window returned earlier and so contributes no edge, which is how a
-	// dust pair is kept out of the cross-rate graph (INV-11). The edge's
-	// weakest-link confidence reuses the pair's existing quality signal
-	// (see [Orchestrator.edgeConfidence]).
-	o.recordEdgeQuote(pair, window, vwap, conf, confOK, trades)
-	o.recordLegRef(pair, window, vwap, trades)
+	o.appendTickEdgeQuote(window, pub.edge)
+	o.setTickLegRef(pair, window, pub.leg)
 
 	o.mu.Lock()
 	o.vwapWrites++
@@ -1471,17 +1578,35 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 	// rule queries. Pair-level (not pair×window) — staleness reads
 	// off the asset/quote shape that customers see via /v1/price.
 	o.recordPairWrite(pair, now)
-
-	// The SSE closed-bucket contract (ADR-0015, openapi price/stream)
-	// promises byte-identical payloads across every subscriber on the same
-	// (asset, quote, window) — including cross-region. Raw tick wall-clock
-	// carries per-instance scheduling jitter (sub-second to low-second),
-	// so two regions publishing "the same" bucket would stamp different
-	// observed_at values. Truncate to the minute boundary — the aggregator's
-	// documented closed-bucket cadence (internal/api/streaming/hub.go,
-	// doc.go) — same convention as usd_fx_resolver.go's bucket floor.
-	o.publishToStream(ctx, pair, window, value, now.Truncate(time.Minute))
 	return nil
+}
+
+// replayDecidedBucket re-applies an already-decided closed bucket on a
+// later tick inside the same bucket: the same value is republished (the
+// shared key may since hold a composite) and the per-tick state the
+// triangulation pass reads is restored, but nothing is re-scored — the
+// freeze lifecycle, its release streak and the comparators advance once
+// per closed bucket, not once per tick.
+func (o *Orchestrator) replayDecidedBucket(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	d decidedBucket,
+	now time.Time,
+) error {
+	if d.frozen {
+		o.markFrozenThisTick(pair, window)
+	}
+	if d.compositeRef != nil {
+		if o.tickCompositeRefs == nil {
+			o.tickCompositeRefs = make(map[string]compositeReference)
+		}
+		o.tickCompositeRefs[pair.String()+":"+window.String()] = *d.compositeRef
+	}
+	if d.published == nil {
+		return nil
+	}
+	return o.publishDirect(ctx, pair, window, d.published, now)
 }
 
 // computeNormalizedVWAP computes VWAP over trades and applies the

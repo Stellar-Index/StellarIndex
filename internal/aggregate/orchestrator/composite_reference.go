@@ -382,24 +382,34 @@ func (o *Orchestrator) chainForTarget(pair canonical.Pair) (TriangulationChain, 
 
 // recordLegRef captures a confidently-published (pair, window) bucket
 // as a CURRENT-tick leg for the reference evaluator. Called from
-// refreshPairWindow at the publish point (next to recordEdgeQuote), so
+// refreshPairWindow at the publish point (next to newEdgeQuote), so
 // frozen / dropped / empty / below-floor buckets leave no entry.
 // Rebuilt at the top of every Tick; same single-Tick-at-a-time
 // invariant as tickEdgeQuotes (L4).
 func (o *Orchestrator) recordLegRef(pair canonical.Pair, window time.Duration, vwap *big.Rat, trades []canonical.Trade) {
+	o.setTickLegRef(pair, window, o.newLegRef(pair, vwap, trades))
+}
+
+// newLegRef builds the reference-leg reading for a published bucket.
+func (o *Orchestrator) newLegRef(pair canonical.Pair, vwap *big.Rat, trades []canonical.Trade) legRef {
+	dispersion, uncomputable := o.legDispersion(pair, trades, vwap)
+	return legRef{
+		price:                  new(big.Rat).Set(vwap), // defensive copy, as newEdgeQuote
+		sources:                distinctSourceCount(trades),
+		dispersion:             dispersion,
+		dispersionUncomputable: uncomputable,
+	}
+}
+
+// setTickLegRef records lr as this tick's reference leg for (pair, window).
+func (o *Orchestrator) setTickLegRef(pair canonical.Pair, window time.Duration, lr legRef) {
 	if o.tickLegRefs == nil {
 		o.tickLegRefs = make(map[time.Duration]map[string]legRef, len(o.cfg.Windows))
 	}
 	if o.tickLegRefs[window] == nil {
 		o.tickLegRefs[window] = make(map[string]legRef, len(o.cfg.Pairs))
 	}
-	dispersion, uncomputable := o.legDispersion(pair, trades, vwap)
-	o.tickLegRefs[window][pair.String()] = legRef{
-		price:                  new(big.Rat).Set(vwap), // defensive copy, as recordEdgeQuote
-		sources:                distinctSourceCount(trades),
-		dispersion:             dispersion,
-		dispersionUncomputable: uncomputable,
-	}
+	o.tickLegRefs[window][pair.String()] = lr
 }
 
 // evaluateCompositeReference builds the reference for (pair, window)
@@ -541,16 +551,27 @@ func (o *Orchestrator) referenceLeg(
 	if price == nil || price.Sign() <= 0 {
 		return nil, 0, "fx_non_positive"
 	}
-	if observedAt.IsZero() || now.Sub(observedAt) > cfg.FXMaxAge {
-		return nil, 0, "fx_stale"
+	if reason := fxSnapRejection(now, observedAt, source, cfg.FXMaxAge); reason != "" {
+		return nil, 0, reason
 	}
-	providers := strings.Split(source, "+")
-	for _, p := range providers {
+	return price, len(strings.Split(source, "+")), ""
+}
+
+// fxSnapRejection is the admission rule for every FX snap, the
+// publishing chain leg and the corroborating reference alike: the quote
+// must be within maxAge of now and every provider in its source label
+// must be of the FX source class. Returns "" when the snap is usable,
+// else the refusal reason.
+func fxSnapRejection(now, observedAt time.Time, source string, maxAge time.Duration) string {
+	if observedAt.IsZero() || now.Sub(observedAt) > maxAge {
+		return "fx_stale"
+	}
+	for _, p := range strings.Split(source, "+") {
 		if !external.IsFXSource(p) {
-			return nil, 0, "fx_source_class=" + p
+			return "fx_source_class=" + p
 		}
 	}
-	return price, len(providers), ""
+	return ""
 }
 
 // emitCompositeReference publishes the verdict gauge (one series per

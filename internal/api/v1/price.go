@@ -631,8 +631,8 @@ func (s *Server) parsePricePairParams(w http.ResponseWriter, r *http.Request) (a
 // in-progress one (ADR-0015) — that is what makes the answer
 // byte-identical across regions that have ingested the same ledgers,
 // and it costs a worst-case ~30–120 s of staleness by construction.
-// `?window=N` serves the aggregator's rolling VWAP for that window
-// instead (still closed-bucket-flavoured, see [Server.handlePriceWindowed]);
+// `?window=N` serves the aggregator's VWAP for that window instead,
+// ending at the last closed minute (see [Server.handlePriceWindowed]);
 // sub-minute freshness is /v1/price/tip's job, per the URL discipline in
 // ADR-0018. `flags.stale` here means specifically "the closed bucket
 // wasn't available and this degraded to a last-trade fallback" — or
@@ -661,8 +661,8 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// Optional aggregation-window selection (board #43; proposal:
 	// "the window length … can be modified through query"). The
 	// default 60 keeps the existing closed-1m-bucket behavior; the
-	// other values serve the aggregator's continuously-published
-	// rolling VWAP for that window from the vwap:<pair>:<window>
+	// other values serve the aggregator's VWAP for that window, ending
+	// at the last closed minute, from the vwap:<pair>:<window>
 	// cache. Sub-minute rolling windows are /v1/price/tip's job.
 	if rawWindow := r.URL.Query().Get("window"); rawWindow != "" && rawWindow != "60" {
 		s.handlePriceWindowed(w, r, asset, quote, rawWindow)

@@ -98,6 +98,7 @@ func TestConfidence_ScoreFlowsToCacheKey(t *testing.T) {
 	if err := orch.Tick(context.Background()); err != nil {
 		t.Fatalf("first tick: %v", err)
 	}
+	nextBucket(orch)
 	if err := orch.Tick(context.Background()); err != nil {
 		t.Fatalf("second tick: %v", err)
 	}
@@ -141,6 +142,7 @@ func TestConfidence_SkipsWhenBaselinesNil(t *testing.T) {
 	})
 
 	_ = orch.Tick(context.Background())
+	nextBucket(orch)
 	_ = orch.Tick(context.Background())
 
 	confKey := cachekeys.Confidence(pair.Base, pair.Quote, time.Minute)
@@ -195,6 +197,7 @@ func TestConfidence_DivergenceWiredFromCache(t *testing.T) {
 			Baselines: bsrc,
 		})
 		_ = orch.Tick(context.Background())
+		nextBucket(orch)
 		_ = orch.Tick(context.Background())
 		body, err := rdb.Get(context.Background(),
 			cachekeys.Confidence(pair.Base, pair.Quote, time.Minute).String()).Bytes()
@@ -292,6 +295,7 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 		Baselines: bsrc,
 	})
 	_ = orch.Tick(context.Background())
+	nextBucket(orch)
 	_ = orch.Tick(context.Background())
 
 	scoreBody, err := rdb.Get(context.Background(),
@@ -443,6 +447,7 @@ func TestPhase2Freeze_BlocksVWAPPublish(t *testing.T) {
 		t.Fatalf("read tick-1 VWAP: %v", err)
 	}
 	store.trades = bigSpike
+	nextBucket(orch)
 	if err := orch.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}
@@ -496,6 +501,7 @@ func TestConfidence_BaselineMissingDoesNotBlockVWAP(t *testing.T) {
 	})
 
 	_ = orch.Tick(context.Background())
+	nextBucket(orch)
 	_ = orch.Tick(context.Background())
 
 	vwapKey := cachekeys.VWAP(pair.Base, pair.Quote, time.Minute)
