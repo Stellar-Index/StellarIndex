@@ -333,7 +333,12 @@ func bespokeFromStore(b *timescale.BespokeBlock) *ProtocolBespoke {
 		out.Breakdowns = append(out.Breakdowns, BespokeBreakdown{Title: bd.Title, Unit: bd.Unit, Rows: rows})
 	}
 	for _, t := range b.Tables {
-		out.Tables = append(out.Tables, BespokeTable{Title: t.Title, Columns: t.Columns, Rows: t.Rows})
+		rows := t.Rows
+		if rows == nil {
+			// An empty table serves `rows: []`, never null — the spec types rows as an array.
+			rows = [][]string{}
+		}
+		out.Tables = append(out.Tables, BespokeTable{Title: t.Title, Columns: t.Columns, Rows: rows})
 	}
 	return out
 }

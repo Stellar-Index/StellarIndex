@@ -655,3 +655,26 @@ func TestParseCreateRequest_AcceptsValidAllowlistForms(t *testing.T) {
 		t.Fatalf("valid body rejected: status=%d problem=%q", status, problem)
 	}
 }
+
+// TestParseCreateRequest_LengthLimitsCountCodePoints: the spec's
+// maxLength and Postgres length() both count characters, so a CJK name
+// at the documented limit is valid even though it is 3× that in bytes.
+func TestParseCreateRequest_LengthLimitsCountCodePoints(t *testing.T) {
+	for _, tc := range []struct {
+		field string
+		limit int
+		body  func(v string) string
+	}{
+		{"name", 200, func(v string) string { return `{"name":"` + v + `"}` }},
+		{"description", 2000, func(v string) string { return `{"name":"k","description":"` + v + `"}` }},
+	} {
+		for _, n := range []int{tc.limit, tc.limit + 1} {
+			body := tc.body(strings.Repeat("名", n))
+			r := httptest.NewRequest(http.MethodPost, "/v1/dashboard/keys", strings.NewReader(body))
+			_, status, problem := parseCreateRequest(r)
+			if accepted := problem == ""; accepted != (n <= tc.limit) {
+				t.Errorf("%s of %d code points: status=%d problem=%q", tc.field, n, status, problem)
+			}
+		}
+	}
+}

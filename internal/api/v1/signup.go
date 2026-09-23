@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -472,7 +473,7 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 	// 2026-08-03).
 	req.Email = strings.ToLower(strings.TrimSpace(addr.Address))
 
-	if len(req.Label) > 128 {
+	if utf8.RuneCountInString(req.Label) > 128 {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/label-too-long",
 			"Label too long", http.StatusBadRequest,

@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -492,7 +493,7 @@ func parseAccountOverrideRequest(w http.ResponseWriter, r *http.Request) (adminA
 			"status must be one of active, suspended, closed")
 		return req, false
 	}
-	if req.SuspendedReason != nil && len(*req.SuspendedReason) > 500 {
+	if req.SuspendedReason != nil && utf8.RuneCountInString(*req.SuspendedReason) > 500 {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-suspended-reason",
 			"suspended_reason too long", http.StatusBadRequest,

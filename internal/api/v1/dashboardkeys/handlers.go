@@ -15,6 +15,7 @@ import (
 	"net/netip"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -453,7 +454,7 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	if req.Name == "" {
 		return req, http.StatusBadRequest, "name is required"
 	}
-	if len(req.Name) > 200 {
+	if utf8.RuneCountInString(req.Name) > 200 {
 		return req, http.StatusBadRequest, "name must be 200 chars or fewer"
 	}
 	if req.RateLimitPerMin <= 0 {
@@ -470,7 +471,7 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 	// indistinguishable from the genuine 500 a migration-drift on
 	// api_keys produces, and the first thing it prompts is "key creation
 	// is broken" rather than "your request was malformed".
-	if len(req.Description) > 2000 {
+	if utf8.RuneCountInString(req.Description) > 2000 {
 		return req, http.StatusBadRequest, "description must be 2000 chars or fewer"
 	}
 	if req.MonthlyQuota < 0 {

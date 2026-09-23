@@ -50,6 +50,79 @@ var handlerSpecFieldPairs = []struct {
 	{"TradeRow", reflect.TypeOf(TradeRow{})},
 	{"OHLCBar", reflect.TypeOf(OHLCBar{})},
 	{"Price", reflect.TypeOf(PriceSnapshot{})},
+	{"KeyCreated", reflect.TypeOf(KeyCreated{})},
+	{"AccountUser", reflect.TypeOf(AccountUser{})},
+	{"AccountInfo", reflect.TypeOf(AccountInfo{})},
+	{"LakeHealth", reflect.TypeOf(lakeHealth{})},
+	{"ProtocolBespoke", reflect.TypeOf(ProtocolBespoke{})},
+	{"BespokeKPI", reflect.TypeOf(BespokeKPI{})},
+	{"BespokeSeries", reflect.TypeOf(BespokeSeries{})},
+	{"BespokeSeriesPoint", reflect.TypeOf(BespokeSeriesPt{})},
+	{"BespokeBreakdown", reflect.TypeOf(BespokeBreakdown{})},
+	{"BespokeBreakdownRow", reflect.TypeOf(BespokeBreakdownRow{})},
+	{"BespokeTable", reflect.TypeOf(BespokeTable{})},
+}
+
+// TestHandlerRequiredFieldsAreAlwaysServed is the other direction: a
+// property the spec marks `required` must be a handler field that is never
+// omitted. `omitempty` on it drops a guaranteed field whenever the value is
+// zero, so a schema-validating client rejects a successful response.
+func TestHandlerRequiredFieldsAreAlwaysServed(t *testing.T) {
+	for _, pair := range handlerSpecFieldPairs {
+		t.Run(pair.schema, func(t *testing.T) {
+			opts := structJSONTagOptions(pair.typ)
+			for _, f := range specSchemaRequired(t, pair.schema) {
+				o, ok := opts[f]
+				switch {
+				case !ok:
+					t.Errorf("spec requires %q but %s has no such field", f, pair.typ.Name())
+				case strings.Contains(o, "omitempty") || strings.Contains(o, "omitzero"):
+					t.Errorf("spec requires %q but %s tags it %q — drop the omit option or make it optional in the spec",
+						f, pair.typ.Name(), o)
+				}
+			}
+		})
+	}
+}
+
+// structJSONTagOptions maps each wire field name to its json tag options
+// (the part after the first comma), following embedded structs.
+func structJSONTagOptions(t reflect.Type) map[string]string {
+	out := map[string]string{}
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			for k, v := range structJSONTagOptions(f.Type) {
+				out[k] = v
+			}
+			continue
+		}
+		tag := f.Tag.Get("json")
+		if !f.IsExported() || tag == "-" {
+			continue
+		}
+		name, rest, _ := strings.Cut(tag, ",")
+		if name == "" {
+			name = f.Name
+		}
+		out[name] = rest
+	}
+	return out
+}
+
+// specSchemaRequired returns a named schema's top-level `required` list.
+func specSchemaRequired(t *testing.T, schema string) []string {
+	t.Helper()
+	schemas, _ := loadSpecDoc(t)["components"].(map[string]any)["schemas"].(map[string]any)
+	s, _ := schemas[schema].(map[string]any)
+	raw, _ := s["required"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, r := range raw {
+		if name, ok := r.(string); ok {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func TestHandlerResponseFieldsAreDocumented(t *testing.T) {

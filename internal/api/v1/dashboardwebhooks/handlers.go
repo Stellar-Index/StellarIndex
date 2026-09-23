@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -483,7 +484,7 @@ func parseCreateRequest(ctx context.Context, r *http.Request) (createRequest, in
 }
 
 func validateWebhookName(name string) error {
-	if name == "" || len(name) > 200 {
+	if name == "" || utf8.RuneCountInString(name) > 200 {
 		return errors.New("name must be 1–200 chars")
 	}
 	return nil
