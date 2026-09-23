@@ -1,11 +1,15 @@
 package sushiswap_v3
 
 import (
+	"encoding/base64"
 	"errors"
 	"math/big"
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
+	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -364,6 +368,110 @@ func TestDecodeSwapFields_RejectsForeignBodyShapes(t *testing.T) {
 				t.Fatal("want an error, got nil")
 			}
 		})
+	}
+}
+
+// addressScValFromStrkey turns a G-strkey into an ScVal::Address.
+func addressScValFromStrkey(t *testing.T, s string) xdr.ScVal {
+	t.Helper()
+	raw, err := strkey.Decode(strkey.VersionByteAccountID, s)
+	if err != nil {
+		t.Fatalf("decode G: %v", err)
+	}
+	var pub xdr.Uint256
+	copy(pub[:], raw)
+	aid := xdr.AccountId{Type: xdr.PublicKeyTypePublicKeyTypeEd25519, Ed25519: &pub}
+	addr := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &aid}
+	return xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &addr}
+}
+
+// splitBigInt128 splits a signed *big.Int into I128 Hi/Lo parts.
+func splitBigInt128(n *big.Int) (hi int64, lo uint64) {
+	twoTo64 := new(big.Int).Lsh(big.NewInt(1), 64)
+	mask64 := new(big.Int).Sub(twoTo64, big.NewInt(1))
+	if n.Sign() >= 0 {
+		loBig := new(big.Int).And(n, mask64)
+		hiBig := new(big.Int).Rsh(n, 64)
+		return hiBig.Int64(), loBig.Uint64()
+	}
+	twoTo128 := new(big.Int).Lsh(big.NewInt(1), 128)
+	u := new(big.Int).Add(twoTo128, n)
+	loBig := new(big.Int).And(u, mask64)
+	hiBig := new(big.Int).Rsh(u, 64)
+	return int64(hiBig.Uint64()), loBig.Uint64()
+}
+
+func i128ScVal(t *testing.T, n *big.Int) xdr.ScVal {
+	t.Helper()
+	hi, lo := splitBigInt128(n)
+	p := xdr.Int128Parts{Hi: xdr.Int64(hi), Lo: xdr.Uint64(lo)}
+	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &p}
+}
+
+// swapBodyWithBadTick builds a swap Map body carrying valid amount0 /
+// amount1 / recipient but a `tick` field of the WRONG ScVal type (Bool
+// instead of I32), and omits liquidity / sqrt_price_x96 / sender
+// entirely — the four fields decodeSwap never reads.
+func swapBodyWithBadTick(t *testing.T, amount0, amount1 *big.Int, recipient string) string {
+	t.Helper()
+	badTick := true
+	keys := []string{"amount0", "amount1", "recipient", "tick"}
+	vals := []xdr.ScVal{
+		i128ScVal(t, amount0),
+		i128ScVal(t, amount1),
+		addressScValFromStrkey(t, recipient),
+		{Type: xdr.ScValTypeScvBool, B: &badTick},
+	}
+	m := make(xdr.ScMap, len(keys))
+	for i, k := range keys {
+		sym := xdr.ScSymbol(k)
+		m[i] = xdr.ScMapEntry{
+			Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym},
+			Val: vals[i],
+		}
+	}
+	pm := &m
+	body := xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &pm}
+	b, err := body.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// TestDecodeSwapFields_ToleratesMalformedUnusedFields proves RLT-066: a
+// malformed/missing tick (or liquidity, sqrt_price_x96, sender — none of
+// which decodeSwap reads) must not fail the whole decode and drop an
+// otherwise-good, price-forming trade. Only amount0, amount1, and
+// recipient — the fields decodeSwap actually consumes — are required.
+func TestDecodeSwapFields_ToleratesMalformedUnusedFields(t *testing.T) {
+	recipient := "GCBYPF2OVPSZ7NJSXIOINCBMOSMY7I6KOWHPZV36OH4OH5R2A63DKUKY"
+	body := swapBodyWithBadTick(t, big.NewInt(100), big.NewInt(-50), recipient)
+
+	got, err := sdkDecodeSwapFields(body)
+	if err != nil {
+		t.Fatalf("decode: %v, want no error — tick is unused by decodeSwap", err)
+	}
+	if got.Amount0.String() != "100" {
+		t.Errorf("amount0 = %s, want 100", got.Amount0)
+	}
+	if got.Amount1.String() != "-50" {
+		t.Errorf("amount1 = %s, want -50", got.Amount1)
+	}
+	if got.Recipient != recipient {
+		t.Errorf("recipient = %s, want %s", got.Recipient, recipient)
+	}
+	if got.Tick != 0 {
+		t.Errorf("tick = %d, want 0 (malformed field left at zero value)", got.Tick)
+	}
+}
+
+// TestDecodeSwapFields_RequiresAmountsAndRecipient proves the fields
+// decodeSwap DOES consume are still hard-required, wrapped in
+// ErrMalformedPayload.
+func TestDecodeSwapFields_RequiresAmountsAndRecipient(t *testing.T) {
+	if _, err := sdkDecodeSwapFields(goldenPoolCreated); !errors.Is(err, ErrMalformedPayload) {
+		t.Fatalf("err = %v, want ErrMalformedPayload", err)
 	}
 }
 
