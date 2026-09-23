@@ -636,3 +636,36 @@ func TestListingClient_FollowsASameOriginRedirect(t *testing.T) {
 		t.Errorf("key at the same-origin hop = %q, want it carried", gotKey)
 	}
 }
+
+func TestListingClient_RedirectPolicy(t *testing.T) {
+	// Not parallel: it sets process environment.
+	t.Setenv("COINGECKO_API_KEY", "pro-secret")
+	t.Setenv("COINGECKO_DEMO_API_KEY", "")
+	assertKeyedRedirectPolicy(t, newListingClient("").http.CheckRedirect)
+}
+
+// TestListingClient_StopsASelfRedirectLoop — a same-origin 302 to itself
+// must end at the hop cap, not re-send the key until the 60 s client
+// timeout.
+func TestListingClient_StopsASelfRedirectLoop(t *testing.T) {
+	// Not parallel: it sets process environment.
+	t.Setenv("COINGECKO_API_KEY", "pro-secret")
+	t.Setenv("COINGECKO_DEMO_API_KEY", "")
+
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Redirect(w, r, r.URL.Path, http.StatusFound)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, _, err := newListingClient(srv.URL).fetchStellarListings(ctx)
+	if err == nil || !strings.Contains(err.Error(), "stopped after 10 redirects") {
+		t.Fatalf("err = %v, want the loop stopped at the hop cap", err)
+	}
+	if got := hits.Load(); got != 10 {
+		t.Errorf("origin saw %d keyed requests, want 10", got)
+	}
+}
