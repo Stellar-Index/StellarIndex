@@ -94,6 +94,19 @@ func TestMinStreamQuoteUnits_IsUSDDenominated(t *testing.T) {
 	}
 }
 
+// A quote asset worth more than $100k/unit rounds the $0.001 floor to 0
+// units; the clamp keeps it at 1 so a zero quote leg is still dust.
+func TestDustFloorUnits_ClampsToOne(t *testing.T) {
+	for _, ref := range []uint64{dustFloorUSDMicros * externalQuoteScale, dustFloorUSDMicros*externalQuoteScale + 1, 1 << 62} {
+		if got := dustFloorUnits(ref).String(); got != "1" {
+			t.Errorf("dustFloorUnits(%d) = %s, want 1", ref, got)
+		}
+	}
+	if got := dustFloorUnits(dustFloorUSDMicros*externalQuoteScale/2 - 1).String(); got != "2" {
+		t.Errorf("dustFloorUnits(just under $50k) = %s, want 2 (floor division, no clamp)", got)
+	}
+}
+
 // TestForwardTrades_DustFloorIsQuoteAssetAware drives the real
 // streamer path. The BTC-quoted case is the C2-016 regression: a
 // 0.0005 BTC fill (~$50 of notional) is a genuine retail-size
