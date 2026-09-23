@@ -72,6 +72,8 @@ func Run(args []string) error { //nolint:gocyclo // flat command-dispatch switch
 		return assetRegistryBackfill(args[1:])
 	case "directory-sync":
 		return directorySync(args[1:])
+	case "directory-override":
+		return directoryOverride(args[1:])
 	case "listing-sync":
 		return listingSync(args[1:])
 	case "curated-rwa-sync":

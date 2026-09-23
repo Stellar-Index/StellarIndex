@@ -14,8 +14,10 @@ import (
 // DirectoryEntry is one curated label for a Stellar address (G-account
 // or C-contract strkey). Source of record is the MIT-licensed
 // stellar-expert/public-directory repo, synced by `stellarindex-ops
-// directory-sync` (migration 0136). Display-only with third-party
-// attribution — never an input to verification or scam suppression.
+// directory-sync` (migration 0136), shown with third-party attribution.
+// NOT display-only: a scam-class tag withholds the issuer's price and
+// demotes its listing rank (DirectoryScamFlagTags), and a recognition tag
+// admits it to the RWA surface (DirectoryRecognisedContracts).
 type DirectoryEntry struct {
 	Address string
 	Name    string
@@ -78,8 +80,9 @@ const directoryUpsertChunk = 500
 // column: ReplaceDirectory only ever touches rows carrying ITS source
 // (see buildDirectoryUpsert) and prunes only rows carrying its source,
 // so a row owned by this one survives every sync of every upstream.
-// Write it with [Store.UpsertDirectoryOverride]; undo it with
-// [Store.DeleteDirectoryOverride], after which the next sync restores
+// Write it with `stellarindex-ops directory-override -clear-scam-flag`
+// ([Store.ClearDirectoryScamFlag]); undo it with `-delete`
+// ([Store.DeleteDirectoryOverride]), after which the next sync restores
 // the upstream row.
 //
 // An override REPLACES the upstream label for that address rather than
@@ -88,6 +91,36 @@ const directoryUpsertChunk = 500
 // disagreeing (see DirectoryScamFlagTags above), and a layered view
 // would reintroduce exactly that split.
 const DirectoryOperatorOverrideSource = "operator-override"
+
+// ErrDirectoryNotScamFlagged is returned by [Store.ClearDirectoryScamFlag]
+// when the row carries no scam-class tag; nothing was written, so a
+// mistyped address cannot freeze an unflagged row away from its upstream.
+var ErrDirectoryNotScamFlagged = errors.New("directory: row carries no scam-class tag")
+
+// DirectoryTagsWithoutScamFlags returns tags with every scam-class tag
+// removed and every other tag kept, in order.
+func DirectoryTagsWithoutScamFlags(tags []string) []string {
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if !isDirectoryScamFlagTag(t) {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// isDirectoryScamFlagTag matches trimmed and case-folded, the widest of
+// the rules the consumers apply (pricingguard and rwa trim, the SQL
+// predicates only fold), so a tag any of them would count is removed.
+func isDirectoryScamFlagTag(tag string) bool {
+	lt := strings.ToLower(strings.TrimSpace(tag))
+	for _, f := range DirectoryScamFlagTags {
+		if lt == f {
+			return true
+		}
+	}
+	return false
+}
 
 // DirectoryChurnLimit bounds how far ONE sync may move a source's
 // snapshot: the rows it prunes and the addresses it newly scam-flags
@@ -378,43 +411,57 @@ func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any)
 	return sb.String(), args
 }
 
-// UpsertDirectoryOverride records an operator-owned label for one
-// address, taking the row over from whichever upstream currently owns
-// it. The row carries [DirectoryOperatorOverrideSource], so from this
-// point no `directory-sync` of any upstream updates or prunes it — the
-// correction holds until an operator removes it, which is the whole
-// point (a hand-edited upstream-owned row was reverted by the next
-// daily sync).
+// ClearDirectoryScamFlag corrects a third-party FALSE POSITIVE: it takes
+// the address's row over as [DirectoryOperatorOverrideSource] with every
+// scam-class tag removed and the name, domain and every other tag kept,
+// so no `directory-sync` updates or prunes it until the override is
+// deleted.
 //
-// Tags are written verbatim: pass the corrected set. Dropping the
-// scam-class tags (timescale.DirectoryScamFlagTags) is what un-withholds
-// the issuer's price and market cap, restores its listing rank tier and
-// clears the explorer's flag pill — all three read this one row, so they
-// move together.
+// Keeping the other tags is the point. The row feeds four readers: the
+// price gate, the /v1/assets rank tier, the explorer's flag pill and the
+// RWA recognition funnel, which admits an issuer on a recognition tag
+// such as `issuer` (directoryHasIssuingTagSQL). Replacing the tag set
+// wholesale clears the flag and silently drops the issuer from that
+// funnel.
 //
-// The `address ~ '^[GC][A-Z2-7]{55}$'` CHECK from migration 0136 is the
-// validator; a malformed address is a database error, not a silent
-// no-op row.
-func (s *Store) UpsertDirectoryOverride(ctx context.Context, e DirectoryEntry) error {
-	const q = `
-		INSERT INTO account_directory (address, name, domain, tags, source, synced_at)
-		VALUES ($1, $2, $3, $4, $5, now())
-		ON CONFLICT (address) DO UPDATE SET
-		    name = EXCLUDED.name,
-		    domain = EXCLUDED.domain,
-		    tags = EXCLUDED.tags,
-		    source = EXCLUDED.source,
-		    synced_at = EXCLUDED.synced_at`
-	tags := e.Tags
-	if tags == nil {
-		tags = []string{}
+// found=false (no error) means the address has no row. A row with no
+// scam-class tag is refused with [ErrDirectoryNotScamFlagged].
+func (s *Store) ClearDirectoryScamFlag(ctx context.Context, address string) (before, after DirectoryEntry, found bool, err error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return before, after, false, fmt.Errorf("directory: begin: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, q,
-		e.Address, e.Name, e.Domain, tags, DirectoryOperatorOverrideSource,
-	); err != nil {
-		return fmt.Errorf("directory: upsert override %s: %w", e.Address, err)
+	defer func() { _ = tx.Rollback() }() // no-op once committed
+	// FOR UPDATE: a concurrent sync must not rewrite the tags between
+	// this read and the takeover.
+	err = tx.QueryRowContext(ctx, `
+		SELECT address, name, domain, tags, source
+		  FROM account_directory
+		 WHERE address = $1
+		   FOR UPDATE`, address).Scan(
+		&before.Address, &before.Name, &before.Domain, pgarray.Strings(&before.Tags), &before.Source)
+	if errors.Is(err, sql.ErrNoRows) {
+		return before, after, false, nil
 	}
-	return nil
+	if err != nil {
+		return before, after, false, fmt.Errorf("directory: lock %s: %w", address, err)
+	}
+	after = before
+	after.Tags = DirectoryTagsWithoutScamFlags(before.Tags)
+	after.Source = DirectoryOperatorOverrideSource
+	if len(after.Tags) == len(before.Tags) {
+		return before, after, true, fmt.Errorf("%w: %s (tags %v)", ErrDirectoryNotScamFlagged, address, before.Tags)
+	}
+	if _, err = tx.ExecContext(ctx, `
+		UPDATE account_directory
+		   SET tags = $2, source = $3, synced_at = now()
+		 WHERE address = $1`, address, after.Tags, after.Source); err != nil {
+		return before, after, true, fmt.Errorf("directory: clear scam flag %s: %w", address, err)
+	}
+	if err = tx.Commit(); err != nil {
+		return before, after, true, fmt.Errorf("directory: commit: %w", err)
+	}
+	return before, after, true, nil
 }
 
 // DeleteDirectoryOverride removes an operator override, reporting
