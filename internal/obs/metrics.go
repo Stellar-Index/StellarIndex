@@ -4644,7 +4644,8 @@ var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
 
 // SDEXOrderBookCrossedPairs — the order book's data-quality invariant
 // tripwire. Stellar's DEX executes crossing offers at submission, so a
-// RESTING classic book can never have best bid >= best ask; a crossed
+// RESTING classic book can never have best bid > best ask (a PASSIVE
+// offer may rest touching at equal price, so that is not counted); a crossed
 // pair in the SERVED in-process book means phantom offers (the
 // 2026-07-31 zombie class: version-tie survivors of intra-less
 // backfill rows served 4.7-year-dead XLM/USDC bids at 0.4327 against
@@ -4655,7 +4656,7 @@ var SDEXOrderBookMaintainDurationSeconds = prometheus.NewHistogramVec(
 var SDEXOrderBookCrossedPairs = prometheus.NewGauge(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_sdex_orderbook_crossed_pairs",
-		Help: "Asset pairs whose served SDEX order book is crossed (best bid >= best ask); any sustained non-zero value is phantom-offer data corruption.",
+		Help: "Asset pairs whose served SDEX order book is crossed (best bid > best ask); any sustained non-zero value is phantom-offer data corruption.",
 	},
 )
 

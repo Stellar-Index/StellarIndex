@@ -54,7 +54,7 @@ func TestSDEXOrderBookCache_MaintainTickReloadsPeriodically(t *testing.T) {
 		t.Fatalf("loads/advances = %d/%d, want 2/0: a failed initial load retries next tick, with no advance before it lands",
 			reader.loads, reader.advances)
 	}
-	if _, _, _, _, ready := c.snapshotPair("native", usdc); !ready {
+	if _, ready := c.snapshotMarket("native", usdc); !ready {
 		t.Fatal("book must be ready once the retried load lands")
 	}
 
@@ -76,7 +76,8 @@ func TestSDEXOrderBookCache_MaintainTickReloadsPeriodically(t *testing.T) {
 	if reader.loads != 3 {
 		t.Fatalf("loads = %d, want 3: a book older than SDEXOrderBookReloadInterval must be re-loaded", reader.loads)
 	}
-	asks, _, cursor, _, _ := c.snapshotPair("native", usdc)
+	snap, _ := c.snapshotMarket("native", usdc)
+	asks, cursor := snap.asks, snap.cursor
 	if len(asks) != 1 || asks[0].KeyXDR != "k2" || cursor != 900 {
 		t.Fatalf("after re-load asks=%+v cursor=%d, want exactly k2 at cursor 900 — the re-load replaces the book wholesale", asks, cursor)
 	}
@@ -89,8 +90,8 @@ func TestSDEXOrderBookCache_MaintainTickReloadsPeriodically(t *testing.T) {
 	if reader.loads != 4 {
 		t.Fatalf("loads = %d, want 4: the due re-load is attempted", reader.loads)
 	}
-	if asks, _, _, _, ready := c.snapshotPair("native", usdc); !ready || len(asks) != 1 || asks[0].KeyXDR != "k2" {
-		t.Fatalf("after a failed re-load ready=%v asks=%+v, want the previous book (k2) still served", ready, asks)
+	if snap, ready := c.snapshotMarket("native", usdc); !ready || len(snap.asks) != 1 || snap.asks[0].KeyXDR != "k2" {
+		t.Fatalf("after a failed re-load ready=%v asks=%+v, want the previous book (k2) still served", ready, snap.asks)
 	}
 	clock = clock.Add(SDEXOrderBookAdvanceInterval)
 	c.MaintainTick(ctx)
@@ -124,14 +125,14 @@ func TestSDEXOrderBookCache_ReloadKeepsVerificationVerdicts(t *testing.T) {
 	if err := c.Load(ctx); err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if asks, _, _, _, _ := c.snapshotPair("native", usdc); len(asks) != 0 {
-		t.Fatalf("first load serves %d asks, want 0: both suspects start quarantined", len(asks))
+	if snap, _ := c.snapshotMarket("native", usdc); len(snap.asks) != 0 {
+		t.Fatalf("first load serves %d asks, want 0: both suspects start quarantined", len(snap.asks))
 	}
 	if err := c.VerifyPending(ctx, SDEXOrderBookVerifyBatch); err != nil {
 		t.Fatalf("VerifyPending: %v", err)
 	}
-	if asks, _, _, _, _ := c.snapshotPair("native", usdc); len(asks) != 1 || asks[0].KeyXDR != "live" {
-		t.Fatalf("after verify asks = %+v, want exactly the proven-live offer", asks)
+	if snap, _ := c.snapshotMarket("native", usdc); len(snap.asks) != 1 || snap.asks[0].KeyXDR != "live" {
+		t.Fatalf("after verify asks = %+v, want exactly the proven-live offer", snap.asks)
 	}
 
 	// Re-load reads the same rows again, plus a suspect the book has never
@@ -141,7 +142,8 @@ func TestSDEXOrderBookCache_ReloadKeepsVerificationVerdicts(t *testing.T) {
 	if err := c.Load(ctx); err != nil {
 		t.Fatalf("re-Load: %v", err)
 	}
-	asks, _, _, _, _ := c.snapshotPair("native", usdc)
+	snap, _ := c.snapshotMarket("native", usdc)
+	asks := snap.asks
 	if len(asks) != 1 || asks[0].KeyXDR != "live" {
 		t.Fatalf("after re-load asks = %+v, want exactly [live]: a verified offer at the same version stays "+
 			"served (not re-quarantined), while the proven-dead and the never-verified suspects stay out", asks)
@@ -159,8 +161,8 @@ func TestSDEXOrderBookCache_ReloadKeepsVerificationVerdicts(t *testing.T) {
 	if err := c.Load(ctx); err != nil {
 		t.Fatalf("second re-Load: %v", err)
 	}
-	if asks, _, _, _, _ := c.snapshotPair("native", usdc); len(asks) != 0 {
+	if snap, _ := c.snapshotMarket("native", usdc); len(snap.asks) != 0 {
 		t.Fatalf("asks = %+v, want none: a verdict earned at version 40<<32 does not cover the key's new "+
-			"version 60<<32 — that row is a fresh version-tie suspect", asks)
+			"version 60<<32 — that row is a fresh version-tie suspect", snap.asks)
 	}
 }

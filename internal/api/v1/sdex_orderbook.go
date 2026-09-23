@@ -46,7 +46,8 @@ const (
 // ~1.5 ms/key measured on r1 (2026-07-31) — so a 2,500 batch is ~4 s
 // of the 60 s tick, and a fully zombie-laden book (~10^6 suspects)
 // converges in hours, not days. The quarantined suspects are NOT
-// served meanwhile, so the book is honest from the first snapshot;
+// served meanwhile — each response counts them per side as
+// `*_offers_withheld` — so the book is honest from the first snapshot;
 // verification only widens it back out with proven-live offers.
 const SDEXOrderBookVerifyBatch = 2500
 
@@ -68,10 +69,9 @@ const (
 	// restarts. Daily bounds that to a day for about the cost of one
 	// deploy's restart — the same scan, under the same work-shape bound.
 	//
-	// Periodic rather than triggered by the crossed-pairs gauge: that
-	// count uses >=, so two PASSIVE offers resting at one price — legal on
-	// the DEX — hold it non-zero and would re-fire a multi-minute scan
-	// for as long as they rest.
+	// Periodic rather than triggered by the crossed-pairs gauge: a
+	// sustained crossed pair is a lake coverage gap a re-load cannot
+	// heal, so re-firing a multi-minute scan on it would only add load.
 	SDEXOrderBookReloadInterval = 24 * time.Hour
 	// SDEXOrderBookReloadRetry spaces re-load attempts after a FAILED
 	// re-load. The book keeps serving and advancing meanwhile, so there is
@@ -119,6 +119,7 @@ type SDEXOrderBookCache struct {
 	mu       sync.RWMutex
 	offers   map[string]clickhouse.LiveOffer // served book; key = LedgerKey XDR
 	pending  map[string]clickhouse.LiveOffer // quarantined suspects awaiting verification
+	withheld map[[2]string]int               // pending count per (selling, buying) market; kept in step by dropPendingLocked
 	crossed  int                             // last computed crossed-pair count (for change-only logging)
 	cursor   uint32                          // contiguous lake ledger the book has applied through
 	updated  time.Time
@@ -232,6 +233,10 @@ func (c *SDEXOrderBookCache) Load(ctx context.Context) (err error) {
 	}
 	c.mu.Lock()
 	c.offers, c.pending = partitionLoadedBook(book, c.offers)
+	c.withheld = make(map[[2]string]int)
+	for _, o := range c.pending {
+		c.withheld[[2]string{o.Selling, o.Buying}]++
+	}
 	c.cursor = cursor
 	c.updated = time.Now().UTC()
 	c.loadedOK = true
@@ -261,6 +266,22 @@ func partitionLoadedBook(book, trusted map[string]clickhouse.LiveOffer) (served,
 		pending[k] = o
 	}
 	return served, pending
+}
+
+// dropPendingLocked removes k from the quarantine and its market's
+// withheld count. Caller holds mu for writing.
+func (c *SDEXOrderBookCache) dropPendingLocked(k string) {
+	o, ok := c.pending[k]
+	if !ok {
+		return
+	}
+	delete(c.pending, k)
+	m := [2]string{o.Selling, o.Buying}
+	if c.withheld[m] <= 1 {
+		delete(c.withheld, m)
+		return
+	}
+	c.withheld[m]--
 }
 
 // VerifyPending drains up to limit quarantined offers by probing the
@@ -296,7 +317,7 @@ func (c *SDEXOrderBookCache) VerifyPending(ctx context.Context, limit int) (err 
 		if !ok || o.Ledger != ref.Ledger {
 			continue // superseded by an Advance since the refs were drawn
 		}
-		delete(c.pending, ref.KeyXDR)
+		c.dropPendingLocked(ref.KeyXDR)
 		if _, gone := dead[ref.KeyXDR]; gone {
 			continue // proven dead — never serve, never re-check
 		}
@@ -337,7 +358,7 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) (err error) {
 		// Any tip-forward change supersedes a quarantined pre-load
 		// state: the live stream's version ordering is trustworthy, so
 		// the key's fate is decided below, not by verification.
-		delete(c.pending, ch.KeyXDR)
+		c.dropPendingLocked(ch.KeyXDR)
 		prev, exists := c.offers[ch.KeyXDR]
 		if exists && prev.Version > ch.Version {
 			continue // stale duplicate
@@ -360,15 +381,19 @@ func (c *SDEXOrderBookCache) Advance(ctx context.Context) (err error) {
 //
 // The crossed-pairs count is the invariant tripwire this cache exists
 // to keep at zero: Stellar's DEX executes crossing offers at
-// submission, so a RESTING book can never have best bid >= best ask.
+// submission, so a RESTING book can never have best bid > best ask.
 // Any sustained non-zero value means phantom offers are being served —
 // e.g. the residual zombie class whose removal was never ingested at
-// all (so [VerifyPending] cannot disprove them).
+// all (so [VerifyPending] cannot disprove them). The
+// stellarindex_sdex_orderbook_crossed_book alert (ticket) fires on it; the
+// log line names the pairs so the operator knows which market to chase.
 func (c *SDEXOrderBookCache) updateHealthGaugesLocked() {
-	crossed := crossedPairCount(c.offers)
+	pairs := crossedPairs(c.offers)
+	crossed := len(pairs)
 	if crossed != c.crossed && c.logger != nil {
 		c.logger.Warn("sdex order book crossed-pair count changed",
-			"crossed_pairs", crossed, "was", c.crossed, "pending_offers", len(c.pending))
+			"crossed_pairs", crossed, "was", c.crossed, "pending_offers", len(c.pending),
+			"pairs", pairs[:min(len(pairs), 10)])
 	}
 	c.crossed = crossed
 	obs.SDEXOrderBookCrossedPairs.Set(float64(crossed))
@@ -385,9 +410,11 @@ func minPriceRat(curN, curD, n, d int64) (int64, int64) {
 	return curN, curD
 }
 
-// crossedPairCount counts (unordered) asset pairs whose book is
-// crossed: best bid >= best ask.
-func crossedPairCount(offers map[string]clickhouse.LiveOffer) int {
+// crossedPairs lists, sorted, the (unordered) asset pairs whose book is
+// crossed: best bid strictly above best ask. A touching book is legal —
+// a PASSIVE offer rests against an opposite offer at exactly the inverse
+// price — so counting it would hold the gauge non-zero indefinitely.
+func crossedPairs(offers map[string]clickhouse.LiveOffer) []string {
 	// Per unordered pair, track the best (minimum) offer price of each
 	// direction. For direction A→B an offer's N/D is B-per-A.
 	type bestPrices struct {
@@ -412,38 +439,52 @@ func crossedPairCount(offers map[string]clickhouse.LiveOffer) int {
 			b.revN, b.revD = minPriceRat(b.revN, b.revD, n, d)
 		}
 	}
-	crossed := 0
-	for _, b := range pairs {
+	var crossed []string
+	for key, b := range pairs {
 		if b.fwdD == 0 || b.revD == 0 {
 			continue // one-sided book — nothing to cross
 		}
 		// Best ask (key[1] per key[0]) = fwdN/fwdD. Best bid in the same
 		// unit is the inverse of the reverse side's best price: revD/revN.
-		// Crossed iff revD/revN >= fwdN/fwdD ⟺ revD·fwdD >= revN·fwdN.
-		if b.revD*b.fwdD >= b.revN*b.fwdN {
-			crossed++
+		// Crossed iff revD/revN > fwdN/fwdD ⟺ revD·fwdD > revN·fwdN.
+		if b.revD*b.fwdD > b.revN*b.fwdN {
+			crossed = append(crossed, key[0]+"/"+key[1])
 		}
 	}
+	sort.Strings(crossed)
 	return crossed
 }
 
-// snapshotPair collects both sides of the (selling, buying) market
-// under an RLock. ok=false before the first Load.
-func (c *SDEXOrderBookCache) snapshotPair(selling, buying string) (asks, bids []clickhouse.LiveOffer, cursor uint32, at time.Time, ok bool) {
+// sdexMarketSnapshot is one consistent read of a (selling, buying)
+// market: the served offers per side, the quarantined offers withheld
+// from each side, and the book's freshness.
+type sdexMarketSnapshot struct {
+	asks, bids                 []clickhouse.LiveOffer
+	withheldAsks, withheldBids int
+	cursor                     uint32
+	at                         time.Time
+}
+
+// snapshotMarket collects both sides of the (selling, buying) market
+// under one RLock. ok=false before the first Load.
+func (c *SDEXOrderBookCache) snapshotMarket(selling, buying string) (snap sdexMarketSnapshot, ok bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if !c.loadedOK {
-		return nil, nil, 0, time.Time{}, false
+		return sdexMarketSnapshot{}, false
 	}
 	for _, o := range c.offers {
 		switch {
 		case o.Selling == selling && o.Buying == buying:
-			asks = append(asks, o)
+			snap.asks = append(snap.asks, o)
 		case o.Selling == buying && o.Buying == selling:
-			bids = append(bids, o)
+			snap.bids = append(snap.bids, o)
 		}
 	}
-	return asks, bids, c.cursor, c.updated, true
+	snap.withheldAsks = c.withheld[[2]string{selling, buying}]
+	snap.withheldBids = c.withheld[[2]string{buying, selling}]
+	snap.cursor, snap.at = c.cursor, c.updated
+	return snap, true
 }
 
 // ─── Wire shapes ─────────────────────────────────────────────────────
@@ -489,10 +530,16 @@ type SDEXOrderBookView struct {
 	// base with quote) descending by price.
 	Asks []SDEXOrderBookLevelView `json:"asks"`
 	Bids []SDEXOrderBookLevelView `json:"bids"`
-	// AskOffers / BidOffers are the total live offer counts per side
+	// AskOffers / BidOffers are the total SERVED offer counts per side
 	// BEFORE the depth cap, so a truncated book is visible as such.
 	AskOffers int `json:"ask_offers"`
 	BidOffers int `json:"bid_offers"`
+	// AskOffersWithheld / BidOffersWithheld count the offers the lake
+	// lists as live on each side but the book withholds until removal
+	// verification clears them (see [SDEXOrderBookCache]). Non-zero
+	// means the served depth — possibly the best price — is incomplete.
+	AskOffersWithheld int `json:"ask_offers_withheld"`
+	BidOffersWithheld int `json:"bid_offers_withheld"`
 	// Depth is the applied per-side level cap.
 	Depth int `json:"depth"`
 }
@@ -516,7 +563,7 @@ func (s *Server) handleSDEXOrderbook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	asks, bids, cursor, at, ready := s.sdexOrderBook.snapshotPair(selling.String(), buying.String())
+	snap, ready := s.sdexOrderBook.snapshotMarket(selling.String(), buying.String())
 	if !ready {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/orderbook-loading",
@@ -526,15 +573,17 @@ func (s *Server) handleSDEXOrderbook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := SDEXOrderBookView{
-		Selling:    selling.String(),
-		Buying:     buying.String(),
-		AsOfLedger: cursor,
-		SnapshotAt: at.Format(time.RFC3339),
-		Asks:       aggregateOrderBookSide(asks, false, depth),
-		Bids:       aggregateOrderBookSide(bids, true, depth),
-		AskOffers:  len(asks),
-		BidOffers:  len(bids),
-		Depth:      depth,
+		Selling:           selling.String(),
+		Buying:            buying.String(),
+		AsOfLedger:        snap.cursor,
+		SnapshotAt:        snap.at.Format(time.RFC3339),
+		Asks:              aggregateOrderBookSide(snap.asks, false, depth),
+		Bids:              aggregateOrderBookSide(snap.bids, true, depth),
+		AskOffers:         len(snap.asks),
+		BidOffers:         len(snap.bids),
+		AskOffersWithheld: snap.withheldAsks,
+		BidOffersWithheld: snap.withheldBids,
+		Depth:             depth,
 	}
 	writeJSON(w, view, Flags{})
 }
