@@ -524,7 +524,7 @@ func TestDecode_UnknownFeedQuoteSuffix(t *testing.T) {
 
 func TestDecode_RWAandQuoteCurrency(t *testing.T) {
 	// Exercises the ADR-0028 feed registry: an RWA feed whose
-	// feed_id ≠ display name, the EUR-quoted EUROC feed (the pre-#53
+	// feed_id ≠ display name, the EUR-quoted EUROC feed (the pre-ecc289c6
 	// USD-hardcode bug), a plain RWA feed, and a tokenized-BTC crypto
 	// feed.
 	feedIDs := []string{
@@ -572,7 +572,7 @@ func TestDecode_RWAandQuoteCurrency(t *testing.T) {
 		t.Errorf("feed_id EUROC/EUR → %s, want crypto:EUROC", updates[1].Asset)
 	}
 	if updates[1].Quote.String() != "fiat:EUR" {
-		t.Errorf("EUROC quote = %s, want fiat:EUR (pre-#53 this was mislabelled USD)", updates[1].Quote)
+		t.Errorf("EUROC quote = %s, want fiat:EUR (pre-ecc289c6 this was mislabelled USD)", updates[1].Quote)
 	}
 
 	wantGILTS, _ := canonical.NewRWAAsset("GILTS")

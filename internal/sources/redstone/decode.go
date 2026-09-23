@@ -193,7 +193,7 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			Asset:     entry.Base,
 			// Per-feed quote (ADR-0028): USD for most, EUR for
 			// EUROC/EUR, and the reserve ASSET for the bare
-			// `_FUNDAMENTAL` NAV-ratio feeds. Pre-#53 this was
+			// `_FUNDAMENTAL` NAV-ratio feeds. Pre-ecc289c6 this was
 			// hardcoded USD, mislabelling EUROC; pre-D8 the SolvBTC
 			// NAV ratios were still fiat:USD.
 			Quote:    entry.Quote,
