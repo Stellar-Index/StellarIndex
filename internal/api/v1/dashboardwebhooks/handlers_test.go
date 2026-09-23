@@ -745,3 +745,14 @@ func TestHandleListDeliveries_CrossAccount404(t *testing.T) {
 // strPtr is a tiny test helper — Go has no literal *string syntax
 // and inline helpers like `&s` need a temporary variable.
 func strPtr(s string) *string { return &s }
+
+// TestValidateWebhookName_CountsCodePoints: maxLength 200 is code points
+// (spec) and characters (Postgres CHECK), not bytes.
+func TestValidateWebhookName_CountsCodePoints(t *testing.T) {
+	if err := validateWebhookName(strings.Repeat("名", 200)); err != nil {
+		t.Errorf("200 code points (600 bytes) rejected: %v", err)
+	}
+	if err := validateWebhookName(strings.Repeat("名", 201)); err == nil {
+		t.Error("201 code points accepted")
+	}
+}
