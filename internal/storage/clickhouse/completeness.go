@@ -344,6 +344,16 @@ func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (proble
 // from-1 is also the tightest bound (<= any interior firstGap-1), so it correctly
 // takes precedence over an interior gap that may co-exist above the boundary hole.
 func watermark(from, chMax, firstGap, minPresent uint32) uint32 {
+	if from == 0 {
+		// Ledger 0 does not exist (sequences start at 1) — a caller with no
+		// cursor yet (a brand-new projected source) can reach this with
+		// from=0, and the two guards below both return from-1 on a miss.
+		// Left unclamped that underflows uint32 to 4294967295, which
+		// resolveTip reads as "the lake is complete forever" and the
+		// stall-at-a-hole clamp becomes a silent no-op for exactly the
+		// caller that needs it most (RLT-154 / GH #623).
+		from = 1
+	}
 	if chMax < from {
 		return from - 1
 	}
