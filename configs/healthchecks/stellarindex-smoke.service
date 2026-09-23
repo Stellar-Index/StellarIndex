@@ -6,6 +6,13 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# The timer re-fires every 5 min (OnUnitActiveSec, see the .timer unit)
+# and systemd will not start a new instance while this one is still
+# running, so a hung smoke test silently stops all future runs forever.
+# 2 min covers the 34-GET run with margin while still guaranteeing the
+# unit is dead well before the next scheduled fire.
+TimeoutStartSec=2min
+RuntimeMaxSec=2min
 ExecStart=/opt/stellarindex/healthchecks/smoke.sh
 EnvironmentFile=-/etc/default/stellarindex-healthchecks
 DynamicUser=true

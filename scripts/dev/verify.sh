@@ -285,6 +285,8 @@ echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration
 echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe.sh
 echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
 echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
+echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
+echo "=== Healthcheck oneshot start/runtime bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
