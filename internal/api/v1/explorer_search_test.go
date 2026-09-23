@@ -64,6 +64,31 @@ func TestExplorer_Search_AccountNotClaimedSupported(t *testing.T) {
 	}
 }
 
+// TestExplorer_Search_MuxedResolvesToAccount: an exchange deposit address is
+// a muxed M-strkey; search must resolve it to the underlying G (SEP-23 vector)
+// and echo the M as the query, not fall through to "unknown".
+func TestExplorer_Search_MuxedResolvesToAccount(t *testing.T) {
+	base := explorerTestServer(t, &stubExplorerReader{})
+	const m = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVAAAAAAAAAAAAAJLK"
+	const g = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	resp := mustGet(t, base+"/v1/search?q="+url.QueryEscape(m))
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data v1.SearchResultView `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	d := body.Data
+	if d.Kind != "account" || d.Canonical != g || d.Query != m || d.Href != "/v1/issuers/"+g {
+		t.Fatalf("got kind=%q canonical=%q query=%q href=%q; want account/%s/%s//v1/issuers/%s",
+			d.Kind, d.Canonical, d.Query, d.Href, g, m, g)
+	}
+	if d.Supported {
+		t.Errorf("Supported = true, want false (same unverified issuer href as a G query)")
+	}
+}
+
 func TestExplorer_Search_EmptyQuery400(t *testing.T) {
 	base := explorerTestServer(t, &stubExplorerReader{})
 	if resp := mustGet(t, base+"/v1/search?q="); resp.StatusCode != http.StatusBadRequest {
