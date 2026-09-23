@@ -104,9 +104,13 @@ jobs:
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "Resolved tag: $tag"
 
-  # Build every binary for every (os, arch) combo we ship. Matrix
-  # keeps each combo independent — a single arch failure doesn't
-  # block the others; the release job aggregates whatever succeeded.
+  # Build every binary we ship (linux/amd64 only — see the goarch
+  # comment below). fail-fast: false keeps each binary's build
+  # independent, so one binary failing doesn't cancel the others'
+  # in-flight jobs. It does NOT mean a partial release: the release
+  # job below `needs: [resolve-tag, build]` with no `if: always()`,
+  # so GitHub Actions skips it entirely if any binary in this matrix
+  # fails — we never publish a release missing an artifact.
   build:
     name: Build ${{ matrix.binary }} (${{ matrix.goos }}/${{ matrix.goarch }})
     needs: resolve-tag
