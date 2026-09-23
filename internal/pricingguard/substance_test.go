@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"math/big"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -102,6 +104,12 @@ func (f *fakeSubstanceReader) PairMarketSubstance(_ context.Context, p canonical
 		return sub, nil
 	}
 	return timescale.MarketSubstance{VolumeUSD: "0"}, nil
+}
+
+func (f *fakeSubstanceReader) PairMarketSubstanceAt(
+	ctx context.Context, p canonical.Pair, _ time.Time, window time.Duration, _ timescale.HistoryGranularity,
+) (timescale.MarketSubstance, error) {
+	return f.PairMarketSubstance(ctx, p, window)
 }
 
 func TestSubstanceGate_WithholdsThinPair(t *testing.T) {
@@ -308,5 +316,119 @@ func TestSubstanceGate_LogsOnTransitionsOnly(t *testing.T) {
 	gate.Allowed(context.Background(), classic, native, "test")
 	if warns != 2 {
 		t.Errorf("allowed→withheld flip must WARN, got %d", warns)
+	}
+}
+
+// A store that answers only the live question must not be accepted by
+// the constructor: the gate would otherwise judge history by today's
+// market, and would do so without failing or logging.
+func TestNewSubstanceGate_RequiresPointInTimeReader(t *testing.T) {
+	param := reflect.TypeOf(NewSubstanceGate).In(0)
+	atReader := reflect.TypeFor[MarketSubstanceAtReader]()
+	if !param.Implements(atReader) {
+		t.Fatalf("NewSubstanceGate accepts %v, which does not require %v", param, atReader)
+	}
+}
+
+// substanceLegs counts a market given as trade minutes (offsets from a
+// UTC hour boundary) at the named grain, as PairMarketSubstanceAt does:
+// distinct buckets, and max(bucket) - min(bucket) in seconds.
+func substanceLegs(minutes []int64, grain time.Duration) (buckets, spanSeconds int64) {
+	seen := map[int64]bool{}
+	var lo, hi int64
+	for i, m := range minutes {
+		k := int64((time.Duration(m) * time.Minute).Truncate(grain) / time.Second)
+		seen[k] = true
+		if i == 0 || k < lo {
+			lo = k
+		}
+		if i == 0 || k > hi {
+			hi = k
+		}
+	}
+	return int64(len(seen)), hi - lo
+}
+
+// substanceLayouts is the weakest-shaped market for the policy (packed
+// minutes, the last pushed out to the span floor) plus every union of
+// up to two runs of consecutive minutes drawn from a grid of hours,
+// in-hour offsets and lengths.
+func substanceLayouts(pol SubstancePolicy) [][]int64 {
+	packed := make([]int64, 0, pol.MinBuckets)
+	for m := range pol.MinBuckets - 1 {
+		packed = append(packed, m)
+	}
+	packed = append(packed, max(pol.MinBuckets-1, int64(pol.MinSpan/time.Minute)))
+	var runs [][]int64
+	for _, hour := range []int64{0, 1, 6} {
+		for _, start := range []int64{0, 5, 30, 59} {
+			for _, n := range []int64{1, 10, 20, 31, 60, 120} {
+				run := make([]int64, 0, n)
+				for m := range n {
+					run = append(run, hour*60+start+m)
+				}
+				runs = append(runs, run)
+			}
+		}
+	}
+	out := [][]int64{packed}
+	for i, a := range runs {
+		out = append(out, a)
+		for _, b := range runs[i+1:] {
+			u := slices.Concat(a, b)
+			slices.Sort(u)
+			out = append(out, slices.Compact(u))
+		}
+	}
+	return out
+}
+
+// The historical verdict must never refuse what the live verdict admits
+// under ANY legal policy, not just the default one; the hour floor is
+// derived from the policy and is the strictest floor with that property.
+func TestSubstanceGate_HourGrainFloorAgreesWithMinuteFloorForAnyPolicy(t *testing.T) {
+	past := timescale.PriceAtMinuteRungMaxAge + time.Hour
+	vol := new(big.Rat).SetInt64(5000)
+	cases := []struct {
+		minBuckets  int64
+		minSpan     time.Duration
+		wantBuckets int64
+		wantSpan    time.Duration
+	}{
+		{20, 6 * time.Hour, 2, 6 * time.Hour},
+		{20, 30 * time.Minute, 1, 0}, // twenty minutes inside one hour clear the live floor
+		{20, 90 * time.Minute, 2, time.Hour},
+		{90, 45 * time.Minute, 2, 0},
+		{200, 6 * time.Hour, 4, 6 * time.Hour},
+		{1, time.Minute, 1, 0},
+	}
+	for _, tc := range cases {
+		pol := testPolicy()
+		pol.MinBuckets, pol.MinSpan = tc.minBuckets, tc.minSpan
+		gate := NewSubstanceGate(&fakeSubstanceReader{}, SubstanceGateOptions{Policy: pol})
+		grain, hourly := gate.policyAt(past)
+		if grain != timescale.Granularity1h {
+			t.Fatalf("policyAt(%v) grain = %s, want %s", past, grain, timescale.Granularity1h)
+		}
+		if hourly.MinBuckets != tc.wantBuckets || hourly.MinSpan != tc.wantSpan {
+			t.Errorf("policy %d buckets / %v: hour floor = %d buckets / %v, want %d / %v",
+				tc.minBuckets, tc.minSpan, hourly.MinBuckets, hourly.MinSpan, tc.wantBuckets, tc.wantSpan)
+		}
+		admitted := 0
+		for _, layout := range substanceLayouts(pol) {
+			mb, ms := substanceLegs(layout, time.Minute)
+			if !SubstanceOK(vol, mb, ms, pol) {
+				continue
+			}
+			admitted++
+			if hb, hs := substanceLegs(layout, time.Hour); !SubstanceOK(vol, hb, hs, hourly) {
+				t.Errorf("policy %d buckets / %v: live floor admits %d buckets over %ds, hour floor refuses the same market (%d buckets over %ds)",
+					tc.minBuckets, tc.minSpan, mb, ms, hb, hs)
+				break
+			}
+		}
+		if admitted == 0 {
+			t.Fatalf("policy %d buckets / %v: no layout clears the live floor — the property was not exercised", tc.minBuckets, tc.minSpan)
+		}
 	}
 }
