@@ -53,7 +53,7 @@ func pegTestServer(t *testing.T, fx FXHistoryReader) *Server {
 // strip a pre-existing fill.
 func TestFillDeclaredPegPrices_AfterSubstanceGate(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
-		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655},
+		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655, InverseUSDText: "0.655"},
 	}}
 	s := pegTestServer(t, fx)
 	// Gate denies everything (no allow entries) — AUDD's USD books are
@@ -99,7 +99,7 @@ func TestFillDeclaredPegPrices_AfterSubstanceGate(t *testing.T) {
 // nil-only and must not stamp a basis on a market observation.
 func TestFillDeclaredPegPrices_NeverOverwritesMarketPrice(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
-		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655},
+		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655, InverseUSDText: "0.655"},
 	}}
 	s := pegTestServer(t, fx)
 	s.substance = &stubListingGate{allow: map[string]bool{
@@ -131,7 +131,7 @@ func TestFillDeclaredPegPrices_NeverOverwritesMarketPrice(t *testing.T) {
 // PriceReader fallback tier, whose stale flag that resolver discards.)
 func TestFillDeclaredPegPrices_StaleFXDoesNotFill(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
-		{Bucket: time.Now().UTC().Add(-10 * 24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655},
+		{Bucket: time.Now().UTC().Add(-10 * 24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655, InverseUSDText: "0.655"},
 	}}
 	s := pegTestServer(t, fx)
 
@@ -152,7 +152,7 @@ func TestFillDeclaredPegPrices_StaleFXDoesNotFill(t *testing.T) {
 // mirroring fiatMarketCapUSD's special case.
 func TestFillDeclaredPegPrice_DetailPathSingleRow(t *testing.T) {
 	fx := &stubFXHistory{points: []FXQuotePoint{
-		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655},
+		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655, InverseUSDText: "0.655"},
 	}}
 	s := pegTestServer(t, fx)
 

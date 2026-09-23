@@ -27,7 +27,10 @@ type FXQuote struct {
 	// on write: [Store.InsertFXQuoteBatch] derives inverse_usd from
 	// rate_usd in NUMERIC so the column never carries a float64 quotient.
 	InverseUSD float64
-	Source     string
+	// InverseUSDText is inverse_usd's exact NUMERIC text on read (unset
+	// on write, like InverseUSD).
+	InverseUSDText string
+	Source         string
 }
 
 // InsertFXQuoteBatch upserts a slice of fx quotes. Idempotent on
@@ -127,7 +130,7 @@ func (s *Store) InsertFXQuoteBatch(ctx context.Context, quotes []FXQuote) error 
 // `history_all`, etc. on the response.
 func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.Time) ([]FXQuote, error) {
 	const stmt = `
-		SELECT bucket, ticker, rate_usd, inverse_usd, COALESCE(source, '')
+		SELECT bucket, ticker, rate_usd, inverse_usd, inverse_usd::text, COALESCE(source, '')
 		  FROM fx_quotes
 		 WHERE ticker = $1
 		   AND bucket BETWEEN $2 AND $3
@@ -141,7 +144,7 @@ func (s *Store) ListFXHistory(ctx context.Context, ticker string, from, to time.
 	var out []FXQuote
 	for rows.Next() {
 		var q FXQuote
-		if err := rows.Scan(&q.Bucket, &q.Ticker, &q.RateUSD, &q.InverseUSD, &q.Source); err != nil {
+		if err := rows.Scan(&q.Bucket, &q.Ticker, &q.RateUSD, &q.InverseUSD, &q.InverseUSDText, &q.Source); err != nil {
 			return nil, fmt.Errorf("timescale: ListFXHistory scan: %w", err)
 		}
 		out = append(out, q)

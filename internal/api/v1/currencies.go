@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"math/big"
 	"time"
 )
 
@@ -33,6 +34,19 @@ type FXQuotePoint struct {
 	Bucket     time.Time
 	RateUSD    float64
 	InverseUSD float64
+	// InverseUSDText is inverse_usd's exact NUMERIC text: the value to
+	// serve as a price. InverseUSD is its float for chart arithmetic.
+	InverseUSDText string
+}
+
+// inverseUSDRat is the point's exact fiat→USD rate, parsed from the
+// stored NUMERIC text; ok is false when there is no text or it is not > 0.
+func (p FXQuotePoint) inverseUSDRat() (*big.Rat, bool) {
+	r, ok := new(big.Rat).SetString(p.InverseUSDText)
+	if !ok || r.Sign() <= 0 {
+		return nil, false
+	}
+	return r, true
 }
 
 // CurrenciesSnapshot is the v1-side projection of the forex cache.

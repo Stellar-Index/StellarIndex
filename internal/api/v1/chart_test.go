@@ -799,8 +799,8 @@ func TestChart_MarketCap_FiatCNY_ComputesFromM2(t *testing.T) {
 	d1 := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
 	d2 := time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC)
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: d1, RateUSD: 7.18, InverseUSD: 1.0 / 7.18},
-		{Bucket: d2, RateUSD: 7.20, InverseUSD: 1.0 / 7.20},
+		{Bucket: d1, RateUSD: 7.18, InverseUSD: 1.0 / 7.18, InverseUSDText: "0.13927576601671309192"},
+		{Bucket: d2, RateUSD: 7.20, InverseUSD: 1.0 / 7.20, InverseUSDText: "0.13888888888888888889"},
 	}}
 	srv := v1.New(v1.Options{
 		History:            &stubHistoryReader{},

@@ -54,5 +54,14 @@ func TestFXQuotes_InverseUSDIsTheExactNumericReciprocal(t *testing.T) {
 			t.Errorf("%s: stored inverse_usd = %s is not the NUMERIC reciprocal of rate_usd = %s "+
 				"(a float64 1/rate reached the money column)", q.Ticker, inverse, rate)
 		}
+
+		// The read path hands the served-price surfaces that exact text.
+		hist, err := store.ListFXHistory(ctx, q.Ticker, day, day)
+		if err != nil {
+			t.Fatalf("ListFXHistory %s: %v", q.Ticker, err)
+		}
+		if len(hist) != 1 || hist[0].InverseUSDText != inverse {
+			t.Errorf("%s: ListFXHistory = %+v, want one row with InverseUSDText %q", q.Ticker, hist, inverse)
+		}
 	}
 }

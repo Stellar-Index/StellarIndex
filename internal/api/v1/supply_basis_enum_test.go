@@ -71,6 +71,13 @@ func TestSupplyBasis_RWAAssetSpecEnumIsTheGoVocabulary(t *testing.T) {
 // .properties.supply_basis, in spec order.
 func specSupplyBasisEnum(t *testing.T, schema string) []string {
 	t.Helper()
+	return specPropertyEnum(t, schema, "supply_basis")
+}
+
+// specPropertyEnum returns the `enum` of components.schemas.<schema>
+// .properties.<prop>, in spec order.
+func specPropertyEnum(t *testing.T, schema, prop string) []string {
+	t.Helper()
 	body, err := os.ReadFile(filepath.Join(repoRoot(t), "openapi", "stellar-index.v1.yaml")) //nolint:gosec // repo-relative path
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
@@ -91,12 +98,12 @@ func specSupplyBasisEnum(t *testing.T, schema string) []string {
 	if !ok {
 		t.Fatalf("spec has no components.schemas.%s", schema)
 	}
-	p, ok := s.Properties["supply_basis"]
+	p, ok := s.Properties[prop]
 	if !ok {
-		t.Fatalf("components.schemas.%s has no supply_basis property", schema)
+		t.Fatalf("components.schemas.%s has no %s property", schema, prop)
 	}
 	if len(p.Enum) == 0 {
-		t.Fatalf("components.schemas.%s.supply_basis has no enum", schema)
+		t.Fatalf("components.schemas.%s.%s has no enum", schema, prop)
 	}
 	return p.Enum
 }
@@ -130,6 +137,26 @@ func goSupplyBases(t *testing.T) []string {
 func isBasisTyped(_ string, vs *ast.ValueSpec) bool {
 	id, ok := vs.Type.(*ast.Ident)
 	return ok && id.Name == "Basis"
+}
+
+// goFileStringConsts reads the string constants of type typeName declared
+// in file, in declaration order. Distinct from packageStringConsts, which
+// globs a whole directory — this one is scoped to a single file, which
+// TestPriceAuthority_SpecEnumIsTheGoVocabulary compares positionally.
+func goFileStringConsts(t *testing.T, file, typeName string) []string {
+	t.Helper()
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
+	if err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	out := fileStringConsts(t, file, parsed, func(_ string, vs *ast.ValueSpec) bool {
+		id, ok := vs.Type.(*ast.Ident)
+		return ok && id.Name == typeName
+	})
+	if len(out) == 0 {
+		t.Fatalf("%s: no typed %s constants found — this guard needs re-aiming", file, typeName)
+	}
+	return out
 }
 
 // TestSupplyBasis_ListingValuationSpecEnumIsTheGoVocabulary —
