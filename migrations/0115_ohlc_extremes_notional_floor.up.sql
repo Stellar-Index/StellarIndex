@@ -39,7 +39,7 @@
 -- a crumb contributes ~0 by construction, and filtering them would
 -- change volume semantics (a $0.00000027 fill is still a trade that
 -- happened). TWAP was left unfiltered here on the same argument, which
--- is false for an equal-weight mean; migration 0165 floors it.
+-- is false for an equal-weight mean; migration 0166 floors it.
 --
 -- ─── Why $0.01, and why a size floor rather than a price band ──────────
 -- Operator DECISION, 2026-07-22 (see the finding, "DECISION"): filter on

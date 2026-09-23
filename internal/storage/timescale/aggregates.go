@@ -272,7 +272,7 @@ func combineDirVWAP(rows []dirVWAP) (string, bool) {
 //     the exact denominator of the row's own avg, and the weight the
 //     union merge needs.
 //   - notionalCount is how many of those minutes cleared the $0.01
-//     notional floor (migration 0165); zero means the row's twap is the
+//     notional floor (migration 0166); zero means the row's twap is the
 //     unfloored fallback.
 //   - flipped marks a row stored (quote, base) relative to the orientation
 //     the caller asked for.
@@ -283,7 +283,7 @@ type dirTWAP struct {
 	flipped       bool
 }
 
-// flooredDirTWAP applies migration 0165's notional-floor fallback across
+// flooredDirTWAP applies migration 0166's notional-floor fallback across
 // directions: when any direction cleared the floor, a direction whose twap
 // is the unfloored fallback (dust or unpriced only) is dropped from the merge.
 func flooredDirTWAP(rows []dirTWAP) []dirTWAP {

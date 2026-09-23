@@ -266,7 +266,7 @@ func TestTWAPPointsInRange_FlippedOnlyBucketIsServed(t *testing.T) {
 	}
 }
 
-// Migration 0165 floors the TWAP chain at $0.01 of notional with a
+// Migration 0166 floors the TWAP chain at $0.01 of notional with a
 // COALESCE fallback, so a direction holding only dust keeps an unfloored
 // twap. When the other direction cleared the floor the fallback row must not
 // enter the merge: here a dust-only flipped minute at 0.001 (oriented 1000)

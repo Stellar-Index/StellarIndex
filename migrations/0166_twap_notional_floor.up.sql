@@ -1,4 +1,4 @@
--- 0165 up — put the $0.01 notional floor on the TWAP chain.
+-- 0166 up — put the $0.01 notional floor on the TWAP chain.
 --
 -- ─── The defect ────────────────────────────────────────────────────────
 -- 0115 floored the OHLC extremes at usd_volume >= $0.01 and left TWAP
@@ -38,10 +38,12 @@
 -- free rider at the next full price-CAGG rebuild.
 --
 -- Everything else in prices_1m is 0147's definition verbatim (exact
--- VWAP, tie-break key, floored extremes, index, refresh policy);
--- twap_1h/1d keep 0126's policies and index. Dropping prices_1m drops
--- 0156's retention policy with it, so it is re-attached here with the
--- same 90-day horizon and, like 0156, DISARMED and asserted so.
+-- VWAP, tie-break key, floored extremes, index) except the refresh
+-- policy's start_offset, which carries 0165's widened 15 minutes
+-- (0147 last set it to 5); twap_1h/1d keep 0126's policies and index.
+-- Dropping prices_1m drops 0156's retention policy with it, so it is
+-- re-attached here with the same 90-day horizon and, like 0156,
+-- DISARMED and asserted so.
 --
 -- ─── ⚠ OPERATOR: this migration leaves all three views EMPTY ──────────
 -- WITH NO DATA, the 0115/0147 pattern. Follow 0156's Recovery section:
@@ -61,7 +63,7 @@
 
 BEGIN;
 
-CREATE TEMP TABLE _0165_prev_matonly ON COMMIT DROP AS
+CREATE TEMP TABLE _0166_prev_matonly ON COMMIT DROP AS
 SELECT view_name, materialized_only
   FROM timescaledb_information.continuous_aggregates
  WHERE view_schema = 'public'
@@ -116,7 +118,7 @@ CREATE INDEX prices_1m_pair_bucket_idx ON prices_1m (base_asset, quote_asset, bu
 
 SELECT add_continuous_aggregate_policy(
     'prices_1m',
-    start_offset      => INTERVAL '5 minutes',
+    start_offset      => INTERVAL '15 minutes',
     end_offset        => INTERVAL '30 seconds',
     schedule_interval => INTERVAL '30 seconds'
 );
@@ -210,7 +212,7 @@ DO $do$
 DECLARE
     v record;
 BEGIN
-    FOR v IN SELECT * FROM _0165_prev_matonly LOOP
+    FOR v IN SELECT * FROM _0166_prev_matonly LOOP
         EXECUTE format(
             'ALTER MATERIALIZED VIEW %I SET (timescaledb.materialized_only = %L)',
             v.view_name, v.materialized_only);

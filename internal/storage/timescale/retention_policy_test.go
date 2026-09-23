@@ -170,9 +170,9 @@ func TestRetentionPolicies_AreExactlyTheDeclaredSet(t *testing.T) {
 		// The minute price aggregate, 90 days (0156). 69 GB / 82 M
 		// rows on r1 2026-09-07, 55 % of all price-CAGG storage, and
 		// recomputable from `trades` — which 0156 depends on and the
-		// next test pins. 0165 rebuilds prices_1m and re-attaches the
-		// same policy (TestPrices1mRetention_0165ReattachesTheSamePolicy).
-		"prices_1m": "0165_twap_notional_floor.up.sql",
+		// next test pins. 0166 rebuilds prices_1m and re-attaches the
+		// same policy (TestPrices1mRetention_0166ReattachesTheSamePolicy).
+		"prices_1m": "0166_twap_notional_floor.up.sql",
 	}
 
 	held := retentionLedger(t)
@@ -273,13 +273,13 @@ func TestPrices1mRetention_HorizonIsNinetyDaysAndNamesOneRelation(t *testing.T) 
 	}
 }
 
-// 0165 drops and recreates prices_1m, which drops 0156's policy with it.
-// Both directions of 0165 must put back the SAME policy: one relation,
+// 0166 drops and recreates prices_1m, which drops 0156's policy with it.
+// Both directions of 0166 must put back the SAME policy: one relation,
 // 90 days, shipped disarmed and asserted so.
-func TestPrices1mRetention_0165ReattachesTheSamePolicy(t *testing.T) {
+func TestPrices1mRetention_0166ReattachesTheSamePolicy(t *testing.T) {
 	for _, path := range []string{
-		"migrations/0165_twap_notional_floor.up.sql",
-		"migrations/0165_twap_notional_floor.down.sql",
+		"migrations/0166_twap_notional_floor.up.sql",
+		"migrations/0166_twap_notional_floor.down.sql",
 	} {
 		sql := stripSQLComments(readRepoFile(t, path))
 		added := retentionRelationsFromCalls(t, addRetentionCallRe, sql, path)
