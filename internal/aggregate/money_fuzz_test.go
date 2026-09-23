@@ -191,7 +191,8 @@ func addTradeSeeds(f *testing.F) {
 }
 
 // FuzzVWAP pins VWAP to an independent per-trade weighted mean and the
-// volume helpers to unfiltered big.Int sums (no int64/float64 anywhere).
+// volume helpers to big.Int sums over the same priced population VWAP
+// draws from (priceable: both legs strictly positive) — not every trade.
 func FuzzVWAP(f *testing.F) {
 	addTradeSeeds(f)
 	f.Fuzz(func(t *testing.T, data []byte) {
@@ -199,21 +200,19 @@ func FuzzVWAP(f *testing.F) {
 		orig := cloneTrades(trades)
 
 		weighted := new(big.Rat)
-		sumBase := new(big.Int)
-		allBase, allQuote := new(big.Int), new(big.Int)
+		sumBase, sumQuote := new(big.Int), new(big.Int)
 		var lo, hi *big.Rat
 		valid := 0
 		for _, tr := range trades {
-			allBase.Add(allBase, tr.BaseAmount.BigInt())
-			allQuote.Add(allQuote, tr.QuoteAmount.BigInt())
 			p, ok := validPrice(tr)
 			if !ok {
 				continue
 			}
 			valid++
-			b := tr.BaseAmount.BigInt()
+			b, q := tr.BaseAmount.BigInt(), tr.QuoteAmount.BigInt()
 			weighted.Add(weighted, new(big.Rat).Mul(p, new(big.Rat).SetInt(b)))
 			sumBase.Add(sumBase, b)
+			sumQuote.Add(sumQuote, q)
 			if lo == nil || p.Cmp(lo) < 0 {
 				lo = p
 			}
@@ -239,11 +238,11 @@ func FuzzVWAP(f *testing.F) {
 				t.Fatalf("VWAP %s outside [%s, %s]", got.RatString(), lo.RatString(), hi.RatString())
 			}
 		}
-		if v := TotalBaseVolume(trades).BigInt(); v.Cmp(allBase) != 0 {
-			t.Fatalf("TotalBaseVolume = %s, want %s", v, allBase)
+		if v := TotalBaseVolume(trades).BigInt(); v.Cmp(sumBase) != 0 {
+			t.Fatalf("TotalBaseVolume = %s, want %s", v, sumBase)
 		}
-		if v := TotalQuoteVolume(trades).BigInt(); v.Cmp(allQuote) != 0 {
-			t.Fatalf("TotalQuoteVolume = %s, want %s", v, allQuote)
+		if v := TotalQuoteVolume(trades).BigInt(); v.Cmp(sumQuote) != 0 {
+			t.Fatalf("TotalQuoteVolume = %s, want %s", v, sumQuote)
 		}
 
 		contribs := SourceContributions(trades)
@@ -344,24 +343,34 @@ func FuzzTWAP(f *testing.F) {
 		var lo, hi *big.Rat
 		exact := new(big.Rat)
 		total := new(big.Int)
-		for i, tr := range trades {
+		// A priced trade's price is current from its own timestamp until
+		// the NEXT priced trade's timestamp (or end): an unpriceable trade
+		// in between neither starts nor ends a slot (fuzzTrades never
+		// repeats a timestamp, so "instant" and "trade" coincide here).
+		var pending *big.Rat
+		var pendingAt time.Time
+		for _, tr := range trades {
 			p, ok := validPrice(tr)
 			if !ok {
 				continue
 			}
-			next := end
-			if i+1 < len(trades) {
-				next = trades[i+1].Timestamp
+			if pending != nil {
+				d := big.NewInt(int64(tr.Timestamp.Sub(pendingAt)))
+				exact.Add(exact, new(big.Rat).Mul(pending, new(big.Rat).SetInt(d)))
+				total.Add(total, d)
 			}
-			d := big.NewInt(int64(next.Sub(tr.Timestamp)))
-			exact.Add(exact, new(big.Rat).Mul(p, new(big.Rat).SetInt(d)))
-			total.Add(total, d)
+			pending, pendingAt = p, tr.Timestamp
 			if lo == nil || p.Cmp(lo) < 0 {
 				lo = p
 			}
 			if hi == nil || p.Cmp(hi) > 0 {
 				hi = p
 			}
+		}
+		if pending != nil {
+			d := big.NewInt(int64(end.Sub(pendingAt)))
+			exact.Add(exact, new(big.Rat).Mul(pending, new(big.Rat).SetInt(d)))
+			total.Add(total, d)
 		}
 		got, err := TWAP(trades, end)
 		if lo == nil {
@@ -591,10 +600,16 @@ func FuzzFilterOutliers(f *testing.F) {
 			}
 			return
 		}
-		if len(valid)%2 == 1 && len(got) == 0 {
-			t.Fatal("odd window dropped its own median")
+		band := refFilterOutliers(valid, sigma)
+		if len(valid)%2 == 1 && len(band) == 0 {
+			t.Fatal("odd window's band excluded its own median")
 		}
-		if want := refFilterOutliers(valid, sigma); !sameKeys(got, want) {
+		// Survivors lighter than what the band drops withhold the window.
+		want := band
+		if bandVol := baseVolume(band); bandVol.Lsh(bandVol, 1).Cmp(baseVolume(valid)) < 0 {
+			want = nil
+		}
+		if !sameKeys(got, want) {
 			t.Fatalf("FilterOutliers kept %d, documented band keeps %d", len(got), len(want))
 		}
 		// Price scale invariance: multiplying every quote by k keeps the set.
@@ -667,6 +682,14 @@ func refFilterOutliers(valid []canonical.Trade, sigma float64) []canonical.Trade
 		}
 	}
 	return out
+}
+
+func baseVolume(trades []canonical.Trade) *big.Int {
+	sum := new(big.Int)
+	for _, tr := range trades {
+		sum.Add(sum, tr.BaseAmount.BigInt())
+	}
+	return sum
 }
 
 func sameKeys(a, b []canonical.Trade) bool {

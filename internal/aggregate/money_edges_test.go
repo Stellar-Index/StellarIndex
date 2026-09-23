@@ -20,7 +20,9 @@ func TestFilterOutliers_BandEdgesAreInclusiveAndRatioSymmetric(t *testing.T) {
 		tr.BaseAmount = canonical.NewAmount(big.NewInt(base))
 		return tr
 	}
-	centre := []canonical.Trade{mk("a", 1, 100), mk("b", 1, 100), mk("c", 1, 100), mk("d", 1, 100)}
+	// The centre outweighs every probe, so a dropped probe never trips
+	// the volume-majority withhold.
+	centre := []canonical.Trade{mk("a", 1000, 100000), mk("b", 1000, 100000), mk("c", 1000, 100000), mk("d", 1000, 100000)}
 	cases := []struct {
 		name        string
 		base, quote int64
