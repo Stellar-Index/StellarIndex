@@ -2,6 +2,7 @@ package rollupworker
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -17,7 +18,7 @@ func TestRun_RefreshesImmediately(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("roll called %d times, want 1 (the immediate pass)", calls)
 	}
-	if err != context.Canceled {
+	if !errors.Is(err, context.Canceled) {
 		t.Errorf("Run err = %v, want context.Canceled", err)
 	}
 }
@@ -47,7 +48,7 @@ func TestRun_TicksRepeatedly(t *testing.T) {
 		}
 	}
 	cancel()
-	if err := <-done; err != context.Canceled {
+	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Errorf("Run err = %v, want context.Canceled", err)
 	}
 }
