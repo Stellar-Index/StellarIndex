@@ -1436,10 +1436,9 @@ func (s *Server) chartFiatProxyQuotes(quote canonical.Asset) (established, heldB
 			add(&established, canonical.CanonicalAsset(peg))
 		}
 	}
-	// (1b) abstract stablecoin backers for the quote's fiat, sorted.
-	backers := aggregate.FiatBackers(quote.Code)
-	sort.Strings(backers)
-	for _, code := range backers {
+	// (1b) abstract stablecoin backers for the quote's fiat, in
+	// FiatBackers' sorted order.
+	for _, code := range aggregate.FiatBackers(quote.Code) {
 		if a, err := canonical.NewCryptoAsset(code); err == nil {
 			add(&established, a)
 		}

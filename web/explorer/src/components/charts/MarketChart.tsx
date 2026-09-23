@@ -13,6 +13,7 @@ import {
   useTipStream,
 } from '@/lib/live/hooks';
 import type { components } from '@/api/types';
+import { scaleBaseUnits } from '@/lib/format';
 
 /** A tip tick drives the chart's live price line while fresher than this
  * (producer window ~5s; 30s of silence = wedged stream / backgrounded tab
@@ -34,8 +35,36 @@ type Bar = {
   high: number;
   low: number;
   close: number;
-  volume: number;
+  /** Quote-asset units; absent when the bar states no scale. */
+  volume?: number;
 };
+
+/**
+ * A series bar's quote volume in quote-asset units. `v_quote` is a
+ * smallest-unit sum at the scale of the venues in THAT bucket (7 on-chain,
+ * 8 CEX, 6 FX), so it is divided by the bar's own `v_quote_decimals`; a bar
+ * that states none plots no volume rather than a guessed divisor. The
+ * sub-smallest-unit fraction `v_quote` can carry is dropped before the
+ * BigInt-safe scale (ADR-0003).
+ */
+export function seriesQuoteVolume(b: OHLCBar): number | undefined {
+  const d = b.v_quote_decimals;
+  if (d === null || !Number.isInteger(d) || d < 0) return undefined;
+  const whole = /^(\d+)(?:\.\d*)?$/.exec(b.v_quote.trim());
+  if (!whole) return undefined;
+  return scaleBaseUnits(whole[1], d) ?? undefined;
+}
+
+export function toChartBar(b: OHLCBar): Bar {
+  return {
+    time: Math.floor(new Date(b.t).getTime() / 1000),
+    open: Number(b.o),
+    high: Number(b.h),
+    low: Number(b.l),
+    close: Number(b.c),
+    volume: seriesQuoteVolume(b),
+  };
+}
 
 // Interval → seconds, used to size the request (limit = span ÷ interval, capped
 // at the API's 1000-bar/request ceiling). /v1/ohlc serves this full grain set,
@@ -178,14 +207,7 @@ export function MarketChart({
       const r = await fetch(url, { signal });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const env = (await r.json()) as { data?: { intervals?: OHLCBar[] } };
-      return (env.data?.intervals ?? []).map((b) => ({
-        time: Math.floor(new Date(b.t).getTime() / 1000),
-        open: Number(b.o),
-        high: Number(b.h),
-        low: Number(b.l),
-        close: Number(b.c),
-        volume: Number(b.v_quote),
-      }));
+      return (env.data?.intervals ?? []).map(toChartBar);
     },
   });
 
