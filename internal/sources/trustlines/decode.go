@@ -20,9 +20,10 @@ var (
 
 	// ErrUnsupportedTrustLineAsset — Trustline references either
 	// native XLM (Algorithm 1, covered by accounts observer) or a
-	// pool-share asset (covered by liquidity_pools observer at
-	// Task #65). Algorithm 2's trustline component is for classic
-	// credits only; other variants are skipped at Match time.
+	// pool-share asset (covered by the LP-reserve observer,
+	// liquidity_pools, Task #55). Algorithm 2's trustline
+	// component is for classic credits only; other variants are
+	// skipped at Match time.
 	ErrUnsupportedTrustLineAsset = errors.New("trustlines: TrustLineAsset is not a classic credit asset")
 )
 
