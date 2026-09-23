@@ -102,22 +102,9 @@ type pollResult struct {
 
 // pollFeed resolves decimals, fetches the latest round and, if it's
 // new, projects and commits it. ok=false means "already emitted this
-// round" (no-op, nothing for the caller to report) — that's the one
-// path PollOnce's fan-in must NOT receive a result for, matching its
-// pre-extraction behaviour exactly.
-//
-// An unrecovered panic here would kill the whole process; a price
-// feed that silently stops reporting is the failure mode this
-// source's error accounting exists to make visible, so recover and
-// report it as a failed result instead of letting it vanish.
-func (p *Poller) pollFeed(ctx context.Context, logger *slog.Logger, pair canonical.Pair, spec FeedSpec) (res pollResult, ok bool) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			worker.Report(logger, "external-chainlink-feed-poll", rec)
-			res = pollResult{err: fmt.Errorf("chainlink feed poll panicked: %v", rec), pair: pair}
-			ok = true
-		}
-	}()
+// round" (no-op, nothing for the caller to report) — the one path
+// PollOnce's fan-in must NOT receive a result for.
+func (p *Poller) pollFeed(ctx context.Context, pair canonical.Pair, spec FeedSpec) (pollResult, bool) {
 	// Scale first: the on-chain decimals() verified against the
 	// configured value (decimals.go). A disagreeing or unknown
 	// scale refuses the feed before its price is read.
@@ -193,7 +180,16 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		go func(pair canonical.Pair, spec FeedSpec) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			if res, ok := p.pollFeed(ctx, logger, pair, spec); ok {
+			// An unrecovered panic in ANY goroutine kills the whole
+			// process; report the feed as failed rather than letting it
+			// silently vanish from `updates`.
+			defer func() {
+				if rec := recover(); rec != nil {
+					worker.Report(logger, "external-chainlink-feed-poll", rec)
+					results <- pollResult{err: fmt.Errorf("chainlink feed poll panicked: %v", rec), pair: pair}
+				}
+			}()
+			if res, ok := p.pollFeed(ctx, pair, spec); ok {
 				results <- res
 			}
 		}(pr, spec)
