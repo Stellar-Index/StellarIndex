@@ -130,3 +130,73 @@ func TestSDEXOrderbook_ProblemPaths(t *testing.T) {
 		}
 	}
 }
+
+// TestSDEXOrderbook_WithheldQuarantineIsDisclosed pins that offers held
+// in the version-tie quarantine are counted per side on the response:
+// the best ask can sit on a quarantined key for hours after a restart,
+// and without the count a thinner book is indistinguishable from the
+// whole one.
+func TestSDEXOrderbook_WithheldQuarantineIsDisclosed(t *testing.T) {
+	const eurc = "EURC-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	cache := v1.NewSDEXOrderBookCache(&stubSDEXOfferBookReader{
+		offers: []clickhouse.LiveOffer{
+			// Trusted ask at 0.5 USDC/XLM (nonzero intra_ledger_seq).
+			{KeyXDR: "trusted-ask", OfferID: 1, Amount: 100_000_000, Selling: "native", Buying: obUSDC, PriceN: 1, PriceD: 2, Version: 5<<32 | 1},
+			// Better ask at 0.4 and a bid, both intra 0 → quarantined.
+			{KeyXDR: "suspect-ask", OfferID: 2, Amount: 100_000_000, Selling: "native", Buying: obUSDC, PriceN: 2, PriceD: 5, Version: 4 << 32},
+			{KeyXDR: "suspect-bid", OfferID: 3, Amount: 60_000_000, Selling: obUSDC, Buying: "native", PriceN: 4, PriceD: 1, Version: 4 << 32},
+			// Quarantined on another market — must not count here.
+			{KeyXDR: "suspect-other", OfferID: 4, Amount: 70_000_000, Selling: "native", Buying: eurc, PriceN: 1, PriceD: 1, Version: 4 << 32},
+		},
+		cursor: 63_400_000,
+	}, nil)
+	if err := cache.Load(context.Background()); err != nil {
+		t.Fatalf("cache load: %v", err)
+	}
+	ts := httpTestServer(t, v1.New(v1.Options{SDEXOrderBook: cache}))
+	url := ts.URL + "/v1/sdex/orderbook?selling=native&buying=" + obUSDC
+
+	book := getOrderBookData(t, url)
+	assertBookCounts(t, "post-load", book, 1, 0, 1, 1)
+	if asks, _ := book["asks"].([]any); len(asks) != 1 || asks[0].(map[string]any)["price"] != "0.5000000" {
+		t.Errorf("post-load asks = %v, want only the trusted 0.5 ask served", book["asks"])
+	}
+
+	// Partial drain: the quarantine empties one key per probe here, and
+	// the withheld counts must follow every step, not just Load.
+	for range 3 {
+		if err := cache.VerifyPending(context.Background(), 1); err != nil {
+			t.Fatalf("VerifyPending: %v", err)
+		}
+	}
+	book = getOrderBookData(t, url)
+	assertBookCounts(t, "post-verify", book, 2, 1, 0, 0)
+}
+
+func getOrderBookData(t *testing.T, url string) map[string]any {
+	t.Helper()
+	resp := mustGet(t, url)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return env.Data
+}
+
+func assertBookCounts(t *testing.T, stage string, book map[string]any, asks, bids, withheldAsks, withheldBids float64) {
+	t.Helper()
+	for field, want := range map[string]float64{
+		"ask_offers": asks, "bid_offers": bids,
+		"ask_offers_withheld": withheldAsks, "bid_offers_withheld": withheldBids,
+	} {
+		got, ok := book[field].(float64)
+		if !ok || got != want {
+			t.Errorf("%s: %s = %v (present=%v), want %v", stage, field, book[field], ok, want)
+		}
+	}
+}

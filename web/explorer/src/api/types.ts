@@ -2376,6 +2376,13 @@ export interface paths {
          *     Amounts are decimal strings in whole 7-decimal asset units;
          *     `ask_offers` / `bid_offers` count each side BEFORE the `depth`
          *     cap so truncation is visible. Served with `public, max-age=30`.
+         *
+         *     Offers whose lake row is ambiguous (a version tie that may hide
+         *     a removal) are withheld from the book until the lake proves them
+         *     live — for hours after a process restart. They are counted, per
+         *     side, in `ask_offers_withheld` / `bid_offers_withheld`; while
+         *     either is non-zero the served depth, including the best price,
+         *     may be incomplete.
          */
         get: operations["getSdexOrderbook"];
         put?: never;
@@ -8894,10 +8901,21 @@ export interface components {
             asks: components["schemas"]["SDEXOrderBookLevel"][];
             /** @description Aggregated bid levels, descending by price. */
             bids: components["schemas"]["SDEXOrderBookLevel"][];
-            /** @description Live ask offers BEFORE the depth cap. */
+            /** @description Served ask offers BEFORE the depth cap. */
             ask_offers: number;
-            /** @description Live bid offers BEFORE the depth cap. */
+            /** @description Served bid offers BEFORE the depth cap. */
             bid_offers: number;
+            /**
+             * @description Ask offers the lake lists as live but the book withholds until
+             *     removal verification clears them. Non-zero means the served
+             *     asks, possibly including the best price, are incomplete.
+             */
+            ask_offers_withheld: number;
+            /**
+             * @description Bid offers withheld pending removal verification; see
+             *     `ask_offers_withheld`.
+             */
+            bid_offers_withheld: number;
             /** @description Applied per-side level cap. */
             depth: number;
         };
@@ -16771,6 +16789,8 @@ export interface operations {
                      *         ],
                      *         "ask_offers": 3,
                      *         "bid_offers": 1,
+                     *         "ask_offers_withheld": 0,
+                     *         "bid_offers_withheld": 0,
                      *         "depth": 25
                      *       },
                      *       "as_of": "2026-07-29T12:35:02.870546219Z",
