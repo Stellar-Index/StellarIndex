@@ -43,9 +43,11 @@
 //   - /v1/vwap, /v1/twap and /v1/chart, in their handlers.
 //
 // Every one of those sites asks the PAIR question. Inside
-// internal/api/v1 they all route through its scamWithheld helper, whose
-// AST guard (TestScamGateIsAskedThePairQuestion) permits no base-only
-// consultation and no exemption for one.
+// internal/api/v1 they all route through its scamWithheld helper. Its
+// AST guard (TestScamGateIsAskedThePairQuestion) fails on any `Withheld`
+// selector under internal/api/v1, subpackages included, other than
+// scamWithheld's own fallback, and on a pair question that names one leg
+// twice. It cannot see a surface that consults no gate at all.
 //
 // The handlers are the correct site for the last group, NOT their
 // shared tradesInRangeWithStablecoinFallback: that helper is also the
@@ -273,9 +275,9 @@ func (g *ScamGate) WithheldPair(ctx context.Context, base, quote canonical.Asset
 // (via internal/api/v1's scamWithheld helper): /v1/twap and /v1/chart
 // under F019/F032, and /v1/price/tip plus the closed-bucket price
 // stream — the last two — under F002/K001. internal/api/v1's
-// TestScamGateIsAskedThePairQuestion now permits ZERO base-only
-// consultations and carries no exemption mechanism, so one cannot be
-// reintroduced there without failing CI.
+// TestScamGateIsAskedThePairQuestion fails on any selector of this
+// method under internal/api/v1 — whatever its receiver, subpackages
+// included — outside scamWithheld's fallback, with no exemption list.
 //
 // It survives only because the v1.PriceScamGate interface declares it,
 // and that interface is what v1.PriceScamPairGate embeds; production
