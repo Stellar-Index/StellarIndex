@@ -730,3 +730,39 @@ func TestStellarCollision_DoesNotFlagTheGenuineIssuer(t *testing.T) {
 		t.Fatal("no verified Stellar issuances found — the guard proved nothing")
 	}
 }
+
+// TestFiatDenomination_ExcludesFiatWithSorobanOnlyIssuance: a fiat entry
+// whose only Stellar issuance is a Soroban contract (no classic code) has
+// a Stellar identity, so StellarCollision owns its ticker and
+// FiatDenomination must not answer for it — the same rule the classic
+// case follows and the census test's `StellarEntry() == nil` carve-out
+// assumes. The indexer used to route every code-less entry through the
+// ticker-only path, which files any fiat-class entry as a denomination
+// regardless of its issuance.
+func TestFiatDenomination_ExcludesFiatWithSorobanOnlyIssuance(t *testing.T) {
+	const contract = "CBSJZEIO5C7KC2SF3MKSNXXJSW5G3VTNBX4ATMKUI3B2MR4JKM4R26YF"
+	cat, err := LoadFromBytes([]byte(`verified_currencies:
+  - ticker: EURX
+    slug: eurx
+    name: Euro on Soroban
+    class: fiat
+    networks:
+      - network: stellar
+        asset_id: ` + contract + `
+        contract: ` + contract + `
+`))
+	if err != nil {
+		t.Fatalf("LoadFromBytes: %v", err)
+	}
+	vc, _ := cat.LookupByTicker("EURX")
+	if vc == nil || vc.StellarEntry() == nil {
+		t.Fatal("fixture must load as a fiat entry with a Stellar issuance")
+	}
+	if v, ok := cat.FiatDenomination("EURX"); ok {
+		t.Errorf("FiatDenomination(EURX) = %q; a fiat entry with a Stellar issuance is a Stellar identity, not a denomination", v.Ticker)
+	}
+	const attacker = "GBEO62ZYQXBGDQEHPTMBHRJVUEBNMXAWZFPBQBLPJXLJKMQTOEVEDGRA"
+	if v, coll := cat.StellarCollision("EURX", attacker); v != vc || !coll {
+		t.Errorf("StellarCollision(EURX, attacker) = (%v, %v), want (EURX, true): a classic EURX from any issuer impersonates the verified Soroban issuance", v, coll)
+	}
+}

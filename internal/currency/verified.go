@@ -356,8 +356,9 @@ func (cat *Catalogue) indexStellarEntries(vc *VerifiedCurrency) error {
 	return nil
 }
 
-// indexTickerOnlyEntry indexes a catalogue entry that has NO Stellar
-// issuance, keyed on its ticker.
+// indexTickerOnlyEntry indexes a catalogue entry that has no classic
+// Stellar code (no Stellar issuance, or a Soroban-only one), keyed on its
+// ticker.
 //
 // Such an entry never enters indexStellarEntries' issuance loop, so its
 // ticker never reached byStellarCode and StellarCollision could not speak
@@ -404,7 +405,9 @@ func (cat *Catalogue) indexTickerOnlyEntry(vc *VerifiedCurrency) error {
 	if codeKey == "" {
 		return nil
 	}
-	if vc.Class == ClassFiat {
+	// Also reached for a code-less (Soroban-only) Stellar issuance; that is
+	// a Stellar identity, so only an issuance-free fiat entry is a denomination.
+	if vc.Class == ClassFiat && vc.StellarEntry() == nil {
 		if existing, dup := cat.byFiatCode[codeKey]; dup {
 			return fmt.Errorf(
 				"currency: fiat code %q claimed by both %q and %q",
