@@ -44,9 +44,3 @@ stellarindex-api.service:RestartSec
 # the earlier 16h cap.
 verify-archive-tier-a.service:Environment:VERIFY_ARCHIVE_MAX_RUNTIME
 verify-archive-tier-b.service:Environment:VERIFY_ARCHIVE_MAX_RUNTIME
-
-# Template runs de-privileged as stellarindex (the CS-118 hardening note
-# in stellarindex-api.service.j2 describes the same move for the API);
-# reference still shows User=root.
-verify-archive-tier-a.service:User
-verify-archive-tier-b.service:User

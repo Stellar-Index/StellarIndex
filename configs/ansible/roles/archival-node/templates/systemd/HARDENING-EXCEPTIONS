@@ -1,0 +1,40 @@
+# HARDENING-EXCEPTIONS — role units that do not carry a baseline sandbox
+# directive, checked by scripts/ci/lint-systemd-hardening.sh.
+#
+# An UNDECLARED gap fails the lint, and so does a declared one the unit no
+# longer has; closing an entry means hardening the unit, then deleting the
+# line. Not a template: nothing in the role renders or copies this file.
+#
+# Format: <unit>:<directive>  # why
+
+# lock-path is the default /tmp/pgbackrest, shared with archive-push,
+# manual backups and `pgbackrest stop`; see the unit's own comment.
+pgbackrest-backup.service:PrivateTmp
+
+# Run as root and drop to postgres with `sudo -u`; no-new-privs blocks
+# sudo's setuid transition (BDR-04, see the units' own comments).
+restore-drill.service:NoNewPrivileges
+restore-drill-offsite.service:NoNewPrivileges
+
+# Pre-existing and not yet reviewed: runs as root under run-heavy-job.sh
+# (its comment explains the root, not the missing no-new-privs).
+asset-registry-backfill.service:NoNewPrivileges
+
+# Pre-existing and not yet reviewed: these run as root for root's mc
+# aliases (~/.mc/config.json), which rules out ProtectHome, but nothing
+# records why the rest of the baseline is absent.
+galexie-archive-contiguity.service:NoNewPrivileges
+galexie-archive-contiguity.service:PrivateTmp
+galexie-archive-contiguity.service:ProtectKernelTunables
+galexie-archive-contiguity.service:ProtectKernelModules
+galexie-archive-contiguity.service:ProtectControlGroups
+galexie-archive-fill.service:NoNewPrivileges
+galexie-archive-fill.service:PrivateTmp
+galexie-archive-fill.service:ProtectKernelTunables
+galexie-archive-fill.service:ProtectKernelModules
+galexie-archive-fill.service:ProtectControlGroups
+galexie-archive-tip-lag.service:NoNewPrivileges
+galexie-archive-tip-lag.service:PrivateTmp
+galexie-archive-tip-lag.service:ProtectKernelTunables
+galexie-archive-tip-lag.service:ProtectKernelModules
+galexie-archive-tip-lag.service:ProtectControlGroups
