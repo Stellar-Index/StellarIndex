@@ -81,6 +81,10 @@ const MinBatchLimit = 25
 // downstream sink can't block other sources past this.
 const PerSourceTimeout = 60 * time.Second
 
+// cursorCommitTimeout bounds the cycle's closing cursor CAS, which runs
+// outside the per-cycle budget so work already committed is never discarded.
+const cursorCommitTimeout = 10 * time.Second
+
 // WedgeCycles is how many CONSECUTIVE cycles a source must sit at the
 // MinBatchLimit floor while a per-cycle deadline keeps it from committing
 // forward progress before the projector flags it as WEDGED (obs.ProjectorWedged
@@ -818,8 +822,15 @@ func lowestHeldLedger(held []heldRow) (uint32, bool) {
 // "error" outcome because the cycle did not commit, and because the one
 // way to lose it REPEATEDLY — two projectors on one cursor — is precisely
 // what the sustained-error ticket should catch.
+//
+// The write gets its own deadline, detached from the caller's: a cycle that
+// spent PerSourceTimeout in sink writes has already committed rows, and
+// running the one-row CAS on that dead context threw the watermark away and
+// re-projected the same window forever.
 func (p *Projector) commitCursor(ctx context.Context, source string, read timescale.CursorRead, commitTo uint32) bool {
-	advanced, err := p.store.AdvanceCursorFrom(ctx, "projector", source, read, commitTo)
+	commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cursorCommitTimeout)
+	defer cancel()
+	advanced, err := p.store.AdvanceCursorFrom(commitCtx, "projector", source, read, commitTo)
 	if err != nil {
 		p.logger.Warn("projector: cursor advance failed", "source", source, "err", err)
 		obs.ProjectorRunsTotal.WithLabelValues(source, "error").Inc()
@@ -1209,8 +1220,8 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// the 2026-07-10 fix): the stream-level shrink above only fires when the
 	// CH scan itself times out. A window dense enough that the scan FINISHES
 	// but the per-event sink writes exhaust PerSourceTimeout mid-batch ends
-	// here instead — every remaining write (and the cursor upsert below)
-	// fast-fails on the dead cycleCtx, the cursor holds, and the IDENTICAL
+	// here instead — every remaining write fast-fails on the dead cycleCtx,
+	// the cursor holds below the first failed row, and the IDENTICAL
 	// window retried forever (aquarius reserves at 63,488,687 wedged 3.5h
 	// this way). If the cycle budget is spent and rows are held as transient,
 	// halve the window with the same floor so the retry converges.
@@ -1279,7 +1290,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if holding {
 		commitTo = firstHeldLedger - 1
 	}
-	if !p.commitCursor(cycleCtx, src.Name, read, commitTo) {
+	if !p.commitCursor(ctx, src.Name, read, commitTo) {
 		return
 	}
 
@@ -1290,8 +1301,11 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 
 	// Window recovery: a successful cycle doubles back toward
 	// BatchLimit so a one-off dense stretch doesn't permanently slow
-	// the replay.
-	*window = recoverWindow(*window)
+	// the replay. A cycle that spent its budget is no such evidence: keep the
+	// sink-side shrink above.
+	if cycleCtx.Err() == nil {
+		*window = recoverWindow(*window)
+	}
 
 	obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(float64(durableTip - commitTo))
 	// "ok" counts only events that DURABLY committed — eventsEmitted excludes
