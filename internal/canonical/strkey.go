@@ -37,6 +37,20 @@ func IsMuxedAccount(s string) bool {
 	return err == nil
 }
 
+// MuxedAccountID returns the G-strkey underlying an M-strkey: the first 32
+// bytes of the muxed payload are the ed25519 key. ok=false on a malformed M.
+func MuxedAccountID(m string) (string, bool) {
+	raw, err := strkey.Decode(strkey.VersionByteMuxedAccount, m)
+	if err != nil || len(raw) < 32 {
+		return "", false
+	}
+	g, err := strkey.Encode(strkey.VersionByteAccountID, raw[:32])
+	if err != nil {
+		return "", false
+	}
+	return g, true
+}
+
 // IsClaimableBalance reports whether s is a valid Stellar
 // claimable-balance address (B-strkey), CRC-checked. CAP-67 / P23
 // extended SEP-41 transfer destinations to include claimable

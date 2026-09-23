@@ -12,7 +12,8 @@ import (
 
 // LedgerView is the wire shape for a ledger header (ADR-0038). total_coins and
 // fee_pool are XLM stroops as decimal STRINGS — they exceed 2^53 so a JSON
-// number would lose precision (ADR-0003).
+// number would lose precision (ADR-0003). tx_count/op_count cover the whole tx
+// set, failed txs included; soroban_event_count covers successful txs only.
 type LedgerView struct {
 	Sequence          uint32 `json:"sequence"`
 	CloseTime         string `json:"close_time"`

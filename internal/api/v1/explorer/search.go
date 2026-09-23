@@ -35,7 +35,7 @@ func (h *Handler) Search(w http.ResponseWriter, r *http.Request) {
 }
 
 // classifySearch maps a query to its entity kind + detail href. Order matters:
-// the most specific shapes first (tx hash, ledger seq, account/contract
+// the most specific shapes first (tx hash, ledger seq, account/contract/muxed
 // strkeys), then the generic asset-id parse, then unknown.
 func classifySearch(q string) SearchResultView {
 	res := SearchResultView{Query: q}
@@ -61,6 +61,14 @@ func classifySearch(q string) SearchResultView {
 		// verified will resolve; leave the href as a hint only.
 		res.Kind, res.Canonical, res.Href, res.Supported = "account", q, "/v1/issuers/"+q, false
 		res.Note = "full account view isn't built yet; this may be an issuer — check the linked issuer view, which 404s if it isn't"
+
+	case canonical.IsMuxedAccount(q):
+		// A muxed M-address is a G-account plus an off-chain routing id (the
+		// shape exchanges hand out as deposit addresses); the ledger state
+		// belongs to the G, so resolve to it and keep the M in Query.
+		g, _ := canonical.MuxedAccountID(q)
+		res.Kind, res.Canonical, res.Href, res.Supported = "account", g, "/v1/issuers/"+g, false
+		res.Note = "muxed address resolved to its underlying account " + g + "; full account view isn't built yet — check the linked issuer view, which 404s if it isn't"
 
 	default:
 		if a, err := canonical.ParseAsset(q); err == nil {

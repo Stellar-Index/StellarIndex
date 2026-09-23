@@ -5217,8 +5217,11 @@ export interface components {
             hash?: string;
             prev_hash?: string;
             protocol_version?: number;
+            /** @description Transactions in the ledger's tx set, INCLUDING failed ones (fee-charged but not applied). Each transaction's `successful` flag (GET /v1/ledgers/{seq}/transactions) distinguishes applied from failed. */
             tx_count?: number;
+            /** @description Operations across every transaction in the tx set, INCLUDING those in failed transactions (Horizon's tx_set_operation_count, not its applied operation_count). */
             op_count?: number;
+            /** @description Contract events emitted by SUCCESSFUL transactions only: a failed transaction's events are rolled back by the protocol, so this count has a different basis from tx_count/op_count. */
             soroban_event_count?: number;
             /** @description XLM stroops as a string (exceeds 2^53). */
             total_coins?: string;
@@ -22948,7 +22951,7 @@ export interface operations {
     classifySearchQuery: {
         parameters: {
             query: {
-                /** @description Tx hash, ledger seq, G-account, C-contract, or asset id. */
+                /** @description Tx hash, ledger seq, G-account, M-muxed account (resolved to its underlying G in `canonical`), C-contract, or asset id. */
                 q: string;
             };
             header?: never;
