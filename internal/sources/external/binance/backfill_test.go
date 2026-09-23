@@ -3,6 +3,7 @@ package binance
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 // synthesiseKlines builds a slice of Binance-shape kline rows for
@@ -123,7 +125,10 @@ func TestBackfill_SinglePage(t *testing.T) {
 	// This is the "rerunnable backfill hits the same primary key"
 	// invariant — no need for a second HTTP call, the formula is
 	// pure.
-	wantHash := backfillTxHash("XLMUSDT", wantCloseMs)
+	wantHash, err := backfillTxHash("XLMUSDT", wantCloseMs)
+	if err != nil {
+		t.Fatalf("backfillTxHash: %v", err)
+	}
 	if trades[0].TxHash != wantHash {
 		t.Errorf("tx_hash = %s want %s (formula drift)", trades[0].TxHash, wantHash)
 	}
@@ -310,6 +315,51 @@ func mustPairMapBF(t *testing.T) map[string]canonical.Pair {
 		t.Fatalf("DefaultPairs: %v", err)
 	}
 	return m
+}
+
+// A 9-byte symbol pushes the candle seed one byte past the hash, which
+// used to drop closeMs's last digit so neighbouring candles overwrote
+// each other on the trades PK. Backfill must refuse it before walking
+// rather than per-candle-skip it into an empty result.
+func TestBackfill_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
+	const startMs = int64(1_745_000_000_000)
+	srv := newTestREST(t, [][]kline{synthesiseKlines(2, startMs, 1), {}})
+	defer srv.Close()
+
+	// Only the symbol's length matters; the pair is any valid one.
+	pair := mustPairMapBF(t)["XLMUSDT"]
+	s := NewStreamer(map[string]canonical.Pair{"MATICUSDT": pair})
+	s.Endpoint = srv.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	from := time.UnixMilli(startMs).UTC()
+	trades, err := s.Backfill(ctx, pair, from, from.Add(time.Minute), time.Minute)
+	if err == nil {
+		hashes := make([]string, len(trades))
+		for i, tr := range trades {
+			hashes[i] = tr.TxHash
+		}
+		t.Fatalf("9-byte symbol accepted; candle tx_hashes %v", hashes)
+	}
+	if !errors.Is(err, scale.ErrSyntheticSeedTooLong) {
+		t.Fatalf("err = %v, want ErrSyntheticSeedTooLong", err)
+	}
+}
+
+// The longest symbols pairs.yaml ships (8 bytes) must still hash whole.
+func TestBackfillTxHash_EightByteSymbolKeepsFullCloseTime(t *testing.T) {
+	a, err := backfillTxHash("AVAXUSDT", 1_745_000_000_000)
+	if err != nil {
+		t.Fatalf("backfillTxHash: %v", err)
+	}
+	b, err := backfillTxHash("AVAXUSDT", 1_745_000_000_001)
+	if err != nil {
+		t.Fatalf("backfillTxHash: %v", err)
+	}
+	if a == b {
+		t.Fatalf("candles 1ms apart collided: %s", a)
+	}
 }
 
 // Shut up unused-import warnings when fmt isn't used in other paths.

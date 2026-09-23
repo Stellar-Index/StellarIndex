@@ -53,6 +53,7 @@ func backfillExternal(args []string) error {
 	toStr := fs.String("to", "", "End time, RFC 3339 (required, e.g. 2024-12-31T00:00:00Z)")
 	granStr := fs.String("granularity", "1h", "Candle granularity as a Go duration (1m / 15m / 1h / 4h / 1d / 1w)")
 	rawTrades := fs.Bool("raw-trades", false, "kraken only: walk the /Trades fills endpoint instead of /OHLC — the deep-history path (OHLC serves only the most recent 720 candles; board #44). Slower (rate-limited pagination) but reaches the pair's full history with exact per-fill prices.")
+	allowOverlap := fs.Bool("allow-overlap", false, "Write even though the trades table already holds rows for this source+pair inside [-from, -to). Rows from another path (live stream, candles vs fills) carry a different tx_hash and would be counted twice; use only to re-run or resume a window this command itself wrote.")
 	gate := opsutil.RegisterWriteGate(fs)
 	progressEvery := fs.Int("progress-every", 1000, "Print a progress line every N trades inserted")
 	if err := fs.Parse(args); err != nil {
@@ -84,6 +85,13 @@ func backfillExternal(args []string) error {
 	backfiller, pair, err := buildBackfiller(*source, *pairSym)
 	if err != nil {
 		return err
+	}
+	// Before the walk, which can take a day: the probe is cheap and the
+	// refusal is the common outcome for a window that reaches live data.
+	if !dryRun && !*allowOverlap {
+		if err := checkStoredOverlap(*cfgPath, *source, pair, from, to); err != nil {
+			return err
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "backfill-external: source=%s pair=%s granularity=%v from=%s to=%s dry-run=%v\n",
@@ -207,9 +215,54 @@ func partialFetchResume(trades []canonical.Trade, err error) (time.Time, bool) {
 func partialWalkError(n int, resumeFrom time.Time, insErr error) error {
 	at := resumeFrom.UTC().Format(time.RFC3339Nano)
 	if insErr != nil {
-		return fmt.Errorf("backfill-external: venue walk ended early with %d trade(s) salvaged AND the write had faults (%w) — range incomplete, resume with -from %s", n, insErr, at)
+		return fmt.Errorf("backfill-external: venue walk ended early with %d trade(s) salvaged AND the write had faults (%w) — range incomplete, resume with -from %s -allow-overlap", n, insErr, at)
 	}
-	return fmt.Errorf("backfill-external: venue walk ended early — %d trade(s) salvaged but the requested range is NOT complete; resume with -from %s", n, at)
+	return fmt.Errorf("backfill-external: venue walk ended early — %d trade(s) salvaged but the requested range is NOT complete; resume with -from %s -allow-overlap", n, at)
+}
+
+// errBackfillOverlap marks a refused run whose window already holds rows.
+var errBackfillOverlap = errors.New("backfill window overlaps stored trades")
+
+// storedTradeProbe is the storage seam refuseStoredOverlap depends on.
+type storedTradeProbe interface {
+	EarliestTradeInWindow(ctx context.Context, source string, pair canonical.Pair, from, to time.Time) (time.Time, bool, error)
+}
+
+// refuseStoredOverlap refuses a window that already holds trades for
+// (source, pair). An off-chain row's identity is its synthesised tx_hash,
+// and no backfill shape derives the live streamer's (a candle has no
+// venue trade id), so writing over live rows double-counts their volume
+// with no VWAP, outlier or divergence guard to notice. Any stored row
+// refuses, not only live ones: the tool cannot tell a row it wrote
+// itself from one it did not, and -allow-overlap covers its own re-runs.
+func refuseStoredOverlap(ctx context.Context, probe storedTradeProbe, source string, pair canonical.Pair, from, to time.Time) error {
+	first, found, err := probe.EarliestTradeInWindow(ctx, source, pair, from, to)
+	if err != nil {
+		return fmt.Errorf("backfill-external: overlap probe: %w", err)
+	}
+	if !found {
+		return nil
+	}
+	at := first.UTC().Format(time.RFC3339Nano)
+	return fmt.Errorf("backfill-external: %w: %s %s already has stored rows from %s inside [-from, -to); "+
+		"end the run with -to %s, or pass -allow-overlap only to re-run a window this command wrote",
+		errBackfillOverlap, source, pair.String(), at, at)
+}
+
+// checkStoredOverlap runs refuseStoredOverlap against the configured store.
+func checkStoredOverlap(cfgPath, source string, pair canonical.Pair, from, to time.Time) error {
+	cfg, err := config.LoadWithEnv(cfgPath)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	if err != nil {
+		return fmt.Errorf("storage: %w", err)
+	}
+	defer func() { _ = store.Close() }()
+	return refuseStoredOverlap(ctx, store, source, pair, from, to)
 }
 
 // windowPlan slices a fills walk into bounded spans of venue history.

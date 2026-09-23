@@ -72,6 +72,11 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	if !ok {
 		return nil, fmt.Errorf("kraken.Backfill: pair %s not in configured PairMap", pair.String())
 	}
+	// Refuse up front: the per-candle skip below would otherwise turn
+	// an unrepresentable symbol into a silently empty backfill.
+	if _, err := candleTxHash(symbol, 0); err != nil {
+		return nil, fmt.Errorf("kraken.Backfill: %w", err)
+	}
 
 	endpoint := s.restBase() + ohlcPath
 	sinceSec := from.Unix()
@@ -263,10 +268,15 @@ func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, clo
 		return canonical.Trade{}, ErrDustTrade
 	}
 
+	txHash, err := candleTxHash(symbol, closeTs)
+	if err != nil {
+		return canonical.Trade{}, err
+	}
+
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0,
-		TxHash:      backfillTxHash(symbol, closeTs),
+		TxHash:      txHash,
 		OpIndex:     0,
 		Timestamp:   time.Unix(closeTs, 0).UTC(),
 		Pair:        pair,
@@ -275,24 +285,25 @@ func krakenCandleToTrade(c krakenCandle, symbol string, pair canonical.Pair, clo
 	}, nil
 }
 
-// backfillTxHash mirrors the Binance pattern but sources from
-// Kraken's symbol format (no slashes at this layer — we work from
-// the venue's v1 altname).
+// candleTxHash is the identity of an OHLC-synthesised row: a candle has
+// no venue trade id, so it is keyed on its close time under a "-BF-"
+// infix that keeps it apart from formatTxHash's per-fill identities.
+// The seed leaves 8 bytes for the symbol; a longer one would truncate
+// closeTs and merge neighbouring candles on the trades PK, so it is
+// refused instead.
+func candleTxHash(symbol string, closeTs int64) (string, error) {
+	return scale.StrictSyntheticTxHash(backfillSeed(symbol, closeTs))
+}
+
+// backfillTxHash is the truncating form of candleTxHash, kept only for
+// the raw-fill path, whose over-long seed it cuts to 32 bytes.
 func backfillTxHash(symbol string, closeTs int64) string {
+	return scale.SyntheticTxHash(backfillSeed(symbol, closeTs))
+}
+
+func backfillSeed(symbol string, closeTs int64) string {
 	normalised := strings.ReplaceAll(strings.ToUpper(symbol), "/", "")
-	s := fmt.Sprintf("%s-BF-%020d", normalised, closeTs)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+	return fmt.Sprintf("%s-BF-%020d", normalised, closeTs)
 }
 
 // granularityToMinutes maps a time.Duration to Kraken's interval

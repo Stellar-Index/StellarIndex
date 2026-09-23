@@ -4,6 +4,7 @@
 package scale
 
 import (
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -98,6 +99,20 @@ func TestSyntheticTxHash_matchesLegacyForm(t *testing.T) {
 		if len(got) != 64 {
 			t.Errorf("SyntheticTxHash(%q) len = %d, want 64", seed, len(got))
 		}
+	}
+}
+
+func TestStrictSyntheticTxHash(t *testing.T) {
+	fits := "ECB-USD-EUR-00000000001745539200" // exactly 32 bytes
+	got, err := StrictSyntheticTxHash(fits)
+	if err != nil {
+		t.Fatalf("StrictSyntheticTxHash(%q): %v", fits, err)
+	}
+	if want := SyntheticTxHash(fits); got != want {
+		t.Errorf("StrictSyntheticTxHash(%q) = %s, want the stored form %s", fits, got, want)
+	}
+	if _, err := StrictSyntheticTxHash(fits + "0"); !errors.Is(err, ErrSyntheticSeedTooLong) {
+		t.Errorf("33-byte seed: err = %v, want ErrSyntheticSeedTooLong", err)
 	}
 }
 
