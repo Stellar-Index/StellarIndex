@@ -721,7 +721,11 @@ export function search(
         c.name.toLowerCase().includes(norm),
     )
     .slice(0, 5)
-    .map(currencyResult);
+    .map(currencyResult)
+    // Drop rows the ISO-4217 direct-jump above already surfaced — same
+    // assetHrefFor() target, so without this an exact ticker match (e.g.
+    // "USD") rendered twice.
+    .filter((r) => !direct.some((d) => d.href === r.href));
   // On the lean test nets, drop the pricing/off-chain seed rows (they lead to
   // empty/inert pages there) and all bespoke-protocol rows (not indexed).
   // Per-route availability comes from the shared table (#328) — search

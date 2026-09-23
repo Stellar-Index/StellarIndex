@@ -94,4 +94,16 @@ describe('SearchModal fiat direct-jump href', () => {
     expect(r.type).toBe('currency');
     expect(r.href).toBe('/external/assets/euro');
   });
+
+  it('does not duplicate the currency row when the ISO-4217 direct-jump already matched it', () => {
+    const results = search(
+      'USD',
+      [],
+      [{ ticker: 'USD', name: 'US Dollar' }],
+      false,
+    );
+    const currencyRows = results.filter((r) => r.type === 'currency');
+    expect(currencyRows).toHaveLength(1);
+    expect(currencyRows[0].href).toBe('/external/assets/us-dollar');
+  });
 });
