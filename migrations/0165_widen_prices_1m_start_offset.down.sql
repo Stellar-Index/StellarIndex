@@ -1,4 +1,5 @@
--- 0165 down — restore prices_1m's original 5-minute start_offset.
+-- 0165 down — restore prices_1m's refresh policy as 0147 set it
+-- (5-minute start_offset).
 
 BEGIN;
 
