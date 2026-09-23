@@ -31,3 +31,21 @@ func TestNoDanglingIssueReferences(t *testing.T) {
 		}
 	}
 }
+
+// TestNoStaleIssueNumber1099 guards against re-introducing "#1099" into
+// chart/observations/sources' cold-path timeout-guard comments (RSWP-077).
+// #1099 no longer dangles — it now resolves to an unrelated
+// supply-canonicalization issue — so citing it here points a reader at
+// the wrong thing instead of the 8s-ceiling precedent it once meant.
+func TestNoStaleIssueNumber1099(t *testing.T) {
+	files := []string{"chart.go", "observations.go", "sources.go"}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		if strings.Contains(string(b), "#1099") {
+			t.Errorf("%s still cites #1099; that number now resolves to an unrelated supply-canonicalization issue, not this package's timeout-guard precedent", f)
+		}
+	}
+}

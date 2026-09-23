@@ -273,7 +273,7 @@ func (s *Server) handleChart(w http.ResponseWriter, r *http.Request) {
 	gran = chartFitGranularity(chartVWAPGranularityLadder, gran, tf.Duration)
 
 	// 8s ceiling on the chart query + downstream stablecoin
-	// fallback. Same pattern as #1082 / #1099 / #1100 / #1101.
+	// fallback. Same pattern as #1082 / #1100 / #1101.
 	// The chart's prices_1m / prices_5m / prices_1h scan can take
 	// 5–10s on a cold cache for long timeframes (`?timeframe=1y`
 	// + `granularity=1h` is ~8 760 buckets).
@@ -535,7 +535,7 @@ func (s *Server) handleChartTWAP(
 		twapChartGranularity(gran), chartTimeframes[tfRaw].Duration)
 
 	// 8s ceiling covering the CAGG scan + the proxy fallback retry,
-	// matching the VWAP path (#1082 / #1099 …).
+	// matching the VWAP path (#1082 …).
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
