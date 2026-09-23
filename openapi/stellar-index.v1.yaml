@@ -1273,7 +1273,12 @@ paths:
         carries `coverage_from` and `outside_coverage` as extension
         members, measured over the pair AND those pegs together — the
         earliest bucket any of them holds — so an instant a peg covers
-        is reported as a gap, not as predating the history held.
+        is reported as a gap, not as predating the history held. A bucket
+        that exists but is refused — by the thin-market or scam-issuer
+        gate, or by the serving-sanity guard when a 1-minute bucket
+        deviates grossly from the buckets before it (or has none to be
+        checked against) and no clean bucket falls within the lookback —
+        is a 404 of type `price-withheld`, never `price-not-found`.
         Current price: /v1/price or /v1/price/tip. Multi-horizon change:
         /v1/price/changes.
       parameters:
@@ -1320,7 +1325,11 @@ paths:
         aged out of the served tier. A horizon with no data that far back
         (a young pair, or a market that predates the window) is returned
         with all fields `null` and `available: false` — NEVER an error,
-        so a fresh listing still returns its 1h/24h moves. Each horizon
+        so a fresh listing still returns its 1h/24h moves. A horizon whose
+        reference bucket exists but was refused by a serving gate (the
+        thin-market or scam-issuer gate, or the serving-sanity guard that
+        rejects a manipulated minute) is the same null shape with
+        `withheld: true`, so it is never mistaken for missing history. Each horizon
         carries `reference_at` + `resolution` so callers see exactly
         which bucket (and at what granularity) the delta was measured
         against. A 404 only when the pair has no CURRENT price to anchor
@@ -1349,24 +1358,28 @@ paths:
                     reference_at: '2026-07-04T23:00:00Z'
                     resolution: 1m
                     available: true
+                    withheld: false
                   24h:
                     change_pct: '+3.62'
                     reference_price: '0.19703'
                     reference_at: '2026-07-04T00:00:00Z'
                     resolution: 1m
                     available: true
+                    withheld: false
                   7d:
                     change_pct: '-1.08'
                     reference_price: '0.20639'
                     reference_at: '2026-06-28T00:00:00Z'
                     resolution: 1h
                     available: true
+                    withheld: false
                   30d:
                     change_pct: null
                     reference_price: null
                     reference_at: null
                     resolution: null
                     available: false
+                    withheld: false
                 as_of: '2026-07-05T00:00:12.481Z'
                 flags:
                   stale: false
@@ -17840,8 +17853,11 @@ components:
           description: "CAGG resolution that served the reference bucket — one of 1m, 15m, 1h, 4h, 1d. Null when unavailable."
         available:
           type: boolean
-          description: "False when no closed bucket exists that far back (all sibling fields null)."
-      required: [change_pct, reference_price, reference_at, resolution, available]
+          description: "False when the horizon has no reference price (all nullable fields null) — no data that far back, or a withheld reference (see withheld)."
+        withheld:
+          type: boolean
+          description: "True when the reference bucket exists but a serving gate refused to publish it (thin-market or scam-issuer gate, or the serving-sanity guard). Always false when available is true."
+      required: [change_pct, reference_price, reference_at, resolution, available, withheld]
 
     PriceChanges:
       # The /v1/price/changes payload — EXACTLY the fields the handler's

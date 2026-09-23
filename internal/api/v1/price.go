@@ -164,6 +164,11 @@ const (
 	// without its cause (a folded bool, or a bare ErrPriceWithheld).
 	// Its wording claims neither cause.
 	PriceWithheldUnattributed PriceWithheldReason = "unattributed"
+	// PriceWithheldManipulationGuard: the serving-sanity guard could not
+	// validate the bucket at a requested instant — it was a gross outlier
+	// with no clean bucket inside the caller's staleness bound, or it had
+	// no prior bucket to be judged against ([ErrPriceAtGuarded]).
+	PriceWithheldManipulationGuard PriceWithheldReason = "manipulation_guard"
 )
 
 // withheldError pairs ErrPriceWithheld with the reason it fired for.
@@ -322,6 +327,11 @@ func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detai
 	case PriceWithheldUpstreamLeg:
 		return "Price withheld — upstream leg withheld",
 			"the price used to derive " + pair + " depends on a leg that is itself withheld, so no price is published"
+	case PriceWithheldManipulationGuard:
+		return "Price withheld — bucket failed the serving-sanity guard",
+			"a closed bucket exists for " + pair +
+				" at the requested instant, but it deviates grossly from the buckets before it (or has none to be checked against)" +
+				" and no clean bucket falls within the lookback, so no price is published"
 	case PriceWithheldUnattributed:
 	}
 	return "Price withheld",

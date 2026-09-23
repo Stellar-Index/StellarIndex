@@ -78,7 +78,8 @@ var (
 	guardThinRatioBound = big.NewRat(10, 1)
 
 	// guardMADFactor widens acceptance for genuinely volatile pairs: a
-	// candidate within centre ± K·(1.4826·MAD) also passes. Because the
+	// candidate within the ratio-symmetric band [centre²/(centre + K·s),
+	// centre + K·s], s = 1.4826·MAD, also passes (see [symmetricDev]). Because the
 	// acceptance region is the UNION of the ratio band and this MAD band,
 	// a volatile pair whose recent buckets are widely spread is never
 	// over-filtered — its own history earns it the wider band. K = 10 is

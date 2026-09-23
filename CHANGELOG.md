@@ -399,6 +399,37 @@ against.
   holding domains they exclude (claimable balances, Soroban/SAC contract
   balances); the ranking also sets `lower_bound: true`. Serving those
   excluded domains remains open.
+- **api / pricingguard:** the point-in-time serving guard behind
+  `/v1/price/at` and every `/v1/price/changes` horizon now judges a
+  historical 1m bucket against the buckets immediately before it
+  (`timescale.Store.ClosedVWAP1mCombinedBefore`). It fetched the newest
+  40 buckets instead, kept only those older than the candidate, and so
+  had no baseline — and passed the candidate unjudged — for any instant
+  older than about 40 minutes on an active pair, which covers the 1h and
+  24h change references it was wired to protect. A bucket with no prior
+  bucket at all (the pair's first) is now withheld on these routes rather
+  than served as validated: a point-in-time answer has no stale flag to
+  carry the doubt `/v1/price` reports through. (#1149)
+- **api:** a point-in-time bucket the serving-sanity guard refuses is now
+  reported as withheld, not as missing data. The reader returned
+  `ErrPriceAtUnavailable`, so `/v1/price/at` answered `price-not-found`
+  with "no closed bucket within 24h" and a `/v1/price/changes` horizon
+  read as a young pair. A new `ErrPriceAtGuarded` (an `ErrPriceWithheld`
+  carrying the new `manipulation_guard` reason) makes `/v1/price/at` a
+  `price-withheld` 404 worded for the guard, and each
+  `/v1/price/changes` horizon gains a `withheld` boolean, true when the
+  reference bucket exists and any serving gate refused it. Both
+  `price-withheld` 404s now use the wording of the gate that fired rather
+  than always the thin-market sentence. (#1151)
+- **api / pricingguard:** the last two raw `prices_1m` readers now pass
+  the serving-sanity guard: the SEP-40 `prices(asset, records)` series
+  drops a bucket the band rejects (or one with no prior bucket) instead of
+  publishing it as an oracle record, and the 24h-ago anchor behind
+  `/v1/assets` `change_24h_pct` is judged by the point-in-time guard, a
+  refused anchor reading as no anchor. pricingguard's list of wired call
+  sites is now enforced by `TestRawPrices1mReadersPassTheGuard`, which
+  fails when a function under `cmd/` calls a raw `prices_1m` store read
+  without a guard entry point or is missing from the list. (#1150)
 - **docs / ADR index had no completeness check (T543):**
   `docs/adr/README.md`'s Index table topped out at ADR-0050 though
   ADR-0051 (USD-anchored fiat derivation, landed 2026-08-31) already
@@ -3808,7 +3839,9 @@ against.
   reaches routinely, after which a single crafted minute bucket at any
   price down to 0 was published into the VWAP and served as a confident
   price. The deviation is now measured symmetrically in RATIO space
-  (ADR-0046 §1 — a ½× and a 2× print are equally outlying), giving the
+  (ADR-0046 §1's direction symmetry — a ½× and a 2× print are equally
+  outlying; the scale is still a price-space MAD, not §1's MAD(log p)),
+  giving the
   band `[centre²/(centre + K·scale), centre + K·scale]`: always strictly
   positive, identical to the old band above the centre and never lower
   than it below, so nothing previously rejected is newly accepted and a

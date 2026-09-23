@@ -189,9 +189,12 @@ type PriceChangeHorizon struct {
 	// Resolution is the CAGG that served the reference bucket
 	// ("1m" | "15m" | "1h" | "4h" | "1d"). Nil when unavailable.
 	Resolution *string `json:"resolution"`
-	// Available is false when no closed bucket exists that far back
-	// (all sibling fields nil).
+	// Available is false when the horizon has no reference price (all
+	// pointer fields nil): no data that far back, or a withheld reference.
 	Available bool `json:"available"`
+	// Withheld is true when the reference bucket exists but a serving
+	// gate refused to publish it; always false when Available is true.
+	Withheld bool `json:"withheld"`
 }
 
 // PriceChanges is the data shape returned by [Client.PriceChanges]:

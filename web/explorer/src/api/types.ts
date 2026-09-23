@@ -589,7 +589,7 @@ export interface paths {
         };
         /**
          * Point-in-time price (closed bucket at-or-before a timestamp)
-         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. Daily coverage is not yet continuous — an instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. The 404 carries `coverage_from` and `outside_coverage` as extension members, measured over the pair AND those pegs together — the earliest bucket any of them holds — so an instant a peg covers is reported as a gap, not as predating the history held. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
+         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. Daily coverage is not yet continuous — an instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. The 404 carries `coverage_from` and `outside_coverage` as extension members, measured over the pair AND those pegs together — the earliest bucket any of them holds — so an instant a peg covers is reported as a gap, not as predating the history held. A bucket that exists but is refused — by the thin-market or scam-issuer gate, or by the serving-sanity guard when a 1-minute bucket deviates grossly from the buckets before it (or has none to be checked against) and no clean bucket falls within the lookback — is a 404 of type `price-withheld`, never `price-not-found`. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
          */
         get: operations["getPriceAt"];
         put?: never;
@@ -609,7 +609,7 @@ export interface paths {
         };
         /**
          * Multi-horizon price change (1h / 24h / 7d / 30d in one call)
-         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request (RFP §6). Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2018), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
+         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request (RFP §6). Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2018), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. A horizon whose reference bucket exists but was refused by a serving gate (the thin-market or scam-issuer gate, or the serving-sanity guard that rejects a manipulated minute) is the same null shape with `withheld: true`, so it is never mistaken for missing history. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
          */
         get: operations["getPriceChanges"];
         put?: never;
@@ -9889,8 +9889,10 @@ export interface components {
             reference_at: string | null;
             /** @description CAGG resolution that served the reference bucket — one of 1m, 15m, 1h, 4h, 1d. Null when unavailable. */
             resolution: string | null;
-            /** @description False when no closed bucket exists that far back (all sibling fields null). */
+            /** @description False when the horizon has no reference price (all nullable fields null) — no data that far back, or a withheld reference (see withheld). */
             available: boolean;
+            /** @description True when the reference bucket exists but a serving gate refused to publish it (thin-market or scam-issuer gate, or the serving-sanity guard). Always false when available is true. */
+            withheld: boolean;
         };
         PriceChanges: {
             asset_id: string;
@@ -12353,28 +12355,32 @@ export interface operations {
                      *           "reference_price": "0.20330",
                      *           "reference_at": "2026-07-04T23:00:00Z",
                      *           "resolution": "1m",
-                     *           "available": true
+                     *           "available": true,
+                     *           "withheld": false
                      *         },
                      *         "24h": {
                      *           "change_pct": "+3.62",
                      *           "reference_price": "0.19703",
                      *           "reference_at": "2026-07-04T00:00:00Z",
                      *           "resolution": "1m",
-                     *           "available": true
+                     *           "available": true,
+                     *           "withheld": false
                      *         },
                      *         "7d": {
                      *           "change_pct": "-1.08",
                      *           "reference_price": "0.20639",
                      *           "reference_at": "2026-06-28T00:00:00Z",
                      *           "resolution": "1h",
-                     *           "available": true
+                     *           "available": true,
+                     *           "withheld": false
                      *         },
                      *         "30d": {
                      *           "change_pct": null,
                      *           "reference_price": null,
                      *           "reference_at": null,
                      *           "resolution": null,
-                     *           "available": false
+                     *           "available": false,
+                     *           "withheld": false
                      *         }
                      *       },
                      *       "as_of": "2026-07-05T00:00:12.481Z",

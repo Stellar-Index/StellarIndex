@@ -99,6 +99,31 @@ func TestHandlePriceAt_WithheldDistinctFromNotFound(t *testing.T) {
 	}
 }
 
+// TestHandlePriceAt_GuardedIsWithheldNotNoData: a bucket the
+// serving-sanity guard refused exists, so the 404 is price-withheld with
+// the guard's wording — not price-not-found's "no closed bucket", and not
+// the thin-market sentence the bare withheld sentinel gets.
+func TestHandlePriceAt_GuardedIsWithheldNotNoData(t *testing.T) {
+	ts := time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
+	s := &Server{priceAt: priceAtStub{err: ErrPriceAtGuarded}}
+	req := httptest.NewRequest(http.MethodGet, "/v1/price/at?asset=native&ts="+ts.Format(time.RFC3339), nil)
+	rec := httptest.NewRecorder()
+	s.handlePriceAt(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"https://api.stellarindex.io/errors/price-withheld"`) {
+		t.Errorf("guard refusal did not carry the price-withheld type: %s", body)
+	}
+	if !strings.Contains(body, "serving-sanity guard") {
+		t.Errorf("guard refusal is not worded for the guard: %s", body)
+	}
+	if strings.Contains(body, "no closed bucket") || strings.Contains(body, "too thin") {
+		t.Errorf("guard refusal claims a cause that did not fire: %s", body)
+	}
+}
+
 // priceAtPairStub answers only for pairs present in byPair (keyed
 // "base/quote"); everything else gets ErrPriceAtUnavailable. Lets the
 // stablecoin-fallback test distinguish the literal fiat:USD read from

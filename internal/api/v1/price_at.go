@@ -32,14 +32,24 @@ type PriceAtReader interface {
 	// labels window_seconds honestly. maxStaleness caps how far before
 	// ts the nearest bucket may close before the answer is refused —
 	// past it the reader returns ErrPriceAtUnavailable rather than
-	// fabricating continuity across a dead-market gap.
+	// fabricating continuity across a dead-market gap. A bucket that
+	// exists but is refused returns ErrPriceWithheld or ErrPriceAtGuarded.
 	PriceAt(ctx context.Context, pair canonical.Pair, ts time.Time, maxStaleness time.Duration) (value string, observedAt time.Time, resolutionSeconds int, err error)
 }
 
-// ErrPriceAtUnavailable is the sentinel a PriceAtReader returns when
-// no closed bucket exists at-or-before the requested instant (pair
-// younger than ts, or ts predates recorded history).
+// ErrPriceAtUnavailable is the sentinel a PriceAtReader returns when no
+// closed bucket exists within maxStaleness at-or-before the requested
+// instant (pair younger than ts, ts predates recorded history, or a
+// dead-market gap). It never means a bucket exists and was refused.
 var ErrPriceAtUnavailable = errors.New("api: no closed bucket at or before requested timestamp")
+
+// ErrPriceAtGuarded is the sentinel a PriceAtReader returns when a
+// closed bucket exists but the serving-sanity guard refused it (a gross
+// outlier with no clean bucket inside maxStaleness, or no prior bucket to
+// validate it against). It matches errors.Is(err, ErrPriceWithheld), so
+// every withheld branch treats it as withheld, and carries
+// [PriceWithheldManipulationGuard] for the problem wording.
+var ErrPriceAtGuarded = newPriceWithheld(PriceWithheldManipulationGuard)
 
 // priceAtMaxLookback caps the gap the endpoint tolerates between the
 // requested instant and the bucket actually found. Without a cap, a
@@ -115,12 +125,16 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, fbSnap, Flags{Triangulated: true})
 		return
 	}
-	if withheld || fbWithheld {
+	if withheld == nil {
+		withheld = fbWithheld
+	}
+	if withheld != nil {
 		// At least one orientation HAS a closed bucket at-or-before ts
-		// and the substance/scam gate refused to publish it — the
-		// distinct 404 type so integrators can branch, same contract
-		// as /v1/price and /v1/price/changes (see ErrPriceWithheld).
-		writePriceWithheldProblem(w, r, asset, quote, PriceWithheldUnattributed)
+		// and a serving gate refused to publish it — the distinct 404
+		// type so integrators can branch, same contract as /v1/price and
+		// /v1/price/changes (see ErrPriceWithheld), worded for the gate
+		// that fired.
+		writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(withheld))
 		return
 	}
 	// The 404 below carries the same ambiguity the series surfaces have
@@ -148,13 +162,13 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 
 // lookupPriceAt walks the alias combinations (F-1340, same as every
 // other price surface) and returns the first in-lookback bucket.
-// withheld reports whether any orientation tried hit the
-// substance/scam gate (ErrPriceWithheld) rather than simply having no
-// bucket — the caller needs that to choose the correct 404 type once
-// every orientation (and, via lookupPriceAtStablecoinFallback, every
-// peg) is exhausted.
-func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, bool) {
-	withheld := false
+// withheld is the first ErrPriceWithheld-class error any orientation
+// returned (a substance/scam gate or the serving-sanity guard refused an
+// existing bucket), nil when none did — the caller needs it to choose the
+// correct 404 type and wording once every orientation (and, via
+// lookupPriceAtStablecoinFallback, every peg) is exhausted.
+func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset, ts time.Time) (PriceSnapshot, bool, error) {
+	var withheld error
 	for _, a := range assetAliases(asset) {
 		for _, q := range assetAliases(quote) {
 			if a.Equal(q) {
@@ -166,8 +180,8 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 			}
 			value, bucketAt, resSec, lookErr := s.priceAt.PriceAt(ctx, pair, ts, priceAtMaxLookback)
 			if lookErr != nil {
-				if errors.Is(lookErr, ErrPriceWithheld) {
-					withheld = true
+				if withheld == nil && errors.Is(lookErr, ErrPriceWithheld) {
+					withheld = lookErr
 				}
 				continue
 			}
@@ -191,7 +205,7 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 				PriceType:     "vwap",
 				ObservedAt:    WireTime(bucketAt),
 				WindowSeconds: resSec,
-			}, true, false
+			}, true, nil
 		}
 	}
 	return PriceSnapshot{}, false, withheld
@@ -212,19 +226,19 @@ func (s *Server) lookupPriceAt(ctx context.Context, asset, quote canonical.Asset
 // [Server.lookupPriceAt]'s withheld signal up across every peg tried.
 func (s *Server) lookupPriceAtStablecoinFallback(
 	ctx context.Context, asset, quote canonical.Asset, ts time.Time,
-) (PriceSnapshot, bool, bool) {
-	withheld := false
+) (PriceSnapshot, bool, error) {
+	var withheld error
 	for _, proxied := range s.priceAtUSDPegPairs(asset, quote) {
 		snap, found, w := s.lookupPriceAt(ctx, proxied.Base, proxied.Quote, ts)
-		if w {
-			withheld = true
+		if withheld == nil {
+			withheld = w
 		}
 		if !found {
 			continue
 		}
 		snap.AssetID = asset.String()
 		snap.Quote = quote.String()
-		return snap, true, false
+		return snap, true, nil
 	}
 	return PriceSnapshot{}, false, withheld
 }

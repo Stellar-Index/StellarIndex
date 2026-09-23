@@ -84,28 +84,95 @@ func TestSelectGuardedVWAP1mAt_StaleLKGWithheldNotServed(t *testing.T) {
 	}
 }
 
-func TestSelectGuardedVWAP1mAt_EmptyBaselineFailsOpen(t *testing.T) {
-	// Posture unchanged from the latest-bucket guard: no baseline means
-	// nothing to judge against, so the real price is still served.
+func TestSelectGuardedVWAP1mAt_EmptyBaselineWithheld(t *testing.T) {
+	// No trailing bucket to judge against is the pair's first-ever minute,
+	// the one a lone manipulated print most easily owns. /v1/price serves it
+	// flagged stale; a point-in-time answer has no stale flag, so it is
+	// withheld rather than published as a validated price.
 	candidate := mkRow(0, "1.01")
-	served, ok := SelectGuardedVWAP1mAt(candidate, nil, baseTS, time.Minute)
-	if !ok || served.VWAP != candidate.VWAP {
-		t.Fatalf("empty baseline: served %+v ok=%v, want the candidate served unchanged", served, ok)
+	served, ok := SelectGuardedVWAP1mAt(candidate, nil, baseTS, time.Hour)
+	if ok {
+		t.Fatalf("empty baseline: served %+v as a validated point-in-time price", served)
+	}
+	if served.VWAP != "" {
+		t.Errorf("withheld answer carried a value (%s) — callers must get an empty row", served.VWAP)
 	}
 }
 
-// fetchErrReader is a TrailingReader whose fetch always fails.
-type fetchErrReader struct{}
+// historyReader answers both trailing reads the way the store does over
+// one newest-first history: the now-anchored read returns the newest
+// `limit` buckets, the anchored read the newest `limit` strictly before
+// the anchor.
+type historyReader struct{ rows []timescale.Vwap1mRow }
 
-func (fetchErrReader) RecentClosedVWAP1mCombined(context.Context, canonical.Pair, int) ([]timescale.Vwap1mRow, error) {
-	return nil, context.DeadlineExceeded
+func (h historyReader) RecentClosedVWAP1mCombined(_ context.Context, _ canonical.Pair, limit int) ([]timescale.Vwap1mRow, error) {
+	return h.rows[:min(limit, len(h.rows))], nil
 }
 
-// rowsReader serves a fixed trailing slice.
-type rowsReader struct{ rows []timescale.Vwap1mRow }
+func (h historyReader) ClosedVWAP1mCombinedBefore(_ context.Context, _ canonical.Pair, before time.Time, limit int) ([]timescale.Vwap1mRow, error) {
+	var out []timescale.Vwap1mRow
+	for _, r := range h.rows {
+		if r.Bucket.Before(before) && len(out) < limit {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
 
-func (r rowsReader) RecentClosedVWAP1mCombined(context.Context, canonical.Pair, int) ([]timescale.Vwap1mRow, error) {
-	return r.rows, nil
+func TestGuardServedVWAP1mAt_HistoricalCandidateJudgedAgainstItsOwnPast(t *testing.T) {
+	// Three hours of flat 1.0 with a 100x print two hours back — the
+	// reference behind /v1/price/changes' 1h/24h horizons. The newest
+	// SampleFetch buckets are all NEWER than that candidate, so a baseline
+	// fetched from now holds nothing to judge it by.
+	history := make([]timescale.Vwap1mRow, 180)
+	for i := range history {
+		history[i] = mkRow(i, "1.0")
+	}
+	const candidateAgo = 120
+	history[candidateAgo] = mkRow(candidateAgo, "100.0")
+	candidate := history[candidateAgo]
+	ts := candidate.Bucket.Add(time.Minute)
+
+	served, ok := GuardServedVWAP1mAt(context.Background(), historyReader{rows: history}, nil,
+		mustPair(t), candidate, ts, time.Hour)
+	if !ok {
+		t.Fatal("a clean bucket one minute before the candidate is in contract — must be served")
+	}
+	if served.VWAP != "1.0" {
+		t.Fatalf("served VWAP = %s at %v, want last-known-good 1.0 — the manipulated 100.0 was judged "+
+			"against a baseline that does not precede it", served.VWAP, served.Bucket)
+	}
+	if !served.Bucket.Equal(history[candidateAgo+1].Bucket) {
+		t.Fatalf("served bucket = %v, want the bucket immediately before the candidate %v",
+			served.Bucket, history[candidateAgo+1].Bucket)
+	}
+}
+
+func TestGuardServedVWAP1mSeries_DropsManipulatedAndUnvalidatedBuckets(t *testing.T) {
+	// SEP-40 prices(records=5) over a 12-bucket history: a 100x print at
+	// index 2 is dropped (not replaced by an older value at its
+	// timestamp); every sane bucket keeps its own row.
+	history := make([]timescale.Vwap1mRow, 12)
+	for i := range history {
+		history[i] = mkRow(i, "1.0")
+	}
+	history[2] = mkRow(2, "100.0")
+	got := GuardServedVWAP1mSeries(nil, mustPair(t), history, 5)
+	if len(got) != 4 {
+		t.Fatalf("got %d records, want 4 (the manipulated bucket dropped): %+v", len(got), got)
+	}
+	for _, r := range got {
+		if r.VWAP != "1.0" {
+			t.Errorf("record at %v = %s, want 1.0 — a manipulated bucket was published", r.Bucket, r.VWAP)
+		}
+		if r.Bucket.Equal(history[2].Bucket) {
+			t.Errorf("the rejected bucket's timestamp was filled with another value")
+		}
+	}
+	// A pair whose whole history is one bucket: nothing validates it.
+	if got := GuardServedVWAP1mSeries(nil, mustPair(t), history[:1], 5); len(got) != 0 {
+		t.Errorf("first-ever bucket published unvalidated: %+v", got)
+	}
 }
 
 func TestGuardServedVWAP1mAt_EndToEnd(t *testing.T) {
@@ -113,13 +180,13 @@ func TestGuardServedVWAP1mAt_EndToEnd(t *testing.T) {
 	candidate := mkRow(0, "100.0")
 
 	// A transient fetch failure must not blank a price: fail open.
-	served, ok := GuardServedVWAP1mAt(context.Background(), fetchErrReader{}, nil, pair, candidate, baseTS, time.Hour)
+	served, ok := GuardServedVWAP1mAt(context.Background(), fakeTrailing{err: context.DeadlineExceeded}, nil, pair, candidate, baseTS, time.Hour)
 	if !ok || served.VWAP != "100.0" {
 		t.Fatalf("fetch error: served %+v ok=%v, want the candidate served unguarded", served, ok)
 	}
 
 	// With a baseline, the manipulated bucket is swapped for last-known-good.
-	served, ok = GuardServedVWAP1mAt(context.Background(), rowsReader{rows: steadyRows(12)}, nil, pair, candidate, baseTS, time.Hour)
+	served, ok = GuardServedVWAP1mAt(context.Background(), fakeTrailing{rows: steadyRows(12)}, nil, pair, candidate, baseTS, time.Hour)
 	if !ok {
 		t.Fatal("an in-contract last-known-good must be served")
 	}

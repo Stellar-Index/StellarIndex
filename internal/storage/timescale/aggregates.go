@@ -1090,6 +1090,68 @@ func (s *Store) RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair
 	return scanCombinedVwap1mRows(rows, p, limit, "RecentClosedVWAP1mCombined")
 }
 
+// closedVWAP1mCombinedBeforeTemplate is [recentClosedVWAP1mCombinedTemplate]
+// anchored at an instant instead of at now(): only buckets STRICTLY older
+// than $4 qualify, so the newest-first LIMIT-N walk starts at the anchor.
+// `%[1]s` is the literal `bucket >=` lower bound, injected into both
+// branches for plan-time chunk pruning.
+const closedVWAP1mCombinedBeforeTemplate = `
+        SELECT * FROM (
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $1 AND quote_asset = $2
+                AND bucket < $4::timestamptz
+                %[1]s
+              ORDER BY bucket DESC
+              LIMIT $3)
+            UNION ALL
+            (SELECT bucket, base_asset, vwap::text, COALESCE(volume, 0)::text,
+                    COALESCE(trade_count, 0), sources
+               FROM prices_1m
+              WHERE base_asset = $2 AND quote_asset = $1
+                AND bucket < $4::timestamptz
+                %[1]s
+              ORDER BY bucket DESC
+              LIMIT $3)
+        ) AS both_directions
+         ORDER BY bucket DESC, base_asset
+         LIMIT $3
+    `
+
+// ClosedVWAP1mCombinedBefore is [RecentClosedVWAP1mCombined] anchored at
+// `before`: up to `limit` closed prices_1m buckets whose START is strictly
+// older than `before`, newest-first, each combined across both stored
+// directions with the same [combineDirVWAP] the served candidate uses.
+//
+// It is the trailing baseline for a HISTORICAL candidate bucket (the
+// point-in-time serving guard): the now-anchored read returns the newest
+// buckets, none of which precede a candidate older than them, so the
+// guard had no baseline for any instant outside the last few dozen
+// minutes and passed every such candidate unjudged. The lower bound is
+// [latestVWAPWindow] behind `before`, the same lookback the latest-bucket
+// readers apply behind now.
+//
+// Empty slice + nil error when no closed bucket precedes `before`.
+func (s *Store) ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair, before time.Time, limit int) ([]Vwap1mRow, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	cutoff := before.UTC().Add(-latestVWAPWindow)
+	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
+	// #nosec G201 — the only interpolated value is `lower`, built from our
+	// own time.Time in a fixed layout; pair strings, limit and the anchor
+	// bind as $1..$4. Same discipline as RecentClosedVWAP1mCombined.
+	q := fmt.Sprintf(closedVWAP1mCombinedBeforeTemplate, lower) //nolint:gosec // G201: see note above
+	rows, err := s.db.QueryContext(ctx, q, p.Base.String(), p.Quote.String(), bucketRowCap(limit), before.UTC())
+	if err != nil {
+		return nil, fmt.Errorf("timescale: ClosedVWAP1mCombinedBefore: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	return scanCombinedVwap1mRows(rows, p, limit, "ClosedVWAP1mCombinedBefore")
+}
+
 // scanCombinedVwap1mRows folds the raw both-directions rows of a
 // prices_1m read into one [Vwap1mRow] per bucket, preserving the query's
 // bucket ordering. Rows of the same bucket are adjacent (callers order by
