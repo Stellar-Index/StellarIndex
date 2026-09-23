@@ -10,6 +10,7 @@ package scale
 
 import (
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -151,4 +152,24 @@ func SyntheticTxHash(seed string) string {
 		return h[:64]
 	}
 	return h + strings.Repeat("0", 64-len(h))
+}
+
+// MaxSyntheticSeedBytes is the longest seed SyntheticTxHash encodes
+// whole: 64 hex chars carry 32 seed bytes and the rest is dropped.
+const MaxSyntheticSeedBytes = 32
+
+// ErrSyntheticSeedTooLong is returned by StrictSyntheticTxHash for a
+// seed SyntheticTxHash would truncate.
+var ErrSyntheticSeedTooLong = errors.New("synthetic tx_hash seed exceeds 32 bytes")
+
+// StrictSyntheticTxHash is SyntheticTxHash for a seed whose tail is part
+// of the identity (a trade id, a candle close time). Truncation would
+// drop that tail and merge distinct rows on the trades PK, so an
+// over-long seed is refused instead. For a seed that fits, the result is
+// byte-identical to SyntheticTxHash, so stored identities are unchanged.
+func StrictSyntheticTxHash(seed string) (string, error) {
+	if len(seed) > MaxSyntheticSeedBytes {
+		return "", fmt.Errorf("%w: %q is %d bytes", ErrSyntheticSeedTooLong, seed, len(seed))
+	}
+	return SyntheticTxHash(seed), nil
 }

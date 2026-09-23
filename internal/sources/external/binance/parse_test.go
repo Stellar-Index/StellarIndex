@@ -164,7 +164,10 @@ func TestFormatTxHash_64CharsHex(t *testing.T) {
 	// canonical.Trade.Validate() requires tx_hash to be exactly 64
 	// lowercase hex characters. Off-chain trades have no real tx
 	// hash, so formatTxHash synthesises one — assert the shape.
-	h := formatTxHash("XLMUSDT", 987654321)
+	h, err := formatTxHash("XLMUSDT", 987654321)
+	if err != nil {
+		t.Fatalf("formatTxHash: %v", err)
+	}
 	if len(h) != 64 {
 		t.Errorf("len = %d want 64", len(h))
 	}
@@ -176,8 +179,32 @@ func TestFormatTxHash_64CharsHex(t *testing.T) {
 		}
 	}
 	// Uniqueness: different aggIDs must produce different hashes.
-	h2 := formatTxHash("XLMUSDT", 987654322)
+	h2, err := formatTxHash("XLMUSDT", 987654322)
+	if err != nil {
+		t.Fatalf("formatTxHash: %v", err)
+	}
 	if h == h2 {
 		t.Error("formatTxHash collided on adjacent aggIDs")
+	}
+}
+
+// A 12-byte symbol pushes the live seed one byte past the hash, which
+// used to drop aggID's last digit: ten consecutive aggTrades shared one
+// trades PK and all but one were overwritten. It must be refused.
+func TestParseAggTradeFrame_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
+	// Only the symbol's length matters; the pair is any valid one.
+	pm := map[string]canonical.Pair{"1000PEPEUSDT": buildPairMap(t)["XLMUSDT"]}
+	frame := func(aggID string) []byte {
+		return []byte(`{"stream":"1000pepeusdt@aggTrade","data":{"e":"aggTrade","E":1745000000000,` +
+			`"s":"1000PEPEUSDT","a":` + aggID + `,"p":"0.01","q":"1000","f":1,"l":1,"T":1745000000100,"m":true}}`)
+	}
+	a, errA := parseAggTradeFrame(frame("987654321"), pm)
+	b, errB := parseAggTradeFrame(frame("987654322"), pm)
+	if errA == nil || errB == nil {
+		t.Fatalf("12-byte symbol accepted: aggIDs 987654321/987654322 -> tx_hash %s / %s (identical=%v)",
+			a.TxHash, b.TxHash, a.TxHash == b.TxHash)
+	}
+	if !errors.Is(errA, scale.ErrSyntheticSeedTooLong) {
+		t.Fatalf("err = %v, want ErrSyntheticSeedTooLong", errA)
 	}
 }

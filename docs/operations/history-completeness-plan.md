@@ -794,6 +794,13 @@ run-heavy-job.sh xlm-usd-<q> \
     -from 2021-02-01T00:00:00Z -to 2021-04-01T00:00:00Z -write
 ```
 
+With `-write`, `backfill-external` refuses a window that already holds
+`trades` rows for the source and pair, naming the earliest one as the `-to`
+to use: a backfilled row never carries the live streamer's `tx_hash`, so
+writing over streamed data counts its volume twice. Resuming or re-running
+a slice this command wrote itself needs `-allow-overlap`, which the
+truncated-walk error prints alongside `-from <cursor>`.
+
 `backfill-external` does **not** refresh any aggregate — it inserts and
 exits. After each slice, or once at the end, run the twelve-view refresh in
 the §2.5 order, in weekly or monthly windows, and never concurrently with

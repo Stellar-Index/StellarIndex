@@ -94,6 +94,11 @@ func DefaultPairs() (map[string]canonical.Pair, error) {
 		if _, dup := out[p.Symbol]; dup {
 			return nil, fmt.Errorf("binance pairs.yaml: duplicate symbol %s", p.Symbol)
 		}
+		// The candle seed is the longer synthesised identity, so a
+		// symbol that fits it also fits formatTxHash's.
+		if _, err := backfillTxHash(p.Symbol, 0); err != nil {
+			return nil, fmt.Errorf("binance pairs.yaml: %s: %w", p.Symbol, err)
+		}
 		base, err := p.Base.asset()
 		if err != nil {
 			return nil, fmt.Errorf("%s base: %w", p.Symbol, err)
