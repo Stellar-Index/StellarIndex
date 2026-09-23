@@ -243,3 +243,29 @@ func TestRecentClosedVWAP1mForPairQueryShape(t *testing.T) {
 		t.Error("query must cap the row walk")
 	}
 }
+
+// TestDailyMarketDaysQueryShape extends the sargability guard to
+// DailyMarketDays' daily rollup read (RLT-042).
+//
+// This query used `bucket + INTERVAL '1 hour' <= now()` — a function on
+// the indexed column, so the planner can neither use the bucket index
+// nor prune chunks at plan time over the day/hour GROUP BY's full scan.
+//
+// It drifted because it was an inline `const q` inside the function
+// body: the guards in this file assert over PACKAGE-LEVEL templates, so
+// an in-function query stayed invisible to them (`rg DailyMarketDays
+// internal/storage/timescale/*_test.go` returned nothing before this).
+// Hoisting it to [dailyMarketDaysQuery] is what makes this test
+// possible at all, and is the durable half of the fix.
+func TestDailyMarketDaysQueryShape(t *testing.T) {
+	q := dailyMarketDaysQuery
+
+	if !strings.Contains(q, "bucket <= now() - INTERVAL '1 hour'") {
+		t.Error("query missing the sargable `bucket <= now() - INTERVAL '1 hour'` closed-bucket guard")
+	}
+	if strings.Contains(q, "bucket + INTERVAL") {
+		t.Error("query uses the non-sargable `bucket + INTERVAL` form " +
+			"(function on the indexed column) — the planner cannot use the " +
+			"bucket index or prune chunks at plan time")
+	}
+}
