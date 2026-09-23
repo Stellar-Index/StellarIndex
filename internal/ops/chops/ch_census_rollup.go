@@ -22,14 +22,20 @@ import (
 // -backfill walks every day from the lake's first contract event
 // (or -from-day) up to today. Heavy on the first run — serialize on
 // r1 under run-heavy-job.sh.
+//
+// Fail-closed DRY RUN by default (opsutil.WriteGate): without -write
+// this only logs which days WOULD be recomputed. The census-rollup
+// and holders-rollup systemd units pass -write explicitly.
 func chCensusRollup(args []string) error {
 	fs := flag.NewFlagSet("ch-census-rollup", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	backfill := fs.Bool("backfill", false, "walk every day from the lake's first contract event (or -from-day) to today")
 	fromDay := fs.String("from-day", "", "backfill floor as YYYY-MM-DD (default: first contract event's day; also the resume point)")
+	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	write := gate.Banner()
 
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
@@ -74,6 +80,10 @@ func chCensusRollup(args []string) error {
 	}
 
 	for day := from; !day.After(today); day = day.Add(24 * time.Hour) {
+		if !write {
+			logf("DRY RUN: would recompute census day %s (pass -write to apply)", day.Format("2006-01-02"))
+			continue
+		}
 		if err := clickhouse.RunCensusDay(ctx, *chAddr, day, logf); err != nil {
 			return fmt.Errorf("%w — resume with -from-day %s", err, day.Format("2006-01-02"))
 		}
