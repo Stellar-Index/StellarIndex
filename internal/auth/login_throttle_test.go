@@ -3,6 +3,12 @@ package auth_test
 import (
 	"context"
 	"errors"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -257,4 +263,75 @@ func TestLoginThrottle_IPv6RotationWithinSlash64CannotEvadeCap(t *testing.T) {
 	if ok, err := tt.Allow(ctx, "2001:db8:1234:9999::1", "target@example.com"); err != nil || !ok {
 		t.Errorf("a different /64 must have its own budget: ok=%v err=%v", ok, err)
 	}
+}
+
+var (
+	deployedAnonCeilingRe = regexp.MustCompile(`(?m)^anon_rate_limit_per_min\s*=\s*(\d+)\s*$`)
+	clauseSplitRe         = regexp.MustCompile(`[.;]\s`)
+	anonRateLimitRe       = regexp.MustCompile(`(?i)anon.*rate[- ]?limit|rate[- ]?limit.*anon`)
+	perMinFigureRe        = regexp.MustCompile(`\b(\d[\d,]*)\s*(?:req(?:uests?)?)?/min\b`)
+)
+
+// The magic-link throttle is justified by how much the global anonymous
+// per-IP ceiling lets through, so a comment quoting that ceiling must quote
+// the value r1 actually ships: a 100x-low figure makes the email-bombing
+// exposure look bounded when it is not.
+func TestAnonCeilingCitedInAuthRationalesMatchesDeployedConfig(t *testing.T) {
+	tmpl, err := os.ReadFile("../../configs/ansible/roles/archival-node/templates/stellarindex.toml.j2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := deployedAnonCeilingRe.FindSubmatch(tmpl)
+	if m == nil {
+		t.Fatal("anon_rate_limit_per_min not found in the archival-node config template")
+	}
+	deployed := string(m[1])
+
+	var checked int
+	for _, dir := range []string{".", "../api/v1/dashboardauth"} {
+		for _, clause := range anonCeilingClauses(t, dir) {
+			checked++
+			for _, fig := range perMinFigureRe.FindAllStringSubmatch(clause.text, -1) {
+				if got := strings.ReplaceAll(fig[1], ",", ""); got != deployed {
+					t.Errorf("%s cites the anonymous rate-limit as %s/min; deployed anon_rate_limit_per_min is %s: %q",
+						clause.file, got, deployed, clause.text)
+				}
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no comment mentions the anonymous rate-limit; the scan is not reading the sources it guards")
+	}
+}
+
+type commentClause struct{ file, text string }
+
+// anonCeilingClauses returns every comment clause in dir's non-test Go files
+// that talks about the anonymous rate-limit.
+func anonCeilingClauses(t *testing.T, dir string) []commentClause {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []commentClause
+	fset := token.NewFileSet()
+	for _, path := range files {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, cg := range f.Comments {
+			flat := strings.Join(strings.Fields(cg.Text()), " ")
+			for _, clause := range clauseSplitRe.Split(flat, -1) {
+				if anonRateLimitRe.MatchString(clause) {
+					out = append(out, commentClause{filepath.Base(path), clause})
+				}
+			}
+		}
+	}
+	return out
 }

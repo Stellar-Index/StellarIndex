@@ -69,9 +69,12 @@ type EmailLocker interface {
 
 // LoginThrottle, when set, bounds magic-link sends to prevent inbox
 // email-bombing + sender-reputation / email-quota burn. The global
-// anonymous rate-limit only caps per-IP REQUEST volume (60/min); a single
-// IP under that ceiling can still bomb one victim inbox or spray many
-// addresses, and each accepted request fires an outbound email. nil
+// anonymous rate-limit (`[api] anon_rate_limit_per_min`; the deployed
+// figure is stated once, on auth.RedisLoginThrottle) only caps per-IP
+// REQUEST volume and is sized for browsing, orders of magnitude above any
+// sane email rate: a single IP under that ceiling can still bomb one victim
+// inbox or spray many addresses, and each accepted request fires an
+// outbound email. nil
 // disables the check (legacy behaviour). audit-2026-06-14 A12.
 type LoginThrottle interface {
 	// Allow reports whether a magic-link send for (ip, email) is within
@@ -420,8 +423,10 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Magic-link abuse throttle (audit-2026-06-14 A12). Over quota → skip the
 	// send but return the SAME generic 200 below, so neither an attacker nor
-	// the victim's inbox learns a throttle fired. Redis blip → fall open
-	// (the global anon rate-limit still bounds per-IP volume).
+	// the victim's inbox learns a throttle fired. Throttle error → fall open.
+	// The global anon rate-limit is NOT what bounds sends then (it is far
+	// above any email cap); auth.RedisLoginThrottle only errors after its
+	// in-process fallback has admitted the send under the same caps.
 	if h.cfg.LoginThrottle != nil {
 		ok, terr := h.cfg.LoginThrottle.Allow(r.Context(), clientIP(r).String(), email)
 		switch {
