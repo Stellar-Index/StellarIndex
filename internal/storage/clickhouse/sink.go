@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -269,8 +270,9 @@ func (s *Sink) SetMaxBufferLedgers(n int) { s.maxBufferLedgers = n }
 func (s *Sink) BufferedLedgers() int { return len(s.ledgers) }
 
 // Open dials ClickHouse (native protocol) at addr (e.g. "127.0.0.1:9300")
-// against the `stellar` database and pings it. flushEvery is the ledger-count
-// threshold that triggers an automatic Flush.
+// against the `stellar` database, pings it, and fails if any table Flush
+// writes to is missing. flushEvery is the ledger-count threshold that
+// triggers an automatic Flush.
 func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 	if flushEvery <= 0 {
 		flushEvery = 2000
@@ -281,7 +283,7 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 	if err != nil {
 		return nil, err
 	}
-	conn, err := clickhouse.Open(&clickhouse.Options{
+	return openSink(ctx, &clickhouse.Options{
 		Addr: []string{addr},
 		Auth: auth,
 		Settings: clickhouse.Settings{
@@ -298,7 +300,15 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 		MaxOpenConns:    4,
 		MaxIdleConns:    2,
 		ConnMaxLifetime: time.Hour,
-	})
+	}, flushEvery)
+}
+
+// openSink dials with opts, pings, and refuses a target that lacks any table
+// Flush writes to, so a mis-pointed or un-migrated endpoint fails at startup
+// rather than on the first Flush.
+func openSink(ctx context.Context, opts *clickhouse.Options, flushEvery int) (*Sink, error) {
+	addr := strings.Join(opts.Addr, ",")
+	conn, err := clickhouse.Open(opts)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: open %s: %w", addr, err)
 	}
@@ -306,7 +316,48 @@ func Open(ctx context.Context, addr string, flushEvery int) (*Sink, error) {
 		_ = conn.Close()
 		return nil, fmt.Errorf("clickhouse: ping %s: %w", addr, err)
 	}
+	if err := checkSchema(ctx, conn); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("clickhouse: %s: %w", addr, err)
+	}
 	return &Sink{conn: conn, flushEvery: flushEvery}, nil
+}
+
+// sinkTables is every stellar.* table Flush inserts into.
+var sinkTables = []string{
+	"transactions", "operations", "operation_results", "operation_participants",
+	"contract_events", "ledger_entry_changes", "supply_flows", "ledgers",
+}
+
+// checkSchema returns an error naming every sinkTables entry absent from the
+// stellar database.
+func checkSchema(ctx context.Context, conn driver.Conn) error {
+	rows, err := conn.Query(ctx, `SELECT name FROM system.tables WHERE database = 'stellar'`)
+	if err != nil {
+		return fmt.Errorf("schema check: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	have := make(map[string]bool)
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return fmt.Errorf("schema check: scan: %w", err)
+		}
+		have[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("schema check: %w", err)
+	}
+	var missing []string
+	for _, name := range sinkTables {
+		if !have[name] {
+			missing = append(missing, "stellar."+name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("schema check: missing table(s) %s (apply deploy/clickhouse/tier1_schema.sql)", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 // Add buffers one ledger's extract, auto-flushing when the ledger threshold
