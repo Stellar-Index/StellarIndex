@@ -407,13 +407,3 @@ func (s *MetricsSnapshot) PopulateFromFillResult(res FillResult) {
 		s.RepairFailures[source] += count
 	}
 }
-
-// SerialiseHeader returns a stable comment-only header that
-// callers can prepend to a textfile dump for human readability —
-// who emitted it, when, with what tool version. node_exporter
-// ignores comment lines so this is wire-safe.
-func SerialiseHeader(producedBy string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "# Produced by %s at %s\n", producedBy, time.Now().UTC().Format(time.RFC3339))
-	return b.String()
-}
