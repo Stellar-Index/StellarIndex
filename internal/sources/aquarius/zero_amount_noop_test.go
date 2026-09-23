@@ -95,3 +95,25 @@ func TestDecodeTrade_negativeAmountStillMalformed(t *testing.T) {
 		t.Fatalf("negative amount must not be the zero-amount no-op: %v", err)
 	}
 }
+
+// A self-pair trade (token_sold == token_bought) decodes fully but maps
+// to zero rows (canonical.ErrPairMismatch) — the same recognised no-op
+// comet applies to the exploit self-swap primitive. As an error it would
+// count as undecodable-but-matched and fail the source's verdict closed.
+func TestDecoderDecode_selfPairTradeIsNoOp(t *testing.T) {
+	dec := NewDecoder()
+	ev := zeroAmountTradeEvent()
+	ev.Topic = append([]string(nil), zeroAmountTradeTopics...)
+	ev.Topic[2] = ev.Topic[1]
+	ev.Value = encodeTradeBody(t, big.NewInt(2), big.NewInt(1), big.NewInt(0))
+	if !dec.Matches(ev) {
+		t.Fatal("gated decoder must match the registered pool's trade event")
+	}
+	outs, err := dec.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode = %v, want recognized no-op (nil error)", err)
+	}
+	if len(outs) != 0 {
+		t.Fatalf("Decode emitted %d events, want 0 (self-pair trade projects nothing)", len(outs))
+	}
+}

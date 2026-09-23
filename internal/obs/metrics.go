@@ -217,6 +217,7 @@ func registerAppMetricsTail() {
 		// SourceUnrepresentableSymbolsTotal below.
 		PasskeyLoginRefusalsTotal,
 
+		AMMSwapReceivedDivergenceTotal,
 		// Readiness-check gauge (#371 F2) — the only alertable signal
 		// ClickHouse has, since it is the one dependency on r1 with no
 		// Prometheus exporter of its own.
@@ -417,6 +418,7 @@ func seedBoundedLabelSeries() {
 	AMMSelfPairSwapTotal.WithLabelValues("comet")
 	// Same dead-metric ambiguity as AMMSelfPairSwapTotal above, same fix.
 	AMMNonPositiveSwapTotal.WithLabelValues("comet")
+	AMMSwapReceivedDivergenceTotal.WithLabelValues("phoenix")
 	for _, outcome := range []string{"written", "buffered", "dropped", "errored"} {
 		ChLiveSinkLedgersTotal.WithLabelValues(outcome)
 	}
@@ -928,7 +930,8 @@ var ProjectorLagLedgers = prometheus.NewGaugeVec(
 )
 
 // ProjectorRunsTotal counts projector cycle outcomes per source.
-// `outcome` ∈ {ok, error, idle, watermark_held, sink_retry, decode_degraded}; rate is
+// `outcome` ∈ {ok, error, idle, watermark_held, sink_retry, decode_degraded,
+// gate_widened}; rate is
 // the alive-check (zero rate sustained 5+ minutes means the source's
 // loop wedged). `decode_degraded` (DATA-6 / NS-2) marks a cycle that
 // advanced the cursor but dropped at least one decode-failed row — a
@@ -937,10 +940,12 @@ var ProjectorLagLedgers = prometheus.NewGaugeVec(
 // `watermark_held` is an empty scan because the CH lake's contiguous
 // watermark sits below ledgers ledgerstream already holds (a lake hole),
 // as opposed to `idle`, which is genuinely caught up.
+// `gate_widened` marks a cycle whose read admitted a new contract into a
+// live gate (a factory-seeded pool); it holds the cursor for one re-read.
 var ProjectorRunsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_projector_runs_total",
-		Help: "Per-source projector cycle outcomes (ok, error, idle, watermark_held, sink_retry, decode_degraded). Rate goes to zero if the source's loop has wedged.",
+		Help: "Per-source projector cycle outcomes (ok, error, idle, watermark_held, sink_retry, decode_degraded, gate_widened). Rate goes to zero if the source's loop has wedged.",
 	},
 	[]string{"source", "outcome"},
 )
@@ -1410,6 +1415,19 @@ var AMMNonPositiveSwapTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_amm_non_positive_swap_total",
 		Help: "AMM swaps dropped for a non-positive amount (in/out <= 0). By source.",
+	},
+	[]string{"source"},
+)
+
+// AMMSwapReceivedDivergenceTotal counts decoded swaps whose pool-received
+// sell amount differs from the taker's offer (a fee-on-transfer sell token).
+// The stored base leg stays the offer — the pool prices the swap off it —
+// so this is the only signal. Counts decodes, not unique swaps: a replay or
+// completeness sweep re-counts. Detection only.
+var AMMSwapReceivedDivergenceTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_amm_swap_received_divergence_total",
+		Help: "AMM swaps whose pool-received sell amount differs from the taker's offer (fee-on-transfer sell token). Stored base leg is unchanged. By source.",
 	},
 	[]string{"source"},
 )

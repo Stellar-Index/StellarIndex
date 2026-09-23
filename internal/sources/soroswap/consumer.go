@@ -134,7 +134,8 @@ func newBuffer() *buffer {
 	}
 }
 
-// absorb records an event; returns any pairs that just completed.
+// absorb records an event; returns any pairs that just completed,
+// including a swap-only group rotated out by a same-pair re-entry.
 // Also sweeps the buffer for entries older than maxAge; evicted
 // orphans are RETURNED so the caller can emit metrics — they're
 // NOT returned as completed pairs (they have no Sync to finalise).
@@ -148,6 +149,20 @@ func (b *buffer) absorb(e *events.Event, kind string, closedAt time.Time) (compl
 
 	k := keyOf(e)
 	p, ok := b.m[k]
+	if ok && p.rotates(kind, e) {
+		// A second swap (or sync) into an occupied slot with a DIFFERENT
+		// EventIndex belongs to a second swap through the SAME pair in the
+		// same op, emitted non-contiguously. Overwriting in place lost the
+		// first trade uncounted. Rotate the group out: a swap-only group is
+		// final (the trade is read from the swap body alone), a sync-only
+		// one is an orphan. Same EventIndex is a redelivery: overwrite.
+		if p.Swap != nil {
+			completed = append(completed, *p)
+		} else {
+			evicted = append(evicted, *p)
+		}
+		ok = false
+	}
 	if !ok {
 		p = &RawPair{
 			Ledger: e.Ledger, TxHash: e.TxHash, OpIndex: uint32(e.OperationIndex),
@@ -163,9 +178,23 @@ func (b *buffer) absorb(e *events.Event, kind string, closedAt time.Time) (compl
 	}
 	if p.Complete() {
 		delete(b.m, k)
-		completed = []RawPair{*p}
+		completed = append(completed, *p)
 	}
 	return completed, evicted
+}
+
+// rotates reports whether e lands in an already-occupied slot of p as a
+// DIFFERENT event (another EventIndex), i.e. a second swap/sync through
+// the same pair in the same op rather than a redelivery.
+func (p *RawPair) rotates(kind string, e *events.Event) bool {
+	var prior *events.Event
+	switch kind {
+	case EventSwap:
+		prior = p.Swap
+	case EventSync:
+		prior = p.Sync
+	}
+	return prior != nil && prior.EventIndex != e.EventIndex
 }
 
 // sweepStale removes every entry whose ClosedAt is older than

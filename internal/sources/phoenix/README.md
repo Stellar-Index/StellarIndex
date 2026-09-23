@@ -136,6 +136,16 @@ trade re-derive is required to correct rows written before the fix.**
 `spread_amount` / `referral_fee_amount` are emitted but not surfaced
 (no `Fee` field on `canonical.Trade`).
 
+`canonical.Trade.BaseAmount = offer_amount` on both the String and Map
+paths. `do_swap` calls `compute_swap` with `offer_amount` before the
+sell-token transfer and computes `actual received amount` only
+afterwards, for the reserve update and the event. So `return_amount`
+was priced off `offer_amount`, and `return / offer` is the executed
+price even for a fee-on-transfer sell token. When the two differ the
+decoder keeps the trade unchanged and increments
+`stellarindex_amm_swap_received_divergence_total{source="phoenix"}`
+with a WARN log naming the pool and tx.
+
 ### Q4 — Multihop expands to N×8 events
 
 A Phoenix multihop swap passes through N pools and emits 8 events

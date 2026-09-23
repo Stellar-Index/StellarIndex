@@ -190,8 +190,15 @@ type Source struct {
 	// projector doesn't stream irrelevant rows. Pass nil for
 	// "match by Decoder.Matches alone" — coarser network read
 	// but simpler config. Mirrors `StreamSorobanEvents`'s args.
+	// Read through PrefilterContractIDs, never directly.
 	ContractIDs []string
 	Topic0Syms  []string
+
+	// ContractIDsFunc, when set, supersedes ContractIDs and is re-read
+	// every cycle: for a gate that grows in-stream (sushiswap_v3's
+	// factory-seeded pools) a boot-time list filters a new pool's events
+	// out before Matches ever sees them.
+	ContractIDsFunc func() []string
 
 	// ExcludeTopic0Syms drops events whose topic[0] symbol is in the
 	// list at the SQL layer (topic_0_sym NOT IN …). For the DEX/lending
@@ -226,6 +233,34 @@ type Source struct {
 	// BatchLimit-per-cycle ceiling. It must never be ABOVE the true first
 	// event — that would skip it — so only exact or rounded-down values.
 	Genesis uint32
+}
+
+// PrefilterContractIDs returns the contract-id prefilter for one read.
+func (s Source) PrefilterContractIDs() []string {
+	if s.ContractIDsFunc != nil {
+		return s.ContractIDsFunc()
+	}
+	return s.ContractIDs
+}
+
+// prefilterWidened returns the contracts s's live gate now admits that
+// snapshot — the prefilter a read just ran with — excluded. Empty when
+// the gate is static or the read was unfiltered.
+func prefilterWidened(s Source, snapshot []string) []string {
+	if s.ContractIDsFunc == nil || len(snapshot) == 0 {
+		return nil
+	}
+	had := make(map[string]struct{}, len(snapshot))
+	for _, c := range snapshot {
+		had[c] = struct{}{}
+	}
+	var added []string
+	for _, c := range s.ContractIDsFunc() {
+		if _, ok := had[c]; !ok {
+			added = append(added, c)
+		}
+	}
+	return added
 }
 
 // Registry is the set of sources the projector handles. Built
@@ -1121,12 +1156,13 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		}
 	}
 
+	prefilter := src.PrefilterContractIDs()
 	if p.chAddr != "" {
 		// CH feed-switch (#10): read contract_events directly (already an
 		// events.Event, no Reconstruct). No FINAL — small forward window +
 		// idempotent downstream writes absorb any duplicate.
 		err = clickhouse.StreamContractEventsFiltered(cycleCtx, p.chAddr, fromLedger, toLedger,
-			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms,
+			prefilter, src.Topic0Syms, src.ExcludeTopic0Syms,
 			false,                   // no FINAL: idempotent writes absorb dups
 			true,                    // withOpArgs: the projector routes every source, incl. OpArgs consumers (redstone); windows are BatchLimit-small
 			src.NeedsStateWriteKeys, // per-source: only redstone reads written contract-data keys
@@ -1140,7 +1176,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 			})
 	} else {
 		err = p.store.StreamSorobanEvents(cycleCtx, fromLedger, toLedger,
-			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms,
+			prefilter, src.Topic0Syms, src.ExcludeTopic0Syms,
 			func(row sorobanevents.Row) error {
 				rowsScanned++
 				if row.Ledger > lastSeenLedger {
@@ -1188,6 +1224,11 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// re-read AND re-failed, so a row that healed (or that the window no
 	// longer covers) starts from zero.
 	tracker.retain(failedThisCycle)
+
+	if added := prefilterWidened(src, prefilter); len(added) > 0 {
+		p.holdForWidenedGate(src.Name, fromLedger, toLedger, added)
+		return
+	}
 
 	// Poison-row shed cap (RLT-131): release at most [PermanentSkipPerCycle]
 	// of the rows the sink PERMANENTLY rejected, lowest ledger first, and keep
@@ -1519,6 +1560,19 @@ func (p *Projector) findSeed(ctx context.Context, src Source, lake *sourceLake) 
 		return tip, true, nil
 	}
 	return first, true, nil
+}
+
+// holdForWidenedGate ends a cycle whose read admitted new contracts into
+// the source's gate mid-window (a factory announced a pool): that pool's
+// events in [from, to] were filtered out by the prefilter the read started
+// with. The cursor stays put so the next cycle re-reads the window with
+// the widened prefilter; the idempotent downstream Insert* absorbs the
+// rows already written. Converges in one extra read, since the re-read
+// re-seeds contracts the gate already holds.
+func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []string) {
+	obs.ProjectorRunsTotal.WithLabelValues(source, "gate_widened").Inc()
+	p.logger.Info("projector: contract gate widened mid-window — re-reading the window with the new prefilter",
+		"source", source, "from", from, "to", to, "added", len(added), "first_added", added[0])
 }
 
 // resolveTip returns the upper scan bound for one cycle. The base

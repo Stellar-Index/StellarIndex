@@ -152,13 +152,14 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 		// so firehoseExcludeSyms would have to drop the source's own events
 		// to keep a catch-up window affordable. Scoping by contract instead
 		// is both cheaper and lossless. The set grows across restarts via
-		// the protocol_contracts warm that gated[...] carries.
+		// the protocol_contracts warm that gated[...] carries, and in-stream
+		// from pool_created — hence the live func, re-read every cycle.
 		sushiDec := sushiswap_v3.NewDecoder(gated[sushiswap_v3.SourceName]...)
 		return Source{
-			Name:        sushiswap_v3.SourceName,
-			Decoder:     sushiDec,
-			ContractIDs: sushiDec.GatedContractSet(),
-			Genesis:     sushiswap_v3.FactoryGenesisLedger,
+			Name:            sushiswap_v3.SourceName,
+			Decoder:         sushiDec,
+			ContractIDsFunc: sushiDec.GatedContractSet,
+			Genesis:         sushiswap_v3.FactoryGenesisLedger,
 		}, true, nil
 	case upshift.SourceName:
 		// ADR-0035/0040: contract-gated (curated set — the vaults have no
@@ -171,10 +172,10 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 		// two contracts is both cheaper and lossless.
 		upshiftDec := upshift.NewDecoder(gated[upshift.SourceName]...)
 		return Source{
-			Name:        upshift.SourceName,
-			Decoder:     upshiftDec,
-			ContractIDs: upshiftDec.GatedContractSet(),
-			Genesis:     upshift.GenesisLedger,
+			Name:            upshift.SourceName,
+			Decoder:         upshiftDec,
+			ContractIDsFunc: upshiftDec.GatedContractSet,
+			Genesis:         upshift.GenesisLedger,
 		}, true, nil
 	case comet.SourceName:
 		// ADR-0035/0040: contract-gated (curated set — comet has no
