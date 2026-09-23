@@ -29,6 +29,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -113,8 +114,12 @@ type Options struct {
 // Worker sweeps the catalogue on a ticker and publishes the
 // priceless-popular coverage gauge + sweep-health metrics.
 type Worker struct {
-	reader       CandidateReader
-	resolveSAC   func(ctx context.Context, contractID string) (string, bool)
+	reader CandidateReader
+	// resolveSAC is optional and may be wired after construction
+	// (SetResolveSAC) by a background dial retry (K024), while Sweep is
+	// already ticking on another goroutine — hence atomic rather than a
+	// plain field.
+	resolveSAC   atomic.Pointer[func(ctx context.Context, contractID string) (string, bool)]
 	isPriced     func(ctx context.Context, assetID string) (bool, error)
 	interval     time.Duration
 	sweepTimeout time.Duration
@@ -130,12 +135,14 @@ func New(reader CandidateReader, opts Options) *Worker {
 	}
 	w := &Worker{
 		reader:       reader,
-		resolveSAC:   opts.ResolveSAC,
 		isPriced:     opts.IsPriced,
 		interval:     opts.Interval,
 		sweepTimeout: opts.SweepTimeout,
 		logger:       opts.Logger,
 		now:          opts.Clock,
+	}
+	if opts.ResolveSAC != nil {
+		w.SetResolveSAC(opts.ResolveSAC)
 	}
 	if w.interval <= 0 {
 		w.interval = DefaultInterval
@@ -150,6 +157,15 @@ func New(reader CandidateReader, opts Options) *Worker {
 		w.now = func() time.Time { return time.Now().UTC() }
 	}
 	return w
+}
+
+// SetResolveSAC wires (or re-wires) the SAC-to-classic-asset resolver
+// after construction. Safe to call concurrently with Run/Sweep: a
+// background ClickHouse dial retry (K024) arms the SAC alias check once
+// the lake answers, rather than the sweep either blocking start on that
+// dial or giving up on it forever after one failure.
+func (w *Worker) SetResolveSAC(f func(ctx context.Context, contractID string) (string, bool)) {
+	w.resolveSAC.Store(&f)
 }
 
 // Run drives the sweep loop until ctx is cancelled. Sweeps once
@@ -226,10 +242,12 @@ func (w *Worker) Sweep(ctx context.Context) {
 // error is logged and treated as "not priced": the tripwire fails loud,
 // never quiet.
 func (w *Worker) pricedViaClassicAlias(ctx context.Context, assetID string) (string, bool) {
-	if w.resolveSAC == nil || w.isPriced == nil || !looksLikeContractID(assetID) {
+	resolveSACPtr := w.resolveSAC.Load()
+	if resolveSACPtr == nil || w.isPriced == nil || !looksLikeContractID(assetID) {
 		return "", false
 	}
-	classic, ok := w.resolveSAC(ctx, assetID)
+	resolveSAC := *resolveSACPtr
+	classic, ok := resolveSAC(ctx, assetID)
 	if !ok || classic == "" || classic == assetID {
 		return "", false
 	}

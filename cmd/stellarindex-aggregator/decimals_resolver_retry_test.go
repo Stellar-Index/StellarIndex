@@ -39,9 +39,17 @@ import (
 // lives inside run(), which needs a config file, a Postgres pool and a
 // Redis client before it is reachable, so the WIRING is asserted here.
 //
-// Putting clickhouse.NewExplorerReader back inline — which reads like a
-// simplification to anyone who does not know the cold-boot race —
-// restores the defect in full.
+// Putting clickhouse.NewExplorerReader (or clickhouse.NewTxIndexReader)
+// back inline — which reads like a simplification to anyone who does not
+// know the cold-boot race — restores the defect in full.
+//
+// K024: the MEV tx-order resolver and the priceless-coverage SAC resolver
+// used to be the same single-shot-then-permanent-degrade shape as the
+// pre-fix decimals guard — carried deliberately for a time as a smaller,
+// different harm (a SAC mis-ticketed as priceless; sandwich detection
+// silently off), but that reasoning does not hold once the retrying dial
+// is a two-line call (dialLakeReaderWithRetry) rather than a bespoke
+// rewrite, so both now go through it too.
 func TestDecimalsGuardResolverIsDialledWithRetry(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "main.go", nil, 0)
@@ -50,21 +58,20 @@ func TestDecimalsGuardResolverIsDialledWithRetry(t *testing.T) {
 	}
 
 	// knownDirectDials is the number of OTHER components that still dial
-	// the lake reader inline, each accounted for:
+	// a lake reader inline, each accounted for:
 	//
 	//  1. the supply refresher's close-time source — fails CLOSED
 	//     (`return err`), so a cold lake refuses startup rather than
 	//     degrading silently; nothing to fix.
-	//  2. the priceless-coverage SAC resolver — same silent-degradation
-	//     SHAPE as the pre-fix decimals guard, but a different harm (a
-	//     SAC mis-ticketed as priceless, not a mispriced pair) and a
-	//     different fix (the resolver closure is built synchronously
-	//     into Options). Carried deliberately, not overlooked.
 	//
-	// A THIRD direct dial means the decimals guard's went back inline.
-	const knownDirectDials = 2
+	// A SECOND direct dial means some other component went back inline.
+	const knownDirectDials = 1
+	// wantViaGenericRetry is dialDecimalsResolver's own delegation +
+	// the MEV tx-order resolver + the priceless-coverage SAC resolver
+	// (K024).
+	const wantViaGenericRetry = 3
 
-	direct, viaRetry := 0, 0
+	direct, directTxIndex, viaRetry, viaGenericRetry := 0, 0, 0, 0
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
@@ -72,15 +79,25 @@ func TestDecimalsGuardResolverIsDialledWithRetry(t *testing.T) {
 		}
 		switch fn := call.Fun.(type) {
 		case *ast.SelectorExpr:
-			// A CALL of clickhouse.NewExplorerReader — not a reference to
-			// it, which is how it is handed to dialDecimalsResolver.
+			// A CALL of clickhouse.NewExplorerReader/NewTxIndexReader —
+			// not a reference to one, which is how each is handed to the
+			// retrying dial helpers.
 			pkg, pkgOK := fn.X.(*ast.Ident)
-			if pkgOK && pkg.Name == "clickhouse" && fn.Sel != nil && fn.Sel.Name == "NewExplorerReader" {
+			if !pkgOK || pkg.Name != "clickhouse" || fn.Sel == nil {
+				return true
+			}
+			switch fn.Sel.Name {
+			case "NewExplorerReader":
 				direct++
+			case "NewTxIndexReader":
+				directTxIndex++
 			}
 		case *ast.Ident:
-			if fn.Name == "dialDecimalsResolver" {
+			switch fn.Name {
+			case "dialDecimalsResolver":
 				viaRetry++
+			case "dialLakeReaderWithRetry":
+				viaGenericRetry++
 			}
 		}
 		return true
@@ -92,11 +109,23 @@ func TestDecimalsGuardResolverIsDialledWithRetry(t *testing.T) {
 			"whole process lifetime whenever ClickHouse was still loading metadata after a "+
 			"reboot, so the guard's resolver must go through the retrying dial", viaRetry)
 	}
+	if viaGenericRetry != wantViaGenericRetry {
+		t.Errorf("found %d dialLakeReaderWithRetry call(s) in main.go, want %d — the MEV "+
+			"tx-order resolver and the priceless-coverage SAC resolver must both dial "+
+			"through the retrying helper, not a bare clickhouse.New*Reader call, or a cold "+
+			"lake at boot disables them for the process lifetime again (K024)", viaGenericRetry, wantViaGenericRetry)
+	}
 	if direct != knownDirectDials {
 		t.Errorf("found %d direct clickhouse.NewExplorerReader call(s) in main.go, want %d — "+
 			"a new one is a component that gives up on a cold lake for its whole process "+
 			"lifetime; either fail closed like the supply close-time reader or retry like "+
 			"the decimals guard, then account for it here", direct, knownDirectDials)
+	}
+	if directTxIndex != 0 {
+		t.Errorf("found %d direct clickhouse.NewTxIndexReader call(s) in main.go, want 0 — "+
+			"the MEV tx-order resolver must dial through dialLakeReaderWithRetry, not "+
+			"inline, or a cold lake at boot disables sandwich/oracle-sandwich detection for "+
+			"the process lifetime (K024)", directTxIndex)
 	}
 }
 
