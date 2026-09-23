@@ -151,6 +151,7 @@ func TestTick_CompositeRecordedOnlyOnPublish(t *testing.T) {
 	// Now break a leg: the next tick must not refresh the sample.
 	mr.Del(cachekeys.VWAP(usdEUR.Base, usdEUR.Quote, window).String())
 	before := o.lastComposites[compositeKey(xlmEUR, window)].at
+	nextBucket(o)
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("second Tick: %v", err)
 	}
@@ -205,6 +206,9 @@ func TestTick_CompositeCorroborationReachesTheCachedConfidence(t *testing.T) {
 		// Tick 1 warms prevVWAP and publishes the first composite;
 		// tick 2 scores the direct price against it.
 		for i := 0; i < 2; i++ {
+			if i > 0 {
+				nextBucket(o)
+			}
 			if err := o.Tick(context.Background()); err != nil {
 				t.Fatalf("tick %d: %v", i+1, err)
 			}

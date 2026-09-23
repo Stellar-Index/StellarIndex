@@ -83,7 +83,10 @@ func (o *Orchestrator) triangulateAll(ctx context.Context) {
 	if len(o.cfg.Triangulations) == 0 {
 		return
 	}
-	now := time.Now().UTC()
+	// The tick's own clock read (o.tickNow), never a second wall-clock
+	// read: the FX snap must key off the same instant as the leg VWAPs it
+	// multiplies, and the injected clock must be able to drive it.
+	now := o.tickClock()
 	for _, window := range o.cfg.Windows {
 		if err := ctx.Err(); err != nil {
 			return
@@ -95,6 +98,15 @@ func (o *Orchestrator) triangulateAll(ctx context.Context) {
 			obs.AggregatorTriangulationsTotal.WithLabelValues(outcome).Inc()
 		}
 	}
+}
+
+// tickClock is the current tick's clock read, or a fresh read of the
+// injected clock outside a Tick.
+func (o *Orchestrator) tickClock() time.Time {
+	if o.tickNow.IsZero() {
+		return o.clock().UTC()
+	}
+	return o.tickNow
 }
 
 // chainLegStatus is the per-chain result of resolving that chain's legs
@@ -127,7 +139,7 @@ type chainLegStatus struct {
 // reference is never the LIMITING edge — the route's trust reflects the
 // crypto/USD leg's own confidence score (the genuinely less-certain leg).
 // Priced-pair legs never use this; they carry their real per-pair confidence
-// from [recordEdgeQuote].
+// from [newEdgeQuote].
 //
 // This applies ONLY to FX legs (isFXLeg). A cached NON-FX leg uses the
 // conservative [cachedLegConfidence] instead (L1): before the fix EVERY
@@ -138,7 +150,7 @@ const legEdgeConfidence = 1.0
 // cachedLegConfidence is the weakest-link confidence assigned to a NON-FX
 // chain leg resolved from CACHE (a crypto/crypto or crypto/fiat leg that was
 // not one of this tick's priced pairs, so it carries no fresh per-pair quality
-// signal from [recordEdgeQuote]). Unlike an FX leg it has unknown freshness
+// signal from [newEdgeQuote]). Unlike an FX leg it has unknown freshness
 // and provenance, so it must be able to be the route's LIMITING edge rather
 // than silently entering at max trust and dragging a stale crypto price
 // through a hub at full confidence (L1). Set to the reroute/corroboration
@@ -150,7 +162,7 @@ const cachedLegConfidence = 0.5
 
 // buildWindowEdges assembles the cross-rate edge graph for one window:
 // this tick's priced-pair VWAPs (each with its real per-pair
-// confidence, captured in [recordEdgeQuote]) plus every configured
+// confidence, captured in [newEdgeQuote]) plus every configured
 // chain's resolved legs (FX legs via the snap path, others from cache).
 // It returns the deterministic edge set and the per-chain leg status the
 // router pass needs to distinguish a dry leg from a frozen one.
@@ -470,31 +482,36 @@ func excludeDirectEdge(edges []aggregate.RouteLeg, target canonical.Pair) []aggr
 	return out
 }
 
-// recordEdgeQuote captures a successfully-published (pair, window) VWAP
-// as a router edge input for THIS tick's triangulation pass. The edge's
-// weakest-link confidence reuses the pair's existing quality signal (see
-// [edgeConfidence]); nothing new is invented. Called from
-// refreshPairWindow only after a confident publish, so frozen / dropped /
-// empty / below-floor windows contribute no edge — the min_usd_volume
-// gate is what keeps a dust pair out of the cross-rate graph (INV-11).
-func (o *Orchestrator) recordEdgeQuote(
+// newEdgeQuote builds a successfully-published (pair, window) VWAP as a
+// router edge input for the triangulation pass. The edge's weakest-link
+// confidence reuses the pair's existing quality signal (see
+// [edgeConfidence]); nothing new is invented. Built by refreshPairWindow
+// only after a confident publish, so frozen / dropped / empty /
+// below-floor windows contribute no edge — the min_usd_volume gate is
+// what keeps a dust pair out of the cross-rate graph (INV-11).
+func newEdgeQuote(
 	pair canonical.Pair,
-	window time.Duration,
 	vwap *big.Rat,
 	conf confidenceComputation,
 	confOK bool,
 	trades []canonical.Trade,
-) {
-	if o.tickEdgeQuotes == nil {
-		o.tickEdgeQuotes = make(map[time.Duration][]aggregate.Quote, len(o.cfg.Windows))
-	}
-	o.tickEdgeQuotes[window] = append(o.tickEdgeQuotes[window], aggregate.Quote{
+) aggregate.Quote {
+	return aggregate.Quote{
 		Pair: pair,
 		// Defensive copy: vwap is the caller's working value and must not
 		// alias into the edge graph or the next tick.
 		Price:      new(big.Rat).Set(vwap),
 		Confidence: edgeConfidence(conf, confOK, trades),
-	})
+	}
+}
+
+// appendTickEdgeQuote adds one published pair to this tick's router edge
+// inputs for window.
+func (o *Orchestrator) appendTickEdgeQuote(window time.Duration, q aggregate.Quote) {
+	if o.tickEdgeQuotes == nil {
+		o.tickEdgeQuotes = make(map[time.Duration][]aggregate.Quote, len(o.cfg.Windows))
+	}
+	o.tickEdgeQuotes[window] = append(o.tickEdgeQuotes[window], q)
 }
 
 // edgeConfidence derives a router edge's weakest-link confidence from
@@ -632,8 +649,9 @@ func legConfidence(leg canonical.Pair) float64 {
 // metric label the caller bubbles up via [obs.AggregatorTriangulationsTotal].
 //
 // FX legs (both sides fiat) attempt the X2.5 snap path via
-// [Config.FXStore]. Snap misses (no FX quote at-or-before bucketEnd)
-// fall back to the cached-VWAP path and increment
+// [Config.FXStore]. Snap misses (no FX quote at-or-before bucketEnd) and
+// snaps refused by [fxSnapRejection] (stale, or not from the FX source
+// class) fall back to the cached-VWAP path and increment
 // [obs.AggregatorFXSnapFallbackTotal]; this keeps the chain publishing
 // during fresh deploys / FX-source outages instead of black-holing.
 // Snap DB errors propagate up as "redis_error"-class outcomes — the
@@ -655,16 +673,20 @@ func (o *Orchestrator) legPrice(
 	bucketEnd time.Time,
 ) (*big.Rat, []string, string) {
 	if isFXLeg(leg) && o.cfg.FXStore != nil {
-		price, _, _, err := o.cfg.FXStore.FXQuoteAtOrBefore(ctx, leg, bucketEnd, external.FXSources())
+		price, observedAt, source, err := o.cfg.FXStore.FXQuoteAtOrBefore(ctx, leg, bucketEnd, external.FXSources())
 		switch {
 		case err == nil:
-			return price, fxLegProvenance(leg), ""
+			// Same budget and source class the corroborating reference
+			// enforces: a dead FX feed must not keep pricing the chain off
+			// its last rate as a fresh composite.
+			reason := fxSnapRejection(o.tickClock(), observedAt, source,
+				o.cfg.CompositeReference.withDefaults().FXMaxAge)
+			if reason == "" {
+				return price, fxLegProvenance(leg), ""
+			}
+			o.logger.Warn("triangulation: FX snap refused",
+				"chain", chain.Target.String(), "leg", leg.String(), "reason", reason)
 		case errors.Is(err, timescale.ErrNoFXQuote):
-			// Soft fallback to cached VWAP — degraded but the chain
-			// still publishes. Counter drives the dashboard /
-			// alert (>50% sustained = FX ingestion is sick).
-			obs.AggregatorFXSnapFallbackTotal.WithLabelValues(leg.String()).Inc()
-			// fallthrough to cached-VWAP read below
 		default:
 			o.logger.Warn("triangulation: FX snap query failed",
 				"chain", chain.Target.String(),
@@ -672,6 +694,10 @@ func (o *Orchestrator) legPrice(
 				"err", err)
 			return nil, nil, "redis_error"
 		}
+		// Snap missing or refused: soft fallback to the cached VWAP —
+		// degraded, but the chain can still publish. Counter drives the
+		// dashboard / alert (>50% sustained = FX ingestion is sick).
+		obs.AggregatorFXSnapFallbackTotal.WithLabelValues(leg.String()).Inc()
 	}
 	price, outcome := o.legPriceFromCache(ctx, chain, leg, window)
 	return price, nil, outcome

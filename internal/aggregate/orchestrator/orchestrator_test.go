@@ -1332,6 +1332,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 			MinUSDVolume: 10_000,
 		})
 
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1353,6 +1354,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 			MinUSDVolume: 0, // off
 		})
 
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1407,6 +1409,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 		})
 
 		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1441,6 +1444,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 			MinUSDVolume: 10_000,
 		})
 
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1499,6 +1503,7 @@ func TestTick_MinUSDVolumeFilter(t *testing.T) {
 		})
 
 		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1611,6 +1616,7 @@ func TestTick_MinUSDVolumeFilter_StablecoinProxyLegs(t *testing.T) {
 		})
 
 		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1639,6 +1645,7 @@ func TestTick_MinUSDVolumeFilter_StablecoinProxyLegs(t *testing.T) {
 		})
 
 		before := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume"))
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1785,6 +1792,7 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 			USDPeggedSorobanAssets: []canonical.Asset{sacUSDC},
 		})
 
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}
@@ -1818,6 +1826,7 @@ func TestTick_MinUSDVolumeFilter_SorobanQuotedPair(t *testing.T) {
 
 		before := testutil.ToFloat64(obs.AggregatorMinUSDVolumeUnvaluableTotal.WithLabelValues(pair.String()))
 		beforeDropped := testutil.ToFloat64(obs.AggregatorDroppedWindowsTotal.WithLabelValues("min_usd_volume_unvaluable"))
+		nextBucket(orch)
 		if err := orch.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}

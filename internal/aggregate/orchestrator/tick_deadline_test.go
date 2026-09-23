@@ -204,6 +204,7 @@ func TestTick_EveryFXQueryInheritsTheTickDeadline(t *testing.T) {
 		t.Fatalf("tick 1: %v", err)
 	}
 	setTrades(15_000_000, 12_000_000, now.Add(-10*time.Second))
+	nextBucket(o)
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}

@@ -114,6 +114,7 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 		store.trades = []canonical.Trade{
 			makeTradeOn(t, xlmGBP, "soroswap", 100_000_000, 12_000_000, now.Add(-10*time.Second)),
 		}
+		nextBucket(o)
 		if err := o.Tick(context.Background()); err != nil {
 			t.Fatalf("tick 2: %v", err)
 		}
@@ -123,6 +124,7 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 		store.trades = []canonical.Trade{
 			makeTradeOn(t, xlmGBP, "soroswap", 100_000_000, 12_000_000, now.Add(-5*time.Second)),
 		}
+		nextBucket(o)
 		if err := o.Tick(context.Background()); err != nil {
 			t.Fatalf("tick 3: %v", err)
 		}
@@ -348,6 +350,7 @@ func runFreezeWithChains(
 	store.trades = []canonical.Trade{
 		makeTradeOn(t, target, "soroswap", 100_000_000, 12_000_000, now.Add(-10*time.Second)),
 	}
+	nextBucket(o)
 	if err := o.Tick(context.Background()); err != nil {
 		t.Fatalf("tick 2: %v", err)
 	}
@@ -516,6 +519,7 @@ func TestRouterTarget_FXDryRerouteGatedAndFlagged(t *testing.T) {
 	// ── above the floor: substitute publishes, still flagged ──
 	t.Run("above_floor_publishes_flagged", func(t *testing.T) {
 		o, cache := buildO(t, false)
+		nextBucket(o)
 		if err := o.Tick(context.Background()); err != nil {
 			t.Fatalf("Tick: %v", err)
 		}

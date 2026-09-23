@@ -207,7 +207,7 @@ func (f *windowIsolationFixture) freezeTheLongWindow() {
 
 	// Bucket 1: single-source manipulated print on the long window.
 	f.feed(thinBaseAmount, thinQuoteAmount, lkgBaseAmount, manipQuoteAmount)
-	f.tick(30 * time.Second)
+	f.tick(closedBucket)
 	if !f.orch.freezeStates[f.key(f.long)].Active() {
 		f.t.Fatal("setup: the manipulated long-window bucket did not freeze")
 	}
@@ -270,7 +270,7 @@ func TestFreezeWindowIsolation_ColdThinWindowDoesNotAdoptASiblingsLadder(t *test
 	// price, now with volume above the floor. First time this stateKey
 	// reaches the freeze step.
 	f.feed(lkgBaseAmount, lkgQuoteAmount, lkgBaseAmount, manipQuoteAmount*2)
-	f.tick(30 * time.Second)
+	f.tick(closedBucket)
 
 	f.assertShortWindowStartsClean(lkgFormatted)
 
@@ -300,7 +300,7 @@ func TestFreezeWindowIsolation_RestartDoesNotSpreadALadderAcrossWindows(t *testi
 	// in-memory sibling state at all.
 	f.restart()
 	f.feed(lkgBaseAmount, lkgQuoteAmount, thinBaseAmount, thinQuoteAmount)
-	f.tick(30 * time.Second)
+	f.tick(closedBucket)
 
 	f.assertShortWindowStartsClean(lkgFormatted)
 }
@@ -324,7 +324,7 @@ func TestFreezeWindowIsolation_RestartRehydratesEveryFrozenWindow(t *testing.T) 
 
 	// One manipulated print, both windows, both above the volume floor.
 	f.feed(lkgBaseAmount, manipQuoteAmount, lkgBaseAmount, manipQuoteAmount)
-	f.tick(30 * time.Second)
+	f.tick(closedBucket)
 	for _, w := range []time.Duration{f.short, f.long} {
 		if !f.orch.freezeStates[f.key(w)].Active() {
 			t.Fatalf("setup: the %v window did not freeze on the manipulated bucket", w)
@@ -334,7 +334,7 @@ func TestFreezeWindowIsolation_RestartRehydratesEveryFrozenWindow(t *testing.T) 
 	// Deploy, with the manipulation still live on both windows.
 	f.restart()
 	f.feed(lkgBaseAmount, manipQuoteAmount, lkgBaseAmount, manipQuoteAmount)
-	f.tick(30 * time.Second)
+	f.tick(closedBucket)
 
 	for _, w := range []time.Duration{f.short, f.long} {
 		st := f.orch.freezeStates[f.key(w)]
@@ -369,7 +369,7 @@ func TestFreezeWindowIsolation_ReleasedWindowLadderLeavesTheMarker(t *testing.T)
 
 	// Both windows freeze on the same manipulated print.
 	f.feed(lkgBaseAmount, manipQuoteAmount, lkgBaseAmount, manipQuoteAmount)
-	f.tick(30 * time.Second)
+	f.tick(closedBucket)
 	for _, w := range []time.Duration{f.short, f.long} {
 		if !f.orch.freezeStates[f.key(w)].Active() {
 			t.Fatalf("setup: the %v window did not freeze on the manipulated bucket", w)
@@ -398,7 +398,7 @@ func TestFreezeWindowIsolation_ReleasedWindowLadderLeavesTheMarker(t *testing.T)
 	// was refused by a rehydrated ladder (the pinned last-known-good).
 	f.restart()
 	f.feed(lkgBaseAmount, nudgedQuoteAmount, lkgBaseAmount, manipQuoteAmount*3)
-	f.tick(30 * time.Second)
+	f.tick(closedBucket)
 
 	if st := f.orch.freezeStates[shortKey]; st.Active() {
 		t.Errorf("E1: the short window rehydrated a ladder it had already released "+
