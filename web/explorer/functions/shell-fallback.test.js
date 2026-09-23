@@ -225,3 +225,104 @@ describe('each handler fetches its own shell path', () => {
     expect(fetched).toBe(shellPath);
   });
 });
+
+// T291: the walk above only proves the handlers that EXIST behave; it
+// cannot notice a dynamic route that has none. /sources/[name],
+// /external/assets/[slug] and /embed/{asset,currency,pair}/[*] pre-render
+// only the ids their API listing held at build time, and explorer deploys
+// are manual, so every id that appeared since hard-404'd on the static
+// host. Walk the app router instead: every dynamic route must either be
+// covered by its family's shell-fallback handler (and bake the `shell`
+// document that handler serves), or be listed with the reason its param
+// set cannot grow between builds.
+const appDir = path.resolve(functionsDir, '../src/app');
+
+const CLOSED_AT_BUILD = new Map([
+  ['blog/[slug]', 'repo markdown (loadBlogPosts)'],
+  ['dexes/[source]', 'frontend DEX_INFO constant'],
+  ['exchanges/[name]', 'frontend CEX_INFO constant'],
+  ['protocols/[name]', 'frontend PROTOCOLS constant, dynamicParams = false'],
+  ['research/adr/[id]', 'repo ADRs (loadADRs)'],
+  ['research/architecture/[slug]', 'repo docs (loadArchitectureDocs)'],
+  ['research/operations/[slug]', 'repo docs (loadOperationsDocs)'],
+  ['status/incident/[slug]', 'repo incident files (loadIncidents)'],
+]);
+
+// API-derived and still uncovered: a live defect, not an exemption. The
+// last test fails once its handler lands so the entry cannot outlive it.
+const KNOWN_GAPS = new Map([
+  [
+    'convert/[from]/[to]',
+    'two dynamic segments; the one-segment /<family>/shell/ contract does not fit',
+  ],
+]);
+
+const familyOf = (segs) =>
+  segs.slice(
+    0,
+    segs.findIndex((s) => s.startsWith('[')),
+  );
+
+function discoverDynamicRoutes(dir, relSegments = []) {
+  const found = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const segs = [...relSegments, entry.name];
+    const pagePath = path.join(dir, entry.name, 'page.tsx');
+    if (segs.some((s) => s.startsWith('[')) && fs.existsSync(pagePath)) {
+      found.push({
+        route: segs.join('/'),
+        family: familyOf(segs),
+        source: fs.readFileSync(pagePath, 'utf8'),
+      });
+    }
+    found.push(...discoverDynamicRoutes(path.join(dir, entry.name), segs));
+  }
+  return found;
+}
+
+const dynamicRoutes = discoverDynamicRoutes(appDir);
+if (dynamicRoutes.length === 0) {
+  throw new Error(
+    `discoverDynamicRoutes found no dynamic routes under ${appDir}`,
+  );
+}
+
+const handlerFor = (family) =>
+  path.join(functionsDir, ...family, '[[path]].js');
+
+describe('every growable dynamic route has a shell fallback', () => {
+  const growable = dynamicRoutes.filter(
+    ({ route }) => !CLOSED_AT_BUILD.has(route) && !KNOWN_GAPS.has(route),
+  );
+
+  it.each(growable.map((r) => [r.route, r]))(
+    '%s',
+    (_route, { family, source }) => {
+      const handler = handlerFor(family);
+      expect(
+        fs.existsSync(handler),
+        `missing ${path.relative(functionsDir, handler)}`,
+      ).toBe(true);
+      expect(fs.readFileSync(handler, 'utf8')).toContain(
+        `'/${family.join('/')}/shell/'`,
+      );
+      // That shell document exists only if the page bakes the sentinel
+      // through generateStaticParams.
+      expect(source).toMatch(/['"]shell['"]/);
+    },
+  );
+
+  it('lists only routes that exist and still lack a handler', () => {
+    const byRoute = new Map(dynamicRoutes.map((r) => [r.route, r]));
+    for (const route of [...CLOSED_AT_BUILD.keys(), ...KNOWN_GAPS.keys()]) {
+      expect(byRoute.has(route), `stale entry ${route}`).toBe(true);
+    }
+    for (const route of KNOWN_GAPS.keys()) {
+      expect(
+        fs.existsSync(handlerFor(byRoute.get(route).family)),
+        `${route} now has a handler; drop it from KNOWN_GAPS`,
+      ).toBe(false);
+    }
+  });
+});

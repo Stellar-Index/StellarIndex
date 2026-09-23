@@ -50,7 +50,7 @@ export function LivePrice({
           data?: { price?: string; observed_at?: string };
         };
         if (!cancelled && body.data?.price) {
-          setPrice(fmt(Number(body.data.price), format));
+          setPrice(formatLivePrice(Number(body.data.price), format));
           setAsOf(body.data.observed_at ?? null);
           setWithheld(false);
         }
@@ -81,7 +81,7 @@ export function LivePrice({
         {price}
       </span>
       {withheld && (
-        <span className="font-mono text-[11px] text-ink-faint" role="status">
+        <span className="text-ink-faint font-mono text-[11px]" role="status">
           stale
         </span>
       )}
@@ -89,7 +89,7 @@ export function LivePrice({
   );
 }
 
-function fmt(n: number, format?: 'usd' | 'plain'): string {
+export function formatLivePrice(n: number, format?: 'usd' | 'plain'): string {
   const s =
     n >= 1
       ? n.toFixed(n >= 100 ? 2 : 4)

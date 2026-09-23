@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Suspense } from 'react';
 
 import { EntityNotFoundShell } from '@/components/EntityNotFoundShell';
 import { Container, Breadcrumbs } from '@/components/ui';
 import { SourceHealthPanel } from './SourceHealthPanel';
+import { SourcePathView } from './SourcePathView';
 import { SourceStatsPanel } from '@/app/dexes/[source]/SourceStatsPanel';
 import { SourceTopChart } from '@/app/dexes/[source]/SourceTopChart';
 import { buildFetchData, failBuild, requireRows } from '@/lib/buildFetch';
@@ -59,8 +61,13 @@ export async function generateStaticParams() {
     '/v1/sources listing for /sources/[name] static params',
   );
   const names = rows.map((s) => s.name).filter(Boolean);
-  return names.length > 0 ? names.map((name) => ({ name })) : fallback;
+  // `shell` backs functions/sources/[[path]].js for a source registered
+  // after this build (T291) — see SourcePathView.
+  const listed = names.length > 0 ? names.map((name) => ({ name })) : fallback;
+  return [...listed, { name: 'shell' }];
 }
+
+const isShell = (name: string) => name.toLowerCase() === 'shell';
 
 export async function generateMetadata({
   params,
@@ -68,6 +75,18 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { name } = await params;
+  // One baked document answers every unlisted /sources/* path: generic,
+  // noindex, and an explicit empty `alternates` so the root layout's
+  // canonical is cleared rather than inherited (F095).
+  if (isShell(name)) {
+    return {
+      title: 'Source detail',
+      description:
+        'Per-venue source detail, rendered live from the Stellar Index API.',
+      robots: { index: false, follow: true },
+      alternates: {},
+    };
+  }
   const canonical = `${CURRENT_NETWORK.explorerUrl}/sources/${encodeURIComponent(name)}`;
   const title = `${name} — source detail`;
   const description = `Per-venue source metadata, ingest cursor, and contribution profile for ${name}.`;
@@ -137,6 +156,15 @@ async function fetchSourceMarkets(name: string): Promise<MarketRow[] | null> {
 
 export default async function SourceDetailPage({ params }: { params: Params }) {
   const { name } = await params;
+  if (isShell(name)) {
+    return (
+      <Container className="space-y-6 py-8">
+        <Suspense fallback={null}>
+          <SourcePathView />
+        </Suspense>
+      </Container>
+    );
+  }
   const [source, allCursors, topMarkets] = await Promise.all([
     fetchSource(name),
     fetchCursors(),

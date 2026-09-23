@@ -1,6 +1,7 @@
 // Shared implementation for the CF Pages shell-fallback Functions
 // (accounts, assets, contracts, issuers, ledgers, lending, markets,
-// transactions, insights/sponsors, insights/creators — S-022/S1b). Each
+// transactions, insights/sponsors, insights/creators — S-022/S1b; sources,
+// external/assets, embed/{asset,currency,pair} — T291). Each
 // route serves a real pre-rendered asset first, else the route's static
 // shell. A leading underscore excludes this directory from CF Pages
 // routing, so it is never itself served as a route.

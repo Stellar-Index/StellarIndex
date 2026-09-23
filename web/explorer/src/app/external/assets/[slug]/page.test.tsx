@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import ExternalAssetDetailPage from './page';
+import ExternalAssetDetailPage, {
+  generateMetadata,
+  generateStaticParams,
+} from './page';
 
 function mockFetch(impl: () => Promise<Response>) {
   vi.stubGlobal('fetch', vi.fn(impl));
@@ -74,5 +77,42 @@ describe('ExternalAssetDetailPage', () => {
     expect(
       screen.queryByText('Asset detail unavailable'),
     ).not.toBeInTheDocument();
+  });
+});
+
+// T291: functions/external/assets/[[path]].js serves /external/assets/shell/
+// for every slug added after the build, so the build must bake it on every
+// path (listing, API failure, CI stub) and it must never hit the API.
+describe('ExternalAssetDetailPage runtime shell', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('bakes the shell sentinel alongside the listed slugs', async () => {
+    mockFetch(async () => jsonResponse({ data: [{ slug: 'eth' }] }));
+    expect(await generateStaticParams()).toEqual([
+      { slug: 'eth' },
+      { slug: 'shell' },
+    ]);
+  });
+
+  it('bakes the shell sentinel when the listing is unreachable', async () => {
+    mockFetch(async () => jsonResponse({}, 503));
+    expect(await generateStaticParams()).toContainEqual({ slug: 'shell' });
+  });
+
+  it('renders the shell and its metadata without fetching', async () => {
+    const fetchSpy = vi.fn(async () => jsonResponse({}, 404));
+    vi.stubGlobal('fetch', fetchSpy);
+    await ExternalAssetDetailPage({
+      params: Promise.resolve({ slug: 'shell' }),
+    });
+    const meta = await generateMetadata({
+      params: Promise.resolve({ slug: 'shell' }),
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(meta.robots).toMatchObject({ index: false });
+    expect(meta).toHaveProperty('alternates');
+    expect(meta.alternates?.canonical).toBeUndefined();
   });
 });
