@@ -2,10 +2,12 @@ package obs_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -13,6 +15,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/bitstamp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/coinbase"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/wsclient"
 )
 
 // obs.HTTPRequestsTotal is a PROCESS-GLOBAL counter that no test resets,
@@ -581,5 +586,46 @@ func TestZeroSeed_F0033(t *testing.T) {
 		if !strings.Contains(s, want) {
 			t.Errorf("scrape body missing pre-seeded series: %q", want)
 		}
+	}
+}
+
+// TestCEXStreamDisconnectReasons_MatchesEmittedSet is the GH-941
+// regression guard: obs.CEXStreamDisconnectReasons (and therefore
+// CEXStreamDisconnectTotal's Help text / the README enum, both
+// generated from it) must list exactly the reason strings the
+// classifiers actually produce — no more, no less. Before the fix the
+// documented set (reset|broken_pipe|timeout|dial|server_requested|
+// other) silently omitted "stall" (wsclient's half-open-socket
+// detector) and "subscription_rejected" (coinbase), even though both
+// were live in production.
+func TestCEXStreamDisconnectReasons_MatchesEmittedSet(t *testing.T) {
+	emitted := map[string]bool{
+		// wsclient.ClassifyDisconnect covers every venue at the wire
+		// level (binance/kraken use it directly; bitstamp/coinbase
+		// delegate to it for non-venue-specific errors).
+		wsclient.ClassifyDisconnect(nil):                                          true,
+		wsclient.ClassifyDisconnect(wsclient.ErrStreamStalled):                    true,
+		wsclient.ClassifyDisconnect(errors.New("read: connection reset by peer")): true,
+		wsclient.ClassifyDisconnect(errors.New("write: broken pipe")):             true,
+		wsclient.ClassifyDisconnect(errors.New("read tcp: i/o timeout")):          true,
+		wsclient.ClassifyDisconnect(errors.New("dial: tcp connect refused")):      true,
+		// Venue-specific additions layered on top of wsclient's base
+		// classifier (coinbase/streamer.go, bitstamp/streamer.go).
+		"server_requested":      bitstamp.ErrRequestedReconnect != nil,
+		"subscription_rejected": coinbase.ErrSubscriptionRejected != nil,
+	}
+	got := make([]string, 0, len(emitted))
+	for reason, ok := range emitted {
+		if ok {
+			got = append(got, reason)
+		}
+	}
+	sort.Strings(got)
+
+	want := append([]string(nil), obs.CEXStreamDisconnectReasons...)
+	sort.Strings(want)
+
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("documented reason set %v does not match emitted set %v", want, got)
 	}
 }

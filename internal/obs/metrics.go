@@ -2,6 +2,7 @@ package obs
 
 import (
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -62,6 +63,7 @@ func registerAppMetrics() {
 		ExternalFXBaselineHealedTotal,
 		ExternalDustDroppedTotal,
 		CEXStreamDisconnectTotal,
+		CEXStreamLastTradeUnix,
 		DiscoveryDroppedHitsTotal,
 		DiscoverySkippedHitsTotal,
 		DiscoveryRecordFailuresTotal,
@@ -1361,14 +1363,22 @@ var AMMNonPositiveSwapTotal = prometheus.NewCounterVec(
 )
 
 // CEXStreamDisconnectTotal — per-source, per-reason counter of CEX
-// WebSocket stream disconnects. Reason is one of:
+// WebSocket stream disconnects, incremented by [wsclient.Loop] for
+// every venue (binance, bitstamp, coinbase, kraken all run through
+// wsclient.Loop). Reason is one of:
 //
-//   - reset           — TCP RST surfaced as "connection reset by peer"
-//   - broken_pipe     — write after peer hung up
-//   - timeout         — read/handshake timed out
-//   - dial            — handshake failed (DNS, TLS, refused, etc.)
-//   - server_requested — bitstamp's bts:request_reconnect frame
-//   - other           — EOF, framing, or anything else
+//   - stall              — venue stopped answering pings, a half-open
+//     socket TCP hasn't noticed yet (wsclient.ErrStreamStalled,
+//     C2-017/C2-031); operationally the most important reason, since
+//     it means the connection LOOKS alive but is dead.
+//   - reset               — TCP RST surfaced as "connection reset by peer"
+//   - broken_pipe         — write after peer hung up
+//   - timeout             — read/handshake timed out
+//   - dial                — handshake failed (DNS, TLS, refused, etc.)
+//   - server_requested    — bitstamp's bts:request_reconnect frame
+//   - subscription_rejected — coinbase rejected the subscribe frame
+//     (ErrSubscriptionRejected), usually a config bug (bad product_id)
+//   - other               — EOF, framing, or anything else
 //
 // F-0029 (audit-2026-05-27): r1 logs showed Binance + Bitstamp
 // reconnecting every 6-12 min with backoff pinned at 60 s. Pre-fix
@@ -1380,9 +1390,43 @@ var AMMNonPositiveSwapTotal = prometheus.NewCounterVec(
 var CEXStreamDisconnectTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_cex_stream_disconnect_total",
-		Help: "CEX WebSocket stream disconnects by source and reason (reset | broken_pipe | timeout | dial | server_requested | other). F-0029.",
+		Help: "CEX WebSocket stream disconnects by source and reason (" +
+			strings.Join(CEXStreamDisconnectReasons, " | ") + "). F-0029.",
 	},
 	[]string{"source", "reason"},
+)
+
+// CEXStreamDisconnectReasons is the full label set CEXStreamDisconnectTotal's
+// "reason" label takes, across every venue: wsclient.ClassifyDisconnect's
+// wire-level reasons plus the venue-specific ones (coinbase's
+// "subscription_rejected", bitstamp's "server_requested"). Single source
+// of truth for the metric's Help text so the two cannot drift apart the
+// way they did pre-GH-941 (stall and subscription_rejected were added to
+// the code without updating the Help/README enum). metrics_test.go checks
+// it against what wsclient + the venue classifiers actually emit.
+var CEXStreamDisconnectReasons = []string{
+	"stall", "reset", "broken_pipe", "timeout", "dial",
+	"server_requested", "subscription_rejected", "other",
+}
+
+// CEXStreamLastTradeUnix — per-source UNIX-seconds timestamp of the
+// most recent trade forwarded from a CEX WebSocket streamer to the
+// sink. Zero / unset when the streamer has forwarded no trade since
+// process start.
+//
+// Streamer analogue of [ExternalPollerLastSuccessUnix]: that gauge is
+// set only in runPoller, so joining CEXStreamDisconnectTotal against
+// it (as docs/reference/metrics/README.md instructed pre-GH-941)
+// selected a series with no binance/coinbase/kraken/bitstamp label —
+// it can never exist for a streamer. Set in forwardTrades
+// (internal/sources/external/runner.go) so `time() - <gauge>` is
+// alertable the same way pollers already are.
+var CEXStreamLastTradeUnix = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_cex_stream_last_trade_unix",
+		Help: "UNIX timestamp of the most recent trade forwarded from a CEX WebSocket streamer, by source.",
+	},
+	[]string{"source"},
 )
 
 // ExternalPollerLastSuccessUnix — per-source UNIX-seconds timestamp
