@@ -1969,8 +1969,8 @@ func (s *Server) Handler() http.Handler {
 	// report showed zero traffic instead of a wall of throttling (cold
 	// audit 2026-08-03; the comments here and in internal/usage
 	// claimed both 429 classes stayed visible). The LEGACY per-day
-	// total (the MonthlyQuota input) still excludes BOTH 429s and 5xx
-	// — the middleware skips it by response status, see
+	// total (the MonthlyQuota input) still excludes 429s and 5xx other
+	// than a timed-out read — see
 	// middleware.billableClass (COR-05) — so a counted quota-429
 	// cannot feed back into the quota it was denied by, and neither a
 	// throttled request nor an outage on our side eats billing quota.

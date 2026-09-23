@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -67,6 +68,8 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 				next.ServeHTTP(w, r)
 				return
 			}
+			deadlineFired := new(atomic.Bool)
+			r = r.WithContext(context.WithValue(r.Context(), readDeadlineKey{}, deadlineFired))
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
 			subject, ok := auth.SubjectFrom(r.Context())
@@ -103,7 +106,7 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			// timeout instead.
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), postResponseWriteTimeout)
 			defer cancel()
-			if billableClass(class) {
+			if billableClass(class, deadlineFired.Load()) {
 				// Legacy total: billable traffic only (quota input).
 				if err := counter.Increment(ctx, id); err != nil {
 					logger.Debug("usage: increment failed", "err", err, "subject", id)
@@ -245,14 +248,35 @@ func endpointFamily(r *http.Request) string {
 // LEGACY per-day total — the counter [MonthlyQuota] enforces against.
 //
 // Only outcomes the CALLER caused are billable. A 429 is our
-// throttle firing and a 5xx is our failure; charging either against
-// the customer's monthly quota means a rate-limit storm or an outage
-// on our side eats the plan they paid for and locks them out for the
-// rest of the month (COR-05). Both remain counted in the per-endpoint
-// DETAIL family under their own class, so nothing becomes invisible —
-// only unbillable.
-func billableClass(class string) bool {
-	return class != usage.ClassThrottled && class != usage.ClassServerError
+// throttle firing and a fast-failing 5xx is our failure; charging
+// either against the customer's monthly quota means a rate-limit storm
+// or an outage on our side eats the plan they paid for (COR-05).
+//
+// The exception is a 5xx on which a server-side read deadline fired
+// ([MarkReadDeadline]): that read held a pool connection for its whole
+// budget, usually because of the request's own size, and leaving it
+// unbilled made the most expensive request shape free. Every class
+// stays counted in the per-endpoint DETAIL family regardless.
+func billableClass(class string, readDeadlineFired bool) bool {
+	switch class {
+	case usage.ClassThrottled:
+		return false
+	case usage.ClassServerError:
+		return readDeadlineFired
+	default:
+		return true
+	}
+}
+
+type readDeadlineKey struct{}
+
+// MarkReadDeadline records that a server-side read deadline fired while
+// serving the request ctx belongs to, making a 5xx answer billable (see
+// [billableClass]). A no-op outside [UsageTracker]; safe for concurrent use.
+func MarkReadDeadline(ctx context.Context) {
+	if fired, ok := ctx.Value(readDeadlineKey{}).(*atomic.Bool); ok {
+		fired.Store(true)
+	}
 }
 
 // outcomeClass maps a response status onto the four bounded usage
