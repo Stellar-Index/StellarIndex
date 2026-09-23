@@ -372,3 +372,33 @@ func TestCheckLiveCursorGuard_ErrorMentionsTheRelevantLedgers(t *testing.T) {
 		}
 	}
 }
+
+// A run whose workers all returned cleanly but which held windows or dropped
+// trades lost rows; the command must exit non-zero so an unattended caller
+// does not read it as a complete rebuild.
+func TestProjectedRebuildOutcome_LossyRunExitsNonZero(t *testing.T) {
+	cases := []struct {
+		name string
+		r    ProjectedRebuildResult
+	}{
+		{"held windows", ProjectedRebuildResult{WindowsProcessed: 4, WindowsHeld: 2, InsertErrors: 5}},
+		{"permanent drops", ProjectedRebuildResult{WindowsProcessed: 4, PermanentDrops: 3}},
+	}
+	for _, tc := range cases {
+		err := projectedRebuildOutcome(tc.r, nil, false)
+		if !errors.Is(err, errProjectedRebuildIncomplete) {
+			t.Errorf("%s: outcome = %v, want errProjectedRebuildIncomplete", tc.name, err)
+		}
+	}
+
+	if err := projectedRebuildOutcome(ProjectedRebuildResult{WindowsProcessed: 4}, nil, false); err != nil {
+		t.Errorf("clean run: outcome = %v, want nil", err)
+	}
+	fatal := errors.New("worker fatal")
+	if err := projectedRebuildOutcome(ProjectedRebuildResult{}, fatal, false); !errors.Is(err, fatal) {
+		t.Errorf("fatal run: outcome = %v, want it to wrap the worker error", err)
+	}
+	if err := projectedRebuildOutcome(ProjectedRebuildResult{WindowsHeld: 1}, fatal, true); err != nil {
+		t.Errorf("interrupted run: outcome = %v, want nil (re-run with -resume)", err)
+	}
+}
