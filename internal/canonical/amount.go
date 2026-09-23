@@ -191,7 +191,19 @@ func (a Amount) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON accepts either a JSON string or a JSON number (for
 // small amounts emitted by lax producers). String form is preferred.
+//
+// JSON `null` is an ERROR, not a zero Amount. encoding/json leaves a
+// non-pointer string target unmodified on `null`, so without this
+// guard `null` would fall through to FromString("") and silently
+// become the money value 0 — the same "invalid data that reads as
+// valid" failure mode [Asset.Scan] fails closed on. A field that may
+// legitimately be absent must be typed *Amount so the caller states
+// what absent means.
 func (a *Amount) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		return fmt.Errorf("canonical: cannot unmarshal JSON null into an Amount "+
+			"(use *Amount for a field that may legitimately be absent): %w", ErrInvalidAmount)
+	}
 	// Try string first.
 	var s string
 	if err := json.Unmarshal(b, &s); err == nil {

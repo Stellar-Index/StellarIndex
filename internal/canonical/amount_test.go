@@ -221,6 +221,25 @@ func TestAmount_UnmarshalJSONRejectsOversize(t *testing.T) {
 	}
 }
 
+// TestAmount_UnmarshalJSONRejectsNull guards T139: encoding/json leaves
+// a non-pointer string target unmodified on `null`, so without an
+// explicit guard `null` silently became FromString("") == zero — an
+// absent money value read back as the real value 0.
+func TestAmount_UnmarshalJSONRejectsNull(t *testing.T) {
+	t.Parallel()
+	// Seed with a nonzero value so a silent no-op would be visible too,
+	// but the real assertion is on the returned error and the value
+	// after a failed Unmarshal must not read back as a valid zero.
+	a := Amount{value: big.NewInt(42)}
+	err := a.UnmarshalJSON([]byte("null"))
+	if err == nil {
+		t.Fatal("JSON null must be rejected, not silently treated as zero")
+	}
+	if !errors.Is(err, ErrInvalidAmount) {
+		t.Errorf("err should wrap ErrInvalidAmount, got %v", err)
+	}
+}
+
 func TestAmount_SQLRoundTrip(t *testing.T) {
 	t.Parallel()
 
