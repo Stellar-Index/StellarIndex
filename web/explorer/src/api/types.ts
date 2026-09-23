@@ -13318,6 +13318,15 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            /** @description Single-bar mode only — the window had trades but the `outlier_sigma` filter kept none, including a contested window whose trim would have discarded most of its base volume. Relax the threshold or pass `outlier_sigma=0`. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             429: components["responses"]["RateLimited"];
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];

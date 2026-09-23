@@ -255,8 +255,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 	// FilterOutliers would yield false negatives whenever the filter
 	// dropped any trade. See G2-05.
 	preFilter := len(trades)
-	if sigma > 0 {
-		trades = aggregate.FilterOutliers(trades, sigma)
+	if trades, ok = filterOHLCOutliers(w, r, trades, sigma); !ok {
+		return
 	}
 
 	bar, ok := s.computeOHLCSingleBar(w, r, pair, from, to, trades)
@@ -278,6 +278,28 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
 	}, Flags{Triangulated: triangulated})
+}
+
+// filterOHLCOutliers applies the single-bar outlier filter. A window
+// that had trades but kept none is a 422, not "no trades": the filter
+// withheld them — including a contested window whose trim would have
+// discarded most of its base volume. Returns ok=false when it has
+// already written the response.
+func filterOHLCOutliers(w http.ResponseWriter, r *http.Request, trades []canonical.Trade, sigma float64) ([]canonical.Trade, bool) {
+	if sigma <= 0 {
+		return trades, true
+	}
+	pre := len(trades)
+	trades = aggregate.FilterOutliers(trades, sigma)
+	if pre > 0 && len(trades) == 0 {
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/all-filtered",
+			"All trades filtered as outliers", http.StatusUnprocessableEntity,
+			fmt.Sprintf("outlier_sigma=%v removed all %d trades in window; relax the threshold or pass outlier_sigma=0 for the unfiltered bar",
+				sigma, pre))
+		return nil, false
+	}
+	return trades, true
 }
 
 // computeOHLCSingleBar folds the single-bar path's compute-and-normalize
