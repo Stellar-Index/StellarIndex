@@ -86,29 +86,23 @@ func backfillExternal(args []string) error {
 		return err
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-
 	fmt.Fprintf(os.Stderr, "backfill-external: source=%s pair=%s granularity=%v from=%s to=%s dry-run=%v\n",
 		*source, pair.String(), granularity,
 		from.Format(time.RFC3339), to.Format(time.RFC3339), dryRun)
 
-	t0 := time.Now()
-	var trades []canonical.Trade
 	if *rawTrades {
 		kr, ok := backfiller.(*externalkraken.Streamer)
 		if !ok {
 			return fmt.Errorf("-raw-trades is kraken-only (venue %q has no fills-pagination path)", *source)
 		}
-		// Deep pagination is slow by design (venue rate limit) —
-		// replace the 30-minute candle budget with a day.
-		cancel()
-		ctx, cancel = context.WithTimeout(context.Background(), 24*time.Hour)
-		defer cancel()
-		trades, err = kr.BackfillTrades(ctx, pair, from, to)
-	} else {
-		trades, err = backfiller.Backfill(ctx, pair, from, to, granularity)
+		return backfillKrakenRawTrades(kr, pair, from, to, dryRun, *cfgPath, *progressEvery)
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	t0 := time.Now()
+	trades, err := backfiller.Backfill(ctx, pair, from, to, granularity)
 	resumeFrom, partial := partialFetchResume(trades, err)
 	if err != nil && !partial {
 		return fmt.Errorf("backfill: %w", err)
@@ -128,21 +122,35 @@ func backfillExternal(args []string) error {
 		return nil
 	}
 
-	cfg, err := config.LoadWithEnv(*cfgPath)
-	if err != nil {
-		return err
-	}
-
 	// The walk's context may already be expired (that is exactly the
 	// case `partial` covers), so the write half runs on its own.
 	insCtx, insCancel := context.WithTimeout(context.Background(), externalInsertBudget)
 	defer insCancel()
 
-	store, err := timescale.Open(insCtx, cfg.Storage.PostgresDSN)
+	store, err := openBackfillStore(insCtx, *cfgPath)
 	if err != nil {
-		return fmt.Errorf("storage: %w", err)
+		return err
 	}
 	defer func() { _ = store.Close() }()
+
+	insErr := insertBackfilledTrades(insCtx, store, trades, *progressEvery, os.Stderr, t0)
+	if partial {
+		return partialWalkError(len(trades), resumeFrom, insErr)
+	}
+	return insErr
+}
+
+// openBackfillStore opens the trades store wired exactly as live ingest
+// writes, so a backfilled row is derived the same way a streamed one is.
+func openBackfillStore(ctx context.Context, cfgPath string) (*timescale.Store, error) {
+	cfg, err := config.LoadWithEnv(cfgPath)
+	if err != nil {
+		return nil, err
+	}
+	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
+	if err != nil {
+		return nil, fmt.Errorf("storage: %w", err)
+	}
 
 	// Re-derive path (INV-3 / migration 0109): stamp a positive
 	// derive_generation so a corrected trade re-derive UPDATEs the stored
@@ -160,14 +168,10 @@ func backfillExternal(args []string) error {
 		cfg.Trades.USDPeggedClassicAssets,
 		cfg.Supply.SACWrappers,
 	); err != nil {
-		return err
+		_ = store.Close()
+		return nil, err
 	}
-
-	insErr := insertBackfilledTrades(insCtx, store, trades, *progressEvery, os.Stderr, t0)
-	if partial {
-		return partialWalkError(len(trades), resumeFrom, insErr)
-	}
-	return insErr
+	return store, nil
 }
 
 // partialFetchResume reports whether a venue walk that ended in a
@@ -206,6 +210,155 @@ func partialWalkError(n int, resumeFrom time.Time, insErr error) error {
 		return fmt.Errorf("backfill-external: venue walk ended early with %d trade(s) salvaged AND the write had faults (%w) — range incomplete, resume with -from %s", n, insErr, at)
 	}
 	return fmt.Errorf("backfill-external: venue walk ended early — %d trade(s) salvaged but the requested range is NOT complete; resume with -from %s", n, at)
+}
+
+// windowPlan slices a fills walk into bounded spans of venue history.
+type windowPlan struct {
+	size time.Duration // history held in memory at once, and the checkpoint grain
+	// overlap is re-fetched ahead of each window so a fill on the boundary
+	// survives whether the venue's `since` cursor is inclusive or not; the
+	// duplicates are dropped by trade identity before the write.
+	overlap time.Duration
+	// pace spaces windows apart: the venue walker paces only between its
+	// own pages, so back-to-back windows would otherwise burst requests.
+	pace time.Duration
+}
+
+// krakenRawWindows bounds a -raw-trades run to one day of fills in memory.
+// A pair's deep history is ~10^7 fills; held whole, it is killed by the
+// memory cap before a row is written. pace mirrors kraken's tradesRateLimit.
+var krakenRawWindows = windowPlan{size: 24 * time.Hour, overlap: time.Second, pace: 1100 * time.Millisecond}
+
+type (
+	windowFetch func(ctx context.Context, from, to time.Time) ([]canonical.Trade, error)
+	windowSink  func(trades []canonical.Trade) error
+)
+
+// backfillKrakenRawTrades drives the kraken fills walk one window at a
+// time, writing each window before fetching the next, so memory is bounded
+// by a window and a failure costs at most the window it happened in.
+func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, from, to time.Time, dryRun bool, cfgPath string, progressEvery int) error {
+	// Deep pagination is slow by design (venue rate limit), so the walk
+	// gets a day rather than the 30-minute candle budget.
+	ctx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
+	defer cancel()
+	fetch := func(ctx context.Context, f, t time.Time) ([]canonical.Trade, error) {
+		return kr.BackfillTrades(ctx, pair, f, t)
+	}
+
+	if dryRun {
+		var sum dryRunSummary
+		err := walkWindowed(ctx, krakenRawWindows, from, to, fetch, func(trades []canonical.Trade) error {
+			sum.add(trades)
+			return nil
+		}, os.Stderr)
+		sum.print()
+		return err
+	}
+
+	openCtx, openCancel := context.WithTimeout(context.Background(), time.Minute)
+	defer openCancel()
+	store, err := openBackfillStore(openCtx, cfgPath)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.Close() }()
+
+	t0 := time.Now()
+	return walkWindowed(ctx, krakenRawWindows, from, to, fetch, func(trades []canonical.Trade) error {
+		insCtx, insCancel := context.WithTimeout(context.Background(), externalInsertBudget)
+		defer insCancel()
+		return insertBackfilledTrades(insCtx, store, trades, progressEvery, os.Stderr, t0)
+	}, os.Stderr)
+}
+
+// walkWindowed fetches [from, to) window by window and hands each window
+// to sink before fetching the next. Every window before the one that
+// stops the walk is fully written, so resuming at the stopping window's
+// start skips nothing and re-fetches at most one window; whatever that
+// window's walk returned is discarded rather than trusted. A per-row
+// write fault does not stop the walk (the rows are already logged and
+// lost) but keeps the exit non-zero; an infra write fault stops it.
+func walkWindowed(ctx context.Context, plan windowPlan, from, to time.Time, fetch windowFetch, sink windowSink, log io.Writer) error {
+	var (
+		written int
+		faults  []error
+		seen    map[string]struct{}
+	)
+	for start := from; start.Before(to); {
+		end := start.Add(plan.size)
+		if end.After(to) {
+			end = to
+		}
+		if start.After(from) {
+			if err := waitPace(ctx, plan.pace); err != nil {
+				return windowStopError(start, end, written, append(faults, err))
+			}
+		}
+		fetchFrom := start.Add(-plan.overlap)
+		if fetchFrom.Before(from) {
+			fetchFrom = from
+		}
+		trades, err := fetch(ctx, fetchFrom, end)
+		if err != nil {
+			return windowStopError(start, end, written, append(faults, err))
+		}
+		trades, seen = dropSeen(trades, seen, end.Add(-plan.overlap))
+		if len(trades) > 0 {
+			if err := sink(trades); err != nil {
+				if timescale.IsInfraError(err) {
+					return windowStopError(start, end, written, append(faults, err))
+				}
+				faults = append(faults, err)
+			}
+		}
+		written += len(trades)
+		_, _ = fmt.Fprintf(log, "backfill-external: window %s -> %s done, %d trade(s) so far — checkpoint: resume with -from %s\n",
+			start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339), written, end.UTC().Format(time.RFC3339Nano))
+		start = end
+	}
+	return errors.Join(faults...)
+}
+
+// dropSeen removes trades already handed to the sink by the previous
+// window's overlap, and returns the identities the next window's overlap
+// may repeat (those at or after tailFrom).
+func dropSeen(trades []canonical.Trade, seen map[string]struct{}, tailFrom time.Time) ([]canonical.Trade, map[string]struct{}) {
+	next := make(map[string]struct{})
+	kept := trades[:0]
+	for _, tr := range trades {
+		if _, dup := seen[tr.TxHash]; dup {
+			continue
+		}
+		kept = append(kept, tr)
+		if !tr.Timestamp.Before(tailFrom) {
+			next[tr.TxHash] = struct{}{}
+		}
+	}
+	return kept, next
+}
+
+func waitPace(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return ctx.Err()
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// windowStopError is the non-zero exit of a windowed walk that did not
+// reach -to. It carries every cause (errors.Is sees each) and the resume
+// point: the window's start, before which everything is written.
+func windowStopError(start, end time.Time, written int, causes []error) error {
+	return fmt.Errorf("backfill-external: walk stopped in window %s -> %s with %d trade(s) written — range incomplete, resume with -from %s: %w",
+		start.UTC().Format(time.RFC3339), end.UTC().Format(time.RFC3339), written,
+		start.UTC().Format(time.RFC3339Nano), errors.Join(causes...))
 }
 
 // tradeInserter is the storage seam insertBackfilledTrades depends on —
@@ -317,30 +470,49 @@ func unknownPairError(source, want string, pm map[string]canonical.Pair) error {
 // volume totals so the operator can sanity-check a range before
 // committing a large insert.
 func summariseDryRun(trades []canonical.Trade) {
-	if len(trades) == 0 {
-		fmt.Println("(no trades in range)")
-		return
-	}
-	totalBase, totalQuote := 0.0, 0.0
+	var sum dryRunSummary
+	sum.add(trades)
+	sum.print()
+}
+
+// dryRunSummary accumulates the dry-run view incrementally so a windowed
+// walk can report on its whole range without holding it.
+type dryRunSummary struct {
+	count                 int
+	first, last           canonical.Trade
+	totalBase, totalQuote float64
+}
+
+func (s *dryRunSummary) add(trades []canonical.Trade) {
 	for _, t := range trades {
+		if s.count == 0 {
+			s.first = t
+		}
+		s.last = t
+		s.count++
 		// Convert 10^8-scaled Amount to float for display. Precision
 		// loss here is fine — it's a dry-run summary, not a computed
 		// price.
-		bf := amountToFloat(t.BaseAmount, 8)
-		qf := amountToFloat(t.QuoteAmount, 8)
-		totalBase += bf
-		totalQuote += qf
+		s.totalBase += amountToFloat(t.BaseAmount, 8)
+		s.totalQuote += amountToFloat(t.QuoteAmount, 8)
+	}
+}
+
+func (s *dryRunSummary) print() {
+	if s.count == 0 {
+		fmt.Println("(no trades in range)")
+		return
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "FIELD\tVALUE")
-	_, _ = fmt.Fprintf(w, "trade count\t%d\n", len(trades))
-	_, _ = fmt.Fprintf(w, "first ts\t%s\n", trades[0].Timestamp.Format(time.RFC3339))
-	_, _ = fmt.Fprintf(w, "last  ts\t%s\n", trades[len(trades)-1].Timestamp.Format(time.RFC3339))
-	_, _ = fmt.Fprintf(w, "pair\t%s\n", trades[0].Pair.String())
-	_, _ = fmt.Fprintf(w, "total base volume\t%.8f\n", totalBase)
-	_, _ = fmt.Fprintf(w, "total quote volume\t%.8f\n", totalQuote)
-	if totalBase > 0 {
-		_, _ = fmt.Fprintf(w, "vwap (quote/base)\t%.8f\n", totalQuote/totalBase)
+	_, _ = fmt.Fprintf(w, "trade count\t%d\n", s.count)
+	_, _ = fmt.Fprintf(w, "first ts\t%s\n", s.first.Timestamp.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(w, "last  ts\t%s\n", s.last.Timestamp.Format(time.RFC3339))
+	_, _ = fmt.Fprintf(w, "pair\t%s\n", s.first.Pair.String())
+	_, _ = fmt.Fprintf(w, "total base volume\t%.8f\n", s.totalBase)
+	_, _ = fmt.Fprintf(w, "total quote volume\t%.8f\n", s.totalQuote)
+	if s.totalBase > 0 {
+		_, _ = fmt.Fprintf(w, "vwap (quote/base)\t%.8f\n", s.totalQuote/s.totalBase)
 	}
 	_ = w.Flush()
 }

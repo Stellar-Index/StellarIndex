@@ -776,6 +776,13 @@ Property 3 is a plausible mechanism for §3.4's unexplained stop.
   be scripted and a truncated slice can never be mistaken for a complete
   one.
 
+Property 1 is since fixed for `-raw-trades`: `walkWindowed` fetches and
+writes one 24-hour window at a time (counted from `-from`), so memory is
+bounded by a day of fills. Any stop (a context expiry, a venue HTTP error,
+an infra write fault) exits non-zero with `-from` set to the start of the
+unfinished window, and every earlier window is already written. Slicing by
+quarter still helps scheduling but is no longer needed to bound memory.
+
 ### 5.5 Operating it
 
 Slice by quarter — 21 slices over the hole, ~460k fills each:
