@@ -118,7 +118,7 @@ func TestContractCodeHistory_BoundsTheScan(t *testing.T) {
 	// Truncation direction matters: the cap is taken NEWEST-first and re-sorted
 	// ascending for the caller, so a truncated timeline keeps the CURRENT
 	// executable and drops the oldest tail — never the reverse.
-	if !strings.Contains(q, "ORDER BY ledger_seq DESC, change_index DESC, ingested_at DESC") {
+	if !strings.Contains(q, "ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC, ingested_at DESC") {
 		t.Fatalf("query = %q, want the capped inner select ordered newest-first", q)
 	}
 	inner := strings.Index(q, "ORDER BY ledger_seq DESC")
@@ -226,7 +226,7 @@ func TestContractCodeHistory_IndexedPath(t *testing.T) {
 		"FROM stellar.contract_instance_changes",
 		"WHERE contract_hash = ?",
 		"is_sac = 0",
-		"ORDER BY ledger_seq DESC, change_index DESC",
+		"ORDER BY ledger_seq DESC, intra_ledger_seq DESC, change_index DESC",
 		"LIMIT ?",
 	} {
 		if !strings.Contains(q, must) {

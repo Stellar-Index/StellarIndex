@@ -11,7 +11,8 @@ import (
 // BackfillContractActiveLedgers and BackfillContractInstanceChanges dial their
 // own connection via openRead, so — like BackfillTxHashIndex — they cannot be
 // driven end-to-end by the stubConn harness. Their per-window INSERT…SELECT is
-// a package-level const precisely so its text stays testable; the walk that
+// package-level (a const, or a pure builder) precisely so its text stays
+// testable; the walk that
 // drives it is covered in ledger_window_test.go.
 
 // readDeployDDL returns one deploy/clickhouse artifact as text.
@@ -104,7 +105,7 @@ func TestContractActiveLedgersBackfillQuery_Shape(t *testing.T) {
 // Every expression below is byte-offset-bearing, so an off-by-one is a silent
 // data corruption rather than an error.
 func TestContractInstanceBackfillQuery_MatchesTheMaterializedView(t *testing.T) {
-	q := contractInstanceBackfillQuery
+	q := contractInstanceBackfillQuery(ContractInstanceChangesTable)
 	mv := stripSQLComments(readDeployDDL(t, "contract_instance_changes.sql"))
 
 	shared := []string{
@@ -162,7 +163,7 @@ func TestContractInstanceBackfillQuery_MatchesTheMaterializedView(t *testing.T) 
 	// Column order is load-bearing: this is an INSERT…SELECT, so the SELECT
 	// list is matched to the column list POSITIONALLY. is_sac and wasm_hash
 	// swapping would write a hex hash into a UInt8 flag.
-	const wantCols = "(contract_hash, ledger_seq, change_index, close_time, is_sac, wasm_hash)"
+	const wantCols = "(contract_hash, ledger_seq, tx_hash, change_index, intra_ledger_seq, close_time, is_sac, wasm_hash)"
 	if !strings.Contains(strings.Join(strings.Fields(q), " "), wantCols) {
 		t.Errorf("contractInstanceBackfillQuery column list is not %s:\n%s", wantCols, q)
 	}
