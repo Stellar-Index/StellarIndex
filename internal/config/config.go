@@ -971,10 +971,21 @@ type StorageConfig struct {
 	RedisMasterName    string   `toml:"redis_master_name" doc:"Sentinel master name as set in inventory (e.g. stellarindex-r1-cache). Required when redis_sentinel_addrs is non-empty." default:""`
 	RedisPassword      string   `toml:"redis_password_env" doc:"The Redis password itself — injected via the STELLARINDEX_REDIS_PASSWORD env override (the project's standard secret path), NOT an env-var NAME to dereference. The '_env' toml suffix is a legacy misnomer (audit C3-15): the code uses this value directly, so putting an env-var name here ships that literal string as the password. Used as both requirepass (client auth) and SentinelPassword (sentinel auth) — same secret per the role." env:"STELLARINDEX_REDIS_PASSWORD" default:""`
 	RedisUsername      string   `toml:"redis_username" doc:"Optional Redis ACL username. Empty (default) AUTHs as Redis's legacy 'default' user — same wire shape as redis_password alone. Set to 'stellarindex' (or the operator's per-component user) when redis_acl_lockdown is enabled in the ansible role (F-1213 audit-2026-05-12); without a username the broker-side ACL rejects the connection." default:""`
-	S3Endpoint         string   `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
-	S3Region           string   `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
-	S3BucketArchive    string   `toml:"s3_bucket_archive" doc:"Immutable history-archive bucket name." default:"galexie-archive"`
-	S3BucketLive       string   `toml:"s3_bucket_live" doc:"Live Galexie export bucket name." default:"galexie-live"`
+	// RedisClosedBucketChannel is the Redis pub/sub channel the
+	// aggregator's redispub.Publisher writes closed-bucket VWAP events
+	// to and the API's redispub.Subscriber listens on (RLT-347). Both
+	// binaries pass this straight to redispub.NewPublisher /
+	// NewSubscriber, which fall back to redispub.DefaultChannel when
+	// empty — so leaving this unset preserves today's behavior exactly.
+	// Only an operator running more than one StellarIndex deployment
+	// against a shared Redis needs to set this, to keep the streams
+	// partitioned (redispub's doc.go already documented the channel as
+	// "configurable"; this is the config key that makes it so).
+	RedisClosedBucketChannel string `toml:"redis_closed_bucket_channel" doc:"Redis pub/sub channel the aggregator publishes closed-bucket VWAP events to and the API subscribes on. Empty (default) uses redispub.DefaultChannel (stellarindex:closed-bucket:v1). Set only when multiple deployments share one Redis and need partitioned streams." default:""`
+	S3Endpoint               string `toml:"s3_endpoint" doc:"S3-compatible object-store endpoint (MinIO / AWS S3)." default:"http://127.0.0.1:9000"`
+	S3Region                 string `toml:"s3_region" doc:"S3 region label (free-form for MinIO; AWS region name otherwise)." default:"r1"`
+	S3BucketArchive          string `toml:"s3_bucket_archive" doc:"Immutable history-archive bucket name." default:"galexie-archive"`
+	S3BucketLive             string `toml:"s3_bucket_live" doc:"Live Galexie export bucket name." default:"galexie-live"`
 	// These hold the NAME of the env var that carries the credential, NOT
 	// the credential itself — buildS3Client does os.Getenv(S3AccessKeyEnv).
 	// They deliberately have NO `env:` tag: an `env:` tag means

@@ -526,11 +526,12 @@ func run(cfgPath string, dryRun bool) error {
 	// ─── Closed-bucket stream publisher ────────────────────────
 	// L3.9: fan out each successful (pair, window) VWAP cache write
 	// to API-side `/v1/price/stream` subscribers via Redis pub/sub.
-	// Always wired here — there's no operator config gate yet
-	// because the channel is statically named (DefaultChannel) and
-	// PUBLISH on a no-subscriber channel is a Redis no-op. The
-	// matching API-side subscriber lives in PR 2 of L3.9.
-	streamPub, err := redispub.NewPublisher(rdb, redispub.DefaultChannel)
+	// Always wired here — there's no operator gate on WHETHER to
+	// publish, only on WHICH channel (RedisClosedBucketChannel, empty
+	// falls back to DefaultChannel); PUBLISH on a no-subscriber
+	// channel is a Redis no-op. The matching API-side subscriber
+	// lives in PR 2 of L3.9.
+	streamPub, err := redispub.NewPublisher(rdb, cfg.Storage.RedisClosedBucketChannel)
 	if err != nil {
 		return fmt.Errorf("redispub.NewPublisher: %w", err)
 	}

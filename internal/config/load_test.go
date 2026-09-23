@@ -47,6 +47,33 @@ postgres_dsn = "postgres://u:p@h/db"
 	}
 }
 
+// TestLoadReader_RedisClosedBucketChannel — RLT-347: the closed-bucket
+// stream channel must be a real config key that round-trips into
+// StorageConfig, not silently dropped, so cmd/stellarindex-aggregator
+// and cmd/stellarindex-api can wire operator-chosen channel partitioning
+// instead of the hardcoded redispub.DefaultChannel.
+func TestLoadReader_RedisClosedBucketChannel(t *testing.T) {
+	body := `
+[region]
+id = "r2"
+name = "Ashburn"
+
+[stellar]
+network = "pubnet"
+
+[storage]
+postgres_dsn = "postgres://u:p@h/db"
+redis_closed_bucket_channel = "stellarindex:closed-bucket:staging"
+`
+	c, err := cfg.LoadReader(strings.NewReader(body), "test.toml")
+	if err != nil {
+		t.Fatalf("LoadReader: %v", err)
+	}
+	if got, want := c.Storage.RedisClosedBucketChannel, "stellarindex:closed-bucket:staging"; got != want {
+		t.Errorf("Storage.RedisClosedBucketChannel = %q, want %q", got, want)
+	}
+}
+
 func TestLoadReader_AggregatePairsAndWindows(t *testing.T) {
 	body := `
 [region]

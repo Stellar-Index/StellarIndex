@@ -1770,7 +1770,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// events, matching the documented "Redis optional at API
 	// layer" posture.
 	if rdb != nil && hub != nil {
-		sub, err := redispub.NewSubscriber(rdb, redispub.DefaultChannel, hub, logger.With("component", "stream-sub"))
+		sub, err := redispub.NewSubscriber(rdb, cfg.Storage.RedisClosedBucketChannel, hub, logger.With("component", "stream-sub"))
 		if err != nil {
 			return fmt.Errorf("redispub subscriber: %w", err)
 		}
