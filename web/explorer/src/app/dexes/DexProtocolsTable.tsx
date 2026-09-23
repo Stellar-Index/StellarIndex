@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 
 import { Panel } from '@/components/reveal';
+import { Th, Td } from '@/components/ui';
 import { apiGet, asExample } from '@/api/client';
 import { formatCompact } from '@/lib/format';
 import { sourceToneClass } from '@/lib/pillTone';
@@ -230,35 +231,3 @@ function TvlCell({ tvl }: { tvl?: ProtocolTvl }) {
   );
 }
 
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      scope="col"
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
-  );
-}

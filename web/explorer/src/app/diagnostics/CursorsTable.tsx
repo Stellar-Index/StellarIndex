@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 
 import { Panel } from '@/components/reveal';
+import { Th, Td } from '@/components/ui';
 import { asExample } from '@/api/client';
 import { useCursors, type Cursor } from '@/api/hooks';
 import { formatRelative, formatDurationShort } from '@/lib/format';
@@ -207,35 +208,3 @@ function groupBySource(rows: Cursor[]): { source: string; rows: Cursor[] }[] {
   return out;
 }
 
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-      scope="col"
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-3 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
-  );
-}
