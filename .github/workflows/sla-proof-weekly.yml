@@ -363,21 +363,43 @@ jobs:
           if [ "$PROOF_RC" = "1" ]; then verdict="NOT PROVEN"; fi
 
           content="$(base64 -w0 "$PROOF_PATH")"
-          message="$(printf 'docs(sla): weekly SLA proof %s (%s)\n\nRendered by scripts/ops/sla-proof-from-probe.sh from a %s window of\nstellarindex_sla_probe_* series. Run %s, commit %s.\n' \
+          message="$(printf 'docs(sla): weekly SLA proof %s (%s)\n\nRendered by scripts/ops/sla-proof-from-probe.sh from a %s window of\nstellarindex_sla_probe_* series. Run %s, commit %s. Prunes all but the\nnewest four docs/operations/sla-proof-*.md files in this commit.\n' \
             "${PROOF_PATH##*/}" "$verdict" "$WINDOW" "${GITHUB_RUN_ID:-?}" "${GITHUB_SHA:-?}")"
 
-          # An existing file at this path (a same-day re-run) needs its blob
-          # sha to update rather than 422. Absent file => empty sha => create.
-          existing="$(gh api "repos/${GH_REPO}/contents/${PROOF_PATH}?ref=${BRANCH}" \
-            --jq '.sha' 2>/dev/null || true)"
+          # Git Data API, not the Contents API: publishing and pruning old
+          # dated reports must land as ONE commit, and the Contents API can
+          # only touch one path per call. base_tree pins the prune to the
+          # branch head read at the top of this step.
+          ref_sha="$(gh api "repos/${GH_REPO}/git/refs/heads/${BRANCH}" --jq '.object.sha')"
+          base_tree="$(gh api "repos/${GH_REPO}/git/commits/${ref_sha}" --jq '.tree.sha')"
+          blob_sha="$(gh api --method POST "repos/${GH_REPO}/git/blobs" \
+            -f "content=${content}" -f "encoding=base64" --jq '.sha')"
 
-          args=(--method PUT "repos/${GH_REPO}/contents/${PROOF_PATH}"
-                -f "message=${message}" -f "content=${content}" -f "branch=${BRANCH}")
-          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
-            args+=(-f "sha=${existing}")
-          fi
-          gh api "${args[@]}" --jq '.commit.sha' > "$EXTRACT_DIR/published-commit.txt"
-          echo "Published ${PROOF_PATH} to ${BRANCH} as $(cat "$EXTRACT_DIR/published-commit.txt")."
+          # Every dated report in docs/operations, plus the one being
+          # published (it may not exist yet, or this may be a same-day
+          # re-run). Keep the newest four by name — the YYYY-MM-DD in the
+          # filename sorts lexically — and delete the rest via a tree entry
+          # with sha=null.
+          existing_names="$(gh api "repos/${GH_REPO}/contents/docs/operations?ref=${BRANCH}" \
+            --jq '.[].name' | grep -E '^sla-proof-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md$' || true)"
+          prune_names="$(printf '%s\n%s\n' "$existing_names" "${PROOF_PATH##*/}" \
+            | grep -v '^$' | sort -u | sort -r | tail -n +5)"
+          prune_json="$(printf '%s\n' "$prune_names" | jq -R -s \
+            'split("\n") | map(select(length>0)) | map({path: ("docs/operations/" + .), mode: "100644", type: "blob", sha: null})')"
+
+          new_tree_sha="$(jq -n --arg base "$base_tree" --arg path "$PROOF_PATH" \
+              --arg blobsha "$blob_sha" --argjson prune "$prune_json" \
+              '{base_tree: $base, tree: ([{path: $path, mode: "100644", type: "blob", sha: $blobsha}] + $prune)}' \
+            | gh api --method POST "repos/${GH_REPO}/git/trees" --input - --jq '.sha')"
+          new_commit_sha="$(jq -n --arg msg "$message" --arg tree "$new_tree_sha" --arg parent "$ref_sha" \
+              '{message: $msg, tree: $tree, parents: [$parent]}' \
+            | gh api --method POST "repos/${GH_REPO}/git/commits" --input - --jq '.sha')"
+          gh api --method PATCH "repos/${GH_REPO}/git/refs/heads/${BRANCH}" \
+            -f "sha=${new_commit_sha}" -F force=false > /dev/null
+
+          echo "$new_commit_sha" > "$EXTRACT_DIR/published-commit.txt"
+          pruned_count="$(printf '%s\n' "$prune_names" | grep -c . || true)"
+          echo "Published ${PROOF_PATH} to ${BRANCH} as ${new_commit_sha}; pruned ${pruned_count} old sla-proof file(s)."
 
       - name: Re-assess the SLA evidence feed
         id: verdict

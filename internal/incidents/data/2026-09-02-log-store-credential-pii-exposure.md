@@ -70,7 +70,7 @@ Operational follow-ups:
 
 - [x] File the customer-facing incident record — this file, filed
       retroactively per
-      [`docs/operations/sev-playbook.md` §6.4](../../../docs/operations/sev-playbook.md#64-credentialpii-exposure-incidents).
+      [`docs/operations/sev-playbook.md` §6.5](../../../docs/operations/sev-playbook.md#65-credentialpii-exposure-incidents).
 - [ ] **No targeted API-key rotation or customer notification.** The
       retention scan confirms the LOG STORE is now clean; it says
       nothing about whether a key that was visible in that window
@@ -82,7 +82,7 @@ Operational follow-ups:
       a new key and `DELETE /v1/account/keys/{key_id}` —
       `AccountStore.RevokeKeyByID` — to revoke the exposed one).
       This notification has not yet been sent; tracked as a
-      postmortem action item per §6.4. This checkbox is a
+      postmortem action item per §6.5. This checkbox is a
       structural closure gate: `scripts/ci/lint-docs.sh` §15 fails
       CI once this incident is 30 days old if it is still unchecked.
 

@@ -71,4 +71,5 @@ detail level.
 Once the postmortem lands at
 `docs/operations/postmortems/<same-date>-<same-slug>.md`, link
 it here AND update the front-matter `postmortem:` field to point
-at it.
+at it. When it is later retired (sev-playbook §6.3), repoint
+`postmortem:` at its permalink from the §6.3 retirement log.

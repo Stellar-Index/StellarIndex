@@ -1155,7 +1155,7 @@ network,protocols}` with a per-page-type panel map kept in lockstep with the
 explorer views (contract behavior unchanged/byte-compatible), and the first
 cold→fully-populated run against the live API landed. Full per-type tables +
 the id-draw method:
-`docs/operations/w32-page-type-cold-perf-2026-08-22.md`. **Residue stays
+[w32-page-type-cold-perf-2026-08-22.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/w32-page-type-cold-perf-2026-08-22.md). **Residue stays
 named:** the systemic breachers found there are W3.3's existing classes
 (per-entity O(scan) cold reads — account family, asset detail on the shell
 path) plus whatever the results doc flags as worth a W3.3-style fix; the

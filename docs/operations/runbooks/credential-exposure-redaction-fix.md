@@ -15,7 +15,7 @@ previously reaching in full. `7843f129` (customer emails and
 Not a Prometheus alert — there is no metric for "a secret used to be
 in the logs" — so this is a manual trigger off the PR/commit itself,
 declared per
-[`sev-playbook.md` §6.4](../sev-playbook.md#64-credentialpii-exposure-incidents).
+[`sev-playbook.md` §6.5](../sev-playbook.md#65-credentialpii-exposure-incidents).
 
 ## At a glance
 
@@ -77,6 +77,6 @@ declared per
 
 ## Related
 
-- [`sev-playbook.md` §6.4](../sev-playbook.md#64-credentialpii-exposure-incidents) — when this runbook is mandatory.
+- [`sev-playbook.md` §6.5](../sev-playbook.md#65-credentialpii-exposure-incidents) — when this runbook is mandatory.
 - [`internal/incidents/data/_template.md`](../../../internal/incidents/data/_template.md) — incident-record template.
 - `internal/api/v1/account.go` (`AccountStore.RevokeKeyByID`) — the self-service key-revocation path customers use to rotate.
