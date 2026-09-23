@@ -79,6 +79,14 @@ type CachedResult struct {
 	// below the quorum is what marks the entry unchecked.
 	WarningFired bool `json:"warning_fired"`
 
+	// FiringSince is the comparison time the current uninterrupted raw
+	// divergence began, zero while the raw condition is clear. It is the
+	// durable half of the WarningPersistence debounce: a restarted worker
+	// resumes the streak from it instead of restarting the clock, which
+	// would republish WarningFired=false for a pair that never stopped
+	// diverging. See [Service.restoreWarningState].
+	FiringSince time.Time `json:"firing_since,omitzero"`
+
 	// Sources / Failures mirror Result, kept for operator
 	// dashboards.
 	Sources  map[string]float64 `json:"sources,omitempty"`
@@ -263,11 +271,16 @@ type Service struct {
 	// time of the first refresh in the current uninterrupted
 	// raw-firing streak, and powers the WarningPersistence debounce in
 	// [Service.warningPersists]. It is cleared the moment a refresh
-	// finds the raw condition clear. warningMu guards BOTH maps.
+	// finds the raw condition clear.
+	//
+	// restored records the pairs whose maps were seeded from the previous
+	// process's cached result ([Service.restoreWarningState]). warningMu
+	// guards all three maps.
 	onWarning    WarningHook
 	warningMu    sync.Mutex
 	warningState map[string]bool
 	firingSince  map[string]time.Time
+	restored     map[string]bool
 }
 
 // independentReferences drops references that cannot corroborate our
@@ -323,6 +336,7 @@ func NewService(opts ServiceOptions) (*Service, error) {
 		onWarning:    opts.OnWarningFired,
 		warningState: map[string]bool{},
 		firingSince:  map[string]time.Time{},
+		restored:     map[string]bool{},
 	}, nil
 }
 
@@ -389,13 +403,16 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	if gateAt.IsZero() {
 		gateAt = time.Now().UTC()
 	}
+	key := cachekeys.Divergence(pair)
+	s.restoreWarningState(ctx, pair.String(), key.String(), gateAt)
+
 	// A below-quorum refresh is unevaluable: it must not assert "no
 	// divergence", restart the persistence streak or reset the webhook
 	// latch, so it carries the last evaluated verdict forward.
-	warningFired := s.lastWarning(pair.String())
+	warningFired, firingSince := s.lastWarning(pair.String()), s.lastFiringSince(pair.String())
 	if checked {
 		rawFiring := res.DivergencePct > s.threshold || agreeing == 0
-		warningFired = s.warningPersists(pair.String(), rawFiring, gateAt)
+		warningFired, firingSince = s.warningPersists(pair.String(), rawFiring, gateAt)
 	}
 
 	cached := CachedResult{
@@ -404,6 +421,7 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		Median:         res.Median,
 		DivergencePct:  res.DivergencePct,
 		WarningFired:   warningFired,
+		FiringSince:    firingSince,
 		Sources:        res.Sources,
 		Failures:       res.Failures,
 		SuccessCount:   res.SuccessCount,
@@ -424,7 +442,6 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	// per-base key let the last pair in iteration order clobber the
 	// asset's divergence verdict. The per-pair key keeps each pair's
 	// result independent; the by-asset reader (LookupCached) ORs them.
-	key := cachekeys.Divergence(pair)
 	if err := s.cache.Set(ctx, key.String(), body, cachekeys.DivergenceTTL).Err(); err != nil {
 		return fmt.Errorf("divergence: cache set %s: %w", key, err)
 	}
@@ -486,6 +503,16 @@ func (s *Service) lastWarning(pairKey string) bool {
 	return s.warningState[pairKey]
 }
 
+// lastFiringSince returns the persistence-streak start recorded for the
+// pair (zero when there is none, i.e. the raw condition last evaluated
+// clear). It mirrors lastWarning so a below-quorum refresh can carry the
+// streak forward into the cached result without calling warningPersists.
+func (s *Service) lastFiringSince(pairKey string) time.Time {
+	s.warningMu.Lock()
+	defer s.warningMu.Unlock()
+	return s.firingSince[pairKey]
+}
+
 // recordWarning latches an evaluated refresh's verdict and runs the
 // F-1249 edge-triggered hook: it fires only on `false → true`, so the
 // customer-webhook queue gets one POST per episode rather than one per
@@ -513,24 +540,76 @@ func (s *Service) recordWarning(ctx context.Context, pair canonical.Pair, cached
 // own persistence clock (and a real divergence that briefly dips below
 // threshold restarts, which is the conservative choice). Returns
 // rawFiring unchanged when the gate is disabled (s.persistence <= 0).
-func (s *Service) warningPersists(pairKey string, rawFiring bool, at time.Time) bool {
+// The second result is the streak start to persist, zero when clear.
+func (s *Service) warningPersists(pairKey string, rawFiring bool, at time.Time) (bool, time.Time) {
 	if s.persistence <= 0 {
-		return rawFiring
+		return rawFiring, time.Time{}
 	}
 	s.warningMu.Lock()
 	defer s.warningMu.Unlock()
 	if !rawFiring {
 		delete(s.firingSince, pairKey)
-		return false
+		return false, time.Time{}
 	}
 	since, ok := s.firingSince[pairKey]
 	if !ok || at.Before(since) {
 		// First firing of a new streak (or a non-monotonic comparison
 		// clock): start the persistence clock here and hold the warning.
 		s.firingSince[pairKey] = at
-		return false
+		return false, at
 	}
-	return at.Sub(since) >= s.persistence
+	return at.Sub(since) >= s.persistence, since
+}
+
+// restoreWarningState seeds a pair's debounce streak and webhook edge
+// latch from the result the previous process cached at cacheKey, once per
+// pair per process. Without it a restart starts both maps empty: the
+// first refresh of a still-diverging pair overwrites the cached
+// WarningFired=true with false (an affirmative all-clear) for a whole
+// persistence window, then re-fires divergence.firing for a divergence
+// that never stopped. The cache TTL bounds how stale the seeded streak
+// can be. A read error leaves the pair unrestored so the next refresh
+// retries.
+func (s *Service) restoreWarningState(ctx context.Context, pairKey, cacheKey string, at time.Time) {
+	s.warningMu.Lock()
+	done := s.restored[pairKey]
+	s.warningMu.Unlock()
+	if done {
+		return
+	}
+	var prior CachedResult
+	body, err := s.cache.Get(ctx, cacheKey).Bytes()
+	switch {
+	case errors.Is(err, redis.Nil):
+	case err != nil:
+		if s.logger != nil {
+			s.logger.Warn("divergence: restore warning state failed; retrying next refresh",
+				"pair", pairKey, "err", err)
+		}
+		return
+	default:
+		if uerr := json.Unmarshal(body, &prior); uerr != nil {
+			prior = CachedResult{}
+		}
+	}
+	since := prior.FiringSince
+	if since.IsZero() && prior.WarningFired && s.persistence > 0 {
+		// Written before FiringSince existed: it was published firing, so
+		// its streak had already persisted a full window.
+		since = at.Add(-s.persistence)
+	}
+	s.warningMu.Lock()
+	defer s.warningMu.Unlock()
+	if s.restored[pairKey] {
+		return
+	}
+	s.restored[pairKey] = true
+	if _, live := s.firingSince[pairKey]; !live && !since.IsZero() {
+		s.firingSince[pairKey] = since
+	}
+	if _, live := s.warningState[pairKey]; !live && prior.WarningFired {
+		s.warningState[pairKey] = true
+	}
 }
 
 // flushObservations persists one durable row per (pair, reference)

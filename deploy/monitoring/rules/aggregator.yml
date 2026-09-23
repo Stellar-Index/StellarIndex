@@ -516,7 +516,7 @@ groups:
       # permanent ticket. Threshold
       # is three sweep intervals (decimalsguard.DefaultInterval = 15m,
       # so 45m) plus a 15m for-duration, and the query is scoped to
-      # job="stellarindex-aggregator" so the indexer/api binaries
+      # job="stellarindex_aggregator" so the indexer/api binaries
       # importing the same obs package — which register every gauge at
       # its Go zero-value even though they never call Sweep — cannot
       # hold the series at a permanent 0 and page a false positive (the
@@ -524,8 +524,8 @@ groups:
       # against in pricing-coverage.yml).
       - alert: stellarindex_decimals_guard_sweep_stale
         expr: |
-          (time() - stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}) > 2700
-            and stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"} > 0
+          (time() - stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_aggregator"}) > 2700
+            and stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_aggregator"} > 0
         for: 15m
         labels:
           severity: ticket

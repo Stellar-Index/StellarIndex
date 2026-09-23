@@ -252,3 +252,150 @@ func TestRefreshPair_BelowQuorumTickFreezesWarning(t *testing.T) {
 		t.Errorf("hook fired %d times for one uninterrupted divergence, want 1", fired)
 	}
 }
+
+// restartedService builds a second Service over the SAME Redis, standing
+// in for the aggregator process that comes back after a deploy: fresh
+// in-memory state, the previous process's cached results still in place.
+func restartedService(t *testing.T, refs []divergence.Reference, rdb *redis.Client, hook divergence.WarningHook) *divergence.Service {
+	t.Helper()
+	svc, err := divergence.NewService(divergence.ServiceOptions{
+		References:           refs,
+		Cache:                rdb,
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		OnWarningFired:       hook,
+	})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	return svc
+}
+
+func depeggedRefs() []divergence.Reference {
+	return []divergence.Reference{
+		&stubReference{name: "coingecko", price: 0.93},
+		&stubReference{name: "chainlink", price: 0.93},
+		&stubReference{name: "reflector", price: 0.93},
+	}
+}
+
+// TestRefreshPair_RestartKeepsPublishedWarning: a divergence that has been
+// published for a while must stay published across an aggregator restart,
+// and the restarted process must not re-send divergence.firing for it.
+// Before the fix both maps started empty, so the first post-restart refresh
+// wrote WarningFired=false — /v1/price said "cross-checked and agrees" for
+// a 7% depeg — and the next matured refresh re-fired the webhook.
+func TestRefreshPair_RestartKeepsPublishedWarning(t *testing.T) {
+	refs := depeggedRefs()
+	var firstHooks, secondHooks int
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		OnWarningFired: func(context.Context, canonical.Pair, divergence.CachedResult) {
+			firstHooks++
+		},
+	})
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	ctx := context.Background()
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(40*time.Minute))
+	if !readDivergence(t, rdb, pair).WarningFired || firstHooks != 1 {
+		t.Fatalf("precondition: want a published warning and one hook, got fired=%v hooks=%d",
+			readDivergence(t, rdb, pair).WarningFired, firstHooks)
+	}
+
+	restarted := restartedService(t, refs, rdb, func(context.Context, canonical.Pair, divergence.CachedResult) {
+		secondHooks++
+	})
+	t1 := t0.Add(41 * time.Minute)
+	_ = restarted.RefreshPair(ctx, pair, 1.00, t1)
+	if !readDivergence(t, rdb, pair).WarningFired {
+		t.Error("WarningFired = false on the first refresh after a restart for a pair that never " +
+			"stopped diverging: the restart published a false all-clear")
+	}
+	_ = restarted.RefreshPair(ctx, pair, 1.00, t1.Add(divergence.DefaultWarningPersistence+time.Minute))
+	if secondHooks != 0 {
+		t.Errorf("restarted process fired divergence.firing %d time(s) for a divergence already "+
+			"announced before the restart, want 0", secondHooks)
+	}
+}
+
+// TestRefreshPair_StreakSurvivesRestartInsideDebounce: restarts closer
+// together than the persistence window must not reset the debounce clock,
+// or a crash-looping aggregator never publishes the warning at all.
+func TestRefreshPair_StreakSurvivesRestartInsideDebounce(t *testing.T) {
+	refs := depeggedRefs()
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+	})
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	ctx := context.Background()
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
+	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, 1.00, t0.Add(3*time.Minute))
+	if readDivergence(t, rdb, pair).WarningFired {
+		t.Fatal("WarningFired = true 3m into the streak; the debounce must still hold it")
+	}
+	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, 1.00, t0.Add(6*time.Minute))
+	got := readDivergence(t, rdb, pair)
+	if !got.WarningFired {
+		t.Error("WarningFired = false 6m into a divergence spanning two restarts: the streak " +
+			"restarted with each process and the warning can never publish")
+	}
+	if !got.FiringSince.Equal(t0) {
+		t.Errorf("FiringSince = %v, want the streak start %v", got.FiringSince, t0)
+	}
+}
+
+// TestRefreshPair_RestartFromLegacyCachedWarning covers the deploy that
+// ships FiringSince: the cached result was written without it, and a
+// published warning must still carry over rather than reset.
+func TestRefreshPair_RestartFromLegacyCachedWarning(t *testing.T) {
+	refs := depeggedRefs()
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+	})
+	pair := xlmUSD(t)
+	legacy, err := json.Marshal(map[string]any{
+		"pair_id": pair.String(), "warning_fired": true, "success_count": 3,
+		"computed_at": time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := rdb.Set(context.Background(), cachekeys.Divergence(pair).String(), legacy, cachekeys.DivergenceTTL).Err(); err != nil {
+		t.Fatalf("seed legacy result: %v", err)
+	}
+	_ = svc.RefreshPair(context.Background(), pair, 1.00, time.Now())
+	if !readDivergence(t, rdb, pair).WarningFired {
+		t.Error("WarningFired = false after restarting over a pre-FiringSince cached warning")
+	}
+}
+
+// TestRefreshPair_RestartDoesNotResurrectClearedWarning: the restore only
+// carries a streak forward; a pair that is no longer diverging publishes
+// false on its first post-restart refresh, whatever the prior entry said.
+func TestRefreshPair_RestartDoesNotResurrectClearedWarning(t *testing.T) {
+	refs := depeggedRefs()
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+	})
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	ctx := context.Background()
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0)
+	_ = svc.RefreshPair(ctx, pair, 1.00, t0.Add(10*time.Minute))
+	if !readDivergence(t, rdb, pair).WarningFired {
+		t.Fatal("precondition: want a published warning")
+	}
+	_ = restartedService(t, refs, rdb, nil).RefreshPair(ctx, pair, 0.93, t0.Add(11*time.Minute))
+	got := readDivergence(t, rdb, pair)
+	if got.WarningFired || !got.FiringSince.IsZero() {
+		t.Errorf("after recovery: WarningFired=%v FiringSince=%v, want false and zero",
+			got.WarningFired, got.FiringSince)
+	}
+}
