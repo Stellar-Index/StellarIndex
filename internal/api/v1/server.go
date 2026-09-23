@@ -2921,6 +2921,7 @@ var errorSlugRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // reflected as a live 200 page (RLT-218).
 var knownErrorSlugs = map[string]struct{}{
 	"account-activity-timeout":        {},
+	"account-closed":                  {},
 	"account-cohort-timeout":          {},
 	"account-cohort-warming":          {},
 	"account-create-failed":           {},

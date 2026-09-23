@@ -8232,8 +8232,11 @@ paths:
         `suspended` or `closed` stops its API keys authenticating and
         denies its dashboard sessions; `suspended_reason` is stored
         alongside and `suspended_at` is stamped on the first transition
-        away from `active`. Moving back to `active` clears both. To kill a
-        single leaked credential instead, use
+        away from `active`. Moving back to `active` clears both. `closed`
+        is terminal: every live dashboard API key is revoked (reason
+        `account closed`), and any later `status` other than `closed` is
+        refused with 409. Re-sending `status: closed` retries revocations
+        that failed. To kill a single leaked credential instead, use
         `DELETE /v1/admin/keys/{keyID}`.
 
         Operator-tier only (staff-issued via stellarindex-ops; never
@@ -8326,6 +8329,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The account is closed and the request would move it to another status.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -8765,8 +8773,10 @@ paths:
       security:
         - SessionCookie: []
       description: |
-        Session-gated. Returns every key (active + revoked) for
-        the authenticated user's account, ordered oldest-first.
+        Session-gated. Returns every active key plus the 100 most
+        recently created revoked keys for the authenticated user's
+        account, ordered oldest-first. `revoked_truncated` is true
+        when older revoked keys exist and were omitted.
         Plaintext is never returned by this endpoint — only
         the prefix (`sip_4f9c1d8b…`).
       responses:
@@ -8786,13 +8796,19 @@ paths:
                   usage_alert_threshold_pct: 80
                   last_used_at: '2026-07-03T08:59:41Z'
                   created_at: '2026-06-12T08:30:00Z'
+                revoked_truncated: false
               schema:
                 type: object
                 properties:
                   keys:
                     type: array
                     items: { $ref: "#/components/schemas/DashboardKey" }
-                required: [keys]
+                  revoked_truncated:
+                    type: boolean
+                    description: |
+                      True when the account holds more revoked keys than
+                      the 100 most recent returned in `keys`.
+                required: [keys, revoked_truncated]
         "401":
           description: No valid session cookie.
           content:

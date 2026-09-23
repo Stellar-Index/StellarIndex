@@ -306,3 +306,72 @@ func TestAdminAccountGet_Happy(t *testing.T) {
 		t.Errorf("view = %+v", env.Data)
 	}
 }
+
+// TestAdminAccountOverrides_CloseRevokesKeys pins GH-809: closing an account
+// revokes every live key (and evicts it from the auth cache) instead of
+// leaving closure as a status string the credentials outlive.
+func TestAdminAccountOverrides_CloseRevokesKeys(t *testing.T) {
+	acct := seededAccount()
+	accounts := newFakePlatformAccountStore(acct)
+	pgKeys := &fakePlatformAPIKeysForBridge{byAcct: map[uuid.UUID][]platform.APIKey{
+		acct.ID: {
+			{ID: "pg_a", AccountID: acct.ID, KeyHash: []byte{0xaa}},
+			{ID: "pg_b", AccountID: acct.ID, KeyHash: []byte{0xbb}},
+		},
+	}}
+	inv := &fakeKeyCacheInvalidator{}
+	sink := &recordingAuditSink{}
+	ts := newAdminClampServer(t, accounts, v1.APIKeyBudgetStores{Platform: pgKeys, CacheInvalidator: inv}, sink)
+
+	resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acct.ID.String(), "customer asked to close", `{"status":"closed"}`)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, body)
+	}
+	if got := pgKeys.revokedIDs(); strings.Join(got, ",") != "pg_a,pg_b" {
+		t.Fatalf("revoked keys = %v, want [pg_a pg_b]: a closed account's keys must not outlive it", got)
+	}
+	for _, k := range pgKeys.byAcct[acct.ID] {
+		if k.RevokedReason != "account closed" {
+			t.Errorf("key %s revoked_reason = %q, want %q", k.ID, k.RevokedReason, "account closed")
+		}
+	}
+	if got := strings.Join(inv.seen(), ","); !strings.Contains(got, "aa") || !strings.Contains(got, "bb") {
+		t.Errorf("cache evictions = %q, want both revoked keys evicted", got)
+	}
+	if len(sink.entries) != 1 || !strings.Contains(string(sink.entries[0].Metadata), `"keys_revoked":2`) {
+		t.Errorf("audit row must record keys_revoked=2; entries=%+v", sink.entries)
+	}
+}
+
+// TestAdminAccountOverrides_ClosedIsTerminal pins GH-809: a closed account
+// cannot be moved back to active or suspended, so no status edit resurrects
+// the passkeys, sessions and webhooks closure left in place.
+func TestAdminAccountOverrides_ClosedIsTerminal(t *testing.T) {
+	for _, target := range []string{"active", "suspended"} {
+		t.Run(target, func(t *testing.T) {
+			acct := seededAccount()
+			acct.Status = platform.AccountClosed
+			store := newFakePlatformAccountStore(acct)
+			ts := newAdminAccountServer(t, operatorSubject(), store, &recordingAuditSink{})
+
+			resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acct.ID.String(), "reopen", `{"status":"`+target+`"}`)
+			if resp.StatusCode != http.StatusConflict {
+				t.Fatalf("closed→%s status = %d, want 409", target, resp.StatusCode)
+			}
+			if store.updateCalls != 0 || store.byID[acct.ID].Status != platform.AccountClosed {
+				t.Errorf("closed account was rewritten: updates=%d status=%q", store.updateCalls, store.byID[acct.ID].Status)
+			}
+		})
+	}
+	t.Run("closed stays patchable", func(t *testing.T) {
+		acct := seededAccount()
+		acct.Status = platform.AccountClosed
+		store := newFakePlatformAccountStore(acct)
+		ts := newAdminAccountServer(t, operatorSubject(), store, &recordingAuditSink{})
+		resp := patchJSON(t, ts.URL+"/v1/admin/accounts/"+acct.ID.String(), "retry", `{"status":"closed"}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("closed→closed status = %d, want 200 (the retry path for a failed revoke)", resp.StatusCode)
+		}
+	})
+}

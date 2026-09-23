@@ -210,25 +210,32 @@ func nilIfZero(t time.Time) *time.Time {
 	return &t
 }
 
+// listRevokedLimit caps the revoked history HandleList returns. Revoked rows
+// are kept forever and a create/revoke loop grows them without bound.
+const listRevokedLimit = 100
+
 type listResponse struct {
 	Keys []keyDTO `json:"keys"`
+	// RevokedTruncated is true when older revoked keys exist beyond the
+	// listRevokedLimit most recent ones returned.
+	RevokedTruncated bool `json:"revoked_truncated"`
 }
 
-// HandleList returns every key (active + revoked) for the
-// session's account, ordered oldest-first.
+// HandleList returns every active key plus the most recently created
+// revoked keys for the session's account, ordered oldest-first.
 func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 	sc, ok := dashboardauth.SessionFromContext(r.Context())
 	if !ok {
 		writeProblem(w, http.StatusUnauthorized, "authentication required", r.URL.Path)
 		return
 	}
-	keys, err := h.cfg.Keys.ListForAccount(r.Context(), sc.Account.ID)
+	keys, moreRevoked, err := h.cfg.Keys.ListForAccount(r.Context(), sc.Account.ID, listRevokedLimit)
 	if err != nil {
 		h.cfg.Logger.Error("list keys", "err", err, "account_id", sc.Account.ID)
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	out := listResponse{Keys: make([]keyDTO, 0, len(keys))}
+	out := listResponse{Keys: make([]keyDTO, 0, len(keys)), RevokedTruncated: moreRevoked}
 	for _, k := range keys {
 		out.Keys = append(out.Keys, toDTO(k))
 	}
@@ -626,16 +633,10 @@ func (h *Handlers) maxKeysFor(tier platform.Tier) int {
 // tier-resolved ceiling; returns (status, problem) on failure,
 // (0, "") on pass.
 func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxKeys int) (int, string) {
-	existing, err := h.cfg.Keys.ListForAccount(r.Context(), accountID)
+	active, err := h.cfg.Keys.CountActiveForAccount(r.Context(), accountID)
 	if err != nil {
-		h.cfg.Logger.Error("list keys for quota", "err", err, "account_id", accountID)
+		h.cfg.Logger.Error("count keys for quota", "err", err, "account_id", accountID)
 		return http.StatusInternalServerError, "internal error"
-	}
-	active := 0
-	for _, k := range existing {
-		if k.RevokedAt.IsZero() {
-			active++
-		}
 	}
 	if active >= maxKeys {
 		return http.StatusConflict,

@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -374,6 +376,44 @@ func TestHandleList_OnlyOwnAccount(t *testing.T) {
 	}
 }
 
+// TestHandleList_BoundsRevokedHistory pins GH-766: a create/revoke loop grows
+// revoked rows without bound, so the list returns every active key but only
+// the listRevokedLimit most recent revoked ones, and says it truncated.
+func TestHandleList_BoundsRevokedHistory(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	// The active key is the OLDEST row: it must survive any truncation.
+	store.byID["k-active"] = platform.APIKey{ID: "k-active", AccountID: sc.Account.ID, CreatedAt: base}
+	const revokedRows = listRevokedLimit + 50
+	for i := 1; i <= revokedRows; i++ {
+		id := fmt.Sprintf("k-rev-%03d", i)
+		at := base.Add(time.Duration(i) * time.Minute)
+		store.byID[id] = platform.APIKey{ID: id, AccountID: sc.Account.ID, CreatedAt: at, RevokedAt: at}
+	}
+
+	w := httptest.NewRecorder()
+	h.HandleList(w, sessionRequest(t, http.MethodGet, "/v1/dashboard/keys", nil, sc))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var resp listResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got, want := len(resp.Keys), 1+listRevokedLimit; got != want {
+		t.Fatalf("len(keys) = %d, want %d (every active key + the %d newest revoked)", got, want, listRevokedLimit)
+	}
+	if !resp.RevokedTruncated {
+		t.Error("revoked_truncated = false with 50 older revoked keys omitted")
+	}
+	if resp.Keys[0].ID != "k-active" {
+		t.Errorf("keys[0] = %q, want the oldest active key k-active", resp.Keys[0].ID)
+	}
+	if first, want := resp.Keys[1].ID, fmt.Sprintf("k-rev-%03d", revokedRows-listRevokedLimit+1); first != want {
+		t.Errorf("oldest revoked key returned = %q, want %q (the newest revoked are kept)", first, want)
+	}
+}
+
 func TestHandleRevoke_HappyPath(t *testing.T) {
 	h, store, sc := newTestRig(t)
 	store.byID["k-mine"] = platform.APIKey{ID: "k-mine", AccountID: sc.Account.ID, Name: "mine"}
@@ -473,16 +513,43 @@ func (f *fakeKeyStore) GetByHash(_ context.Context, hash []byte) (platform.APIKe
 	return platform.APIKey{}, platform.ErrNotFound
 }
 
-func (f *fakeKeyStore) ListForAccount(_ context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
+func (f *fakeKeyStore) CountActiveForAccount(ctx context.Context, accountID uuid.UUID) (int, error) {
+	active, err := f.ListActiveForAccount(ctx, accountID)
+	return len(active), err
+}
+
+func (f *fakeKeyStore) ListActiveForAccount(_ context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []platform.APIKey
 	for _, k := range f.byID {
-		if k.AccountID == accountID {
+		if k.AccountID == accountID && k.RevokedAt.IsZero() {
 			out = append(out, k)
 		}
 	}
 	return out, nil
+}
+
+// ListForAccount mirrors the store contract: every active key plus the
+// revokedLimit most recently created revoked keys, oldest first.
+func (f *fakeKeyStore) ListForAccount(ctx context.Context, accountID uuid.UUID, revokedLimit int) ([]platform.APIKey, bool, error) {
+	out, _ := f.ListActiveForAccount(ctx, accountID)
+	f.mu.Lock()
+	var revoked []platform.APIKey
+	for _, k := range f.byID {
+		if k.AccountID == accountID && !k.RevokedAt.IsZero() {
+			revoked = append(revoked, k)
+		}
+	}
+	f.mu.Unlock()
+	slices.SortFunc(revoked, func(a, b platform.APIKey) int { return b.CreatedAt.Compare(a.CreatedAt) })
+	more := len(revoked) > revokedLimit
+	if more {
+		revoked = revoked[:revokedLimit]
+	}
+	out = append(out, revoked...)
+	slices.SortFunc(out, func(a, b platform.APIKey) int { return a.CreatedAt.Compare(b.CreatedAt) })
+	return out, more, nil
 }
 
 func (f *fakeKeyStore) Update(_ context.Context, k platform.APIKey) error {

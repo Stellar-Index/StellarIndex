@@ -218,19 +218,15 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	// result back inside the same transaction, so a concurrent PATCH on
 	// this account can't read the same stale snapshot we did (Q148).
 	beforeAcct, acct, err := s.platformAccounts.UpdateAtomic(r.Context(), id, func(a *platform.Account) error {
+		if a.Status == platform.AccountClosed && req.Status != nil &&
+			platform.AccountStatus(*req.Status) != platform.AccountClosed {
+			return errAccountClosed
+		}
 		applyAccountOverrides(a, req, time.Now().UTC())
 		return nil
 	})
-	if errors.Is(err, platform.ErrNotFound) {
-		writeAccountNotFound(w, r)
-		return
-	}
 	if err != nil {
-		s.logger.Error("admin account overrides: update failed", "err", err, "account_id", id)
-		writeProblem(w, r,
-			"https://api.stellarindex.io/errors/account-update-failed",
-			"Could not update account", http.StatusInternalServerError,
-			"see X-Request-ID in server logs")
+		s.writeAccountUpdateError(w, r, id, err)
 		return
 	}
 
@@ -242,6 +238,7 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 	clamped, clampFailed := s.clampKeysAfterTierChange(r.Context(), subject, priorTier, acct)
 	evicted, evictFailed := s.evictKeyCacheOnEnforcementChange(
 		r.Context(), subject, priorStatus, priorRateOverride, priorQuotaOverride, acct)
+	revoked, revokeFailed := s.revokeKeysOnClosure(r.Context(), subject, acct)
 
 	before := adminAccountView(beforeAcct)
 	after := adminAccountView(acct)
@@ -253,10 +250,83 @@ func (s *Server) handleAdminAccountOverrides(w http.ResponseWriter, r *http.Requ
 		"keys_clamped", clamped,
 		"key_clamp_failures", clampFailed,
 		"keys_evicted", evicted,
-		"key_evict_failures", evictFailed)
-	s.recordAdminAccountAudit(r, subject, id.String(), reason, before, after, clamped, clampFailed)
+		"key_evict_failures", evictFailed,
+		"keys_revoked", revoked,
+		"key_revoke_failures", revokeFailed)
+	s.recordAdminAccountAudit(r, subject, id.String(), reason, before, after,
+		adminAccountKeyOutcome{clamped: clamped, clampFailed: clampFailed, revoked: revoked, revokeFailed: revokeFailed})
 
 	writeJSON(w, after, Flags{})
+}
+
+// errAccountClosed refuses any status change out of `closed`. Closure is
+// terminal: reopening would bring back every passkey, webhook and key the
+// closure did not revoke, so a returning customer registers afresh.
+var errAccountClosed = errors.New("account is closed")
+
+// accountClosedRevokeReason is stamped on every key revoked by a closure.
+const accountClosedRevokeReason = "account closed"
+
+// adminAccountKeyOutcome is what a PATCH did to the account's credentials,
+// recorded durably in its audit row.
+type adminAccountKeyOutcome struct {
+	clamped, clampFailed, revoked, revokeFailed int
+}
+
+// writeAccountUpdateError maps an UpdateAtomic failure to its problem response.
+func (s *Server) writeAccountUpdateError(w http.ResponseWriter, r *http.Request, id uuid.UUID, err error) {
+	switch {
+	case errors.Is(err, platform.ErrNotFound):
+		writeAccountNotFound(w, r)
+	case errors.Is(err, errAccountClosed):
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-closed",
+			"Account is closed", http.StatusConflict,
+			"a closed account cannot change status; closure is terminal")
+	default:
+		s.logger.Error("admin account overrides: update failed", "err", err, "account_id", id)
+		writeProblem(w, r,
+			"https://api.stellarindex.io/errors/account-update-failed",
+			"Could not update account", http.StatusInternalServerError,
+			"see X-Request-ID in server logs")
+	}
+}
+
+// revokeKeysOnClosure revokes every live Postgres key of a closed account and
+// evicts each from the auth cache, so closure is recorded on the credential
+// rows themselves instead of resting on the account-status gate alone. It runs
+// on every PATCH that leaves the account closed, so a re-PATCH retries a key a
+// previous sweep failed on. Redis self-service keys are gated by the Redis
+// validator's account-status check, which a terminal closure keeps shut.
+func (s *Server) revokeKeysOnClosure(
+	ctx context.Context, subject auth.Subject, acct platform.Account,
+) (revoked, failed int) {
+	st := s.apiKeyBudgets
+	if acct.Status != platform.AccountClosed || st.Platform == nil {
+		return 0, 0
+	}
+	cause := "admin PATCH /v1/admin/accounts/" + acct.ID.String() + " by " + subject.KeyID + " (account closed)"
+	keys, err := st.Platform.ListActiveForAccount(ctx, acct.ID)
+	if err != nil {
+		st.note("list_keys")
+		s.logger.Error("account closure: ListActiveForAccount failed; keys stay unrevoked "+
+			"(the account-status gate still denies them); re-PATCH status=closed to retry",
+			"cause", cause, "account_id", acct.ID, "err", err)
+		return 0, 1
+	}
+	for i := range keys {
+		k := keys[i]
+		if err := st.Platform.Revoke(ctx, k.ID, uuid.Nil, accountClosedRevokeReason); err != nil {
+			st.note("key_revoke")
+			s.logger.Error("account closure: key revoke failed; re-PATCH status=closed to retry",
+				"cause", cause, "account_id", acct.ID, "key_id", k.ID, "err", err)
+			failed++
+			continue
+		}
+		revoked++
+		s.invalidatePlatformKeyCache(ctx, cause, st, acct, k)
+	}
+	return revoked, failed
 }
 
 // clampKeysAfterTierChange lowers every credential the account can still
@@ -334,7 +404,7 @@ func (s *Server) clampKeysAfterTierChange(
 // redis validator enforces suspension through its own account-status gate and
 // does not resolve account overrides at all, so nothing is left stale.
 //
-// Reuses the tier-clamp eviction seam exactly (ListForAccount +
+// Reuses the tier-clamp eviction seam exactly (ListActiveForAccount +
 // InvalidateCachedKey). Best-effort and idempotent — a failure on one key never
 // stops the others, and a failed eviction just means that key waits out the
 // TTL; the durable state (the persisted account row) is already written.
@@ -354,10 +424,10 @@ func (s *Server) evictKeyCacheOnEnforcementChange(
 	}
 	cause := "admin PATCH /v1/admin/accounts/" + acct.ID.String() +
 		" by " + subject.KeyID + " (" + enforcementChangeCause(statusLeftActive, overrideChanged, priorStatus, acct.Status) + ")"
-	keys, err := st.Platform.ListForAccount(ctx, acct.ID)
+	keys, err := st.Platform.ListActiveForAccount(ctx, acct.ID)
 	if err != nil {
 		st.note("list_keys")
-		s.logger.Error("enforcement-change cache evict: ListForAccount failed; cached keys keep "+
+		s.logger.Error("enforcement-change cache evict: ListActiveForAccount failed; cached keys keep "+
 			"the stale resolved budget until the validator TTL rolls them off",
 			"cause", cause, "account_id", acct.ID, "err", err)
 		return 0, 1
@@ -581,7 +651,7 @@ func writeAccountNotFound(w http.ResponseWriter, r *http.Request) {
 // same contract as recordAdminKeyMintAudit).
 func (s *Server) recordAdminAccountAudit(
 	r *http.Request, actor auth.Subject, accountID, reason string, before, after AdminAccountView,
-	keysClamped, keyClampFailures int,
+	keys adminAccountKeyOutcome,
 ) {
 	if s.audit == nil {
 		return
@@ -596,8 +666,12 @@ func (s *Server) recordAdminAccountAudit(
 		// the surface staff already read for privileged mutations, so a
 		// non-zero key_clamp_failures is queryable next to the tier
 		// change that caused it.
-		"keys_clamped":       keysClamped,
-		"key_clamp_failures": keyClampFailures,
+		"keys_clamped":       keys.clamped,
+		"key_clamp_failures": keys.clampFailed,
+		// Keys revoked because the account closed; failures are retried
+		// by re-PATCHing status=closed.
+		"keys_revoked":        keys.revoked,
+		"key_revoke_failures": keys.revokeFailed,
 		"before": map[string]any{
 			"tier":                           before.Tier,
 			"status":                         before.Status,

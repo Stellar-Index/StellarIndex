@@ -6,7 +6,9 @@ package v1_test
 import (
 	"context"
 	"net"
+	"slices"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -61,21 +63,33 @@ func (r *recordingAuditSink) Append(_ context.Context, e platform.AuditEntry) er
 }
 
 // fakePlatformAPIKeysForBridge is the [platform.APIKeyStore] test
-// double for the clamp seam. ListForAccount returns the seeded
-// slice; Update records every call so assertions can confirm which
-// keys were rewritten.
+// double for the clamp seam. ListActiveForAccount returns the seeded
+// non-revoked keys; Update records every call so assertions can
+// confirm which keys were rewritten.
 type fakePlatformAPIKeysForBridge struct {
 	mu      sync.Mutex
 	byAcct  map[uuid.UUID][]platform.APIKey
 	updates []platform.APIKey
 }
 
-func (f *fakePlatformAPIKeysForBridge) ListForAccount(_ context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
+func (f *fakePlatformAPIKeysForBridge) ListActiveForAccount(_ context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]platform.APIKey, len(f.byAcct[accountID]))
-	copy(out, f.byAcct[accountID])
+	var out []platform.APIKey
+	for _, k := range f.byAcct[accountID] {
+		if k.RevokedAt.IsZero() {
+			out = append(out, k)
+		}
+	}
 	return out, nil
+}
+
+func (*fakePlatformAPIKeysForBridge) CountActiveForAccount(_ context.Context, _ uuid.UUID) (int, error) {
+	panic("unused")
+}
+
+func (*fakePlatformAPIKeysForBridge) ListForAccount(_ context.Context, _ uuid.UUID, _ int) ([]platform.APIKey, bool, error) {
+	panic("unused")
 }
 
 func (f *fakePlatformAPIKeysForBridge) Update(_ context.Context, k platform.APIKey) error {
@@ -105,8 +119,35 @@ func (*fakePlatformAPIKeysForBridge) GetByHash(_ context.Context, _ []byte) (pla
 	panic("unused")
 }
 
-func (*fakePlatformAPIKeysForBridge) Revoke(_ context.Context, _ string, _ uuid.UUID, _ string) error {
-	panic("unused")
+func (f *fakePlatformAPIKeysForBridge) Revoke(_ context.Context, id string, _ uuid.UUID, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for acct, keys := range f.byAcct {
+		for i := range keys {
+			if keys[i].ID == id {
+				f.byAcct[acct][i].RevokedAt = time.Now().UTC()
+				f.byAcct[acct][i].RevokedReason = reason
+				return nil
+			}
+		}
+	}
+	return platform.ErrNotFound
+}
+
+// revokedIDs returns the ids of every revoked key, sorted.
+func (f *fakePlatformAPIKeysForBridge) revokedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, keys := range f.byAcct {
+		for _, k := range keys {
+			if !k.RevokedAt.IsZero() {
+				out = append(out, k.ID)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 func (*fakePlatformAPIKeysForBridge) TouchUsage(_ context.Context, _ string, _ net.IP, _ string) error {

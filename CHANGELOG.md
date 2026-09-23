@@ -61,6 +61,28 @@ against.
   and `TestSourceClassSurfacesAgree` pins the constants, the allow-list,
   the served glossary and all three spec enums together.
 
+- **admin — account closure revokes keys and is terminal (GH-809):**
+  `status: closed` on `PATCH /v1/admin/accounts/{id}` was the same
+  code path as suspension, so a later edit back to `active` brought
+  every credential back live. Closing an account now revokes every live
+  Postgres-backed API key (reason `account closed`, evicted from the
+  auth cache, counted in the audit row as `keys_revoked`), and any
+  later non-`closed` status gets a 409 `account-closed`. Account
+  erasure and data export (`DELETE /v1/account`,
+  `GET /v1/account/data-export`) are still not built.
+
+- **platform — api_keys reads bounded by the active set (GH-766):**
+  revoked keys are kept forever, and `ListForAccount` read an
+  account's whole key history on every mint quota check, every
+  dashboard key list and every admin suspend or tier-clamp eviction.
+  The mint check now runs `CountActiveForAccount`, the clamp and
+  eviction paths read `ListActiveForAccount`, and
+  `GET /v1/dashboard/keys` returns every active key plus the 100 most
+  recently created revoked keys, with a new `revoked_truncated` flag
+  when older ones were omitted. A package test fails on any
+  `FROM api_keys` query without a LIMIT, aggregate, unique-key lookup
+  or active-set filter.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was
