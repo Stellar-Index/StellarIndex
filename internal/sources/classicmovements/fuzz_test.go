@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,6 +122,9 @@ func FuzzPathPaymentStrictReceiveSourceAmount(f *testing.F) {
 	f.Add(encodeFuzzAtoms(m(math.MaxInt64), m(math.MaxInt64), m(3)), int64(7))
 	f.Add(encodeFuzzAtoms(m(5), m(-3)), int64(7))
 	f.Add(encodeFuzzAtoms(fuzzAtom{variant: 3, matches: true, amount: 1}), int64(7))
+	f.Add(encodeFuzzAtoms(m(0)), int64(7))
+	f.Add(encodeFuzzAtoms(m(math.MaxInt64-1), m(1)), int64(7))
+	f.Add(encodeFuzzAtoms(fuzzAtom{variant: 2, matches: true, amount: 100}), int64(7))
 
 	sendAsset := fuzzCreditAsset("SEND", 0x01)
 	// Same code, different issuer: an impersonating asset must never be
@@ -224,11 +228,16 @@ func FuzzLiquidityPoolReserveDeltas(f *testing.F) {
 	f.Add(int64(math.MinInt64), int64(0), int64(1), int64(1), uint8(haveState|haveUpdated))
 	f.Add(int64(-5), int64(1), int64(10), int64(10), uint8(haveState|haveUpdated))
 	f.Add(int64(math.MinInt64), int64(5), int64(1), int64(1), uint8(haveState|haveUpdated|isWithdraw))
+	f.Add(int64(1000), int64(2000), int64(1100), int64(2000), uint8(haveState|haveUpdated))
+	f.Add(int64(1000), int64(2000), int64(900), int64(2000), uint8(haveState|haveUpdated|isWithdraw))
+	f.Add(int64(5), int64(-1), int64(10), int64(10), uint8(haveState|haveUpdated))
+	f.Add(int64(0), int64(0), int64(1)<<40, int64(3)<<33, uint8(haveUpdated))
 
 	assetA := fuzzCreditAsset("AAA", 0x0a)
 	assetB := xdr.MustNewNativeAsset()
 	fromAddr := fuzzAccountID(0x33).Address()
-	poolID := xdr.PoolId{0x77}
+	poolID := xdr.PoolId{0xab}
+	wantPoolID := "ab" + strings.Repeat("0", 62)
 
 	f.Fuzz(func(t *testing.T, beforeA, beforeB, afterA, afterB int64, flags uint8) {
 		st, up, rm := flags&haveState != 0, flags&haveUpdated != 0, flags&haveRemoved != 0
@@ -318,7 +327,7 @@ func FuzzLiquidityPoolReserveDeltas(f *testing.F) {
 			if g.FromAddress != wantFrom || g.ToAddress != wantTo {
 				t.Fatalf("leg %d from/to = %q/%q, want %q/%q", i, g.FromAddress, g.ToAddress, wantFrom, wantTo)
 			}
-			if g.Attributes["pool_id"] != "77"+string(bytes.Repeat([]byte("0"), 62)) {
+			if g.Attributes["pool_id"] != wantPoolID {
 				t.Fatalf("leg %d pool_id = %v", i, g.Attributes["pool_id"])
 			}
 		}
