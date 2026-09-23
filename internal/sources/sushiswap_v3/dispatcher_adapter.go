@@ -262,6 +262,15 @@ func (d *Decoder) SkippedUnknownPool() int {
 	return d.skippedUnknownPool
 }
 
+// UnknownContractDrops implements the dispatcher's duck-typed reporter
+// interface (mirrors soroswap.Decoder.EvictedOrphans) so a gated swap
+// dropped for want of a token mapping is surfaced to
+// obs.SourceDecodeErrorsTotal instead of vanishing with no error, log
+// or metric (GH-1307).
+func (d *Decoder) UnknownContractDrops() int {
+	return d.SkippedUnknownPool()
+}
+
 // SkippedNonDirectional counts swaps carrying no cross-token exchange
 // (recognized no-ops; see [ErrNonDirectionalSwap]).
 func (d *Decoder) SkippedNonDirectional() int {

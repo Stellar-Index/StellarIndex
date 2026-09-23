@@ -86,4 +86,16 @@ func emitDispatcherMetricDeltas(before, after dispatcher.Stats) {
 		}
 		obs.SourceOrphanEventsTotal.WithLabelValues(source).Add(float64(delta))
 	}
+	// A completed, priced event dropped for want of a pair/pool token
+	// mapping (GH-1307): the body decoded cleanly, so it never touches
+	// the DecodeErrors path above, but it is the same class of lost
+	// data — count it against the same budget rather than leaving it
+	// with no signal at all.
+	for source, n := range after.UnknownContractDrops {
+		delta := n - before.UnknownContractDrops[source]
+		if delta <= 0 {
+			continue
+		}
+		obs.SourceDecodeErrorsTotal.WithLabelValues(source).Add(float64(delta))
+	}
 }

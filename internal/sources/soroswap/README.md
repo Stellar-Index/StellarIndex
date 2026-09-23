@@ -55,14 +55,27 @@ Our decoder groups events by `(ledger, tx_hash, op_index, pair)`
 and completes the pair in EITHER arrival order — mainnet has real
 cases of `sync` preceding `swap` within the op (e.g. ledger
 57,403,300 tx `be7028b9…`, sync at event_index 6, swap at 7).
-Missing sync = reject the swap with a metric counter; never emit an
-incomplete trade.
+Missing sync = reject the swap with a metric counter
+(`Decoder.EvictedOrphans`, wired to `obs.SourceOrphanEventsTotal`);
+never emit an incomplete trade.
 
 ### Q2 — `sync` also fires without a swap
 
 Deposits, withdrawals, and direct `skim` operations ALSO emit
 `sync`. A bare `sync` with no preceding swap is NOT a trade. We
-drop it (counter-only).
+drop it, counted separately (`Decoder.EvictedBareSync`) from a
+genuinely lost swap so the LP-traffic volume doesn't drown the loss
+signal (GH-1308).
+
+### Q6 — a decoded, priced swap with no pair registry entry
+
+`emitCompleted` drops a completed swap+sync whose pair contract has
+no token mapping (pair discovered mid-history, or its `new_pair`
+arrived late). Counted via `Decoder.SkippedUnknownPair`, surfaced to
+the dispatcher as `Decoder.UnknownContractDrops` and wired to
+`obs.SourceDecodeErrorsTotal` — the drop returns `(nil, nil)` from
+`Decode`, so without this it is indistinguishable from "not a trade"
+(GH-1307).
 
 ### Q3 — Amounts are i128
 

@@ -329,6 +329,12 @@ func TestDecode_GatedPoolWithNoTokenMappingFailsClosed(t *testing.T) {
 	if d.SkippedUnknownPool() != 1 {
 		t.Errorf("SkippedUnknownPool = %d, want 1", d.SkippedUnknownPool())
 	}
+	// GH-1307: the drop must also be reachable through the dispatcher's
+	// duck-typed reporter interface — before the fix, Decoder exposed
+	// no such method and the dispatcher's Stats() never saw it.
+	if got := d.UnknownContractDrops(); got != 1 {
+		t.Errorf("UnknownContractDrops() = %d, want 1", got)
+	}
 }
 
 // TestSeedPool_AdmitsAPoolAndItsTokens covers the operator seam.
