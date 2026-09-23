@@ -911,7 +911,7 @@ func sacWatchedBalanceKey(keyXDR string, watched map[string]string) (bool, error
 func watchedKeyDecodeErr(keyXDR string, watched map[string]string, decodeErr error) error {
 	raw, err := base64.StdEncoding.DecodeString(keyXDR)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // non-base64 bytes cannot carry a watched contract id, so the row is skipped like any non-watched row
 	}
 	for strk := range watched {
 		id, err := strkey.Decode(strkey.VersionByteContract, strk)
