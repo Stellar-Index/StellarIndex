@@ -45,7 +45,7 @@
 // event is honored from the trust root OR a registered child. The topics
 // are distinctive, but two OTHER mainnet contracts emit the same symbols
 // (~159 events total, lake 2026-07-07) — the identity gate rejects them.
-// In practice ALL 7 event types are emitted by the main contract and the
+// In practice ALL 8 event types are emitted by the main contract and the
 // child contracts emit nothing (verified), so the childgate is
 // forward-compat defense-in-depth; the trust root does the real gating.
 //
@@ -78,7 +78,7 @@ const MainnetContract = "CCG5EWFY2KCWWYYEIUMIRG6WSAQFLDR5QE5FMCWY25N36XA5GYTCPQW
 const GenesisLedger uint32 = 61_620_822
 
 // Event topic[0] symbols, exactly as they appear on the wire (Soroban
-// Symbols). The main contract emits all seven.
+// Symbols). The main contract emits all eight.
 const (
 	TopicNewCollateralContract = "NewCollateralContract"
 	TopicStatementPublished    = "StatementPublished"
@@ -112,22 +112,49 @@ var (
 	topicSymTreasuryUpdated       = scval.MustEncodeSymbol(TopicTreasuryUpdated)
 )
 
-// EventSymbols returns the seven topic[0] symbol strings this source
+// topicClassifications is the single source of truth pairing each
+// tracked topic[0] symbol with the [EventType] it decodes to. classify()
+// (decode.go) and EventSymbols() are both derived from this table so
+// they cannot fall out of lockstep — this is exactly the failure mode
+// that dropped TreasuryUpdated recognition under ADR-0033 (see
+// TopicTreasuryUpdated above): the symbol was added to one hand-written
+// list but not the other.
+var topicClassifications = []struct {
+	Topic string
+	Sym   string
+	Type  EventType
+}{
+	{TopicNewCollateralContract, topicSymNewCollateralContract, TypeNewCollateralContract},
+	{TopicStatementPublished, topicSymStatementPublished, TypeStatement},
+	{TopicLiquidation, topicSymLiquidation, TypeSettlement},
+	{TopicWithdrawal, topicSymWithdrawal, TypeWithdrawal},
+	{TopicBeaconUpdated, topicSymBeaconUpdated, TypeBeaconUpdated},
+	{TopicSupportedAssetAdded, topicSymSupportedAssetAdded, TypeSupportedAssetAdded},
+	{TopicCollateralHashUpdated, topicSymCollateralHashUpdated, TypeCollateralHashUpdated},
+	{TopicTreasuryUpdated, topicSymTreasuryUpdated, TypeTreasuryUpdated},
+}
+
+// classifyBySym indexes topicClassifications by encoded symbol for
+// classify()'s O(1) lookup. Built once at init.
+var classifyBySym = func() map[string]EventType {
+	m := make(map[string]EventType, len(topicClassifications))
+	for _, c := range topicClassifications {
+		m[c.Sym] = c.Type
+	}
+	return m
+}()
+
+// EventSymbols returns the eight topic[0] symbol strings this source
 // consumes, for the projector's SQL topic prefilter (topic_0_sym IN …).
 // These are distinctive (not part of the CAP-67 classic-token firehose),
 // so a topic prefilter pulls exactly this source's events and the
 // identity gate then rejects the two look-alike emitters.
 func EventSymbols() []string {
-	return []string{
-		TopicNewCollateralContract,
-		TopicStatementPublished,
-		TopicLiquidation,
-		TopicWithdrawal,
-		TopicBeaconUpdated,
-		TopicSupportedAssetAdded,
-		TopicCollateralHashUpdated,
-		TopicTreasuryUpdated,
+	syms := make([]string, len(topicClassifications))
+	for i, c := range topicClassifications {
+		syms[i] = c.Topic
 	}
+	return syms
 }
 
 // EventType is the decoder-side discriminator that routes a decoded
@@ -162,7 +189,7 @@ const (
 
 // Errors returned by the decode path. Callers classify via errors.Is.
 var (
-	// ErrNotSoroCreditEvent — topic[0] doesn't match any of the seven
+	// ErrNotSoroCreditEvent — topic[0] doesn't match any of the eight
 	// tracked symbols. Returned by decodeOne so the dispatcher skips
 	// cheaply rather than treating it as malformed.
 	ErrNotSoroCreditEvent = errors.New("sorocredit: not a tracked event")
