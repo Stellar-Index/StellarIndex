@@ -153,7 +153,7 @@ function MetricStrip({ me, keys }: { me: MeResponse; keys: APIKey[] | null }) {
       <StatCell>
         <Stat
           icon={<Activity className="h-3.5 w-3.5" />}
-          label="Rate limit"
+          label="Default key limit"
           value={rateLimit !== null ? fmtInt(rateLimit) : '—'}
           sub="requests / min"
         />
@@ -323,6 +323,7 @@ function GettingStarted({
 function PlanCard({ me }: { me: MeResponse }) {
   const tier = accountTier(me);
   const rateLimit = accountEffectiveRateLimit(me);
+  const ceiling = tierCeiling(tier);
   const status = me.account?.status ?? 'active';
   const isPartner = ['partner', 'enterprise'].includes(
     (tier ?? '').toLowerCase(),
@@ -338,9 +339,14 @@ function PlanCard({ me }: { me: MeResponse }) {
             </div>
             <div className="text-ink-muted mt-0.5 text-sm">
               {rateLimit !== null
-                ? `${fmtInt(rateLimit)} req/min`
+                ? `${fmtInt(rateLimit)} req/min default key limit`
                 : 'Custom limits'}
             </div>
+            {ceiling !== null && (
+              <div className="tnum text-ink-faint mt-0.5 text-xs">
+                Plan ceiling: {fmtInt(ceiling)} req/min
+              </div>
+            )}
           </div>
           <Badge tone={status === 'active' ? 'ok' : 'warn'} dot>
             {status}
@@ -431,17 +437,11 @@ function accountTier(me: MeResponse): string | undefined {
   return me.account?.tier ?? me.tier;
 }
 
-// accountEffectiveRateLimit reads the EFFECTIVE (override-resolved)
-// rate limit — session callers get it from `account.rate_limit_per_min`
-// (account.go's AccountInfo, GH-1074); API-key callers already get it
-// at the top level (the auth cascade resolves the override into
-// subject.RateLimitPerMin before the response is built). Falls back to
-// the tier ceiling only against an older API build that predates
-// either field.
+// What auth enforces on a key minted without an explicit limit, override
+// included. Never the tier ceiling, which only caps what a key may be
+// minted with; limits are per key, so an explicitly budgeted key differs.
 function accountEffectiveRateLimit(me: MeResponse): number | null {
-  return (
-    me.account?.rate_limit_per_min ?? me.rate_limit_per_min ?? tierCeiling(accountTier(me))
-  );
+  return me.account?.rate_limit_per_min ?? null;
 }
 
 function firstName(me: MeResponse): string {
