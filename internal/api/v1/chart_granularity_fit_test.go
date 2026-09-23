@@ -114,5 +114,13 @@ func TestChart_UnknownGranularityStill400sAtEveryTimeframe(t *testing.T) {
 		if resp.StatusCode != http.StatusBadRequest {
 			t.Errorf("timeframe=%s granularity=2h → status=%d, want 400", tf, resp.StatusCode)
 		}
+		// The 400 must come from an UNCOARSENED "2h" reaching the reader
+		// — a fit rule that coarsened an unknown grain onto a real one
+		// (e.g. "15m") before the reader ever sees it would still 400
+		// here for the wrong reason and serve 200 on a live backend.
+		if reader.lastCall.granularity != "2h" {
+			t.Errorf("timeframe=%s: reader was called at %q, want unfitted %q",
+				tf, reader.lastCall.granularity, "2h")
+		}
 	}
 }
