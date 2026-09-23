@@ -167,13 +167,17 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 			// Also guarantees a positive divisor for the Invert path.
 			continue
 		}
-		price := pd.Price
-		if entry.Invert {
-			// Feed published in market-FX orientation (units-per-USD);
-			// reciprocate to our canonical "<Base> in USD" convention
-			// so the row is comparable to every other feed. See
-			// feedEntry.Invert + reciprocalAtScale.
-			price = reciprocalAtScale(price, DefaultDecimals)
+		price, ok := orientedPrice(entry, pd.Price)
+		if !ok {
+			slog.Warn("redstone: skipping inverted price that rounds to zero",
+				"source", SourceName,
+				"contract_id", e.ContractID,
+				"ledger", e.Ledger,
+				"tx_hash", e.TxHash,
+				"feed_id", attributed[i],
+				"raw_price", pd.Price.String(),
+			)
+			continue
 		}
 		u := canonical.OracleUpdate{
 			Source:     SourceName,
@@ -205,7 +209,7 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 	}
 	if len(out) == 0 {
 		// Only reachable when EVERY attributed entry was non-positive
-		// or unrepresentable: since the oracle capture-totality change
+		// (before or after inversion) or unrepresentable: since the oracle capture-totality change
 		// an unregistered feed_id is a raw row, not a skip, so an
 		// all-unknown batch no longer lands here. Surfaces to the
 		// dispatcher as a decode error counter bump — correct, because
@@ -214,6 +218,20 @@ func decodeWritePrices(e *events.Event, closedAt time.Time) ([]canonical.OracleU
 		return nil, ErrEmptyUpdates
 	}
 	return out, nil
+}
+
+// orientedPrice returns the raw (positive) price in the row's "<Base> in
+// <Quote>" orientation. An Invert feed, published in market-FX
+// orientation (units-per-USD), is reciprocated at DefaultDecimals — see
+// feedEntry.Invert. ok is false when that reciprocal rounds to zero: a
+// price-0 row would read as "worth nothing" and shadow the last real
+// observation on every latest-read.
+func orientedPrice(entry feedEntry, raw canonical.Amount) (canonical.Amount, bool) {
+	if !entry.Invert {
+		return raw, true
+	}
+	inv := reciprocalAtScale(raw, DefaultDecimals)
+	return inv, inv.Sign() > 0
 }
 
 // resolveFeedEntry returns the registry entry for feedID, or — when
