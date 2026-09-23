@@ -2260,38 +2260,53 @@ func crossCheckPairs(sc config.SupplyConfig, passphrase string, logger *slog.Log
 
 	pairs := make([]supply.CrossCheckPair, 0, len(sacIDs))
 	for _, sacID := range sacIDs {
-		raw := sc.SACWrappers[sacID]
-		classicKey, asset, err := crossCheckClassicKey(raw)
-		if errors.Is(err, errNoClassicSide) {
-			continue
-		}
+		pair, skip, err := crossCheckPairFor(sacID, sc.SACWrappers[sacID], watchedClassic, watchedSEP41, fullyWrapped, passphrase, logger)
 		if err != nil {
-			return nil, fmt.Errorf("sac_wrappers[%q] = %q: %w", sacID, raw, err)
+			return nil, err
 		}
-		_, classicWatched := watchedClassic[classicKey]
-		_, sacWatched := watchedSEP41[sacID]
-		if !classicWatched || !sacWatched {
-			logger.Warn("cross-check: sac_wrappers entry NOT cross-checked; add both sides to the watched sets to enable it",
-				"sac_id", sacID, "classic_key", classicKey,
-				"in_watched_classic_assets", classicWatched,
-				"in_watched_sep41_contracts", sacWatched)
+		if skip {
 			continue
 		}
-		derived, ok := xdrjson.SACContractID(asset.String(), passphrase)
-		if !ok {
-			return nil, fmt.Errorf("sac_wrappers[%q] = %q: cannot derive the asset's SAC contract id", sacID, raw)
-		}
-		if derived != sacID {
-			return nil, fmt.Errorf("sac_wrappers[%q] = %q: the SAC of %s on this network is %s, so the cross-check would compare unrelated tokens",
-				sacID, raw, classicKey, derived)
-		}
-		wrapClass := supply.WrapClassPartial
-		if _, ok := fullyWrapped[sacID]; ok {
-			wrapClass = supply.WrapClassFull
-		}
-		pairs = append(pairs, supply.CrossCheckPair{ClassicKey: classicKey, SACKey: sacID, WrapClass: wrapClass})
+		pairs = append(pairs, pair)
 	}
 	return pairs, nil
+}
+
+// crossCheckPairFor derives sacID's [supply.CrossCheckPair] from its
+// sac_wrappers value raw, or skip=true for the reasons [crossCheckPairs]
+// continues past an entry instead of returning it: a pure SEP-41 self-map
+// (no classic side), or an entry missing from one of the watched sets
+// (logged at Warn so it isn't silently disabled).
+func crossCheckPairFor(sacID, raw string, watchedClassic, watchedSEP41, fullyWrapped map[string]struct{}, passphrase string, logger *slog.Logger) (pair supply.CrossCheckPair, skip bool, err error) {
+	classicKey, asset, err := crossCheckClassicKey(raw)
+	if errors.Is(err, errNoClassicSide) {
+		return supply.CrossCheckPair{}, true, nil
+	}
+	if err != nil {
+		return supply.CrossCheckPair{}, false, fmt.Errorf("sac_wrappers[%q] = %q: %w", sacID, raw, err)
+	}
+	_, classicWatched := watchedClassic[classicKey]
+	_, sacWatched := watchedSEP41[sacID]
+	if !classicWatched || !sacWatched {
+		logger.Warn("cross-check: sac_wrappers entry NOT cross-checked; add both sides to the watched sets to enable it",
+			"sac_id", sacID, "classic_key", classicKey,
+			"in_watched_classic_assets", classicWatched,
+			"in_watched_sep41_contracts", sacWatched)
+		return supply.CrossCheckPair{}, true, nil
+	}
+	derived, ok := xdrjson.SACContractID(asset.String(), passphrase)
+	if !ok {
+		return supply.CrossCheckPair{}, false, fmt.Errorf("sac_wrappers[%q] = %q: cannot derive the asset's SAC contract id", sacID, raw)
+	}
+	if derived != sacID {
+		return supply.CrossCheckPair{}, false, fmt.Errorf("sac_wrappers[%q] = %q: the SAC of %s on this network is %s, so the cross-check would compare unrelated tokens",
+			sacID, raw, classicKey, derived)
+	}
+	wrapClass := supply.WrapClassPartial
+	if _, ok := fullyWrapped[sacID]; ok {
+		wrapClass = supply.WrapClassFull
+	}
+	return supply.CrossCheckPair{ClassicKey: classicKey, SACKey: sacID, WrapClass: wrapClass}, false, nil
 }
 
 // errNoClassicSide marks a wrapper value naming a Soroban contract (a
