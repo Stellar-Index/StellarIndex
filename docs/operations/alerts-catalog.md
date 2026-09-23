@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 58 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 177 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 178 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -103,6 +103,7 @@ enforced 2026-04-23 onward).
 | `stellarindex_ingestion_discovery_record_failures` | `increase(stellarindex_discovery_record_failures_total[10m])` | > 0 sustained 10 min | ticket | [discovery-drops](runbooks/discovery-drops.md) |
 | `stellarindex_ingestion_duplicate_flood` | `rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])` UNLESS `rate(...{outcome="new"}[10m]) > 0` per source | duplicates > 0.5/s with zero-or-absent new for 10 min | ticket | [ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md) |
 | `stellarindex_ingestion_source_insert_stale` | `time() - stellarindex_source_last_insert_unix` per source AND `source_enabled=1` | > 3600 s for ≥ 10 min | ticket | [ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md) |
+| `stellarindex_ingestion_dispatcher_tx_skips` | `increase(stellarindex_dispatcher_tx_read_errors_total\|stellarindex_dispatcher_tx_event_read_errors_total\|stellarindex_dispatcher_entry_meta_unsupported_total[15m])` | > 0, `for: 0m` — any one skipped transaction tickets at once | ticket | [dispatcher-tx-skips](runbooks/dispatcher-tx-skips.md) |
 | `stellarindex_dex_trade_unit_ratio_detected` | `sum by (source) (increase(stellarindex_dex_trade_unit_ratio_total[30m]))` | > 25 per source, sustained 5 min | ticket | [dex-trade-unit-ratio](runbooks/dex-trade-unit-ratio.md) |
 | `stellarindex_ingest_gap_detected` | `max by (source) (stellarindex_ingest_gap_max_size_ledgers) > 1000` per (source, table) | sustained 15 min | page | [ingest-gap-detected](runbooks/ingest-gap-detected.md) + per-source [sdex-gap-detected](runbooks/sdex-gap-detected.md) / [projector-replay](runbooks/projector-replay.md) |
 | `stellarindex_ingest_gap_detector_silent` | `(time() - stellarindex_ingest_gap_detector_last_success_unix) > 8h` OR detector metric absent for 15 min OR `runs_total{outcome="error"}` present now + 8h ago with no last-success stamp in 8h | for ≥ 10 min | ticket | [ingest-gap-detector-silent](runbooks/ingest-gap-detector-silent.md) |
