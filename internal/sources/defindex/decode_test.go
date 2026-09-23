@@ -1282,6 +1282,43 @@ func TestDecode_dfeesFeeIndexOrdering(t *testing.T) {
 	}
 }
 
+// TestDecode_dfeesToleratesAdditiveTupleField pins forward-compat for
+// a future vault upgrade that appends a third element to each
+// distributed_fees tuple: token and amount (positions 0, 1) must
+// still decode, with the extra trailing element ignored rather than
+// erroring the whole event (Q068).
+func TestDecode_dfeesToleratesAdditiveTupleField(t *testing.T) {
+	t.Parallel()
+	d := NewDecoder()
+	ev := events.Event{
+		ContractID:     MainnetVaults[0],
+		Ledger:         61_000_001,
+		LedgerClosedAt: "2026-08-02T00:00:00Z",
+		TxHash:         "dfeestx-additive",
+		EventIndex:     5,
+		Topic:          []string{TopicPrefixVault, TopicSymbolDFees},
+		Value: mustB64(t, mapSCVal(t,
+			mapEntry(t, "distributed_fees", vecSCVal(t,
+				vecSCVal(t, addrSCVal(makeContractAddress(t, 0xA1)), i128SCVal(big.NewInt(33)), i128SCVal(big.NewInt(99))),
+			)),
+		)),
+	}
+	out, err := d.Decode(ev)
+	if err != nil {
+		t.Fatalf("Decode(additive-tuple dfees) err = %v, want nil (extra trailing field tolerated)", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("emitted %d events, want 1", len(out))
+	}
+	fe, ok := out[0].(DFeesEvent)
+	if !ok {
+		t.Fatalf("out[0] is %T, want defindex.DFeesEvent", out[0])
+	}
+	if got, want := fe.Fee.Amount.String(), "33"; got != want {
+		t.Errorf("Amount = %q, want %q (position 1, extra field ignored)", got, want)
+	}
+}
+
 // TestDecode_dfeesMalformedBodyErrors pins fail-loud (not silent-drop)
 // for a dfees body that doesn't match the PROVEN schema — unlike the
 // unmodelled admin topics, a broken dfees body is a genuine decode
