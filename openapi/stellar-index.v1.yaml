@@ -10140,8 +10140,8 @@ paths:
                     soroban_event_count: 1105
                     total_coins: '1054439020873472865'
                     fee_pool: '100768724524038'
-                    base_fee: 100
-                    base_reserve: 5000000
+                    base_fee: '100'
+                    base_reserve: '5000000'
                   - sequence: 63316165
                     close_time: '2026-07-03T22:36:56Z'
                     hash: 58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08
@@ -10152,8 +10152,8 @@ paths:
                     soroban_event_count: 708
                     total_coins: '1054439020873472865'
                     fee_pool: '100768720236504'
-                    base_fee: 100
-                    base_reserve: 5000000
+                    base_fee: '100'
+                    base_reserve: '5000000'
                   next_before: 63316165
                 as_of: '2026-07-03T22:37:10.384389772Z'
                 flags:
@@ -10204,8 +10204,8 @@ paths:
                   soroban_event_count: 1105
                   total_coins: '1054439020873472865'
                   fee_pool: '100768724524038'
-                  base_fee: 100
-                  base_reserve: 5000000
+                  base_fee: '100'
+                  base_reserve: '5000000'
                 as_of: '2026-07-03T22:39:59.693177604Z'
                 flags:
                   stale: false
@@ -10252,8 +10252,8 @@ paths:
                     close_time: '2026-07-03T22:37:01Z'
                     index: 0
                     source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
-                    fee_charged: 600
-                    max_fee: 120000
+                    fee_charged: '600'
+                    max_fee: '120000'
                     operation_count: 6
                     successful: false
                     result_code: -1
@@ -10302,8 +10302,8 @@ paths:
                   close_time: '2026-07-03T22:37:01Z'
                   index: 0
                   source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
-                  fee_charged: 600
-                  max_fee: 120000
+                  fee_charged: '600'
+                  max_fee: '120000'
                   operation_count: 6
                   successful: false
                   result_code: -1
@@ -11525,8 +11525,8 @@ paths:
                     close_time: '2026-07-03T21:02:29Z'
                     index: 7
                     source_account: GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N
-                    fee_charged: 200
-                    max_fee: 13935
+                    fee_charged: '200'
+                    max_fee: '13935'
                     operation_count: 1
                     successful: true
                     result_code: 1
@@ -12770,8 +12770,8 @@ components:
         soroban_event_count: { type: integer, description: "Contract events emitted by SUCCESSFUL transactions only: a failed transaction's events are rolled back by the protocol, so this count has a different basis from tx_count/op_count." }
         total_coins: { type: string, description: XLM stroops as a string (exceeds 2^53). }
         fee_pool: { type: string }
-        base_fee: { type: integer }
-        base_reserve: { type: integer }
+        base_fee: { type: string, description: "Base fee per operation in stroops, as a decimal string." }
+        base_reserve: { type: string, description: "Base reserve in stroops, as a decimal string." }
     TxSummary:
       type: object
       description: Transaction summary (in ledger + tx listings).
@@ -12781,8 +12781,8 @@ components:
         close_time: { type: string, format: date-time }
         index: { type: integer }
         source_account: { type: string }
-        fee_charged: { type: integer }
-        max_fee: { type: integer, description: "The fee bid that bounds fee_charged: on a fee bump, the fee payer's bid (the inner transaction's is fee_bump.inner_max_fee)." }
+        fee_charged: { type: string, description: "Fee charged in stroops, as a decimal string." }
+        max_fee: { type: string, description: "The fee bid that bounds fee_charged, as a decimal string: on a fee bump, the fee payer's bid (the inner transaction's is fee_bump.inner_max_fee)." }
         operation_count: { type: integer }
         successful: { type: boolean, description: "Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record)." }
         result_code: { type: integer, description: Raw XDR TransactionResultCode (0 = success; negatives are failure reasons). }
@@ -12810,7 +12810,7 @@ components:
           properties:
             fee_account: { type: string, description: The account that paid the fee. }
             inner_hash: { type: string, description: "The inner transaction's hash. Omitted when the result carried no inner result pair." }
-            inner_max_fee: { type: integer, description: "The inner transaction's own fee bid." }
+            inner_max_fee: { type: string, description: "The inner transaction's own fee bid, in stroops, as a decimal string." }
             inner_result_code: { type: integer, description: "Raw XDR TransactionResultCode of the inner transaction. Present with inner_hash." }
             inner_result: { type: string, description: "Human-readable slug for inner_result_code (e.g. tx_failed, tx_insufficient_balance) — why the inner transaction failed. Present with inner_hash." }
     Operation:

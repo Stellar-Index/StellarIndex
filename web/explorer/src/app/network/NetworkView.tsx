@@ -536,7 +536,7 @@ function HeroStats({ stats: s, tip }: { stats?: NetworkStats; tip?: Ledger }) {
           label="Base fee"
           value={
             tip?.base_fee != null
-              ? `${tip.base_fee.toLocaleString('en-US')}`
+              ? Number(tip.base_fee).toLocaleString('en-US')
               : '—'
           }
           sub="stroops / op"
