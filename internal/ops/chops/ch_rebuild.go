@@ -755,17 +755,16 @@ func chRebuild(args []string) error { //nolint:gocognit,gocyclo,funlen // linear
 			"Note the [from,to] window and source set on the change record, and re-check " +
 			"the affected sources' reconcile before trusting the next /v1/coverage verdict.")
 	}
-	// Buffer-pass range guard (2026-07-05): the event + sep41 passes
-	// buffer a whole invocation's decoded events in this process. A
+	// Buffer-pass range guard (2026-07-05): every decode pass
+	// buffers a whole invocation's decoded events in this process. A
 	// 12.9M-ledger -sep41 run ballooned until the kernel killed it
 	// silently — and the memory pressure swapped galexie's captive
 	// core into an invalid-local-state wedge (11h lake stall). The
 	// tool's docs always said "window your invocation"; docs aren't
 	// guards. 2M ledgers ≈ a comfortable single-window ceiling.
 	const maxBufferedRange = 2_000_000
-	buffering := *includeSEP41 || len(srcFilter) == 0 || anyEventSourceEnabled(cat, srcFilter)
-	if buffering && *to-*from > maxBufferedRange {
-		return fmt.Errorf("ch-rebuild: range [%d,%d] spans %d ledgers — the event/sep41 passes buffer in-process; window invocations to <=%d ledgers (loop externally, resume per window)",
+	if chRebuildBuffers(cat, sep41Cat, passes, enabled) && *to-*from > maxBufferedRange {
+		return fmt.Errorf("ch-rebuild: range [%d,%d] spans %d ledgers — every decode pass (event, sep41, sdex, contract-call) buffers in-process; window invocations to <=%d ledgers (loop externally, resume per window)",
 			*from, *to, *to-*from, maxBufferedRange)
 	}
 	// -preflight stops HERE: past the last refusal, before the first lake
@@ -1427,13 +1426,9 @@ func dropReconSources(cat []reconSource, names ...string) []reconSource {
 	return out
 }
 
-// anyEventSourceEnabled reports whether the -sources filter selects at
-// least one event-decoder source (the buffering pass runs for those).
-func anyEventSourceEnabled(cat []reconSource, srcFilter map[string]bool) bool {
-	for _, src := range cat {
-		if src.dec != nil && srcFilter[src.name] {
-			return true
-		}
-	}
-	return false
+// chRebuildBuffers reports whether any pass of this invocation appends to
+// the in-process buffer. Every pass does, so it keys on the same selection
+// as the BackfillSafe gate rather than on event decoders alone.
+func chRebuildBuffers(cat, sep41Cat []reconSource, passes chRebuildPasses, enabled func(string) bool) bool {
+	return passes.sep41 || len(reDerivedSourcesInRun(cat, sep41Cat, passes, enabled)) > 0
 }
