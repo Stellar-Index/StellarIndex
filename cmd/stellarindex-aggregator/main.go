@@ -2549,14 +2549,11 @@ func (obsSupplyDivergenceEmitter) Duration(kind divergence.SupplyOutcomeKind, se
 	obs.SupplyDivergenceDurationSeconds.WithLabelValues(string(kind)).Observe(seconds)
 }
 
-// buildDivergenceReferences mirrors the API binary's helper of the
-// same name. Builds the CoinGecko + Chainlink HTTP reference clients
-// plus the on-chain oracle references (Reflector/Redstone/Band,
-// reading our own served oracle_updates rows) the
-// `divergence.Service` runs on each tick. Kept in lockstep with
-// `cmd/stellarindex-api/main.go::buildDivergenceReferences` —
-// drift here would mean the aggregator and API see different
-// divergence semantics for the same pair.
+// buildDivergenceReferences is the sole divergence reference builder:
+// the CoinGecko + Chainlink HTTP clients plus the on-chain oracle
+// references (Reflector/Redstone/Band, reading our own served
+// oracle_updates rows) the `divergence.Service` runs on each tick. The
+// API binary builds a cache-reading Service with no References.
 //
 // oracles may be nil (no Postgres) — the on-chain references are
 // skipped with a warning when any is enabled.
@@ -2662,8 +2659,7 @@ func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Log
 // buildOracleDivergenceReferences constructs the on-chain oracle
 // reference set (reflector-dex/cex/fx + redstone + band) per the
 // `[divergence.{reflector,redstone,band}]` gates. Split from
-// buildDivergenceReferences to stay under the funlen ceiling; same
-// lockstep rule with the API binary applies.
+// buildDivergenceReferences to stay under the funlen ceiling.
 func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
 	anyEnabled := cfg.Reflector.Enabled || cfg.Redstone.Enabled || cfg.Band.Enabled
 	if oracles == nil {
