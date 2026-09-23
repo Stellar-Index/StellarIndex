@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -395,7 +396,7 @@ func (s *Server) parseAndValidateRegister(w http.ResponseWriter, r *http.Request
 	}
 
 	req.Name = strings.TrimSpace(req.Name)
-	if len(req.Name) > 128 {
+	if utf8.RuneCountInString(req.Name) > 128 {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/name-too-long",
 			"Name too long", http.StatusBadRequest,
