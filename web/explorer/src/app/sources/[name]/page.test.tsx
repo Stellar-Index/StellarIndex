@@ -20,8 +20,11 @@ vi.mock('../../dexes/[source]/SourceTopChart', () => ({
   SourceTopChart: () => <div />,
 }));
 
-import { buildFetchData } from '@/lib/buildFetch';
-import SourceDetailPage from './page';
+import { buildFetchData, failBuild } from '@/lib/buildFetch';
+import SourceDetailPage, {
+  generateMetadata,
+  generateStaticParams,
+} from './page';
 
 const SOURCE = { name: 'soroswap', class: 'exchange', subclass: 'dex' };
 
@@ -70,5 +73,35 @@ describe('SourceDetailPage top markets', () => {
       screen.queryByText(/Market list unavailable/),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/0 pairs/)).toBeInTheDocument();
+  });
+});
+
+// T291: functions/sources/[[path]].js serves /sources/shell/ for every
+// source registered after the build, so the build must bake that document
+// and it must not be the fail-hard "promised but unlisted" path.
+describe('SourceDetailPage runtime shell', () => {
+  it('bakes the shell sentinel alongside the listed sources', async () => {
+    mockFetches([]);
+    expect(await generateStaticParams()).toEqual([
+      { name: 'soroswap' },
+      { name: 'shell' },
+    ]);
+  });
+
+  it('renders the shell without a build fetch or a build failure', async () => {
+    vi.mocked(buildFetchData).mockClear();
+    vi.mocked(failBuild).mockClear();
+    await SourceDetailPage({ params: Promise.resolve({ name: 'shell' }) });
+    expect(buildFetchData).not.toHaveBeenCalled();
+    expect(failBuild).not.toHaveBeenCalled();
+  });
+
+  it('keeps the shell out of the index and clears the canonical', async () => {
+    const meta = await generateMetadata({
+      params: Promise.resolve({ name: 'shell' }),
+    });
+    expect(meta.robots).toMatchObject({ index: false });
+    expect(meta).toHaveProperty('alternates');
+    expect(meta.alternates?.canonical).toBeUndefined();
   });
 });

@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 
 // Wire shapes from the generated OpenAPI contract (src/api/types.ts,
 // `make web-generate-api`).
@@ -7,6 +8,7 @@ import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
+import { EmbedPairPathView } from './EmbedPairPathView';
 import { LiveChangeChip } from '../../LiveChangeChip';
 import { isCIStub } from '@/lib/buildFetch';
 import { shortAssetText } from '@/lib/asset-label';
@@ -33,8 +35,14 @@ function decodePairSlug(slug: string): { base: string; quote: string } | null {
   return { base: decoded.slice(0, ix), quote: decoded.slice(ix + 1) };
 }
 
+// `shell` backs functions/embed/pair/[[path]].js for an id outside this
+// build's pre-render (T291) — see EmbedPairPathView. Every return path carries it.
+const SHELL = { pair: 'shell' };
+const isShell = (pair: string) => pair.toLowerCase() === 'shell';
+
 export async function generateStaticParams() {
   const fallback = [
+    SHELL,
     {
       pair: encodeURIComponent(
         `native${PAIR_SEPARATOR}USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN`,
@@ -52,7 +60,7 @@ export async function generateStaticParams() {
     const out = (env.data ?? [])
       .filter((m) => m.base && m.quote)
       .map((m) => ({ pair: `${m.base}${PAIR_SEPARATOR}${m.quote}` }));
-    return out.length > 0 ? out : fallback;
+    return out.length > 0 ? [...out, SHELL] : fallback;
   } catch {
     return fallback;
   }
@@ -64,6 +72,12 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { pair } = await params;
+  if (isShell(pair)) {
+    return {
+      title: 'Embeddable price widget',
+      robots: { index: false, follow: false },
+    };
+  }
   const decoded = decodePairSlug(pair);
   const label = decoded
     ? `${shortAssetText(decoded.base)} / ${shortAssetText(decoded.quote)}`
@@ -121,6 +135,13 @@ async function fetchChart(
  */
 export default async function EmbedPairPage({ params }: { params: Params }) {
   const { pair } = await params;
+  if (isShell(pair)) {
+    return (
+      <Suspense fallback={null}>
+        <EmbedPairPathView />
+      </Suspense>
+    );
+  }
   const decoded = decodePairSlug(pair);
   if (!decoded) {
     return (
@@ -143,9 +164,7 @@ export default async function EmbedPairPage({ params }: { params: Params }) {
   const change24hNum =
     price?.change_24h_pct != null ? Number(price.change_24h_pct) : null;
   const change24h =
-    change24hNum != null && Number.isFinite(change24hNum)
-      ? change24hNum
-      : null;
+    change24hNum != null && Number.isFinite(change24hNum) ? change24hNum : null;
 
   const baseLabel = shortAssetText(base);
   const quoteLabel = shortAssetText(quote);

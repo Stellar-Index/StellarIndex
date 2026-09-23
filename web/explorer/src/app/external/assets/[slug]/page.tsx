@@ -1,14 +1,16 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Suspense } from 'react';
 
-import { Panel } from '@/components/reveal';
-import { asExample, API_BASE_URL } from '@/api/client';
+import { API_BASE_URL } from '@/api/client';
 import { ogImageFor } from '@/lib/seo';
-import { formatSubunitPrice } from '@/lib/format';
-import { Badge, Breadcrumbs, Callout, Container } from '@/components/ui';
+import { Breadcrumbs, Callout, Container } from '@/components/ui';
 import { type GlobalAssetView } from '../../../assets/catalogue';
 import { isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
+
+import { ExternalAssetDetailView } from './ExternalAssetDetailView';
+import { ExternalAssetPathView } from './ExternalAssetPathView';
 
 /**
  * /external/assets/[slug] — detail page for a NON-Stellar reference
@@ -31,6 +33,12 @@ import { CURRENT_NETWORK } from '@/lib/networks';
 // 8s per fetch, matching the Stellar detail page's build budget.
 const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
+// `shell` backs functions/external/assets/[[path]].js for a slug added
+// after this build (T291) — see ExternalAssetPathView. Every return path
+// carries it: the Function needs the document on CI-stub builds too.
+const SHELL = { slug: 'shell' };
+const isShell = (slug: string) => slug.toLowerCase() === 'shell';
+
 export async function generateStaticParams() {
   // Build-time fetch of the external listing so every fiat / reference
   // coin gets a pre-rendered route. A single canonical fallback keeps
@@ -38,7 +46,7 @@ export async function generateStaticParams() {
   // Next refuses a dynamic route under output:'export' with zero
   // params. `btc` is a real reference-only catalogue slug, so the
   // fallback page renders real content rather than a stub.
-  const fallback = [{ slug: 'btc' }];
+  const fallback = [{ slug: 'btc' }, SHELL];
   if (isCIStub) return fallback;
   try {
     const res = await fetch(`${API_BASE_URL}/v1/external/assets?limit=500`, {
@@ -55,7 +63,7 @@ export async function generateStaticParams() {
         out.push({ slug: row.slug });
       }
     }
-    return out.length > 0 ? out : fallback;
+    return out.length > 0 ? [...out, SHELL] : fallback;
   } catch {
     return fallback;
   }
@@ -105,6 +113,18 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { slug } = await params;
+  // One baked document answers every unlisted slug: generic, noindex, and
+  // an explicit empty `alternates` so the root layout's canonical is
+  // cleared rather than inherited (F095).
+  if (isShell(slug)) {
+    return {
+      title: 'External asset',
+      description:
+        'Non-Stellar reference asset detail, rendered live from the Stellar Index API.',
+      robots: { index: false, follow: true },
+      alternates: {},
+    };
+  }
   const res = await fetchExternalAsset(slug);
   const view = res.status === 'ok' ? res.view : null;
   const name = view?.name ?? view?.ticker ?? slug;
@@ -137,6 +157,13 @@ export default async function ExternalAssetDetailPage({
   params: Params;
 }) {
   const { slug } = await params;
+  if (isShell(slug)) {
+    return (
+      <Suspense fallback={null}>
+        <ExternalAssetPathView />
+      </Suspense>
+    );
+  }
   const result = await fetchExternalAsset(slug);
 
   if (result.status !== 'ok') {
@@ -193,150 +220,5 @@ export default async function ExternalAssetDetailPage({
     );
   }
 
-  const view = result.view;
-
-  const priceNum = view.price_usd != null ? Number(view.price_usd) : null;
-  const hasPrice =
-    priceNum != null && Number.isFinite(priceNum) && priceNum > 0;
-  const authorityLabel = view.price_authority
-    ? (PRICE_AUTHORITY_LABELS[view.price_authority] ?? view.price_authority)
-    : null;
-
-  return (
-    <Container className="space-y-8 py-8 sm:py-10">
-      <header className="space-y-3">
-        <Breadcrumbs
-          items={[
-            { label: 'Home', href: '/' },
-            { label: 'External assets', href: '/external/assets' },
-            { label: view.name || view.ticker },
-          ]}
-        />
-        <div className="text-brand-600 text-xs font-medium tracking-wider uppercase">
-          External asset
-        </div>
-        <h1 className="text-h1 text-ink flex flex-wrap items-baseline gap-3 font-semibold">
-          <span>{view.name}</span>
-          <span className="text-ink-muted font-mono text-base">
-            {view.ticker}
-          </span>
-          <ClassBadge cls={view.class} />
-        </h1>
-        {view.verified_issuer && (
-          <p className="text-ink-body text-sm">
-            Reference issuer:{' '}
-            <span className="font-medium">{view.verified_issuer}</span>
-          </p>
-        )}
-      </header>
-
-      <Panel
-        headingLevel={2}
-        title="Price"
-        hint={
-          view.price_as_of
-            ? `As of ${new Date(view.price_as_of).toISOString().replace('T', ' ').slice(0, 19)} UTC`
-            : undefined
-        }
-        source={asExample('/v1/external/assets/{slug}', { slug: view.slug })}
-        bodyClassName="space-y-3"
-      >
-        <div className="flex flex-wrap items-baseline gap-4">
-          <span className="text-ink font-mono text-3xl tabular-nums">
-            {hasPrice ? `$${formatHeadlinePrice(priceNum)}` : '—'}
-          </span>
-          <span className="text-ink-muted text-sm">USD</span>
-          {authorityLabel && (
-            <span
-              className="bg-brand-50 text-brand-700 rounded-sm px-2 py-0.5 text-[11px] tracking-wider uppercase"
-              title="How this price was derived"
-            >
-              {authorityLabel}
-            </span>
-          )}
-        </div>
-        {!hasPrice && (
-          <p className="text-ink-muted text-sm">
-            No live USD price is currently available for this asset from our
-            off-chain feeds.
-          </p>
-        )}
-        {view.price_sources && view.price_sources.length > 0 && (
-          <p className="text-ink-muted text-xs">
-            Sources:{' '}
-            <span className="text-ink-body font-mono">
-              {view.price_sources.join(', ')}
-            </span>
-          </p>
-        )}
-      </Panel>
-
-      <Panel
-        headingLevel={2}
-        title="About"
-        bodyClassName="space-y-3 text-sm text-ink-body"
-      >
-        {view.description && (
-          <p className="leading-relaxed">{view.description}</p>
-        )}
-        <p className="text-ink-muted leading-relaxed">
-          <span className="text-ink-body font-medium">{view.name}</span> is a
-          non-Stellar{' '}
-          {view.class === 'fiat' ? 'fiat currency' : 'reference asset'} tracked
-          by Stellar Index for pricing — it is{' '}
-          <span className="font-medium">not issued on Stellar</span>. We index
-          it from off-chain venues and reference feeds so on-Stellar pairs (and
-          the aggregated VWAP) have a fiat/reference anchor. Stellar-issued
-          assets live on{' '}
-          <Link
-            href="/assets"
-            className="text-brand-600 hover:text-brand-700 font-medium"
-          >
-            /assets
-          </Link>
-          .
-        </p>
-      </Panel>
-
-      <p className="text-ink-muted text-sm">
-        <Link
-          href="/external/assets"
-          className="text-brand-600 hover:text-brand-700 font-medium"
-        >
-          ← External assets
-        </Link>
-      </p>
-    </Container>
-  );
-}
-
-// Human-readable labels for GlobalAssetView.price_authority — the tier
-// of ComputeGlobalPrice's fallback chain that produced the headline.
-const PRICE_AUTHORITY_LABELS: Record<string, string> = {
-  vwap_native: 'Native VWAP',
-  aggregator_avg: 'Aggregator average',
-  triangulated: 'Triangulated',
-};
-
-// formatHeadlinePrice mirrors the GlobalAssetView headline formatting
-// on the Stellar detail page's VerifiedCurrencyView: plain-decimal
-// significant digits for sub-milli prices (formatSubunitPrice, never
-// scientific notation — UXP-26), 2dp for large, 6dp otherwise.
-function formatHeadlinePrice(n: number): string {
-  if (n < 0.001) return formatSubunitPrice(n);
-  return n.toFixed(n >= 100 ? 2 : 6);
-}
-
-// ClassBadge renders the asset-class pill (Fiat / Crypto / Stablecoin),
-// tone-matched to the /assets directory table so the same class looks
-// the same everywhere.
-function ClassBadge({ cls }: { cls?: string }) {
-  if (!cls) {
-    return <Badge>reference</Badge>;
-  }
-  const tone: 'warn' | 'ok' | 'brand' =
-    cls === 'fiat' ? 'warn' : cls === 'stablecoin' ? 'ok' : 'brand';
-  const label =
-    cls === 'fiat' ? 'Fiat' : cls === 'stablecoin' ? 'Stablecoin' : 'Crypto';
-  return <Badge tone={tone}>{label}</Badge>;
+  return <ExternalAssetDetailView view={result.view} />;
 }

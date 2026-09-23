@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 import { LivePrice } from '../../LivePrice';
+import { EmbedAssetPathView } from './EmbedAssetPathView';
 import { LiveChangeChip } from '../../LiveChangeChip';
 
 // The /v1/assets row shape, derived from the generated OpenAPI
@@ -179,8 +181,13 @@ function fetchChartSparkline(
   return p;
 }
 
+// `shell` backs functions/embed/asset/[[path]].js for an id outside this
+// build's pre-render (T291) — see EmbedAssetPathView. Every return path carries it.
+const SHELL = { slug: 'shell' };
+const isShell = (slug: string) => slug.toLowerCase() === 'shell';
+
 export async function generateStaticParams() {
-  const fallback = [{ slug: 'XLM' }];
+  const fallback = [{ slug: 'XLM' }, SHELL];
   if (isCIStub) return fallback;
   try {
     const { slugs } = await getAssetIndex();
@@ -199,7 +206,7 @@ export async function generateStaticParams() {
         }
       }
     }
-    return out;
+    return [...out, SHELL];
   } catch {
     return fallback;
   }
@@ -211,6 +218,12 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { slug } = await params;
+  if (isShell(slug)) {
+    return {
+      title: 'Embeddable price widget',
+      robots: { index: false, follow: false },
+    };
+  }
   return {
     title: `${slug} — embeddable price widget`,
     description: `Iframe-friendly Stellar price ticker for ${slug}. Designed to be dropped into a customer site at any width.`,
@@ -263,6 +276,13 @@ async function fetchCoin(slug: string): Promise<Coin | null> {
  */
 export default async function EmbedAssetPage({ params }: { params: Params }) {
   const { slug } = await params;
+  if (isShell(slug)) {
+    return (
+      <Suspense fallback={null}>
+        <EmbedAssetPathView />
+      </Suspense>
+    );
+  }
   const [coin, index] = await Promise.all([fetchCoin(slug), getAssetIndex()]);
 
   if (!coin) {

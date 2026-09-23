@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { Suspense } from 'react';
 
 import { assetHrefFor } from '@/lib/fiat-slugs';
 import type { components } from '@/api/types';
@@ -6,6 +7,7 @@ import { API_BASE_URL } from '@/api/client';
 import { formatSubunitPrice } from '@/lib/format';
 
 import { LivePrice } from '../../LivePrice';
+import { EmbedCurrencyPathView } from './EmbedCurrencyPathView';
 import { isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -39,7 +41,16 @@ interface CurrencyDetail {
 
 const FALLBACK = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'CNY'];
 
+// `shell` backs functions/embed/currency/[[path]].js for an id outside this
+// build's pre-render (T291) — see EmbedCurrencyPathView. Every return path carries it.
+const SHELL = { ticker: 'shell' };
+const isShell = (ticker: string) => ticker.toLowerCase() === 'shell';
+
 export async function generateStaticParams() {
+  return [...(await listedTickers()), SHELL];
+}
+
+async function listedTickers(): Promise<{ ticker: string }[]> {
   if (isCIStub) return FALLBACK.map((ticker) => ({ ticker }));
   // Migrated from /v1/currencies → /v1/assets/verified (rc.48 +
   // F-1201 audit-2026-05-12). Filter to class=fiat to keep the
@@ -68,6 +79,12 @@ export async function generateMetadata({
   params: Params;
 }): Promise<Metadata> {
   const { ticker } = await params;
+  if (isShell(ticker)) {
+    return {
+      title: 'Embeddable currency widget',
+      robots: { index: false, follow: false },
+    };
+  }
   return {
     title: `${ticker.toUpperCase()} — embeddable currency widget`,
     description: `Iframe-friendly forex rate ticker for ${ticker.toUpperCase()} vs USD. Drop into any site at any width.`,
@@ -143,6 +160,13 @@ export default async function EmbedCurrencyPage({
   params: Params;
 }) {
   const { ticker } = await params;
+  if (isShell(ticker)) {
+    return (
+      <Suspense fallback={null}>
+        <EmbedCurrencyPathView />
+      </Suspense>
+    );
+  }
   const upper = ticker.toUpperCase();
   const [cur, series] = await Promise.all([
     fetchCurrency(upper),

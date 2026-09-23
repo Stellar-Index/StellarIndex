@@ -92,6 +92,12 @@ for path in \
   "/transactions/${PROBE_ID}" \
   "/insights/sponsors/G${PROBE_ID}" \
   "/insights/creators/G${PROBE_ID}" \
+  "/lending/C${PROBE_ID}" \
+  "/sources/${PROBE_ID}" \
+  "/external/assets/${PROBE_ID}" \
+  "/embed/asset/${PROBE_ID}" \
+  "/embed/currency/${PROBE_ID}" \
+  "/embed/pair/native~${PROBE_ID}" \
   ; do
   CODE=$(status_of "$SITE$path")
   [ "$CODE" = "200" ] || fail "long-tail shell $path → HTTP $CODE (CF Pages Function fallback broken)"
