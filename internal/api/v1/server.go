@@ -82,13 +82,23 @@ type ReadyChecker interface {
 // The comparison is `applied >= expected` (not `==`) on purpose: a schema
 // NEWER than the binary is the safe/expected state during a rolling deploy
 // (migrations run ahead of the swap) and after a rollback (old binary,
-// newer schema). Only an applied head BELOW the binary's expectation — or
-// a dirty row — is a mismatch.
+// newer schema). Only an applied head BELOW the binary's expectation is a
+// mismatch — a dirty row on its own is not, see [nonAtomicMigrationVersions].
 //
 // This constant MUST equal the head under migrations/; the parity test
 // TestExpectedSchemaVersionMatchesMigrationsHead fails CI if a migration
 // is added without bumping it.
 const ExpectedSchemaVersion uint = 164
+
+// nonAtomicMigrationVersions lists migration numbers whose up.sql commits
+// mid-file, breaking golang-migrate's one-transaction-per-file guarantee
+// (migrations/README.md's "Transactions" convention; 0030 is the corpus's
+// one exception, cold audit 2026-08-04). golang-migrate wraps every OTHER
+// migration in Postgres's implicit transaction, so a dirty flag at any
+// version NOT in this set means the failed attempt rolled back cleanly and
+// the schema is intact at version-1 — GH-1159. Only these versions leave a
+// genuinely unknown/partial schema when dirty.
+var nonAtomicMigrationVersions = map[uint]bool{30: true}
 
 // SchemaVersionReader reports the applied golang-migrate schema state
 // (schema_migrations.version + dirty). cmd/stellarindex-api adapts
@@ -123,11 +133,49 @@ func (c schemaVersionChecker) Ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema_migrations version: %w", err)
 	}
-	if dirty {
-		return fmt.Errorf("schema_migrations is dirty at version %d: a migration is partially applied — the binary must not serve against a half-migrated schema", version)
+	if dirty && nonAtomicMigrationVersions[version] {
+		return fmt.Errorf("schema_migrations is dirty at version %d: this migration is not atomic (explicit mid-file COMMIT) and its schema state cannot be inferred — the binary must not serve against a half-migrated schema", version)
 	}
-	if version < c.expected {
-		return fmt.Errorf("schema/binary mismatch: binary expects migrations head >= %d but only %d is applied — a deploy skipped migrations or the binary was swapped ahead of them", c.expected, version)
+	// Every OTHER migration runs in one implicit transaction, so a dirty
+	// flag means Postgres rolled the failed attempt back and the applied
+	// schema is really at version-1 (GH-1159). The dirty ROW itself still
+	// needs an operator `force`, tracked separately and non-critically by
+	// schemaDirtyChecker — it must not by itself drain the backend.
+	effective := version
+	if dirty && version > 0 {
+		effective = version - 1
+	}
+	if effective < c.expected {
+		return fmt.Errorf("schema/binary mismatch: binary expects migrations head >= %d but only %d is applied (dirty=%v) — a deploy skipped migrations or the binary was swapped ahead of them", c.expected, effective, dirty)
+	}
+	return nil
+}
+
+// schemaDirtyChecker is the NON-critical sibling of schemaVersionChecker:
+// it surfaces a dirty schema_migrations row as a readyz "degraded" flag
+// (visible to operators) without draining the backend, for the atomic
+// migrations where a dirty flag means a clean rollback rather than a
+// half-applied schema — see [nonAtomicMigrationVersions] and GH-1159.
+type schemaDirtyChecker struct {
+	reader SchemaVersionReader
+}
+
+// NewSchemaDirtyChecker builds the non-critical dirty-row visibility check.
+// Register it alongside [NewSchemaVersionChecker] against the same reader.
+func NewSchemaDirtyChecker(reader SchemaVersionReader) ReadyChecker {
+	return schemaDirtyChecker{reader: reader}
+}
+
+func (c schemaDirtyChecker) Name() string   { return "schema-dirty" }
+func (c schemaDirtyChecker) Critical() bool { return false }
+
+func (c schemaDirtyChecker) Ping(ctx context.Context) error {
+	version, dirty, err := c.reader.SchemaMigrationVersion(ctx)
+	if err != nil {
+		return fmt.Errorf("read schema_migrations version: %w", err)
+	}
+	if dirty {
+		return fmt.Errorf("schema_migrations is dirty at version %d — run `migrate force` once confirmed; the applied schema is otherwise intact and serving continues", version)
 	}
 	return nil
 }

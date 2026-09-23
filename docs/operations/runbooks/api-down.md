@@ -87,7 +87,8 @@ checks:
 | check | critical? | effect when red |
 | ----- | --------- | --------------- |
 | `postgres` (`storeChecker`) | yes | 503 |
-| `schema` (`v1.NewSchemaVersionChecker`, REC-06 2026-08-14) | yes | 503 — applied migration head is below what the binary was built against, or dirty |
+| `schema` (`v1.NewSchemaVersionChecker`, REC-06 2026-08-14) | yes | 503 — the applied schema (dirty rollbacks resolved to their pre-attempt version — GH-1159) is below what the binary was built against, or the dirty migration is the one non-atomic exception (`nonAtomicMigrationVersions`, currently just 0030) whose state can't be inferred |
+| `schema-dirty` (`v1.NewSchemaDirtyChecker`, GH-1159) | no | 200 + `status="degraded"` — schema_migrations is dirty but the rollback was atomic and the applied schema still satisfies the binary; needs an operator `force` but the API keeps serving on it |
 | `redis` (`redisChecker`) | no | 200 + `status="degraded"` |
 | `clickhouse` (`clickhouseChecker`, only when `storage.clickhouse_addr` is set) | no | 200 + degraded; the lake routes 503 separately via their own lake-readiness probe |
 
@@ -173,8 +174,9 @@ readyz 503 does **not** drop the upstream — customers get the real
       [`release-process.md`](../release-process.md) → Rollback.
       Preferred:
       `gh workflow run deploy.yml -f region=r1 -f version=<prev-tag> -f binaries=stellarindex-api`
-      (health-probes `/v1/healthz` and auto-rolls back on failure,
-      `configs/ansible/tasks/deploy-one-binary.yml`). Manual fallback:
+      (health-probes `/v1/readyz` and auto-rolls back on failure, GH-1167 —
+      was `/v1/healthz`; `configs/ansible/tasks/deploy-one-binary.yml`,
+      `api_health_path` in `deploy-binary.yml`). Manual fallback:
       `systemctl stop stellarindex-api && cp /usr/local/bin/stellarindex-api.prev-<prev-tag> /usr/local/bin/stellarindex-api && echo <prev-tag> > /var/lib/stellarindex/deployed-versions/stellarindex-api && systemctl start stellarindex-api`.
       On r1 there is **one** API instance: a rollback is a
       stop/swap/start and is itself a brief full outage — there is

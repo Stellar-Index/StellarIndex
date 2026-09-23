@@ -319,10 +319,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	checks := []v1.ReadyChecker{
 		storeChecker{s: store},
 		// REC-06 (audit-2026-08-14): assert the applied schema head is
-		// at least what this binary was built against (and not dirty).
-		// Critical, so a migrations-skipped/binary-swap mismatch drains
-		// the backend (503) instead of serving stale data behind a 200.
+		// at least what this binary was built against. Critical, so a
+		// migrations-skipped/binary-swap mismatch drains the backend
+		// (503) instead of serving stale data behind a 200. A dirty row
+		// alone is no longer sufficient here — see the checker's doc.
 		v1.NewSchemaVersionChecker(schemaChecker{db: store.DB()}),
+		// GH-1159: non-critical sibling that surfaces a dirty row as a
+		// readyz "degraded" flag for operators to `force` without
+		// draining the fleet over a migration that rolled back cleanly.
+		v1.NewSchemaDirtyChecker(schemaChecker{db: store.DB()}),
 	}
 	if rdb != nil {
 		checks = append(checks, redisChecker{rdb: rdb})

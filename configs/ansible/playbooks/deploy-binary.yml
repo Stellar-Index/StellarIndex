@@ -12,7 +12,7 @@
 #   binaries_csv         — comma-separated list (e.g. "stellarindex-api,stellarindex-indexer")
 #   local_dist_dir       — path on the controller (Action runner) holding
 #                          the binaries; each is named "<binary>-linux-amd64"
-#   health_grace_seconds — sleep before /v1/healthz probe (api only)
+#   health_grace_seconds — sleep before /v1/readyz probe (api only)
 #   pgbackrest_backup_enabled — "true" on hosts with a pgBackRest
 #                          stellarindex stanza (r1); "false" on the
 #                          test-net VMs, which have no pgbackrest at all
@@ -28,7 +28,11 @@
 #      across the same filesystem; mv is just a wrapper around it).
 #   5. systemctl restart <binary>.
 #   6. Health probe:
-#         api → curl http://127.0.0.1:3000/v1/healthz expects 200
+#         api → curl http://127.0.0.1:3000/v1/readyz expects 200 (GH-1167:
+#           was /v1/healthz, a constant-200 liveness probe that never
+#           touches the schema/DB checkers HAProxy's readyz-based
+#           routing decision depends on — a binary readyz would refuse
+#           could pass this gate, HAProxy would then drain every backend)
 #         indexer / aggregator / other → systemctl is-active expects "active"
 #      after `health_grace_seconds` to give the service a moment to
 #      open its listening sockets.
@@ -44,7 +48,12 @@
     binary_list: "{{ binaries_csv.split(',') | map('trim') | list }}"
     install_dir: /usr/local/bin
     api_port: 3000
-    api_health_path: /v1/healthz
+    # GH-1167: was /v1/healthz (constant 200, touches nothing) while
+    # HAProxy routes on /v1/readyz (checks Postgres + the REC-06 schema
+    # version — critical checks drain the backend on failure). A binary
+    # readyz would refuse used to pass the deploy gate and then get
+    # drained by every backend the moment traffic hit it.
+    api_health_path: /v1/readyz
     # CLI tools — no systemd service to restart, no health probe.
     # The deploy steps short-circuit to a `<binary> -version`
     # smoke test for these. Adding a new daemon binary? Don't
@@ -224,6 +233,31 @@
       # working while migrate gets a mangled DSN and fails 28P01, or worse
       # runs the tail of the secret as root (deploy-ansible-secrets-5).
       # POSIX loop (this runs under /bin/sh); same reader as run-heavy-job.sh.
+      #
+      # PGOPTIONS (GH-1166): the 2026-07-18 deploy plan recorded "apply
+      # with a short lock_timeout+retry in a low-write window" as the
+      # mitigation for a DDL lock convoy on a hot table — an ACCESS
+      # EXCLUSIVE request (0110 holds one across 24 ALTERs) queues behind
+      # a long read and PostgreSQL's FIFO lock queue then blocks every
+      # later reader of that table too, with no bound. That was never
+      # implemented anywhere on the migrate path. stellarindex-migrate runs
+      # golang-migrate's database/postgres driver, which is lib/pq; lib/pq
+      # reads PGOPTIONS as backend startup options (conn.go parseEnviron)
+      # — same effect as a session SET before every migration, without
+      # editing 160+ immutable files. An `options=` param in
+      # -e migrate_dsn=… REPLACES this whole string (lib/pq: DSN beats
+      # env), so a long migration that needs more than 5min passes
+      # `options=-c lock_timeout=5s -c statement_timeout=<N>` URL-encoded
+      # there. lock_timeout fails FAST on a queued
+      # lock instead of hanging; statement_timeout bounds one runaway
+      # statement. A failure here aborts the deploy (fail-closed) instead
+      # of hanging the fleet; retry from a low-write window per the
+      # runbook. `timeout 900` below is belt-and-braces for a hang that
+      # ISN'T a Postgres lock wait (a wedged connection, a binary bug) —
+      # ansible.builtin.shell/command have no task-level timeout keyword
+      # of their own, so this wraps the invocation instead.
+      environment:
+        PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=5min"
       ansible.builtin.shell:
         cmd: |
           set -eu
@@ -236,7 +270,7 @@
             esac
           done < /etc/default/stellarindex
           {% endif %}
-          /usr/local/bin/stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up
+          timeout 900 /usr/local/bin/stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up
       register: migrate_result
       # `migrated to version` is what cmdUp actually prints on success; its
       # only other output is "already at latest version — nothing to do".

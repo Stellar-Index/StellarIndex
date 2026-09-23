@@ -98,6 +98,37 @@ func TestSchemaVersionChecker_Ping(t *testing.T) {
 	}
 }
 
+// TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain pins GH-1159:
+// a dirty row at an ATOMIC migration (anything but the 0030 exception)
+// means Postgres rolled the failed attempt back, so the schema is intact
+// at version-1. If that still satisfies ExpectedSchemaVersion, the
+// CRITICAL checker must pass — draining every backend over a rollback
+// that never touched the served schema is the defect. The dirty row
+// itself is still surfaced, but non-critically, by NewSchemaDirtyChecker.
+func TestSchemaVersionChecker_DirtyAtomicRollbackDoesNotDrain(t *testing.T) {
+	t.Parallel()
+	exp := v1.ExpectedSchemaVersion
+
+	// A routine migration well past the binary's expectation failed and
+	// rolled back cleanly; version-1 still satisfies exp.
+	reader := fakeSchemaReader{version: exp + 5, dirty: true}
+
+	c := v1.NewSchemaVersionChecker(reader)
+	if err := c.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping() = %v, want nil — an atomic dirty rollback above the expected head must not drain the backend", err)
+	}
+
+	dirty := v1.NewSchemaDirtyChecker(reader)
+	if dirty.Critical() {
+		t.Fatal("schema-dirty checker must be non-critical — it degrades readyz, it must not 503 it")
+	}
+	if err := dirty.Ping(context.Background()); err == nil {
+		t.Fatal("schema-dirty checker Ping() = nil, want an error surfacing the dirty row for operator visibility")
+	} else if !strings.Contains(err.Error(), "dirty") {
+		t.Fatalf("schema-dirty error = %q, want it to name the dirty row", err.Error())
+	}
+}
+
 // TestReadyz_SchemaMismatchDrainsBackend is the end-to-end gate
 // demonstration: with the REC-06 critical checker wired into the
 // readiness round reporting an applied head one below the binary's

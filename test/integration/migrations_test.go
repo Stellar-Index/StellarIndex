@@ -244,6 +244,57 @@ func TestMigrationsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestMigration0004DownRestoresCompression pins GH-1162: 0004's down
+// disabled compression on `trades` and named the compression policy
+// (0001) as the recovery — but that policy only SCHEDULES a job against
+// a table with timescaledb.compress enabled, and it can never recompress
+// a table 0004's own down just disabled it on. Migrates up through 0004,
+// then rolls back exactly that one migration and asserts compression is
+// still enabled, i.e. the down's terminal state matches 0001's, not a
+// permanently decompressed table.
+func TestMigration0004DownRestoresCompression(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	defer db.Close()
+
+	_, thisFile, _, _ := runtime.Caller(0)
+	migrationsDir := filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+
+	migrator, err := migrate.New("file://"+migrationsDir, dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	t.Cleanup(func() {
+		if srcErr, dbErr := migrator.Close(); srcErr != nil || dbErr != nil {
+			t.Logf("migrator close: src=%v db=%v", srcErr, dbErr)
+		}
+	})
+
+	if err := migrator.Migrate(4); err != nil {
+		t.Fatalf("migrate to version 4: %v", err)
+	}
+	// 0002 registers a CAGG refresh policy on trades' derived views;
+	// quiesce it so it can't race the DDL below (same 55P03 class as
+	// applyMigrations in storage_test.go).
+	quiesceCAGGRefreshPolicies(t, ctx, db)
+
+	assertCompressionEnabled(t, db, ctx, "trades", true)
+
+	// Roll back exactly 0004 (version 4 -> 3).
+	if err := migrator.Steps(-1); err != nil {
+		t.Fatalf("migrate down one step (0004): %v", err)
+	}
+
+	assertCompressionEnabled(t, db, ctx, "trades", true)
+}
+
 // ─── helpers ──────────────────────────────────────────────────────
 
 func assertTableExists(t *testing.T, db *sql.DB, ctx context.Context, name string) {
@@ -313,6 +364,26 @@ func assertHypertableExists(t *testing.T, db *sql.DB, ctx context.Context, name 
 	}
 	if !exists {
 		t.Errorf("expected hypertable %q to exist", name)
+	}
+}
+
+// assertCompressionEnabled checks timescaledb_information.hypertables'
+// compression_enabled column — the reloption an `ALTER TABLE ... SET
+// (timescaledb.compress = …)` flips, distinct from whether a
+// policy_compression JOB is scheduled (assertPolicyAttached): the job
+// can be attached and still fail on every run against a hypertable
+// this is false on (GH-1162).
+func assertCompressionEnabled(t *testing.T, db *sql.DB, ctx context.Context, hypertable string, want bool) {
+	t.Helper()
+	var got bool
+	err := db.QueryRowContext(ctx, `
+        SELECT compression_enabled FROM timescaledb_information.hypertables
+        WHERE hypertable_name = $1`, hypertable).Scan(&got)
+	if err != nil {
+		t.Fatalf("check compression_enabled on %q: %v", hypertable, err)
+	}
+	if got != want {
+		t.Errorf("hypertable %q compression_enabled = %v, want %v", hypertable, got, want)
 	}
 }
 

@@ -823,6 +823,12 @@ jobs:
         # A gate only the local pre-push hook runs is a gate that rots
         # unobserved — main sat red on `make verify` until wave D.
         run: bash scripts/ops/ch-ops-user-test.sh
+      - name: lint-migrations back-numbering self-test
+        # GH-1164: a new migration numbered into a gap below the head is
+        # invisible to `migrate up` on every deployment already past it.
+        # Runs pre-restore: lint-migrations.sh IS in the restore list, so
+        # after it this would only re-test the base ref's copy.
+        run: ./scripts/ci/lint-migrations-backnumber-test.sh
       - name: Restore trusted gate scripts from the base ref
         # CID-03 (audit-2026-07-23): every step below runs from the
         # PR-head checkout, including the SCRIPT FILES themselves — so
@@ -1418,6 +1424,16 @@ jobs:
         # injected backup_freshness_skip=true and skipped the backup gate.
         # No network, no gh.
         run: ./scripts/ci/deploy-inputs-test.sh
+      - name: migrate lock-timeout self-test
+        # GH-1166: both ansible call sites of `stellarindex-migrate up` must
+        # bound DDL lock waits (PGOPTIONS lock_timeout/statement_timeout)
+        # and wall time, or an ACCESS EXCLUSIVE request convoys every
+        # later reader of a hot table. No network, no ansible.
+        run: ./scripts/ci/lint-migrate-lock-timeout-test.sh
+      - name: deploy-probe parity self-test
+        # GH-1167: the deploy gate must probe /v1/readyz, the probe HAProxy
+        # routes on, not the constant-200 /v1/healthz.
+        run: ./scripts/ci/lint-deploy-probe-parity-test.sh
       - name: check-no-wrangler-cache-tracked
         # T535: docs/reference/api/.wrangler/cache/pages.json was a
         # Cloudflare Pages build-cache artifact committed to this public

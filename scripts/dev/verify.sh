@@ -276,6 +276,7 @@ echo "=== i128/NUMERIC ===" && ./scripts/ci/lint-i128.sh
 echo "=== Go typographic quotes ===" && python3 ./scripts/ci/lint-go-typographic-quotes.py
 echo "=== Go typographic quotes self-test ===" && ./scripts/ci/lint-go-typographic-quotes-test.sh
 echo "=== Migrations money ===" && ./scripts/ci/lint-migrations.sh
+echo "=== Migrations back-numbering self-test ===" && ./scripts/ci/lint-migrations-backnumber-test.sh
 echo "=== Migration backward-compat self-test ===" && ./scripts/ci/lint-migration-compat-test.sh
 echo "=== Migration immutability ===" && ./scripts/ci/lint-migration-immutability.sh
 echo "=== Migration immutability self-test ===" && ./scripts/ci/lint-migration-immutability-test.sh
@@ -308,6 +309,8 @@ echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy
 echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
 echo "=== verify-archive EnvironmentFile override-order self-test ===" && ./scripts/ci/verify-archive-env-order-test.sh
 echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy-inputs-test.sh
+echo "=== Migrate lock-timeout self-test ===" && ./scripts/ci/lint-migrate-lock-timeout-test.sh
+echo "=== Deploy-probe parity self-test ===" && ./scripts/ci/lint-deploy-probe-parity-test.sh
 echo "=== Wrangler build-cache tracking tripwire (T535) ===" && ./scripts/ci/check-no-wrangler-cache-tracked.sh
 echo "=== Wrangler build-cache tracking tripwire self-test ===" && bash scripts/ci/check-no-wrangler-cache-tracked-test.sh
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
