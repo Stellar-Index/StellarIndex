@@ -1343,12 +1343,53 @@ func TestRecognitionAttribution_TopicMatchedSourceFailsOnItsPoolGap(t *testing.T
 	}
 
 	// The per-source verdict must now FAIL — the structural always-true is gone.
-	ok, problems := sourceRecognitionOK(soroswapGenesis, recBySource["soroswap"])
+	ok, problems := sourceRecognitionOK(soroswapGenesis, 61_000_000, recBySource["soroswap"], false, priorProjection{})
 	if ok {
 		t.Fatal("soroswap recognition_ok stayed TRUE over a dropped topic on its own pool — the W1-flowcompleteness-1 lie")
 	}
 	if len(problems) != 1 || problems[0] != 61_000_000 {
 		t.Fatalf("recognition problem ledger not pinned into the watermark: %v", problems)
+	}
+}
+
+// TestSourceRecognitionOK_SkipRecognitionCarriesRatherThanAsserts pins #668:
+// -skip-recognition runs no scan at all, so `attributed` is always empty and
+// the fixed function must not fall back to reading that as recOK=true. It
+// must instead read the PRIOR verdict, exactly as substrateClaim already
+// does for -skip-substrate (C4-057) — confirming a clean prior that reached
+// this tip, and refusing to upgrade a missing, failing, or stale one.
+func TestSourceRecognitionOK_SkipRecognitionCarriesRatherThanAsserts(t *testing.T) {
+	const (
+		genesis = uint32(50_746_266)
+		hi      = uint32(63_900_000)
+	)
+
+	// No prior verdict at all: must not assert recognition_ok=true with zero
+	// evidence (this is the exact worked example in #668 — a never-seeded or
+	// freshly-decommissioned source under -skip-recognition).
+	if ok, problems := sourceRecognitionOK(genesis, hi, nil, true, priorProjection{}); ok {
+		t.Errorf("-skip-recognition with no prior verdict must not publish recognition_ok=true, got ok=true problems=%v", problems)
+	}
+
+	// A prior verdict exists but was itself FAILING: must not launder it into
+	// a clean verdict just because this run skipped the scan.
+	if ok, problems := sourceRecognitionOK(genesis, hi, nil, true, priorProjection{known: true, ok: false, tip: hi}); ok {
+		t.Errorf("-skip-recognition must not upgrade a FAILING prior recognition verdict, got ok=true problems=%v", problems)
+	}
+
+	// A prior clean verdict that stopped short of this run's tip leaves a
+	// band nobody ever scanned — must not silently extend the old claim.
+	if ok, problems := sourceRecognitionOK(genesis, hi, nil, true, priorProjection{known: true, ok: true, tip: hi - 10_000}); ok {
+		t.Errorf("-skip-recognition must not extend a prior verdict past the tip it reached, got ok=true problems=%v", problems)
+	}
+
+	// A prior clean verdict that already reached this tip is confirmable.
+	ok, problems := sourceRecognitionOK(genesis, hi, nil, true, priorProjection{known: true, ok: true, tip: hi})
+	if !ok {
+		t.Errorf("-skip-recognition must still confirm a prior clean verdict that reached this tip, got ok=false problems=%v", problems)
+	}
+	if problems != nil {
+		t.Errorf("a confirmed carry must add no new problem ledgers, got %v", problems)
 	}
 }
 

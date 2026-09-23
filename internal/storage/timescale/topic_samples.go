@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/domain"
@@ -364,7 +365,7 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 		// Per-pair deadline expiry (not the caller's ctx): degrade to
 		// "unsampled" instead of failing the whole recognition scan —
 		// the pathological-dormant-pair case this timeout exists for.
-		if pairCtx.Err() != nil && ctx.Err() == nil {
+		if pairTimeoutSkip(pairCtx, ctx, contractID, topic0Sym, from, to) {
 			return TopicSample{}, false, nil
 		}
 		return TopicSample{}, false, fmt.Errorf("timescale: oneSorobanTopicSample query: %w", err)
@@ -388,4 +389,23 @@ func (s *Store) oneSorobanTopicSample(ctx context.Context, contractID, topic0Sym
 	samp.MinLedger = uint32(ledger)
 	samp.MaxLedger = uint32(ledger)
 	return samp, true, nil
+}
+
+// pairTimeoutSkip reports whether a PHASE 3 per-pair fetch failed because
+// ITS OWN deadline (pairCtx, oneSorobanTopicSampleTimeout) expired, as
+// opposed to the caller's ctx being canceled or a genuine query error — and
+// logs it. #802: the comment above claimed this degraded to "a logged
+// skip", but nothing was ever logged, so this shape then produced no
+// recognition gap with zero trace of why — and a dormant, rarely-emitted
+// shape (exactly the class the recognition audit exists to catch) is the
+// one most likely to hit this timeout. Split out of oneSorobanTopicSample
+// so the classification is unit-testable without a live query.
+func pairTimeoutSkip(pairCtx, ctx context.Context, contractID, topic0Sym string, from, to uint32) bool {
+	if pairCtx.Err() == nil || ctx.Err() != nil {
+		return false
+	}
+	slog.Warn("timescale: oneSorobanTopicSample: per-pair timeout, shape unsampled",
+		"contract_id", contractID, "topic_0_sym", topic0Sym, "from", from, "to", to,
+		"timeout", oneSorobanTopicSampleTimeout)
+	return true
 }

@@ -85,7 +85,7 @@ func TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts(t *testing.T) {
 				t.Errorf("%s: gap on %s attributed as %v, want exactly [%d] on %s",
 					tc.source, contract, recBySource, gapLedger, tc.source)
 			}
-			ok, problems := sourceRecognitionOK(src.genesis, got)
+			ok, problems := sourceRecognitionOK(src.genesis, gapLedger, got, false, priorProjection{})
 			if ok {
 				t.Errorf("%s: recognition_ok stayed TRUE over an unhandled topic on %s (F071)", tc.source, contract)
 			}
