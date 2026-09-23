@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql/driver"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -140,6 +141,27 @@ func TestBoundedConnector_PositiveTimeoutSetsBackstop(t *testing.T) {
 	}
 	if stc.timeoutMS != (30 * time.Minute).Milliseconds() {
 		t.Fatalf("timeoutMS = %d, want %d (the generous background backstop)", stc.timeoutMS, (30 * time.Minute).Milliseconds())
+	}
+}
+
+// TestSessionConnConfig_PinsUTC: whatever zone the DSN or PGTZ names, in
+// whatever key spelling, every pool's startup packet carries exactly one
+// timezone and it is UTC — the precondition for the closed-bucket guards'
+// `now() - INTERVAL '1 day'` to match the UTC bucket grid across DST.
+func TestSessionConnConfig_PinsUTC(t *testing.T) {
+	t.Setenv("PGTZ", "Australia/Sydney")
+	cfg, err := sessionConnConfig("postgres://u@127.0.0.1:5432/db?sslmode=disable&TimeZone=Europe/London")
+	if err != nil {
+		t.Fatalf("sessionConnConfig: %v", err)
+	}
+	var zones []string
+	for k, v := range cfg.RuntimeParams {
+		if strings.EqualFold(k, "timezone") {
+			zones = append(zones, k+"="+v)
+		}
+	}
+	if len(zones) != 1 || cfg.RuntimeParams["timezone"] != "UTC" {
+		t.Fatalf("timezone runtime params = %v, want exactly [timezone=UTC]", zones)
 	}
 }
 

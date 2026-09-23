@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -120,9 +119,9 @@ func boundedConnector(dsn string, statementTimeout time.Duration, forceCustomPla
 	if statementTimeout <= 0 {
 		return nil, nil
 	}
-	cfg, err := pgx.ParseConfig(dsn)
+	cfg, err := sessionConnConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: pgx.ParseConfig: %w", err)
+		return nil, err
 	}
 	base := stdlib.GetConnector(*cfg)
 	return &statementTimeoutConnector{
