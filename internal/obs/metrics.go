@@ -93,6 +93,7 @@ func registerAppMetrics() {
 		AggregatorTicksTotal,
 		AggregatorVWAPWritesTotal,
 		AggregatorVWAPCacheWriteErrorsTotal,
+		AggregatorContributionWriteErrorsTotal,
 		AggregatorEmptyWindowsTotal,
 		AggregatorWindowTruncatedTotal,
 		AggregatorStreamPublishTotal,
@@ -2955,6 +2956,17 @@ var AggregatorVWAPCacheWriteErrorsTotal = prometheus.NewCounter(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_vwap_cache_write_errors_total",
 		Help: "Aggregator VWAP cache writes that returned a Redis error. Cumulative since process start.",
+	},
+)
+
+// AggregatorContributionWriteErrorsTotal counts per-(pair, window)
+// source-contribution batches the ContributionSink failed to persist.
+// The batch is written atomically, so a failure loses the whole bucket
+// rather than leaving a partial one whose weights do not sum to 1.
+var AggregatorContributionWriteErrorsTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_aggregator_contribution_write_errors_total",
+		Help: "Aggregator source-contribution batches that failed to persist to price_source_contributions. Cumulative since process start.",
 	},
 )
 

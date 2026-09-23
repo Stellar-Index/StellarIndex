@@ -2297,3 +2297,54 @@ func TestUSDVolumeForPairPerTrade_PerSourceDecimals(t *testing.T) {
 		}
 	})
 }
+
+// TestFilterForVWAP_LeavesInputUntouched pins that the class filter
+// returns a fresh slice instead of compacting survivors over the
+// caller's backing array.
+func TestFilterForVWAP_LeavesInputUntouched(t *testing.T) {
+	ts := time.Now()
+	trades := []canonical.Trade{
+		buildTradeFrom(t, "unregistered-venue", big.NewInt(10), big.NewInt(1), ts),
+		buildTradeFrom(t, "soroswap", big.NewInt(10), big.NewInt(2), ts),
+	}
+	got := filterForVWAP(trades)
+	if len(got) != 1 || got[0].Source != "soroswap" {
+		t.Fatalf("filtered = %d trades, want only the soroswap one", len(got))
+	}
+	if trades[0].Source != "unregistered-venue" || trades[1].Source != "soroswap" {
+		t.Errorf("input mutated to [%s %s], want [unregistered-venue soroswap]", trades[0].Source, trades[1].Source)
+	}
+}
+
+// errContributionSink always fails, standing in for a DB outage.
+type errContributionSink struct{ calls int }
+
+func (s *errContributionSink) RecordContributions(context.Context, ContributionRecord) error {
+	s.calls++
+	return errors.New("price_source_contributions: connection refused")
+}
+
+// TestFlushContributions_SinkFailureIsCounted pins that a lost
+// contribution bucket is visible on a metric, not only a Debug log line.
+func TestFlushContributions_SinkFailureIsCounted(t *testing.T) {
+	rdb, _ := newTestRedis(t)
+	sink := &errContributionSink{}
+	orch := New(&mockStore{}, rdb, Config{
+		Pairs:            []canonical.Pair{xlmUsdtPair(t)},
+		Windows:          []time.Duration{5 * time.Minute},
+		ContributionSink: sink,
+	})
+	trades := []canonical.Trade{
+		buildTrade(t, big.NewInt(100), big.NewInt(17), time.Now().Add(-time.Minute)),
+	}
+
+	before := testutil.ToFloat64(obs.AggregatorContributionWriteErrorsTotal)
+	orch.flushContributions(context.Background(), xlmUsdtPair(t), 5*time.Minute, trades, nil)
+
+	if sink.calls != 1 {
+		t.Fatalf("sink.calls = %d, want 1", sink.calls)
+	}
+	if got := testutil.ToFloat64(obs.AggregatorContributionWriteErrorsTotal) - before; got != 1 {
+		t.Errorf("contribution_write_errors_total delta = %v, want 1", got)
+	}
+}

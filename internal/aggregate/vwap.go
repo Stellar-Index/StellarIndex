@@ -35,16 +35,11 @@ func VWAP(trades []canonical.Trade) (*big.Rat, error) {
 	sumBase := new(big.Int)
 	for i := range trades {
 		t := &trades[i]
-		b := t.BaseAmount.BigInt()
-		if b.Sign() <= 0 {
+		if !priceable(t) {
 			continue
 		}
-		q := t.QuoteAmount.BigInt()
-		if q.Sign() <= 0 {
-			continue
-		}
-		sumBase.Add(sumBase, b)
-		sumQuote.Add(sumQuote, q)
+		sumBase.Add(sumBase, t.BaseAmount.BigInt())
+		sumQuote.Add(sumQuote, t.QuoteAmount.BigInt())
 	}
 	if sumBase.Sign() == 0 {
 		return nil, ErrNoTrades
@@ -52,20 +47,34 @@ func VWAP(trades []canonical.Trade) (*big.Rat, error) {
 	return new(big.Rat).SetFrac(sumQuote, sumBase), nil
 }
 
-// TotalBaseVolume returns Σ(BaseAmount_i) as an Amount.
+// priceable reports whether a trade belongs to the priced population:
+// both legs strictly positive. [VWAP], [TWAP], [SourceContributions] and
+// the Total*Volume sums share it so the price and the volumes served
+// beside it are computed over the same trades.
+func priceable(t *canonical.Trade) bool {
+	return t.BaseAmount.BigInt().Sign() > 0 && t.QuoteAmount.BigInt().Sign() > 0
+}
+
+// TotalBaseVolume returns Σ(BaseAmount_i) over the trades [VWAP] prices
+// from, so it is the exact denominator of the price served beside it.
 func TotalBaseVolume(trades []canonical.Trade) canonical.Amount {
 	sum := new(big.Int)
 	for i := range trades {
-		sum.Add(sum, trades[i].BaseAmount.BigInt())
+		if priceable(&trades[i]) {
+			sum.Add(sum, trades[i].BaseAmount.BigInt())
+		}
 	}
 	return canonical.NewAmount(sum)
 }
 
-// TotalQuoteVolume returns Σ(QuoteAmount_i) as an Amount.
+// TotalQuoteVolume returns Σ(QuoteAmount_i) over the trades [VWAP] prices
+// from, so it is the exact numerator of the price served beside it.
 func TotalQuoteVolume(trades []canonical.Trade) canonical.Amount {
 	sum := new(big.Int)
 	for i := range trades {
-		sum.Add(sum, trades[i].QuoteAmount.BigInt())
+		if priceable(&trades[i]) {
+			sum.Add(sum, trades[i].QuoteAmount.BigInt())
+		}
 	}
 	return canonical.NewAmount(sum)
 }
@@ -104,14 +113,10 @@ func SourceContributions(trades []canonical.Trade) []SourceContribution {
 	totalQuote := new(big.Int)
 	for i := range trades {
 		t := &trades[i]
-		b := t.BaseAmount.BigInt()
-		if b.Sign() <= 0 {
+		if !priceable(t) {
 			continue
 		}
-		q := t.QuoteAmount.BigInt()
-		if q.Sign() <= 0 {
-			continue
-		}
+		b, q := t.BaseAmount.BigInt(), t.QuoteAmount.BigInt()
 		a, ok := bySource[t.Source]
 		if !ok {
 			a = &accum{base: new(big.Int), quote: new(big.Int)}

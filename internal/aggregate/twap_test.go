@@ -68,24 +68,75 @@ func TestTWAP_AllZeroDurationReturnsErr(t *testing.T) {
 	}
 }
 
-func TestTWAP_SkipsZeroBaseTrades(t *testing.T) {
-	// The zero-base middle trade must not contribute to either the
-	// weighted sum or the duration accumulator.
+func TestTWAP_ZeroBaseTradeAbstains(t *testing.T) {
+	// The zero-base middle trade has no price, so it must not end the
+	// prevailing price's slot: 100 stays current until the next PRICED
+	// trade. Deleting its 30s slot from ΣΔt instead would give 150.
 	t0 := time.Unix(0, 0).UTC()
 	trades := []canonical.Trade{
 		mkTradeAt(1, 100, t0),
 		mkTradeAt(0, 999, t0.Add(30*time.Second)),
 		mkTradeAt(1, 200, t0.Add(60*time.Second)),
 	}
-	// Price 100 active t=0..30s (30s), skipped slot 30..60s,
-	// price 200 active 60..90s (30s).
-	// TWAP = (100*30 + 200*30) / 60 = 150.
+	// Price 100 active t=0..60s (60s), price 200 active 60..90s (30s).
+	// TWAP = (100*60 + 200*30) / 90 = 400/3.
 	got, err := aggregate.TWAP(trades, t0.Add(90*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Cmp(big.NewRat(150, 1)) != 0 {
-		t.Errorf("TWAP = %v, want 150", got)
+	if got.Cmp(big.NewRat(400, 3)) != 0 {
+		t.Errorf("TWAP = %v, want 400/3", got)
+	}
+}
+
+func TestTWAP_UnpriceableTradeDoesNotDeleteItsTimeSlot(t *testing.T) {
+	// 1 for 60s then 9 for 60s is 5.00 whatever unpriceable records
+	// (zero base, negative quote) sit between them.
+	t0 := time.Unix(0, 0).UTC()
+	trades := []canonical.Trade{
+		mkTradeAt(1, 1, t0),
+		mkTradeAt(0, 7, t0.Add(30*time.Second)),
+		mkTradeAt(1, -3, t0.Add(45*time.Second)),
+		mkTradeAt(1, 9, t0.Add(60*time.Second)),
+	}
+	got, err := aggregate.TWAP(trades, t0.Add(120*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cmp(big.NewRat(5, 1)) != 0 {
+		t.Errorf("TWAP = %v, want 5", got)
+	}
+}
+
+func TestTWAP_DescendingInputReturnsErrUnsortedTrades(t *testing.T) {
+	// Newest-first input: every interior Δt is negative, so without the
+	// ordering check the oldest trade (price 1) takes the whole window
+	// and is returned as the average. The true TWAP of this data is 5.
+	t0 := time.Unix(0, 0).UTC()
+	trades := []canonical.Trade{
+		mkTradeAt(1, 9, t0.Add(60*time.Second)),
+		mkTradeAt(1, 1, t0),
+	}
+	got, err := aggregate.TWAP(trades, t0.Add(120*time.Second))
+	if !errors.Is(err, aggregate.ErrUnsortedTrades) {
+		t.Fatalf("TWAP = %v, err = %v; want ErrUnsortedTrades", got, err)
+	}
+	if got != nil {
+		t.Errorf("TWAP returned price %v alongside ErrUnsortedTrades", got)
+	}
+}
+
+func TestTWAP_OutOfOrderUnpriceableTradeIsStillUnsorted(t *testing.T) {
+	// Ordering is checked over every record, priced or not: an
+	// out-of-order row is a caller bug regardless of its amounts.
+	t0 := time.Unix(0, 0).UTC()
+	trades := []canonical.Trade{
+		mkTradeAt(1, 1, t0.Add(10*time.Second)),
+		mkTradeAt(0, 5, t0),
+		mkTradeAt(1, 9, t0.Add(60*time.Second)),
+	}
+	if _, err := aggregate.TWAP(trades, t0.Add(120*time.Second)); !errors.Is(err, aggregate.ErrUnsortedTrades) {
+		t.Fatalf("err = %v, want ErrUnsortedTrades", err)
 	}
 }
 

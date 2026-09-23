@@ -54,18 +54,30 @@ func (s *Store) InsertPriceSourceContributions(ctx context.Context, rows []Price
 		    volume_usd   = EXCLUDED.volume_usd,
 		    trade_count  = EXCLUDED.trade_count
 	`
+	// One transaction: a batch is one bucket's weights, which only mean
+	// anything together (they sum to 1). A mid-batch failure must leave
+	// no rows rather than a committed prefix.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("timescale: InsertPriceSourceContributions begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
 	for _, r := range rows {
 		var volumeUSD any
 		if r.VolumeUSD != nil {
 			volumeUSD = *r.VolumeUSD
 		}
-		if _, err := s.db.ExecContext(ctx, q,
+		if _, err := tx.ExecContext(ctx, q,
 			r.AssetID, r.QuoteID, r.Bucket.UTC(), r.Source,
 			r.Weight, volumeUSD, r.TradeCount,
 		); err != nil {
 			return fmt.Errorf("timescale: InsertPriceSourceContributions %s/%s/%s: %w",
 				r.AssetID, r.QuoteID, r.Source, err)
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("timescale: InsertPriceSourceContributions commit: %w", err)
 	}
 	return nil
 }

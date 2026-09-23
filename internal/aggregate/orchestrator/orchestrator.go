@@ -2438,9 +2438,10 @@ func (o *Orchestrator) dropForMinUSDVolume(pair canonical.Pair, trades []canonic
 // don't vote in VWAP unless an operator explicitly registers them.
 //
 // Preserves input order so VWAP's weighted-mean semantics stay
-// deterministic under the same input set.
+// deterministic under the same input set, and returns a fresh slice:
+// the caller's backing array is left untouched.
 func filterForVWAP(trades []canonical.Trade) []canonical.Trade {
-	out := trades[:0]
+	out := make([]canonical.Trade, 0, len(trades))
 	for _, t := range trades {
 		md := external.Lookup(t.Source)
 		if md.Class == external.ClassExchange && md.IncludeInVWAP {
@@ -2625,7 +2626,10 @@ func (o *Orchestrator) flushContributions(
 		Contributions:   contributions,
 		SourceUSDVolume: sourceUSD,
 	}); err != nil {
-		o.logger.Debug("contribution sink",
+		// Non-fatal to the tick (the VWAP is already published), but a
+		// lost bucket must be visible, not a Debug line.
+		obs.AggregatorContributionWriteErrorsTotal.Inc()
+		o.logger.Warn("contribution sink write failed",
 			"pair", pair.String(), "window", window, "err", err)
 	}
 }

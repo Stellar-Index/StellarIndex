@@ -312,23 +312,20 @@ func tryTriangulatedTier(
 
 // filterFreshAggregatorRows drops observations older than
 // `maxAge`. Zero `maxAge` is "no filter" — every observation
-// passes through.
+// passes through. The result is a fresh slice; the input's backing
+// array is left untouched.
 func filterFreshAggregatorRows(rows []canonical.OracleUpdate, maxAge time.Duration) []canonical.OracleUpdate {
 	if maxAge <= 0 {
 		return rows
 	}
 	cutoff := time.Now().Add(-maxAge)
-	out := rows[:0]
+	out := make([]canonical.OracleUpdate, 0, len(rows))
 	for _, u := range rows {
 		if u.Timestamp.After(cutoff) {
 			out = append(out, u)
 		}
 	}
-	// Reslice into a fresh backing array so callers don't alias the
-	// input slice's storage in surprising ways.
-	cp := make([]canonical.OracleUpdate, len(out))
-	copy(cp, out)
-	return cp
+	return out
 }
 
 // aggregatorCommonDecimals is the shared fixed scale every aggregator
