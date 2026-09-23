@@ -18732,8 +18732,10 @@ components:
             column is the BILLABLE counter the monthly quota is
             enforced against, so it also excludes platform-caused
             5xx responses: an outage on our side must not consume
-            the quota you paid for. Those responses are still
-            reported under `errors`.
+            the quota you paid for. The exception is a request whose
+            read ran out its server-side time budget (a `…-timeout`
+            503 after the query ran): it is billed like a served
+            request. All 5xx are still reported under `errors`.
         errors:
           type: integer
           description: 4xx (excluding 429) + 5xx responses.

@@ -296,6 +296,7 @@ func writeProblemCoverage(
 	// is already 503 and only the type still identifies the condition.
 	// Both upgrade legs therefore carry the hint.
 	if typeURL == requestTimeoutType {
+		middleware.MarkReadDeadline(r.Context())
 		w.Header().Set("Retry-After", retryAfterRequestTimeout)
 	}
 	w.WriteHeader(status)
@@ -472,11 +473,16 @@ func clientAborted(r *http.Request, _ error) bool {
 //
 // R-021 in `docs/review-2026-05-10.md` — pre-fix, /v1/markets cold
 // cache returned `500 Internal error` instead of `503 markets-timeout`.
+//
+// A true verdict is also recorded for usage metering
+// ([middleware.MarkReadDeadline]): a timed-out read is billable.
 func handlerTimedOut(callCtx context.Context, err error) bool {
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
+	timedOut := errors.Is(err, context.DeadlineExceeded) ||
+		callCtx.Err() == context.DeadlineExceeded
+	if timedOut {
+		middleware.MarkReadDeadline(callCtx)
 	}
-	return callCtx.Err() == context.DeadlineExceeded
+	return timedOut
 }
 
 // transientStorageErr reports whether a storage-layer error looks

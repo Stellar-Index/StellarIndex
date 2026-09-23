@@ -146,9 +146,10 @@ func (g *monthlyQuotaGate) observeReadSuccess() {
 //     counter and neither minting a second key nor revoking and
 //     re-minting this one resets it. When the count >= quota, reject
 //     with `429 Too Many Requests` + Problem-JSON body listing the cap. The counter this reads is BILLABLE traffic only —
-//     `UsageTracker` keeps 429s and 5xx out of it (see
+//     `UsageTracker` keeps 429s and fast-failing 5xx out of it (see
 //     [billableClass]), so neither our throttle nor our outage can
-//     consume the customer's cap.
+//     consume the customer's cap; a read that timed out on its
+//     server-side budget is charged like a served one.
 //   - Reader nil: no backing store, pass through (Redis-less
 //     deployment).
 //   - Read error, dwell-time NOT yet exceeded: count + log + pass
