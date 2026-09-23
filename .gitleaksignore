@@ -54,15 +54,21 @@ f9157d5dc84fb5bf5f8acdaefe4b5a6d5c5b0f1e:internal/storage/clickhouse/blend_pool_
 bd1e3b50c3d6e1bb58ad9b9b707d26c0440492c7:cmd/stellarindex-ops/usage_rollup_backfill_test.go:generic-api-key:73
 8c20079f7d2ccb5ecdebcfe0e2f1ddd27367819f:docs/agent-onboarding.md:generic-api-key:25
 
-# 2026-09-18 — two test fixtures the local gitleaks 8.30 reads as generic API
-# keys; CI's pinned 8.21 does not. Both are literal strings written to be
-# recognisably fake: a query-string redaction test whose URL carries an api_key
-# parameter with a Stripe-shaped placeholder and a token parameter with a JWT
-# prefix, to prove the shape logger strips both, and a usage rollup test whose
-# subject is a synthetic API-key id ("key:kid_…"), not a key.
+# Two test fixtures the local gitleaks 8.30 reads as generic API keys; CI's
+# pinned 8.21 does not. A query-string redaction test carries a Stripe-shaped
+# api_key placeholder and a JWT-prefixed token to prove the shape logger strips
+# both; a usage rollup test's subject is a synthetic key id ("key:kid_..."), not
+# a key. Both commits are still served by the remote, and the local secrets gate
+# (verify.sh, prepush.sh) scans every ref, so these stay while they are
+# reachable. A fingerprint pins its commit: bd1e3b50c:73 does not cover 6721eacb1.
 cb6b58cc5eaae69132535f305c71046303aee326:internal/api/v1/middleware/slow_query_shape_test.go:generic-api-key:38
 6721eacb1b40533c039ecd58b424c3071f29b7c5:cmd/stellarindex-ops/usage_rollup_backfill_test.go:generic-api-key:73
-# The first draft of the block above quoted one of those literals in its own
-# comment; that draft commit stays reachable from agent worktree branches
-# until they are pruned, so the local history scan reads it as a finding.
-f8356acf72bbe875f7ed0a29c288776059f04fbb:.gitleaksignore:generic-api-key:59
+
+# The listing-sync address-form table (4345a9707) put the XLM native SAC
+# contract id and a one-character-short copy of it on two lines of
+# listing_sync_test.go. Both are public ledger identifiers (or a malformed
+# copy of one); the entropy rule reads a 56-char base32 id as a key. The
+# working tree carries `// gitleaks:allow` on both lines, so the file stays
+# scanned; these fingerprints exempt only the commit that landed them bare.
+4345a9707cb5c2500b7291c381b0094392fabb35:internal/ops/ingest/listing_sync_test.go:generic-api-key:175
+4345a9707cb5c2500b7291c381b0094392fabb35:internal/ops/ingest/listing_sync_test.go:generic-api-key:183

@@ -696,6 +696,9 @@ func run(cfgPath string, dryRun bool) error {
 			// fatal than an error. ADR-0033's projection reconcile turns
 			// the resulting gap into /v1/coverage complete=false for the
 			// window, and worker_panics_total{worker="projector"} pages.
+			// This guard covers Run's own frame only; the goroutines Run
+			// fans out defer their own (worker="projector-source-<name>",
+			// "projector-replay-windows").
 			defer worker.Recover(logger, "projector")
 			if err := proj.Run(rootCtx); err != nil && !errors.Is(err, context.Canceled) {
 				logger.Warn("projector exited with error", "err", err)
