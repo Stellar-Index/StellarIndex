@@ -1,6 +1,7 @@
 package binance
 
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
 
@@ -52,6 +53,21 @@ func (a assetSpec) asset() (canonical.Asset, error) {
 	}
 }
 
+// parsePairsYAML decodes a pairs.yaml document with strict field
+// checking, so a misspelled or renamed key (e.g. "clas" for "class")
+// fails the load instead of silently dropping to the zero value.
+// Pulled out of DefaultPairs so it's testable against arbitrary
+// bytes, not just the embedded file.
+func parsePairsYAML(b []byte) (pairsFile, error) {
+	var f pairsFile
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	if err := dec.Decode(&f); err != nil {
+		return pairsFile{}, fmt.Errorf("binance pairs.yaml: %w", err)
+	}
+	return f, nil
+}
+
 // DefaultPairs returns the built-in pair map for Binance — the
 // common set we stream when the operator enables Binance in config
 // without specifying a pair list. Covers the largest XLM markets,
@@ -63,9 +79,9 @@ func (a assetSpec) asset() (canonical.Asset, error) {
 // one-entry addition to pairs.yaml; per-operator overrides land in
 // config in a follow-up PR.
 func DefaultPairs() (map[string]canonical.Pair, error) {
-	var f pairsFile
-	if err := yaml.Unmarshal(pairsYAML, &f); err != nil {
-		return nil, fmt.Errorf("binance pairs.yaml: %w", err)
+	f, err := parsePairsYAML(pairsYAML)
+	if err != nil {
+		return nil, err
 	}
 	if len(f.Pairs) == 0 {
 		return nil, fmt.Errorf("binance pairs.yaml: no pairs declared")

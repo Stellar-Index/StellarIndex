@@ -1,6 +1,7 @@
 package currency
 
 import (
+	"bytes"
 	_ "embed"
 	"fmt"
 	"strings"
@@ -183,7 +184,9 @@ func LoadEmbedded() (*Catalogue, error) {
 // any future operator-config override path.
 func LoadFromBytes(b []byte) (*Catalogue, error) {
 	var raw rawCatalogue
-	if err := yaml.Unmarshal(b, &raw); err != nil {
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true) // reject a misspelled/renamed key instead of silently dropping it
+	if err := dec.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("currency: yaml parse: %w", err)
 	}
 

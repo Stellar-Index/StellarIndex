@@ -509,6 +509,27 @@ func TestSeedBrowseable_StellarOnlyNetworks(t *testing.T) {
 	}
 }
 
+// TestLoadFromBytes_RejectsUnknownField guards F007/K035: a misspelled
+// or renamed optional key (e.g. "coingecko_id" typo'd as "coingecko_di")
+// must fail the load loudly instead of silently parsing to the zero
+// value and dropping the intended data.
+func TestLoadFromBytes_RejectsUnknownField(t *testing.T) {
+	yamlSrc := `verified_currencies:
+  - ticker: FOO
+    slug: foo
+    name: Foo
+    coingecko_di: foo-coin
+    networks: [{network: stellar}]
+`
+	_, err := LoadFromBytes([]byte(yamlSrc))
+	if err == nil {
+		t.Fatal("LoadFromBytes: nil err, want error rejecting unknown field coingecko_di")
+	}
+	if !strings.Contains(err.Error(), "coingecko_di") {
+		t.Errorf("err = %q, want it to name the unknown field coingecko_di", err)
+	}
+}
+
 func TestLoadFromBytes_RejectsUnknownClass(t *testing.T) {
 	y := `verified_currencies:
   - ticker: FOO
