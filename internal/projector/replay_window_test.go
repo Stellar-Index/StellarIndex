@@ -64,7 +64,7 @@ func runCycleThenRefresh(p *Projector, src Source) {
 	window := uint32(BatchLimit)
 	var tracker poisonTracker
 	var wedge wedgeTracker
-	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge)
+	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
 	p.refreshReplayWindows(context.Background())
 }
 
@@ -273,7 +273,7 @@ func TestReplayWindow_RunStartsTheWatcher(t *testing.T) {
 	window := uint32(BatchLimit)
 	var tracker poisonTracker
 	var wedge wedgeTracker
-	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge)
+	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
 	obs.ProjectorReplayWindowActive.WithLabelValues(source).Set(0)
 
 	ctx, cancel := context.WithCancel(context.Background())

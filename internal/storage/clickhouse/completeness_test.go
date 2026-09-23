@@ -87,14 +87,8 @@ func TestWatermark(t *testing.T) {
 		// `from` present, first ledger present then hole at 101: minPresent==from.
 		{"gap one past from", 100, 200, 101, 100, 100}, // first ledger present, hole next
 		{"single complete ledger at from", 100, 100, 0, 100, 100},
-		// THE FIX (RLT-154 / GH #623): a brand-new projected source with no
-		// cursor yet calls this with from=0. Every net's lake begins at
-		// ledger 2, so minPresent(2) > from is always true for from=0 too.
-		// Pre-fix the `minPresent > from` guard returned from-1 = 0-1,
-		// underflowing uint32 to 4294967295 — resolveTip read that as "the
-		// lake is complete forever" and the stall-at-a-hole clamp silently
-		// became a no-op for exactly this caller. from=0 is clamped to 1
-		// first, so the guard now returns 1-1 = 0 ("nothing complete yet").
+		// A source with no cursor yet asks from=0; the lake starts at 2, so
+		// `from` is a boundary hole and from-1 must not wrap to MaxUint32.
 		{"from=0 does not underflow", 0, 200, 0, 2, 0},
 	}
 	for _, tt := range tests {
