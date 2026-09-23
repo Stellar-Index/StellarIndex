@@ -41,23 +41,12 @@ WASM_HASH="${WASM_HASH:-unknown-wasm-hash}"
 # Factory contract ID (constant per docs/protocols/soroswap.md).
 FACTORY_ID="CA4HEQTL2WPEUYKYKCDOHCDNIV4QHNJ7EL4J4NQ6VADP7SYHVRYZ7AW2"
 
-while getopts "e:n:s:h" opt; do
-  case "$opt" in
-    e) ENDPOINT="$OPTARG" ;;
-    n) MAX_EVENTS="$OPTARG" ;;
-    s) START_LEDGER="$OPTARG" ;;
-    h|*)
-      sed -n '2,/^set/p' "$0" | sed 's/^# \{0,1\}//'
-      exit 0 ;;
-  esac
-done
+# shellcheck source=scripts/dev/lib/fixture-capture-common.sh
+source "$(cd "$(dirname "$0")" && pwd)/lib/fixture-capture-common.sh"
 
-command -v "$JQ" >/dev/null || { echo "jq not found" >&2; exit 127; }
-command -v "$CURL" >/dev/null || { echo "curl not found" >&2; exit 127; }
-
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-OUT_DIR="$REPO_ROOT/test/fixtures/soroswap/$WASM_HASH"
-mkdir -p "$OUT_DIR"
+fixture_capture_parse_args "$@"
+fixture_capture_check_deps
+fixture_capture_setup_outdir soroswap
 
 # Pre-encoded topic blobs — must match what the package computes
 # at init. Regenerate via:
@@ -69,18 +58,7 @@ TOPIC_SWAP='AAAADwAAAARzd2Fw'
 TOPIC_SYNC='AAAADwAAAARzeW5j'
 TOPIC_NEW_PAIR='AAAADwAAAAhuZXdfcGFpcg=='
 
-rpc() {
-  "$CURL" -sS -X POST "$ENDPOINT" \
-    -H 'Content-Type: application/json' \
-    -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"$1\",\"params\":$2}"
-}
-
-if [[ -z "$START_LEDGER" ]]; then
-  latest="$(rpc getLatestLedger '{}' | "$JQ" -r '.result.sequence')"
-  [[ "$latest" == "null" || -z "$latest" ]] && { echo "getLatestLedger failed" >&2; exit 1; }
-  START_LEDGER=$((latest - 200))
-  echo "latest ledger: $latest → starting from $START_LEDGER"
-fi
+fixture_capture_resolve_start_ledger
 
 capture_topic() {
   local event_name="$1"
@@ -89,6 +67,7 @@ capture_topic() {
   local contract_clause="$4"
 
   local params
+  # shellcheck disable=SC2016  # $start/$t0/$t1/$cc/$limit are jq variables, not shell
   params="$("$JQ" -nc \
     --argjson start "$START_LEDGER" \
     --argjson limit "$MAX_EVENTS" \
@@ -125,6 +104,7 @@ capture_topic() {
     value="$(echo "$evt" | "$JQ" -r 'if (.value|type) == "object" then .value.xdr else .value end')"
     fname="$OUT_DIR/${event_name}_${ledger}_${tx:0:12}.json"
     contract="$(echo "$evt" | "$JQ" -r '.contractId')"
+    # shellcheck disable=SC2016  # $c/$w/$l/... are jq variables, not shell
     "$JQ" -n \
       --arg c "$contract" \
       --arg w "$WASM_HASH" \
@@ -147,6 +127,7 @@ capture_topic "swap" "$TOPIC_SWAP" "$TOPIC_PREFIX_PAIR" '{}'
 capture_topic "sync" "$TOPIC_SYNC" "$TOPIC_PREFIX_PAIR" '{}'
 
 # Factory event: scoped to the factory contract ID.
+# shellcheck disable=SC2016  # $c is a jq variable, not shell
 factory_clause="$("$JQ" -nc --arg c "$FACTORY_ID" '{contractIds:[$c]}')"
 capture_topic "new_pair" "$TOPIC_NEW_PAIR" "$TOPIC_PREFIX_FACT" "$factory_clause"
 
