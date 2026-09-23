@@ -3,7 +3,15 @@
 -- retention policy disarmed as the up does. prices_1m's refresh policy
 -- keeps 0165's widened 15-minute start_offset — this migration only
 -- undoes 0166's own notional-floor columns, not 0165's fix. Leaves the
--- three views EMPTY; re-materialise per the up migration's header.
+-- three views EMPTY (WITH NO DATA). Re-materialize as the up's header
+-- says: recent first, prices_1m BEFORE the TWAP views, every refresh
+-- WINDOWED, then walk older windows the same way:
+--
+--   CALL refresh_continuous_aggregate('prices_1m', now() - INTERVAL '7 days', now(), force => true);
+--   CALL refresh_continuous_aggregate('twap_1h', now() - INTERVAL '7 days', now(), force => true);
+--   CALL refresh_continuous_aggregate('twap_1d', now() - INTERVAL '7 days', now(), force => true);
+--
+-- The NULL-start TWAP refresh stays forbidden (0156).
 
 BEGIN;
 

@@ -164,6 +164,19 @@ against.
   now says "nothing to rewind" and how far the cursor has to go, instead
   of "already at ledger N".
 
+- **migrations — hypertable index and CAGG re-materialization lints
+  (#856, #865):** `scripts/ci/lint-migrations.sh` now fails a
+  `CREATE INDEX` on an existing hypertable that lacks `IF NOT EXISTS`
+  or `SET LOCAL lock_timeout` (the 0150 shape), and a migration that
+  recreates a continuous aggregate `WITH NO DATA` without naming a
+  refresh for every recreated view. The downs of 0115 and 0147 were that
+  second shape: their headers said "see the up", and 0115's up leaves the
+  `prices_1m` back-fill that `twap_*` depends on to a prose "walk
+  backwards" line. Both downs' headers
+  now carry the full ordered refresh sequence (header-only edit, baseline
+  refreshed). The 0150 register row records the operator step for its
+  in-transaction `trades_signer_idx` build.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was
