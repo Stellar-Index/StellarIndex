@@ -105,7 +105,7 @@ the repo SHA is how the source that produced that hash was verified):
 | Band (StandardReference) | `CCQXWMZV…3NFBGG5M` | (band hash) |
 | Reflector — DEX | `CALI2BYU…OB2PLE6M` | (reflector hash) |
 | Reflector — External CEX/DEX | `CAFJZQWS…JLN34DLN` | (reflector hash) |
-| Reflector — Fiat FX | `CBKGPWGK…KOMJRN63` | (reflector hash) |
+| Reflector — Fiat FX | `CBKGPWGK…4DXMCJZC` | (reflector hash) |
 
 Full address tables live in the per-protocol verification pages
 under `docs/protocols/`.
