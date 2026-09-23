@@ -105,4 +105,4 @@ severity: P2
   "≤ 60 s post-deploy" verification scoped to the light tier.
   Status promoted draft → current.
 - 2026-05-09 — initial draft, motivated by the Order-dimension drift
-  bug plus #1194 / the Limit-dimension bug / #1196.
+  bug plus #1194 / the Limit-dimension bug.

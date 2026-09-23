@@ -1,6 +1,6 @@
 ---
 title: Runbook — price-stale
-last_verified: 2026-08-28
+last_verified: 2026-09-23
 status: ratified
 severity: P2
 ---
@@ -31,9 +31,6 @@ severity: P2
   Go straight to `aggregator-silent.md`.
 - `/v1/price?asset=<X>` returns 200 with a price but the
   `observed_at` timestamp is well behind wall-clock.
-- TODO(maintainer): the *Price → freshness* Grafana dashboard referenced by
-  earlier revisions of this runbook has no JSON in the repo; link the
-  live dashboard UID here or drop the reference.
 
 ## Quick diagnosis (≤ 5 min)
 

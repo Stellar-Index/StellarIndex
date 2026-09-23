@@ -56,9 +56,10 @@ Type=notify
 NotifyAccess=main
 WatchdogSec=1h
 
-EnvironmentFile=-/etc/default/stellarindex-ops
-
-# Sensible defaults. Operators override via /etc/default/stellarindex-ops.
+# Sensible defaults, declared BEFORE EnvironmentFile= below so operators
+# can actually override them: systemd resolves a repeated key in file
+# order, later wins, so a default declared after the file would silently
+# discard any operator override in /etc/default/stellarindex-ops.
 Environment=VERIFY_ARCHIVE_FROM=2
 Environment=VERIFY_ARCHIVE_WORKERS=12
 Environment=VERIFY_ARCHIVE_MAX_RUNTIME=16h
@@ -80,6 +81,11 @@ Environment=VERIFY_ARCHIVE_SAFETY_OVERLAP=5000
 # archive-completeness, supply-snapshot and sla-probe already use.
 Environment=VERIFY_ARCHIVE_TEXTFILE=/var/lib/node_exporter/textfile_collector/verify_archive_tier_b.prom
 Environment=VERIFY_ARCHIVE_ROOT=/srv/history-archive
+
+# Placed after the defaults above (not before): systemd resolves a
+# repeated key in file order, so operator overrides in this file only
+# take effect if it is declared last.
+EnvironmentFile=-/etc/default/stellarindex-ops
 
 # Incremental scheme (shared with Tier A): -from-last-verified reads the
 # prior run's checkpoint-tier high-water from the state file, then anchors

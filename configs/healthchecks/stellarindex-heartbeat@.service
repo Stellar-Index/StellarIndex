@@ -6,6 +6,11 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# The timer re-fires every 60s (OnUnitActiveSec, see the .timer unit)
+# and systemd will not start a new instance while this one is still
+# running, so a hung heartbeat silently stops all future pings forever.
+TimeoutStartSec=30s
+RuntimeMaxSec=30s
 ExecStart=/opt/stellarindex/healthchecks/heartbeat.sh %i
 # systemd reads this as root before dropping to DynamicUser, so a
 # 0600 secret stays unreadable to the unprivileged service user

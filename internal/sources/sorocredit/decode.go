@@ -132,11 +132,18 @@ func decodeNewCollateralContract(e *events.Event) (decoded, error) {
 		return decoded{}, fmt.Errorf("%w: NewCollateralContract body not a 2-Vec (len=%d)", ErrMalformedPayload, len(vec))
 	}
 	// AsText, not AsString: position_name is bound to a `text NOT NULL`
-	// column (see strTopic). An escaped name has no "Collateral-" prefix
-	// to strip, so its UUID is the whole text form.
+	// column (see strTopic).
 	name, err := scval.AsText(vec[0])
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: NewCollateralContract name: %w", ErrMalformedPayload, err)
+	}
+	// TrimPrefix silently returns the whole string when the prefix is
+	// absent — a malformed/renamed position would then get PositionUUID
+	// == PositionName, which never matches the real UUID a StatementPublished
+	// / Liquidation topic carries. That row would sit forever looking like
+	// "no statement yet" instead of the decode failure it actually is.
+	if !strings.HasPrefix(name, collateralNamePrefix) {
+		return decoded{}, fmt.Errorf("%w: NewCollateralContract name %q missing %q prefix", ErrMalformedPayload, name, collateralNamePrefix)
 	}
 	owner, err := scval.AsAddressStrkey(vec[1])
 	if err != nil {

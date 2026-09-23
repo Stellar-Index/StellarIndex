@@ -682,12 +682,16 @@ week lands.
   config gap.
 
 - **2026-05-11** — **All five 2026-05-10 ❌ rows have landing
-  code fixes on `main`** (PRs #1261, #1262, #1263,
+  code fixes on `main`** (PRs #1261,
   #1268, #1270 across the session). Headline
   resolutions:
   R-005 → #1261 (batch shares full /v1/price fallback chain),
-  R-007 → #1262 (OHLC outlier filter, default 4σ),
-  R-008 → #1263 (ATH from day-VWAP, dust-resistant),
+  R-007 → OHLC outlier filter, default 4σ (no
+  surviving PR number for this entry; the one previously cited
+  here now resolves to an unrelated live issue),
+  R-008 (ATH from day-VWAP, dust-resistant; no surviving PR number for
+  this entry — the one previously cited here now resolves to an
+  unrelated live issue),
   R-013 (chart truncated/data_starts_at signals),
   R-014 → markets default sort = volume_24h_usd_desc (no
   surviving PR number for this entry; the one previously cited

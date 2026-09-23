@@ -201,6 +201,33 @@ func TestGolden_NewCollateralContract(t *testing.T) {
 	}
 }
 
+// TestDecode_NewCollateralContract_MissingPrefixRejected proves Q078's
+// fix: TrimPrefix silently returns the whole string when the "Collateral-"
+// prefix is absent, which used to mint a PositionUUID that could never
+// match a real StatementPublished/Liquidation topic — a permanent join
+// miss disguised as "no statement yet". A body name lacking the prefix
+// must now fail decode instead of fabricating a bogus UUID.
+func TestDecode_NewCollateralContract_MissingPrefixRejected(t *testing.T) {
+	t.Parallel()
+	child := contractStrkey(t, 0x02)
+	body := b64(t, vecSV(
+		stringSV("not-the-expected-shape"),
+		contractAddrSV(t, contractStrkey(t, 0x03)),
+	))
+	ev := events.Event{
+		LedgerClosedAt: "2026-07-06T00:00:00Z",
+		Topic: []string{
+			topicSymNewCollateralContract,
+			b64(t, contractAddrSV(t, child)),
+		},
+		Value: body,
+	}
+	_, err := decodeOne(&ev)
+	if !errors.Is(err, ErrMalformedPayload) {
+		t.Fatalf("decodeOne: want ErrMalformedPayload, got %v", err)
+	}
+}
+
 // TestGolden_Withdrawal pins the withdrawal decode (token, recipient,
 // i128 amount from the body; collateral from the topic).
 func TestGolden_Withdrawal(t *testing.T) {

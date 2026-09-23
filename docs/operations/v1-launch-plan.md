@@ -2803,7 +2803,8 @@ one — they are lead-time items, not sequenced work.
   Deploying does not silently rewrite supply.
 
   **Verification order after deploy** (each answers a different question):
-  1. `bash scripts/dev/r1-smoke.sh` — 13 shape-asserted GETs.
+  1. `bash scripts/dev/r1-smoke.sh` — the smoke script's hand-picked,
+     shape-asserted GETs (not full OpenAPI coverage; see step 2).
   2. `bash scripts/ops/route-sweep.sh` — every OpenAPI GET; this is what
      catches a repeat of the 21/94 explorer outage.
   3. `bash scripts/ops/reconcile-supply-vs-horizon.sh` — expect EURC and

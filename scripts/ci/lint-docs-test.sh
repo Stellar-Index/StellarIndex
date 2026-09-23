@@ -75,6 +75,14 @@ check "a reintroduced 'PR #1230' citation in CHANGELOG.md is caught" red
 git checkout -- CHANGELOG.md
 check "clean tree passes again after revert" ok
 
+# RSWP-128: CHANGELOG's /v1/coins/{slug} canonical asset_id entry cited
+# "(PR #1231)" but #1231 is a real, currently-open, unrelated issue
+# (${EXTRA_FLAGS} brace-form word-split), not that PR.
+echo "(PR #1231)" >> CHANGELOG.md
+check "a reintroduced 'PR #1231' citation in CHANGELOG.md is caught" red
+git checkout -- CHANGELOG.md
+check "clean tree passes again after revert" ok
+
 # RSWP-086: CHANGELOG's r1-smoke.sh budget-bump entry cited a PR number
 # (#1108) that never identified the actual PR; #1108 now resolves to a
 # real, unrelated issue, not a 404.
@@ -107,12 +115,32 @@ check "a reintroduced '#1369' citation in remediation STATUS.md is caught" red
 git checkout -- docs/remediation-2026-07-01/STATUS.md
 check "clean tree passes again after revert" ok
 
+# RSWP-151: CHANGELOG.md must not carry the dangling "dependabot
+# #1371/#1372" citation back in — #1371 and #1372 now resolve to real,
+# unrelated live PRs (an open dependabot npm-bump PR and a closed
+# audit-remediation PR), not the dependabot bumps this entry named.
+echo "supersedes dependabot #1371/#1372" >> CHANGELOG.md
+check "a reintroduced 'dependabot #1371/#1372' citation in CHANGELOG.md is caught" red
+git checkout -- CHANGELOG.md
+check "clean tree passes again after revert" ok
+
 # §4 stale-reference check: docs/architecture/coverage-matrix.md must not
 # carry the "R-013 → #1265" citation back in (RSWP-141 — #1265 now
 # resolves to an unrelated resolveTip completeness-clamp finding, not the
 # chart truncated/data_starts_at PR the R-013 row implies).
 echo "R-013 → #1265" >> docs/architecture/coverage-matrix.md
 check "a reintroduced 'R-013 -> #1265' citation is caught" red
+git checkout -- docs/architecture/coverage-matrix.md
+check "clean tree passes again after revert" ok
+
+# §4 stale-reference check: docs/architecture/coverage-matrix.md must not
+# carry the "#1263" citation back in (RSWP-139 — #1263 now resolves to an
+# unrelated, currently-open projector cursor-commit finding, not the
+# ATH/day-VWAP fix). Bare pattern, so a citation reappearing in the
+# 2026-05-11 PR-list header ALONE (without the literal "R-008" alongside
+# it) is caught too, not only an "R-008 → #1263" row.
+echo "(PRs #1261, #1262, #1263, #1268, #1270)" >> docs/architecture/coverage-matrix.md
+check "a reintroduced bare '#1263' header citation is caught" red
 git checkout -- docs/architecture/coverage-matrix.md
 check "clean tree passes again after revert" ok
 

@@ -369,6 +369,14 @@ stale_patterns=(
                                   # resolves to a real, unrelated open issue
                                   # (price-alert freeze marker) rather than
                                   # a 404
+  "#1263\b"                      # dangling ref (RSWP-139) — coverage-matrix.md's
+                                  # 2026-05-11 entry cited "#1263" both in the
+                                  # R-008 row and in the PR-list header; #1263
+                                  # now resolves to an unrelated, currently-open
+                                  # projector cursor-commit finding, not the
+                                  # ATH/day-VWAP fix. Bare pattern (not scoped
+                                  # to "R-008") so it also catches a citation
+                                  # reappearing in the header list alone
   "#1347\b"                      # STATUS.md's go-stellar-sdk v0.6 bump cited
                                   # #1347 before it existed (RSWP-146); #1347
                                   # is now a real, unrelated issue about
@@ -381,6 +389,14 @@ stale_patterns=(
                                   # tooling-groups entry as #1368 + #1369
                                   # (RSWP-149); #1369 now resolves to an
                                   # unrelated, already-merged W3 slice PR
+  "dependabot #1371/#1372"       # dangling ref (RSWP-151) — CHANGELOG's Go
+                                  # toolchain 1.25.12 + all-deps bump entry
+                                  # cited these as the dependabot PRs it
+                                  # superseded; #1371 and #1372 now resolve
+                                  # to real, unrelated live PRs (an open
+                                  # dependabot npm-bump PR and a closed
+                                  # audit-remediation PR), not the
+                                  # dependabot bumps this entry named
   "R-013.*#1265"                  # coverage-matrix.md's R-013 row cited #1265
                                   # (RSWP-141); #1265 now resolves to an
                                   # unrelated resolveTip completeness-clamp
@@ -451,11 +467,26 @@ stale_patterns=(
                                   # as the tracking issue; #975 now
                                   # resolves to an unrelated, currently-open
                                   # streaming-docs-vs-hub drift finding
+  "#1196\b"                       # dangling ref (RSWP-111) — CHANGELOG's
+                                  # cache_ops_total counter + coins/
+                                  # sources_stats entries, and the
+                                  # cache-miss-rate-high runbook's history,
+                                  # cited this as the counter's landing PR
+                                  # and as a motivating bug; #1196 is now a
+                                  # real, unrelated live issue (BigQuery
+                                  # subcommands uncapped byte billing)
   "PR #1198"                     # dangling ref (RSWP-113) — CHANGELOG's
                                   # coins/sources_stats cache-ops entry cited
                                   # a PR number that didn't exist yet;
                                   # #1198 is now a real, unrelated live issue
                                   # (trim-galexie-archive delete-key drift)
+  "PR #1231"                     # dangling ref (RSWP-128) — CHANGELOG's
+                                  # /v1/coins/{slug} canonical asset_id
+                                  # entry cited this as its PR; #1231 is now
+                                  # a real, currently-open, unrelated issue
+                                  # (${EXTRA_FLAGS} brace-form word-split on
+                                  # direct-exec systemd units), not the
+                                  # asset_id fix it names
   "#201\b"                        # dangling ref (RSWP-001) — semver-policy.md's
                                   # and CHANGELOG's pkg/client SDK skeleton
                                   # entries cited "#201" as the landing PR;
@@ -522,6 +553,33 @@ stale_patterns=(
                                   # number that never existed; #1225 is now
                                   # a real, unrelated open issue (test-vacuity
                                   # residue across several endpoints)
+  "#1226\b"                      # dangling ref (RSWP-123) — CHANGELOG's
+                                  # ADR-0026 summary entry and its
+                                  # `pkg/client` VWAP/TWAP/Pools SDK entry
+                                  # both cited this; #1226 is now a real,
+                                  # unrelated merged PR (the SDK methods
+                                  # PR itself), not the /v1/ohlc fallback
+                                  # ADR-0026 attributes it to
+  "#1217\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
+                                  # stablecoin-fiat-proxy rollout entries
+                                  # (/v1/price, F2 fields, /v1/ohlc,
+                                  # /v1/oracle/lastprice, /v1/price/tip)
+                                  # cited an internal tracking number that
+                                  # never resolved to a real PR
+  "#1218\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
+                                  # /v1/price/tip stablecoin-fiat-proxy
+                                  # entry cited an internal tracking number
+                                  # that never resolved to a real PR
+  "#1219\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
+                                  # /v1/vwap + /v1/twap and /v1/ohlc
+                                  # stablecoin-fiat-proxy entries cited an
+                                  # internal tracking number that never
+                                  # resolved to a real PR
+  "#1224\b"                      # dangling ref (RSWP-123 class) — CHANGELOG's
+                                  # /v1/oracle/prices and /v1/assets F2
+                                  # stablecoin-fiat-proxy entries cited an
+                                  # internal tracking number that never
+                                  # resolved to a real PR
   "#1368\b"                      # dangling ref (RSWP-148) — STATUS.md's
                                   # tooling-groups deferral cited this as a
                                   # tracking issue before it existed; #1368
@@ -532,6 +590,25 @@ stale_patterns=(
                                   # bump note cited this as its PR; #1370 is
                                   # now a real, unrelated dependabot PR
                                   # (npm-minor-patch group bump)
+  "#1262\b"                      # dangling ref (RSWP-138) — coverage-matrix's
+                                  # R-007 OHLC outlier-filter entry cited a PR
+                                  # number that never existed; #1262 is now a
+                                  # real, unrelated issue
+  "PR #1041"                     # dangling ref (RSWP-067) — the
+                                  # fx-history-missing.md runbook and
+                                  # CHANGELOG's fx_quotes hypertable /
+                                  # /v1/currencies range entries cited this
+                                  # as their shipping PR; #1041 has no
+                                  # corresponding PR (repo max at the time
+                                  # was far short of it), so the citation
+                                  # 404s outright
+  "\(added in #314\)"             # dangling ref (RSWP-042) — the
+                                  # supply-refresh-error-dominant and
+                                  # supply-refresh-stalled runbooks cited
+                                  # this as the PR that added the
+                                  # asset_key label; #314 is now a real,
+                                  # unrelated merged PR (integration-suite
+                                  # 4-way sharding)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \

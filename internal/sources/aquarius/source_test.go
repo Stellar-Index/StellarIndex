@@ -1,12 +1,21 @@
 package aquarius
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"math/big"
+	"path/filepath"
+	"regexp"
+	"runtime"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 func TestClassify(t *testing.T) {
@@ -63,60 +72,98 @@ func TestClassify(t *testing.T) {
 	}
 }
 
+// eventConstNamePattern matches the package's Event* constant naming
+// convention (events.go).
+var eventConstNamePattern = regexp.MustCompile(`^Event[A-Z]`)
+
+// eventsExcludedFromClassify are Event* constants that are
+// deliberately NOT part of classify()'s closed set. EventAddPool is
+// the ROUTER's pool-registration topic — recognised by
+// dispatcher_adapter.go's own topic check, not routed through
+// kindByTopicSymbol/classify (see events.go's EventAddPool doc).
+var eventsExcludedFromClassify = map[string]bool{
+	"EventAddPool": true,
+}
+
+// packageEventConstants AST-parses every non-test .go file in this
+// package directory and returns every top-level string constant named
+// Event* (name -> value). Unlike a hand-copied list, this reflects
+// whatever events.go actually declares: a future Event* constant is
+// picked up automatically, with no second list to remember to update.
+func packageEventConstants(t *testing.T) map[string]string {
+	t.Helper()
+	_, thisFile, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller(0) failed")
+	}
+	dir := filepath.Dir(thisFile)
+	paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	if err != nil {
+		t.Fatalf("glob %s: %v", dir, err)
+	}
+	fset := token.NewFileSet()
+	out := map[string]string{}
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range vs.Names {
+					if !eventConstNamePattern.MatchString(name.Name) || i >= len(vs.Values) {
+						continue
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					val, err := strconv.Unquote(lit.Value)
+					if err != nil {
+						t.Fatalf("unquote %s: %v", name.Name, err)
+					}
+					out[name.Name] = val
+				}
+			}
+		}
+	}
+	return out
+}
+
 // TestClassify_completenessVsUpstream is a forcing function: if a
-// future agent adds an Event* constant without also wiring its
-// TopicSymbol* into classify(), this test fails. It enumerates every
-// exported Event* string and asserts classify() recognises the
-// matching TopicSymbol*. The test fixture also acts as documentation
-// of the closed set of topics aquarius emits (verified against
+// future agent adds an Event* constant without also wiring it into
+// kindByTopicSymbol/classify(), this test fails. It AST-enumerates
+// every Event* constant declared in the package (see
+// packageEventConstants) instead of a hand-maintained list, so the
+// enumeration itself cannot drift out of sync with events.go. The
+// test fixture also acts as documentation of the closed set of topics
+// aquarius emits (verified against
 // aquarius-amm/liquidity_pool_events/src/lib.rs).
 func TestClassify_completenessVsUpstream(t *testing.T) {
-	pairs := []struct {
-		name   string
-		event  string
-		symbol string
-	}{
-		{"trade", EventTrade, TopicSymbolTrade},
-		{"deposit_liquidity", EventDepositLiquidity, TopicSymbolDepositLiquidity},
-		{"withdraw_liquidity", EventWithdrawLiquidity, TopicSymbolWithdrawLiquidity},
-		{"update_reserves", EventUpdateReserves, TopicSymbolUpdateReserves},
-		{"reserves_sync", EventReservesSync, TopicSymbolReservesSync},
-		{"set_protocol_fee", EventSetProtocolFee, TopicSymbolSetProtocolFee},
-		{"claim_protocol_fee", EventClaimProtocolFee, TopicSymbolClaimProtocolFee},
-		{"kill_deposit", EventKillDeposit, TopicSymbolKillDeposit},
-		{"unkill_deposit", EventUnkillDeposit, TopicSymbolUnkillDeposit},
-		{"kill_swap", EventKillSwap, TopicSymbolKillSwap},
-		{"unkill_swap", EventUnkillSwap, TopicSymbolUnkillSwap},
-		{"kill_claim", EventKillClaim, TopicSymbolKillClaim},
-		{"unkill_claim", EventUnkillClaim, TopicSymbolUnkillClaim},
-		{"kill_gauges_claim", EventKillGaugesClaim, TopicSymbolKillGaugesClaim},
-		{"unkill_gauges_claim", EventUnkillGaugesClaim, TopicSymbolUnkillGaugesClaim},
-		{"pool_state", EventPoolState, TopicSymbolPoolState},
-		{"claim_reward", EventClaimReward, TopicSymbolClaimReward},
-		{"set_rewards_config", EventSetRewardsConfig, TopicSymbolSetRewardsConfig},
-		{"position_update", EventPositionUpdate, TopicSymbolPositionUpdate},
-		{"deposit (bare)", EventGaugeDeposit, TopicSymbolGaugeDeposit},
-		{"claim_fees", EventClaimFees, TopicSymbolClaimFees},
-		{"rewards_gauge_claim", EventRewardsGaugeClaim, TopicSymbolRewardsGaugeClaim},
-		{"claim (bare)", EventGaugeClaim, TopicSymbolGaugeClaim},
-		{"rewards_gauge_schedule_reward", EventRewardsGaugeScheduleReward, TopicSymbolRewardsGaugeScheduleReward},
-		{"set_rewards_state", EventSetRewardsState, TopicSymbolSetRewardsState},
-		{"rewards_gauge_add", EventRewardsGaugeAdd, TopicSymbolRewardsGaugeAdd},
-		{"config_rewards", EventConfigRewards, TopicSymbolConfigRewards},
-		{"apply_upgrade", EventApplyUpgrade, TopicSymbolApplyUpgrade},
-		{"commit_upgrade", EventCommitUpgrade, TopicSymbolCommitUpgrade},
-		{"set_privileged_addrs", EventSetPrivilegedAddrs, TopicSymbolSetPrivilegedAddrs},
-		{"apply_transfer_ownership", EventApplyTransferOwnership, TopicSymbolApplyTransferOwnership},
-		{"commit_transfer_ownership", EventCommitTransferOwnership, TopicSymbolCommitTransferOwnership},
-		{"enable_emergency_mode", EventEnableEmergencyMode, TopicSymbolEnableEmergencyMode},
-		{"disable_emergency_mode", EventDisableEmergencyMode, TopicSymbolDisableEmergencyMode},
-		{"pool_gauge_switch_token", EventPoolGaugeSwitchToken, TopicSymbolPoolGaugeSwitchToken},
+	consts := packageEventConstants(t)
+	if len(consts) == 0 {
+		t.Fatal("packageEventConstants found no Event* constants — enumeration is broken")
 	}
-	for _, p := range pairs {
-		t.Run(p.name, func(t *testing.T) {
-			got := classify(&events.Event{Topic: []string{p.symbol}})
-			if got != p.event {
-				t.Fatalf("classify(symbol for %s) = %q, want %q — extend classify() switch", p.name, got, p.event)
+	for name, val := range consts {
+		if eventsExcludedFromClassify[name] {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			symbol := scval.MustEncodeSymbol(val)
+			got := classify(&events.Event{Topic: []string{symbol}})
+			if got != val {
+				t.Fatalf("classify(symbol for %s=%q) = %q, want %q — wire %s into kindByTopicSymbol in decode.go", name, val, got, val, name)
 			}
 		})
 	}

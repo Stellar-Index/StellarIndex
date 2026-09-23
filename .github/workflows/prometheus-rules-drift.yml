@@ -1,0 +1,93 @@
+name: prometheus-rules-drift
+
+# T677: the only codified≠live check for Prometheus rules ran at deploy
+# time — ci.yml's `apply-rules.sh --check-only` validates the repo's own
+# copy (PR-time, no live host involved) and deploy.yml's apply step
+# verifies the rules it JUST installed. Neither catches drift that
+# accumulates between deploys: an out-of-band edit on r1, a reload that
+# silently failed to pick up a change, or simply a long gap between
+# releases. This is the scheduled counterpart to ansible-drift.yml, scoped
+# to the one surface that role deliberately excludes (see
+# configs/prometheus/apply-rules.sh's own header): the rule files
+# themselves, read-only, via apply-rules.sh --live-check.
+#
+# Read-only: --live-check never installs, reloads or touches the host's
+# rule files — it only diffs $PROM_URL/api/v1/rules against the repo's
+# declared alert set. Reuses the same SSH secrets deploy.yml and
+# ansible-drift.yml already have (DEPLOY_SSH_PRIVATE_KEY, R1_SSH_KNOWN_HOSTS,
+# R1_HOST, R1_USER); no new secret is required.
+
+on:
+  schedule:
+    # Thursdays 08:00 UTC — clear of ansible-drift's Monday run and
+    # reconciliation-health's Tuesday one.
+    - cron: '0 8 * * 4'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  live-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up SSH
+        # Mirrors deploy.yml's "Set up SSH" / ansible-drift.yml's "SSH key
+        # + known_hosts" (F-1297/F-1298): route the key through `env:`, pin
+        # the host key from R1_SSH_KNOWN_HOSTS, fail fast if either secret
+        # is unset rather than reporting a connection failure as drift.
+        env:
+          SSH_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          KNOWN_HOSTS_B64: ${{ secrets.R1_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SSH_KEY:-}" ]; then
+            echo "::error::DEPLOY_SSH_PRIVATE_KEY is unset — this is a missing-credential failure, not a drift signal." >&2
+            exit 1
+          fi
+          if [ -z "${KNOWN_HOSTS_B64:-}" ]; then
+            echo "::error::R1_SSH_KNOWN_HOSTS is unset — this is a missing-credential failure, not a drift signal." >&2
+            exit 1
+          fi
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          echo "$KNOWN_HOSTS_B64" | base64 -d > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+
+      - name: Live-check r1 against the repo's rules.r1/
+        env:
+          R1_HOST: ${{ secrets.R1_HOST }}
+          R1_USER: ${{ secrets.R1_USER }}
+        run: |
+          set -euo pipefail
+          if [ -z "${R1_HOST:-}" ]; then
+            echo "::error::R1_HOST is unset — this is a missing-credential failure, not a drift signal." >&2
+            exit 1
+          fi
+          USER="${R1_USER:-root}"
+          TARGET="${USER}@${R1_HOST}"
+          SSH_OPTS=(-i ~/.ssh/id_deploy -o BatchMode=yes -o ConnectTimeout=20)
+
+          scp "${SSH_OPTS[@]}" -q configs/prometheus/apply-rules.sh \
+            "${TARGET}:/tmp/apply-rules.sh"
+          ssh "${SSH_OPTS[@]}" "$TARGET" \
+            'rm -rf /tmp/rules.r1.check && mkdir -p /tmp/rules.r1.check'
+          scp "${SSH_OPTS[@]}" -q configs/prometheus/rules.r1/*.yml \
+            "${TARGET}:/tmp/rules.r1.check/"
+
+          # PROM_URL defaults to localhost:9090 inside apply-rules.sh,
+          # which is correct here — this ssh runs the check ON r1, where
+          # Prometheus's rules API is reachable, rather than tunnelling it
+          # (the lifecycle/query API is not exposed off-host).
+          rc=0
+          ssh "${SSH_OPTS[@]}" "$TARGET" \
+            'bash /tmp/apply-rules.sh --live-check /tmp/rules.r1.check' || rc=$?
+          ssh "${SSH_OPTS[@]}" "$TARGET" 'rm -rf /tmp/rules.r1.check /tmp/apply-rules.sh' || true
+          exit "$rc"

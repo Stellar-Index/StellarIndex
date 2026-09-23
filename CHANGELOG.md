@@ -19524,8 +19524,8 @@ Tested against Stellar protocol v23.
   stale comment (it caps a ledger window, not a row count) corrected.
 - Go toolchain bumped to 1.25.12 (clears GO-2026-5856 `crypto/tls` govulncheck finding);
   every direct Go dep bumped to latest in one commit (aws-sdk-go-v2 family, x/sync 0.22,
-  google.golang.org/api 0.287.1 + grpc 1.82) — supersedes dependabot #1371/#1372, whose
-  isolated per-module bumps left `go.sum` missing sibling-module entries.
+  google.golang.org/api 0.287.1 + grpc 1.82) — supersedes the prior isolated
+  per-module dependabot bumps, which left `go.sum` missing sibling-module entries.
 - Dependabot now groups all minor/patch bumps into **one weekly PR per ecosystem** (majors
   stay per-dependency); dead `web/dashboard` npm entry removed. Ends the per-module PR
   fan-out whose merges invalidated each other's `go.sum` and forced rebase cascades.
@@ -20388,7 +20388,7 @@ Tested against Stellar protocol v23.
   an empty series ("a follow-up can implement cross-currency
   triangulation on read").
 - **`/v1/price/at` stablecoin-proxy fallback**: the closed-1m-VWAP
-  CAGG point lookup gains the #1217-family X/fiat:USD → X/⟨peg⟩
+  CAGG point lookup gains the stablecoin-fiat-proxy-family X/fiat:USD → X/⟨peg⟩
   retry (the CAGG sibling the vwap.go raw-trades fallback doc
   deferred to "a separate PR"): when the literal pair + aliases
   have no bucket at-or-before `ts`, each operator-declared
@@ -27711,7 +27711,7 @@ rc.48 deploy to R1.
   `VWAPResult`, `TWAPResult`, `Pool`. Five tests pin happy-path
   round-trips, query-param shape, and required-field validation.
   Supersedes the stale PR #1124 (whose branch had drifted into
-  conflict). (PR #1226)
+  conflict).
 - **HSTS on the explorer + status site** — both surfaces were
   missing `Strict-Transport-Security`, leaving them vulnerable
   to a downgrade-protocol-stripping attack on first visit.
@@ -27736,8 +27736,8 @@ rc.48 deploy to R1.
   aggregator policy, not eager ingest normalisation**
   (`docs/adr/0026-stablecoin-fiat-proxy-late-binding.md`).
   Records the implicit-from-the-start policy that a flurry
-  of API-side fallback PRs (#1217 / #1218 / #1219 / #1224 /
-  #1226) each instantiated. Captures: the
+  of API-side fallback PRs (internal tracking numbers that
+  never resolved to real PRs) each instantiated. Captures: the
   late-binding-vs-eager-rewrite tradeoff (depeg detection,
   per-stablecoin signal preservation, reversibility), the
   default peg list (USDT/USDC/PYUSD/EUROC/EUROB/MXNe), the
@@ -27782,7 +27782,7 @@ rc.48 deploy to R1.
   needed on r1 to add the crypto feeds (tracked).
 - **Runbook for the `fx_quotes` hypertable / migration 0028 gap.**
   Captures the 2026-05-10 finding that r1's DB is at migration
-  0027 (PR #1041's migration 0028 was never applied), so the
+  0027 (migration 0028 was never applied), so the
   forex worker WARN-spams `pq: relation "fx_quotes" does not
   exist` on every refresh tick and `/v1/currencies/EUR.history_1y`
   / `.history_all` stay empty (customer-visible regression of
@@ -27918,7 +27918,7 @@ rc.48 deploy to R1.
   tests + log-greps and only surfaced from live latency probes
   ("dex pools take forever"). With this counter an alert on
   `rate(...{result="miss"}[5m]) / rate(...[5m]) > 0.5` sustained
-  catches the next drift in minutes instead of days. (PR #1196)
+  catches the next drift in minutes instead of days.
 - **Prometheus alert `stellarindex_api_cache_miss_rate_high`** wired
   to the new counter. Fires P2/ticket when miss rate > 50% sustained
   10 min on any (cache, op) with ≥ 0.1 req/s traffic. The traffic
@@ -27930,7 +27930,7 @@ rc.48 deploy to R1.
   (which is what we did manually for #1185 / #1194 / the Limit dimension).
   (PR #1197)
 - **`stellarindex_api_cache_ops_total` extended to `coins` and
-  `sources_stats` cache wrappers.** PR #1196 only instrumented
+  `sources_stats` cache wrappers.** The counter above only instrumented
   `markets`; this fills in the other two so the existing alert
   (#1197) catches drift on every cached endpoint, not just the
   ones that motivated the original bugs. New op labels:
@@ -27995,7 +27995,6 @@ rc.48 deploy to R1.
   the #45 scam-token disambiguation guard). Handler adds a
   `canonical.ParseAsset` short-circuit so the canonical-form
   path skips the case-insensitive retry it doesn't need.
-  (PR #1231)
 - **`/v1/oracle/prices` now applies the same X/fiat:USD → X/<peg>
   stablecoin-fiat proxy fallback** as `/v1/oracle/lastprice`
   (#1220) and the other X/fiat:USD surfaces. Pre-fix, the SEP-40
@@ -28007,13 +28006,13 @@ rc.48 deploy to R1.
   the operator's classic USD pegs in priority order; first peg
   with non-empty closed buckets wins. Response carries
   `flags.triangulated=true` so the wire shape is honest about the
-  derivation. (PR #1224)
+  derivation.
 - **F2 fields on `/v1/assets/{id}` (`market_cap_usd`, `fdv_usd`,
   `change_24h_pct`) now populate via the same X/fiat:USD →
-  X/<peg> stablecoin-fiat proxy fallback that #1217 added to
+  X/<peg> stablecoin-fiat proxy fallback already shipped for
   `/v1/price`**. The F2 path's `lookupUSDPrice` and the binary's
   `storeChange24hReader` both bypass the v1 handler's
-  `priceFallback`, so even with #1217 deployed every asset on
+  `priceFallback`, so even with that fallback deployed every asset on
   Stellar mainnet had `market_cap_usd / fdv_usd / change_24h_pct`
   silently null — the steady-state because nothing on-chain ever
   quotes in fiat:USD. `lookupUSDPrice` now calls the existing
@@ -28113,8 +28112,8 @@ rc.48 deploy to R1.
   error-skip branch absorbs it. Caught from r1 production logs
   on 2026-05-10 — XLMUSD trades flooding the indexer ERROR log.
 - **`/v1/ohlc` now applies the same X/fiat:USD → X/<peg> stablecoin
-  fallback** as `/v1/price` (#1217), `/v1/chart` (#1015), and the
-  vwap+twap pair (#1219). Pre-fix, `/v1/ohlc?base=native&quote=fiat:USD`
+  fallback** as `/v1/price`, `/v1/chart` (#1015), and the
+  vwap+twap pair below. Pre-fix, `/v1/ohlc?base=native&quote=fiat:USD`
   404'd "no trades in window" out-of-the-box on every fresh
   deployment. the spec §3 names `/v1/ohlc` as a launch-blocker
   for the asset-detail surface, so this gap was visible to every
@@ -28123,7 +28122,7 @@ rc.48 deploy to R1.
   first peg with non-empty trades wins. Response carries
   `flags.triangulated=true`.
 - **`/v1/vwap` and `/v1/twap` now apply the same X/fiat:USD →
-  X/<peg> stablecoin-fiat proxy fallback** as `/v1/price` (#1217)
+  X/<peg> stablecoin-fiat proxy fallback** as `/v1/price`
   and `/v1/chart` (#1015). Pre-fix, `/v1/vwap?base=native&quote=fiat:USD`
   and `/v1/twap?base=native&quote=fiat:USD` both 404'd "no trades
   in window" out-of-the-box because no on-chain trades quote in
@@ -28132,14 +28131,14 @@ rc.48 deploy to R1.
   order; first non-empty result wins. Response carries
   `flags.triangulated=true` so wire shape is honest about the
   derivation. Same opt-in shape (empty allow-list still 404s);
-  non-USD fiat quotes skip the fallback. (PR #1219)
+  non-USD fiat quotes skip the fallback.
 - **`/v1/oracle/lastprice` and `/v1/oracle/x_last_price` get the
   same X/fiat:USD → X/<peg> stablecoin-fiat proxy fallback** as
-  `/v1/price` (#1217). Pre-fix, the SEP-40 passthrough surface
+  `/v1/price`. Pre-fix, the SEP-40 passthrough surface
   inherited the same out-of-the-box 404 mode: an on-chain
   integrator drop-in-replacing `lastprice(native)` against XLM
   got 404 even though `/v1/coins/native` showed $0.16 cleanly.
-  Same intent as #1217 — keep the SEP-40 surface and the
+  Same intent as the `/v1/price` fallback above -- keep the SEP-40 surface and the
   closed-bucket surface consistent in coverage so an integrator
   switching between them sees the same set of "available" pairs.
   Two new tests pin the lastprice + x_last_price branches.
@@ -28175,7 +28174,7 @@ rc.48 deploy to R1.
   caches the err for in-flight waiters but doesn't TTL-cache it
   for new callers — same semantics as before, minus the panic.
 - **`/v1/price/tip?asset=X&quote=fiat:USD` gets the same
-  stablecoin-fiat proxy fallback as `/v1/price`** (#1217). Tip
+  stablecoin-fiat proxy fallback as `/v1/price`**. Tip
   was 404'ing on the same shape — `tipWindowVWAP →
   PriceReader.LatestPrice → tryRedisVWAPFallback → tryFiatCrossRate`
   with no peg-rewrite branch — so a customer reading the
@@ -28183,7 +28182,6 @@ rc.48 deploy to R1.
   404 as `/v1/price`. Now slots `tryStablecoinFiatProxy` between
   the Redis cache layer and the fiat-cross-rate fallback in
   `computeTip`. Same opt-in shape (empty allow-list still 404s).
-  (PR #1218)
 - **`/v1/price?asset=X&quote=fiat:USD` now serves via classic-USDC
   peg fallback at handler read time**, mirroring the `/v1/chart`
   fallback shipped in #1015 (task #98). Same root cause: the
@@ -28201,7 +28199,6 @@ rc.48 deploy to R1.
   Response carries `flags.triangulated=true` and the wire `quote`
   field echoes the user's request (`fiat:USD`), not the proxy
   peg. Opt-in shape preserved — empty allow-list still 404s.
-  (PR #1217)
 - **Indexer now WARNs at boot when `[supply]` watched-sets are all
   empty**, instead of silently registering zero supply observers.
   This was the silent-failure mode behind r1's
@@ -28839,22 +28836,22 @@ rc.48 deploy to R1.
 
 ### Added
 
-- **Persistent fx_quotes hypertable** (PR #1041). Daily forex
+- **Persistent fx_quotes hypertable.** Daily forex
   rate snapshots now backfill into a TimescaleDB hypertable
   (migration 0028) so the per-currency page can render charts
   beyond the 7-day in-memory window. The forex worker upserts on
   every refresh tick; a one-shot `scripts/ops/fx-history-backfill`
   walks Massive's grouped-daily endpoint to seed up to 10 years
   of history.
-- **`/v1/currencies/{ticker}?range=`** (PR #1041) — handler now
+- **`/v1/currencies/{ticker}?range=`** — handler now
   accepts `30d`, `90d`, `1y`, `5y`, `10y`, `all`. Reads from the
   new fx_quotes hypertable and surfaces the series as `history` +
   `history_range`. Default behaviour (no `range` param) is
   unchanged: the in-memory 7d series in `history_7d`.
 - **/currencies/[ticker]: range-selectable USD-value chart**
-  (PR #1041) replaces the 7d-only sparkline. Chart uses a
+  replaces the 7d-only sparkline. Chart uses a
   720×200 SVG optimised for hundreds of points.
-- **Asset detail: market-cap timeline empty-state** (PR #1041)
+- **Asset detail: market-cap timeline empty-state**
   on the Supply tab — placeholder until the supply-history
   hypertable joins up with per-asset USD prices.
 - **/exchanges all-CEX markets table** sorted by 24h
