@@ -4,7 +4,10 @@
 package chops
 
 import (
+	"bytes"
 	"context"
+	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -277,5 +280,44 @@ func TestValidateRestampFXStaleness(t *testing.T) {
 		if err := validateRestampFXStaleness(bad); err == nil {
 			t.Errorf("-fx-max-staleness %s was accepted", bad)
 		}
+	}
+}
+
+// TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne is the RLT-019
+// regression. printReport (usd_volume_restamp_xlmbase.go) is the shared
+// report chokepoint EVERY estimated tier's walk finishes through — the
+// xlm-base run this file's tests exercise, and the xlm-quote/cex-fx
+// mirrors here. Its scanLabel/declineLabel lines were already templated
+// on the running tier; only the report's own header line hard-coded
+// "tier xlm-base" regardless of which tier actually ran, so an operator
+// reading an xlm-quote or cex-fx report's banner saw the wrong tier name
+// on every line above the ones the walk itself supplied.
+func TestPrintReport_NamesTheRunningTierNotTheXLMBaseOne(t *testing.T) {
+	store := newFakeMirrorChunkStore(nil)
+	run := newEstimatedRestampRun(xlmBaseRestampOptions{Slice: time.Hour, Batch: 1}, xlmQuoteTierProfile(store))
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	done := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		done <- buf.String()
+	}()
+	orig := os.Stdout
+	os.Stdout = w
+	run.printReport(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	os.Stdout = orig
+	_ = w.Close()
+	got := <-done
+	_ = r.Close()
+
+	if !strings.Contains(got, "REPORT — tier xlm-quote —") {
+		t.Errorf("xlm-quote report header does not name its own tier:\n%s", got)
+	}
+	if strings.Contains(got, "REPORT — tier xlm-base —") {
+		t.Errorf("xlm-quote report header still hard-codes the xlm-base tier:\n%s", got)
 	}
 }
