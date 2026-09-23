@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -163,6 +164,62 @@ func TestRedisAPIKey_AccountStatusReadAtMostOncePerWindow(t *testing.T) {
 	if accounts.calls != 2 {
 		t.Fatalf("account reads after the window elapsed = %d, want 2 (should re-read)", accounts.calls)
 	}
+}
+
+// TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries is the
+// Q183/T150 regression: statusCache was write-only — every distinct
+// account slug ever seen stayed in the map for the life of the
+// process, even long after it passed the staleness bound and could
+// never be served from cache again. This pins that a write past the
+// staleness bound sweeps out entries that aged past it, bounding the
+// cache to the working set of recently-seen accounts instead of every
+// account ever queried.
+func TestRedisAPIKey_AccountStatusCacheEvictsStaleEntries(t *testing.T) {
+	clock := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	accounts := &stubAccountStatusReader{bySlug: map[string]platform.Account{}}
+	v, mr := newStatusCacheValidator(t, accounts, &clock)
+
+	const n = 5
+	for i := 0; i < n; i++ {
+		slug := fmt.Sprintf("acct-%d", i)
+		accounts.bySlug[slug] = acctWithStatus(slug, platform.AccountActive)
+		seedKey(t, mr, "sip_"+slug, APIKeyRecord{
+			KeyID:      "kid-" + slug,
+			Identifier: AccountIdentifier(slug),
+			Tier:       TierAPIKey,
+		})
+		if _, err := v.Lookup(context.Background(), "sip_"+slug); err != nil {
+			t.Fatalf("warm Lookup %s: %v", slug, err)
+		}
+	}
+	if got := statusCacheLen(v); got != n {
+		t.Fatalf("cache size after warming %d distinct accounts = %d, want %d", n, got, n)
+	}
+
+	// Advance past the staleness bound (10x30s = 5m) and touch one more,
+	// distinct account. The write must sweep the now-unreadable stale
+	// entries rather than leaving them in the map forever.
+	clock = clock.Add(10 * time.Minute)
+	accounts.bySlug["acct-new"] = acctWithStatus("acct-new", platform.AccountActive)
+	seedKey(t, mr, "sip_new", APIKeyRecord{
+		KeyID:      "kid-new",
+		Identifier: AccountIdentifier("acct-new"),
+		Tier:       TierAPIKey,
+	})
+	if _, err := v.Lookup(context.Background(), "sip_new"); err != nil {
+		t.Fatalf("warm Lookup acct-new: %v", err)
+	}
+
+	if got := statusCacheLen(v); got != 1 {
+		t.Fatalf("cache size after the stale sweep = %d, want 1 (only the fresh entry) — stale entries were never evicted", got)
+	}
+}
+
+// statusCacheLen reads the current statusCache size under its mutex.
+func statusCacheLen(v *RedisAPIKeyValidator) int {
+	v.statusMu.RLock()
+	defer v.statusMu.RUnlock()
+	return len(v.statusCache)
 }
 
 // TestRedisAPIKey_SuspendedRideOutStillRejected pins that the kill

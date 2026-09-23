@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
@@ -53,7 +55,12 @@ func (s *RedisAPIKeyStore) MarkEmailVerified(ctx context.Context, keyID string, 
 		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: marshal: %w", err)
 	}
 	k := cachekeys.APIKey(hash).String()
-	if err := s.rdb.Set(ctx, k, body, 0).Err(); err != nil {
+	// KeepTTL (Q186): same reasoning as UpdateRateLimit — this
+	// read-modify-write must not clear a register-mirrored record's
+	// sliding idle TTL ([MirroredKeyIdleTTL]). A bare `SET ... 0` here
+	// would turn the FIRST verification click into a permanent, never-
+	// expiring credential regardless of subsequent use.
+	if err := s.rdb.Set(ctx, k, body, redis.KeepTTL).Err(); err != nil {
 		return APIKeyRecord{}, fmt.Errorf("auth: MarkEmailVerified: redis set %s: %w", k, err)
 	}
 	return rec, nil

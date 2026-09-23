@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
@@ -52,7 +54,13 @@ func (s *RedisAPIKeyStore) UpdateRateLimit(ctx context.Context, keyID string, ne
 		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: marshal: %w", err)
 	}
 	k := cachekeys.APIKey(hash).String()
-	if err := s.rdb.Set(ctx, k, body, 0).Err(); err != nil {
+	// KeepTTL (Q186): this is a read-modify-write on a record that may
+	// carry the register-mirror's sliding idle TTL
+	// ([MirroredKeyIdleTTL]). A bare `SET ... 0` clears any existing TTL,
+	// turning a bounded-lifetime mirrored key permanent the first time an
+	// operator rate-limit change touches it — silently defeating the
+	// idle-expiry that bounds open-registration keyspace growth.
+	if err := s.rdb.Set(ctx, k, body, redis.KeepTTL).Err(); err != nil {
 		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: redis set %s: %w", k, err)
 	}
 	return rec, nil

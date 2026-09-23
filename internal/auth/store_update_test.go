@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
 // newTestStore lives in store_redis_test.go; reuse its
@@ -108,5 +110,40 @@ func TestUpdateRateLimit_RejectsEmptyKeyID(t *testing.T) {
 	_, err := store.UpdateRateLimit(context.Background(), "", 5000)
 	if err == nil {
 		t.Errorf("expected error for empty keyID, got nil")
+	}
+}
+
+// TestUpdateRateLimit_PreservesMirroredKeyTTL is the Q186 regression: a
+// register-mirrored record is written with the sliding idle TTL
+// (MirroredKeyIdleTTL) so an abandoned open-registration key ages out of
+// Redis. Pre-fix, the read-modify-write did `SET ... 0`, which clears any
+// existing TTL — so the FIRST rate-limit change on such a key silently
+// turned it permanent, defeating the idle-expiry bound entirely.
+func TestUpdateRateLimit_PreservesMirroredKeyTTL(t *testing.T) {
+	store, mr, _ := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateWithSecret(ctx, MirroredKey{
+		Plaintext:  "sip_mirrored_secret",
+		KeyID:      "kid_mirrored",
+		Identifier: AccountIdentifier("acme"),
+	}); err != nil {
+		t.Fatalf("CreateWithSecret: %v", err)
+	}
+
+	hash := HashAPIKey("sip_mirrored_secret")
+	recordKey := cachekeys.APIKey(hash).String()
+	before := mr.TTL(recordKey)
+	if before <= 0 {
+		t.Fatalf("mirrored record TTL before update = %v, want > 0 (MirroredKeyIdleTTL)", before)
+	}
+
+	if _, err := store.UpdateRateLimit(ctx, "kid_mirrored", 5000); err != nil {
+		t.Fatalf("UpdateRateLimit: %v", err)
+	}
+
+	after := mr.TTL(recordKey)
+	if after <= 0 {
+		t.Fatalf("mirrored record TTL after UpdateRateLimit = %v, want > 0 (TTL must survive the write-back, not be cleared to persistent)", after)
 	}
 }

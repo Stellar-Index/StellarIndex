@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 )
 
 // TestMarkEmailVerified_HappyPath — flips a freshly-minted
@@ -88,5 +90,40 @@ func TestMarkEmailVerified_RejectsEmptyKeyID(t *testing.T) {
 	store, _, _ := newTestStore(t)
 	if _, err := store.MarkEmailVerified(context.Background(), "", time.Now()); err == nil {
 		t.Error("expected error for empty keyID")
+	}
+}
+
+// TestMarkEmailVerified_PreservesMirroredKeyTTL is the Q186 regression:
+// the /v1/signup/verify handler calls this on a register-mirrored key,
+// which is written with the sliding idle TTL (MirroredKeyIdleTTL). Pre-fix
+// the write-back did `SET ... 0`, clearing that TTL — so the customer's
+// FIRST click on the verification link turned their open-registration key
+// permanent, defeating the idle-expiry bound.
+func TestMarkEmailVerified_PreservesMirroredKeyTTL(t *testing.T) {
+	store, mr, _ := newTestStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateWithSecret(ctx, MirroredKey{
+		Plaintext:  "sip_mirrored_verify",
+		KeyID:      "kid_mirrored_verify",
+		Identifier: AccountIdentifier("acme"),
+	}); err != nil {
+		t.Fatalf("CreateWithSecret: %v", err)
+	}
+
+	hash := HashAPIKey("sip_mirrored_verify")
+	recordKey := cachekeys.APIKey(hash).String()
+	before := mr.TTL(recordKey)
+	if before <= 0 {
+		t.Fatalf("mirrored record TTL before verify = %v, want > 0 (MirroredKeyIdleTTL)", before)
+	}
+
+	if _, err := store.MarkEmailVerified(ctx, "kid_mirrored_verify", time.Time{}); err != nil {
+		t.Fatalf("MarkEmailVerified: %v", err)
+	}
+
+	after := mr.TTL(recordKey)
+	if after <= 0 {
+		t.Fatalf("mirrored record TTL after MarkEmailVerified = %v, want > 0 (TTL must survive the write-back, not be cleared to persistent)", after)
 	}
 }
