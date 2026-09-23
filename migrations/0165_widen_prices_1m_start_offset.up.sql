@@ -1,8 +1,9 @@
 -- 0165 up — widen prices_1m's refresh start_offset past the
 -- ch-live-catchup worst-case stall (RLT-154 / GH #623).
 --
--- 0002 set start_offset to 5 minutes, sized against late-arriving
--- Postgres backfills only. Under the CH feed-switch (ADR-0034 #10) a
+-- The policy this replaces was last set by 0147, which recreated
+-- prices_1m and re-added its refresh policy at 5 minutes — the value 0002
+-- first chose, sized against late-arriving Postgres backfills only. Under the CH feed-switch (ADR-0034 #10) a
 -- lake hole stalls the projector's DEX-trade source until
 -- ch-live-catchup heals it — deploy/systemd/ch-live-catchup.timer
 -- runs every 10 minutes — so a stall that starts right after a catch-up
@@ -19,8 +20,8 @@
 -- the Phase-4 flip (persist_per_source = false) referenced in
 -- stellarindex.toml.j2. 15 minutes covers the 10-minute catch-up
 -- period with a 5-minute margin for the catch-up run's own drain time
--- and clock skew — the same margin 0002's original 5-minute offset
--- allowed for backfills, layered on top of the stall.
+-- and clock skew — the same margin the 5-minute offset allowed for
+-- backfills, layered on top of the stall.
 --
 -- remove_continuous_aggregate_policy + add_continuous_aggregate_policy
 -- is the supported way to change an existing policy's offsets — there
