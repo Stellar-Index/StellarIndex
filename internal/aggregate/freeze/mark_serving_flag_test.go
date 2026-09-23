@@ -142,6 +142,42 @@ func TestMark_PreservesALegacyMarkersLadder(t *testing.T) {
 	}
 }
 
+// TestMark_KeepsALegacyMarkersOwnerRecord: on a legacy marker the
+// pair-level State IS the live ladder, so Mark must leave the whole
+// marker as its lifecycle owner wrote it — reason and ladder — not
+// relabel an escalated freeze as an inherited refusal.
+func TestMark_KeepsALegacyMarkersOwnerRecord(t *testing.T) {
+	mr, rdb := newRedis(t)
+	w, err := freeze.NewWriter(rdb, time.Minute)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	ctx := context.Background()
+	if err := w.MarkHold(ctx, asset, quote, "0.1242", freezeDecision(), escalatedState(time.Now().UTC()), 30*time.Minute); err != nil {
+		t.Fatalf("MarkHold: %v", err)
+	}
+	if err := w.Mark(ctx, asset, quote, "0.1242", inheritedDecision()); err != nil {
+		t.Fatalf("Mark: %v", err)
+	}
+	key := cachekeys.Freeze(asset, quote).String()
+	raw, gerr := mr.Get(key)
+	if gerr != nil {
+		t.Fatalf("read marker: %v", gerr)
+	}
+	var marker freeze.Marker
+	if err := json.Unmarshal([]byte(raw), &marker); err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if marker.Windowed || marker.Reason != freezeDecision().Reason || !marker.State.Escalated {
+		t.Errorf("legacy marker after Mark: windowed=%v reason=%q state=%+v, want the owner's "+
+			"unwindowed marker (%q, escalated)", marker.Windowed, marker.Reason, marker.State, freezeDecision().Reason)
+	}
+	if ttl := mr.TTL(key); ttl < 25*time.Minute {
+		t.Errorf("legacy marker TTL after Mark = %s, want at least the remaining hold (25m)", ttl)
+	}
+}
+
 // TestMark_AfterRedisLossDoesNotHideTheDurableLadder: Redis lost the
 // marker, and the inherited refusal re-creates it BEFORE the target's own
 // window next reaches the freeze step. From then on the marker is present,
