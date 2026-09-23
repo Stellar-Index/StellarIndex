@@ -288,7 +288,7 @@ func (s *Server) handleOraclePrices(w http.ResponseWriter, r *http.Request) {
 // recentClosedWithStablecoinFallback wraps PriceReader.RecentClosedSnapshots
 // with the same X/fiat:USD → X/<peg> retry shape used in the
 // other handler-side stablecoin-proxy fallbacks (#1217 / #1218 /
-// #1219 / #1220). When the literal asset/fiat:USD lookup returns an
+// #1220). When the literal asset/fiat:USD lookup returns an
 // empty slice AND quote is fiat:USD AND the operator declared
 // classic USD pegs, walks the pegs and returns the first non-empty
 // asset/<peg> result. triangulated=true on the return so the

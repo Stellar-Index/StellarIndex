@@ -56,6 +56,17 @@ superseded_by: null
 > replaced with a guess. Treat both "#1226" mentions below as
 > historical record only, not a live reference.
 
+> **Amendment (2026-09-23, RSWP-118).** The "PR #1219" citation below
+> (References → Implementation surface) no longer identifies the
+> `/v1/chart` proxy fallback it describes. No PR #1219 has ever
+> existed in this repo; GitHub has since assigned #1219 to a real but
+> unrelated open issue about `oracle_unparsed_metric_test` incrementing
+> the dropped-row counter itself instead of exercising the reader it's
+> meant to guard, not this ADR's `/v1/chart` fallback. The actual PR
+> number for the `/v1/chart` fallback does not survive in git history,
+> so the citation is not replaced with a guess. Treat the "#1219"
+> mention below as historical record only, not a live reference.
+
 ## Context
 
 Most CEX and DEX trades quote against a USD stablecoin

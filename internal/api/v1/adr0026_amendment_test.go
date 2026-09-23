@@ -140,3 +140,43 @@ func TestADR0026PinsThe1226AmendmentNotice(t *testing.T) {
 		}
 	}
 }
+
+// TestADR0026PinsThe1219AmendmentNotice guards RSWP-118: ADR-0026's
+// "PR #1219" citation (References → Implementation surface) no longer
+// identifies the `/v1/chart` proxy fallback it describes. No PR #1219
+// has ever existed in this repo; GitHub has since assigned #1219 to a
+// real but unrelated open issue about oracle_unparsed_metric_test
+// incrementing the dropped-row counter itself, so a reader following
+// the citation lands on wrong content instead of a 404.
+//
+// Per docs/adr/README.md's amendment rule, the original ADR body is
+// left intact (the "#1219" mention stays, as historical record) and
+// the correction lives in a dated Amendment blockquote. This test
+// pins that the blockquote exists and still calls out both the wrong
+// resolution and the unrelated target, so it can't be silently
+// dropped in a future edit of the doc.
+func TestADR0026PinsThe1219AmendmentNotice(t *testing.T) {
+	path := filepath.Join(repoRoot(t), "docs", "adr", "0026-stablecoin-fiat-proxy-late-binding.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	doc := string(b)
+
+	for _, want := range []string{
+		"Amendment (2026-09-23, RSWP-118)",
+		"No PR #1219 has ever\n> existed in this repo",
+		"oracle_unparsed_metric_test",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s is missing amendment text %q; the dangling #1219 citation is no longer flagged as misdirecting a reader to an unrelated issue", path, want)
+		}
+	}
+
+	// The original citation must survive untouched (README.md's
+	// "amend, don't rewrite" rule) — the amendment explains it, it
+	// doesn't replace it.
+	if original := "PR #1219 — `/v1/chart` proxy fallback"; !strings.Contains(doc, original) {
+		t.Errorf("%s: original citation %q was rewritten or removed; ADR body text must only be amended, per docs/adr/README.md", path, original)
+	}
+}
