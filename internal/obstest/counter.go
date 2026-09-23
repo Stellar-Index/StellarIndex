@@ -1,8 +1,6 @@
 package obstest
 
 import (
-	"testing"
-
 	"github.com/prometheus/client_golang/prometheus"
 	io_prom_dto "github.com/prometheus/client_model/go"
 )
@@ -29,17 +27,6 @@ func CounterValue(c prometheus.Counter) float64 {
 	m := &io_prom_dto.Metric{}
 	if err := c.Write(m); err != nil {
 		return 0
-	}
-	return m.GetCounter().GetValue()
-}
-
-// CounterValueT is CounterValue with a *testing.T, for callers that want a
-// write failure to fail the test rather than read as zero.
-func CounterValueT(t *testing.T, c prometheus.Counter) float64 {
-	t.Helper()
-	m := &io_prom_dto.Metric{}
-	if err := c.Write(m); err != nil {
-		t.Fatalf("read counter: %v", err)
 	}
 	return m.GetCounter().GetValue()
 }
