@@ -1674,13 +1674,15 @@ type RWACuratedPublishedPoint struct {
 // TotalUSD minus the verified reference total, signed, and is nil when
 // the verified set publishes no reference total. The curator's
 // arithmetic over inputs this index cannot read; nothing in it is
-// verified here.
+// verified here. Stale is true when ExecutedAt is more than 48h old;
+// past 7 days the server omits the block entirely.
 type RWACuratedPublished struct {
 	TotalUSD         string                     `json:"total_usd"`
 	AsOf             string                     `json:"as_of"`
 	ExecutedAt       time.Time                  `json:"executed_at"`
 	BySubclass       []RWACuratedPublishedSplit `json:"by_subclass"`
 	Series           []RWACuratedPublishedPoint `json:"series"`
+	Stale            bool                       `json:"stale,omitempty"`
 	Source           string                     `json:"source"`
 	GapVsVerifiedUSD *string                    `json:"gap_vs_verified_usd,omitempty"`
 }

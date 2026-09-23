@@ -51,18 +51,30 @@ func (s *stubCuratedReader) LatestCuratedPublished(_ context.Context, _ string) 
 	return s.published, nil
 }
 
-// publishedFixture is what the curator's two public queries printed on
-// 2026-09-17: a headline of $4,004,795,860 for August 2025, its split,
-// and a three-month series.
+// publishedFixtureExecutedAt is when the curator's query last ran, held
+// relative to the test's own clock (not a fixed calendar date) so the
+// fixture stays inside [v1.rwaCuratedPublishedStaleAfter] and
+// [v1.rwaCuratedPublishedMaxAge] no matter when the suite runs.
+var publishedFixtureExecutedAt = time.Now().UTC().Add(-6 * time.Hour)
+
+// publishedFixture is what the curator's two public queries printed: a
+// headline of $4,004,795,860 for August 2025, its split, and a
+// three-month series.
 func publishedFixture() *timescale.CuratedRWAPublished {
+	return publishedFixtureAt(publishedFixtureExecutedAt)
+}
+
+// publishedFixtureAt is [publishedFixture] with the curator's own
+// execution clock set explicitly, for pinning the staleness bound.
+func publishedFixtureAt(executedAt time.Time) *timescale.CuratedRWAPublished {
 	month := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC) }
 	return &timescale.CuratedRWAPublished{
 		MonthEnd:         month(2025, 8, 31),
 		TotalUSD:         "4004795860",
 		SourceQuery:      6961845,
 		SplitSourceQuery: 6961847,
-		ExecutedAt:       time.Date(2026, 9, 17, 4, 58, 12, 0, time.UTC),
-		ObservedAt:       time.Date(2026, 9, 17, 5, 0, 0, 0, time.UTC),
+		ExecutedAt:       executedAt,
+		ObservedAt:       time.Now().UTC(),
 		BySubclass: []timescale.CuratedRWAPublishedSplit{
 			{Subclass: "US Treasuries", ValueUSD: "3100000000"},
 			{Subclass: "Private Credit", ValueUSD: "904795860.00"},
@@ -218,8 +230,11 @@ func TestRWACurated_PublishedTotalsWhenNoRowIsReadable(t *testing.T) {
 	if p.TotalUSD != "4004795860.00" || p.AsOf != "2025-08-31" {
 		t.Errorf("headline = %s as of %s, want 4004795860.00 as of 2025-08-31", p.TotalUSD, p.AsOf)
 	}
-	if got := time.Time(p.ExecutedAt); !got.Equal(time.Date(2026, 9, 17, 4, 58, 12, 0, time.UTC)) {
+	if got := time.Time(p.ExecutedAt); !got.Equal(publishedFixtureExecutedAt) {
 		t.Errorf("executed_at = %v, want the curator's execution time", got)
+	}
+	if p.Stale {
+		t.Errorf("a 6-hour-old published total must not be labelled stale")
 	}
 	if p.Source != "dune query 6961845 / 6961847" {
 		t.Errorf("source = %q", p.Source)
@@ -269,6 +284,29 @@ func TestRWACurated_PublishedTotalsWhenNoRowIsReadable(t *testing.T) {
 	}
 	if derefStr(both.Summary.ReferenceValuation.ValueUSD) != derefStr(v.Summary.ReferenceValuation.ValueUSD) {
 		t.Error("the published block changed the verified summary")
+	}
+}
+
+// The curator's own execution clock (executed_at) is a SEPARATE fact
+// from our sync's own freshness (observed_at): a sync that keeps
+// succeeding against an unmoving curator-side result must not be read
+// as a fresh headline figure forever.
+func TestRWACurated_PublishedTotalAgesOutStaleThenGone(t *testing.T) {
+	stale := getRWA(t, rwaCuratedServer(t, &stubCuratedReader{
+		published: publishedFixtureAt(time.Now().UTC().Add(-60 * time.Hour)), // > 48h, < 7d
+	}))
+	if stale.Curated == nil || stale.Curated.Published == nil {
+		t.Fatalf("60h-old published total: %+v, want it still served", stale.Curated)
+	}
+	if !stale.Curated.Published.Stale {
+		t.Error("a 60-hour-old published total must be labelled stale: true")
+	}
+
+	gone := getRWA(t, rwaCuratedServer(t, &stubCuratedReader{
+		published: publishedFixtureAt(time.Now().UTC().Add(-8 * 24 * time.Hour)), // > 7d
+	}))
+	if gone.Curated == nil || gone.Curated.Published != nil || gone.Curated.Status != "unavailable" {
+		t.Errorf("8-day-old published total: %+v, want no published block and status unavailable", gone.Curated)
 	}
 }
 

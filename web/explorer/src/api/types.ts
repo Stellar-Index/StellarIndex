@@ -8325,7 +8325,9 @@ export interface components {
          *     behind them are private. The curator's arithmetic over inputs
          *     this index cannot read: no per-asset breakdown, no price, no
          *     market, nothing verified here. Absent when nothing published is
-         *     inside its recognition bound.
+         *     inside its recognition bound, or when `executed_at` is more than
+         *     7 days old: the curator's own query has not run in a week,
+         *     however recently this index read its result.
          */
         RWACuratedPublished: {
             /** @description The latest month's total, a decimal string at 2dp. */
@@ -8341,6 +8343,12 @@ export interface components {
              *     as fresh as this, not as fresh as this index's read of it.
              */
             executed_at: string;
+            /**
+             * @description True when `executed_at` is more than 48 hours old: the
+             *     figure is still served, but the curator's own query has not
+             *     run since. Absent (false) otherwise.
+             */
+            stale?: boolean;
             /** @description The latest month's total split by the curator's own subclass labels, largest first. Empty when the curator publishes no split for that month. */
             by_subclass: components["schemas"]["RWACuratedPublishedSplit"][];
             /** @description The whole monthly total series, oldest month first; its last point is `as_of` / `total_usd`. */

@@ -127,9 +127,11 @@ curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.curated | {status, asse
 
    **`executed_at_unix` frozen while `last_run_unix` advances** — the
    run is healthy and the CURATOR has stopped refreshing its queries.
-   The API's `curated.published.executed_at` shows the same stamp; the
-   figure is still the curator's latest, only older. Nothing on this
-   side fixes it.
+   The API's `curated.published.executed_at` shows the same stamp. Past
+   48 hours the API serves the block with `stale: true`; past 7 days it
+   drops `curated.published` entirely (`curated.status` reads
+   `unavailable` when no per-asset row is readable either). Nothing on
+   this side fixes it.
 
 6. **Textfile is written but `last_run_unix` frozen** — the unit ran and
    wrote, but node_exporter is not scraping the directory (permission
