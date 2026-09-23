@@ -240,6 +240,24 @@ func TestAmount_UnmarshalJSONRejectsNull(t *testing.T) {
 	}
 }
 
+// JSON permits insignificant whitespace around a value, and
+// json.Unmarshal into a string leaves it untouched on a padded null
+// just as on a bare one — so the null guard must not depend on the
+// exact byte spelling.
+func TestAmount_UnmarshalJSONRejectsWhitespacePaddedNull(t *testing.T) {
+	t.Parallel()
+	for _, in := range []string{" null", "null\n", "\t null \r\n"} {
+		a := Amount{value: big.NewInt(42)}
+		err := a.UnmarshalJSON([]byte(in))
+		if !errors.Is(err, ErrInvalidAmount) {
+			t.Errorf("UnmarshalJSON(%q) = %v, value %s; want ErrInvalidAmount", in, err, a)
+		}
+		if a.String() != "42" {
+			t.Errorf("UnmarshalJSON(%q) overwrote the receiver with %s", in, a)
+		}
+	}
+}
+
 func TestAmount_SQLRoundTrip(t *testing.T) {
 	t.Parallel()
 

@@ -1,6 +1,7 @@
 package canonical
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/json"
 	"fmt"
@@ -200,7 +201,7 @@ func (a Amount) MarshalJSON() ([]byte, error) {
 // legitimately be absent must be typed *Amount so the caller states
 // what absent means.
 func (a *Amount) UnmarshalJSON(b []byte) error {
-	if string(b) == "null" {
+	if string(bytes.TrimSpace(b)) == "null" {
 		return fmt.Errorf("canonical: cannot unmarshal JSON null into an Amount "+
 			"(use *Amount for a field that may legitimately be absent): %w", ErrInvalidAmount)
 	}

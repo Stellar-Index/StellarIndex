@@ -50,6 +50,16 @@ func TestOracle_Validate_happy(t *testing.T) {
 	}
 }
 
+// 38 is the NUMERIC precision limit itself, so it is accepted; 39 is
+// the first rejected value (the "decimals 39" error case below).
+func TestOracle_Validate_decimalsBoundaryAccepted(t *testing.T) {
+	u := validOracle()
+	u.Decimals = 38
+	if err := u.Validate(); err != nil {
+		t.Fatalf("Decimals=38 rejected: %v", err)
+	}
+}
+
 func TestOracle_Validate_errors(t *testing.T) {
 	cases := map[string]func(*c.OracleUpdate){
 		"empty source":      func(u *c.OracleUpdate) { u.Source = "" },
@@ -60,6 +70,7 @@ func TestOracle_Validate_errors(t *testing.T) {
 		"zero price":        func(u *c.OracleUpdate) { u.Price = c.NewAmount(big.NewInt(0)) },
 		"neg price":         func(u *c.OracleUpdate) { u.Price = c.NewAmount(big.NewInt(-1)) },
 		"too many decimals": func(u *c.OracleUpdate) { u.Decimals = 40 },
+		"decimals 39":       func(u *c.OracleUpdate) { u.Decimals = 39 },
 		"negative conf":     func(u *c.OracleUpdate) { u.Confidence = -0.1 },
 		"conf > 1":          func(u *c.OracleUpdate) { u.Confidence = 1.5 },
 		"NaN conf":          func(u *c.OracleUpdate) { u.Confidence = math.NaN() },
