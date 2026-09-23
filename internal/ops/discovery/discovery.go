@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -31,8 +33,12 @@ func Run(args []string) error {
 // with one mode (`list`); future modes (e.g. `prune`, `flag`) plug
 // in here without changing the top-level dispatch.
 func discoveryCmd(args []string) error {
+	const usage = "usage: discovery list [flags]"
 	if len(args) == 0 {
-		return fmt.Errorf("usage: discovery list [flags]")
+		return errors.New(usage)
+	}
+	if opsutil.IsHelpArg(args[0]) {
+		return opsutil.Usage(usage)
 	}
 	switch args[0] {
 	case "list":

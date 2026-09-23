@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"flag"
+	"os"
 	"strings"
 	"testing"
 
@@ -82,5 +83,31 @@ func TestDispatchExitCode_ExitCodeErrorStillWins(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "reconcile-balances: 3 mismatches") {
 		t.Errorf("stderr = %q, want it to contain %q", stderr.String(), "reconcile-balances: 3 mismatches")
+	}
+}
+
+// TestEverySubcommandHelpExitsZero drives every help spelling through
+// every dispatch-table entry and the real exit-code chokepoint. Namespace
+// verbs (discovery, supply, archive-completeness) and the positional verb
+// rpc-probe read args[1] before any FlagSet exists, so their help request
+// never reaches fs.Parse and must be answered with flag.ErrHelp directly.
+func TestEverySubcommandHelpExitsZero(t *testing.T) {
+	devNull, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer devNull.Close()
+	stdout, stderrFile := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = devNull, devNull
+	defer func() { os.Stdout, os.Stderr = stdout, stderrFile }()
+
+	for name, run := range subcommands {
+		for _, help := range []string{"-h", "-help", "--help"} {
+			var stderr bytes.Buffer
+			code := dispatchExitCode(name, run([]string{name, help}), &stderr)
+			if code != 0 || stderr.Len() != 0 {
+				t.Errorf("%s %s: exit %d, stderr %q; want exit 0 and no error line", name, help, code, stderr.String())
+			}
+		}
 	}
 }
