@@ -39,6 +39,13 @@ type captureEmitter struct {
 	mu          sync.Mutex
 	divergences []divergenceCall
 	outcomes    []outcomeCall
+	// gauge mirrors the live GaugeVec: Divergence sets a series,
+	// ClearDivergence deletes it.
+	gauge map[string]float64
+}
+
+func gaugeSeries(classicKey string, wrapClass supply.WrapClass) string {
+	return classicKey + "|" + string(wrapClass)
 }
 
 type divergenceCall struct {
@@ -56,6 +63,23 @@ func (c *captureEmitter) Divergence(k string, wrapClass supply.WrapClass, s floa
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.divergences = append(c.divergences, divergenceCall{ClassicKey: k, WrapClass: wrapClass, Stroops: s})
+	if c.gauge == nil {
+		c.gauge = map[string]float64{}
+	}
+	c.gauge[gaugeSeries(k, wrapClass)] = s
+}
+
+func (c *captureEmitter) ClearDivergence(k string, wrapClass supply.WrapClass) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.gauge, gaugeSeries(k, wrapClass))
+}
+
+func (c *captureEmitter) liveSeries(k string, wrapClass supply.WrapClass) (float64, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	v, ok := c.gauge[gaugeSeries(k, wrapClass)]
+	return v, ok
 }
 
 func (c *captureEmitter) Outcome(k supply.CrossCheckOutcomeKind, wrapClass supply.WrapClass) {
@@ -456,5 +480,66 @@ func TestCrossCheckRefresher_PerPairIsolation(t *testing.T) {
 	}
 	if got[1].Pair.ClassicKey != "USDC:G..." || got[1].Kind != supply.CrossCheckOutcomeReadError {
 		t.Fatalf("got[1]: %#v", got[1])
+	}
+}
+
+// TestCrossCheckRefresher_NonEvaluableOutcomeClearsGauge — a pair whose
+// last tick agreed must not keep serving that agreement once it stops
+// being evaluable: Prometheus re-exports a GaugeVec series on every
+// scrape, so a stalled classic refresher would otherwise read as a
+// healthy 0 forever while the divergence alert stays silent.
+func TestCrossCheckRefresher_NonEvaluableOutcomeClearsGauge(t *testing.T) {
+	t.Parallel()
+	const classicKey, sacKey = "USDC:G...", "CCONTRACT"
+	cases := []struct {
+		name  string
+		want  supply.CrossCheckOutcomeKind
+		stall func(f *fakeSnapshotReader)
+	}{
+		{"read_error", supply.CrossCheckOutcomeReadError, func(f *fakeSnapshotReader) {
+			f.errs = map[string]error{classicKey: errors.New("connection refused")}
+		}},
+		{"missing_snapshot", supply.CrossCheckOutcomeMissing, func(f *fakeSnapshotReader) {
+			delete(f.supplies, sacKey)
+		}},
+		{"misaligned", supply.CrossCheckOutcomeMisaligned, func(f *fakeSnapshotReader) {
+			s := f.supplies[sacKey]
+			s.LedgerSequence += supply.CrossCheckLedgerTolerance + 1
+			f.supplies[sacKey] = s
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			reader := &fakeSnapshotReader{supplies: map[string]supply.Supply{
+				classicKey: {AssetKey: classicKey, TotalSupply: big.NewInt(100), LedgerSequence: 50_000_000},
+				sacKey:     {AssetKey: sacKey, TotalSupply: big.NewInt(100), LedgerSequence: 50_000_000},
+			}}
+			emitter := &captureEmitter{}
+			r, err := supply.NewCrossCheckRefresher(
+				[]supply.CrossCheckPair{{ClassicKey: classicKey, SACKey: sacKey, WrapClass: supply.WrapClassPartial}},
+				reader, emitter, newSilentLogger(),
+			)
+			if err != nil {
+				t.Fatalf("NewCrossCheckRefresher: %v", err)
+			}
+			if got := r.Tick(context.Background()); got[0].Kind != supply.CrossCheckOutcomeWithin {
+				t.Fatalf("first tick: got %q, want within", got[0].Kind)
+			}
+			if v, ok := emitter.liveSeries(classicKey, supply.WrapClassPartial); !ok || v != 0 {
+				t.Fatalf("after within: series=(%v, %v), want (0, true)", v, ok)
+			}
+
+			reader.mu.Lock()
+			tc.stall(reader)
+			reader.mu.Unlock()
+
+			if got := r.Tick(context.Background()); got[0].Kind != tc.want {
+				t.Fatalf("second tick: got %q, want %q", got[0].Kind, tc.want)
+			}
+			if v, ok := emitter.liveSeries(classicKey, supply.WrapClassPartial); ok {
+				t.Fatalf("after %s the gauge still serves %v — a stale verdict re-exported every scrape", tc.want, v)
+			}
+		})
 	}
 }

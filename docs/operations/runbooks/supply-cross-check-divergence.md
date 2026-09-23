@@ -209,7 +209,7 @@ psql -d stellarindex -c \
 
 The SAC contract id for a classic asset is deterministic — derive it once and confirm it matches the row in `asset_supply_history` you'd expect.
 
-> **Periodic gauge emission is wired into the aggregator's supply-refresh loop** when `[supply].aggregator_refresh_enabled = true`. Every `aggregator_refresh_cadence` tick, `supply.CrossCheckRefresher` (built in `cmd/stellarindex-aggregator/main.go::buildCrossCheckRefresher`) loads the latest classic + SAC snapshots for every classic asset that's both in `watched_classic_assets` AND has its SAC contract id declared in `sac_wrappers` AND that contract id is also in `watched_sep41_contracts`. The intersection is the cross-check pair set — outside it the supply package can't compare, so the refresher silently skips it. The CLI `stellarindex-ops supply audit <asset> -cross-check <counterpart>` path remains available for ad-hoc operator inspection but is no longer the gauge-emission path.
+> **Periodic gauge emission is wired into the aggregator's supply-refresh loop** when `[supply].aggregator_refresh_enabled = true`. Every `aggregator_refresh_cadence` tick, `supply.CrossCheckRefresher` (built in `cmd/stellarindex-aggregator/main.go::buildCrossCheckRefresher`) loads the latest classic + SAC snapshots for every classic asset that's both in `watched_classic_assets` AND has its SAC contract id declared in `sac_wrappers` AND that contract id is also in `watched_sep41_contracts`. The intersection is the cross-check pair set; a `sac_wrappers` value may use the `CODE-ISSUER` or `CODE:ISSUER` form. Each wrapper outside it is logged at WARN on startup (`sac_wrappers entry NOT cross-checked`). A wrapper whose contract id is not the classic asset's derived SAC fails aggregator startup. A pair the refresher cannot evaluate has its gauge series deleted, and [`supply-cross-check-unevaluable`](supply-cross-check-unevaluable.md) alerts on it. The CLI `stellarindex-ops supply audit <asset> -cross-check <counterpart>` path remains available for ad-hoc operator inspection but is no longer the gauge-emission path.
 
 Decision tree (2026-07-08: read `wrap_class` off the firing series first — it changes which row applies):
 
@@ -360,6 +360,10 @@ Capture for the postmortem:
   and where the cross-check fits.
 - [`docs/reference/metrics/README.md`](../../reference/metrics/README.md)
   — `wrap_class` label semantics on both cross-check metrics.
+- [`supply-cross-check-unevaluable`](supply-cross-check-unevaluable.md)
+  — sibling alert for pairs the refresher cannot evaluate
+  (`missing_snapshot` / `read_error` / `misaligned`); their gauge
+  series is deleted, so this alert is silent for them.
 - `aggregator-silent.md` — if the aggregator is stalled, the
   cross-check gauge is also stale; investigate that first.
 - `supply-refresh-stalled.md` / `supply-refresh-error-dominant.md`
@@ -374,6 +378,12 @@ Capture for the postmortem:
 
 ## Changelog
 
+- 2026-09-23 — Pairing and staleness. `sac_wrappers` values are now
+  normalised before the watched-set lookup (a dash-form value used to
+  drop the pair silently), a wrapper that is not the asset's derived SAC
+  fails startup, and non-evaluable outcomes delete the gauge series
+  instead of freezing it. Added the sibling
+  `supply-cross-check-unevaluable` alert.
 - 2026-07-25 — **Corrected the standing-cause section (E4/N-F3).** The
   "Known limitation" paragraph still carried the pre-2026-07-06
   hypothesis — that BLND/PHO's missing balances lived in pool-internal

@@ -80,6 +80,43 @@ groups:
             correspondingly wrong until reconciled.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-divergence.md
 
+      # The cross-check ran but evaluated NOTHING for a sustained
+      # window: a side has no snapshot, a storage read keeps failing,
+      # or the two snapshots are > CrossCheckLedgerTolerance ledgers
+      # apart (a stalled refresher on one side). The refresher deletes
+      # the pair's divergence gauge series on these outcomes — a gauge
+      # left at its last value would re-export a stale "agreed" 0 on
+      # every scrape — so the divergence alert above CANNOT fire for
+      # such a pair; this rule is what makes the gap visible. The
+      # counter carries no classic_key (bounded cardinality), so the
+      # runbook's first step is the aggregator's per-pair WARN log.
+      # [30m] with `for: 1h` tolerates an isolated blip at the default
+      # 5m refresh cadence; a missing_snapshot bootstrap window clears
+      # within one refresh of each side, well inside it.
+      - alert: stellarindex_supply_cross_check_unevaluable
+        expr: |
+          sum by (outcome, wrap_class) (
+            increase(stellarindex_supply_cross_check_total{outcome=~"missing_snapshot|read_error|misaligned"}[30m])
+          ) > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: supply
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-unevaluable.md
+          summary: "Supply cross-check not evaluated ({{ $labels.outcome }}, {{ $labels.wrap_class }}) for > 1h (P3)"
+          description: |
+            At least one configured classic ↔ SAC cross-check pair has
+            returned outcome={{ $labels.outcome }} for over an hour, so
+            its classic-vs-SAC conservation invariant is NOT being
+            checked and stellarindex_supply_cross_check_divergence
+            cannot fire for it. missing_snapshot: a side has no
+            asset_supply_history row; read_error: storage reads keep
+            failing; misaligned: the two latest snapshots are more
+            than 1000 ledgers apart (one side's refresher has stalled).
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/supply-cross-check-unevaluable.md
+
       # Served circulating supply drifted > 1% from an EXTERNAL
       # authoritative reference (Stellar Network Dashboard for XLM;
       # CoinGecko when a Pro key is configured). DISTINCT from the

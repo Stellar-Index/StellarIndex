@@ -2494,15 +2494,17 @@ the value MEANS, not in the alert condition.
 ### `stellarindex_supply_cross_check_total`
 
 Counter, labels `outcome` (`within` / `over` / `missing_snapshot` /
-`read_error`) and `wrap_class` (`partial_wrap` | `full_wrap` —
-2026-07-08, BACKLOG #59).
+`read_error` / `misaligned`) and `wrap_class` (`partial_wrap` |
+`full_wrap` — 2026-07-08, BACKLOG #59).
 
-Cross-check evaluations classified by whether the divergence stayed
-within tolerance. Drives the alert's rate-of-failure view and
-provides a "is the cross-checker even running" check orthogonal to
-the gauge — a flat gauge with zero counter increments means the
-orchestrator stopped invoking the cross-check, not that everything's
-healthy.
+Cross-check evaluations per outcome. `missing_snapshot`, `read_error`
+and `misaligned` evaluated nothing: the refresher deletes the pair's
+`stellarindex_supply_cross_check_divergence_stroops` series on them
+rather than leaving the last value re-exported. A sustained rate of
+any of the three drives
+[`stellarindex_supply_cross_check_unevaluable`](../../operations/runbooks/supply-cross-check-unevaluable.md).
+A flat gauge with zero counter increments means the orchestrator
+stopped invoking the cross-check, not that everything's healthy.
 
 ### `stellarindex_supply_divergence_ratio`
 

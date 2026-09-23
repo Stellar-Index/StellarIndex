@@ -271,9 +271,11 @@ both the classic and the SAC sides via `Store.LatestSupply`, runs
 
 - `stellarindex_supply_cross_check_divergence_stroops{classic_key,wrap_class}` —
   gauge holding the stroop divergence on within/over outcomes (meaning
-  depends on `wrap_class` — see above).
+  depends on `wrap_class` — see above). The pair's series is deleted
+  on the other outcomes, so it is never a stale reading.
 - `stellarindex_supply_cross_check_total{outcome,wrap_class}` —
-  counter labelled by `within | over | missing_snapshot | read_error`.
+  counter labelled by `within | over | missing_snapshot | read_error |
+  misaligned`.
 
 The supply.yml alert (`stellarindex_supply_cross_check_divergence`)
 fires when the gauge stays > 1 for ≥ 5 min — unchanged expression;
@@ -547,12 +549,15 @@ above for what each class checks):
 | `over` | Both snapshots loaded; divergence > 1 stroop | follow `supply-cross-check-divergence` runbook |
 | `missing_snapshot` | One/both sides have no row in `asset_supply_history` yet | bootstrap window — no action unless sustained past first refresh of each side |
 | `read_error` | Transient storage read failure | check `pg-conns-saturated` / `timescale-primary-down` runbooks |
+| `misaligned` | Both snapshots loaded but > 1000 ledgers apart — one side's refresher stalled | follow `supply-refresh-stalled` for the stale side |
 
-Bootstrap-state (`missing_snapshot`) is intentionally NOT escalated
-— it's the normal state during first-tick warmup and the first
-moments after a new operator-watched asset is added. Sustained
-`read_error` would surface via the same storage-layer alerts the
-per-asset refreshers ride.
+A brief `missing_snapshot` is the normal first-tick warmup state and is
+not escalated. Any of `missing_snapshot`, `read_error` or `misaligned`
+sustained for over an hour fires
+`stellarindex_supply_cross_check_unevaluable` (runbook:
+[`supply-cross-check-unevaluable`](../operations/runbooks/supply-cross-check-unevaluable.md)),
+because the divergence alert cannot fire for a pair it is not
+evaluating.
 
 ## ADR map
 

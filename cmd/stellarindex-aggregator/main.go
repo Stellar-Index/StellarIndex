@@ -105,6 +105,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/supply"
 	"github.com/Stellar-Index/StellarIndex/internal/version"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
+	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
 // Baseline-refresh tunables. Deliberately not surfaced as TOML knobs
@@ -2181,56 +2182,108 @@ func buildCompositeReference(cfg config.AggregateConfig) (orchestrator.Composite
 }
 
 // buildCrossCheckRefresher composes the periodic supply-cross-check
-// emitter from the operator's `[supply]` config:
-//
-//   - For every entry in `sac_wrappers` whose ClassicKey appears in
-//     the watched-classic set AND whose ContractID appears in the
-//     watched-SEP-41 set, derive one [supply.CrossCheckPair].
-//   - The pair's WrapClass is [supply.WrapClassFull] when its SAC
-//     contract id appears in `fully_wrapped_sacs`, else the safe
-//     default [supply.WrapClassPartial] (2026-07-08 decision,
-//     BACKLOG #59 — see [supply.WrapClass]'s doc for the category
-//     error this fixes: total-vs-total equality is a false invariant
-//     for a partially-wrapped classic asset).
-//   - Wire the refresher to read snapshots via timescale's
-//     LatestSupply and emit gauges/counters via obs.
+// emitter from the operator's `[supply]` config: pairs come from
+// [crossCheckPairs], snapshots from timescale's LatestSupply, and
+// gauges/counters from obs.
 //
 // Returns (nil, nil) when no pair survives the watched-set
-// intersection — silently no-op so operators that haven't yet
-// configured both sides of a wrapper don't see a startup error.
+// intersection, so an operator who hasn't configured both sides of a
+// wrapper gets no startup error — but every skipped classic wrapper is
+// logged at Warn by [crossCheckPairs], never dropped silently.
 func buildCrossCheckRefresher(cfg config.Config, store *timescale.Store, logger *slog.Logger) (*supply.CrossCheckRefresher, error) {
-	if len(cfg.Supply.SACWrappers) == 0 {
+	pairs, err := crossCheckPairs(cfg.Supply, cfg.Stellar.Passphrase(), logger)
+	if err != nil || len(pairs) == 0 {
+		return nil, err
+	}
+	fullWrap := 0
+	for _, p := range pairs {
+		if p.WrapClass == supply.WrapClassFull {
+			fullWrap++
+		}
+	}
+	logger.Info("cross-check pairs registered", "count", len(pairs), "fully_wrapped", fullWrap)
+	return supply.NewCrossCheckRefresher(
+		pairs,
+		supplyAggregatorSnapshotReader{s: store},
+		obsCrossCheckEmitter{},
+		logger,
+	)
+}
+
+// crossCheckPairs derives one [supply.CrossCheckPair] per
+// `sac_wrappers` entry whose classic asset is in
+// `watched_classic_assets` AND whose contract is in
+// `watched_sep41_contracts`.
+//
+//   - Both sides of the watched-classic lookup go through the same
+//     [crossCheckClassicKey] normaliser, so a "CODE-ISSUER" wrapper
+//     value matches the "CODE:ISSUER" snapshot key instead of silently
+//     disabling the check (the bug class
+//     [supply.CanonicalizeWatchedClassic] documents).
+//   - The contract id must be the classic asset's derived SAC on the
+//     configured network. That discharges [supply.CrossCheck]'s
+//     same-asset precondition, and a SAC always carries its classic
+//     asset's 7 decimals — which is what makes the absolute 1-stroop
+//     [supply.CrossCheckTolerance] meaningful. A mismatch is a startup
+//     error: the comparison would be between unrelated tokens.
+//   - WrapClass is [supply.WrapClassFull] for `fully_wrapped_sacs`,
+//     else the safe default [supply.WrapClassPartial] (BACKLOG #59).
+//
+// Pure SEP-41 self-maps (contract → contract) have no classic side and
+// are skipped. Output is ordered by SAC id so the logs are stable.
+func crossCheckPairs(sc config.SupplyConfig, passphrase string, logger *slog.Logger) ([]supply.CrossCheckPair, error) {
+	if len(sc.SACWrappers) == 0 {
 		return nil, nil
 	}
-
-	watchedClassic := make(map[string]struct{}, len(cfg.Supply.WatchedClassicAssets))
-	for _, raw := range cfg.Supply.WatchedClassicAssets {
-		asset, err := canonical.ParseAsset(raw)
+	watchedClassic := make(map[string]struct{}, len(sc.WatchedClassicAssets))
+	for _, raw := range sc.WatchedClassicAssets {
+		k, _, err := crossCheckClassicKey(raw)
 		if err != nil {
-			return nil, fmt.Errorf("parse watched classic asset %q: %w", raw, err)
-		}
-		k, err := supply.AssetKey(asset)
-		if err != nil {
-			return nil, fmt.Errorf("derive AssetKey for %q: %w", raw, err)
+			return nil, fmt.Errorf("watched classic asset %q: %w", raw, err)
 		}
 		watchedClassic[k] = struct{}{}
 	}
-	watchedSEP41 := make(map[string]struct{}, len(cfg.Supply.WatchedSEP41Contracts))
-	for _, c := range cfg.Supply.WatchedSEP41Contracts {
+	watchedSEP41 := make(map[string]struct{}, len(sc.WatchedSEP41Contracts))
+	for _, c := range sc.WatchedSEP41Contracts {
 		watchedSEP41[c] = struct{}{}
 	}
-	fullyWrapped := make(map[string]struct{}, len(cfg.Supply.FullyWrappedSACs))
-	for _, sacID := range cfg.Supply.FullyWrappedSACs {
+	fullyWrapped := make(map[string]struct{}, len(sc.FullyWrappedSACs))
+	for _, sacID := range sc.FullyWrappedSACs {
 		fullyWrapped[sacID] = struct{}{}
 	}
 
-	pairs := make([]supply.CrossCheckPair, 0, len(cfg.Supply.SACWrappers))
-	for sacID, classicKey := range cfg.Supply.SACWrappers {
-		if _, ok := watchedClassic[classicKey]; !ok {
+	sacIDs := make([]string, 0, len(sc.SACWrappers))
+	for id := range sc.SACWrappers {
+		sacIDs = append(sacIDs, id)
+	}
+	sort.Strings(sacIDs)
+
+	pairs := make([]supply.CrossCheckPair, 0, len(sacIDs))
+	for _, sacID := range sacIDs {
+		raw := sc.SACWrappers[sacID]
+		classicKey, asset, err := crossCheckClassicKey(raw)
+		if errors.Is(err, errNoClassicSide) {
 			continue
 		}
-		if _, ok := watchedSEP41[sacID]; !ok {
+		if err != nil {
+			return nil, fmt.Errorf("sac_wrappers[%q] = %q: %w", sacID, raw, err)
+		}
+		_, classicWatched := watchedClassic[classicKey]
+		_, sacWatched := watchedSEP41[sacID]
+		if !classicWatched || !sacWatched {
+			logger.Warn("cross-check: sac_wrappers entry NOT cross-checked; add both sides to the watched sets to enable it",
+				"sac_id", sacID, "classic_key", classicKey,
+				"in_watched_classic_assets", classicWatched,
+				"in_watched_sep41_contracts", sacWatched)
 			continue
+		}
+		derived, ok := xdrjson.SACContractID(asset.String(), passphrase)
+		if !ok {
+			return nil, fmt.Errorf("sac_wrappers[%q] = %q: cannot derive the asset's SAC contract id", sacID, raw)
+		}
+		if derived != sacID {
+			return nil, fmt.Errorf("sac_wrappers[%q] = %q: the SAC of %s on this network is %s, so the cross-check would compare unrelated tokens",
+				sacID, raw, classicKey, derived)
 		}
 		wrapClass := supply.WrapClassPartial
 		if _, ok := fullyWrapped[sacID]; ok {
@@ -2238,17 +2291,29 @@ func buildCrossCheckRefresher(cfg config.Config, store *timescale.Store, logger 
 		}
 		pairs = append(pairs, supply.CrossCheckPair{ClassicKey: classicKey, SACKey: sacID, WrapClass: wrapClass})
 	}
-	if len(pairs) == 0 {
-		return nil, nil
-	}
+	return pairs, nil
+}
 
-	logger.Info("cross-check pairs registered", "count", len(pairs), "fully_wrapped", len(fullyWrapped))
-	return supply.NewCrossCheckRefresher(
-		pairs,
-		supplyAggregatorSnapshotReader{s: store},
-		obsCrossCheckEmitter{},
-		logger,
-	)
+// errNoClassicSide marks a wrapper value naming a Soroban contract (a
+// pure SEP-41 self-map), which has no classic supply to compare.
+var errNoClassicSide = errors.New("not a classic or native asset")
+
+// crossCheckClassicKey normalises a classic asset in "CODE-ISSUER" or
+// "CODE:ISSUER" form (or native) to the key its supply snapshot is
+// written under.
+func crossCheckClassicKey(raw string) (string, canonical.Asset, error) {
+	a, err := canonical.ParseAsset(raw)
+	if err != nil {
+		return "", canonical.Asset{}, err
+	}
+	if a.Type != canonical.AssetClassic && a.Type != canonical.AssetNative {
+		return "", canonical.Asset{}, errNoClassicSide
+	}
+	k, err := supply.AssetKey(a)
+	if err != nil {
+		return "", canonical.Asset{}, err
+	}
+	return k, a, nil
 }
 
 // runCrossCheckRefresh ticks the cross-check refresher on `cadence`,
@@ -2293,6 +2358,10 @@ type obsCrossCheckEmitter struct{}
 
 func (obsCrossCheckEmitter) Divergence(classicKey string, wrapClass supply.WrapClass, stroops float64) {
 	obs.SupplyCrossCheckDivergenceStroops.WithLabelValues(classicKey, string(wrapClass)).Set(stroops)
+}
+
+func (obsCrossCheckEmitter) ClearDivergence(classicKey string, wrapClass supply.WrapClass) {
+	obs.SupplyCrossCheckDivergenceStroops.DeleteLabelValues(classicKey, string(wrapClass))
 }
 
 func (obsCrossCheckEmitter) Outcome(kind supply.CrossCheckOutcomeKind, wrapClass supply.WrapClass) {
