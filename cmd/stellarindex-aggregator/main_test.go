@@ -476,13 +476,10 @@ func (nopOracleReaderAgg) LatestOracleObservation(_ context.Context, _ string, _
 	return nil, nil
 }
 
-// TestBuildDivergenceReferences_AggregatorParity mirrors the API
-// binary's wiring tests (the lockstep rule in
-// buildDivergenceReferences' doc): the aggregator wires the same five
-// on-chain references plus the synthetic USD-cross, and the synthetic
-// does not construct without an FX leg class. Added by the PR #149
-// verification panel — the aggregator previously had NO wiring test,
-// which is how a lockstep break would have shipped silently.
+// TestBuildDivergenceReferences_AggregatorParity pins the production
+// divergence wiring: the aggregator wires the five on-chain references
+// plus the synthetic USD-cross, and the synthetic does not construct
+// without an FX leg class.
 func TestBuildDivergenceReferences_AggregatorParity(t *testing.T) {
 	cfg := config.DivergenceConfig{
 		Reflector: config.DivergenceOracleConfig{Enabled: true},

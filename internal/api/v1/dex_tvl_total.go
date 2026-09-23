@@ -123,6 +123,13 @@ var dexTVLScopeExclusions = []DEXTVLExclusion{
 		Reason: "vault capital is deployed into Blend strategy contracts, so counting vault AUM " +
 			"alongside the protocols holding those positions would double-count it",
 	},
+	{
+		Subject: "upshift",
+		Reason: "no current-state total-assets figure exists for it — the only on-event total is " +
+			"the DEPLOYED leg (deployed_assets_changed), the idle leg is unobservable from indexed " +
+			"events, and a TVL reader must not zero-fill the missing leg; its protocol block " +
+			"carries event and user counts only",
+	},
 }
 
 // Reconciliation refusal reasons. A protocol that trips one of these is

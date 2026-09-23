@@ -41,11 +41,14 @@ func TestDEXTVLScope_PooledProtocolIsDerivedOrExplicitlyExcluded(t *testing.T) {
 	}
 
 	for _, p := range protocolRegistry {
-		// Pooled-liquidity categories only. A lending/oracle/bridge
-		// protocol is not a candidate for an AMM headline, and the ones
-		// that carry a comparable figure (blend, sorocredit, defindex)
-		// already carry their own exclusion for a different reason.
-		if p.Category != "amm" && p.Category != "dex" {
+		// Pooled-liquidity and vault/AUM categories only. A
+		// lending/oracle/bridge protocol is not a candidate for an AMM
+		// headline, and the ones that carry a comparable figure (blend,
+		// sorocredit, defindex, upshift) already carry their own
+		// exclusion for a different reason. "yield" is included because
+		// a vault's AUM is the same double-count/no-current-state-figure
+		// shape a reader would otherwise expect summed here (GH-1083).
+		if p.Category != "amm" && p.Category != "dex" && p.Category != "yield" {
 			continue
 		}
 		if derived[p.Name] || excluded[p.Name] {

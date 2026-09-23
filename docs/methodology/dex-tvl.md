@@ -1,6 +1,6 @@
 ---
 title: DEX TVL methodology
-last_verified: 2026-09-04
+last_verified: 2026-09-23
 status: current
 ---
 
@@ -49,13 +49,21 @@ are all the same methodology applied to different quantities.
 
 Before any valuation, each leg's asset is put through the serving trust
 gates at the same chokepoint every other served price uses — the
-substance gate and the scam-directory gate. The gate is asked about the
-asset's **canonical** identity, so a configured classic↔SAC wrapper is
+substance gate and the scam-directory gate, **whichever of the two this
+deployment has wired**. The gate is asked about the asset's
+**canonical** identity, so a configured classic↔SAC wrapper is
 collapsed to its classic twin first; without that collapse the scam arm
 would be a no-op on the C-strkey addresses pool legs actually carry.
 The trust check runs **before** the declared-peg shortcut, so a token an
 operator once declared 1:1-USD cannot re-enter through the peg after its
 issuer has been flagged.
+
+A deployment can disable either screen independently
+(`[pricing_guard]`); every response's `basis` field names exactly the
+screens THIS wiring actually ran (`internal/api/v1/dex_tvl_cache.go`'s
+`basisTail`, narrowed 2026-09-03), never a fixed sentence claiming
+both regardless of what is wired. Read `basis` before trusting a TVL
+figure against a non-default configuration.
 
 ## Per-pool drill-down
 
@@ -124,8 +132,13 @@ makes the served number smaller, never larger.
    LP shares, and counting them would double-count the underlying.
 
 Consequence: whenever `unpriced_pools > 0` the figure is a **lower
-bound**, published as such on the wire (`lower_bound`) and rendered with
-a `≥` prefix and a hatched bar tail in the explorer.
+bound**. At the per-protocol level (each `/v1/protocols` row's `tvl`
+block and `/v1/protocols/{name}/tvl`) this is DERIVED, not a dedicated
+wire field: `unpriced_pools > 0` is the whole test, the same one the
+explorer's `TvlCell` runs client-side to prefix the figure with `≥`.
+The headline `tvl_total` additionally publishes a dedicated
+`lower_bound` boolean, because it has a second, non-derivable reason to
+be one — a refused protocol (see "The reconciliation check" below).
 
 ### From the headline total
 
@@ -144,6 +157,7 @@ claim by omission:
 | Blend (lending) | Supplied-value is a different quantity from AMM pooled liquidity. Blend's current-state figure is served per-pool as `tvl_usd` on `/v1/lending/pools/{pool}/reserves` (ADR-0039, decoded from contract storage); adding lending into an AMM headline would flatter it |
 | Sorocredit (lending) | Excluded on the same basis as Blend. No current-state figure exists for it — its protocol block carries event and user counts only |
 | DeFindex (vaults) | Vault capital is deployed into Blend strategy contracts, so counting vault AUM alongside the protocols holding those positions would double-count it |
+| Upshift (vaults) | No current-state total-assets figure exists for it — the only on-event total is the DEPLOYED leg (`deployed_assets_changed`), the idle leg is unobservable from indexed events, and a TVL reader must not zero-fill the missing leg; its protocol block carries event and user counts only |
 
 ## As-of
 
@@ -189,9 +203,12 @@ checkable:
 
 - A protocol's `tvl_usd` is the exact sum of the `tvl_usd` of its pools
   on `/v1/protocols/{name}/tvl`, and each pool's `tvl_usd` is the exact
-  sum of its legs' published `usd`. The per-pool reserves behind
-  soroswap, phoenix and comet are the same lake current-state entries
-  `/v1/pools/reserves` serves.
+  sum of its legs' published `usd`. For Soroswap specifically, the
+  per-pool reserves are the same lake current-state entries
+  `/v1/pools/reserves` serves (`source=soroswap`; it is the only venue
+  that endpoint accepts today). Phoenix and Comet reserves are not
+  cross-checkable against `/v1/pools/reserves` — reconcile those two
+  against the pool storage entries the drill-down cites instead.
 - The headline `tvl_total.tvl_usd` is the sum of the `tvl_usd` values on
   the `protocols` rows of the same response.
 - A leg's valuation uses the same price `/v1/assets/{id}` serves for the
