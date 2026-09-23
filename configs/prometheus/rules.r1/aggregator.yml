@@ -32,9 +32,10 @@ groups:
             Zero VWAP writes for 5+ minutes. Either the orchestrator
             tick loop is wedged, the (pair, window) refresh path is
             consistently empty, or the Redis write is erroring on every
-            attempt. /v1/vwap responses fall back to raw aggregation —
-            slow, and the freshness signal API consumers depend on goes
-            quiet within 60 s.
+            attempt. VWAP keys expire cachekeys.VWAPMaxAge (5 min) after
+            the last write, so /v1/price?window= has been answering 404
+            for 5-10 minutes when this fires. /v1/vwap is unaffected (it
+            scans raw trades on-query).
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-silent.md
 
       # 2026-08-28 REDESIGN (was: sum by (pair) rate(dropped_trades_total
