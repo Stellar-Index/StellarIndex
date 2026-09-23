@@ -2701,7 +2701,7 @@ rate materially exceeds the engaged rate.
 ### `stellarindex_divergence_refresh_total`
 
 Counter, label `outcome` (`ok` / `no_vwap` / `parse_error` /
-`refresh_error`).
+`refresh_error` / `no_reference`).
 
 Per-Tick outcomes for the orchestrator's divergence-cache refresh
 loop (ADR-0019 / launch-readiness L2.10 + L2.11). The aggregator
@@ -2712,11 +2712,23 @@ computes the divergence percent vs the median external reference,
 and writes the result to `div:<asset>` in Redis. The API's
 `flags.divergence_warning` reads from that cache.
 
-`no_vwap` is benign on cold start and after Phase-1/Phase-2 freezes
-(no fresh VWAP to compare against). Sustained `refresh_error` means
-external references are unreachable — `flags.divergence_warning`
-goes stale across the API surface; alert on a sustained rate via
-`stellarindex_divergence_refresh_error_dominant` (deploy/monitoring/rules/aggregator.yml).
+`no_vwap` is benign on cold start and for a minority of frozen pairs,
+but only `ok` writes a fresh `div:<asset>` entry. Sustained
+`refresh_error` or `no_reference` dominating `ok` fires
+`stellarindex_divergence_refresh_error_dominant` /
+`stellarindex_divergence_no_reference`; zero `ok` for 30 min while the
+refresher is wired (every pair `no_vwap`, or no outcome at all) fires
+`stellarindex_divergence_no_ok_outcomes`
+(deploy/monitoring/rules/divergence.yml).
+
+### `stellarindex_divergence_refresher_wired`
+
+Gauge, no labels. 1 while the aggregator's divergence pass has a
+refresher (at least one reference configured) and windows to run
+with; 0 when every reference is disabled. Set on every pass before the
+min-interval gate, so it arms `stellarindex_divergence_no_ok_outcomes`
+even when the pass never counts an outcome, and keeps a deliberate
+opt-out from paging.
 
 ### `stellarindex_aggregator_baseline_refresh_total`
 

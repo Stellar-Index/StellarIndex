@@ -17,6 +17,8 @@
 #   galexie_live_tip_ledger             — gauge, newest ledger in live bucket.
 #   galexie_archive_tip_lag_ledgers     — gauge, live - archive (lag in ledgers).
 #   galexie_archive_tip_lag_updated_seconds — gauge, unix-time of last successful update.
+#   galexie_archive_tip_lag_probe_success — gauge, 1 when both tips were read on the
+#     last run, 0 when not (the three gauges above are then omitted, not 0).
 #
 # Partition model — the thresholds below depend on it:
 # galexie writes 64,000 ledgers per partition (files_per_partition
@@ -83,8 +85,15 @@ groups:
             full-mirror integrity-leader role is broken until repair.
             Runbook: same as above.
 
+      # probe_success == 0 is a run that could not read a bucket tip: the
+      # script then omits the lag (absent, never a fabricated 0) and
+      # carries the last success stamp forward, so the lag thresholds
+      # above go quiet and only this arm speaks.
       - alert: stellarindex_galexie_archive_tip_lag_metric_stale
-        expr: time() - galexie_archive_tip_lag_updated_seconds > 1800
+        expr: |
+          galexie_archive_tip_lag_probe_success == 0
+          or
+          time() - galexie_archive_tip_lag_updated_seconds > 1800
         for: 15m
         labels:
           severity: ticket
@@ -92,12 +101,15 @@ groups:
           component: archive
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
-          summary: "galexie-archive tip-lag metric not updated >30m"
+          summary: "galexie-archive tip-lag not measured (probe failing or no success >30m)"
           description: |
-            The galexie-archive-tip-lag.timer hasn't successfully
-            updated its textfile for >30 min (timer fires every
-            5 min). The alert metric itself is the canary; without
-            it we lose the safety net. Check
+            Either the last tip-lag run could not read a bucket tip
+            (galexie_archive_tip_lag_probe_success 0 — the lag is then
+            omitted, so the lag thresholds cannot fire), or the
+            galexie-archive-tip-lag.timer hasn't successfully updated
+            its textfile for >30 min (timer fires every 5 min). The
+            alert metric itself is the canary; without it we lose the
+            safety net. Check
             `systemctl status galexie-archive-tip-lag.timer` +
             the service's last journal entries; verify the script
             can read both MinIO buckets via the `local` mc alias.

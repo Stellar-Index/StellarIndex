@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
@@ -75,6 +77,33 @@ func TestRefreshDivergenceAll_NilRefresherIsNoOp(t *testing.T) {
 	o.refreshDivergenceAll(context.Background(), time.Now().UTC())
 	// No assertion on metrics or calls — the function returned
 	// without panicking, which is the whole assertion.
+}
+
+// TestRefreshDivergenceAll_PublishesWiredGauge pins the gauge that arms
+// stellarindex_divergence_no_ok_outcomes: 1 whenever the pass has a
+// refresher, even when every pair yields only no_vwap and no `ok` is
+// ever counted; 0 when the refresher is deliberately unwired. Not
+// parallel: the gauge is process-global.
+func TestRefreshDivergenceAll_PublishesWiredGauge(t *testing.T) {
+	rdb, _ := newTestRedis(t)
+	base := Config{
+		Pairs:   []canonical.Pair{pairXLMUSD(t)},
+		Windows: []time.Duration{5 * time.Minute},
+		Logger:  silentLogger(),
+	}
+
+	obs.DivergenceRefresherWired.Set(0)
+	wired := base
+	wired.DivergenceRefresher = &captureRefresher{}
+	New(nil, rdb, wired).refreshDivergenceAll(context.Background(), time.Now().UTC())
+	if got := testutil.ToFloat64(obs.DivergenceRefresherWired); got != 1 {
+		t.Fatalf("wired refresher, only no_vwap outcomes: gauge = %v, want 1", got)
+	}
+
+	New(nil, rdb, base).refreshDivergenceAll(context.Background(), time.Now().UTC())
+	if got := testutil.ToFloat64(obs.DivergenceRefresherWired); got != 0 {
+		t.Fatalf("nil refresher: gauge = %v, want 0", got)
+	}
 }
 
 // TestRefreshDivergenceAll_NoCachedVWAP — pair has no VWAP entry

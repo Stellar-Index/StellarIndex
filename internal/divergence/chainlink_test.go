@@ -395,3 +395,44 @@ func TestChainlink_LegacyAnswerShapeFailsLoudly(t *testing.T) {
 		t.Fatalf("want too-short decode error for legacy 32-byte result, got %v", err)
 	}
 }
+
+// TestChainlink_OmittedMaxAgeKeepsFXBudget pins that an operator feed
+// entry omitting MaxAge does not silently swap an FX feed's 76h
+// weekend budget for the 3h crypto one: a built-in key inherits the
+// built-in budget and any other fiat/fiat key gets the FX default. A
+// 70h-old round is a normal Sunday-night FX read, not a dead feed.
+func TestChainlink_OmittedMaxAgeKeepsFXBudget(t *testing.T) {
+	answer := big.NewInt(1_27000000)
+	observedAt := time.Date(2026, 7, 5, 22, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name, key, base, quote string
+		updatedAt              time.Time
+		wantStale              bool
+	}{
+		{"built-in FX key pasted from example.toml", "fiat:GBP/fiat:USD", "fiat:GBP", "fiat:USD", observedAt.Add(-70 * time.Hour), false},
+		{"operator-added FX key", "fiat:CHF/fiat:USD", "fiat:CHF", "fiat:USD", observedAt.Add(-70 * time.Hour), false},
+		{"FX key still bounded by 76h", "fiat:GBP/fiat:USD", "fiat:GBP", "fiat:USD", observedAt.Add(-80 * time.Hour), true},
+		{"built-in crypto key keeps 3h", "crypto:BTC/fiat:USD", "crypto:BTC", "fiat:USD", observedAt.Add(-4 * time.Hour), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeChainlinkRPC(t, roundDataHex(answer, tc.updatedAt))
+			ref := NewChainlinkReference(ChainlinkOptions{
+				RPCURL: srv.URL,
+				FeedMap: map[string]ChainlinkFeed{
+					tc.key: {Address: "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5", Decimals: 8},
+				},
+			})
+			_, err := ref.LookupPrice(context.Background(), mustPair(t, tc.base, tc.quote), observedAt)
+			if tc.wantStale {
+				if !errors.Is(err, ErrPriceUnavailable) {
+					t.Fatalf("want ErrPriceUnavailable for a round beyond budget, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("round within the FX budget rejected: %v", err)
+			}
+		})
+	}
+}

@@ -151,8 +151,8 @@ type ChainlinkFeed struct {
 	Invert bool
 
 	// MaxAge is the staleness ceiling for the feed's latestRoundData
-	// updatedAt (CS-089). Zero = the crypto default (3h). FX feeds
-	// pause over market closes — configure ~76h for those.
+	// updatedAt (CS-089). Zero = the built-in feed's budget for a
+	// built-in key, 76h for any other fiat/fiat key, else 3h.
 	MaxAge time.Duration
 }
 
@@ -201,15 +201,14 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	builtins := defaultChainlinkFeedMap()
 	feedMap := defaultChainlinkFeedMap()
 	for k, v := range opts.FeedMap {
 		spec := chainlinkFeedSpec(v)
 		// Decimals == 0 is left as-is: it means "adopt the on-chain
 		// decimals()" (chainlink_decimals.go), not "divide by 10^0".
 		if spec.MaxAge == 0 {
-			// Crypto default — FX operators set ~76h explicitly
-			// (see defaultChainlinkMaxAgeFX's rationale).
-			spec.MaxAge = defaultChainlinkMaxAgeCrypto
+			spec.MaxAge = defaultChainlinkMaxAge(k, builtins)
 		}
 		feedMap[k] = spec
 	}
@@ -221,6 +220,20 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 		feedMap:    feedMap,
 		decimals:   make(map[string]*chainlinkDecimalsState),
 	}
+}
+
+// defaultChainlinkMaxAge is the budget for an operator feed that omits
+// MaxAge: a built-in key keeps its built-in budget, and any other
+// fiat/fiat key is an FX feed that pauses over market closes.
+func defaultChainlinkMaxAge(key string, builtins map[string]chainlinkFeedSpec) time.Duration {
+	if b, ok := builtins[key]; ok && b.MaxAge > 0 {
+		return b.MaxAge
+	}
+	base, quote, ok := strings.Cut(key, "/")
+	if ok && strings.HasPrefix(base, "fiat:") && strings.HasPrefix(quote, "fiat:") {
+		return defaultChainlinkMaxAgeFX
+	}
+	return defaultChainlinkMaxAgeCrypto
 }
 
 // defaultChainlinkFeedMap returns the built-in seed of pair →

@@ -76,6 +76,7 @@ func registerAppMetrics() {
 		Sep1CacheOpsTotal,
 		CursorLastLedger,
 		DivergenceRefreshTotal,
+		DivergenceRefresherWired,
 		TradeInsertsTotal,
 		TradeInsertOutcomeTotal,
 		DexTradeUnitRatioTotal,
@@ -1920,18 +1921,32 @@ var CursorLastLedger = prometheus.NewGaugeVec(
 //   - `refresh_error` — RefreshPair returned a network/marshal/cache
 //     error. The previous entry's TTL keeps
 //     counting down; flag stays at last-known good.
+//   - `no_reference`  — every configured reference was dark for the
+//     pair (CS-088).
 //
-// Operators alert on a sustained `refresh_error` rate (CoinGecko
-// down, Chainlink RPC unreachable) — that means
-// `flags.divergence_warning` is going stale across the API surface.
-// `no_vwap` is benign during cold-start and after freezes; not
-// alert-worthy on its own.
+// Only `ok` writes a fresh div:<asset> entry, so the alerts compare
+// the failure children against `ok` AND fire when `ok` stops while
+// the refresher is wired (stellarindex_divergence_no_ok_outcomes):
+// a pass that yields only `no_vwap` (every pair frozen) drains the
+// 5-min cache fleet-wide just as surely as `refresh_error` does.
 var DivergenceRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_divergence_refresh_total",
-		Help: "Aggregator divergence-cache refresh outcomes per Tick (ok|no_vwap|parse_error|refresh_error).",
+		Help: "Aggregator divergence-cache refresh outcomes per Tick (ok|no_vwap|parse_error|refresh_error|no_reference).",
 	},
 	[]string{"outcome"},
+)
+
+// DivergenceRefresherWired is 1 while the aggregator's divergence pass
+// has a refresher and windows to run with, 0 when every reference is
+// disabled. It gates the no-ok liveness alert so a pass that dies
+// before counting any outcome still fires, and a deliberate opt-out
+// does not.
+var DivergenceRefresherWired = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_refresher_wired",
+		Help: "1 when the aggregator's divergence-cache refresh pass is wired (at least one reference configured), 0 when it is disabled and div:<asset> is never written.",
+	},
 )
 
 // DivergenceRefreshDurationSeconds — latency histogram for the

@@ -805,6 +805,14 @@ func (d DivergenceConfig) validate() error {
 		return fmt.Errorf("%w: divergence.supply.refresh_interval_seconds must be > 0 when "+
 			"divergence.supply.enabled is true (got %d)", ErrInvalidConfig, d.Supply.RefreshIntervalSeconds)
 	}
+	// Negative is non-zero, so it escapes the per-feed default and marks
+	// every round stale; 0 is the "use the default budget" sentinel.
+	for pair, f := range d.Chainlink.FeedMap {
+		if f.MaxAgeHours < 0 {
+			return fmt.Errorf("%w: divergence.chainlink.feeds.%q.max_age_hours must be >= 0 (got %d)",
+				ErrInvalidConfig, pair, f.MaxAgeHours)
+		}
+	}
 	return nil
 }
 

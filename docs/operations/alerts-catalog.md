@@ -404,7 +404,7 @@ chain-link locally. See [archive-completeness.md](archive-completeness.md).
 | `stellarindex_host_swap_activity` | `rate(node_vmstat_pswpout[10m])` | > 100 for 15 m | ticket | [host-swap-activity](runbooks/host-swap-activity.md) |
 | `stellarindex_galexie_archive_tip_lag_high` | `galexie_archive_tip_lag_ledgers` (archive newest vs live newest) | > 64,000 for 90 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_severe` | same | > 128,000 for 30 m | page | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
-| `stellarindex_galexie_archive_tip_lag_metric_stale` | `time() - galexie_archive_tip_lag_updated_seconds` | > 30 m for 15 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
+| `stellarindex_galexie_archive_tip_lag_metric_stale` | `galexie_archive_tip_lag_probe_success == 0`, or `time() - galexie_archive_tip_lag_updated_seconds` > 30 m | for 15 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_gap` | `galexie_archive_unexpected_gaps` — partition-level holes/overlaps in the DR mirror that are NOT the declared capacity trim (tip-lag proves the newest edge; this proves the middle) | > 0 for 1 h | page | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 | `stellarindex_galexie_archive_contiguity_silent` | `absent_over_time(galexie_archive_unexpected_gaps[3h])` | for 15 m (hourly scan dark) | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 | `stellarindex_galexie_archive_scan_degraded` | `galexie_archive_scan_ok` / `_scan_last_run_unix` | the bucket listing errored, the scan stopped rewriting its file (> 3 h), or it was never written — for > 15 min. A failed read no longer publishes a partition verdict at all, so this is what speaks for it | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
@@ -536,6 +536,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_oracle_stale` | `time() - stellarindex_oracle_last_update_unix` per (source, asset) | > that pair's `stellarindex_oracle_staleness_budget_seconds` — 10× the source's declared resolution by default, per-asset overrides in `[[oracle.staleness_overrides]]` | ticket | [oracle-stale](runbooks/oracle-stale.md) |
 | `stellarindex_divergence_refresh_error_dominant` | `rate(divergence_refresh_total{outcome="refresh_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-refresh-error-dominant](runbooks/divergence-refresh-error-dominant.md) |
 | `stellarindex_divergence_no_reference` | `rate(divergence_refresh_total{outcome="no_reference"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-no-reference](runbooks/divergence-no-reference.md) |
+| `stellarindex_divergence_no_ok_outcomes` | `sum(increase(divergence_refresh_total{outcome="ok"}[30m])) == 0` while `divergence_refresher_wired == 1` | sustained 15 min | ticket | [divergence-no-ok-outcomes](runbooks/divergence-no-ok-outcomes.md) |
 
 ## Aggregator alerts
 
