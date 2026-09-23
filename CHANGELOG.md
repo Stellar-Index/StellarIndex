@@ -15,6 +15,13 @@ against.
 
 ## [Unreleased]
 
+- **sources — chainlink round dedup (RNC26):** the poller now marks a
+  round as emitted only after its oracle update is built. A round whose
+  projection failed (unresolved decimals, malformed answer) was
+  previously marked anyway and never emitted until restart. Successful
+  rounds are unchanged; sdex's `ErrUnknownClaimAtomType` godoc now
+  matches the decoder (Q092, comment only).
+
 - **docs / CHANGELOG — dangling `#948` citation in the "6 more detail
   surfaces" BreadcrumbList entry corrected (RSWP-055):** the entry
   credited the prior `/assets/{slug}` + `/markets/{pair}` BreadcrumbList
