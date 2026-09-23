@@ -22000,7 +22000,7 @@
               "request": {
                 "name": "Consolidated home-page aggregate stats.",
                 "description": {
-                  "content": "Single-call replacement for the home network-strip's\nprevious fan-out across `/v1/markets`, `/v1/assets`,\n`/v1/sources`, and `/v1/diagnostics/cursors`. Returns\ntotal trailing-24h USD volume, count of pairs that\nrecorded volume in 24h, total `classic_assets` row count,\nlatest live ledger across all non-backfill sources, and\nthe count of registered exchange-class sources.\n\nComputed from a single SQL query over `prices_1m`,\n`classic_assets`, and `ingestion_cursors`. The source\ncounts are derived from the in-memory `external.Registry`,\nnot the DB.\n\nUseful for dashboards / status displays / embed widgets\nthat just want a quick health-of-the-network number.\n",
+                  "content": "Single-call replacement for the home network-strip's\nprevious fan-out across `/v1/markets`, `/v1/assets`,\n`/v1/sources`, and `/v1/diagnostics/cursors`. Returns\ntotal trailing-24h USD volume, count of pairs that\nrecorded volume in 24h, total `classic_assets` row count,\nlatest ledger across the live cursor namespaces, and\nthe count of registered exchange-class sources.\n\nComputed from a single SQL query over `prices_1m`,\n`classic_assets`, and `ingestion_cursors`. The source\ncounts are derived from the in-memory `external.Registry`,\nnot the DB.\n\nUseful for dashboards / status displays / embed widgets\nthat just want a quick health-of-the-network number.\n",
                   "type": "text/plain"
                 },
                 "url": {

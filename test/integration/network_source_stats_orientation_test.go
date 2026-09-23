@@ -97,3 +97,47 @@ func TestGetNetworkStatsFoldsFlippedOrientation(t *testing.T) {
 		t.Errorf("MarketsCount24h = %d, want 1 (native/USDC on two venues, both orientations, is one market)", before.MarketsCount24h)
 	}
 }
+
+// TestGetNetworkStatsLatestLedgerReadsOnlyLiveCursors pins T603: the
+// home page's latest_ledger must be the live tip, not the highest
+// ledger any one-shot job's shard cursor ever reached. Each job writes
+// its own namespace ("census-backfill", "projected-rebuild", …), and a
+// denylist of the literal "backfill" counted every one of them as live.
+func TestGetNetworkStatsLatestLedgerReadsOnlyLiveCursors(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	cursors := []struct {
+		source, sub string
+		ledger      uint32
+	}{
+		{"ledgerstream", "", 62_000_000},
+		{"projector", "blend", 61_999_990},
+		{"backfill", "0-70000000:sdex", 70_000_000},
+		{"census-backfill", "shard-3", 69_000_000},
+		{"projected-rebuild", "soroswap:60000000-68000000", 68_000_000},
+		{"tag-signer", "shard-1", 67_000_000},
+	}
+	for _, c := range cursors {
+		if err := store.UpsertCursor(ctx, c.source, c.sub, c.ledger); err != nil {
+			t.Fatalf("UpsertCursor(%s,%s): %v", c.source, c.sub, err)
+		}
+	}
+
+	got, err := store.GetNetworkStats(ctx)
+	if err != nil {
+		t.Fatalf("GetNetworkStats: %v", err)
+	}
+	if got.LatestLedger != 62_000_000 {
+		t.Errorf("LatestLedger = %d, want 62000000 (the ledgerstream tip; one-shot job cursors are not live)", got.LatestLedger)
+	}
+}

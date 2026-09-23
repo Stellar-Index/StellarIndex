@@ -6,6 +6,7 @@ import { ArrowRight } from 'lucide-react';
 import { Panel } from '@/components/reveal';
 import { asExample } from '@/api/client';
 import { useCursors, useNetworkStats } from '@/api/hooks';
+import { isLiveCursorSource } from '@/lib/cursors';
 import { formatCompact } from '@/lib/format';
 
 /**
@@ -64,7 +65,7 @@ export function NetworkLivePanel() {
 /**
  * SystemHealthLivePanel — replaces the static traffic-light list with
  * a live health summary. Uses the cursors endpoint as a heartbeat
- * indicator: if any non-backfill cursor advanced in the last 60s,
+ * indicator: if any live cursor advanced in the last 60s,
  * indexer/aggregator are "ok"; if every live cursor is >10m stale,
  * "degraded". Gives the home page a real-time pulse without needing
  * the still-pending /v1/diagnostics/pulse endpoint.
@@ -85,7 +86,7 @@ export function SystemHealthLivePanel() {
     );
   }
 
-  const liveRows = data.filter((c) => c.source !== 'backfill');
+  const liveRows = data.filter((c) => isLiveCursorSource(c.source));
   const fastest = liveRows.length
     ? liveRows.reduce(
         (m, c) => (c.lag_seconds < m ? c.lag_seconds : m),
@@ -117,7 +118,7 @@ export function SystemHealthLivePanel() {
         />
         <div className="text-ink-muted pt-1 text-[11px]">
           {liveRows.length} live cursor{liveRows.length === 1 ? '' : 's'},{' '}
-          {data.length - liveRows.length} backfill task
+          {data.length - liveRows.length} job cursor
           {data.length - liveRows.length === 1 ? '' : 's'}
         </div>
         <Link
@@ -167,7 +168,7 @@ function maxLiveLedger(
 ): number | null {
   let best: number | null = null;
   for (const c of cursors) {
-    if (c.source === 'backfill') continue;
+    if (!isLiveCursorSource(c.source)) continue;
     if (best === null || c.last_ledger > best) best = c.last_ledger;
   }
   return best;
