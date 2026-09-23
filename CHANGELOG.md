@@ -198,6 +198,15 @@ against.
   (#793):** the launch plan's D3 step now computes the reproject start
   from `min(ledger_seq)` of the served `ledger_entries_current` and says
   that `cutover` refuses a v2 that does not cover v1.
+- **api — listing valuation keeps the ADR-0011 observation (#531):**
+  `listing_valuation` took the larger of the lake-flows total and the
+  row's own `circulating_supply` whatever that reading was. When the row
+  carried a supply observation, a lake over-count replaced it, for
+  example BLND about +11.5% under `supply_basis: lake_flows`. The lake now
+  replaces the row's reading only when that reading is a provable floor
+  (trustline sum) or absent. An observation, or a reading with no basis,
+  is multiplied as served.
+
 - **supply — SEP-41 genesis seed rebuilds the fold it sits on (#596,
   #1086):** `seed-sep41-genesis -write` now re-derives the contract's
   rollup fold under the seeded floor in the same transaction, on every

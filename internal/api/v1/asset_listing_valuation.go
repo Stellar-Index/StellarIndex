@@ -199,9 +199,9 @@ type AssetListingValuation struct {
 	//
 	// Published in the block rather than inferred from the row's own
 	// `circulating_supply`, because the two can legitimately differ —
-	// this arm takes the LARGER of the row's reading and the lake's flow
-	// total, and on the detail surface the row often has no reading at
-	// all. A figure whose multiplicand a reader has to guess at is a
+	// against a trustline floor this arm takes the LARGER of the row's
+	// reading and the lake's flow total, and on the detail surface the
+	// row often has no reading at all. A figure whose multiplicand a reader has to guess at is a
 	// dollar total with no traceable source, which on this surface is
 	// worse than no figure.
 	//
@@ -286,11 +286,13 @@ const (
 	// balances. See classic_lake_supply.go.
 	ListingSupplyBasisLakeFlows = "lake_flows"
 	// ListingSupplyBasisServed — the `circulating_supply` already on
-	// the row, used when it is the larger of the two readings or when
-	// the lake could not answer. [higherClassicSupply] picks between
-	// them, and the floor guard there is what makes this basis safe:
-	// every trustline balance was minted, so a lake total below the
-	// trustline sum is incomplete seeding rather than a smaller truth.
+	// the row, carrying the row's own `supply_basis`. Used when the row
+	// holds an ADR-0011 observation (which outranks the lake, see
+	// [classicSupplyReading]), when its trustline floor is the larger of
+	// the two readings, or when the lake could not answer. Against a
+	// floor the guard in [higherClassicSupply] applies: every trustline
+	// balance was minted, so a lake total below the trustline sum is
+	// incomplete seeding rather than a smaller truth.
 	ListingSupplyBasisServed = "served"
 )
 
@@ -640,8 +642,10 @@ func listingReferenceOf(entry timescale.ListingEntry, form string, now time.Time
 // # Which supply, and why it is not the one on the row
 //
 // `lake` is Σmint − Σburn − Σclawback over the asset's Stellar Asset
-// Contract, and [higherClassicSupply] prefers it over the row's own
-// reading whenever it is the larger of the two. That preference is the
+// Contract, and [listingSupplyReading] prefers it over the row's own
+// reading whenever that reading is a trustline FLOOR (or absent) and the
+// lake is the larger of the two; an ADR-0011 observation on the row is
+// kept. That preference is the
 // difference between a correct figure and one that is wrong by two
 // orders of magnitude, and USDT0 is the proof: its trustline sum is
 // 6,469 tokens against 2,581,052 by mint−burn, because a trustline query
@@ -665,11 +669,7 @@ func listingReferenceOf(entry timescale.ListingEntry, form string, now time.Time
 // of a third party's row, which is a much larger claim than this arm is
 // making.
 func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
-	served := ""
-	if row.CirculatingSupply != nil {
-		served = *row.CirculatingSupply
-	}
-	circ, reading := higherClassicSupply(lake, served)
+	circ, reading := listingSupplyReading(row, lake)
 	if circ == "" {
 		row.ListingValuation = &AssetListingValuation{Status: ListingValuationNoSupply}
 		row.ListingReference = nil
@@ -696,6 +696,33 @@ func (s *Server) publishListingValuation(row *AssetDetail, lake string) {
 		CirculatingSupply: circ,
 		SupplyBasis:       basis,
 	}
+}
+
+// listingSupplyReading picks the multiplicand from the row's own supply
+// reading and the lake's flow total.
+//
+// The lake may replace the row's reading only when that reading is a
+// provable FLOOR ([supply.Basis.LowerBound]) or absent: the floor guard
+// in [higherClassicSupply] is sound only against a sum every balance of
+// which was minted. When the row carries an ADR-0011 observation, that
+// is the arm [classicSupplyReading] ranks above the lake, because the
+// lake over-counts replayed mints whose burns are missing (BLND +11.53%,
+// PHO +156.79% on 2026-09-15), and the valuation must not overrule the
+// supply the row itself publishes. A reading with no basis is not known
+// to be a floor, so it is kept too.
+func listingSupplyReading(row *AssetDetail, lake string) (string, supply.Basis) {
+	if row.CirculatingSupply == nil || *row.CirculatingSupply == "" {
+		return higherClassicSupply(lake, "")
+	}
+	served := *row.CirculatingSupply
+	var basis supply.Basis
+	if row.SupplyBasis != nil {
+		basis = supply.Basis(*row.SupplyBasis)
+	}
+	if basis.LowerBound() || basis == supply.BasisClassicLakeFlows {
+		return higherClassicSupply(lake, served)
+	}
+	return served, basis
 }
 
 // listingValueUSD = (circulating / 10^decimals) x price, as a 2-dp

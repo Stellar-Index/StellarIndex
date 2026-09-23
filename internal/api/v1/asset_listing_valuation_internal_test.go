@@ -11,6 +11,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/currency"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // The listing-priced valuation arm, tested from the two sides that can
@@ -138,10 +139,50 @@ func tlvDustSuppressedRow(assetID, price, servedSupply string) AssetDetail {
 		MarketCapLowLiquidity: true,
 	}
 	if servedSupply != "" {
-		s := servedSupply
-		row.CirculatingSupply = &s
+		// The shape stampCirculatingSupply leaves when classicSupplyReading
+		// fell through to the trustline arm: value and basis travel together.
+		stampCirculatingSupply(&row, servedSupply, supply.BasisClassicTrustlineSum)
 	}
 	return row
+}
+
+// TestListingValuation_ObservationIsNeverPromotedOver is #531: the row's
+// supply is an ADR-0011 observation, which classicSupplyReading ranks
+// ABOVE the lake because the lake over-counts replayed mints (BLND read
+// +11.53%). The floor guard that lets the lake replace a trustline sum
+// does not apply to an observation, so the valuation must multiply the
+// observation the row itself publishes. A reading with no basis is not
+// known to be a floor either.
+func TestListingValuation_ObservationIsNeverPromotedOver(t *testing.T) {
+	const observation = "23000000000000" // below tlvUSDT0LakeSupply
+	observed := string(supply.BasisIssuerExclusion)
+	for _, basis := range []*string{&observed, nil} {
+		s := tlvServer(t,
+			&stubAssetListingDirectory{rows: map[string]timescale.ListingEntry{
+				tlvUSDT0SAC: tlvEntry(tlvUSDT0SAC, "usdt0", "1", time.Minute),
+			}},
+			map[string]string{tlvUSDT0SAC: tlvUSDT0LakeSupply},
+		)
+		row := tlvDustSuppressedRow(tlvUSDT0Asset, "1.00", "")
+		obs := observation
+		row.CirculatingSupply = &obs
+		row.SupplyBasis = basis
+		row = tlvApply(t, s, []AssetDetail{row})[0]
+
+		if row.ListingValuation == nil || row.ListingValuation.ValueUSD == nil {
+			t.Fatalf("basis %v: no figure published: %+v", basis, row.ListingValuation)
+		}
+		if got := row.ListingValuation.CirculatingSupply; got != observation {
+			t.Errorf("basis %v: listing_valuation.circulating_supply = %q, want the observation %q, not the lake %q",
+				basis, got, observation, tlvUSDT0LakeSupply)
+		}
+		if got := *row.ListingValuation.ValueUSD; got != "2300000.00" {
+			t.Errorf("basis %v: value_usd = %q, want 2300000.00", basis, got)
+		}
+		if got := row.ListingValuation.SupplyBasis; got != ListingSupplyBasisServed {
+			t.Errorf("basis %v: supply_basis = %q, want %q", basis, got, ListingSupplyBasisServed)
+		}
+	}
 }
 
 func tlvApply(t *testing.T, s *Server, rows []AssetDetail) []AssetDetail {
