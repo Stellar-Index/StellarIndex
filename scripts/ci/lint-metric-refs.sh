@@ -49,6 +49,17 @@ RULE_DIRS=(
   "configs/prometheus/rules.r1"
 )
 
+# The scrape config each rule tree is deployed beside, index-aligned with
+# RULE_DIRS. Every `job=` / `job=~` value in a tree's exprs must name a
+# `job_name` in ITS config: the trees use different job names
+# (stellarindex_aggregator vs stellarindex-aggregator), a selector over an
+# undefined job matches nothing, and `absent_over_time(up{job=...})` over
+# one fires forever.
+SCRAPE_CONFIGS=(
+  "configs/ansible/roles/prometheus/templates/prometheus.yml.j2"
+  "configs/prometheus/prometheus.r1.yml"
+)
+
 # Directories scanned for emitters (Go Name: fields + textfile .prom + shell).
 # configs/ansible/.../files holds the textfile-collector emitter scripts
 # (data-freshness.sh, galexie-archive-tip-lag.sh, …) that write .prom gauges.
@@ -142,18 +153,11 @@ in_list() {
   return 1
 }
 
-# Pull stellarindex_* tokens that appear inside a rule's `expr:` region.
-# An expr region starts at an `expr:` line and ends at the next sibling
-# key (`for:` / `labels:` / `annotations:` / `- alert:` / `- record:`).
-# Tokens inside a job= / job=~ matcher are dropped (scrape-job names).
-extract_expr_tokens() {
+# Print the body of every rule `expr:` region, `#` comments removed. An
+# expr region starts at an `expr:` line and ends at the next sibling key
+# (`for:` / `labels:` / `annotations:` / `- alert:` / `- record:`).
+expr_lines() {
   awk '
-    function strip_jobs(s) {
-      # remove job="..." and job=~"..." matcher bodies so their tokens
-      # (scrape-job names) are not mistaken for metric names.
-      gsub(/job[[:space:]]*=~?[[:space:]]*"[^"]*"/, "", s)
-      return s
-    }
     function strip_hash(s) {
       # drop `# ...` trailing YAML/PromQL comments inside the expr region
       # so a metric NAMED ONLY in a comment (e.g. `# TODO wire
@@ -163,12 +167,39 @@ extract_expr_tokens() {
       return s
     }
     /^[[:space:]]*expr:[[:space:]]*\|?[[:space:]]*$/ { inexpr=1; next }
-    /^[[:space:]]*expr:/ { print strip_hash(strip_jobs(substr($0, index($0,"expr:")+5))); next }
+    /^[[:space:]]*expr:/ { print strip_hash(substr($0, index($0,"expr:")+5)); next }
     inexpr {
       if ($0 ~ /^[[:space:]]*(for|labels|annotations):/ || $0 ~ /^[[:space:]]*-[[:space:]]+(alert|record):/) { inexpr=0; next }
-      print strip_hash(strip_jobs($0))
+      print strip_hash($0)
     }
-  ' "$1" | grep -oE 'stellarindex_[a-zA-Z0-9_]+' || true
+  ' "$1"
+}
+
+# Pull stellarindex_* tokens that appear inside a rule's `expr:` region.
+# job= / job=~ matcher bodies are removed first so scrape-job names are
+# not mistaken for metric names.
+extract_expr_tokens() {
+  expr_lines "$1" \
+    | sed -E 's/job[[:space:]]*=~?[[:space:]]*"[^"]*"//g' \
+    | grep -oE 'stellarindex_[a-zA-Z0-9_]+' || true
+}
+
+# Print every scrape-job name a rule file's exprs select, one per line.
+# Only positive matchers count (`job="x"`, `job=~"x|y"`); `ops_job=` is a
+# different label. A regex alternative carrying metacharacters cannot be
+# resolved statically and is skipped.
+extract_expr_jobs() {
+  expr_lines "$1" \
+    | grep -oE '(^|[^a-zA-Z0-9_])job[[:space:]]*=~?[[:space:]]*"[^"]*"' \
+    | sed -E 's/^[^"]*"//; s/"$//' \
+    | tr '|' '\n' \
+    | grep -E '^[A-Za-z0-9_:-]+$' || true
+}
+
+# Print every job_name a scrape config defines (plain YAML or the jinja
+# template; a job rendered under a `{% if %}` guard still counts).
+scrape_job_names() {
+  sed -nE 's/^[[:space:]]*-?[[:space:]]*job_name:[[:space:]]*"?([A-Za-z0-9_.-]+)"?.*/\1/p' "$1"
 }
 
 self_rel="scripts/ci/lint-metric-refs.sh"
@@ -227,6 +258,20 @@ for dir in "${RULE_DIRS[@]}"; do
   done < <(find "$dir" -maxdepth 1 -name '*.yml' -print0)
 done
 
+for i in "${!RULE_DIRS[@]}"; do
+  dir="${RULE_DIRS[$i]}"
+  cfg="${SCRAPE_CONFIGS[$i]}"
+  [[ -f "$cfg" ]] || { echo "lint-metric-refs: missing scrape config: $cfg" >&2; exit 2; }
+  defined_jobs=" $(scrape_job_names "$cfg" | tr '\n' ' ')"
+  while IFS= read -r -d '' f; do
+    while IFS= read -r job; do
+      [[ -z "$job" || "$defined_jobs" == *" $job "* ]] && continue
+      echo "DEAD-JOB: $f selects job=\"$job\" but $cfg defines no such scrape job."
+      dead=$((dead + 1))
+    done < <(extract_expr_jobs "$f" | sort -u)
+  done < <(find "$dir" -maxdepth 1 -name '*.yml' -print0)
+done
+
 # Reverse guard: a KNOWN_INERT entry that has GAINED a producer should be
 # promoted to a live ref (and dropped from the list), not left lying.
 for tok in "${KNOWN_INERT[@]}"; do
@@ -249,21 +294,19 @@ UNALERTED_OK=(
 # membership in that set — O(rule_files) + O(emitted_tokens), not
 # O(rule_files * emitted_tokens). Re-parsing every rule file per emitted
 # token made a full-repo run take 66s+; this collapses it back down.
-declare -A ALERTED_SET
-while IFS= read -r tok; do
-  [[ -z "$tok" ]] && continue
-  ALERTED_SET["$tok"]=1
-done < <(
+# A newline-joined string rather than `declare -A`, which the bash 3.2
+# that macOS ships (and the pre-commit hook runs) rejects.
+alerted_tokens="$(
   for dir in "${RULE_DIRS[@]}"; do
     [[ -d "$dir" ]] || continue
     while IFS= read -r -d '' f; do
       extract_expr_tokens "$f"
     done < <(find "$dir" -maxdepth 1 -name '*.yml' -print0)
-  done
-)
+  done | sort -u
+)"
 
 is_alerted() {
-  [[ -n "${ALERTED_SET[$1]:-}" ]]
+  grep -qxF -e "$1" <<<"$alerted_tokens"
 }
 
 # Collects every stellarindex_* token that appears as a literal on a
@@ -285,7 +328,7 @@ collect_emitted_tokens() {
 unalerted=0
 while IFS= read -r tok; do
   [[ -z "$tok" ]] && continue
-  in_list "$tok" "${UNALERTED_OK[@]}" && continue
+  in_list "$tok" ${UNALERTED_OK[@]+"${UNALERTED_OK[@]}"} && continue
   is_alerted "$tok" && continue
   echo "UNALERTED (advisory): '$tok' is emitted but no rule expr references it yet."
   unalerted=$((unalerted + 1))

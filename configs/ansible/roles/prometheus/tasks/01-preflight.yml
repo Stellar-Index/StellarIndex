@@ -51,6 +51,25 @@
       of: stellarindex_api / stellarindex_aggregator /
       stellarindex_indexer.
 
+# The rule tree is synced verbatim, and meta.yml pages on
+# absent_over_time(up{job=...}) for the data-tier exporters: a job this
+# template never renders pages from the first evaluation and nothing an
+# operator does on the box clears it, while storage.yml's
+# up{job="pgbackrest_exporter"} == 1 gates go silently dead.
+- name: assert the data-tier scrape groups the rule tree pages on are populated
+  assert:
+    that:
+      - "groups['postgres_cluster'] | default([]) | length > 0"
+      - "groups['clickhouse_cluster'] | default([]) | length > 0"
+      - "groups['minio_cluster'] | default([]) | length > 0"
+    fail_msg: >-
+      deploy/monitoring/rules/ selects the postgres_exporter,
+      pgbackrest_exporter, clickhouse and minio scrape jobs, which
+      prometheus.yml.j2 renders only for hosts in postgres_cluster,
+      clickhouse_cluster and minio_cluster. Populate all three, or
+      stellarindex_{postgres,pgbackrest,minio}_exporter_down and
+      stellarindex_clickhouse_server_down page permanently.
+
 - name: warn when alertmanager_pagerduty_key is empty
   debug:
     msg: >-

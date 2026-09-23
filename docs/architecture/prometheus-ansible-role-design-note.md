@@ -107,6 +107,10 @@ sensible scrape interval + label set:
 | HAProxy | every host in `haproxy_lb` | 8404 | 15s | `/metrics` (built-in 2.4+) |
 | redis_exporter | every host in `redis_cluster` | 9121 | 30s | `/metrics` |
 | Patroni textfile | via `node_exporter` on every host in `postgres_cluster` | 9100 | 30s | `/metrics` (textfile collector picks up /var/lib/node_exporter/textfile_collector/*.prom) |
+| postgres_exporter | every host in `postgres_cluster` | 9187 | 15s | `/metrics` |
+| pgbackrest_exporter | every host in `postgres_cluster` | 9854 | 15s | `/metrics` |
+| clickhouse (server's own endpoint) | every host in `clickhouse_cluster` | 9363 | 15s | `/metrics` |
+| minio | every host in `minio_cluster` | 9000 | 15s | `/minio/v2/metrics/cluster` (bearer token, operator-minted) |
 | node_exporter | every host (any inventory group) | 9100 | 30s | `/metrics` |
 | AlertManager (self) | every host in `prometheus_pair` | 9093 | 30s | `/metrics` |
 | Prometheus (self) | every host in `prometheus_pair` | 9090 | 30s | `/metrics` |

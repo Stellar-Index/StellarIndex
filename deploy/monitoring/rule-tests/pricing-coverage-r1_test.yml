@@ -2,7 +2,11 @@
 # promtool unit tests for the priceless-popular coverage tripwire
 # (task #28 Part B).
 #
-#   promtool test rules deploy/monitoring/rule-tests/pricing-coverage_test.yml
+#   promtool test rules deploy/monitoring/rule-tests/pricing-coverage-r1_test.yml
+#
+# The r1 OVERLAY's copy, with r1's hyphenated job names. Cases are
+# identical to pricing-coverage_test.yml (the multi-host tree, underscored
+# job names); only rule_files and the job labels differ. Keep them in step.
 #
 # PROVEN-RED: with either alert removed from pricing-coverage.yml, promtool
 # reports "no rule with alertname …" and the matching case FAILS — the test
@@ -10,7 +14,7 @@
 # silent-on-healthy behaviour), not a mock.
 
 rule_files:
-  - ../rules/pricing-coverage.yml
+  - ../../../configs/prometheus/rules.r1/pricing-coverage.yml
 
 evaluation_interval: 1m
 
@@ -73,7 +77,7 @@ tests:
   - interval: 1m
     name: a frozen aggregator coverage sweep trips the staleness alert
     input_series:
-      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex_aggregator"}'
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex-aggregator"}'
         values: '0x90'
     alert_rule_test:
       - eval_time: 70m
@@ -83,7 +87,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: pricing-coverage
-              job: stellarindex_aggregator
+              job: stellarindex-aggregator
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/assets-popular-priceless.md
               summary: "Priceless-popular coverage tripwire has stopped sweeping (P3)"
@@ -104,9 +108,9 @@ tests:
   - interval: 1m
     name: a zero gauge on a non-aggregator instance never fires
     input_series:
-      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex_indexer"}'
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex-indexer"}'
         values: '0x90'
-      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex_api"}'
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex-api"}'
         values: '0x90'
     alert_rule_test:
       - eval_time: 70m
@@ -117,7 +121,7 @@ tests:
   - interval: 1m
     name: a freshly-updating coverage sweep never trips staleness
     input_series:
-      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex_aggregator"}'
+      - series: 'stellarindex_priceless_coverage_check_last_success_unix{job="stellarindex-aggregator"}'
         values: '0+60x90'
     alert_rule_test:
       - eval_time: 70m
