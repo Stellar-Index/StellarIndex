@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -27,7 +28,8 @@ const postResponseWriteTimeout = 5 * time.Second
 // /v1/account/usage is per-account, and there's no account to bill
 // for IP-only callers.
 //
-// Two counter families per request:
+// Two counter families per request, each advanced by the request's
+// unit count (1 unless the handler raised it via [ChargeUsage]):
 //
 //   - The LEGACY per-day total (usage:<sub>:<day>) — feeds
 //     [MonthlyQuota] and the /v1/account/usage fallback path. Only
@@ -68,7 +70,11 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 				return
 			}
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-			next.ServeHTTP(rec, r)
+			units := &usageUnits{n: 1}
+			// endpointFamily reads the dispatched copy: its r.Pattern
+			// fallback is set on the request the mux actually received.
+			inner := r.WithContext(context.WithValue(r.Context(), usageUnitsKey{}, units))
+			next.ServeHTTP(rec, inner)
 			subject, ok := auth.SubjectFrom(r.Context())
 			if !ok {
 				return
@@ -77,7 +83,7 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			if id == "" {
 				return
 			}
-			family := endpointFamily(r)
+			family := endpointFamily(inner)
 			class := outcomeClass(rec.status)
 			// The response is already written, so these counters MUST NOT
 			// inherit the request's cancellation: a client that aborted, or
@@ -103,17 +109,63 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			// timeout instead.
 			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), postResponseWriteTimeout)
 			defer cancel()
+			n := units.get()
 			if billableClass(class) {
 				// Legacy total: billable traffic only (quota input).
-				if err := counter.Increment(ctx, id); err != nil {
+				if err := counter.IncrementBy(ctx, id, n); err != nil {
 					logger.Debug("usage: increment failed", "err", err, "subject", id)
 				}
 			}
-			if err := counter.IncrementDetail(ctx, id, family, class); err != nil {
+			if err := counter.IncrementDetailBy(ctx, id, family, class, n); err != nil {
 				logger.Debug("usage: detail increment failed",
 					"err", err, "subject", id, "endpoint", family, "class", class)
 			}
 		})
+	}
+}
+
+// usageUnits is one request's metered cost in request units. The
+// tracker opens it at one unit before dispatch; a handler whose product
+// output scales with a client-chosen parameter raises it through
+// [ChargeUsage]. Mutex-guarded for the same reason as rateLimitCharge.
+type usageUnits struct {
+	mu sync.Mutex
+	n  int64
+}
+
+type usageUnitsKey struct{}
+
+func (u *usageUnits) get() int64 {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.n
+}
+
+// ChargeUsage prices the in-flight request at units request units IN
+// TOTAL for the monthly meter — both the billable total [MonthlyQuota]
+// enforces and the per-endpoint detail counters. It can raise a
+// request's price, never lower it. A request that never crossed
+// [UsageTracker] has no meter and is unaffected.
+//
+// This is the monthly-quota counterpart of [ChargeRateLimit], and is
+// deliberately separate from it: rate-limit tokens are a capacity
+// weight (a /v1/assets volume sort costs ten), while request units are
+// the PRODUCT unit a plan sells — one per price returned, so a
+// 1000-id POST /v1/price/batch costs what 1000 GET /v1/price calls do.
+//
+// The quota gate runs before dispatch and cannot know the cost, so a
+// caller one unit under its cap can finish one batch over it; the
+// overshoot is bounded by that request's size and the next request is
+// refused.
+func ChargeUsage(r *http.Request, units int) {
+	u, ok := r.Context().Value(usageUnitsKey{}).(*usageUnits)
+	if !ok || u == nil {
+		return
+	}
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if n := int64(units); n > u.n {
+		u.n = n
 	}
 }
 

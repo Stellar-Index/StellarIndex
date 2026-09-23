@@ -2852,6 +2852,10 @@ func (s *Server) runPriceBatch(w http.ResponseWriter, r *http.Request, rawIDs []
 	if !middleware.ChargeRateLimit(w, r, len(ids)) {
 		return
 	}
+	// The monthly meter counts the same de-duplicated ids: one request
+	// unit per price looked up, as a GET /v1/price per id would cost.
+	// After the rate-limit charge, so a 429 above meters one unit.
+	middleware.ChargeUsage(r, len(ids))
 	s.lookupPriceBatch(w, r, ids, quote)
 }
 

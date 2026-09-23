@@ -238,6 +238,13 @@ against.
   `soroban_event_count` recorded in `stellar.ledgers`. A short partition
   fails `substrate_ok` and `recognition_ok` for each event-reading source
   whose range it touches.
+- **api — monthly quota meters price lookups, not HTTP calls (#1275):**
+  `/v1/price/batch` now advances the monthly-quota counter and the
+  per-endpoint usage counters by one request unit per de-duplicated
+  asset id, matching its per-minute rate-limit charge. A 1000-id POST
+  used to cost one unit of the quota, so a 1M-unit key could resolve
+  10⁹ prices. Handlers price a request through
+  `middleware.ChargeUsage`; every other route still costs one unit.
 
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
