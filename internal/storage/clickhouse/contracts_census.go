@@ -33,7 +33,7 @@ type censusExecConn interface {
 // Format-built identifier is safe.
 func censusDayInsert(staging string) string {
 	return fmt.Sprintf(`
-	INSERT INTO stellar.%s
+	INSERT INTO stellar.%s (day, contract_id, events, last_ledger, last_seen)
 	SELECT
 		toDate(close_time) AS day,
 		contract_id,

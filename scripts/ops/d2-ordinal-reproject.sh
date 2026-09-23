@@ -131,7 +131,10 @@ for P in $(seq "$FIRST" "$LAST"); do
     #     alone would drop them, and REPLACE PARTITION would then delete
     #     them permanently (~9M rows across the D2 range). They are removed
     #     deliberately later, by the cleanup phase.
-    q "INSERT INTO $STAGE
+    # Named column list: intra_ledger_seq was appended by ALTER TABLE, so
+    # a positional INSERT depends on it staying last — a future ADD COLUMN
+    # or the documented DROP COLUMN rollback would shift it silently.
+    q "INSERT INTO $STAGE ($COLS_NO_ORD, intra_ledger_seq)
        SELECT lec.ledger_seq, lec.close_time, lec.tx_hash, lec.op_index, lec.change_index,
               lec.change_type, lec.entry_type, lec.key_xdr, lec.entry_xdr, lec.ingested_at,
               lec.account_id, lec.asset, lec.balance,
