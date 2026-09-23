@@ -32,6 +32,34 @@ import (
 // task's "a user won't have >500 venues" note.
 const positionsVenueLimit = 500
 
+// queryFold runs one of this file's `WHERE <user_col> = $1 ... LIMIT
+// $2` fold queries and scans each row via scan, sharing the
+// QueryContext -> rows.Next/Scan -> rows.Err shell every fold method
+// here has in common. label matches each method's own name so the
+// wrapped error text is unchanged (e.g. "timescale: BlendPositionsByUser:
+// %w") — only this shell is shared; each method keeps its own SQL and
+// scanned struct.
+func queryFold[T any](ctx context.Context, db *sql.DB, label, query string, args []any, scan func(*sql.Rows) (T, error)) ([]T, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: %s: %w", label, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []T
+	for rows.Next() {
+		f, err := scan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("timescale: %s scan: %w", label, err)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: %s rows: %w", label, err)
+	}
+	return out, nil
+}
+
 // BlendPositionFold is one (pool, asset) money-market fold for a user,
 // read from blend_positions (migration 0045/0053/0054). SupplyNet and
 // BorrowNet are independent nets — a user can carry both a supply and a
@@ -101,14 +129,7 @@ func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]Ble
 		   AND event_kind IN ('supply','withdraw','supply_collateral','withdraw_collateral','borrow','repay')
 		 GROUP BY pool, asset
 		 LIMIT $2`
-	rows, err := s.db.QueryContext(ctx, q, address, positionsVenueLimit)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: BlendPositionsByUser: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []BlendPositionFold
-	for rows.Next() {
+	return queryFold(ctx, s.db, "BlendPositionsByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendPositionFold, error) {
 		var (
 			f                              BlendPositionFold
 			supplyActivity, borrowActivity sql.NullTime
@@ -116,7 +137,7 @@ func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]Ble
 		)
 		if err := rows.Scan(&f.Pool, &f.Asset, &f.HasSupplyLeg, &f.SupplyNet, &supplyActivity, &supplyLedger,
 			&f.HasBorrowLeg, &f.BorrowNet, &borrowActivity, &borrowLedger); err != nil {
-			return nil, fmt.Errorf("timescale: BlendPositionsByUser scan: %w", err)
+			return f, err
 		}
 		if supplyActivity.Valid {
 			f.SupplyLastActivity = supplyActivity.Time.UTC()
@@ -130,12 +151,8 @@ func (s *Store) BlendPositionsByUser(ctx context.Context, address string) ([]Ble
 		if borrowLedger.Valid {
 			f.BorrowLastLedger = uint32(borrowLedger.Int64) //nolint:gosec // ledger seq fits uint32
 		}
-		out = append(out, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: BlendPositionsByUser rows: %w", err)
-	}
-	return out, nil
+		return f, nil
+	})
 }
 
 // BlendBackstopFold is one pool's backstop-share fold for a user, read
@@ -181,30 +198,19 @@ func (s *Store) BlendBackstopSharesByUser(ctx context.Context, address string) (
 		   AND pool IS NOT NULL
 		 GROUP BY pool
 		 LIMIT $2`
-	rows, err := s.db.QueryContext(ctx, q, address, positionsVenueLimit)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: BlendBackstopSharesByUser: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []BlendBackstopFold
-	for rows.Next() {
+	return queryFold(ctx, s.db, "BlendBackstopSharesByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (BlendBackstopFold, error) {
 		var (
 			f       BlendBackstopFold
 			ledger  int64
 			closeAt time.Time
 		)
 		if err := rows.Scan(&f.Pool, &f.SharesNet, &closeAt, &ledger); err != nil {
-			return nil, fmt.Errorf("timescale: BlendBackstopSharesByUser scan: %w", err)
+			return f, err
 		}
 		f.LastActivity = closeAt.UTC()
 		f.LastLedger = uint32(ledger) //nolint:gosec // ledger seq fits uint32
-		out = append(out, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: BlendBackstopSharesByUser rows: %w", err)
-	}
-	return out, nil
+		return f, nil
+	})
 }
 
 // PhoenixStakeFold is one stake-contract's bond/unbond fold for a user,
@@ -239,30 +245,19 @@ func (s *Store) PhoenixStakeByUser(ctx context.Context, address string) ([]Phoen
 		   AND action IN ('bond','unbond')
 		 GROUP BY stake_contract, lp_token
 		 LIMIT $2`
-	rows, err := s.db.QueryContext(ctx, q, address, positionsVenueLimit)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: PhoenixStakeByUser: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []PhoenixStakeFold
-	for rows.Next() {
+	return queryFold(ctx, s.db, "PhoenixStakeByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (PhoenixStakeFold, error) {
 		var (
 			f       PhoenixStakeFold
 			ledger  int64
 			closeAt time.Time
 		)
 		if err := rows.Scan(&f.StakeContract, &f.LPToken, &f.NetAmount, &closeAt, &ledger); err != nil {
-			return nil, fmt.Errorf("timescale: PhoenixStakeByUser scan: %w", err)
+			return f, err
 		}
 		f.LastActivity = closeAt.UTC()
 		f.LastLedger = uint32(ledger) //nolint:gosec // ledger seq fits uint32
-		out = append(out, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: PhoenixStakeByUser rows: %w", err)
-	}
-	return out, nil
+		return f, nil
+	})
 }
 
 // DefindexVaultFold is one vault's df-token-share fold for a user, read
@@ -298,30 +293,19 @@ func (s *Store) DefindexVaultSharesByUser(ctx context.Context, address string) (
 		   AND layer = 'vault'
 		 GROUP BY contract_id
 		 LIMIT $2`
-	rows, err := s.db.QueryContext(ctx, q, address, positionsVenueLimit)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: DefindexVaultSharesByUser: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []DefindexVaultFold
-	for rows.Next() {
+	return queryFold(ctx, s.db, "DefindexVaultSharesByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (DefindexVaultFold, error) {
 		var (
 			f       DefindexVaultFold
 			ledger  int64
 			closeAt time.Time
 		)
 		if err := rows.Scan(&f.ContractID, &f.SharesNet, &closeAt, &ledger); err != nil {
-			return nil, fmt.Errorf("timescale: DefindexVaultSharesByUser scan: %w", err)
+			return f, err
 		}
 		f.LastActivity = closeAt.UTC()
 		f.LastLedger = uint32(ledger) //nolint:gosec // ledger seq fits uint32
-		out = append(out, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: DefindexVaultSharesByUser rows: %w", err)
-	}
-	return out, nil
+		return f, nil
+	})
 }
 
 // CreditPositionFold is one sorocredit position for an owner, read from
@@ -387,14 +371,7 @@ func (s *Store) CreditPositionsByOwner(ctx context.Context, address string) ([]C
 		       ) s ON true
 		 WHERE p.owner = $1
 		 LIMIT $2`
-	rows, err := s.db.QueryContext(ctx, q, address, positionsVenueLimit)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: CreditPositionsByOwner: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []CreditPositionFold
-	for rows.Next() {
+	return queryFold(ctx, s.db, "CreditPositionsByOwner", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (CreditPositionFold, error) {
 		var (
 			f            CreditPositionFold
 			opened       time.Time
@@ -405,7 +382,7 @@ func (s *Store) CreditPositionsByOwner(ctx context.Context, address string) ([]C
 		)
 		if err := rows.Scan(&f.CollateralContract, &f.PositionUUID, &opened, &openedLedger,
 			&latestAmount, &latestClose, &latestLedger, &f.Withdrawn); err != nil {
-			return nil, fmt.Errorf("timescale: CreditPositionsByOwner scan: %w", err)
+			return f, err
 		}
 		f.OpenedAt = opened.UTC()
 		f.OpenedLedger = uint32(openedLedger) //nolint:gosec // ledger seq fits uint32
@@ -418,12 +395,8 @@ func (s *Store) CreditPositionsByOwner(ctx context.Context, address string) ([]C
 		if latestLedger.Valid {
 			f.LatestLedger = uint32(latestLedger.Int64) //nolint:gosec // ledger seq fits uint32
 		}
-		out = append(out, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: CreditPositionsByOwner rows: %w", err)
-	}
-	return out, nil
+		return f, nil
+	})
 }
 
 // AquariusGaugeFold is one pool's gauge-position fold for a user, read
@@ -462,28 +435,17 @@ func (s *Store) AquariusGaugeByUser(ctx context.Context, address string) ([]Aqua
 		   AND event_kind = 'position_update'
 		 GROUP BY contract_id
 		 LIMIT $2`
-	rows, err := s.db.QueryContext(ctx, q, address, positionsVenueLimit)
-	if err != nil {
-		return nil, fmt.Errorf("timescale: AquariusGaugeByUser: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var out []AquariusGaugeFold
-	for rows.Next() {
+	return queryFold(ctx, s.db, "AquariusGaugeByUser", q, []any{address, positionsVenueLimit}, func(rows *sql.Rows) (AquariusGaugeFold, error) {
 		var (
 			f       AquariusGaugeFold
 			ledger  int64
 			closeAt time.Time
 		)
 		if err := rows.Scan(&f.ContractID, &f.NetDelta, &closeAt, &ledger); err != nil {
-			return nil, fmt.Errorf("timescale: AquariusGaugeByUser scan: %w", err)
+			return f, err
 		}
 		f.LastActivity = closeAt.UTC()
 		f.LastLedger = uint32(ledger) //nolint:gosec // ledger seq fits uint32
-		out = append(out, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("timescale: AquariusGaugeByUser rows: %w", err)
-	}
-	return out, nil
+		return f, nil
+	})
 }
