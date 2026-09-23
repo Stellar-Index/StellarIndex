@@ -89,8 +89,8 @@ func decodeLatestRoundData(rawHex, feedAddress string, now time.Time) (Round, er
 	// startedAt — uint256 in word 2 (we ignore it; updatedAt is the
 	// authoritative timestamp).
 	// updatedAt — uint256 in word 3.
-	updatedAt := bigEndianUint64(bytes[120:128])
-	if err := checkUpdatedAt(updatedAt, now); err != nil {
+	updatedAt, err := readUpdatedAt(bytes[96:128], now)
+	if err != nil {
 		return Round{}, fmt.Errorf("feed=%s round=%d: %w", feedAddress, roundID, err)
 	}
 	// answeredInRound — uint80 in word 4 (ignored).
@@ -149,8 +149,8 @@ func decodeAnswerUpdatedLog(entry LogEntry, now time.Time) (Round, error) {
 	if len(dataBytes) != 32 {
 		return Round{}, fmt.Errorf("%w: AnswerUpdated.data expected 32 bytes (one uint256), got %d", ErrMalformedResult, len(dataBytes))
 	}
-	updatedAt := bigEndianUint64(dataBytes[24:32])
-	if err := checkUpdatedAt(updatedAt, now); err != nil {
+	updatedAt, err := readUpdatedAt(dataBytes, now)
+	if err != nil {
 		return Round{}, fmt.Errorf("%s round=%d: %w", entry.Address, roundID, err)
 	}
 
@@ -214,6 +214,19 @@ func parseHexUint(s string) (uint64, error) {
 // return slot.
 func decodeRoundID(b []byte) *big.Int {
 	return new(big.Int).SetBytes(b)
+}
+
+// readUpdatedAt reads a 32-byte uint256 updatedAt word and applies
+// checkUpdatedAt, rejecting any value with the high 24 bytes set (which
+// the low 8 bytes alone would misread).
+func readUpdatedAt(word []byte, now time.Time) (uint64, error) {
+	for _, b := range word[:24] {
+		if b != 0 {
+			return 0, fmt.Errorf("%w: out-of-range updatedAt %s", ErrMalformedResult, new(big.Int).SetBytes(word))
+		}
+	}
+	v := bigEndianUint64(word[24:32])
+	return v, checkUpdatedAt(v, now)
 }
 
 // bigEndianUint64 reads 8 bytes as big-endian uint64. Tiny helper

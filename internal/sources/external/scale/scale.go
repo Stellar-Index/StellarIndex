@@ -27,15 +27,22 @@ func DecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
 	if strings.ContainsAny(s, "eE") {
 		return nil, fmt.Errorf("scientific notation %q not supported", s)
 	}
+	orig := s
 	neg := false
-	if s[0] == '-' {
-		neg = true
+	if s[0] == '-' || s[0] == '+' {
+		neg = s[0] == '-'
 		s = s[1:]
 	}
 	intPart, fracPart := s, ""
 	if dot := strings.IndexByte(s, '.'); dot >= 0 {
 		intPart = s[:dot]
 		fracPart = s[dot+1:]
+	}
+	// Validate every digit before truncating: big.Int.SetString would
+	// accept a second sign ("--1.5" → +1.5) and truncation would hide
+	// junk past targetDecimals.
+	if intPart == "" && fracPart == "" || !isDigits(intPart) || !isDigits(fracPart) {
+		return nil, fmt.Errorf("not a decimal: %q", orig)
 	}
 	if intPart == "" {
 		intPart = "0"
@@ -55,6 +62,15 @@ func DecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error) {
 		v.Neg(v)
 	}
 	return v, nil
+}
+
+func isDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // FloatToScaledInt converts a non-negative float to an integer scaled to
