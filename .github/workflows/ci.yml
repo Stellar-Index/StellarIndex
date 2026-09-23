@@ -1411,6 +1411,17 @@ jobs:
         # injected backup_freshness_skip=true and skipped the backup gate.
         # No network, no gh.
         run: ./scripts/ci/deploy-inputs-test.sh
+      - name: check-no-wrangler-cache-tracked
+        # T535: docs/reference/api/.wrangler/cache/pages.json was a
+        # Cloudflare Pages build-cache artifact committed to this public
+        # repo, carrying account_id/project_name verbatim, because
+        # .gitignore's old /.wrangler/ entry was root-anchored and never
+        # matched the nested path. Fails if a .wrangler/ path is tracked
+        # again or the ignore pattern regresses to root-anchored. No
+        # network, no ansible.
+        run: ./scripts/ci/check-no-wrangler-cache-tracked.sh
+      - name: check-no-wrangler-cache-tracked self-test
+        run: bash scripts/ci/check-no-wrangler-cache-tracked-test.sh
       - name: lint-lexicon
         # Maintainability audit 2026-07-01 (D2+D6): domain-lexicon +
         # idiom ratchet. Zero rules (no Fetch/Make verbs, slog is the
