@@ -66,7 +66,7 @@ func TestDefindexKPIQueriesShape(t *testing.T) {
 	}
 
 	a := defindexAllTimeKPIQuery()
-	if strings.Contains(a, "$1") || strings.Contains(a, "interval") {
+	if strings.Contains(a, "$1") || sqlContainsFold(a, "interval") {
 		t.Error("all-time KPI query must not be window-bounded (it is the retained-history total)")
 	}
 	if strings.Contains(a, "sum(") {

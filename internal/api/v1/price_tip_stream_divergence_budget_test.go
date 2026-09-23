@@ -602,7 +602,8 @@ func TestPriceDivergence_GenuineStoreErrorIsLoggedEvenPastTheBudget(t *testing.T
 			resp.Body.Close()
 
 			if div.calls.Load() == 0 {
-				t.Skipf("precondition unmet: the handler never reached the divergence lookup on %s", path)
+				t.Fatalf("the handler never reached the divergence lookup on %s; budgetBurningPrices guarantees the budget "+
+					"is already spent by the time the flag walk runs, so this precondition must hold", path)
 			}
 			if logs.count("divergence lookup failed") == 0 {
 				t.Errorf("a genuine store failure (%v) reached the lookup with an expired request context and was logged nowhere; "+

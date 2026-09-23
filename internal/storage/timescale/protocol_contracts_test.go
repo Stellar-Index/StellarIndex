@@ -66,7 +66,7 @@ func TestSourceContractCountQueryShape(t *testing.T) {
 	if !strings.Contains(q, "credit_positions") {
 		t.Errorf("sorocredit count must read credit_positions, got %q", q)
 	}
-	if strings.Contains(q, "LIMIT") || strings.Contains(q, "interval") {
+	if strings.Contains(q, "LIMIT") || sqlContainsFold(q, "interval") {
 		t.Errorf("sorocredit count must be the unwindowed, uncapped total, got %q", q)
 	}
 

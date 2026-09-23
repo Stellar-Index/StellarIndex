@@ -221,7 +221,7 @@ func TestDexLargestTradesQueryShape(t *testing.T) {
 // 2026-03-18 on r1 while raw sdex history reaches 2018).
 func TestDexSinceTotalsQueryShape(t *testing.T) {
 	q := dexSinceTotalsQuery()
-	if strings.Contains(q, "$2") || strings.Contains(q, "interval") {
+	if strings.Contains(q, "$2") || sqlContainsFold(q, "interval") {
 		t.Error("since-totals is the lifetime-of-the-rollup query and must not be window-bounded")
 	}
 	if !strings.Contains(q, "min(bucket)::date") {
