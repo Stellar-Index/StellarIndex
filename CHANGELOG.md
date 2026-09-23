@@ -19524,8 +19524,8 @@ Tested against Stellar protocol v23.
   stale comment (it caps a ledger window, not a row count) corrected.
 - Go toolchain bumped to 1.25.12 (clears GO-2026-5856 `crypto/tls` govulncheck finding);
   every direct Go dep bumped to latest in one commit (aws-sdk-go-v2 family, x/sync 0.22,
-  google.golang.org/api 0.287.1 + grpc 1.82) — supersedes dependabot #1371/#1372, whose
-  isolated per-module bumps left `go.sum` missing sibling-module entries.
+  google.golang.org/api 0.287.1 + grpc 1.82) — supersedes the prior isolated
+  per-module dependabot bumps, which left `go.sum` missing sibling-module entries.
 - Dependabot now groups all minor/patch bumps into **one weekly PR per ecosystem** (majors
   stay per-dependency); dead `web/dashboard` npm entry removed. Ends the per-module PR
   fan-out whose merges invalidated each other's `go.sum` and forced rebase cascades.

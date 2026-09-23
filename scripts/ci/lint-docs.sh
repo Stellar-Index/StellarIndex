@@ -381,6 +381,14 @@ stale_patterns=(
                                   # tooling-groups entry as #1368 + #1369
                                   # (RSWP-149); #1369 now resolves to an
                                   # unrelated, already-merged W3 slice PR
+  "dependabot #1371/#1372"       # dangling ref (RSWP-151) — CHANGELOG's Go
+                                  # toolchain 1.25.12 + all-deps bump entry
+                                  # cited these as the dependabot PRs it
+                                  # superseded; #1371 and #1372 now resolve
+                                  # to real, unrelated live PRs (an open
+                                  # dependabot npm-bump PR and a closed
+                                  # audit-remediation PR), not the
+                                  # dependabot bumps this entry named
   "R-013.*#1265"                  # coverage-matrix.md's R-013 row cited #1265
                                   # (RSWP-141); #1265 now resolves to an
                                   # unrelated resolveTip completeness-clamp

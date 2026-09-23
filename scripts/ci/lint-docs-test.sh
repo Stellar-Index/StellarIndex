@@ -115,6 +115,15 @@ check "a reintroduced '#1369' citation in remediation STATUS.md is caught" red
 git checkout -- docs/remediation-2026-07-01/STATUS.md
 check "clean tree passes again after revert" ok
 
+# RSWP-151: CHANGELOG.md must not carry the dangling "dependabot
+# #1371/#1372" citation back in — #1371 and #1372 now resolve to real,
+# unrelated live PRs (an open dependabot npm-bump PR and a closed
+# audit-remediation PR), not the dependabot bumps this entry named.
+echo "supersedes dependabot #1371/#1372" >> CHANGELOG.md
+check "a reintroduced 'dependabot #1371/#1372' citation in CHANGELOG.md is caught" red
+git checkout -- CHANGELOG.md
+check "clean tree passes again after revert" ok
+
 # §4 stale-reference check: docs/architecture/coverage-matrix.md must not
 # carry the "R-013 → #1265" citation back in (RSWP-141 — #1265 now
 # resolves to an unrelated resolveTip completeness-clamp finding, not the
