@@ -2694,7 +2694,7 @@ func newDivergenceAdapter(svc *divergence.Service) divergenceAdapter {
 func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, err error) {
 	pair, perr := canonical.NewPair(asset, quote)
 	if perr != nil {
-		return false, false, nil
+		return false, false, nil //nolint:nilerr // intentional: an unconstructible pair reports unchecked
 	}
 	return a.svc.LookupCachedPairVerdict(ctx, pair)
 }
