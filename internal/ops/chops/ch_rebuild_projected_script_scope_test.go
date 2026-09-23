@@ -312,7 +312,7 @@ func TestChRebuildProjectedScript_MidRunFailureIsRecordedAndRecoveredFirst(t *te
 		t.Fatalf("recovery run: exit %d\n%s", narrowed.exit, narrowed.log)
 	}
 	if got, want := narrowed.sequence(),
-		"record@61000000 preflight@61000000 psql write@61000000 preflight@62000000 psql write@62000000"; got != want {
+		"record@61000000 preflight@61000000 psql write@61000000 refresh@61000000 preflight@62000000 psql write@62000000 refresh@62000000"; got != want {
 		t.Fatalf("recovery trace = %q, want %q", got, want)
 	}
 	if got := narrowed.writes()[0].flag("-sources"); got != scriptDefaultSources {

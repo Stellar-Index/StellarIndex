@@ -173,6 +173,7 @@ var subcommands = map[string]func(args []string) error{
 	"ch-gate":                      chops.Run,
 	"ch-reproject":                 chops.Run,
 	"ch-rebuild":                   chops.Run,
+	"trades-cagg-refresh":          chops.Run,
 	"ch-supply":                    chops.Run,
 	"ch-txindex-backfill":          chops.Run,
 	"ch-contract-ledgers-backfill": chops.Run,
@@ -980,6 +981,18 @@ Subcommands:
                           says so. Use it for a historical re-derive below
                           the source's floor — for a recovery INTO populated
                           ledgers it only adds a probe and then falls back.
+  trades-cagg-refresh -config PATH -from N -to N
+                          Refresh every continuous aggregate over trades
+                          (prices_1m first, twap_1h/twap_1d last) over the
+                          time span of the trades now in ledgers
+                          [-from,-to], padded so the edge buckets are
+                          refreshed too. Their policies never look back
+                          this far, so run it after any in-place rewrite of
+                          historical trades; scripts/ops/
+                          ch-rebuild-projected.sh runs it per window.
+                          Fails on a range with no trades (the span of what
+                          was deleted is unknowable) and on the first view
+                          that fails. Idempotent.
   ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
                           Derive every token's total supply from the lake by
                           summing CAP-67 classic + SEP-41 mint/burn/clawback

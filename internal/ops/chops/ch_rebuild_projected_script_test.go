@@ -37,7 +37,7 @@ exit "${STUB_PSQL_RC:-0}"
 
 const stubOps = `#!/usr/bin/env bash
 printf 'OPS %s\n' "$*" >> "$STUB_CALLS"
-from=""; to=""; srcs=""; pre=0; rec=0
+verb="$1"; from=""; to=""; srcs=""; pre=0; rec=0
 while [ $# -gt 0 ]; do
   case "$1" in
     -from) from="$2"; shift ;;
@@ -48,6 +48,16 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+# The CAGG refresh reads and writes only Postgres; only
+# STUB_FAIL_REFRESH_FROM (a statement timeout, PG down) makes it fail.
+if [ "$verb" = trades-cagg-refresh ]; then
+  if [ -n "${STUB_FAIL_REFRESH_FROM:-}" ] && [ "$from" = "$STUB_FAIL_REFRESH_FROM" ]; then
+    echo "trades-cagg-refresh: prices_1m: canceling statement due to statement timeout" >&2
+    exit 1
+  fi
+  echo "trades-cagg-refresh: refreshed [$from,$to]"
+  exit 0
+fi
 echo "ch-rebuild: seeded 4821 soroswap pairs from PG" >&2
 # The record is its own mode: it reads no lake and re-derives nothing, so
 # neither the -write guards nor a re-derive's failure apply to it. Only
@@ -106,6 +116,11 @@ func (c scriptCall) flag(name string) string {
 	return ""
 }
 
+// isCAGGRefresh reports whether this is the trades-cagg-refresh verb.
+func (c scriptCall) isCAGGRefresh() bool {
+	return c.kind == "OPS" && strings.HasPrefix(c.args, "trades-cagg-refresh ")
+}
+
 func (c scriptCall) has(name string) bool {
 	for _, f := range strings.Fields(c.args) {
 		if f == name {
@@ -149,9 +164,10 @@ func (r scriptRun) records() []scriptCall {
 // sequence renders the calls as a compact ordered trace, e.g.
 // "preflight@61000000 psql write@61000000 record@61000000".
 //
-// The three OPS modes are rendered apart because they are not
-// interchangeable: `preflight@` asks, `write@` re-derives, and `record@`
-// files an emptied window with the completeness verdict. Collapsing the
+// The four OPS modes are rendered apart because they are not
+// interchangeable: `preflight@` asks, `write@` re-derives, `record@`
+// files an emptied window with the completeness verdict, and `refresh@`
+// re-materialises the trades continuous aggregates. Collapsing the
 // last two into `write@` once hid whether the script filed anything at all.
 func (r scriptRun) sequence() string {
 	var out []string
@@ -163,6 +179,8 @@ func (r scriptRun) sequence() string {
 			out = append(out, "preflight@"+c.flag("-from"))
 		case c.has("-record-dirty-window"):
 			out = append(out, "record@"+c.flag("-from"))
+		case c.isCAGGRefresh():
+			out = append(out, "refresh@"+c.flag("-from"))
 		default:
 			out = append(out, "write@"+c.flag("-from"))
 		}
@@ -409,7 +427,7 @@ func TestChRebuildProjectedScript_RefusalOnSecondWindowLeavesItUntouched(t *test
 	if run.exit == 0 {
 		t.Fatalf("exit 0 despite a refused window\n%s", run.log)
 	}
-	if got, want := run.sequence(), "preflight@61000000 psql write@61000000 preflight@62000000"; got != want {
+	if got, want := run.sequence(), "preflight@61000000 psql write@61000000 refresh@61000000 preflight@62000000"; got != want {
 		t.Errorf("call trace = %q, want %q", got, want)
 	}
 }
@@ -422,7 +440,7 @@ func TestChRebuildProjectedScript_PreflightMatchesTheWriteItPrecedes(t *testing.
 	if run.exit != 0 {
 		t.Fatalf("exit %d\n%s", run.exit, run.log)
 	}
-	if got, want := run.sequence(), "preflight@61000000 psql write@61000000 preflight@62000000 psql write@62000000"; got != want {
+	if got, want := run.sequence(), "preflight@61000000 psql write@61000000 refresh@61000000 preflight@62000000 psql write@62000000 refresh@62000000"; got != want {
 		t.Fatalf("call trace = %q, want %q", got, want)
 	}
 	pre, wr := run.preflights(), run.writes()
@@ -477,7 +495,7 @@ func TestChRebuildProjectedScript_ParsesTheRealPreflightLine(t *testing.T) {
 	if run.exit != 0 {
 		t.Fatalf("the script rejected the real binary's preflight line %q\n%s", line.String(), run.log)
 	}
-	if got, want := run.sequence(), "preflight@61000000 psql write@61000000"; got != want {
+	if got, want := run.sequence(), "preflight@61000000 psql write@61000000 refresh@61000000"; got != want {
 		t.Errorf("call trace = %q, want %q", got, want)
 	}
 }

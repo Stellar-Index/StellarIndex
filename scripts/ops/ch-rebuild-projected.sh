@@ -13,7 +13,7 @@
 # still writing stays untouched; the delete/rebuild range never overlaps the
 # indexer's current writes, so ingestion keeps running. Append-logged.
 #
-# The DELETE is destructive, so four rules bound it (F075, RLT-380, RLT-381):
+# The DELETE is destructive, so five rules bound it (F075, RLT-380, RLT-381, #782):
 #
 #   1. Ask first. Each window runs `ch-rebuild -write -preflight` BEFORE its
 #      DELETE: the same BackfillSafe / live-cursor / buffered-range refusals
@@ -50,6 +50,14 @@
 #      The command is printed as well as run, because the filing can itself
 #      fail (no binary, PG down): the run then says COULD NOT FILE and the
 #      printed line is what the operator re-runs (F075).
+#   5. Never leave the aggregates on the old rows. Every continuous aggregate
+#      over `trades` (prices_*, twap_*, the volume rollups) has a refresh
+#      policy that looks back minutes to months, never this far, so once a
+#      window's trades are rewritten this script refreshes them over it with
+#      `trades-cagg-refresh`. $STALE gets `lo hi` before a DELETE that
+#      touches trades and loses it only after that refresh succeeds; the
+#      next run — whatever its SRC/FROM/TO — refreshes every $STALE line
+#      (after rebuilding its dirty windows) before anything else.
 #
 # Done-state ($STATE) is per source: `source lo hi`. A bare window start is
 # the pre-per-source format, written by the full-SRC run, and still reads as
@@ -86,9 +94,10 @@
 # Fix the lag (projector-replay / projected-rebuild) rather than reaching for
 # -allow-live-overlap.
 #
-# Exit: 0 complete · 1 a window was refused or failed (read the log) ·
-# 2 bad SRC/FROM/TO/WIN (nothing touched), or a corrupt line in $DIRTY
-# (dirty windows listed before it may already have been recovered).
+# Exit: 0 complete · 1 a window was refused or failed, or a CAGG refresh
+# failed (read the log) · 2 bad SRC/FROM/TO/WIN (nothing touched), or a
+# corrupt line in $DIRTY or $STALE (lines listed before it may already have
+# been handled).
 #
 # Run on r1: nohup setsid bash scripts/ops/ch-rebuild-projected.sh >/dev/null 2>&1 &
 set -uo pipefail
@@ -120,8 +129,9 @@ SRC=${SRC:-"aquarius,soroswap,phoenix,comet,blend,cctp,rozo,defindex"}
 FROM=${FROM:-50000000}; TO=${TO:-62894000}; WIN=${WIN:-1000000}
 STATE=${STATE:-/var/lib/ch-backfill/rebuild-done-windows.txt}
 DIRTY=${DIRTY:-"$STATE.dirty"}
+STALE=${STALE:-"$STATE.caggs"}
 LOG=${LOG:-/var/log/ch-rebuild-projected.log}
-mkdir -p "$(dirname "$STATE")"; touch "$STATE" "$DIRTY"
+mkdir -p "$(dirname "$STATE")"; touch "$STATE" "$DIRTY" "$STALE"
 exec >>"$LOG" 2>&1
 
 # The sources window_delete_sql has a DELETE map for. Pinned against the
@@ -136,6 +146,12 @@ is_ledger() { case "$1" in ''|0*|*[!0-9]*) return 1 ;; esac; return 0; }
 in_words() { case " $2 " in *" $1 "*) return 0 ;; esac; return 1; }  # NAME "a b c"
 in_csv() { case ",$2," in *",$1,"*) return 0 ;; esac; return 1; }    # NAME "a,b,c"
 is_source_csv() { case "$1" in ''|*[!a-z0-9_,-]*|,*|*,|*,,*) return 1 ;; esac; return 0; }
+has_trade_source() {  # CSV → true if any of it writes `trades`
+  local s names
+  IFS=, read -r -a names <<<"$1"
+  for s in "${names[@]}"; do in_words "$s" "$TRADE_SOURCES" && return 0; done
+  return 1
+}
 
 # unknown_in CSV → prints the first name with no DELETE map, if any.
 unknown_in() {
@@ -229,12 +245,24 @@ file_dirty_window() {
   return 1
 }
 
-clear_dirty() {
+drop_line() {  # FILE LINE
   local rc=0
-  grep -vxF "$1 $2 $3" "$DIRTY" > "$DIRTY.tmp" || rc=$?
+  grep -vxF "$2" "$1" > "$1.tmp" || rc=$?
   # grep -v exits 1 when nothing is left, which is the usual case.
-  if [ "$rc" -gt 1 ]; then echo "cannot rewrite $DIRTY (grep rc=$rc) — the window will be redone next run"; exit 1; fi
-  mv "$DIRTY.tmp" "$DIRTY"
+  if [ "$rc" -gt 1 ]; then echo "cannot rewrite $1 (grep rc=$rc) — the window will be redone next run"; exit 1; fi
+  mv "$1.tmp" "$1"
+}
+clear_dirty() { drop_line "$DIRTY" "$1 $2 $3"; }  # LO HI CSV
+
+mark_stale() { grep -qxF "$1 $2" "$STALE" || echo "$1 $2" >> "$STALE"; }  # LO HI
+
+# refresh_window LO HI — rule 5. Idempotent, so a retry only costs time.
+refresh_window() {
+  echo "--- window [$1,$2] CAGG REFRESH $(date -u) ---"
+  $OPS trades-cagg-refresh -config "$CFG" -from "$1" -to "$2" \
+    || { echo "CAGG REFRESH FAILED [$1,$2] — trades are re-derived, but every continuous aggregate over them still serves the pre-repair rows. Recorded in $STALE; the next run refreshes it first. By hand: $OPS trades-cagg-refresh -config $CFG -from $1 -to $2"
+         exit 1; }
+  drop_line "$STALE" "$1 $2"
 }
 
 # run_window LO HI CSV MODE — MODE is `normal` or `recover`. In recover mode
@@ -283,6 +311,10 @@ run_window() {
   # nothing would rebuild the window.
   mark_dirty "$lo" "$hi" "$rederive" \
     || { echo "CANNOT RECORD [$lo,$hi] sources=$rederive in $DIRTY — nothing was deleted for this window. Fix the state directory (space, permissions) and re-run."; exit 1; }
+  if has_trade_source "$rederive"; then
+    mark_stale "$lo" "$hi" \
+      || { echo "CANNOT RECORD [$lo,$hi] in $STALE — nothing was deleted for this window. Fix the state directory (space, permissions) and re-run."; exit 1; }
+  fi
   sql=$(window_delete_sql "$rederive" "$lo" "$hi")
   echo "--- window [$lo,$hi] DELETE sources=$rederive $(date -u) ---"
   echo "$sql"
@@ -309,6 +341,7 @@ run_window() {
   IFS=, read -r -a names <<<"$rederive"
   for s in "${names[@]}"; do echo "$s $lo $hi" >> "$STATE"; done
   clear_dirty "$lo" "$hi" "$rederive"
+  if has_trade_source "$rederive"; then refresh_window "$lo" "$hi"; fi
   echo "window [$lo,$hi] DONE sources=$rederive $(date -u)"
 }
 
@@ -326,6 +359,9 @@ bad=$(unknown_in "$SRC")
 # be missing, full, read-only, or occupied by something that is not a file.
 if ! { : >> "$DIRTY" && [ -f "$DIRTY" ] && [ -r "$DIRTY" ]; }; then
   refuse "\$DIRTY ($DIRTY) is not a readable, appendable file — it is the only record that a window was emptied, and without it a DELETE could be forgotten"
+fi
+if ! { : >> "$STALE" && [ -f "$STALE" ] && [ -r "$STALE" ]; }; then
+  refuse "\$STALE ($STALE) is not a readable, appendable file — it is the only record that a window's continuous aggregates still hold the pre-repair trades"
 fi
 
 # ── recovery first: windows an earlier run emptied and did not rebuild ──
@@ -345,6 +381,19 @@ if [ "${#dirty_lines[@]}" -gt 0 ]; then
     run_window "$dlo" "$dhi" "$dsrcs" recover
   done
 fi
+
+# ── then the refreshes an earlier run owed (rule 5) ──
+stale_lines=()
+while IFS= read -r line || [ -n "$line" ]; do
+  [ -n "$line" ] && stale_lines+=("$line")
+done < "$STALE"
+for line in "${stale_lines[@]}"; do
+  read -r slo shi extra <<<"$line"
+  if ! { is_ledger "${slo:-}" && is_ledger "${shi:-}" && [ -z "${extra:-}" ]; }; then
+    echo "REFUSED: corrupt line in $STALE: '$line' — repair it by hand before re-running"; exit 2
+  fi
+  refresh_window "$slo" "$shi"
+done
 
 w=$FROM
 while [ "$w" -le "$TO" ]; do
