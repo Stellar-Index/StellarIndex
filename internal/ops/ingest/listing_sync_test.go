@@ -175,7 +175,7 @@ func TestClassifyListingAddress(t *testing.T) {
 		wantForm listingAddressForm
 		wantOK   bool
 	}{
-		{"contract strkey", "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", listingFormContract, true},
+		{"contract strkey", "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", listingFormContract, true}, // gitleaks:allow
 		{"classic pair", "AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", listingFormClassic, true},
 		{"classic code with a lowercase letter", "sUSD-GCHW7CWI7GMIYQYFXMFJNJX5645XGWIINIAEQK3SABQO6CAYL5T7JYIH", listingFormClassic, true},
 		{"classic code beginning with C", "CETES-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC", listingFormClassic, true},
@@ -183,7 +183,7 @@ func TestClassifyListingAddress(t *testing.T) {
 		{"free text", "NOT-A-STELLAR-ADDRESS", listingFormUnknown, false},
 		{"an EVM address", "0x834df4c1d8f51be24322e39e4766697be015512f", listingFormUnknown, false},
 		{"a G account, which is an ISSUER and not an asset", "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", listingFormUnknown, false},
-		{"contract strkey one char short", "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWM", listingFormUnknown, false},
+		{"contract strkey one char short", "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWM", listingFormUnknown, false}, // gitleaks:allow
 		{"classic code past 12 chars", "THIRTEENCHARS-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", listingFormUnknown, false},
 		{"base32 alphabet excludes 0 and 1", "C0S3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA", listingFormUnknown, false},
 	} {
