@@ -62,6 +62,14 @@ redis_sentinel_down_after_milliseconds: 5000
 redis_sentinel_failover_timeout: 60000
 redis_sentinel_parallel_syncs: 1
 
+# SL03 (reverification 2026-09-18): under `redis_acl_lockdown`, the
+# monitored primary's legacy `default` user is off, so Sentinel's
+# username-less AUTH is rejected and it can no longer monitor the
+# primary at all. `sentinel auth-user` in sentinel.conf.j2 names the
+# ACL user (defined in users.acl.j2) Sentinel authenticates as
+# instead. Only takes effect under lockdown; ignored otherwise.
+redis_sentinel_auth_user: sentinel
+
 # ── Idempotency knob ───────────────────────────────────────────
 # When true, on re-runs the role consults Sentinel for the
 # current primary and refuses to overwrite the existing replicaof
