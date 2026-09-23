@@ -76,8 +76,16 @@ type ReservesEvent struct {
 	Reserves []canonical.Amount
 }
 
-// EventKind implements [consumer.Event].
-func (ReservesEvent) EventKind() string { return "aquarius.reserves" }
+// EventKind implements [consumer.Event]. reserves_sync is a DISTINCT
+// signal from update_reserves (see Kind) and lands in its own table
+// (persistAquariusReserves), so it carries its own kind — the two no
+// longer share one coarse identity a by-EventKind reconcile can't split.
+func (e ReservesEvent) EventKind() string {
+	if e.Kind == EventReservesSync {
+		return "aquarius.reserves_sync"
+	}
+	return "aquarius.reserves"
+}
 
 // Source implements [consumer.Event].
 func (ReservesEvent) Source() string { return SourceName }

@@ -10,6 +10,7 @@ import (
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/aquarius"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -228,6 +229,49 @@ func TestHandleProtocolsList_CompletenessCarriesProjectionFloor(t *testing.T) {
 	}
 	if n, isNum := got.(float64); !isNum || uint32(n) != 61_609_957 {
 		t.Fatalf("projection_verified_from = %v, want 61609957", got)
+	}
+}
+
+// TestHandleProtocolDetail_AquariusEventKindsMatchDecoder is the
+// registry↔decoder lockstep check the T068 finding asked for: the
+// published /v1/protocols/aquarius event_kinds list must contain every
+// EventKind() the aquarius consumer package's event types emit, so a
+// decoder kind can never again silently go unpublished.
+func TestHandleProtocolDetail_AquariusEventKindsMatchDecoder(t *testing.T) {
+	ts := protocolsTestServer(t)
+
+	resp := mustGet(t, ts.URL+"/v1/protocols/aquarius")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.ProtocolDetailView `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	published := map[string]bool{}
+	for _, k := range env.Data.EventKinds {
+		published[k] = true
+	}
+
+	// Real decoder-output values, not string duplicates, so a renamed
+	// EventKind() breaks this test too.
+	decoderKinds := []string{
+		aquarius.TradeEvent{}.EventKind(),
+		aquarius.ReservesEvent{}.EventKind(),
+		aquarius.ReservesEvent{Kind: aquarius.EventReservesSync}.EventKind(),
+		aquarius.LiquidityEvent{}.EventKind(),
+		aquarius.RewardsEvent{}.EventKind(),
+		aquarius.AdminEvent{}.EventKind(),
+		aquarius.FeeEvent{}.EventKind(),
+		aquarius.KillEvent{}.EventKind(),
+	}
+	for _, k := range decoderKinds {
+		if !published[k] {
+			t.Errorf("aquarius consumer emits EventKind %q but /v1/protocols/aquarius event_kinds omits it: %v", k, env.Data.EventKinds)
+		}
 	}
 }
 

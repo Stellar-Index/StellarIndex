@@ -170,11 +170,12 @@ var projRoutes = []projRoute{
 	{typeName: "aquarius.AdminEvent", table: "aquarius_admin", kind: "aquarius.admin", disp: reconciledByKind},
 	{typeName: "aquarius.FeeEvent", table: "aquarius_protocol_fee", kind: "aquarius.fee", disp: reconciledByKind},
 	{typeName: "aquarius.KillEvent", table: "aquarius_kill_switches", kind: "aquarius.kill", disp: reconciledByKind},
-	// aquarius.ReservesEvent routes to TWO tables by its runtime Kind field,
-	// both fan-out AND both sharing the single coarse "aquarius.reserves"
-	// EventKind() — un-attributable and un-countable by the current axis.
-	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves", disp: noReconcile, reason: fanoutWaiver + "; also shares the coarse aquarius.reserves EventKind with aquarius_reserves_sync (sink routes on ReservesEvent.Kind, invisible to the by-EventKind expected side)"},
-	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves_sync", disp: noReconcile, reason: fanoutWaiver + "; also shares the coarse aquarius.reserves EventKind with aquarius_reserves"},
+	// aquarius.ReservesEvent routes to TWO tables by its runtime Kind
+	// field. EventKind() now branches on Kind too ("aquarius.reserves" /
+	// "aquarius.reserves_sync"), so the tables are attributable by kind —
+	// fan-out alone is why they stay off the reconcile axis.
+	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves", disp: noReconcile, reason: fanoutWaiver},
+	{typeName: "aquarius.ReservesEvent", table: "aquarius_reserves_sync", disp: noReconcile, reason: fanoutWaiver},
 	{typeName: "aquarius.LiquidityEvent", table: "aquarius_liquidity", disp: noReconcile, reason: fanoutWaiver},
 
 	// ── phoenix ──

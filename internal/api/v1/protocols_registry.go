@@ -87,7 +87,7 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		Description:   "Aquarius AMM — incentivised constant-product and stableswap pools anchored on the Aquarius router.",
 		GenesisLedger: 52_728_375,
 		Factories:     []string{aquarius.MainnetRouter},
-		EventKinds:    []string{"aquarius.trade", "aquarius.reserves", "aquarius.liquidity", "aquarius.rewards", "aquarius.admin"},
+		EventKinds:    []string{"aquarius.trade", "aquarius.reserves", "aquarius.reserves_sync", "aquarius.liquidity", "aquarius.rewards", "aquarius.admin", "aquarius.fee", "aquarius.kill"},
 	},
 	{
 		Name:          "phoenix",

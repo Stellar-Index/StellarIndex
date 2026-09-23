@@ -69,3 +69,23 @@ func TestMatches_reservesSyncPoolGated(t *testing.T) {
 		t.Error("reserves_sync from an unregistered contract: Matches=true, want false (injection guard)")
 	}
 }
+
+// TestReservesEvent_EventKindDistinguishesSync pins the by-Kind split:
+// update_reserves and reserves_sync must carry distinct EventKind()
+// values. Before this, both returned the single coarse "aquarius.reserves"
+// even though they persist to two different tables — structurally
+// blocking a by-EventKind reconcile from ever attributing a count to one
+// table vs the other.
+func TestReservesEvent_EventKindDistinguishesSync(t *testing.T) {
+	update := ReservesEvent{}
+	sync := ReservesEvent{Kind: EventReservesSync}
+	if got := update.EventKind(); got != "aquarius.reserves" {
+		t.Errorf("update_reserves EventKind() = %q, want %q", got, "aquarius.reserves")
+	}
+	if got := sync.EventKind(); got != "aquarius.reserves_sync" {
+		t.Errorf("reserves_sync EventKind() = %q, want %q", got, "aquarius.reserves_sync")
+	}
+	if update.EventKind() == sync.EventKind() {
+		t.Error("update_reserves and reserves_sync share one EventKind() — un-attributable by a by-EventKind reconcile")
+	}
+}
