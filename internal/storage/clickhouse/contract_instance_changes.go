@@ -3,7 +3,8 @@ package clickhouse
 import (
 	"context"
 	"fmt"
-	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // contractInstanceBackfillQuery fills one ledger window of
@@ -51,18 +52,8 @@ func BackfillContractInstanceChanges(ctx context.Context, addr string, from, to,
 	}
 	defer func() { _ = conn.Close() }()
 
-	start := time.Now()
-	for lo := from; ; {
-		hi := ledgerWindowHi(lo, to, window)
-		wStart := time.Now()
-		if err := conn.Exec(ctx, contractInstanceBackfillQuery, lo, hi); err != nil {
-			return fmt.Errorf("clickhouse: instance-changes window [%d,%d]: %w — resume with -from %d", lo, hi, err, lo)
-		}
-		logf("window [%d,%d] done in %s (total %s; resume point -from %d)",
-			lo, hi, time.Since(wStart).Round(time.Second), time.Since(start).Round(time.Second), hi+1)
-		if hi >= to {
-			return nil
-		}
-		lo = hi + 1
-	}
+	return runWindowedBackfill(ctx, conn, from, to, window, "instance-changes",
+		func(ctx context.Context, conn driver.Conn, lo, hi uint32) error {
+			return conn.Exec(ctx, contractInstanceBackfillQuery, lo, hi)
+		}, logf)
 }
