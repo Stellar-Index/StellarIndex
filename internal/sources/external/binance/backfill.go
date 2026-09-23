@@ -71,6 +71,11 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	if !ok {
 		return nil, fmt.Errorf("binance.Backfill: pair %s not in configured PairMap", pair.String())
 	}
+	// Refuse up front: klineToTrade's per-candle skip would otherwise
+	// turn an unrepresentable symbol into a silently empty backfill.
+	if _, err := backfillTxHash(symbol, 0); err != nil {
+		return nil, fmt.Errorf("binance.Backfill: %w", err)
+	}
 
 	endpoint := s.restBase() + klinesPath
 	startMs := from.UnixMilli()
@@ -220,8 +225,7 @@ func fetchKlines(ctx context.Context, endpoint string, q url.Values) ([]kline, e
 // volume fields — no derivation from open/high/low/close.
 //
 // The synthesised tx_hash is stable across repeated backfill runs:
-// sha-like hex over "<symbol>-<close_ms>". Collision-free for
-// (symbol, time-bucket) pairs.
+// see backfillTxHash.
 func klineToTrade(c kline, symbol string, pair canonical.Pair) (canonical.Trade, error) {
 	closeMs, ok := c.closeTimeMs()
 	if !ok {
@@ -249,10 +253,15 @@ func klineToTrade(c kline, symbol string, pair canonical.Pair) (canonical.Trade,
 		return canonical.Trade{}, fmt.Errorf("kline zero volume")
 	}
 
+	txHash, err := backfillTxHash(symbol, closeMs)
+	if err != nil {
+		return canonical.Trade{}, err
+	}
+
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0,
-		TxHash:      backfillTxHash(symbol, closeMs),
+		TxHash:      txHash,
 		OpIndex:     0,
 		Timestamp:   time.UnixMilli(closeMs).UTC(),
 		Pair:        pair,
@@ -263,23 +272,13 @@ func klineToTrade(c kline, symbol string, pair canonical.Pair) (canonical.Trade,
 
 // backfillTxHash is the historical-candle equivalent of formatTxHash
 // — identical shape (64-char hex) but derived from the candle's
-// close-time rather than a per-trade aggTrade ID. The two hash
-// spaces don't collide in practice (trade IDs are small integers,
-// timestamps are 13-digit ms values with a different tail).
-func backfillTxHash(symbol string, closeMs int64) string {
-	s := fmt.Sprintf("%s-BF-%020d", strings.ToUpper(symbol), closeMs)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+// close-time rather than a per-trade aggTrade ID. The "-BF-" infix
+// keeps the two hash spaces apart only while the whole seed fits the
+// hash: the seed leaves 8 bytes for the symbol, and a longer one would
+// truncate closeMs so neighbouring candles overwrite each other on the
+// trades PK. Such a symbol is refused instead.
+func backfillTxHash(symbol string, closeMs int64) (string, error) {
+	return scale.StrictSyntheticTxHash(fmt.Sprintf("%s-BF-%020d", strings.ToUpper(symbol), closeMs))
 }
 
 // granularityToInterval maps a time.Duration to Binance's interval

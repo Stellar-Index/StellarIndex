@@ -227,12 +227,35 @@ func TestDecimalStringToScaledInt_KrakenPrecision(t *testing.T) {
 	}
 }
 
+// A 12-byte symbol pushes the live seed one byte past the hash, which
+// used to drop trade_id's last digit so ten consecutive fills shared
+// one trades PK. It must be refused.
+func TestBuildTrade_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
+	// Only the symbol's length matters; the pair is any valid one.
+	pm := map[string]canonical.Pair{"FARTCOIN/USDT": buildPairMap(t)["XLM/USD"]}
+	fill := func(id int64) tradePayload {
+		return tradePayload{Symbol: "FARTCOIN/USDT", Qty: "10", Price: "1", TradeID: id, Timestamp: "2026-04-24T00:00:00Z"}
+	}
+	a, errA := buildTrade(fill(987654321), pm)
+	b, errB := buildTrade(fill(987654322), pm)
+	if errA == nil || errB == nil {
+		t.Fatalf("12-byte symbol accepted: trade_ids 987654321/987654322 -> tx_hash %s / %s (identical=%v)",
+			a.TxHash, b.TxHash, a.TxHash == b.TxHash)
+	}
+	if !errors.Is(errA, scale.ErrSyntheticSeedTooLong) {
+		t.Fatalf("err = %v, want ErrSyntheticSeedTooLong", errA)
+	}
+}
+
 func TestFormatTxHash_SymbolNormalised(t *testing.T) {
 	// formatTxHash strips "/" so "XLM/USD" and "XLMUSD" (future
 	// alias) produce the same hash for the same trade_id —
 	// prevents dedupe failure on venue symbol renames.
-	a := formatTxHash("XLM/USD", 42)
-	b := formatTxHash("XLMUSD", 42)
+	a, errA := formatTxHash("XLM/USD", 42)
+	b, errB := formatTxHash("XLMUSD", 42)
+	if errA != nil || errB != nil {
+		t.Fatalf("formatTxHash: %v / %v", errA, errB)
+	}
 	if a != b {
 		t.Errorf("slash-normalised formatTxHash differs: %s vs %s", a, b)
 	}

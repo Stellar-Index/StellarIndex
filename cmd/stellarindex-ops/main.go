@@ -753,7 +753,9 @@ Subcommands:
                           (binance / kraken / bitstamp / coinbase) and
                           insert synthesised canonical.Trade rows into
                           the trades hypertable. -dry-run prints stats
-                          only, no writes. Example:
+                          only, no writes. Refuses a window that already
+                          holds rows for the source+pair unless
+                          -allow-overlap. Example:
                             stellarindex-ops backfill-external \
                               -config configs/prod.toml \
                               -source binance -pair XLMUSDT \

@@ -179,3 +179,56 @@ func TestPartialWalkError_NeverExitsZero(t *testing.T) {
 		t.Fatalf("resume cursor missing from combined error: %v", both)
 	}
 }
+
+type fakeTradeProbe struct {
+	first  time.Time
+	found  bool
+	err    error
+	source string
+	pair   canonical.Pair
+	from   time.Time
+	to     time.Time
+}
+
+func (f *fakeTradeProbe) EarliestTradeInWindow(_ context.Context, source string, pair canonical.Pair, from, to time.Time) (time.Time, bool, error) {
+	f.source, f.pair, f.from, f.to = source, pair, from, to
+	return f.first, f.found, f.err
+}
+
+// A backfill over a window the live streamer already wrote inserts every
+// fill again under a different synthesised tx_hash; the run must be
+// refused and name the earliest stored row so the operator can set -to.
+func TestRefuseStoredOverlap_RefusesWindowWithStoredRows(t *testing.T) {
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, err := canonical.NewPair(xlm, usd)
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	from := time.Date(2018, 1, 1, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	live := time.Date(2026, 4, 2, 9, 30, 0, 0, time.UTC)
+
+	probe := &fakeTradeProbe{first: live, found: true}
+	err = refuseStoredOverlap(context.Background(), probe, "kraken", pair, from, to)
+	if !errors.Is(err, errBackfillOverlap) {
+		t.Fatalf("err = %v, want errBackfillOverlap", err)
+	}
+	if !strings.Contains(err.Error(), "-to 2026-04-02T09:30:00Z") {
+		t.Fatalf("refusal does not name the earliest stored row as the -to bound: %v", err)
+	}
+	if probe.source != "kraken" || !probe.pair.Equal(pair) || !probe.from.Equal(from) || !probe.to.Equal(to) {
+		t.Fatalf("probed (%s, %s, %v, %v), want (kraken, %s, %v, %v)",
+			probe.source, probe.pair, probe.from, probe.to, pair, from, to)
+	}
+
+	if err := refuseStoredOverlap(context.Background(), &fakeTradeProbe{}, "kraken", pair, from, to); err != nil {
+		t.Fatalf("empty window refused: %v", err)
+	}
+
+	probeErr := errors.New("connection refused")
+	err = refuseStoredOverlap(context.Background(), &fakeTradeProbe{err: probeErr}, "kraken", pair, from, to)
+	if !errors.Is(err, probeErr) || errors.Is(err, errBackfillOverlap) {
+		t.Fatalf("probe failure must fail the run as a probe error, got %v", err)
+	}
+}

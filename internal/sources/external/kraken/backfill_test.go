@@ -3,6 +3,7 @@ package kraken
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external/scale"
 )
 
 // synthesiseKrakenCandles builds a slice of Kraken-shape OHLC rows
@@ -183,5 +185,81 @@ func TestKrakenBackfill_APIError(t *testing.T) {
 		time.Unix(1, 0), time.Unix(100, 0), time.Hour)
 	if err == nil {
 		t.Error("expected error from Kraken API error array")
+	}
+}
+
+// "RENDER/USD" leaves a 33-byte candle seed, which used to drop the
+// close time's last digit so neighbouring candles could share one
+// trades PK. Backfill must refuse it before walking rather than
+// per-candle-skip it into an empty result.
+func TestKrakenBackfill_RejectsSymbolThatWouldTruncateSeed(t *testing.T) {
+	const startSec = int64(1_745_000_000)
+	srv := newTestKrakenREST(t, "RENDER/USD", synthesiseKrakenCandles(2, startSec, 60), startSec+60)
+	defer srv.Close()
+
+	// Only the symbol's length matters; the pair is any valid one.
+	pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	s := NewStreamer(map[string]canonical.Pair{"RENDER/USD": pair})
+	s.Endpoint = srv.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	from := time.Unix(startSec, 0).UTC()
+	trades, err := s.Backfill(ctx, pair, from, from.Add(2*time.Minute), time.Minute)
+	if err == nil {
+		hashes := make([]string, len(trades))
+		for i, tr := range trades {
+			hashes[i] = tr.TxHash
+		}
+		t.Fatalf("9-byte symbol accepted; candle tx_hashes %v", hashes)
+	}
+	if !errors.Is(err, scale.ErrSyntheticSeedTooLong) {
+		t.Fatalf("err = %v, want ErrSyntheticSeedTooLong", err)
+	}
+}
+
+// Every shipped pair must fit both synthesised identities whole, so a
+// new long symbol fails here rather than colliding in production.
+func TestDefaultPairs_FitSyntheticTxHash(t *testing.T) {
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	for sym := range m {
+		if _, err := candleTxHash(sym, 0); err != nil {
+			t.Errorf("candleTxHash(%q): %v", sym, err)
+		}
+		if _, err := formatTxHash(sym, 0); err != nil {
+			t.Errorf("formatTxHash(%q): %v", sym, err)
+		}
+	}
+}
+
+// A raw-fill backfill and the live streamer must derive the same
+// tx_hash for the same Kraken fill, or backfilling a streamed window
+// inserts every fill twice. Red today: the raw-fill path hashes
+// "<SYM>-fill-<id>-BF-<ts>" via backfillTxHash, the streamer
+// "<SYM>-<id>" via formatTxHash. The fix is in backfill_trades.go,
+// which is held by another change.
+func TestRawFillTxHashMatchesLiveIdentity(t *testing.T) {
+	t.Skip("GH-994 part 1: needs krakenFillToTrade (backfill_trades.go) to call formatTxHash")
+	pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	f := krakenFill{price: "0.19329800", volume: "159.80957483", ts: 1530403200.5, id: 12345678}
+	backfilled, err := krakenFillToTrade(f, "XLM/USD", pair)
+	if err != nil {
+		t.Fatalf("krakenFillToTrade: %v", err)
+	}
+	live, err := formatTxHash("XLM/USD", f.id)
+	if err != nil {
+		t.Fatalf("formatTxHash: %v", err)
+	}
+	if backfilled.TxHash != live {
+		t.Fatalf("raw-fill tx_hash %s != live tx_hash %s for fill %d", backfilled.TxHash, live, f.id)
 	}
 }

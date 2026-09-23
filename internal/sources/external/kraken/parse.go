@@ -141,10 +141,15 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 		return canonical.Trade{}, fmt.Errorf("%w: timestamp %q: %w", ErrMalformedFrame, t.Timestamp, err)
 	}
 
+	txHash, err := formatTxHash(t.Symbol, t.TradeID)
+	if err != nil {
+		return canonical.Trade{}, err
+	}
+
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0, // no ledger off-chain
-		TxHash:      formatTxHash(t.Symbol, t.TradeID),
+		TxHash:      txHash,
 		OpIndex:     0,
 		Timestamp:   ts.UTC(),
 		Pair:        pair,
@@ -155,24 +160,13 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 
 // formatTxHash — see binance.formatTxHash for rationale. 64-char
 // hex synthesised from (symbol, trade_id) for canonical.Trade
-// validation.
-func formatTxHash(symbol string, tradeID int64) string {
+// validation; a slash-stripped symbol over 11 bytes would truncate
+// trade_id, so it is refused.
+func formatTxHash(symbol string, tradeID int64) (string, error) {
 	// Normalise symbol — strip slash so the hash matches regardless
 	// of how Kraken formats it. "XLM/USD" and "XLMUSD" yield the
 	// same underlying bytes prefix; safe for dedup across potential
 	// future alias changes.
 	normalised := strings.ReplaceAll(strings.ToUpper(symbol), "/", "")
-	s := fmt.Sprintf("%s-%020d", normalised, tradeID)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+	return scale.StrictSyntheticTxHash(fmt.Sprintf("%s-%020d", normalised, tradeID))
 }

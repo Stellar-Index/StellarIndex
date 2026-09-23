@@ -101,10 +101,15 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 		return canonical.Trade{}, ErrDustTrade
 	}
 
+	txHash, err := formatTxHash(ev.Symbol, ev.AggTradeID)
+	if err != nil {
+		return canonical.Trade{}, err
+	}
+
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0, // off-chain: no ledger. Aligns with other non-chain venues.
-		TxHash:      formatTxHash(ev.Symbol, ev.AggTradeID),
+		TxHash:      txHash,
 		OpIndex:     0,
 		Timestamp:   time.UnixMilli(ev.TradeTime).UTC(),
 		Pair:        pair,
@@ -116,21 +121,9 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 // formatTxHash synthesises a 64-hex-char identifier from the venue
 // symbol + aggregate trade ID. canonical.Trade.Validate() requires a
 // 64-char hex string; CEX trades have no natural Stellar-shaped hash,
-// so we construct a stable one per aggregated fill. Symbol-scoped
-// aggID is monotonic and globally unique across (symbol, id), so
-// no collision risk in practice.
-func formatTxHash(symbol string, aggID int64) string {
-	s := fmt.Sprintf("%s-%020d", strings.ToUpper(symbol), aggID)
-	var hex strings.Builder
-	hex.Grow(64)
-	for _, b := range []byte(s) {
-		fmt.Fprintf(&hex, "%02x", b)
-		if hex.Len() >= 64 {
-			break
-		}
-	}
-	for hex.Len() < 64 {
-		hex.WriteByte('0')
-	}
-	return hex.String()[:64]
+// so we construct a stable one per aggregated fill. (symbol, aggID)
+// is unique only while the whole seed fits the hash: a symbol over 11
+// bytes would truncate aggID's low digits, so it is refused instead.
+func formatTxHash(symbol string, aggID int64) (string, error) {
+	return scale.StrictSyntheticTxHash(fmt.Sprintf("%s-%020d", strings.ToUpper(symbol), aggID))
 }

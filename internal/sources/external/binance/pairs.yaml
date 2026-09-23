@@ -8,6 +8,8 @@
 #
 # Shape: symbol is the Binance wire symbol (uppercase, no separator);
 # base/quote carry the canonical asset code + class (crypto | fiat).
+# A symbol may be at most 8 bytes: longer ones cannot be hashed into a
+# synthesised tx_hash without truncating it, and DefaultPairs refuses them.
 #
 # Pair rationale:
 #   - XLMUSDT — largest XLM market globally; canonical "XLM/USD" proxy

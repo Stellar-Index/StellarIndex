@@ -2415,3 +2415,30 @@ func dedupeSortedTradesByConflictKey(sorted []canonical.Trade) []canonical.Trade
 	}
 	return out
 }
+
+// EarliestTradeInWindow returns the earliest stored ts for (source, pair)
+// in [from, to), and false when the window holds no row. Served by
+// trades_pair_source_ts_idx (migration 0037).
+func (s *Store) EarliestTradeInWindow(ctx context.Context, source string, pair canonical.Pair, from, to time.Time) (time.Time, bool, error) {
+	const q = `
+        SELECT ts
+          FROM trades
+         WHERE base_asset  = $1::text
+           AND quote_asset = $2::text
+           AND source      = $3::text
+           AND ts         >= $4::timestamptz
+           AND ts          < $5::timestamptz
+         ORDER BY ts
+         LIMIT 1`
+	var ts time.Time
+	err := s.db.QueryRowContext(ctx, q,
+		pair.Base.String(), pair.Quote.String(), source, from.UTC(), to.UTC(),
+	).Scan(&ts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("timescale: EarliestTradeInWindow (%s %s): %w", source, pair.String(), err)
+	}
+	return ts.UTC(), true, nil
+}
