@@ -6,10 +6,13 @@ package v1
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
@@ -170,6 +173,68 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// revokeKeyEverywhere revokes a credential in every store that might
+// hold a live record for it (GH-978). Redis is the working
+// credential under the default auth_backend=redis; Postgres's
+// api_keys row is the durable management record that
+// mintRegisterKey ALSO writes for the same KeyID. Revoking only
+// Redis stops authentication but leaves api_keys.revoked_at NULL —
+// the row keeps counting toward the active-key ceiling and lists as
+// live to every Postgres reader. Both legs are scoped to identifier
+// and collapse "no such key for this owner" into a silent no-op, so
+// neither can be used to enumerate or revoke another account's keys.
+func (s *Server) revokeKeyEverywhere(ctx context.Context, identifier, keyID, reason string) error {
+	err := s.accounts.RevokeKeyByID(ctx, identifier, keyID)
+	if pgErr := s.revokeOwnedPlatformKey(ctx, identifier, keyID, reason); pgErr != nil {
+		if err == nil {
+			err = pgErr
+		} else {
+			s.logger.Error("revoke: postgres management row also failed",
+				"err", pgErr, "identifier", identifier, "key_id", keyID)
+		}
+	}
+	return err
+}
+
+// revokeOwnedPlatformKey revokes keyID's Postgres api_keys row only
+// when that row's account is the one identifier names. The store's
+// Revoke is keyed by id alone, so the owner check has to happen here —
+// the same posture as RedisAPIKeyStore.RevokeKeyByID. A missing row, a
+// row owned by another account, or no account store to prove ownership
+// all return nil without revoking (fail closed, no enumeration oracle).
+func (s *Server) revokeOwnedPlatformKey(ctx context.Context, identifier, keyID, reason string) error {
+	keys := s.apiKeyBudgets.Platform
+	if keys == nil {
+		return nil
+	}
+	if s.platformAccounts == nil {
+		s.logger.Warn("revoke: postgres key store wired without an account store; management row left untouched",
+			"identifier", identifier, "key_id", keyID)
+		return nil
+	}
+	k, err := keys.Get(ctx, keyID)
+	if errors.Is(err, platform.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	owner, err := s.platformAccounts.Get(ctx, k.AccountID)
+	if errors.Is(err, platform.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if auth.AccountIdentifier(owner.Slug) != identifier {
+		return nil
+	}
+	if err := keys.Revoke(ctx, keyID, uuid.Nil, reason); err != nil && !errors.Is(err, platform.ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
 // handleAdminKeysRevoke serves DELETE
 // /v1/admin/keys/{keyID}?identifier=<owner> — the operator kill switch
 // for a leaked or abused credential (C3-010, audit-2026-07-23).
@@ -225,7 +290,7 @@ func (s *Server) handleAdminKeysRevoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.accounts.RevokeKeyByID(r.Context(), identifier, keyID); err != nil {
+	if err := s.revokeKeyEverywhere(r.Context(), identifier, keyID, reason); err != nil {
 		if clientAborted(r, err) {
 			return
 		}

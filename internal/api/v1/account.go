@@ -896,7 +896,11 @@ func (s *Server) handleAccountKeysRevoke(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
-	if err := s.accounts.RevokeKeyByID(r.Context(), subject.Identifier, keyID); err != nil {
+	// revokeKeyEverywhere (admin_keys.go, GH-978) also clears the
+	// Postgres management row for a key that has one — a self-service
+	// caller can hold a /v1/register-minted key, which mirrors to both
+	// stores, alongside Redis-only keys minted via this same endpoint.
+	if err := s.revokeKeyEverywhere(r.Context(), subject.Identifier, keyID, reason); err != nil {
 		s.logger.Error("account keys revoke failed", "err", err,
 			"identifier", subject.Identifier, "key_id", keyID)
 		writeProblem(w, r,

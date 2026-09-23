@@ -98,7 +98,8 @@ type fakeRegisterKeyStore struct {
 	mu          sync.Mutex
 	byID        map[string]platform.APIKey
 	lastMaxKeys int
-	createErr   error // when set, Create fails (durable management-row write failure)
+	createErr   error    // when set, Create fails (durable management-row write failure)
+	revokedIDs  []string // KeyIDs passed to Revoke, in call order
 }
 
 func newFakeRegisterKeyStore() *fakeRegisterKeyStore {
@@ -166,7 +167,16 @@ func (f *fakeRegisterKeyStore) Update(_ context.Context, k platform.APIKey) erro
 	return nil
 }
 
-func (f *fakeRegisterKeyStore) Revoke(_ context.Context, _ string, _ uuid.UUID, _ string) error {
+func (f *fakeRegisterKeyStore) Revoke(_ context.Context, id string, _ uuid.UUID, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k, ok := f.byID[id]
+	if !ok {
+		return platform.ErrNotFound
+	}
+	k.RevokedAt = time.Now().UTC()
+	f.byID[id] = k
+	f.revokedIDs = append(f.revokedIDs, id)
 	return nil
 }
 
