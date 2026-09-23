@@ -471,13 +471,28 @@ The SLA commits "≥ 1000 requests/minute per client". The
 callers (no API key) are bucketed by IP at a much tighter cap so a
 single shared egress can't burn the public surface.
 
-| Tier | How obtained | Default rate-limit per minute | Identity |
-| ---- | ------------ | ----------------------------: | -------- |
-| Anonymous | no API key | **60** | per IP (XFF-aware via `api.trusted_proxy_cidrs`) |
-| Starter (free) | `POST /v1/signup` | **1,000** | per `X-API-Key` |
-| Pro | staff-set (operator comp / partner) | **10,000** | per `X-API-Key` |
-| Business | staff-set (operator comp / partner) | **50,000** | per `X-API-Key` |
-| Enterprise | staff-set override (`rate_limit_per_min_override`) | per-arrangement | per `X-API-Key` |
+The platform is free; there are no paid tiers. Account tiers are
+Free and Partner, plus anonymous callers:
+
+| Tier | How obtained | Per-key default (req/min) | Per-key ceiling (req/min) | Identity |
+| ---- | ------------ | ------------------------: | ------------------------: | -------- |
+| Anonymous | no API key | **60** | n/a (`[api].anon_rate_limit_per_min`) | per IP (XFF-aware via `api.trusted_proxy_cidrs`) |
+| Free | `POST /v1/signup` (every registered account's default) | **1,000** | **1,000** | per API key |
+| Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **1,000** | **100,000** | per API key |
+
+Default and ceiling apply to dashboard-minted keys: a key minted
+without `rate_limit_per_min` gets 1,000, and a requested value is
+clamped down to the tier's `platform.Tier.MaxRateLimitPerMin`. So
+100,000 is the most a Partner key can be minted with, not what every
+Partner key gets. Operator-minted keys (`stellarindex-ops mint-key` /
+`upgrade-key`) carry their own per-key value and are not clamped.
+
+`rate_limit_per_min_override` (set on `PATCH /v1/admin/accounts/{id}`,
+accepted range 0–100,000, `0` clears it) is an account-wide **floor**,
+not a replacement limit. Every key on the account budgeted below the
+override is raised to it; a key budgeted above it keeps its own
+higher value. It can only raise a limit, never lower one, it cannot
+exceed 100,000, and it applies to any account, not only Partner.
 
 Operator notes:
 
@@ -502,8 +517,9 @@ X-RateLimit-Remaining: 987
 
 The `X-RateLimit-Limit` header reflects the *active* budget for
 the current request's identity — anonymous callers see 60,
-authenticated callers see their tier's budget (1,000 / 10,000 /
-50,000 / per-contract).
+authenticated callers see their key's budget (1,000 by default, up to
+the tier ceiling above), raised to at least the account's
+`rate_limit_per_min_override` when one is set.
 
 ---
 
@@ -568,16 +584,19 @@ Every 4xx/5xx returns:
 
 ```
 Content-Type: application/problem+json
+Retry-After: 12
 
 {
-  "type": "https://api.stellarindex.io/errors/rate-limit-exceeded",
+  "type": "https://api.stellarindex.io/errors/rate-limited",
   "title": "Rate limit exceeded",
   "status": 429,
-  "detail": "You have exceeded your 1000 req/min quota. Try again in 12 seconds.",
-  "instance": "/v1/price?asset_id=...",
-  "retry_after": 12
+  "detail": "Retry after 12s",
+  "instance": "/v1/price?asset_id=..."
 }
 ```
+
+The retry delay is carried only in the `Retry-After` header
+(seconds); the 429 body has no retry field.
 
 Error types are URL-stable; each `type` URL resolves to a live HTML
 page explaining the error. Custom fields are snake_case.

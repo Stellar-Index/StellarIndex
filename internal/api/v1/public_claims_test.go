@@ -1,10 +1,22 @@
 package v1
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
+
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // TestPublicClaimsMatchTheDeployment pins the handful of factual claims
@@ -105,6 +117,28 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 				"or `sep1_isin_declaration` (the bound entry's `anchor_asset` is a well-formed ISIN)",
 			},
 		},
+		{
+			// T495 / RLT-159: §7.1 documented a Starter/Pro/Business/
+			// Enterprise ladder (1k/10k/50k) that platform.Tier no longer
+			// has, and the account override is a floor
+			// (auth/apikey_postgres.go), not a replacement limit.
+			path: "docs/reference/api-design.md",
+			forbidden: []string{
+				"Pro | staff-set",
+				"Business | staff-set",
+				"Enterprise | staff-set override",
+				"1,000 / 10,000 / 50,000 / per-contract",
+				"higher or lower per-account limit",
+				"the override is the real limit",
+				"100,000 ceiling above no longer applies",
+			},
+			required: []string{
+				"| Free | `POST /v1/signup` (every registered account's default) | **1,000** | **" + thousands(platform.TierFree.MaxRateLimitPerMin()) + "** |",
+				"| Partner | staff-set `tier` on `PATCH /v1/admin/accounts/{id}` | **1,000** | **" + thousands(platform.TierPartner.MaxRateLimitPerMin()) + "** |",
+				"is an account-wide **floor**",
+				"It can only raise a limit, never lower one",
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -128,6 +162,80 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 	}
 }
 
+// TestErrorDocExampleMatchesRateLimitResponse holds the api-design.md
+// §11 problem example to the 429 the rate-limit middleware really
+// writes: same `type` URL and status, and no body field the response
+// does not carry (RLT-159: the doc showed `errors/rate-limit-exceeded`
+// and a `retry_after` body field; the code emits `errors/rate-limited`
+// and carries the delay only in the Retry-After header).
+func TestErrorDocExampleMatchesRateLimitResponse(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRootForClaims(t), "docs/reference/api-design.md"))
+	if err != nil {
+		t.Fatalf("read api-design.md: %v", err)
+	}
+	var documented map[string]any
+	if err := json.Unmarshal([]byte(errorsSectionExample(t, string(body))), &documented); err != nil {
+		t.Fatalf("§11 example is not valid JSON: %v", err)
+	}
+	emitted := emittedRateLimitProblem(t)
+
+	for _, field := range []string{"type", "status"} {
+		if documented[field] != emitted[field] {
+			t.Errorf("§11 example %s = %v, the 429 response carries %v", field, documented[field], emitted[field])
+		}
+	}
+	for field := range documented {
+		if _, ok := emitted[field]; !ok {
+			t.Errorf("§11 example documents body field %q, which the 429 response does not carry", field)
+		}
+	}
+}
+
+// errorsSectionExample returns the JSON object in the first fenced
+// block of api-design.md's "## 11. Errors" section.
+func errorsSectionExample(t *testing.T, doc string) string {
+	t.Helper()
+	_, section, ok := strings.Cut(doc, "## 11. Errors")
+	if !ok {
+		t.Fatal("api-design.md has no \"## 11. Errors\" section")
+	}
+	_, fenced, ok := strings.Cut(section, "```")
+	if !ok {
+		t.Fatal("§11 has no fenced example")
+	}
+	fenced, _, _ = strings.Cut(fenced, "```")
+	start, end := strings.Index(fenced, "{"), strings.LastIndex(fenced, "}")
+	if start < 0 || end < start {
+		t.Fatal("§11 fenced example carries no JSON object")
+	}
+	return fenced[start : end+1]
+}
+
+// emittedRateLimitProblem drives the real rate-limit middleware past a
+// one-request budget and returns the decoded 429 problem body.
+func emittedRateLimitProblem(t *testing.T) map[string]any {
+	t.Helper()
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	keyFn := func(*http.Request) string { return "doc-example" }
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	h := middleware.RateLimit(ratelimit.New(rdb, 1, time.Minute), keyFn, nil, nil)(ok)
+
+	var w *httptest.ResponseRecorder
+	for i := 0; i < 2; i++ {
+		w = httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/price", nil))
+	}
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("second request status = %d, want 429", w.Code)
+	}
+	var problem map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &problem); err != nil {
+		t.Fatalf("decode 429 body: %v", err)
+	}
+	return problem
+}
+
 // repoRootForClaims walks up from the package directory to the checkout
 // root, so the test works under `go test ./...` from anywhere.
 func repoRootForClaims(t *testing.T) string {
@@ -144,4 +252,13 @@ func repoRootForClaims(t *testing.T) string {
 	}
 	t.Fatal("could not locate the repo root (go.mod) from cwd")
 	return ""
+}
+
+// thousands renders n with comma grouping, the way the docs print limits.
+func thousands(n int) string {
+	s := strconv.Itoa(n)
+	for i := len(s) - 3; i > 0; i -= 3 {
+		s = s[:i] + "," + s[i:]
+	}
+	return s
 }
