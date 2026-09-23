@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"regexp"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -251,6 +251,17 @@ func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 	return nil
 }
 
+// canonicalValueDecimal is the exact shape the aggregator's
+// formatRatFixed emits: an optional leading '-', one or more digits,
+// and an optional '.' plus more digits. Allowlisting this shape (rather
+// than blacklisting the forms big.Rat.SetString also accepts) is the
+// fix: SetString parses fractions ("1/2"), scientific notation ("1e9"),
+// an explicit leading '+', and — as of Go's arbitrary-precision literal
+// support — hex ("0x1p4"), binary ("0b101"), octal ("0o17") and
+// underscore-separated ("1_000.5") forms, none of which the aggregator
+// ever produces.
+var canonicalValueDecimal = regexp.MustCompile(`^-?[0-9]+(\.[0-9]+)?$`)
+
 // parseValueDecimal validates that s is a canonical, strictly-positive,
 // in-range fixed-point decimal — the shape the aggregator's
 // formatRatFixed emits — and returns it as an exact big.Rat (ADR-0003:
@@ -259,12 +270,8 @@ func parseValueDecimal(s string) (*big.Rat, error) {
 	if s == "" {
 		return nil, errors.New("empty value_decimal")
 	}
-	// Reject the fraction ("1/2") and scientific ("1e9") forms
-	// big.Rat.SetString would otherwise accept: the aggregator only
-	// ever emits plain [-]?digits[.digits], so anything else is
-	// injected — and rejecting them keeps the forwarded string canonical.
-	if strings.ContainsAny(s, "/eE") {
-		return nil, fmt.Errorf("non-decimal value_decimal %q", s)
+	if !canonicalValueDecimal.MatchString(s) {
+		return nil, fmt.Errorf("non-canonical value_decimal %q", s)
 	}
 	v, ok := new(big.Rat).SetString(s)
 	if !ok {
