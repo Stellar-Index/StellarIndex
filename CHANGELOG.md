@@ -83,6 +83,25 @@ against.
   `FROM api_keys` query without a LIMIT, aggregate, unique-key lookup
   or active-set filter.
 
+- **api / price stream — clock-skew drops and silent pubsub retries are
+  now visible (#753):** the Redis subscriber labels a future-dated event
+  `future_observed_at` and a >24 h one `stale_observed_at` instead of
+  `malformed`, seeds every outcome at construction, and the new
+  `stellarindex_api_price_stream_not_delivering` ticket fires when the
+  aggregator publishes but the API fans out nothing for 15 min. `Run`'s
+  doc no longer claims a Redis failure ends it: go-redis v9 retries
+  internally. Docs: `price-divergence` runbook states the real
+  `flags.divergence_warning` rule (#826).
+
+- **monitoring — every /sla target now has an alert at the published
+  figure (#741):** added `stellarindex_sla_probe_p99_breach` (> 500 ms)
+  and `stellarindex_sla_probe_availability_breach` (< 99.9 %) to both
+  rule trees, and lowered the `/v1/price` freshness page from 180 s to
+  the published 150 s bound. The multi-host rule file's timer pointer now
+  names the real unit. `sla_figure_consistency_test.go` fails when a
+  published target has no matching alert threshold or a probe family is
+  selected by no rule.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

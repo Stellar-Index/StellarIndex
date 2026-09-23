@@ -2932,11 +2932,16 @@ var AggregatorStreamPublishTotal = prometheus.NewCounterVec(
 //   - "decode_error" — JSON unmarshal failed; message dropped, next
 //     message processed normally. Indicates wire-format drift between
 //     aggregator's Publisher and this Subscriber.
-//   - "malformed" — JSON decoded but Asset or Quote was empty;
-//     message dropped without Hub publish (no valid topic to route to).
+//   - "malformed" — JSON decoded but a field failed validation: empty
+//     asset/quote, window_seconds out of range, missing observed_at, or
+//     a non-canonical / out-of-range value_decimal. Dropped.
+//   - "future_observed_at" — observed_at more than 5 min ahead of the
+//     API host's clock. Every event lands here when the API host lags
+//     the aggregator: a clock-skew fault, not a wire-format one.
+//   - "stale_observed_at" — observed_at more than 24 h old. Dropped.
 //
-// Unset when no Subscriber is wired (the API binary's
-// /v1/price/stream returns 503 instead of fanning out).
+// Seeded by redispub.NewSubscriber, so only a process that wires a
+// subscriber exports it.
 var APIStreamSubscribeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_stream_subscribe_total",

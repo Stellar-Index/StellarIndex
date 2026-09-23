@@ -280,13 +280,15 @@ stellarindex_sla_probe_last_pass_timestamp                  gauge   unix; only o
 
 ### Alerts
 
-Four alerts in `deploy/monitoring/rules/sla-probe.yml`, each with a
+Six alerts in `deploy/monitoring/rules/sla-probe.yml`, each with a
 runbook under `docs/operations/runbooks/sla-probe-*.md`:
 
 | Alert | Condition | Severity |
 |-------|-----------|----------|
 | `stellarindex_sla_probe_p95_breach` | per-endpoint p95 > 200 ms sustained 30 min | **P2** page |
-| `stellarindex_sla_probe_freshness_breach` | `price` freshness > 180 s (the ADR-0015 closed-bucket bound), every other endpoint > 30 s (the pricing SLA), sustained 30 min | **P2** page |
+| `stellarindex_sla_probe_p99_breach` | per-endpoint p99 > 500 ms sustained 30 min | **P2** page |
+| `stellarindex_sla_probe_availability_breach` | per-endpoint availability < 99.9 % sustained 30 min | **P2** page |
+| `stellarindex_sla_probe_freshness_breach` | `price` freshness > 150 s (the ADR-0015 closed-bucket bound), every other endpoint > 30 s (the pricing SLA), sustained 30 min | **P2** page |
 | `stellarindex_sla_probe_unit_failed_alert` | overall verdict gauge = 1 sustained 30 min | P3 ticket |
 | `stellarindex_sla_probe_stale` | `last_pass_timestamp` older than 90 min (6× 15-min cadence) | **P2** page |
 

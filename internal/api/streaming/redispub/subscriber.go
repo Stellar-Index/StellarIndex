@@ -60,7 +60,46 @@ func NewSubscriber(cache RedisSubscriber, channel string, hub Hub, logger *slog.
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Seeded here, not in obs, so only a process that wires a subscriber
+	// exports the family and "no ok events" reads as a real zero.
+	for _, o := range subscribeOutcomes {
+		obs.APIStreamSubscribeTotal.WithLabelValues(o)
+	}
 	return &Subscriber{cache: cache, channel: channel, hub: hub, logger: logger}, nil
+}
+
+// Outcome labels for [obs.APIStreamSubscribeTotal]. Each rejection
+// cause that points a responder somewhere different gets its own label.
+const (
+	outcomeOK               = "ok"
+	outcomeDecodeError      = "decode_error"
+	outcomeMalformed        = "malformed"
+	outcomeFutureObservedAt = "future_observed_at"
+	outcomeStaleObservedAt  = "stale_observed_at"
+)
+
+var subscribeOutcomes = []string{
+	outcomeOK, outcomeDecodeError, outcomeMalformed, outcomeFutureObservedAt, outcomeStaleObservedAt,
+}
+
+// Sentinels validateEvent wraps so handleMessage can label the drop by
+// cause: a clock-skewed API host rejects EVERY event as future-dated,
+// and must not read as a wire-format bug.
+var (
+	errObservedAtFuture = errors.New("observed_at is in the future")
+	errObservedAtStale  = errors.New("observed_at is too old")
+)
+
+// rejectionOutcome maps a validateEvent error to its outcome label.
+func rejectionOutcome(err error) string {
+	switch {
+	case errors.Is(err, errObservedAtFuture):
+		return outcomeFutureObservedAt
+	case errors.Is(err, errObservedAtStale):
+		return outcomeStaleObservedAt
+	default:
+		return outcomeMalformed
+	}
 }
 
 // Channel returns the Redis channel this Subscriber listens on.
@@ -68,9 +107,15 @@ func (s *Subscriber) Channel() string { return s.channel }
 
 // Run blocks until ctx is cancelled, consuming messages from the
 // Redis channel and republishing each one on the Hub. Returns
-// ctx.Err() on clean shutdown; any unexpected stream-end is
-// surfaced as an error so the caller can log and decide whether
-// to retry.
+// ctx.Err() on clean shutdown.
+//
+// A Redis failure does NOT end Run: go-redis v9 retries a refused,
+// dropped or killed pubsub connection internally and closes the
+// message channel only when the PubSub itself is closed. An outage
+// therefore shows as a flat `ok` outcome on
+// stellarindex_api_stream_subscribe_total while the aggregator keeps
+// publishing, which stellarindex_api_price_stream_not_delivering
+// alerts on; the channel-closed error below is a backstop.
 //
 // One Subscriber per binary; safe to invoke as a long-lived
 // goroutine. The matching `cmd/stellarindex-api/main.go` wiring
@@ -92,9 +137,8 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			return ctx.Err()
 		case msg, ok := <-ch:
 			if !ok {
-				// go-redis closes the channel when the underlying
-				// pubsub disconnects irrecoverably. Surface it so the
-				// caller can restart.
+				// Only a closed PubSub closes the channel (see the doc
+				// above); surface it so the supervisor can restart.
 				return errors.New("redispub: subscribe channel closed unexpectedly")
 			}
 			s.handleMessage([]byte(msg.Payload))
@@ -120,14 +164,15 @@ func (s *Subscriber) Run(ctx context.Context) error {
 func (s *Subscriber) handleMessage(payload []byte) {
 	var ev ClosedBucketEvent
 	if err := json.Unmarshal(payload, &ev); err != nil {
-		obs.APIStreamSubscribeTotal.WithLabelValues("decode_error").Inc()
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeDecodeError).Inc()
 		s.logger.Warn("redispub: decode message", "err", err, "payload_len", len(payload))
 		return
 	}
 	if err := validateEvent(&ev, time.Now()); err != nil {
-		obs.APIStreamSubscribeTotal.WithLabelValues("malformed").Inc()
+		outcome := rejectionOutcome(err)
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcome).Inc()
 		s.logger.Warn("redispub: rejected event (failed validation)",
-			"err", err, "asset", ev.Asset, "quote", ev.Quote)
+			"outcome", outcome, "err", err, "asset", ev.Asset, "quote", ev.Quote)
 		return
 	}
 	// Fan out the DOCUMENTED envelope shape built from the validated
@@ -157,13 +202,13 @@ func (s *Subscriber) handleMessage(payload []byte) {
 	if err != nil {
 		// Marshalling a fully-typed, already-decoded struct cannot
 		// fail; defensive for static analysis only.
-		obs.APIStreamSubscribeTotal.WithLabelValues("malformed").Inc()
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeMalformed).Inc()
 		s.logger.Warn("redispub: re-marshal validated event", "err", err)
 		return
 	}
 	topic := topicForPair(ev.Asset, ev.Quote, ev.WindowSeconds)
 	s.hub.Publish(topic, "price_update", sanitized)
-	obs.APIStreamSubscribeTotal.WithLabelValues("ok").Inc()
+	obs.APIStreamSubscribeTotal.WithLabelValues(outcomeOK).Inc()
 }
 
 // closedBucketEnvelope is the SSE wire shape fanned out to
@@ -232,10 +277,11 @@ func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 		return errors.New("missing observed_at")
 	}
 	if ev.ObservedAt.After(now.Add(observedAtFutureSkew)) {
-		return fmt.Errorf("observed_at %s is in the future", ev.ObservedAt.Format(time.RFC3339))
+		return fmt.Errorf("%w: %s (local clock %s)", errObservedAtFuture,
+			ev.ObservedAt.Format(time.RFC3339), now.UTC().Format(time.RFC3339))
 	}
 	if ev.ObservedAt.Before(now.Add(-observedAtMaxAge)) {
-		return fmt.Errorf("observed_at %s is too old", ev.ObservedAt.Format(time.RFC3339))
+		return fmt.Errorf("%w: %s", errObservedAtStale, ev.ObservedAt.Format(time.RFC3339))
 	}
 	if _, err := parseValueDecimal(ev.ValueDecimal); err != nil {
 		return err

@@ -26,8 +26,8 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 58 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 183 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 184 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -199,6 +199,7 @@ signal lands.
 | `stellarindex_api_down` | `sum(up{job=~"stellarindex[_-]api"})` across regions, `or absent_over_time(up{...}[5m])` | == 0 for > 60 s, or the `up` series absent 5 min — `sum()` over an empty vector is empty, so the absent arm is what covers a target dropped from service discovery | page | [api-down](runbooks/api-down.md) |
 | `stellarindex_api_latency_p95_high` | `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="stellarindex-api"}[5m]))` | > 500 ms for 10 m (the p95 is already a 5 m percentile, so the longer `for` rides out a cold-cache deploy) | ticket | [api-latency](runbooks/api-latency.md) |
 | `stellarindex_api_latency_p99_high` | `histogram_quantile(0.99, ...)` | > 2 s for 10 m | ticket | [api-latency](runbooks/api-latency.md) |
+| `stellarindex_api_price_stream_not_delivering` | `stellarindex_aggregator_stream_publish_total{outcome="ok"}` vs `stellarindex_api_stream_subscribe_total{outcome="ok"}` | aggregator publishing, API fanning out none, for 15 min (clock skew or a silently-retrying pubsub) | ticket | [price-stream-not-delivering](runbooks/price-stream-not-delivering.md) |
 | `stellarindex_api_error_rate_high` | `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])` | > 1 % for > 2 min | ticket | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_error_rate_critical` | same | > 5 % for > 2 min | page | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per asset | > 120 s sustained 5 min | ticket | [price-stale](runbooks/price-stale.md) |
@@ -221,13 +222,16 @@ is the only signal a mail outage leaves.
 Source: `cmd/stellarindex-sla-probe` runs every 15 min via the
 systemd timer in `configs/healthchecks/stellarindex-sla-probe.timer`; metrics emitted
 to node_exporter's textfile_collector via `-textfile-output`.
-Per the service SLA targets — these are the synthetic
-counterparts to the API-plane alerts above.
+These alert at exactly the targets `/sla` publishes (pinned by
+`internal/ops/chops/sla_figure_consistency_test.go`); the API-plane
+latency alerts above are real-traffic backstops at looser multiples.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_sla_probe_p95_breach` | `stellarindex_sla_probe_latency_ms{quantile="0.95"}` | > 200 ms for ≥ 30 min | page | [sla-probe-p95-breach](runbooks/sla-probe-p95-breach.md) |
-| `stellarindex_sla_probe_freshness_breach` | `stellarindex_sla_probe_freshness_sec` | `endpoint="price"` > 180 s, every other endpoint > 30 s, for ≥ 30 min | page | [sla-probe-freshness-breach](runbooks/sla-probe-freshness-breach.md) |
+| `stellarindex_sla_probe_p99_breach` | `stellarindex_sla_probe_latency_ms{quantile="0.99"}` | > 500 ms for ≥ 30 min | page | [sla-probe-p99-breach](runbooks/sla-probe-p99-breach.md) |
+| `stellarindex_sla_probe_availability_breach` | `stellarindex_sla_probe_availability_pct` | < 99.9 for ≥ 30 min | page | [sla-probe-availability-breach](runbooks/sla-probe-availability-breach.md) |
+| `stellarindex_sla_probe_freshness_breach` | `stellarindex_sla_probe_freshness_sec` | `endpoint="price"` > 150 s, every other endpoint > 30 s, for ≥ 30 min | page | [sla-probe-freshness-breach](runbooks/sla-probe-freshness-breach.md) |
 | `stellarindex_sla_probe_unit_failed_alert` | `stellarindex_sla_probe_unit_failed` | > 0 for ≥ 30 min | ticket | [sla-probe-unit-failed](runbooks/sla-probe-unit-failed.md) |
 | `stellarindex_sla_probe_stale` | `time() - stellarindex_sla_probe_last_pass_timestamp` | > 90 min for ≥ 5 min | page | [sla-probe-stale](runbooks/sla-probe-stale.md) |
 
