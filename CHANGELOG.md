@@ -27782,7 +27782,7 @@ rc.48 deploy to R1.
   needed on r1 to add the crypto feeds (tracked).
 - **Runbook for the `fx_quotes` hypertable / migration 0028 gap.**
   Captures the 2026-05-10 finding that r1's DB is at migration
-  0027 (PR #1041's migration 0028 was never applied), so the
+  0027 (migration 0028 was never applied), so the
   forex worker WARN-spams `pq: relation "fx_quotes" does not
   exist` on every refresh tick and `/v1/currencies/EUR.history_1y`
   / `.history_all` stay empty (customer-visible regression of
@@ -28836,22 +28836,22 @@ rc.48 deploy to R1.
 
 ### Added
 
-- **Persistent fx_quotes hypertable** (PR #1041). Daily forex
+- **Persistent fx_quotes hypertable.** Daily forex
   rate snapshots now backfill into a TimescaleDB hypertable
   (migration 0028) so the per-currency page can render charts
   beyond the 7-day in-memory window. The forex worker upserts on
   every refresh tick; a one-shot `scripts/ops/fx-history-backfill`
   walks Massive's grouped-daily endpoint to seed up to 10 years
   of history.
-- **`/v1/currencies/{ticker}?range=`** (PR #1041) — handler now
+- **`/v1/currencies/{ticker}?range=`** — handler now
   accepts `30d`, `90d`, `1y`, `5y`, `10y`, `all`. Reads from the
   new fx_quotes hypertable and surfaces the series as `history` +
   `history_range`. Default behaviour (no `range` param) is
   unchanged: the in-memory 7d series in `history_7d`.
 - **/currencies/[ticker]: range-selectable USD-value chart**
-  (PR #1041) replaces the 7d-only sparkline. Chart uses a
+  replaces the 7d-only sparkline. Chart uses a
   720×200 SVG optimised for hundreds of points.
-- **Asset detail: market-cap timeline empty-state** (PR #1041)
+- **Asset detail: market-cap timeline empty-state**
   on the Supply tab — placeholder until the supply-history
   hypertable joins up with per-asset USD prices.
 - **/exchanges all-CEX markets table** sorted by 24h

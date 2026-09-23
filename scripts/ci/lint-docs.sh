@@ -586,6 +586,14 @@ stale_patterns=(
                                   # R-007 OHLC outlier-filter entry cited a PR
                                   # number that never existed; #1262 is now a
                                   # real, unrelated issue
+  "PR #1041"                     # dangling ref (RSWP-067) — the
+                                  # fx-history-missing.md runbook and
+                                  # CHANGELOG's fx_quotes hypertable /
+                                  # /v1/currencies range entries cited this
+                                  # as their shipping PR; #1041 has no
+                                  # corresponding PR (repo max at the time
+                                  # was far short of it), so the citation
+                                  # 404s outright
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \

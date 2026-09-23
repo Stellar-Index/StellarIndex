@@ -54,8 +54,8 @@ applies unchanged.)
 
 ## Why this happens
 
-The `fx_quotes` hypertable was added in PR #1041 (task #104,
-"Persistent fx_quotes hypertable + 10y backfill") via migration
+The `fx_quotes` hypertable was added in task #104
+("Persistent fx_quotes hypertable + 10y backfill") via migration
 0028. The migration ships in the repo at
 `migrations/0028_create_fx_quotes.up.sql`. Two operator-side
 steps make it live on a deployment:
