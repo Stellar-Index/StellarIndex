@@ -336,6 +336,40 @@ fi
 assert_cmd ch_ops_batch_not_in_service_env bash -c \
   '! grep -qE "^STELLARINDEX_CLICKHOUSE_OPS_(USER|PASSWORD)=" /etc/default/stellarindex 2>/dev/null'
 
+# ── ClickHouse destructive-DDL size guard, EFFECTIVE value (T616) ────
+# 21-clickhouse-drop-guard.yml pins max_{table,partition}_size_to_drop
+# and verifies the live value once, at apply time. r1 ran both at 1 TiB
+# for weeks from a hand-written config.d file nothing re-read; the
+# reloader applies such a file within seconds, so only a recurring read
+# of system.server_settings sees it. Pass = both present and in
+# (0, ceiling]: 0 means unlimited, and stricter than pinned is safe.
+# The ceiling mirrors the role's clickhouse_max_*_size_to_drop
+# (lockstep-tested in config-assertions_test.sh). Skipped where the
+# role would not apply the guard either: no ClickHouse config dir.
+CH_CONFIG_DIR="${CH_CONFIG_DIR:-/etc/clickhouse-server}"
+CH_DROP_GUARD_MAX_BYTES="${CH_DROP_GUARD_MAX_BYTES:-53687091200}"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+ch_drop_guard_live() {
+  local rows name value seen=""
+  rows=$(curl -fsS --max-time 15 "http://127.0.0.1:8123/" --data-binary "
+    SELECT name, value FROM system.server_settings
+    WHERE name IN ('max_partition_size_to_drop', 'max_table_size_to_drop')
+    ORDER BY name FORMAT TSV") || return 1
+  while IFS=$'\t' read -r name value; do
+    # Length cap before arithmetic: bash wraps past 2^63, which would
+    # turn a huge limit into a small or negative one that passes.
+    [[ "$value" =~ ^[0-9]{1,18}$ ]] || return 1
+    ((10#$value > 0 && 10#$value <= CH_DROP_GUARD_MAX_BYTES)) || return 1
+    seen+="$name,"
+  done <<<"$rows"
+  [[ "$seen" == "max_partition_size_to_drop,max_table_size_to_drop," ]]
+}
+if [[ -d "$CH_CONFIG_DIR" ]]; then
+  assert_cmd ch_drop_guard_live ch_drop_guard_live
+else
+  skip ch_drop_guard_live
+fi
+
 mv "$TMP" "$OUT"
 chmod 644 "$OUT"
 echo "config-assertions: $fails failure(s)" >&2

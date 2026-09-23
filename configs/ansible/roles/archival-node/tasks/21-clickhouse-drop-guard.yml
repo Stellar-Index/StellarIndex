@@ -34,6 +34,11 @@
 # same operator step (config.d files merge alphabetically, last wins —
 # a later-sorting leftover would silently keep winning). The verify
 # task fails the apply if the effective value is not the pinned one.
+# That check runs only at apply time; between applies the hourly
+# scripts/ops/config-assertions.sh re-reads the same live values
+# (assertion ch_drop_guard_live, alert stellarindex_config_assertion_failed).
+# Its ceiling mirrors defaults/main.yml's clickhouse_max_*_size_to_drop
+# and scripts/ops/config-assertions_test.sh fails if the two diverge.
 #
 # Planned big drops: docs/operations/clickhouse-destructive-ddl.md.
 

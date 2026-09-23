@@ -30,7 +30,11 @@ writes `/etc/clickhouse-server/config.d/si-drop-guard.xml` from
 `clickhouse_max_table_size_to_drop` / `clickhouse_max_partition_size_to_drop`
 (`defaults/main.yml`) and then asserts the LIVE value from
 `system.server_settings`. The settings hot-reload — applying the tag does
-not restart `clickhouse-server`.
+not restart `clickhouse-server`. Between applies, the hourly
+`config-assertions.sh` re-reads the same live values as `ch_drop_guard_live`
+and fails it when either is `0` or above the pinned 50 GB
+(`stellarindex_config_assertion_failed`,
+[runbook](runbooks/config-assertion-failed.md)).
 
 Why this page exists (2026-08-29 audit): r1 measured **1 TiB for both**.
 They had been raised by hand for D2's `REPLACE PARTITION`

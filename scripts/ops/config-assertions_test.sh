@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # config-assertions_test.sh — fixture tests for the Postgres
-# max_worker_processes headroom pair (T615).
+# max_worker_processes headroom pair (T615) and the ClickHouse
+# destructive-DDL size guard's effective value (T616).
 #
 # Pins the property T615 was about: max_worker_processes is
 # postmaster-level (postgresql.conf.j2's own comment), so an ansible
@@ -39,6 +40,22 @@ EOF
 chmod +x "$FAKEBIN/psql"
 echo x > "$TMP/pgpass"
 
+# Fake curl: answers only the drop-guard query, with FAKE_CH_DROP_GUARD
+# (printf %b escapes); every other query fails like an unreachable lake.
+cat > "$FAKEBIN/curl" <<'EOF'
+#!/usr/bin/env bash
+for a in "$@"; do
+  case "$a" in
+    *"system.server_settings"*"max_table_size_to_drop"*)
+      [ "${FAKE_CH_DOWN:-0}" = 1 ] && exit 7
+      printf '%b' "${FAKE_CH_DROP_GUARD:-}"; exit 0 ;;
+  esac
+done
+exit 7
+EOF
+chmod +x "$FAKEBIN/curl"
+mkdir -p "$TMP/ch-config"
+
 pass=0
 fail=0
 
@@ -58,6 +75,9 @@ run() {
     PG_PASSWORD_FILE="$TMP/pgpass" \
     FAKE_PG_MAX_WORKER_PROCESSES="$live" \
     FAKE_PG_IDLE_IN_TXN_TIMEOUT="$idle_live" \
+    CH_CONFIG_DIR="${CH_DIR:-$TMP/ch-config}" \
+    FAKE_CH_DROP_GUARD="${CH_GUARD:-}" \
+    FAKE_CH_DOWN="${CH_DOWN:-0}" \
     bash "$GATE" >/dev/null 2>&1
   OUT="$(cat "$TMP/out/config_assertions.prom" 2>/dev/null)"
 }
@@ -115,6 +135,71 @@ expect_metric 'idle timeout codified, reload pending -> live catches the gap' pg
 # The unfixed shape: the GUC is absent from the file entirely.
 run 32 32 ABSENT 0
 expect_metric 'idle timeout absent from file -> codified catches it' pg_idle_in_transaction_timeout_codified 0
+
+# ── ClickHouse drop guard (T616) ────────────────────────────────────
+# The ansible verify task asserts the EFFECTIVE limits once, at apply
+# time. These pin the hourly re-assertion that catches the r1 shape — a
+# later-sorting hand-written config.d file (or a hand edit) raising a
+# limit to 1 TiB with no ansible run. The query is ORDER BY name.
+GIB50=53687091200
+TIB1=1099511627776
+guard() { CH_GUARD="max_partition_size_to_drop\t$1\nmax_table_size_to_drop\t$2\n"; }
+
+guard "$GIB50" "$GIB50"; run 32 32
+expect_metric 'drop guard at the pinned 50 GiB -> ok' ch_drop_guard_live 1
+
+guard 10737418240 10737418240; run 32 32
+expect_metric 'drop guard stricter than pinned -> ok' ch_drop_guard_live 1
+
+guard "$TIB1" "$GIB50"; run 32 32
+expect_metric 'partition limit raised to 1 TiB (the r1 shape) -> fail' ch_drop_guard_live 0
+
+guard "$GIB50" "$TIB1"; run 32 32
+expect_metric 'table limit raised to 1 TiB -> fail' ch_drop_guard_live 0
+
+guard 0 "$GIB50"; run 32 32
+expect_metric 'partition limit 0 (unlimited) -> fail' ch_drop_guard_live 0
+
+guard "$GIB50" 0; run 32 32
+expect_metric 'table limit 0 (unlimited) -> fail' ch_drop_guard_live 0
+
+guard "$GIB50" 99999999999999999999; run 32 32
+expect_metric 'value past 64-bit shell arithmetic -> fail, not wrap' ch_drop_guard_live 0
+
+CH_GUARD="max_table_size_to_drop\t$GIB50\n"; run 32 32
+expect_metric 'one setting missing from the answer -> fail' ch_drop_guard_live 0
+
+CH_GUARD=""; run 32 32
+expect_metric 'empty answer -> fail' ch_drop_guard_live 0
+
+guard "$GIB50" "$GIB50"; CH_DOWN=1; run 32 32; CH_DOWN=0
+expect_metric 'ClickHouse unreachable -> fail (unknown is not safe)' ch_drop_guard_live 0
+
+# A host with no ClickHouse config dir has no lake to guard: an explicit
+# _skipped series, never an _ok sample (which would page forever).
+guard "$TIB1" "$TIB1"; CH_DIR="$TMP/no-such-dir"; run 32 32; unset CH_DIR
+if grep -qF 'stellarindex_config_assertion_skipped{assertion="ch_drop_guard_live"} 1' <<<"$OUT" \
+  && ! grep -qF 'stellarindex_config_assertion_ok{assertion="ch_drop_guard_live"}' <<<"$OUT"; then
+  echo "ok: no ClickHouse -> skipped, not failed"; pass=$((pass + 1))
+else
+  echo "FAIL: no ClickHouse -> want only a _skipped series for ch_drop_guard_live" >&2
+  fail=$((fail + 1))
+fi
+
+# Lockstep: the script's default ceiling IS the role's pinned value. A
+# role change without the script (or vice versa) either fails every
+# host forever or silently accepts a raised limit.
+DEFAULTS=configs/ansible/roles/archival-node/defaults/main.yml
+script_ceiling="$(sed -nE 's/^CH_DROP_GUARD_MAX_BYTES="\$\{CH_DROP_GUARD_MAX_BYTES:-([0-9]+)\}"$/\1/p' "$GATE")"
+for v in clickhouse_max_table_size_to_drop clickhouse_max_partition_size_to_drop; do
+  role="$(sed -nE "s/^${v}:[[:space:]]*([0-9]+).*/\1/p" "$DEFAULTS")"
+  if [ -n "$role" ] && [ "$role" = "$script_ceiling" ]; then
+    echo "ok: $v ($role) matches the script's ceiling"; pass=$((pass + 1))
+  else
+    echo "FAIL: $v is '$role' in $DEFAULTS but the script ceiling is '$script_ceiling'" >&2
+    fail=$((fail + 1))
+  fi
+done
 
 echo
 echo "config-assertions-test: ${pass} passed, ${fail} failed"
