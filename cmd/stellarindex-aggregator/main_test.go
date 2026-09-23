@@ -394,7 +394,7 @@ func TestBuildSupplyPolicy_TranslatesConfig(t *testing.T) {
 	cfg := config.SupplyConfig{
 		PerAssetLockedSets: map[string]config.SupplyLockedSetConfig{
 			"XLM": {
-				Accounts:  []string{"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"},
+				Accounts:  []string{"GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4"},
 				Contracts: nil,
 			},
 		},
@@ -420,7 +420,7 @@ func TestBuildSupplyPolicy_TranslatesConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("policy.PerAsset[\"XLM\"] missing — per_asset_locked_sets was not translated")
 	}
-	if len(locked.Accounts) != 1 || locked.Accounts[0] != "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF" {
+	if len(locked.Accounts) != 1 || locked.Accounts[0] != "GDUY7J7A33TQWOSOQGDO776GGLM3UQERL4J3SPT56F6YS4ID7MLDERI4" {
 		t.Errorf("policy.PerAsset[\"XLM\"].Accounts = %v, want the one configured account", locked.Accounts)
 	}
 

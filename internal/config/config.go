@@ -1682,8 +1682,8 @@ type SupplyLockedSetConfig struct {
 // Validate reports inconsistencies in the supply block. Currently
 // checks:
 //
-//  1. Every configured SDF reserve account is a syntactically valid
-//     G-strkey (DOM-11, audit-2026-07-23) — a typo'd address is a
+//  1. Every configured SDF reserve account is a CRC-valid G-strkey
+//     (DOM-11, audit-2026-07-23) — a typo'd address is a
 //     config mistake, not "this account happens to have zero
 //     reserves." NOTE: this method deliberately does NOT require a
 //     matching reserve_balances_stroops entry for every account —
@@ -1714,7 +1714,7 @@ type SupplyLockedSetConfig struct {
 //     SACWrappers).
 func (sc SupplyConfig) Validate() error {
 	for i, acc := range sc.SDFReserveAccounts {
-		if !accountIDPattern.MatchString(acc) {
+		if !canonical.IsAccountID(acc) {
 			return fmt.Errorf("supply: sdf_reserve_accounts[%d] %q is not a valid G-strkey", i, acc)
 		}
 	}

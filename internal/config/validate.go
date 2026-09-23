@@ -1111,14 +1111,6 @@ var (
 	// doesn't depend on canonical (cycle avoidance).
 	contractIDPattern = regexp.MustCompile(`^C[A-Z2-7]{55}$`)
 
-	// accountIDPattern matches the Stellar classic G-strkey (ed25519
-	// public key) format. Same shallow shape-only check as
-	// contractIDPattern (no checksum verification) — good enough to
-	// catch a typo'd/truncated address at config-load time (DOM-11,
-	// audit-2026-07-23); a byte-flip that still checksums is caught
-	// downstream when the account doesn't resolve on-chain.
-	accountIDPattern = regexp.MustCompile(`^G[A-Z2-7]{55}$`)
-
 	// envVarNameLikePattern matches this project's own STELLARINDEX_*
 	// env-var naming convention. Used to catch the "holds the VALUE"
 	// `_env`-suffixed fields (redis_password_env,
