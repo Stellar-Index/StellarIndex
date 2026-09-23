@@ -66,6 +66,11 @@ curl -X POST https://api.stellarindex.io/v1/register \
 Everything is free; `partner` is not a paid plan, it's an operator
 override for teams that need more headroom.
 
+The monthly quota counts request units, not HTTP calls: a request is
+one unit except `/v1/price/batch`, which costs one unit per distinct
+asset id — a 250-id batch spends 250 of the monthly quota and 250 of
+the per-minute limit.
+
 Yes, the hosted anonymous per-IP limit is currently *higher* than a
 free key's per-key limit. That is deliberate: a key buys per-subject
 attribution, usage reporting and the private `/v1/account/*` surfaces,

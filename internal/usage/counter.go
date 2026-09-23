@@ -13,7 +13,7 @@
 //
 // Storage shape — two key families per (subject, day):
 //
-//	usage:<sub>:<YYYY-MM-DD>     → INCR-counted request total
+//	usage:<sub>:<YYYY-MM-DD>     → INCRBY-counted request-unit total
 //	                               (BILLABLE traffic only; the
 //	                               MonthlyQuota input — excludes
 //	                               429 AND 5xx, see ClassThrottled
@@ -124,19 +124,27 @@ func New(rdb redis.Cmdable, opts ...Option) *Counter {
 	return c
 }
 
-// Increment bumps the counter for (subject, today). Errors are
-// returned but callers should treat usage tracking as best-effort
+// Increment bumps the counter for (subject, today) by one unit. Errors
+// are returned but callers should treat usage tracking as best-effort
 // — failing to increment must NEVER block a request. Hot-path
 // callers typically `_ = counter.Increment(...)` and let the
 // metric tell them if Redis is misbehaving.
 func (c *Counter) Increment(ctx context.Context, subject string) error {
-	if subject == "" {
+	return c.IncrementBy(ctx, subject, 1)
+}
+
+// IncrementBy adds n request units to the counter for (subject, today).
+// A request's unit count is its product cost — one per priced asset on
+// /v1/price/batch — so the monthly quota meters lookups, not HTTP calls.
+// n <= 0 records nothing.
+func (c *Counter) IncrementBy(ctx context.Context, subject string, n int64) error {
+	if c == nil || subject == "" || n <= 0 {
 		return nil
 	}
 	day := c.nowFn().UTC().Format("2006-01-02")
 	key := c.keyPrefix + url.QueryEscape(subject) + ":" + day
 	pipe := c.rdb.TxPipeline()
-	pipe.Incr(ctx, key)
+	pipe.IncrBy(ctx, key, n)
 	pipe.Expire(ctx, key, retentionDays*24*time.Hour)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("usage: incr %s: %w", key, err)
@@ -162,13 +170,20 @@ func (c *Counter) detailKey(subject, day string) string {
 // class is one of the Class* constants. Best-effort like
 // [Counter.Increment] — callers drop the error after logging.
 func (c *Counter) IncrementDetail(ctx context.Context, subject, endpoint, class string) error {
-	if c == nil || subject == "" || endpoint == "" || class == "" {
+	return c.IncrementDetailBy(ctx, subject, endpoint, class, 1)
+}
+
+// IncrementDetailBy adds n request units to the per-endpoint outcome
+// counter, weighted exactly as [Counter.IncrementBy] weights the
+// billable total so the rollup's billable sum equals the quota counter.
+func (c *Counter) IncrementDetailBy(ctx context.Context, subject, endpoint, class string, n int64) error {
+	if c == nil || subject == "" || endpoint == "" || class == "" || n <= 0 {
 		return nil
 	}
 	day := c.nowFn().UTC().Format("2006-01-02")
 	key := c.detailKey(subject, day)
 	pipe := c.rdb.TxPipeline()
-	pipe.HIncrBy(ctx, key, endpoint+"|"+class, 1)
+	pipe.HIncrBy(ctx, key, endpoint+"|"+class, n)
 	pipe.Expire(ctx, key, retentionDays*24*time.Hour)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("usage: hincrby %s: %w", key, err)

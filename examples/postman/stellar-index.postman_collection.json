@@ -5207,7 +5207,7 @@
               "request": {
                 "name": "Current prices for up to 100 assets.",
                 "description": {
-                  "content": "Latest price for each id in `asset_ids` (comma-separated,\nmax 100; duplicates de-duplicated server-side). Assets with\nno observation are OMITTED from the response rather than\nfailing the batch — a caller asking for 5 assets and\ngetting 3 rows knows exactly which 2 lack data. The\nenvelope's `flags.stale` is the OR over per-row staleness.\nAbove 100 ids, use the POST form (up to 1000 in the body).\n\n`pairs` is accepted as an alias for `asset_ids` (same\ncomma-separated form) for clients arriving via\ncross-endpoint extrapolation. Exactly one of `asset_ids` /\n`pairs` must be supplied; sending both is a 400.\n",
+                  "content": "Latest price for each id in `asset_ids` (comma-separated,\nmax 100; duplicates de-duplicated server-side). Assets with\nno observation are OMITTED from the response rather than\nfailing the batch — a caller asking for 5 assets and\ngetting 3 rows knows exactly which 2 lack data. The\nenvelope's `flags.stale` is the OR over per-row staleness.\nAbove 100 ids, use the POST form (up to 1000 in the body).\n\n`pairs` is accepted as an alias for `asset_ids` (same\ncomma-separated form) for clients arriving via\ncross-endpoint extrapolation. Exactly one of `asset_ids` /\n`pairs` must be supplied; sending both is a 400.\n\nMetering: a batch costs one request unit per de-duplicated\nid, against both the per-minute rate limit and the monthly\nquota — the same as one `GET /price` per id.\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -5622,7 +5622,7 @@
               "request": {
                 "name": "Current prices for up to 1000 assets.",
                 "description": {
-                  "content": "Body-parameter form of `GET /price/batch` for large\nwatchlists — up to 1000 canonical asset ids in a JSON\narray (URLs would blow past query-string limits well\nbefore that). Same semantics as the GET form: missing\nobservations are omitted, not errored; `flags.stale` is\nthe OR over returned rows.\n",
+                  "content": "Body-parameter form of `GET /price/batch` for large\nwatchlists — up to 1000 canonical asset ids in a JSON\narray (URLs would blow past query-string limits well\nbefore that). Same semantics as the GET form: missing\nobservations are omitted, not errored; `flags.stale` is\nthe OR over returned rows. Metered like the GET form: one\nrequest unit per de-duplicated id.\n",
                   "type": "text/plain"
                 },
                 "url": {

@@ -727,6 +727,10 @@ export interface paths {
          *     comma-separated form) for clients arriving via
          *     cross-endpoint extrapolation. Exactly one of `asset_ids` /
          *     `pairs` must be supplied; sending both is a 400.
+         *
+         *     Metering: a batch costs one request unit per de-duplicated
+         *     id, against both the per-minute rate limit and the monthly
+         *     quota — the same as one `GET /price` per id.
          */
         get: operations["getPriceBatch"];
         put?: never;
@@ -737,7 +741,8 @@ export interface paths {
          *     array (URLs would blow past query-string limits well
          *     before that). Same semantics as the GET form: missing
          *     observations are omitted, not errored; `flags.stale` is
-         *     the OR over returned rows.
+         *     the OR over returned rows. Metered like the GET form: one
+         *     request unit per de-duplicated id.
          */
         post: operations["getPriceBatchBulk"];
         delete?: never;
