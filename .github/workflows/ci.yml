@@ -1317,6 +1317,14 @@ jobs:
         run: ./scripts/ci/lint-systemd-flag-hatch.sh
       - name: lint-systemd-flag-hatch self-test
         run: ./scripts/ci/lint-systemd-flag-hatch-test.sh
+      - name: systemd unit hardening
+        # Every role unit names its User= and carries the baseline
+        # sandbox, and every fixed-hour timer pins UTC, unless the gap is
+        # declared with a reason in templates/systemd/HARDENING-EXCEPTIONS.
+        # The gaps it replaces were all absent directives nothing noticed.
+        run: ./scripts/ci/lint-systemd-hardening.sh
+      - name: systemd unit hardening self-test
+        run: ./scripts/ci/lint-systemd-hardening-test.sh
 
       - name: lint-textfile-exposition
         # r1 2026-09-10: the TimescaleDB probe ran
