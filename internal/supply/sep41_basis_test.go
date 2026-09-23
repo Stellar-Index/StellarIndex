@@ -138,26 +138,34 @@ func TestSEP41_Compute_BasisNeverClaimsAnExclusionThatDidNotHappen(t *testing.T)
 // The two "total only" bases must stay distinct string values and
 // distinct from the exclusion bases — they are wire values consumers
 // switch on, and collapsing any pair would silently re-introduce the
-// lie this fix removes.
+// lie this fix removes. A slice, not a map literal: duplicate constant
+// map keys do not compile, so a map could never observe a collision.
 func TestBasis_TotalOnlyValuesAreDistinct(t *testing.T) {
-	all := map[supply.Basis]string{
-		supply.BasisXLMSDFReserveExclusion:  "xlm_sdf_reserve_exclusion",
-		supply.BasisXLMTotalOnly:            "xlm_total_only",
-		supply.BasisIssuerExclusion:         "issuer_exclusion",
-		supply.BasisAdminExclusion:          "admin_exclusion",
-		supply.BasisSEP41TotalOnly:          "sep41_total_only",
-		supply.BasisOverride:                "override",
-		supply.BasisSEP1DeclaredMax:         "sep1_declared_max",
-		supply.BasisSEP41LakeFlows:          "sep41_lake_flows",
-		supply.BasisContractStorageBalances: "contract_storage_balances",
-		supply.BasisNoMetadata:              "no_metadata",
+	all := []struct {
+		basis supply.Basis
+		wire  string
+	}{
+		{supply.BasisXLMSDFReserveExclusion, "xlm_sdf_reserve_exclusion"},
+		{supply.BasisXLMTotalOnly, "xlm_total_only"},
+		{supply.BasisIssuerExclusion, "issuer_exclusion"},
+		{supply.BasisAdminExclusion, "admin_exclusion"},
+		{supply.BasisSEP41TotalOnly, "sep41_total_only"},
+		{supply.BasisOverride, "override"},
+		{supply.BasisSEP1DeclaredMax, "sep1_declared_max"},
+		{supply.BasisSEP41LakeFlows, "sep41_lake_flows"},
+		{supply.BasisClassicLakeFlows, "classic_lake_flows"},
+		{supply.BasisClassicTrustlineSum, "classic_trustline_sum"},
+		{supply.BasisContractStorageBalances, "contract_storage_balances"},
+		{supply.BasisNoMetadata, "no_metadata"},
 	}
-	if len(all) != 10 {
-		t.Fatalf("basis values collided: %v", all)
-	}
-	for basis, want := range all {
-		if basis.String() != want {
-			t.Errorf("Basis %q renders as %q, want %q", basis, basis.String(), want)
+	seen := make(map[supply.Basis]int, len(all))
+	for i, c := range all {
+		if j, dup := seen[c.basis]; dup {
+			t.Errorf("basis entries %d and %d share the wire value %q", j, i, c.basis)
+		}
+		seen[c.basis] = i
+		if c.basis.String() != c.wire {
+			t.Errorf("Basis %q renders as %q, want %q", c.basis, c.basis.String(), c.wire)
 		}
 	}
 }

@@ -13,11 +13,7 @@ import (
 // USD values source ONLY from usd_volume / its CAGG sums.
 func assertDEXNumericSafe(t *testing.T, name, q string) {
 	t.Helper()
-	for _, bad := range []string{"1e6", "1e+06", "1e7", "::float", "::double"} {
-		if strings.Contains(q, bad) {
-			t.Errorf("%s must never use float arithmetic (ADR-0003); found %q", name, bad)
-		}
-	}
+	assertNoFloatSQL(t, name, q)
 }
 
 // assertWindowBounded guards against unbounded trades/CAGG walks: every

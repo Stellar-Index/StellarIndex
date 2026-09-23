@@ -1,6 +1,14 @@
 package supply
 
-import "testing"
+import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"strconv"
+	"strings"
+	"testing"
+)
 
 // TestLowerBoundNamesEveryBasisInTheVocabulary is the guard that matters more
 // than the two positive cases. [Basis.LowerBound] has a default arm, so a
@@ -64,10 +72,79 @@ func TestLowerBoundIsFalseForAnUnknownBasis(t *testing.T) {
 	}
 }
 
-// allBases is the vocabulary, listed once. It is deliberately hand-written
-// rather than reflected: the constants are untyped-string-valued and Go gives
-// no enumeration, so the only thing that can force a new one to be considered
-// is a list a compiler error points at when the name is wrong.
+// TestAllBasesMatchesTheDeclaredConstants keeps allBases in lockstep with
+// the package source: Go has no enum enumeration, so without this a new
+// Basis constant left off the list escapes every vocabulary-wide guard.
+func TestAllBasesMatchesTheDeclaredConstants(t *testing.T) {
+	declared := declaredBasisValues(t)
+	listed := make(map[string]bool, len(allBases()))
+	for _, b := range allBases() {
+		if listed[string(b)] {
+			t.Errorf("allBases lists %q twice", b)
+		}
+		listed[string(b)] = true
+		if !declared[string(b)] {
+			t.Errorf("allBases lists %q, which no Basis constant declares", b)
+		}
+	}
+	for v := range declared {
+		if !listed[v] {
+			t.Errorf("Basis constant %q is declared but missing from allBases", v)
+		}
+	}
+}
+
+// declaredBasisValues returns the string value of every `X Basis = "..."`
+// constant in this package's non-test sources.
+func declaredBasisValues(t *testing.T) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	fset := token.NewFileSet()
+	out := map[string]bool{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, e.Name(), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", e.Name(), err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			vs, ok := n.(*ast.ValueSpec)
+			if !ok {
+				return true
+			}
+			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "Basis" {
+				return true
+			}
+			for i, name := range vs.Names {
+				var lit *ast.BasicLit
+				if i < len(vs.Values) {
+					lit, _ = vs.Values[i].(*ast.BasicLit)
+				}
+				if lit == nil || lit.Kind != token.STRING {
+					t.Fatalf("Basis constant %s is not a string literal; teach this guard its form", name.Name)
+				}
+				v, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					t.Fatalf("unquote %s: %v", name.Name, err)
+				}
+				out[v] = true
+			}
+			return false
+		})
+	}
+	if len(out) == 0 {
+		t.Fatal("found no Basis constants; the parser guard is not looking at this package")
+	}
+	return out
+}
+
+// allBases is the vocabulary, listed once;
+// TestAllBasesMatchesTheDeclaredConstants fails when it drifts.
 func allBases() []Basis {
 	return []Basis{
 		BasisXLMSDFReserveExclusion,

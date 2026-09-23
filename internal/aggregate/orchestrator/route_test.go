@@ -94,7 +94,7 @@ func TestRouterFreeze_TwoRoutesSuppressSingleSourceFreeze(t *testing.T) {
 			// Anomaly nil isolates the Phase-2 lifecycle; Baselines gives it
 			// the z-score it needs to fire.
 			Baselines: stubBaselineSource{
-				multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 100_000}},
+				multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
 				computedAt: now,
 			},
 		})
@@ -332,7 +332,7 @@ func runFreezeWithChains(
 		Triangulations: chains,
 		FreezeWriter:   marker,
 		Baselines: stubBaselineSource{
-			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 100_000}},
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
 			computedAt: now,
 		},
 	})

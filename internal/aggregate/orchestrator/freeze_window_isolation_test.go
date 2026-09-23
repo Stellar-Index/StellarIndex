@@ -136,7 +136,7 @@ func (f *windowIsolationFixture) newOrchestrator() *Orchestrator {
 		FreezeWriter: writer,
 		Baselines: stubBaselineSource{
 			multi: baseline.MultiBaseline{
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 60_000},
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
 			},
 		},
 	})

@@ -183,13 +183,21 @@ func TestInsertSupply_RejectsNegativeSACWrapped(t *testing.T) {
 
 // TestLatestSupply_NotFoundIsTyped — the API layer relies on
 // errors.Is(err, ErrNotFound) to distinguish "no supply data for
-// this asset" from "Postgres unreachable". This guard pins the
-// contract.
+// this asset" from "Postgres unreachable", so an empty result must
+// map to ErrNotFound and a driver failure must NOT.
 func TestLatestSupply_NotFoundIsTyped(t *testing.T) {
-	// We can't invoke the full Store.LatestSupply without a DB; this
-	// test documents the contract via reference. The actual SELECT
-	// path is covered by the integration test.
-	if !errors.Is(ErrNotFound, ErrNotFound) {
-		t.Fatal("ErrNotFound must satisfy errors.Is against itself")
+	store, conn := newScriptedStore(t, scriptedResult{cols: []string{"observed_at"}})
+	if _, err := store.LatestSupply(context.Background(), "USDC:GA1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LatestSupply on no rows: err = %v, want ErrNotFound", err)
+	}
+	if got := conn.only(t).arg(t, 1); got != "USDC:GA1" {
+		t.Errorf("$1 = %v, want the asset key", got)
+	}
+
+	dbErr := errors.New("connection refused")
+	store, _ = newScriptedStore(t, scriptedResult{err: dbErr})
+	_, err := store.LatestSupply(context.Background(), "USDC:GA1")
+	if errors.Is(err, ErrNotFound) || !errors.Is(err, dbErr) {
+		t.Fatalf("LatestSupply on a driver failure: err = %v, want the wrapped driver error, not ErrNotFound", err)
 	}
 }

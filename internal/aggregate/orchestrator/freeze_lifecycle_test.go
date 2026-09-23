@@ -76,10 +76,9 @@ func newFreezeFixture(t *testing.T) *freezeFixture {
 		FreezeWriter: marker,
 		Baselines: stubBaselineSource{
 			multi: baseline.MultiBaseline{
-				// N large enough that BaselineQualityFactor is 1.0
-				// (60000 / 1440 ≈ 41.7 "days" of bucket density), so
-				// the bootstrap cap doesn't muddy the arithmetic.
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 60_000},
+				// A fully-observed 30d window: BaselineQualityFactor is
+				// 1.0, so the bootstrap cap doesn't muddy the arithmetic.
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
 			},
 		},
 	})
@@ -633,7 +632,7 @@ func TestFreezeLifecycle_RehydratesLadderAcrossRestart(t *testing.T) {
 		FreezeWriter: f.marker,
 		Baselines: stubBaselineSource{
 			multi: baseline.MultiBaseline{
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 60_000},
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
 			},
 		},
 	})
@@ -765,7 +764,7 @@ func newTwoWindowFreeze(t *testing.T) (
 		FreezeWriter: marker,
 		Baselines: stubBaselineSource{
 			multi: baseline.MultiBaseline{
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 60_000},
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
 			},
 		},
 	})
@@ -1013,7 +1012,7 @@ func TestFreezeLifecycle_Phase1FreezeReleasesWhenAnomalyClears(t *testing.T) {
 				// MAD 0.02 (2%): a 2.5% return scores z = 1.25, comfortably
 				// below the auto-unfreeze bound, so the band bucket is
 				// statistically healthy while Phase 1 still flags it.
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.02, N: 60_000},
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.02, N: maxDay30Returns},
 			},
 		},
 	})

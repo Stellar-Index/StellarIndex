@@ -162,10 +162,9 @@ func TestYieldOracleNoFloatLiterals(t *testing.T) {
 		"oracle latest prices":  oracleLatestPricesQuery(),
 	}
 	for name, q := range queries {
-		for _, bad := range []string{"::float", "::double", "1e6", "1e+06", "1e7", "1e+07", "0.5 *"} {
-			if strings.Contains(q, bad) {
-				t.Errorf("%s contains %q — amounts must stay exact NUMERIC (ADR-0003)", name, bad)
-			}
+		assertNoFloatSQL(t, name, q)
+		if strings.Contains(q, "0.5 *") {
+			t.Errorf("%s contains %q — amounts must stay exact NUMERIC (ADR-0003)", name, "0.5 *")
 		}
 	}
 }

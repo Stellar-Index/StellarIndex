@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -42,10 +43,13 @@ type mockStore struct {
 	// callsByPair records each pair that was fetched so
 	// expansion tests can assert the full fetch set.
 	callsByPair map[string]int
+	// lastLimit is the row cap passed on the most recent call.
+	lastLimit int
 }
 
 func (m *mockStore) TradesInRange(ctx context.Context, p canonical.Pair, from, to time.Time, limit int) ([]canonical.Trade, error) {
 	m.calls++
+	m.lastLimit = limit
 	if m.callsByPair == nil {
 		m.callsByPair = make(map[string]int)
 	}
@@ -59,9 +63,20 @@ func (m *mockStore) TradesInRange(ctx context.Context, p canonical.Pair, from, t
 		}
 	}
 	if m.perPair != nil {
-		return m.perPair[p.String()], nil
+		return newestN(m.perPair[p.String()], limit), nil
 	}
-	return m.trades, nil
+	return newestN(m.trades, limit), nil
+}
+
+// newestN mirrors the producer's LIMIT: when a window holds more than
+// limit trades it returns only the newest limit, in ascending time order.
+func newestN(trades []canonical.Trade, limit int) []canonical.Trade {
+	if limit <= 0 || len(trades) <= limit {
+		return trades
+	}
+	sorted := slices.Clone(trades)
+	slices.SortStableFunc(sorted, func(a, b canonical.Trade) int { return a.Timestamp.Compare(b.Timestamp) })
+	return sorted[len(sorted)-limit:]
 }
 
 // newTestRedis spins up a miniredis + go-redis client.

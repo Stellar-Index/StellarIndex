@@ -40,9 +40,7 @@ func assertCCTPNumericSafe(t *testing.T, q string) {
 	if !strings.Contains(q, "/ 1000000::numeric") {
 		t.Error("cctp division must be exact NUMERIC at the 6-decimal USDC scale")
 	}
-	if strings.Contains(q, "1e6") || strings.Contains(q, "1e+06") {
-		t.Error("cctp division must never use a float literal (ADR-0003)")
-	}
+	assertNoFloatSQL(t, "cctp flow query", q)
 }
 
 // assertCCTPRawValueReads guards the post-deletion honesty rule (file-doc

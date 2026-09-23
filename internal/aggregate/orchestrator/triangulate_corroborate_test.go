@@ -199,7 +199,7 @@ func TestTick_CompositeCorroborationReachesTheCachedConfidence(t *testing.T) {
 				{Target: xlmEUR, Legs: []canonical.Pair{xlmUSD, usdEUR}},
 			},
 			Baselines: stubBaselineSource{
-				multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0.0001, MAD: 0.001, N: 100_000}},
+				multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0.0001, MAD: 0.001, N: maxDay30Returns}},
 				computedAt: now,
 			},
 		})

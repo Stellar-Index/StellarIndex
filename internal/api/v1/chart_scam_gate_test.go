@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -147,27 +148,44 @@ func TestChartGateKeysOnBaseNotQuote(t *testing.T) {
 // broken the chart for everyone.
 func TestChartServesUnflaggedIssuer(t *testing.T) {
 	gate := &chartScamGate{withheld: map[string]bool{}} // wired, flags nothing
-	srv := v1.New(v1.Options{History: &pairAwareHistoryReader{}, Scam: gate})
-	ts := httpTestServer(t, srv)
-
-	resp := mustGet(t, ts.URL+"/v1/chart?base=native&quote="+w2t2USDC+"&timeframe=24h")
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusNotFound && strings.Contains(string(body), "price-withheld") {
-		t.Errorf("an UNFLAGGED pair was withheld — the gate must not blanket-close "+
-			"the chart. Body: %s", body)
-	}
+	reader := servedChartHistory()
+	assertChartServed(t, v1.New(v1.Options{History: reader, Scam: gate}), "an UNFLAGGED pair")
 }
 
 // TestChartNilGateServes — a deployment with no gate wired must keep
 // serving. Every other gate in this package is nil-safe and this call
 // site must not be the exception.
 func TestChartNilGateServes(t *testing.T) {
-	srv := v1.New(v1.Options{History: &pairAwareHistoryReader{}}) // no Scam
-	ts := httpTestServer(t, srv)
+	assertChartServed(t, v1.New(v1.Options{History: servedChartHistory()}), "a nil scam gate") // no Scam
+}
 
+// servedChartHistory seeds two buckets so a served chart is
+// distinguishable from an empty 200.
+func servedChartHistory() *pairAwareHistoryReader {
+	now := time.Now().UTC()
+	return &pairAwareHistoryReader{stubHistoryReader: stubHistoryReader{points: []v1.HistoryPoint{
+		{Bucket: now.Add(-2 * time.Hour), VWAP: "0.16"},
+		{Bucket: now.Add(-1 * time.Hour), VWAP: "0.17"},
+	}}}
+}
+
+// assertChartServed requires the full series, not merely "not the
+// withheld 404": a chart regressed to 500, 503, 400 or an empty 200 has
+// been closed just as surely.
+func assertChartServed(t *testing.T, srv *v1.Server, label string) {
+	t.Helper()
+	ts := httpTestServer(t, srv)
 	resp := mustGet(t, ts.URL+"/v1/chart?base=native&quote="+w2t2USDC+"&timeframe=24h")
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusNotFound && strings.Contains(string(body), "price-withheld") {
-		t.Errorf("a nil scam gate withheld the chart. Body: %s", body)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("%s: chart returned %d, want 200 — the gate must not close the chart. Body: %s",
+			label, resp.StatusCode, body)
+	}
+	var env struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(env.Data.Points) != 2 || env.Data.Points[0].P != "0.16" || env.Data.Points[1].P != "0.17" {
+		t.Errorf("%s: chart points = %+v, want the two seeded buckets 0.16, 0.17", label, env.Data.Points)
 	}
 }

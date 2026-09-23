@@ -103,7 +103,7 @@ func runCompositeRefScenario(t *testing.T, sc compositeRefScenario) compositeRef
 		FXStore:        fx,
 		FreezeWriter:   marker,
 		Baselines: stubBaselineSource{
-			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 100_000}},
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
 			computedAt: now,
 		},
 		CompositeReference: cr,
@@ -648,7 +648,7 @@ func TestCompositeReference_ReleaseBandHoldsVenueOffset(t *testing.T) {
 		FXStore:        fx,
 		FreezeWriter:   marker,
 		Baselines: stubBaselineSource{
-			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 100_000}},
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
 			computedAt: clock,
 		},
 		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},
@@ -766,7 +766,7 @@ func TestCompositeReference_VerdictGaugeRetiredWhenPairLeavesTheEvaluatedSet(t *
 		FXStore:        &fakeFXStore{quote: big.NewRat(90, 100), observedAt: now.Add(-time.Hour), source: "massive"},
 		FreezeWriter:   &recordingFreezeMarker{},
 		Baselines: stubBaselineSource{
-			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 100_000}},
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
 			computedAt: now,
 		},
 		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmCHF}},

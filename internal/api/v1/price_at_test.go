@@ -14,17 +14,30 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
+// priceAtStub honours maxStaleness the way the wired producer does
+// (timescale ClosedVWAPAtOrBefore and the pricing guard both refuse a
+// bucket staler than the bound), unless ignoreStaleness asks for the
+// out-of-contract reader the handler's own re-check defends against.
 type priceAtStub struct {
-	value    string
-	bucketAt time.Time
-	resSec   int
-	err      error
+	value           string
+	bucketAt        time.Time
+	resSec          int
+	err             error
+	ignoreStaleness bool
+	// gotStaleness, when non-nil, records the bound the handler passed.
+	gotStaleness *time.Duration
 }
 
-func (s priceAtStub) PriceAt(context.Context, canonical.Pair, time.Time, time.Duration) (string, time.Time, int, error) {
+func (s priceAtStub) PriceAt(_ context.Context, _ canonical.Pair, ts time.Time, maxStaleness time.Duration) (string, time.Time, int, error) {
+	if s.gotStaleness != nil {
+		*s.gotStaleness = maxStaleness
+	}
 	res := s.resSec
 	if res == 0 {
 		res = 60
+	}
+	if s.err == nil && !s.ignoreStaleness && ts.Sub(s.bucketAt) > maxStaleness {
+		return "", time.Time{}, 0, ErrPriceAtUnavailable
 	}
 	return s.value, s.bucketAt, res, s.err
 }
@@ -51,12 +64,28 @@ func TestHandlePriceAt(t *testing.T) {
 		}
 	}
 
-	// Nearest bucket beyond the lookback cap → 404, not a stale lie.
-	s = &Server{priceAt: priceAtStub{value: "0.128", bucketAt: ts.Add(-30 * 24 * time.Hour)}}
+	// Nearest bucket beyond the lookback cap → 404, not a stale lie. The
+	// reader enforces the bound it is handed, so the cap the handler
+	// passes IS the honesty cap.
+	var gotStaleness time.Duration
+	stale := ts.Add(-30 * 24 * time.Hour)
+	s = &Server{priceAt: priceAtStub{value: "0.128", bucketAt: stale, gotStaleness: &gotStaleness}}
 	rec = httptest.NewRecorder()
 	s.handlePriceAt(rec, req)
 	if rec.Code != 404 {
 		t.Errorf("beyond-cap bucket: status %d, want 404", rec.Code)
+	}
+	if gotStaleness != 24*time.Hour {
+		t.Errorf("handler passed maxStaleness %v to the reader, want the 24h honesty cap", gotStaleness)
+	}
+
+	// Defence in depth: a reader that ignores the bound still cannot
+	// get a beyond-cap bucket served.
+	s = &Server{priceAt: priceAtStub{value: "0.128", bucketAt: stale, ignoreStaleness: true}}
+	rec = httptest.NewRecorder()
+	s.handlePriceAt(rec, req)
+	if rec.Code != 404 {
+		t.Errorf("beyond-cap bucket from a bound-ignoring reader: status %d, want 404", rec.Code)
 	}
 
 	// Future ts → 400.
