@@ -62,7 +62,7 @@ Capture `zpool list`, `zfs list -o space`, and the growth trend
 (`node_filesystem_avail_bytes` over 30d) for the postmortem. The lake grows
 forever by design (no TTL — correct for a canonical explorer), so a sustained
 low-space signal is a **capacity-planning** trigger (tiering / R2), not just an
-incident. See the storage section of `docs/audit/audit-2026-07-16/go-live-master-plan.md`.
+incident. See the storage section of the 2026-07-17 live r1 review (commit `ca2f4748`).
 
 ## Known false-positive patterns
 
@@ -75,7 +75,7 @@ incident. See the storage section of `docs/audit/audit-2026-07-16/go-live-master
 - Companion runbook: [`zfs-degraded.md`](zfs-degraded.md) — the redundancy side
   (drive failure) of the same pool. Capacity here; parity there.
 - Rule: `configs/prometheus/rules.r1/infra.yml` (`stellarindex.infra` group).
-- Storage plan: `docs/audit/audit-2026-07-16/go-live-master-plan.md` (§ storage/runway).
+- Storage plan: [go-live-master-plan.md (§ storage/runway)](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit/audit-2026-07-16/go-live-master-plan.md).
 
 ## Changelog
 

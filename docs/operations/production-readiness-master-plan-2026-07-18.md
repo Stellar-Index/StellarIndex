@@ -221,4 +221,4 @@ Captured here so they survive context compaction; fold into `docs/architecture/h
 - Canonical (stale, needs §4/§8 refresh): `docs/architecture/ha-plan.md`; `docs/adr/0008-ha-topology.md`; `docs/adr/0016-per-region-storage-strategy.md`.
 - Deploy detail: `runbooks/consolidated-deploy-plan-2026-07-18.md` (Phase C/D, now BLOCKED-on-capacity).
 - Post-Phase-0 sequence: `runbooks/post-phase0-deploy-sequence.md`. Reproject DDL: `deploy/clickhouse/ledger_entries_current_intra_ledger_seq.sql`.
-- Audit records: `docs/audit/audit-2026-07-16/` + `docs/audit/audit-2026-07-18-unaudited-surfaces/findings-ledger.md`.
+- Audit records: [audit-2026-07-16/](https://github.com/Stellar-Index/StellarIndex/tree/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit/audit-2026-07-16) + [audit-2026-07-18-unaudited-surfaces/findings-ledger.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/audit/audit-2026-07-18-unaudited-surfaces/findings-ledger.md).
