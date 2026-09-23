@@ -22,9 +22,9 @@ import (
 //
 // The fix is the same generation-guarded idempotent-corrective upsert 0109
 // shipped for the core tables. This test exercises the real seam
-// ([Store.SetDeriveGeneration] + the writers) for two REPRESENTATIVE targeted
-// tables — blend_positions (single-row) and sep41_supply_events (batch) — and
-// asserts:
+// ([Store.SetDeriveGeneration] + the writers) end-to-end against a live
+// Postgres for two REPRESENTATIVE targeted tables — blend_positions
+// (single-row) and sep41_supply_events (batch) — and asserts:
 //
 //   - a re-derive at a HIGHER generation (N>0) UPDATEs the wrong value in place
 //     — the correction lands. This assertion FAILS on the unfixed DO-NOTHING
@@ -35,6 +35,12 @@ import (
 //   - the batch writer dedupes an intra-batch duplicate conflict key (last
 //     wins) rather than erroring on Postgres's "cannot affect row a second
 //     time" (which the old DO NOTHING absorbed).
+//
+// scripts/ci/lint-derive-generation-guard is the static, PR-time complement
+// (T351): it enumerates every derive_generation-carrying table from
+// migrations/ and every hand-written ON CONFLICT DO UPDATE writer under
+// internal/storage/timescale/, so a NEW writer that forgets the guard fails
+// CI without needing its own representative-table integration test here.
 //
 // To reproduce the red state: revert one writer's SQL to
 // `ON CONFLICT ... DO NOTHING` (keep migration 0110 + SetDeriveGeneration) and
