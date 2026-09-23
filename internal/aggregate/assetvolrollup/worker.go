@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/aggregate/rollupworker"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
@@ -78,18 +79,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	if w == nil {
 		return errors.New("assetvolrollup: nil Worker")
 	}
-	tick := time.NewTicker(w.interval)
-	defer tick.Stop()
-
-	w.refresh(ctx)
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-tick.C:
-			w.refresh(ctx)
-		}
-	}
+	return rollupworker.Run(ctx, w.interval, w.refresh)
 }
 
 // refresh runs one sum-and-upsert pass, recording the paired outcome
