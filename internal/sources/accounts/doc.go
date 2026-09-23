@@ -3,12 +3,15 @@
 // (LedgerEntryChangeDecoder) and emits one observation per
 // LedgerEntryChange touching an operator-watched G-strkey.
 //
-// Operator usage: populate `[supply] sdf_reserve_accounts` in
-// operator config with the G-strkeys whose AccountEntry deltas
-// should be observed (e.g. the SDF reserve list, issuer accounts
-// for the metadata overlay, validator accounts for tier-1
-// quorum monitoring). That key is what pipeline.RegisterSupplyEntryDecoders
-// passes to NewObserver; there is no `[accounts]` config block.
+// Operator usage: the watched set is `[supply] sdf_reserve_accounts`,
+// which pipeline.RegisterSupplyEntryDecoders passes to NewObserver;
+// there is no `[accounts]` config block. That key is the SDF reserve
+// list and nothing else: every account in it has its balance
+// subtracted from XLM circulating supply (ADR-0011 Algorithm 1) and
+// is diffed daily against the list SDF publishes, so adding an issuer
+// or validator account to observe it would mis-state circulating
+// supply and raise a permanent `kind="extra"` reserve-list ticket.
+// Watching accounts for another purpose needs its own config key.
 //
 // Output: [Observation] events flowing through the standard
 // dispatcher → consumer pipeline. The indexer-side sink writes

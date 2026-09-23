@@ -1511,6 +1511,9 @@ type SupplyConfig struct {
 	// (stellar/dashboard common/lumens.js) and tickets on any
 	// missing/extra account — the 2% value cross-check alone cannot
 	// see a single account change (C4-069; internal/ops/chops).
+	// It is also the accounts observer's watched set, but it is NOT a
+	// general watch list: any account added here is subtracted from
+	// circulating supply.
 	SDFReserveAccounts []string `toml:"sdf_reserve_accounts" doc:"G-strkey list of SDF-controlled reserve accounts whose XLM balances are excluded from circulating supply per ADR-0011 Algorithm 1." default:"[]"`
 
 	// ReserveBalancesStroops maps account G-strkey → balance in
