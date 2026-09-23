@@ -18,36 +18,16 @@ import (
 const collateralNamePrefix = "Collateral-"
 
 // classify maps topic[0] to the decoder-side [EventType], or "" for an
-// event this source doesn't track. Byte-equality against the pre-encoded
-// symbols (events.go) — no per-event SCVal re-decode. Contract-identity
-// filtering happens in the dispatcher adapter's Matches, NOT here: these
-// symbols are also emitted by two look-alike contracts, so classify
-// alone never decides a match.
+// event this source doesn't track. Byte-equality lookup against
+// classifyBySym (events.go, built from topicClassifications) — no
+// per-event SCVal re-decode. Contract-identity filtering happens in the
+// dispatcher adapter's Matches, NOT here: these symbols are also emitted
+// by two look-alike contracts, so classify alone never decides a match.
 func classify(e *events.Event) EventType {
 	if len(e.Topic) == 0 {
 		return ""
 	}
-	switch e.Topic[0] {
-	case topicSymNewCollateralContract:
-		return TypeNewCollateralContract
-	case topicSymStatementPublished:
-		return TypeStatement
-	case topicSymLiquidation:
-		// On-wire "Liquidation" → our SCHEDULED-SETTLEMENT type.
-		return TypeSettlement
-	case topicSymWithdrawal:
-		return TypeWithdrawal
-	case topicSymBeaconUpdated:
-		return TypeBeaconUpdated
-	case topicSymSupportedAssetAdded:
-		return TypeSupportedAssetAdded
-	case topicSymCollateralHashUpdated:
-		return TypeCollateralHashUpdated
-	case topicSymTreasuryUpdated:
-		return TypeTreasuryUpdated
-	default:
-		return ""
-	}
+	return classifyBySym[e.Topic[0]]
 }
 
 // decoded is the intermediate the per-event helpers fill — the promoted

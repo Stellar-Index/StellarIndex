@@ -371,6 +371,36 @@ func TestClassify_UnknownAndEmpty(t *testing.T) {
 	}
 }
 
+// TestEventSymbols_MatchesClassify guards the historical failure mode
+// that dropped TreasuryUpdated recognition under ADR-0033: EventSymbols()
+// and classify() were two independently hand-written lists of the same
+// topics, and one could gain an entry the other lacked. This test is
+// driven off EventSymbols() itself (not a second hardcoded list), so a
+// topic present there but unrecognized by classify() fails loudly.
+func TestEventSymbols_MatchesClassify(t *testing.T) {
+	t.Parallel()
+	syms := EventSymbols()
+	if len(syms) != 8 {
+		t.Fatalf("EventSymbols() returned %d symbols, want 8", len(syms))
+	}
+	seen := make(map[EventType]bool, len(syms))
+	for _, topic := range syms {
+		enc := scval.MustEncodeSymbol(topic)
+		got := classify(&events.Event{Topic: []string{enc}})
+		if got == "" {
+			t.Errorf("classify() did not recognize EventSymbols() topic %q", topic)
+			continue
+		}
+		if seen[got] {
+			t.Errorf("EventType %q claimed by more than one EventSymbols() topic", got)
+		}
+		seen[got] = true
+	}
+	if len(seen) != len(syms) {
+		t.Errorf("classify() recognized %d distinct EventTypes from %d EventSymbols() topics, want them equal", len(seen), len(syms))
+	}
+}
+
 // ─── gating (ADR-0035) ───────────────────────────────────────────────
 
 // TestMatches_TrustRootAcceptedLookAlikeRejected is the gate test: every
