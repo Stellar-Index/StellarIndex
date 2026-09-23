@@ -241,13 +241,14 @@ func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.D
 				// event-count-vs-served-row-count reconcile would false-flag
 				// nearly every ledger — lake-measured ~2.0 served rows per
 				// decoder event (aquarius_reserves 843705/421793,
-				// aquarius_liquidity 12043/6021 over 62.8M–63.2M). Worse,
-				// aquarius_reserves and aquarius_reserves_sync SHARE the single
-				// coarse EventKind() "aquarius.reserves" (the sink routes on the
-				// runtime ReservesEvent.Kind field, which the reconcile's
-				// by-EventKind expected side cannot see), so no kinds split can
-				// attribute a per-ledger count to one table vs the other. These
-				// three stay on the density gap-detector until a fan-out-aware
+				// aquarius_liquidity 12043/6021 over 62.8M–63.2M).
+				// aquarius_reserves and aquarius_reserves_sync now carry
+				// distinct EventKind()s ("aquarius.reserves" /
+				// "aquarius.reserves_sync" — ReservesEvent.EventKind()
+				// branches on the runtime Kind field), so a kinds split CAN
+				// attribute a per-ledger count to one table vs the other; the
+				// fan-out ratio is the only remaining blocker. These three
+				// stay on the density gap-detector until a fan-out-aware
 				// (per-event-identity) reconcile lands — surfaced as a real
 				// follow-up finding, not silently claimed complete.
 			},
