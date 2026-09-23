@@ -779,10 +779,16 @@ against.
   and last rows are refreshed too (Timescale refreshes only whole buckets).
   The script runs it after every window whose re-derive touched trades, and
   records the obligation in `$STALE` before the DELETE so a failed refresh or
-  re-derive is retried first by the next run. Pinned by
+  re-derive is retried first by the next run. `prices_1m` is refreshed with
+  `force => true` over a window containing every `twap_*` window and the twaps
+  are forced after it, since migration 0156's retention drops minute rows
+  without an invalidation; while that policy is armed the twaps are refused.
+  The usd_volume restamp's printed follow-up now emits the same forced,
+  widened calls. Pinned by
   `ch_rebuild_projected_script_caggs_test.go` (executes the script),
   `trades_cagg_refresh_test.go`, and on TimescaleDB by
-  `TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange`.
+  `TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange` and
+  `TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps`.
 - **docs / ADR index had no completeness check (T543):**
   `docs/adr/README.md`'s Index table topped out at ADR-0050 though
   ADR-0051 (USD-anchored fiat derivation, landed 2026-08-31) already

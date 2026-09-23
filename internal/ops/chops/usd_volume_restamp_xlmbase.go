@@ -324,11 +324,20 @@ func restampCAGGFollowUp(from, to time.Time) string {
 	b.WriteString("continuous aggregate, and none auto-refresh further back than 7 days (prices_1m:\n")
 	b.WriteString("5 minutes). Until these run, /v1/markets volume, asset volume, venue rankings and\n")
 	b.WriteString("every chart keep serving the PRE-restamp numbers. Order is load-bearing:\n")
-	b.WriteString("twap_1h/twap_1d are built ON prices_1m, so prices_1m goes first.\n\n")
-	for _, c := range xlmBaseRestampCAGGs {
-		pf, pt := timescale.PadRefreshWindow(lo, hi, c.MinWindow)
-		fmt.Fprintf(&b, "  CALL refresh_continuous_aggregate('%s', '%s', '%s');\n",
-			c.Name, pf.Format(time.RFC3339), pt.Format(time.RFC3339))
+	b.WriteString("twap_1h/twap_1d are built ON prices_1m, so prices_1m goes first, FORCED over every\n")
+	b.WriteString("window the twaps read. If prices_1m's retention policy is armed, disarm it first as\n")
+	b.WriteString("migrations/0156_prices_1m_retention.up.sql states: a twap refresh over dropped\n")
+	b.WriteString("minute rows deletes TWAP history.\n\n")
+	plan := tradesCAGGRefreshPlan(xlmBaseRestampCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
+		return timescale.PadRefreshWindow(lo, hi, c.MinWindow)
+	})
+	for _, st := range plan {
+		force := ""
+		if st.Force {
+			force = ", force => true"
+		}
+		fmt.Fprintf(&b, "  CALL refresh_continuous_aggregate('%s', '%s', '%s'%s);\n",
+			st.View, st.From.Format(time.RFC3339), st.To.Format(time.RFC3339), force)
 	}
 	b.WriteString("\nThen force the asset_volume_24h rollup (it re-sums prices_1m.volume_usd; it also\n")
 	b.WriteString("self-heals on its own cadence, so verify rather than assume).\n")

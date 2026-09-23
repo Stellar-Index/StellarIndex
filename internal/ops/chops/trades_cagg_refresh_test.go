@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,9 @@ type fakeTradesCAGGStore struct {
 	from, to  time.Time
 	spanErr   error
 	failView  string
+	armed     bool
 	refreshed []string
+	forced    map[string]bool
 	windows   map[string][2]time.Time
 }
 
@@ -26,15 +29,28 @@ func (f *fakeTradesCAGGStore) LedgerRangeToTimeRange(context.Context, uint32, ui
 	return f.from, f.to, f.spanErr
 }
 
+func (f *fakeTradesCAGGStore) Prices1mRetentionArmed(context.Context) (bool, error) {
+	return f.armed, nil
+}
+
 func (f *fakeTradesCAGGStore) RefreshContinuousAggregate(_ context.Context, view string, from, to time.Time) error {
+	return f.refresh(view, from, to, false)
+}
+
+func (f *fakeTradesCAGGStore) RefreshContinuousAggregateForced(_ context.Context, view string, from, to time.Time) error {
+	return f.refresh(view, from, to, true)
+}
+
+func (f *fakeTradesCAGGStore) refresh(view string, from, to time.Time, force bool) error {
 	if view == f.failView {
 		return errors.New("canceling statement due to statement timeout")
 	}
 	f.refreshed = append(f.refreshed, view)
 	if f.windows == nil {
-		f.windows = map[string][2]time.Time{}
+		f.windows, f.forced = map[string][2]time.Time{}, map[string]bool{}
 	}
 	f.windows[view] = [2]time.Time{from, to}
+	f.forced[view] = force
 	return nil
 }
 
@@ -117,5 +133,68 @@ func TestRefreshTradesCAGGsOverLedgers_EmptyRangeIsAnError(t *testing.T) {
 	}
 	if len(f.refreshed) != 0 {
 		t.Errorf("refreshed %v over an unknown span", f.refreshed)
+	}
+}
+
+// twap_1h / twap_1d read prices_1m, whose retention (migration 0156) drops
+// minute rows without an invalidation. prices_1m must therefore be FORCED
+// over a window containing every twap window, and the twaps forced after
+// it, or a twap bucket is recomputed from dropped minute rows and its
+// history deleted.
+func TestRefreshTradesCAGGsOverLedgers_ForcesPrices1mOverEveryTwapWindow(t *testing.T) {
+	f := &fakeTradesCAGGStore{
+		from: time.Date(2025, 3, 10, 12, 0, 0, 0, time.UTC),
+		to:   time.Date(2025, 3, 10, 12, 30, 0, 0, time.UTC),
+	}
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_000_100, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if len(timescale.CAGGsOnPrices1m) == 0 {
+		t.Fatal("timescale.CAGGsOnPrices1m is empty")
+	}
+	minute := f.windows["prices_1m"]
+	if !f.forced["prices_1m"] {
+		t.Error("prices_1m was refreshed without force => true; a retention-dropped minute range stays empty")
+	}
+	for _, v := range timescale.CAGGsOnPrices1m {
+		w, ok := f.windows[v]
+		if !ok {
+			t.Fatalf("%s was not refreshed", v)
+		}
+		if w[0].Before(minute[0]) || w[1].After(minute[1]) {
+			t.Errorf("%s window [%s,%s] reaches outside the prices_1m force-rebuild [%s,%s]",
+				v, w[0], w[1], minute[0], minute[1])
+		}
+		if !f.forced[v] {
+			t.Errorf("%s was refreshed without force => true", v)
+		}
+	}
+	for _, c := range timescale.TradesCAGGs {
+		if c.Name != "prices_1m" && !slices.Contains(timescale.CAGGsOnPrices1m, c.Name) && f.forced[c.Name] {
+			t.Errorf("%s reads trades, yet was forced", c.Name)
+		}
+	}
+}
+
+// While prices_1m's retention is armed it can drop the minute rows this
+// run just rebuilt before a twap reads them: the twaps are refused, loudly,
+// after every other view has been refreshed.
+func TestRefreshTradesCAGGsOverLedgers_RefusesTwapsWhilePrices1mRetentionIsArmed(t *testing.T) {
+	f := &fakeTradesCAGGStore{from: time.Unix(1_700_000_000, 0), to: time.Unix(1_700_100_000, 0), armed: true}
+	var out bytes.Buffer
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, &out)
+	if err == nil || !strings.Contains(err.Error(), "retention policy is armed") {
+		t.Fatalf("err = %v, want a refusal naming the armed retention policy", err)
+	}
+	for _, v := range timescale.CAGGsOnPrices1m {
+		if _, ok := f.windows[v]; ok {
+			t.Errorf("%s was refreshed while prices_1m's retention is armed", v)
+		}
+	}
+	if _, ok := f.windows["prices_1d"]; !ok {
+		t.Error("prices_1d was not refreshed; only the prices_1m-derived views are refused")
+	}
+	if out.Len() != 0 {
+		t.Errorf("printed a success line on refusal: %q", out.String())
 	}
 }

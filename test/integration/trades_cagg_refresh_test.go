@@ -109,6 +109,89 @@ func TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange(t *testing.T) {
 	}
 }
 
+// TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps pins the
+// migration-0156 hazard on real TimescaleDB: prices_1m's retention drops
+// minute chunks without an invalidation, and twap_1d is materialised from
+// prices_1m. The refresh must force-rebuild prices_1m over every day
+// twap_1d re-materialises, or twap_1d is recomputed from the missing
+// minute rows and loses them. While the policy is armed, the twaps are
+// refused.
+func TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	cfgPath := filepath.Join(t.TempDir(), "stellarindex.toml")
+	if err := os.WriteFile(cfgPath, []byte(fmt.Sprintf("[storage]\npostgres_dsn = %q\n", dsn)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	exec := func(q string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	day10 := time.Date(2025, 3, 10, 0, 0, 0, 0, time.UTC)
+	// Outside the rewritten ledger, same twap_1d bucket.
+	seedCAGGTrade(t, ctx, db, 60_999_000, 0, day10.Add(6*time.Hour), 5)
+	seedCAGGTrade(t, ctx, db, 61_000_000, 0, day10.Add(12*time.Hour), 10)
+	exec(`CALL refresh_continuous_aggregate('prices_1m', '2025-03-01'::timestamptz, '2025-04-01'::timestamptz)`)
+	exec(`CALL refresh_continuous_aggregate('twap_1d', '2025-03-01'::timestamptz, '2025-04-01'::timestamptz)`)
+	if got := twapTradeCount(t, ctx, db, day10); got != 2 {
+		t.Fatalf("setup: twap_1d[2025-03-10] trade_count = %d, want 2", got)
+	}
+
+	// What an armed 0156 policy does to this old range.
+	exec(`SELECT drop_chunks('prices_1m', older_than => INTERVAL '90 days')`)
+	var minuteRows int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM prices_1m WHERE bucket >= '2025-03-01' AND bucket < '2025-04-01'`).Scan(&minuteRows); err != nil {
+		t.Fatal(err)
+	}
+	if minuteRows != 0 {
+		t.Fatalf("control: %d prices_1m rows survived drop_chunks — this test proves nothing", minuteRows)
+	}
+
+	exec(`DELETE FROM trades WHERE ledger = 61000000`)
+	seedCAGGTrade(t, ctx, db, 61_000_000, 1, day10.Add(12*time.Hour), 11)
+	run := func() (string, error) {
+		return captureStdout(t, func() error {
+			return chops.Run([]string{"trades-cagg-refresh", "-config", cfgPath, "-from", "61000000", "-to", "61000000"})
+		})
+	}
+	if out, err := run(); err != nil {
+		t.Fatalf("trades-cagg-refresh: %v\n%s", err, out)
+	}
+	if got := twapTradeCount(t, ctx, db, day10); got != 2 {
+		t.Errorf("twap_1d[2025-03-10] trade_count = %d after the refresh, want 2 — twap_1d was re-materialised over minute rows prices_1m was not force-rebuilt over", got)
+	}
+
+	exec(`SELECT alter_job(job_id, scheduled => true) FROM timescaledb_information.jobs
+	       WHERE proc_name = 'policy_retention' AND hypertable_name = 'prices_1m'`)
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `SELECT alter_job(job_id, scheduled => false) FROM timescaledb_information.jobs
+		       WHERE proc_name = 'policy_retention' AND hypertable_name = 'prices_1m'`)
+	})
+	if out, err := run(); err == nil || !strings.Contains(err.Error(), "retention policy is armed") {
+		t.Errorf("armed prices_1m retention: err = %v (stdout %q), want the twaps refused", err, out)
+	}
+}
+
+func twapTradeCount(t *testing.T, ctx context.Context, db *sql.DB, bucket time.Time) int {
+	t.Helper()
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT coalesce(sum(trade_count), 0) FROM twap_1d WHERE bucket = $1`, bucket).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 func seedCAGGTrade(t *testing.T, ctx context.Context, db *sql.DB, ledger uint32, opIndex int, ts time.Time, base int) {
 	t.Helper()
 	if _, err := db.ExecContext(ctx, `

@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -95,4 +96,40 @@ func TestTradesCAGGsMatchCatalog(t *testing.T) {
 		}
 	}
 	t.Logf("trades-rooted aggregates in catalog: %d, listed: %d", len(inCatalog), len(listed))
+
+	// CAGGsOnPrices1m decides which views the trades refresh forces after
+	// a forced prices_1m; a hierarchical view missing from it would be
+	// refreshed over minute rows a retention drop removed.
+	onMinute := catalogNames(t, ctx, store, `
+		SELECT c.user_view_name
+		  FROM _timescaledb_catalog.continuous_agg c
+		  JOIN _timescaledb_catalog.continuous_agg p ON p.mat_hypertable_id = c.parent_mat_hypertable_id
+		 WHERE p.user_view_name = 'prices_1m'
+		 ORDER BY 1`)
+	want := append([]string(nil), timescale.CAGGsOnPrices1m...)
+	sort.Strings(want)
+	if strings.Join(onMinute, ",") != strings.Join(want, ",") {
+		t.Errorf("views built on prices_1m in catalog = %v, timescale.CAGGsOnPrices1m = %v", onMinute, want)
+	}
+}
+
+func catalogNames(t *testing.T, ctx context.Context, store *timescale.Store, q string) []string {
+	t.Helper()
+	rows, err := store.DB().QueryContext(ctx, q)
+	if err != nil {
+		t.Fatalf("catalog query: %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	return out
 }

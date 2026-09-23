@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // ─── #372 F1: the verify footer must describe the bound it actually runs ──
@@ -135,6 +137,30 @@ func parseRefreshWindow(t *testing.T, report, view string) (time.Time, time.Time
 		t.Fatalf("%s upper bound %q: %v", view, args[2], err)
 	}
 	return lo, hi
+}
+
+// The printed follow-up must not tell the operator to refresh a twap over
+// days prices_1m was not force-rebuilt over: migration 0156's retention
+// drops minute rows without an invalidation, and a twap refresh over them
+// deletes TWAP history. A one-day restamp pads twap_1d to three days.
+func TestXLMBaseRestampFollowUp_ForcesPrices1mOverEveryTwapWindow(t *testing.T) {
+	t.Parallel()
+	day := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	out := xlmBaseRestampFollowUp(day, day)
+	mlo, mhi := parseRefreshWindow(t, out, "prices_1m")
+	for _, v := range append([]string{"prices_1m"}, timescale.CAGGsOnPrices1m...) {
+		lo, hi := parseRefreshWindow(t, out, v)
+		if lo.Before(mlo) || hi.After(mhi) {
+			t.Errorf("%s window [%s,%s] reaches outside the prices_1m refresh [%s,%s]", v, lo, hi, mlo, mhi)
+		}
+		line := out[strings.Index(out, "refresh_continuous_aggregate('"+v+"'"):]
+		if line = line[:strings.IndexByte(line, '\n')]; !strings.HasSuffix(line, ", force => true);") {
+			t.Errorf("%s is not forced: %q", v, line)
+		}
+	}
+	if line := out[strings.Index(out, "refresh_continuous_aggregate('prices_1d'"):]; strings.Contains(line[:strings.IndexByte(line, '\n')], "force") {
+		t.Errorf("prices_1d reads trades and needs no force: %q", line[:strings.IndexByte(line, '\n')])
+	}
 }
 
 // TestXLMBaseRestampFollowUp_RecommendsMinRelDelta is #372 F5. The
