@@ -551,6 +551,14 @@ func TestZeroSeed_F0033(t *testing.T) {
 		// "the look-up never got wired to the audit sink at all", which
 		// is the pre-fix state.
 		`stellarindex_admin_audit_write_failures_total{surface="staff_customer_lookup"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="passkey_register"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="passkey_delete"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="passkey_clone_warning"} 0`,
+		`stellarindex_admin_audit_write_failures_total{surface="passkey_login_replay"} 0`,
+		// The clone-warning alert reads increase() of this series; absent
+		// and zero must be distinguishable before the first theft signal.
+		`stellarindex_passkey_login_refusals_total{reason="clone_warning"} 0`,
+		`stellarindex_passkey_login_refusals_total{reason="ceremony_replay"} 0`,
 		// Tier clamp: not alerted, but `failed` means paid throughput
 		// stayed live past a downgrade and must not read as "no data".
 		`stellarindex_admin_key_budget_clamps_total{outcome="lowered"} 0`,

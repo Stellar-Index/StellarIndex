@@ -106,12 +106,10 @@ type Config struct {
 	// target email. nil = no throttle (only the global anon
 	// rate-limit applies). audit-2026-06-14 A12.
 	LoginThrottle LoginThrottle
-	// Audit (optional) is the durable audit sink privileged staff
-	// actions on this surface append to — currently the staff
-	// customer look-up (C3-056, audit-2026-07-23), which reads another
-	// customer's PII and must leave the same durable trail the sibling
-	// admin surfaces do. nil degrades that handler to structured-log
-	// -only audit (Redis-less / Postgres-less deployments).
+	// Audit (optional) is the durable audit_log sink for the staff
+	// customer look-up, passkey add/remove, and passkey sign-ins
+	// refused on a clone warning or ceremony replay. nil degrades those
+	// to structured-log-only (Postgres-less deployments).
 	Audit platform.AuditStore
 	// Passkeys (optional) is the WebAuthn credential store backing
 	// passkey sign-in (migration 0140). nil leaves the

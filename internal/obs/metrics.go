@@ -211,6 +211,12 @@ func registerAppMetricsTail() {
 		VerifyArchiveCheckpointsTotal,
 		VerifyArchiveMismatchesTotal,
 
+		// Passkey sign-in refusal counter, registered here rather than
+		// beside its AdminAuditWriteFailuresTotal neighbour in
+		// [registerAppMetrics] for the same funlen reason as
+		// SourceUnrepresentableSymbolsTotal below.
+		PasskeyLoginRefusalsTotal,
+
 		// Readiness-check gauge (#371 F2) — the only alertable signal
 		// ClickHouse has, since it is the one dependency on r1 with no
 		// Prometheus exporter of its own.
@@ -498,9 +504,17 @@ func seedBoundedLabelSeries() {
 		// mutation, but the accountability gap is identical — the row
 		// that records who read whose data is the only trace it happened.
 		"staff_customer_lookup",
+		// Self-service first-factor credential changes, and the passkey
+		// sign-in refusals that carry a credential-theft signal.
+		"passkey_register", "passkey_delete",
+		"passkey_clone_warning", "passkey_login_replay",
 	} {
 		AdminAuditWriteFailuresTotal.WithLabelValues(surface)
 	}
+	// Unrolled rather than looped, same reason as SinkUndrainedRowsTotal
+	// above: the loop tipped this function over the gocognit ceiling.
+	PasskeyLoginRefusalsTotal.WithLabelValues(PasskeyRefusalCloneWarning)
+	PasskeyLoginRefusalsTotal.WithLabelValues(PasskeyRefusalCeremonyReplay)
 	// Tier-clamp outcomes — bounded set of two. `failed` in particular
 	// means paid throughput stayed live past a downgrade, so it must be
 	// distinguishable from "nothing has been clamped yet".
@@ -4235,7 +4249,8 @@ var TLSCertProbeTotal = prometheus.NewCounterVec(
 // Labels:
 //   - surface: which privileged action lost its audit row
 //     (account_override|key_mint|key_revoke|status_notice|
-//     staff_customer_lookup)
+//     staff_customer_lookup|passkey_register|passkey_delete|
+//     passkey_clone_warning|passkey_login_replay)
 //
 // `staff_customer_lookup` is the one READ in the set: the staff
 // customer look-up returns another customer's billing email plus every
@@ -4250,6 +4265,25 @@ var AdminAuditWriteFailuresTotal = prometheus.NewCounterVec(
 		Help: "Privileged mutations that succeeded but whose durable audit row failed to append, by surface. Non-zero = the admin audit trail has holes.",
 	},
 	[]string{"surface"},
+)
+
+// PasskeyLoginRefusalsTotal counts passkey sign-ins refused AFTER the
+// assertion signature verified, by reason. `clone_warning` is a
+// sign-counter regression — WebAuthn's one signal that a private key
+// exists in two places — and tickets via stellarindex_passkey_clone_warning;
+// `ceremony_replay` is a finish-login request presented a second time.
+var PasskeyLoginRefusalsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_passkey_login_refusals_total",
+		Help: "Passkey sign-ins refused after the assertion signature verified, by reason (clone_warning|ceremony_replay).",
+	},
+	[]string{"reason"},
+)
+
+// PasskeyLoginRefusalsTotal reason label values.
+const (
+	PasskeyRefusalCloneWarning   = "clone_warning"
+	PasskeyRefusalCeremonyReplay = "ceremony_replay"
 )
 
 // AdminKeyBudgetClampsTotal — counter of API credentials whose per-minute

@@ -502,6 +502,30 @@ groups:
             window closes on them, then fix whatever made the audit store
             unwritable.
 
+      # A passkey assertion whose signature verified but whose sign
+      # counter went BACKWARDS: at least two copies of that private key
+      # exist. The sign-in is already refused; this tickets so a human
+      # contacts the account owner instead of the signal living in one
+      # log line. increase() over 1h with for: 5m, as above — one
+      # occurrence is worth a ticket.
+      - alert: stellarindex_passkey_clone_warning
+        expr: sum(increase(stellarindex_passkey_login_refusals_total{reason="clone_warning"}[1h])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/passkey-clone-warning.md
+          summary: "Passkey clone warning: {{ $value | humanize }} sign-in(s) refused on a sign-counter regression"
+          description: |
+            A passkey sign-in presented a valid signature with a sign
+            counter at or below the stored one — WebAuthn's signal that the
+            credential's private key has been copied. The sign-in was
+            refused. The `passkey.clone_warning` rows in audit_log name the
+            account and credential; contact the owner and have them remove
+            that passkey.
+
       # C3-032 follow-up: the durable login-code lockout's table is
       # written by an UNAUTHENTICATED endpoint under an ATTACKER-CHOSEN
       # key. POST /v1/auth/verify-code with a synthetic address inserts a

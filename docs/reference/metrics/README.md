@@ -1604,7 +1604,12 @@ distinguishable from "dead".
 ### `stellarindex_admin_audit_write_failures_total`
 
 Counter, label `surface` (`account_override` / `key_mint` /
-`key_revoke` / `status_notice` / `staff_customer_lookup`).
+`key_revoke` / `status_notice` / `staff_customer_lookup` /
+`passkey_register` / `passkey_delete` / `passkey_clone_warning` /
+`passkey_login_replay`). `key_mint` and `key_revoke` also cover the
+dashboard's `/v1/dashboard/keys` routes; the four `passkey_*` surfaces
+are the passkey add/remove routes and the two refused-sign-in rows
+counted by `stellarindex_passkey_login_refusals_total`.
 
 Privileged mutations that **completed** but whose durable audit row
 failed to append. Every one of these call sites appends best-effort:
@@ -1624,11 +1629,26 @@ not an unrecorded change.
 
 Non-zero means the admin audit trail has holes that must be
 reconstructed from application logs before their retention window
-closes. All five label values are pre-seeded at zero (C3-067,
+closes. All nine label values are pre-seeded at zero (C3-067,
 C3-056, audit-2026-07-23).
 
 Alert: `stellarindex_admin_audit_write_failing` →
 [admin-audit-write-failing](../../operations/runbooks/admin-audit-write-failing.md).
+
+### `stellarindex_passkey_login_refusals_total`
+
+Counter, label `reason` (`clone_warning` / `ceremony_replay`).
+
+Passkey sign-ins refused **after** the assertion signature verified.
+`clone_warning` is a sign-counter regression: the presented counter is
+at or below the stored one, so at least two copies of the private key
+exist. `ceremony_replay` is a finish-login request presented a second
+time. Each refusal also appends a `passkey.clone_warning` /
+`passkey.login_replay` row to `audit_log` naming the account and
+credential. Both values are pre-seeded at zero.
+
+Alert: `stellarindex_passkey_clone_warning` (on `clone_warning` only) →
+[passkey-clone-warning](../../operations/runbooks/passkey-clone-warning.md).
 
 ### `stellarindex_admin_key_budget_clamps_total`
 

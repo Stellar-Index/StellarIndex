@@ -54,8 +54,11 @@ type Config struct {
 	// workable but means a revoked key keeps authenticating
 	// until the TTL expires.
 	CacheInvalidator CacheInvalidator
-	Logger           *slog.Logger
-	Now              func() time.Time
+	// Audit, when non-nil, receives the key.mint / key.revoke rows the
+	// /v1/account/keys and /v1/admin/keys routes also write.
+	Audit  platform.AuditStore
+	Logger *slog.Logger
+	Now    func() time.Time
 
 	// KeyQuotas optionally overrides the per-tier ceiling on
 	// concurrently active keys. Tiers absent from the map (or a nil
@@ -379,6 +382,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyMint, out)
 
 	httpx.WriteJSON(w, http.StatusCreated, createResponse{
 		Plaintext: plaintext,
@@ -430,6 +434,7 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordKeyAudit(r, sc, dashboardauth.AuditActionKeyRevoke, existing)
 	// Best-effort cache invalidation. A failure here means the
 	// runtime auth cache keeps authenticating the revoked key
 	// until the TTL rolls it off; we log + 204 anyway so the
@@ -442,6 +447,33 @@ func (h *Handlers) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// recordKeyAudit appends the key.mint / key.revoke row for a dashboard
+// session's change to one of its account's keys. key is the stored row:
+// the created key for a mint, the pre-revoke row for a revoke.
+func (h *Handlers) recordKeyAudit(r *http.Request, sc dashboardauth.SessionContext, action string, key platform.APIKey) {
+	meta := map[string]any{
+		"route":  "/v1/dashboard/keys",
+		"name":   key.Name,
+		"tier":   string(key.Tier),
+		"scopes": key.Scopes,
+	}
+	if action == dashboardauth.AuditActionKeyMint {
+		meta["rate_limit_per_min"] = key.RateLimitPerMin
+		meta["monthly_quota"] = key.MonthlyQuota
+		if !key.ExpiresAt.IsZero() {
+			meta["expires_at"] = key.ExpiresAt.UTC().Format(time.RFC3339)
+		}
+	} else {
+		meta["already_revoked"] = !key.RevokedAt.IsZero()
+	}
+	dashboardauth.RecordSessionCredentialEvent(r, h.cfg.Audit, h.cfg.Logger, h.cfg.Now(), sc, dashboardauth.CredentialEvent{
+		Action:     action,
+		TargetKind: "api_key",
+		TargetID:   key.ID,
+		Metadata:   meta,
+	})
 }
 
 // parseCreateRequest reads + validates the body. Returns the

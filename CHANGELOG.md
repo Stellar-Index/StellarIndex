@@ -377,6 +377,19 @@ against.
   ceiling and read back without the account override cascade, so a
   later change to that override, up or down, does not reach it.
 
+- **dashboard auth — credential changes are audited (#765):** adding or
+  removing a passkey, and minting or revoking a key from
+  `/v1/dashboard/keys`, now append `passkey.register` /
+  `passkey.delete` / `key.mint` / `key.revoke` rows to `audit_log` with
+  the session, IP and user agent, as `/v1/account/keys` and
+  `/v1/admin/keys` already did. A passkey sign-in refused on a
+  clone warning or a ceremony replay appends a `passkey.clone_warning` /
+  `passkey.login_replay` row and increments the new
+  `stellarindex_passkey_login_refusals_total{reason}`; the new
+  `stellarindex_passkey_clone_warning` alert tickets on a clone warning.
+  Lost rows count on `stellarindex_admin_audit_write_failures_total`
+  under four new `passkey_*` surfaces.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

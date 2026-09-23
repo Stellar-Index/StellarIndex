@@ -60,6 +60,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -592,6 +593,7 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordPasskeyRegistered(r, sc, row)
 	h.clearPasskeyCeremonyCookie(w)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(passkeyDTOFrom(row))
@@ -739,9 +741,7 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 		// Sign-count regression: at least two copies of the private
 		// key may exist. Refuse the login and leave a loud trail —
 		// this is the one WebAuthn signal of credential theft.
-		h.cfg.Logger.Error("passkey clone warning — refusing login",
-			"user_id", matchedUser.ID, "credential_id", matchedRow.ID, "ip", clientIP(r).String())
-		writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
+		h.refusePasskeyCloneWarning(w, r, matchedUser, matchedRow, parsed.Response.AuthenticatorData.Counter)
 		return
 	}
 	// Spend the challenge. This is the step that makes a CAPTURED
@@ -755,9 +755,7 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 	// email-code sign-in keeps working is the right way to fail.
 	if err := h.consumeCeremony(r.Context(), ceremony); err != nil {
 		if errors.Is(err, errPasskeyCeremonyReplayed) {
-			h.cfg.Logger.Warn("passkey ceremony replay refused",
-				"user_id", matchedUser.ID, "credential_id", matchedRow.ID, "ip", clientIP(r).String())
-			writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
+			h.refusePasskeyReplay(w, r, matchedUser, matchedRow, parsed.Response.AuthenticatorData.Counter)
 			return
 		}
 		h.cfg.Logger.Error("consume passkey ceremony", "err", err, "user_id", matchedUser.ID)
@@ -787,6 +785,32 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 	h.clearPasskeyCeremonyCookie(w)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(verifyCodeResponse{Status: "ok"})
+}
+
+// refusePasskeyCloneWarning refuses a login whose authenticator reported
+// a sign-count regression — at least two copies of the private key may
+// exist. Split out of [Handlers.HandlePasskeyFinishLogin] for funlen.
+func (h *Handlers) refusePasskeyCloneWarning(
+	w http.ResponseWriter, r *http.Request, user platform.User, cred platform.WebAuthnCredential, signCount uint32,
+) {
+	h.cfg.Logger.Error("passkey clone warning — refusing login",
+		"user_id", user.ID, "credential_id", cred.ID, "ip", clientIP(r).String())
+	h.recordPasskeyLoginRefusal(r, AuditActionPasskeyCloneWarning, obs.PasskeyRefusalCloneWarning,
+		user, cred, signCount)
+	writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
+}
+
+// refusePasskeyReplay refuses a finish-login request whose ceremony was
+// already consumed — a captured request replayed a second time. Split
+// out of [Handlers.HandlePasskeyFinishLogin] for funlen.
+func (h *Handlers) refusePasskeyReplay(
+	w http.ResponseWriter, r *http.Request, user platform.User, cred platform.WebAuthnCredential, signCount uint32,
+) {
+	h.cfg.Logger.Warn("passkey ceremony replay refused",
+		"user_id", user.ID, "credential_id", cred.ID, "ip", clientIP(r).String())
+	h.recordPasskeyLoginRefusal(r, AuditActionPasskeyLoginReplay, obs.PasskeyRefusalCeremonyReplay,
+		user, cred, signCount)
+	writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
 }
 
 // ─── Management (session-gated) ───────────────────────────────────
@@ -865,5 +889,10 @@ func (h *Handlers) HandlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	RecordSessionCredentialEvent(r, h.cfg.Audit, h.cfg.Logger, h.cfg.Now(), sc, CredentialEvent{
+		Action:     AuditActionPasskeyDelete,
+		TargetKind: auditTargetPasskey,
+		TargetID:   id.String(),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }
