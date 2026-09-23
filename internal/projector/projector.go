@@ -158,6 +158,10 @@ type eventStore interface {
 	StreamSorobanEvents(ctx context.Context, from, to uint32,
 		contractIDs, topic0Syms, excludeTopic0Syms []string,
 		fn func(row sorobanevents.Row) error) error
+	// FirstSorobanEventLedger is StreamSorobanEvents' first matching ledger
+	// in [from, to] (false when none) — the never-run source's seed.
+	FirstSorobanEventLedger(ctx context.Context, from, to uint32,
+		contractIDs, topic0Syms, excludeTopic0Syms []string) (uint32, bool, error)
 	// ProjectionDirtyWindows reads the operator-recorded rewind windows
 	// (migration 0125) so the projector can publish
 	// obs.ProjectorReplayWindowActive — the discriminator that tells an
@@ -245,6 +249,12 @@ type Projector struct {
 	// against a recorded rewind window's to_ledger.
 	cursorMu   sync.Mutex
 	lastCursor map[string]uint32
+
+	// seedMu guards seeds: the start ledger [Projector.seedFromLedger] found
+	// for each cursor-less source, reused until the source's first commit
+	// writes a cursor so the seek runs once, not once per cycle.
+	seedMu sync.Mutex
+	seeds  map[string]uint32
 }
 
 // SetClickHouseSource switches the projector to read forward events from the
@@ -905,7 +915,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
 		return
 	}
-	fromLedger := uint32(0)
+	var fromLedger uint32
 	// read is what this cycle's commit is conditional on (see commitCursor):
 	// everything below derives from it, so the advance may only land if the
 	// row still says the same thing when the cycle ends.
@@ -920,16 +930,8 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// [refreshReplayWindows]). Recorded from the READ, not the
 		// commit, so a held cursor keeps reporting its true position.
 		p.recordCursor(src.Name, cursor.LastLedger)
-	} else if p.chAddr != "" {
-		// Fresh source in CH feed-switch mode: start at the lake's first
-		// ledger, as ch-cap67-movements' resolveStart does. 0 is not a
-		// ledger, and a floor below the lake's start is a boundary hole the
-		// watermark would stall on forever.
-		if fromLedger, err = freshSourceFloor(cycleCtx, lake); err != nil {
-			p.logger.Warn("projector: lake min ledger failed", "source", src.Name, "err", err)
-			obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
-			return
-		}
+	} else {
+		fromLedger = p.seedFromLedger(cycleCtx, src, lake)
 	}
 
 	// Upper bound: live tip from ledgerstream. Without a tip we
@@ -1427,6 +1429,78 @@ func (p *Projector) recordNothingToScan(source string, fromLedger, scanTip, dura
 	obs.ProjectorLagLedgers.WithLabelValues(source).Set(float64(durableTip - fromLedger + 1))
 	p.logger.Warn("projector: held at the lake's contiguous watermark — ledgers past it are not yet provably complete",
 		"source", source, "from", fromLedger, "watermark", scanTip, "durable_tip", durableTip)
+}
+
+// seedFromLedger returns the first ledger a source with no cursor scans. Every
+// ledger below the seed is proven to hold nothing the source's stream would
+// return, so starting there loses no event — where ledger 0 made a new source
+// crawl the whole pre-history at BatchLimit per Interval. A failed seek falls
+// back to 0, the slow but lossless crawl.
+func (p *Projector) seedFromLedger(ctx context.Context, src Source, lake *sourceLake) uint32 {
+	p.seedMu.Lock()
+	seed, ok := p.seeds[src.Name]
+	p.seedMu.Unlock()
+	if ok {
+		return seed
+	}
+	seed, settled, err := p.findSeed(ctx, src, lake)
+	if err != nil {
+		p.logger.Warn("projector: first-event seek failed; scanning from ledger 0", "source", src.Name, "err", err)
+		seed, settled = 0, true
+	}
+	if !settled {
+		return seed
+	}
+	p.seedMu.Lock()
+	if p.seeds == nil {
+		p.seeds = make(map[string]uint32)
+	}
+	p.seeds[src.Name] = seed
+	p.seedMu.Unlock()
+	p.logger.Info("projector: no cursor; seeded start ledger", "source", src.Name, "from", seed)
+	return seed
+}
+
+// findSeed seeks the source's first matching event in [floor, tip], using the
+// same tip bound a cycle scans to, so the range it proves empty is exactly
+// what a scan from the floor would have read. With no match it returns tip:
+// the one-ledger scan [tip, tip] then writes the cursor. settled is false
+// while nothing is durable at or above the floor; the caller seeks again.
+//
+// In CH feed-switch mode the floor is freshSourceFloor — the lake's own
+// first present ledger, read on the source's own connection — not a
+// hardcoded constant, so the seek and cycleOneSource's fresh-source start
+// can never disagree about where the lake begins.
+func (p *Projector) findSeed(ctx context.Context, src Source, lake *sourceLake) (seed uint32, settled bool, err error) {
+	floor := uint32(0)
+	if p.chAddr != "" {
+		if floor, err = freshSourceFloor(ctx, lake); err != nil {
+			return 0, false, err
+		}
+	}
+	tip, _, err := p.resolveTip(ctx, lake, floor)
+	if err != nil {
+		return 0, false, err
+	}
+	if tip < floor {
+		return floor, false, nil
+	}
+	var first uint32
+	var found bool
+	if p.chAddr != "" {
+		first, found, err = clickhouse.FirstContractEventLedgerFiltered(ctx, p.chAddr, floor, tip,
+			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms)
+	} else {
+		first, found, err = p.store.FirstSorobanEventLedger(ctx, floor, tip,
+			src.ContractIDs, src.Topic0Syms, src.ExcludeTopic0Syms)
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	if !found {
+		return tip, true, nil
+	}
+	return first, true, nil
 }
 
 // resolveTip returns the upper scan bound for one cycle. The base

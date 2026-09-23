@@ -170,25 +170,8 @@ func (s *Store) StreamSorobanEvents(
         FROM soroban_events
         WHERE ledger BETWEEN $1 AND $2
     `)
-	args := []any{int64(from), int64(to)}
-	if len(contractIDs) > 0 {
-		args = append(args, contractIDArgsAny(contractIDs)...)
-		fmt.Fprintf(&sb, " AND contract_id IN (%s)", placeholdersFrom(3, len(contractIDs)))
-	}
-	if len(topic0Syms) > 0 {
-		baseIdx := 3 + len(contractIDs)
-		args = append(args, topic0Args(topic0Syms)...)
-		fmt.Fprintf(&sb, " AND topic_0_sym IN (%s)", placeholdersFrom(baseIdx, len(topic0Syms)))
-	}
-	// excludeTopic0Syms: drop the CAP-67 classic-token firehose at the SQL
-	// layer for the no-prefilter DEX/lending sources, so a far-behind source's
-	// wide catch-up window doesn't scan millions of rows it would only discard
-	// via Decoder.Matches (see projector.Source.ExcludeTopic0Syms).
-	if len(excludeTopic0Syms) > 0 {
-		baseIdx := len(args) + 1
-		args = append(args, topic0Args(excludeTopic0Syms)...)
-		fmt.Fprintf(&sb, " AND (topic_0_sym IS NULL OR topic_0_sym NOT IN (%s))", placeholdersFrom(baseIdx, len(excludeTopic0Syms)))
-	}
+	args := appendSorobanEventsFilter(&sb, []any{int64(from), int64(to)},
+		contractIDs, topic0Syms, excludeTopic0Syms)
 	// Chunk-pruning (ADR-0033): soroban_events is partitioned by
 	// ledger_close_time, so `WHERE ledger BETWEEN` alone scans every
 	// chunk. When ledger_ingest_log fully covers [from,to] we can bound
@@ -250,6 +233,54 @@ func (s *Store) StreamSorobanEvents(
 		}
 	}
 	return rows.Err()
+}
+
+// appendSorobanEventsFilter appends StreamSorobanEvents' contract / topic[0]
+// prefilters to sb (after a `ledger BETWEEN $1 AND $2` clause) and returns args
+// extended with their bind values. Shared with FirstSorobanEventLedger so the
+// seek and the stream cannot disagree about which rows a source sees.
+func appendSorobanEventsFilter(sb *strings.Builder, args []any, contractIDs, topic0Syms, excludeTopic0Syms []string) []any {
+	if len(contractIDs) > 0 {
+		baseIdx := len(args) + 1
+		args = append(args, contractIDArgsAny(contractIDs)...)
+		fmt.Fprintf(sb, " AND contract_id IN (%s)", placeholdersFrom(baseIdx, len(contractIDs)))
+	}
+	if len(topic0Syms) > 0 {
+		baseIdx := len(args) + 1
+		args = append(args, topic0Args(topic0Syms)...)
+		fmt.Fprintf(sb, " AND topic_0_sym IN (%s)", placeholdersFrom(baseIdx, len(topic0Syms)))
+	}
+	// excludeTopic0Syms: drop the CAP-67 classic-token firehose at the SQL
+	// layer for the no-prefilter DEX/lending sources, so a far-behind source's
+	// wide catch-up window doesn't scan millions of rows it would only discard
+	// via Decoder.Matches (see projector.Source.ExcludeTopic0Syms).
+	if len(excludeTopic0Syms) > 0 {
+		baseIdx := len(args) + 1
+		args = append(args, topic0Args(excludeTopic0Syms)...)
+		fmt.Fprintf(sb, " AND (topic_0_sym IS NULL OR topic_0_sym NOT IN (%s))", placeholdersFrom(baseIdx, len(excludeTopic0Syms)))
+	}
+	return args
+}
+
+// FirstSorobanEventLedger returns the lowest ledger in [from, to] holding a
+// row StreamSorobanEvents would return for the same filters, and false when
+// the range holds none. The projector seeds a never-run source from it.
+func (s *Store) FirstSorobanEventLedger(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string) (uint32, bool, error) {
+	if to < from {
+		return 0, false, nil
+	}
+	var sb strings.Builder
+	sb.WriteString(`SELECT min(ledger) FROM soroban_events WHERE ledger BETWEEN $1 AND $2`)
+	args := appendSorobanEventsFilter(&sb, []any{int64(from), int64(to)},
+		contractIDs, topic0Syms, excludeTopic0Syms)
+	var first sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, sb.String(), args...).Scan(&first); err != nil {
+		return 0, false, fmt.Errorf("timescale: FirstSorobanEventLedger [%d,%d]: %w", from, to, err)
+	}
+	if !first.Valid {
+		return 0, false, nil
+	}
+	return uint32(first.Int64), true, nil
 }
 
 func contractIDArgsAny(ids []string) []any {
