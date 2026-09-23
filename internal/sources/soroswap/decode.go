@@ -41,9 +41,11 @@ func (r RawPair) Complete() bool { return r.Swap != nil && r.Sync != nil }
 // while leaving Pair pinned to A, so A's sync then completed a trade
 // carrying B's amounts under A's pair identity — and therefore under
 // A's token0/token1 mapping. Wrong assets, wrong price, silently.
-// Keying on the emitter makes the correlation correct regardless of
-// emission order; both correlated kinds are gated to the same pair
-// contract by Matches, so this can never split a real pair.
+// Keying on the emitter makes the correlation correct across pools
+// regardless of emission order; both correlated kinds are gated to the
+// same pair contract by Matches, so this can never split a real pair.
+// Two swaps through the SAME pair in one op share a key; buffer.absorb
+// rotates on an occupied slot so neither is overwritten.
 type groupKey struct {
 	Ledger  uint32
 	TxHash  string
@@ -121,6 +123,14 @@ func decodeSwap(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) 
 	if !r.Complete() {
 		return canonical.Trade{}, ErrSwapWithoutSync
 	}
+	return decodeSwapLeg(r, tok0, tok1)
+}
+
+// decodeSwapLeg decodes the trade from r.Swap alone: the sync body only
+// carries post-state reserves and is never read. The buffer hands the
+// adapter a swap-only group when a second swap through the same pair in
+// one op rotates it out (buffer.absorb); every other group is Complete.
+func decodeSwapLeg(r RawPair, tok0, tok1 canonical.Asset) (canonical.Trade, error) {
 	if r.Swap == nil {
 		return canonical.Trade{}, fmt.Errorf("%w: swap nil", ErrMalformedPayload)
 	}

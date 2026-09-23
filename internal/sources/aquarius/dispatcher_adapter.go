@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
@@ -132,6 +133,14 @@ func isAddPool(e *events.Event) bool {
 	return len(e.Topic) > 0 && e.Topic[0] == TopicSymbolAddPool
 }
 
+// isNotATrade reports a recognised no-op: a genuine dust swap whose sold
+// or bought side is zero, or a fully-decoded self-pair (sold == bought
+// token, comet's exploit primitive). Neither can form a canonical.Trade,
+// so there is no row to project and no error to be blind on.
+func isNotATrade(err error) bool {
+	return errors.Is(err, ErrZeroAmountTrade) || errors.Is(err, canonical.ErrPairMismatch)
+}
+
 // Decode implements [dispatcher.Decoder]. Returns one TradeEvent
 // per successful pool-trade decode (Aquarius trades are always
 // single-pair). A router `add_pool` announcement registers the new
@@ -199,11 +208,7 @@ func (d *Decoder) Decode(ev events.Event) ([]consumer.Event, error) {
 	case EventTrade:
 		trade, err := decodeTrade(&ev, closedAt)
 		if err != nil {
-			if errors.Is(err, ErrZeroAmountTrade) {
-				// Recognized no-op: a genuine dust swap whose sold or
-				// bought side is zero. canonical.Trade forbids
-				// non-positive amounts, so there is no row to project —
-				// and no error to be blind on (see ErrZeroAmountTrade).
+			if isNotATrade(err) {
 				return nil, nil
 			}
 			return nil, err

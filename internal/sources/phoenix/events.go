@@ -450,8 +450,16 @@ var (
 	ErrIncompleteSwap = errors.New("phoenix: incomplete swap (need 8 fields)")
 
 	// ErrMalformedPayload — field values don't match expected types
-	// or produce a nonsense Trade (zero amount, same base/quote).
+	// or carry a negative amount.
 	ErrMalformedPayload = errors.New("phoenix: malformed swap payload")
+
+	// ErrZeroAmountSwap marks a fully-decoded swap with a ZERO leg — a
+	// genuine dust swap, not a malformed payload. The dispatcher adapter
+	// treats it (like a self-pair, canonical.ErrPairMismatch) as a
+	// recognised no-op: zero rows, no decode error, so the ADR-0033
+	// re-derive counts expected=0 instead of failing the verdict closed
+	// (aquarius ErrZeroAmountTrade, comet ErrNonPositiveAmounts).
+	ErrZeroAmountSwap = errors.New("phoenix: zero-amount swap (recognised no-op)")
 
 	// ErrIncompleteLiquidity — bubbles up if decodeProvideLiquidity /
 	// decodeWithdrawLiquidity is called before every required field

@@ -382,7 +382,8 @@ func (d *Decoder) emitLiquidity(ev events.Event, kind string) ([]consumer.Event,
 	}}, nil
 }
 
-// emitCompleted turns completed swap+sync pairs into TradeEvents,
+// emitCompleted turns completed swap+sync pairs (and swap-only groups a
+// same-pair re-entry rotated out, see buffer.absorb) into TradeEvents,
 // skipping (with counters) the two recognized non-trade classes:
 // unknown-pair token mappings and non-directional swaps.
 func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
@@ -400,7 +401,7 @@ func (d *Decoder) emitCompleted(completed []RawPair) ([]consumer.Event, error) {
 			d.mu.Unlock()
 			continue
 		}
-		trade, err := decodeSwap(r, tokens.Token0, tokens.Token1)
+		trade, err := decodeSwapLeg(r, tokens.Token0, tokens.Token1)
 		if err != nil {
 			// Non-directional swap: the body decoded cleanly but moved
 			// value within one token side only (direct pair.swap()

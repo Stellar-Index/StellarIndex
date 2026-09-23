@@ -229,7 +229,9 @@ cursor read / cursor write failed; cursor not advanced — retried next
 cycle), `sink_retry` (a sink write held the cursor below a ledger for
 retry), `decode_degraded` (the cursor advanced but at least one
 decode-failed row was dropped — a clean-looking advance that is NOT
-`ok`; DATA-6 / NS-2). Drives the `stellarindex_projector_error_rate_high`
+`ok`; DATA-6 / NS-2), `gate_widened` (the read admitted a new contract
+into a live contract gate, e.g. a factory-created pool, so the cursor
+held for one re-read of the window with the widened prefilter). Drives the `stellarindex_projector_error_rate_high`
 alert (on `error`).
 
 ### `stellarindex_projector_events_decoded_total`
@@ -887,6 +889,19 @@ exploit window, so any sustained count is an exploit-shaped signal, not
 noise — it drives the `stellarindex_amm_self_pair_swap_burst` alert. Find
 the offending tx/signer in `soroban_events` (topic POOL/swap on the pool
 contract).
+
+### `stellarindex_amm_swap_received_divergence_total`
+
+Counter, label `source`.
+
+Decoded swaps whose pool-received sell amount differs from the taker's
+offer — a fee-on-transfer sell token. Emitted by phoenix when `actual
+received amount` / `actual_received_amount` differs from
+`offer_amount`, with a WARN log naming the pool, ledger and tx. The
+stored base leg stays `offer_amount`: the pool contract prices the swap
+off it before the transfer, so `return / offer` is the executed price.
+Counts decodes, not unique swaps (a replay or completeness sweep
+re-counts). Detection only; seeded at zero for `phoenix`.
 
 ### `stellarindex_amm_non_positive_swap_total`
 
