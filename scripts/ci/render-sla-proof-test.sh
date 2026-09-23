@@ -137,6 +137,16 @@ bm["http_req_failed"] = {"value": 0.0042, "passes": 760, "fails": 179561,
                          "thresholds": {"rate<0.001": True}}
 write("breach", bad)
 
+# 3b. `boundary` — p95 lands EXACTLY on the 200 ms limit. The scenario's
+#     threshold is strict ("p(95)<200"), so k6 itself records the
+#     threshold as tripped even though a naive "value <= limit" compare
+#     would call it a pass.
+edge = json.loads(json.dumps(ok))
+em = edge["metrics"]
+em["http_req_duration"]["p(95)"] = 200.0
+em["http_req_duration"]["thresholds"] = {"p(95)<200": True, "p(99)<500": False}
+write("boundary", edge)
+
 # 4. `empty-run` — a run that started and issued nothing. Every headline
 #    key is present, so only the volume check can catch it.
 none = json.loads(json.dumps(ok))
@@ -329,6 +339,31 @@ if grep -qF -- '| 412.5 ms | FAIL |' "$REPORT"; then
   pass=$((pass + 1))
 else
   echo "FAIL: the report does not carry the breaching p95 with a FAIL verdict" >&2
+  fail=$((fail + 1))
+fi
+
+# ── The Result table must agree with k6's own threshold verdict ─────────
+# RLT-054 / GH #563: p95 lands exactly on the 200 ms limit. The scenario's
+# threshold is strict ("p(95)<200"), so k6 records it as BREACHED. The
+# Result table's own PASS/FAIL must say the same thing the "Thresholds
+# declared by the scenario" table says for the same run — a renderer
+# that reports PASS for a run its own threshold table calls BREACHED is
+# publishing a self-contradicting proof.
+base_env
+render "$TMP/boundary.json" "$TMP/out"
+expect 'a p95 exactly at the strict threshold is a breach → rc 1' 1 \
+  'render-sla-proof: FAIL'
+BOUNDARY_REPORT="$TMP/out/sla-proof-2026-09-13.md"
+# shellcheck disable=SC2016  # the backticks are literal markdown in the report
+if grep -qF -- '| `http_req_duration` p95 | < 200 ms | 200.0 ms | FAIL |' \
+     "$BOUNDARY_REPORT" \
+   && grep -qF -- '| `http_req_duration` | `p(95)<200` | BREACHED |' \
+     "$BOUNDARY_REPORT"; then
+  echo "ok: the Result table's p95 verdict matches the scenario's own threshold verdict"
+  pass=$((pass + 1))
+else
+  echo "FAIL: the Result table disagrees with the scenario's own threshold table" >&2
+  sed -n '1,40p' "$BOUNDARY_REPORT" >&2
   fail=$((fail + 1))
 fi
 

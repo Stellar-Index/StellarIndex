@@ -275,10 +275,22 @@ def pct(value):
     return "n/a" if value is None else "%.3f %%" % (value * 100)
 
 
-def verdict(value, limit):
-    if value is None:
+threshold_tripped = {(name, expr): tripped for name, expr, tripped in declared}
+
+
+def verdict(metric_name, expr):
+    # Never re-derive PASS/FAIL from the raw value: k6 already evaluated
+    # the threshold (strict "<", see test/load/scenarios/lib/thresholds.js)
+    # and `declared` is that evaluation. A second, independent comparison
+    # here previously used "<=" and rounded display, so it could print
+    # PASS in this table for the exact run the "Thresholds declared by
+    # the scenario" table below (rendered straight from `declared`)
+    # printed BREACHED for — the report contradicting itself. Look up the
+    # same verdict k6 recorded instead of recomputing it.
+    tripped = threshold_tripped.get((metric_name, expr))
+    if tripped is None:
         return "n/a"
-    return "PASS" if value <= limit else "FAIL"
+    return "FAIL" if tripped else "PASS"
 
 
 started = os.environ["SLA_PROOF_STARTED_AT"]
@@ -340,12 +352,12 @@ w("## Result")
 w("")
 w("| Metric | Threshold | Measured | Verdict |")
 w("| --- | --- | --- | --- |")
-w("| `http_req_duration` p95 | ≤ 200 ms | %s | %s |"
-  % (ms(dur.get("p(95)")), verdict(dur.get("p(95)"), 200.0)))
-w("| `http_req_duration` p99 | ≤ 500 ms | %s | %s |"
-  % (ms(dur.get("p(99)")), verdict(dur.get("p(99)"), 500.0)))
+w("| `http_req_duration` p95 | < 200 ms | %s | %s |"
+  % (ms(dur.get("p(95)")), verdict("http_req_duration", "p(95)<200")))
+w("| `http_req_duration` p99 | < 500 ms | %s | %s |"
+  % (ms(dur.get("p(99)")), verdict("http_req_duration", "p(99)<500")))
 w("| `http_req_failed` rate | < 0.1 % | " + pct(failed.get("value"))
-  + " | %s |" % verdict(failed.get("value"), 0.001))
+  + " | %s |" % verdict("http_req_failed", "rate<0.001"))
 w("")
 w("Distribution (whole run): min %s, med %s, p90 %s, p95 %s, p99 %s, max %s, avg %s."
   % (ms(dur.get("min")), ms(dur.get("med")), ms(dur.get("p(90)")),
