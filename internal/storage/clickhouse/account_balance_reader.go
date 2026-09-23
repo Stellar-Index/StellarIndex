@@ -84,6 +84,17 @@ func QueryAccountBalance(ctx context.Context, addr, accountID string) (snap Acco
 	return AccountBalanceSnapshot{Stroops: bal, AtLedger: atLedger, Snapshots: snapshots}, true, nil
 }
 
+// sampleAccountIDsQuery is [SampleAccountIDs]' frame: args are
+// (minLedger, seed, n).
+const sampleAccountIDsQuery = `
+	SELECT account_id
+	FROM stellar.ledger_entry_changes
+	WHERE entry_type = 'account' AND account_id != '' AND ledger_seq > ?
+	GROUP BY account_id
+	ORDER BY cityHash64(account_id, ?), account_id
+	LIMIT ?
+`
+
 // SampleAccountIDs returns up to n distinct account_ids that have a
 // stellar.ledger_entry_changes 'account' entry above minLedger —
 // reconcile-balances' -sample source set. Restricting to
@@ -93,11 +104,16 @@ func QueryAccountBalance(ctx context.Context, addr, accountID string) (snap Acco
 // have changed on-chain without us knowing, which would show up as a
 // false MISMATCH rather than a real one).
 //
-// Ordering by cityHash64(account_id) is a deterministic pseudo-shuffle
-// — cheap, reproducible across runs (useful for debugging a flaky
-// sample), and avoids ClickHouse's true `rand()`, which the ops
-// contract for this table doesn't need.
-func SampleAccountIDs(ctx context.Context, addr string, minLedger uint32, n int) ([]string, error) {
+// The frame is the change log itself, not the ledger_entries_current
+// projection: the tool proves the change log, so an account the projection
+// lost must still be drawable. Callers keep the scan affordable with a
+// tip-relative minLedger (the table's ORDER BY leads with ledger_seq, so the
+// window prunes to its own granules).
+//
+// The order is cityHash64(account_id, seed): a seeded pseudo-shuffle, so
+// each seed draws a different cohort while one seed reproduces its cohort
+// exactly. account_id breaks hash ties so a seed's order is total.
+func SampleAccountIDs(ctx context.Context, addr string, minLedger uint32, seed uint64, n int) ([]string, error) {
 	if n <= 0 {
 		return nil, nil
 	}
@@ -107,32 +123,9 @@ func SampleAccountIDs(ctx context.Context, addr string, minLedger uint32, n int)
 	}
 	defer func() { _ = conn.Close() }()
 
-	// Sampled from the DEDUPED current-state projection, not the raw change
-	// log. Both select exactly the same population — an account with ANY
-	// change above minLedger necessarily has its LAST change at or above it,
-	// so "last-modified > minLedger" and "has a row > minLedger" are the same
-	// set — but the change log makes ClickHouse GROUP BY across billions of
-	// account rows and then sort every distinct id. Measured on r1
-	// 2026-07-28: that shape consumed nearly the whole budget of a
-	// 900s -sample 50 run, leaving time for only 8 accounts; against
-	// ledger_entries_current (~53.8M account rows, one per account) the same
-	// query answers in ~2.4s.
-	//
-	// The tie-ambiguity that affects ledger_entries_current's VALUES
-	// (audit C2-4c) does not affect this use: only account IDENTITIES are
-	// read here, and each account's balance is still resolved from the change
-	// log by [QueryAccountBalance].
-	const query = `
-		SELECT account_id
-		FROM stellar.ledger_entries_current
-		WHERE entry_type = 'account' AND account_id != '' AND ledger_seq > ?
-		GROUP BY account_id
-		ORDER BY cityHash64(account_id)
-		LIMIT ?
-	`
-	rows, err := conn.Query(ctx, query, minLedger, n)
+	rows, err := conn.Query(ctx, sampleAccountIDsQuery, minLedger, seed, n)
 	if err != nil {
-		return nil, fmt.Errorf("clickhouse: sample account ids above ledger %d: %w", minLedger, err)
+		return nil, fmt.Errorf("clickhouse: sample account ids above ledger %d (seed %d): %w", minLedger, seed, err)
 	}
 	defer func() { _ = rows.Close() }()
 
