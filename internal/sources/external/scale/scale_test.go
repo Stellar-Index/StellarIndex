@@ -26,6 +26,18 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 		{"1e5", 8, "", true},                // scientific rejected
 		{".5", 8, "50000000", false},
 		{"7", 0, "7", false},
+		{"5.", 8, "500000000", false},
+		{"+1.5", 8, "150000000", false},
+		// Malformed input must error, never mis-decode: a doubled sign
+		// used to parse as its own negation, and junk past the target
+		// precision was truncated away unvalidated.
+		{"--1.5", 8, "", true},
+		{"-+1", 8, "", true},
+		{"-", 8, "", true},
+		{".", 8, "", true},
+		{"1.5x", 0, "", true},
+		{"1..5", 0, "", true},
+		{"0.123456789abc", 8, "", true},
 	}
 	for _, c := range cases {
 		got, err := DecimalStringToScaledInt(c.s, c.decimals)
@@ -41,6 +53,28 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 		}
 		if got.String() != c.want {
 			t.Errorf("DecimalStringToScaledInt(%q,%d) = %s, want %s", c.s, c.decimals, got.String(), c.want)
+		}
+	}
+}
+
+// An exponent spelling must decode like its plain spelling (truncation
+// past targetDecimals, as the strict parser does), not round up.
+func TestSciDecimalStringToScaledInt_MatchesPlainSpelling(t *testing.T) {
+	for _, tc := range []struct{ sci, plain string }{
+		{"1.2345678956e-1", "0.12345678956"},
+		{"9.87654329e-4", "0.000987654329"},
+		{"5.55555555e-7", "0.000000555555555"},
+	} {
+		got, err := SciDecimalStringToScaledInt(tc.sci, 8)
+		if err != nil {
+			t.Fatalf("Sci(%q): %v", tc.sci, err)
+		}
+		want, err := DecimalStringToScaledInt(tc.plain, 8)
+		if err != nil {
+			t.Fatalf("strict(%q): %v", tc.plain, err)
+		}
+		if got.Cmp(want) != 0 {
+			t.Errorf("Sci(%q,8) = %s, plain %q = %s", tc.sci, got, tc.plain, want)
 		}
 	}
 }
