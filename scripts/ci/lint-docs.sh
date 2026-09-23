@@ -369,6 +369,14 @@ stale_patterns=(
                                   # resolves to a real, unrelated open issue
                                   # (price-alert freeze marker) rather than
                                   # a 404
+  "#1263\b"                      # dangling ref (RSWP-139) — coverage-matrix.md's
+                                  # 2026-05-11 entry cited "#1263" both in the
+                                  # R-008 row and in the PR-list header; #1263
+                                  # now resolves to an unrelated, currently-open
+                                  # projector cursor-commit finding, not the
+                                  # ATH/day-VWAP fix. Bare pattern (not scoped
+                                  # to "R-008") so it also catches a citation
+                                  # reappearing in the header list alone
   "#1347\b"                      # STATUS.md's go-stellar-sdk v0.6 bump cited
                                   # #1347 before it existed (RSWP-146); #1347
                                   # is now a real, unrelated issue about

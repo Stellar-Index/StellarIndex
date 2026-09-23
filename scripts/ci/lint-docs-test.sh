@@ -133,6 +133,17 @@ check "a reintroduced 'R-013 -> #1265' citation is caught" red
 git checkout -- docs/architecture/coverage-matrix.md
 check "clean tree passes again after revert" ok
 
+# §4 stale-reference check: docs/architecture/coverage-matrix.md must not
+# carry the "#1263" citation back in (RSWP-139 — #1263 now resolves to an
+# unrelated, currently-open projector cursor-commit finding, not the
+# ATH/day-VWAP fix). Bare pattern, so a citation reappearing in the
+# 2026-05-11 PR-list header ALONE (without the literal "R-008" alongside
+# it) is caught too, not only an "R-008 → #1263" row.
+echo "(PRs #1261, #1262, #1263, #1268, #1270)" >> docs/architecture/coverage-matrix.md
+check "a reintroduced bare '#1263' header citation is caught" red
+git checkout -- docs/architecture/coverage-matrix.md
+check "clean tree passes again after revert" ok
+
 # §4 stale-reference check must cover docs/design/, not just
 # docs/architecture/ — a dangling PR citation in a design doc previously
 # escaped the scan entirely because docs/design/ was omitted from the
