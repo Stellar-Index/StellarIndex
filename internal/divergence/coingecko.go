@@ -152,7 +152,7 @@ const coinGeckoLastUpdatedKey = "last_updated_at"
 //
 // When opts.IDMap is empty, the reference falls back to a built-in
 // default that covers the canonical asset_id forms the aggregator
-// computes by default (XLM in both `crypto:XLM` and `native` forms,
+// computes by default (XLM in every canonical alias form,
 // BTC, ETH, LINK, plus the major USD stablecoins). Without this
 // fallback every divergence-cross-check call returns
 // `ErrAssetUnsupported` and `divergence_observations` stays empty
@@ -206,7 +206,7 @@ func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 // defaultCoinGeckoIDMap covers the canonical asset_id forms the
 // aggregator computes by default (per cmd/stellarindex-aggregator/
 // main.go::defaultPairs — XLM/BTC/ETH × USD/EUR/GBP, with XLM in
-// both `crypto:XLM` and `native` forms). Major USD stablecoins are
+// every canonical alias form). Major USD stablecoins are
 // included so a deployment with stablecoin-fiat-proxy enabled
 // (ADR-0026) can cross-check the underlying USDC/USDT path too.
 //
@@ -217,9 +217,7 @@ func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 // strings (`crypto:XLM`, `native`) while the poller keys on bare
 // upper-case tickers.
 func defaultCoinGeckoIDMap() map[string]string {
-	return map[string]string{
-		"crypto:XLM":  "stellar",
-		"native":      "stellar",
+	m := map[string]string{
 		"crypto:BTC":  "bitcoin",
 		"crypto:ETH":  "ethereum",
 		"crypto:LINK": "chainlink",
@@ -233,6 +231,11 @@ func defaultCoinGeckoIDMap() map[string]string {
 		"crypto:USDT":  "tether",
 		"crypto:PYUSD": "paypal-usd",
 	}
+	// Every XLM alias form, the SAC included: they share one price.
+	for _, form := range canonical.AssetAliasStrings(canonical.NativeAsset()) {
+		m[form] = "stellar"
+	}
+	return m
 }
 
 // Name implements [Reference].

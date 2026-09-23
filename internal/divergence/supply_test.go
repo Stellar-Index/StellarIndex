@@ -462,3 +462,62 @@ func bigIntStr(t *testing.T, s string) *big.Int {
 	}
 	return n
 }
+
+// ─── XLM alias-family coverage ──────────────────────────────────────
+
+// Price is alias-invariant, so the CoinGecko price reference must resolve
+// every form canonical declares as XLM. A refused form is ErrAssetUnsupported:
+// no observation, no page, a cross-check that covers nothing.
+func TestCoinGeckoPrice_AcceptsEveryXLMAliasForm(t *testing.T) {
+	const updated = 1783386375
+	srv := serveXLMBody(t, `{"stellar":{"usd":0.12,"last_updated_at":1783386375}}`)
+	ref := NewCoinGeckoReference(CoinGeckoOptions{BaseURL: srv.URL})
+	usd := mustParseAsset(t, "fiat:USD")
+	for _, form := range canonical.AssetAliases(canonical.NativeAsset()) {
+		pair := canonical.Pair{Base: form, Quote: usd}
+		got, err := ref.LookupPrice(context.Background(), pair, time.Unix(updated, 0))
+		if err != nil || got != 0.12 {
+			t.Errorf("LookupPrice(%s/fiat:USD) = %v, %v; want 0.12", form, got, err)
+		}
+	}
+}
+
+// Supply is NOT alias-invariant: the XLM SAC's supply is the wrapped amount.
+// Both XLM supply references answer for the lumens forms and refuse the SAC
+// with ErrAssetUnsupported rather than comparing it to circulating lumens.
+func TestSupplyReferences_XLMAliasForms(t *testing.T) {
+	dash := serveXLMBody(t, dashboardLumensBody)
+	cg := serveXLMBody(t, `{"market_data":{"circulating_supply":34066264765.0,"last_updated":"2026-07-07T01:00:00Z"}}`)
+	fixedNow := func() time.Time { return time.Date(2026, 7, 7, 1, 30, 0, 0, time.UTC) }
+	refs := []SupplyReference{
+		NewStellarDashboardReference(StellarDashboardOptions{BaseURL: dash.URL, NowFn: fixedNow}),
+		NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{BaseURL: cg.URL, NowFn: fixedNow}),
+	}
+	forms := canonical.AssetAliases(canonical.NativeAsset())
+	if len(forms) != 3 {
+		t.Fatalf("XLM alias family = %v, want native, crypto:XLM and the SAC", forms)
+	}
+	for _, ref := range refs {
+		for _, form := range forms {
+			got, err := ref.LookupCirculatingSupply(context.Background(), form)
+			if form.String() == canonical.XLMSacContractID {
+				if !errors.Is(err, ErrAssetUnsupported) {
+					t.Errorf("%s(%s) = %v, %v; want ErrAssetUnsupported", ref.Name(), form, got, err)
+				}
+				continue
+			}
+			if err != nil || math.Abs(got-34_066_264_765) > 1.0 {
+				t.Errorf("%s(%s) = %.2f, %v; want ~34066264765", ref.Name(), form, got, err)
+			}
+		}
+	}
+}
+
+func serveXLMBody(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
