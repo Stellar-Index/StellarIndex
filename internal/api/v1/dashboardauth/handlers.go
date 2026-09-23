@@ -940,30 +940,9 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 		defer release()
 	}
 
-	slug := slugFromEmail(email)
-	acct, err := h.cfg.Accounts.Create(ctx, platform.Account{
-		Name:         email, // operator can rename later
-		Slug:         slug,
-		BillingEmail: email,
-		Tier:         platform.TierFree,
-		Status:       platform.AccountActive,
-	})
+	acct, err := h.createSignupAccount(ctx, email)
 	if err != nil {
-		// Slug collision retry — append a 4-hex suffix and try
-		// once. v1 single-org keeps this rare; v2 will use a
-		// more robust handle generator.
-		if errors.Is(err, platform.ErrConflict) {
-			acct, err = h.cfg.Accounts.Create(ctx, platform.Account{
-				Name:         email,
-				Slug:         slug + "-" + uuid.New().String()[:4],
-				BillingEmail: email,
-				Tier:         platform.TierFree,
-				Status:       platform.AccountActive,
-			})
-		}
-		if err != nil {
-			return platform.User{}, fmt.Errorf("create account: %w", err)
-		}
+		return platform.User{}, err
 	}
 	user, err := h.cfg.Users.CreateUser(ctx, platform.User{
 		AccountID: acct.ID,
@@ -1001,6 +980,31 @@ func (h *Handlers) signupNewUser(ctx context.Context, email string) (platform.Us
 		return platform.User{}, fmt.Errorf("create user: %w", err)
 	}
 	return user, nil
+}
+
+// createSignupAccount inserts the account for a first-login email.
+// Name and slug are derived from the address, so both are clamped to
+// the accounts CHECK bounds; the full address lives in billing_email.
+func (h *Handlers) createSignupAccount(ctx context.Context, email string) (platform.Account, error) {
+	slug := slugFromEmail(email)
+	newAccount := func(slug string) platform.Account {
+		return platform.Account{
+			Name:         accountNameFromEmail(email), // operator can rename later
+			Slug:         slug,
+			BillingEmail: email,
+			Tier:         platform.TierFree,
+			Status:       platform.AccountActive,
+		}
+	}
+	acct, err := h.cfg.Accounts.Create(ctx, newAccount(slug))
+	if errors.Is(err, platform.ErrConflict) {
+		// Slug collision: retry once with a 4-hex suffix.
+		acct, err = h.cfg.Accounts.Create(ctx, newAccount(suffixSlug(slug, uuid.New().String()[:4])))
+	}
+	if err != nil {
+		return platform.Account{}, fmt.Errorf("create account: %w", err)
+	}
+	return acct, nil
 }
 
 // acquireSignupLock attempts to serialise first-login provisioning
@@ -1187,7 +1191,8 @@ func truncateUA(ua string) string {
 }
 
 // slugFromEmail derives an account slug from the local part of
-// an email. Lowercase, hyphenated, ASCII-only.
+// an email. Lowercase, hyphenated, ASCII-only, at most
+// platform.MaxAccountSlugLen bytes.
 func slugFromEmail(email string) string {
 	at := strings.IndexByte(email, '@')
 	if at <= 0 {
@@ -1206,11 +1211,39 @@ func slugFromEmail(email string) string {
 			b.WriteByte('-')
 		}
 	}
-	out := strings.Trim(b.String(), "-")
-	if out == "" {
+	return clampSlug(b.String(), platform.MaxAccountSlugLen)
+}
+
+// clampSlug trims hyphens from both ends of an ASCII slug and caps it
+// at maxLen bytes, falling back to "user" when nothing is left.
+func clampSlug(s string, maxLen int) string {
+	s = strings.Trim(s, "-")
+	if len(s) > maxLen {
+		s = strings.TrimRight(s[:maxLen], "-")
+	}
+	if s == "" {
 		return "user"
 	}
-	return out
+	return s
+}
+
+// suffixSlug appends "-<suffix>" to slug, shortening slug first so the
+// result still fits platform.MaxAccountSlugLen.
+func suffixSlug(slug, suffix string) string {
+	return clampSlug(slug, platform.MaxAccountSlugLen-len(suffix)-1) + "-" + suffix
+}
+
+// accountNameFromEmail returns email cut to platform.MaxAccountNameLen
+// characters on a rune boundary (Postgres length() counts characters).
+func accountNameFromEmail(email string) string {
+	n := 0
+	for i := range email {
+		if n == platform.MaxAccountNameLen {
+			return email[:i]
+		}
+		n++
+	}
+	return email
 }
 
 // writeProblem emits a problem+json error body matching the

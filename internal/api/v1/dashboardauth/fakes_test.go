@@ -3,11 +3,14 @@ package dashboardauth
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net"
+	"regexp"
 	"sort"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 
@@ -50,9 +53,20 @@ func newFakeAccountStore() *fakeAccountStore {
 	}
 }
 
+// fakeAccountSlugRE and the 1..200-character name bound are copied
+// verbatim from the accounts CHECK constraints in migration 0027.
+var fakeAccountSlugRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+// errFakeCheckViolation stands in for SQLSTATE 23514, which
+// AccountStore.Create does NOT map to ErrConflict.
+var errFakeCheckViolation = errors.New("fake: accounts CHECK constraint violated (23514)")
+
 func (f *fakeAccountStore) Create(_ context.Context, a platform.Account) (platform.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if n := utf8.RuneCountInString(a.Name); n < 1 || n > 200 || !fakeAccountSlugRE.MatchString(a.Slug) {
+		return platform.Account{}, errFakeCheckViolation
+	}
 	if _, exists := f.bySlug[a.Slug]; exists {
 		return platform.Account{}, platform.ErrConflict
 	}

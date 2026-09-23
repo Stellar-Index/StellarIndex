@@ -234,6 +234,15 @@ const (
 	AccountClosed    AccountStatus = "closed"
 )
 
+// Bounds the accounts CHECK constraints enforce (migration 0027):
+// length(name) BETWEEN 1 AND 200 counts characters, and the slug
+// pattern ^[a-z0-9][a-z0-9-]{0,62}$ admits at most 63 bytes. Code
+// that derives either field from user input must stay inside them.
+const (
+	MaxAccountNameLen = 200
+	MaxAccountSlugLen = 63
+)
+
 // Account is the top-level org primitive — every API key,
 // webhook, audit-log entry hangs off Account.ID.
 //
