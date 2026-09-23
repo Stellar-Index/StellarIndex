@@ -10571,6 +10571,7 @@ export interface components {
         };
         OraclePricesEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: {
+                asset: string;
                 price: string;
                 /** Format: date-time */
                 timestamp: string;
@@ -13686,6 +13687,7 @@ export interface operations {
                      */
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data: components["schemas"]["PoolRow"][];
+                        pagination?: components["schemas"]["Pagination"];
                     };
                 };
             };
@@ -21964,7 +21966,10 @@ export interface operations {
                                 sponsors: number;
                                 /** Format: int64 */
                                 sponsorships_started: number;
-                                /** Format: int64 */
+                                /**
+                                 * Format: int64
+                                 * @description Distinct accounts sponsored across the WHOLE board, counted once each even if sponsored by more than one sponsor. NOT a sum of the per-row distinct_sponsored figures, which over-counts any account with multiple sponsors.
+                                 */
                                 distinct_sponsored: number;
                                 /** Format: int64 */
                                 revocations_issued: number;
