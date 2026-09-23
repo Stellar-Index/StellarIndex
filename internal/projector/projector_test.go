@@ -5,11 +5,19 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker/guardscan"
 )
 
 // fakeDecoder is a configurable dispatcher.Decoder for the X9
@@ -290,5 +298,93 @@ func TestAdaptiveWindow(t *testing.T) {
 	}
 	if w != BatchLimit {
 		t.Fatalf("recovered to %d, want %d", w, BatchLimit)
+	}
+}
+
+// TestSinkSideShrink_BudgetExhaustedHalvesWindow pins the 2026-08-01
+// incident class: a window whose CH scan completes but whose sink writes
+// exhaust the cycle budget must SHRINK the adaptive window (the stream-side
+// shrink alone retried the identical dense range forever — aquarius
+// reserves wedged 3.5h at ledger 63,488,687).
+func TestSinkSideShrink_BudgetExhaustedHalvesWindow(t *testing.T) {
+	next, shrunk := shrinkWindow(BatchLimit, context.DeadlineExceeded)
+	if !shrunk || next != BatchLimit/2 {
+		t.Fatalf("expected halved window on deadline, got next=%d shrunk=%v", next, shrunk)
+	}
+	// The floor holds.
+	next, shrunk = shrinkWindow(MinBatchLimit, context.DeadlineExceeded)
+	if shrunk || next != MinBatchLimit {
+		t.Fatalf("expected floor hold, got next=%d shrunk=%v", next, shrunk)
+	}
+}
+
+// TestRun_PanicOutsideRowIsRecovered pins that a panic in a source's cycle
+// machinery (not a row — those have their own recover) or in the replay-window
+// watcher stops only that goroutine: the process survives, worker_panics_total
+// moves, and once every goroutine has stopped Run returns an error rather than
+// the nil a clean exit would give. A zero-value Store nil-derefs its *sql.DB on
+// the first read in both.
+func TestRun_PanicOutsideRowIsRecovered(t *testing.T) {
+	const src = "panic-outside-row"
+	srcCounter := obs.WorkerPanicsTotal.WithLabelValues(sourceWorkerName(src))
+	watchCounter := obs.WorkerPanicsTotal.WithLabelValues(replayWindowWorkerName)
+	srcBefore, watchBefore := testutil.ToFloat64(srcCounter), testutil.ToFloat64(watchCounter)
+
+	p := New(&timescale.Store{}, Registry{Sources: []Source{{Name: src}}},
+		func(context.Context, consumer.Event) error { return nil }, discardLog())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- p.Run(ctx) }()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for testutil.ToFloat64(srcCounter) == srcBefore || testutil.ToFloat64(watchCounter) == watchBefore {
+		if time.Now().After(deadline) {
+			t.Fatalf("worker_panics_total did not move: source %v→%v, watcher %v→%v",
+				srcBefore, testutil.ToFloat64(srcCounter), watchBefore, testutil.ToFloat64(watchCounter))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	select {
+	case err := <-done:
+		if err == nil || errors.Is(err, context.Canceled) {
+			t.Fatalf("Run returned %v, want a non-cancellation error naming the stopped goroutines", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after every goroutine stopped — a panicked goroutine never released the WaitGroup")
+	}
+}
+
+// TestProjectorGoroutinesRecover is the package-wide guard: every `go`
+// statement in this package's non-test files must defer worker.Recover. The
+// indexer's own guard test scans main.go only and cannot see the goroutines
+// Run fans out. Proven red: removing either guard in Run fails it by line.
+func TestProjectorGoroutinesRecover(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanner := guardscan.NewScanner(guardscan.Config{Guards: []string{"worker.Recover", "worker.Report"}})
+	checked := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		sites, err := scanner.ScanFile(f)
+		if err != nil {
+			t.Fatalf("scan %s: %v", f, err)
+		}
+		for _, s := range sites {
+			checked++
+			if s.Kind == guardscan.KindUnresolved || !s.Recovers {
+				t.Errorf("go %s at %s:%d does not defer worker.Recover — a panic there kills the "+
+					"indexer without draining its sinks", s.Target, f, s.Line)
+			}
+		}
+	}
+	if checked < 2 {
+		t.Errorf("discovered %d goroutine(s) in internal/projector, want at least 2 (Run's watcher "+
+			"and per-source fan-out) — the scan has drifted from the code", checked)
 	}
 }

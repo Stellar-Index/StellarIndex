@@ -50,6 +50,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Interval is the catch-up cadence. The projector reads new
@@ -291,6 +292,13 @@ func New(store *timescale.Store, registry Registry, sink SinkFunc, logger *slog.
 	return p
 }
 
+// replayWindowWorkerName is the worker_panics_total label for the shared
+// replay-window watcher Run starts.
+const replayWindowWorkerName = "projector-replay-windows"
+
+// sourceWorkerName is the worker_panics_total label for one source's goroutine.
+func sourceWorkerName(source string) string { return "projector-source-" + source }
+
 // Run blocks until ctx is cancelled. Drives one goroutine per
 // source; each independently tails its slice of soroban_events
 // and advances its cursor.
@@ -308,22 +316,33 @@ func (p *Projector) Run(ctx context.Context) error {
 	}
 
 	var wg sync.WaitGroup
+	// Each goroutine recovers its own panic: the indexer's guard around Run
+	// cannot reach them, and an unrecovered one kills the process before its
+	// sinks drain. A panicked source stops; its siblings keep projecting.
+	//
 	// One shared watcher for every source: publishes
 	// obs.ProjectorReplayWindowActive so the lag alert can tell an
 	// operator-initiated rewind apart from a real fall-behind.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer worker.Recover(p.logger, replayWindowWorkerName)
 		p.watchReplayWindows(ctx)
 	}()
 	for _, src := range p.registry.Sources {
 		wg.Add(1)
 		go func(src Source) {
 			defer wg.Done()
+			defer worker.Recover(p.logger, sourceWorkerName(src.Name))
 			p.runOneSource(ctx, src)
 		}(src)
 	}
 	wg.Wait()
+	if ctx.Err() == nil {
+		// Every loop exits only on ctx.Done, so reaching here uncancelled means
+		// each goroutine was stopped by a recovered panic — not a clean exit.
+		return errors.New("projector: every goroutine stopped on a recovered panic before cancellation")
+	}
 	return ctx.Err()
 }
 
