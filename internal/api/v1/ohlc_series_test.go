@@ -165,6 +165,59 @@ func TestOHLCSeries_DailyBoundaryAlignment(t *testing.T) {
 	}
 }
 
+// pgTimeBucketOrigin mirrors timescale's time_bucket() default
+// origin (2000-01-03 00:00 UTC, a Monday) — see
+// internal/storage/timescale/aggregates.go's OHLCSeriesReBucketed
+// doc comment. Server-side folded intervals (3d/2w/2h, RLT-258) grid
+// off this origin; the tests below pin that the API's default `to`
+// does too.
+var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
+
+// TestOHLCSeries_ThreeDayBoundaryMatchesTimeBucketOrigin — the
+// default `to` for interval=3d must land on the same grid
+// [timescale.Store.OHLCSeriesReBucketed]'s `time_bucket(INTERVAL '3
+// days', …)` folds prices_1d onto, i.e. a multiple of 72h measured
+// from pgTimeBucketOrigin. [time.Time.Truncate] floors from Go's
+// zero time instead, whose offset from pgTimeBucketOrigin is not a
+// multiple of 72h, so the un-fixed handler's default `to` is
+// provably off that grid for every possible "now" (RLT-258).
+func TestOHLCSeries_ThreeDayBoundaryMatchesTimeBucketOrigin(t *testing.T) {
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{}}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=fiat:USD&interval=3d&limit=5")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	gotTo := reader.LastTo()
+	width := 3 * 24 * time.Hour
+	if rem := gotTo.Sub(pgTimeBucketOrigin) % width; rem != 0 {
+		t.Errorf("to = %v is %v off the 3d time_bucket grid (origin %v) — client truncation disagrees with the server's default time_bucket origin",
+			gotTo, rem, pgTimeBucketOrigin)
+	}
+}
+
+// TestOHLCSeries_TwoWeekBoundaryMatchesTimeBucketOrigin — same
+// property at the 2w fold (14 days folding prices_1w). See
+// TestOHLCSeries_ThreeDayBoundaryMatchesTimeBucketOrigin.
+func TestOHLCSeries_TwoWeekBoundaryMatchesTimeBucketOrigin(t *testing.T) {
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{}}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=fiat:USD&interval=2w&limit=5")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	gotTo := reader.LastTo()
+	width := 14 * 24 * time.Hour
+	if rem := gotTo.Sub(pgTimeBucketOrigin) % width; rem != 0 {
+		t.Errorf("to = %v is %v off the 2w time_bucket grid (origin %v) — client truncation disagrees with the server's default time_bucket origin",
+			gotTo, rem, pgTimeBucketOrigin)
+	}
+}
+
 // TestOHLCSeries_ExplicitFromTo — explicit RFC3339 from/to flow
 // through verbatim (no clamping); interval validation still
 // applies.
