@@ -218,7 +218,11 @@ func TestCompositeReference_VenueSpecificSpikeStillFreezes(t *testing.T) {
 // counter and verdict gauge move — and the served independence count
 // is STILL 1 (effectiveSourceCount is untouched by the composite).
 func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
-	beforeSuppressed := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal)
+	// An unrelated (pair, window) that this scenario never touches —
+	// read before and after to prove the suppression is attributed to
+	// the firing pair, not folded into one process-wide tally.
+	unrelatedPair := mkPair(t, "crypto", "BTC", "fiat", "USD")
+	beforeUnrelated := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(unrelatedPair.String(), (15 * time.Minute).String()))
 	res := runCompositeRefScenario(t, compositeRefScenario{
 		legSources:    []string{"kraken", "coinbase"},
 		legPriceT2:    15_000_000, // XLM/USD moved WITH the venue → composite 0.12
@@ -253,8 +257,11 @@ func TestCompositeReference_MarketWideMoveDoesNotFreeze(t *testing.T) {
 	if n := res.o.effectiveSourceCount(res.xlmGBP, res.window, res.t2Trades); n != 1 {
 		t.Errorf("effectiveSourceCount = %d, want 1 — the composite must never widen source_count", n)
 	}
-	if got := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal) - beforeSuppressed; got < 1 {
-		t.Errorf("composite_freeze_suppressed_total advanced by %v, want >= 1", got)
+	if got := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(res.xlmGBP.String(), res.window.String())); got < 1 {
+		t.Errorf("composite_freeze_suppressed_total{pair=%s,window=%s} = %v, want >= 1", res.xlmGBP.String(), res.window.String(), got)
+	}
+	if got := testutil.ToFloat64(obs.AggregatorCompositeFreezeSuppressedTotal.WithLabelValues(unrelatedPair.String(), (15*time.Minute).String())) - beforeUnrelated; got != 0 {
+		t.Errorf("composite_freeze_suppressed_total{pair=%s} advanced by %v, want 0 — suppression must be attributed to the firing pair, not a shared/global series", unrelatedPair.String(), got)
 	}
 	if g := testutil.ToFloat64(obs.AggregatorCompositeCorroboration.WithLabelValues(
 		res.xlmGBP.String(), res.window.String(), string(compositeVerdictCorroborated))); g != 1 {

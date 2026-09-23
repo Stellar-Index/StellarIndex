@@ -3699,12 +3699,16 @@ var AggregatorCompositeReferenceLegDispersionBps = prometheus.NewGaugeVec(
 // current-bucket composite reference corroborated the move. Every
 // increment is a bucket that would have frozen before 2026-08-29; read
 // it next to stellarindex_anomaly_freeze_engaged_total when judging
-// whether the tolerance is too loose.
-var AggregatorCompositeFreezeSuppressedTotal = prometheus.NewCounter(
+// whether the tolerance is too loose. Labelled (pair, window) — same
+// pair as AggregatorCompositeCorroboration — so a suppression can be
+// attributed to the pair it happened on rather than read as one
+// unattributed process-wide tally.
+var AggregatorCompositeFreezeSuppressedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_composite_freeze_suppressed_total",
-		Help: "Phase-2 freeze fires suppressed because the current-bucket composite reference corroborated the move (corroboration_basis=composite).",
+		Help: "Phase-2 freeze fires suppressed because the current-bucket composite reference corroborated the move (corroboration_basis=composite), per (pair, window).",
 	},
+	[]string{"pair", "window"},
 )
 
 // AggregatorFXSnapFallbackTotal — counter of triangulation legs that
