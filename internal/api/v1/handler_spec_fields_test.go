@@ -54,6 +54,7 @@ var handlerSpecFieldPairs = []struct {
 	{"Price", reflect.TypeOf(PriceSnapshot{})},
 	{"AccountActivity", reflect.TypeOf(explorerpkg.AccountActivityView{})},
 	{"AccountTrade", reflect.TypeOf(explorerpkg.AccountTradeEntry{})},
+	{"TxSummary", reflect.TypeOf(explorerpkg.TxSummaryView{})},
 }
 
 func TestHandlerResponseFieldsAreDocumented(t *testing.T) {
