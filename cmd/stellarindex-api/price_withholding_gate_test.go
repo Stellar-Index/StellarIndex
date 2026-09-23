@@ -2,14 +2,20 @@ package main
 
 import (
 	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -648,8 +654,10 @@ func (sc *v1Scan) covered(fn *v1Func, before token.Pos, seen map[*v1Func]bool) (
 // consultBefore finds a withholding consultation positioned before
 // `before`. The package spells the decision three ways: scamWithheld()
 // (the handler chokepoint), withheldBy() (its fold with the substance
-// gate, which calls scamWithheld) and the ErrPriceWithheld verdict the
-// store readers propagate. A hand-rolled s.scam.Withheld() is none, and the
+// gate, which calls scamWithheld), writeIfScamWithheld() (scamWithheld
+// plus the scam-worded problem, for handlers that answer the verdict
+// themselves) and the ErrPriceWithheld verdict the store readers
+// propagate. A hand-rolled s.scam.Withheld() is none of them, and the
 // handler package's own TestScamGateIsAskedThePairQuestion fails on it.
 func (sc *v1Scan) consultBefore(fn *v1Func, before token.Pos) (token.Pos, bool) {
 	found := token.NoPos
@@ -658,7 +666,9 @@ func (sc *v1Scan) consultBefore(fn *v1Func, before token.Pos) (token.Pos, bool) 
 		if !ok || id.Pos() >= before {
 			return true
 		}
-		if id.Name != "scamWithheld" && id.Name != "withheldBy" && id.Name != "ErrPriceWithheld" {
+		switch id.Name {
+		case "scamWithheld", "withheldBy", "writeIfScamWithheld", "ErrPriceWithheld":
+		default:
 			return true
 		}
 		if found == token.NoPos || id.Pos() < found {
@@ -705,4 +715,65 @@ func isHTTPHandler(fn *ast.FuncDecl) bool {
 		}
 	}
 	return false
+}
+
+// errPriceReader is a v1.PriceReader whose every read fails with err: the
+// transport that puts a real store reader's withholding error on the
+// /v1/price wire.
+type errPriceReader struct{ err error }
+
+func (r errPriceReader) LatestPrice(context.Context, canonical.Asset, canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	return v1.PriceSnapshot{}, nil, false, r.err
+}
+
+func (r errPriceReader) RecentClosedSnapshots(context.Context, canonical.Asset, canonical.Asset, int) ([]v1.PriceSnapshot, error) {
+	return nil, r.err
+}
+
+// TestReaderChokepointNamesTheScamGate pins that a store reader withholding
+// for a directory-flagged issuer says so on the wire. The reader seams
+// returned the bare sentinel, so /v1/price described a flagged issuer's
+// market as too thin and told the client to recompute the price from the
+// raw trades — the price the gate exists to refuse (#732).
+func TestReaderChokepointNamesTheScamGate(t *testing.T) {
+	const issuer = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	flagged, err := canonical.NewClassicAsset("RIO", issuer)
+	if err != nil {
+		t.Fatalf("classic asset: %v", err)
+	}
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("build fiat:USD: %v", err)
+	}
+	pair, err := canonical.NewPair(flagged, usd)
+	if err != nil {
+		t.Fatalf("pair: %v", err)
+	}
+	gate := pricingguard.NewScamGate(&flaggingScamDirectory{flagged: map[string]bool{issuer: true}}, pricingguard.ScamGateOptions{})
+	reader := storePriceAtReader{scam: gate} // nil store: the gate answers before any read
+
+	_, _, _, readErr := reader.PriceAt(context.Background(), pair, time.Now().Add(-time.Hour), time.Hour)
+	if !errors.Is(readErr, v1.ErrPriceWithheld) {
+		t.Fatalf("PriceAt err = %v, want an ErrPriceWithheld-compatible error", readErr)
+	}
+
+	ts := httptest.NewServer(v1.New(v1.Options{Prices: errPriceReader{err: readErr}}).Handler())
+	t.Cleanup(ts.Close)
+	resp, err := http.Get(ts.URL + "/v1/price?asset=" + flagged.String() + "&quote=fiat:USD")
+	if err != nil {
+		t.Fatalf("GET /v1/price: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", resp.StatusCode, body)
+	}
+	if !strings.Contains(string(body), "Price withheld — issuer flagged") {
+		t.Errorf("withheld body must name the flagged issuer as the cause: %s", body)
+	}
+	for _, wrong := range []string{"too thin", "apply your own judgement", "/v1/history"} {
+		if strings.Contains(string(body), wrong) {
+			t.Errorf("a flagged issuer's withheld body must not say %q: %s", wrong, body)
+		}
+	}
 }

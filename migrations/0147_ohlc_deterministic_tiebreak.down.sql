@@ -6,8 +6,28 @@
 -- bars. Roll back only to unblock an incident; prefer a new forward
 -- migration for any lasting change.
 --
--- ⚠ Like the up, this leaves the CAGGs EMPTY (WITH NO DATA) — a full
--- operator re-materialization is required afterwards; see the up.
+-- ⚠ Like the up, this leaves the CAGGs EMPTY (WITH NO DATA), and no
+-- migration can refill them: refresh_continuous_aggregate refuses a
+-- transaction block. Re-materialize by hand afterwards, recent first:
+--
+--   CALL refresh_continuous_aggregate('prices_1m',  now() - INTERVAL '7 days', now());
+--   CALL refresh_continuous_aggregate('prices_15m', now() - INTERVAL '30 days', now());
+--   CALL refresh_continuous_aggregate('prices_1h',  NULL, now());
+--   CALL refresh_continuous_aggregate('prices_4h',  NULL, now());
+--   CALL refresh_continuous_aggregate('prices_1d',  NULL, now());
+--   CALL refresh_continuous_aggregate('prices_1w',  NULL, now());
+--   CALL refresh_continuous_aggregate('prices_1mo', NULL, now());
+--   CALL refresh_continuous_aggregate('prices_1m',  NULL, now() - INTERVAL '7 days');
+--   CALL refresh_continuous_aggregate('prices_15m', NULL, now() - INTERVAL '30 days');
+--   CALL refresh_continuous_aggregate('twap_1h', NULL, now());
+--   CALL refresh_continuous_aggregate('twap_1d', NULL, now());
+--
+-- twap_1h / twap_1d are built on prices_1m's materialization, so they
+-- go LAST, once prices_1m is whole. Their NULL start is safe here and
+-- only here: this down has just recreated prices_1m and both TWAP views,
+-- so no invalidation entry from a 0156 retention drop survives (0156's
+-- warning is about the views that drop left behind). Budget hours;
+-- run off-peak.
 
 BEGIN;
 

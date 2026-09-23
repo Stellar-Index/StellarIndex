@@ -65,8 +65,12 @@ topic shape must NOT match (this is the gate working).
 
 - Amounts: `scval.AsAmountFromI128/U128` → `canonical.Amount` —
   `int64(parts.Lo)` is rejected in review every time (ADR-0003).
-- New projected source's cursor inits near genesis — fast-forward to
-  tip on deploy or it crawls empty history (blend_backstop lesson).
+- A projected source with no cursor row starts at its `Source.Genesis`
+  (set in `internal/projector/registry.go::buildSource` from the
+  package's verified first-event ledger), raised to the lake floor.
+  Without one it crawls empty history from the lake floor at ~200
+  ledgers/s (blend_backstop lesson); `TestProjectedSourcesDeclareGenesis`
+  fails until you declare it or list the source as a lake-floor crawler.
 - Deploy order: seed contracts on r1 BEFORE the gated binary, then
   lake re-derive (`projector-replay`), then one green
   `compute-completeness -ch -source <name>` cycle (ADR-0040 §2).

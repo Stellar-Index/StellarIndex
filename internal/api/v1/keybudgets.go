@@ -182,10 +182,10 @@ func (s *Server) downgradePlatformAPIKeys(
 	if st.Platform == nil {
 		return 0, 0
 	}
-	keys, err := st.Platform.ListForAccount(ctx, account.ID)
+	keys, err := st.Platform.ListActiveForAccount(ctx, account.ID)
 	if err != nil {
 		st.note("list_keys")
-		s.logger.Error("tier clamp: ListForAccount failed; platform-backed keys keep the OLD budget",
+		s.logger.Error("tier clamp: ListActiveForAccount failed; platform-backed keys keep the OLD budget",
 			"cause", cause, "account_id", account.ID, "err", err)
 		return 0, 1
 	}

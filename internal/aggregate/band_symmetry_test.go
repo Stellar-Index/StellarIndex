@@ -15,13 +15,13 @@ import (
 // (`|p − centre| > K·scale`), which is one-sided-blind by construction:
 // a price can only be `centre` below the centre, so once `K·scale`
 // reaches the centre NO downward print — a 5× crash, a decimal-shift
-// fat finger, an exact 0 — can exceed the threshold, while the
+// fat finger (on the served guard, even an exact 0) — can exceed the threshold, while the
 // mirror-image up-move still is. The additive band goes blind below at
 // a relative scale of 1/K: 16.9 % relative MAD for [FilterOutliers] at
 // the default σ=4, 6.75 % for the served-VWAP guard at K=10 — dispersion
 // an ordinary long-tail pair reaches routinely.
 //
-// The bands are now symmetric in RATIO space (ADR-0046 §1: a ½× and a 2×
+// The bands are now symmetric in RATIO space (ADR-0046 §1's direction symmetry: a ½× and a 2×
 // deviation are equally outlying), so these assert the DOWNWARD half of
 // each band as tightly as the upward half, and pin the upward half
 // unchanged so the fix cannot degenerate into "reject more of

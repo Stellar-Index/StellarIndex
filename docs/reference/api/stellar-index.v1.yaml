@@ -1273,7 +1273,12 @@ paths:
         carries `coverage_from` and `outside_coverage` as extension
         members, measured over the pair AND those pegs together — the
         earliest bucket any of them holds — so an instant a peg covers
-        is reported as a gap, not as predating the history held.
+        is reported as a gap, not as predating the history held. A bucket
+        that exists but is refused — by the thin-market or scam-issuer
+        gate, or by the serving-sanity guard when a 1-minute bucket
+        deviates grossly from the buckets before it (or has none to be
+        checked against) and no clean bucket falls within the lookback —
+        is a 404 of type `price-withheld`, never `price-not-found`.
         Current price: /v1/price or /v1/price/tip. Multi-horizon change:
         /v1/price/changes.
       parameters:
@@ -1320,7 +1325,11 @@ paths:
         aged out of the served tier. A horizon with no data that far back
         (a young pair, or a market that predates the window) is returned
         with all fields `null` and `available: false` — NEVER an error,
-        so a fresh listing still returns its 1h/24h moves. Each horizon
+        so a fresh listing still returns its 1h/24h moves. A horizon whose
+        reference bucket exists but was refused by a serving gate (the
+        thin-market or scam-issuer gate, or the serving-sanity guard that
+        rejects a manipulated minute) is the same null shape with
+        `withheld: true`, so it is never mistaken for missing history. Each horizon
         carries `reference_at` + `resolution` so callers see exactly
         which bucket (and at what granularity) the delta was measured
         against. A 404 only when the pair has no CURRENT price to anchor
@@ -1349,24 +1358,28 @@ paths:
                     reference_at: '2026-07-04T23:00:00Z'
                     resolution: 1m
                     available: true
+                    withheld: false
                   24h:
                     change_pct: '+3.62'
                     reference_price: '0.19703'
                     reference_at: '2026-07-04T00:00:00Z'
                     resolution: 1m
                     available: true
+                    withheld: false
                   7d:
                     change_pct: '-1.08'
                     reference_price: '0.20639'
                     reference_at: '2026-06-28T00:00:00Z'
                     resolution: 1h
                     available: true
+                    withheld: false
                   30d:
                     change_pct: null
                     reference_price: null
                     reference_at: null
                     resolution: null
                     available: false
+                    withheld: false
                 as_of: '2026-07-05T00:00:12.481Z'
                 flags:
                   stale: false
@@ -1870,7 +1883,16 @@ paths:
         - Events carry the `/v1/price` envelope shape (`data` +
           `as_of`); `flags` / `sources` are present only when the
           publishing path evaluated them — absent flags mean "not
-          evaluated", never "fresh".
+          evaluated", never "fresh". The aggregator's 300 / 3600 /
+          86400 series carry neither.
+        - `observed_at` and `as_of` are both the END of the closed
+          1-minute bucket the event was computed at, so they are
+          equal on every event. `price` is the VWAP over
+          `[observed_at - window_seconds, observed_at)`. A series
+          advances once per closed minute, so consecutive events on
+          a 3600 or 86400 series are overlapping trailing windows,
+          not disjoint buckets: identify an event by
+          `(window_seconds, observed_at)`, and never sum them.
         - URL discipline: `?granularity=` returns 400 — bucket series
           are selected by `window_seconds`; use
           `/v1/history/since-inception` for chart granularities.
@@ -1902,13 +1924,13 @@ paths:
               example: |
                 id: 0198a4203f100001
                 event: price_update
-                data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:42.881Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:00Z"}
 
                 :keepalive
 
                 id: 0198a4203f100002
                 event: price_update
-                data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00.417Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00Z"}
 
         "400":        { $ref: "#/components/responses/BadRequest" }
         "404":        { $ref: "#/components/responses/NotFound" }
@@ -4126,7 +4148,17 @@ paths:
         every list view + price card on the showcase site
         (data-inventory §6.1). Refreshed every 5 minutes by the
         change-summary worker; stale rows (>10 min) indicate the
-        worker is lagging.
+        worker is lagging. Every value is computed from CLOSED
+        1-minute buckets only (ADR-0015): the minute still filling
+        never becomes `current_value` or an ATH/ATL.
+
+        The `*_value` and ATH/ATL fields are aggregated price claims,
+        so they are withheld exactly when `/v1/price` withholds the
+        market: a 404 `price-withheld` problem when the issuer on
+        either leg is directory-flagged or the market is below the
+        serve floor. For a `coin` row the floor is met when any of
+        the asset's plausible backing markets (vs XLM, vs USD, vs a
+        declared USD peg) clears it.
 
         Returns 404 when the worker hasn't computed a row yet (fresh
         deployment, newly-added entity, bounded history, or an entity
@@ -6336,7 +6368,7 @@ paths:
             split the catalogue by role.
           schema:
             type: string
-            enum: [exchange, aggregator, oracle, authority_sanity, lending, router]
+            enum: [exchange, aggregator, oracle, authority_sanity, lending, router, bridge]
         - name: include
           in: query
           required: false
@@ -8200,8 +8232,11 @@ paths:
         `suspended` or `closed` stops its API keys authenticating and
         denies its dashboard sessions; `suspended_reason` is stored
         alongside and `suspended_at` is stamped on the first transition
-        away from `active`. Moving back to `active` clears both. To kill a
-        single leaked credential instead, use
+        away from `active`. Moving back to `active` clears both. `closed`
+        is terminal: every live dashboard API key is revoked (reason
+        `account closed`), and any later `status` other than `closed` is
+        refused with 409. Re-sending `status: closed` retries revocations
+        that failed. To kill a single leaked credential instead, use
         `DELETE /v1/admin/keys/{keyID}`.
 
         Operator-tier only (staff-issued via stellarindex-ops; never
@@ -8294,6 +8329,11 @@ paths:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
         "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The account is closed and the request would move it to another status.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
@@ -8733,8 +8773,10 @@ paths:
       security:
         - SessionCookie: []
       description: |
-        Session-gated. Returns every key (active + revoked) for
-        the authenticated user's account, ordered oldest-first.
+        Session-gated. Returns every active key plus the 100 most
+        recently created revoked keys for the authenticated user's
+        account, ordered oldest-first. `revoked_truncated` is true
+        when older revoked keys exist and were omitted.
         Plaintext is never returned by this endpoint — only
         the prefix (`sip_4f9c1d8b…`).
       responses:
@@ -8754,13 +8796,19 @@ paths:
                   usage_alert_threshold_pct: 80
                   last_used_at: '2026-07-03T08:59:41Z'
                   created_at: '2026-06-12T08:30:00Z'
+                revoked_truncated: false
               schema:
                 type: object
                 properties:
                   keys:
                     type: array
                     items: { $ref: "#/components/schemas/DashboardKey" }
-                required: [keys]
+                  revoked_truncated:
+                    type: boolean
+                    description: |
+                      True when the account holds more revoked keys than
+                      the 100 most recent returned in `keys`.
+                required: [keys, revoked_truncated]
         "401":
           description: No valid session cookie.
           content:
@@ -12850,10 +12898,20 @@ components:
           type: integer
           format: int64
           description: |
-            All-time attributed trade count (taker or maker side) — the
-            same attribution scope /accounts/{g_strkey}/trades documents
+            Attributed trade count (taker or maker side) — the same
+            attribution scope /accounts/{g_strkey}/trades documents
             (soroswap + off-chain trades carry no account and are not
-            counted). Absent = the segment could not be read, not zero.
+            counted). All-time ONLY when trades_total_since is absent;
+            when it is present this counts trades from that date
+            onward. Absent = the segment could not be read, not zero.
+        trades_total_since:
+          type: string
+          format: date
+          description: |
+            When present, the UTC date (YYYY-MM-DD) trades_total counts
+            FROM: the trades compression horizon, before which rows are
+            not yet searchable per account. Absent = trades_total is
+            all-time.
         defi_actions:
           type: array
           items: { $ref: "#/components/schemas/AccountDefiActionCount" }
@@ -13090,6 +13148,14 @@ components:
             Descriptive, first-wins metadata from the trade's own routing
             structure — not authenticated provenance and not a price input
             (see the same field on the trade-history schema).
+        signer:
+          type: string
+          description: |
+            The transaction source account (fee-payer / initiator)
+            behind an AMM or Soroban swap, where the recorded taker is
+            a router or contract. Absent for non-AMM trades and for
+            trades the signer sweeper has not yet tagged (migration
+            0150).
       required: [ts, source, base_asset, quote_asset, base_amount, quote_amount, tx_hash, ledger, op_index, role]
     AccountTrades:
       type: object
@@ -13663,7 +13729,11 @@ components:
             signature in `X-StellarIndex-Signature` (prefixed `sha256=`)
             and the signing time in `X-StellarIndex-Timestamp`. See
             `CreateWebhookResponse.secret` for the exact construction —
-            the timestamp is part of the signed message.
+            the timestamp is part of the signed message. Every delivery
+            also carries `X-StellarIndex-Event` (the event type, one of
+            `events`, for routing before the body is parsed) and
+            `X-StellarIndex-Delivery-Id`. `X-StellarIndex-Event` is not
+            signed; the body's `event` field is the authenticated copy.
         events:
           type: array
           description: |
@@ -17836,8 +17906,11 @@ components:
           description: "CAGG resolution that served the reference bucket — one of 1m, 15m, 1h, 4h, 1d. Null when unavailable."
         available:
           type: boolean
-          description: "False when no closed bucket exists that far back (all sibling fields null)."
-      required: [change_pct, reference_price, reference_at, resolution, available]
+          description: "False when the horizon has no reference price (all nullable fields null) — no data that far back, or a withheld reference (see withheld)."
+        withheld:
+          type: boolean
+          description: "True when the reference bucket exists but a serving gate refused to publish it (thin-market or scam-issuer gate, or the serving-sanity guard). Always false when available is true."
+      required: [change_pct, reference_price, reference_at, resolution, available, withheld]
 
     PriceChanges:
       # The /v1/price/changes payload — EXACTLY the fields the handler's
@@ -18391,7 +18464,7 @@ components:
         price_raw:   { type: string, description: "Raw integer value preserved for cross-check (ADR-0003)." }
         decimals:    { type: integer, minimum: 0, maximum: 38 }
         confidence:  { type: number, minimum: 0, maximum: 1, description: "0 means unreported, not zero-confidence." }
-        observer:    { type: string, description: "G-strkey of the publishing account; empty when unknown." }
+        observer:    { type: string, description: "Strkey of the publishing relayer — an account (G…) or, when the relayer is a contract, a C… address; empty when unknown." }
         mapped:      { type: boolean, description: "false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query." }
       required: [source, asset, quote, ts, price, price_raw, decimals, mapped]
 
@@ -18653,7 +18726,7 @@ components:
             properties:
               name:
                 type: string
-                enum: [exchange, aggregator, oracle, authority_sanity, lending, router]
+                enum: [exchange, aggregator, oracle, authority_sanity, lending, router, bridge]
               contributes_to_vwap: { type: boolean }
               description:         { type: string }
             required: [name, contributes_to_vwap, description]
@@ -18755,9 +18828,11 @@ components:
             prefix feature shipped.
         tier:
           type: string
-          enum: [anonymous, apikey, sep10, operator]
+          enum: [apikey, sep10, operator]
           description: |
             The auth.Tier value actually served (internal/auth/subject.go).
+            Never `anonymous`: an unauthenticated caller receives 401, not
+            an Account.
             `operator` is an internal credential, reserved for admin
             endpoints; never issued to a public caller.
         rate_limit_per_min: { type: integer }

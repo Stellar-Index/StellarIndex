@@ -256,12 +256,28 @@ func SubstanceOK(volumeUSD *big.Rat, buckets, spanSeconds int64, policy Substanc
 //
 // Verdicts are cached for [substanceCacheTTL] per direction-insensitive
 // pair key. Nil-receiver safe: a nil gate allows everything.
+//
+// Allowed FAILS OPEN when the pair could not be measured — right for a
+// single price lookup, where a store blip must not 404 the surface. A
+// surface that must not publish an unverified claim (listings, market
+// caps — ADR-0018) asks [SubstanceGate.Verdict] instead.
 func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool {
+	allowed, measured := g.Verdict(ctx, base, quote, surface)
+	return allowed || !measured
+}
+
+// Verdict is [SubstanceGate.Allowed] without the fail-open: measured is
+// false when a store error or the request deadline prevented a verdict,
+// and then allowed is false too — the caller decides what an unmeasured
+// pair means on its surface. Every unmeasured verdict is counted in
+// obs.PriceServeSubstanceUnmeasuredTotal. A nil gate and an out-of-scope
+// pair are measured-and-allowed: no verdict is owed for them.
+func (g *SubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
 	if g == nil {
-		return true
+		return true, true
 	}
 	if !SubstanceGated(base, quote) {
-		return true
+		return true, true
 	}
 	key := pairCacheKey(base, quote)
 	now := g.clock()
@@ -272,15 +288,15 @@ func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset
 		if !prior.allowed {
 			obs.PriceServeSubstanceWithheldTotal.WithLabelValues(surface).Inc()
 		}
-		return prior.allowed
+		return prior.allowed, true
 	}
 	g.mu.Unlock()
 
-	allowed, measured := g.measure(ctx, base, quote)
+	allowed, measured = g.measure(ctx, base, quote)
 	if !measured {
-		// Fail-open on infrastructure error — and do NOT cache, so the
-		// next request re-measures.
-		return true
+		// Not cached, so the next request re-measures.
+		obs.PriceServeSubstanceUnmeasuredTotal.WithLabelValues(surface).Inc()
+		return false, false
 	}
 	g.mu.Lock()
 	if len(g.cache) >= substanceCacheMax {
@@ -304,12 +320,11 @@ func (g *SubstanceGate) Allowed(ctx context.Context, base, quote canonical.Asset
 		g.logger.Info("substance gate: pair recovered above the serve floor — price serving resumed",
 			"base", base.String(), "quote", quote.String(), "surface", surface)
 	}
-	return allowed
+	return allowed, true
 }
 
 // measure runs the alias-union substance measurement. measured=false
-// means an infrastructure error prevented a verdict (caller fails
-// open).
+// means an infrastructure error prevented a verdict.
 func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool) {
 	return g.measureUnion(ctx, base, quote, g.policy,
 		func(ctx context.Context, pair canonical.Pair) (timescale.MarketSubstance, error) {
@@ -338,7 +353,7 @@ func (g *SubstanceGate) measureUnion(
 			sub, err := read(ctx, pair)
 			if err != nil {
 				if g.logger != nil && ctx.Err() == nil {
-					g.logger.Warn("substance gate: measurement failed — serving unguarded",
+					g.logger.Warn("substance gate: measurement failed — no verdict for the pair",
 						"pair", pair.String(), "err", err)
 				}
 				return true, false
@@ -466,6 +481,7 @@ func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Ass
 			return g.atStore.PairMarketSubstanceAt(ctx, pair, asOf, policy.Window, grain)
 		})
 	if !measured {
+		obs.PriceServeSubstanceUnmeasuredTotal.WithLabelValues(surface).Inc()
 		return true
 	}
 	g.mu.Lock()
@@ -501,8 +517,8 @@ func PriceWithheldAt(
 	return PriceWithholdingAt(ctx, substance, scam, base, quote, at, surface) != NotWithheld
 }
 
-// PriceWithholdingAt is [PriceWithheldAt] reporting which gate fired;
-// see [PriceWithholding] for the precedence.
+// PriceWithholdingAt is [PriceWithheldAt] reporting which gate fired,
+// in the same scam-first order as [PriceWithholding].
 func PriceWithholdingAt(
 	ctx context.Context,
 	substance *SubstanceGate,
@@ -511,7 +527,7 @@ func PriceWithholdingAt(
 	at time.Time,
 	surface string,
 ) Withholding {
-	return WithholdingFor(substance.AllowedAt(ctx, base, quote, at, surface), scam.WithheldPair(ctx, base, quote, surface))
+	return WithholdingFor(scam.WithheldPair(ctx, base, quote, surface), substance.AllowedAt(ctx, base, quote, at, surface))
 }
 
 func (g *SubstanceGate) clock() time.Time {

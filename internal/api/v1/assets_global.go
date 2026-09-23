@@ -251,6 +251,47 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 	return view
 }
 
+// decimalsCorrectedGlobalReader is the seam where the global view's
+// vwap_native tier becomes a served price. [aggregate.GlobalPriceReader]
+// returns the RAW prices_1m quote/base ratio and carries no decimals, so
+// [New] wraps every configured reader in this: LatestVWAP applies
+// aggregate.AdjustPrice with the legs the bucket was read under (the alias
+// ComputeGlobalPrice asked for, not the requested spelling). The other two
+// tiers are already whole-unit prices and pass through.
+type decimalsCorrectedGlobalReader struct {
+	aggregate.GlobalPriceReader
+	decimals *NonstandardDecimalsCache
+}
+
+// newDecimalsCorrectedGlobalReader wraps r; a nil r stays nil so the
+// handler's "not wired" check still holds.
+func newDecimalsCorrectedGlobalReader(r aggregate.GlobalPriceReader, decimals *NonstandardDecimalsCache) aggregate.GlobalPriceReader {
+	if r == nil {
+		return nil
+	}
+	return decimalsCorrectedGlobalReader{GlobalPriceReader: r, decimals: decimals}
+}
+
+// LatestVWAP returns the inner tier-1 VWAP decimals-corrected. It is
+// byte-identical when the legs share a scale; a flagged pair whose ratio
+// cannot be parsed reads as a miss, since serving it raw is the defect.
+func (g decimalsCorrectedGlobalReader) LatestVWAP(ctx context.Context, base, quote canonical.Asset) (string, time.Time, int64, []string, bool, error) {
+	vwap, asOf, tradeCount, sources, ok, err := g.GlobalPriceReader.LatestVWAP(ctx, base, quote)
+	if err != nil || !ok {
+		return vwap, asOf, tradeCount, sources, ok, err
+	}
+	baseDec := aggregate.ResolveDecimals(g.decimals, base)
+	quoteDec := aggregate.ResolveDecimals(g.decimals, quote)
+	if baseDec == quoteDec {
+		return vwap, asOf, tradeCount, sources, true, nil
+	}
+	raw := ratFromDecimal(vwap)
+	if raw == nil || raw.Sign() <= 0 {
+		return "", time.Time{}, 0, nil, false, nil
+	}
+	return ratToDecimal(aggregate.AdjustPrice(raw, baseDec, quoteDec), ohlcPriceDigits), asOf, tradeCount, sources, true, nil
+}
+
 // assetForCurrency builds the canonical asset to query global pricing
 // for. Fiat slugs map to a `fiat:CCY` asset (FX feeds populate
 // prices_1m for these pairs). Crypto / stablecoin slugs map to

@@ -81,15 +81,16 @@ SQL:
 // TestPairMarketSubstance_ReadsBothStoredDirections pins both arms of the
 // orientation filter. The CAGGs hold a market as both (A,B) and (B,A)
 // rows (see TestCAGGPairReadsFoldBothDirections); substance is a COUNT
-// and a SUM, so no Go-side fold is needed — but the OR is load-bearing,
-// and a one-armed measurement understates every two-sided market.
+// and a SUM, so no Go-side fold is needed — but the second arm is
+// load-bearing, and a one-armed measurement understates every two-sided
+// market.
 func TestPairMarketSubstance_ReadsBothStoredDirections(t *testing.T) {
 	stmt, _ := substanceQuery(t, time.Hour, []driver.Value{"0", int64(0), int64(0)})
 
 	norm := regexp.MustCompile(`\s+`).ReplaceAllString(stmt.sql, " ")
 	for _, arm := range []string{
-		"(base_asset = $1 AND quote_asset = $2)",
-		"(base_asset = $2 AND quote_asset = $1)",
+		"base_asset = $1 AND quote_asset = $2",
+		"base_asset = $2 AND quote_asset = $1",
 	} {
 		if !strings.Contains(norm, arm) {
 			t.Errorf(`substance query does not read the %s direction.
@@ -102,8 +103,12 @@ SQL:
 %s`, arm, indent(stmt.sql))
 		}
 	}
-	if !strings.Contains(norm, "$1 AND quote_asset = $2) OR (base_asset = $2") {
-		t.Errorf("the two direction arms are not OR'd together:\n%s", indent(stmt.sql))
+	if !strings.Contains(norm, "quote_asset = $2 AND bucket <= now() - INTERVAL '1 minute'") ||
+		!strings.Contains(norm, "quote_asset = $1 AND bucket <= now() - INTERVAL '1 minute'") {
+		t.Errorf("each direction arm must carry its own closed-bucket bound:\n%s", indent(stmt.sql))
+	}
+	if !strings.Contains(norm, "UNION ALL") || orientationDisjunction.MatchString(stmt.sql) {
+		t.Errorf("the two direction arms must be UNION ALL'd, not OR'd:\n%s", indent(stmt.sql))
 	}
 }
 

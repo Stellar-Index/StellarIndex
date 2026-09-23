@@ -64,7 +64,12 @@ ledger_from_object_name() {
 }
 
 newest_ledger() {
-  # $1 = bucket name (e.g. local/galexie-live).
+  # $1 = bucket name (e.g. local/galexie-live). Prints the newest
+  # ledger and returns 0, or prints nothing and returns 1 when it
+  # measured nothing: a failed listing, no partition, or no parseable
+  # object. Both buckets are non-empty on a working node, so "nothing
+  # found" is a failed measurement, never ledger 0 — a 0 here made an
+  # unreadable bucket render as "archive exactly at the live tip".
   #
   # Implementation note: buffer `mc ls` into a variable BEFORE
   # parsing. Streaming `mc ls | awk '...; exit'` causes awk to
@@ -72,28 +77,36 @@ newest_ledger() {
   # 141) and under `set -o pipefail` the whole script aborts. The
   # listings here are tiny (one bucket's partition list, or one
   # partition's first page of objects), so buffering is free.
+  # mc's stderr is left to the journal: it is the diagnosis.
   local bucket="$1" parts_raw objs_raw part name ledger
-  parts_raw=$(mc ls "$bucket/" 2>/dev/null) || true
+  parts_raw=$(mc ls "$bucket/") || return 1
   # Read from the variable, not through a pipe: `awk ... exit` stops
   # reading and `printf` would take EPIPE on a bucket whose partition
-  # listing outsizes the 64 KiB pipe buffer (#475). Benign here only
-  # because of the trailing `|| true` — which is exactly the kind of
-  # accidental cover that lets the class survive.
-  part=$(awk '/\/$/{print $NF; exit}' <<<"$parts_raw" | sed 's:/$::') || true
-  if [ -z "$part" ]; then
-    echo "0"
-    return
-  fi
-  objs_raw=$(mc ls "$bucket/$part/" 2>/dev/null) || true
+  # listing outsizes the 64 KiB pipe buffer (#475).
+  part=$(awk '/\/$/{print $NF; exit}' <<<"$parts_raw" | sed 's:/$::') || return 1
+  [ -n "$part" ] || return 1
+  objs_raw=$(mc ls "$bucket/$part/") || return 1
   # First row whose last column parses as an object name wins (mc ls
   # sorts newest-first here, same as before).
   while read -r name; do
     ledger=$(ledger_from_object_name "$name")
     if [ -n "$ledger" ]; then
       echo "$ledger"
-      return
+      return 0
     fi
   done < <(printf '%s\n' "$objs_raw" | awk 'NF{print $NF}')
+  return 1
+}
+
+# last_success_stamp — the previous file's success stamp, carried
+# forward on a failed run so _metric_stale keeps ageing from the last
+# real measurement instead of going absent (absence disarms it).
+last_success_stamp() {
+  local stamp
+  [ -f "$OUT" ] || return 0
+  stamp=$(awk '$1 == "galexie_archive_tip_lag_updated_seconds" {print $2; exit}' "$OUT") || return 0
+  [[ "$stamp" =~ ^[0-9]+$ ]] && echo "$stamp"
+  return 0
 }
 
 self_test() {
@@ -131,12 +144,27 @@ if [ "${1:-}" = "--self-test" ]; then
   exit $?
 fi
 
-live=$(newest_ledger local/galexie-live)
-archive=$(newest_ledger local/galexie-archive)
+mkdir -p "$TEXTFILE_DIR"
 
-# Guard: numeric.
-[[ "$live" =~ ^[0-9]+$ ]] || live=0
-[[ "$archive" =~ ^[0-9]+$ ]] || archive=0
+live="" archive=""
+if ! live=$(newest_ledger local/galexie-live) || ! archive=$(newest_ledger local/galexie-archive); then
+  echo "galexie-archive-tip-lag: could not read a tip (live='${live}' archive='${archive}'); publishing probe_success 0" >&2
+  stamp=$(last_success_stamp)
+  {
+    printf '# HELP galexie_archive_tip_lag_probe_success 1 when both bucket tips were read and parsed on the last run, 0 when either was not (lag and tips are then omitted, never reported as 0).\n'
+    printf '# TYPE galexie_archive_tip_lag_probe_success gauge\n'
+    printf 'galexie_archive_tip_lag_probe_success 0\n'
+    if [ -n "$stamp" ]; then
+      printf '# HELP galexie_archive_tip_lag_updated_seconds Unix time of the most recent successful tip-lag computation.\n'
+      printf '# TYPE galexie_archive_tip_lag_updated_seconds gauge\n'
+      printf 'galexie_archive_tip_lag_updated_seconds %s\n' "$stamp"
+    fi
+  } > "$TMP"
+  chmod 644 "$TMP"
+  mv "$TMP" "$OUT"
+  # Published, now loud: a failed oneshot is what systemctl status shows.
+  exit 1
+fi
 
 if [ "$live" -gt "$archive" ]; then
   lag=$((live - archive))
@@ -144,8 +172,10 @@ else
   lag=0
 fi
 
-mkdir -p "$TEXTFILE_DIR"
 cat > "$TMP" <<EOF
+# HELP galexie_archive_tip_lag_probe_success 1 when both bucket tips were read and parsed on the last run, 0 when either was not (lag and tips are then omitted, never reported as 0).
+# TYPE galexie_archive_tip_lag_probe_success gauge
+galexie_archive_tip_lag_probe_success 1
 # HELP galexie_archive_tip_ledger Newest ledger sequence present in galexie-archive (R1 durable full-mirror).
 # TYPE galexie_archive_tip_ledger gauge
 galexie_archive_tip_ledger $archive

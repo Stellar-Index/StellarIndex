@@ -1396,6 +1396,11 @@ jobs:
         # on that bucket's shape. These fixtures run the shipped script
         # against a stubbed mc. No MinIO, no systemd.
         run: ./scripts/ci/galexie-archive-contiguity-test.sh
+      - name: galexie archive tip-lag self-test
+        # An unreadable bucket published lag 0 with a fresh success stamp,
+        # disarming every tip-lag threshold. Runs the shipped script against
+        # a stubbed mc. No MinIO, no systemd.
+        run: ./scripts/ci/galexie-archive-tip-lag-test.sh
       - name: API-smoke textfile self-test
         # stellarindex-smoke.timer ran a 34-GET API smoke with jq shape
         # assertions every 5 minutes and reported to NOTHING:

@@ -799,6 +799,14 @@ audit-2026-07-23); the audit row carries `keys_clamped` /
 > the 7-year archived `audit_log` (§8.2) all need a decision this doc does
 > not make. Track against the terms-of-service/privacy-policy review this
 > section depends on.
+>
+> What exists today is operator closure: `PATCH /v1/admin/accounts/{id}`
+> with `status: closed` revokes every live Postgres-backed API key and makes
+> the status terminal (any later non-`closed` status is a 409). Dashboard
+> sessions are refused by the account-status gate and customer-webhook
+> deliveries fail terminally for a closed account. It erases no PII, does not
+> revoke passkeys or disable price alerts, and is not a substitute for the
+> erasure below.
 
 Endpoints (rate-limited heavily):
 

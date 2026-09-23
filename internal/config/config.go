@@ -574,9 +574,8 @@ type ChainlinkFeedConfig struct {
 	Invert   bool   `toml:"invert" doc:"Set true when canonical pair is reciprocal of the feed's natural quote." default:"false"`
 	// MaxAgeHours is the CS-089 staleness ceiling: a latestRoundData
 	// round older than this is rejected as reference-unavailable.
-	// 0 = the crypto default (3h). FX feeds pause over market
-	// closes — set ~76 for those.
-	MaxAgeHours int `toml:"max_age_hours" doc:"Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = 3h crypto default; use ~76 for FX feeds (they pause over market closes)." default:"0"`
+	// 0 = the default budget for the pair (see the doc tag).
+	MaxAgeHours int `toml:"max_age_hours" doc:"Staleness ceiling in hours for the feed's latestRoundData updatedAt; rounds older than this are rejected as reference-unavailable (CS-089). 0 = the default: the built-in feed's budget for a built-in pair, 76h for any other fiat/fiat pair (FX feeds pause over market closes), else 3h. Must be >= 0." default:"0"`
 }
 
 // defaultDivergenceConfig returns the Default()-shape divergence
@@ -1888,6 +1887,16 @@ func defaultAPIConfig() APIConfig {
 		},
 	}
 }
+
+// RetiredKeys lists dotted config paths that once existed in this schema
+// and were deliberately removed. LoadReader treats a key on this list as a
+// deprecation warning instead of a boot-fatal unknown key: a self-hosted
+// deployment's config is a copy of some past release's configs/example.toml
+// (docs/operations/self-hosting.md §4.3), so deleting a struct field would
+// otherwise turn every such upgrade into a hard outage (#890). Add an entry
+// here in the same commit that removes the field; the value is a short note
+// on what replaced it, surfaced in the boot-time warning.
+var RetiredKeys = map[string]string{}
 
 func Default() Config {
 	return Config{

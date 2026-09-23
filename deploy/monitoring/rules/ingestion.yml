@@ -426,6 +426,11 @@ groups:
       # those money-flow kinds — the existing stellarindex_ingestion_
       # insert_errors alert only fires above 0.1/s, so a low-rate silent
       # drop would slip past it.
+      # kind="trade" (a trade permanently dropped on a data fault: sdex,
+      # the projected DEXes, external) is in the set too — it was the one
+      # money-flow kind left to the coarse 0.1/s line. A ctx-abandoned
+      # trade retry (cursor held, re-derivable) counts as
+      # kind="trade_abandoned" and is deliberately NOT in it (GH-612).
       # Q261: `for: 0m`, NOT `for:` = the increase window. A tripwire must
       # fire on ONE isolated increment, and `increase(m[W]) > 0` with
       # `for: W` cannot: the expression is true only for W after the
@@ -454,10 +459,10 @@ groups:
       # limitation in rule-tests/tripwire-isolated-increment*_test.yml.
       - alert: stellarindex_ingestion_persist_drop
         expr: |
-          increase(stellarindex_source_insert_errors_total{kind=~"soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"}[15m]) > 0
+          increase(stellarindex_source_insert_errors_total{kind=~"trade|soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"}[15m]) > 0
           or (
-            stellarindex_source_insert_errors_total{kind=~"soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"} > 0
-            unless stellarindex_source_insert_errors_total{kind=~"soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"} offset 15m
+            stellarindex_source_insert_errors_total{kind=~"trade|soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"} > 0
+            unless stellarindex_source_insert_errors_total{kind=~"trade|soroswap_router_swap|defindex_flow_strategy|defindex_flow_vault"} offset 15m
           )
         for: 0m
         labels:
@@ -468,15 +473,16 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
           summary: "Persist drops on {{ $labels.source }}/{{ $labels.kind }} (any rate)"
           description: |
-            A soroswap-router or defindex persist write failed for
+            A trade, soroswap-router or defindex persist write failed for
             {{ $labels.source }}/{{ $labels.kind }} in the last 15 minutes.
             These are DEX-swap / vault-flow rows — even a low-rate drop
-            matters, and this path was previously counter-less (the drop
-            was log-only and invisible). If the write went through the
-            projector it is retried (watch stellarindex_projector_events_
-            decoded_total{outcome="sink_retry"}); if it went through the
-            dispatcher drain the row was dropped. Check Timescale health
-            and the poison-row logs.
+            matters. kind="trade" is a trade rejected as a permanent data
+            fault: the row is NOT in the served tier (a projected source
+            also counts it as projector outcome="sink_permanent"). For the
+            other kinds, a write through the projector is retried (watch
+            stellarindex_projector_events_decoded_total{outcome="sink_retry"});
+            one through the dispatcher drain was dropped. Check Timescale
+            health and the poison-row logs.
 
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
 

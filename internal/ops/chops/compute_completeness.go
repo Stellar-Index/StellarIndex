@@ -380,6 +380,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	}
 	priorProj := make(map[string]priorProjection, len(priorSnaps))
 	priorSub := make(map[string]priorProjection, len(priorSnaps))
+	priorRec := make(map[string]priorProjection, len(priorSnaps))
 	// priorWatermark is each source's last published lake watermark, used as the
 	// per-source projection floor in -pass mode (projectionFloor): a whole-pass
 	// run resumes every source from where it left off, so substrate + recognition
@@ -395,6 +396,11 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// an incremental run scans only a suffix and must not publish a
 		// genesis-to-tip claim off it. See substrateClaim.
 		priorSub[s.Source] = priorProjection{known: true, ok: s.SubstrateOK, tip: s.Tip}
+		// #668: the RECOGNITION axis needs the same prior-verdict input the
+		// substrate axis got in C4-057 — -skip-recognition runs no scan at
+		// all, so without this it can only ever read recognition_ok=true.
+		// See sourceRecognitionOK.
+		priorRec[s.Source] = priorProjection{known: true, ok: s.RecognitionOK, tip: s.Tip}
 	}
 
 	// Durable per-target projection floors (migration 0116). Loaded once and
@@ -531,7 +537,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 		// Claim 2a: recognition gaps attributed to this source's contracts
 		// (static contractIDs OR the factory-child / soroswap-pair registry
 		// members folded into ownerOf above — W1-flowcompleteness-1).
-		recOK, recProblems := sourceRecognitionOK(genesis, recBySource[src.name])
+		recOK, recProblems := sourceRecognitionOK(genesis, tip, recBySource[src.name], *skipRecognition, priorRec[src.name])
 		problems = append(problems, recProblems...)
 		detail = append(detail, recognitionClaim(recOK, *skipRecognition))
 
@@ -984,13 +990,22 @@ func attributeRecognitionGaps(ownerOf map[string]string, gaps []completeness.Rec
 	return recBySource, unattributed
 }
 
-// sourceRecognitionOK is the pure per-source Claim-2a verdict: a source fails
+// sourceRecognitionOK is the per-source Claim-2a verdict: a source fails
 // recognition (returns false) when any recognition gap attributed to it falls
 // at or after its genesis, and returns those problem ledgers to fold into the
 // coverage watermark. attributed is recBySource[source] — which, since
 // W1-flowcompleteness-1, includes gaps on the source's factory-child /
-// soroswap-pair registry members, not just its static contractIDs. Pure.
-func sourceRecognitionOK(genesis uint32, attributed []uint32) (bool, []uint32) {
+// soroswap-pair registry members, not just its static contractIDs.
+//
+// #668: -skip-recognition runs NO scan at all (attributed is always empty
+// under it), so the loop above alone reads recOK=true unconditionally — the
+// flag's own doc says "trust the prior recognition audit", but nothing ever
+// read that prior verdict. Gate it here exactly as substrateClaim already
+// gates -skip-substrate (C4-057): carry the prior verdict only when it is
+// known, was itself clean, and covered ledgers up to this run's tip; a
+// missing, failing or stale prior fails closed instead of asserting a fresh
+// true with zero evidence.
+func sourceRecognitionOK(genesis, hi uint32, attributed []uint32, skipRecognition bool, prior priorProjection) (bool, []uint32) {
 	ok := true
 	var problems []uint32
 	for _, l := range attributed {
@@ -999,7 +1014,19 @@ func sourceRecognitionOK(genesis uint32, attributed []uint32) (bool, []uint32) {
 			ok = false
 		}
 	}
-	return ok, problems
+	if !skipRecognition || !ok {
+		return ok, problems
+	}
+	switch {
+	case !prior.known:
+		return false, append(problems, genesis)
+	case !prior.ok:
+		return false, append(problems, genesis)
+	case hi > prior.tip:
+		return false, append(problems, prior.tip+1)
+	default:
+		return true, nil
+	}
 }
 
 // recognitionClaim states what THIS run knows about the source's recognition
@@ -1014,6 +1041,8 @@ func sourceRecognitionOK(genesis uint32, attributed []uint32) (bool, []uint32) {
 // proven or merely carried (T239). Pure.
 func recognitionClaim(recOK, skipRecognition bool) string {
 	switch {
+	case !recOK && skipRecognition:
+		return "recognition: -skip-recognition and no clean prior recognition verdict covers this run's tip — refusing to carry recognition_ok=true without evidence (re-run without -skip-recognition)"
 	case !recOK:
 		return "recognition: unhandled topic on this source's contract(s)"
 	case skipRecognition:

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -325,18 +326,71 @@ func (r *APIKeyStore) GetByHash(ctx context.Context, keyHash []byte) (platform.A
 	return out, nil
 }
 
-func (r *APIKeyStore) ListForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
-	const q = `SELECT ` + apiKeyColumns + ` FROM api_keys WHERE account_id = $1 ORDER BY created_at ASC`
-	rows, err := r.s.db.QueryContext(ctx, q, accountID)
+// CountActiveForAccount counts the account's non-revoked keys: the same
+// predicate apiKeyInsertCapped gates on, served by api_keys_account_active_idx.
+func (r *APIKeyStore) CountActiveForAccount(ctx context.Context, accountID uuid.UUID) (int, error) {
+	const q = `SELECT COUNT(*) FROM api_keys WHERE account_id = $1 AND revoked_at IS NULL`
+	var n int
+	if err := r.s.db.QueryRowContext(ctx, q, accountID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count active api keys: %w", err)
+	}
+	return n, nil
+}
+
+// ListActiveForAccount returns the account's non-revoked keys, oldest first.
+// Its size is bounded by the per-account active cap, never by revoked history.
+func (r *APIKeyStore) ListActiveForAccount(ctx context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
+	const q = `SELECT ` + apiKeyColumns + ` FROM api_keys
+		WHERE account_id = $1 AND revoked_at IS NULL
+		ORDER BY created_at ASC, id ASC`
+	return r.queryKeys(ctx, "list active api keys", q, accountID)
+}
+
+// ListForAccount returns every active key plus at most revokedLimit of the
+// most recently created revoked keys, oldest first. moreRevoked reports that
+// older revoked keys exist and were left out.
+func (r *APIKeyStore) ListForAccount(
+	ctx context.Context, accountID uuid.UUID, revokedLimit int,
+) (keys []platform.APIKey, moreRevoked bool, err error) {
+	revokedLimit = max(revokedLimit, 0)
+	active, err := r.ListActiveForAccount(ctx, accountID)
 	if err != nil {
-		return nil, fmt.Errorf("list api keys: %w", err)
+		return nil, false, err
+	}
+	// One row past the limit is the cheapest proof that more history exists.
+	const q = `SELECT ` + apiKeyColumns + ` FROM api_keys
+		WHERE account_id = $1 AND revoked_at IS NOT NULL
+		ORDER BY created_at DESC, id DESC
+		LIMIT $2`
+	revoked, err := r.queryKeys(ctx, "list revoked api keys", q, accountID, revokedLimit+1)
+	if err != nil {
+		return nil, false, err
+	}
+	if len(revoked) > revokedLimit {
+		revoked = revoked[:revokedLimit]
+		moreRevoked = true
+	}
+	keys = slices.Concat(active, revoked)
+	slices.SortFunc(keys, func(a, b platform.APIKey) int {
+		if c := a.CreatedAt.Compare(b.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
+	return keys, moreRevoked, nil
+}
+
+func (r *APIKeyStore) queryKeys(ctx context.Context, op, q string, args ...any) ([]platform.APIKey, error) {
+	rows, err := r.s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
 	}
 	defer func() { _ = rows.Close() }()
 	var out []platform.APIKey
 	for rows.Next() {
 		k, err := scanAPIKey(rows)
 		if err != nil {
-			return nil, fmt.Errorf("list api keys scan: %w", err)
+			return nil, fmt.Errorf("%s scan: %w", op, err)
 		}
 		out = append(out, k)
 	}

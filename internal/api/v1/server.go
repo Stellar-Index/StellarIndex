@@ -1677,7 +1677,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		verifiedCurrencies:      opts.VerifiedCurrencies,
 		backfillCoverage:        opts.BackfillCoverage,
 		nonstandardDecimals:     opts.NonstandardDecimals,
-		globalPrice:             opts.GlobalPrice,
+		globalPrice:             newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
 		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		sacWrappers:             opts.SACWrappers,
 		networkPassphrase:       opts.NetworkPassphrase,
@@ -2921,6 +2921,7 @@ var errorSlugRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // reflected as a live 200 page (RLT-218).
 var knownErrorSlugs = map[string]struct{}{
 	"account-activity-timeout":        {},
+	"account-closed":                  {},
 	"account-cohort-timeout":          {},
 	"account-cohort-warming":          {},
 	"account-create-failed":           {},

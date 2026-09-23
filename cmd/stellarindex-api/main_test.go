@@ -231,7 +231,15 @@ func (stubKeysForBuild) GetByHash(context.Context, []byte) (platform.APIKey, err
 	panic("unused")
 }
 
-func (stubKeysForBuild) ListForAccount(context.Context, uuid.UUID) ([]platform.APIKey, error) {
+func (stubKeysForBuild) CountActiveForAccount(context.Context, uuid.UUID) (int, error) {
+	panic("unused")
+}
+
+func (stubKeysForBuild) ListActiveForAccount(context.Context, uuid.UUID) ([]platform.APIKey, error) {
+	panic("unused")
+}
+
+func (stubKeysForBuild) ListForAccount(context.Context, uuid.UUID, int) ([]platform.APIKey, bool, error) {
 	panic("unused")
 }
 func (stubKeysForBuild) Update(context.Context, platform.APIKey) error            { panic("unused") }

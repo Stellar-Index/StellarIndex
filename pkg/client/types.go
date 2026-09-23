@@ -189,9 +189,12 @@ type PriceChangeHorizon struct {
 	// Resolution is the CAGG that served the reference bucket
 	// ("1m" | "15m" | "1h" | "4h" | "1d"). Nil when unavailable.
 	Resolution *string `json:"resolution"`
-	// Available is false when no closed bucket exists that far back
-	// (all sibling fields nil).
+	// Available is false when the horizon has no reference price (all
+	// pointer fields nil): no data that far back, or a withheld reference.
 	Available bool `json:"available"`
+	// Withheld is true when the reference bucket exists but a serving
+	// gate refused to publish it; always false when Available is true.
+	Withheld bool `json:"withheld"`
 }
 
 // PriceChanges is the data shape returned by [Client.PriceChanges]:
@@ -645,7 +648,8 @@ type OHLCBar struct {
 // venues + oracles + aggregators the deployment can ingest from).
 //
 // Class is one of: `exchange` / `aggregator` / `oracle` /
-// `authority_sanity`. Per the v1 aggregator policy, only
+// `authority_sanity` / `lending` / `router` / `bridge`. Per the v1
+// aggregator policy, only
 // `exchange` contributes to VWAP — the others are reported
 // alongside but excluded (mixing them double-counts upstream
 // markets or imposes their methodology on our output).

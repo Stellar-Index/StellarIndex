@@ -206,6 +206,10 @@ func (g *stubListingGate) Allowed(_ context.Context, base, quote canonical.Asset
 	return g.allow[base.String()+"|"+quote.String()]
 }
 
+func (g *stubListingGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
+	return g.Allowed(ctx, base, quote, surface), true
+}
+
 // TestApplySubstanceGateToListing — the listing's price_usd enrichment
 // (7-day catalogue SQL, outside /v1/price's read path) must respect
 // the same thin-market gate: withheld rows lose price_usd + the change

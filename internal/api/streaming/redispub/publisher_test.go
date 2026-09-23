@@ -71,6 +71,35 @@ func TestNewPublisher_DefaultsChannel(t *testing.T) {
 	}
 }
 
+// TestPublishClosedBucket_StampsProducerID — every event names the
+// process that sent it (#752/#754): one id per Publisher, distinct across
+// Publishers, so the subscriber can tell two aggregators apart.
+func TestPublishClosedBucket_StampsProducerID(t *testing.T) {
+	pair := nativeUSD(t)
+	producerOf := func(p *redispub.Publisher, cache *fakeRedis, i int) string {
+		t.Helper()
+		if err := p.PublishClosedBucket(context.Background(), pair, 5*time.Minute, "0.1", time.Now()); err != nil {
+			t.Fatalf("PublishClosedBucket: %v", err)
+		}
+		var ev redispub.ClosedBucketEvent
+		if err := json.Unmarshal(cache.calls[i].body, &ev); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		return ev.ProducerID
+	}
+	cacheA, cacheB := &fakeRedis{}, &fakeRedis{}
+	a, _ := redispub.NewPublisher(cacheA, "")
+	b, _ := redispub.NewPublisher(cacheB, "")
+	first, second := producerOf(a, cacheA, 0), producerOf(a, cacheA, 1)
+	if first == "" || first != second || first != a.ProducerID() {
+		t.Fatalf("producer ids from one publisher = %q, %q (ProducerID %q), want one stable non-empty id",
+			first, second, a.ProducerID())
+	}
+	if other := producerOf(b, cacheB, 0); other == first {
+		t.Fatalf("two publishers share producer id %q", other)
+	}
+}
+
 // TestPublishClosedBucket_RoundTrip — the canonical happy path:
 // the orchestrator hands a (pair, window, value, observed_at) to
 // the publisher, the publisher PUBLISHes a JSON-encoded

@@ -33,6 +33,63 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # ══ stellarindex_galexie_archive_tip_lag_metric_stale ═════════════
+  #
+  # An unreadable bucket used to publish lag 0 with a fresh success
+  # stamp — "archive exactly at the live tip". The script now publishes
+  # probe_success 0, omits the lag, and carries the last success stamp
+  # (t=10m here) forward. At t=30m that stamp is only 20 min old, so the
+  # probe arm alone must fire, and the lag thresholds stay quiet.
+  - interval: 1m
+    name: an unreadable bucket tickets on the probe arm before the stamp ages out
+    input_series:
+      - series: 'galexie_archive_tip_lag_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '1x10 0x30'
+      - series: 'galexie_archive_tip_lag_updated_seconds{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x10 600+0x30'
+      - series: 'galexie_archive_tip_lag_ledgers{job="node_exporter",instance="r1:9100"}'
+        values: '100x10 _x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_galexie_archive_tip_lag_metric_stale
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              severity: ticket
+              team: stellarindex
+              component: archive
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/galexie-archive-tip-lag.md
+              summary: "galexie-archive tip-lag not measured (probe failing or no success >30m)"
+              description: |
+                Either the last tip-lag run could not read a bucket tip
+                (galexie_archive_tip_lag_probe_success 0 — the lag is then
+                omitted, so the lag thresholds cannot fire), or the
+                galexie-archive-tip-lag.timer hasn't successfully updated
+                its textfile for >30 min (timer fires every 5 min). The
+                alert metric itself is the canary; without it we lose the
+                safety net. Check
+                `systemctl status galexie-archive-tip-lag.timer` +
+                the service's last journal entries; verify the script
+                can read both MinIO buckets via the `local` mc alias.
+      - eval_time: 30m
+        alertname: stellarindex_galexie_archive_tip_lag_high
+        exp_alerts: []
+
+  # ── healthy: both tips read, stamp advancing every run ────────────
+  - interval: 1m
+    name: a measuring tip-lag probe raises nothing
+    input_series:
+      - series: 'galexie_archive_tip_lag_probe_success{job="node_exporter",instance="r1:9100"}'
+        values: '1x60'
+      - series: 'galexie_archive_tip_lag_updated_seconds{job="node_exporter",instance="r1:9100"}'
+        values: '0+60x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: stellarindex_galexie_archive_tip_lag_metric_stale
+        exp_alerts: []
+
   # ══ stellarindex_galexie_catchup_refused ══════════════════════════
   #
   # The page the probe-health alert below exists to protect. It must

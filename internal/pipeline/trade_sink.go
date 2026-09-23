@@ -375,7 +375,7 @@ func persistTradeRouted(ctx context.Context, logger *slog.Logger, w tradeWriter,
 		return nil
 	}
 	if classifyFault(err) == faultData {
-		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, "trade").Inc()
+		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, obs.InsertErrorKindTradeDropped).Inc()
 		logger.Error("insert external trade failed (permanent data fault) — row skipped",
 			"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash,
 			"op_index", t.OpIndex, "err", err)

@@ -66,8 +66,9 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
           summary: "API p95 {{ $value | humanizeDuration }} > 500ms"
           description: |
-            Freighter SLA is p95 ≤ 200 ms; we alarm at > 500 ms (≥ 2.5×
-            target). Typical root cause: Redis cache miss storm → Timescale
+            The published p95 ≤ 200 ms is enforced per endpoint by
+            stellarindex_sla_probe_p95_breach; this all-route real-traffic
+            backstop alarms at > 500 ms (2.5×). Typical root cause: Redis cache miss storm → Timescale
             saturation. Check Redis eviction rate + Postgres connection pool.
 
       - alert: stellarindex_api_latency_p99_high
@@ -86,9 +87,36 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/api-latency.md
           summary: "API p99 {{ $value | humanizeDuration }} > 2s"
           description: |
-            Freighter SLA is p99 ≤ 500 ms; we alarm at > 2 s (≥ 4× target).
+            The published p99 ≤ 500 ms is enforced per endpoint by
+            stellarindex_sla_probe_p99_breach; this all-route real-traffic
+            backstop alarms at > 2 s (4×).
             Tail latency is usually a specific slow endpoint — check the
             per-endpoint breakdown.
+
+      # The aggregator is publishing closed-bucket events and the API is
+      # fanning none of them out. go-redis retries a dead pubsub silently
+      # and a clock-skewed API host rejects every event, so /price/stream
+      # stays 200 with keepalives only; this is the one signal of either.
+      # lint-tripwire-window:sustained: the aggregator publishes every tick, so only a continuing publish-without-delivery gap should notify
+      - alert: stellarindex_api_price_stream_not_delivering
+        expr: |
+          sum(rate(stellarindex_aggregator_stream_publish_total{outcome="ok"}[15m])) > 0
+          unless on()
+          sum(rate(stellarindex_api_stream_subscribe_total{outcome="ok"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-stream-not-delivering.md
+          summary: "Aggregator publishes closed-bucket events but the API fans out none (15m)"
+          description: |
+            /v1/price/stream subscribers are receiving keepalives only.
+            Read stellarindex_api_stream_subscribe_total by outcome:
+            future_observed_at means the API host clock lags the
+            aggregator; no increments at all means the Redis pubsub is
+            down or the subscriber is not running.
 
       - alert: stellarindex_api_error_rate_high
         expr: |
@@ -436,6 +464,31 @@ groups:
             stellarindex_ratelimit_fail_open — the two share a backing
             store. If this fires ALONE, suspect the usage-counter key
             namespace or an eviction policy rather than Redis availability.
+
+      # The scam-pricing gate fails OPEN on an account_directory lookup
+      # error — correct, because failing closed would blank every price
+      # on a DB blip — but while it is open every directory-flagged
+      # issuer is priced at 200 on every gated surface.
+      # lint-tripwire-window:sustained: a continuing fail-open window is actionable, one failover blip is not
+      - alert: stellarindex_scam_gate_fail_open
+        expr: sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m])) > 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/scam-gate-fail-open.md
+          summary: "Scam-pricing gate is FAILING OPEN on {{ $labels.surface }} ({{ $value | humanize }} lookups/s serving unguarded)"
+          description: |
+            The scam-pricing gate could not read account_directory and
+            served the price unguarded, continuously for the last 5
+            minutes. Directory-flagged issuers are being priced on this
+            surface for the duration.
+
+            Check the Postgres readyz probe first. If Postgres is healthy,
+            look for lock contention from directory-sync or pool
+            exhaustion in the gate's WARN line.
 
       # C3-067 (audit-2026-07-23): every privileged mutation on the admin
       # surfaces appends its audit row best-effort. The mutation

@@ -65,6 +65,10 @@ type GlobalPriceReader interface {
 	// trades, retention pruned, or the asset doesn't trade on this
 	// pair). The trade count + sources powers the threshold check
 	// + transparency surface.
+	//
+	// vwap is the RAW prices_1m quote/base ratio, not decimals-corrected,
+	// and [ComputeGlobalPrice] passes it through verbatim: whoever serves
+	// the result must apply [AdjustPrice] for (base, quote) as asked here.
 	LatestVWAP(ctx context.Context, base, quote canonical.Asset) (vwap string, asOf time.Time, tradeCount int64, sources []string, ok bool, err error)
 
 	// LatestAggregatorPrices returns the most-recent observation

@@ -19,12 +19,16 @@
 //   - the price-alert evaluator (cmd/stellarindex-aggregator priceAlertVWAPReader.LatestVWAP)
 //   - /v1/price/at + /v1/price/changes (cmd/stellarindex-api
 //     storePriceAtReader.PriceAt, via [GuardServedVWAP1mAt] — the
-//     point-in-time ladder's 1m rung; added for finding F031, which
-//     found this doc claiming coverage the wiring did not have)
+//     point-in-time ladder's 1m rung)
+//   - the SEP-40 prices() series (cmd/stellarindex-api
+//     storePriceReader.RecentClosedSnapshots, via [GuardServedVWAP1mSeries])
+//   - /v1/assets change_24h_pct's 24h-ago anchor (cmd/stellarindex-api
+//     storeChange24hReader.USDPrice24hAgo, via [GuardServedVWAP1mAt])
 //
-// Each entry is a WIRED call site, not an intention: a raw prices_1m
-// read that reaches a response without one of the entry points below is
-// this package's doc lying again.
+// Each entry is a WIRED call site, not an intention.
+// TestRawPrices1mReadersPassTheGuard (cmd/stellarindex-api) fails when a
+// function under cmd/ calls a raw prices_1m store read without calling a
+// guard entry point, or is missing from this list.
 //
 // This package hosts the WIRING that turns the pure robust-band decision
 // ([aggregate.GuardServedVWAP], ADR-0003 exact-rational) into a servable
@@ -62,6 +66,13 @@ const SampleFetch = 40
 // database.
 type TrailingReader interface {
 	RecentClosedVWAP1mCombined(ctx context.Context, p canonical.Pair, limit int) ([]timescale.Vwap1mRow, error)
+}
+
+// TrailingAtReader is the storage seam of the POINT-IN-TIME guard: the
+// trailing baseline anchored at the candidate bucket rather than at now.
+// *timescale.Store satisfies it.
+type TrailingAtReader interface {
+	ClosedVWAP1mCombinedBefore(ctx context.Context, p canonical.Pair, before time.Time, limit int) ([]timescale.Vwap1mRow, error)
 }
 
 // GuardServedVWAP1m is the serving-sanity guard shared by every raw
@@ -171,18 +182,25 @@ func GuardServedVWAP1mConfidence(
 // never a value the manipulation band rejected and never one that
 // silently breaches the staleness the caller asked for.
 //
-// Fail-open posture is otherwise unchanged from [GuardServedVWAP1m]: a
-// trailing-fetch error or an empty baseline serves the candidate.
+// The baseline is the [SampleFetch] closed buckets immediately BEFORE the
+// candidate ([TrailingAtReader]), not the newest ones: a now-anchored
+// baseline holds nothing older than a historical candidate, so every
+// instant outside the last few dozen minutes would pass unjudged.
+//
+// An empty baseline (nothing traded before the candidate — the pair's
+// first-ever bucket) is ok=false here, where [GuardServedVWAP1m] serves it
+// flagged low-confidence: a point-in-time answer has no stale flag to
+// carry that doubt. A trailing-fetch error still fails open.
 func GuardServedVWAP1mAt(
 	ctx context.Context,
-	store TrailingReader,
+	store TrailingAtReader,
 	logger *slog.Logger,
 	pair canonical.Pair,
 	candidate timescale.Vwap1mRow,
 	ts time.Time,
 	maxStaleness time.Duration,
 ) (served timescale.Vwap1mRow, ok bool) {
-	rows, err := store.RecentClosedVWAP1mCombined(ctx, pair, SampleFetch)
+	rows, err := store.ClosedVWAP1mCombinedBefore(ctx, pair, candidate.Bucket, SampleFetch)
 	if err != nil {
 		obs.PricingGuardTrailingFetchFailedTotal.WithLabelValues("at").Inc()
 		if logger != nil {
@@ -193,9 +211,10 @@ func GuardServedVWAP1mAt(
 	}
 	served, ok = SelectGuardedVWAP1mAt(candidate, rows, ts, maxStaleness)
 	if logger != nil && (!ok || !served.Bucket.Equal(candidate.Bucket)) {
-		logger.Warn("served-vwap guard (point-in-time): candidate bucket rejected as outlier",
+		logger.Warn("served-vwap guard (point-in-time): candidate bucket rejected or unvalidated",
 			"pair", pair.String(),
 			"requested_at", ts,
+			"trailing_rows", len(rows),
 			"candidate_bucket", candidate.Bucket,
 			"candidate_vwap", candidate.VWAP,
 			"served_bucket", served.Bucket,
@@ -206,17 +225,21 @@ func GuardServedVWAP1mAt(
 }
 
 // SelectGuardedVWAP1mAt is the pure decision half of
-// [GuardServedVWAP1mAt]. ok=false means the candidate was rejected and
-// no last-known-good bucket closes within `maxStaleness` of `ts`, so the
-// caller has no servable answer for that instant. Store-free so the
-// staleness contract is unit-testable without a database.
+// [GuardServedVWAP1mAt]. ok=false means the caller has no servable
+// answer for that instant: the candidate had no trailing baseline to be
+// validated against, or it was rejected and no last-known-good bucket
+// closes within `maxStaleness` of `ts`. Store-free so the staleness
+// contract is unit-testable without a database.
 func SelectGuardedVWAP1mAt(
 	candidate timescale.Vwap1mRow,
 	rows []timescale.Vwap1mRow,
 	ts time.Time,
 	maxStaleness time.Duration,
 ) (served timescale.Vwap1mRow, ok bool) {
-	served, rejected, _ := selectGuardedVWAP1m(candidate, rows)
+	served, rejected, lowConfidence := selectGuardedVWAP1m(candidate, rows)
+	if lowConfidence {
+		return timescale.Vwap1mRow{}, false
+	}
 	if !rejected {
 		return served, true
 	}
@@ -228,6 +251,38 @@ func SelectGuardedVWAP1mAt(
 		return timescale.Vwap1mRow{}, false
 	}
 	return served, true
+}
+
+// GuardServedVWAP1mSeries is the guard for a raw prices_1m SERIES (the
+// SEP-40 prices(asset, records) read). `rows` is one newest-first
+// history holding at least `n` + [SampleFetch] buckets when the pair has
+// that many, so each of the first `n` buckets is judged against the
+// [SampleFetch] buckets immediately before it. A bucket the band rejects,
+// or one with no prior bucket to validate it, is DROPPED rather than
+// replaced: a series has one entry per bucket, and standing an older
+// value in at a newer timestamp would fabricate a record. Returns at
+// most `n` rows, newest-first. Exact-rational (ADR-0003).
+func GuardServedVWAP1mSeries(logger *slog.Logger, pair canonical.Pair, rows []timescale.Vwap1mRow, n int) []timescale.Vwap1mRow {
+	if n > len(rows) {
+		n = len(rows)
+	}
+	out := make([]timescale.Vwap1mRow, 0, n)
+	for i := 0; i < n; i++ {
+		trailing := rows[i+1 : min(i+1+SampleFetch, len(rows))]
+		_, rejected, lowConfidence := selectGuardedVWAP1m(rows[i], trailing)
+		if rejected || lowConfidence {
+			if logger != nil {
+				logger.Warn("served-vwap guard (series): bucket dropped as outlier or unvalidated",
+					"pair", pair.String(),
+					"bucket", rows[i].Bucket,
+					"vwap", rows[i].VWAP,
+					"trailing_rows", len(trailing))
+			}
+			continue
+		}
+		out = append(out, rows[i])
+	}
+	return out
 }
 
 // SelectGuardedVWAP1m is the pure decision half of [GuardServedVWAP1m]:

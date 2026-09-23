@@ -1192,14 +1192,15 @@ type pairKey = string
 
 // GetPairsVolumeHistory24hBatch returns per-(base, quote) hourly
 // USD-volume buckets for the trailing 24h, suitable for the
-// /markets / /v1/markets sparkline column. Single CTE pass keyed
-// by ANY($1) on the pair tuple text.
+// /markets / /v1/markets sparkline column.
 //
 // Unlike the per-source variant, this query reads volume_usd
 // directly from prices_1m — pairs aggregated across all sources
-// match the wire shape /v1/markets already returns. Holes are
-// zero-filled so each per-pair series always has 24 entries
-// oldest → newest.
+// match the wire shape /v1/markets already returns. Each requested
+// key sums BOTH stored orientations, as the listing's canon fold does
+// for volume_24h_usd; one UNION ALL arm per direction keeps each an
+// index equality. Holes are zero-filled so each per-pair series always
+// has 24 entries oldest → newest.
 func (s *Store) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]string) (map[pairKey][]PairVolumePoint, error) {
 	if len(pairs) == 0 {
 		return map[pairKey][]PairVolumePoint{}, nil
@@ -1217,19 +1218,32 @@ func (s *Store) GetPairsVolumeHistory24hBatch(ctx context.Context, pairs [][2]st
 		  ) AS bucket
 		),
 		want AS (
-		  SELECT split_part(k, '|', 1) AS base_asset,
+		  SELECT DISTINCT
+		         split_part(k, '|', 1) AS base_asset,
 		         split_part(k, '|', 2) AS quote_asset,
 		         k                       AS pair_key
 		    FROM unnest($1::text[]) k
 		),
+		per_dir AS (
+		  SELECT w.pair_key, p.bucket, p.volume_usd
+		    FROM want w
+		    JOIN prices_1m p
+		      ON p.base_asset = w.base_asset AND p.quote_asset = w.quote_asset
+		   WHERE p.bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		     AND p.volume_usd IS NOT NULL
+		  UNION ALL
+		  SELECT w.pair_key, p.bucket, p.volume_usd
+		    FROM want w
+		    JOIN prices_1m p
+		      ON p.base_asset = w.quote_asset AND p.quote_asset = w.base_asset
+		   WHERE p.bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
+		     AND p.volume_usd IS NOT NULL
+		),
 		per_hour AS (
-		  SELECT base_asset || '|' || quote_asset AS pair_key,
-		         date_trunc('hour', bucket)        AS h,
-		         SUM(volume_usd)::text             AS vol
-		    FROM prices_1m
-		   WHERE bucket >= date_trunc('hour', now() - INTERVAL '23 hours')
-		     AND volume_usd IS NOT NULL
-		     AND (base_asset || '|' || quote_asset) = ANY($1)
+		  SELECT pair_key,
+		         date_trunc('hour', bucket) AS h,
+		         SUM(volume_usd)::text      AS vol
+		    FROM per_dir
 		   GROUP BY pair_key, h
 		)
 		SELECT w.pair_key,

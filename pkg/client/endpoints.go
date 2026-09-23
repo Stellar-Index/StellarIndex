@@ -455,8 +455,9 @@ func (c *Client) AssetMetadata(ctx context.Context, assetID string) (*Envelope[A
 }
 
 // SourcesOptions filters [Client.Sources]. Class is one of the
-// canonical class strings ("exchange" / "aggregator" / "oracle"
-// / "authority_sanity"); empty returns the full registry.
+// canonical class strings ("exchange" / "aggregator" / "oracle" /
+// "authority_sanity" / "lending" / "router" / "bridge"); empty
+// returns the full registry.
 //
 // Include opts into the extra columns [Source] documents as
 // request-gated: "stats" populates TradeCount24h/VolumeUSD24h/

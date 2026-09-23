@@ -223,13 +223,13 @@ about (a single extreme print inflating σ enough to hide the next one).
 An integrator reproducing our numbers from the old text could not
 reconcile them.
 
-**Known limitation.** The band is ADDITIVE in price space
-(`centre ± σ·1.4826·MAD`), not multiplicative, so its lower edge goes
-non-positive once the window's relative MAD exceeds `1/(σ·1.4826)` —
-16.9 % at the default σ = 4. Above that dispersion a downward outlier
-can no longer be rejected while an equivalent upward one still is. This
-is a real asymmetry on thin, volatile pairs; see
-`docs/operations/runbooks/aggregator-outlier-storm.md`.
+**Band shape.** The deviation is measured symmetrically in ratio space:
+a price below the centre is mirrored to `centre²/p` before it is
+compared, so the acceptance band is `[centre²/(centre + σ·s), centre + σ·s]`
+with `s = 1.4826·MAD`. Its lower edge is always strictly positive, and a
+½× print is exactly as outlying as a 2× one. The scale `s` is still the
+MAD of prices, not ADR-0046 §1's MAD of log prices, so the band's width
+is set in price units even though its shape is symmetric.
 
 ## Triangulation — implied cross-pairs
 

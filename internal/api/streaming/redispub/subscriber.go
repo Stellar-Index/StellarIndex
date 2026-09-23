@@ -9,10 +9,12 @@ import (
 	"math/big"
 	"regexp"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
@@ -36,13 +38,33 @@ type Hub interface {
 // topic key is `closed:<asset>/<quote>` — same format as
 // `internal/api/v1.PriceStreamTopic`.
 //
-// Goroutine-safe: fields are read-only after construction.
+// Goroutine-safe: the per-topic dedupe state is mutex-guarded; every
+// other field is read-only after construction.
 type Subscriber struct {
 	cache   RedisSubscriber
 	channel string
 	hub     Hub
 	logger  *slog.Logger
+
+	mu         sync.Mutex
+	forwarded  map[string]topicMark // topic -> newest bucket fanned out
+	lastDupLog time.Time
 }
+
+// topicMark is the newest bucket a topic has fanned out, and who sent it.
+type topicMark struct {
+	observedAt time.Time
+	producer   string
+}
+
+// forwardedPruneAt is the topic count at which marks older than
+// observedAtMaxAge are swept; validateEvent rejects anything that old,
+// so a swept mark can no longer admit a duplicate.
+const forwardedPruneAt = 4096
+
+// duplicateProducerLogEvery rate-limits the two-producers warning: with
+// two aggregators live every (pair, window) bucket arrives twice.
+const duplicateProducerLogEvery = time.Minute
 
 // NewSubscriber constructs a Subscriber bound to the given Redis
 // channel + Hub. Empty channel falls back to [DefaultChannel].
@@ -60,7 +82,79 @@ func NewSubscriber(cache RedisSubscriber, channel string, hub Hub, logger *slog.
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Subscriber{cache: cache, channel: channel, hub: hub, logger: logger}, nil
+	// Seeded here, not in obs, so only a process that wires a subscriber
+	// exports the family and "no ok events" reads as a real zero.
+	for _, o := range subscribeOutcomes {
+		obs.APIStreamSubscribeTotal.WithLabelValues(o)
+	}
+	return &Subscriber{
+		cache: cache, channel: channel, hub: hub, logger: logger,
+		forwarded: make(map[string]topicMark),
+	}, nil
+}
+
+// claim reports whether ev is the first event for its bucket on topic,
+// recording it if so. A repeat of the newest bucket (a second aggregator,
+// a restart overlap) or an older one (a delayed or replayed message) is
+// refused, so each topic carries one frame per bucket, in order.
+func (s *Subscriber) claim(topic string, ev *ClosedBucketEvent, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev, seen := s.forwarded[topic]
+	if seen && !ev.ObservedAt.After(prev.observedAt) {
+		if ev.ProducerID != prev.producer && now.Sub(s.lastDupLog) >= duplicateProducerLogEvery {
+			s.lastDupLog = now
+			s.logger.Warn("redispub: a second producer published a bucket already forwarded — more than one aggregator is publishing on this channel",
+				"channel", s.channel, "topic", topic,
+				"forwarded_producer", prev.producer, "duplicate_producer", ev.ProducerID)
+		}
+		return false
+	}
+	if len(s.forwarded) >= forwardedPruneAt {
+		for t, m := range s.forwarded {
+			if m.observedAt.Before(now.Add(-observedAtMaxAge)) {
+				delete(s.forwarded, t)
+			}
+		}
+	}
+	s.forwarded[topic] = topicMark{observedAt: ev.ObservedAt, producer: ev.ProducerID}
+	return true
+}
+
+// Outcome labels for [obs.APIStreamSubscribeTotal]. Each rejection
+// cause that points a responder somewhere different gets its own label.
+const (
+	outcomeOK               = "ok"
+	outcomeDecodeError      = "decode_error"
+	outcomeMalformed        = "malformed"
+	outcomeFutureObservedAt = "future_observed_at"
+	outcomeStaleObservedAt  = "stale_observed_at"
+	outcomeDuplicate        = "duplicate"
+)
+
+var subscribeOutcomes = []string{
+	outcomeOK, outcomeDecodeError, outcomeMalformed, outcomeFutureObservedAt, outcomeStaleObservedAt,
+	outcomeDuplicate,
+}
+
+// Sentinels validateEvent wraps so handleMessage can label the drop by
+// cause: a clock-skewed API host rejects EVERY event as future-dated,
+// and must not read as a wire-format bug.
+var (
+	errObservedAtFuture = errors.New("observed_at is in the future")
+	errObservedAtStale  = errors.New("observed_at is too old")
+)
+
+// rejectionOutcome maps a validateEvent error to its outcome label.
+func rejectionOutcome(err error) string {
+	switch {
+	case errors.Is(err, errObservedAtFuture):
+		return outcomeFutureObservedAt
+	case errors.Is(err, errObservedAtStale):
+		return outcomeStaleObservedAt
+	default:
+		return outcomeMalformed
+	}
 }
 
 // Channel returns the Redis channel this Subscriber listens on.
@@ -68,9 +162,15 @@ func (s *Subscriber) Channel() string { return s.channel }
 
 // Run blocks until ctx is cancelled, consuming messages from the
 // Redis channel and republishing each one on the Hub. Returns
-// ctx.Err() on clean shutdown; any unexpected stream-end is
-// surfaced as an error so the caller can log and decide whether
-// to retry.
+// ctx.Err() on clean shutdown.
+//
+// A Redis failure does NOT end Run: go-redis v9 retries a refused,
+// dropped or killed pubsub connection internally and closes the
+// message channel only when the PubSub itself is closed. An outage
+// therefore shows as a flat `ok` outcome on
+// stellarindex_api_stream_subscribe_total while the aggregator keeps
+// publishing, which stellarindex_api_price_stream_not_delivering
+// alerts on; the channel-closed error below is a backstop.
 //
 // One Subscriber per binary; safe to invoke as a long-lived
 // goroutine. The matching `cmd/stellarindex-api/main.go` wiring
@@ -92,9 +192,8 @@ func (s *Subscriber) Run(ctx context.Context) error {
 			return ctx.Err()
 		case msg, ok := <-ch:
 			if !ok {
-				// go-redis closes the channel when the underlying
-				// pubsub disconnects irrecoverably. Surface it so the
-				// caller can restart.
+				// Only a closed PubSub closes the channel (see the doc
+				// above); surface it so the supervisor can restart.
 				return errors.New("redispub: subscribe channel closed unexpectedly")
 			}
 			s.handleMessage([]byte(msg.Payload))
@@ -116,18 +215,26 @@ func (s *Subscriber) Run(ctx context.Context) error {
 // missing/future/stale timestamp is dropped, not fanned out — and
 // (2) fan out a re-marshal of the VALIDATED struct rather than the raw
 // incoming bytes, so injected extra JSON fields cannot ride along to
-// clients.
+// clients. A bucket already fanned out on its topic is dropped (see
+// [Subscriber.claim]).
 func (s *Subscriber) handleMessage(payload []byte) {
 	var ev ClosedBucketEvent
 	if err := json.Unmarshal(payload, &ev); err != nil {
-		obs.APIStreamSubscribeTotal.WithLabelValues("decode_error").Inc()
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeDecodeError).Inc()
 		s.logger.Warn("redispub: decode message", "err", err, "payload_len", len(payload))
 		return
 	}
-	if err := validateEvent(&ev, time.Now()); err != nil {
-		obs.APIStreamSubscribeTotal.WithLabelValues("malformed").Inc()
+	now := time.Now()
+	if err := validateEvent(&ev, now); err != nil {
+		outcome := rejectionOutcome(err)
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcome).Inc()
 		s.logger.Warn("redispub: rejected event (failed validation)",
-			"err", err, "asset", ev.Asset, "quote", ev.Quote)
+			"outcome", outcome, "err", err, "asset", ev.Asset, "quote", ev.Quote)
+		return
+	}
+	topic := topicForPair(ev.Asset, ev.Quote, ev.WindowSeconds)
+	if !s.claim(topic, &ev, now) {
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeDuplicate).Inc()
 		return
 	}
 	// Fan out the DOCUMENTED envelope shape built from the validated
@@ -138,18 +245,13 @@ func (s *Subscriber) handleMessage(payload []byte) {
 	// attacker-injected extra fields in the raw payload are dropped
 	// here.
 	//
-	// as_of is whatever ObservedAt the Publisher was handed — for the
-	// production wiring (orchestrator.Tick), that is the tick's un-
-	// truncated wallclock `now`, NOT a fixed calendar-aligned bucket
-	// boundary (RNC34, re-derived 2026-09-18): refreshPairWindow computes
-	// a ROLLING window ending at `now`, unlike the CAGG-backed 1-minute
-	// closed buckets ADR-0015 describes. It is deterministic in the sense
-	// that a given published event carries one fixed timestamp, but it is
-	// NOT the same value two independently-clocked regions would compute
-	// for "the same" window — ADR-0015's byte-identical property holds
-	// for the Timescale closed-bucket surfaces (/v1/price et al.), not for
-	// this Redis-cache bridge. Contrast streampublish/publisher.go, whose
-	// ObservedAt IS a true closed-1m-bucket end read from prices_1m.
+	// as_of is ObservedAt: the end of the closed 1-minute bucket the
+	// orchestrator decided the window at (refreshPairWindow), over
+	// [ObservedAt-window, ObservedAt). Deriving it from the event rather
+	// than the local clock keeps every subscriber's payload byte-identical
+	// (ADR-0015), as streampublish does for its 60 s series.
+	// It is also the dedupe key in [Subscriber.claim]: refreshPairWindow
+	// publishes once per closed bucket.
 	sanitized, err := json.Marshal(closedBucketEnvelope{
 		Data: closedBucketWireData{
 			AssetID:       ev.Asset,
@@ -164,13 +266,12 @@ func (s *Subscriber) handleMessage(payload []byte) {
 	if err != nil {
 		// Marshalling a fully-typed, already-decoded struct cannot
 		// fail; defensive for static analysis only.
-		obs.APIStreamSubscribeTotal.WithLabelValues("malformed").Inc()
+		obs.APIStreamSubscribeTotal.WithLabelValues(outcomeMalformed).Inc()
 		s.logger.Warn("redispub: re-marshal validated event", "err", err)
 		return
 	}
-	topic := topicForPair(ev.Asset, ev.Quote, ev.WindowSeconds)
 	s.hub.Publish(topic, "price_update", sanitized)
-	obs.APIStreamSubscribeTotal.WithLabelValues("ok").Inc()
+	obs.APIStreamSubscribeTotal.WithLabelValues(outcomeOK).Inc()
 }
 
 // closedBucketEnvelope is the SSE wire shape fanned out to
@@ -209,11 +310,10 @@ const (
 	observedAtFutureSkew = 5 * time.Minute
 
 	// observedAtMaxAge bounds how stale a closed-bucket event may be.
-	// ObservedAt tracks ~now for every window (it is the orchestrator's
-	// publish-time wallclock, not the window's start — see the "as_of"
-	// note in handleMessage), so even the 24h window lands near real
-	// time; a day of slack absorbs delivery lag without admitting an
-	// ancient replayed price.
+	// ObservedAt is the window's END — the last closed minute, not the
+	// window's start — so even the 24h window lands within a minute of
+	// real time; a day of slack absorbs delivery lag without admitting
+	// an ancient replayed price.
 	observedAtMaxAge = 24 * time.Hour
 )
 
@@ -233,6 +333,15 @@ func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 	if ev.Asset == "" || ev.Quote == "" {
 		return errors.New("empty asset or quote")
 	}
+	if err := validateCanonicalAsset("asset", ev.Asset); err != nil {
+		return err
+	}
+	if err := validateCanonicalAsset("quote", ev.Quote); err != nil {
+		return err
+	}
+	if ev.Asset == ev.Quote {
+		return fmt.Errorf("asset and quote are both %q", ev.Asset)
+	}
 	if ev.WindowSeconds <= 0 || ev.WindowSeconds > maxWindowSeconds {
 		return fmt.Errorf("window_seconds %d out of range", ev.WindowSeconds)
 	}
@@ -240,13 +349,29 @@ func validateEvent(ev *ClosedBucketEvent, now time.Time) error {
 		return errors.New("missing observed_at")
 	}
 	if ev.ObservedAt.After(now.Add(observedAtFutureSkew)) {
-		return fmt.Errorf("observed_at %s is in the future", ev.ObservedAt.Format(time.RFC3339))
+		return fmt.Errorf("%w: %s (local clock %s)", errObservedAtFuture,
+			ev.ObservedAt.Format(time.RFC3339), now.UTC().Format(time.RFC3339))
 	}
 	if ev.ObservedAt.Before(now.Add(-observedAtMaxAge)) {
-		return fmt.Errorf("observed_at %s is too old", ev.ObservedAt.Format(time.RFC3339))
+		return fmt.Errorf("%w: %s", errObservedAtStale, ev.ObservedAt.Format(time.RFC3339))
 	}
 	if _, err := parseValueDecimal(ev.ValueDecimal); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateCanonicalAsset rejects a leg that is not an asset id in its
+// canonical spelling. Asset and Quote are echoed to clients as asset_id /
+// quote and form the Hub topic key, so anything canonical.Asset.String()
+// could not have produced is forged.
+func validateCanonicalAsset(field, raw string) error {
+	a, err := canonical.ParseAsset(raw)
+	if err != nil {
+		return fmt.Errorf("%s %q is not a canonical asset: %w", field, raw, err)
+	}
+	if a.String() != raw {
+		return fmt.Errorf("%s %q is not in canonical form (want %q)", field, raw, a.String())
 	}
 	return nil
 }

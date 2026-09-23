@@ -4003,9 +4003,16 @@ Order matters; each gates the next check. The DO-NOTHING trap applies:
    ```
    # SAFE: builds v2 ALONGSIDE v1, which keeps serving throughout.
    run-heavy-job.sh d3-setup     /usr/local/sbin/d3-lecur-v2-rebuild.sh setup
-   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject 38000000 <tip>
+   # <v1-floor> = SELECT min(ledger_seq) FROM stellar.ledger_entries_current
+   # (below 38000000 once Phase D has filled [2,38000000]).
+   run-heavy-job.sh d3-reproject /usr/local/sbin/d3-lecur-v2-rebuild.sh reproject <v1-floor> <tip>
    /usr/local/sbin/d3-lecur-v2-rebuild.sh verify     # read-only
    ```
+   A window that starts above v1's floor leaves v2 without every entry last
+   changed below it; `cutover` refuses (exit 1, nothing dropped or renamed)
+   while v2's row count, `min(ledger_seq)` or `max(ledger_seq)` falls short of
+   v1's. `reproject` keeps a progress file per FROM, so a lower window run
+   after a higher one does the work instead of resuming past it.
    `reproject` is resumable (progress file) and every phase is
    idempotent; nothing reads v2 until cutover, so a failure at any
    point costs only time.

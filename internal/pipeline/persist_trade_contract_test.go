@@ -98,6 +98,30 @@ func TestPersistTrade_AbandonStaysABareCtxError(t *testing.T) {
 	}
 }
 
+// TestPersistTrade_AbandonIsNotCountedAsADrop pins the insert-error label
+// split (GH-612): kind="trade" is what the any-rate persist_drop tripwire
+// keys on, so it must mean "row gone". A ctx-abandoned retry (cursor held,
+// re-derivable) counts under kind="trade_abandoned" instead. The literal
+// strings are deliberate — they are the alert rule's wire contract.
+func TestPersistTrade_AbandonIsNotCountedAsADrop(t *testing.T) {
+	droppedBefore := counter(t, obs.SourceInsertErrorsTotal, "soroswap", "trade")
+	abandonedBefore := counter(t, obs.SourceInsertErrorsTotal, "soroswap", "trade_abandoned")
+	store := &fakeTradeStore{} // unhealthy → infra fault → retry loop
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := persistTrade(ctx, discardLogger(), store, mkTrade("soroswap", 705)); !isCtxErr(err) {
+		t.Fatalf("err = %v; want the ctx error", err)
+	}
+
+	if got := counter(t, obs.SourceInsertErrorsTotal, "soroswap", "trade") - droppedBefore; got != 0 {
+		t.Errorf("source_insert_errors{soroswap,trade} delta = %v; want 0 — an abandon is not a drop, and persist_drop tickets on this kind", got)
+	}
+	if got := counter(t, obs.SourceInsertErrorsTotal, "soroswap", "trade_abandoned") - abandonedBefore; got != 1 {
+		t.Errorf("source_insert_errors{soroswap,trade_abandoned} delta = %v; want 1", got)
+	}
+}
+
 // TestHandleEvent_PermanentlyInvalidTradeReturnsDrop drives the PRODUCTION
 // entry point the projector's sink is bound to (cmd/stellarindex-indexer:
 // sinkFn → pipeline.HandleEvent). A zero-value trade fails

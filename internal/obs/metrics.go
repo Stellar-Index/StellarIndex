@@ -76,6 +76,7 @@ func registerAppMetrics() {
 		Sep1CacheOpsTotal,
 		CursorLastLedger,
 		DivergenceRefreshTotal,
+		DivergenceRefresherWired,
 		TradeInsertsTotal,
 		TradeInsertOutcomeTotal,
 		DexTradeUnitRatioTotal,
@@ -103,6 +104,7 @@ func registerAppMetrics() {
 		AggregatorDroppedWindowsTotal,
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
+		PriceServeSubstanceUnmeasuredTotal,
 		PriceServeScamWithheldTotal,
 		PricingGuardTrailingFetchFailedTotal,
 
@@ -118,11 +120,6 @@ func registerAppMetrics() {
 		AggregatorSupplyRefreshTotal,
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
-
-		VerifyArchiveLedgersVerified,
-		VerifyArchiveCurrentLedger,
-		VerifyArchiveCheckpointsTotal,
-		VerifyArchiveMismatchesTotal,
 
 		ChLiveSinkLedgersTotal,
 
@@ -206,10 +203,21 @@ func registerFreezeLifecycleMetrics() {
 // registerAppMetrics).
 func registerAppMetricsTail() {
 	Registry.MustRegister(
+		VerifyArchiveLedgersVerified,
+		VerifyArchiveCurrentLedger,
+		VerifyArchiveCheckpointsTotal,
+		VerifyArchiveMismatchesTotal,
+
 		// Readiness-check gauge (#371 F2) — the only alertable signal
 		// ClickHouse has, since it is the one dependency on r1 with no
 		// Prometheus exporter of its own.
 		DependencyUp,
+
+		// Scam-gate directory-lookup fail-open counter (GH-732), registered
+		// here rather than beside its PriceServeScamWithheldTotal neighbour
+		// in [registerAppMetrics] for the same funlen reason as
+		// SourceUnrepresentableSymbolsTotal below.
+		ScamGateLookupFailuresTotal,
 
 		// Source-family counter (#291). It belongs beside
 		// SourceUnknownSymbolsTotal in [registerAppMetrics] and is
@@ -1883,17 +1891,29 @@ var MonthlyQuotaFailClosedTotal = prometheus.NewCounter(
 // failures (DB connection lost, constraint violation, etc.).
 // Separate from decode errors because operators respond differently:
 // decode errors mean the source schema drifted; insert errors mean
-// the storage layer is struggling. kind="trade"|"oracle"|"panic"|
-// "unhandled" lets dashboards split trade vs oracle-update writes,
-// flag recovered sink panics distinctly from storage-layer rejects,
-// and surface half-wired sources whose event type the sink's
-// type-switch doesn't recognise.
+// the storage layer is struggling. kind="trade"|"trade_abandoned"|
+// "oracle"|"panic"|"unhandled" lets dashboards split trade vs
+// oracle-update writes, flag recovered sink panics distinctly from
+// storage-layer rejects, and surface half-wired sources whose event
+// type the sink's type-switch doesn't recognise.
 var SourceInsertErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_insert_errors_total",
-		Help: "Events that failed to persist to the store, per source + kind (trade/oracle/panic).",
+		Help: "Events that failed to persist to the store, per source + kind (trade/trade_abandoned/oracle/panic).",
 	},
 	[]string{"source", "kind"},
+)
+
+// SourceInsertErrorsTotal kinds for trades. The any-rate
+// stellarindex_ingestion_persist_drop tripwire keys on the dropped kind,
+// so an abandon (re-derivable, cursor held) must never share it.
+const (
+	// InsertErrorKindTradeDropped: a trade permanently dropped on a data
+	// fault — the row is not in the served tier.
+	InsertErrorKindTradeDropped = "trade"
+	// InsertErrorKindTradeAbandoned: a trade whose infra-fault retry was
+	// abandoned on ctx cancellation; re-derivable from the CH lake.
+	InsertErrorKindTradeAbandoned = "trade_abandoned"
 )
 
 // CursorLastLedger — per-source gauge, the last-committed cursor
@@ -1919,18 +1939,32 @@ var CursorLastLedger = prometheus.NewGaugeVec(
 //   - `refresh_error` — RefreshPair returned a network/marshal/cache
 //     error. The previous entry's TTL keeps
 //     counting down; flag stays at last-known good.
+//   - `no_reference`  — every configured reference was dark for the
+//     pair (CS-088).
 //
-// Operators alert on a sustained `refresh_error` rate (CoinGecko
-// down, Chainlink RPC unreachable) — that means
-// `flags.divergence_warning` is going stale across the API surface.
-// `no_vwap` is benign during cold-start and after freezes; not
-// alert-worthy on its own.
+// Only `ok` writes a fresh div:<asset> entry, so the alerts compare
+// the failure children against `ok` AND fire when `ok` stops while
+// the refresher is wired (stellarindex_divergence_no_ok_outcomes):
+// a pass that yields only `no_vwap` (every pair frozen) drains the
+// 5-min cache fleet-wide just as surely as `refresh_error` does.
 var DivergenceRefreshTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_divergence_refresh_total",
-		Help: "Aggregator divergence-cache refresh outcomes per Tick (ok|no_vwap|parse_error|refresh_error).",
+		Help: "Aggregator divergence-cache refresh outcomes per Tick (ok|no_vwap|parse_error|refresh_error|no_reference).",
 	},
 	[]string{"outcome"},
+)
+
+// DivergenceRefresherWired is 1 while the aggregator's divergence pass
+// has a refresher and windows to run with, 0 when every reference is
+// disabled. It gates the no-ok liveness alert so a pass that dies
+// before counting any outcome still fires, and a deliberate opt-out
+// does not.
+var DivergenceRefresherWired = prometheus.NewGauge(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_divergence_refresher_wired",
+		Help: "1 when the aggregator's divergence-cache refresh pass is wired (at least one reference configured), 0 when it is disabled and div:<asset> is never written.",
+	},
 )
 
 // DivergenceRefreshDurationSeconds — latency histogram for the
@@ -2910,11 +2944,19 @@ var AggregatorStreamPublishTotal = prometheus.NewCounterVec(
 //   - "decode_error" — JSON unmarshal failed; message dropped, next
 //     message processed normally. Indicates wire-format drift between
 //     aggregator's Publisher and this Subscriber.
-//   - "malformed" — JSON decoded but Asset or Quote was empty;
-//     message dropped without Hub publish (no valid topic to route to).
+//   - "malformed" — JSON decoded but a field failed validation: empty
+//     asset/quote, window_seconds out of range, missing observed_at, or
+//     a non-canonical / out-of-range value_decimal. Dropped.
+//   - "future_observed_at" — observed_at more than 5 min ahead of the
+//     API host's clock. Every event lands here when the API host lags
+//     the aggregator: a clock-skew fault, not a wire-format one.
+//   - "stale_observed_at" — observed_at more than 24 h old. Dropped.
+//   - "duplicate" — valid, but its topic already fanned out this bucket
+//     or a newer one; dropped. A sustained rate means more than one
+//     aggregator is publishing on the channel.
 //
-// Unset when no Subscriber is wired (the API binary's
-// /v1/price/stream returns 503 instead of fanning out).
+// Seeded by redispub.NewSubscriber, so only a process that wires a
+// subscriber exports it.
 var APIStreamSubscribeTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_api_stream_subscribe_total",
@@ -3251,6 +3293,24 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 	[]string{"surface"},
 )
 
+// PriceServeSubstanceUnmeasuredTotal — count of substance-gate verdicts
+// that could not be reached: the trailing-substance read errored or ran
+// out of request deadline, so the pair was neither cleared nor withheld
+// on evidence. What the surface does with it differs: a single price
+// lookup ("price_read", "tip", …) serves unguarded, while the listing
+// ("listing") withholds the row's price and stamps flags.stale on the
+// page (ADR-0018). Same `surface` constant set as
+// PriceServeSubstanceWithheldTotal. Expected zero; a sustained non-zero
+// rate means the substance store is too slow or down for the request
+// path. Dashboard-only, no alert rule.
+var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_serve_substance_unmeasured_total",
+		Help: "Substance-gate verdicts that could not be measured (store error or deadline), labelled by serving surface.",
+	},
+	[]string{"surface"},
+)
+
 // PriceServeScamWithheldTotal — count of aggregated-price serves withheld
 // by the scam-pricing gate because the asset's issuer is flagged
 // scam-class (malicious/unsafe/fraud/scam/hack/phishing) in the curated
@@ -3259,11 +3319,26 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 // reserve legs refused a USD valuation). A non-zero rate here
 // with no matching directory change can indicate the gate mis-firing;
 // a sudden drop to zero while flagged issuers still trade can indicate
-// the gate failing open (see the paired warn log).
+// the gate failing open — counted directly by ScamGateLookupFailuresTotal.
 var PriceServeScamWithheldTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_scam_withheld_total",
 		Help: "Aggregated price serves withheld by the scam-pricing gate (directory-flagged issuer), labelled by serving surface.",
+	},
+	[]string{"surface"},
+)
+
+// ScamGateLookupFailuresTotal — count of scam-pricing gate consultations
+// whose account_directory lookup errored, so the gate FAILED OPEN and the
+// price was served unguarded (internal/pricingguard.ScamGate). Failures
+// are not cached, so during a directory outage this rises with request
+// traffic. Labelled by the same `surface` constants as
+// PriceServeScamWithheldTotal. Any sustained rate means directory-flagged
+// issuers are being priced; alert: stellarindex_scam_gate_fail_open.
+var ScamGateLookupFailuresTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_scam_gate_lookup_failures_total",
+		Help: "Scam-pricing gate directory lookups that failed, so the price was served unguarded (fail-open), labelled by serving surface.",
 	},
 	[]string{"surface"},
 )

@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 )
@@ -46,6 +48,54 @@ func TestValidate_RejectsEmptyMessage(t *testing.T) {
 				t.Errorf("expected ErrInvalidMessage, got %v", err)
 			}
 		})
+	}
+}
+
+func TestCanonicalRecipient(t *testing.T) {
+	ok := map[string]string{
+		"alice@example.com":                "alice@example.com",
+		"  Alice@Example.COM ":             "alice@example.com",
+		"<alice@example.com>":              "alice@example.com",
+		`"Support" <Alice@Example.com>`:    "alice@example.com",
+		"Bob <bob+tag@mail.example.co.uk>": "bob+tag@mail.example.co.uk",
+	}
+	for in, want := range ok {
+		got, err := notify.CanonicalRecipient(in)
+		if err != nil || got != want {
+			t.Errorf("CanonicalRecipient(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{
+		"", "abc", "@b.co", "a@", "a@b",
+		"a@b.com,c@d.com",
+		`"a b"@example.com`,
+		strings.Repeat("a", 256) + "@b.co",
+	} {
+		if got, err := notify.CanonicalRecipient(in); !errors.Is(err, notify.ErrInvalidRecipient) {
+			t.Errorf("CanonicalRecipient(%q) = %q, %v; want ErrInvalidRecipient", in, got, err)
+		}
+	}
+}
+
+// The mail layer is the chokepoint: a To element in any spelling other
+// than the canonical one is refused before the wire, so no caller can
+// store one identity for an inbox and mail another.
+func TestValidate_RejectsNonCanonicalRecipient(t *testing.T) {
+	n := &notify.NoopSender{}
+	for _, to := range []string{
+		`"Support" <victim@example.com>`,
+		"Victim@Example.com",
+		"a@b.com,c@d.com",
+	} {
+		err := n.Send(context.Background(), notify.Message{
+			From: "x@y.com", To: []string{to}, Subject: "s", Text: "t",
+		})
+		if !errors.Is(err, notify.ErrInvalidMessage) {
+			t.Errorf("To=%q: expected ErrInvalidMessage, got %v", to, err)
+		}
+	}
+	if n.SentCount() != 0 {
+		t.Errorf("SentCount = %d, want 0", n.SentCount())
 	}
 }
 
@@ -153,6 +203,51 @@ func TestResendSender_5xxIsTransient(t *testing.T) {
 	})
 	if !errors.Is(err, notify.ErrTransient) {
 		t.Errorf("expected ErrTransient, got %v", err)
+	}
+}
+
+// A caller whose request context is cancelled while the provider POST
+// is in flight (the client hung up after the token row was written)
+// must not abort the delivery: the send completes and reports success.
+func TestResendSender_CallerCancelDoesNotAbortSend(t *testing.T) {
+	arrived := make(chan struct{})
+	release := make(chan struct{})
+	var delivered atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		<-release
+		if r.Context().Err() != nil {
+			return
+		}
+		delivered.Store(true)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"em_123"}`))
+	}))
+	defer srv.Close()
+
+	s, err := notify.NewResendSender("re_test")
+	if err != nil {
+		t.Fatalf("constructor: %v", err)
+	}
+	s.BaseURL = srv.URL
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- s.Send(ctx, notify.Message{
+			From: "x@y.com", To: []string{"a@b.com"}, Subject: "s", Text: "t",
+		})
+	}()
+	<-arrived
+	cancel()
+	time.Sleep(50 * time.Millisecond) // let a cancellation reach the transport
+	close(release)
+
+	if err := <-done; err != nil {
+		t.Fatalf("Send after caller cancel = %v, want nil (delivery must complete)", err)
+	}
+	if !delivered.Load() {
+		t.Fatal("provider never saw a live request: the POST was aborted")
 	}
 }
 

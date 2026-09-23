@@ -5,9 +5,13 @@
 # resumable (fresh state file — NOT the old done-windows.txt), disk-guarded.
 # Idempotent (RMT overwrite). Census rows coexist harmlessly; cleaned by a bounded
 # DELETE after the walk. NOTE: this is ADDITIVE (~2 TiB) — pool has ~4.4 TiB free.
+# A window that fails PHASED_MAX_ATTEMPTS times in a row stops the run non-zero;
+# re-running resumes from it (the state file records successes only).
 set -uo pipefail
-LOG=/var/log/phaseD-backfill.log
-STATE=/var/lib/ch-backfill/phaseD-done-windows.txt
+LOG="${PHASED_LOG:-/var/log/phaseD-backfill.log}"
+STATE="${PHASED_STATE:-/var/lib/ch-backfill/phaseD-done-windows.txt}"
+MAX_ATTEMPTS="${PHASED_MAX_ATTEMPTS:-3}"
+case "$MAX_ATTEMPTS" in ''|*[!0-9]*|0) echo "phaseD-backfill: PHASED_MAX_ATTEMPTS='$MAX_ATTEMPTS' must be a positive integer" >&2; exit 2 ;; esac
 FLOOR_KB=524288000   # 500 GiB — pause below
 mkdir -p "$(dirname "$STATE")"; touch "$STATE"
 # Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
@@ -33,13 +37,14 @@ load_env_file() {
 for f in /etc/default/stellarindex-ops /etc/default/stellarindex; do
   [ -r "$f" ] && load_env_file "$f" export
 done
-OPS=/usr/local/bin/stellarindex-ops
+OPS="${PHASED_OPS:-/usr/local/bin/stellarindex-ops}"
 
 echo "$(date -u +%FT%TZ) PHASED_START ranges [54000000,63050000] then [2,38000000]; state=$STATE" >> "$LOG"
 for range in "54000000 63050000" "2 38000000"; do
-  set -- $range; RFROM=$1; RTO=$2
+  read -r RFROM RTO <<< "$range"
   echo "$(date -u +%FT%TZ) RANGE [$RFROM,$RTO] START" >> "$LOG"
   w=$RFROM
+  attempts=0
   while [ "$w" -le "$RTO" ]; do
     wto=$((w + 999999)); [ "$wto" -gt "$RTO" ] && wto=$RTO
     if grep -qx "$w" "$STATE"; then w=$((wto + 1)); continue; fi
@@ -51,8 +56,14 @@ for range in "54000000 63050000" "2 38000000"; do
       echo "$w" >> "$STATE"
       echo "$(date -u +%FT%TZ) window $w-$wto DONE (avail now $(df --output=avail -k /var/lib/clickhouse | tail -1 | tr -d ' ')KiB, tip $(curl -sS --max-time 15 localhost:8123/ --data-binary 'SELECT max(ledger_seq) FROM stellar.ledgers'))" >> "$LOG"
     else
-      echo "$(date -u +%FT%TZ) window $w-$wto FAILED — retry on resume" >> "$LOG"; sleep 30; continue
+      rc=$?; attempts=$((attempts + 1))
+      if [ "$attempts" -ge "$MAX_ATTEMPTS" ]; then
+        echo "$(date -u +%FT%TZ) window $w-$wto FAILED (exit $rc) attempt $attempts/$MAX_ATTEMPTS — stopping; re-run to resume from $w" >> "$LOG"
+        exit "$rc"
+      fi
+      echo "$(date -u +%FT%TZ) window $w-$wto FAILED (exit $rc) attempt $attempts/$MAX_ATTEMPTS — retrying in 30s" >> "$LOG"; sleep 30; continue
     fi
+    attempts=0
     w=$((wto + 1))
   done
   echo "$(date -u +%FT%TZ) RANGE [$RFROM,$RTO] COMPLETE" >> "$LOG"

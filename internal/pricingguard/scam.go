@@ -78,8 +78,9 @@
 // overlay: a directory-reader error (the directory is a LOCAL synced
 // table, so an error means the local DB is unreachable) does NOT
 // withhold — failing closed would blank EVERY asset's price on a DB
-// blip and take the whole money surface dark. The fail-open path logs
-// (transition-only) so a silent re-exposure is observable.
+// blip and take the whole money surface dark. Every fail-open serve
+// increments obs.ScamGateLookupFailuresTotal, which the
+// stellarindex_scam_gate_fail_open alert watches, and logs a Warn.
 //
 // OPERATOR OVERRIDE of a false positive. The tags are a third party's
 // judgement, and a wrong one withholds a legitimate issuer's price
@@ -225,9 +226,9 @@ const (
 )
 
 // PriceWithholding is [PriceWithheld] reporting WHICH gate fired. The
-// scam half is asked even when the substance half has already refused:
-// a flagged issuer's market is usually thin as well, and calling it
-// merely thin tells the reader to go and price it themselves.
+// scam gate is asked FIRST: when both would withhold, the flag is the
+// true reason, and reporting the pair as merely thin would hand the
+// client the recompute-it-yourself advice the flag exists to refuse.
 func PriceWithholding(
 	ctx context.Context,
 	substance *SubstanceGate,
@@ -235,12 +236,12 @@ func PriceWithholding(
 	base, quote canonical.Asset,
 	surface string,
 ) Withholding {
-	return WithholdingFor(substance.Allowed(ctx, base, quote, surface), scam.WithheldPair(ctx, base, quote, surface))
+	return WithholdingFor(scam.WithheldPair(ctx, base, quote, surface), substance.Allowed(ctx, base, quote, surface))
 }
 
 // WithholdingFor folds the two gates' verdicts into one; a flagged issuer
 // takes precedence. Callers holding their own gate seams fold through here.
-func WithholdingFor(substanceAllowed, scamFlagged bool) Withholding {
+func WithholdingFor(scamFlagged, substanceAllowed bool) Withholding {
 	switch {
 	case scamFlagged:
 		return WithheldFlaggedIssuer
@@ -319,11 +320,16 @@ func (g *ScamGate) Withheld(ctx context.Context, base canonical.Asset, surface s
 // Direction matters and is one-way. A configured classic↔SAC family is
 // ordered classic-first (canonical.NewAliasRegistry), so the canonical
 // form of a classic asset is itself and a classic-keyed request is
-// bit-for-bit unchanged; only the SAC spelling moves. A deployment with
-// no `[supply].sac_wrappers` entry for the asset resolves it to itself,
-// so the resolution is a no-op there rather than a behaviour change.
-// XLM's SAC canonicalises to `native`, which has no issuer and so still
-// returns false — as it did before.
+// bit-for-bit unchanged; only the SAC spelling moves. XLM's SAC
+// canonicalises to `native`, which has no issuer and so returns false.
+//
+// KNOWN BYPASS: a SAC with no `[supply].sac_wrappers` entry resolves to
+// itself — a C-address cannot be inverted to its classic asset without
+// that table — so it returns false here with no directory lookup, and a
+// flagged issuer's price is served under that contract id. The gate
+// cannot tell it from a genuine bare SEP-41 token, which must keep
+// serving, so it does not fail closed. Closing it for a flagged issuer
+// means registering that asset's SAC in `sac_wrappers`.
 func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surface string) bool {
 	if g == nil {
 		return false
@@ -347,12 +353,15 @@ func (g *ScamGate) withheldLeg(ctx context.Context, asset canonical.Asset, surfa
 
 	e, found, err := g.dir.DirectoryEntryByAddress(ctx, key)
 	if err != nil {
-		// Fail-OPEN. Do NOT cache (re-ask next time), and log on the
-		// live path only so a silent re-exposure is observable without
-		// spamming on client cancellations.
-		if g.logger != nil && ctx.Err() == nil {
-			g.logger.Warn("scam pricing gate: directory lookup failed — serving unguarded",
-				"issuer", key, "surface", surface, "err", err)
+		// Fail-OPEN. Do NOT cache (re-ask next time). Counted and logged
+		// on the live path only — a cancelled request serves nothing, so
+		// it is not an unguarded serve.
+		if ctx.Err() == nil {
+			obs.ScamGateLookupFailuresTotal.WithLabelValues(surface).Inc()
+			if g.logger != nil {
+				g.logger.Warn("scam pricing gate: directory lookup failed — serving unguarded",
+					"issuer", key, "surface", surface, "err", err)
+			}
 		}
 		return false
 	}

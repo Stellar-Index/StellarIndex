@@ -51,6 +51,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"math"
 	"math/big"
 	"net"
 	"net/http"
@@ -1378,7 +1379,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		LakeWatermark:      lakeWatermarkReader,
 		Explorer:           explorerReader,
 		Volume:             storeVolumeReader{s: store},
-		Change24h:          storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache},
+		Change24h:          storeChange24hReader{s: store, pegs: usdPegs, decimals: nonstandardDecimalsCache, logger: logger},
 		PriceAt:            storePriceAtReader{s: store, substance: substanceGate, scam: scamGate, logger: logger.With("component", "price-at-guard")},
 		ChangeSummary:      store,
 		AssetsReader:       cachedAssetsReader,
@@ -3540,7 +3541,8 @@ func (r redisTriangulatedLooker) LookupCompositeMeta(
 // triangulated looker to aggregate.GlobalPriceReader (R-018 Phase
 // 1.4a). Each method maps to one tier of ComputeGlobalPrice:
 //
-//   - LatestVWAP → Store.LatestClosedVWAP1mForPair (tier 1)
+//   - LatestVWAP → Store.LatestClosedVWAP1mForPair (tier 1); the raw
+//     ratio, decimals-corrected by v1's decimalsCorrectedGlobalReader
 //   - LatestAggregatorPrices → Store.LatestAggregatorPricesForPair (tier 2)
 //   - LookupTriangulated → wraps redisTriangulatedLooker (tier 3)
 //
@@ -4165,7 +4167,9 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	if err != nil {
 		return nil, err
 	}
-	rows, err := r.s.RecentClosedVWAP1mForPair(ctx, pair, n)
+	// SampleFetch extra buckets so each of the n served buckets has its own
+	// trailing baseline for the serving-sanity guard below.
+	rows, err := r.s.RecentClosedVWAP1mForPair(ctx, pair, n+pricingguard.SampleFetch)
 	if err != nil {
 		return nil, err
 	}
@@ -4178,6 +4182,10 @@ func (r storePriceReader) RecentClosedSnapshots(ctx context.Context, asset, quot
 	if withheld := priceWithheld(ctx, r.substance, r.scam, asset, quote, "oracle"); withheld != pricingguard.NotWithheld {
 		return nil, v1.PriceWithheldError(withheld)
 	}
+	// Each bucket is the same bare CAGG ratio /v1/price guards; a
+	// manipulated minute is dropped from the series rather than published
+	// as an oracle record.
+	rows = pricingguard.GuardServedVWAP1mSeries(r.logger, pair, rows, n)
 	out := make([]v1.PriceSnapshot, len(rows))
 	for i, row := range rows {
 		out[i] = v1.VWAP1mToSnapshot(asset.String(), quote.String(), row.VWAP, row.Bucket)
@@ -4332,18 +4340,40 @@ type storeChange24hReader struct {
 	s        *timescale.Store
 	pegs     []canonical.Asset
 	decimals aggregate.DecimalsLookup
+	logger   *slog.Logger // nil → guard logging disabled
 }
 
+// change24hAnchorMaxStaleness lets the guard stand a last-known-good in
+// for a refused anchor at any age: ClosedVWAP1mAtOrBefore itself puts no
+// staleness bound on the anchor, so neither does its stand-in.
+const change24hAnchorMaxStaleness = time.Duration(math.MaxInt64)
+
+// errChange24hAnchorGuarded: the anchor bucket exists but the guard refused it.
+var errChange24hAnchorGuarded = errors.New("change_24h anchor refused by the serving-sanity guard")
+
 func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonical.Asset) (string, error) {
-	row, err := r.s.ClosedVWAP1mAtOrBefore(
-		ctx,
-		canonical.Pair{Base: asset, Quote: usdQuoteAsset},
-		time.Now().Add(-24*time.Hour),
-	)
+	at := time.Now().Add(-24 * time.Hour)
+	// Each anchor is a raw prices_1m bucket, so it passes the point-in-time
+	// serving-sanity guard like every other one that reaches a response. A
+	// refused bucket is errChange24hAnchorGuarded: the next market is tried,
+	// as for a pair with no bucket, and a manipulated minute is never the
+	// divisor of a percentage.
+	guardedAnchor24h := func(ctx context.Context, pair canonical.Pair, at time.Time) (timescale.Vwap1mRow, error) {
+		row, err := r.s.ClosedVWAP1mAtOrBefore(ctx, pair, at)
+		if err != nil {
+			return timescale.Vwap1mRow{}, err
+		}
+		served, ok := pricingguard.GuardServedVWAP1mAt(ctx, r.s, r.logger, pair, row, at, change24hAnchorMaxStaleness)
+		if !ok {
+			return timescale.Vwap1mRow{}, errChange24hAnchorGuarded
+		}
+		return served, nil
+	}
+	row, err := guardedAnchor24h(ctx, canonical.Pair{Base: asset, Quote: usdQuoteAsset}, at)
 	if err == nil {
 		return normalizeChange24hAnchor(r.decimals, row.VWAP, asset, usdQuoteAsset)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, errChange24hAnchorGuarded) {
 		return "", err
 	}
 	// Stablecoin-fiat proxy fallback: walk the operator's USD pegs
@@ -4359,11 +4389,7 @@ func (r storeChange24hReader) USDPrice24hAgo(ctx context.Context, asset canonica
 		if canonical.CanonicalAsset(peg).Equal(canonical.CanonicalAsset(asset)) {
 			continue
 		}
-		pegRow, pegErr := r.s.ClosedVWAP1mAtOrBefore(
-			ctx,
-			canonical.Pair{Base: asset, Quote: peg},
-			time.Now().Add(-24*time.Hour),
-		)
+		pegRow, pegErr := guardedAnchor24h(ctx, canonical.Pair{Base: asset, Quote: peg}, at)
 		if pegErr == nil {
 			// Against the peg it was READ from, not the requested
 			// fiat:USD: the factor belongs to the pair behind the bucket.
@@ -6055,15 +6081,15 @@ func (r storePriceAtReader) PriceAt(
 	// pricingguard's package doc claimed to cover every raw-bucket
 	// path. Apply the same trailing-baseline guard, on the 1m rung
 	// only: the coarser rungs are hour/day bars a trailing 1-minute
-	// baseline cannot judge. A rejected candidate with no in-contract
-	// last-known-good is an honest "no price at this instant" — the
-	// handler 404s (or nulls that horizon) rather than serve a value
-	// the manipulation band rejected.
+	// baseline cannot judge. A candidate the guard cannot serve is
+	// ErrPriceAtGuarded, not ErrPriceAtUnavailable: the bucket exists and
+	// was refused, so the handler answers price-withheld (or marks the
+	// horizon withheld) rather than claiming there is no data.
 	if row.Resolution == timescale.Granularity1m {
 		served, ok := pricingguard.GuardServedVWAP1mAt(ctx, r.s, r.logger, pair,
 			timescale.Vwap1mRow{Bucket: row.Bucket, VWAP: row.VWAP}, ts, maxStaleness)
 		if !ok {
-			return "", time.Time{}, 0, v1.ErrPriceAtUnavailable
+			return "", time.Time{}, 0, v1.ErrPriceAtGuarded
 		}
 		row.VWAP, row.Bucket = served.VWAP, served.Bucket
 	}

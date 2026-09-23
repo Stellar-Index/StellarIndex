@@ -16,6 +16,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+const replayNotReachedMsg = "projector cursor for source=%q is at ledger %d, which has not yet passed requested ledger %d — " +
+	"nothing to rewind; the live projector's forward pass will project it (%d ledgers still ahead of the cursor).\n"
+
 // projectorReplay rewinds the projector's per-source cursor so the
 // projector goroutine re-projects a historical range from
 // `soroban_events`. Replaces the family of `*-backfill` subcommands
@@ -121,9 +124,9 @@ func projectorReplay(args []string) error {
 		return fmt.Errorf("invalid -from %d", *from)
 	}
 	if target >= currentLedger {
-		_, _ = fmt.Fprintf(os.Stdout,
-			"projector cursor for source=%q is already at ledger %d ≤ requested rewind point %d — no action.\n",
-			*source, currentLedger, target)
+		// The cursor has NOT reached the requested ledger, so there is
+		// nothing to rewind: the live projector's forward pass covers it.
+		_, _ = fmt.Fprintf(os.Stdout, replayNotReachedMsg, *source, currentLedger, target, target-currentLedger)
 		return nil
 	}
 

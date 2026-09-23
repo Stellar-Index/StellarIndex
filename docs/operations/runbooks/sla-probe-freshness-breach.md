@@ -1,6 +1,6 @@
 ---
 title: Runbook — sla-probe-freshness-breach
-last_verified: 2026-09-05
+last_verified: 2026-09-23
 status: current
 severity: P2
 ---
@@ -15,14 +15,14 @@ severity: P2
 | Severity | P2 (`severity: page`) |
 | Detected by | `configs/prometheus/rules.r1/sla-probe.yml` (group `stellarindex.sla_probe`, `severity: page`, `for: 30m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/sla-probe.yml` (same expr/for/labels). |
 | Typical MTTR | 30–90 min |
-| Impact | Detail-page consumers see stale prices. The 30 s SLA target is the DEFAULT and applies to every freshness-bearing endpoint; `/v1/price` is the one exemption, because it is closed-bucket-served (ADR-0015) and its `observed_at` is *structurally* 30–150 s old by design — the probe holds it to a 150 s verdict bound (`defaultClosedBucketFreshTarget` in `cmd/stellarindex-sla-probe/main.go`) and the alert pages at 180 s. A sustained breach means the affected price surface is out of date beyond even those allowances. |
+| Impact | Detail-page consumers see stale prices. The 30 s SLA target is the DEFAULT and applies to every freshness-bearing endpoint; `/v1/price` is the one exemption, because it is closed-bucket-served (ADR-0015) and its `observed_at` is *structurally* 30–150 s old by design — the probe holds it to a 150 s verdict bound (`defaultClosedBucketFreshTarget` in `cmd/stellarindex-sla-probe/main.go`), `/sla` publishes that bound, and the alert pages at the same 150 s. A sustained breach means the affected price surface is out of date beyond even those allowances. |
 
 ## Symptoms
 
 - The real expression (identical in both rule trees):
 
   ```promql
-  stellarindex_sla_probe_freshness_sec{endpoint="price"} > 180
+  stellarindex_sla_probe_freshness_sec{endpoint="price"} > 150
   or
   stellarindex_sla_probe_freshness_sec{endpoint!="price"} > 30
   ```
@@ -31,7 +31,7 @@ severity: P2
   the single exemption, because it serves the last CLOSED bucket
   (ADR-0015) and its `observed_at` is structurally 30–150 s behind
   wall-clock even when everything is healthy — the probe's verdict
-  bound for it is 150 s and the alert line is 180 s. Read the
+  bound, the published bound and the alert line are all 150 s. Read the
   alert's `summary` for the value; the description covers both
   bounds and cannot tell you which one tripped.
 - The probe's JSON report shows `observed_at` on `/v1/price` (or
@@ -162,7 +162,7 @@ reading the wrong key.
 - [ ] Step 3 — If "no trades in window" — this is honest staleness.
       Confirm the pair is genuinely quiet and ack the alert.
 - [ ] Verification: probe `freshness_sec` back under the
-      per-endpoint bound (180 s for `price`, 30 s for everything
+      per-endpoint bound (150 s for `price`, 30 s for everything
       else) for ≥ 30 min.
 
 ## Known false-positive patterns
@@ -199,6 +199,10 @@ reading the wrong key.
 
 ## Changelog
 
+- 2026-09-23 — `price` alert line lowered 180 s → 150 s, the bound
+  `/sla` publishes and the probe's verdict already used; a CAGG slip
+  holding `/v1/price` at 170 s breached the public bound with this
+  page silent (#741).
 - 2026-09-05 — freshness selector inverted to a positive matcher:
   `{endpoint="price"} > 180 or {endpoint!="price"} > 30`. The old
   `{endpoint!="price-tip"} > 180` arm handed `/v1/price`'s ADR-0015

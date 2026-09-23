@@ -210,11 +210,7 @@ var chartTimeframes = map[string]chartTimeframeSpec{
 // was right: the handler already dispatches four ways. It now has a
 // second caller, which is the better reason to keep it one function.
 func (s *Server) seriesWithheldForScam(w http.ResponseWriter, r *http.Request, pair canonical.Pair, surface string) bool {
-	if !scamWithheld(r.Context(), s.scam, pair.Base, pair.Quote, surface) {
-		return false
-	}
-	writePriceWithheldProblem(w, r, pair.Base, pair.Quote, PriceWithheldScamIssuer)
-	return true
+	return s.writeIfScamWithheld(w, r, pair.Base, pair.Quote, surface)
 }
 
 // handleChart serves

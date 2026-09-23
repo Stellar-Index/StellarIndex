@@ -80,6 +80,10 @@ func (g *closedStreamGate) Allowed(_ context.Context, _, _ canonical.Asset, surf
 	return !g.record(surface)
 }
 
+func (g *closedStreamGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
+	return g.Allowed(ctx, base, quote, surface), true
+}
+
 // Withheld implements v1.PriceScamGate (flagged issuer).
 func (g *closedStreamGate) Withheld(_ context.Context, _ canonical.Asset, surface string) bool {
 	return g.record(surface)

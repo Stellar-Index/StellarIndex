@@ -12,6 +12,7 @@ import (
 	"math/big"
 	"net"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -775,9 +776,12 @@ func TestPlatformPostgresStores(t *testing.T) {
 		}
 
 		// List for account.
-		list, err := keys.ListForAccount(ctx, acct.ID)
+		list, moreRevoked, err := keys.ListForAccount(ctx, acct.ID, 10)
 		if err != nil {
 			t.Fatalf("list: %v", err)
+		}
+		if moreRevoked {
+			t.Error("moreRevoked = true on an account with no revoked keys")
 		}
 		if len(list) != 1 {
 			t.Errorf("list len = %d, want 1", len(list))
@@ -1156,12 +1160,84 @@ func TestPlatformPostgresStores(t *testing.T) {
 		if got := atomic.LoadInt64(&otherErrs); got != 0 {
 			t.Errorf("unexpected errors = %d, want 0", got)
 		}
-		listed, err := keys.ListForAccount(ctx, acct.ID)
+		listed, err := keys.ListActiveForAccount(ctx, acct.ID)
 		if err != nil {
 			t.Fatalf("list: %v", err)
 		}
 		if len(listed) != cap_ {
 			t.Errorf("persisted active rows = %d, want %d (the cap)", len(listed), cap_)
+		}
+		counted, err := keys.CountActiveForAccount(ctx, acct.ID)
+		if err != nil {
+			t.Fatalf("count: %v", err)
+		}
+		if counted != cap_ {
+			t.Errorf("CountActiveForAccount = %d, want %d (the cap)", counted, cap_)
+		}
+	})
+
+	// GH-766: revoked rows are kept forever, so every account read path must
+	// be bounded by the active set, never by the revoked history.
+	t.Run("APIKeyStore/RevokedHistoryIsBounded", func(t *testing.T) {
+		keys := postgresstore.NewAPIKeyStore(store)
+		acct, err := accounts.Create(ctx, platform.Account{
+			Name: "ChurnCo", Slug: "churn-" + strings.ToLower(uuid.New().String()[:8]),
+			BillingEmail: "churn-" + uuid.New().String() + "@k.example",
+			Tier:         platform.TierStarter, Status: platform.AccountActive,
+		})
+		if err != nil {
+			t.Fatalf("create account: %v", err)
+		}
+		mint := func(i int) platform.APIKey {
+			hex := strings.ReplaceAll(uuid.New().String(), "-", "")
+			hash := sha256.Sum256([]byte(hex))
+			k, err := keys.Create(ctx, platform.APIKey{
+				ID: "kid_" + hex[:12], AccountID: acct.ID, Name: fmt.Sprintf("churn-%d", i),
+				KeyHash: hash[:], KeyPrefix: "sip_" + hex[12:20],
+				Tier: platform.APIKeyTierAPIKey, RateLimitPerMin: 100,
+			}, 2)
+			if err != nil {
+				t.Fatalf("create key %d: %v", i, err)
+			}
+			return k
+		}
+		// The active key is minted first, so it is the oldest row.
+		active := mint(0)
+		const revokedRows, limit = 7, 3
+		var newestRevoked []string
+		for i := 1; i <= revokedRows; i++ {
+			k := mint(i)
+			if err := keys.Revoke(ctx, k.ID, uuid.Nil, "churn"); err != nil {
+				t.Fatalf("revoke %d: %v", i, err)
+			}
+			if i > revokedRows-limit {
+				newestRevoked = append(newestRevoked, k.ID)
+			}
+		}
+
+		if n, err := keys.CountActiveForAccount(ctx, acct.ID); err != nil || n != 1 {
+			t.Fatalf("CountActiveForAccount = %d, %v; want 1", n, err)
+		}
+		if got, err := keys.ListActiveForAccount(ctx, acct.ID); err != nil || len(got) != 1 || got[0].ID != active.ID {
+			t.Fatalf("ListActiveForAccount = %+v, %v; want only %s", got, err, active.ID)
+		}
+		list, more, err := keys.ListForAccount(ctx, acct.ID, limit)
+		if err != nil {
+			t.Fatalf("ListForAccount: %v", err)
+		}
+		if !more {
+			t.Error("moreRevoked = false with 4 older revoked keys omitted")
+		}
+		got := make([]string, 0, len(list))
+		for _, k := range list {
+			got = append(got, k.ID)
+		}
+		want := append([]string{active.ID}, newestRevoked...)
+		if !slices.Equal(got, want) {
+			t.Errorf("ListForAccount ids = %v, want %v (active + %d newest revoked, oldest first)", got, want, limit)
+		}
+		if _, more, err := keys.ListForAccount(ctx, acct.ID, revokedRows); err != nil || more {
+			t.Errorf("ListForAccount(limit=%d) moreRevoked = %v, %v; want false", revokedRows, more, err)
 		}
 	})
 

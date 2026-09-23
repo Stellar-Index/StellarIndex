@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 )
 
 // TestHandlerResponseFieldsAreDocumented closes the gap that let
@@ -50,6 +52,8 @@ var handlerSpecFieldPairs = []struct {
 	{"TradeRow", reflect.TypeOf(TradeRow{})},
 	{"OHLCBar", reflect.TypeOf(OHLCBar{})},
 	{"Price", reflect.TypeOf(PriceSnapshot{})},
+	{"AccountActivity", reflect.TypeOf(explorerpkg.AccountActivityView{})},
+	{"AccountTrade", reflect.TypeOf(explorerpkg.AccountTradeEntry{})},
 }
 
 func TestHandlerResponseFieldsAreDocumented(t *testing.T) {

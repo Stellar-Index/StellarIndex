@@ -119,7 +119,7 @@ func TestStoreRoundTrip(t *testing.T) {
 		Price:      c.NewAmount(price),
 		Decimals:   14,
 		Confidence: 0.95,
-		// OracleUpdate.Validate requires a valid G-strkey Observer.
+		// OracleUpdate.Validate requires a checksum-valid Observer strkey.
 		// Hand-crafted "GRELAYER_FAKE" is 13 chars (expected 56),
 		// so it was rejected after canonical tightened validation.
 		// Generate a checksum-valid G-address from a deterministic

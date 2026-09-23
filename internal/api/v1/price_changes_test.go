@@ -5,6 +5,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -166,6 +167,58 @@ func TestHandlePriceChanges_WithheldDistinctFromNotFound(t *testing.T) {
 	}
 	if strings.Contains(body, `"type":"https://api.stellarindex.io/errors/price-not-found"`) {
 		t.Errorf("body used the generic price-not-found type though every orientation was withheld: %s", body)
+	}
+}
+
+// priceChangesHorizonWithheldStub serves the current price but refuses
+// the 1h reference as withheld and has no data for the older horizons.
+type priceChangesHorizonWithheldStub struct{}
+
+func (priceChangesHorizonWithheldStub) PriceAt(
+	_ context.Context, _ canonical.Pair, ts time.Time, _ time.Duration,
+) (string, time.Time, int, error) {
+	age := time.Since(ts)
+	switch {
+	case age < 30*time.Minute:
+		return "1.00", ts, 60, nil
+	case age < 12*time.Hour:
+		return "", time.Time{}, 0, ErrPriceWithheld
+	default:
+		return "", time.Time{}, 0, ErrPriceAtUnavailable
+	}
+}
+
+// TestHandlePriceChanges_WithheldHorizonDistinctFromNoData: a horizon
+// whose reference bucket exists but was refused must not read the same
+// as "no history that far back" — both are unavailable, only the
+// refused one is withheld.
+func TestHandlePriceChanges_WithheldHorizonDistinctFromNoData(t *testing.T) {
+	s := &Server{priceAt: priceChangesHorizonWithheldStub{}}
+	rec := httptest.NewRecorder()
+	s.handlePriceChanges(rec, httptest.NewRequest(http.MethodGet, "/v1/price/changes?asset=native&quote=fiat:USD", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var env struct {
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v\n%s", err, rec.Body.String())
+	}
+	horizon := func(label string) map[string]any {
+		var h map[string]any
+		if err := json.Unmarshal(env.Data[label], &h); err != nil {
+			t.Fatalf("decode %s horizon: %v\n%s", label, err, rec.Body.String())
+		}
+		return h
+	}
+	h1 := horizon("1h")
+	if h1["available"] != false || h1["withheld"] != true {
+		t.Errorf("1h horizon = %v, want available=false withheld=true (the reference exists and was refused)", h1)
+	}
+	h24 := horizon("24h")
+	if h24["available"] != false || h24["withheld"] != false {
+		t.Errorf("24h horizon = %v, want available=false withheld=false (no data that far back)", h24)
 	}
 }
 

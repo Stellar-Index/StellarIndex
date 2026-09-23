@@ -32,7 +32,7 @@
 # closed-bucket contract, not of "not being the tip", and the first
 # other endpoint to publish an observed_at would have silently inherited
 # a bound six times the pricing SLA. Inverted to a positive matcher:
-# /price gets 180 s by name, everything else falls back to the 30 s SLA.
+# /price gets 150 s by name, everything else falls back to the 30 s SLA.
 #
 # PROVEN-RED: restore the `{endpoint!="price-tip"} > 180` pair and the
 # oracle-latest case below reports 0 firing alerts (FAIL) — a 120 s
@@ -111,13 +111,13 @@ tests:
               component: api
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
-              summary: "price-tip price freshness 45s over its bound (30s SLA; /price 180s closed-bucket) sustained 30m"
+              summary: "price-tip price freshness 45s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
                 The SLA probe's median observed_at freshness for
                 price-tip has been over its bound for
                 ≥ 30 minutes. The bound is the 30 s pricing SLA for every
                 endpoint except /price, which serves the ADR-0015 closed
-                bucket and is held to 180 s — read the summary for the
+                bucket and is held to 150 s — read the summary for the
                 value, not the description, before deciding which one
                 tripped.
 
@@ -162,13 +162,13 @@ tests:
               component: api
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
-              summary: "oracle-latest price freshness 120s over its bound (30s SLA; /price 180s closed-bucket) sustained 30m"
+              summary: "oracle-latest price freshness 120s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
                 The SLA probe's median observed_at freshness for
                 oracle-latest has been over its bound for
                 ≥ 30 minutes. The bound is the 30 s pricing SLA for every
                 endpoint except /price, which serves the ADR-0015 closed
-                bucket and is held to 180 s — read the summary for the
+                bucket and is held to 150 s — read the summary for the
                 value, not the description, before deciding which one
                 tripped.
 
@@ -199,13 +199,13 @@ tests:
               component: api
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
-              summary: "price price freshness 200s over its bound (30s SLA; /price 180s closed-bucket) sustained 30m"
+              summary: "price price freshness 200s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
                 The SLA probe's median observed_at freshness for
                 price has been over its bound for
                 ≥ 30 minutes. The bound is the 30 s pricing SLA for every
                 endpoint except /price, which serves the ADR-0015 closed
-                bucket and is held to 180 s — read the summary for the
+                bucket and is held to 150 s — read the summary for the
                 value, not the description, before deciding which one
                 tripped.
 
@@ -216,6 +216,118 @@ tests:
                 (ADR-0018). Check the pair's trade cadence first, then the
                 aggregator → Redis → API path; bisect by which stage's
                 `observed_at` is lagging.
+
+  # ── /price between the published 150s bound and the old 180s line ──
+  # /sla publishes 150 s for /price and the probe's verdict fails there;
+  # the alert used to wait for 180 s, so a CAGG slip holding /price at
+  # 170 s breached the public bound with the page silent (#741).
+  # PROVEN-RED: restore `{endpoint="price"} > 180` and this case reports
+  # 0 firing alerts.
+  - interval: 1m
+    name: a 170s closed-bucket price breaches the published 150s bound
+    input_series:
+      - series: 'stellarindex_sla_probe_freshness_sec{job="node_exporter",instance="r1:9100",endpoint="price"}'
+        values: '170+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_freshness_breach
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              endpoint: price
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
+              summary: "price price freshness 170s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
+              description: |
+                The SLA probe's median observed_at freshness for
+                price has been over its bound for
+                ≥ 30 minutes. The bound is the 30 s pricing SLA for every
+                endpoint except /price, which serves the ADR-0015 closed
+                bucket and is held to 150 s — read the summary for the
+                value, not the description, before deciding which one
+                tripped.
+
+                When the endpoint is price-tip the usual cause is NOT a
+                broken pipeline: computeTip escalates to a 30 s window and
+                then falls back to the closed bucket, so a pair with no
+                trade for 30+ s serves a 60-120 s observed_at in-contract
+                (ADR-0018). Check the pair's trade cadence first, then the
+                aggregator → Redis → API path; bisect by which stage's
+                `observed_at` is lagging.
+
+  # ── availability: the published 99.9 % has an alert (#741) ────────
+  # One failed request in a ~150-sample run reads 99.333 %. Sustained
+  # across consecutive runs it pages; a clean run never does.
+  - interval: 1m
+    name: probe availability under the published 99.9 pct pages
+    input_series:
+      - series: 'stellarindex_sla_probe_availability_pct{job="node_exporter",instance="r1:9100",endpoint="price"}'
+        values: '99.333+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_availability_breach
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              endpoint: price
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-availability-breach.md
+              summary: "price probe availability 99.333% below SLA target (99.9%) sustained 30m"
+              description: |
+                The SLA probe's per-endpoint 2xx share has been below the
+                published 99.9 % for ≥ 30 minutes of consecutive runs. Latency
+                and freshness can be healthy while this fires: the probe
+                counts every non-2xx (429, 5xx, timeout) as unavailable.
+
+  - interval: 1m
+    name: a fully available probe run never pages
+    input_series:
+      - series: 'stellarindex_sla_probe_availability_pct{job="node_exporter",instance="r1:9100",endpoint="price"}'
+        values: '100+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_availability_breach
+        exp_alerts: []
+
+  # ── p99: the published 500 ms has an alert (#741) ─────────────────
+  - interval: 1m
+    name: probe p99 over the published 500ms pages
+    input_series:
+      - series: 'stellarindex_sla_probe_latency_ms{job="node_exporter",instance="r1:9100",endpoint="price",quantile="0.99"}'
+        values: '600+0x60'
+      - series: 'stellarindex_sla_probe_latency_ms{job="node_exporter",instance="r1:9100",endpoint="price",quantile="0.95"}'
+        values: '150+0x60'
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_p99_breach
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              endpoint: price
+              quantile: "0.99"
+              severity: page
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-p99-breach.md
+              summary: "price p99 latency 600ms exceeds SLA target (500ms) sustained 30m"
+              description: |
+                The SLA probe's per-endpoint p99 has been above the published
+                500 ms target for ≥ 30 minutes. The tail is what users feel;
+                a p99 breach with p95 healthy usually names one slow path on
+                price rather than a saturated backend.
+      - eval_time: 45m
+        alertname: stellarindex_sla_probe_p95_breach
+        exp_alerts: []
 
   # ── the sibling verdict gauge: unchanged expr, pinned so it stays ──
   # stellarindex_sla_probe_unit_failed is the probe's own verdict, not
@@ -245,9 +357,8 @@ tests:
               description: |
                 The probe's overall verdict gauge has been 1 (fail) for
                 ≥ 30 minutes. This is the umbrella "something's off"
-                signal — the more-specific p95 / freshness / availability
-                alerts will name the exact breach if they're configured to
-                fire faster. Runbook: pick the most-recent journald entry
+                signal — the p95 / p99 / availability / freshness breach
+                alerts name the exact breach on the same 30 m `for`. Runbook: pick the most-recent journald entry
                 with the JSON report, read the `failed_reasons` array, and
                 route to the appropriate per-endpoint runbook.
 

@@ -14,9 +14,16 @@
 #     (i.e. ≥ 30 min sustained). Page-worthy because this is a
 #     direct user-visible SLA breach.
 #
+#   - `stellarindex_sla_probe_p99_breach` — the same for p99 against
+#     the published 500 ms target.
+#
+#   - `stellarindex_sla_probe_availability_breach` — per-endpoint
+#     2xx share below the published 99.9 % for ≥ 30 min.
+#
 #   - `stellarindex_sla_probe_freshness_breach` — per-endpoint
-#     observed_at freshness > 30 s on the most recent run. The
-#     pricing SLA pins 30 s; sustained breach is a P2 page.
+#     observed_at freshness over its published bound: 30 s (the
+#     pricing SLA) everywhere except /price, whose closed-bucket
+#     bound is 150 s. Sustained breach is a P2 page.
 #
 #   - `stellarindex_sla_probe_unit_failed_alert` — the verdict
 #     gauge has been 1 for ≥ 2 consecutive scrapes. Catches the
@@ -50,26 +57,61 @@ groups:
             through {{ $labels.endpoint }}-specific diagnostics, then
             general API-latency triage.
 
+      - alert: stellarindex_sla_probe_p99_breach
+        expr: stellarindex_sla_probe_latency_ms{quantile="0.99"} > 500
+        for: 30m
+        labels:
+          severity: page
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-p99-breach.md
+          summary: "{{ $labels.endpoint }} p99 latency {{ $value }}ms exceeds SLA target (500ms) sustained 30m"
+          description: |
+            The SLA probe's per-endpoint p99 has been above the published
+            500 ms target for ≥ 30 minutes. The tail is what users feel;
+            a p99 breach with p95 healthy usually names one slow path on
+            {{ $labels.endpoint }} rather than a saturated backend.
+
+      # Availability is the probe's per-run 2xx share — the measure /sla
+      # publishes at ≥ 99.9 %. A run holds ~150 samples per endpoint, so
+      # one failed request is a breach; the `for` asks for consecutive
+      # failing runs, as p95 does, rather than paging on one unlucky run.
+      - alert: stellarindex_sla_probe_availability_breach
+        expr: stellarindex_sla_probe_availability_pct < 99.9
+        for: 30m
+        labels:
+          severity: page
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-availability-breach.md
+          summary: "{{ $labels.endpoint }} probe availability {{ $value }}% below SLA target (99.9%) sustained 30m"
+          description: |
+            The SLA probe's per-endpoint 2xx share has been below the
+            published 99.9 % for ≥ 30 minutes of consecutive runs. Latency
+            and freshness can be healthy while this fires: the probe
+            counts every non-2xx (429, 5xx, timeout) as unavailable.
+
       # Two bounds, and the DEFAULT is the SLA one. /price is the single
       # endpoint carrying a structural exemption: it serves the last
       # CLOSED 1-minute bucket (ADR-0015 closed-bucket serving), so its
-      # freshness is ~60-120s by design — that is NOT staleness, it is
-      # the consistency contract — and 180s is the genuine-stall line
-      # above that envelope. Everything else, /price/tip today and any
-      # endpoint that grows an observed_at tomorrow, is held to the 30s
-      # pricing SLA.
+      # observed_at is 30-150 s old by design — that is NOT staleness, it
+      # is the consistency contract — and /sla publishes 150 s as its
+      # bound: past that the closed-bucket pipeline has fallen behind its
+      # design. Everything else, /price/tip today and any endpoint that
+      # grows an observed_at tomorrow, is held to the 30s pricing SLA.
       #
       # The selector used to read `{endpoint!="price-tip"} > 180`, which
       # handed the closed-bucket exemption to every endpoint that is not
       # the tip. Latent rather than live, since nothing else emitted
       # freshness — but the first endpoint to publish an observed_at
-      # (e.g. /oracle/latest) would have inherited a 180s bound that
-      # only ADR-0015 justifies, and 179s of oracle staleness would have
-      # paged nobody. Inverted to a positive matcher so the exemption is
-      # granted by name and the SLA is the fallback.
+      # (e.g. /oracle/latest) would have inherited a bound that only
+      # ADR-0015 justifies. Inverted to a positive matcher so the
+      # exemption is granted by name and the SLA is the fallback.
       - alert: stellarindex_sla_probe_freshness_breach
         expr: |
-          stellarindex_sla_probe_freshness_sec{endpoint="price"} > 180
+          stellarindex_sla_probe_freshness_sec{endpoint="price"} > 150
           or
           stellarindex_sla_probe_freshness_sec{endpoint!="price"} > 30
         for: 30m
@@ -79,12 +121,12 @@ groups:
           component: api
         annotations:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
-          summary: "{{ $labels.endpoint }} price freshness {{ $value }}s over its bound (30s SLA; /price 180s closed-bucket) sustained 30m"
+          summary: "{{ $labels.endpoint }} price freshness {{ $value }}s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
           description: |
             The SLA probe's observed_at freshness for {{ $labels.endpoint }}
             has been over its bound for ≥ 30 minutes. The bound is the 30s
             pricing SLA for every endpoint except /price, which serves the
-            ADR-0015 closed bucket and is held to 180s — read the summary
+            ADR-0015 closed bucket and is held to 150s — read the summary
             for the value, not this description, before deciding which one
             tripped.
 
@@ -108,9 +150,8 @@ groups:
           description: |
             The probe's overall verdict gauge has been 1 (fail) for
             ≥ 30 minutes. This is the umbrella "something's off"
-            signal — the more-specific p95 / freshness / availability
-            alerts will name the exact breach if they're configured to
-            fire faster. Runbook: pick the most-recent journald entry
+            signal — the p95 / p99 / availability / freshness breach
+            alerts name the exact breach on the same 30 m `for`. Runbook: pick the most-recent journald entry
             with the JSON report, read the `failed_reasons` array, and
             route to the appropriate per-endpoint runbook.
 

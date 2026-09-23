@@ -589,7 +589,7 @@ export interface paths {
         };
         /**
          * Point-in-time price (closed bucket at-or-before a timestamp)
-         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. Daily coverage is not yet continuous — an instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. The 404 carries `coverage_from` and `outside_coverage` as extension members, measured over the pair AND those pegs together — the earliest bucket any of them holds — so an instant a peg covers is reported as a gap, not as predating the history held. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
+         * @description The pair's closed VWAP bucket at-or-before `ts` — the cost-basis / PnL / tax-tooling lookup. The answer comes from the FINEST CAGG resolution that covers the instant: `prices_1m` for recent timestamps, coarser bars (down to daily, back to 2018) for older ones. Daily coverage is not yet continuous — an instant in an uncovered stretch resolves to no bucket and 404s rather than being interpolated. `observed_at` is the BUCKET's close time, never `ts`, and `window_seconds` reports the resolution used (60 for a 1-minute bar, 86400 for a daily bar) — so callers see exactly how far the nearest observation was and at what granularity. A nearest bucket more than 24 hours before `ts` is a 404 (the endpoint refuses to fabricate continuity across dead markets). When the literal pair (and its aliases) has no bucket and the quote is `fiat:USD`, the lookup retries each operator-declared USD-pegged classic (the same stablecoin-proxy chain as /v1/price) and returns the peg's bucket with `flags.triangulated=true`, echoing the requested quote. The 404 carries `coverage_from` and `outside_coverage` as extension members, measured over the pair AND those pegs together — the earliest bucket any of them holds — so an instant a peg covers is reported as a gap, not as predating the history held. A bucket that exists but is refused — by the thin-market or scam-issuer gate, or by the serving-sanity guard when a 1-minute bucket deviates grossly from the buckets before it (or has none to be checked against) and no clean bucket falls within the lookback — is a 404 of type `price-withheld`, never `price-not-found`. Current price: /v1/price or /v1/price/tip. Multi-horizon change: /v1/price/changes.
          */
         get: operations["getPriceAt"];
         put?: never;
@@ -609,7 +609,7 @@ export interface paths {
         };
         /**
          * Multi-horizon price change (1h / 24h / 7d / 30d in one call)
-         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request (RFP §6). Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2018), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
+         * @description The current closed price plus the signed percentage change over 1h, 24h, 7d, and 30d — the wallet/portfolio delta strip in a single request (RFP §6). Each horizon's reference is the closed VWAP at-or-before `now − horizon`, resolved by the SAME point-in-time engine as /v1/price/at (finest CAGG resolution that covers the instant; daily bars reach back to 2018), so long horizons still answer for pairs whose minute-level history has aged out of the served tier. A horizon with no data that far back (a young pair, or a market that predates the window) is returned with all fields `null` and `available: false` — NEVER an error, so a fresh listing still returns its 1h/24h moves. A horizon whose reference bucket exists but was refused by a serving gate (the thin-market or scam-issuer gate, or the serving-sanity guard that rejects a manipulated minute) is the same null shape with `withheld: true`, so it is never mistaken for missing history. Each horizon carries `reference_at` + `resolution` so callers see exactly which bucket (and at what granularity) the delta was measured against. A 404 only when the pair has no CURRENT price to anchor on. `quote` defaults to `fiat:USD`; when no direct fiat:USD bucket exists the same stablecoin-proxy chain as /v1/price resolves it via an operator-declared USD peg (`flags.triangulated`).
          */
         get: operations["getPriceChanges"];
         put?: never;
@@ -875,7 +875,16 @@ export interface paths {
          *     - Events carry the `/v1/price` envelope shape (`data` +
          *       `as_of`); `flags` / `sources` are present only when the
          *       publishing path evaluated them — absent flags mean "not
-         *       evaluated", never "fresh".
+         *       evaluated", never "fresh". The aggregator's 300 / 3600 /
+         *       86400 series carry neither.
+         *     - `observed_at` and `as_of` are both the END of the closed
+         *       1-minute bucket the event was computed at, so they are
+         *       equal on every event. `price` is the VWAP over
+         *       `[observed_at - window_seconds, observed_at)`. A series
+         *       advances once per closed minute, so consecutive events on
+         *       a 3600 or 86400 series are overlapping trailing windows,
+         *       not disjoint buckets: identify an event by
+         *       `(window_seconds, observed_at)`, and never sum them.
          *     - URL discipline: `?granularity=` returns 400 — bucket series
          *       are selected by `window_seconds`; use
          *       `/v1/history/since-inception` for chart granularities.
@@ -1866,7 +1875,17 @@ export interface paths {
          *     every list view + price card on the showcase site
          *     (data-inventory §6.1). Refreshed every 5 minutes by the
          *     change-summary worker; stale rows (>10 min) indicate the
-         *     worker is lagging.
+         *     worker is lagging. Every value is computed from CLOSED
+         *     1-minute buckets only (ADR-0015): the minute still filling
+         *     never becomes `current_value` or an ATH/ATL.
+         *
+         *     The `*_value` and ATH/ATL fields are aggregated price claims,
+         *     so they are withheld exactly when `/v1/price` withholds the
+         *     market: a 404 `price-withheld` problem when the issuer on
+         *     either leg is directory-flagged or the market is below the
+         *     serve floor. For a `coin` row the floor is met when any of
+         *     the asset's plausible backing markets (vs XLM, vs USD, vs a
+         *     declared USD peg) clears it.
          *
          *     Returns 404 when the worker hasn't computed a row yet (fresh
          *     deployment, newly-added entity, bounded history, or an entity
@@ -3405,8 +3424,11 @@ export interface paths {
          *     `suspended` or `closed` stops its API keys authenticating and
          *     denies its dashboard sessions; `suspended_reason` is stored
          *     alongside and `suspended_at` is stamped on the first transition
-         *     away from `active`. Moving back to `active` clears both. To kill a
-         *     single leaked credential instead, use
+         *     away from `active`. Moving back to `active` clears both. `closed`
+         *     is terminal: every live dashboard API key is revoked (reason
+         *     `account closed`), and any later `status` other than `closed` is
+         *     refused with 409. Re-sending `status: closed` retries revocations
+         *     that failed. To kill a single leaked credential instead, use
          *     `DELETE /v1/admin/keys/{keyID}`.
          *
          *     Operator-tier only (staff-issued via stellarindex-ops; never
@@ -3596,8 +3618,10 @@ export interface paths {
         };
         /**
          * Customer dashboard — list this account's API keys.
-         * @description Session-gated. Returns every key (active + revoked) for
-         *     the authenticated user's account, ordered oldest-first.
+         * @description Session-gated. Returns every active key plus the 100 most
+         *     recently created revoked keys for the authenticated user's
+         *     account, ordered oldest-first. `revoked_truncated` is true
+         *     when older revoked keys exist and were omitted.
          *     Plaintext is never returned by this endpoint — only
          *     the prefix (`sip_4f9c1d8b…`).
          */
@@ -5476,12 +5500,22 @@ export interface components {
             ops_by_type?: components["schemas"]["AccountOpTypeCount"][];
             /**
              * Format: int64
-             * @description All-time attributed trade count (taker or maker side) — the
-             *     same attribution scope /accounts/{g_strkey}/trades documents
+             * @description Attributed trade count (taker or maker side) — the same
+             *     attribution scope /accounts/{g_strkey}/trades documents
              *     (soroswap + off-chain trades carry no account and are not
-             *     counted). Absent = the segment could not be read, not zero.
+             *     counted). All-time ONLY when trades_total_since is absent;
+             *     when it is present this counts trades from that date
+             *     onward. Absent = the segment could not be read, not zero.
              */
             trades_total?: number;
+            /**
+             * Format: date
+             * @description When present, the UTC date (YYYY-MM-DD) trades_total counts
+             *     FROM: the trades compression horizon, before which rows are
+             *     not yet searchable per account. Absent = trades_total is
+             *     all-time.
+             */
+            trades_total_since?: string;
             /**
              * @description Per-(protocol, action) DeFi event counts over the served-tier
              *     tables that genuinely carry a per-account column: blend
@@ -5713,6 +5747,14 @@ export interface components {
              *     (see the same field on the trade-history schema).
              */
             routed_via?: string;
+            /**
+             * @description The transaction source account (fee-payer / initiator)
+             *     behind an AMM or Soroban swap, where the recorded taker is
+             *     a router or contract. Absent for non-AMM trades and for
+             *     trades the signer sweeper has not yet tagged (migration
+             *     0150).
+             */
+            signer?: string;
         };
         /**
          * @description An address's attributed historic trades, newest first,
@@ -6284,7 +6326,11 @@ export interface components {
              *     signature in `X-StellarIndex-Signature` (prefixed `sha256=`)
              *     and the signing time in `X-StellarIndex-Timestamp`. See
              *     `CreateWebhookResponse.secret` for the exact construction —
-             *     the timestamp is part of the signed message.
+             *     the timestamp is part of the signed message. Every delivery
+             *     also carries `X-StellarIndex-Event` (the event type, one of
+             *     `events`, for routing before the body is parsed) and
+             *     `X-StellarIndex-Delivery-Id`. `X-StellarIndex-Event` is not
+             *     signed; the body's `event` field is the authenticated copy.
              */
             url: string;
             /**
@@ -9885,8 +9931,10 @@ export interface components {
             reference_at: string | null;
             /** @description CAGG resolution that served the reference bucket — one of 1m, 15m, 1h, 4h, 1d. Null when unavailable. */
             resolution: string | null;
-            /** @description False when no closed bucket exists that far back (all sibling fields null). */
+            /** @description False when the horizon has no reference price (all nullable fields null) — no data that far back, or a withheld reference (see withheld). */
             available: boolean;
+            /** @description True when the reference bucket exists but a serving gate refused to publish it (thin-market or scam-issuer gate, or the serving-sanity guard). Always false when available is true. */
+            withheld: boolean;
         };
         PriceChanges: {
             asset_id: string;
@@ -10356,7 +10404,7 @@ export interface components {
             decimals: number;
             /** @description 0 means unreported, not zero-confidence. */
             confidence?: number;
-            /** @description G-strkey of the publishing account; empty when unknown. */
+            /** @description Strkey of the publishing relayer — an account (G…) or, when the relayer is a contract, a C… address; empty when unknown. */
             observer?: string;
             /** @description false when `asset` is a `raw:<symbol>` row — an oracle symbol recorded verbatim because it maps to no canonical asset. Reference-only: orientation-unknown, never compared or aggregated. /v1/oracle/streams omits such rows unless include_unmapped=true; /v1/oracle/latest returns one only for an explicit `asset=raw:<symbol>` query. */
             mapped: boolean;
@@ -10575,7 +10623,7 @@ export interface components {
             };
             source_classes: {
                 /** @enum {string} */
-                name: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router";
+                name: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router" | "bridge";
                 contributes_to_vwap: boolean;
                 description: string;
             }[];
@@ -10635,11 +10683,13 @@ export interface components {
             key_prefix?: string;
             /**
              * @description The auth.Tier value actually served (internal/auth/subject.go).
+             *     Never `anonymous`: an unauthenticated caller receives 401, not
+             *     an Account.
              *     `operator` is an internal credential, reserved for admin
              *     endpoints; never issued to a public caller.
              * @enum {string}
              */
-            tier?: "anonymous" | "apikey" | "sep10" | "operator";
+            tier?: "apikey" | "sep10" | "operator";
             rate_limit_per_min?: number;
             /** Format: date-time */
             created_at?: string;
@@ -12349,28 +12399,32 @@ export interface operations {
                      *           "reference_price": "0.20330",
                      *           "reference_at": "2026-07-04T23:00:00Z",
                      *           "resolution": "1m",
-                     *           "available": true
+                     *           "available": true,
+                     *           "withheld": false
                      *         },
                      *         "24h": {
                      *           "change_pct": "+3.62",
                      *           "reference_price": "0.19703",
                      *           "reference_at": "2026-07-04T00:00:00Z",
                      *           "resolution": "1m",
-                     *           "available": true
+                     *           "available": true,
+                     *           "withheld": false
                      *         },
                      *         "7d": {
                      *           "change_pct": "-1.08",
                      *           "reference_price": "0.20639",
                      *           "reference_at": "2026-06-28T00:00:00Z",
                      *           "resolution": "1h",
-                     *           "available": true
+                     *           "available": true,
+                     *           "withheld": false
                      *         },
                      *         "30d": {
                      *           "change_pct": null,
                      *           "reference_price": null,
                      *           "reference_at": null,
                      *           "resolution": null,
-                     *           "available": false
+                     *           "available": false,
+                     *           "withheld": false
                      *         }
                      *       },
                      *       "as_of": "2026-07-05T00:00:12.481Z",
@@ -12859,13 +12913,13 @@ export interface operations {
                     /**
                      * @example id: 0198a4203f100001
                      *     event: price_update
-                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:42.881Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159608357106","price_type":"vwap","observed_at":"2026-05-05T14:35:00Z","window_seconds":300},"as_of":"2026-05-05T14:35:00Z"}
                      *
                      *     :keepalive
                      *
                      *     id: 0198a4203f100002
                      *     event: price_update
-                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00.417Z","flags":{"stale":false,"reduced_redundancy":false,"triangulated":false,"divergence_warning":false}}
+                     *     data: {"data":{"asset_id":"native","quote":"fiat:USD","price":"0.159701882234","price_type":"vwap","observed_at":"2026-05-05T14:36:00Z","window_seconds":300},"as_of":"2026-05-05T14:36:00Z"}
                      */
                     "text/event-stream": string;
                 };
@@ -17104,7 +17158,7 @@ export interface operations {
                  *     given class are returned. Useful for dashboards that
                  *     split the catalogue by role.
                  */
-                class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router";
+                class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router" | "bridge";
                 /**
                  * @description Opt-in extras. `stats` populates each row's
                  *     `trade_count_24h` from a single GROUP BY on the trades
@@ -18921,6 +18975,15 @@ export interface operations {
                 };
             };
             404: components["responses"]["NotFound"];
+            /** @description The account is closed and the request would move it to another status. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
             500: components["responses"]["InternalError"];
             503: components["responses"]["ServiceUnavailable"];
         };
@@ -19403,11 +19466,17 @@ export interface operations {
                      *           "last_used_at": "2026-07-03T08:59:41Z",
                      *           "created_at": "2026-06-12T08:30:00Z"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "revoked_truncated": false
                      *     }
                      */
                     "application/json": {
                         keys: components["schemas"]["DashboardKey"][];
+                        /**
+                         * @description True when the account holds more revoked keys than
+                         *     the 100 most recent returned in `keys`.
+                         */
+                        revoked_truncated: boolean;
                     };
                 };
             };

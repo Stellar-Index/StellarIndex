@@ -910,3 +910,70 @@ func TestAssetGet_ClassicSlugResolves(t *testing.T) {
 		t.Errorf("unresolvable id status = %d, want 400", resp2.StatusCode)
 	}
 }
+
+// unmeasuredSubstanceGate is a substance gate whose store cannot answer
+// (error or request deadline): Allowed fails open as the production gate
+// does, Verdict reports that no verdict was reached.
+type unmeasuredSubstanceGate struct{}
+
+func (unmeasuredSubstanceGate) Allowed(context.Context, canonical.Asset, canonical.Asset, string) bool {
+	return true
+}
+
+func (unmeasuredSubstanceGate) Verdict(context.Context, canonical.Asset, canonical.Asset, string) (allowed, measured bool) {
+	return false, false
+}
+
+// TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale pins
+// GH-578 on both /v1/assets listing paths: when the substance gate cannot
+// measure a row, the ungated catalogue price must not be published (so it
+// cannot back a market cap — ADR-0018) and the page must say it is
+// degraded. The control shows a MEASURED withhold stays unflagged.
+func TestAssetList_SubstanceUnmeasured_WithholdsPriceAndStampsStale(t *testing.T) {
+	price := "0.42"
+	row := timescale.AssetRow{
+		Slug:             "DUST",
+		AssetID:          "DUST-" + testUSDCIssuer,
+		Code:             "DUST",
+		IssuerGStrkey:    testUSDCIssuer,
+		ObservationCount: 10,
+		PriceUSD:         &price,
+	}
+	cases := []struct {
+		name      string
+		gate      v1.PriceSubstanceGate
+		wantStale bool
+	}{
+		{"unmeasured", unmeasuredSubstanceGate{}, true},
+		{"measured_thin", &stubSubstanceGate{allow: false}, false},
+	}
+	for _, path := range []string{"/v1/assets?limit=10", "/v1/assets?asset_class=all&limit=10"} {
+		for _, tc := range cases {
+			t.Run(tc.name+" "+path, func(t *testing.T) {
+				srv := v1.New(v1.Options{
+					AssetsReader: &listingStub{rows: []timescale.AssetRow{row}},
+					Assets:       &stubAssetReader{},
+					Substance:    tc.gate,
+				})
+				resp := mustGet(t, httpTestServer(t, srv).URL+path)
+				if resp.StatusCode != http.StatusOK {
+					t.Fatalf("status=%d", resp.StatusCode)
+				}
+				var env struct {
+					Data  []v1.AssetDetail `json:"data"`
+					Flags v1.Flags         `json:"flags"`
+				}
+				mustDecode(t, resp, &env)
+				if len(env.Data) != 1 {
+					t.Fatalf("got %d rows, want 1", len(env.Data))
+				}
+				if p := env.Data[0].PriceUSD; p != nil {
+					t.Errorf("price_usd = %q, want withheld", *p)
+				}
+				if env.Flags.Stale != tc.wantStale {
+					t.Errorf("flags.stale = %v, want %v", env.Flags.Stale, tc.wantStale)
+				}
+			})
+		}
+	}
+}

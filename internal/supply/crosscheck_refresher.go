@@ -242,7 +242,7 @@ func (r *CrossCheckRefresher) Tick(ctx context.Context) []CrossCheckOutcome {
 		r.emitter.Outcome(outcome.Kind, wrapClass)
 		switch outcome.Kind {
 		case CrossCheckOutcomeWithin, CrossCheckOutcomeOver:
-			stroops, _ := outcome.Result.DivergenceStroops.Float64()
+			stroops, _ := outcome.Result.DivergenceStroops.Float64() // i128:ok Prometheus gauge value; the NUMERIC record keeps full precision
 			r.emitter.Divergence(p.ClassicKey, wrapClass, stroops)
 		case CrossCheckOutcomeMissing, CrossCheckOutcomeReadError, CrossCheckOutcomeMisaligned:
 			r.emitter.ClearDivergence(p.ClassicKey, wrapClass)

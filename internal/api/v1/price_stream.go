@@ -2,10 +2,13 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
+	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 )
@@ -116,6 +119,9 @@ const closedStreamGateBudget = tipStreamTickTimeout
 // the asset was refused (F002/K001). The fold over legs belongs inside
 // pricingguard, never hand-written at a call site.
 //
+// The scam gate is asked first so a pair both gates refuse is reported
+// under the flag, not as a thin market (see [writePriceWithheldProblem]).
+//
 // Nil gates (operator disabled [pricing_guard]) withhold nothing.
 func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonical.Asset) pricingguard.Withholding {
 	if s.substance == nil && s.scam == nil {
@@ -124,6 +130,75 @@ func (s *Server) closedStreamWithheld(ctx context.Context, asset, quote canonica
 	ctx, cancel := context.WithTimeout(ctx, closedStreamGateBudget)
 	defer cancel()
 	return withheldBy(ctx, s.substance, s.scam, asset, quote, closedStreamGateSurface)
+}
+
+// closedStreamSeries picks ONE alias spelling's series for a connection.
+//
+// The aggregator prices XLM under both `native` and `crypto:XLM` (disjoint
+// trade sets: SDEX vs CEX) and publishes each on its own topic. The
+// handler must subscribe to every alias topic — a `?asset=native` client
+// otherwise gets zero frames on a CEX-only deployment — but forwarding
+// all of them interleaves two independent price series, one frame each
+// per bucket, indistinguishable from market moves (#752).
+//
+// So a connection forwards a frame only when no higher-priority spelling
+// produced a bucket within [cachekeys.VWAPMaxAge] of it. The priority is
+// /v1/price?window='s read order (assetAliases on each leg, the caller's
+// own spelling first) and the horizon is the age at which that read stops
+// finding the preferred key, so the stream follows the series the REST
+// surface serves. Time is the frame's bucket end, not the wall clock, so
+// replicas fed the same events forward the same frames. Not
+// goroutine-safe: owned by one forwarder.
+type closedStreamSeries struct {
+	rank     map[string]int    // "asset/quote" -> priority, 0 is preferred
+	lastSeen map[int]time.Time // rank -> newest bucket end seen
+}
+
+// newClosedStreamSeries returns the series selector for (asset, quote)
+// and the Hub topics to subscribe, one per alias spelling of the pair.
+func newClosedStreamSeries(asset, quote canonical.Asset, windowSeconds int) (*closedStreamSeries, []string) {
+	c := &closedStreamSeries{rank: map[string]int{}, lastSeen: map[int]time.Time{}}
+	var topics []string
+	for _, a := range assetAliases(asset) {
+		for _, q := range assetAliases(quote) {
+			c.rank[a.String()+"/"+q.String()] = len(topics)
+			topics = append(topics, PriceStreamTopic(a, q, windowSeconds))
+		}
+	}
+	return c, topics
+}
+
+// admit reports whether a frame may be forwarded. A payload that does not
+// name one of this connection's spellings is passed through: selection
+// only ever chooses between the alias series, it never filters content.
+func (c *closedStreamSeries) admit(data []byte) bool {
+	var env struct {
+		Data struct {
+			AssetID    string `json:"asset_id"`
+			Quote      string `json:"quote"`
+			ObservedAt string `json:"observed_at"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(data, &env); err != nil {
+		return true
+	}
+	at, err := time.Parse(time.RFC3339Nano, env.Data.ObservedAt)
+	if err != nil {
+		return true
+	}
+	r, ok := c.rank[env.Data.AssetID+"/"+env.Data.Quote]
+	if !ok {
+		return true
+	}
+	if prev, seen := c.lastSeen[r]; !seen || at.After(prev) {
+		c.lastSeen[r] = at
+	}
+	for higher := 0; higher < r; higher++ {
+		if seen, ok := c.lastSeen[higher]; ok && at.Sub(seen) < cachekeys.VWAPMaxAge {
+			return false
+		}
+	}
+	return true
 }
 
 // forwardClosedStream bridges the Hub subscription onto the SSE writer
@@ -152,6 +227,7 @@ func (s *Server) forwardClosedStream(
 	ch chan<- streaming.Event,
 	sub <-chan streaming.Event,
 	asset, quote canonical.Asset,
+	series *closedStreamSeries,
 ) {
 	defer s.recoverStreamProducer("price_stream")
 	defer close(ch)
@@ -163,6 +239,9 @@ func (s *Server) forwardClosedStream(
 		case ev, open := <-sub:
 			if !open {
 				return
+			}
+			if !series.admit(ev.Data) {
+				continue
 			}
 			if s.closedStreamWithheld(ctx, asset, quote) != pricingguard.NotWithheld {
 				continue
@@ -268,23 +347,12 @@ func (s *Server) handlePriceStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Alias fan-out (cold audit 2026-08-03 finding 2): the aggregator
-	// publishes under whichever canonical spelling it computed —
-	// `crypto:XLM/fiat:USD` for the CEX-fed XLM VWAP — so a client
-	// subscribing as `?asset=native` got a healthy 200 and zero frames
-	// forever. Subscribe to every alias spelling of the pair; the same
-	// assetAliases loop every REST read path already runs.
-	var topics []string
-	for _, a := range assetAliases(asset) {
-		for _, q := range assetAliases(quote) {
-			topics = append(topics, PriceStreamTopic(a, q, window))
-		}
-	}
+	series, topics := newClosedStreamSeries(asset, quote, window)
 	sub, cancelSub := s.hub.Subscribe(topics, streaming.LastEventIDFrom(r))
 	defer cancelSub()
 
 	ch := make(chan streaming.Event, closedStreamQueueDepth)
-	go s.forwardClosedStream(r.Context(), ch, sub, asset, quote)
+	go s.forwardClosedStream(r.Context(), ch, sub, asset, quote, series)
 
 	streaming.StreamFromChannelPreAdmitted(w, r, ch, s.streamOptions())
 }

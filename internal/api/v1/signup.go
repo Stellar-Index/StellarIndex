@@ -8,11 +8,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/mail"
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/notify"
 )
 
 // SignupTracker is the v1 boundary for "has this email already
@@ -148,8 +148,8 @@ const signupDefaultRateLimitPerMin = 1000
 // break every client that reads `plaintext` from the body). Left as-is
 // deliberately; do not "fix" by returning 200 for duplicates without
 // also moving key delivery off the synchronous response.
-//   - **Garbage emails**: net/mail.ParseAddress + heuristic
-//     strip-and-lower normalisation. Bounces are not detected;
+//   - **Garbage emails**: notify.CanonicalRecipient (the same gate
+//     /v1/auth/login uses). Bounces are not detected;
 //     the F-1218 email-ownership-proof flow covers verification.
 //
 // Stores nil → 503 (no AccountStore wired); same shape as
@@ -455,7 +455,10 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 			"the signup body must include an 'email' field")
 		return signupRequest{}, false
 	}
-	addr, err := mail.ParseAddress(req.Email)
+	// Keep the canonical addr-spec, not the raw input: every spelling of
+	// one inbox (`<a@b.com>`, `"n" <a@b.com>`) must hash to ONE signup
+	// identifier, or the duplicate-signup guard is bypassable.
+	canon, err := notify.CanonicalRecipient(req.Email)
 	if err != nil {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-email",
@@ -463,14 +466,7 @@ func (s *Server) parseAndValidateSignup(w http.ResponseWriter, r *http.Request) 
 			"the email field could not be parsed as a valid address")
 		return signupRequest{}, false
 	}
-	// Keep the parsed addr-spec, not the raw input. ParseAddress accepts
-	// the RFC-5322 display-name forms (`<a@b.com>`, `"n" <a@b.com>`), and
-	// discarding its result meant every spelling of one inbox hashed to a
-	// DIFFERENT signup identifier — so the duplicate-signup guard (and the
-	// per-email reservation behind it) was bypassable by re-spelling the
-	// address, minting unlimited identities per inbox (cold audit
-	// 2026-08-03).
-	req.Email = strings.ToLower(strings.TrimSpace(addr.Address))
+	req.Email = canon
 
 	if len(req.Label) > 128 {
 		writeProblem(w, r,

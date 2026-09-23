@@ -46,6 +46,11 @@
 set -uo pipefail
 
 T="${1:?usage: lake-dedup-driver.sh <table> [max_partitions]}"
+# $T is spliced into SQL and into the log path below: accept only the lake tables named above.
+case "$T" in
+  transactions|operations|operation_results|contract_events|ledgers|ledger_entry_changes) ;;
+  *) echo "lake-dedup-driver: refusing table '$T' — not one of the lake tables this driver dedups" >&2; exit 2 ;;
+esac
 MAXP="${2:-9999}"
 DRY_RUN="${DRY_RUN:-0}"
 CH="${CH:-clickhouse-client --port 9300}"

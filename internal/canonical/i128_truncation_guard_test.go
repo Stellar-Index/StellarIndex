@@ -26,6 +26,12 @@ package canonical
 //     int64(lo)` is the same truncation and is judged the same way,
 //     however many plain assignments sit between the word and the
 //     conversion (see collectWordTaint).
+//   - an `Int64()` / `Uint64()` / `Float64()` call on a math/big Int,
+//     Rat or Float. A 128-bit amount widened into big.* is narrowed
+//     again there, and the go/types receiver type is the only thing
+//     that sees it: `new(big.Float).SetInt(total).Float64()` has no
+//     parts word or Must* call left in the expression. Every such site
+//     is judged, so each deliberate one carries its reason.
 //
 // Escape hatch: a `//i128:ok <reason>` comment on the same line (or
 // the line above) exempts a site. Reasons are mandatory; stale
@@ -36,6 +42,7 @@ package canonical
 import (
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/printer"
 	"go/token"
@@ -67,6 +74,13 @@ var mustAccessors = map[string]bool{
 	"MustI128": true, "MustU128": true,
 	"MustI256": true, "MustU256": true,
 }
+
+// bigNarrowers are the math/big accessors that return a machine number:
+// Int64/Uint64 wrap silently outside their range, Float64 rounds.
+var bigNarrowers = map[string]bool{"Int64": true, "Uint64": true, "Float64": true}
+
+// bigNumberTypes are the math/big types an amount is widened into.
+var bigNumberTypes = map[string]bool{"Int": true, "Rat": true, "Float": true}
 
 var i128OkMarker = regexp.MustCompile(`^\s*i128:ok\s+\S+`)
 
@@ -328,6 +342,33 @@ func checkConversion(info *types.Info, tainted map[types.Object]wordTaint, call 
 	return fmt.Sprintf("%s(<x>.%s)%s truncates/reinterprets a 128-bit word (field is %s) — decode via canonical.FromInt128Parts(int64(p.Hi), uint64(p.Lo)) or the FromUInt* siblings", target.Name(), tn.field, via, tn.fieldTyp)
 }
 
+// isBigNumber reports whether t (after pointer deref) is big.Int,
+// big.Rat or big.Float.
+func isBigNumber(t types.Type) bool {
+	if ptr, ok := t.Underlying().(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
+	if !ok || named.Obj().Pkg() == nil {
+		return false
+	}
+	return named.Obj().Pkg().Path() == "math/big" && bigNumberTypes[named.Obj().Name()]
+}
+
+// checkBigNarrowing returns a violation message when call narrows a
+// math/big value to a machine number via Int64/Uint64/Float64, else "".
+func checkBigNarrowing(info *types.Info, call *ast.CallExpr) string {
+	sel, ok := ast.Unparen(call.Fun).(*ast.SelectorExpr)
+	if !ok || len(call.Args) != 0 || !bigNarrowers[sel.Sel.Name] {
+		return ""
+	}
+	s, ok := info.Selections[sel]
+	if !ok || s.Kind() != types.MethodVal || !isBigNumber(s.Recv()) {
+		return ""
+	}
+	return fmt.Sprintf("%s.%s() narrows an arbitrary-precision value to a machine number — keep amounts in canonical.Amount / *big.Int / *big.Rat end to end and render with FloatString", s.Recv(), sel.Sel.Name)
+}
+
 // TestI128TruncationGuard — ADR-0003. Repo-wide go/types walk
 // rejecting int64/float/narrowing conversions of i128/u128/i256/u256
 // words. Every finding must be fixed or carry an //i128:ok marker
@@ -357,6 +398,9 @@ func TestI128TruncationGuard(t *testing.T) {
 					return true
 				}
 				msg := checkConversion(pkg.TypesInfo, tainted, call)
+				if msg == "" {
+					msg = checkBigNarrowing(pkg.TypesInfo, call)
+				}
 				if msg == "" {
 					return true
 				}
@@ -480,6 +524,80 @@ func sink() {
 	for _, k := range mustPass {
 		if fired[k] {
 			t.Errorf("checkConversion FALSE-fired on the correct decode shape %s — it would reject valid FromInt128Parts code", k)
+		}
+	}
+}
+
+// TestI128TruncationGuard_BigNarrowingPositiveControl proves the math/big
+// sink fires on the widen-then-narrow spellings that carry no parts word
+// or Must* call — the aggregate VWAP weight's original
+// `new(big.Float).SetInt(totalQuote).Float64()` among them — and stays
+// silent on same-named methods of other types.
+func TestI128TruncationGuard_BigNarrowingPositiveControl(t *testing.T) {
+	const src = `package sink
+
+import "math/big"
+
+type gauge struct{}
+
+func (gauge) Float64() float64 { return 0 }
+
+func sink(total, part *big.Int, r big.Rat) {
+	_, _ = new(big.Float).SetInt(total).Float64()
+	_, _ = new(big.Rat).SetFrac(part, total).Float64()
+	_ = total.Int64()
+	_ = total.Uint64()
+	_, _ = r.Float64()
+	_ = r.Num().Int64()
+	_ = gauge{}.Float64()
+	_ = total.IsInt64()
+	_ = r.FloatString(7)
+}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "sink.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse synthetic source: %v", err)
+	}
+	info := &types.Info{
+		Types:      map[ast.Expr]types.TypeAndValue{},
+		Selections: map[*ast.SelectorExpr]*types.Selection{},
+	}
+	if _, err := (&types.Config{Importer: importer.Default()}).Check("example.test/sink", fset, []*ast.File{f}, info); err != nil {
+		t.Fatalf("type-check synthetic source: %v", err)
+	}
+
+	fired := map[string]bool{}
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var b strings.Builder
+		if err := printer.Fprint(&b, fset, call); err != nil {
+			t.Fatalf("render call: %v", err)
+		}
+		fired[b.String()] = checkBigNarrowing(info, call) != ""
+		return true
+	})
+
+	mustFire := []string{
+		"new(big.Float).SetInt(total).Float64()", "new(big.Rat).SetFrac(part, total).Float64()",
+		"total.Int64()", "total.Uint64()", "r.Float64()", "r.Num().Int64()",
+	}
+	mustPass := []string{"gauge{}.Float64()", "total.IsInt64()", "r.FloatString(7)", "new(big.Float).SetInt(total)"}
+	for _, k := range mustFire {
+		if seen, ok := fired[k]; !ok {
+			t.Fatalf("positive-control expr %s never inspected — synthetic source drifted", k)
+		} else if !seen {
+			t.Errorf("checkBigNarrowing did NOT fire on %s — a math/big value reaches a machine-number sink unjudged", k)
+		}
+	}
+	for _, k := range mustPass {
+		if seen, ok := fired[k]; !ok {
+			t.Fatalf("control expr %s never inspected — synthetic source drifted", k)
+		} else if seen {
+			t.Errorf("checkBigNarrowing FALSE-fired on %s", k)
 		}
 	}
 }

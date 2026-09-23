@@ -151,8 +151,8 @@ type ChainlinkFeed struct {
 	Invert bool
 
 	// MaxAge is the staleness ceiling for the feed's latestRoundData
-	// updatedAt (CS-089). Zero = the crypto default (3h). FX feeds
-	// pause over market closes — configure ~76h for those.
+	// updatedAt (CS-089). Zero = the built-in feed's budget for a
+	// built-in key, 76h for any other fiat/fiat key, else 3h.
 	MaxAge time.Duration
 }
 
@@ -201,15 +201,14 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	builtins := defaultChainlinkFeedMap()
 	feedMap := defaultChainlinkFeedMap()
 	for k, v := range opts.FeedMap {
 		spec := chainlinkFeedSpec(v)
 		// Decimals == 0 is left as-is: it means "adopt the on-chain
 		// decimals()" (chainlink_decimals.go), not "divide by 10^0".
 		if spec.MaxAge == 0 {
-			// Crypto default — FX operators set ~76h explicitly
-			// (see defaultChainlinkMaxAgeFX's rationale).
-			spec.MaxAge = defaultChainlinkMaxAgeCrypto
+			spec.MaxAge = defaultChainlinkMaxAge(k, builtins)
 		}
 		feedMap[k] = spec
 	}
@@ -221,6 +220,20 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 		feedMap:    feedMap,
 		decimals:   make(map[string]*chainlinkDecimalsState),
 	}
+}
+
+// defaultChainlinkMaxAge is the budget for an operator feed that omits
+// MaxAge: a built-in key keeps its built-in budget, and any other
+// fiat/fiat key is an FX feed that pauses over market closes.
+func defaultChainlinkMaxAge(key string, builtins map[string]chainlinkFeedSpec) time.Duration {
+	if b, ok := builtins[key]; ok && b.MaxAge > 0 {
+		return b.MaxAge
+	}
+	base, quote, ok := strings.Cut(key, "/")
+	if ok && strings.HasPrefix(base, "fiat:") && strings.HasPrefix(quote, "fiat:") {
+		return defaultChainlinkMaxAgeFX
+	}
+	return defaultChainlinkMaxAgeCrypto
 }
 
 // defaultChainlinkFeedMap returns the built-in seed of pair →
@@ -444,7 +457,7 @@ func decodeChainlinkRoundData(hexStr string) (*big.Int, time.Time, error) {
 	if !updatedRaw.IsInt64() {
 		return nil, time.Time{}, fmt.Errorf("updatedAt overflows int64: %s", updatedRaw.String())
 	}
-	return answer, time.Unix(updatedRaw.Int64(), 0).UTC(), nil
+	return answer, time.Unix(updatedRaw.Int64(), 0).UTC(), nil // i128:ok updatedAt unix seconds, IsInt64 range-checked above
 }
 
 // decodeChainlinkInt256 parses a 0x-prefixed hex string returned by
@@ -487,11 +500,8 @@ func scaleChainlinkAnswer(answer *big.Int, decimals int) (float64, error) {
 	if decimals < 0 || decimals > 38 {
 		return 0, fmt.Errorf("decimals %d out of range [0, 38]", decimals)
 	}
-	if decimals == 0 {
-		return float64(answer.Int64()), nil
-	}
 	div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
 	q := new(big.Rat).SetFrac(answer, div)
-	f, _ := q.Float64()
+	f, _ := q.Float64() // i128:ok reference price for a percentage cross-check; one correctly-rounded conversion of the exact ratio
 	return f, nil
 }

@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -177,6 +180,36 @@ func TestSubstanceGate_FailsOpenOnStoreError(t *testing.T) {
 	gate.Allowed(context.Background(), classic, native, "test")
 	if reader.calls == before {
 		t.Error("error verdict was cached; next request must re-measure")
+	}
+}
+
+// TestSubstanceGate_VerdictReportsUnmeasured pins GH-578's gate half: a
+// store error is reported as NO verdict (allowed=false, measured=false)
+// to callers that must not publish an unverified price, and is counted,
+// while Allowed keeps its single-lookup fail-open.
+func TestSubstanceGate_VerdictReportsUnmeasured(t *testing.T) {
+	classic := mustAsset(t, "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V")
+	native := mustAsset(t, "native")
+	reader := &fakeSubstanceReader{err: context.DeadlineExceeded}
+	gate := NewSubstanceGate(reader, SubstanceGateOptions{Policy: testPolicy()})
+	counter := obs.PriceServeSubstanceUnmeasuredTotal.WithLabelValues("verdict_test")
+	before := testutil.ToFloat64(counter)
+
+	allowed, measured := gate.Verdict(context.Background(), classic, native, "verdict_test")
+	if allowed || measured {
+		t.Fatalf("Verdict on store error = (allowed=%v, measured=%v), want (false, false)", allowed, measured)
+	}
+	if got := testutil.ToFloat64(counter) - before; got != 1 {
+		t.Errorf("unmeasured counter moved by %v, want 1", got)
+	}
+	if !gate.Allowed(context.Background(), classic, native, "verdict_test") {
+		t.Error("Allowed must still fail open on a store error")
+	}
+
+	reader.err = nil
+	allowed, measured = gate.Verdict(context.Background(), classic, native, "verdict_test")
+	if allowed || !measured {
+		t.Errorf("Verdict on a thin pair = (allowed=%v, measured=%v), want (false, true)", allowed, measured)
 	}
 }
 

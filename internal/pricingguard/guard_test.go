@@ -239,6 +239,10 @@ func (f fakeTrailing) RecentClosedVWAP1mCombined(context.Context, canonical.Pair
 	return f.rows, f.err
 }
 
+func (f fakeTrailing) ClosedVWAP1mCombinedBefore(context.Context, canonical.Pair, time.Time, int) ([]timescale.Vwap1mRow, error) {
+	return f.rows, f.err
+}
+
 // testPair is a valid canonical pair for the wrapper cases (native/fiat:USD
 // — the aggregator's headline pair). Its only use in the guard is
 // pair.String() inside the warn-log branches.

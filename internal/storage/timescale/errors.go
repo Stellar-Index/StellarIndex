@@ -108,6 +108,11 @@ func IsInfraError(err error) bool {
 	return false
 }
 
+// ErrMalformedRow marks a row a store method's own pre-SQL validation
+// rejected. The check is deterministic, so [IsPermanentDataError] treats
+// it like a class 22/23 fault: retrying the same row can never succeed.
+var ErrMalformedRow = errors.New("timescale: malformed row")
+
 // IsPermanentDataError reports whether err from a write path is a
 // DETERMINISTIC data fault that can NEVER succeed on retry — a CHECK /
 // integrity-constraint violation (SQLSTATE class 23, e.g. the
@@ -130,16 +135,17 @@ func IsInfraError(err error) bool {
 //     the next cycle's smaller window can land).
 //   - context cancellation / deadline → false (shutdown / cycle timeout;
 //     retry next cycle).
-//   - anything UNRECOGNISED (including the store's own defensive
-//     `errors.New` validation and any non-pg error) → false.
+//   - a store validation reject wrapping [ErrMalformedRow] → true.
+//   - anything UNRECOGNISED (including a validation error that does not
+//     wrap the sentinel, and any non-pg error) → false.
 //
 // The false-default is the SAFE side for a data-integrity caller: an
 // unknown error is treated as transient (hold the cursor, retry) so we
 // never SKIP-and-silently-drop a row we merely failed to classify. A row
 // that is genuinely stuck then surfaces as rising projector lag + a
 // repeated failure-outcome metric (an alert), not a silent stall. Only a
-// POSITIVELY-identified permanent data fault (class 22 / 23) returns true
-// and is skipped.
+// POSITIVELY-identified permanent data fault (class 22 / 23, or
+// ErrMalformedRow) returns true and is skipped.
 func IsPermanentDataError(err error) bool {
 	if err == nil {
 		return false
@@ -147,6 +153,9 @@ func IsPermanentDataError(err error) bool {
 	// Shutdown / cycle-deadline is transient, not a permanent data fault.
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
+	}
+	if errors.Is(err, ErrMalformedRow) {
+		return true
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
@@ -160,8 +169,8 @@ func IsPermanentDataError(err error) bool {
 		// shutdown) and everything else are transient — retry, don't skip.
 		return false
 	}
-	// Non-pg error (net fault, driver.ErrBadConn, or the store's own
-	// validation sentinels): default to transient. See the godoc — the
+	// Non-pg error (net fault, driver.ErrBadConn, an unwrapped
+	// validation error): default to transient. See the godoc — the
 	// safe side for a data-integrity caller is retry-and-alert, not skip.
 	return false
 }

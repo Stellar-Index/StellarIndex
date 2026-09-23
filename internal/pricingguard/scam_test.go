@@ -6,7 +6,10 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -122,6 +125,56 @@ func TestScamGate_Withheld(t *testing.T) {
 	ge.Withheld(ctx, classic("RIO", "GBNL"), "price_read")
 	if fe.calls != 2 {
 		t.Errorf("fail-open must not cache: lookups = %d, want 2", fe.calls)
+	}
+}
+
+// TestScamGate_FailOpenIsCounted: a failed directory lookup serves a
+// possibly-flagged issuer's price unguarded, so every one must reach the
+// metric the stellarindex_scam_gate_fail_open alert watches — a Warn
+// line alone left a directory outage visible only to a log grep (#732).
+// A cancelled request serves nothing and is not counted.
+func TestScamGate_FailOpenIsCounted(t *testing.T) {
+	const surface = "test_fail_open"
+	counter := obs.ScamGateLookupFailuresTotal.WithLabelValues(surface)
+	before := testutil.ToFloat64(counter)
+
+	g := NewScamGate(&fakeDir{err: errors.New("db down")}, ScamGateOptions{})
+	g.WithheldPair(context.Background(), classic("RIO", "GBNL"), canonical.NativeAsset(), surface)
+	g.WithheldPair(context.Background(), classic("RIO", "GBNL"), canonical.NativeAsset(), surface)
+	if got := testutil.ToFloat64(counter) - before; got != 2 {
+		t.Errorf("fail-open lookups counted = %v, want 2 (one per unguarded consultation)", got)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	g.WithheldPair(cancelled, classic("RIO", "GBNL"), canonical.NativeAsset(), surface)
+	if got := testutil.ToFloat64(counter) - before; got != 2 {
+		t.Errorf("a cancelled request's lookup failure was counted: total = %v, want 2", got)
+	}
+}
+
+// TestPriceWithholding_NamesTheScamGateFirst: when both gates would
+// withhold, the verdict must be the flag. Reported as thin, the pair
+// would carry the recompute-from-raw-trades advice the flag refuses.
+func TestPriceWithholding_NamesTheScamGateFirst(t *testing.T) {
+	ctx := context.Background()
+	flagged := mustAsset(t, "RIO-GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ")
+	native := mustAsset(t, "native")
+	thin := NewSubstanceGate(&fakeSubstanceReader{byPair: map[string]timescale.MarketSubstance{}}, SubstanceGateOptions{Policy: testPolicy()})
+	scam := NewScamGate(&fakeDir{entry: timescale.DirectoryEntry{Tags: []string{"unsafe"}}, found: true}, ScamGateOptions{})
+	clean := NewScamGate(&fakeDir{found: false}, ScamGateOptions{})
+
+	if got := PriceWithholding(ctx, thin, scam, flagged, native, "test"); got != WithheldFlaggedIssuer {
+		t.Errorf("thin AND flagged: verdict = %q, want WithheldFlaggedIssuer", got)
+	}
+	if got := PriceWithholding(ctx, thin, clean, flagged, native, "test"); got != WithheldThinMarket {
+		t.Errorf("thin only: verdict = %q, want WithheldThinMarket", got)
+	}
+	if got := PriceWithholding(ctx, nil, nil, flagged, native, "test"); got != NotWithheld {
+		t.Errorf("nil gates: verdict = %q, want NotWithheld", got)
+	}
+	if !PriceWithheld(ctx, thin, scam, flagged, native, "test") {
+		t.Error("PriceWithheld must agree with a withholding verdict")
 	}
 }
 

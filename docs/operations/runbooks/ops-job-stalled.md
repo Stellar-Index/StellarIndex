@@ -335,7 +335,7 @@ both bear on what a stop actually achieves.
   the semantics the stop bound is documented against, so it will
   mislead the next reader who checks how a stop lands.
 - **A ClickHouse `OPTIMIZE … FINAL` cannot be stopped by killing its
-  client.** `scripts/ops/recompress-lec.sh:23` issues `OPTIMIZE TABLE
+  client.** `scripts/ops/recompress-lec.sh` issues `OPTIMIZE TABLE
   stellar.ledger_entry_changes PARTITION ID '<p>' FINAL` over the HTTP
   interface (`curl` on `:8123`), and
   [phase-a-capacity-relief-2026-07-18.md](phase-a-capacity-relief-2026-07-18.md)

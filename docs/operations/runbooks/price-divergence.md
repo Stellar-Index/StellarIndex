@@ -42,12 +42,31 @@ reference". Do not go looking for a CMC feed to pull out of rotation.
 ## Symptoms
 
 - `flags.divergence_warning = true` on `/v1/price` responses for the
-  affected asset, driven by a `divergence_observations` row with
-  `status = 'firing'` (`|delta_pct| > 5` warning / `> 10` critical).
+  affected asset. The flag is `divergence.CachedResult.WarningFired`,
+  cached per pair at the Redis key `div:<base>/<quote>` and ORed across
+  every quote of the base. It is true only when ALL of:
+  1. at least `min_sources_for_warning` references answered
+     (`success_count`, default 2);
+  2. EITHER the references' median differs from our price by more
+     than `threshold_pct` (default 5), OR no answering reference agrees
+     with us within it (`agreement_count` = 0 — symmetric
+     disagreement leaves the median on our price);
+  3. that raw condition has persisted for `WarningPersistence`
+     (default 5 min) across at least two refreshes.
+
+  To answer "is the flag on, and why": `redis-cli GET
+  'div:<base>/<quote>'` and read `warning_fired`, `success_count`,
+  `agreement_count` and `divergence_pct`.
+- `divergence_observations` rows are NOT the flag. The worker writes one
+  row per answering reference per refresh, with `status = 'firing'`
+  whenever that single reference's `|delta_pct|` exceeds the threshold —
+  no quorum, no median, no debounce. Firing rows with the flag off are
+  normal (fewer than `min_sources_for_warning` answered, or the
+  condition is still inside the debounce); never infer the flag from
+  the rows — read the Redis blob. There is one threshold; the 10 % tier belongs to the INERT
+  Prometheus rule above, not the worker.
   There are no `stellarindex_our_price` / `stellarindex_reference_price`
-  Prometheus gauges — the per-tick deltas live in the
-  `divergence_observations` hypertable (migration 0019), and the
-  boolean flag is the public surface.
+  Prometheus gauges.
 - Dashboard *Divergence → per-asset* panel shows the spread.
 - Often *doesn't* fire alone: bad decimal handling produces 100×
   or 1e6× divergence, not 5–10 %.

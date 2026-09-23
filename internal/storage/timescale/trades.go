@@ -1615,7 +1615,7 @@ func (s *Store) filterStorableTrades(trades []canonical.Trade) []canonical.Trade
 				"base", t.BaseAmount.String(), "quote", t.QuoteAmount.String())
 			continue
 		}
-		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, "trade").Inc()
+		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, obs.InsertErrorKindTradeDropped).Inc()
 		slog.Default().Error("timescale: batch dropped invalid trade before insert",
 			"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
 	}

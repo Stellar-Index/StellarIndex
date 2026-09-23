@@ -1,10 +1,17 @@
 -- 0067 down — revert the arbitrage kind + dedup key.
 -- Drops the dedup index/column and restores the original 4-kind CHECK.
--- Any 'arbitrage' rows are deleted first so the narrower CHECK applies.
+-- Any 'arbitrage' rows must be deleted EXPLICITLY first — this down
+-- REFUSES if any exist (down-migrating with data present is loud, not
+-- silent).
 
 BEGIN;
 
-DELETE FROM mev_events WHERE kind = 'arbitrage';
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM mev_events WHERE kind = 'arbitrage') THEN
+    RAISE EXCEPTION '0067_mev_arbitrage_dedup.down.sql: mev_events still holds rows where kind = ''arbitrage'' — down-migrating with data present is LOUD, not silent (#357). Delete them explicitly first if that is really what you want.';
+  END IF;
+END $$;
 
 DROP INDEX IF EXISTS mev_events_dedup_key_idx;
 ALTER TABLE mev_events DROP COLUMN IF EXISTS dedup_key;

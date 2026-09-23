@@ -244,6 +244,6 @@ func computeDeviationPct(prev, curr *big.Rat) float64 {
 	// Evaluate (cold audit 2026-08-04).
 	delta.Abs(delta)
 	delta.Mul(delta, big.NewRat(100, 1))
-	f, _ := delta.Float64()
+	f, _ := delta.Float64() // i128:ok percentage move for the anomaly threshold compare, not an amount
 	return f
 }

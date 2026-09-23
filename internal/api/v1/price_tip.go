@@ -168,7 +168,7 @@ func (s *Server) tipFlags(ctx context.Context, asset canonical.Asset, sources []
 // "stream cannot start" on the stream endpoint. Any other error is
 // surfaced as-is for caller-side logging + 500 mapping.
 func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, windowSeconds int) (PriceSnapshot, []string, error) {
-	// Thin-market substance gate, checked FIRST: the tip surface
+	// Withholding gates, checked before any read: the tip surface
 	// promises freshness, not provability (ADR-0018), but it is still
 	// an aggregated "the price of X is P" claim — and the rolling-
 	// window VWAP below is computed straight from raw trades, so
@@ -193,8 +193,8 @@ func (s *Server) computeTip(ctx context.Context, asset, quote canonical.Asset, w
 	// Scam-issuer gate: same posture as the substance gate on this
 	// surface — a directory-scam-flagged issuer's live tip is still an
 	// aggregated price claim we decline to publish. Both are folded by
-	// [withheldBy], so a flagged issuer on a thin market is reported as
-	// flagged rather than as merely thin.
+	// [withheldBy], scam asked first, so a pair both gates refuse is
+	// reported as flagged rather than as merely thin.
 	//
 	// Asked about BOTH legs, via [scamWithheld], because the withholding
 	// decision is a property of the MARKET rather than of whichever leg

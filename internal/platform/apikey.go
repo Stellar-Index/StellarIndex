@@ -150,10 +150,21 @@ type APIKeyStore interface {
 	// returned record.
 	GetByHash(ctx context.Context, keyHash []byte) (APIKey, error)
 
-	// ListForAccount returns every key (active + revoked)
-	// belonging to the account, sorted CreatedAt asc — matches
-	// the existing /v1/account/keys ordering.
-	ListForAccount(ctx context.Context, accountID uuid.UUID) ([]APIKey, error)
+	// CountActiveForAccount returns the number of non-revoked keys
+	// the account holds — the figure the active-key cap gates on.
+	CountActiveForAccount(ctx context.Context, accountID uuid.UUID) (int, error)
+
+	// ListActiveForAccount returns every non-revoked key, sorted
+	// CreatedAt asc. Bounded by the active-key cap, so it is safe on
+	// the tier-clamp and kill-switch paths; revoked history is never read.
+	ListActiveForAccount(ctx context.Context, accountID uuid.UUID) ([]APIKey, error)
+
+	// ListForAccount returns every active key plus at most
+	// revokedLimit of the most recently created revoked keys, sorted
+	// CreatedAt asc. moreRevoked is true when older revoked keys exist
+	// and were omitted. Revoked rows are kept forever, so no caller may
+	// read the whole history.
+	ListForAccount(ctx context.Context, accountID uuid.UUID, revokedLimit int) (keys []APIKey, moreRevoked bool, err error)
 
 	// Update writes the editable fields: name, description,
 	// rate_limit_per_min, monthly_quota, permissions,

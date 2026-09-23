@@ -1247,7 +1247,7 @@ func (s *Server) handleAssetListFromAssets(
 		out = append(out, assetDetailFromAssetRow(row))
 	}
 	s.stampListingCollisions(out)
-	s.applySubstanceGateToListing(r.Context(), out)
+	unmeasured := s.applySubstanceGateToListing(r.Context(), out)
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
 	// AFTER the gate (which would strip it) and AFTER the market-cap
 	// fill (so no valuation derives from it) — see
@@ -1287,7 +1287,7 @@ func (s *Server) handleAssetListFromAssets(
 	// past the TTL, `flags.stale` — never now() over a boot-seeded or
 	// refresh-starved page-set. An uncached read leaves observedAt zero
 	// and writeEnvelope defaults as_of to now.
-	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
+	env := Envelope{Data: out, Flags: Flags{Stale: stale || unmeasured}}
 	if !observedAt.IsZero() {
 		env.AsOf = WireTime(observedAt.UTC())
 	}
@@ -1560,9 +1560,15 @@ func (s *Server) applyConfirmedListingDecimals(ctx context.Context, row *AssetDe
 // Runs after stampListingCollisions and BEFORE fillMarketCapsFromSupply
 // so a withheld price can't back a market cap (that fill early-returns
 // on PriceUSD == nil).
-func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDetail) {
+//
+// A row the gate could not MEASURE (store error, request deadline) is
+// withheld as well: its price is unverified, and publishing it would
+// back a market cap with exactly the claim this gate exists to refuse.
+// unmeasured reports that it happened so the caller stamps flags.stale
+// — the empty price is then an outage, not a verdict on the market.
+func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDetail) (unmeasured bool) {
 	if s.substance == nil {
-		return
+		return false
 	}
 	for i := range rows {
 		row := &rows[i]
@@ -1573,41 +1579,57 @@ func (s *Server) applySubstanceGateToListing(ctx context.Context, rows []AssetDe
 		if err != nil {
 			continue
 		}
-		if s.listingPriceAllowed(ctx, asset) {
+		allowed, measured := s.listingSubstanceVerdict(ctx, asset)
+		if allowed {
 			continue
+		}
+		if !measured {
+			unmeasured = true
 		}
 		row.PriceUSD = nil
 		row.Change1hPct = nil
 		row.Change24hPct = nil
 		row.Change7dPct = nil
 	}
+	return unmeasured
 }
 
-// listingPriceAllowed is [Server.applySubstanceGateToListing]'s
-// per-row verdict: allowed when the row is out of gate scope
-// (fiat/crypto catalogue rows), is native (definitionally liquid;
-// identity pairs degenerate under the alias union), or when ANY of
-// its plausible backing pairs — vs XLM, vs fiat:USD (alias union
-// covers the CEX series), or vs an operator-declared USD peg —
-// clears the substance floor.
+// listingPriceAllowed is [Server.listingSubstanceVerdict] for callers
+// that only need yes/no. It fails CLOSED: an unmeasured row is not
+// allowed.
 func (s *Server) listingPriceAllowed(ctx context.Context, asset canonical.Asset) bool {
+	allowed, _ := s.listingSubstanceVerdict(ctx, asset)
+	return allowed
+}
+
+// listingSubstanceVerdict is the listing's per-row verdict: allowed
+// when the row is out of gate scope (fiat/crypto catalogue rows), is
+// native (definitionally liquid; identity pairs degenerate under the
+// alias union), or when ANY of its plausible backing pairs — vs XLM,
+// vs fiat:USD (alias union covers the CEX series), or vs an
+// operator-declared USD peg — clears the substance floor. measured is
+// false when no pair cleared and at least one could not be measured:
+// the row is then unverified rather than withheld on evidence.
+func (s *Server) listingSubstanceVerdict(ctx context.Context, asset canonical.Asset) (allowed, measured bool) {
 	if !pricingSubstanceGated(asset) {
-		return true
+		return true, true
 	}
 	native := canonical.NativeAsset()
 	if asset.Equal(native) {
-		return true
+		return true, true
 	}
-	if s.substance.Allowed(ctx, asset, native, "listing") ||
-		s.substance.Allowed(ctx, asset, defaultPriceQuote, "listing") {
-		return true
-	}
-	for _, peg := range s.usdPeggedClassics {
-		if s.substance.Allowed(ctx, asset, peg, "listing") {
-			return true
+	quotes := append([]canonical.Asset{native, defaultPriceQuote}, s.usdPeggedClassics...)
+	measured = true
+	for _, quote := range quotes {
+		ok, m := s.substance.Verdict(ctx, asset, quote, "listing")
+		if ok && m {
+			return true, true
+		}
+		if !m {
+			measured = false
 		}
 	}
-	return false
+	return false, measured
 }
 
 // pricingSubstanceGated mirrors pricingguard.SubstanceGated's
@@ -2961,11 +2983,12 @@ func (s *Server) serveCatalogueUnifiedPage(
 	// 11-row catalogue tail regardless of limit, and the /assets page
 	// presented the curated sliver as the entire asset universe).
 	if remaining := limit - len(page); remaining > 0 {
-		classicRows, nextInner, ok := s.fetchClassicUnifiedRows(w, r, filters, remaining, "")
+		classicRows, nextInner, stale, ok := s.fetchClassicUnifiedRows(w, r, filters, remaining, "")
 		if !ok {
 			return
 		}
 		env.Data = append(page, classicRows...)
+		env.Flags.Stale = stale
 		if nextInner != "" {
 			env.Pagination = &Pagination{Next: "classic:" + nextInner}
 		} else {
@@ -2987,7 +3010,7 @@ func (s *Server) serveClassicUnifiedPage(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, innerCursor string,
 ) {
-	out, nextInner, ok := s.fetchClassicUnifiedRows(w, r, filters, limit, innerCursor)
+	out, nextInner, stale, ok := s.fetchClassicUnifiedRows(w, r, filters, limit, innerCursor)
 	if !ok {
 		return
 	}
@@ -3000,7 +3023,7 @@ func (s *Server) serveClassicUnifiedPage(
 	if out == nil {
 		out = []AssetDetail{}
 	}
-	env := Envelope{Data: out, Flags: Flags{}}
+	env := Envelope{Data: out, Flags: Flags{Stale: stale}}
 	if nextInner != "" {
 		env.Pagination = &Pagination{Next: "classic:" + nextInner}
 	}
@@ -3012,11 +3035,14 @@ func (s *Server) serveClassicUnifiedPage(
 // already written. nextInner is empty when the stream is exhausted.
 // Shared by the classic phase AND the page-1 fill (S-002: page 1 used
 // to return just the 11-row catalogue tail regardless of limit,
-// making the curated sliver look like the asset universe).
+// making the curated sliver look like the asset universe). The third
+// result, stale, reports that the substance gate withheld an unmeasured
+// row's price ([Server.applySubstanceGateToListing]); the caller stamps
+// it on the envelope.
 func (s *Server) fetchClassicUnifiedRows(
 	w http.ResponseWriter, r *http.Request,
 	filters assetListFilters, limit int, innerCursor string,
-) ([]AssetDetail, string, bool) {
+) ([]AssetDetail, string, bool, bool) {
 	// AGT-06: this phase's cursor is the
 	// `<rank_tier>:<vol_or_blank>:<asset_id>` shape this function itself
 	// emits below — reject a malformed one (e.g. a
@@ -3026,7 +3052,7 @@ func (s *Server) fetchClassicUnifiedRows(
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-cursor",
 			"Invalid cursor", http.StatusBadRequest, err.Error())
-		return nil, "", false
+		return nil, "", false, false
 	}
 	// A type this spine cannot carry (native / fiat) ends the phase
 	// before the reader: the catalogue phase above serves those rows,
@@ -3040,12 +3066,12 @@ func (s *Server) fetchClassicUnifiedRows(
 	// shape of harm as the dropped filter (a response the caller cannot
 	// tell is wrong).
 	if !typeMatchesListingSpine(filters.typ) {
-		return []AssetDetail{}, "", true
+		return []AssetDetail{}, "", false, true
 	}
 	if s.assetsReader == nil {
 		// No AssetsReader wired → empty terminator.
 		writeJSON(w, []AssetDetail{}, Flags{})
-		return nil, "", false
+		return nil, "", false, false
 	}
 	opts := timescale.ListAssetsOptions{
 		Cursor: innerCursor,
@@ -3088,13 +3114,13 @@ func (s *Server) fetchClassicUnifiedRows(
 	rows, err := s.assetsReader.ListAssetsExt(r.Context(), opts)
 	if err != nil {
 		if clientAborted(r, err) {
-			return nil, "", false
+			return nil, "", false, false
 		}
 		s.logger.Error("ListAssetsExt (unified) failed", "err", err)
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError, "")
-		return nil, "", false
+		return nil, "", false, false
 	}
 	hasMore := len(rows) > limit
 	if hasMore {
@@ -3126,7 +3152,7 @@ func (s *Server) fetchClassicUnifiedRows(
 	}
 	out = s.suppressCatalogueTwins(out)
 	s.stampListingCollisions(out)
-	s.applySubstanceGateToListing(r.Context(), out)
+	unmeasured := s.applySubstanceGateToListing(r.Context(), out)
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
 	// AFTER the gate (which would strip it) and AFTER the market-cap
 	// fill (so no valuation derives from it) — see
@@ -3181,7 +3207,7 @@ func (s *Server) fetchClassicUnifiedRows(
 		// row, before the alias/twin folds trimmed `out`.
 		nextInner = timescale.EncodeAssetsCursor(rows[len(rows)-1], timescale.AssetsOrderVolume24hUSDDesc)
 	}
-	return out, nextInner, true
+	return out, nextInner, unmeasured, true
 }
 
 // computeAllCatalogueMarketCaps fans out market_cap_usd across the

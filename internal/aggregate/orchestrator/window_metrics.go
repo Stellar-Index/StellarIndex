@@ -64,7 +64,7 @@ func (o *Orchestrator) recordVenueVWAPs(pair canonical.Pair, window time.Duratio
 			continue
 		}
 		vwap := aggregate.AdjustPrice(new(big.Rat).SetFrac(c.QuoteVolume, c.BaseVolume), baseDec, quoteDec)
-		f, _ := vwap.Float64()
+		f, _ := vwap.Float64() // i128:ok Prometheus per-venue VWAP gauge, not served
 		obs.AggregatorVenueVWAP.WithLabelValues(pairLabel, wLabel, c.Source).Set(f)
 	}
 }

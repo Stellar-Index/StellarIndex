@@ -106,8 +106,8 @@ func (o *Orchestrator) computeConfidence(
 		return confidenceComputation{}, false
 	}
 
-	currF, _ := vwap.Float64()
-	prevF, _ := prevVWAP.Float64()
+	currF, _ := vwap.Float64()     // i128:ok prices for the confidence-score move ratio, not served
+	prevF, _ := prevVWAP.Float64() // i128:ok prices for the confidence-score move ratio, not served
 	if prevF == 0 {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("skipped").Inc()
 		return confidenceComputation{}, false
@@ -386,7 +386,7 @@ func approxUSDVolume(trades []canonicalTrade, pair canonical.Pair) float64 {
 		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(dec)), nil)
 		total.Add(total, new(big.Rat).SetFrac(amt, scale))
 	}
-	usd, _ := total.Float64()
+	usd, _ := total.Float64() // i128:ok USD volume as a confidence-score input, not served
 	return usd
 }
 

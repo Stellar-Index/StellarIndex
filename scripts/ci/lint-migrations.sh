@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Migration lint: money-column (ADR-0003) + file integrity (audit C4-7)
-# + register completeness (wave-D PS-01) + ClickHouse money-column.
+# + register completeness (wave-D PS-01) + ClickHouse money-column
+# + hypertable index builds + CAGG re-materialization.
 #
-# Four passes, all gating (exit non-zero on any violation):
+# Seven passes, all gating (exit non-zero on any violation):
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
 #      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
@@ -14,6 +15,12 @@
 #   4. ClickHouse money-column — the lake DDL under deploy/clickhouse/
 #      must never hold a monetary column in Float32/Float64 (ADR-0003
 #      applied to the substrate; see the pass for the type rule).
+#   5. down-delete — no *.down.sql DELETEs/TRUNCATEs rows silently; a
+#      narrowing down refuses with a RAISE EXCEPTION guard instead.
+#   6. hypertable index — a CREATE INDEX on an existing hypertable uses
+#      IF NOT EXISTS under SET LOCAL lock_timeout (see the pass).
+#   7. CAGG re-materialization — a file that recreates a continuous
+#      aggregate WITH NO DATA names its refresh (see the pass).
 #
 # ── register-completeness detail ──
 #
@@ -284,7 +291,161 @@ while IFS= read -r entry; do
 done <<<"$ch_float_baseline"
 echo "lint-migrations: ClickHouse money pass inspected ${ch_files} file(s) under ${CH_DIR}."
 
+# ── pass 5: downs never delete rows silently (#357 F1, #595) ───────
+# A down that narrows a CHECK must REFUSE while offending rows exist
+# (`DO $$ … IF EXISTS … RAISE EXCEPTION … $$`, see 0070's down), not
+# DELETE them: a rollback past it would otherwise discard production
+# rows and report success. Any executable DELETE/TRUNCATE in a down is a
+# violation unless its line carries `-- lint-down-delete:ok <reason>`
+# (e.g. removing only the seed row the matching up inserted).
+del_re='^[[:space:]]*(DELETE[[:space:]]+FROM|TRUNCATE)\b'
+down_files=0
+for f in migrations/*.down.sql; do
+  [ -e "$f" ] || continue
+  down_files=$((down_files + 1))
+  hits=$(grep -nEi "$del_re" "$f" | grep -viE -- '-- *lint-down-delete:ok +[^ ]' || true)
+  if [ -n "$hits" ]; then
+    echo "lint-migrations ❌ ${f}: down deletes rows silently — refuse with a RAISE EXCEPTION guard instead (see 0070's down):" >&2
+    indent "$hits" >&2
+    fail=1
+  fi
+  stale=$(grep -nEi -- '-- *lint-down-delete:ok' "$f" | grep -vEi "^[0-9]+:${del_re#^}" || true)
+  if [ -n "$stale" ]; then
+    echo "lint-migrations ❌ ${f}: stale lint-down-delete:ok marker (line is not a DELETE/TRUNCATE) — remove it:" >&2
+    indent "$stale" >&2
+    fail=1
+  fi
+done
+if [ "$down_files" -eq 0 ]; then
+  echo "lint-migrations ❌ no migrations/*.down.sql found — the down-delete pass cannot pass vacuously" >&2
+  fail=1
+fi
+
+# ── Passes 6 and 7: operational hazards on populated tables ──
+#
+# MIG_DIR exists so scripts/ci/lint-migrations-test.sh can point these
+# two passes at fixture trees; the passes above always read migrations/.
+MIG_DIR="${MIG_DIR:-migrations}"
+
+# sql_stmts <file>: one SQL statement per line, `--` comments stripped
+# and whitespace collapsed, so a statement split across lines matches.
+sql_stmts() {
+  sed -E 's/--.*$//' "$1" | tr '\n\t' '  ' \
+    | awk 'BEGIN { RS = ";" } { gsub(/ +/, " "); sub(/^ /, ""); if ($0 != "") print }'
+}
+
+# hyper_indexes <file>: `<idx>|<table>|<if-not-exists 0/1>|<lock_timeout 0/1>`
+# for every in-transaction CREATE INDEX on a table the file does not
+# itself create (an index on a table born in the same file is free).
+hyper_indexes() {
+  sql_stmts "$1" | awk '
+    { s = tolower($0); n = split(s, w, " ") }
+    s ~ /^create (unlogged )?table / {
+      t = (w[3] == "if") ? w[6] : w[3]
+      if (w[3] == "unlogged") t = (w[4] == "if") ? w[7] : w[4]
+      sub(/\(.*/, "", t); sub(/^public\./, "", t); here[t] = 1
+    }
+    s ~ /^set (local )?lock_timeout/ { lt = 1 }
+    s ~ /^create (unique )?index / && s !~ /^create (unique )?index concurrently/ {
+      j = (w[2] == "unique") ? 4 : 3; ine = (w[j] == "if"); if (ine) j += 3
+      tbl = ""
+      for (i = j; i <= n; i++) if (w[i] == "on") { tbl = (w[i+1] == "only") ? w[i+2] : w[i+1]; break }
+      sub(/\(.*/, "", tbl); sub(/^public\./, "", tbl)
+      k++; idx[k] = w[j]; on[k] = tbl; ok[k] = ine
+    }
+    END { for (i = 1; i <= k; i++) if (!(on[i] in here)) printf "%s|%s|%d|%d\n", idx[i], on[i], ok[i], lt + 0 }'
+}
+
+# Pass 6 — CREATE INDEX on an existing hypertable. The in-transaction
+# build holds a SHARE lock that blocks every write to the table for the
+# whole build, and a partial index still scans every row. 0037's header
+# is the recipe: `IF NOT EXISTS`, so an operator's CREATE INDEX
+# CONCURRENTLY pre-build turns the migration into a no-op, and
+# `SET LOCAL lock_timeout`, so the build cannot queue every writer behind
+# an open transaction. Shipped migrations are immutable, so the ones that
+# predate this pass are listed below (0150's operator
+# note is in the README register); an entry that no longer matches is
+# stale and fails (the list only shrinks).
+hyper_index_baseline='0025_create_routers_and_attribution.up.sql:trades_routed_via_idx
+0037_trades_pair_source_ts_index.up.sql:trades_pair_source_ts_idx
+0083_sep41_transfers_ledger_idx.up.sql:sep41_transfers_ledger_idx
+0091_aquarius_liquidity_pool_tokens_idx.up.sql:aquarius_liquidity_pool_token_idx
+0101_soroswap_router_swaps_call_path.up.sql:soroswap_router_swaps_call_kind_ts_idx
+0106_sep41_transfers_address_idx.up.sql:sep41_transfers_from_addr_ledger_idx
+0106_sep41_transfers_address_idx.up.sql:sep41_transfers_to_addr_ledger_idx
+0107_positions_view_user_indexes.up.sql:blend_backstop_events_user_ts_idx
+0107_positions_view_user_indexes.up.sql:blend_positions_user_ts_idx
+0123_trades_account_ts_indexes.up.sql:trades_maker_ts_idx
+0123_trades_account_ts_indexes.up.sql:trades_taker_ts_idx
+0150_add_trades_signer.up.sql:trades_signer_idx'
+
+hypertables="$(for f in "$MIG_DIR"/*.up.sql; do grep -qi create_hypertable "$f" && sql_stmts "$f"; done \
+  | grep -oiE "create_hypertable\( *'[a-z0-9_.]+'" \
+  | sed -E "s/.*'([A-Za-z0-9_.]+)'/\1/; s/^public\.//" | tr '[:upper:]' '[:lower:]' | sort -u || true)"
+if [ -z "$hypertables" ]; then
+  echo "lint-migrations ❌ no create_hypertable() call found under ${MIG_DIR} — the hypertable-index pass has gone vacuous" >&2
+  fail=1
+fi
+hi_seen=""
+hi_checked=0
+for f in "$MIG_DIR"/*.up.sql; do
+  grep -qiE 'create +(unique +)?index' "$f" || continue
+  b="$(basename "$f")"
+  while IFS='|' read -r idx tbl ine lt; do
+    [ -n "$idx" ] || continue
+    grep -qx "$tbl" <<<"$hypertables" || continue
+    hi_checked=$((hi_checked + 1))
+    [ "$ine" = 1 ] && [ "$lt" = 1 ] && continue
+    if grep -qx "${b}:${idx}" <<<"$hyper_index_baseline"; then
+      hi_seen="${hi_seen}${b}:${idx}"$'\n'
+      continue
+    fi
+    missing=""
+    [ "$ine" = 1 ] || missing="IF NOT EXISTS"
+    [ "$lt" = 1 ] || missing="${missing:+${missing} and }SET LOCAL lock_timeout"
+    echo "lint-migrations ❌ ${f}: CREATE INDEX ${idx} ON ${tbl} lacks ${missing} — ${tbl} is an existing hypertable, and the in-transaction build blocks every write to it for the whole build. Write CREATE INDEX IF NOT EXISTS (so a CREATE INDEX CONCURRENTLY pre-build makes the migration a no-op) under SET LOCAL lock_timeout, and name the pre-build in the header and the README register row (0037 is the recipe)." >&2
+    fail=1
+  done < <(hyper_indexes "$f")
+done
+while IFS= read -r entry; do
+  [ -n "$entry" ] || continue
+  [ -e "${MIG_DIR}/${entry%%:*}" ] || continue
+  if ! grep -qx "$entry" <<<"$hi_seen"; then
+    echo "lint-migrations ❌ stale hyper_index_baseline entry ${entry} — it no longer names a non-conforming hypertable index; remove it (the list only shrinks)" >&2
+    fail=1
+  fi
+done <<<"$hyper_index_baseline"
+echo "lint-migrations: hypertable-index pass checked ${hi_checked} index build(s) on existing hypertables under ${MIG_DIR}."
+
+# Pass 7 — a continuous aggregate dropped and recreated WITH NO DATA is
+# EMPTY until someone refreshes it, and a migration cannot do that:
+# refresh_continuous_aggregate refuses a transaction block, and
+# golang-migrate runs each file as one. So the file must NAME the
+# refresh (`refresh_continuous_aggregate('<view>'`, in its operator
+# header) for every view it recreates — a down included, because a
+# rollback empties the views exactly as the up did.
+cagg_files=0
+for f in "$MIG_DIR"/*.sql; do
+  grep -qi 'with no data' "$f" || continue
+  stmts="$(sql_stmts "$f")"
+  grep -qi 'with no data' <<<"$stmts" || continue
+  cagg_files=$((cagg_files + 1))
+  dropped="$(grep -iE '^drop materialized view ' <<<"$stmts" \
+    | sed -E 's/^[Dd][Rr][Oo][Pp] [Mm][Aa][Tt][Ee][Rr][Ii][Aa][Ll][Ii][Zz][Ee][Dd] [Vv][Ii][Ee][Ww] ([Ii][Ff] [Ee][Xx][Ii][Ss][Tt][Ss] )?//' \
+    | tr ',' '\n' | awk '{ print tolower($1) }' | sed 's/^public\.//' | sort -u || true)"
+  named="$(grep -oE "refresh_continuous_aggregate\( *'[a-z0-9_]+'" "$f" | sed -E "s/.*'([a-z0-9_]+)'/\1/" | sort -u || true)"
+  unnamed=""
+  for v in $dropped; do
+    grep -qx "$v" <<<"$named" || unnamed="${unnamed}${v} "
+  done
+  if [ -n "$unnamed" ]; then
+    echo "lint-migrations ❌ ${f}: recreates continuous aggregate(s) WITH NO DATA and names no refresh for: ${unnamed}— they serve nothing until re-materialized. Write the ordered CALL refresh_continuous_aggregate('<view>', …) sequence into the header (hierarchical views after their parent is whole) and the README register row." >&2
+    fail=1
+  fi
+done
+echo "lint-migrations: CAGG re-materialization pass inspected ${cagg_files} WITH NO DATA file(s) under ${MIG_DIR}."
+
 if [ "$fail" -eq 0 ]; then
-  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money)."
+  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money + down-delete, ${down_files} downs + hypertable index + CAGG re-materialization)."
 fi
 exit "$fail"

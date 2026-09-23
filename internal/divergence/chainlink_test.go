@@ -212,6 +212,27 @@ func TestChainlink_ScaleAnswer(t *testing.T) {
 	}
 }
 
+// TestChainlink_ScaleAnswerZeroDecimalsAboveInt64 pins the zero-decimals
+// path to the same exact conversion as every other scale: an int256
+// answer beyond int64 must not wrap through big.Int.Int64().
+func TestChainlink_ScaleAnswerZeroDecimalsAboveInt64(t *testing.T) {
+	answer := new(big.Int).Lsh(big.NewInt(1), 70)
+	got, err := scaleChainlinkAnswer(answer, 0)
+	if err != nil {
+		t.Fatalf("scale: %v", err)
+	}
+	if want := 1180591620717411303424.0; got != want {
+		t.Errorf("scaleChainlinkAnswer(2^70, 0) = %v, want %v", got, want)
+	}
+	neg, err := scaleChainlinkAnswer(new(big.Int).Neg(answer), 0)
+	if err != nil {
+		t.Fatalf("scale negative: %v", err)
+	}
+	if want := -1180591620717411303424.0; neg != want {
+		t.Errorf("scaleChainlinkAnswer(-2^70, 0) = %v, want %v", neg, want)
+	}
+}
+
 func TestChainlink_Name(t *testing.T) {
 	r := NewChainlinkReference(ChainlinkOptions{})
 	if r.Name() != "chainlink" {
@@ -372,5 +393,46 @@ func TestChainlink_LegacyAnswerShapeFailsLoudly(t *testing.T) {
 	_, err := ref.LookupPrice(context.Background(), mustPair(t, "native", "fiat:USD"), time.Now())
 	if err == nil || !strings.Contains(err.Error(), "too short") {
 		t.Fatalf("want too-short decode error for legacy 32-byte result, got %v", err)
+	}
+}
+
+// TestChainlink_OmittedMaxAgeKeepsFXBudget pins that an operator feed
+// entry omitting MaxAge does not silently swap an FX feed's 76h
+// weekend budget for the 3h crypto one: a built-in key inherits the
+// built-in budget and any other fiat/fiat key gets the FX default. A
+// 70h-old round is a normal Sunday-night FX read, not a dead feed.
+func TestChainlink_OmittedMaxAgeKeepsFXBudget(t *testing.T) {
+	answer := big.NewInt(1_27000000)
+	observedAt := time.Date(2026, 7, 5, 22, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name, key, base, quote string
+		updatedAt              time.Time
+		wantStale              bool
+	}{
+		{"built-in FX key pasted from example.toml", "fiat:GBP/fiat:USD", "fiat:GBP", "fiat:USD", observedAt.Add(-70 * time.Hour), false},
+		{"operator-added FX key", "fiat:CHF/fiat:USD", "fiat:CHF", "fiat:USD", observedAt.Add(-70 * time.Hour), false},
+		{"FX key still bounded by 76h", "fiat:GBP/fiat:USD", "fiat:GBP", "fiat:USD", observedAt.Add(-80 * time.Hour), true},
+		{"built-in crypto key keeps 3h", "crypto:BTC/fiat:USD", "crypto:BTC", "fiat:USD", observedAt.Add(-4 * time.Hour), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := fakeChainlinkRPC(t, roundDataHex(answer, tc.updatedAt))
+			ref := NewChainlinkReference(ChainlinkOptions{
+				RPCURL: srv.URL,
+				FeedMap: map[string]ChainlinkFeed{
+					tc.key: {Address: "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5", Decimals: 8},
+				},
+			})
+			_, err := ref.LookupPrice(context.Background(), mustPair(t, tc.base, tc.quote), observedAt)
+			if tc.wantStale {
+				if !errors.Is(err, ErrPriceUnavailable) {
+					t.Fatalf("want ErrPriceUnavailable for a round beyond budget, got %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("round within the FX budget rejected: %v", err)
+			}
+		})
 	}
 }

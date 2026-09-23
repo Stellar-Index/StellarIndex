@@ -344,3 +344,97 @@ func TestSubscriber_StripsInjectedExtraFields(t *testing.T) {
 		t.Errorf("window_seconds = %d, want 300", ev.Data.WindowSeconds)
 	}
 }
+
+// TestSubscriber_DropsNonCanonicalAssetIdentity — asset and quote are
+// echoed to SSE clients as asset_id / quote and form the Hub topic key,
+// so a forged event naming anything canonical.Asset.String() could not
+// have produced must be DROPPED (#754), not fanned out verbatim. Same
+// batch-then-sentinel proof as TestSubscriber_DropsForgedValueDecimal.
+func TestSubscriber_DropsNonCanonicalAssetIdentity(t *testing.T) {
+	const channel = "test:closed"
+	_, rdb := newRedis(t)
+	hub := &fakeHub{}
+	sub, err := redispub.NewSubscriber(rdb, channel, hub, nil)
+	if err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sub.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+
+	observedAt := time.Now().UTC().Format(time.RFC3339)
+	forged := [][2]string{
+		{"<script>alert(1)</script>", "fiat:USD"}, // not an asset id at all
+		{"native", "injected quote text"},         // quote not an asset id
+		{"XLM", "fiat:USD"},                       // parses, but not the canonical spelling
+		{"NATIVE", "fiat:USD"},                    // case variant of a canonical id
+		{"native", "native"},                      // degenerate self-pair
+	}
+	for _, f := range forged {
+		publishRaw(t, rdb, channel, fmt.Sprintf(
+			`{"asset":%q,"quote":%q,"window_seconds":300,"value_decimal":"1.000000000000","observed_at":%q}`,
+			f[0], f[1], observedAt))
+	}
+	const sentinelValue = "7.654321000000"
+	publishRaw(t, rdb, channel, fmt.Sprintf(
+		`{"asset":"native","quote":"fiat:USD","window_seconds":300,"value_decimal":%q,"observed_at":%q}`,
+		sentinelValue, observedAt))
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !hasValue(t, hub.Calls(), sentinelValue) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	calls := hub.Calls()
+	if !hasValue(t, calls, sentinelValue) {
+		t.Fatalf("valid sentinel never fanned out")
+	}
+	if len(calls) != 1 {
+		topics := make([]string, len(calls))
+		for i, c := range calls {
+			topics[i] = c.topic
+		}
+		t.Fatalf("Hub.Publish called %d times, want 1 — non-canonical identities must be dropped; topics = %v",
+			len(calls), topics)
+	}
+}
+
+// TestSubscriber_ForwardsOneFramePerBucket — two aggregators on one
+// channel (a restart overlap, a failover pair) each publish every
+// bucket; a delayed message can arrive after a newer bucket. The Hub
+// topic must carry each bucket once, in order (#752): a repeat of the
+// newest bucket from a second producer and an older bucket are both
+// dropped, and the next bucket goes through.
+func TestSubscriber_ForwardsOneFramePerBucket(t *testing.T) {
+	const channel = "test:closed"
+	_, rdb := newRedis(t)
+	hub := &fakeHub{}
+	sub, err := redispub.NewSubscriber(rdb, channel, hub, nil)
+	if err != nil {
+		t.Fatalf("NewSubscriber: %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = sub.Run(ctx) }()
+	time.Sleep(50 * time.Millisecond)
+
+	bucket := time.Now().UTC().Truncate(time.Minute).Add(-2 * time.Minute)
+	publish := func(producer, value string, at time.Time) {
+		publishRaw(t, rdb, channel, fmt.Sprintf(
+			`{"asset":"native","quote":"fiat:USD","window_seconds":300,"value_decimal":%q,"observed_at":%q,"producer_id":%q}`,
+			value, at.Format(time.RFC3339), producer))
+	}
+	publish("agg-a", "0.100000000000", bucket)                   // first
+	publish("agg-b", "0.110000000000", bucket)                   // same bucket, second aggregator
+	publish("agg-a", "0.090000000000", bucket.Add(-time.Minute)) // older bucket, delivered late
+	const sentinelValue = "0.120000000000"
+	publish("agg-a", sentinelValue, bucket.Add(time.Minute)) // next bucket
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && !hasValue(t, hub.Calls(), sentinelValue) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got, want := callValues(t, hub.Calls()), "0.100000000000,"+sentinelValue; got != want {
+		t.Fatalf("forwarded values = [%s], want [%s] — one frame per bucket, in order", got, want)
+	}
+}

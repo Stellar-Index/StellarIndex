@@ -138,16 +138,25 @@ func (f *fakeRegisterKeyStore) GetByHash(_ context.Context, hash []byte) (platfo
 	return platform.APIKey{}, platform.ErrNotFound
 }
 
-func (f *fakeRegisterKeyStore) ListForAccount(_ context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
+func (f *fakeRegisterKeyStore) CountActiveForAccount(ctx context.Context, accountID uuid.UUID) (int, error) {
+	active, err := f.ListActiveForAccount(ctx, accountID)
+	return len(active), err
+}
+
+func (f *fakeRegisterKeyStore) ListActiveForAccount(_ context.Context, accountID uuid.UUID) ([]platform.APIKey, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []platform.APIKey
 	for _, k := range f.byID {
-		if k.AccountID == accountID {
+		if k.AccountID == accountID && k.RevokedAt.IsZero() {
 			out = append(out, k)
 		}
 	}
 	return out, nil
+}
+
+func (f *fakeRegisterKeyStore) ListForAccount(_ context.Context, _ uuid.UUID, _ int) ([]platform.APIKey, bool, error) {
+	panic("unused")
 }
 
 func (f *fakeRegisterKeyStore) Update(_ context.Context, k platform.APIKey) error {

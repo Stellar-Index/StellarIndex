@@ -52,8 +52,12 @@ func (o *Orchestrator) refreshDivergenceAll(ctx context.Context, now time.Time) 
 		}
 	}()
 	if o.cfg.DivergenceRefresher == nil || len(o.cfg.Windows) == 0 {
+		obs.DivergenceRefresherWired.Set(0)
 		return
 	}
+	// Set before the interval gate and the per-pair loop, so a pass that
+	// never reaches an outcome still arms stellarindex_divergence_no_ok_outcomes.
+	obs.DivergenceRefresherWired.Set(1)
 	// F-0030 follow-up (2026-05-27): gate the refresh behind a
 	// minimum-elapsed interval so the external-reference quota (CMC
 	// free tier = 10K/month) isn't exhausted by every-tick refreshes.

@@ -132,3 +132,25 @@ Algorithm 13 (ECDSA P-256 SHA-256), digest type 2 (SHA-256), key tag
 not retype it, and check with `dig DS stellarindex.io @1.1.1.1`
 afterwards. The check script reports the missing DS as a note rather than
 a failure, and will start asserting it once it is published.
+
+---
+
+## Sending-domain settings DNS cannot show
+
+**Click and open tracking stay off.** With click tracking on, the
+provider rewrites every link in a message through its own redirector.
+In sign-in mail that link carries the magic-link token, so the token
+would pass through, and be logged by, a third party before the user
+reaches us. Open tracking adds a pixel to every message. Both are
+per-domain settings in the Resend dashboard (Domains → `stellarindex.io`
+→ Configuration), and neither is visible in DNS, so
+`dns-perimeter-check.sh` cannot assert them. To check, open a received
+sign-in email: the link must point straight at the dashboard host's
+`/auth/callback`, not at a provider domain.
+
+**Bounce and complaint feedback is not consumed.** The `send` MX routes
+feedback to the provider, and nothing in this service ingests it: there
+is no webhook receiver and no suppression list, so a hard-bouncing
+address keeps getting login mail up to its per-inbox throttle (#738).
+Until that exists, watch bounce and complaint rates in the provider
+dashboard.

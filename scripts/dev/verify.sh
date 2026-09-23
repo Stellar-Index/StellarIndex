@@ -330,6 +330,7 @@ echo "=== data-freshness watchdog self-test ===" && ./scripts/ci/data-freshness-
 echo "=== TimescaleDB job/CAGG probe self-test ===" && ./scripts/ci/timescale-jobs-probe-test.sh
 echo "=== galexie catchup probe self-test ===" && ./scripts/ci/galexie-catchup-probe-test.sh
 echo "=== galexie archive contiguity self-test ===" && ./scripts/ci/galexie-archive-contiguity-test.sh
+echo "=== galexie archive tip-lag self-test ===" && ./scripts/ci/galexie-archive-tip-lag-test.sh
 # BASE_SHA-gated. Both this and lint-replay-plan.sh below take their
 # comparison base from the environment, and with none set they print a skip
 # line and exit 0 — so invoking them bare made verify↔CI parity look honest
@@ -588,6 +589,9 @@ lane_d() { # everything else
     echo "=== Public-dataset drift decision-core self-test ===" && ./scripts/ci/check-public-dataset-test.sh
     echo "=== Replay-plan tripwire self-test ===" && ./scripts/ci/lint-replay-plan-test.sh
     echo "=== Verdict helpers self-test (oneshot waits, sentinel gates) ===" && bash scripts/ops/ops-verdict-test.sh
+    echo "=== ClickHouse maintenance + Phase-D failure-path self-test ===" && bash scripts/ops/ch-maintenance-fail-closed-test.sh
+    echo "=== Lake-dedup driver self-test ===" && bash deploy/clickhouse/lake-dedup-driver-test.sh
+    echo "=== D3 current-state rebuild self-test (cutover coverage gate) ===" && bash scripts/ops/d3-lecur-v2-rebuild-test.sh
     # Prometheus rule files. Graceful-skip when promtool isn't
     # installed locally — CI installs it explicitly. The Makefile
     # target hard-fails on missing promtool; verify.sh wraps it with

@@ -213,8 +213,8 @@ type OracleReading struct {
 	// published. Zero means "not reported", not "zero confidence."
 	Confidence float64 `json:"confidence,omitempty"`
 
-	// Observer is the on-chain account that published the update
-	// (typically a Reflector relayer). Empty when unknown.
+	// Observer is the on-chain address (account or contract) that
+	// published the update. Empty when unknown.
 	Observer string `json:"observer,omitempty"`
 
 	// Mapped is false when Asset is a `raw:<symbol>` row — an

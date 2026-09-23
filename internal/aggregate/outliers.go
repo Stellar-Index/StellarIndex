@@ -30,7 +30,8 @@ import (
 // change.
 //
 // The deviation is measured symmetrically in RATIO space
-// ([symmetricDev], ADR-0046 §1), so the acceptance band is
+// ([symmetricDev]; ADR-0046 §1's direction symmetry, though the scale
+// is a price-space MAD, not §1's MAD(log p)), so the acceptance band is
 // [median²/(median + sigma·scale), median + sigma·scale]: a ½× print is
 // exactly as outlying as a 2× one. The band used to be additive in
 // price space, which made its lower edge non-positive once the relative

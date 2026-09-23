@@ -138,14 +138,16 @@ func robustCentreScale(vals []*big.Rat) (centre, scale *big.Rat) {
 // used to be ADDITIVE in price space — `|p − centre| > K·scale` — which
 // is one-sided-blind by construction. `p` can only ever be `centre`
 // below the centre, so once `K·scale >= centre` NO downward print can
-// exceed the threshold: a crash print, a decimal-shift fat finger, even
-// an exact 0, all score inside the band, while the mirror-image up-move
+// exceed the threshold: a crash print or a decimal-shift fat finger (on
+// the served guard, even an exact 0) scores inside the band, while the mirror-image up-move
 // is still rejected. The additive band goes blind below at a relative
 // scale of 1/K — 16.9 % for [FilterOutliers] at the default σ=4, 6.75 %
 // for [robustBand]'s MAD arm at K=10 — which ordinary long-tail
 // volatility reaches routinely.
 //
-// Price noise is MULTIPLICATIVE (ADR-0046 §1: "a 2× and a ½× deviation
+// Price noise is MULTIPLICATIVE (ADR-0046 §1's direction symmetry; its
+// MAD(log p) scale is not implemented — the scale here is a price-space
+// MAD: "a 2× and a ½× deviation
 // should be equally outlying"), so the deviation is measured on the
 // ratio: a price below the centre is first mirrored to the up-move that
 // is the same distance away in log space (centre²/p — the reflection of

@@ -257,8 +257,8 @@ func (o *Orchestrator) triangulationDivergencePct(
 	if time.Since(sample.at) > compositeMaxAgeTicks*o.tickInterval() {
 		return 0, false
 	}
-	compositeF, _ := sample.price.Float64()
-	directF, _ := direct.Float64()
+	compositeF, _ := sample.price.Float64() // i128:ok prices for a percentage divergence compare, not served
+	directF, _ := direct.Float64()          // i128:ok prices for a percentage divergence compare, not served
 	if compositeF <= 0 || directF <= 0 || math.IsInf(compositeF, 0) || math.IsInf(directF, 0) {
 		return 0, false
 	}

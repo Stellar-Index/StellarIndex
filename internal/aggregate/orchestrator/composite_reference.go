@@ -248,7 +248,7 @@ func ratBps(r *big.Rat) float64 {
 	if r == nil {
 		return 0
 	}
-	f, _ := r.Float64()
+	f, _ := r.Float64() // i128:ok basis points for reporting only
 	return f * 10_000
 }
 
@@ -474,8 +474,8 @@ func (o *Orchestrator) resolveCompositeReference(
 		}
 		composite.Mul(composite, price)
 	}
-	compositeF, _ := composite.Float64()
-	directF, _ := direct.Float64()
+	compositeF, _ := composite.Float64() // i128:ok prices for a percentage divergence compare, not served
+	directF, _ := direct.Float64()       // i128:ok prices for a percentage divergence compare, not served
 	if compositeF <= 0 || directF <= 0 || math.IsInf(compositeF, 0) || math.IsInf(directF, 0) {
 		ref.unavailable = "non_finite"
 		return ref

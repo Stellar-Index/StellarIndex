@@ -674,26 +674,65 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
               summary: "Persist drops on defindex/defindex_flow_vault (any rate)"
               description: |
-                A soroswap-router or defindex persist write failed for
+                A trade, soroswap-router or defindex persist write failed for
                 defindex/defindex_flow_vault in the last 15 minutes.
                 These are DEX-swap / vault-flow rows — even a low-rate drop
-                matters, and this path was previously counter-less (the drop
-                was log-only and invisible). If the write went through the
-                projector it is retried (watch stellarindex_projector_events_
-                decoded_total{outcome="sink_retry"}); if it went through the
-                dispatcher drain the row was dropped. Check Timescale health
-                and the poison-row logs.
+                matters. kind="trade" is a trade rejected as a permanent data
+                fault: the row is NOT in the served tier (a projected source
+                also counts it as projector outcome="sink_permanent"). For the
+                other kinds, a write through the projector is retried (watch
+                stellarindex_projector_events_decoded_total{outcome="sink_retry"});
+                one through the dispatcher drain was dropped. Check Timescale
+                health and the poison-row logs.
 
                 Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
 
-  # ── guard: the kind regex excludes non-money-flow kinds ───────────
-  # A slow trickle of kind="trade" errors belongs to the coarse
-  # insert_errors alert (and only above 0.1/s) — the sensitive
-  # tripwire must not fire on it.
+  # ── firing: a single permanently dropped trade tickets (GH-612) ──
+  # kind="trade" means the row is gone (sdex, projected DEX, external).
+  # It used to be excluded, so a trickle below the coarse 0.1/s
+  # insert_errors line was never alerted on at all.
   - interval: 1m
-    name: a non-money-flow kind does not trip the sensitive tripwire
+    name: one permanently dropped sdex trade trips the sensitive tripwire
     input_series:
       - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",kind="trade"}'
+        values: '0x3 1x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: stellarindex_ingestion_persist_drop
+        exp_alerts:
+          - exp_labels:
+              job: stellarindex_indexer
+              instance: r1:9100
+              source: sdex
+              kind: trade
+              severity: ticket
+              team: stellarindex
+              component: ingestion
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+              summary: "Persist drops on sdex/trade (any rate)"
+              description: |
+                A trade, soroswap-router or defindex persist write failed for
+                sdex/trade in the last 15 minutes.
+                These are DEX-swap / vault-flow rows — even a low-rate drop
+                matters. kind="trade" is a trade rejected as a permanent data
+                fault: the row is NOT in the served tier (a projected source
+                also counts it as projector outcome="sink_permanent"). For the
+                other kinds, a write through the projector is retried (watch
+                stellarindex_projector_events_decoded_total{outcome="sink_retry"});
+                one through the dispatcher drain was dropped. Check Timescale
+                health and the poison-row logs.
+
+                Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/insert-errors.md
+
+  # ── guard: an abandoned (re-derivable) trade is not a drop ────────
+  # kind="trade_abandoned" is a ctx-cancelled retry: the cursor is held
+  # and the row re-derives from the CH lake. It belongs to the coarse
+  # insert_errors alert only — the sensitive tripwire must not fire.
+  - interval: 1m
+    name: an abandoned trade retry does not trip the sensitive tripwire
+    input_series:
+      - series: 'stellarindex_source_insert_errors_total{job="stellarindex_indexer",instance="r1:9100",source="sdex",kind="trade_abandoned"}'
         values: '0+1x40'
     alert_rule_test:
       - eval_time: 20m

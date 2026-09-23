@@ -528,9 +528,10 @@ func TestExternalRetryBuffer_InfraDuringIsolationRequeues(t *testing.T) {
 
 // TestPersistTrade_AbandonOnShutdown — if the context is cancelled while
 // an infra fault persists (shutdown), persistTrade must give up (not
-// hang) and count the loss; the row is recoverable from the CH lake.
+// hang) and count the abandon under kind="trade_abandoned" (not "trade",
+// which means dropped); the row is recoverable from the CH lake.
 func TestPersistTrade_AbandonOnShutdown(t *testing.T) {
-	before := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade")
+	before := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade_abandoned")
 	store := &fakeTradeStore{} // stays unhealthy
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -551,7 +552,7 @@ func TestPersistTrade_AbandonOnShutdown(t *testing.T) {
 	if n := store.landedCount(); n != 0 {
 		t.Fatalf("landed %d on abandon; want 0", n)
 	}
-	if got := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade") - before; got != 1 {
-		t.Errorf("source_insert_errors{sdex,trade} delta = %v; want 1", got)
+	if got := counter(t, obs.SourceInsertErrorsTotal, "sdex", "trade_abandoned") - before; got != 1 {
+		t.Errorf("source_insert_errors{sdex,trade_abandoned} delta = %v; want 1", got)
 	}
 }

@@ -26,8 +26,8 @@ enforced 2026-04-23 onward).
 
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
-  | `page` | 58 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 181 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
+  | `ticket` | 184 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -99,7 +99,7 @@ enforced 2026-04-23 onward).
 | `stellarindex_ingestion_sink_undrained_rows` | `increase(stellarindex_sink_undrained_rows_total[1h])` per (sink, kind) | > 0, fires at once (`for: 0m`) — the Postgres pipeline sink's bounded shutdown drain abandoned rows the ledger cursor had already advanced past; served-tier twin of the `ch_live_sink_drops` rules | ticket | [sink-undrained-rows](runbooks/sink-undrained-rows.md) |
 | `stellarindex_ingestion_trade_insert_backpressure` | `sum(rate(stellarindex_trade_insert_retries_total{outcome="retry"}[5m]))` | > 0 sustained 10 min | ticket | [trade-insert-backpressure](runbooks/trade-insert-backpressure.md) |
 | `stellarindex_ingestion_insert_errors` | `rate(stellarindex_source_insert_errors_total[5m])` per (source, kind) | > 0.1/s (≈6/min) sustained 5 min | ticket | [insert-errors](runbooks/insert-errors.md) |
-| `stellarindex_ingestion_persist_drop` | `increase(stellarindex_source_insert_errors_total{kind=~"soroswap_router_swap\|defindex_flow_strategy\|defindex_flow_vault"}[15m])` | > 0, `for: 0m` — ONE dropped swap / vault-flow row tickets at once and stays up for the 15 min window; a child born non-zero counts (was `for: 15m`, which a single drop could never satisfy) | ticket | [insert-errors](runbooks/insert-errors.md) |
+| `stellarindex_ingestion_persist_drop` | `increase(stellarindex_source_insert_errors_total{kind=~"trade\|soroswap_router_swap\|defindex_flow_strategy\|defindex_flow_vault"}[15m])` | > 0, `for: 0m` — ONE dropped trade / swap / vault-flow row tickets (`trade_abandoned`, a re-derivable abandoned retry, is excluded) at once and stays up for the 15 min window; a child born non-zero counts (was `for: 15m`, which a single drop could never satisfy) | ticket | [insert-errors](runbooks/insert-errors.md) |
 | `stellarindex_ingestion_discovery_record_failures` | `increase(stellarindex_discovery_record_failures_total[10m])` | > 0 sustained 10 min | ticket | [discovery-drops](runbooks/discovery-drops.md) |
 | `stellarindex_ingestion_duplicate_flood` | `rate(stellarindex_trade_insert_outcome_total{outcome="duplicate"}[10m])` UNLESS `rate(...{outcome="new"}[10m]) > 0` per source | duplicates > 0.5/s with zero-or-absent new for 10 min | ticket | [ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md) |
 | `stellarindex_ingestion_source_insert_stale` | `time() - stellarindex_source_last_insert_unix` per source AND `source_enabled=1` | > 3600 s for ≥ 10 min | ticket | [ingestion-duplicate-flood](runbooks/ingestion-duplicate-flood.md) |
@@ -199,6 +199,7 @@ signal lands.
 | `stellarindex_api_down` | `sum(up{job=~"stellarindex[_-]api"})` across regions, `or absent_over_time(up{...}[5m])` | == 0 for > 60 s, or the `up` series absent 5 min — `sum()` over an empty vector is empty, so the absent arm is what covers a target dropped from service discovery | page | [api-down](runbooks/api-down.md) |
 | `stellarindex_api_latency_p95_high` | `histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="stellarindex-api"}[5m]))` | > 500 ms for 10 m (the p95 is already a 5 m percentile, so the longer `for` rides out a cold-cache deploy) | ticket | [api-latency](runbooks/api-latency.md) |
 | `stellarindex_api_latency_p99_high` | `histogram_quantile(0.99, ...)` | > 2 s for 10 m | ticket | [api-latency](runbooks/api-latency.md) |
+| `stellarindex_api_price_stream_not_delivering` | `stellarindex_aggregator_stream_publish_total{outcome="ok"}` vs `stellarindex_api_stream_subscribe_total{outcome="ok"}` | aggregator publishing, API fanning out none, for 15 min (clock skew or a silently-retrying pubsub) | ticket | [price-stream-not-delivering](runbooks/price-stream-not-delivering.md) |
 | `stellarindex_api_error_rate_high` | `rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m])` | > 1 % for > 2 min | ticket | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_error_rate_critical` | same | > 5 % for > 2 min | page | [api-5xx](runbooks/api-5xx.md) |
 | `stellarindex_api_price_stale` | `stellarindex_price_staleness_seconds` per asset | > 120 s sustained 5 min | ticket | [price-stale](runbooks/price-stale.md) |
@@ -221,13 +222,16 @@ is the only signal a mail outage leaves.
 Source: `cmd/stellarindex-sla-probe` runs every 15 min via the
 systemd timer in `configs/healthchecks/stellarindex-sla-probe.timer`; metrics emitted
 to node_exporter's textfile_collector via `-textfile-output`.
-Per the service SLA targets — these are the synthetic
-counterparts to the API-plane alerts above.
+These alert at exactly the targets `/sla` publishes (pinned by
+`internal/ops/chops/sla_figure_consistency_test.go`); the API-plane
+latency alerts above are real-traffic backstops at looser multiples.
 
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_sla_probe_p95_breach` | `stellarindex_sla_probe_latency_ms{quantile="0.95"}` | > 200 ms for ≥ 30 min | page | [sla-probe-p95-breach](runbooks/sla-probe-p95-breach.md) |
-| `stellarindex_sla_probe_freshness_breach` | `stellarindex_sla_probe_freshness_sec` | `endpoint="price"` > 180 s, every other endpoint > 30 s, for ≥ 30 min | page | [sla-probe-freshness-breach](runbooks/sla-probe-freshness-breach.md) |
+| `stellarindex_sla_probe_p99_breach` | `stellarindex_sla_probe_latency_ms{quantile="0.99"}` | > 500 ms for ≥ 30 min | page | [sla-probe-p99-breach](runbooks/sla-probe-p99-breach.md) |
+| `stellarindex_sla_probe_availability_breach` | `stellarindex_sla_probe_availability_pct` | < 99.9 for ≥ 30 min | page | [sla-probe-availability-breach](runbooks/sla-probe-availability-breach.md) |
+| `stellarindex_sla_probe_freshness_breach` | `stellarindex_sla_probe_freshness_sec` | `endpoint="price"` > 150 s, every other endpoint > 30 s, for ≥ 30 min | page | [sla-probe-freshness-breach](runbooks/sla-probe-freshness-breach.md) |
 | `stellarindex_sla_probe_unit_failed_alert` | `stellarindex_sla_probe_unit_failed` | > 0 for ≥ 30 min | ticket | [sla-probe-unit-failed](runbooks/sla-probe-unit-failed.md) |
 | `stellarindex_sla_probe_stale` | `time() - stellarindex_sla_probe_last_pass_timestamp` | > 90 min for ≥ 5 min | page | [sla-probe-stale](runbooks/sla-probe-stale.md) |
 
@@ -404,7 +408,7 @@ chain-link locally. See [archive-completeness.md](archive-completeness.md).
 | `stellarindex_host_swap_activity` | `rate(node_vmstat_pswpout[10m])` | > 100 for 15 m | ticket | [host-swap-activity](runbooks/host-swap-activity.md) |
 | `stellarindex_galexie_archive_tip_lag_high` | `galexie_archive_tip_lag_ledgers` (archive newest vs live newest) | > 64,000 for 90 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_tip_lag_severe` | same | > 128,000 for 30 m | page | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
-| `stellarindex_galexie_archive_tip_lag_metric_stale` | `time() - galexie_archive_tip_lag_updated_seconds` | > 30 m for 15 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
+| `stellarindex_galexie_archive_tip_lag_metric_stale` | `galexie_archive_tip_lag_probe_success == 0`, or `time() - galexie_archive_tip_lag_updated_seconds` > 30 m | for 15 m | ticket | [galexie-archive-tip-lag](runbooks/galexie-archive-tip-lag.md) |
 | `stellarindex_galexie_archive_gap` | `galexie_archive_unexpected_gaps` — partition-level holes/overlaps in the DR mirror that are NOT the declared capacity trim (tip-lag proves the newest edge; this proves the middle) | > 0 for 1 h | page | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 | `stellarindex_galexie_archive_contiguity_silent` | `absent_over_time(galexie_archive_unexpected_gaps[3h])` | for 15 m (hourly scan dark) | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
 | `stellarindex_galexie_archive_scan_degraded` | `galexie_archive_scan_ok` / `_scan_last_run_unix` | the bucket listing errored, the scan stopped rewriting its file (> 3 h), or it was never written — for > 15 min. A failed read no longer publishes a partition verdict at all, so this is what speaks for it | ticket | [galexie-archive-contiguity](runbooks/galexie-archive-contiguity.md) |
@@ -536,6 +540,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_oracle_stale` | `time() - stellarindex_oracle_last_update_unix` per (source, asset) | > that pair's `stellarindex_oracle_staleness_budget_seconds` — 10× the source's declared resolution by default, per-asset overrides in `[[oracle.staleness_overrides]]` | ticket | [oracle-stale](runbooks/oracle-stale.md) |
 | `stellarindex_divergence_refresh_error_dominant` | `rate(divergence_refresh_total{outcome="refresh_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-refresh-error-dominant](runbooks/divergence-refresh-error-dominant.md) |
 | `stellarindex_divergence_no_reference` | `rate(divergence_refresh_total{outcome="no_reference"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-no-reference](runbooks/divergence-no-reference.md) |
+| `stellarindex_divergence_no_ok_outcomes` | `sum(increase(divergence_refresh_total{outcome="ok"}[30m])) == 0` while `divergence_refresher_wired == 1` | sustained 15 min | ticket | [divergence-no-ok-outcomes](runbooks/divergence-no-ok-outcomes.md) |
 
 ## Aggregator alerts
 
@@ -567,6 +572,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_signup_reaper_failing` | `rate(stellarindex_signup_reaper_runs_total{outcome="error"}[6h]) > rate(...{outcome="ok"}[6h])` | sustained 30 min | ticket | [signup-reaper-failing](runbooks/signup-reaper-failing.md) |
 | `stellarindex_ratelimit_fail_open` | `sum(rate(stellarindex_ratelimit_fail_open_total[5m]))` | > 0 for ≥ 10 min (rate limiter bypassing on a Redis error) | ticket | [ratelimit-fail-open](runbooks/ratelimit-fail-open.md) |
 | `stellarindex_monthly_quota_fail_open` | `sum(rate(stellarindex_monthly_quota_fail_open_total[5m]))` | > 0 for ≥ 10 min (metered-spend ceiling bypassing on a counter read error) | ticket | [monthly-quota-fail-open](runbooks/monthly-quota-fail-open.md) |
+| `stellarindex_scam_gate_fail_open` | `sum by (surface) (rate(stellarindex_scam_gate_lookup_failures_total[5m]))` | > 0 for ≥ 5 min (scam-pricing gate serving directory-flagged issuers' prices on an `account_directory` lookup error) | ticket | [scam-gate-fail-open](runbooks/scam-gate-fail-open.md) |
 | `stellarindex_admin_audit_write_failing` | `sum by (surface) (increase(stellarindex_admin_audit_write_failures_total[1h]))` | > 0 for ≥ 5 min (a privileged mutation committed with no durable audit row) | ticket | [admin-audit-write-failing](runbooks/admin-audit-write-failing.md) |
 | `stellarindex_login_code_lockout_table_growing` | `stellarindex_login_code_lockout_rows` **or** `increase(stellarindex_login_code_lockout_errors_total{op="status_check"}[1h])` | rows > 10000, **or** any fail-open, for ≥ 30 min (a table an unauthenticated caller keys, or the code-brute-force bound not being enforced) | ticket | [login-code-lockout-table-growing](runbooks/login-code-lockout-table-growing.md) |
 | `stellarindex_auth_reaper_stalled` | `time() - stellarindex_auth_reaper_last_sweep_unix{reaper}` vs `3 × stellarindex_auth_reaper_interval_seconds{reaper}` | a reaper (login_code / magic_link / signup) has not completed a sweep for > 3× its cadence, for ≥ 15 min (its rows gauge is frozen, not healthy) | ticket | [auth-reaper-stalled](runbooks/auth-reaper-stalled.md) |

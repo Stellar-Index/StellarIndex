@@ -85,13 +85,17 @@ func TestPairMarketSubstanceAt_KeepsTheLiveReadersShape(t *testing.T) {
 	norm := regexp.MustCompile(`\s+`).ReplaceAllString(stmt.sql, " ")
 
 	for _, want := range []string{
-		"(base_asset = $1 AND quote_asset = $2) OR (base_asset = $2 AND quote_asset = $1)",
-		"bucket <= now() - INTERVAL '1 hour'",
+		"base_asset = $1 AND quote_asset = $2 AND bucket <= now() - INTERVAL '1 hour'",
+		"UNION ALL",
+		"base_asset = $2 AND quote_asset = $1 AND bucket <= now() - INTERVAL '1 hour'",
 		"GROUP BY bucket",
 	} {
 		if !strings.Contains(norm, want) {
 			t.Errorf("query is missing %q:\n%s", want, indent(stmt.sql))
 		}
+	}
+	if orientationDisjunction.MatchString(stmt.sql) {
+		t.Errorf("the two direction arms must be UNION ALL'd, not OR'd:\n%s", indent(stmt.sql))
 	}
 	if strings.Contains(stmt.sql, "bucket + INTERVAL") {
 		t.Error("non-sargable `bucket + INTERVAL` form: function on the indexed column")

@@ -186,7 +186,7 @@ func stroopsToXLM(stroops *big.Int) float64 {
 		return 0
 	}
 	rat := new(big.Rat).SetFrac(stroops, big.NewInt(10_000_000))
-	f, _ := rat.Float64()
+	f, _ := rat.Float64() // i128:ok Prometheus textfile gauge; asset_supply_history keeps full NUMERIC precision
 	return f
 }
 

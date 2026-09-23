@@ -492,20 +492,26 @@ enabled  = false
 # decimals = 8
 #
 # FX-side feeds (only useful once the aggregator has fiat-fiat
-# coverage; documented for future operator reference):
+# coverage; documented for future operator reference). FX feeds pause
+# over market closes, so they carry a 76h staleness budget rather than
+# the 3h crypto one (an omitted max_age_hours on a fiat/fiat pair also
+# resolves to 76h):
 #
 # [divergence.chainlink.feeds."fiat:EUR/fiat:USD"]
 # address  = "0xb49f677943BC038e9857d61E7d053CaA2C1734C1"
 # decimals = 8
 # invert   = false
+# max_age_hours = 76
 #
 # [divergence.chainlink.feeds."fiat:GBP/fiat:USD"]
 # address  = "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5"
 # decimals = 8
+# max_age_hours = 76
 #
 # [divergence.chainlink.feeds."fiat:JPY/fiat:USD"]
 # address  = "0xBcE206caE7f0ec07b545EddE332A47C2F75bbeb3"
 # decimals = 8
+# max_age_hours = 76
 
 # On-chain oracle references — read our OWN ingested oracle_updates
 # rows (Reflector as three references: reflector-dex/cex/fx;

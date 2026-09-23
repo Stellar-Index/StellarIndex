@@ -4,8 +4,9 @@ import "time"
 
 // DefaultChannel is the Redis pub/sub channel the [Publisher]
 // writes to and the matching Subscriber listens on by default.
-// Operators with multiple deployments sharing one Redis can
-// override per-environment to keep streams partitioned.
+// Operators with multiple deployments sharing one Redis override it
+// per environment with `[storage].redis_closed_bucket_channel`, read
+// by both the aggregator and the API.
 const DefaultChannel = "stellarindex:closed-bucket:v1"
 
 // ClosedBucketEvent is the JSON wire shape published per
@@ -36,7 +37,16 @@ type ClosedBucketEvent struct {
 	// big.Rat precision the JSON `number` type would lose.
 	ValueDecimal string `json:"value_decimal"`
 
-	// ObservedAt is the bucket-end timestamp the aggregator
-	// attributed to this VWAP. RFC 3339 UTC.
+	// ObservedAt is the end of the closed 1-minute bucket the
+	// aggregator computed this VWAP at; the VWAP covers
+	// [ObservedAt-WindowSeconds, ObservedAt). RFC 3339 UTC.
+	// With the topic it is the event's identity: the subscriber
+	// forwards one event per (topic, ObservedAt) and drops a repeat or
+	// an older bucket.
 	ObservedAt time.Time `json:"observed_at"`
+
+	// ProducerID names the publishing aggregator process (minted once
+	// per [Publisher]). Never forwarded to clients; the subscriber uses
+	// it to report two aggregators publishing the same bucket.
+	ProducerID string `json:"producer_id,omitempty"`
 }

@@ -36,24 +36,25 @@ func (s *Store) InsertSorobanEventsBatch(ctx context.Context, rows []domain.Soro
 		return nil
 	}
 
-	// Per-row validation. Cheap — keeps a transient malformed row
-	// from poisoning the batch.
+	// Per-row validation. Each reject wraps ErrMalformedRow so the
+	// caller's IsPermanentDataError isolates the row rather than
+	// retrying the identical batch forever.
 	for i := range rows {
 		r := &rows[i]
 		if len(r.TxHash) != 32 {
-			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d TxHash len %d, want 32", i, len(r.TxHash))
+			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d TxHash len %d, want 32: %w", i, len(r.TxHash), ErrMalformedRow)
 		}
 		if r.ContractID == "" {
-			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d empty ContractID", i)
+			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d empty ContractID: %w", i, ErrMalformedRow)
 		}
 		if len(r.ContractIDHex) != 32 {
-			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d ContractIDHex len %d, want 32", i, len(r.ContractIDHex))
+			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d ContractIDHex len %d, want 32: %w", i, len(r.ContractIDHex), ErrMalformedRow)
 		}
 		if len(r.Topic0XDR) == 0 {
-			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d empty Topic0XDR", i)
+			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d empty Topic0XDR: %w", i, ErrMalformedRow)
 		}
 		if len(r.BodyXDR) == 0 {
-			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d empty BodyXDR", i)
+			return fmt.Errorf("timescale: InsertSorobanEventsBatch: row %d empty BodyXDR: %w", i, ErrMalformedRow)
 		}
 	}
 

@@ -18,7 +18,8 @@
 #   - internal/canonical/i128_truncation_guard_test.go — the DEEP
 #     guard: a repo-wide go/types walk that catches every lossy
 #     conversion shape of the xdr 128/256-bit part words (sign
-#     reinterpretation, narrowing, floats), with //i128:ok escapes.
+#     reinterpretation, narrowing, floats) and every math/big
+#     Int64/Uint64/Float64 narrowing, with //i128:ok escapes.
 #   - scripts/ci/lint-migrations.sh — the SQL side (money columns
 #     must be NUMERIC). The migration check that used to live here
 #     moved there 2026-07-05 (broader name set + lint-money:ok
@@ -68,6 +69,26 @@ if [ -n "$vhits" ]; then
   echo "lint-i128 ❌ i128 truncation through a local — the variable was bound to <x>.Lo earlier in the file (ADR-0003):" >&2
   echo "$vhits" >&2
   echo "  → pass the word as uint64(p.Lo) to canonical.FromInt128Parts; do not narrow it first." >&2
+  fail=1
+fi
+
+# Widen-then-narrow in one expression: `new(big.Float).SetInt(x).Float64()`
+# leaves no parts word for the patterns above. The go/types guard judges
+# every math/big Int64/Uint64/Float64 by receiver type; this catches the
+# inline spelling. A `//i128:ok <reason>` on the line or the one above
+# exempts it, matching the deep guard.
+bhits=$(awk '
+    FNR == 1 { prev = "" }
+    /^[[:space:]]*\/\// { prev = $0; next }
+    {
+      ok = ($0 ~ /\/\/[[:space:]]*i128:ok[[:space:]]+[^[:space:]]/) || (prev ~ /\/\/[[:space:]]*i128:ok[[:space:]]+[^[:space:]]/)
+      if (!ok && $0 ~ /new\(big\.(Int|Rat|Float)\).*\.(Int64|Uint64|Float64)\(\)/) print FILENAME ":" FNR ":" $0
+      prev = $0
+    }' "${go_files[@]}" || true)
+if [ -n "$bhits" ]; then
+  echo "lint-i128 ❌ math/big value narrowed to a machine number (ADR-0003):" >&2
+  echo "$bhits" >&2
+  echo "  → keep the amount in *big.Int / *big.Rat and render with FloatString, or mark //i128:ok <reason> if it is not an amount." >&2
   fail=1
 fi
 

@@ -6,10 +6,14 @@ package chops
 import (
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ─── The published availability figure and the alert budget agree ───
@@ -279,5 +283,148 @@ func TestOperatorDocsStateThePublishedAvailabilityFigure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ─── Every published target is an alert threshold, in both trees ───
+//
+// The probe measures every target the /sla page publishes and its
+// verdict fails on each, so a published bound that no rule compares
+// against is a breach nobody is told about: availability and p99 were
+// exported and selected by nothing, and the /v1/price freshness alert
+// sat above the published structural bound (#741).
+
+const (
+	slaProbeTextfile   = "cmd/stellarindex-sla-probe/textfile.go"
+	slaProofScript     = "scripts/ops/sla-proof-from-probe.sh"
+	slaProbeRulesMulti = "deploy/monitoring/rules/sla-probe.yml"
+	slaProbeRulesR1    = "configs/prometheus/rules.r1/sla-probe.yml"
+)
+
+// slaProbeUnalertedFamilies are the exported families that state no
+// target, each with the reason it needs no rule. Every other family
+// the probe exports must be selected by an alert in both trees.
+var slaProbeUnalertedFamilies = map[string]string{
+	"stellarindex_sla_probe_samples":              "per-run sample count, the denominator of the other families",
+	"stellarindex_sla_probe_run_duration_seconds": "wall-clock of the run itself, a diagnostic",
+}
+
+type publishedSLATargets struct {
+	p95MS, p99MS, availPct, freshSec, closedFreshSec string
+}
+
+func publishedSLAPageTargets(t *testing.T) publishedSLATargets {
+	t.Helper()
+	page := readRepoFile(t, slaPage)
+	cell := func(label, value string) string {
+		t.Helper()
+		re := regexp.MustCompile(regexp.QuoteMeta(label) + `\s*</td>\s*<td[^>]*>\s*` + value)
+		m := re.FindStringSubmatch(page)
+		if m == nil {
+			t.Fatalf("%s no longer states the %q objective in the targets table", slaPage, label)
+		}
+		return m[1]
+	}
+	closed := regexp.MustCompile(`held to that structural ([0-9]+)-second bound`).FindStringSubmatch(flattenProse(page))
+	if closed == nil {
+		t.Fatalf("%s no longer states /v1/price's structural freshness bound", slaPage)
+	}
+	return publishedSLATargets{
+		p95MS:          cell("p95 latency", `&le;\s*([0-9]+)\s*ms`),
+		p99MS:          cell("p99 latency", `&le;\s*([0-9]+)\s*ms`),
+		availPct:       publishedAvailability(t),
+		freshSec:       cell("Price freshness", `&le;\s*([0-9]+)\s*s\b`),
+		closedFreshSec: closed[1],
+	}
+}
+
+// alertExprs returns every alert expression in a rule file,
+// whitespace-collapsed and newline-joined.
+func alertExprs(t *testing.T, path string) string {
+	t.Helper()
+	var doc struct {
+		Groups []struct {
+			Rules []struct {
+				Alert string `yaml:"alert"`
+				Expr  string `yaml:"expr"`
+			} `yaml:"rules"`
+		} `yaml:"groups"`
+	}
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, path)), &doc); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	var out []string
+	for _, g := range doc.Groups {
+		for _, r := range g.Rules {
+			if r.Alert != "" {
+				out = append(out, strings.Join(strings.Fields(r.Expr), " "))
+			}
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestSLAProbeAlertsEnforceEveryPublishedTarget(t *testing.T) {
+	pub := publishedSLAPageTargets(t)
+	comparisons := []string{
+		fmt.Sprintf(`stellarindex_sla_probe_latency_ms{quantile="0.95"} > %s`, pub.p95MS),
+		fmt.Sprintf(`stellarindex_sla_probe_latency_ms{quantile="0.99"} > %s`, pub.p99MS),
+		fmt.Sprintf(`stellarindex_sla_probe_availability_pct < %s`, pub.availPct),
+		fmt.Sprintf(`stellarindex_sla_probe_freshness_sec{endpoint="price"} > %s`, pub.closedFreshSec),
+		fmt.Sprintf(`stellarindex_sla_probe_freshness_sec{endpoint!="price"} > %s`, pub.freshSec),
+	}
+	families := regexp.MustCompile(`# TYPE (stellarindex_sla_probe_[a-z0-9_]+) gauge`).
+		FindAllStringSubmatch(readRepoFile(t, slaProbeTextfile), -1)
+	if len(families) == 0 {
+		t.Fatalf("%s declares no stellarindex_sla_probe_* families", slaProbeTextfile)
+	}
+	timerRef := regexp.MustCompile(`[A-Za-z0-9_./-]+\.timer\b`)
+	for _, path := range []string{slaProbeRulesMulti, slaProbeRulesR1} {
+		t.Run(path, func(t *testing.T) {
+			exprs := alertExprs(t, path)
+			for _, want := range comparisons {
+				if !strings.Contains(exprs, want) {
+					t.Errorf("%s: no alert compares %q — the /sla page publishes that bound", path, want)
+				}
+			}
+			for _, f := range families {
+				if _, exempt := slaProbeUnalertedFamilies[f[1]]; !exempt && !strings.Contains(exprs, f[1]) {
+					t.Errorf("%s: probe family %s is selected by no alert", path, f[1])
+				}
+			}
+			for _, ref := range timerRef.FindAllString(readRepoFile(t, path), -1) {
+				if _, err := os.Stat(filepath.Join(repoRoot(t), ref)); err != nil {
+					t.Errorf("%s points at %s, which does not exist", path, ref)
+				}
+			}
+		})
+	}
+}
+
+// TestSLAProbeVerdictUsesThePublishedTargets pins the probe's own
+// verdict defaults and the proof script's gate to the same page.
+func TestSLAProbeVerdictUsesThePublishedTargets(t *testing.T) {
+	pub := publishedSLAPageTargets(t)
+	probe := strings.Join(strings.Fields(readRepoFile(t, slaProbeMain)), " ")
+	for _, want := range []string{
+		fmt.Sprintf("defaultP95Target = %s * time.Millisecond", pub.p95MS),
+		fmt.Sprintf("defaultP99Target = %s * time.Millisecond", pub.p99MS),
+		fmt.Sprintf("defaultFreshTarget = %s * time.Second", pub.freshSec),
+		fmt.Sprintf("defaultClosedBucketFreshTarget = %s * time.Second", pub.closedFreshSec),
+	} {
+		if !strings.Contains(probe, want) {
+			t.Errorf("%s no longer declares %q", slaProbeMain, want)
+		}
+	}
+	script := readRepoFile(t, slaProofScript)
+	for _, want := range []string{
+		fmt.Sprintf("P95_TARGET_MS = %s.0", pub.p95MS),
+		fmt.Sprintf("P99_TARGET_MS = %s.0", pub.p99MS),
+		fmt.Sprintf("AVAILABILITY_TARGET_PCT = %s", pub.availPct),
+		fmt.Sprintf(`FRESHNESS_TARGET_SEC = {"price": %s.0, "price-tip": %s.0}`, pub.closedFreshSec, pub.freshSec),
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("%s no longer declares %q", slaProofScript, want)
+		}
 	}
 }

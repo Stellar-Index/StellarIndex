@@ -164,6 +164,11 @@ const (
 	// without its cause (a folded bool, or a bare ErrPriceWithheld).
 	// Its wording claims neither cause.
 	PriceWithheldUnattributed PriceWithheldReason = "unattributed"
+	// PriceWithheldManipulationGuard: the serving-sanity guard could not
+	// validate the bucket at a requested instant — it was a gross outlier
+	// with no clean bucket inside the caller's staleness bound, or it had
+	// no prior bucket to be judged against ([ErrPriceAtGuarded]).
+	PriceWithheldManipulationGuard PriceWithheldReason = "manipulation_guard"
 )
 
 // withheldError pairs ErrPriceWithheld with the reason it fired for.
@@ -198,12 +203,13 @@ func withheldReasonFor(w pricingguard.Withholding) PriceWithheldReason {
 }
 
 // withheldBy folds the server's two gate seams into one verdict, with
-// pricingguard's precedence: the substance gate is asked first (its
-// metric is unchanged), the scam gate always, and a flagged issuer wins.
-// Nil gates withhold nothing.
+// pricingguard's precedence: the scam gate is asked FIRST (a pair both
+// gates refuse is reported under the flag, not as merely thin), the
+// substance gate always. Nil gates withhold nothing.
 func withheldBy(ctx context.Context, substance PriceSubstanceGate, scam PriceScamGate, asset, quote canonical.Asset, surface string) pricingguard.Withholding {
+	scamFlagged := scamWithheld(ctx, scam, asset, quote, surface)
 	substanceAllowed := substance == nil || substance.Allowed(ctx, asset, quote, surface)
-	return pricingguard.WithholdingFor(substanceAllowed, scamWithheld(ctx, scam, asset, quote, surface))
+	return pricingguard.WithholdingFor(scamFlagged, substanceAllowed)
 }
 
 // priceWithheldReason extracts the reason err carries, or
@@ -226,8 +232,14 @@ func priceWithheldReason(err error) PriceWithheldReason {
 // surface is a low-cardinality metric label constant identifying the
 // serving path ("tip", "price_read", …) — see
 // obs.PriceServeSubstanceWithheldTotal.
+//
+// Allowed fails open when the pair cannot be measured. Verdict reports
+// that case as measured=false (allowed=false) for surfaces that must
+// not publish an unverified price — the listing, see
+// [Server.listingSubstanceVerdict].
 type PriceSubstanceGate interface {
 	Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool
+	Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool)
 }
 
 // PriceScamGate is the serving-side scam-issuer gate seam: it withholds
@@ -289,6 +301,20 @@ func scamWithheld(ctx context.Context, gate PriceScamGate, base, quote canonical
 	return gate.Withheld(ctx, base, surface)
 }
 
+// writeIfScamWithheld is [scamWithheld] for a handler that answers the
+// verdict itself: it asks the pair question and, when the gate
+// withholds, writes the problem with the scam reason. Binding the two
+// is the point — a handler that gated on the flag and wrote the
+// reason-free problem told the client the market was too thin and to
+// recompute the price from the raw trades.
+func (s *Server) writeIfScamWithheld(w http.ResponseWriter, r *http.Request, base, quote canonical.Asset, surface string) bool {
+	if !scamWithheld(r.Context(), s.scam, base, quote, surface) {
+		return false
+	}
+	writePriceWithheldProblem(w, r, base, quote, PriceWithheldScamIssuer)
+	return true
+}
+
 // writePriceWithheldProblem is the single serializer for the withheld
 // verdict: one problem type (clients branch on it), wording chosen by
 // the gate that fired. Only the thin-market verdict points the reader
@@ -316,6 +342,11 @@ func priceWithheldWording(pair string, reason PriceWithheldReason) (title, detai
 	case PriceWithheldUpstreamLeg:
 		return "Price withheld — upstream leg withheld",
 			"the price used to derive " + pair + " depends on a leg that is itself withheld, so no price is published"
+	case PriceWithheldManipulationGuard:
+		return "Price withheld — bucket failed the serving-sanity guard",
+			"a closed bucket exists for " + pair +
+				" at the requested instant, but it deviates grossly from the buckets before it (or has none to be checked against)" +
+				" and no clean bucket falls within the lookback, so no price is published"
 	case PriceWithheldUnattributed:
 	}
 	return "Price withheld",
@@ -3273,8 +3304,7 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 	// the package's one [scamWithheld] spelling — the alias loop below
 	// reads under alias spellings of the SAME market, so the requested
 	// pair is the right subject for the verdict.
-	if scamWithheld(r.Context(), s.scam, asset, quote, "price_read") {
-		writePriceWithheldProblem(w, r, asset, quote, PriceWithheldScamIssuer)
+	if s.writeIfScamWithheld(w, r, asset, quote, "price_read") {
 		return
 	}
 	for _, a := range assetAliases(asset) {

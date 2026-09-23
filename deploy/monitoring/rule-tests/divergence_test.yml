@@ -530,6 +530,110 @@ tests:
         alertname: stellarindex_divergence_no_reference
         exp_alerts: []
 
+  # ══ stellarindex_divergence_no_ok_outcomes ═════════════════════════
+  # ── firing: every pair frozen, only no_vwap from t=30m ────────────
+  # Neither child-vs-child sibling can see this: no_vwap is compared
+  # against nothing. ok stops at t=30m, increase over 30m reads 0 from
+  # t=60m, and the alert fires once `for: 15m` elapses (t=75m).
+  - interval: 1m
+    name: a checker producing only no_vwap tickets on the liveness arm
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '0+5x30 150+0x60'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="no_vwap"}'
+        values: '0+0x30 0+5x60'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="refresh_error"}'
+        values: '0+0x90'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="no_reference"}'
+        values: '0+0x90'
+      - series: 'stellarindex_divergence_refresher_wired{job="stellarindex_aggregator",instance="r1:9102"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_divergence_no_ok_outcomes
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: stellarindex_divergence_no_ok_outcomes
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-ok-outcomes.md
+              summary: "Divergence checker wired but produced no healthy comparison in 45 min (P3)"
+              description: |
+                The divergence refresher is wired, yet no pair has recorded an
+                `ok` outcome for 45+ min, so no div:<asset> entry has been
+                written and flags.divergence_warning / divergence_checked read
+                false fleet-wide. Check which outcome the pass IS producing
+                (no_vwap = every pair frozen or below min_usd_volume; nothing
+                at all = the pass is not completing); see the runbook.
+      - eval_time: 80m
+        alertname: stellarindex_divergence_refresh_error_dominant
+        exp_alerts: []
+      - eval_time: 80m
+        alertname: stellarindex_divergence_no_reference
+        exp_alerts: []
+
+  # ── firing: wired, but no outcome is counted at all ───────────────
+  # Every child flat at its seeded zero (the pass never completes a pair).
+  - interval: 1m
+    name: a wired checker that counts nothing tickets on the liveness arm
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '0+0x60'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="no_vwap"}'
+        values: '0+0x60'
+      - series: 'stellarindex_divergence_refresher_wired{job="stellarindex_aggregator",instance="r1:9102"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 50m
+        alertname: stellarindex_divergence_no_ok_outcomes
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: divergence
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-ok-outcomes.md
+              summary: "Divergence checker wired but produced no healthy comparison in 45 min (P3)"
+              description: |
+                The divergence refresher is wired, yet no pair has recorded an
+                `ok` outcome for 45+ min, so no div:<asset> entry has been
+                written and flags.divergence_warning / divergence_checked read
+                false fleet-wide. Check which outcome the pass IS producing
+                (no_vwap = every pair frozen or below min_usd_volume; nothing
+                at all = the pass is not completing); see the runbook.
+
+  # ── silent: healthy comparisons alongside frozen pairs ────────────
+  - interval: 1m
+    name: a checker with some ok outcomes raises nothing on the liveness arm
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '0+1x90'
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="no_vwap"}'
+        values: '0+20x90'
+      - series: 'stellarindex_divergence_refresher_wired{job="stellarindex_aggregator",instance="r1:9102"}'
+        values: '1x90'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: stellarindex_divergence_no_ok_outcomes
+        exp_alerts: []
+
+  # ── silent: every reference deliberately disabled (wired=0) ───────
+  - interval: 1m
+    name: an unwired checker is an operator choice, not an outage
+    input_series:
+      - series: 'stellarindex_divergence_refresh_total{job="stellarindex_aggregator",instance="r1:9102",outcome="ok"}'
+        values: '0+0x90'
+      - series: 'stellarindex_divergence_refresher_wired{job="stellarindex_aggregator",instance="r1:9102"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 80m
+        alertname: stellarindex_divergence_no_ok_outcomes
+        exp_alerts: []
+
   # ══ stellarindex_oracle_stream_rows_unparsed ══════════════════════
   # The counter is an unseeded CounterVec, so a `{source,field}` child
   # is BORN on the first bad row. A relabel typo that breaks one row on

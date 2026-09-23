@@ -20,6 +20,12 @@
 #     baseline only shrinks);
 #   - an empty directory FAILS rather than passing vacuously.
 #
+# It also pins the hypertable-index pass (the 0150 shape — a bare
+# in-transaction CREATE INDEX on an existing hypertable — is CAUGHT; IF
+# NOT EXISTS under SET LOCAL lock_timeout passes) and the CAGG
+# re-materialization pass (a recreate WITH NO DATA that names no refresh
+# for a dropped view — the 0115/0147 down shape — is CAUGHT).
+#
 # The Postgres passes run against the real migrations/ tree in every case,
 # so this file assumes (and the first case asserts) that tree is clean.
 #
@@ -35,7 +41,7 @@ fail=0
 
 indent() { printf '%s\n' "         ${1//$'\n'/$'\n'         }"; }
 
-run() { CH_DIR="$1" bash "$LINT" 2>&1; }
+run() { CH_DIR="${1:-deploy/clickhouse}" MIG_DIR="${2:-migrations}" bash "$LINT" 2>&1; }
 
 clean() { # clean <desc> <ch_dir>
   local desc="$1" dir="$2" out got
@@ -162,6 +168,131 @@ catches "a baseline entry whose column was retyped is caught as stale" "$d" \
 mkdir -p "$TMP/empty"
 catches "an empty directory fails rather than passing vacuously" "$TMP/empty" \
   "cannot pass vacuously"
+
+# Passes 6 and 7 read MIG_DIR (run's second argument); the passes above keep reading migrations/
+mig() { # mig <name> <file> <<sql — a fixture tree whose 0001 creates the trades hypertable
+  local dir
+  dir="$(mk "$1" "$2")"
+  printf '%s\n' "CREATE TABLE trades (ts timestamptz NOT NULL, signer text);" \
+    "SELECT create_hypertable('trades', 'ts');" > "$dir/0001_trades.up.sql"
+  echo "$dir"
+}
+clean_mig() { # clean_mig <desc> <mig_dir>
+  local out got
+  out="$(run deploy/clickhouse "$2")"; got=$?
+  if [ "$got" -eq 0 ]; then echo "  ok   $1"; pass=$((pass + 1))
+  else echo "  FAIL $1 (exit $got, want 0)"; indent "$out"; fail=$((fail + 1)); fi
+}
+mcatches() { # mcatches <desc> <mig_dir> <needle>
+  local out got
+  out="$(run deploy/clickhouse "$2")"; got=$?
+  if [ "$got" -ne 0 ] && [[ "$out" == *"$3"* ]]; then echo "  ok   $1"; pass=$((pass + 1))
+  else echo "  FAIL $1 (exit $got, want non-zero naming: $3)"; indent "$out"; fail=$((fail + 1)); fi
+}
+
+echo "lint-migrations-test: hypertable-index pass"
+
+out="$(run)"
+case "$out" in
+  *"hypertable-index pass checked "[1-9]*"CAGG re-materialization pass inspected "[1-9]*) echo "  ok   real tree reports non-zero hypertable-index and CAGG counts"; pass=$((pass + 1)) ;;
+  *) echo "  FAIL real tree did not report its hypertable-index / CAGG counts"; indent "$out"; fail=$((fail + 1)) ;;
+esac
+
+d="$(mig bare-index 0002_signer.up.sql <<'SQL'
+BEGIN;
+ALTER TABLE trades ADD COLUMN signer text;
+CREATE INDEX trades_signer_idx ON trades (signer)
+    WHERE signer IS NOT NULL;
+COMMIT;
+SQL
+)"
+mcatches "the 0150 shape (no IF NOT EXISTS, no lock_timeout) on a hypertable is caught" "$d" \
+  "CREATE INDEX trades_signer_idx ON trades lacks IF NOT EXISTS and SET LOCAL lock_timeout"
+
+d="$(mig no-timeout 0002_signer.up.sql <<'SQL'
+BEGIN;
+CREATE INDEX IF NOT EXISTS trades_signer_idx ON trades (signer);
+COMMIT;
+SQL
+)"
+mcatches "IF NOT EXISTS without a lock_timeout is caught" "$d" \
+  "CREATE INDEX trades_signer_idx ON trades lacks SET LOCAL lock_timeout"
+
+d="$(mig conforming 0002_signer.up.sql <<'SQL'
+-- Pre-build by hand first: CREATE INDEX CONCURRENTLY ... (0037 recipe).
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+CREATE INDEX IF NOT EXISTS trades_signer_idx
+    ON trades (signer) WHERE signer IS NOT NULL;
+COMMIT;
+SQL
+)"
+clean_mig "IF NOT EXISTS under SET LOCAL lock_timeout passes, split across lines" "$d"
+
+d="$(mig fresh-table 0002_events.up.sql <<'SQL'
+CREATE TABLE soroban_things (ts timestamptz NOT NULL, id text);
+SELECT create_hypertable('soroban_things', 'ts');
+CREATE INDEX soroban_things_id_idx ON soroban_things (id);
+CREATE INDEX plain_idx ON not_a_hypertable (id);
+SQL
+)"
+clean_mig "an index on a hypertable born in the same file, or on a plain table, passes" "$d"
+
+mkdir -p "$TMP/no-hyper"
+printf 'CREATE TABLE t (id int);\n' > "$TMP/no-hyper/0001_t.up.sql"
+mcatches "a tree with no create_hypertable fails rather than passing vacuously" "$TMP/no-hyper" \
+  "hypertable-index pass has gone vacuous"
+
+echo "lint-migrations-test: CAGG re-materialization pass"
+
+d="$(mig cagg-no-refresh 0002_recreate.down.sql <<'SQL'
+-- ⚠ this leaves the CAGGs EMPTY; see the up.
+BEGIN;
+DROP MATERIALIZED VIEW IF EXISTS twap_1h;  -- migration-compat:ok restore
+DROP MATERIALIZED VIEW IF EXISTS prices_1m;
+CREATE MATERIALIZED VIEW prices_1m WITH (timescaledb.continuous) AS
+SELECT time_bucket('1 minute', ts) AS bucket FROM trades GROUP BY 1
+WITH NO DATA;
+COMMIT;
+SQL
+)"
+mcatches "a down that recreates CAGGs WITH NO DATA and names no refresh is caught (the 0115/0147 down shape)" "$d" \
+  "names no refresh for: prices_1m twap_1h"
+
+d="$(mig cagg-partial 0002_recreate.up.sql <<'SQL'
+--   CALL refresh_continuous_aggregate('prices_1m', NULL, now());
+BEGIN;
+DROP MATERIALIZED VIEW twap_1h, prices_1m CASCADE;
+CREATE MATERIALIZED VIEW prices_1m WITH (timescaledb.continuous) AS
+SELECT time_bucket('1 minute', ts) AS bucket FROM trades GROUP BY 1
+WITH NO DATA;
+COMMIT;
+SQL
+)"
+mcatches "a multi-view DROP names every view, and one missing refresh is caught" "$d" \
+  "names no refresh for: twap_1h"
+
+d="$(mig cagg-named 0002_recreate.up.sql <<'SQL'
+--   CALL refresh_continuous_aggregate('prices_1m', NULL, now());
+--   CALL refresh_continuous_aggregate('twap_1h', NULL, now());
+BEGIN;
+DROP MATERIALIZED VIEW IF EXISTS twap_1h;
+DROP MATERIALIZED VIEW IF EXISTS prices_1m;
+CREATE MATERIALIZED VIEW prices_1m WITH (timescaledb.continuous) AS
+SELECT time_bucket('1 minute', ts) AS bucket FROM trades GROUP BY 1
+WITH NO DATA;
+COMMIT;
+SQL
+)"
+clean_mig "a recreate that names every view's refresh passes" "$d"
+
+d="$(mig cagg-initial 0002_create.up.sql <<'SQL'
+CREATE MATERIALIZED VIEW prices_1m WITH (timescaledb.continuous) AS
+SELECT time_bucket('1 minute', ts) AS bucket FROM trades GROUP BY 1
+WITH NO DATA;
+SQL
+)"
+clean_mig "an initial CAGG creation (nothing dropped, nothing emptied) passes" "$d"
 
 echo "lint-migrations-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]

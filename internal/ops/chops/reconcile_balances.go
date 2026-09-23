@@ -339,7 +339,7 @@ func bigStroopsToInt64(v *big.Int) (int64, error) {
 	if !v.IsInt64() {
 		return 0, fmt.Errorf("reconcile-balances: stroop amount %s does not fit int64 (unexpected for XLM)", v.String())
 	}
-	return v.Int64(), nil
+	return v.Int64(), nil // i128:ok IsInt64 range-checked above; XLM stroops fit int64
 }
 
 // ─── Horizon fetch ──────────────────────────────────────────────────

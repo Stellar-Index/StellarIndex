@@ -1,8 +1,8 @@
 # Daily, not hourly: the curator's upload cadence is days, and every run is a
-# billed execution.
+# billed read (by datapoint; the service header has the detail).
 [Unit]
-Description=Daily third-party curated RWA directory sync
-Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/migrations/0161_create_rwa_curated_directory.up.sql
+Description=Daily third-party curated RWA published-series sync
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/migrations/0162_create_curated_rwa_published_series.up.sql
 
 [Timer]
 OnCalendar=*-*-* 04:12:00 UTC

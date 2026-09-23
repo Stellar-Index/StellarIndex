@@ -400,8 +400,8 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "malformed JSON", "/v1/auth/login")
 		return
 	}
-	email := strings.TrimSpace(strings.ToLower(req.Email))
-	if !looksLikeEmail(email) {
+	email, err := notify.CanonicalRecipient(req.Email)
+	if err != nil {
 		writeProblem(w, http.StatusBadRequest, "invalid email", "/v1/auth/login")
 		return
 	}
@@ -641,9 +641,9 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusBadRequest, "malformed JSON", "/v1/auth/verify-code")
 		return
 	}
-	email := strings.TrimSpace(strings.ToLower(req.Email))
+	email, emailErr := notify.CanonicalRecipient(req.Email)
 	code := strings.TrimSpace(req.Code)
-	if !looksLikeEmail(email) || !looksLikeCode(code) {
+	if emailErr != nil || !looksLikeCode(code) {
 		writeProblem(w, http.StatusBadRequest, "invalid email or code", "/v1/auth/verify-code")
 		return
 	}
@@ -1114,20 +1114,6 @@ func (h *Handlers) waitForWinnerUser(ctx context.Context, email string) (platfor
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────
-
-func looksLikeEmail(s string) bool {
-	if len(s) < 3 || len(s) > 254 {
-		return false
-	}
-	at := strings.IndexByte(s, '@')
-	if at <= 0 || at >= len(s)-1 {
-		return false
-	}
-	if strings.IndexByte(s[at+1:], '.') < 0 {
-		return false
-	}
-	return true
-}
 
 // looksLikeCode reports whether s is a well-formed 6-digit numeric
 // code. Cheap pre-filter so a malformed body never reaches the token

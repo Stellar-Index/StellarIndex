@@ -39,6 +39,14 @@ values false-fired through every normal partition cycle.
 
 ## Quick diagnosis
 
+If `stellarindex_galexie_archive_tip_lag_metric_stale` fired with
+`galexie_archive_tip_lag_probe_success 0`, the probe could not read a
+bucket tip (failed `mc ls`, no partition, or no parseable object). It
+then omits the lag rather than publishing 0, so the lag alerts are
+blind until it reads again. The mc error is in
+`journalctl -u galexie-archive-tip-lag.service`; check the `local` mc
+alias credentials and MinIO reachability first.
+
 ```sh
 # 1. Is the catch-up timer actively running on its hourly cadence (:17 + jitter)?
 ssh r1 'systemctl list-timers galexie-archive-fill.timer galexie-archive-tip-lag.timer'

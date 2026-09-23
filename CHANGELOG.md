@@ -15,6 +15,190 @@ against.
 
 ## [Unreleased]
 
+- **api — `/v1/price/stream` spec and comments described a frame nobody
+  emits (GH-751):** the example showed `as_of` 42 s after
+  `observed_at` and a `flags` object on the 300 s series; the aggregator
+  stamps each event with the closed bucket's end and the bridge emits it
+  as both timestamps, without flags. The example, the description (the
+  window each event covers, and that a 3600/86400 series advances once
+  per minute as overlapping trailing windows) and the redispub comments
+  now match the wire, and a test pins the example to the bridged frame.
+
+- **api — `/v1/changes` served the open minute and ungated prices
+  (GH-757):** the change-summary read admitted the in-progress
+  `prices_1m` bucket (`bucket < now`), so a fat-finger print in the
+  filling minute became `current_value` and, through the upsert's
+  GREATEST/LEAST ratchet, a permanent ATH/ATL. It now reads closed
+  buckets only (in SQL and again in the worker), refuses to upsert a
+  newest point with no positive price, and the handler withholds the
+  row with the `price-withheld` problem whenever `/v1/price` would
+  withhold the market (flagged issuer, or below the substance floor).
+  A new guard fails on any pair-bound `prices_1m` read without a
+  closed-bucket predicate.
+
+- **api — `AccountActivity.trades_total_since` and `AccountTrade.signer`
+  documented (#573):** both fields were on the wire but absent from the
+  spec, so the generated types and spec-driven clients could not see
+  them — and `trades_total_since` changes `trades_total` from all-time
+  to "since this date". Both are now in the spec (with that meaning
+  stated on `trades_total`), and the handler-vs-spec field test covers
+  the two explorer structs.
+
+- **api — `Account.tier` enum no longer lists `anonymous` (#572):**
+  `/v1/account/me` and `/v1/account/keys` 401 an anonymous caller before
+  an Account is built, so the value was documented but unreachable. The
+  enum is now `[apikey, sep10, operator]`, and the spec test derives it
+  from the `auth.Tier` constants minus `TierAnonymous` while a second
+  test holds the 401 premise that justifies the exclusion.
+
+- **api — `bridge` source class accepted by `/v1/sources?class=` and
+  listed in both spec enums (#571):** the registry serves `cctp` and
+  `rozo` as `class: "bridge"` and `/v1/methodology` describes the class,
+  but the `?class=` allow-list rejected it with a 400 whose message named
+  four of the six values it did accept, and the `?class=` and
+  `source_classes[].name` enums stopped at six. The allow-list now
+  carries every `external.Class`, the 400 detail is rendered from it,
+  and `TestSourceClassSurfacesAgree` pins the constants, the allow-list,
+  the served glossary and all three spec enums together.
+
+- **admin — account closure revokes keys and is terminal (GH-809):**
+  `status: closed` on `PATCH /v1/admin/accounts/{id}` was the same
+  code path as suspension, so a later edit back to `active` brought
+  every credential back live. Closing an account now revokes every live
+  Postgres-backed API key (reason `account closed`, evicted from the
+  auth cache, counted in the audit row as `keys_revoked`), and any
+  later non-`closed` status gets a 409 `account-closed`. Account
+  erasure and data export (`DELETE /v1/account`,
+  `GET /v1/account/data-export`) are still not built.
+
+- **platform — api_keys reads bounded by the active set (GH-766):**
+  revoked keys are kept forever, and `ListForAccount` read an
+  account's whole key history on every mint quota check, every
+  dashboard key list and every admin suspend or tier-clamp eviction.
+  The mint check now runs `CountActiveForAccount`, the clamp and
+  eviction paths read `ListActiveForAccount`, and
+  `GET /v1/dashboard/keys` returns every active key plus the 100 most
+  recently created revoked keys, with a new `revoked_truncated` flag
+  when older ones were omitted. A package test fails on any
+  `FROM api_keys` query without a LIMIT, aggregate, unique-key lookup
+  or active-set filter.
+
+- **api / price stream — clock-skew drops and silent pubsub retries are
+  now visible (#753):** the Redis subscriber labels a future-dated event
+  `future_observed_at` and a >24 h one `stale_observed_at` instead of
+  `malformed`, seeds every outcome at construction, and the new
+  `stellarindex_api_price_stream_not_delivering` ticket fires when the
+  aggregator publishes but the API fans out nothing for 15 min. `Run`'s
+  doc no longer claims a Redis failure ends it: go-redis v9 retries
+  internally. Docs: `price-divergence` runbook states the real
+  `flags.divergence_warning` rule (#826).
+
+- **monitoring — every /sla target now has an alert at the published
+  figure (#741):** added `stellarindex_sla_probe_p99_breach` (> 500 ms)
+  and `stellarindex_sla_probe_availability_breach` (< 99.9 %) to both
+  rule trees, and lowered the `/v1/price` freshness page from 180 s to
+  the published 150 s bound. The multi-host rule file's timer pointer now
+  names the real unit. `sla_figure_consistency_test.go` fails when a
+  published target has no matching alert threshold or a probe family is
+  selected by no rule.
+
+- **auth / notify — one canonical spelling per inbox (#736):**
+  `/v1/auth/login` and `/v1/auth/verify-code` now reduce the email
+  through `notify.CanonicalRecipient` (the `mail.ParseAddress` addr-spec
+  `/v1/signup` and `/v1/register` already used) instead of a hand-rolled
+  `@`/`.` check. `"x" <a@b.com>` used to be stored, mailed and
+  provisioned as a separate account from `a@b.com`, and
+  `a@b.com,c@d.com` passed the gate. `notify` now refuses any
+  `Message.To` element that is not already canonical. Signup and
+  register additionally reject addresses over 254 bytes and dotless
+  domains, as login always did.
+
+- **notify — a client disconnect no longer aborts transactional mail
+  (#735):** `ResendSender.Send` runs the provider POST on a context
+  detached from the caller's cancellation, bounded by its own 10 s
+  timeout. A login or signup request aborted after its token row or
+  reservation was written used to cancel the send and count it as
+  `result="failed"`.
+
+- **api / price stream — one series per connection, one frame per
+  bucket (#752):** the aggregator prices XLM as both `native` (SDEX)
+  and `crypto:XLM` (CEX) and publishes each on its own topic, and
+  `/v1/price/stream` subscribes to every alias spelling, so with a CEX
+  connector enabled a client got two `price_update` frames per bucket
+  from two independent series. Each connection now follows one series:
+  the caller's own spelling first, falling back to an alias only once
+  the preferred one has published nothing for `cachekeys.VWAPMaxAge`,
+  the read order and horizon of `/v1/price?window=`. Closed-bucket
+  events now carry a `producer_id`, and the API subscriber forwards
+  one event per (topic, bucket end), dropping a second aggregator's
+  copy or a late older bucket (counted as
+  `stellarindex_api_stream_subscribe_total{outcome="duplicate"}` and
+  logged with both producer ids).
+
+- **api / price stream — closed-bucket events must name canonical
+  assets (#754):** the Redis→Hub subscriber now parses `asset` and
+  `quote` with `canonical.ParseAsset` and requires the canonical
+  spelling, and rejects a self-pair. A forged event on the channel
+  previously had any non-empty string echoed to SSE clients as
+  `asset_id` and used as the Hub topic key; it is now counted as
+  `malformed` and dropped.
+
+- **alerting — a permanently dropped trade tickets at any rate (GH-612):**
+  `stellarindex_ingestion_persist_drop` now includes
+  `source_insert_errors_total{kind="trade"}`, so a low-rate trade drop on
+  sdex or an external source (the dispatcher path, which never reaches the
+  projector's `sink_permanent` alert) is no longer silent below the coarse
+  0.1/s `insert_errors` line. A trade retry abandoned on shutdown or the
+  projector's cycle timeout — cursor held, row re-derivable — now counts
+  as `kind="trade_abandoned"` instead of sharing `trade`, so the label
+  means "row gone" and the tripwire does not fire on an abandon.
+
+- **projector — a newly enabled source starts at its genesis, not ledger 0
+  (GH-567):** `projector.Source` gains `Genesis`, set for `upshift`,
+  `sushiswap_v3`, `sorocredit` and `blend` from each package's verified
+  first-event ledger. A source with no cursor row starts there (raised to
+  the lake floor in CH mode) instead of crawling ~85 h of ledgers that
+  cannot hold its events. `TestProjectedSourcesDeclareGenesis` makes every
+  new projected source either declare one or be listed as a lake-floor
+  crawler. `projector-replay` with a `-from` the cursor has not reached
+  now says "nothing to rewind" and how far the cursor has to go, instead
+  of "already at ledger N".
+
+- **migrations — hypertable index and CAGG re-materialization lints
+  (#856, #865):** `scripts/ci/lint-migrations.sh` now fails a
+  `CREATE INDEX` on an existing hypertable that lacks `IF NOT EXISTS`
+  or `SET LOCAL lock_timeout` (the 0150 shape), and a migration that
+  recreates a continuous aggregate `WITH NO DATA` without naming a
+  refresh for every recreated view. The downs of 0115 and 0147 were that
+  second shape: their headers said "see the up", and 0115's up leaves the
+  `prices_1m` back-fill that `twap_*` depends on to a prose "walk
+  backwards" line. Both downs' headers
+  now carry the full ordered refresh sequence (header-only edit, baseline
+  refreshed). The 0150 register row records the operator step for its
+  in-transaction `trades_signer_idx` build.
+
+- **ops — ClickHouse maintenance and Phase-D backfill scripts stop
+  reporting success on failure (#794):** `recompress-lec.sh` and
+  `recompress-others.sh` now call ClickHouse with `--fail-with-body`,
+  check every query, and exit non-zero without a `DONE`/`*_COMPLETE`
+  line when an `OPTIMIZE` or a partition is skipped or fails.
+  `recompress-others.sh` reads each table's own
+  `max_bytes_to_merge_at_max_space_in_pool` before raising it to 500 GB
+  and restores that value (or `RESET SETTING` when it was unset) on
+  success, failure and TERM/INT/HUP, instead of pinning a hardcoded
+  150 GiB. `phaseD-backfill.sh` and `phaseD-range.sh` stop non-zero after
+  `PHASED_MAX_ATTEMPTS` (default 3) consecutive failures of one window
+  instead of retrying it every 30 s forever. `lake-dedup-driver.sh`
+  refuses any table argument outside the six lake tables it is for,
+  since the name is spliced into SQL and the log path.
+  `scripts/ops/ch-maintenance-fail-closed-test.sh` pins all of it and
+  runs in `verify.sh` with the lake-dedup and D3 rebuild self-tests.
+
+- **docs / D3 runbook — reproject from v1's floor, not 38,000,000
+  (#793):** the launch plan's D3 step now computes the reproject start
+  from `min(ledger_seq)` of the served `ledger_entries_current` and says
+  that `cutover` refuses a v2 that does not cover v1.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was
@@ -399,6 +583,37 @@ against.
   holding domains they exclude (claimable balances, Soroban/SAC contract
   balances); the ranking also sets `lower_bound: true`. Serving those
   excluded domains remains open.
+- **api / pricingguard:** the point-in-time serving guard behind
+  `/v1/price/at` and every `/v1/price/changes` horizon now judges a
+  historical 1m bucket against the buckets immediately before it
+  (`timescale.Store.ClosedVWAP1mCombinedBefore`). It fetched the newest
+  40 buckets instead, kept only those older than the candidate, and so
+  had no baseline — and passed the candidate unjudged — for any instant
+  older than about 40 minutes on an active pair, which covers the 1h and
+  24h change references it was wired to protect. A bucket with no prior
+  bucket at all (the pair's first) is now withheld on these routes rather
+  than served as validated: a point-in-time answer has no stale flag to
+  carry the doubt `/v1/price` reports through. (#1149)
+- **api:** a point-in-time bucket the serving-sanity guard refuses is now
+  reported as withheld, not as missing data. The reader returned
+  `ErrPriceAtUnavailable`, so `/v1/price/at` answered `price-not-found`
+  with "no closed bucket within 24h" and a `/v1/price/changes` horizon
+  read as a young pair. A new `ErrPriceAtGuarded` (an `ErrPriceWithheld`
+  carrying the new `manipulation_guard` reason) makes `/v1/price/at` a
+  `price-withheld` 404 worded for the guard, and each
+  `/v1/price/changes` horizon gains a `withheld` boolean, true when the
+  reference bucket exists and any serving gate refused it. Both
+  `price-withheld` 404s now use the wording of the gate that fired rather
+  than always the thin-market sentence. (#1151)
+- **api / pricingguard:** the last two raw `prices_1m` readers now pass
+  the serving-sanity guard: the SEP-40 `prices(asset, records)` series
+  drops a bucket the band rejects (or one with no prior bucket) instead of
+  publishing it as an oracle record, and the 24h-ago anchor behind
+  `/v1/assets` `change_24h_pct` is judged by the point-in-time guard, a
+  refused anchor reading as no anchor. pricingguard's list of wired call
+  sites is now enforced by `TestRawPrices1mReadersPassTheGuard`, which
+  fails when a function under `cmd/` calls a raw `prices_1m` store read
+  without a guard entry point or is missing from the list. (#1150)
 - **docs / ADR index had no completeness check (T543):**
   `docs/adr/README.md`'s Index table topped out at ADR-0050 though
   ADR-0051 (USD-anchored fiat derivation, landed 2026-08-31) already
@@ -3808,7 +4023,9 @@ against.
   reaches routinely, after which a single crafted minute bucket at any
   price down to 0 was published into the VWAP and served as a confident
   price. The deviation is now measured symmetrically in RATIO space
-  (ADR-0046 §1 — a ½× and a 2× print are equally outlying), giving the
+  (ADR-0046 §1's direction symmetry — a ½× and a 2× print are equally
+  outlying; the scale is still a price-space MAD, not §1's MAD(log p)),
+  giving the
   band `[centre²/(centre + K·scale), centre + K·scale]`: always strictly
   positive, identical to the old band above the centre and never lower
   than it below, so nothing previously rejected is newly accepted and a

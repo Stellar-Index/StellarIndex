@@ -37,15 +37,15 @@
 //
 // The deviation is measured in RATIO space, so the acceptance band is
 // [median²/(median + σ·scale), median + σ·scale] — a ½× print is
-// exactly as outlying as a 2× one (ADR-0046 §1). Until 2026-09-18 the
+// exactly as outlying as a 2× one (ADR-0046 §1's symmetry; the scale is
+// still a price-space MAD, not §1's MAD(log p)). Until 2026-09-18 the
 // band was ADDITIVE in price space, which put its lower edge below zero
 // above 1/(σ×1.4826) relative MAD — 16.9% at σ=4 — from where downward
-// prints, a price of 0 included, stopped being rejectable at all while
+// prints stopped being rejectable at all while
 // their mirror-image up-moves still were. The same correction applies
 // to the time-local filter and to the served-VWAP guard's MAD arm
-// (6.75% at its K=10); docs/methodology/vwap-aggregation.md still
-// records the old asymmetry as a known limitation and needs the same
-// correction. On-call guidance lives in
+// (6.75% at its K=10), and docs/methodology/vwap-aggregation.md
+// describes the symmetric band. On-call guidance lives in
 // docs/operations/runbooks/aggregator-outlier-storm.md.
 //
 // Corrected 2026-08-04: this block used to describe a sigma-threshold

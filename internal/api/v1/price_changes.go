@@ -13,10 +13,11 @@ import (
 )
 
 // PriceChangeHorizon is one trailing-window delta on
-// GET /v1/price/changes. Every field except Available is nil when the
-// pair has no closed bucket that far back (a young pair, or a horizon
-// predating recorded history) — the miss is per-horizon, never an
-// error for the whole call. ReferenceAt + Resolution disclose exactly
+// GET /v1/price/changes. Every pointer field is nil when the horizon is
+// unavailable — no closed bucket that far back (a young pair, or a
+// horizon predating recorded history), a read failure, or a withheld
+// reference (Withheld) — and the miss is per-horizon, never an error
+// for the whole call. ReferenceAt + Resolution disclose exactly
 // which closed bucket the comparison used, so a consumer can see the
 // delta was measured against, say, a daily bar and not a 1-minute one.
 type PriceChangeHorizon struct {
@@ -35,9 +36,15 @@ type PriceChangeHorizon struct {
 	// Resolution is the CAGG that served the reference bucket
 	// ("1m" | "15m" | "1h" | "4h" | "1d"). Null when unavailable.
 	Resolution *string `json:"resolution"`
-	// Available is the per-horizon flag: false means no closed bucket
-	// exists that far back (all the sibling fields are null).
+	// Available is the per-horizon flag: false means the horizon has no
+	// reference price (all the pointer fields are null).
 	Available bool `json:"available"`
+	// Withheld is true when the reference bucket EXISTS but a serving
+	// gate refused to publish it (the thin-market or scam-issuer gate, or
+	// the serving-sanity guard). It is what separates "withheld" from
+	// "no data that far back" on an unavailable horizon; always false
+	// when Available is true.
+	Withheld bool `json:"withheld"`
 }
 
 // PriceChanges is the GET /v1/price/changes payload: the current
@@ -92,8 +99,9 @@ var priceChangeHorizons = []struct {
 // handlePriceChanges serves GET /v1/price/changes?asset=&quote=.
 //
 // Returns the current closed price plus the signed change over each of
-// the four horizons. Missing horizons (no closed bucket that far back)
-// are null with available=false — never an error. A 404 only when the
+// the four horizons. Missing horizons are null with available=false —
+// never an error — and withheld=true when the reference bucket exists but
+// a serving gate refused it. A 404 only when the
 // pair has no CURRENT price to anchor against; a 503 when no
 // point-in-time reader is wired.
 func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
@@ -141,12 +149,12 @@ func (s *Server) handlePriceChanges(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	pair, current, triangulated, found, withheld := s.resolvePriceChangePair(ctx, asset, quote, now)
 	if !found {
-		if withheld {
-			// At least one orientation HAS a closed bucket and the
-			// substance/scam gate refused to publish it — the distinct
-			// 404 type so integrators can branch, same contract as
-			// /v1/price and /v1/price/tip (see ErrPriceWithheld).
-			writePriceWithheldProblem(w, r, asset, quote, PriceWithheldUnattributed)
+		if withheld != nil {
+			// At least one orientation HAS a closed bucket and a serving
+			// gate refused to publish it — the distinct 404 type so
+			// integrators can branch, same contract as /v1/price and
+			// /v1/price/tip (see ErrPriceWithheld).
+			writePriceWithheldProblem(w, r, asset, quote, priceWithheldReason(withheld))
 			return
 		}
 		writeProblem(w, r,
@@ -186,19 +194,17 @@ type priceAtResult struct {
 // direct/aliased bucket exists, the operator's USD-pegged classics
 // (the same stablecoin-proxy chain /v1/price and /v1/price/at use) —
 // flagging triangulated=true on that path. found=false when no
-// orientation has a fresh-enough current bucket; withheld=true (only
-// meaningful when found=false) means at least one orientation DID have
-// a bucket but the substance/scam gate refused to publish it — the
-// caller reports the distinct price-withheld 404 rather than the
-// generic not-found (see ErrPriceWithheld).
+// orientation has a fresh-enough current bucket; a non-nil withheld
+// (only meaningful when found=false) is the first ErrPriceWithheld-class
+// error an orientation returned — a bucket existed but a serving gate
+// refused it — and the caller reports the distinct price-withheld 404,
+// worded for that gate, rather than the generic not-found.
 func (s *Server) resolvePriceChangePair(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
-) (canonical.Pair, priceAtResult, bool, bool, bool) {
-	withheld := false
-	if pair, res, ok, w := s.currentPriceForAliases(ctx, asset, quote, now); ok {
-		return pair, res, false, true, false
-	} else if w {
-		withheld = true
+) (canonical.Pair, priceAtResult, bool, bool, error) {
+	pair, res, ok, withheld := s.currentPriceForAliases(ctx, asset, quote, now)
+	if ok {
+		return pair, res, false, true, nil
 	}
 	// Stablecoin fiat-proxy fallback: retry each USD peg. First hit
 	// wins; the response still echoes the requested quote (fiat:USD)
@@ -210,10 +216,12 @@ func (s *Server) resolvePriceChangePair(
 			if sameAsset(peg, asset) {
 				continue
 			}
-			if pair, res, ok, w := s.currentPriceForAliases(ctx, asset, peg, now); ok {
-				return pair, res, true, true, false
-			} else if w {
-				withheld = true
+			pair, res, ok, w := s.currentPriceForAliases(ctx, asset, peg, now)
+			if ok {
+				return pair, res, true, true, nil
+			}
+			if withheld == nil {
+				withheld = w
 			}
 		}
 	}
@@ -222,14 +230,14 @@ func (s *Server) resolvePriceChangePair(
 
 // currentPriceForAliases returns the first (assetAlias, quoteAlias)
 // orientation with a current closed bucket within
-// priceChangesCurrentStaleness of now. withheld reports whether any
-// orientation tried hit the substance/scam gate (ErrPriceWithheld)
-// rather than simply having no bucket — the caller needs that to
-// choose the correct 404 type once every orientation is exhausted.
+// priceChangesCurrentStaleness of now. withheld is the first
+// ErrPriceWithheld-class error any orientation returned (nil when none
+// did) — the caller needs it to choose the correct 404 once every
+// orientation is exhausted.
 func (s *Server) currentPriceForAliases(
 	ctx context.Context, asset, quote canonical.Asset, now time.Time,
-) (canonical.Pair, priceAtResult, bool, bool) {
-	withheld := false
+) (canonical.Pair, priceAtResult, bool, error) {
+	var withheld error
 	for _, a := range assetAliases(asset) {
 		for _, q := range assetAliases(quote) {
 			if a.Equal(q) {
@@ -241,8 +249,8 @@ func (s *Server) currentPriceForAliases(
 			}
 			value, observedAt, resSec, err := s.priceAt.PriceAt(ctx, pair, now, priceChangesCurrentStaleness)
 			if err != nil {
-				if errors.Is(err, ErrPriceWithheld) {
-					withheld = true
+				if withheld == nil && errors.Is(err, ErrPriceWithheld) {
+					withheld = err
 				}
 				continue
 			}
@@ -252,7 +260,7 @@ func (s *Server) currentPriceForAliases(
 			// the served current_price / reference_price absolute values are
 			// corrected. Resolve against the actual traded legs. No-op at 7dp.
 			value = s.normalizeRawRatioString(value, pair.Base, pair.Quote)
-			return pair, priceAtResult{value: value, observedAt: observedAt, resSec: resSec}, true, false
+			return pair, priceAtResult{value: value, observedAt: observedAt, resSec: resSec}, true, nil
 		}
 	}
 	return canonical.Pair{}, priceAtResult{}, false, withheld
@@ -260,23 +268,19 @@ func (s *Server) currentPriceForAliases(
 
 // priceChangeHorizon computes one horizon's delta for an already-
 // resolved pair. Returns an unavailable (all-null) horizon on any miss
-// — reader error, no bucket that far back, or an unparseable ratio —
-// so a single bad horizon never fails the whole response. A gate
-// withholding is intentionally folded into the same unavailable=false
-// outcome (never surfaced as a distinct wire signal): the gate is
-// asked about `target`, not `now` (T038), so one horizon can be
-// withheld while its siblings are not, and PriceChangeHorizon carries
-// per-horizon granularity the same way the batch endpoint's per-row
-// result does — omit/null rather than a distinct reason (see
-// lookupPriceBatch in price.go). The top-level 404 in
-// handlePriceChanges is the only place this endpoint distinguishes
-// withheld, mirroring resolvePriceChangePair's "current" anchor.
+// — reader error, no bucket that far back, a withheld reference, or an
+// unparseable ratio — so a single bad horizon never fails the whole
+// response. A withheld reference (ErrPriceWithheld, which includes
+// ErrPriceAtGuarded) additionally sets Withheld: the gates are asked
+// about `target`, not `now` (T038), so one horizon can be withheld while
+// its siblings are not, and a consumer must not read that null as "no
+// history that far back".
 func (s *Server) priceChangeHorizon(
 	ctx context.Context, pair canonical.Pair, currentPrice string, target time.Time, tolerance time.Duration,
 ) PriceChangeHorizon {
 	value, observedAt, resSec, err := s.priceAt.PriceAt(ctx, pair, target, tolerance)
 	if err != nil {
-		return PriceChangeHorizon{Available: false}
+		return PriceChangeHorizon{Available: false, Withheld: errors.Is(err, ErrPriceWithheld)}
 	}
 	// dex-nonstandard-decimals forward normalization (M2) on the absolute
 	// reference price. `currentPrice` was already normalized against this SAME

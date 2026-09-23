@@ -549,7 +549,7 @@ func run(cfgPath string, dryRun bool) error {
 		return fmt.Errorf("redispub.NewPublisher: %w", err)
 	}
 	logger.Info("closed-bucket stream publisher wired",
-		"channel", streamPub.Channel())
+		"channel", streamPub.Channel(), "producer_id", streamPub.ProducerID())
 
 	// ─── Decimals-normalization lookup (dex-nonstandard-decimals) ──
 	// Mirrors `nonstandard_decimals_assets` (migration 0093) in-process so

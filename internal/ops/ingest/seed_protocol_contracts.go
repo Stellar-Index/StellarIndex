@@ -114,42 +114,65 @@ func seedProtocolContracts(args []string) error {
 	return nil
 }
 
-// seedOneGatedSource walks one source's factory creation events and
-// upserts each announced child. Returns the number of children seeded.
+// gatedSeedStore is the slice of *timescale.Store the seed needs.
+type gatedSeedStore interface {
+	pipeline.ProtocolContractUpserter
+	StreamSorobanEvents(ctx context.Context, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string,
+		fn func(sorobanevents.Row) error) error
+}
+
+// seedOneGatedSource upserts one source's protocol_contracts rows and
+// returns how many it seeded: its in-code curated set, if it declares one,
+// then every child its factories' creation events announce.
 //
-// Curated-only sources (no factory namespace — comet, blend_emitter,
-// upshift; ADR-0040 §1 mechanism 3) have no creation events to walk:
-// their in-code curated set is upserted directly with provenance
-// factory_id = pipeline.CuratedFactoryID. The indexer now reconciles
-// that same set at warm time, so running this for a curated source is a
-// repair/verification step rather than a deploy precondition.
-func seedOneGatedSource(ctx context.Context, store *timescale.Store, write bool, source string, hi uint32) (int, error) {
+// Curated sets (ADR-0040 §1 mechanism 3 — comet, blend_emitter, upshift,
+// and defindex, whose permissionless factory's creation events never
+// admit a child) are upserted with provenance factory_id =
+// pipeline.CuratedFactoryID. The indexer reconciles the same set at warm
+// time, so running this for them is a repair/verification step rather
+// than a deploy precondition.
+func seedOneGatedSource(ctx context.Context, store gatedSeedStore, write bool, source string, hi uint32) (int, error) {
 	meta, ok := pipeline.GatedMetaFor(source)
 	if !ok {
 		return 0, fmt.Errorf("%q is not a factory-anchored gated source (one of: %s)", source, strings.Join(sortedGatedNames(), ", "))
 	}
 
-	if len(meta.Factories) == 0 {
-		if !write {
-			// Preview of the curated path. It mirrors
-			// SeedCuratedContracts' own refusal rather than reporting a
-			// clean zero: a curated-only source with an empty CuratedSet
-			// declares a gate with no trust root, and a preview that
-			// prints "0 contracts" for it reads as "nothing to do".
-			if len(meta.CuratedSet) == 0 {
-				return 0, fmt.Errorf("seed curated contracts %s: GatedMeta.CuratedSet is empty — "+
-					"a curated-set source (ADR-0040 §1 mechanism 3) must declare its in-code trust root", source)
-			}
-			return len(meta.CuratedSet), nil
+	curated := 0
+	if len(meta.CuratedSet) > 0 || len(meta.Factories) == 0 {
+		n, err := seedCuratedSet(ctx, store, write, source, meta)
+		if err != nil || len(meta.Factories) == 0 {
+			return n, err
 		}
-		// One writer for curated rows (pipeline.SeedCuratedContracts), so
-		// this walk and the indexer's warm-time reconcile cannot drift
-		// into different provenance or first_ledger. have=nil: the CLI's
-		// documented contract is a full idempotent re-seed. An empty
-		// CuratedSet is an error there, not a zero-row success.
-		return pipeline.SeedCuratedContracts(ctx, store, source, meta, nil)
+		curated = n
 	}
+	walked, err := walkFactoryCreations(ctx, store, write, source, meta, hi)
+	return curated + walked, err
+}
 
+// seedCuratedSet upserts meta.CuratedSet, or in preview counts it.
+func seedCuratedSet(ctx context.Context, store gatedSeedStore, write bool, source string, meta pipeline.GatedMeta) (int, error) {
+	if !write {
+		// Preview of the curated path. It mirrors
+		// SeedCuratedContracts' own refusal rather than reporting a
+		// clean zero: a curated-only source with an empty CuratedSet
+		// declares a gate with no trust root, and a preview that
+		// prints "0 contracts" for it reads as "nothing to do".
+		if len(meta.CuratedSet) == 0 {
+			return 0, fmt.Errorf("seed curated contracts %s: GatedMeta.CuratedSet is empty — "+
+				"a curated-set source (ADR-0040 §1 mechanism 3) must declare its in-code trust root", source)
+		}
+		return len(meta.CuratedSet), nil
+	}
+	// One writer for curated rows (pipeline.SeedCuratedContracts), so
+	// this and the indexer's warm-time reconcile cannot drift into
+	// different provenance or first_ledger. have=nil: the CLI's
+	// documented contract is a full idempotent re-seed.
+	return pipeline.SeedCuratedContracts(ctx, store, source, meta, nil)
+}
+
+// walkFactoryCreations replays meta's factory creation events through the
+// source's decoder and upserts each child it admits.
+func walkFactoryCreations(ctx context.Context, store gatedSeedStore, write bool, source string, meta pipeline.GatedMeta, hi uint32) (int, error) {
 	// Build the source's decoder with a hook that upserts each newly
 	// observed child into protocol_contracts — the SAME persistence path
 	// the live indexer uses, so the genesis walk and live ingest converge

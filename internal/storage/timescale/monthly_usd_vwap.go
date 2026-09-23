@@ -111,7 +111,7 @@ func (s *Store) MonthlyUSDVWAPs(ctx context.Context, from, to time.Time) ([]Mont
 		if f.base.Sign() <= 0 {
 			continue
 		}
-		usd, _ := f.usd.Float64()
+		usd, _ := f.usd.Float64() // i128:ok VolumeUSD is a ranking magnitude; the served VWAPUSD stays a decimal string
 		out = append(out, MonthlyUSDVWAP{
 			Asset:     k.asset,
 			Month:     f.month,

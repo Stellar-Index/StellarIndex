@@ -1083,9 +1083,16 @@ noise on one event.
 
 ### `stellarindex_source_insert_errors_total`
 
-Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` /
-`unhandled` / `dropped` / `soroswap_router_swap` /
+Counter, labels `source`, `kind` (`trade` / `trade_abandoned` /
+`oracle` / `panic` / `unhandled` / `dropped` / `soroswap_router_swap` /
 `defindex_flow_strategy` / `defindex_flow_vault`).
+
+`trade` is a trade permanently dropped on a data fault — the row is not
+in the served tier — and is alerted at any rate by
+`stellarindex_ingestion_persist_drop`. `trade_abandoned` is a trade
+whose infra-fault retry was abandoned on shutdown or the projector's
+cycle timeout: the cursor is held and the row re-derives from the CH
+lake, so it is not a drop.
 
 The `soroswap_router_swap` / `defindex_flow_*` kinds were added
 audit-2026-07-16 (C4-3): those persist paths previously logged a Warn
@@ -2415,6 +2422,26 @@ rather than of request traffic, and a withheld leg shows up as a pool
 moving into `unpriced_pools` on `/v1/protocols` (the `≥` lower bound),
 never as a smaller number claiming to be exact.
 
+### `stellarindex_price_serve_substance_unmeasured_total`
+
+Counter, label `surface` (same set as
+`stellarindex_price_serve_substance_withheld_total`, plus `listing`).
+
+Fires once per substance-gate verdict that could not be reached: the
+trailing-substance read errored or ran out of request deadline, so the
+pair was neither cleared nor withheld on evidence. Unmeasured verdicts
+are not cached, so the counter tracks requests, not distinct pairs.
+What the surface did with the pair depends on the surface: a single
+price lookup (`price_read`, `tip`, …) served the price unguarded,
+while the `/v1/assets` listing (`surface="listing"`) withheld the
+row's `price_usd` — and so its `market_cap_usd` — and stamped
+`flags.stale` on the page (ADR-0018: listings and market caps use the
+guarded surface only).
+
+When to look at it: expected zero. A sustained non-zero rate means the
+substance store is too slow or down for the request path; correlate
+with the timescale readyz probe. Dashboard-only, no alert rule.
+
 ### `stellarindex_pricingguard_trailing_fetch_failed_total`
 
 Counter, label `path` (`latest` | `at`).
@@ -2452,9 +2479,23 @@ tied to the (small, slow-moving) set of scam-flagged issuers that are
 also actively traded. The gate FAILS OPEN — a directory-reader error
 does NOT withhold — so a drop to zero while flagged issuers still
 trade can mean the gate is failing open (the local directory table is
-unreachable); the paired `scam pricing gate: directory lookup failed`
-warn log is the corroborating signal. Verdicts are cached ~60s per
-issuer. Dashboard-only, no alert rule.
+unreachable); `stellarindex_scam_gate_lookup_failures_total` counts
+that directly. Verdicts are cached ~60s per issuer. Dashboard-only, no
+alert rule.
+
+### `stellarindex_scam_gate_lookup_failures_total`
+
+Counter, label `surface` (same set as
+`stellarindex_price_serve_scam_withheld_total`).
+
+Fires once per scam-pricing gate consultation whose `account_directory`
+lookup errored, so the gate FAILED OPEN and the price was served
+unguarded. Failed lookups are not cached, so during a directory outage
+this rises with request traffic. A cancelled client request is not
+counted.
+
+Alert: `stellarindex_scam_gate_fail_open` →
+[scam-gate-fail-open](../../operations/runbooks/scam-gate-fail-open.md).
 
 ## Supply derivation (aggregator binary)
 
@@ -2681,7 +2722,7 @@ rate materially exceeds the engaged rate.
 ### `stellarindex_divergence_refresh_total`
 
 Counter, label `outcome` (`ok` / `no_vwap` / `parse_error` /
-`refresh_error`).
+`refresh_error` / `no_reference`).
 
 Per-Tick outcomes for the orchestrator's divergence-cache refresh
 loop (ADR-0019 / launch-readiness L2.10 + L2.11). The aggregator
@@ -2692,11 +2733,23 @@ computes the divergence percent vs the median external reference,
 and writes the result to `div:<asset>` in Redis. The API's
 `flags.divergence_warning` reads from that cache.
 
-`no_vwap` is benign on cold start and after Phase-1/Phase-2 freezes
-(no fresh VWAP to compare against). Sustained `refresh_error` means
-external references are unreachable — `flags.divergence_warning`
-goes stale across the API surface; alert on a sustained rate via
-`stellarindex_divergence_refresh_error_dominant` (deploy/monitoring/rules/aggregator.yml).
+`no_vwap` is benign on cold start and for a minority of frozen pairs,
+but only `ok` writes a fresh `div:<asset>` entry. Sustained
+`refresh_error` or `no_reference` dominating `ok` fires
+`stellarindex_divergence_refresh_error_dominant` /
+`stellarindex_divergence_no_reference`; zero `ok` for 30 min while the
+refresher is wired (every pair `no_vwap`, or no outcome at all) fires
+`stellarindex_divergence_no_ok_outcomes`
+(deploy/monitoring/rules/divergence.yml).
+
+### `stellarindex_divergence_refresher_wired`
+
+Gauge, no labels. 1 while the aggregator's divergence pass has a
+refresher (at least one reference configured) and windows to run
+with; 0 when every reference is disabled. Set on every pass before the
+min-interval gate, so it arms `stellarindex_divergence_no_ok_outcomes`
+even when the pass never counts an outcome, and keeps a deliberate
+opt-out from paging.
 
 ### `stellarindex_aggregator_baseline_refresh_total`
 

@@ -1,6 +1,9 @@
 package timescale
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +19,47 @@ import (
 // ledger_ingest_log range-covered fast path also applies, or a future
 // edit could silently drop the bound while leaving the (optional)
 // [$4,$5] chunk-pruning bound in place.
+// TestPairTimeoutSkip_LogsOnItsOwnDeadlineExpiry pins #802: a PHASE 3
+// per-pair fetch that hits ITS OWN oneSorobanTopicSampleTimeout degrades
+// to "unsampled" so the whole recognition scan doesn't abort — but the
+// comment on the query const claimed this was already "a logged skip"
+// when nothing was ever logged, leaving the dormant shape (exactly the
+// class the recognition audit exists to catch) drop with zero trace.
+func TestPairTimeoutSkip_LogsOnItsOwnDeadlineExpiry(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// pairCtx's OWN deadline has already expired; the caller's ctx has not
+	// — this is exactly the case oneSorobanTopicSample hits when the
+	// per-pair fetch times out but the run itself is still healthy.
+	pairCtx, cancel := context.WithTimeout(context.Background(), 0)
+	defer cancel()
+	<-pairCtx.Done()
+	ctx := context.Background()
+
+	if skip := pairTimeoutSkip(pairCtx, ctx, "CDORMANTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "mint", 50_000_000, 60_000_000); !skip {
+		t.Fatal("pairTimeoutSkip must report true on the pair's own deadline expiry")
+	}
+	got := buf.String()
+	if got == "" {
+		t.Fatal("a per-pair timeout produced NO log output — the shape is dropped with zero trace of why (#802), contradicting the 'logged skip' the code claims")
+	}
+	if !strings.Contains(got, "CDORMANTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") || !strings.Contains(got, "mint") {
+		t.Errorf("log output must identify the dropped (contract, topic) pair so an operator can find it, got: %s", got)
+	}
+
+	// The caller's OWN ctx being canceled (a genuine run abort, not a
+	// per-pair timeout) must NOT be classified/logged as a pair timeout.
+	buf.Reset()
+	cancelledCtx, cancel2 := context.WithCancel(context.Background())
+	cancel2()
+	if skip := pairTimeoutSkip(pairCtx, cancelledCtx, "CDORMANT", "mint", 1, 2); skip {
+		t.Error("a canceled caller ctx must not be classified as a per-pair timeout")
+	}
+}
+
 func TestDistinctSorobanTopicSamplesWindowedQuery_CarriesTheBound(t *testing.T) {
 	t.Parallel()
 	const bound = "ledger_close_time >= $3"

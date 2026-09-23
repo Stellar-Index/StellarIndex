@@ -446,7 +446,7 @@ func TestSlugFromEmail(t *testing.T) {
 }
 
 // TestSignupNewUser_LongEmailFitsAccountConstraints: any address
-// looksLikeEmail admits must provision an account; a derived slug or
+// notify.CanonicalRecipient admits must provision an account; a derived slug or
 // name past the accounts CHECK bounds was a permanent 500.
 func TestSignupNewUser_LongEmailFitsAccountConstraints(t *testing.T) {
 	cases := map[string]string{
@@ -456,8 +456,8 @@ func TestSignupNewUser_LongEmailFitsAccountConstraints(t *testing.T) {
 	}
 	for name, email := range cases {
 		t.Run(name, func(t *testing.T) {
-			if !looksLikeEmail(email) {
-				t.Fatalf("fixture %q rejected by looksLikeEmail", email)
+			if canon, err := notify.CanonicalRecipient(email); err != nil || canon != email {
+				t.Fatalf("fixture %q not admitted unchanged by CanonicalRecipient: %q, %v", email, canon, err)
 			}
 			r := newTestRig(t)
 			user, err := r.h.signupNewUser(context.Background(), email)
@@ -509,21 +509,47 @@ func TestAccountNameFromEmail_RuneBoundary(t *testing.T) {
 	}
 }
 
-func TestLooksLikeEmail(t *testing.T) {
-	cases := map[string]bool{
-		"alice@example.com":               true,
-		"a@b.c":                           true,
-		"":                                false,
-		"@b.c":                            false,
-		"a@":                              false,
-		"a@b":                             false,
-		"abc":                             false,
-		strings.Repeat("a", 256) + "@b.c": false,
+// A display-name spelling of an inbox must be stored, mailed and later
+// keyed as the bare address, exactly as /v1/signup canonicalises it —
+// otherwise one inbox becomes two accounts.
+func TestHandleLogin_CanonicalisesDisplayNameSpelling(t *testing.T) {
+	r := newTestRig(t)
+	w := r.postLogin(t, `"Support" <Victim@Example.com>`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	for in, want := range cases {
-		if got := looksLikeEmail(in); got != want {
-			t.Errorf("looksLikeEmail(%q) = %v, want %v", in, got, want)
+	last, ok := r.sender.Last()
+	if !ok {
+		t.Fatal("no email sent")
+	}
+	if got := last.To; len(got) != 1 || got[0] != "victim@example.com" {
+		t.Errorf("recipient = %q, want [victim@example.com]", got)
+	}
+	r.tokens.mu.Lock()
+	defer r.tokens.mu.Unlock()
+	if len(r.tokens.tokens) != 1 {
+		t.Fatalf("stored tokens = %d, want 1", len(r.tokens.tokens))
+	}
+	for _, tok := range r.tokens.tokens {
+		if tok.Email != "victim@example.com" {
+			t.Errorf("token email = %q, want victim@example.com", tok.Email)
 		}
+	}
+}
+
+func TestHandleLogin_RejectsNonSingleMailbox(t *testing.T) {
+	r := newTestRig(t)
+	for _, email := range []string{
+		"a@b.com,c@d.com",
+		`"a b"@example.com`,
+		strings.Repeat("a", 256) + "@b.co",
+	} {
+		if w := r.postLogin(t, email); w.Code != http.StatusBadRequest {
+			t.Errorf("email=%q got %d, want 400", email, w.Code)
+		}
+	}
+	if n := r.sender.SentCount(); n != 0 {
+		t.Errorf("sent = %d, want 0", n)
 	}
 }
 

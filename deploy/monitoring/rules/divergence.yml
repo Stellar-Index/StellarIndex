@@ -238,3 +238,31 @@ groups:
             flags.divergence_warning is frozen — a live depeg would go
             unflagged. Check the CoinGecko Pro key / 429 state and Chainlink
             RPC reachability; see the runbook.
+
+      # Liveness arm for the two child-vs-child rules above. Both compare
+      # a failure child against `ok`, so a pass that yields only no_vwap
+      # (every pair frozen, min_usd_volume above real volume, the VWAP
+      # writer regressed) or no outcome at all (the pass dies before
+      # counting) satisfies neither while every div:<asset> key drains
+      # after its 5-min TTL. Gated on the refresher being wired: an
+      # operator who disables every reference publishes wired=0.
+      - alert: stellarindex_divergence_no_ok_outcomes
+        expr: |
+          sum(increase(stellarindex_divergence_refresh_total{outcome="ok"}[30m])) == 0
+          and on()
+          max(stellarindex_divergence_refresher_wired) == 1
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: divergence
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/divergence-no-ok-outcomes.md
+          summary: "Divergence checker wired but produced no healthy comparison in 45 min (P3)"
+          description: |
+            The divergence refresher is wired, yet no pair has recorded an
+            `ok` outcome for 45+ min, so no div:<asset> entry has been
+            written and flags.divergence_warning / divergence_checked read
+            false fleet-wide. Check which outcome the pass IS producing
+            (no_vwap = every pair frozen or below min_usd_volume; nothing
+            at all = the pass is not completing); see the runbook.
