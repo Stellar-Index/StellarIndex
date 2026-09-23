@@ -149,7 +149,7 @@ func TestParsePublishedReserveList_ShapeChangeIsAnError(t *testing.T) {
 		want string
 	}{
 		{"no accounts table", strings.Replace(fixture, "const accounts = {", "const reserveAccounts = {", 1), "no `const accounts"},
-		{"empty accounts table", reserveAccountsBlock.ReplaceAllString(fixture, "const accounts = {}"), "no G-strkey entries"},
+		{"empty accounts table", emptyAccountsTable(t, fixture), "no G-strkey entries"},
 		{"upgrade reserve constant gone", strings.Replace(fixture, "networkUpgradeReserveAccount =", "upgradeReserve =", 1), "networkUpgradeReserveAccount"},
 		{"html error page", "<html><body>rate limited</body></html>", "no `const accounts"},
 		{"empty body", "", "no `const accounts"},
@@ -402,4 +402,134 @@ func TestRenderServedValueProm_ReserveList(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestParsePublishedReserveList_UnrecognisedRowIsNeverAPartialList — an
+// upstream reshape of ONE row must fail the whole parse (the caller
+// skips), never yield the rows before it. A partial list reads as
+// phantom `extra` accounts whose runbook remedy is deleting real SDF
+// reserve accounts from our config.
+func TestParsePublishedReserveList_UnrecognisedRowIsNeverAPartialList(t *testing.T) {
+	fixture := readLumensFixture(t)
+	const row = `  escrowJan2023: "GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA",`
+	if !strings.Contains(fixture, row) {
+		t.Fatal("fixture row for escrowJan2023 not found — fixture shape changed")
+	}
+	cases := []struct{ name, replacement string }{
+		{"nested object row", `  escrowJan2023: { id: "GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA", retiredAt: null },`},
+		{"spread of another table", `  ...legacyEscrows,`},
+		{"computed value", `  escrowJan2023: pick("GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA"),`},
+		{"missing comma between rows", `  escrowJan2023: "GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA"`},
+		{"template literal value", "  escrowJan2023: `GA2VRL65L3ZFEDDJ357RGI3MAOKPJZ2Z3IJTPSC24I4KDTNFSVEQURRA`,"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parsePublishedReserveList(strings.Replace(fixture, row, tc.replacement, 1))
+			if err == nil {
+				t.Fatalf("an unrecognised row must fail the parse, got a list of %d of the 16 published", len(got))
+			}
+		})
+	}
+}
+
+// TestParsePublishedReserveList_EquivalentSpellingsParseWhole — JS
+// spellings of the SAME table (single quotes, quoted keys, trailing and
+// block comments, a brace inside a comment) must yield the full
+// published set, not a truncated one.
+func TestParsePublishedReserveList_EquivalentSpellingsParseWhole(t *testing.T) {
+	fixture := readLumensFixture(t)
+	const (
+		row1 = `  escrowJan2022: "GD2D6JG6D3V52ZMPIYSVHYFKVNIMXGYVLYJQ3HYHG5YDPGJ3DCRGPLTP",`
+		row2 = `  sdfGrowth: "GCVJDBALC2RQFLD2HYGQGWNFZBCOD2CPOTN3LE7FWRZ44H2WRAVZLFCU",`
+	)
+	cases := []struct{ name, r1, r2 string }{
+		{"single-quoted values", `  escrowJan2022: 'GD2D6JG6D3V52ZMPIYSVHYFKVNIMXGYVLYJQ3HYHG5YDPGJ3DCRGPLTP',`, `  sdfGrowth: 'GCVJDBALC2RQFLD2HYGQGWNFZBCOD2CPOTN3LE7FWRZ44H2WRAVZLFCU',`},
+		{"quoted keys", `  "escrowJan2022": "GD2D6JG6D3V52ZMPIYSVHYFKVNIMXGYVLYJQ3HYHG5YDPGJ3DCRGPLTP",`, `  'sdfGrowth': "GCVJDBALC2RQFLD2HYGQGWNFZBCOD2CPOTN3LE7FWRZ44H2WRAVZLFCU",`},
+		{"brace inside a comment", "  // retired {see escrowJan2021}\n" + row1, row2 + " /* hot: {a} */"},
+		{"trailing line comment", row1 + " // 2022 escrow", row2},
+	}
+	want := sortedCopy(r1ReserveAccounts)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.Replace(strings.Replace(fixture, row1, tc.r1, 1), row2, tc.r2, 1)
+			if src == fixture {
+				t.Fatal("fixture rows not found — fixture shape changed")
+			}
+			got, err := parsePublishedReserveList(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d := diffReserveList(want, got); !d.empty() {
+				t.Errorf("an equivalent spelling changed the published set: %+v", d)
+			}
+		})
+	}
+}
+
+// TestReconcileReserveList_ImplausibleRetirementIsSkipped — a published
+// table the grammar accepts but that retires more accounts at once than
+// SDF plausibly does (e.g. rows moved to a second table) must not become
+// a drift verdict whose remedy deletes reserve accounts: it is skipped,
+// still naming the accounts, and the bound itself stays a verdict.
+func TestReconcileReserveList_ImplausibleRetirementIsSkipped(t *testing.T) {
+	fixture := readLumensFixture(t)
+	c := &http.Client{Timeout: 5 * time.Second}
+	serveWithout := func(t *testing.T, drop int) string {
+		t.Helper()
+		src := fixture
+		for _, a := range r1ReserveAccounts[:drop] {
+			src = dropTableRow(t, src, a)
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(src))
+		}))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+	cfg := writeReserveConfig(t, r1ReserveAccounts)
+
+	r := reconcileReserveList(context.Background(), c, cfg, serveWithout(t, maxPlausibleReserveRetirements))
+	if !r.verified() || len(r.drift.extra) != maxPlausibleReserveRetirements {
+		t.Fatalf("%d retirements is within bound and must be a verdict, got %+v", maxPlausibleReserveRetirements, r)
+	}
+
+	r = reconcileReserveList(context.Background(), c, cfg, serveWithout(t, maxPlausibleReserveRetirements+1))
+	if !r.skipped || r.verified() || r.ok() {
+		t.Fatalf("%d retirements at once must be skipped, not a drift verdict; got %+v", maxPlausibleReserveRetirements+1, r)
+	}
+	if len(r.drift.extra) != maxPlausibleReserveRetirements+1 || !strings.Contains(r.note, "implausible") {
+		t.Errorf("the skip must still name the accounts and why: extra=%v note=%q", r.drift.extra, r.note)
+	}
+	if body := renderServedValueProm(nil, &r, time.Unix(0, 0)); strings.Contains(body, "stellarindex_sdf_reserve_list_drift{") {
+		t.Errorf("a refused diff must not emit a drift gauge:\n%s", body)
+	}
+}
+
+// dropTableRow deletes the whole accounts-table row (`key:` through the
+// end of the line carrying the quoted account) from src.
+func dropTableRow(t *testing.T, src, account string) string {
+	t.Helper()
+	i := strings.Index(src, `"`+account+`"`)
+	if i < 0 {
+		t.Fatalf("account %s not in fixture", account)
+	}
+	start := strings.LastIndex(src[:strings.LastIndex(src[:i], ":")], "\n") + 1
+	end := i + strings.Index(src[i:], "\n") + 1
+	return src[:start] + src[end:]
+}
+
+// emptyAccountsTable replaces every row of the fixture's accounts table
+// with nothing, leaving `const accounts = {}`.
+func emptyAccountsTable(t *testing.T, fixture string) string {
+	t.Helper()
+	const open = "const accounts = {"
+	i := strings.Index(fixture, open)
+	j := -1
+	if i >= 0 {
+		j = strings.Index(fixture[i:], "\n};")
+	}
+	if j < 0 {
+		t.Fatal("accounts table not found — fixture shape changed")
+	}
+	return fixture[:i] + open + fixture[i+j+1:]
 }

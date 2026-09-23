@@ -54,8 +54,8 @@ import (
 //
 // Empty -textfile prints the gauges to stdout (operator spot-run).
 // Empty -config skips the reserve-list check (a spot-run off-host has
-// no node config to diff). Exits 1 when any check failed or every check
-// was skipped (see servedValuesExitError), 0 otherwise.
+// no node config to diff). Exits 1 when any check failed or every VALUE
+// check was skipped (see servedValuesExitError), 0 otherwise.
 func verifyServedValues(args []string) error {
 	fs := flag.NewFlagSet("verify-served-values", flag.ContinueOnError)
 	apiBase := fs.String("api", "http://127.0.0.1:3000", "Base URL of our API (loopback on r1)")
@@ -83,19 +83,24 @@ func verifyServedValues(args []string) error {
 		return fmt.Errorf("write textfile: %w", err)
 	}
 
-	total, failed, skipped := len(results), 0, 0
+	return servedValuesVerdict(os.Stderr, results, list)
+}
+
+// servedValuesVerdict writes one status line per check to w and returns
+// the run's exit error. The list check can FAIL the run but never counts
+// toward the value checks' all-skipped guard (see servedValuesExitError).
+func servedValuesVerdict(w io.Writer, results []servedValueResult, list *reserveListResult) error {
+	failed, skipped := 0, 0
 	if list != nil {
-		total++
 		status := "OK"
 		switch {
 		case list.skipped:
 			status = "SKIP"
-			skipped++
 		case !list.ok():
 			status = "FAIL"
 			failed++
 		}
-		fmt.Fprintf(os.Stderr, "verify-served-values: %-28s %-4s configured=%d published=%d missing=%v extra=%v (%s)\n",
+		fmt.Fprintf(w, "verify-served-values: %-28s %-4s configured=%d published=%d missing=%v extra=%v (%s)\n",
 			sdfReserveListCheck, status, len(list.configured), len(list.published), list.drift.missing, list.drift.extra, list.note)
 	}
 	for _, r := range results {
@@ -110,20 +115,24 @@ func verifyServedValues(args []string) error {
 			status = "FAIL"
 			failed++
 		}
-		fmt.Fprintf(os.Stderr, "verify-served-values: %-28s %-4s served=%s truth=%s rel_err=%.4f tol=%.4f (%s)\n",
+		fmt.Fprintf(w, "verify-served-values: %-28s %-4s served=%s truth=%s rel_err=%.4f tol=%.4f (%s)\n",
 			r.name, status, r.served, r.truth, r.relErr, r.tolerance, r.note)
 	}
-	return servedValuesExitError(total, failed, skipped)
+	return servedValuesExitError(len(results), failed, skipped)
 }
 
-// servedValuesExitError decides the run's exit status from its tally. Any
-// FAILED (drifted) check fails the run. An ALL-SKIPPED run also fails CLOSED:
-// every independent truth source was dark, so the run verified NOTHING and a
-// one-shot gate must not read that as a clean pass (F5 — the
+// servedValuesExitError decides the run's exit status from its tally. total
+// and skipped count the VALUE checks only; failed counts any check, the
+// reserve-list check included. Any FAILED check fails the run. A run whose
+// value checks ALL skipped also fails CLOSED: every truth source for a served
+// number was dark, so the run verified no served value and a one-shot gate
+// must not read that as a clean pass (F5 — the
 // served_value_persistently_skipped alert catches a SUSTAINED dark source, but
-// a single run must fail closed too). A PARTIAL skip stays clean: some checks
-// were verified, and a lone third-party outage must not fail the daily cron.
-// Pure — unit-testable.
+// a single run must fail closed too). The list check is excluded from that
+// denominator because it verifies a config list, not a served number: a
+// verified list must not turn a run with every value source dark into exit 0.
+// A PARTIAL skip stays clean, and a lone third-party outage (the list's
+// source included) must not fail the daily cron. Pure — unit-testable.
 func servedValuesExitError(total, failed, skipped int) error {
 	if failed > 0 {
 		return fmt.Errorf("%d served-value check(s) failed", failed)

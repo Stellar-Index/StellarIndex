@@ -5,6 +5,7 @@ package chops
 
 import (
 	"context"
+	"io"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -239,6 +240,41 @@ func TestServedValuesExitError(t *testing.T) {
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("servedValuesExitError(total=%d, failed=%d, skipped=%d) err=%v, wantErr=%v",
 					tc.total, tc.failed, tc.skipped, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestServedValuesVerdict_ListCheckIsNotAValueCheck — the reserve-list
+// check verifies no served NUMBER, so it must not count toward the value
+// checks' all-skipped guard: every value source dark with a verified list
+// still verified no served value and must exit non-zero.
+func TestServedValuesVerdict_ListCheckIsNotAValueCheck(t *testing.T) {
+	ok := servedValueResult{name: "v", ok: true}
+	dark := servedValueResult{name: "v", relErr: math.NaN(), skipped: true}
+	drifted := servedValueResult{name: "v"}
+	listOK := &reserveListResult{}
+	listDark := &reserveListResult{skipped: true}
+	listDrift := &reserveListResult{drift: reserveListDrift{extra: []string{"GAAA"}}}
+	cases := []struct {
+		name    string
+		results []servedValueResult
+		list    *reserveListResult
+		wantErr bool
+	}{
+		{"every value source dark, list verified: verified no served value", []servedValueResult{dark, dark, dark}, listOK, true},
+		{"every value source dark, list dark", []servedValueResult{dark, dark, dark}, listDark, true},
+		{"every value source dark, no list", []servedValueResult{dark, dark, dark}, nil, true},
+		{"values verified, list dark: a lone outage stays clean", []servedValueResult{ok, ok, ok}, listDark, false},
+		{"one value verified, list verified", []servedValueResult{dark, ok, dark}, listOK, false},
+		{"list drift fails the run", []servedValueResult{ok, ok, ok}, listDrift, true},
+		{"value drift fails the run", []servedValueResult{ok, drifted, ok}, listOK, true},
+		{"all clean", []servedValueResult{ok, ok, ok}, listOK, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := servedValuesVerdict(io.Discard, tc.results, tc.list); tc.wantErr != (err != nil) {
+				t.Fatalf("err=%v, wantErr=%v", err, tc.wantErr)
 			}
 		})
 	}
