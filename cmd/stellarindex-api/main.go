@@ -5959,9 +5959,10 @@ func (r *fxHistoryReader) ListFXHistory(ctx context.Context, ticker string, from
 	out := make([]v1.FXQuotePoint, len(rows))
 	for i, q := range rows {
 		out[i] = v1.FXQuotePoint{
-			Bucket:     q.Bucket,
-			RateUSD:    q.RateUSD,
-			InverseUSD: q.InverseUSD,
+			Bucket:         q.Bucket,
+			RateUSD:        q.RateUSD,
+			InverseUSD:     q.InverseUSD,
+			InverseUSDText: q.InverseUSDText,
 		}
 	}
 	return out, nil

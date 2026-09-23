@@ -351,3 +351,47 @@ func TestAssetGet_StellarExternalGate(t *testing.T) {
 		t.Errorf("/v1/assets/usdc status = %d, want 200", resp.StatusCode)
 	}
 }
+
+// Fiat prices are not the vwap_native tier: a non-USD fiat is an FX
+// reference rate served as its stored NUMERIC text (never re-rendered
+// from a float), and USD is an identity.
+func TestAssetGet_FiatPriceAuthorityAndExactRate(t *testing.T) {
+	const exact = "1.1700000000000000000123"
+	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
+		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1 / 1.17, InverseUSD: 1.17, InverseUSDText: exact},
+	}}
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies: newTestCatalogue(t),
+		FXHistory:          fx,
+		GlobalPrice:        &stubGlobalPriceReader{},
+	})
+	ts := httpTestServer(t, srv)
+
+	for _, tc := range []struct {
+		slug, price string
+		authority   aggregate.PriceAuthority
+	}{
+		{"euro", exact, aggregate.AuthorityReferenceRate},
+		{"us-dollar", "1.00000000000000", aggregate.AuthorityIdentity},
+	} {
+		resp := mustGet(t, ts.URL+"/v1/external/assets/"+tc.slug)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s: status = %d", tc.slug, resp.StatusCode)
+		}
+		var env struct {
+			Data v1.GlobalAssetView `json:"data"`
+		}
+		mustDecode(t, resp, &env)
+		d := env.Data
+		if d.PriceUSD == nil || *d.PriceUSD != tc.price {
+			got := "<nil>"
+			if d.PriceUSD != nil {
+				got = *d.PriceUSD
+			}
+			t.Errorf("%s: price_usd = %q, want %q", tc.slug, got, tc.price)
+		}
+		if d.PriceAuthority != tc.authority {
+			t.Errorf("%s: price_authority = %q, want %q", tc.slug, d.PriceAuthority, tc.authority)
+		}
+	}
+}

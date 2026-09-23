@@ -151,8 +151,10 @@ func TestGlobalAssetViewOnChainFallback(t *testing.T) {
 	if *view.PriceUSD != price {
 		t.Errorf("fallback price = %q, want %q (the listing/on-chain value)", *view.PriceUSD, price)
 	}
-	if view.PriceAuthority != aggregate.AuthorityVWAPNative {
-		t.Errorf("fallback authority = %q, want %q", view.PriceAuthority, aggregate.AuthorityVWAPNative)
+	// The listing price has no trade floor or observation time: it is
+	// not the vwap_native tier and must not be labelled as it.
+	if view.PriceAuthority != aggregate.AuthorityOnChainListing {
+		t.Errorf("fallback authority = %q, want %q", view.PriceAuthority, aggregate.AuthorityOnChainListing)
 	}
 	if len(view.PriceSources) != 1 || view.PriceSources[0] != "stellar_onchain" {
 		t.Errorf("fallback sources = %v, want [stellar_onchain]", view.PriceSources)

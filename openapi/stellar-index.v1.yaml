@@ -17524,15 +17524,23 @@ components:
         price_usd:        { type: [string, "null"], description: "USD price from the three-tier fallback chain. Null when no tier produced a price — consumer drills into the canonical /v1/assets/{asset_id} surface for the per-Stellar-asset price instead." }
         price_authority:
           type: string
-          enum: [vwap_native, aggregator_avg, triangulated]
+          enum: [vwap_native, aggregator_avg, triangulated, reference_rate, identity, onchain_listing]
           description: |
-            Which tier of the fallback chain produced `price_usd`.
+            What produced `price_usd`. The first three are the tiers of the
+            fallback chain, in trust order; each of the first two is held to
+            a 10-minute freshness ceiling, and a VWAP past it is served (with
+            its own `price_as_of`) only when no fresher tier has a price.
             - `vwap_native`: our own VWAP across exchange-class trades.
             - `aggregator_avg`: average across CG / CMC / CryptoCompare.
             - `triangulated`: derived via bridge currency (X_USD ≈
               X_BTC × BTC_USD or similar).
+            - `reference_rate`: a published FX reference rate (daily ECB
+              series) for a non-USD fiat.
+            - `identity`: USD, 1 by definition.
+            - `onchain_listing`: a Stellar-only token's per-asset listing
+              price; no trade-count floor and no `price_as_of`.
         price_sources:    { type: array, items: { type: string }, description: "Contributor venue / aggregator names — for transparency." }
-        price_as_of:      { type: [string, "null"], format: date-time, description: "Observation timestamp of the served price." }
+        price_as_of:      { type: [string, "null"], format: date-time, description: "Observation timestamp of the served price. Null when price_usd is null, and under price_authority onchain_listing." }
         circulating_supply: { type: [string, "null"], description: "Natural-unit amount in circulation. For fiat: M2 (broad money). Empty for crypto/stablecoin (the per-Stellar-asset F2 fields on /v1/assets/{asset_id} are the canonical source)." }
         supply_decimals:  { type: integer, description: "Exponent mapping circulating_supply to display value. 0 for fiat." }
         market_cap_usd:   { type: [string, "null"], description: "Decimal string (2 fractional digits). Computed for fiat rows: M2 × current FX rate. Null for crypto/stablecoin (their market cap lives on the per-Stellar-asset F2 fields)." }

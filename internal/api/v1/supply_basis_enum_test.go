@@ -71,6 +71,13 @@ func TestSupplyBasis_RWAAssetSpecEnumIsTheGoVocabulary(t *testing.T) {
 // .properties.supply_basis, in spec order.
 func specSupplyBasisEnum(t *testing.T, schema string) []string {
 	t.Helper()
+	return specPropertyEnum(t, schema, "supply_basis")
+}
+
+// specPropertyEnum returns the `enum` of components.schemas.<schema>
+// .properties.<prop>, in spec order.
+func specPropertyEnum(t *testing.T, schema, prop string) []string {
+	t.Helper()
 	body, err := os.ReadFile(filepath.Join(repoRoot(t), "openapi", "stellar-index.v1.yaml")) //nolint:gosec // repo-relative path
 	if err != nil {
 		t.Fatalf("read spec: %v", err)
@@ -91,12 +98,12 @@ func specSupplyBasisEnum(t *testing.T, schema string) []string {
 	if !ok {
 		t.Fatalf("spec has no components.schemas.%s", schema)
 	}
-	p, ok := s.Properties["supply_basis"]
+	p, ok := s.Properties[prop]
 	if !ok {
-		t.Fatalf("components.schemas.%s has no supply_basis property", schema)
+		t.Fatalf("components.schemas.%s has no %s property", schema, prop)
 	}
 	if len(p.Enum) == 0 {
-		t.Fatalf("components.schemas.%s.supply_basis has no enum", schema)
+		t.Fatalf("components.schemas.%s.%s has no enum", schema, prop)
 	}
 	return p.Enum
 }
@@ -108,6 +115,23 @@ func specSupplyBasisEnum(t *testing.T, schema string) []string {
 func goSupplyBases(t *testing.T) []string {
 	t.Helper()
 	file := filepath.Join(repoRoot(t), "internal", "supply", "supply.go")
+	out := goStringConsts(t, file, "Basis")
+	var seen bool
+	for _, s := range out {
+		if s == string(supply.BasisSEP41TotalOnly) {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatalf("%s: walk did not enumerate %q", file, supply.BasisSEP41TotalOnly)
+	}
+	return out
+}
+
+// goStringConsts reads the string constants of type typeName declared in
+// file, in declaration order.
+func goStringConsts(t *testing.T, file, typeName string) []string {
+	t.Helper()
 	parsed, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)
 	if err != nil {
 		t.Fatalf("parse %s: %v", file, err)
@@ -123,13 +147,13 @@ func goSupplyBases(t *testing.T) []string {
 			if !ok {
 				continue
 			}
-			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != "Basis" {
+			if id, ok := vs.Type.(*ast.Ident); !ok || id.Name != typeName {
 				continue
 			}
 			for _, v := range vs.Values {
 				lit, ok := v.(*ast.BasicLit)
 				if !ok || lit.Kind != token.STRING {
-					t.Fatalf("%s: Basis const %v is not a string literal", file, vs.Names)
+					t.Fatalf("%s: %s const %v is not a string literal", file, typeName, vs.Names)
 				}
 				s, err := strconv.Unquote(lit.Value)
 				if err != nil {
@@ -142,16 +166,7 @@ func goSupplyBases(t *testing.T) []string {
 	// The walk must have seen the real block, or every assertion above
 	// holds vacuously against an empty list.
 	if len(out) == 0 {
-		t.Fatalf("%s: no typed Basis constants found — this guard needs re-aiming", file)
-	}
-	var seen bool
-	for _, s := range out {
-		if s == string(supply.BasisSEP41TotalOnly) {
-			seen = true
-		}
-	}
-	if !seen {
-		t.Fatalf("%s: walk did not enumerate %q", file, supply.BasisSEP41TotalOnly)
+		t.Fatalf("%s: no typed %s constants found — this guard needs re-aiming", file, typeName)
 	}
 	return out
 }
