@@ -57,6 +57,16 @@ export const sla = {
   },
 };
 
+// Explorer (ADR-0038) latency bars, applied per endpoint by
+// 08-explorer-lake.js. These routes read the ClickHouse lake, not the
+// cached price tier, so the 200 ms Freighter target does not apply.
+// The scan p99 equals explorerReadTimeout (8 s): past it requests are
+// being cut off, not served. Provisional until a measured staging run.
+export const explorerBars = {
+  lookup: ['p(95)<500', 'p(99)<2000'],
+  scan:   ['p(95)<2000', 'p(99)<8000'],
+};
+
 // Common executor shape — RPS-controlled per the design note Q4.
 // Scenarios override stages but inherit the executor type.
 export function rampingArrivalRate(stages, preAllocatedVUs = 100) {

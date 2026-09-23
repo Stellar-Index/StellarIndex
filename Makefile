@@ -298,6 +298,10 @@ test-load-batch: test-load-guard ## Run only the batch scenario (5 min)
 test-load-streaming: test-load-guard ## Run only the SSE streaming scenario (5 min)
 	@k6 run --out $(PROM_OUT) test/load/scenarios/05-streaming.js
 
+.PHONY: test-load-explorer
+test-load-explorer: test-load-guard ## Run only the ClickHouse-backed explorer scenario (7 min)
+	@k6 run --out $(PROM_OUT) test/load/scenarios/08-explorer-lake.js
+
 .PHONY: test-load-spike
 test-load-spike: test-load-guard ## Run the 10× spike scenario (5 min). Posts AlertManager silence if ALERTMANAGER_URL set
 	@if [ -z "$$ALERTMANAGER_URL" ]; then \
