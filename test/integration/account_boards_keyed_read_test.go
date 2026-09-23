@@ -56,7 +56,7 @@ func TestAccountBoardKeyedReadsPruneOnTheSkipIndex(t *testing.T) {
 					t.Fatalf("%s: %v", q, err)
 				}
 			}
-			t.Cleanup(func() { _ = conn.Exec(context.Background(), `DROP TABLE IF EXISTS `+probe) })
+			t.Cleanup(func() { _ = conn.Exec(context.Background(), `DROP TABLE IF EXISTS `+probe) }) //nolint:contextcheck // cleanup outlives the test context
 
 			plan := explain(t, ctx, conn, fmt.Sprintf(`EXPLAIN indexes = 1 SELECT count() FROM %s
 				WHERE %s = 'GKEYEDPROBE31000'`, probe, tc.col))
