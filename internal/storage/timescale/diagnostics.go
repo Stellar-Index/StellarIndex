@@ -547,8 +547,8 @@ func (s *Store) SupplyCoverageStats(ctx context.Context) (SupplyCoverage, error)
 }
 
 // SourceEntryCounts returns the per-source running entry tally from
-// `source_entry_counts` (migration 0035) — trades + oracle_updates,
-// keyed by source. This is a ~20-row PK scan of a tiny tally table,
+// `source_entry_counts` (migration 0035) — every decoded-event
+// hypertable (see [Store.SeedSourceEntryCounts]), keyed by source. This is a ~20-row PK scan of a tiny tally table,
 // so it is O(1)-ish and ALWAYS fast — unlike BackfillCoverageStats
 // it does not touch the trades/oracle_updates hypertables, so it
 // stays responsive even during an all-time backfill (the whole

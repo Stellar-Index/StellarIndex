@@ -1532,8 +1532,8 @@ Subcommands:
   seed-entry-counts -config PATH [-timeout DUR]
                           Authoritatively recompute source_entry_counts
                           (the "entries" column on /v1/diagnostics/
-                          ingestion) from a full GROUP BY over trades +
-                          oracle_updates. The writers keep it live going
+                          ingestion) from a full GROUP BY over every
+                          decoded-event hypertable. The writers keep it live going
                           forward; this one-shot folds in pre-counter
                           history + any crash drift. Run ONCE post-
                           backfill (scans every trades chunk). Idempotent
