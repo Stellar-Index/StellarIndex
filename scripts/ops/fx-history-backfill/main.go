@@ -35,7 +35,8 @@
 //	                       Frankfurter-supported currencies)
 //
 // The script logs one line per chunk to stderr; final summary writes
-// total rows + elapsed.
+// total rows + elapsed. Exit status is non-zero if any chunk failed or the
+// run was interrupted before covering the whole window.
 package main
 
 import (
@@ -54,6 +55,12 @@ import (
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run returns the process exit code so deferred cleanup (store.Close) runs
+// before main calls os.Exit.
+func run() int {
 	cfg, logger := parseFlags()
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -67,7 +74,7 @@ func main() {
 		store, err = openBackfillStore(ctx, cfg.dsn)
 		if err != nil {
 			logger.Error("open timescale", "err", err)
-			os.Exit(1)
+			return 1
 		}
 		defer func() { _ = store.Close() }()
 	}
@@ -79,12 +86,7 @@ func main() {
 		"chunk_years", cfg.chunkYears,
 		"dry_run", cfg.dryRun)
 
-	totalRows, chunks, elapsed := runBackfill(ctx, logger, client, store, cfg)
-
-	logger.Info("fx-history-backfill: done",
-		"chunks", chunks,
-		"rows", totalRows,
-		"elapsed", elapsed)
+	return runBackfill(ctx, logger, client, store, cfg).report(logger)
 }
 
 // openBackfillStore opens the timescale store and stamps a POSITIVE
@@ -187,6 +189,44 @@ func parseFlags() (backfillConfig, *slog.Logger) {
 	}, logger
 }
 
+// backfillResult summarises a run. A failed chunk or an interrupted walk
+// leaves a hole in fx_quotes history, so either makes the run unsuccessful.
+type backfillResult struct {
+	totalRows    int
+	chunks       int
+	failedChunks int
+	interrupted  bool
+	elapsed      time.Duration
+}
+
+// exitCode is non-zero whenever the requested window was not fully written,
+// so a wrapper script or operator cannot mistake a partial backfill for done.
+func (r backfillResult) exitCode() int {
+	if r.failedChunks > 0 || r.interrupted {
+		return 1
+	}
+	return 0
+}
+
+// report logs the final summary at a level matching the outcome and returns
+// the exit code.
+func (r backfillResult) report(logger *slog.Logger) int {
+	attrs := []any{
+		"chunks", r.chunks,
+		"failed_chunks", r.failedChunks,
+		"interrupted", r.interrupted,
+		"rows", r.totalRows,
+		"elapsed", r.elapsed,
+	}
+	code := r.exitCode()
+	if code != 0 {
+		logger.Error("fx-history-backfill: incomplete, re-run the failed ranges", attrs...)
+		return code
+	}
+	logger.Info("fx-history-backfill: done", attrs...)
+	return code
+}
+
 // runBackfill walks the window in chunkYears-sized segments. Sequential,
 // not parallel — Frankfurter is a free service and one operator-side
 // backfill doesn't justify hammering it. Each chunk is one HTTP
@@ -197,14 +237,14 @@ func runBackfill(
 	client *frankfurter.Client,
 	store *timescale.Store,
 	cfg backfillConfig,
-) (totalRows, chunks int, elapsed time.Duration) {
+) backfillResult {
 	started := time.Now()
+	var res backfillResult
 	chunkStart := cfg.from
 	for chunkStart.Before(cfg.to) {
-		select {
-		case <-ctx.Done():
-			return totalRows, chunks, time.Since(started).Round(time.Second)
-		default:
+		if ctx.Err() != nil {
+			res.interrupted = true
+			break
 		}
 		chunkEnd := chunkStart.AddDate(cfg.chunkYears, 0, 0)
 		if chunkEnd.After(cfg.to) {
@@ -212,21 +252,23 @@ func runBackfill(
 		}
 		rows, err := fetchAndPersist(ctx, client, store, chunkStart, chunkEnd, cfg.tickerFilter, cfg.dryRun)
 		if err != nil {
-			logger.Warn("chunk failed",
+			res.failedChunks++
+			logger.Error("chunk failed",
 				"from", chunkStart.Format("2006-01-02"),
 				"to", chunkEnd.Format("2006-01-02"),
 				"err", err)
 		} else {
-			totalRows += rows
+			res.totalRows += rows
 			logger.Info("chunk done",
 				"from", chunkStart.Format("2006-01-02"),
 				"to", chunkEnd.Format("2006-01-02"),
 				"rows", rows)
 		}
-		chunks++
+		res.chunks++
 		chunkStart = chunkEnd.AddDate(0, 0, 1)
 	}
-	return totalRows, chunks, time.Since(started).Round(time.Second)
+	res.elapsed = time.Since(started).Round(time.Second)
+	return res
 }
 
 // fetchAndPersist pulls one chunk of daily snapshots and projects each
