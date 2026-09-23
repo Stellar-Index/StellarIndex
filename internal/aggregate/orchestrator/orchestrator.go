@@ -1291,7 +1291,13 @@ func (o *Orchestrator) refreshPairWindow( //nolint:funlen // 61>60 after the R-2
 		// agreed regime shift survives while a lone wild print does not
 		// (see aggregate.FilterOutliersLocal for the 2026-08-28 drift
 		// artifact this replaces the whole-window filter for).
-		trades = aggregate.FilterOutliersLocal(trades, aggregate.LocalOutlierOptions{Sigma: o.cfg.OutlierSigmaThreshold})
+		// A trim that would leave less base volume than it removes
+		// withholds the window instead, compared at the same
+		// common scale computeNormalizedVWAP weights by.
+		trades = aggregate.FilterOutliersLocal(trades, aggregate.LocalOutlierOptions{
+			Sigma:               o.cfg.OutlierSigmaThreshold,
+			AmountScaleDecimals: amountScaleDecimalsFor,
+		})
 		if dropped := preOutlier - len(trades); dropped > 0 {
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier", pair.String()).Add(float64(dropped))
 		}

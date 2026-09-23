@@ -95,7 +95,7 @@ and `aggregate.VWAP`. Each step is independent and falls back to
 | --- | --- | --- | --- |
 | 1. Stablecoin expansion | OFF | `aggregate.enable_stablecoin_fiat_proxy` | Expand fiat-quote targets to direct + stablecoin backers; rewrite via `aggregate.ProxyPair` |
 | 2. Class filter | ON | `aggregate.disable_class_filter` (inverted — zero is filter ON) | Drop non-`ClassExchange` rows; aggregator / oracle / authority_sanity classes don't contribute to VWAP |
-| 3. Outlier filter | ON (`σ=4.0`) | `aggregate.outlier_sigma_threshold` | Drop a trade only when it sits > σ **robust scales (1.4826·MAD)** from **every** reference it is scored against — the window MEDIAN *and* its time-local neighbourhood (own/adjacent 1-minute buckets, or nearest prints for thin series). **Median+MAD, not mean+stdev** (`internal/aggregate/outliers_local.go`; `internal/config/config.go:1150` states this verbatim). Volume-blind: one price per trade. |
+| 3. Outlier filter | ON (`σ=4.0`) | `aggregate.outlier_sigma_threshold` | Drop a trade only when it sits > σ **robust scales (1.4826·MAD)** from **every** reference it is scored against — the window MEDIAN *and* its time-local neighbourhood (own/adjacent 1-minute buckets, or nearest prints for thin series). **Median+MAD, not mean+stdev** (`internal/aggregate/outliers_local.go`; `internal/config/config.go:1150` states this verbatim). The centre is per-print (one price per trade); a trim that would keep less base volume than it drops withholds the window instead. |
 
 Order matters: class filter runs before the outlier filter because
 the σ arithmetic should run over a pair-homogeneous, exchange-only

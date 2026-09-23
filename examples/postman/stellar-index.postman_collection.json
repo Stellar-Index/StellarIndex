@@ -8957,6 +8957,104 @@
               "_postman_previewlanguage": "json"
             },
             {
+              "name": "Single-bar mode only — the window had trades but the `outlier_sigma` filter kept none, including a contested window whose trim would have discarded most of its base volume. Relax the threshold or pass `outlier_sigma=0`.",
+              "originalRequest": {
+                "url": {
+                  "path": [
+                    "ohlc"
+                  ],
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "query": [
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "(Required) Canonical asset identifier for the base side of a pair.\nStrict canonical form only — `USDC` / `XLM` are rejected;\nthe full `<code>-<G…>` strkey is required, or `native` for\nXLM. The default example resolves to Centre's USDC issuance,\nwhich is the most-traded base on Stellar.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "base",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "(Required) Quote-side asset (REQUIRED on this endpoint). Either a\ncanonical asset identifier (`native`, `<code>-<issuer>`,\ncontract ID) or the `fiat:<ISO-4217>` form (e.g. `fiat:USD`,\n`fiat:EUR`). Unlike the `/price` family, this endpoint does\nNOT default the quote — omitting it returns 400.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "quote",
+                      "value": "<string>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Window start (inclusive), RFC 3339 UTC — e.g.\n`2026-06-01T00:00:00Z`. Windows are half-open `[from, to)`.\nWhen omitted the endpoint applies its own default lookback\nfrom `to` (documented per endpoint). Must be before `to`\nor the request 400s.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "from",
+                      "value": "<dateTime>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Window end (exclusive), RFC 3339 UTC. Defaults to now.\nWindows are half-open `[from, to)` — a trade exactly at\n`to` is excluded.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "to",
+                      "value": "<dateTime>"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Bar width for multi-bar series mode. Omit for the\nsingle-bar response over `[from, to)`. Invalid intervals\nreturn 400 `errors/invalid-interval`.\n\n**`1m`, `5m` and `30m` may be bounded to 90 days.** All\nthree are served from the minute aggregate (`5m` and `30m`\nby re-bucketing it), which is the one rung a deployment can\nput a retention window on (migration 0156). Where it is\nenabled, a window older than that returns no bars at these\nthree widths; `15m` and coarser hold the deployment's full\nhistory. It bounds what is MATERIALISED, not what happened\n— the raw trades are kept forever and remain reachable\nthrough `/v1/history`.\n (This can only be one of 1m,5m,15m,30m,1h,2h,4h,12h,1d,3d,1w,2w,1mo)",
+                        "type": "text/plain"
+                      },
+                      "key": "interval",
+                      "value": "4h"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Series-mode bar count (max 1000, default 100). Ignored in\nsingle-bar mode. Invalid values return 400\n`errors/limit-too-large`. A window holding more closed\nbuckets than this serves the newest `limit` of them, each\nflagged `truncated: true`.\n",
+                        "type": "text/plain"
+                      },
+                      "key": "limit",
+                      "value": "100"
+                    },
+                    {
+                      "disabled": false,
+                      "description": {
+                        "content": "Drop trades > N σ from window mean before computing the bar (single-bar mode only). Default 4σ. Pass 0 to disable.",
+                        "type": "text/plain"
+                      },
+                      "key": "outlier_sigma",
+                      "value": "4"
+                    }
+                  ],
+                  "variable": []
+                },
+                "header": [
+                  {
+                    "key": "Accept",
+                    "value": "application/problem+json"
+                  }
+                ],
+                "method": "GET",
+                "body": {}
+              },
+              "status": "Unprocessable Entity (WebDAV) (RFC 4918)",
+              "code": 422,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/problem+json"
+                }
+              ],
+              "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+              "cookie": [],
+              "_postman_previewlanguage": "json"
+            },
+            {
               "name": "Rate-limit quota exhausted. See `Retry-After` header.",
               "originalRequest": {
                 "url": {

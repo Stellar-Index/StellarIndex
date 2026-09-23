@@ -68,11 +68,16 @@ import (
 //     band alone, where it fails. Untrusted references are simply
 //     absent from the print's reference set.
 //
+// A burst that is the COUNT majority of the whole window moves the
+// window median to the burst level and can trim the honest prints.
+// Unless it also carries the window's base-volume majority, that trim
+// removes more volume than it keeps and the window is withheld
+// ([keepIfVolumeMajority]) rather than published at the burst level.
+//
 // Residual gap (documented, accepted): a burst is still self-validated
-// when it is the MAJORITY OF THE WHOLE WINDOW (the window median is
-// then the burst level — the whole-window filter fails identically,
-// and outlier_trim_fraction cannot see it either), when it sits within
-// the ~4 % anchor tolerance of the honest level (indistinguishable from
+// when it holds both the count AND the base-volume majority of the
+// whole window (outlier_trim_fraction cannot see it either), when it
+// sits within the ~4 % anchor tolerance of the honest level (indistinguishable from
 // a step by construction), or when it random-walks in ≤ 4 % steps
 // bucket-to-bucket (indistinguishable from a trending market). The
 // unregistered-venue class filter still removes token-farm spam from
@@ -112,6 +117,11 @@ type LocalOutlierOptions struct {
 	// that form the count-neighbourhood reference for a print whose
 	// own bucket is too thin to qualify.
 	Neighbours int
+	// AmountScaleDecimals resolves a trade source's smallest-unit scale
+	// so the survivors' base volume is compared at one scale
+	// ([keepIfVolumeMajority]). nil compares raw amounts, which is exact
+	// only for a single-scale window.
+	AmountScaleDecimals func(source string) int
 }
 
 func (o LocalOutlierOptions) withDefaults() LocalOutlierOptions {
@@ -134,7 +144,8 @@ func (o LocalOutlierOptions) withDefaults() LocalOutlierOptions {
 //
 // Edge cases match [FilterOutliers]: Sigma <= 0 is a no-op copy;
 // fewer than 3 usable prices returns the usable trades unchanged;
-// zero-base / zero-quote trades are dropped before the statistics.
+// zero-base / zero-quote trades are dropped before the statistics; a
+// trim that keeps less base volume than it drops returns empty.
 func FilterOutliersLocal(trades []canonical.Trade, opts LocalOutlierOptions) []canonical.Trade {
 	if opts.Sigma <= 0 || len(trades) < 3 {
 		out := make([]canonical.Trade, len(trades))
@@ -149,14 +160,14 @@ func FilterOutliersLocal(trades []canonical.Trade, opts LocalOutlierOptions) []c
 	if sigmaRat == nil {
 		return keepByIndex(trades, validIdx)
 	}
-	out := make([]canonical.Trade, 0, len(validIdx))
+	kept := make([]int, 0, len(validIdx))
 	for k, i := range validIdx {
 		if z[k] == nil || z[k].Cmp(sigmaRat) > 0 {
 			continue // outlier — disagrees with every reference
 		}
-		out = append(out, trades[i])
+		kept = append(kept, i)
 	}
-	return out
+	return keepIfVolumeMajority(trades, validIdx, kept, opts.AmountScaleDecimals)
 }
 
 // robustRef is one (centre, scale) reference a print is scored

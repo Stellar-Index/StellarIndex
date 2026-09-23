@@ -2391,6 +2391,15 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "422":
+          description: >-
+            Single-bar mode only — the window had trades but the
+            `outlier_sigma` filter kept none, including a contested
+            window whose trim would have discarded most of its base
+            volume. Relax the threshold or pass `outlier_sigma=0`.
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
         "429": { $ref: "#/components/responses/RateLimited" }
         "500": { $ref: "#/components/responses/InternalError" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }

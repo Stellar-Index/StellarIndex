@@ -60,6 +60,10 @@ import (
 //     still dropped. Dropping every non-majority price was itself a
 //     defect — it handed VWAP the majority price alone and erased
 //     honest price discovery from the served value.
+//   - A trim whose survivors carry less base volume than the prints it
+//     dropped returns an EMPTY slice ([keepIfVolumeMajority]): the
+//     window is contested between a count majority and a volume
+//     majority, and neither side is published.
 func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 	if sigma <= 0 || len(trades) < 3 {
 		out := make([]canonical.Trade, len(trades))
@@ -93,15 +97,51 @@ func FilterOutliers(trades []canonical.Trade, sigma float64) []canonical.Trade {
 	}
 	threshold := new(big.Rat).Mul(sigmaRat, scale)
 
-	out := make([]canonical.Trade, 0, len(validIdx))
+	kept := make([]int, 0, len(validIdx))
 	for k, p := range prices {
 		dev := symmetricDev(p, centre)
 		if dev == nil || dev.Cmp(threshold) > 0 {
 			continue // outlier — drop
 		}
-		out = append(out, trades[validIdx[k]])
+		kept = append(kept, validIdx[k])
 	}
-	return out
+	return keepIfVolumeMajority(trades, validIdx, kept, nil)
+}
+
+// keepIfVolumeMajority returns the kept trades, in order, unless they
+// carry less base volume than the usable trades the filter dropped — in
+// which case it returns an empty slice and the window is withheld.
+//
+// The robust centre is a per-print (count) median, so a count majority
+// of dust prints can put the honest block outside the band: the trim
+// then deletes most of the money traded and the dust becomes the whole
+// Σquote/Σbase. A volume-weighted centre only moves the lever to one
+// large print (ADR-0046 §5). Requiring the survivors to hold the volume
+// majority as well means setting the published price costs both.
+//
+// scaleOf lifts every trade to one smallest-unit scale before volumes
+// are compared ([NormalizeAmountScale]); nil compares raw BaseAmount,
+// which is exact for a single-scale window.
+func keepIfVolumeMajority(trades []canonical.Trade, validIdx, kept []int, scaleOf func(source string) int) []canonical.Trade {
+	if len(kept) == len(validIdx) {
+		return keepByIndex(trades, kept)
+	}
+	vol := trades
+	if scaleOf != nil {
+		vol = NormalizeAmountScale(trades, scaleOf)
+	}
+	total, keptVol := new(big.Int), new(big.Int)
+	for _, i := range validIdx {
+		total.Add(total, vol[i].BaseAmount.BigInt())
+	}
+	for _, i := range kept {
+		keptVol.Add(keptVol, vol[i].BaseAmount.BigInt())
+	}
+	// kept < dropped  ⇔  2·kept < total, exact.
+	if keptVol.Lsh(keptVol, 1).Cmp(total) < 0 {
+		return []canonical.Trade{}
+	}
+	return keepByIndex(trades, kept)
 }
 
 // keepByIndex returns the trades at the given indices, in order.

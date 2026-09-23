@@ -396,9 +396,15 @@ so an *agreed* regime shift survives while a lone wild print does not
 **Defends against:** Step 3, *before* the bucket lands, for prints that
 disagree with both the window and their own neighbourhood.
 
-**Known limit (not a hardening idea — a live property):** the filter is
-**volume-blind** — one price per trade — so a large legitimate print far
-from a tight cluster can be dropped. The alerting half is now two rules,
+**Known limit (not a hardening idea — a live property):** the robust
+centre is per-print — one price per trade — so a count majority can
+trim a volume majority. The filter refuses to publish such a trim: when
+the survivors carry less base volume than the dropped prints, the
+window is withheld (`keepIfVolumeMajority`, `internal/aggregate/outliers.go`),
+so a dust burst cannot outvote a large block and one large print cannot
+outvote the rest. Withheld windows surface as all-dropped `outlier`
+drops and empty windows; there is no dedicated contested-window metric.
+The alerting half is now two rules,
 `stellarindex_aggregator_outlier_storm` and
 `..._outlier_trim_fraction` (`configs/prometheus/rules.r1/aggregator.yml:61,115`).
 **Still not built:** automatic *source*-level exclusion on sustained
