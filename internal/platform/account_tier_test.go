@@ -118,12 +118,10 @@ func TestTierLadders(t *testing.T) {
 	}
 }
 
-// TestAccountEffectiveRateLimitPerMin pins GH-1074: a partner account
-// comped BELOW the tier ceiling must read its comped limit, not the
-// ceiling — the override is a floor that only ever RAISES the
-// effective limit above the tier default, so a low override (a
-// customer's actual paid-for limit) still reports the higher tier
-// ceiling if this regresses to "always show the ceiling".
+// TestAccountEffectiveRateLimitPerMin pins GH-1074: the account view
+// reports what auth enforces on a default-minted key (1000/min, raised
+// by the override floor), never the tier ceiling. A partner comped to
+// 5,000/min reads 5,000, not 100,000.
 func TestAccountEffectiveRateLimitPerMin(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -132,9 +130,10 @@ func TestAccountEffectiveRateLimitPerMin(t *testing.T) {
 		want     int
 	}{
 		{"free, no override", TierFree, 0, 1000},
-		{"partner, no override: ceiling", TierPartner, 0, 100_000},
-		{"partner, override below ceiling: still the ceiling (override only raises)", TierPartner, 5000, 100_000},
+		{"partner, no override: the default key's 1000, not the 100k ceiling", TierPartner, 0, 1000},
+		{"partner comped to 5000: the override", TierPartner, 5000, 5000},
 		{"free, override above tier default: raised to the override", TierFree, 50_000, 50_000},
+		{"override below the default key budget cannot lower it", TierFree, 500, 1000},
 	}
 	for _, c := range cases {
 		a := Account{Tier: c.tier, RateLimitPerMinOverride: c.override}
@@ -144,9 +143,9 @@ func TestAccountEffectiveRateLimitPerMin(t *testing.T) {
 	}
 }
 
-// TestAccountEffectiveMonthlyQuota pins GH-1074's quota half: the
-// override is a ceiling that only ever LOWERS the effective quota
-// below the tier default.
+// TestAccountEffectiveMonthlyQuota pins GH-1074's quota half: a
+// default-minted key stores the tier ceiling with no override and
+// inherits the override when one is set, above or below the ceiling.
 func TestAccountEffectiveMonthlyQuota(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -156,13 +155,33 @@ func TestAccountEffectiveMonthlyQuota(t *testing.T) {
 	}{
 		{"free, no override", TierFree, 0, 1_000_000},
 		{"partner, no override: ceiling", TierPartner, 0, 1_000_000_000},
-		{"partner, override below ceiling: lowered to the override", TierPartner, 200_000, 200_000},
-		{"free, override above tier default: stays at the ceiling (override only lowers)", TierFree, 5_000_000, 1_000_000},
+		{"partner, override below ceiling: the override", TierPartner, 200_000, 200_000},
+		{"free, override above tier default: the default key inherits it", TierFree, 5_000_000, 5_000_000},
 	}
 	for _, c := range cases {
 		a := Account{Tier: c.tier, MonthlyRequestQuotaOverride: c.override}
 		if got := a.EffectiveMonthlyQuota(); got != c.want {
 			t.Errorf("%s: EffectiveMonthlyQuota() = %d, want %d", c.name, got, c.want)
 		}
+	}
+}
+
+// TestAccountResolveKeyLimits pins the per-key cascade auth's Validate
+// delegates to: rate override is a floor, quota override inherits at 0
+// and caps anything above it.
+func TestAccountResolveKeyLimits(t *testing.T) {
+	a := Account{RateLimitPerMinOverride: 5000, MonthlyRequestQuotaOverride: 200_000}
+	for keyRate, want := range map[int]int{1000: 5000, 5000: 5000, 50_000: 50_000} {
+		if got := a.ResolveKeyRateLimitPerMin(keyRate); got != want {
+			t.Errorf("ResolveKeyRateLimitPerMin(%d) = %d, want %d", keyRate, got, want)
+		}
+	}
+	for keyQuota, want := range map[int64]int64{0: 200_000, 100_000: 100_000, 9_000_000: 200_000} {
+		if got := a.ResolveKeyMonthlyQuota(keyQuota); got != want {
+			t.Errorf("ResolveKeyMonthlyQuota(%d) = %d, want %d", keyQuota, got, want)
+		}
+	}
+	if got := (Account{}).ResolveKeyMonthlyQuota(0); got != 0 {
+		t.Errorf("no override, key 0: ResolveKeyMonthlyQuota = %d, want 0 (unmetered)", got)
 	}
 }

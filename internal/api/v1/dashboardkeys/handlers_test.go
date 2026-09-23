@@ -238,6 +238,60 @@ func TestHandleCreate_ClampsMonthlyQuota(t *testing.T) {
 	}
 }
 
+// TestDefaultMintedKey_MatchesAccountEffectiveLimits locks the
+// account-level "effective" limits served on /v1/account/me and the
+// staff views (GH-1074) to what auth enforces on a key minted here with
+// the request's limits unset: mint through the real handler, resolve
+// the persisted key through the same platform cascade auth's Validate
+// calls, and require both to equal the account view and the expected
+// value. A partner comped to 5,000/min must read 5,000, not the
+// 100,000 tier ceiling.
+func TestDefaultMintedKey_MatchesAccountEffectiveLimits(t *testing.T) {
+	cases := []struct {
+		name      string
+		tier      platform.Tier
+		rate      int
+		quota     int64
+		wantRate  int
+		wantQuota int64
+	}{
+		{"partner comped to 5000/min", platform.TierPartner, 5000, 200_000, 5000, 200_000},
+		{"partner, no overrides", platform.TierPartner, 0, 0, 1000, platform.TierPartner.MaxMonthlyQuota()},
+		{"free, no overrides", platform.TierFree, 0, 0, 1000, platform.TierFree.MaxMonthlyQuota()},
+		{"free raised above its tier", platform.TierFree, 50_000, 5_000_000, 50_000, 5_000_000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store, sc := newTestRig(t)
+			sc.Account.Tier = tc.tier
+			sc.Account.RateLimitPerMinOverride = tc.rate
+			sc.Account.MonthlyRequestQuotaOverride = tc.quota
+			req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{Name: "default-key"}, sc)
+			w := httptest.NewRecorder()
+			h.HandleCreate(w, req)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var key platform.APIKey
+			for _, k := range store.byID {
+				if k.AccountID == sc.Account.ID && k.Name == "default-key" {
+					key = k
+				}
+			}
+			enforcedRate := sc.Account.ResolveKeyRateLimitPerMin(key.RateLimitPerMin)
+			enforcedQuota := sc.Account.ResolveKeyMonthlyQuota(key.MonthlyQuota)
+			if enforcedRate != tc.wantRate || sc.Account.EffectiveRateLimitPerMin() != tc.wantRate {
+				t.Errorf("rate: enforced %d, account view %d, want %d",
+					enforcedRate, sc.Account.EffectiveRateLimitPerMin(), tc.wantRate)
+			}
+			if enforcedQuota != tc.wantQuota || sc.Account.EffectiveMonthlyQuota() != tc.wantQuota {
+				t.Errorf("quota: enforced %d, account view %d, want %d",
+					enforcedQuota, sc.Account.EffectiveMonthlyQuota(), tc.wantQuota)
+			}
+		})
+	}
+}
+
 func TestHandleCreate_RejectsMalformedExpiresAt(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{

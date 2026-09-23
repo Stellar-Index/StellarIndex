@@ -262,10 +262,8 @@ export type MeResponse = Omit<Schemas['Account'], 'tier'> & {
     slug?: string;
     tier?: string;
     status?: string;
-    // Effective (override-resolved) budgets, not the tier ceiling —
-    // GH-1074. account.go's AccountInfo folds
-    // platform.Account.RateLimitPerMinOverride /
-    // MonthlyRequestQuotaOverride in before serving these.
+    // What auth enforces on a default-minted key, account override
+    // included (platform.Account.EffectiveRateLimitPerMin); not the tier ceiling.
     rate_limit_per_min?: number;
     monthly_request_quota?: number;
   };

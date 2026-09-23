@@ -231,7 +231,7 @@ function HeadroomStrip({
       <StatCell>
         <Stat
           icon={<Gauge className="h-3.5 w-3.5" />}
-          label="Tier ceiling"
+          label="Plan ceiling"
           value={ceiling !== null ? `${fmtInt(ceiling)}` : '—'}
           sub={`${tierLabel(tier)} · req/min`}
         />

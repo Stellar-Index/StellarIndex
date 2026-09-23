@@ -16,9 +16,7 @@ vi.mock('@/api/account', async (importOriginal) => ({
 
 vi.mock('next/navigation', async () => {
   const actual =
-    await vi.importActual<typeof import('next/navigation')>(
-      'next/navigation',
-    );
+    await vi.importActual<typeof import('next/navigation')>('next/navigation');
   return {
     ...actual,
     useRouter: () => ({ ...actual.useRouter(), replace: vi.fn() }),
@@ -50,15 +48,12 @@ function renderDashboard(me: MeResponse) {
   );
 }
 
-// TestAccountMe_SessionEffectiveLimits (Go) pins the API side of
-// GH-1074; this pins the render side: the dashboard's "Rate limit"
-// stat must show the EFFECTIVE (override-resolved) limit the API now
-// serves on `account.rate_limit_per_min`, not the partner tier
-// ceiling (100,000) computed from `tierCeiling`. Pre-fix, MetricStrip
-// read only the tier and derived the ceiling client-side — a partner
-// comped to 5,000/min would have rendered "100,000".
-describe('AccountOverviewPage — GH-1074 effective rate limit', () => {
-  it('renders the effective limit from account.rate_limit_per_min, not the tier ceiling', async () => {
+// GH-1074, render side. A partner comped to 5,000/min is what the API
+// serves on `account.rate_limit_per_min` (platform.Account.EffectiveRateLimitPerMin
+// for override 5000); the 100,000 partner tier number may only appear
+// labelled "Plan ceiling", never as the account's limit.
+describe('AccountOverviewPage — GH-1074 enforced rate limit', () => {
+  it('renders the served limit and labels the tier number as the plan ceiling', async () => {
     renderDashboard({
       user: { id: 'u1', email: 'owner@acme.example' },
       account: {
@@ -70,8 +65,29 @@ describe('AccountOverviewPage — GH-1074 effective rate limit', () => {
       },
     } as MeResponse);
 
-    const value = await screen.findByText('5,000');
-    expect(value).toBeInTheDocument();
+    expect(await screen.findByText('5,000')).toBeInTheDocument();
+    expect(
+      screen.getByText('5,000 req/min default key limit'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('Plan ceiling: 100,000 req/min'),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('100,000')).not.toBeInTheDocument();
+    expect(screen.queryByText('100,000 req/min')).not.toBeInTheDocument();
+  });
+
+  it('never falls back to the tier ceiling when no limit is served', async () => {
+    renderDashboard({
+      user: { id: 'u1', email: 'owner@acme.example' },
+      account: {
+        id: 'acct-1',
+        slug: 'acme',
+        tier: 'partner',
+        status: 'active',
+      },
+    } as MeResponse);
+
+    expect(await screen.findByText('Custom limits')).toBeInTheDocument();
     expect(screen.queryByText('100,000')).not.toBeInTheDocument();
   });
 });

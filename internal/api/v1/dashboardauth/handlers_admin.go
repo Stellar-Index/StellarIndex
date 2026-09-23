@@ -31,15 +31,10 @@ type AdminAccountView struct {
 	// must never be dropped by omitempty.
 	RateLimitPerMinOverride     int   `json:"rate_limit_per_min_override"`
 	MonthlyRequestQuotaOverride int64 `json:"monthly_request_quota_override"`
-	// EffectiveRateLimitPerMin / EffectiveMonthlyQuota are the tier
-	// ceiling with the override folded in — what the account ACTUALLY
-	// gets, computed the same way the auth-time cascade does
-	// ([platform.Account.EffectiveRateLimitPerMin] /
-	// [platform.Account.EffectiveMonthlyQuota]). GH-1074: the cockpit
-	// fetched the two override numbers above and rendered neither, so
-	// staff had no way to see what a customer's limits actually were
-	// without reading the override raw and doing the tier-ceiling math
-	// by hand.
+	// EffectiveRateLimitPerMin / EffectiveMonthlyQuota are what auth
+	// enforces on a key minted at the dashboard defaults, override
+	// included ([platform.Account.EffectiveRateLimitPerMin]); limits are
+	// per key, so an explicitly budgeted key can differ.
 	EffectiveRateLimitPerMin int   `json:"effective_rate_limit_per_min"`
 	EffectiveMonthlyQuota    int64 `json:"effective_monthly_quota"`
 }

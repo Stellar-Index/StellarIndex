@@ -161,13 +161,9 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	//
 	// F-1226 (codex audit-2026-05-12) introduced the fallback leg;
 	// audit-2026-07 hardened it into a ceiling.
-	monthlyQuota := pgKey.MonthlyQuota
-	switch {
-	case monthlyQuota == 0:
-		monthlyQuota = acct.MonthlyRequestQuotaOverride
-	case acct.MonthlyRequestQuotaOverride > 0 && acct.MonthlyRequestQuotaOverride < monthlyQuota:
-		monthlyQuota = acct.MonthlyRequestQuotaOverride
-	}
+	// The cascade lives on platform.Account so the account views that
+	// report "your limit" resolve it exactly as enforced here.
+	monthlyQuota := acct.ResolveKeyMonthlyQuota(pgKey.MonthlyQuota)
 
 	// Account-level rate-limit override (platform-spec accounts.
 	// rate_limit_per_min_override, "when set, replaces the tier
@@ -185,10 +181,7 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 	// immediately for cache-miss lookups; cache hits inherit the
 	// resolved value on the next Postgres read after the cache TTL
 	// (same staleness window the monthly-quota override already has).
-	rateLimit := pgKey.RateLimitPerMin
-	if acct.RateLimitPerMinOverride > rateLimit {
-		rateLimit = acct.RateLimitPerMinOverride
-	}
+	rateLimit := acct.ResolveKeyRateLimitPerMin(pgKey.RateLimitPerMin)
 	sub := Subject{
 		Identifier:          AccountIdentifier(acct.Slug),
 		Tier:                pgTierToAuthTier(pgKey.Tier),
