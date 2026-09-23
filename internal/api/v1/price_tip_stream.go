@@ -80,9 +80,9 @@ const tipStreamDivergenceBudget = time.Second
 //
 // The warning is process-wide rather than per stream or per pair on
 // purpose: what stalls is the one shared verdict store, so keying the
-// limit any finer just reproduces the flood. The producer ceiling is 512
-// and a window may be as short as a second, so an unbounded warning is
-// up to ~30k lines a minute at precisely the moment an operator is
+// limit any finer just reproduces the flood. The producers' aggregate
+// rate budget is [defaultMaxTipTicksPerMinute], so an unbounded warning
+// is up to ~6k lines a minute at precisely the moment an operator is
 // trying to read the log. One line a minute is enough to see a stall
 // begin, persist and end, and each line carries the count it swallowed
 // so the volume stays visible instead of hidden.
@@ -265,12 +265,12 @@ func (s *Server) handlePriceTipStream(w http.ResponseWriter, r *http.Request) {
 // would reintroduce exactly the unbounded detached compute the bounds
 // exist to prevent, making them decorative.
 //
-// 503 + Retry-After, not 429, for BOTH refusals. The status code is part
+// 503 + Retry-After, not 429, for EVERY refusal. The status code is part
 // of this endpoint's published contract, and the per-caller refusal is
 // still honestly "come back shortly": the caller's own lingering
 // producers expire within [tipProducerLinger] without it doing anything,
 // and a viewer of an ALREADY-watched pair is served normally throughout.
-// The two refusals are told apart in the log and the detail rather than
+// The refusals are told apart in the log and the detail rather than
 // the status line — an operator needs to know whether ONE address is
 // enumerating the key space or the deployment has outgrown its ceiling.
 func (s *Server) writeTipProducerRefused(
@@ -278,7 +278,7 @@ func (s *Server) writeTipProducerRefused(
 	outcome tipProducerOutcome, asset, quote canonical.Asset, window int,
 ) {
 	detail := "too many distinct price-tip streams are active; retry shortly"
-	if outcome == tipProducerAtCallerQuota {
+	if outcome.callerRefusal() {
 		detail = "too many distinct price-tip streams are already active from your address; retry shortly"
 	}
 	s.logger.Warn("tip producer refused — refusing stream",

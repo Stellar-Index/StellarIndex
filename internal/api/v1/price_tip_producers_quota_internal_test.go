@@ -63,6 +63,9 @@ func TestTipProducerRegistry_OneCallerCannotMonopoliseTheGlobalPool(t *testing.T
 		case tipProducerAtGlobalCeiling:
 			t.Fatalf("window %d hit the GLOBAL ceiling at %d producers; one caller "+
 				"reached the shared pool's bound, which is the finding", w, reg.running())
+		case tipProducerAtCallerRateBudget, tipProducerAtGlobalRateBudget:
+			t.Fatalf("window %d hit the untuned rate budget (%s); this test sizes only "+
+				"the count quota and must not have enough windows/quota to reach it", w, outcome)
 		}
 	}
 
