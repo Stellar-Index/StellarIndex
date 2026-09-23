@@ -57,6 +57,10 @@ WorkingDirectory=/var/lib/stellarindex
 EnvironmentFile=/etc/default/stellarindex
 ExecStart=/usr/local/bin/stellarindex-indexer -config /etc/stellarindex.toml
 ExecStop=/bin/kill -TERM $MAINPID
+# Must be >= pipeline.IndexerStopTimeout (120s): the drain budgets main
+# runs in sequence after SIGTERM, plus margin. systemd's 90s default
+# SIGKILLs mid-drain. Pinned by TestIndexerStopTimeout_UnitsCoverDrainBudgets.
+TimeoutStopSec=120s
 
 LimitNOFILE=1048576
 Restart=on-failure

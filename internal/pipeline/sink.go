@@ -834,6 +834,27 @@ drainRemainder:
 // TestDrainBudget_FitsShutdownDeadline.
 const ShutdownDeadline = 30 * time.Second
 
+// Drain budgets of the indexer's other shutdown sinks. main wires each
+// into its sink and runs the drains AFTER the [ShutdownDeadline] window,
+// so the process's worst-case stop is their sum, not their max.
+const (
+	// CHLiveSinkStopBudget bounds clickhouse.LiveSink.Stop.
+	CHLiveSinkStopBudget = 30 * time.Second
+	// RawEventDrainBudget is the soroban-events sink's DrainGrace.
+	RawEventDrainBudget = 20 * time.Second
+	// DiscoveryDrainBudget bounds discovery.AsyncSink.Stop.
+	DiscoveryDrainBudget = 10 * time.Second
+	// stopTimeoutMargin covers the unbudgeted ctx-cancelled defers
+	// (taggers, stats flusher) and process exit.
+	stopTimeoutMargin = 30 * time.Second
+)
+
+// IndexerStopTimeout is the floor for the indexer unit's TimeoutStopSec:
+// below it systemd SIGKILLs mid-drain and the buffered rows are lost.
+// Pinned against both unit files by TestIndexerStopTimeout_UnitsCoverDrainBudgets.
+const IndexerStopTimeout = ShutdownDeadline + CHLiveSinkStopBudget +
+	RawEventDrainBudget + DiscoveryDrainBudget + stopTimeoutMargin
+
 // drainFinalPassBudget is the tail reserved for the FINAL best-effort
 // persist pass drainBufferedEvents makes after its deadline trips
 // (G15-08) and for the external retry buffer's finalDrain. Both run
