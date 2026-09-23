@@ -218,15 +218,32 @@ func runCap67Follow(ctx context.Context, chAddr string, window uint32, dryRun bo
 		// the resume point, so this never resolves" from "a hole or a
 		// lagging ingest, so it will".
 		if n := idle + 1; n%cap67IdleLogEvery == 0 {
-			minPresent, merr := clickhouse.LakeMinLedger(ctx, chAddr)
-			if merr != nil {
-				return false, merr
-			}
-			fmt.Fprintf(os.Stderr, "ch-cap67-movements: idle for %d ticks — idle: start=%d contiguous tip=%d min_present=%d (next tick in %s)\n",
-				n, res.start, res.last, minPresent, followTick(interval, n))
+			cap67IdleLogTick(ctx, chAddr, res, n, interval, clickhouse.LakeMinLedger)
 		}
 		return false, nil
 	})
+}
+
+// cap67IdleLogTick emits the periodic idle-tick diagnostic line named in
+// runCap67Follow's doc comment. The min-present read is diagnostic only —
+// nothing derives from it — so its failure is logged inline (as
+// "<unavailable: …>") rather than returned: this function's caller reports
+// every tick as idle-with-no-error regardless, because a returned error
+// would surface as a catchUp error to followLoop, which retries it on the
+// SAME idle count forever (an error is "neither work nor idleness"), so a
+// persistently-failing diagnostic read would hammer LakeMinLedger every
+// tick instead of once per cap67IdleLogEvery and this line would never
+// advance past it. Extracted from runCap67Follow, like followLoop itself,
+// so the failure path is unit-testable without a live ClickHouse.
+func cap67IdleLogTick(ctx context.Context, chAddr string, res cap67CatchUp, n int, interval time.Duration, minLedger func(context.Context, string) (uint32, error)) {
+	minPresent, merr := minLedger(ctx, chAddr)
+	if merr != nil {
+		fmt.Fprintf(os.Stderr, "ch-cap67-movements: idle for %d ticks — idle: start=%d contiguous tip=%d min_present=<unavailable: %v> (next tick in %s)\n",
+			n, res.start, res.last, merr, followTick(interval, n))
+		return
+	}
+	fmt.Fprintf(os.Stderr, "ch-cap67-movements: idle for %d ticks — idle: start=%d contiguous tip=%d min_present=%d (next tick in %s)\n",
+		n, res.start, res.last, minPresent, followTick(interval, n))
 }
 
 // followLoop runs catchUp immediately and then again after each sleep until

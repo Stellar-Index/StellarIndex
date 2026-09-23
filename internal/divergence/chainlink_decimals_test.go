@@ -203,6 +203,61 @@ func TestChainlink_Decimals_MismatchRefusedAndCounted(t *testing.T) {
 	}
 }
 
+// TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress
+// — two canonical pairs mapped to the SAME feed address, one whose
+// configured decimals disagrees with the chain and one that agrees
+// (asserts none): the verification state is keyed by address only, so
+// it must never let the first pair's refusal leak into the second
+// pair's verdict on a cache-hit call within the same retry window.
+func TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress(t *testing.T) {
+	t.Parallel()
+	const address = "0x00000000000000000000000000000000000000e7"
+	answer := big.NewInt(1_500_000_000)
+	f := newChainlinkFakeRPC(t, roundDataHex(answer, time.Date(2026, 9, 18, 11, 0, 0, 0, time.UTC)), 8, http.StatusOK)
+
+	// Distinct codes from every other decimals test in this file — the
+	// mismatch counter is a global Prometheus metric keyed by pair
+	// string, so reusing a pair here would race with another test's
+	// before/after counter snapshot.
+	mismatchPair := mustPair(t, "crypto:SOL", "fiat:USD")
+	okPair := mustPair(t, "crypto:AVAX", "fiat:USD")
+
+	var logBuf bytes.Buffer
+	clock := &fakeClock{now: time.Date(2026, 9, 18, 12, 0, 0, 0, time.UTC)}
+	ref := NewChainlinkReference(ChainlinkOptions{
+		RPCURL: f.srv.URL,
+		Logger: slog.New(slog.NewTextHandler(&logBuf, nil)),
+		FeedMap: map[string]ChainlinkFeed{
+			// Configured 6 vs on-chain 8: refused.
+			mismatchPair.String(): {Address: address, Decimals: 6, MaxAge: 76 * time.Hour},
+			// No configured value: adopts on-chain 8, must NOT be
+			// refused just because it shares an address with the
+			// mismatching pair above.
+			okPair.String(): {Address: address, Decimals: 0, MaxAge: 76 * time.Hour},
+		},
+	})
+	ref.now = clock.Now
+
+	// First call establishes the shared per-address state as a
+	// mismatch (and caches it for chainlinkDecimalsRetryInterval).
+	if _, err := ref.LookupPrice(context.Background(), mismatchPair, ref.now()); !errors.Is(err, ErrChainlinkDecimalsMismatch) {
+		t.Fatalf("mismatchPair: err = %v, want ErrChainlinkDecimalsMismatch", err)
+	}
+
+	// Second call, different pair, same address, well within the
+	// retry window (cache hit path in resolveDecimals): must adopt
+	// the on-chain 8 and succeed, not inherit the other pair's
+	// mismatch verdict.
+	got, err := ref.LookupPrice(context.Background(), okPair, ref.now())
+	if err != nil {
+		t.Fatalf("okPair: LookupPrice = %v, want success — its own config (none asserted) agrees with on-chain 8, "+
+			"a sibling pair's mismatch on the same feed address must not bleed into this verdict", err)
+	}
+	if want := 15.0; abs(got-want) > 1e-9 {
+		t.Errorf("okPair: price = %.12g, want %.12g (scaled by on-chain 8)", got, want)
+	}
+}
+
 // TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry — decimals()
 // fails (500) but latestRoundData() works: the configured value is kept
 // with a WARN, the fail-open counter advances so the failure is

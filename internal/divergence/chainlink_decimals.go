@@ -63,11 +63,17 @@ const (
 var ErrChainlinkDecimalsMismatch = errors.New("divergence: chainlink configured decimals disagree with on-chain decimals()")
 
 // chainlinkDecimalsState is the per-feed verification memory, keyed by
-// lowercase feed address in ChainlinkReference.decimals.
+// lowercase feed address in ChainlinkReference.decimals. onChain is a
+// property of the ADDRESS, so it is safe to share across every
+// canonical pair mapped to that address. Whether it agrees with a
+// caller's configured decimals is NOT a property of the address — two
+// pairs can point at the same feed with different (or absent)
+// configured values — so that verdict is never cached here; it is
+// recomputed per call in decimalsVerdict against the caller's own
+// spec.Decimals.
 type chainlinkDecimalsState struct {
 	onChain   int       // last successfully read decimals(); valid when hasChain
 	hasChain  bool      // at least one decimals() read has succeeded
-	mismatch  bool      // last successful read disagreed with the configured value
 	nextCheck time.Time // do not re-read decimals() before this instant
 	lastErr   error     // most recent decimals() failure, for the refusal message
 }
@@ -120,8 +126,7 @@ func (r *ChainlinkReference) resolveDecimals(ctx context.Context, pair canonical
 	st.onChain = onChain
 	st.hasChain = true
 	st.lastErr = nil
-	st.mismatch = spec.Decimals != 0 && spec.Decimals != onChain
-	if st.mismatch {
+	if spec.Decimals != 0 && spec.Decimals != onChain {
 		st.nextCheck = now.Add(chainlinkDecimalsRetryInterval)
 		r.logger.Error("chainlink feed decimals mismatch — refusing readings until config and chain agree",
 			"source", ChainlinkSourceName,
@@ -143,10 +148,15 @@ func (r *ChainlinkReference) resolveDecimals(ctx context.Context, pair canonical
 }
 
 // decimalsVerdict turns the per-feed state into a scale or a refusal.
-// Caller holds r.decMu.
+// Caller holds r.decMu. The mismatch check is against THIS call's own
+// spec.Decimals, never a value cached on st: st is shared by every
+// canonical pair mapped to the same feed address, so a mismatch found
+// for one pair's configured decimals must never be served — from the
+// resolveDecimals fast-path cache hit — to a different pair whose
+// configured value agrees (or asserts none).
 func (r *ChainlinkReference) decimalsVerdict(pair canonical.Pair, spec chainlinkFeedSpec, st *chainlinkDecimalsState) (int, error) {
 	switch {
-	case st.mismatch:
+	case st.hasChain && spec.Decimals != 0 && spec.Decimals != st.onChain:
 		obs.ChainlinkFeedDecimalsMismatchTotal.WithLabelValues("divergence", pair.String()).Inc()
 		return 0, fmt.Errorf("%w: %w: %s configured decimals=%d, on-chain decimals()=%d",
 			ErrPriceUnavailable, ErrChainlinkDecimalsMismatch, pair.String(), spec.Decimals, st.onChain)
