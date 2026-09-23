@@ -408,6 +408,10 @@ export interface AdminAccountView {
   suspended_reason?: string;
   rate_limit_per_min_override?: number;
   monthly_request_quota_override?: number;
+  // Effective (override-resolved) budgets — what the account ACTUALLY
+  // gets, not the raw override or the tier ceiling (GH-1074).
+  effective_rate_limit_per_min?: number;
+  effective_monthly_quota?: number;
 }
 export interface AdminUserView {
   id: string;

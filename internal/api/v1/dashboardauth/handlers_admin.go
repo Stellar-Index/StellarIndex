@@ -31,6 +31,17 @@ type AdminAccountView struct {
 	// must never be dropped by omitempty.
 	RateLimitPerMinOverride     int   `json:"rate_limit_per_min_override"`
 	MonthlyRequestQuotaOverride int64 `json:"monthly_request_quota_override"`
+	// EffectiveRateLimitPerMin / EffectiveMonthlyQuota are the tier
+	// ceiling with the override folded in — what the account ACTUALLY
+	// gets, computed the same way the auth-time cascade does
+	// ([platform.Account.EffectiveRateLimitPerMin] /
+	// [platform.Account.EffectiveMonthlyQuota]). GH-1074: the cockpit
+	// fetched the two override numbers above and rendered neither, so
+	// staff had no way to see what a customer's limits actually were
+	// without reading the override raw and doing the tier-ceiling math
+	// by hand.
+	EffectiveRateLimitPerMin int   `json:"effective_rate_limit_per_min"`
+	EffectiveMonthlyQuota    int64 `json:"effective_monthly_quota"`
 }
 
 // AdminUserView is one user under the looked-up account.
@@ -242,6 +253,8 @@ func adminAccountView(a platform.Account) AdminAccountView {
 		SuspendedReason:             a.SuspendedReason,
 		RateLimitPerMinOverride:     a.RateLimitPerMinOverride,
 		MonthlyRequestQuotaOverride: a.MonthlyRequestQuotaOverride,
+		EffectiveRateLimitPerMin:    a.EffectiveRateLimitPerMin(),
+		EffectiveMonthlyQuota:       a.EffectiveMonthlyQuota(),
 	}
 	if !a.CreatedAt.IsZero() {
 		v.CreatedAt = a.CreatedAt.UTC().Format(time.RFC3339)
