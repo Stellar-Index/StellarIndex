@@ -120,7 +120,7 @@ func (s *Server) handlePriceAt(w http.ResponseWriter, r *http.Request) {
 		// and the substance/scam gate refused to publish it — the
 		// distinct 404 type so integrators can branch, same contract
 		// as /v1/price and /v1/price/changes (see ErrPriceWithheld).
-		writePriceWithheldProblem(w, r, asset, quote)
+		writePriceWithheldProblem(w, r, asset, quote, PriceWithheldUnattributed)
 		return
 	}
 	// The 404 below carries the same ambiguity the series surfaces have

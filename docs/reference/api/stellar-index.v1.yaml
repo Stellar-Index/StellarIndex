@@ -1196,10 +1196,13 @@ paths:
         for pennies, so an aggregated price claim for a substanceless
         market would be an attacker-controlled number. Integrators can
         branch on the problem `type`: `price-not-found` means "pair
-        never observed", `price-withheld` means "pair observed, too
-        thin to aggregate — read `/v1/observations`, `/v1/ohlc` or
-        `/v1/history` (which still serve the raw market) and apply
-        your own judgement". The same gate protects `/v1/price/tip`,
+        never observed", `price-withheld` means "pair observed, price
+        not published". The problem's title and detail name the gate
+        that fired: only a too-thin market points you at
+        `/v1/observations`, `/v1/ohlc` or `/v1/history` (which still
+        serve the raw market) to apply your own judgement; a
+        directory-flagged issuer's market is withheld on every price
+        surface and its trades are not a price signal. The same gate protects `/v1/price/tip`,
         `/v1/price/batch` (withheld rows are omitted, like misses),
         the SEP-40 oracle endpoints, and the `price_usd` enrichment on
         asset surfaces.

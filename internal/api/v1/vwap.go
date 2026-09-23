@@ -110,7 +110,7 @@ func (s *Server) handleVWAP(w http.ResponseWriter, r *http.Request) {
 	// promise /v1/ohlc stays visible. Gating there would make our own
 	// error message's escape-hatch advice a lie.
 	if scamWithheld(r.Context(), s.scam, base, quote, "vwap") {
-		writePriceWithheldProblem(w, r, base, quote)
+		writePriceWithheldProblem(w, r, base, quote, PriceWithheldScamIssuer)
 		return
 	}
 

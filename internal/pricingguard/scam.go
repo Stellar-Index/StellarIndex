@@ -207,7 +207,48 @@ func PriceWithheld(
 	base, quote canonical.Asset,
 	surface string,
 ) bool {
-	return !substance.Allowed(ctx, base, quote, surface) || scam.WithheldPair(ctx, base, quote, surface)
+	return PriceWithholding(ctx, substance, scam, base, quote, surface) != NotWithheld
+}
+
+// Withholding names which gate withheld a pair's price, so a surface
+// can tell its reader the true cause. The zero value is [NotWithheld].
+type Withholding string
+
+const (
+	// NotWithheld: neither gate refused the pair.
+	NotWithheld Withholding = ""
+	// WithheldThinMarket: the substance gate refused — trailing market
+	// activity is below the serve floor.
+	WithheldThinMarket Withholding = "thin_market"
+	// WithheldFlaggedIssuer: either leg's issuer is directory-scam-flagged.
+	WithheldFlaggedIssuer Withholding = "flagged_issuer"
+)
+
+// PriceWithholding is [PriceWithheld] reporting WHICH gate fired. The
+// scam half is asked even when the substance half has already refused:
+// a flagged issuer's market is usually thin as well, and calling it
+// merely thin tells the reader to go and price it themselves.
+func PriceWithholding(
+	ctx context.Context,
+	substance *SubstanceGate,
+	scam *ScamGate,
+	base, quote canonical.Asset,
+	surface string,
+) Withholding {
+	return WithholdingFor(substance.Allowed(ctx, base, quote, surface), scam.WithheldPair(ctx, base, quote, surface))
+}
+
+// WithholdingFor folds the two gates' verdicts into one; a flagged issuer
+// takes precedence. Callers holding their own gate seams fold through here.
+func WithholdingFor(substanceAllowed, scamFlagged bool) Withholding {
+	switch {
+	case scamFlagged:
+		return WithheldFlaggedIssuer
+	case !substanceAllowed:
+		return WithheldThinMarket
+	default:
+		return NotWithheld
+	}
 }
 
 // WithheldPair reports whether the aggregated price for the pair

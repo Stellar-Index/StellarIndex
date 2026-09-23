@@ -76,9 +76,10 @@ have to defend. For those, use an execution venue's own quote.
 - **A price we are withholding.** If a price is withheld — a
   scam-flagged issuer, a failed decimals check — it stays withheld in
   every currency. The conversion is not a way around it. You will get
-  `errors/price-withheld`, which tells you the data exists on the raw
-  surfaces (`/v1/observations`, `/v1/ohlc`, `/v1/history`) even though
-  we decline to publish an aggregate.
+  `errors/price-withheld`, whose title and detail name the gate that
+  fired. Only a too-thin market points you at the raw surfaces
+  (`/v1/observations`, `/v1/ohlc`, `/v1/history`) to judge it
+  yourself; a flagged issuer's trades are not a price signal.
 - **An invented rate.** A currency with no FX rate returns a plain
   404 rather than a guess.
 - **A price for an asset we cannot value in USD.** The USD leg is the

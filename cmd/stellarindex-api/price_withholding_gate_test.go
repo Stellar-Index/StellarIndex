@@ -177,7 +177,7 @@ func TestPriceWithheldChokepointHonoursBothGates(t *testing.T) {
 		t.Fatalf("build fiat:USD: %v", err)
 	}
 	// Nil gates: allow (disabled guard keeps prior behaviour).
-	if priceWithheld(context.Background(), nil, nil, canonical.NativeAsset(), usd, "price_read") {
+	if priceWithheld(context.Background(), nil, nil, canonical.NativeAsset(), usd, "price_read") != pricingguard.NotWithheld {
 		t.Error("nil gates must allow — a disabled [pricing_guard] must not withhold every price")
 	}
 }
@@ -346,7 +346,7 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 	dir := &flaggingScamDirectory{flagged: map[string]bool{issuer: true}}
 	gate := pricingguard.NewScamGate(dir, pricingguard.ScamGateOptions{})
 
-	if !priceWithheld(ctx, nil, gate, sac, usd, "price_read") {
+	if priceWithheld(ctx, nil, gate, sac, usd, "price_read") != pricingguard.WithheldFlaggedIssuer {
 		t.Error("the SAC spelling of a flagged classic issuance must be withheld on " +
 			"/v1/price — the wrapper is the same asset, so the contract id must not " +
 			"be a second, ungated way to ask for the price")
@@ -356,14 +356,14 @@ func TestPriceWithheldChokepointResolvesSACSpelling(t *testing.T) {
 			"the resolution, not the status, is what is being pinned", dir.asked, issuer)
 	}
 	// The classic spelling is unchanged.
-	if !priceWithheld(ctx, nil, gate, classic, usd, "price_read") {
+	if priceWithheld(ctx, nil, gate, classic, usd, "price_read") != pricingguard.WithheldFlaggedIssuer {
 		t.Error("the classic spelling must still be withheld")
 	}
 
 	// Blast radius: an unflagged wrapped asset keeps serving.
 	cleanDir := &flaggingScamDirectory{flagged: map[string]bool{}}
 	cleanGate := pricingguard.NewScamGate(cleanDir, pricingguard.ScamGateOptions{})
-	if priceWithheld(ctx, nil, cleanGate, sac, usd, "price_read") {
+	if priceWithheld(ctx, nil, cleanGate, sac, usd, "price_read") != pricingguard.NotWithheld {
 		t.Error("a wrapped asset the directory has not flagged must keep serving")
 	}
 }
@@ -646,9 +646,10 @@ func (sc *v1Scan) covered(fn *v1Func, before token.Pos, seen map[*v1Func]bool) (
 }
 
 // consultBefore finds a withholding consultation positioned before
-// `before`. The package spells the decision two ways: scamWithheld()
-// (the handler chokepoint) and the ErrPriceWithheld verdict the store
-// readers propagate. A hand-rolled s.scam.Withheld() is neither, and the
+// `before`. The package spells the decision three ways: scamWithheld()
+// (the handler chokepoint), withheldBy() (its fold with the substance
+// gate, which calls scamWithheld) and the ErrPriceWithheld verdict the
+// store readers propagate. A hand-rolled s.scam.Withheld() is none, and the
 // handler package's own TestScamGateIsAskedThePairQuestion fails on it.
 func (sc *v1Scan) consultBefore(fn *v1Func, before token.Pos) (token.Pos, bool) {
 	found := token.NoPos
@@ -657,7 +658,7 @@ func (sc *v1Scan) consultBefore(fn *v1Func, before token.Pos) (token.Pos, bool) 
 		if !ok || id.Pos() >= before {
 			return true
 		}
-		if id.Name != "scamWithheld" && id.Name != "ErrPriceWithheld" {
+		if id.Name != "scamWithheld" && id.Name != "withheldBy" && id.Name != "ErrPriceWithheld" {
 			return true
 		}
 		if found == token.NoPos || id.Pos() < found {
