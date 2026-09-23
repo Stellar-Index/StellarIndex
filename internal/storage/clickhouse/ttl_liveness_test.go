@@ -183,3 +183,23 @@ func TestTTLMissingTableErrorNamesTheArtifact(t *testing.T) {
 		t.Errorf("missing-table error does not name the table: %q", msg)
 	}
 }
+
+// TestTTLVerdictAt pins the one liveness rule every TTL reader shares: live
+// through live_until inclusive, archived after, and a zero never archives.
+func TestTTLVerdictAt(t *testing.T) {
+	cases := []struct {
+		liveUntil, asOf uint32
+		want            TTLLiveness
+	}{
+		{0, 64_000_000, TTLUnknown},
+		{54_400_000, 64_277_149, TTLArchived},
+		{64_277_148, 64_277_149, TTLArchived},
+		{64_277_149, 64_277_149, TTLLive},
+		{70_000_000, 64_277_149, TTLLive},
+	}
+	for _, tc := range cases {
+		if got := TTLVerdictAt(tc.liveUntil, tc.asOf); got != tc.want {
+			t.Errorf("TTLVerdictAt(%d, %d) = %d, want %d", tc.liveUntil, tc.asOf, got, tc.want)
+		}
+	}
+}

@@ -267,7 +267,7 @@ func resolveSACArchivals(ctx context.Context, conn driver.Conn, lastWrite map[st
 	archivedAt := make(map[string]uint32)
 	ledgers := make([]uint32, 0)
 	for k, lu := range liveUntil {
-		if ttlVerdict(lu, asOfLedger) != TTLArchived || lu < lastWrite[k] {
+		if TTLVerdictAt(lu, asOfLedger) != TTLArchived || lu < lastWrite[k] {
 			continue
 		}
 		archivedAt[k] = lu + 1 // lu < asOfLedger, so no overflow

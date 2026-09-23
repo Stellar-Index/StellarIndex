@@ -138,14 +138,16 @@ func ClassifyTTLLiveness(ctx context.Context, conn driver.Conn, keyXDRs []string
 	}
 	out := make(map[string]TTLLiveness, len(keyXDRs))
 	for _, k := range keyXDRs {
-		out[k] = ttlVerdict(liveUntil[k], asOfLedger)
+		out[k] = TTLVerdictAt(liveUntil[k], asOfLedger)
 	}
 	return out, nil
 }
 
-// ttlVerdict classifies one resolved liveUntilLedgerSeq against asOfLedger. A
-// zero (absent, or a literal stored 0) proves nothing: fail-open says UNKNOWN.
-func ttlVerdict(liveUntil, asOfLedger uint32) TTLLiveness {
+// TTLVerdictAt is the one liveness rule every TTL reader shares: an entry is
+// live through its liveUntilLedgerSeq inclusive and archived once asOfLedger
+// passes it. A zero live_until (absent, or a literal stored 0) proves
+// nothing: fail-open says UNKNOWN, never a guessed archival.
+func TTLVerdictAt(liveUntil, asOfLedger uint32) TTLLiveness {
 	switch {
 	case liveUntil == 0:
 		return TTLUnknown
@@ -172,8 +174,12 @@ func resolveTTLLiveUntil(ctx context.Context, conn driver.Conn, keyXDRs []string
 		if end > len(keyXDRs) {
 			end = len(keyXDRs)
 		}
-		if err := resolveTTLLiveUntilBatch(ctx, conn, keyXDRs[start:end], out); err != nil {
-			return nil, err
+		batch, err := ttlLiveUntilBatch(ctx, conn, keyXDRs[start:end])
+		if err != nil {
+			return nil, fmt.Errorf("clickhouse: ClassifyTTLLiveness: %w", err)
+		}
+		for k, lu := range batch {
+			out[k] = lu
 		}
 	}
 	return out, nil
@@ -218,8 +224,10 @@ func ttlLivenessBatchQuery(placeholders []string) string {
 	)
 }
 
-// resolveTTLLiveUntilBatch resolves one bounded chunk of keys into out.
-func resolveTTLLiveUntilBatch(ctx context.Context, conn driver.Conn, keyXDRs []string, out map[string]uint32) error {
+// ttlLiveUntilBatch returns the newest non-zero live_until held in
+// stellar.ttl_live_until for each key of one bounded chunk. A key with no
+// row, an undecodable key, or a stored 0 is absent from the result.
+func ttlLiveUntilBatch(ctx context.Context, conn driver.Conn, keyXDRs []string) (map[string]uint32, error) {
 	// hash -> the key(s) it governs. Distinct keys cannot collide under
 	// sha256, but the same key may legitimately appear twice in the input.
 	byHash := make(map[string][]string, len(keyXDRs))
@@ -238,13 +246,14 @@ func resolveTTLLiveUntilBatch(ctx context.Context, conn driver.Conn, keyXDRs []s
 		}
 		byHash[h] = append(byHash[h], k)
 	}
+	out := make(map[string]uint32, len(keyXDRs))
 	if len(placeholders) == 0 {
-		return nil
+		return out, nil
 	}
 
 	rows, err := conn.Query(ctx, ttlLivenessBatchQuery(placeholders), args...)
 	if err != nil {
-		return fmt.Errorf("clickhouse: ClassifyTTLLiveness: %w", err)
+		return nil, err
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -254,7 +263,7 @@ func resolveTTLLiveUntilBatch(ctx context.Context, conn driver.Conn, keyXDRs []s
 			liveUntil uint32
 		)
 		if err := rows.Scan(&keyHash, &liveUntil); err != nil {
-			return fmt.Errorf("clickhouse: ClassifyTTLLiveness scan: %w", err)
+			return nil, fmt.Errorf("scan: %w", err)
 		}
 		// The MV's length guards mean a malformed shape is never inserted,
 		// so 0 cannot arise from misparsing — but a literal stored 0 still
@@ -267,7 +276,7 @@ func resolveTTLLiveUntilBatch(ctx context.Context, conn driver.Conn, keyXDRs []s
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("clickhouse: ClassifyTTLLiveness stream: %w", err)
+		return nil, fmt.Errorf("stream: %w", err)
 	}
-	return nil
+	return out, nil
 }
