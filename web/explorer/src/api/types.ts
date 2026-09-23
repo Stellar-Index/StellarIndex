@@ -21529,7 +21529,9 @@ export interface operations {
                      *             "usd_value": "838665433.46"
                      *           }
                      *         ],
-                     *         "as_of_ledger": 63340102
+                     *         "as_of_ledger": 63340102,
+                     *         "lower_bound": true,
+                     *         "coverage_note": "Ranked on classic holdings only: the account entry's native XLM, plus, on the usd basis, trustline balances of USD-priced assets. Claimable balances, liquidity-pool shares and Soroban contract balances (including SAC balances) are not counted."
                      *       },
                      *       "as_of": "2026-07-03T22:39:22.213002912Z",
                      *       "flags": {
@@ -21564,6 +21566,10 @@ export interface operations {
                              * @description Lake watermark this current-state ranking is fresh to (ADR-0041) — the highest captured ledger at serve time. Omitted when no watermark reader is wired. Pairs with flags.stale.
                              */
                             as_of_ledger?: number;
+                            /** @description Always true: each value counts only the holding domains coverage_note names, so it can under-state an account, never over-state it. */
+                            lower_bound?: boolean;
+                            /** @description The holding domains the ranking counts and the ones it excludes (claimable balances, liquidity-pool shares, Soroban contract and SAC balances). */
+                            coverage_note?: string;
                         };
                     };
                 };
@@ -22072,6 +22078,10 @@ export interface operations {
                      *         "seq_num": "144373126631784461",
                      *         "num_subentries": 6,
                      *         "flags": 2,
+                     *         "num_sponsoring": 0,
+                     *         "num_sponsored": 0,
+                     *         "buying_liabilities": "0",
+                     *         "selling_liabilities": "0",
                      *         "home_domain": "circle.com",
                      *         "thresholds": {
                      *           "master": 0,
@@ -22092,9 +22102,12 @@ export interface operations {
                      *         "trustlines": [
                      *           {
                      *             "asset": "USDCAllow-GDIEKKIQWMIZ4LD3RP3ABPN7X5KEAEWYMR634BRHB7EULIMEVREWLF3G",
+                     *             "kind": "asset",
                      *             "balance": "77129744523269078",
                      *             "limit": "9223372036854775807",
-                     *             "flags": 1
+                     *             "flags": 1,
+                     *             "buying_liabilities": "9146242292331506729",
+                     *             "selling_liabilities": "0"
                      *           }
                      *         ],
                      *         "offers": [
@@ -22108,7 +22121,8 @@ export interface operations {
                      *           }
                      *         ],
                      *         "last_modified_ledger": 63314771,
-                     *         "as_of_ledger": 63340102
+                     *         "as_of_ledger": 63340102,
+                     *         "coverage_note": "Classic holdings only: native XLM, trustlines (liquidity-pool shares carry kind \"pool_share\") and offers. Claimable balances and Soroban contract balances (including SAC balances) are not included."
                      *       },
                      *       "as_of": "2026-07-03T22:39:25.722776013Z",
                      *       "flags": {
@@ -22127,8 +22141,18 @@ export interface operations {
                             /** @description Native XLM balance in stroops. */
                             balance?: string;
                             seq_num?: string;
+                            /** @description Present (including 0) whenever exists is true. */
                             num_subentries?: number;
+                            /** @description Present (including 0) whenever exists is true. */
                             flags?: number;
+                            /** @description Reserves this account pays for other accounts' entries (AccountEntry ext.v2). */
+                            num_sponsoring?: number;
+                            /** @description This account's reserves paid by a sponsor (AccountEntry ext.v2). Minimum balance = (2 + num_subentries + num_sponsoring - num_sponsored) × base_reserve; spendable = balance - minimum balance - selling_liabilities. */
+                            num_sponsored?: number;
+                            /** @description Native XLM buying liabilities from open offers, in stroops. */
+                            buying_liabilities?: string;
+                            /** @description Native XLM locked by open offers, in stroops. */
+                            selling_liabilities?: string;
                             home_domain?: string;
                             thresholds?: {
                                 master?: number;
@@ -22142,9 +22166,18 @@ export interface operations {
                             }[];
                             trustlines?: {
                                 asset?: string;
+                                /**
+                                 * @description pool_share = a liquidity-pool share (asset pool:<hex>), a claim on the pool's two reserves rather than a balance of one asset.
+                                 * @enum {string}
+                                 */
+                                kind?: "asset" | "pool_share";
                                 balance?: string;
                                 limit?: string;
                                 flags?: number;
+                                /** @description Buying liabilities from open offers, in stroops. */
+                                buying_liabilities?: string;
+                                /** @description Balance locked by open offers, in stroops. */
+                                selling_liabilities?: string;
                             }[];
                             offers?: {
                                 /** Format: int64 */
@@ -22163,6 +22196,8 @@ export interface operations {
                              */
                             as_of_ledger?: number;
                             directory?: components["schemas"]["DirectoryInfo"];
+                            /** @description The holding domains this view serves. Claimable balances and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false. */
+                            coverage_note?: string;
                         };
                     };
                 };

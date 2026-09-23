@@ -388,6 +388,17 @@ against.
 
 ### Fixed
 
+- **`/v1/accounts/{g}` served no reserve inputs and mislabelled pool
+  shares (#1064):** the account view never decoded `AccountEntry`
+  ext.v1/ext.v2, so neither minimum balance nor spendable XLM was
+  derivable from its fields. It now serves `num_sponsoring`,
+  `num_sponsored`, native `buying_liabilities`/`selling_liabilities`,
+  per-trustline liabilities, a trustline `kind` (`asset` | `pool_share`),
+  and `num_subentries`/`flags` including zero. Both the account view and
+  the `/v1/accounts` wealth ranking now carry a `coverage_note` naming the
+  holding domains they exclude (claimable balances, Soroban/SAC contract
+  balances); the ranking also sets `lower_bound: true`. Serving those
+  excluded domains remains open.
 - **docs / ADR index had no completeness check (T543):**
   `docs/adr/README.md`'s Index table topped out at ADR-0050 though
   ADR-0051 (USD-anchored fiat derivation, landed 2026-08-31) already

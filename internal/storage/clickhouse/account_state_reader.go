@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -16,11 +17,19 @@ import (
 // the latest ledger_entry_changes per key (ADR-0038 Phase C). Exists=false
 // when the account has no live AccountEntry (never created, or merged away).
 type AccountState struct {
-	Exists             bool
-	Balance            int64 // native XLM, stroops
-	SeqNum             int64
-	NumSubEntries      uint32
-	Flags              uint32
+	Exists        bool
+	Balance       int64 // native XLM, stroops
+	SeqNum        int64
+	NumSubEntries uint32
+	Flags         uint32
+	// Liabilities (AccountEntry ext.v1) and sponsorship counters (ext.v2)
+	// make minimum balance and spendable XLM derivable:
+	// min = (2 + NumSubEntries + NumSponsoring - NumSponsored) × base_reserve,
+	// spendable = Balance - min - SellingLiabilities. Zero when absent.
+	BuyingLiabilities  int64
+	SellingLiabilities int64
+	NumSponsoring      uint32
+	NumSponsored       uint32
 	HomeDomain         string
 	MasterWeight       byte
 	ThreshLow          byte
@@ -42,6 +51,13 @@ type TrustlineState struct {
 	Balance int64
 	Limit   int64
 	Flags   uint32
+	// SellingLiabilities is the part of Balance locked by open offers
+	// (TrustLineEntry ext.v1), as BuyingLiabilities is of Limit.
+	BuyingLiabilities  int64
+	SellingLiabilities int64
+	// PoolShare marks a liquidity-pool-share trustline (asset "pool:<hex>"):
+	// a claim on a pool's two reserves, not a balance of one asset.
+	PoolShare bool
 }
 
 type OfferState struct {
@@ -106,29 +122,11 @@ func (r *ExplorerReader) AccountState(ctx context.Context, account string) (Acco
 	if changeType == "removed" || entryXDR == "" {
 		return st, nil
 	}
-	var le xdr.LedgerEntry
-	if err := xdr.SafeUnmarshalBase64(entryXDR, &le); err != nil {
+	st, ok := accountStateFromEntry(entryXDR, bal, ledgerSeq)
+	if !ok {
 		// A corrupt stored entry degrades to "no state" rather than 500-ing
 		// the request — the row is the substrate's problem, not the caller's.
-		return st, nil //nolint:nilerr // intentional degrade-to-empty on bad data
-	}
-	acc, ok := le.Data.GetAccount()
-	if !ok {
 		return st, nil
-	}
-	st.Exists = true
-	st.Balance = bal
-	st.SeqNum = int64(acc.SeqNum)
-	st.NumSubEntries = uint32(acc.NumSubEntries)
-	st.Flags = uint32(acc.Flags)
-	st.HomeDomain = string(acc.HomeDomain)
-	st.MasterWeight = byte(acc.Thresholds[0])
-	st.ThreshLow = byte(acc.Thresholds[1])
-	st.ThreshMed = byte(acc.Thresholds[2])
-	st.ThreshHigh = byte(acc.Thresholds[3])
-	st.LastModifiedLedger = ledgerSeq
-	for _, s := range acc.Signers {
-		st.Signers = append(st.Signers, AccountSigner{Key: signerAddress(s.Key), Weight: uint32(s.Weight)})
 	}
 
 	tl, err := r.accountTrustlines(ctx, account)
@@ -174,17 +172,63 @@ func (r *ExplorerReader) accountTrustlines(ctx context.Context, account string) 
 		if err := rows.Scan(&asset, &ex, &bal); err != nil {
 			return nil, fmt.Errorf("clickhouse: scan trustline: %w", err)
 		}
-		t := TrustlineState{Asset: asset, Balance: bal}
-		var le xdr.LedgerEntry
-		if xdr.SafeUnmarshalBase64(ex, &le) == nil {
-			if tl, ok := le.Data.GetTrustLine(); ok {
-				t.Limit = int64(tl.Limit)
-				t.Flags = uint32(tl.Flags)
-			}
-		}
-		out = append(out, t)
+		out = append(out, trustlineStateFromEntry(asset, ex, bal))
 	}
 	return out, rows.Err()
+}
+
+// accountStateFromEntry decodes a stored AccountEntry (base64 LedgerEntry
+// XDR). ok=false when the XDR is corrupt or not an account entry.
+func accountStateFromEntry(entryXDR string, bal int64, ledgerSeq uint32) (AccountState, bool) {
+	var le xdr.LedgerEntry
+	if err := xdr.SafeUnmarshalBase64(entryXDR, &le); err != nil {
+		return AccountState{}, false
+	}
+	acc, ok := le.Data.GetAccount()
+	if !ok {
+		return AccountState{}, false
+	}
+	liab := acc.Liabilities()
+	st := AccountState{
+		Exists:             true,
+		Balance:            bal,
+		SeqNum:             int64(acc.SeqNum),
+		NumSubEntries:      uint32(acc.NumSubEntries),
+		Flags:              uint32(acc.Flags),
+		BuyingLiabilities:  int64(liab.Buying),
+		SellingLiabilities: int64(liab.Selling),
+		NumSponsoring:      uint32(acc.NumSponsoring()),
+		NumSponsored:       uint32(acc.NumSponsored()),
+		HomeDomain:         string(acc.HomeDomain),
+		MasterWeight:       byte(acc.Thresholds[0]),
+		ThreshLow:          byte(acc.Thresholds[1]),
+		ThreshMed:          byte(acc.Thresholds[2]),
+		ThreshHigh:         byte(acc.Thresholds[3]),
+		LastModifiedLedger: ledgerSeq,
+	}
+	for _, s := range acc.Signers {
+		st.Signers = append(st.Signers, AccountSigner{Key: signerAddress(s.Key), Weight: uint32(s.Weight)})
+	}
+	return st, true
+}
+
+// trustlineStateFromEntry builds one trustline from its key-derived asset
+// id, balance column and stored TrustLineEntry XDR. A corrupt entry keeps
+// the balance and leaves the entry-only fields zero.
+func trustlineStateFromEntry(asset, entryXDR string, bal int64) TrustlineState {
+	t := TrustlineState{Asset: asset, Balance: bal, PoolShare: strings.HasPrefix(asset, "pool:")}
+	var le xdr.LedgerEntry
+	if xdr.SafeUnmarshalBase64(entryXDR, &le) != nil {
+		return t
+	}
+	if tl, ok := le.Data.GetTrustLine(); ok {
+		liab := tl.Liabilities()
+		t.Limit = int64(tl.Limit)
+		t.Flags = uint32(tl.Flags)
+		t.BuyingLiabilities = int64(liab.Buying)
+		t.SellingLiabilities = int64(liab.Selling)
+	}
+	return t
 }
 
 // accountOffersQuery — same PK-prefix range shape + rationale as
