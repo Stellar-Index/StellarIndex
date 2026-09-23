@@ -44,8 +44,8 @@
 # /etc/default/stellarindex is loaded too, for the Postgres DSN the
 # on-disk stellarindex.toml deliberately omits.
 [Unit]
-Description=Stellar Index — third-party curated RWA directory sync (daily)
-Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/migrations/0161_create_rwa_curated_directory.up.sql
+Description=Stellar Index — third-party curated RWA published-series sync (daily)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/migrations/0162_create_curated_rwa_published_series.up.sql
 After=network-online.target postgresql.service
 Wants=network-online.target
 

@@ -94,13 +94,24 @@ chmod +x "$PROBE"
 
 # ─── stubs ──────────────────────────────────────────────────────────
 #
-# runuser stub: answers the five queries by matching their distinctive
+# runuser stub: drops `-u <user> --` and runs the rest, so whatever the
+# probe puts between `--` and psql (an `env PGOPTIONS=…`) really runs.
+#
+# psql stub: answers the five queries by matching their distinctive
 # SQL, driven by $SCENARIO. Fails or empties one query at a time so the
-# blast radius of a single failure is observable.
+# blast radius of a single failure is observable. It logs the
+# PGOPTIONS each query reached psql with to $PSQL_ENV_LOG.
 mkdir -p "$TMP/bin" "$TMP/textfile"
 cat > "$TMP/bin/runuser" <<'SH'
 #!/usr/bin/env bash
-# `runuser -u postgres -- psql -d stellarindex -At -F'|' -c "<sql>"`
+while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done
+[[ $# -gt 0 ]] && shift
+exec "$@"
+SH
+chmod +x "$TMP/bin/runuser"
+cat > "$TMP/bin/psql" <<'SH'
+#!/usr/bin/env bash
+# `psql -d stellarindex -At -F'|' -c "<sql>"`
 sql=""; prev=""
 for a in "$@"; do
   [[ "$prev" == "-c" ]] && sql="$a"
@@ -114,6 +125,9 @@ case "$sql" in
   *policy_compression*)                  kind=compression ;;
   *job_stats\ js*)                       kind=jobs ;;
 esac
+if [[ -n "${PSQL_ENV_LOG:-}" ]]; then
+  printf '%s\t%s\n' "$kind" "${PGOPTIONS-<unset>}" >> "$PSQL_ENV_LOG"
+fi
 for f in ${FAIL_QUERIES:-}; do
   [[ "$kind" == "$f" ]] && { echo 'ERROR:  permission denied' >&2; exit 1; }
 done
@@ -169,11 +183,14 @@ oracle_prices_1m|1788598600|30}\n" ;;
   # brace arrive raw, and a newline in the text starts an output line
   # that is NOT a new record.
   job_errors)  printf '%s\n' "${JOB_ERRORS_ROWS:-$JOB_ERRORS_DEFAULT}" ;;
-  *)           echo "runuser stub: unmatched sql" >&2; exit 9 ;;
+  *)           echo "psql stub: unmatched sql" >&2; exit 9 ;;
 esac
 exit 0
 SH
-chmod +x "$TMP/bin/runuser"
+chmod +x "$TMP/bin/psql"
+# The probe must set the timeout itself; an ambient one would satisfy
+# the statement_timeout section without the probe doing anything.
+unset PGOPTIONS
 export JOB_ERRORS_DEFAULT='1001|policy_compression|trades|could not compress "_hyper_1_42_chunk" at C:\tmp\x | lock held
 DETAIL: {"retry": 3}
 1002|policy_retention|-|canceling statement due to statement timeout'
@@ -492,6 +509,39 @@ eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_errors"}')" \
 holds "…and the record after it survives intact" \
   has_line "stellarindex_timescale_job_last_failure_reason_info{job_id=\"1002\",proc=\"policy_retention\",hypertable=\"-\",reason=\"$REASON_1002\"} 1"
 refutes "…and the tag never reaches the file" grep -q 'SET' "$PROM"
+
+# 8. Every query carries a statement_timeout, out of band, and the
+#    timeouts together fit inside the unit's TimeoutStartSec. The in-band
+#    SET was removed (it printed a command tag) and its PGOPTIONS
+#    replacement was never written, so a stalled query ran until systemd
+#    killed the probe at 60 s with no textfile written that run.
+export PSQL_ENV_LOG="$TMP/psql-env.log"
+: > "$PSQL_ENV_LOG"
+run "" ""
+unset PSQL_ENV_LOG
+ENV_LOG="$TMP/psql-env.log"
+want_opts=$'\t-c statement_timeout=10s'
+eq 0 "$RC" "the probe runs clean with the environment logged"
+for kind in lock_convoy cagg compression jobs job_errors; do
+  holds "the $kind query reaches psql with PGOPTIONS='-c statement_timeout=10s'" \
+    grep -qFx "$kind$want_opts" "$ENV_LOG"
+done
+refutes "no query reaches psql without the timeout" \
+  grep -qvF "$want_opts" "$ENV_LOG"
+queries=$(wc -l < "$ENV_LOG" | tr -d ' ')
+start_timeout=$(SRC="$SRC" python3 - <<'PY'
+import io, os, re, yaml
+for task in yaml.safe_load(io.open(os.environ["SRC"], encoding="utf-8")) or []:
+    if isinstance(task, dict) and task.get("name") == "TimescaleDB job/CAGG health probe service unit":
+        m = re.search(r"^TimeoutStartSec=(\d+)$", task["ansible.builtin.copy"]["content"], re.M)
+        print(m.group(1) if m else "")
+PY
+)
+if [[ -n "$start_timeout" && "$queries" -gt 0 && $((queries * 10)) -lt "$start_timeout" ]]; then
+  ok "$queries queries x 10 s stay inside TimeoutStartSec=$start_timeout"
+else
+  bad "$queries queries x 10 s must stay inside TimeoutStartSec (got '${start_timeout}')"
+fi
 
 printf 'timescale-jobs-probe-test: %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

@@ -1199,8 +1199,12 @@
         # q <sql> — leaves the rows in $Q_OUT and the outcome in $Q_OK.
         # Output is captured rather than piped so the caller's read loop
         # runs in THIS shell and can count what it emitted.
+        # The timeout rides in PGOPTIONS, out of band: an in-band SET
+        # prints a command tag into the reply (see is_num below). Five
+        # queries x 10 s stays inside the unit's TimeoutStartSec=60.
         local rc=0
-        Q_OUT=$(runuser -u postgres -- psql -d stellarindex -At -F'|' -c "$1" 2>/dev/null) || rc=$?
+        Q_OUT=$(runuser -u postgres -- env PGOPTIONS='-c statement_timeout=10s' \
+          psql -d stellarindex -At -F'|' -c "$1" 2>/dev/null) || rc=$?
         if [ "$rc" -eq 0 ]; then
           Q_OK=1
         else
@@ -1241,8 +1245,9 @@
       # and nothing said so, because the metric that would have said so
       # was in the same file.
       #
-      # The command tag is fixed at the source (PGOPTIONS, b96982c22) and
-      # gated in CI (scripts/ci/lint-textfile-exposition.sh). This is the
+      # The command tag is fixed at the source (the timeout travels in
+      # PGOPTIONS, set in q()) and gated in CI
+      # (scripts/ci/lint-textfile-exposition.sh). This is the
       # second half: the reply is an EXTERNAL input, and a command tag is
       # only one of the shapes it can arrive in — a NULL column renders as
       # an empty field, a short row leaves later fields unset, a NOTICE
@@ -1307,8 +1312,8 @@
       # the whole predicate: a lock request that is pending behind
       # another pending lock request.
       #
-      # Its own statement_timeout, belt and braces: this query must
-      # never be the thing that hangs the probe past TimeoutStartSec.
+      # q()'s statement_timeout bounds it, belt and braces: this query
+      # must never be the thing that hangs the probe past TimeoutStartSec.
       q "SELECT count(*),
                 COALESCE(max(EXTRACT(epoch FROM clock_timestamp() - a.query_start))::bigint, 0),
                 (SELECT count(*) FROM pg_stat_activity w WHERE w.wait_event_type = 'Lock')

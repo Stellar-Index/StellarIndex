@@ -54,8 +54,8 @@ ClickHouse and no host.
      data-returning statement prints its rows too.  So a *single* command
      string handed to such a client must contain exactly ONE statement.
      Carry session settings out of band (``PGOPTIONS='-c
-     statement_timeout=10s'``, which is what b96982c22 did) or issue a
-     second invocation.  ``-q`` is NOT an accepted remedy: it suppresses
+     statement_timeout=10s'``, as the timescale-jobs probe's q() does) or
+     issue a second invocation.  ``-q`` is NOT an accepted remedy: it suppresses
      command tags but not the rows of an extra SELECT.
 
 WHAT THIS GATE DOES NOT CHECK, said plainly, because a gate whose reach is
