@@ -115,7 +115,7 @@ func isIndexLookup(q string) bool {
 }
 
 func isLedgerScopedRead(q string) bool {
-	return strings.Contains(q, "stellar.transactions") && strings.Contains(q, "WHERE ledger_seq = ? AND tx_hash = ?")
+	return strings.Contains(q, "stellar.transactions") && strings.Contains(q, "WHERE ledger_seq = ? AND (tx_hash = ? OR inner_tx_hash = ?)")
 }
 
 func isBloomScan(q string) bool {
@@ -133,11 +133,19 @@ func countQueries(qs []string, match func(string) bool) int {
 	return n
 }
 
-// txRowFor builds the 12-column stellar.transactions row scanTxSummaries expects.
+// isInnerBloomScan is the scan fallback's second step-1 probe: a fee bump's
+// inner hash.
+func isInnerBloomScan(q string) bool {
+	return strings.Contains(q, "stellar.transactions") && strings.Contains(q, "WHERE inner_tx_hash = ?") &&
+		!strings.Contains(q, "ledger_seq = ?")
+}
+
+// txRowFor builds the 16-column stellar.transactions row scanTxSummaries expects.
 func txRowFor(seq uint32, hash string) []any {
 	return []any{
 		seq, time.Unix(1700000000, 0).UTC(), hash, uint32(3), "GSOURCE",
 		int64(100), int64(200), uint16(1), uint8(1), int32(0), "text", "hi",
+		"", "", int64(0), int32(0),
 	}
 }
 
@@ -227,6 +235,8 @@ func TestTransactionByHashIndexTableAbsent(t *testing.T) {
 			}
 		case isBloomScan(q):
 			return &stubRows{}, nil // unknown hash
+		case isInnerBloomScan(q):
+			return &stubRows{}, nil // nor a fee bump's inner hash
 		default:
 			return nil, fmt.Errorf("unexpected query: %s", q)
 		}
@@ -317,6 +327,8 @@ func TestTransactionByHashRepopulatedIndexRegainsAuthority(t *testing.T) {
 			return &stubRows{}, nil // hash genuinely absent
 		case isBloomScan(q):
 			return &stubRows{}, nil // scan path (first call only): unknown hash
+		case isInnerBloomScan(q):
+			return &stubRows{}, nil // nor a fee bump's inner hash
 		default:
 			return nil, fmt.Errorf("unexpected query: %s", q)
 		}

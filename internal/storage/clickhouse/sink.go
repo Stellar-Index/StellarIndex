@@ -66,6 +66,14 @@ type TransactionRow struct {
 	SorobanNonrefundFee   int64  // actual non-refundable resource fee charged
 	SorobanRefundableFee  int64  // actual refundable resource fee charged
 	SorobanRentFee        int64  // actual rent fee charged
+
+	// Fee-bump outer layer (extract.go:extractFeeBump); ""/0 on a non-fee-bump
+	// tx. On a fee bump TxHash is the OUTER hash and SourceAccount/MaxFee are
+	// the inner tx's.
+	InnerTxHash     string // inner tx hash
+	FeeAccount      string // fee payer
+	FeeBumpFee      int64  // fee payer's max-fee bid (the bound on FeeCharged)
+	InnerResultCode int32  // inner TransactionResultCode
 }
 
 // OperationRow mirrors stellar.operations.
@@ -473,13 +481,14 @@ func (s *Sink) flushLedgers(ctx context.Context) error {
 }
 
 func (s *Sink) flushTxs(ctx context.Context) error {
-	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.transactions (ledger_seq, close_time, tx_hash, tx_index, source_account, fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo, soroban_instructions, soroban_disk_read_bytes, soroban_write_bytes, soroban_read_entries, soroban_write_entries, soroban_resource_fee_bid, soroban_nonrefundable_fee, soroban_refundable_fee, soroban_rent_fee)")
+	b, err := s.conn.PrepareBatch(ctx, "INSERT INTO stellar.transactions (ledger_seq, close_time, tx_hash, tx_index, source_account, fee_charged, max_fee, operation_count, successful, result_code, memo_type, memo, soroban_instructions, soroban_disk_read_bytes, soroban_write_bytes, soroban_read_entries, soroban_write_entries, soroban_resource_fee_bid, soroban_nonrefundable_fee, soroban_refundable_fee, soroban_rent_fee, inner_tx_hash, fee_account, fee_bump_fee, inner_result_code)")
 	if err != nil {
 		return fmt.Errorf("clickhouse: prepare transactions: %w", err)
 	}
 	for _, r := range s.txs {
 		if err := b.Append(r.LedgerSeq, r.CloseTime, r.TxHash, r.TxIndex, r.SourceAccount, r.FeeCharged, r.MaxFee, r.OperationCount, r.Successful, r.ResultCode, r.MemoType, r.Memo,
-			r.SorobanInstructions, r.SorobanDiskReadBytes, r.SorobanWriteBytes, r.SorobanReadEntries, r.SorobanWriteEntries, r.SorobanResourceFeeBid, r.SorobanNonrefundFee, r.SorobanRefundableFee, r.SorobanRentFee); err != nil {
+			r.SorobanInstructions, r.SorobanDiskReadBytes, r.SorobanWriteBytes, r.SorobanReadEntries, r.SorobanWriteEntries, r.SorobanResourceFeeBid, r.SorobanNonrefundFee, r.SorobanRefundableFee, r.SorobanRentFee,
+			r.InnerTxHash, r.FeeAccount, r.FeeBumpFee, r.InnerResultCode); err != nil {
 			return fmt.Errorf("clickhouse: append tx %s: %w", r.TxHash, err)
 		}
 	}

@@ -5302,6 +5302,7 @@ export interface components {
             index?: number;
             source_account?: string;
             fee_charged?: number;
+            /** @description The fee bid that bounds fee_charged: on a fee bump, the fee payer's bid (the inner transaction's is fee_bump.inner_max_fee). */
             max_fee?: number;
             operation_count?: number;
             /** @description Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record). */
@@ -5313,6 +5314,26 @@ export interface components {
             /** @description Normalised: none|text|id|hash|return. */
             memo_type?: string;
             memo?: string;
+            /**
+             * @description Present on a fee-bump transaction: hash is then the OUTER
+             *     (fee-bump) hash, source_account the inner transaction's source,
+             *     and max_fee the fee payer's bid. GET /v1/tx/{hash} also resolves
+             *     the inner hash. Absent on a fee bump ingested before the outer
+             *     layer was captured; its result still reads
+             *     tx_fee_bump_inner_success / tx_fee_bump_inner_failed.
+             */
+            fee_bump?: {
+                /** @description The account that paid the fee. */
+                fee_account: string;
+                /** @description The inner transaction's hash. Omitted when the result carried no inner result pair. */
+                inner_hash?: string;
+                /** @description The inner transaction's own fee bid. */
+                inner_max_fee: number;
+                /** @description Raw XDR TransactionResultCode of the inner transaction. Present with inner_hash. */
+                inner_result_code?: number;
+                /** @description Human-readable slug for inner_result_code (e.g. tx_failed, tx_insufficient_balance) — why the inner transaction failed. Present with inner_hash. */
+                inner_result?: string;
+            };
         };
         /** @description An operation decoded from XDR into clean JSON. */
         Operation: {
@@ -5352,6 +5373,8 @@ export interface components {
             result_code?: number;
             /** @description Human-readable slug for result_code (e.g. op_inner, op_bad_auth, op_no_source_account). Present with result_code. */
             result?: string;
+            /** @description For result op_inner, the operation's op-type-specific outcome (e.g. payment_underfunded, payment_success, invoke_host_function_trapped) — which operation of a tx_failed transaction failed, and why. Omitted otherwise. */
+            inner_result?: string;
         };
         TxDetail: components["schemas"]["TxSummary"] & {
             operations?: components["schemas"]["Operation"][];

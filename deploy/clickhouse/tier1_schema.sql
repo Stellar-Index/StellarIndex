@@ -75,13 +75,25 @@ CREATE TABLE IF NOT EXISTS stellar.transactions
     soroban_nonrefundable_fee Int64  DEFAULT 0,  -- actual non-refundable fee charged
     soroban_refundable_fee    Int64  DEFAULT 0,  -- actual refundable fee charged
     soroban_rent_fee          Int64  DEFAULT 0,  -- actual rent fee charged
+    -- Fee-bump outer layer (extract.go:extractFeeBump). On a fee bump tx_hash
+    -- is the OUTER hash while source_account and max_fee are the INNER tx's
+    -- (the SDK accessors unwrap), so these carry what the envelope adds.
+    -- ''/0 on a non-fee-bump tx. GO-FORWARD only (deploy/clickhouse/
+    -- transactions_fee_bump.sql): a historical fee bump (result_code 1 or
+    -- -13) reads '' here until its range is re-derived.
+    inner_tx_hash             String DEFAULT '', -- inner tx hash (also indexed in tx_hash_index)
+    fee_account               String DEFAULT '', -- fee payer
+    fee_bump_fee              Int64  DEFAULT 0,  -- fee payer's max-fee bid (bounds fee_charged)
+    inner_result_code         Int32  DEFAULT 0,  -- inner TransactionResultCode (the inner failure reason)
     -- Bloom skip-index for hash lookups (GET /v1/tx/{hash}, ADR-0038): the
     -- sort key is (ledger_seq, tx_index), so WHERE tx_hash=? would otherwise
     -- full-scan. New parts are indexed on insert; existing history needs a
     -- one-time `ALTER TABLE stellar.transactions MATERIALIZE INDEX idx_tx_hash`.
     INDEX idx_tx_hash tx_hash TYPE bloom_filter(0.01) GRANULARITY 1,
     -- Per-account submitted-tx lookups (GET /v1/accounts/{g}/transactions).
-    INDEX idx_tx_source source_account TYPE bloom_filter(0.01) GRANULARITY 1
+    INDEX idx_tx_source source_account TYPE bloom_filter(0.01) GRANULARITY 1,
+    -- Inner-hash lookups on the bloom-scan fallback (index unavailable).
+    INDEX idx_tx_inner_hash inner_tx_hash TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY intDiv(ledger_seq, 1000000)
@@ -591,6 +603,13 @@ ORDER BY tx_hash;
 CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.tx_hash_index_mv
 TO stellar.tx_hash_index AS
 SELECT tx_hash, ledger_seq, tx_index FROM stellar.transactions;
+
+-- A fee bump's INNER hash resolves to the same row: it is the hash the
+-- submitter's SDK returned, so a miss on it would be a wrong 404.
+CREATE MATERIALIZED VIEW IF NOT EXISTS stellar.tx_hash_index_inner_mv
+TO stellar.tx_hash_index AS
+SELECT inner_tx_hash AS tx_hash, ledger_seq, tx_index FROM stellar.transactions
+WHERE inner_tx_hash != '';
 
 -- ── account_movements — ADR-0048 D2 feed-shaped account-activity archive ──
 -- Amends ADR-0047 D1 (which planned a Postgres `classic_movements` hypertable,

@@ -18,7 +18,7 @@ type stubExplorerReader struct {
 	opTypeStats    []clickhouse.OpTypeCount
 	throughput     []clickhouse.ThroughputBucket
 	reserves       []clickhouse.BlendReserveState
-	opResults      map[uint32]int32
+	opResults      map[uint32]clickhouse.OpResult
 	events         []clickhouse.EventSummary
 	contractEvents []clickhouse.ContractActivityRow
 	wasm           clickhouse.ContractWasmInfo
@@ -138,7 +138,7 @@ func (s *stubExplorerReader) OperationsByTx(_ context.Context, _ uint32, _ strin
 	return s.ops, s.err
 }
 
-func (s *stubExplorerReader) OperationResultsByTx(_ context.Context, _ uint32, _ string) (map[uint32]int32, error) {
+func (s *stubExplorerReader) OperationResultsByTx(_ context.Context, _ uint32, _ string) (map[uint32]clickhouse.OpResult, error) {
 	return s.opResults, s.err
 }
 
@@ -511,7 +511,7 @@ func TestExplorer_TxDetail(t *testing.T) {
 	reader := &stubExplorerReader{
 		txs:       []clickhouse.TxSummary{{Seq: 42, TxHash: testTxHash, SourceAccount: "GABC", FeeCharged: 300, OperationCount: 1, Successful: true, MemoType: "MemoTypeMemoText", Memo: "hello"}},
 		ops:       []clickhouse.OpRow{{Seq: 42, TxHash: testTxHash, OpIndex: 0, OpType: "OperationTypePayment", BodyXDR: "not-valid-xdr"}},
-		opResults: map[uint32]int32{0: 0},
+		opResults: map[uint32]clickhouse.OpResult{0: {Code: 0}},
 		events:    []clickhouse.EventSummary{{OpIndex: 0, EventIndex: 1, ContractID: "CABC", EventType: "contract", Topic0Sym: "transfer"}},
 	}
 	base := explorerTestServer(t, reader)
