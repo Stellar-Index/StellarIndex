@@ -41,15 +41,21 @@ const priceBatchMaxAssetsPOST = 1000
 // reached yet (TTL'd out, never refreshed, etc.).
 type DivergenceLooker interface {
 	// DivergenceFiringFor reports whether the cross-reference divergence
-	// warning is firing for the asset, AND whether the check was actually
-	// live: `checked` is true only when a cached result exists whose responding
-	// reference count met the worker's own `min_sources_for_warning` quorum —
-	// the same threshold the worker requires before it will fire a warning, so
-	// the two cannot disagree. When `checked` is false the warning is not
-	// meaningful — either no divergence record exists yet, or every reference
-	// was dark (CS-087) — so consumers must not read a `false` firing as
-	// "prices agree".
-	DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (firing, checked bool, err error)
+	// warning is firing for the EXACT (asset, quote) pair, AND whether the
+	// check was actually live: `checked` is true only when a cached result
+	// exists whose responding reference count met the worker's own
+	// `min_sources_for_warning` quorum — the same threshold the worker
+	// requires before it will fire a warning, so the two cannot disagree.
+	// When `checked` is false the warning is not meaningful — either no
+	// divergence record exists yet, or every reference was dark (CS-087)
+	// — so consumers must not read a `false` firing as "prices agree".
+	//
+	// Quote-specific (GH-1045): the verdict for XLM/GBP must never leak
+	// onto an XLM/USD response. A pre-fix implementation ORed every
+	// quote of the base together (worker.go's per-base index), which
+	// attached a warning computed against a market the served value
+	// never touched.
+	DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, err error)
 }
 
 // FrozenLooker is the read-side interface the v1 server uses to
@@ -863,7 +869,14 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	default:
 		flags.SingleSource = len(sources) == 1
 	}
-	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
+	// Start the verdict walk at the spelling the price was served from
+	// (frozenPairBase's resolution); the walk still falls through to
+	// other aliases on a miss — see lookupDivergenceFlag.
+	governing := served
+	if governing.IsZero() {
+		governing = asset
+	}
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), governing, quote)
 	writeJSON(w, snapshot, flags, sources...)
 }
 
@@ -2413,6 +2426,13 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 // verdict than to 5xx because a Redis blip lost the cached divergence
 // record.
 //
+// quote is held FIXED across the walk; only the base's alias spellings
+// are tried. Callers pass the spelling the price was served from, so the
+// walk STARTS at the served market — but a miss there still falls
+// through to the other aliases, so the verdict can describe a different
+// venue population than the price (open under #1045, as is scoping the
+// verdict to the requested window).
+//
 // Loops the alias set, exactly as readPriceWithAliases and
 // attachConfidence do. Without this the verdict silently vanished for
 // XLM's canonical `native` spelling: the aggregator refreshes the check
@@ -2438,21 +2458,15 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 // Redis outage at one round-trip and at most one WARN per request rather
 // than one per alias — at most, because an error that IS the context's
 // (cancelled, or a deadline the caller set deliberately) is not news
-// about the store and is left to whoever set that deadline.
-//
-// A below-quorum record can still carry warning=true: the worker carries
-// the last evaluated verdict forward rather than asserting "no
-// divergence". That is a standing warning, not a fresh verdict, so it
-// does not end the walk — a checked verdict under a later spelling wins —
-// but when no spelling reaches a verdict it is returned as (true, false)
-// rather than dropped.
-func (s *Server) lookupDivergenceFlag(ctx context.Context, asset canonical.Asset) (firing, checked bool) {
+// about the store and is left to whoever set that deadline. The (warning=true, checked=false) pair stays
+// unreachable because a fired warning necessarily met that quorum.
+func (s *Server) lookupDivergenceFlag(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool) {
 	if s.divergence == nil {
 		return false, false
 	}
 	standing := false
 	for _, a := range assetAliases(asset) {
-		gotFiring, gotChecked, err := s.divergence.DivergenceFiringFor(ctx, a)
+		gotFiring, gotChecked, err := s.divergence.DivergenceFiringFor(ctx, a, quote)
 		if err != nil {
 			// Suppress errors that ARE the context's — a cancellation or
 			// an expiry says nothing about the store, only that the
@@ -3367,7 +3381,7 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 				ObservedAt:    WireTime(time.Now().UTC()),
 				WindowSeconds: int(window / time.Second),
 			}
-			writeJSON(w, snap, s.windowedPriceFlags(r, asset, a, q, window, triangulated))
+			writeJSON(w, snap, s.windowedPriceFlags(r, a, q, window, triangulated))
 			return
 		}
 	}
@@ -3378,22 +3392,22 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 }
 
 // windowedPriceFlags assembles the envelope flags for a ?window= value
-// read under the alias pair (a, q). Every per-pair marker — freeze and
-// composite meta — is asked for (a, q), never the spelling the client
-// used: each is keyed on the literal pair the aggregator prices, so the
-// requested literal's marker is a verdict on a different venue population
-// (K037 class; same rule as [Server.frozenPairBase]). No value
-// substitution is needed here, unlike the default path: a frozen pair's
-// `vwap:` key IS what the freeze holds. The divergence verdict is
-// base-level, so it keys on the requested asset.
-func (s *Server) windowedPriceFlags(r *http.Request, asset, a, q canonical.Asset, window time.Duration, triangulated bool) Flags {
+// read under the alias pair (a, q). Every per-pair marker — freeze,
+// composite meta, and the divergence verdict — is asked for (a, q),
+// never the spelling the client used: each is keyed on the literal
+// pair the aggregator prices, so the requested literal's marker is a
+// verdict on a different venue population (K037 class; same rule as
+// [Server.frozenPairBase]). No value substitution is needed here,
+// unlike the default path: a frozen pair's `vwap:` key IS what the
+// freeze holds.
+func (s *Server) windowedPriceFlags(r *http.Request, a, q canonical.Asset, window time.Duration, triangulated bool) Flags {
 	frozenVal, frozenChecked := s.lookupFrozen(r, a, q)
 	flags := Flags{Triangulated: triangulated, Frozen: frozenVal, FrozenChecked: frozenChecked}
 	// ActionFreeze contract, as on the default path: a held value is
 	// single-sourced. Unfrozen, this surface has no source list to derive it.
 	flags.SingleSource = frozenVal
 	s.attachCompositeFlags(r, &flags, a, q, window, triangulated)
-	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), a, q)
 	return flags
 }
 

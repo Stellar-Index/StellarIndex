@@ -622,7 +622,11 @@ func run(cfgPath string, dryRun bool) error {
 		MinUSDVolume:              cfg.Aggregate.MinUSDVolume,
 		DivergenceRefresher:       divRefresher,
 		DivergenceMinInterval:     time.Duration(cfg.Aggregate.DivergenceMinIntervalSeconds) * time.Second,
-		StreamPublisher:           streamPub,
+		// GH-1046: same source as the divergence Service's own quorum
+		// (wired a few lines above into ServiceOptions.MinSourcesForWarning)
+		// and the API adapter's mirror — one config value, three consumers.
+		DivergenceMinSources: cfg.Divergence.MinSourcesForWarning,
+		StreamPublisher:      streamPub,
 		// Per-source contribution mirror — feeds the explorer
 		// source-donut on every price card. See migrations/0026 +
 		// Phase 2 of the explorer implementation plan.

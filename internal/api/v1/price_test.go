@@ -633,7 +633,7 @@ type stubDivergenceLooker struct {
 	calls   int
 }
 
-func (s *stubDivergenceLooker) DivergenceFiringFor(_ context.Context, _ canonical.Asset) (firing, checked bool, err error) {
+func (s *stubDivergenceLooker) DivergenceFiringFor(_ context.Context, _, _ canonical.Asset) (firing, checked bool, err error) {
 	s.calls++
 	return s.firing, s.checked, s.err
 }
@@ -884,7 +884,7 @@ type stubAliasDivergenceLooker struct {
 	asked []string
 }
 
-func (s *stubAliasDivergenceLooker) DivergenceFiringFor(_ context.Context, a canonical.Asset) (firing, checked bool, err error) {
+func (s *stubAliasDivergenceLooker) DivergenceFiringFor(_ context.Context, a, _ canonical.Asset) (firing, checked bool, err error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, a.String())
 	s.mu.Unlock()
@@ -1012,11 +1012,73 @@ func TestPrice_DivergenceStandingWarningKeptWhenNoVerdict(t *testing.T) {
 	}
 }
 
+// conflictingXLMVerdicts puts a FIRING verdict under `native` and a clean
+// one under `crypto:XLM` — two disjoint venue populations — so a test can
+// tell which spelling's verdict reached the response.
+func conflictingXLMVerdicts() *stubAliasDivergenceLooker {
+	return &stubAliasDivergenceLooker{
+		verdicts: map[string]struct{ firing, checked bool }{
+			"native":     {firing: true, checked: true},
+			"crypto:XLM": {firing: false, checked: true},
+		},
+	}
+}
+
+// TestPrice_DivergenceWalkStartsAtServedAlias — when `native` misses and
+// the price is served from `crypto:XLM`, the verdict walk must start at
+// `crypto:XLM`, not at the requested spelling: the served market's clean
+// verdict describes the value returned, `native`'s firing one does not.
+func TestPrice_DivergenceWalkStartsAtServedAlias(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"crypto:XLM/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
+		},
+	}
+	div := conflictingXLMVerdicts()
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", status, body)
+	}
+	if !strings.Contains(body, `"divergence_warning":false`) {
+		t.Errorf("verdict must come from the served crypto:XLM market (clean), not native: %s", body)
+	}
+	if asked := div.askedSpellings(); len(asked) == 0 || asked[0] != "crypto:XLM" {
+		t.Errorf("lookup order = %v, want the served spelling crypto:XLM first", asked)
+	}
+}
+
+// TestPriceWindowed_DivergenceWalkStartsAtServedAlias — the ?window=
+// branch reads the VWAP under whichever alias pair holds it; the verdict
+// must be asked for that same (a, q), as the freeze check beside it is.
+func TestPriceWindowed_DivergenceWalkStartsAtServedAlias(t *testing.T) {
+	div := conflictingXLMVerdicts()
+	srv := v1.New(v1.Options{
+		Prices:       &stubPriceReader{},
+		Divergence:   div,
+		Triangulated: lkgPairs{"crypto:XLM/fiat:USD/300": "0.2051"},
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	status, body := getBody(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD&window=300")
+	if status != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", status, body)
+	}
+	if !strings.Contains(body, `"divergence_warning":false`) {
+		t.Errorf("verdict must come from the served crypto:XLM market (clean), not native: %s", body)
+	}
+	if asked := div.askedSpellings(); len(asked) == 0 || asked[0] != "crypto:XLM" {
+		t.Errorf("lookup order = %v, want the served spelling crypto:XLM first", asked)
+	}
+}
+
 // failingDivergenceLooker fails every lookup and counts the attempts —
 // the shape of a store that is down for every spelling at once.
 type failingDivergenceLooker struct{ calls atomic.Int32 }
 
-func (f *failingDivergenceLooker) DivergenceFiringFor(context.Context, canonical.Asset) (firing, checked bool, err error) {
+func (f *failingDivergenceLooker) DivergenceFiringFor(context.Context, canonical.Asset, canonical.Asset) (firing, checked bool, err error) {
 	f.calls.Add(1)
 	return false, false, errors.New("redis exploded")
 }
