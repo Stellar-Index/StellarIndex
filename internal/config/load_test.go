@@ -200,6 +200,53 @@ nonsense_field = "oops"
 	}
 }
 
+// TestLoadReader_retiredKeyWarnsInsteadOfFailing — #890: deleting a field
+// from Config used to turn every self-hosted deployment whose config
+// descended from an old configs/example.toml into a boot-fatal "unknown
+// keys" error. A key registered on cfg.RetiredKeys must be tolerated
+// (warn, not fail) while a genuinely unknown key next to it still errors.
+func TestLoadReader_retiredKeyWarnsInsteadOfFailing(t *testing.T) {
+	const retiredPath = "external.retired_source"
+	cfg.RetiredKeys[retiredPath] = "source decommissioned in test"
+	defer delete(cfg.RetiredKeys, retiredPath)
+
+	body := `
+[region]
+id = "r1"
+name = "Ashburn"
+
+[external.retired_source]
+api_key = "old-value"
+`
+	c, err := cfg.LoadReader(strings.NewReader(body), "test.toml")
+	if err != nil {
+		t.Fatalf("LoadReader with only a retired key should not error: %v", err)
+	}
+	if c.Region.ID != "r1" {
+		t.Errorf("region.id = %q, want r1", c.Region.ID)
+	}
+
+	// A genuinely unknown key alongside a retired one must still hard-fail.
+	body2 := `
+[region]
+id = "r1"
+nonsense_field = "oops"
+
+[external.retired_source]
+api_key = "old-value"
+`
+	_, err = cfg.LoadReader(strings.NewReader(body2), "test.toml")
+	if err == nil {
+		t.Fatal("expected unknown-key error for nonsense_field, got nil")
+	}
+	if !strings.Contains(err.Error(), "nonsense_field") {
+		t.Errorf("error should name the offending key: %v", err)
+	}
+	if strings.Contains(err.Error(), retiredPath) {
+		t.Errorf("retired key should not appear in the hard-error list: %v", err)
+	}
+}
+
 func TestLoad_readsFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "cfg.toml")

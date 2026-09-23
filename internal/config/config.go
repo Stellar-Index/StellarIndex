@@ -1889,6 +1889,16 @@ func defaultAPIConfig() APIConfig {
 	}
 }
 
+// RetiredKeys lists dotted config paths that once existed in this schema
+// and were deliberately removed. LoadReader treats a key on this list as a
+// deprecation warning instead of a boot-fatal unknown key: a self-hosted
+// deployment's config is a copy of some past release's configs/example.toml
+// (docs/operations/self-hosting.md §4.3), so deleting a struct field would
+// otherwise turn every such upgrade into a hard outage (#890). Add an entry
+// here in the same commit that removes the field; the value is a short note
+// on what replaced it, surfaced in the boot-time warning.
+var RetiredKeys = map[string]string{}
+
 func Default() Config {
 	return Config{
 		Region: RegionConfig{

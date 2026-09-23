@@ -252,6 +252,15 @@ change). At minimum, edit:
 
 Secrets never belong in this file — see §5.
 
+Upgrading in place by re-copying `example.toml` over an edited config is
+not the flow: keep editing your existing file and diff in new keys by
+hand. But a key a *later* release deleted from the schema can still be
+sitting in your file if it started life from an older `example.toml`.
+Such a key is logged and ignored at boot (`config: retired keys present,
+ignoring`) rather than refused, as long as it's registered on
+`internal/config.RetiredKeys`; anything not on that list still hard-fails
+with `config: unknown keys in ...` — remove it from your file.
+
 ### 4.4 MinIO + Galexie (captive stellar-core)
 
 Galexie is a separate SDF project; install it per its own docs, then

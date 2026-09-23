@@ -38,19 +38,50 @@ func LoadReader(r io.Reader, origin string) (Config, error) {
 		return Config{}, fmt.Errorf("config: decode %s: %w", origin, err)
 	}
 	if undec := meta.Undecoded(); len(undec) > 0 {
-		// Unknown keys are a hard error — silent typos in config
-		// are one of the most common deployment bugs.
-		keys := make([]string, 0, len(undec))
+		// Unknown keys are a hard error — silent typos in config are one
+		// of the most common deployment bugs. A key on RetiredKeys is a
+		// known exception: it once existed and a deployment upgrading
+		// from an old configs/example.toml still carries it (#890), so
+		// warn instead of refusing to boot.
+		var unknown, retired []string
 		for _, k := range undec {
-			keys = append(keys, k.String())
+			path := k.String()
+			if note, ok := retiredKeyMatch(path); ok {
+				retired = append(retired, path+" ("+note+")")
+				continue
+			}
+			unknown = append(unknown, path)
 		}
-		return Config{}, fmt.Errorf("config: unknown keys in %s: %s",
-			origin, strings.Join(keys, ", "))
+		if len(retired) > 0 {
+			slog.Warn("config: retired keys present, ignoring",
+				"path", origin, "keys", retired)
+		}
+		if len(unknown) > 0 {
+			return Config{}, fmt.Errorf("config: unknown keys in %s: %s",
+				origin, strings.Join(unknown, ", "))
+		}
 	}
 	if err := c.Validate(); err != nil {
 		return Config{}, fmt.Errorf("config: %s: %w", origin, err)
 	}
 	return c, nil
+}
+
+// retiredKeyMatch reports whether path is covered by RetiredKeys, either
+// directly or as a child of a retired table (toml's Undecoded() lists both
+// the table and its leaves when a whole table was removed from the schema,
+// e.g. "external.retired_source" and "external.retired_source.api_key" for
+// one deleted [external.retired_source] block).
+func retiredKeyMatch(path string) (string, bool) {
+	if note, ok := RetiredKeys[path]; ok {
+		return note, true
+	}
+	for retiredPath, note := range RetiredKeys {
+		if strings.HasPrefix(path, retiredPath+".") {
+			return note, true
+		}
+	}
+	return "", false
 }
 
 // ApplyEnvOverrides mutates c in place, replacing any field that has
