@@ -116,7 +116,7 @@ func TestTWAP_ReaderError500(t *testing.T) {
 // pair has zero trades but the operator declared a USDC peg, the TWAP
 // handler retries against X/<USDC-classic> and serves the resulting
 // time-weighted average with flags.triangulated=true. Mirrors #1217 /
-// #1218 / #1219 for the /v1/twap surface — without it, every fresh
+// #1218 for the /v1/twap surface — without it, every fresh
 // deployment 404s on the canonical XLM/USD TWAP query.
 func TestTWAP_StablecoinFiatProxyFallback(t *testing.T) {
 	usdcClassic, err := canonical.ParseAsset("USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN")

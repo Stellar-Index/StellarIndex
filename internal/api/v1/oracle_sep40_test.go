@@ -648,7 +648,7 @@ func TestOraclePrices_EmptyAsArray(t *testing.T) {
 // declared classic USD pegs, the handler walks the pegs and
 // returns the rewritten asset/<peg> snapshots. Mirrors the
 // fallback shipped on /v1/oracle/lastprice (#1220) and the other
-// X/fiat:USD surfaces (#1217 / #1218 / #1219). Without this,
+// X/fiat:USD surfaces (#1217 / #1218). Without this,
 // /v1/oracle/prices?asset=native silently returned an empty data
 // array on Stellar mainnet.
 func TestOraclePrices_StablecoinFiatProxyFallback(t *testing.T) {
