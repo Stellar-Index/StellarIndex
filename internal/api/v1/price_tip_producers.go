@@ -89,6 +89,33 @@ const defaultMaxTipProducers = 512
 // Tune with [Server.SetMaxTipProducersPerCaller].
 const defaultMaxTipProducersPerCaller = 24
 
+// defaultMaxTipTicksPerMinute bounds the AGGREGATE compute rate of every
+// registered producer, in ticks per minute; each tick is one computeTip
+// plus its divergence lookup against the database.
+//
+// The count ceilings above do not bound the rate: a producer ticks every
+// window_seconds, client-chosen down to 1s, so 512 producers minted at a
+// 1s window drive five times the query rate of 512 at the default 5s
+// window the ceiling was sized against. The budget is exactly that
+// sized-for rate (512 × 12 = 6144/min, ~102 computes/s): every slot stays
+// usable at the default window, and a shorter window spends
+// proportionally more of it.
+const defaultMaxTipTicksPerMinute = defaultMaxTipProducers * (60 / defaultTipWindowSeconds)
+
+// defaultMaxTipTicksPerMinutePerCaller is one caller's share of that rate,
+// derived the same way from its count quota (24 × 12 = 288/min): a caller
+// at the default window keeps its whole count quota, a caller at a 1s
+// window gets four producers, and saturating the global budget still
+// takes over 20 addresses.
+const defaultMaxTipTicksPerMinutePerCaller = defaultMaxTipProducersPerCaller * (60 / defaultTipWindowSeconds)
+
+// tipTicksPerMinute is the compute rate of a producer on a window-second
+// ticker, rounded UP so a budget is never undercharged.
+func tipTicksPerMinute(window int) int {
+	window = max(window, minTipWindowSeconds)
+	return (60 + window - 1) / window
+}
+
 // unattributedTipCaller is the caller identity for an acquire with no
 // principal to charge — in-process/test callers that never came from an
 // HTTP request. The per-caller quota does not apply to it. The HTTP path
@@ -117,6 +144,14 @@ const (
 	// tipProducerAtGlobalCeiling: the registry is full and this key would
 	// need a NEW producer. No release is handed back.
 	tipProducerAtGlobalCeiling
+	// tipProducerAtCallerRateBudget: minting this producer would take the
+	// caller's producers past its share of the compute rate — a short
+	// window costs more than a long one. No release is handed back.
+	tipProducerAtCallerRateBudget
+	// tipProducerAtGlobalRateBudget: minting this producer would take the
+	// registry's aggregate compute rate past its budget. No release is
+	// handed back.
+	tipProducerAtGlobalRateBudget
 )
 
 // String is the low-cardinality reason label for logs.
@@ -128,9 +163,19 @@ func (o tipProducerOutcome) String() string {
 		return "caller_quota"
 	case tipProducerAtGlobalCeiling:
 		return "global_ceiling"
+	case tipProducerAtCallerRateBudget:
+		return "caller_rate_budget"
+	case tipProducerAtGlobalRateBudget:
+		return "global_rate_budget"
 	default:
 		return "unknown"
 	}
+}
+
+// callerRefusal reports whether the refusal names a caller that has had
+// its share, as opposed to a server at capacity.
+func (o tipProducerOutcome) callerRefusal() bool {
+	return o == tipProducerAtCallerQuota || o == tipProducerAtCallerRateBudget
 }
 
 type tipProducerKey struct {
@@ -156,6 +201,9 @@ type tipProducer struct {
 	// can relaunch the compute loop for THIS entry.
 	start  func(ctx context.Context)
 	logger *slog.Logger
+	// ticks is the compute rate charged for this entry, per
+	// [tipTicksPerMinute], held and released alongside minter's charge.
+	ticks int
 }
 
 // tipProducerRestartBackoff bounds how fast a producer that keeps
@@ -184,11 +232,19 @@ type tipProducerRegistry struct {
 	// are deleted at zero, so the map cannot outgrow the set of callers
 	// currently holding a producer.
 	minted map[string]int
-	// refused counts acquire calls turned away by EITHER bound, so a
+	// maxTicks / maxTicksPerCaller override defaultMaxTipTicksPerMinute /
+	// defaultMaxTipTicksPerMinutePerCaller when > 0; negative disables.
+	maxTicks          int
+	maxTicksPerCaller int
+	// ticks is the aggregate compute rate charged by every registered
+	// producer; mintedTicks is its per-caller split, deleted at zero.
+	ticks       int
+	mintedTicks map[string]int
+	// refused counts acquire calls turned away by ANY bound, so a
 	// flood is visible rather than merely survived.
 	refused uint64
-	// refusedPerCaller counts the subset turned away by the per-caller
-	// quota — the shape that says "one client is enumerating the key
+	// refusedPerCaller counts the subset turned away by a per-caller
+	// bound — the shape that says "one client is enumerating the key
 	// space" rather than "the deployment has outgrown its ceiling".
 	refusedPerCaller uint64
 }
@@ -225,27 +281,93 @@ func refuseTipProducer(o tipProducerOutcome) tipProducerOutcome {
 	return o
 }
 
-// chargeLocked records that caller minted one more producer.
-func (r *tipProducerRegistry) chargeLocked(caller string) {
+// tickLimit is the effective aggregate compute-rate budget in ticks per
+// minute; <= 0 from the operator means "no budget".
+func (r *tipProducerRegistry) tickLimit() int {
+	if r.maxTicks != 0 {
+		return r.maxTicks
+	}
+	return defaultMaxTipTicksPerMinute
+}
+
+// callerTickLimit is the effective per-caller compute-rate share in ticks
+// per minute; <= 0 from the operator means "no per-caller share".
+func (r *tipProducerRegistry) callerTickLimit() int {
+	if r.maxTicksPerCaller != 0 {
+		return r.maxTicksPerCaller
+	}
+	return defaultMaxTipTicksPerMinutePerCaller
+}
+
+// overBudget reports whether charging cost on top of held would pass lim;
+// lim <= 0 is no bound.
+func overBudget(lim, held, cost int) bool {
+	return lim > 0 && held+cost > lim
+}
+
+// admitLocked decides whether caller may mint a NEW producer costing
+// ticks, counting any refusal (and its metric). Per-caller bounds come
+// FIRST: a client that has had its share must be turned away before it
+// can consume one more slot of the shared pool, so the global bounds are
+// reached by many callers rather than by one.
+func (r *tipProducerRegistry) admitLocked(caller string, ticks int) tipProducerOutcome {
+	attributed := caller != unattributedTipCaller
+	outcome := tipProducerAdmitted
+	switch {
+	case attributed && overBudget(r.callerLimit(), r.minted[caller], 1):
+		outcome = tipProducerAtCallerQuota
+	case attributed && overBudget(r.callerTickLimit(), r.mintedTicks[caller], ticks):
+		outcome = tipProducerAtCallerRateBudget
+	case overBudget(r.limit(), len(r.active), 1):
+		outcome = tipProducerAtGlobalCeiling
+	case overBudget(r.tickLimit(), r.ticks, ticks):
+		outcome = tipProducerAtGlobalRateBudget
+	}
+	if outcome != tipProducerAdmitted {
+		r.refused++
+		if outcome.callerRefusal() {
+			r.refusedPerCaller++
+		}
+		return refuseTipProducer(outcome)
+	}
+	return outcome
+}
+
+// chargeLocked records that caller minted one more producer costing ticks.
+// The aggregate rate is charged even for an unattributed caller.
+func (r *tipProducerRegistry) chargeLocked(caller string, ticks int) {
+	r.ticks += ticks
 	if caller == unattributedTipCaller {
 		return
 	}
 	if r.minted == nil {
 		r.minted = make(map[string]int)
 	}
+	if r.mintedTicks == nil {
+		r.mintedTicks = make(map[string]int)
+	}
 	r.minted[caller]++
+	r.mintedTicks[caller] += ticks
 }
 
-// dischargeLocked gives caller its slot back when a producer it minted
-// leaves the registry.
-func (r *tipProducerRegistry) dischargeLocked(caller string) {
-	if caller == unattributedTipCaller {
+// dischargeLocked gives p's minter its slot and rate back when p leaves
+// the registry.
+func (r *tipProducerRegistry) dischargeLocked(p *tipProducer) {
+	r.ticks -= p.ticks
+	if p.minter == unattributedTipCaller {
 		return
 	}
-	if n := r.minted[caller]; n <= 1 {
-		delete(r.minted, caller)
+	decrementOrDelete(r.minted, p.minter, 1)
+	decrementOrDelete(r.mintedTicks, p.minter, p.ticks)
+}
+
+// decrementOrDelete subtracts n from m[k], deleting the entry at zero so
+// the map cannot outgrow the set of callers currently holding a charge.
+func decrementOrDelete(m map[string]int, k string, n int) {
+	if v := m[k]; v <= n {
+		delete(m, k)
 	} else {
-		r.minted[caller] = n - 1
+		m[k] = v - n
 	}
 }
 
@@ -271,9 +393,9 @@ func (r *tipProducerRegistry) acquire(
 // holds a reference to it. Returns the release func — call exactly
 // once; idempotence is the caller's job.
 //
-// A NEW producer is refused when caller already holds its per-caller
-// quota of minted producers, or when the registry is at its global
-// ceiling. Joining an ALREADY-RUNNING producer is always allowed and
+// A NEW producer is refused when it would take caller past its quota of
+// minted producers or its share of the compute rate, or the registry past
+// its producer ceiling or aggregate rate budget. Joining an ALREADY-RUNNING producer is always allowed and
 // never charged: refusing that would turn a popular pair's own viewers
 // away while costing nothing to serve, which is the opposite of the
 // protection intended — and it is the page-reload case the linger
@@ -295,27 +417,18 @@ func (r *tipProducerRegistry) acquireFor(
 		}
 		p.refs++
 	} else {
-		// Per-caller quota FIRST: a client that has had its share must
-		// be turned away before it can consume one more slot of the
-		// shared pool, so the global ceiling is reached by many callers
-		// rather than by one.
-		if q := r.callerLimit(); q > 0 && caller != unattributedTipCaller && r.minted[caller] >= q {
-			r.refused++
-			r.refusedPerCaller++
-			return nil, refuseTipProducer(tipProducerAtCallerQuota)
-		}
-		if lim := r.limit(); lim > 0 && len(r.active) >= lim {
-			r.refused++
-			return nil, refuseTipProducer(tipProducerAtGlobalCeiling)
+		ticks := tipTicksPerMinute(key.window)
+		if outcome := r.admitLocked(caller, ticks); outcome != tipProducerAdmitted {
+			return nil, outcome
 		}
 		// The cancel func is NOT lost (gosec G118 false positive): it is
 		// stored on the producer record and invoked by the linger timer
 		// in release() once the last reference is gone.
 		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec
-		p = &tipProducer{refs: 1, cancel: cancel, minter: caller, start: start, logger: logger}
+		p = &tipProducer{refs: 1, cancel: cancel, minter: caller, ticks: ticks, start: start, logger: logger}
 		r.active[key] = p
 		r.producersGauge().Inc()
-		r.chargeLocked(caller)
+		r.chargeLocked(caller, ticks)
 		// `start` is a func VALUE, so the guard inside the producer it
 		// wraps (runSharedTipProducer defers recoverStreamProducer) is
 		// invisible to any static walk — including the one that keeps
@@ -362,7 +475,7 @@ func (r *tipProducerRegistry) release(key tipProducerKey) {
 		// closed would hand the slot back while the producer is still
 		// running out its linger — which is precisely the window the
 		// abort-loop flood exploits.
-		r.dischargeLocked(cur.minter)
+		r.dischargeLocked(cur)
 	})
 }
 
@@ -504,8 +617,8 @@ func tipProducerCaller(r *http.Request) string {
 //
 // The outcome is [tipProducerAdmitted] only when a reference is held.
 // Otherwise this pair has no producer running and one may not be minted
-// — either the caller is at its quota or the registry is at its global
-// ceiling. The caller must refuse the stream rather than fall through to
+// — either the caller has had its share or the registry is at capacity,
+// by producer count or by compute rate. The caller must refuse the stream rather than fall through to
 // a per-connection loop, which would reintroduce exactly the unbounded
 // compute these bounds are there to prevent.
 func (s *Server) acquireTipProducer(
