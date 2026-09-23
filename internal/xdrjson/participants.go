@@ -6,6 +6,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/scval"
 )
 
 // ParticipantAccounts returns the non-source G-account strkeys an operation
@@ -36,7 +37,7 @@ import (
 // sorted (deterministic → idempotent re-derive).
 func ParticipantAccounts(bodyB64 string) ([]string, error) {
 	var body xdr.OperationBody
-	if err := xdr.SafeUnmarshalBase64(bodyB64, &body); err != nil {
+	if err := scval.UnmarshalBase64(bodyB64, &body); err != nil {
 		return nil, err
 	}
 	var out []string

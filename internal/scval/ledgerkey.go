@@ -20,7 +20,7 @@ import (
 // callers filtering a mixed key list should skip that class, not fail.
 func ParseContractDataKey(b64 string) (contractID string, key xdr.ScVal, err error) {
 	var lk xdr.LedgerKey
-	if uerr := xdr.SafeUnmarshalBase64(b64, &lk); uerr != nil {
+	if uerr := UnmarshalBase64(b64, &lk); uerr != nil {
 		return "", xdr.ScVal{}, fmt.Errorf("%w: ledger key: %w", ErrScValDecode, uerr)
 	}
 	cd, ok := lk.GetContractData()
