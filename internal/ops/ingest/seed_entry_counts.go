@@ -14,11 +14,13 @@ import (
 
 // seedEntryCounts authoritatively recomputes the per-source entry
 // tally (source_entry_counts, migration 0035) from a full GROUP BY
-// over `trades` + `oracle_updates`, overwriting the table.
+// over every decoded-event hypertable (the list lives on
+// [timescale.Store.SeedSourceEntryCounts]), overwriting the table.
 //
-// Why this exists: the writers (InsertTrade / InsertOracleUpdate)
-// keep source_entry_counts live by bumping it atomically +
-// idempotently on every NEW row. But a fresh table starts at 0 and
+// Why this exists: the writers keep source_entry_counts live — the
+// trade / oracle / FX inserts bump it only for a row that landed, the
+// other served-tier sinks bump it once per persisted event (see
+// pipeline.bumpEntryCount). But a fresh table starts at 0 and
 // only counts entries ingested SINCE the counter went live — it does
 // not know about the ~60M+ rows of pre-existing history. This
 // subcommand is the one-shot reconciliation: run it ONCE after the
@@ -68,7 +70,7 @@ func seedEntryCounts(args []string) error {
 	}
 	defer func() { _ = store.Close() }()
 
-	fmt.Fprintln(os.Stderr, "seed-entry-counts: recomputing source_entry_counts from trades + oracle_updates (this scans every trades chunk — run post-backfill)…")
+	fmt.Fprintln(os.Stderr, "seed-entry-counts: recomputing source_entry_counts from every decoded-event hypertable (this scans every trades chunk — run post-backfill)…")
 
 	n, err := store.SeedSourceEntryCounts(ctx)
 	if err != nil {

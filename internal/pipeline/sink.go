@@ -84,7 +84,8 @@ const (
 	// `PersistPerSource` flag's value (closing the config foot-gun
 	// where a mis-set flag silently dropped sep41 rows). The
 	// events-goroutine still writes sdex / external / band / supply
-	// observers, exactly as in [SinkModeSkipProjected].
+	// observers, exactly as in [SinkModeSkipProjected]. Its copies of
+	// the double-written events count nothing: see [countsInProjector].
 	SinkModeSkipSoleWriter
 )
 
@@ -127,6 +128,38 @@ func skipInSink(ev consumer.Event, mode SinkMode) bool {
 	default: // SinkModeAll
 		return false
 	}
+}
+
+// countsInProjector reports whether ev's per-source counts belong to the
+// projector rather than to the dispatcher running under mode: in Phase-3
+// parallel mode both writers persist every un-promoted projected event, so
+// counting it on both sides doubled the `entries` column and
+// stellarindex_source_events_total. The projector counts in every mode it
+// runs in, so its tally reads the same in Phase 3 and Phase 4.
+func countsInProjector(ev consumer.Event, mode SinkMode) bool {
+	return mode == SinkModeSkipSoleWriter && IsProjectedEvent(ev)
+}
+
+// uncountedEntriesKey marks a ctx whose writes must not bump
+// source_entry_counts; see [countsInProjector].
+type uncountedEntriesKey struct{}
+
+// dispatcherEventPersister wraps ep so a Phase-3 parallel write of a
+// projected event still lands (the ON CONFLICT soak) but counts nothing:
+// neither the received/last-seen metrics nor the `entries` tally.
+func dispatcherEventPersister(ep eventPersister, mode SinkMode) eventPersister {
+	return func(ctx context.Context, ev consumer.Event, countEvent bool) error {
+		if countsInProjector(ev, mode) {
+			return ep(context.WithValue(ctx, uncountedEntriesKey{}, true), ev, false)
+		}
+		return ep(ctx, ev, countEvent)
+	}
+}
+
+// countReceived bumps the per-source received/last-seen metrics for one event.
+func countReceived(source string) {
+	obs.SourceEventsTotal.WithLabelValues(source).Inc()
+	obs.SourceLastEventUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
 }
 
 // PersistEvents drains `in` and writes each event to its hypertable
@@ -260,6 +293,7 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 	// [persistCarried] then RETURN, so there is no reset — nothing reads
 	// it again.
 	var carried []consumer.Event
+	ep = dispatcherEventPersister(ep, mode)
 	flushTicker := time.NewTicker(tradeBatchFlushInterval)
 	defer flushTicker.Stop()
 
@@ -382,8 +416,9 @@ func persistWorker(ctx context.Context, logger *slog.Logger, ep eventPersister, 
 				continue
 			}
 			if t, ok := tradeFromEvent(ev); ok {
-				obs.SourceEventsTotal.WithLabelValues(t.Source).Inc()
-				obs.SourceLastEventUnix.WithLabelValues(t.Source).Set(float64(time.Now().Unix()))
+				if !countsInProjector(ev, mode) {
+					countReceived(t.Source)
+				}
 				tradeBuf = append(tradeBuf, t)
 				if len(tradeBuf) >= tradeBatchSize {
 					// CON-09: see the flushTicker arm above.
@@ -900,8 +935,7 @@ func handleEvent(ctx context.Context, logger *slog.Logger, store *timescale.Stor
 		logger.Warn("event with empty source", "kind", ev.EventKind())
 	}
 	if countEvent {
-		obs.SourceEventsTotal.WithLabelValues(source).Inc()
-		obs.SourceLastEventUnix.WithLabelValues(source).Set(float64(time.Now().Unix()))
+		countReceived(source)
 	}
 
 	// Every arm RETURNS its persist result so the projector can gate its
@@ -2074,13 +2108,17 @@ func persistSoroCreditEvent(ctx context.Context, logger *slog.Logger, store *tim
 // bumpEntryCount is the shared 'entries' counter increment used by
 // every sink whose decoded events don't ride the trades + oracle_updates
 // per-insert bump path (those tables have their counter bump inlined
-// in the INSERT). Surfaces source-attributed protocol activity on
-// /v1/diagnostics/ingestion's `entries` column for the broader set
-// of sources (blend lending, soroswap-router + defindex log-only
-// sinks). Errors are logged at Warn — a failed bump doesn't fail
+// in the INSERT, counting only rows that landed). Surfaces
+// source-attributed protocol activity on /v1/diagnostics/ingestion's
+// `entries` column. It is a bare +1 per persisted event, so a Phase-3
+// parallel write must not reach it: [dispatcherEventPersister] marks
+// that ctx. Errors are logged at Warn — a failed bump doesn't fail
 // the underlying decode/persist; the operator's periodic
 // `stellarindex-ops seed-entry-counts` reconciles drift.
 func bumpEntryCount(ctx context.Context, logger *slog.Logger, store *timescale.Store, source string) {
+	if uncounted, _ := ctx.Value(uncountedEntriesKey{}).(bool); uncounted {
+		return
+	}
 	if err := store.BumpSourceEntryCount(ctx, source, 1); err != nil {
 		logger.Warn("bump source entry count failed",
 			"source", source, "err", err)
