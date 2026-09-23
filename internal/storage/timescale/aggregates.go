@@ -271,12 +271,38 @@ func combineDirVWAP(rows []dirVWAP) (string, bool) {
 //   - sampleCount is the number of those minute buckets (migration 0126) —
 //     the exact denominator of the row's own avg, and the weight the
 //     union merge needs.
+//   - notionalCount is how many of those minutes cleared the $0.01
+//     notional floor (migration 0165); zero means the row's twap is the
+//     unfloored fallback.
 //   - flipped marks a row stored (quote, base) relative to the orientation
 //     the caller asked for.
 type dirTWAP struct {
-	twapText    string
-	sampleCount int64
-	flipped     bool
+	twapText      string
+	sampleCount   int64
+	notionalCount int64
+	flipped       bool
+}
+
+// flooredDirTWAP applies migration 0165's notional-floor fallback across
+// directions: when any direction cleared the floor, a direction whose twap
+// is the unfloored fallback (dust or unpriced only) is dropped from the merge.
+func flooredDirTWAP(rows []dirTWAP) []dirTWAP {
+	floored := 0
+	for _, r := range rows {
+		if r.notionalCount > 0 {
+			floored++
+		}
+	}
+	if floored == 0 || floored == len(rows) {
+		return rows
+	}
+	out := make([]dirTWAP, 0, floored)
+	for _, r := range rows {
+		if r.notionalCount > 0 {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // combineDirTWAP folds the stored market directions of ONE TWAP bucket
@@ -311,9 +337,13 @@ type dirTWAP struct {
 // A single unflipped row is returned VERBATIM (its stored NUMERIC text),
 // keeping the served bytes byte-identical to a single-direction read.
 //
+// Rows that fell back past the notional floor are dropped first whenever
+// another direction cleared it ([flooredDirTWAP]).
+//
 // ok=false when no row carries a usable (parseable, positive) twap with a
 // positive sample_count; callers treat that as "no data for this bucket".
 func combineDirTWAP(rows []dirTWAP) (string, bool) {
+	rows = flooredDirTWAP(rows)
 	if len(rows) == 1 && !rows[0].flipped {
 		if v, ok := new(big.Rat).SetString(rows[0].twapText); !ok || v.Sign() <= 0 {
 			return "", false
@@ -773,12 +803,12 @@ func (s *Store) TWAPPointsInRange(
 	// twapGranularities set, not user input. See TWAPGranularitySupported.
 	q := fmt.Sprintf(`
 		SELECT * FROM (
-		    (SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), volume_usd::text
+		    (SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), COALESCE(notional_sample_count, 0), volume_usd::text
 		       FROM %[1]s
 		      WHERE base_asset = $1 AND quote_asset = $2%[2]s
 		      ORDER BY bucket ASC%[3]s)
 		    UNION ALL
-		    (SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), volume_usd::text
+		    (SELECT bucket, base_asset, twap::text, COALESCE(sample_count, 0), COALESCE(notional_sample_count, 0), volume_usd::text
 		       FROM %[1]s
 		      WHERE base_asset = $2 AND quote_asset = $1%[2]s
 		      ORDER BY bucket ASC%[3]s)
@@ -837,9 +867,10 @@ func scanTWAPPoints(rows *sql.Rows, base string, limit int, what string) ([]Hist
 			rowBase string
 			twap    string
 			sc      int64
+			nsc     int64
 			vusd    sql.NullString
 		)
-		if err := rows.Scan(&bucket, &rowBase, &twap, &sc, &vusd); err != nil {
+		if err := rows.Scan(&bucket, &rowBase, &twap, &sc, &nsc, &vusd); err != nil {
 			return nil, fmt.Errorf("timescale: %s scan: %w", what, err)
 		}
 		if !open || !bucket.Equal(curBucket) {
@@ -847,9 +878,10 @@ func scanTWAPPoints(rows *sql.Rows, base string, limit int, what string) ([]Hist
 			curBucket, curDirs, curUSD, open = bucket, curDirs[:0], curUSD[:0], true
 		}
 		curDirs = append(curDirs, dirTWAP{
-			twapText:    twap,
-			sampleCount: sc,
-			flipped:     rowBase != base,
+			twapText:      twap,
+			sampleCount:   sc,
+			notionalCount: nsc,
+			flipped:       rowBase != base,
 		})
 		curUSD = append(curUSD, vusd)
 	}

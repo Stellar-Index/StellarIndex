@@ -170,8 +170,9 @@ func TestRetentionPolicies_AreExactlyTheDeclaredSet(t *testing.T) {
 		// The minute price aggregate, 90 days (0156). 69 GB / 82 M
 		// rows on r1 2026-09-07, 55 % of all price-CAGG storage, and
 		// recomputable from `trades` — which 0156 depends on and the
-		// next test pins.
-		"prices_1m": "0156_prices_1m_retention.up.sql",
+		// next test pins. 0165 rebuilds prices_1m and re-attaches the
+		// same policy (TestPrices1mRetention_0165ReattachesTheSamePolicy).
+		"prices_1m": "0165_twap_notional_floor.up.sql",
 	}
 
 	held := retentionLedger(t)
@@ -269,6 +270,28 @@ func TestPrices1mRetention_HorizonIsNinetyDaysAndNamesOneRelation(t *testing.T) 
 		"0156_prices_1m_retention.down.sql")
 	if len(removed) != 1 || removed[0] != "prices_1m" {
 		t.Errorf("0156 down removes %v, want exactly one removal naming prices_1m", removed)
+	}
+}
+
+// 0165 drops and recreates prices_1m, which drops 0156's policy with it.
+// Both directions of 0165 must put back the SAME policy: one relation,
+// 90 days, shipped disarmed and asserted so.
+func TestPrices1mRetention_0165ReattachesTheSamePolicy(t *testing.T) {
+	for _, path := range []string{
+		"migrations/0165_twap_notional_floor.up.sql",
+		"migrations/0165_twap_notional_floor.down.sql",
+	} {
+		sql := stripSQLComments(readRepoFile(t, path))
+		added := addRetentionRe.FindAllStringSubmatch(sql, -1)
+		if len(added) != 1 || added[0][1] != "prices_1m" {
+			t.Errorf("%s re-attaches %v, want exactly one policy naming prices_1m", path, added)
+		}
+		for _, want := range []string{"INTERVAL '90 days'", "scheduled => false", "RAISE EXCEPTION"} {
+			if !strings.Contains(sql, want) {
+				t.Errorf("%s no longer contains %q — the rebuilt prices_1m must carry 0156's "+
+					"policy unchanged: same horizon, disarmed, and the disarm asserted", path, want)
+			}
+		}
 	}
 }
 
