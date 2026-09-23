@@ -289,6 +289,11 @@ func decodeLiquidityEvent(e *events.Event, closedAt time.Time) (LiquidityEvent, 
 	if fields.Amount.Sign() <= 0 {
 		return LiquidityEvent{}, fmt.Errorf("%w: amount=%s", ErrNonPositiveAmounts, fields.Amount)
 	}
+	// A withdraw burns a strictly positive BPT count (comet_liquidity
+	// CHECKs pool_amount_in > 0); the other kinds carry none.
+	if k == LiquidityWithdraw && fields.PoolAmountIn.Sign() <= 0 {
+		return LiquidityEvent{}, fmt.Errorf("%w: pool_amount_in=%s", ErrNonPositiveAmounts, fields.PoolAmountIn)
+	}
 	return LiquidityEvent{
 		ContractID:   e.ContractID,
 		Ledger:       e.Ledger,

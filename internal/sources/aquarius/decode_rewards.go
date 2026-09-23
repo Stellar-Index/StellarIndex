@@ -147,6 +147,9 @@ func decodeClaimReward(e *events.Event, closedAt time.Time) (RewardsEvent, error
 	if err != nil {
 		return RewardsEvent{}, fmt.Errorf("%w: claim_reward amount: %w", ErrMalformedPayload, err)
 	}
+	if amount.Sign() < 0 {
+		return RewardsEvent{}, fmt.Errorf("%w: claim_reward amount negative: %s", ErrMalformedPayload, amount)
+	}
 	rv := rewardsEnvelope(e, RewardsClaimReward, closedAt)
 	rv.UserAddress = user
 	rv.Amount = &amount
@@ -385,6 +388,9 @@ func decodeGaugeClaim(e *events.Event, closedAt time.Time) (RewardsEvent, error)
 	amount, err := scval.AsAmountFromI128(body)
 	if err != nil {
 		return RewardsEvent{}, fmt.Errorf("%w: claim amount: %w", ErrMalformedPayload, err)
+	}
+	if amount.Sign() < 0 {
+		return RewardsEvent{}, fmt.Errorf("%w: claim amount negative: %s", ErrMalformedPayload, amount)
 	}
 	rv := rewardsEnvelope(e, RewardsClaim, closedAt)
 	rv.UserAddress = user
