@@ -51,6 +51,7 @@ var mutatingIngestSubcommands = []string{
 	"backfill-chainlink",
 	"backfill-external",
 	"curated-rwa-sync",
+	"directory-override",
 	"directory-sync",
 	"issuer-enrich",
 	"issuer-flags",

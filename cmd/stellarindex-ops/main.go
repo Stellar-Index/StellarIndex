@@ -150,6 +150,7 @@ var subcommands = map[string]func(args []string) error{
 	"sep1-refresh":            ingest.Run,
 	"issuer-flags":            ingest.Run,
 	"directory-sync":          ingest.Run,
+	"directory-override":      ingest.Run,
 	"listing-sync":            ingest.Run,
 	"curated-rwa-sync":        ingest.Run,
 	"asset-registry-backfill": ingest.Run,
@@ -381,9 +382,18 @@ Subcommands:
                           account labels (~18.5k G/C addresses: names, domains,
                           tags like #exchange/#sdf/#malicious) into
                           account_directory. One tarball GET, full upsert +
-                          prune; refuses an empty parse. Display-only data —
-                          never feeds verification or the in-repo scam list.
+                          prune; refuses an empty parse. Not display-only: a
+                          scam-class tag withholds the issuer's price, and a
+                          recognition tag admits it to the RWA surface.
                           Run daily from a timer.
+  directory-override -config PATH -address G|C… (-clear-scam-flag | -delete) [-write]
+                          Durable correction of a false-positive directory scam
+                          flag. -clear-scam-flag takes the row over as
+                          operator-override with only the scam-class tags
+                          removed (name, domain, recognition tags kept);
+                          directory-sync never updates or prunes it. -delete
+                          hands the address back to the next sync. Dry run
+                          unless -write.
   curated-rwa-sync -config PATH [-base-url URL] [-dry-run] [-timeout DUR] [-textfile PATH]
                           Cache a third party's curated list of tokenized
                           real-world assets on Stellar, and that party's own

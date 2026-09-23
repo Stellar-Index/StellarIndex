@@ -3,6 +3,7 @@ package timescale
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -107,5 +108,25 @@ func TestReplaceDirectory_RefusesEmptySet(t *testing.T) {
 	}
 	if _, _, err := s.ReplaceDirectory(context.Background(), "", directoryEntriesN(1)); err == nil {
 		t.Fatal("ReplaceDirectory(no source) = nil error, want refusal")
+	}
+}
+
+// TestDirectoryTagsWithoutScamFlags pins the correction a false-positive
+// override writes: every scam-class spelling the gate would count goes,
+// and every other tag stays — `issuer` above all, since it is what admits
+// the address to the RWA recognition funnel.
+func TestDirectoryTagsWithoutScamFlags(t *testing.T) {
+	got := DirectoryTagsWithoutScamFlags([]string{"issuer", "UNSAFE", "memo-required", " Malicious ", "anchor", "phishing"})
+	want := []string{"issuer", "memo-required", "anchor"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("DirectoryTagsWithoutScamFlags = %q, want %q", got, want)
+	}
+	for _, tag := range DirectoryScamFlagTags {
+		if left := DirectoryTagsWithoutScamFlags([]string{tag, "issuer"}); !slices.Equal(left, []string{"issuer"}) {
+			t.Errorf("scam tag %q survived: %q", tag, left)
+		}
+	}
+	if got := DirectoryTagsWithoutScamFlags(nil); got == nil || len(got) != 0 {
+		t.Errorf("DirectoryTagsWithoutScamFlags(nil) = %#v, want a non-nil empty set (tags is NOT NULL)", got)
 	}
 }

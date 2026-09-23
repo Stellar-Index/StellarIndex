@@ -30,9 +30,12 @@ import (
 //
 //	stellarindex-ops directory-sync -config /etc/stellarindex.toml
 //
-// The labels are DISPLAY data with third-party attribution — they
-// never feed verification, the currency catalogue, or the in-repo
-// scam list. A truncated, corrupt or oversized tarball fails the run
+// The labels carry third-party attribution and are NOT display-only: a
+// scam-class tag withholds the issuer's price (pricingguard.ScamGate)
+// and a recognition tag admits it to the RWA surface. They never feed
+// the currency catalogue. A false positive is corrected durably with
+// `directory-override`, whose rows this sync never touches.
+// A truncated, corrupt or oversized tarball fails the run
 // (parseDirectoryTarball), `ReplaceDirectory` refuses an empty parse
 // (a broken fetch must not prune the table), and per-file JSON errors
 // are counted + reported, failing the run only if EVERYTHING failed.

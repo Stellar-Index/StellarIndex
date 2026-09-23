@@ -89,9 +89,10 @@
 // directory row directly. The correction is made where all three read
 // from — an operator-owned row in account_directory carrying
 // timescale.DirectoryOperatorOverrideSource, which `directory-sync`
-// neither updates nor prunes (timescale.Store.UpsertDirectoryOverride,
-// .DeleteDirectoryOverride). Drop the scam-class tags there and this
-// gate stops withholding within scamCacheTTL.
+// neither updates nor prunes, written by `stellarindex-ops
+// directory-override -clear-scam-flag` (timescale.Store.ClearDirectoryScamFlag),
+// which drops only the scam-class tags. This gate stops withholding
+// within scamCacheTTL.
 package pricingguard
 
 import (

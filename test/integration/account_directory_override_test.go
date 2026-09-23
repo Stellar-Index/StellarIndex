@@ -4,12 +4,15 @@ package integration_test
 
 import (
 	"context"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	c "github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
+	"github.com/Stellar-Index/StellarIndex/internal/rwa"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -77,6 +80,22 @@ func scamWithheld(ctx context.Context, store *timescale.Store, issuer string) bo
 	return gate.Withheld(ctx, c.Asset{Type: c.AssetClassic, Code: "RIO", Issuer: issuer}, "price_read")
 }
 
+// rwaRecognised reports whether the RWA recognition funnel's issuer arm
+// (recognition tag, no scam tag) admits `issuer`.
+func rwaRecognised(t *testing.T, ctx context.Context, store *timescale.Store, issuer string) bool {
+	t.Helper()
+	rows, err := store.DirectoryRecognisedIssuersWithoutAsset(ctx, rwa.RecognitionTags(), 0)
+	if err != nil {
+		t.Fatalf("DirectoryRecognisedIssuersWithoutAsset: %v", err)
+	}
+	for _, r := range rows {
+		if r.Address == issuer {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -93,7 +112,7 @@ func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 	flagged := dirAddress("RIOISSUER")
 	neighbour := dirAddress("NEIGHBOUR")
 	upstream := []timescale.DirectoryEntry{
-		dirEntry(flagged, "Rio Issuer", "unsafe"),
+		dirEntry(flagged, "Rio Issuer", "issuer", "unsafe", "memo-required"),
 		dirEntry(neighbour, "Neighbour", "exchange"),
 	}
 
@@ -102,11 +121,22 @@ func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 	if !scamWithheld(ctx, store, flagged) {
 		t.Fatal("gate does not withhold a directory-flagged issuer — the fixture proves nothing")
 	}
+	if rwaRecognised(t, ctx, store, flagged) {
+		t.Fatal("a scam-flagged issuer is already RWA-recognised — the fixture proves nothing")
+	}
+
+	// A row with no scam tag is refused, and stays upstream-owned.
+	if _, _, _, err := store.ClearDirectoryScamFlag(ctx, neighbour); !errors.Is(err, timescale.ErrDirectoryNotScamFlagged) {
+		t.Fatalf("ClearDirectoryScamFlag(unflagged) err = %v, want ErrDirectoryNotScamFlagged", err)
+	}
+	if got := mustDirectoryEntry(t, ctx, store, neighbour); got.Source != dirUpstreamSource {
+		t.Fatalf("refused clear still took the row over: source = %q", got.Source)
+	}
 
 	// 2. The operator judges it a false positive and records a
-	//    correction: same address, the scam tag dropped.
-	if err := store.UpsertDirectoryOverride(ctx, dirEntry(flagged, "Rio Issuer (reviewed)", "memo-required")); err != nil {
-		t.Fatalf("UpsertDirectoryOverride: %v", err)
+	//    correction: same address, only the scam tag dropped.
+	if _, _, found, err := store.ClearDirectoryScamFlag(ctx, flagged); err != nil || !found {
+		t.Fatalf("ClearDirectoryScamFlag: found=%v err=%v", found, err)
 	}
 	if scamWithheld(ctx, store, flagged) {
 		t.Fatal("gate still withholds immediately after the override — the correction never took effect")
@@ -125,11 +155,17 @@ func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 	if pricingguard.IsDirectoryScamFlagged(got.Tags) {
 		t.Errorf("after sync, tags = %v — upstream's scam tag overwrote the operator's correction", got.Tags)
 	}
-	if got.Name != "Rio Issuer (reviewed)" {
-		t.Errorf("after sync, name = %q, want the operator's %q", got.Name, "Rio Issuer (reviewed)")
+	if want := []string{"issuer", "memo-required"}; !slices.Equal(got.Tags, want) {
+		t.Errorf("after sync, tags = %q, want %q — the override must drop only the scam tag", got.Tags, want)
+	}
+	if got.Name != "Rio Issuer" || got.Domain != "example.org" {
+		t.Errorf("after sync, name/domain = %q/%q, want the upstream's kept", got.Name, got.Domain)
 	}
 	if scamWithheld(ctx, store, flagged) {
 		t.Error("gate withholds again after a sync — the override is not durable, which is the whole defect")
+	}
+	if !rwaRecognised(t, ctx, store, flagged) {
+		t.Error("cleared issuer is missing from the RWA recognition funnel — the override dropped its recognition tag")
 	}
 
 	// 4. The override also survives the PRUNE arm: upstream drops the
