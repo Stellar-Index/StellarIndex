@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/dispatcher"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sdex"
 )
 
 // mkAccount returns a valid G-strkey + corresponding xdr.AccountId
@@ -533,6 +534,54 @@ func TestDecoder_pathPaymentStrictSend_success(t *testing.T) {
 	}
 	if m.ToAddress != destAddr {
 		t.Errorf("ToAddress = %q, want %q", m.ToAddress, destAddr)
+	}
+}
+
+// TestDispatcher_pathPayment_reachesBothSDEXAndMovements pins GH-1312:
+// one path payment is both SDEX trades (its claim atoms) and a movement
+// (its delivered leg), and sdex and this package both claim the two
+// path-payment op types. Whatever the registration order, the dispatcher
+// must hand the op to both decoders and count it against both.
+func TestDispatcher_pathPayment_reachesBothSDEXAndMovements(t *testing.T) {
+	fromAddr, _ := mkAccount(t, 0x65)
+	native := xdr.Asset{Type: xdr.AssetTypeAssetTypeNative}
+	aqua := mkAlphanum4Asset(t, "AQUA", 0x67)
+	offers := []xdr.ClaimAtom{mkOrderBookClaimAtom(t, 0x68, aqua, 63545, native, 1100)}
+	ctx := dispatcher.OpContext{
+		Ledger:   61000000,
+		ClosedAt: time.Unix(1_760_000_000, 0).UTC(),
+		TxHash:   "txpp-both",
+		TxSource: fromAddr,
+		Op:       mkPathPaymentStrictSendOp(t, native, 1100, 0x66, aqua, 60000),
+		OpResult: mkPathPaymentStrictSendSuccessResult(t, 0x66, aqua, 63545, offers),
+	}
+	orders := map[string][]dispatcher.OpDecoder{
+		"sdex-first":      {sdex.NewDecoder(), NewDecoder()},
+		"movements-first": {NewDecoder(), sdex.NewDecoder()},
+	}
+	for name, order := range orders {
+		t.Run(name, func(t *testing.T) {
+			disp := dispatcher.New()
+			for _, od := range order {
+				disp.AddOpDecoder(od)
+			}
+			outs, err := disp.RouteOp(ctx)
+			if err != nil {
+				t.Fatalf("RouteOp: %v", err)
+			}
+			bySource := map[string]int{}
+			for _, ev := range outs {
+				bySource[ev.Source()]++
+			}
+			if bySource[sdex.SourceName] != 1 || bySource[SourceName] != 1 {
+				t.Errorf("outputs by source = %v, want one %s trade and one %s movement",
+					bySource, sdex.SourceName, SourceName)
+			}
+			seen := disp.Stats().EventsSeen
+			if seen[sdex.SourceName] != 1 || seen[SourceName] != 1 {
+				t.Errorf("EventsSeen = %v, want 1 for both %s and %s", seen, sdex.SourceName, SourceName)
+			}
+		})
 	}
 }
 

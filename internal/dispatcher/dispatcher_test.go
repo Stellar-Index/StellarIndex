@@ -284,6 +284,80 @@ func TestRouteOp_decodeErrorCountedPerSource(t *testing.T) {
 	}
 }
 
+// TestRouteOp_everyMatchingDecoderRuns pins GH-1312: op decoders are
+// per-domain observers of one op, so two that claim the same op type
+// must both decode it and both be counted. First-match routing handed
+// the op to the earlier registration only and recorded the loss nowhere.
+func TestRouteOp_everyMatchingDecoderRuns(t *testing.T) {
+	trades := &fakeOpDecoder{
+		name:     "trades",
+		matchTyp: xdr.OperationTypePathPaymentStrictSend,
+		outputs:  []consumer.Event{fakeEvent{source: "trades", kind: "trade"}},
+	}
+	movements := &fakeOpDecoder{
+		name:     "movements",
+		matchTyp: xdr.OperationTypePathPaymentStrictSend,
+		outputs:  []consumer.Event{fakeEvent{source: "movements", kind: "movement"}},
+	}
+	d := New()
+	d.AddOpDecoder(trades)
+	d.AddOpDecoder(movements)
+
+	outs, err := d.RouteOp(OpContext{
+		Op: xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypePathPaymentStrictSend}},
+	})
+	if err != nil {
+		t.Fatalf("RouteOp: %v", err)
+	}
+	if len(outs) != 2 || outs[0].Source() != "trades" || outs[1].Source() != "movements" {
+		t.Errorf("outputs = %+v, want [trades movements] in registration order", outs)
+	}
+	if trades.calls != 1 || movements.calls != 1 {
+		t.Errorf("decoder calls: trades=%d movements=%d, want 1 each", trades.calls, movements.calls)
+	}
+	seen := d.Stats().EventsSeen
+	if seen["trades"] != 1 || seen["movements"] != 1 {
+		t.Errorf("EventsSeen = %v, want 1 for both decoders", seen)
+	}
+}
+
+// TestRouteOp_failingDecoderDoesNotDropSibling pins the isolation the
+// fan-out needs: one decoder's error or panic on an op costs only that
+// decoder's output for it, never a sibling domain's.
+func TestRouteOp_failingDecoderDoesNotDropSibling(t *testing.T) {
+	boom := errors.New("op decoder explosion")
+	failing := map[string]OpDecoder{
+		"error": &fakeOpDecoder{name: "broken", matchTyp: xdr.OperationTypePathPaymentStrictSend, err: boom},
+		"panic": &panickyOpDecoder{name: "broken"},
+	}
+	for mode, broken := range failing {
+		t.Run(mode, func(t *testing.T) {
+			healthy := &fakeOpDecoder{
+				name:     "healthy",
+				matchTyp: xdr.OperationTypePathPaymentStrictSend,
+				outputs:  []consumer.Event{fakeEvent{source: "healthy", kind: "movement"}},
+			}
+			d := New()
+			d.AddOpDecoder(broken)
+			d.AddOpDecoder(healthy)
+
+			outs, err := d.RouteOp(OpContext{
+				Op: xdr.Operation{Body: xdr.OperationBody{Type: xdr.OperationTypePathPaymentStrictSend}},
+			})
+			if err == nil {
+				t.Error("RouteOp err = nil, want the broken decoder's failure")
+			}
+			if len(outs) != 1 || outs[0].Source() != "healthy" {
+				t.Errorf("outputs = %+v, want the healthy decoder's one event", outs)
+			}
+			stats := d.Stats()
+			if stats.DecodeErrors["broken"] != 1 || stats.DecodeErrors["healthy"] != 0 {
+				t.Errorf("DecodeErrors = %v, want broken=1 healthy=0", stats.DecodeErrors)
+			}
+		})
+	}
+}
+
 // ─── ProcessLedger happy path — empty ledger (no txs) ────────────
 
 func TestProcessLedger_emptyLedgerYieldsNoOutputs(t *testing.T) {
