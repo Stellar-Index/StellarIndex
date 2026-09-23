@@ -99,8 +99,7 @@ all:
     # differs from the role default (raidz2 — the right shape for a
     # FRESH archival node): the live pool has been raidz1 since
     # ~2026-05-21, confirmed by the 2026-07-17 live r1 review
-    # (docs/audit/audit-2026-07-16/go-live-master-plan.md §5, commit
-    # ca2f4748) and by arithmetic — the footprint measured that day
+    # (commit ca2f4748) and by arithmetic — the footprint measured that day
     # (~16.8 TB across ClickHouse/MinIO/pgBackRest/Postgres) does not
     # fit raidz2's ~13.85 TB ceiling on these four drives. Rebuilding
     # r1 as raidz2 would hand back a pool too small for its own data.

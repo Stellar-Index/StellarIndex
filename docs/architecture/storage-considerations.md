@@ -63,9 +63,8 @@ zpool: data
 > 1. **Live inspection.** The 2026-07-17 live r1 review:
 >    "ZFS **raidz1** (single parity, NOT raidz2), 4×7.68TB, pool ~90 %
 >    (~1.6 T usable free). Usable ≈ 66 % of raw (parity + 4K padding)."
->    — `docs/audit/audit-2026-07-16/go-live-master-plan.md` §5, whose
->    heading is literally "corrected from the earlier snapshot-based
->    assessment". Commit `ca2f4748` landed the same correction into
+>    — commit `ca2f4748`, whose finding was "corrected from the earlier
+>    snapshot-based assessment", which landed the same correction into
 >    both rule trees' `stellarindex_zfs_pool_degraded` description.
 > 2. **Arithmetic, which needs no host access.** The dataset footprint
 >    measured that day — ClickHouse 7.5 T + MinIO 5.56 T + pgBackRest

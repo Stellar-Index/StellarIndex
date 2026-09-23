@@ -20,9 +20,8 @@ severity: P1
 > **Settled 2026-08-29 (#289): raidz1.** The ansible *default* is
 > raidz2, but that default describes a fresh archival node, never r1 —
 > r1's inventory pins `zfs_data_pool_type: "raidz1"`, matching the
-> 2026-07-17 live review ("ZFS raidz1 (single parity, NOT raidz2)",
-> `docs/audit/audit-2026-07-16/go-live-master-plan.md` §5) and commit
-> `ca2f4748`. Capacity settles it without host access too: the ~16.8 TB
+> 2026-07-17 live r1 review (commit `ca2f4748`: "ZFS raidz1 (single
+> parity, NOT raidz2)"). Capacity settles it without host access too: the ~16.8 TB
 > live footprint measured that day does not fit the ~13.85 TB a
 > second parity drive would leave. `scripts/ci/lint-docs.sh` §18 now
 > lints every r1-scoped file against the inventory, so this cannot

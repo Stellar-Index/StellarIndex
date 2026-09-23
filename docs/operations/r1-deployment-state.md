@@ -59,10 +59,9 @@ datasets currently:
 - `data/archive` → `/srv/history-archive`
 
 > **Topology corrected 2026-08-29 (#289).** This snapshot originally
-> said raidz2 / ~13.3 TB usable. The live 2026-07-17 r1 review settled
-> it as raidz1 — `docs/audit/audit-2026-07-16/go-live-master-plan.md`
-> §5 ("ZFS **raidz1** (single parity, NOT raidz2)") and commit
-> ca2f4748, which is why both rule trees' `zfs_pool_degraded`
+> said raidz2 / ~13.3 TB usable. The 2026-07-17 live r1 review (commit
+> ca2f4748) settled it as raidz1 ("ZFS **raidz1** (single parity, NOT
+> raidz2)"), which is why both rule trees' `zfs_pool_degraded`
 > description says raidz1. The arithmetic is decisive by itself: the
 > footprint measured that day (ClickHouse 7.5 T + MinIO 5.56 T +
 > pgBackRest 2.49 T + Postgres 1.21 T ≈ 16.8 T) does not fit inside
