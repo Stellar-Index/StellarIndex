@@ -342,6 +342,7 @@ echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh
 echo "=== External channels self-test ===" && ./scripts/ci/lint-external-channels-test.sh
 echo "=== OpenAPI URLs (query discipline + served hosts) ===" && go run ./scripts/ci/lint-openapi-urls openapi/stellar-index.v1.yaml
 echo "=== PK discriminators ===" && go run ./scripts/ci/lint-pk-discriminators
+echo "=== derive_generation guard (INV-3) ===" && go run ./scripts/ci/lint-derive-generation-guard
 # Structural rule-file lint — pure-Python (no promtool), so it runs even
 # on machines without a Prometheus install and catches the mis-indented-rule
 # class that otherwise only CI's promtool job flags (2026-07-06 galexie-archive
