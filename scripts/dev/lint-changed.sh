@@ -356,7 +356,7 @@ fi
 #     still deferred to verify.sh.
 if [ "${#md_files[@]}" -gt 0 ]; then
     add_step "lint-doc-links" "scoped to ${#md_files[@]} file(s)" "$ci_dir/lint-doc-links.sh" "${md_files[@]}"
-    defer "lint-docs" "${#md_files[@]} .md file(s) changed; lint-docs (64 s, no file list) runs in scripts/dev/verify.sh"
+    defer "lint-docs" "${#md_files[@]} .md file(s) changed; lint-docs (~20 s, no file list) runs in scripts/dev/verify.sh"
 fi
 
 # 3. Workflows: the pinning policy, actionlint, zizmor — all scoped.

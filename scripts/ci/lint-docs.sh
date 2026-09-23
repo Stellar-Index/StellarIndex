@@ -582,9 +582,11 @@ fi
 # ─── 6. Frontmatter freshness on 'current' docs ─────────────────────────────
 
 echo "Checking doc frontmatter freshness..."
+# ISO dates compare correctly as strings, so age each stamp against two
+# precomputed cutoffs instead of forking `date` per file.
 today=$(date -u +%s)
-stale_threshold=$((90 * 24 * 60 * 60))   # 90 days in seconds
-fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
+stale_cut=$(date -u -r $((today - 90 * 86400)) +%F 2>/dev/null || date -u -d "@$((today - 90 * 86400))" +%F)
+fail_cut=$(date -u -r $((today - 180 * 86400)) +%F 2>/dev/null || date -u -d "@$((today - 180 * 86400))" +%F)
 
 # Iterate over 'current' docs — architecture/, operations/, adr/,
 # contributing/ (added 2026-09-02, issue #362: the contributor
@@ -624,14 +626,25 @@ fail_threshold=$((180 * 24 * 60 * 60))   # 180 days — hard fail
 # opt out by accident. A freshness stamp on a post-mortem would
 # demand periodic re-verification of something that must never change,
 # and would hard-fail at 180 days for being exactly what it is.
+# One awk pass emits `path<TAB>generated<TAB>last_verified` per file; it
+# reads each file with getline so an empty doc still gets a row.
 find docs/architecture docs/operations docs/design docs/contributing \
-     docs/protocols docs/methodology -type f -name '*.md' 2>/dev/null | while read -r f; do
+     docs/protocols docs/methodology -type f -name '*.md' -print0 2>/dev/null | \
+  xargs -0 awk 'BEGIN {
+    for (i = 1; i < ARGC; i++) {
+      f = ARGV[i]; gen = 0; v = ""
+      while ((getline line < f) > 0) {
+        if (index(line, "GENERATED FILE - DO NOT EDIT")) gen = 1
+        if (v == "" && line ~ /^last_verified:/) { split(line, a, " "); v = a[2]; gsub(/"/, "", v) }
+      }
+      close(f)
+      print f "\t" gen "\t" v
+    }
+  }' | while IFS=$'\t' read -r f gen verified; do
   # Skip generated docs, archive, templates.
-  if grep -q "GENERATED FILE - DO NOT EDIT" "$f" 2>/dev/null; then continue; fi
+  if [ "$gen" = 1 ]; then continue; fi
   if [[ "$f" == *"_archive"* ]] || [[ "$f" == *"_template"* ]]; then continue; fi
 
-  # Extract last_verified date from frontmatter if present.
-  verified=$(awk '/^last_verified:/{print $2; exit}' "$f" 2>/dev/null | tr -d '"')
   if [ -z "$verified" ]; then
     case "$f" in
       docs/operations/evidence/*|docs/operations/postmortems/*|\
@@ -647,14 +660,11 @@ find docs/architecture docs/operations docs/design docs/contributing \
     esac
   fi
 
-  verified_epoch=$(date -u -j -f "%Y-%m-%d" "$verified" +%s 2>/dev/null || \
-                   date -u -d "$verified" +%s 2>/dev/null || echo "")
-  if [ -z "$verified_epoch" ]; then continue; fi
+  [[ "$verified" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || continue
 
-  age=$((today - verified_epoch))
-  if [ "$age" -gt "$fail_threshold" ]; then
+  if [[ "$verified" < "$fail_cut" ]]; then
     err "Doc '$f' is STALE — last_verified $verified is > 180 days old"
-  elif [ "$age" -gt "$stale_threshold" ]; then
+  elif [[ "$verified" < "$stale_cut" ]]; then
     echo "  WARN: doc '$f' last_verified $verified is > 90 days old — refresh soon" >&2
   fi
 done
@@ -931,36 +941,47 @@ if [ -d docs/operations/runbooks ] && [ -d internal/ops ]; then
       sed -E 's|.*"(.*)"|\1|'
   done | sort -u > "$gated"
 
+  # Join backslash-continued shell lines so a multi-line invocation is
+  # matched as one command — the wrapper form is always continued — and
+  # keep only wrapper lines, as `path<TAB>command`, in ONE pass over every
+  # runbook: a per-runbook × per-subcommand loop was ~5k pipelines per run.
+  # awk, not the sed `:a;/\\$/N;ta` idiom: the awk form behaves
+  # identically under BSD awk (dev laptops) and gawk (CI runners).
+  wrapped=$(mktemp)
   for rb in docs/operations/runbooks/*.md; do
-    [ -f "$rb" ] || continue
-    # Join backslash-continued shell lines so a multi-line invocation is
-    # matched as one command — the wrapper form is always continued.
-    # awk, not the sed `:a;/\\$/N;ta` idiom: the awk form behaves
-    # identically under BSD awk (dev laptops) and gawk (CI runners).
-    joined=$(awk '{ while (sub(/\\$/, "")) { if ((getline nxt) > 0) { $0 = $0 " " nxt } else { break } } print }' "$rb")
-    while IFS= read -r sub; do
-      [ -z "$sub" ] && continue
-      # `|| true`: a no-match grep exits 1, which under set -e +
-      # pipefail would abort the whole lint instead of meaning "clean".
-      #
-      # An EXPLICIT -dry-run is exempt. The forgotten-flag failure this
-      # section exists to catch is a command that looks like it writes
-      # and does not; a command that says -dry-run is a deliberate
-      # preview, and several runbooks correctly show the dry run
-      # immediately before the -write run (see
-      # supply-cross-check-divergence.md §Mitigation). Flagging those
-      # would train responders to ignore this check.
-      offenders=$(printf '%s\n' "$joined" | \
-        grep -E "run-heavy-job\.sh.*stellarindex-ops[[:space:]]+${sub}([[:space:]]|\$)" | \
-        grep -vE '(^|[[:space:]])-{1,2}write([[:space:]]|$)' | \
-        grep -vE '(^|[[:space:]])-{1,2}dry-run([[:space:]]|$)' || true)
-      [ -z "$offenders" ] && continue
-      printf '%s\n' "$offenders" | while IFS= read -r bad; do
-        [ -z "$bad" ] && continue
-        err "$rb: heavy-job command runs write-gated '$sub' without -write — it is a DRY RUN and will report success having written nothing: ${bad}"
-      done
-    done < "$gated"
-  done
+    if [ -f "$rb" ]; then printf '%s\0' "$rb"; fi
+  done | xargs -0 awk 'BEGIN {
+    for (i = 1; i < ARGC; i++) {
+      f = ARGV[i]
+      while ((getline line < f) > 0) {
+        while (sub(/\\$/, "", line)) { if ((getline nxt < f) > 0) line = line " " nxt; else break }
+        if (index(line, "run-heavy-job.sh")) print f "\t" line
+      }
+      close(f)
+    }
+  }' > "$wrapped"
+  while IFS= read -r sub; do
+    [ -z "$sub" ] && continue
+    # `|| true`: a no-match grep exits 1, which under set -e +
+    # pipefail would abort the whole lint instead of meaning "clean".
+    #
+    # An EXPLICIT -dry-run is exempt. The forgotten-flag failure this
+    # section exists to catch is a command that looks like it writes
+    # and does not; a command that says -dry-run is a deliberate
+    # preview, and several runbooks correctly show the dry run
+    # immediately before the -write run (see
+    # supply-cross-check-divergence.md §Mitigation). Flagging those
+    # would train responders to ignore this check.
+    offenders=$(grep -E "run-heavy-job\.sh.*stellarindex-ops[[:space:]]+${sub}([[:space:]]|\$)" "$wrapped" | \
+      grep -vE '(^|[[:space:]])-{1,2}write([[:space:]]|$)' | \
+      grep -vE '(^|[[:space:]])-{1,2}dry-run([[:space:]]|$)' || true)
+    [ -z "$offenders" ] && continue
+    printf '%s\n' "$offenders" | while IFS=$'\t' read -r rb bad; do
+      [ -z "$bad" ] && continue
+      err "$rb: heavy-job command runs write-gated '$sub' without -write — it is a DRY RUN and will report success having written nothing: ${bad}"
+    done
+  done < "$gated"
+  rm -f "$wrapped"
   rm -f "$gated"
 fi
 
@@ -1480,10 +1501,13 @@ done
 echo "Checking Phoenix's synthetic XLM SAC test-fixture id hasn't resurfaced in a README..."
 PHOENIX_FAKE_XLM_SAC="CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 while IFS= read -r -d '' readme; do
+  [ -f "$readme" ] || continue
   if grep -q "$PHOENIX_FAKE_XLM_SAC" "$readme"; then
     err "$readme republishes '$PHOENIX_FAKE_XLM_SAC' as if it were a real address — internal/sources/phoenix/events.go documents this as the synthetic test/integration-fixture id, NOT a real XLM SAC on any network. Use aquarius.MainnetXLMSAC or canonical.Asset.SacContractID() instead; do not print this id in a README."
   fi
-done < <(find . -name node_modules -prune -o -name README.md -print0)
+# Tracked files only: `find .` also walked .claude/worktrees/ (thousands of
+# agent-checkout READMEs), costing ~25s and letting an untracked copy redden the lint.
+done < <(git ls-files -z -- ':(glob)**/README.md')
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 
