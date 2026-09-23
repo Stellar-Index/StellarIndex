@@ -97,6 +97,8 @@ rc=0
 
 # 1. Heal holes below CH_MAX. leadInFrame's (CURRENT ROW .. 1 FOLLOWING) frame
 #    returns the last row's own value, so there is no spurious trailing gap.
+#    stderr stays on the journal and the exit status is checked: a failed scan
+#    also yields no rows, and must not be reported as "no holes".
 GAPS=$(CH -q "
   SELECT gap_start, gap_end FROM (
     SELECT ledger_seq + 1 AS gap_start, nxt - 1 AS gap_end
@@ -110,8 +112,12 @@ GAPS=$(CH -q "
     WHERE nxt > ledger_seq + 1
   )
   ORDER BY gap_start
-  FORMAT TSV" 2>/dev/null)
-if [ -n "$GAPS" ]; then
+  FORMAT TSV")
+scan_rc=$?
+if [ "$scan_rc" -ne 0 ]; then
+  echo "$(date -u) ch-live-catchup: gap scan FAILED (clickhouse-client exit $scan_rc) — holes in [$LIVE_ERA_FROM,$CH_MAX] NOT checked or healed" >&2
+  rc=1
+elif [ -n "$GAPS" ]; then
   NGAPS=$(printf '%s\n' "$GAPS" | wc -l | tr -d '[:space:]')
   echo "$(date -u) ch-live-catchup: healing $NGAPS hole(s) in [$LIVE_ERA_FROM,$CH_MAX]"
   while IFS=$'\t' read -r gstart gend; do

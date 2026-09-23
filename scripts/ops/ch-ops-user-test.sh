@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # ch-ops-user-test.sh — the shared scripts/ops contracts CI pins under
-# stubs. Two of them:
+# stubs. Three of them:
 #
 #   A. the ClickHouse ops-credential contract for every scripts/ops
 #      script that shells out to clickhouse-client (below);
-#   B. ch-live-catchup.sh's required live-era floor (#371 F10, at the
-#      bottom of this file).
+#   B. ch-live-catchup.sh's required live-era floor (#371 F10);
+#   C. ch-live-catchup.sh failing, not reporting "no holes", when its
+#      gap scan errors (at the bottom of this file).
 #
 # Contract (2026-08-28 Wave A follow-up):
 #
@@ -211,6 +212,58 @@ if [ -n "$(head -n1 "$REC")" ]; then
 else
   bad "ch-live-catchup.sh: a valid floor was refused — the guard is too strict"
   sed 's/^/       /' "$TMP/out.floor.valid"
+fi
+
+# ─── ch-live-catchup's gap-scan failure contract ────────────────────
+#
+# A gap scan that errors or times out returns no rows, exactly like a
+# lake with no holes. It must fail the run (the unit goes failed) and
+# must never claim "no holes"; the tip-extend is independent of the scan
+# and still runs. Here CH_MAX and TIP resolve, and only the scan fails.
+mkdir -p "$TMP/scanbin"
+cat > "$TMP/scanbin/clickhouse-client" <<'STUB'
+#!/usr/bin/env bash
+case "$*" in
+  *"SELECT max(ledger_seq) FROM stellar.ledgers"*) echo 62894100 ;;
+  *) echo "Code: 159. DB::Exception: Timeout exceeded (TIMEOUT_EXCEEDED)" >&2; exit 159 ;;
+esac
+STUB
+cat > "$TMP/scanbin/psql" <<'STUB'
+#!/usr/bin/env bash
+echo 62894200
+STUB
+cat > "$TMP/scanbin/ops" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$STUB_OUT"
+STUB
+chmod +x "$TMP/scanbin/"*
+REC="$TMP/rec.scanfail"; : > "$REC"
+env -u STELLARINDEX_CLICKHOUSE_OPS_USER -u STELLARINDEX_CLICKHOUSE_OPS_PASSWORD \
+    -u CLICKHOUSE_USER -u CLICKHOUSE_PASSWORD \
+    PATH="$TMP/scanbin:$PATH" OPS="$TMP/scanbin/ops" STUB_OUT="$REC" \
+    STELLARINDEX_POSTGRES_DSN=postgres://stub LIVE_ERA_FROM=62894001 \
+    bash "$OPS_DIR/ch-live-catchup.sh" >"$TMP/out.scanfail" 2>&1
+scan_rc=$?
+if [ "$scan_rc" -ne 0 ]; then
+  ok "ch-live-catchup.sh: failed gap scan ⇒ non-zero exit"
+else
+  bad "ch-live-catchup.sh: failed gap scan ⇒ exited 0; the unit reports success on an unscanned lake"
+fi
+if grep -q 'no holes' "$TMP/out.scanfail"; then
+  bad "ch-live-catchup.sh: failed gap scan ⇒ claimed 'no holes'"
+  sed 's/^/       /' "$TMP/out.scanfail"
+else
+  ok "ch-live-catchup.sh: failed gap scan ⇒ does not claim 'no holes'"
+fi
+if grep -q 'TIMEOUT_EXCEEDED' "$TMP/out.scanfail"; then
+  ok "ch-live-catchup.sh: failed gap scan ⇒ ClickHouse's error reaches the log"
+else
+  bad "ch-live-catchup.sh: failed gap scan ⇒ ClickHouse's error was discarded"
+fi
+if grep -q -- '-from 62894101 -to 62894200 ' "$REC"; then
+  ok "ch-live-catchup.sh: failed gap scan ⇒ tip-extend still runs"
+else
+  bad "ch-live-catchup.sh: failed gap scan ⇒ tip-extend [62894101,62894200] did not run: '$(cat "$REC")'"
 fi
 
 echo "ch-ops-user-test: $pass passed, $fail failed"
