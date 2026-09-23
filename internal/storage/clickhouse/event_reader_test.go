@@ -8,6 +8,31 @@ import (
 	"testing"
 )
 
+// TestFirstContractEventLedgerQuery_SharesStreamFilter pins the projector
+// seed's seek to the stream's exact WHERE clause, read in sort-key order so
+// LIMIT 1 stops at the first match, under the bounded-scan settings.
+func TestFirstContractEventLedgerQuery_SharesStreamFilter(t *testing.T) {
+	ids, topics, excludes := []string{"CAAA"}, []string{"swap"}, []string{"mint", "burn"}
+	q := firstContractEventLedgerQuery(ids, topics, excludes)
+	for _, s := range []string{
+		contractEventsFilterWhere(ids, topics, excludes),
+		"FROM stellar.contract_events\n",
+		"ORDER BY ledger_seq\n",
+		"LIMIT 1",
+		boundedScanSettings,
+	} {
+		if !strings.Contains(q, s) {
+			t.Errorf("query missing %q:\n%s", s, q)
+		}
+	}
+	if strings.Contains(q, "FINAL") {
+		t.Errorf("seek must not merge-on-read (FINAL defeats read-in-order):\n%s", q)
+	}
+	if !strings.Contains(contractEventsFilteredQuery(ids, topics, excludes, false, false), contractEventsFilterWhere(ids, topics, excludes)) {
+		t.Error("stream query no longer uses contractEventsFilterWhere")
+	}
+}
+
 // TestContractEventsFilteredQuery_OpArgsTrim pins the 2026-07-08 OOM fix's
 // column trim: the WIDE op_args_xdr column is read only when the consuming
 // decoder actually uses events.Event.OpArgs (redstone). The sep41 reconcile —

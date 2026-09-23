@@ -35,6 +35,10 @@ type fakeStore struct {
 	rows            []sorobanevents.Row
 	upserts         int
 
+	// seeks counts FirstSorobanEventLedger calls; seekErr fails them.
+	seeks   int
+	seekErr error
+
 	// dirtyWindows / dirtyErr back ProjectionDirtyWindows — the
 	// operator-recorded projector-replay rewind windows the
 	// replay-window watcher reads (see replay_window_test.go).
@@ -121,6 +125,27 @@ func (f *fakeStore) StreamSorobanEvents(_ context.Context, from, to uint32,
 		}
 	}
 	return nil
+}
+
+// FirstSorobanEventLedger mirrors StreamSorobanEvents' row set (filters
+// ignored, as there): the lowest row ledger in [from, to].
+func (f *fakeStore) FirstSorobanEventLedger(_ context.Context, from, to uint32,
+	_, _, _ []string,
+) (uint32, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.seeks++
+	if f.seekErr != nil {
+		return 0, false, f.seekErr
+	}
+	var first uint32
+	found := false
+	for _, r := range f.rows {
+		if r.Ledger >= from && r.Ledger <= to && (!found || r.Ledger < first) {
+			first, found = r.Ledger, true
+		}
+	}
+	return first, found, nil
 }
 
 func (f *fakeStore) cursor() uint32 {

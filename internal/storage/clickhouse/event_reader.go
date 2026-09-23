@@ -2,6 +2,8 @@ package clickhouse
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -275,20 +277,7 @@ func topic0Predicate(topic0Syms []string) string {
 // text. Split out so the query shape (column trim, FINAL, prefilters, the
 // bounded-scan SETTINGS) is unit-testable without a ClickHouse server.
 func contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms []string, useFinal, withOpArgs bool) string {
-	where := "WHERE ledger_seq BETWEEN ? AND ?"
-	if len(contractIDs) > 0 {
-		// contractIDs is caller-supplied (e.g. a decoder's live-grown
-		// GatedContractSet(), not a compile-time constant) — escape it
-		// like sqlQuoteEscaped's other lake-derived-value callers, not
-		// sqlQuoteList's compile-time-constant topic symbols.
-		where += " AND contract_id IN (" + sqlQuoteEscapedList(contractIDs) + ")"
-	}
-	if len(topic0Syms) > 0 {
-		where += " AND " + topic0Predicate(topic0Syms)
-	}
-	if len(excludeTopic0Syms) > 0 {
-		where += " AND topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0Syms) + ")"
-	}
+	where := contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms)
 	final := ""
 	if useFinal {
 		final = "FINAL"
@@ -305,6 +294,62 @@ func contractEventsFilteredQuery(contractIDs, topic0Syms, excludeTopic0Syms []st
 		%s
 		ORDER BY ledger_seq, tx_hash, op_index, event_index
 		%s`, opArgsCol, final, where, boundedScanSettings)
+}
+
+// FirstContractEventLedgerFiltered returns the lowest ledger in [from, to]
+// holding a row StreamContractEventsFiltered would stream for the same
+// filters, and false when the range holds none. The projector seeds a
+// never-run source from it.
+func FirstContractEventLedgerFiltered(ctx context.Context, addr string, from, to uint32, contractIDs, topic0Syms, excludeTopic0Syms []string) (uint32, bool, error) {
+	if to < from {
+		return 0, false, nil
+	}
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return 0, false, err
+	}
+	defer func() { _ = conn.Close() }()
+	var ledger uint32
+	err = conn.QueryRow(ctx, firstContractEventLedgerQuery(contractIDs, topic0Syms, excludeTopic0Syms), from, to).Scan(&ledger)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("clickhouse: first contract_events ledger [%d,%d]: %w", from, to, err)
+	}
+	return ledger, true, nil
+}
+
+// firstContractEventLedgerQuery orders by the sort-key prefix with LIMIT 1 so
+// CH reads in order and stops at the first match instead of scanning [from, to].
+func firstContractEventLedgerQuery(contractIDs, topic0Syms, excludeTopic0Syms []string) string {
+	return fmt.Sprintf(`
+		SELECT ledger_seq FROM stellar.contract_events
+		%s
+		ORDER BY ledger_seq
+		LIMIT 1
+		%s`, contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms), boundedScanSettings)
+}
+
+// contractEventsFilterWhere renders the `WHERE ledger_seq BETWEEN ? AND ?`
+// clause plus the contract / topic[0] prefilters, shared by the stream and
+// the first-ledger seek so they cannot disagree about which rows match.
+func contractEventsFilterWhere(contractIDs, topic0Syms, excludeTopic0Syms []string) string {
+	where := "WHERE ledger_seq BETWEEN ? AND ?"
+	if len(contractIDs) > 0 {
+		// contractIDs is caller-supplied (e.g. a decoder's live-grown
+		// GatedContractSet(), not a compile-time constant) — escape it
+		// like sqlQuoteEscaped's other lake-derived-value callers, not
+		// sqlQuoteList's compile-time-constant topic symbols.
+		where += " AND contract_id IN (" + sqlQuoteEscapedList(contractIDs) + ")"
+	}
+	if len(topic0Syms) > 0 {
+		where += " AND " + topic0Predicate(topic0Syms)
+	}
+	if len(excludeTopic0Syms) > 0 {
+		where += " AND topic_0_sym NOT IN (" + sqlQuoteList(excludeTopic0Syms) + ")"
+	}
+	return where
 }
 
 // excludeTopic0 (nil = no filter) drops events whose topic[0] symbol is in the
