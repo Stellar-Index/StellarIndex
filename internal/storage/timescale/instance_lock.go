@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // Instance locks make "one indexer, one aggregator per database"
@@ -123,6 +125,7 @@ func (l *InstanceLock) verify(ctx context.Context) error {
 
 func (l *InstanceLock) watch(ctx context.Context, every time.Duration) {
 	defer close(l.watchDone)
+	defer worker.Recover(l.logger, "instance-lock-watch:"+l.name)
 	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 	for {
