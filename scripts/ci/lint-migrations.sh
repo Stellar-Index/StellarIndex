@@ -7,8 +7,13 @@
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
 #      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
-#      no empty files. Numbering GAPS are a non-fatal WARNING (this repo
-#      legitimately skips numbers when a migration is squashed/removed).
+#      no empty files. Numbering GAPS ALREADY in the tree are a
+#      non-fatal WARNING (this repo legitimately skips numbers when a
+#      migration is squashed/removed) — but a NEW migration numbered
+#      below the comparison base's head (i.e. filed INTO a gap) is
+#      FATAL (GH-1164): such a file is invisible to `migrate up` on any
+#      deployment already past that number and silently divergent on a
+#      fresh one.
 #   3. register completeness — every NNNN_*.up.sql has a row in
 #      migrations/README.md's register, and no row names a file that does
 #      not exist.
@@ -117,9 +122,12 @@ fi
 # ─── Pass 2: pairing / numbering / non-empty (audit C4-7) ───
 # A missing or empty .down.sql means a migration can't be rolled back —
 # a silent operational trap discovered only during an incident. This
-# pass makes it a CI failure. Gaps are WARN-only (see header): the tree
-# legitimately skips numbers (e.g. 0075, 0077-0079, 0084 today) when a
-# migration is squashed out, so a hard no-gap rule would false-positive.
+# pass makes it a CI failure. EXISTING gaps are WARN-only (see header):
+# the tree legitimately skips numbers (e.g. 0075, 0077-0079, 0084 today)
+# when a migration is squashed out, so a hard no-gap rule on the whole
+# tree would false-positive. A NEW migration filed INTO a gap is a
+# different, fatal shape (GH-1164, below): the warning names why gaps
+# already in the tree are fine, never why it would be fine to add one.
 
 # Non-empty: every migration file must have content.
 for f in migrations/*.sql; do
@@ -168,6 +176,47 @@ gaps=$(find migrations -maxdepth 1 -name '*.up.sql' \
   ' || true)
 if [ -n "$gaps" ]; then
   echo "lint-migrations ⚠️  numbering gap(s) (non-fatal — squashed/removed migrations): ${gaps}" >&2
+fi
+
+# ── back-numbering guard (GH-1164) ──
+# Nothing asserted a NEW migration's number exceeds the head that
+# existed when it was added, so a file back-numbered into a gap (a
+# historical one, or a fresh one from this same change) sails through
+# every other check: it's new, so immutability just appends it; it
+# doesn't collide with an existing NNNN, so the duplicate check above
+# is silent; and TestExpectedSchemaVersionMatchesMigrationsHead takes a
+# MAX over the tree, so the constant doesn't move. A deployment already
+# past that number never runs it (`migrate up` only walks numbers
+# greater than applied); a fresh database does — permanent, silent
+# schema divergence with no signal anywhere.
+#
+# Compare against a comparison base (same BASE_SHA convention as
+# lint-baseline-growth.sh, with a local origin/main merge-base fallback
+# so this also works outside CI) to find *.up.sql files that are NEW in
+# this change, and require each one's number to exceed every number
+# that already existed at that base. Silently skips when no usable base
+# is resolvable (shallow clone, no configured remote) — same tradeoff
+# lint-baseline-growth.sh already makes.
+base_sha="${BASE_SHA:-}"
+if [ -z "$base_sha" ] && git rev-parse -q --verify origin/main >/dev/null 2>&1; then
+  base_sha="$(git merge-base origin/main HEAD 2>/dev/null || true)"
+fi
+if [ -n "$base_sha" ] && git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+  base_max=$(git ls-tree --name-only "${base_sha}:migrations" 2>/dev/null \
+    | grep -E '^[0-9]+_.*\.up\.sql$' \
+    | sed -E 's/^([0-9]+)_.*/\1/' | sed 's/^0*//' | sort -n | tail -1 || true)
+  base_max="${base_max:-0}"
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    n="$(basename "$f" | sed -E 's/^([0-9]+)_.*/\1/' | sed 's/^0*//')"
+    [ -n "$n" ] || n=0
+    if [ "$n" -le "$base_max" ]; then
+      echo "lint-migrations ❌ ${f}: new migration numbered ${n} does not exceed the comparison base's head (${base_max}) — a migration back-numbered into a gap is invisible to any deployment already past it (GH-1164)" >&2
+      fail=1
+    fi
+  done < <(git diff --name-only --diff-filter=A "${base_sha}...HEAD" -- 'migrations/*.up.sql' 2>/dev/null || true)
+else
+  echo "lint-migrations: no comparison base (BASE_SHA unset and origin/main unresolvable) — skipping the GH-1164 back-numbering guard." >&2
 fi
 
 # ── pass 3: register completeness ──────────────────────────────────

@@ -199,12 +199,23 @@
   when: stellarindex_apply_migrations | default(false) | bool
   ansible.builtin.command:
     argv:
+      # `timeout` (belt-and-braces alongside PGOPTIONS below — bounds a
+      # hang that isn't a Postgres lock wait too; ansible.builtin.command
+      # has no task-level timeout keyword of its own).
+      - timeout
+      - "900"
       - /usr/local/bin/stellarindex-migrate
       - -migrations
       - /usr/local/share/stellarindex/migrations
       - up
   environment:
     STELLARINDEX_POSTGRES_DSN: "postgres://{{ postgres_user_stellarindex }}:{{ postgres_pass_stellarindex }}@127.0.0.1:5432/{{ postgres_db_stellarindex }}?sslmode=disable"
+    # GH-1166: same DDL-lock-convoy mitigation as deploy-binary.yml's
+    # "Apply outstanding migrations" task. stellarindex-migrate's
+    # golang-migrate postgres driver is lib/pq, which reads PGOPTIONS as
+    # backend startup options; this and deploy-binary.yml are the two
+    # call sites of `stellarindex-migrate up`.
+    PGOPTIONS: "-c lock_timeout=5s -c statement_timeout=5min"
   register: migrate_result
   changed_when: "'no change' not in (migrate_result.stdout | default(''))"
   failed_when: migrate_result.rc != 0
