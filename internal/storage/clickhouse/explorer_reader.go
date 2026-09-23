@@ -324,10 +324,14 @@ type ExplorerReader struct {
 	holdersRollupProbe schemaProbe
 
 	// cap67 movements watermark cache (see Cap67MovementsWatermark in
-	// cap67_movements.go).
-	cap67WMMu sync.Mutex
-	cap67WM   uint32
-	cap67WMAt time.Time
+	// cap67_movements.go). cap67WMErr/At negatively cache a failed read;
+	// cap67WMFlight is non-nil while one read is in flight.
+	cap67WMMu     sync.Mutex
+	cap67WM       uint32
+	cap67WMAt     time.Time
+	cap67WMErr    error
+	cap67WMErrAt  time.Time
+	cap67WMFlight chan struct{}
 
 	// opsBySourceProbe probes whether stellar.ops_by_source (the slim
 	// sourced-history projection, deploy/clickhouse/ops_by_source.sql)
