@@ -300,6 +300,7 @@ echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansib
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
 echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
 echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
+echo "=== verify-archive EnvironmentFile override-order self-test ===" && ./scripts/ci/verify-archive-env-order-test.sh
 echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy-inputs-test.sh
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
