@@ -132,7 +132,7 @@ func (c *contractDetailCache) put(key string, v any) {
 }
 
 // detachedClassForKey maps a cache key to its refresh-gate CLASS, using
-// the key's kind prefix ("ev:", "ix:", "ch:", "act:").
+// the key's kind prefix ("ev:", "ix:", "ch:", "act:", "inst:").
 //
 // Every caller of contractDetailCached previously shared the single
 // class "contract_detail", capped at half the global limit. The

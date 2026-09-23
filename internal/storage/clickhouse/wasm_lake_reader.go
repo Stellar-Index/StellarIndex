@@ -219,6 +219,55 @@ func (r *ExplorerReader) contractWasmHashLegacy(ctx context.Context, cid xdr.Has
 	return xdr.Hash{}, false, rows.Err()
 }
 
+// ContractInstanceState is the lake's evidence about a contract's instance
+// ledger entry.
+type ContractInstanceState struct {
+	// Known is true when the lake holds positive evidence the instance entry
+	// exists or existed: a TTL row for its key, or a resolvable executable
+	// (wasm hash or SAC). False is "not in the captured window", not proof
+	// the contract was never deployed.
+	Known bool
+	// LiveUntil is the newest liveUntilLedgerSeq recorded for the instance
+	// key; 0 when no TTL row is held. Judge it with [TTLVerdictAt].
+	LiveUntil uint32
+}
+
+// ContractInstanceState resolves the contract's instance-entry evidence: a
+// primary-key read on stellar.ttl_live_until for the instance key, falling
+// back to the executable resolution only when no TTL row proves existence.
+func (r *ExplorerReader) ContractInstanceState(ctx context.Context, contractID string) (ContractInstanceState, error) {
+	dec, err := strkey.Decode(strkey.VersionByteContract, contractID)
+	if err != nil {
+		return ContractInstanceState{}, fmt.Errorf("clickhouse: bad contract id %q: %w", contractID, err)
+	}
+	var cid xdr.Hash
+	copy(cid[:], dec)
+	keys, err := instanceKeyXDR(cid)
+	if err != nil {
+		return ContractInstanceState{}, err
+	}
+	liveUntil, err := ttlLiveUntilBatch(ctx, r.conn, keys)
+	if err != nil {
+		return ContractInstanceState{}, fmt.Errorf("clickhouse: instance ttl lookup: %w", err)
+	}
+	var st ContractInstanceState
+	for _, lu := range liveUntil {
+		st.LiveUntil = max(st.LiveUntil, lu)
+	}
+	if st.LiveUntil > 0 {
+		st.Known = true
+		return st, nil
+	}
+	_, ok, err := r.contractWasmHash(ctx, cid)
+	if errors.Is(err, ErrContractIsSAC) {
+		return ContractInstanceState{Known: true}, nil
+	}
+	if err != nil {
+		return ContractInstanceState{}, err
+	}
+	return ContractInstanceState{Known: ok}, nil
+}
+
 // ContractCodeVersion is one entry in a contract's code-upgrade timeline: the
 // ledger at which the contract's instance began pointing at WasmHash.
 type ContractCodeVersion struct {

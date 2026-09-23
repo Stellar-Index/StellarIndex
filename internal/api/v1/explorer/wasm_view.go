@@ -3,6 +3,7 @@ package explorer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -37,13 +38,17 @@ type ContractWasmView struct {
 	Wat        string           `json:"wat,omitempty"`
 	Decompiled string           `json:"decompiled,omitempty"`
 	SourceNote string           `json:"source_note"`
+	// TTL is the instance entry's liveness at the lake watermark (see
+	// ContractDetailView.TTL); archived also qualifies source_note.
+	TTL *ContractTTLV `json:"ttl,omitempty"`
 }
 
 // ContractWasm serves GET /v1/contracts/{contract_id}/wasm — the
 // contract's on-chain WASM surfaced for the explorer's "see the code" view:
 // metadata + exported function table (+ WAT + decompiled pseudocode when the
 // wabt toolchain is present). Read on demand from the certified lake (ADR-0034);
-// the wasm for a hash is immutable, so the response is cached for a day.
+// the wasm for a hash is immutable, so the response is cached for a day
+// unless it carries a ttl verdict (wasmCacheControl).
 //
 // 404 when the contract's wasm isn't resolvable from the captured
 // ledger_entry_changes window (the instance or code entry wasn't captured —
@@ -133,8 +138,8 @@ func (h *Handler) ContractWasm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := contractWasmView(info)
-	// The wasm for a content-addressed hash is immutable — cache hard.
-	w.Header().Set("Cache-Control", "public, max-age=86400")
+	h.setWasmLiveness(ctx, cid, &view)
+	w.Header().Set("Cache-Control", wasmCacheControl(view))
 	h.WriteJSON(w, view, false)
 }
 
@@ -164,6 +169,32 @@ func contractWasmView(info clickhouse.ContractWasmInfo) ContractWasmView {
 		Decompiled: info.Decompiled,
 		SourceNote: note,
 	}
+}
+
+// setWasmLiveness attaches the instance TTL and, for an archived instance,
+// says so in source_note — the resolved wasm is its last executable, not
+// something that can be invoked now.
+func (h *Handler) setWasmLiveness(ctx context.Context, cid string, view *ContractWasmView) {
+	st, ok := h.contractInstanceState(ctx, cid)
+	if !ok {
+		return
+	}
+	view.TTL = h.contractTTL(ctx, st.LiveUntil)
+	if view.TTL != nil && view.TTL.State == ttlStateArchived {
+		view.SourceNote = fmt.Sprintf("ARCHIVED: the contract instance's TTL lapsed at ledger %d "+
+			"(lake watermark %d); invocations fail until it is restored — ",
+			view.TTL.LiveUntil, view.TTL.AsOfLedger) + view.SourceNote
+	}
+}
+
+// wasmCacheControl caches the wasm view hard — the wasm for a content-addressed
+// hash is immutable — unless it carries a ttl verdict, which is not: an
+// archival or restore must not hide behind a day-long cache.
+func wasmCacheControl(view ContractWasmView) string {
+	if view.TTL != nil {
+		return "public, max-age=300"
+	}
+	return "public, max-age=86400"
 }
 
 // nonNilStrings returns a non-nil slice so the JSON renders [] not null for a

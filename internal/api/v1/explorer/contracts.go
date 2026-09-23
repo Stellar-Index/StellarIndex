@@ -52,6 +52,28 @@ type ContractDetailView struct {
 	// lifetime bounds + a 30-day daily active-ledger series off the
 	// contract-keyed index. Omitted when the index isn't provisioned.
 	Activity *ContractActivityV `json:"activity,omitempty"`
+	// Exists is false when the lake holds no evidence the contract was ever
+	// deployed — no events, no activity, no instance entry or TTL row — so
+	// "no such contract / not yet captured", 200 not 404 like the account
+	// route. Absent when the instance read failed and nothing else decides it.
+	Exists *bool `json:"exists,omitempty"`
+	// TTL is the instance entry's liveness at the lake watermark. Absent
+	// when no TTL row is held or the watermark is unavailable.
+	TTL *ContractTTLV `json:"ttl,omitempty"`
+}
+
+// Wire values of ContractTTLV.State.
+const (
+	ttlStateLive     = "live"
+	ttlStateArchived = "archived"
+)
+
+// ContractTTLV is the wire TTL state of a contract's instance entry. An
+// archived instance cannot be invoked until it is restored.
+type ContractTTLV struct {
+	LiveUntil  uint32 `json:"live_until"`
+	State      string `json:"state"`
+	AsOfLedger uint32 `json:"as_of_ledger"`
 }
 
 // ContractActivityV is the wire liveness card.
@@ -130,20 +152,11 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	out := ContractDetailView{ContractID: cid, Events: make([]ContractEventView, len(rows))}
 	out.Protocol = h.contractAttribution(ctx)[cid]
 	out.Directory = h.directoryFor(ctx, cid)
-	if act, actOK, actErr := h.Reader.ContractActivitySummaryFor(ctx, cid, 30); actErr == nil && actOK && act.ActiveLedgersTotal > 0 {
-		av := &ContractActivityV{
-			FirstSeen:          act.FirstSeen.UTC().Format(time.RFC3339),
-			LastSeen:           act.LastSeen.UTC().Format(time.RFC3339),
-			ActiveLedgersTotal: act.ActiveLedgersTotal,
-		}
-		for _, d := range act.Daily {
-			av.Daily = append(av.Daily, ContractActivityDayV{Date: d.Date.UTC().Format("2006-01-02"), ActiveLedgers: d.ActiveLedgers})
-		}
-		out.Activity = av
-	}
+	out.Activity = h.contractActivityCard(ctx, cid)
 	for i, e := range rows {
 		out.Events[i] = contractEventView(e)
 	}
+	h.setContractLiveness(ctx, &out)
 	// Only emit a cursor on a full page — a short page is the last page, so a
 	// cursor there just costs the client one empty round-trip.
 	if n := len(rows); n == limit {
@@ -155,6 +168,80 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.WriteJSON(w, out, false)
+}
+
+// contractActivityCard is the 30-day liveness card, nil when the activity
+// index is unprovisioned, errors, or holds nothing for the contract.
+func (h *Handler) contractActivityCard(ctx context.Context, cid string) *ContractActivityV {
+	act, ok, err := h.Reader.ContractActivitySummaryFor(ctx, cid, 30)
+	if err != nil || !ok || act.ActiveLedgersTotal == 0 {
+		return nil
+	}
+	av := &ContractActivityV{
+		FirstSeen:          act.FirstSeen.UTC().Format(time.RFC3339),
+		LastSeen:           act.LastSeen.UTC().Format(time.RFC3339),
+		ActiveLedgersTotal: act.ActiveLedgersTotal,
+	}
+	for _, d := range act.Daily {
+		av.Daily = append(av.Daily, ContractActivityDayV{Date: d.Date.UTC().Format("2006-01-02"), ActiveLedgers: d.ActiveLedgers})
+	}
+	return av
+}
+
+// setContractLiveness fills Exists and TTL. Exists is claimed false only on
+// a successful instance read that found nothing and no other lake evidence.
+func (h *Handler) setContractLiveness(ctx context.Context, out *ContractDetailView) {
+	st, ok := h.contractInstanceState(ctx, out.ContractID)
+	if ok {
+		out.TTL = h.contractTTL(ctx, st.LiveUntil)
+	}
+	var exists bool
+	switch {
+	case len(out.Events) > 0 || out.Activity != nil || st.Known:
+		exists = true
+	case h.IsKnownSAC != nil && h.IsKnownSAC(out.ContractID):
+		exists = true
+	case !ok:
+		return
+	}
+	out.Exists = &exists
+}
+
+// contractInstanceState reads the instance evidence through the shared
+// contract-detail SWR cache. ok=false when the read failed.
+func (h *Handler) contractInstanceState(ctx context.Context, cid string) (clickhouse.ContractInstanceState, bool) {
+	v, _, _, err := h.contractDetailCached(ctx, "inst:"+cid, func(rctx context.Context) (any, error) {
+		return h.Reader.ContractInstanceState(rctx, cid)
+	})
+	if err != nil {
+		h.Logger.Warn("explorer ContractInstanceState failed", "contract", cid, "err", err)
+		return clickhouse.ContractInstanceState{}, false
+	}
+	st, ok := v.(clickhouse.ContractInstanceState)
+	return st, ok
+}
+
+// contractTTL judges the instance's live_until against the lake watermark —
+// the same ledger every lake-backed view is stamped with. Nil when there is
+// no TTL row or no watermark to judge it against.
+func (h *Handler) contractTTL(ctx context.Context, liveUntil uint32) *ContractTTLV {
+	if liveUntil == 0 || h.LakeWatermark == nil {
+		return nil
+	}
+	tip, _, ok := h.LakeWatermark(ctx)
+	if !ok {
+		return nil
+	}
+	var state string
+	switch clickhouse.TTLVerdictAt(liveUntil, tip) {
+	case clickhouse.TTLLive:
+		state = ttlStateLive
+	case clickhouse.TTLArchived:
+		state = ttlStateArchived
+	default:
+		return nil
+	}
+	return &ContractTTLV{LiveUntil: liveUntil, State: state, AsOfLedger: tip}
 }
 
 // parseContractEventsCursor decodes the opaque `?cursor=` for the contract

@@ -165,6 +165,11 @@ func (r *capReader) ContractWasm(ctx context.Context, _ string) (clickhouse.Cont
 	return clickhouse.ContractWasmInfo{}, clickhouse.ErrContractWasmUnresolved
 }
 
+func (r *capReader) ContractInstanceState(ctx context.Context, _ string) (clickhouse.ContractInstanceState, error) {
+	r.probe.record(ctx)
+	return clickhouse.ContractInstanceState{}, nil
+}
+
 func (r *capReader) RecentContracts(ctx context.Context, _ int, _ uint32) ([]clickhouse.ContractDirectoryRow, error) {
 	r.probe.record(ctx)
 	return nil, nil
