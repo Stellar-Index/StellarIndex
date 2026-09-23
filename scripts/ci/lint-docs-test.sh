@@ -47,6 +47,15 @@ result() { # <name> <status: 0 = ok>
 }
 present() { grep -qE -- "$2" "$OUT"; result "$1" $?; }  # <name> <ERE>
 absent() { ! grep -qE -- "$2" "$OUT"; result "$1" $?; } # <name> <ERE>
+# The listed line must sit under THIS pattern's header: one fixture line
+# can match several patterns, so the line alone would let one mask another.
+stale() { # <name> <pattern as printed in the header> <listed-line ERE>
+  HDR="Stale reference to '$2' in" RE="$3" awk '
+    /ERROR:/ { cur = index($0, ENVIRON["HDR"]) > 0; next }
+    cur && $0 ~ ENVIRON["RE"] { found = 1 }
+    END { exit !found }' "$OUT"
+  result "$1" $?
+}
 tree_state() { git status --porcelain=v1 -uall; git diff; }
 days_ago() { date -u -r $(( $(date -u +%s) - $1 * 86400 )) +%F 2>/dev/null || date -u -d "@$(( $(date -u +%s) - $1 * 86400 ))" +%F; }
 incident() { # <path> <bullet prefix>
@@ -87,10 +96,12 @@ printf '| [0098](0098-zz-lint-docs-fixture.md) | Accepted | Fixture ADR for lint
 
 # §4 stale references. Each number now resolves to a real but unrelated
 # issue/PR (RSWP-068 #1042, RSWP-135 #1254, RSWP-086 #1108, RSWP-144 #1271,
-# RSWP-141 R-013→#1265, RSWP-146 #1347, RSWP-147 #1353, RSWP-149 #1369) or
-# never existed (RSWP-127 #1230). docs/design/ must be scanned too.
-printf '(PR #1042)\n(PR #1254)\n(PR #1230)\n(#1108)\n' >> CHANGELOG.md
-printf '(#1271)\nR-013 → #1265\n' >> docs/architecture/coverage-matrix.md
+# RSWP-141 R-013→#1265, RSWP-146 #1347, RSWP-147 #1353, RSWP-149 #1369,
+# RSWP-128 #1231, RSWP-151 dependabot #1371/#1372, RSWP-139 #1263) or never
+# existed (RSWP-127 #1230). #1263 is a bare pattern so the 2026-05-11
+# PR-list header alone, without "R-008", is caught. docs/design/ is scanned too.
+printf '(PR #1042)\n(PR #1254)\n(PR #1230)\n(#1108)\n(PR #1231)\nsupersedes dependabot #1371/#1372\n' >> CHANGELOG.md
+printf '(#1271)\nR-013 → #1265\n(PRs #1261, #1262, #1263, #1268, #1270)\n' >> docs/architecture/coverage-matrix.md
 printf '(#1347)\n#1353\n#1369\n' >> docs/remediation-2026-07-01/STATUS.md
 printf '# fixture design doc\n\nCites the dangling reference (PR #1042).\n' > "$DESIGN"
 
@@ -125,16 +136,19 @@ red=1; [ "$rc" -gt 0 ] && red=0
 result "the fixture tree is red (rc=$rc)" "$red"
 present "an ADR with no Index row is caught" "ADR '$ADR_NOROW' \(ADR-0099\) has no row"
 absent  "a stale last_verified on an ADR is not aged by §6" "0098-zz-lint-docs-fixture"
-present "'PR #1042' in CHANGELOG.md is caught" '^ +CHANGELOG\.md:[0-9]+:\(PR #1042\)$'
-present "'(PR #1254)' in CHANGELOG.md is caught" '^ +CHANGELOG\.md:[0-9]+:\(PR #1254\)$'
-present "'PR #1230' in CHANGELOG.md is caught" '^ +CHANGELOG\.md:[0-9]+:\(PR #1230\)$'
-present "'#1108' in CHANGELOG.md is caught" '^ +CHANGELOG\.md:[0-9]+:\(#1108\)$'
-present "'#1271' in coverage-matrix.md is caught" '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(#1271\)$'
-present "'R-013 → #1265' in coverage-matrix.md is caught" '^ +docs/architecture/coverage-matrix\.md:[0-9]+:R-013 → #1265$'
-present "'#1347' in remediation STATUS.md is caught" '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:\(#1347\)$'
-present "'#1353' in remediation STATUS.md is caught" '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1353$'
-present "'#1369' in remediation STATUS.md is caught" '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1369$'
-present "a dangling 'PR #1042' in docs/design/ is caught" "^ +$DESIGN:[0-9]+:"
+stale "'PR #1042' in CHANGELOG.md is caught" 'PR #1042' '^ +CHANGELOG\.md:[0-9]+:\(PR #1042\)$'
+stale "'(PR #1254)' in CHANGELOG.md is caught" '\(PR #1254\)' '^ +CHANGELOG\.md:[0-9]+:\(PR #1254\)$'
+stale "'PR #1230' in CHANGELOG.md is caught" 'PR #1230' '^ +CHANGELOG\.md:[0-9]+:\(PR #1230\)$'
+stale "'#1108' in CHANGELOG.md is caught" '#1108\b' '^ +CHANGELOG\.md:[0-9]+:\(#1108\)$'
+stale "'PR #1231' in CHANGELOG.md is caught" 'PR #1231' '^ +CHANGELOG\.md:[0-9]+:\(PR #1231\)$'
+stale "'dependabot #1371/#1372' in CHANGELOG.md is caught" 'dependabot #1371/#1372' '^ +CHANGELOG\.md:[0-9]+:supersedes dependabot'
+stale "'#1271' in coverage-matrix.md is caught" '#1271\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(#1271\)$'
+stale "'R-013 → #1265' in coverage-matrix.md is caught" 'R-013.*#1265' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:R-013 → #1265$'
+stale "a bare '#1263' header citation in coverage-matrix.md is caught" '#1263\b' '^ +docs/architecture/coverage-matrix\.md:[0-9]+:\(PRs #1261'
+stale "'#1347' in remediation STATUS.md is caught" '#1347\b' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:\(#1347\)$'
+stale "'#1353' in remediation STATUS.md is caught" '#1353' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1353$'
+stale "'#1369' in remediation STATUS.md is caught" '#1369' '^ +docs/remediation-2026-07-01/STATUS\.md:[0-9]+:#1369$'
+stale "a dangling 'PR #1042' in docs/design/ is caught" 'PR #1042' "^ +$DESIGN:[0-9]+:"
 absent  "an aged incident's prose action item escapes the forcing function" "$(basename "$INC_PROSE")"
 present "an aged incident's '- [ ]' action item is caught" "incident '$INC_BOX' is older than 30 days"
 present "an unquoted comma in a flow-mapping description is caught" "bogus null-valued key 'C-strkey\.'"

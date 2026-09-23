@@ -33,7 +33,7 @@ curl -s http://aggregator:9464/metrics | \
   sort -t' ' -k2 -rn | head
 
 # 2. Per-asset breakdown — does the failure track one asset or all of them?
-#    The metric carries an `asset_key` label (added in #314); split by it
+#    The metric carries an `asset_key` label; split by it
 #    in PromQL or directly off /metrics:
 curl -s http://aggregator:9464/metrics | \
   awk '/^stellarindex_aggregator_supply_refresh_total\{/' | \
@@ -326,7 +326,7 @@ fix.
   alerts).
 - 2026-04-30 — quick-diagnosis #2 corrected: the
   `aggregator_supply_refresh_total` metric DOES carry an
-  `asset_key` label (added in #314), so per-asset splitting is
+  `asset_key` label, so per-asset splitting is
   possible from `/metrics` directly without needing journald.
 - 2026-06-11 — F-1320: documented the previously-omitted
   `stale_component` and `missing_freshness` outcomes; added the

@@ -55,7 +55,9 @@ jobs:
       - name: Assert required reviewers on the r1 environment
         # ⚠ PRE-PRODUCTION RELAXATION (2026-07-26): mirrors deploy.yml,
         # fail-closed. Only when the repo variable DEPLOY_APPROVAL_RELAXED
-        # is exactly "true" is the gate intentionally absent (R1 has no
+        # is exactly "true" AND DEPLOY_APPROVAL_RELAXED_UNTIL is a
+        # still-future ISO-8601 date (K079: an open-ended relaxation
+        # never re-alarms) is the gate intentionally absent (R1 has no
         # production traffic) and this drift check does NOT alarm. Re-arm
         # by deleting the variable; the assertion then enforces the r1
         # Required-reviewers rule again.
@@ -64,11 +66,15 @@ jobs:
           REPO: ${{ github.repository }}
           REGION: r1
           APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
+          APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
         run: |
           set -euo pipefail
-          if [ "${APPROVAL_RELAXED:-}" = "true" ]; then
-            echo "::notice::deploy-approval-gate intentionally relaxed (pre-production, DEPLOY_APPROVAL_RELAXED=true). Skipping the required-reviewers assertion. Re-arm before production launch by deleting the variable."
+          relax_rc=0
+          bash scripts/ci/check-deploy-relax.sh "$REGION" || relax_rc=$?
+          if [ "$relax_rc" -eq 0 ]; then
             exit 0
+          elif [ "$relax_rc" -eq 1 ]; then
+            exit 1
           fi
           if ! gh api "repos/${REPO}/environments/${REGION}" > env-protection.json; then
             echo "::error::Could not read the '${REGION}' environment protection config. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."

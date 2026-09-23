@@ -6,6 +6,13 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+# The timer re-fires every 15 min (OnUnitActiveSec, see the .timer unit)
+# and systemd will not start a new instance while this one is still
+# running, so a hung probe silently stops all future runs forever.
+# 5 min covers the ~30s SLA_PROBE_DURATION with margin while still
+# guaranteeing the unit is dead well before the next scheduled fire.
+TimeoutStartSec=5min
+RuntimeMaxSec=5min
 ExecStart=/opt/stellarindex/healthchecks/sla-probe.sh
 EnvironmentFile=-/etc/default/stellarindex-healthchecks
 DynamicUser=true

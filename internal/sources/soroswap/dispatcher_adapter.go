@@ -67,8 +67,9 @@ type Decoder struct {
 	// indexer + backfill main wire this to a postgres-backed
 	// upsert so the mapping survives process restarts and is
 	// visible to other parallel backfill chunks. Hook is called
-	// with the decoder's mutex held — keep it cheap; the storage
-	// implementation should ExecContext non-blockingly or buffer.
+	// with the decoder's mutex NOT held — see [Decoder.storePairTokens]
+	// — but the map write it follows has already happened, so the
+	// implementation should still avoid blocking the caller for long.
 	onNewPair func(pairStrkey, token0Strkey, token1Strkey string)
 
 	// Counters surfaced for test assertions. Production wiring

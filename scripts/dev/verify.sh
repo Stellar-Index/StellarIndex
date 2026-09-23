@@ -285,6 +285,8 @@ echo "=== Integration-shard partition self-test ===" && ./scripts/ci/integration
 echo "=== Shell SIGPIPE (pipe-into-head) ===" && ./scripts/ci/lint-shell-sigpipe.sh
 echo "=== HTTP timeouts ===" && ./scripts/ci/lint-http-timeouts.sh
 echo "=== HTTP timeouts self-test ===" && ./scripts/ci/lint-http-timeouts-test.sh
+echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout.sh
+echo "=== Healthcheck oneshot start/runtime bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
@@ -300,7 +302,10 @@ echo "=== Ansible-drift decision-core self-test ===" && ./scripts/ci/check-ansib
 echo "=== run-heavy-job wrapper self-test ===" && ./scripts/ci/run-heavy-job-test.sh
 echo "=== Deploy playbook jump/backup-gate lint ===" && ./scripts/ci/lint-deploy-playbook.sh
 echo "=== EnvironmentFile verbatim-reader self-test ===" && ./scripts/ci/envfile-loader-test.sh
+echo "=== verify-archive EnvironmentFile override-order self-test ===" && ./scripts/ci/verify-archive-env-order-test.sh
 echo "=== Deploy workflow input-validation self-test ===" && ./scripts/ci/deploy-inputs-test.sh
+echo "=== Wrangler build-cache tracking tripwire (T535) ===" && ./scripts/ci/check-no-wrangler-cache-tracked.sh
+echo "=== Wrangler build-cache tracking tripwire self-test ===" && bash scripts/ci/check-no-wrangler-cache-tracked-test.sh
 echo "=== Jinja template parse gate ===" && ./scripts/ci/lint-jinja-templates.sh
 echo "=== Jinja template parse gate self-test ===" && ./scripts/ci/lint-jinja-templates-test.sh
 echo "=== ClickHouse Prometheus endpoint self-test ===" && ./scripts/ci/clickhouse-exporter-test.sh

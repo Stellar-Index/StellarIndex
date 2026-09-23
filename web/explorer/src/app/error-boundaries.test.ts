@@ -21,6 +21,7 @@ const SEGMENTS_REQUIRING_ERROR_BOUNDARY = [
   'oracles',
   'network',
   'convert',
+  'operation',
 ];
 
 describe('error boundary coverage', () => {

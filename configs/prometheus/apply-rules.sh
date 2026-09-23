@@ -20,6 +20,21 @@
 #
 # Usage:
 #   apply-rules.sh --check-only [SRC_DIR]   validate only; no install
+#   apply-rules.sh --live-check [SRC_DIR]   validate + diff SRC_DIR against
+#                                            the alerts $PROM_URL has loaded
+#                                            RIGHT NOW; no install. For a
+#                                            scheduled reconciliation run on
+#                                            the host itself (T677): apply,
+#                                            ci.yml's --check-only and this
+#                                            script's own verify step (below)
+#                                            only ever run AT deploy time —
+#                                            nothing periodically re-checks
+#                                            that the live rule set still
+#                                            matches the repo between
+#                                            deploys, so an out-of-band host
+#                                            edit or a restart that fails to
+#                                            reload goes undetected until the
+#                                            next deploy happens to run.
 #   apply-rules.sh [SRC_DIR]                validate, install, reload, verify
 #
 # SRC_DIR defaults to the directory this script lives in, /rules.r1.
@@ -53,10 +68,17 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 CHECK_ONLY=0
-if [ "${1:-}" = "--check-only" ]; then
-  CHECK_ONLY=1
-  shift
-fi
+LIVE_CHECK=0
+case "${1:-}" in
+  --check-only)
+    CHECK_ONLY=1
+    shift
+    ;;
+  --live-check)
+    LIVE_CHECK=1
+    shift
+    ;;
+esac
 
 SRC="${1:-$SCRIPT_DIR/rules.r1}"
 DEST="${RULES_DEST:-/etc/prometheus/rules.r1}"
@@ -88,6 +110,20 @@ if [ "$CHECK_ONLY" != "1" ]; then
   done
 fi
 
+# Parses a Prometheus /api/v1/rules JSON body on stdin into one loaded
+# alert/recording-rule name per line. Shared by --live-check and the
+# post-install verify poll below so the two can never disagree on what
+# "loaded" means.
+parse_loaded_rule_names() {
+  python3 -c 'import sys,json
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+for g in d.get("data",{}).get("groups",[]):
+    for r in g.get("rules",[]):
+        n=r.get("name")
+        if n: print(n)' 2>/dev/null | sort -u
+}
+
 # ─── 1. Validate BEFORE touching anything ─────────────────────────
 #
 # On the host, not only in CI. CI validates the repo's copy; this
@@ -104,8 +140,8 @@ promtool check rules "${src_files[@]}" >/dev/null \
 echo "apply-rules: ${#src_files[@]} file(s) valid"
 
 # Alert names the incoming set declares. This is what we verify loaded.
-expected_alerts="$(grep -hoE '^\s*-\s*alert:\s*\S+' "${src_files[@]}" \
-  | sed -E 's/^\s*-\s*alert:\s*//' | sort -u)"
+expected_alerts="$(grep -hoE '^[[:space:]]*-[[:space:]]*alert:[[:space:]]*[^[:space:]]+' "${src_files[@]}" \
+  | sed -E 's/^[[:space:]]*-[[:space:]]*alert:[[:space:]]*//' | sort -u)"
 expected_count="$(printf '%s\n' "$expected_alerts" | grep -c . || true)"
 [ "$expected_count" -gt 0 ] || die "the incoming rule set declares no alerts — refusing (an empty set would look like a successful apply while disabling everything)"
 echo "apply-rules: expecting $expected_count alert(s) to load"
@@ -113,6 +149,25 @@ echo "apply-rules: expecting $expected_count alert(s) to load"
 if [ "$CHECK_ONLY" = "1" ]; then
   echo "apply-rules: --check-only, stopping before install"
   exit 0
+fi
+
+if [ "$LIVE_CHECK" = "1" ]; then
+  loaded="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null | parse_loaded_rule_names || true)"
+  missing="$(comm -23 <(printf '%s\n' "$expected_alerts") <(printf '%s\n' "$loaded") || true)"
+  extra="$(comm -13 <(printf '%s\n' "$expected_alerts") <(printf '%s\n' "$loaded") || true)"
+  status=0
+  if [ -n "$missing" ]; then
+    echo "apply-rules: live-check: in the repo but NOT loaded on $PROM_URL:" >&2
+    printf '  %s\n' "$missing" >&2
+    status=1
+  fi
+  if [ -n "$extra" ]; then
+    echo "apply-rules: live-check: loaded on $PROM_URL but NOT in the repo (stale host or out-of-band change):" >&2
+    printf '  %s\n' "$extra" >&2
+    status=1
+  fi
+  [ "$status" = 0 ] && echo "apply-rules: live-check OK — $PROM_URL matches the repo ($expected_count alert(s))"
+  exit "$status"
 fi
 
 [ -d "$DEST" ] || die "destination not found: $DEST"
@@ -151,7 +206,7 @@ restore() {
 reload_prometheus() {
   systemctl reload prometheus 2>/dev/null && return 0
   local pid
-  pid="$(pgrep -x prometheus | head -1)" || return 1
+  pid="$(pgrep -x prometheus | sed -n '1p')" || return 1
   [ -n "$pid" ] && kill -HUP "$pid"
 }
 reload_prometheus || { restore; die "could not reload prometheus"; }
@@ -164,14 +219,7 @@ echo "apply-rules: reloaded"
 # working apply as broken, because the reload is asynchronous.
 deadline=$(( $(date +%s) + VERIFY_TIMEOUT_S ))
 while :; do
-  loaded="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null \
-    | python3 -c 'import sys,json
-try: d=json.load(sys.stdin)
-except Exception: sys.exit(0)
-for g in d.get("data",{}).get("groups",[]):
-    for r in g.get("rules",[]):
-        n=r.get("name")
-        if n: print(n)' 2>/dev/null | sort -u || true)"
+  loaded="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null | parse_loaded_rule_names || true)"
 
   missing="$(comm -23 <(printf '%s\n' "$expected_alerts") <(printf '%s\n' "$loaded") || true)"
   if [ -z "$missing" ]; then
@@ -180,7 +228,7 @@ for g in d.get("data",{}).get("groups",[]):
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
     echo "apply-rules: these alerts never loaded after ${VERIFY_TIMEOUT_S}s:" >&2
-    printf '  %s\n' $missing >&2
+    printf '  %s\n' "$missing" >&2
     restore
     die "verification failed — rules restored from backup"
   fi
@@ -210,7 +258,8 @@ fi
 # accumulate on the box whose disk pressure is the top cause of the
 # ClickHouse outage this script's first alert exists to catch. Keep 5,
 # matching the deploy workflow's retention for binary backups.
-ls -1dt "${DEST}.bak-"* 2>/dev/null | tail -n +6 | while read -r old; do
+find "$(dirname "$DEST")" -maxdepth 1 -name "$(basename "$DEST").bak-*" -printf '%T@ %p\n' 2>/dev/null \
+  | sort -rn | tail -n +6 | cut -d' ' -f2- | while read -r old; do
   rm -rf "$old"
 done
 

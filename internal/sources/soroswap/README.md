@@ -142,10 +142,11 @@ See `events.go` for the typed enum.
 
 - **Decode**: real. SCVal decoding via `internal/scval`
   (the `go-stellar-sdk/xdr`-backed wrapper per ADR-0013). The
-  `swap+sync` correlation, the 2-vs-4-topic detection, and the
-  factory-RPC seed for pre-history pairs (PR #14) are all
-  implemented and tested against real mainnet fixtures captured
-  under `test/fixtures/soroswap/`.
+  `swap+sync` correlation and the factory-RPC seed for pre-history
+  pairs (PR #14) are implemented and tested against real mainnet
+  fixtures captured under `test/fixtures/soroswap/`. There is no
+  2-vs-4-topic detection: per Q4 above, Soroswap pair events never
+  take the 4-topic shape, so `classify()` has no branch for it.
 - **Consumer**: production. Plugs into the
   Galexie → `internal/ledgerstream` → `internal/dispatcher` →
   decoder pipeline per

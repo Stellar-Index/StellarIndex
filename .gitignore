@@ -122,7 +122,7 @@ service-account*.json
 
 # Agent session state — local only
 /docs/reference/api/postman-collection.json
-/.wrangler/
+**/.wrangler/
 
 # GCP / BigQuery service-account keys — credentials, NEVER commit
 stellar-index-data-validation-*.json

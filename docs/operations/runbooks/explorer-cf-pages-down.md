@@ -120,6 +120,18 @@ path, not in the static export. A full redeploy (above) also
 redeploys the Functions, so if the cause isn't obvious, roll back
 first and diagnose the Function offline.
 
+**`og/[[path]].js` returning 503 for every request**: before treating
+this as a Function outage, check the `OG_DISABLED` CF Pages
+environment variable on the project (dashboard → **Settings →
+Environment variables**). It is a dashboard-only kill-switch (no
+redeploy needed either direction) for taking OG image generation
+offline under abusive load; `OG_DISABLED=1` makes every request short
+-circuit to a 503 with the body `OG image generation is temporarily
+disabled.` before any upstream fetch or render runs. If it's set and
+the incident that required it has passed, unset it (or set it to
+anything other than `1`) to restore image generation — no deploy
+required.
+
 ### Silent stale deploy (file-ceiling or a bypassed publish)
 
 1. Confirm with the `re-build-sha` comparison under Symptoms.

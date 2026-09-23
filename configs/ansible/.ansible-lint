@@ -1,7 +1,7 @@
 # ansible-lint configuration (CID-3, audit-2026-08-14)
 #
 # The CI ansible-lint step (.github/workflows/ci.yml, job `ansible-check`)
-# runs `ansible-lint --profile moderate roles/ playbooks/` from this
+# runs `ansible-lint --profile moderate roles/ playbooks/ tasks/` from this
 # directory. It previously ended in `|| true`, which silently swallowed the
 # exit code so the REQUIRED check was permanently green even on real
 # error-level violations — a false green.
@@ -22,7 +22,7 @@
 profile: moderate
 
 # Pre-existing violations grandfathered on 2026-08-14 (counts at time of
-# baseline; run `ansible-lint --profile moderate roles/ playbooks/` to refresh):
+# baseline; run `ansible-lint --profile moderate roles/ playbooks/ tasks/` to refresh):
 skip_list:
   - name[casing]              # 223 — task/handler names not capitalized
   - yaml[colons]              # 104 — spacing around colons

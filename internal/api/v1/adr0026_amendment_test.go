@@ -97,3 +97,46 @@ func TestADR0026PinsThe1225AmendmentNotice(t *testing.T) {
 		}
 	}
 }
+
+// TestADR0026PinsThe1226AmendmentNotice guards RSWP-123: ADR-0026's two
+// "#1226" citations (Context intro, References > Implementation) no
+// longer identify the `/v1/ohlc` proxy fallback they describe. GitHub
+// has since assigned #1226 to a real but unrelated merged PR (the
+// `pkg/client` VWAP/TWAP/Pools SDK methods), so a reader following the
+// citation lands on wrong content instead of a 404.
+//
+// Per docs/adr/README.md's amendment rule, the original ADR body is
+// left intact (both "#1226" mentions stay, as historical record) and
+// the correction lives in a dated Amendment blockquote. This test
+// pins that the blockquote exists and still calls out both the wrong
+// resolution and the unrelated target, so it can't be silently
+// dropped in a future edit of the doc.
+func TestADR0026PinsThe1226AmendmentNotice(t *testing.T) {
+	path := filepath.Join(repoRoot(t), "docs", "adr", "0026-stablecoin-fiat-proxy-late-binding.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	doc := string(b)
+
+	for _, want := range []string{
+		"Amendment (2026-09-23, RSWP-123)",
+		"VWAP`/`TWAP`/`Pools` SDK methods",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s is missing amendment text %q; the dangling #1226 citation is no longer flagged as misdirecting a reader to an unrelated PR", path, want)
+		}
+	}
+
+	// The original citations must survive untouched (README.md's
+	// "amend, don't rewrite" rule) — the amendment explains them, it
+	// doesn't replace them.
+	for _, original := range []string{
+		"PRs #1217 / #1218 / #1224 / #1225 / #1226 (etc.) added",
+		"PR #1226 — `/v1/ohlc` proxy fallback",
+	} {
+		if !strings.Contains(doc, original) {
+			t.Errorf("%s: original citation %q was rewritten or removed; ADR body text must only be amended, per docs/adr/README.md", path, original)
+		}
+	}
+}

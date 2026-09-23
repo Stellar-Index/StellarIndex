@@ -10,11 +10,14 @@
 #
 # Format: <unit>  # <why it is kept, and what would retire it>
 
-# Superseded, not deployed. ExecStart is
-# /usr/local/bin/completeness-incremental.sh, which does not exist
-# anywhere in this repo — the role ships compute-completeness.{service,
-# timer}.j2 for the same job instead. Kept only so the supersession is
-# visible rather than silently deleted; safe to remove once an operator
-# confirms no host still carries a hand-scp'd copy.
+# Live, but not ansible-installed. ExecStart is
+# /usr/local/bin/completeness-incremental.sh, which IS in this repo at
+# scripts/ops/completeness-incremental.sh (see its own header) — the
+# hourly ADR-0033 *incremental* verify, scp'd out per the
+# r1-deployment-state.md operator convention rather than templated by
+# the role. It is a different job from compute-completeness.{service,
+# timer}.j2 (the role's daily whole-pass verdict refresh), not a
+# superseded copy of it. Kept declared here, not wired into the role,
+# until the incremental job gets its own ansible task.
 stellarindex-completeness.service
 stellarindex-completeness.timer

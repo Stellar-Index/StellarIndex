@@ -180,8 +180,9 @@ func (r *ExplorerReader) refreshAccountState(account string) (fl *stateFlightEnt
 		return fl, true
 	}
 	go func() {
-		defer r.refreshGate.ReleaseClass("account_state")
+		// end() runs last: a waiter woken by done that re-kicks must find the slot free.
 		defer r.stateFlight.end(account, fl)
+		defer r.refreshGate.ReleaseClass("account_state")
 		// An unrecovered panic in ANY goroutine kills the whole API process;
 		// the account is attacker-chosen, so this scan is reachable with
 		// arbitrary input. Registered last so it unwinds FIRST and the two

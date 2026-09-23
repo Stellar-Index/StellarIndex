@@ -125,6 +125,20 @@ user redis_exporter on >{{ redis_password }} \
   +info +client +cluster|info +config|get +dbsize +slowlog|get +latency \
   ~* &*
 
+# Sentinel monitoring/failover user (SL03, reverification 2026-09-18).
+# sentinel.conf.j2's `sentinel auth-user` points here instead of the
+# disabled `default` user. Sentinel needs PING/INFO to poll instance
+# state, PUBLISH/SUBSCRIBE on `__sentinel__:hello` for Sentinel-to-
+# Sentinel gossip, CONFIG GET/SET/REWRITE to persist `replicaof`
+# across restarts, and REPLICAOF/SLAVEOF itself to promote/demote on
+# failover — the last two live in `@dangerous`/`@admin`, which is why
+# this can't reuse the `stellarindex` application user.
+user sentinel on >{{ redis_password }} \
+  -@all +auth +ping +info +subscribe +publish \
+  +config|get +config|set +config|rewrite +replicaof +slaveof +role \
+  +client|setname +client|getname +client|id +client|list \
+  ~* &*
+
 {# When the operator wants per-component lockdown they uncomment #}
 {# the three users below (rotating distinct passwords through the #}
 {# vault) and stop the API / aggregator / indexer binaries with #}

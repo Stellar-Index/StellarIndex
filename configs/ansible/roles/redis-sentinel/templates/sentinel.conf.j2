@@ -25,6 +25,14 @@ requirepass {{ redis_password }}
 sentinel monitor {{ redis_sentinel_master_name }} {{ redis_effective_primary_host }} {{ redis_port }} {{ redis_sentinel_quorum }}
 
 sentinel auth-pass {{ redis_sentinel_master_name }} {{ redis_password }}
+{% if redis_acl_lockdown | bool %}
+# SL03: under lockdown the primary's `default` user is off, so a
+# username-less AUTH (what `auth-pass` alone sends) is rejected and
+# Sentinel can't monitor the primary at all. `auth-user` names the
+# dedicated `sentinel` ACL user (users.acl.j2) to authenticate as
+# instead; `auth-pass` above supplies its password.
+sentinel auth-user {{ redis_sentinel_master_name }} {{ redis_sentinel_auth_user }}
+{% endif %}
 sentinel down-after-milliseconds {{ redis_sentinel_master_name }} {{ redis_sentinel_down_after_milliseconds }}
 sentinel failover-timeout {{ redis_sentinel_master_name }} {{ redis_sentinel_failover_timeout }}
 sentinel parallel-syncs {{ redis_sentinel_master_name }} {{ redis_sentinel_parallel_syncs }}

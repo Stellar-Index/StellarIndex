@@ -105,6 +105,29 @@ func TestParsePair_bad(t *testing.T) {
 	}
 }
 
+// A raw oracle symbol is the one asset form the grammar lets carry
+// "/" (real RedStone feed_ids like "SolvBTC.BBN_FUNDAMENTAL/USD" do).
+// It must still never be usable as a pair leg — Pair.Validate keys
+// on IsMapped, not on the separator character — and ParsePair's
+// right-to-left split must not mistake the embedded "/" for the pair
+// separator and hand back a bogus split.
+func TestParsePair_rawSymbolSlashNeverALeg(t *testing.T) {
+	raw, err := c.NewOracleRawAsset("SolvBTC.BBN_FUNDAMENTAL/USD")
+	if err != nil {
+		t.Fatalf("NewOracleRawAsset: %v", err)
+	}
+	xlm := c.NativeAsset()
+
+	if _, err := c.NewPair(raw, xlm); err == nil {
+		t.Fatal("expected error: raw oracle symbol must never be a pair leg")
+	}
+
+	s := raw.String() + "/native" // "raw:SolvBTC.BBN_FUNDAMENTAL/USD/native"
+	if _, err := c.ParsePair(s); err == nil {
+		t.Fatalf("ParsePair(%q): expected error, raw symbol is record-layer only", s)
+	}
+}
+
 func TestPair_JSON(t *testing.T) {
 	p := mustPair(c.NativeAsset(), mustClassic("USDC", usdcIssuer))
 	b, err := json.Marshal(p)

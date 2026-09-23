@@ -1,6 +1,7 @@
 package redstone
 
 import (
+	"encoding/base64"
 	"errors"
 	"math/big"
 	"testing"
@@ -155,6 +156,49 @@ func TestDecode_EqualArity_StateWriteCorroboration(t *testing.T) {
 			t.Fatalf("got %d updates, want 2", len(out))
 		}
 	})
+}
+
+// encodePayloadArgBytes is encodePayloadArg parameterized over the raw
+// payload bytes, for tests that need a real (or deliberately malformed)
+// RedStone payload rather than the two-byte sentinel.
+func encodePayloadArgBytes(t *testing.T, raw []byte) string {
+	t.Helper()
+	b := xdr.ScBytes(raw)
+	sv := xdr.ScVal{Type: xdr.ScValTypeScvBytes, Bytes: &b}
+	marshaled, err := sv.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(marshaled)
+}
+
+func TestDecode_EqualArity_StateWriteMismatch_FallsBackToPayload(t *testing.T) {
+	// hardeningEvent's BTC/ETH prices are 1_000_000 and 2_000_000 at
+	// package_timestamp 1_745_000_000_000 (see hardeningEvent). Build a
+	// real payload whose feed medians match those prices exactly: the
+	// state-write claim disagrees (only BTC's key is reported changed),
+	// but the payload independently and uniquely corroborates BOTH
+	// feeds, so the fallback must attribute rather than refuse — the
+	// contract internal/dispatcher/state_write_keys.go documents
+	// ("the worst case is a fallback, never a misattribution").
+	ev := hardeningEvent(t, []string{"BTC", "ETH"})
+	payload := buildTestPayload(t, 1_745_000_000_000, map[string][]int64{
+		"BTC": {1_000_000},
+		"ETH": {2_000_000},
+	})
+	ev.OpArgs[2] = encodePayloadArgBytes(t, payload)
+	ev.StateWriteKeys = []string{adapterFeedKey(t, "BTC")} // missing ETH's key: equal-arity mismatch
+
+	out, err := decodeWritePrices(ev, time.Unix(1_745_000_000, 0))
+	if err != nil {
+		t.Fatalf("decode: %v, want fallback attribution via payload median", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("got %d updates, want 2", len(out))
+	}
+	if out[0].Asset.String() != "crypto:BTC" || out[1].Asset.String() != "crypto:ETH" {
+		t.Fatalf("attributed to %s/%s, want crypto:BTC then crypto:ETH", out[0].Asset, out[1].Asset)
+	}
 }
 
 func TestSubsetFromStateWrites_DuplicateCandidatesCountWrittenFeedOnce(t *testing.T) {
