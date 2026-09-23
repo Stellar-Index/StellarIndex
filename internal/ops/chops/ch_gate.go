@@ -20,9 +20,10 @@ import (
 // chGate runs the ADR-0034 Phase-2 §6 gates over a backfilled ledger range:
 //
 //   - Gate 2 (completeness): for every ledger it recomputes the
-//     decoder-independent census (dispatcher.CensusLedger) AND the
-//     structural extract (clickhouse.ExtractLedger) straight from galexie,
-//     asserts the extractor matches the census, then reads the range back
+//     decoder-independent census (dispatcher.CensusLedger, plus tx/op
+//     counts read off the LCM itself) AND the structural extract
+//     (clickhouse.ExtractLedger) straight from galexie, asserts the
+//     extractor matches the census, then reads the range back
 //     out of ClickHouse and asserts the STORED per-ledger counts and the
 //     ACTUAL child-table row counts both equal the census. Any divergence
 //     is a dropped/miscounted row — the gate fails (non-zero exit).
@@ -78,33 +79,22 @@ func chGate(args []string) error { //nolint:gocognit,gocyclo,funlen // linear wa
 			walked++
 			seq := lcm.LedgerSequence()
 
-			census, cerr := dispatcher.CensusLedger(lcm, passphrase)
-			if cerr != nil {
-				fmt.Fprintf(os.Stderr, "ch-gate: ledger %d census: %v\n", seq, cerr)
+			led, mismatch, gerr := gateLedger(lcm, passphrase)
+			if gerr != nil {
+				fmt.Fprintf(os.Stderr, "ch-gate: ledger %d %v\n", seq, gerr)
 				return nil
 			}
-			ext, eerr := clickhouse.ExtractLedger(lcm, passphrase)
-			if eerr != nil {
-				fmt.Fprintf(os.Stderr, "ch-gate: ledger %d extract: %v\n", seq, eerr)
-				return nil
-			}
-
-			// Cross-check: the structural extractor must agree with the
-			// independent census oracle on the protocol-meaningful counts.
-			if uint32(census.SorobanEventCount) != ext.Ledger.SorobanEventCount ||
-				uint32(census.ClassicTradeEffectCount) != ext.Ledger.ClassicTradeEffectCount {
+			if mismatch != "" {
 				extractMismatches++
 				if extractMismatches <= *examples {
-					fmt.Fprintf(os.Stderr, "ch-gate: EXTRACT≠CENSUS ledger %d: events census=%d extract=%d | trades census=%d extract=%d\n",
-						seq, census.SorobanEventCount, ext.Ledger.SorobanEventCount,
-						census.ClassicTradeEffectCount, ext.Ledger.ClassicTradeEffectCount)
+					fmt.Fprintf(os.Stderr, "ch-gate: EXTRACT≠CENSUS ledger %d: %s\n", seq, mismatch)
 				}
 			}
 
-			censusEvents += uint64(census.SorobanEventCount)
-			censusTrades += uint64(census.ClassicTradeEffectCount)
-			censusTx += uint64(ext.Ledger.TxCount) // tx/op are pure LCM counts; census doesn't track them
-			censusOp += uint64(ext.Ledger.OpCount)
+			censusTx += led.tx
+			censusOp += led.op
+			censusEvents += led.events
+			censusTrades += led.trades
 
 			if time.Since(lastLog) >= 15*time.Second {
 				rate := float64(walked) / time.Since(start).Seconds()
@@ -271,4 +261,52 @@ func walkCoverage(cmd string, from, to uint32, walked int, bucket string) error 
 			"partially examined, so every count above describes a subset; historical ranges need "+
 			"-bucket galexie-archive. Refusing to report on a short walk as if it were complete",
 		cmd, walked, requested, from, to, bucket)
+}
+
+// gateCounts is one ledger's census-side tallies for the gate's four checks.
+type gateCounts struct {
+	tx, op, events, trades uint64
+}
+
+// gateLedger computes one ledger's census counts and cross-checks the
+// structural extract against them; mismatch is empty when they agree.
+func gateLedger(lcm sdkxdr.LedgerCloseMeta, passphrase string) (want gateCounts, mismatch string, err error) {
+	census, err := dispatcher.CensusLedger(lcm, passphrase)
+	if err != nil {
+		return gateCounts{}, "", fmt.Errorf("census: %w", err)
+	}
+	ext, err := clickhouse.ExtractLedger(lcm, passphrase)
+	if err != nil {
+		return gateCounts{}, "", fmt.Errorf("extract: %w", err)
+	}
+	tx, op := lcmTxOpCounts(lcm)
+	want = gateCounts{
+		tx:     tx,
+		op:     op,
+		events: uint64(census.SorobanEventCount),
+		trades: uint64(census.ClassicTradeEffectCount),
+	}
+	got := gateCounts{
+		tx:     uint64(ext.Ledger.TxCount),
+		op:     uint64(ext.Ledger.OpCount),
+		events: uint64(ext.Ledger.SorobanEventCount),
+		trades: uint64(ext.Ledger.ClassicTradeEffectCount),
+	}
+	if got != want {
+		mismatch = fmt.Sprintf("txs census=%d extract=%d | ops census=%d extract=%d | "+
+			"events census=%d extract=%d | trades census=%d extract=%d",
+			want.tx, got.tx, want.op, got.op, want.events, got.events, want.trades, got.trades)
+	}
+	return want, mismatch, nil
+}
+
+// lcmTxOpCounts counts a ledger's transactions and operations straight off
+// the LCM, bypassing the tx reader: ExtractLedger skips a tx the reader
+// cannot decode, so its own TxCount/OpCount cannot witness that drop.
+func lcmTxOpCounts(lcm sdkxdr.LedgerCloseMeta) (tx, op uint64) {
+	tx = uint64(lcm.CountTransactions())
+	for _, env := range lcm.TransactionEnvelopes() {
+		op += uint64(len(env.Operations()))
+	}
+	return tx, op
 }
