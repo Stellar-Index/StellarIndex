@@ -125,9 +125,9 @@ func acquireGlobalStreamSlot() (release func(), ok bool) {
 
 // DefaultHeartbeatInterval is the cadence at which Stream emits
 // SSE comment heartbeats (`:keepalive\n\n`) when no real events are
-// flowing. 15 s matches the api-design.md note and is well under
-// the typical 60 s reverse-proxy idle timeout — which is what we're
-// trying to dodge by sending these.
+// flowing, so no idle bound on the proxy path cuts a quiet stream.
+// internal/config/caddy_sse_timeouts_test.go holds every Caddy timeout
+// on the stream path to at least two of these.
 const DefaultHeartbeatInterval = 15 * time.Second
 
 // StreamOptions tunes [Stream] behaviour. Zero values use sensible

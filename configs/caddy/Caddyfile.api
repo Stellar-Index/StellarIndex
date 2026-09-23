@@ -224,8 +224,18 @@ api.stellarindex.io {
 		# Scoped to /v1/*/stream: `flush_interval -1` disables response
 		# buffering for everything it covers — right for a long-lived
 		# stream, needless for the ordinary JSON routes below.
+		#
+		# Caddy keeps active health state PER reverse_proxy handler, so
+		# this one needs its own copy of the catch-all's /v1/healthz
+		# check: without it, new stream requests kept going to an upstream
+		# the catch-all had already taken out of rotation.
+		# internal/config/caddy_stream_upstream_test.go pins the parity.
 		reverse_proxy @sse localhost:3000 {
 			flush_interval -1
+			health_uri /v1/healthz
+			health_interval 10s
+			health_timeout 3s
+			health_status 200
 			header_up Host {host}
 			header_up X-Real-IP {client_ip}
 			header_up X-Forwarded-For {client_ip}
