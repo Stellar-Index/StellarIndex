@@ -9,9 +9,18 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // T301: capture the html the function rendered so a test can assert on the
 // card's footer byline without needing the real satori/resvg pipeline.
-const capturedHtml = { last: null };
+const capturedHtml = { last: null, opts: null };
+
+// T246: the real ImageResponse renders lazily inside its body stream, so a
+// font-fetch or satori/resvg failure surfaces AFTER the 200 + public
+// Cache-Control headers exist. `renderFails` reproduces that shape.
+const renderMode = { renderFails: false };
+const fontLoader = {
+  impl: async () => new ArrayBuffer(8),
+};
 
 vi.mock('workers-og', () => ({
+  loadGoogleFont: (...args) => fontLoader.impl(...args),
   // F087: mirrors workers-og@0.0.27's actual ImageResponse header
   // construction (`{"Content-Type":...,"Cache-Control":<default>,
   // ...opts.headers}`) so a caller that passes a differently-cased
@@ -20,7 +29,15 @@ vi.mock('workers-og', () => ({
   ImageResponse: class FakeImageResponse extends Response {
     constructor(html, opts) {
       capturedHtml.last = html;
-      super('fake-png-bytes', {
+      capturedHtml.opts = opts;
+      const body = renderMode.renderFails
+        ? new ReadableStream({
+            start(c) {
+              c.error(new Error('Could not find font URL'));
+            },
+          })
+        : 'fake-png-bytes';
+      super(body, {
         status: 200,
         headers: {
           'Content-Type': 'image/png',
@@ -38,7 +55,12 @@ const { onRequest, liveSubline, TYPE_LABEL, resetOgGatesForTest } =
 // Isolate each test from the rate limiter/circuit breaker's module-scope
 // state — without this, tests sharing the default (no `cf-connecting-ip`)
 // IP bucket would trip the K067 rate limit depending on run order.
-beforeEach(() => resetOgGatesForTest());
+beforeEach(() => {
+  resetOgGatesForTest();
+  renderMode.renderFails = false;
+  fontLoader.impl = async () => new ArrayBuffer(8);
+  capturedHtml.opts = null;
+});
 
 function makeContext(pathname, env = {}, headers = {}) {
   return {
@@ -236,5 +258,55 @@ describe('og function — per-network API origin (network-hardcodes T283)', () =
     });
     expect(capturedHtml.last).toContain('testnet.stellarindex.io');
     expect(capturedHtml.last).not.toContain('>stellarindex.io<');
+  });
+});
+
+describe('og function — render failure path (T246)', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('passes a preloaded font so the library never does its own unbounded font fetch', async () => {
+    const res = await onRequest(makeContext('/og/assets/usdc'));
+    expect(res.status).toBe(200);
+    expect(capturedHtml.opts.fonts).toHaveLength(1);
+    expect(capturedHtml.opts.fonts[0].data.byteLength).toBe(8);
+  });
+
+  it('serves the static card, uncached, when rendering fails mid-stream', async () => {
+    renderMode.renderFails = true;
+    const res = await onRequest(makeContext('/og/assets/usdc'));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://stellarindex.io/og.png');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('serves the static card, uncached, when the font fetch rejects', async () => {
+    fontLoader.impl = async () => {
+      throw new Error('fonts.googleapis.com unreachable');
+    };
+    const res = await onRequest(makeContext('/og/assets/usdc'));
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://stellarindex.io/og.png');
+    expect(res.headers.get('cache-control')).toBe('no-store');
+  });
+
+  it('bounds a hung font fetch instead of holding the request open', async () => {
+    vi.useFakeTimers();
+    fontLoader.impl = () => new Promise(() => {});
+    const pending = onRequest(makeContext('/og/assets/usdc'));
+    await vi.advanceTimersByTimeAsync(3000);
+    const res = await pending;
+    expect(res.status).toBe(302);
+    expect(res.headers.get('location')).toBe('https://stellarindex.io/og.png');
+  });
+
+  it('retries the font after a failure instead of pinning it for the isolate', async () => {
+    fontLoader.impl = async () => {
+      throw new Error('transient');
+    };
+    expect((await onRequest(makeContext('/og/assets/usdc'))).status).toBe(302);
+    fontLoader.impl = async () => new ArrayBuffer(8);
+    const res = await onRequest(makeContext('/og/assets/usdc'));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('fake-png-bytes');
   });
 });

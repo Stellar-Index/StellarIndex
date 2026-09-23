@@ -132,6 +132,13 @@ the incident that required it has passed, unset it (or set it to
 anything other than `1`) to restore image generation — no deploy
 required.
 
+**`og/[[path]].js` returning `302` to `/og.png`**: the per-entity card
+failed to render and the Function fell back to the static site card
+(`cache-control: no-store`, so it clears as soon as rendering works
+again). The Function logs `og render failed` with the cause — most often
+the card font fetch from `fonts.googleapis.com` failing or exceeding its
+3 s bound, otherwise a satori/resvg error.
+
 ### Silent stale deploy (file-ceiling or a bypassed publish)
 
 1. Confirm with the `re-build-sha` comparison under Symptoms.
