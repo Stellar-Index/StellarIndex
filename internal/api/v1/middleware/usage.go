@@ -69,10 +69,11 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 				return
 			}
 			deadlineFired := new(atomic.Bool)
-			r = r.WithContext(context.WithValue(r.Context(), readDeadlineKey{}, deadlineFired))
+			reqCtx := r.Context()
+			r = r.WithContext(context.WithValue(reqCtx, readDeadlineKey{}, deadlineFired))
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rec, r)
-			subject, ok := auth.SubjectFrom(r.Context())
+			subject, ok := auth.SubjectFrom(reqCtx)
 			if !ok {
 				return
 			}
@@ -104,7 +105,7 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			// wire, so it holds for every store wired here today; a driver
 			// that ignored ctx would block the request goroutine for its own
 			// timeout instead.
-			ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), postResponseWriteTimeout)
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), postResponseWriteTimeout)
 			defer cancel()
 			if billableClass(class, deadlineFired.Load()) {
 				// Legacy total: billable traffic only (quota input).
