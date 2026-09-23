@@ -327,6 +327,34 @@ func capOHLCSeriesNewest(bars []OHLCSeriesBar, limit int) []OHLCSeriesBar {
 	return out
 }
 
+// pgTimeBucketOrigin is the default origin Postgres/TimescaleDB's
+// `time_bucket()` snaps a fixed-width interval to when no explicit
+// origin is given (see [timescale.Store.OHLCSeriesReBucketed]).
+// [time.Time.Truncate] snaps from a DIFFERENT origin (Go's zero
+// time), which agrees with time_bucket only for widths that evenly
+// divide the offset between the two origins — true for 1h/4h/12h/1d
+// (whole-day widths) but false for 3d and 2w, whose default `to`
+// then lands on a boundary [Store.OHLCSeriesReBucketed]'s folded
+// rows never do (RLT-258).
+var pgTimeBucketOrigin = time.Date(2000, 1, 3, 0, 0, 0, 0, time.UTC)
+
+// truncateToBucketOrigin rounds t DOWN to the nearest multiple of d
+// counted from [pgTimeBucketOrigin], reproducing time_bucket's own
+// floor rather than [time.Time.Truncate]'s (which floors from Go's
+// zero time instead). d <= 0 is a no-op — duration() only returns 0
+// for an interval outside the validated enum, and it composes
+// straight into an Add of an empty duration either way.
+func truncateToBucketOrigin(t time.Time, d time.Duration) time.Time {
+	if d <= 0 {
+		return t
+	}
+	rem := t.Sub(pgTimeBucketOrigin) % d
+	if rem < 0 {
+		rem += d
+	}
+	return t.Add(-rem)
+}
+
 // parseOHLCSeriesFromTo parses from/to for the series mode with
 // interval-aware defaults:
 //
@@ -357,7 +385,7 @@ func parseOHLCSeriesFromTo(
 		to = parsed.UTC()
 	}
 	if !toExplicit {
-		to = to.Truncate(intervalDur)
+		to = truncateToBucketOrigin(to, intervalDur)
 	}
 
 	from = to.Add(-time.Duration(limit) * intervalDur)
