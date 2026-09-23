@@ -73,6 +73,17 @@ type TokenDisplayMeta struct {
 // "unavailable", so an archived pair uses it rather than being reported as
 // live. Same fail-open contract as elsewhere: only a positively-resolved,
 // lapsed TTL drops a pair (see [ClassifyTTLLiveness]).
+// soroswapPairStateQuery is the batched current-state lookup — a
+// PK-prefix probe on (entry_type, key_xdr). SETTINGS pins are the
+// shared guard rails the sibling readers use (see cometPoolStateQuery
+// / phoenixPoolStateQuery, ttlLivenessBatchQuery): the read is cheap,
+// and a planner or layout shift must fail THIS query loudly rather
+// than fan out on the shared host.
+const soroswapPairStateQuery = `SELECT key_xdr, ledger_seq, entry_xdr
+	FROM stellar.ledger_entries_current FINAL
+	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
+	SETTINGS max_threads = 4, max_memory_usage = 8000000000`
+
 func (r *ExplorerReader) SoroswapPairReserves(ctx context.Context, pairs []string) (map[string]SoroswapPairState, error) {
 	keys := make([]string, 0, len(pairs)*2)
 	pairByKey := make(map[string]string, len(pairs)*2)
@@ -94,10 +105,7 @@ func (r *ExplorerReader) SoroswapPairReserves(ctx context.Context, pairs []strin
 		return map[string]SoroswapPairState{}, nil
 	}
 
-	const q = `SELECT key_xdr, ledger_seq, entry_xdr
-		FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''`
-	rows, err := r.conn.Query(ctx, q, keys)
+	rows, err := r.conn.Query(ctx, soroswapPairStateQuery, keys)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: soroswap pair reserves lookup: %w", err)
 	}
@@ -193,6 +201,14 @@ func dropArchivedPairs(
 // for the given token contracts from their instance METADATA entries.
 // Same single-query batching as SoroswapPairReserves. Tokens without
 // readable metadata are present with HasMeta=false.
+// tokenDisplaysQuery is the batched current-state lookup for LP-share
+// token metadata. SETTINGS pins match soroswapPairStateQuery above —
+// the shared guard rails the sibling readers use.
+const tokenDisplaysQuery = `SELECT key_xdr, entry_xdr
+	FROM stellar.ledger_entries_current FINAL
+	WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''
+	SETTINGS max_threads = 4, max_memory_usage = 8000000000`
+
 func (r *ExplorerReader) TokenDisplays(ctx context.Context, tokens []string) (map[string]TokenDisplayMeta, error) {
 	keys := make([]string, 0, len(tokens)*2)
 	tokByKey := make(map[string]string, len(tokens)*2)
@@ -218,10 +234,7 @@ func (r *ExplorerReader) TokenDisplays(ctx context.Context, tokens []string) (ma
 		return out, nil
 	}
 
-	const q = `SELECT key_xdr, entry_xdr
-		FROM stellar.ledger_entries_current FINAL
-		WHERE entry_type = 'contract_data' AND key_xdr IN (?) AND entry_xdr != ''`
-	rows, err := r.conn.Query(ctx, q, keys)
+	rows, err := r.conn.Query(ctx, tokenDisplaysQuery, keys)
 	if err != nil {
 		return nil, fmt.Errorf("clickhouse: token displays lookup: %w", err)
 	}
