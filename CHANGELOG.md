@@ -198,6 +198,19 @@ against.
   (#793):** the launch plan's D3 step now computes the reproject start
   from `min(ledger_seq)` of the served `ledger_entries_current` and says
   that `cutover` refuses a v2 that does not cover v1.
+- **supply — SEP-41 genesis seed rebuilds the fold it sits on (#596,
+  #1086):** `seed-sep41-genesis -write` now re-derives the contract's
+  rollup fold under the seeded floor in the same transaction, on every
+  run. Before, it only zeroed the fold when the floor moved. A contract
+  already seeded over a floor-0 fold kept double-counting its
+  pre-boundary band, and re-running the seed could not repair it. A
+  seed that did zero the fold put the serving read onto the unbounded
+  per-contract aggregate until the aggregator re-folded. Every fold
+  writer now runs under a 10 s `lock_timeout`, so an aggregator pass
+  that meets a seed's held row yields instead of stalling every later
+  contract in the pass. The rows already poisoned on r1 still need one
+  re-run of the seed after deploy (docs/operations/v1-launch-plan.md
+  §2.6).
 
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose

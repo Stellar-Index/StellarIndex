@@ -333,40 +333,33 @@ func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (s
 
 // UpsertSEP41GenesisBaseline seeds (or re-seeds) a contract's pre-Soroban
 // per-kind opening balance into sep41_supply_rollup (migration 0088, incident
-// 2026-07-06). It SETS the genesis columns (not add) so re-running is
-// idempotent — the CH-lake pre-genesis sum is deterministic — and never
-// double-counts.
+// 2026-07-06), and RE-DERIVES the worker-owned fold beneath it in the same
+// transaction. The genesis columns are SET, not added, and the fold is rebuilt
+// from sep41_supply_events under the new floor, so re-running with the same
+// inputs converges on the same row whatever state it started from.
 //
 // genesis_baseline_ledger is ALSO the Soroban-era slice's floor
-// ([sep41SorobanFloor]), so writing it redefines which sep41_supply_events rows
-// the worker-owned fold columns are supposed to contain. The fold is cumulative
-// and the worker only ever looks ABOVE its own last_ledger, so a fold
-// accumulated under the OLD floor can never re-apply the new one. This upsert
-// therefore zeroes the worker-owned fold columns (mint_total / burn_total /
-// clawback_total / last_ledger) in the SAME statement whenever the floor
-// actually MOVES (IS DISTINCT FROM — so NULL → N, the first seed, counts), and
-// leaves them alone when it does not, so a repeat seed of the same boundary
-// stays the no-op the runbook calls idempotent.
+// ([sep41SorobanFloor]). The fold is cumulative and the worker only ever looks
+// ABOVE its own last_ledger, so a fold accumulated under any other floor can
+// never re-apply this one: a contract the worker folded at floor 0 before its
+// first seed holds the CAP-67-replayed pre-boundary band in mint_total, and a
+// seed that wrote only the genesis columns added that band a second time (the
+// 13 contracts measured on r1 2026-08-04, worst case +114%). Rebuilding the
+// fold on EVERY seed, not only when the floor moves, is what lets a re-run
+// repair a row that was already seeded over such a fold: there the floor no
+// longer moves, and nothing else would ever notice.
 //
-// Without that reset the documented remedy re-armed the very double-count it
-// exists to fix (audit 2026-09-02, F022/F029). The aggregator's rollup worker
-// starts folding a newly-watched contract immediately; with no baseline seeded
-// the floor is 0, so the fold sweeps the CAP-67-replayed pre-Soroban rows into
-// mint_total and advances last_ledger past them. A later
-// `stellarindex-ops supply seed-sep41-genesis -write` then ADDED that same
-// pre-boundary band a second time as the genesis baseline, because it wrote
-// only the genesis columns — the identical shape as the 13 double-counting
-// contracts measured on r1 2026-08-04 (worst case +114%).
+// Rebuilding inside the transaction, rather than zeroing last_ledger and
+// leaving the aggregator to re-fold, keeps the serving read on its fast path:
+// [Store.SEP41KindTotalsAtOrBefore] sees either the old row or a row folded up
+// to the settled tip, never last_ledger = 0 and the unbounded per-contract
+// aggregate migration 0085 keeps off the hot path. The cold fold's cost lands
+// here, one contract at a time in an operator command, and the row lock it
+// holds makes a contending aggregator pass yield after
+// [sep41RollupLockTimeout] instead of convoying.
 //
-// The invariant this restores, and which every fold path now preserves: the
-// fold columns sum EXACTLY the rows with
-// COALESCE(genesis_baseline_ledger, 0) ≤ ledger ≤ last_ledger.
-//
-// Correctness during the gap: a zeroed fold sends last_ledger back to 0, so the
-// reader ([Store.SEP41KindTotalsAtOrBefore]) serves the exact floored full-sum
-// fallback until the worker re-folds — supply stays correct throughout, just off
-// the fast path for a cadence or two. Same trade as
-// [Store.ResetSEP41SupplyRollupFold].
+// The invariant every fold path preserves: the fold columns sum EXACTLY the
+// rows with COALESCE(genesis_baseline_ledger, 0) ≤ ledger ≤ last_ledger.
 //
 // baselineLedger is the EXCLUSIVE upper ledger bound of the seeded sum
 // (typically clickhouse.SorobanGenesisLedger); it is stored so the reader can
@@ -374,6 +367,48 @@ func (s *Store) sep41RollupCheckpoint(ctx context.Context, contractID string) (s
 // auditable (with genesis_seeded_at). i128-safe — the three totals are Postgres
 // NUMERIC (ADR-0003).
 func (s *Store) UpsertSEP41GenesisBaseline(ctx context.Context, contractID string, genesis SEP41KindTotals, baselineLedger uint32) error {
+	if err := validateSEP41GenesisBaseline(contractID, genesis); err != nil {
+		return err
+	}
+	tx, err := beginSEP41RollupTx(ctx, s.db)
+	if err != nil {
+		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: %w", contractID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := lockSEP41RollupRow(ctx, tx, contractID); err != nil {
+		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: %w", contractID, err)
+	}
+	const q = `
+        UPDATE sep41_supply_rollup
+           SET genesis_mint_total      = $2,
+               genesis_burn_total      = $3,
+               genesis_clawback_total  = $4,
+               genesis_baseline_ledger = $5,
+               genesis_seeded_at       = now(),
+               mint_total              = 0,
+               burn_total              = 0,
+               clawback_total          = 0,
+               last_ledger             = 0,
+               updated_at              = now()
+         WHERE contract_id = $1
+    `
+	if _, err := tx.ExecContext(ctx, q,
+		contractID, genesis.Mint.String(), genesis.Burn.String(), genesis.Clawback.String(),
+		int(baselineLedger),
+	); err != nil {
+		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: %w", contractID, err)
+	}
+	if _, _, err := foldSEP41RollupLocked(ctx, tx, contractID); err != nil {
+		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s re-fold: %w", contractID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s commit: %w", contractID, err)
+	}
+	return nil
+}
+
+// validateSEP41GenesisBaseline rejects a seed the rollup row cannot hold.
+func validateSEP41GenesisBaseline(contractID string, genesis SEP41KindTotals) error {
 	if contractID == "" {
 		return errors.New("timescale: UpsertSEP41GenesisBaseline: empty contractID")
 	}
@@ -383,38 +418,6 @@ func (s *Store) UpsertSEP41GenesisBaseline(ctx context.Context, contractID strin
 	if genesis.Mint.Sign() < 0 || genesis.Burn.Sign() < 0 || genesis.Clawback.Sign() < 0 {
 		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: negative genesis total (mint=%s burn=%s clawback=%s) — per-kind sums are non-negative",
 			contractID, genesis.Mint, genesis.Burn, genesis.Clawback)
-	}
-	const q = `
-        INSERT INTO sep41_supply_rollup
-            (contract_id, genesis_mint_total, genesis_burn_total, genesis_clawback_total,
-             genesis_baseline_ledger, genesis_seeded_at)
-        VALUES ($1, $2, $3, $4, $5, now())
-        ON CONFLICT (contract_id) DO UPDATE SET
-            genesis_mint_total      = EXCLUDED.genesis_mint_total,
-            genesis_burn_total      = EXCLUDED.genesis_burn_total,
-            genesis_clawback_total  = EXCLUDED.genesis_clawback_total,
-            genesis_baseline_ledger = EXCLUDED.genesis_baseline_ledger,
-            genesis_seeded_at       = now(),
-            -- Moving the floor invalidates the cumulative fold beneath it, so
-            -- zero the worker-owned columns and let the next pass re-fold from
-            -- scratch under the new floor. Floor unchanged -> the fold is left
-            -- exactly as it was, keeping a repeat seed a no-op.
-            mint_total     = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
-                                  THEN 0     ELSE sep41_supply_rollup.mint_total     END,
-            burn_total     = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
-                                  THEN 0     ELSE sep41_supply_rollup.burn_total     END,
-            clawback_total = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
-                                  THEN 0     ELSE sep41_supply_rollup.clawback_total END,
-            last_ledger    = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
-                                  THEN 0     ELSE sep41_supply_rollup.last_ledger    END,
-            updated_at     = CASE WHEN sep41_supply_rollup.genesis_baseline_ledger IS DISTINCT FROM EXCLUDED.genesis_baseline_ledger
-                                  THEN now() ELSE sep41_supply_rollup.updated_at     END
-    `
-	if _, err := s.db.ExecContext(ctx, q,
-		contractID, genesis.Mint.String(), genesis.Burn.String(), genesis.Clawback.String(),
-		int(baselineLedger),
-	); err != nil {
-		return fmt.Errorf("timescale: UpsertSEP41GenesisBaseline %s: %w", contractID, err)
 	}
 	return nil
 }
@@ -772,10 +775,10 @@ type SEP41RollupAdvance struct {
 // AdvanceSEP41SupplyRollup folds a contract's newly-SETTLED
 // sep41_supply_events into its sep41_supply_rollup checkpoint — the
 // incremental maintainer that keeps the SEP41KindTotalsAtOrBefore fast
-// path cheap (migration 0085, incident 2026-07-06). It is the only writer
-// that ACCUMULATES the fold columns; the other two zero them
-// ([Store.ResetSEP41SupplyRollupFold], and [Store.UpsertSEP41GenesisBaseline]
-// when the floor moves), and the genesis columns are the seed's alone.
+// path cheap (migration 0085, incident 2026-07-06). The fold columns have two
+// other writers: [Store.ResetSEP41SupplyRollupFold] zeroes them, and
+// [Store.UpsertSEP41GenesisBaseline] zeroes them and re-folds through the
+// same statement this pass runs. The genesis columns are the seed's alone.
 //
 // It sums only rows with `ledger > last_ledger` that are SETTLED by BOTH
 // independent pieces of evidence that a ledger will receive no further
@@ -836,7 +839,7 @@ type SEP41RollupAdvance struct {
 // unlocked round trip beforehand. Both of the other writers of those two columns
 // — [Store.ResetSEP41SupplyRollupFold] (`ch-rebuild -sep41 -write`) and
 // [Store.UpsertSEP41GenesisBaseline] (`supply seed-sep41-genesis`, which
-// now zeroes the fold when the floor moves) — run against a LIVE
+// rebuilds the fold) — run against a LIVE
 // aggregator. With the boundary decided before the write, a reset landing
 // in that gap was stranded: the pass added its delta over
 // (stale last_ledger, mx) on top of the freshly-zeroed totals and then
@@ -850,9 +853,9 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 	if contractID == "" {
 		return SEP41RollupAdvance{}, errors.New("timescale: AdvanceSEP41SupplyRollup: empty contractID")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := beginSEP41RollupTx(ctx, s.db)
 	if err != nil {
-		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s begin: %w", contractID, err)
+		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
@@ -861,8 +864,49 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
 	if err := lockSEP41RollupRow(ctx, tx, contractID); err != nil {
 		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
 	}
+	fromLedger, toLedger, err := foldSEP41RollupLocked(ctx, tx, contractID)
+	if err != nil {
+		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s commit: %w", contractID, err)
+	}
+	return SEP41RollupAdvance{
+		ContractID: contractID,
+		FromLedger: uint32(fromLedger),
+		ToLedger:   uint32(toLedger),
+		Advanced:   toLedger > fromLedger,
+	}, nil
+}
 
-	// One statement, run under the lock taken above:
+// sep41RollupLockTimeout bounds how long any fold writer waits for another
+// writer's lock on a sep41_supply_rollup row. The aggregator advances contracts
+// sequentially and a seed or reset can hold a row through a cold full-history
+// fold, so an unbounded wait stalls every later contract in the pass. A
+// contended pass yields (an `error` outcome) and retries next cadence.
+const sep41RollupLockTimeout = 10 * time.Second
+
+// beginSEP41RollupTx opens a fold-writer transaction whose lock waits are
+// bounded by [sep41RollupLockTimeout]. Deliberately no statement_timeout: a
+// cold fold that cannot finish leaves the contract on the slower full-sum read
+// path forever, which is the cost the fold exists to remove.
+func beginSEP41RollupTx(ctx context.Context, db *sql.DB) (*sql.Tx, error) {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, fmt.Sprintf("SET LOCAL lock_timeout = '%d'", sep41RollupLockTimeout.Milliseconds())); err != nil {
+		_ = tx.Rollback()
+		return nil, fmt.Errorf("set lock_timeout: %w", err)
+	}
+	return tx, nil
+}
+
+// foldSEP41RollupLocked adds a contract's newly-settled events into its fold,
+// on a transaction that ALREADY holds the row lock ([lockSEP41RollupRow]).
+// Returns the checkpoint ledger before and after.
+func foldSEP41RollupLocked(ctx context.Context, tx *sql.Tx, contractID string) (fromLedger, toLedger int64, err error) {
+	// One statement, run under the caller's lock:
 	//   locked   — this pass's OWN input boundary + floor. The row cannot
 	//              change while we hold its lock, and this statement's
 	//              snapshot postdates the acquisition, so the boundary and
@@ -924,21 +968,12 @@ func (s *Store) AdvanceSEP41SupplyRollup(ctx context.Context, contractID string)
          WHERE r.contract_id = $1
         RETURNING d.from_ledger, r.last_ledger
     `
-	var fromLedger, toLedger int64
 	if err := tx.QueryRowContext(ctx, q, contractID,
 		sep41SupplyCursorSource, sep41SupplyCursorSub,
 	).Scan(&fromLedger, &toLedger); err != nil {
-		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s: %w", contractID, err)
+		return 0, 0, fmt.Errorf("fold: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return SEP41RollupAdvance{}, fmt.Errorf("timescale: AdvanceSEP41SupplyRollup %s commit: %w", contractID, err)
-	}
-	return SEP41RollupAdvance{
-		ContractID: contractID,
-		FromLedger: uint32(fromLedger),
-		ToLedger:   uint32(toLedger),
-		Advanced:   toLedger > fromLedger,
-	}, nil
+	return fromLedger, toLedger, nil
 }
 
 // lockSEP41RollupRow materialises a contract's sep41_supply_rollup row and
