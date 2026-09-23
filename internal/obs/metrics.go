@@ -4334,11 +4334,12 @@ var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
 // decimals() (clickhouse.TokenDecimals — the source of truth) versus the
 // `nonstandard_decimals_assets` projection of it that every price-shaped
 // serving path and the aggregator's VWAP normalise through
-// (aggregate.ResolveDecimals). Labels: site, asset (C-strkey).
+// (aggregate.ResolveDecimals). Labels: site, asset (C-strkey) — asset is
+// populated ONLY at the bounded site below; see GH-1059.
 //
 // The projection is a materialised view of the lake for the non-7
 // subset, so the invariant is: for every token, projection row present
-// ⇔ lake decimals ≠ 7, and when present the two values are equal. Two
+// ⇔ lake decimals ≠ 7, and when present the two values are equal. Three
 // sites check it:
 //
 //   - site="guard_reconcile" — the aggregator's decimals-guard re-reads
@@ -4346,24 +4347,31 @@ var NonstandardDecimalsPartialAliasFamilyTotal = prometheus.NewCounter(
 //     (decimalsguard.Guard.Reconcile) and REPAIRS the row toward the lake
 //     (upsert the lake's value, or delete when the lake confirms 7). One
 //     increment per repaired row. This is the lockstep enforcement at
-//     aggregation time.
+//     aggregation time, and the ONLY site the asset label is populated for
+//     — the walked set is the projection table itself, bounded and
+//     operator-visible, not request-driven.
 //   - site="asset_detail" — GET /v1/assets/{id} found the lake and the
 //     projection disagreeing at request time (a row the guard has not yet
 //     seeded or repaired — the 15m tick and the 60s cache refresh both
 //     lag the lake). The response REFUSES market_cap_usd / fdv_usd for
 //     that request (market_cap_decimals_mismatch=true) rather than divide
 //     a supply on one scale by a price normalised on another. One
-//     increment per refused request.
+//     increment per refused request. asset is "" — the request path picks
+//     the contract id, so labelling it here would mint one Prometheus
+//     series per distinct contract the lake has ever captured metadata
+//     for (GH-1059); correlate the contract from the paired WARN log line.
+//   - site="asset_listing" — GET /v1/assets found the same disagreement
+//     for a listing row (GH-1009). Same refusal, same unlabelled asset.
 //
 // Expected value is 0 in steady state. A nonzero guard_reconcile count is
 // a repaired drift (hand-seeded row that contradicted the lake, or a
-// re-captured instance); a sustained asset_detail count means the guard
-// is not converging and is folded into the
+// re-captured instance); a sustained asset_detail/asset_listing count means
+// the guard is not converging and is folded into the
 // stellarindex_nonstandard_decimals_correction_failing alert.
 var NonstandardDecimalsLockstepMismatchTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_nonstandard_decimals_lockstep_mismatch_total",
-		Help: "Observations that the lake's on-chain decimals() and the nonstandard_decimals_assets projection disagree for one asset. Labels: site (guard_reconcile = repaired at aggregation time; asset_detail = market cap refused at request time), asset (C-strkey). Expected 0; see runbook dex-nonstandard-decimals.md.",
+		Help: "Observations that the lake's on-chain decimals() and the nonstandard_decimals_assets projection disagree for one asset. Labels: site (guard_reconcile = repaired at aggregation time; asset_detail/asset_listing = market cap refused at request time), asset (C-strkey, populated for guard_reconcile only — request-driven sites leave it empty to bound cardinality). Expected 0; see runbook dex-nonstandard-decimals.md.",
 	},
 	[]string{"site", "asset"},
 )

@@ -165,7 +165,7 @@ func TestFillRowMarketCapRefusesACapItsOwnMarketNeverValued(t *testing.T) {
 	// 1,999,999,682.35 tokens, the served figure.
 	precise := observedSupply(map[string]string{row.AssetID: "19999996823547616"})
 
-	s.fillRowMarketCap(&row, precise, nil, nil, map[string]int{row.AssetID: 5})
+	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{row.AssetID: 5})
 
 	if row.MarketCapUSD != nil {
 		t.Errorf("market_cap_usd = %q, want suppressed — $3.13B on $3,791 of daily "+
@@ -200,7 +200,7 @@ func TestFillRowMarketCapKeepsTheLeastLiquidRecognisedAsset(t *testing.T) {
 	}
 	precise := observedSupply(map[string]string{row.AssetID: "9791078149866822"})
 
-	s.fillRowMarketCap(&row, precise, nil, nil, map[string]int{row.AssetID: 5})
+	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{row.AssetID: 5})
 
 	if row.MarketCapUSD == nil {
 		t.Fatal("suppressed the cap of the least liquid asset the surface still values; " +
@@ -227,7 +227,7 @@ func TestFillRowMarketCapNativeIsNeverTurnoverSuppressed(t *testing.T) {
 	}
 	precise := observedSupply(map[string]string{"native": "100000000000000000"})
 
-	s.fillRowMarketCap(&row, precise, nil, nil, map[string]int{})
+	s.fillRowMarketCap(context.Background(), &row, precise, nil, nil, map[string]int{})
 
 	if row.MarketCapUSD == nil {
 		t.Fatal("native market cap must never be turnover-suppressed")

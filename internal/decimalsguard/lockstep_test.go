@@ -370,3 +370,37 @@ func TestRun_ReconcilesOnTheInitialTick(t *testing.T) {
 		t.Fatalf("row decimals after Run's initial tick = %d, want 9", got)
 	}
 }
+
+// deadlineRecordingResolver records whether the context reconcileRow passed
+// it carried a deadline, without actually blocking for one (a hung-lake
+// repro would have to sleep past reconcileRowReadTimeout — this asserts the
+// bound is APPLIED, which is the invariant, not that a slow call was
+// observed timing out).
+type deadlineRecordingResolver struct {
+	decimals    uint32
+	hadDeadline bool
+}
+
+func (r *deadlineRecordingResolver) TokenDecimals(ctx context.Context, _ string) (uint32, bool, error) {
+	_, r.hadDeadline = ctx.Deadline()
+	return r.decimals, true, nil
+}
+
+// TestReconcile_BoundsEachRowReadWithADeadline is GH-1059's #4: Reconcile
+// ran every row's lake read on the tick's root context, unbounded, so one
+// hung ClickHouse query stalled the whole serial pass. PROVEN RED before
+// reconcileRowReadTimeout: the resolver saw the caller's bare
+// context.Background() (no deadline) passed straight through.
+func TestReconcile_BoundsEachRowReadWithADeadline(t *testing.T) {
+	const asset = "fake-lockstep-read-budget"
+	store := newFakeStore(row(asset, 9))
+	resolver := &deadlineRecordingResolver{decimals: 9}
+	g := New(&fakeReader{}, resolver, Options{Writer: store})
+
+	if err := g.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if !resolver.hadDeadline {
+		t.Error("lake decimals() read ran with no deadline — a hung read stalls the whole reconcile pass")
+	}
+}

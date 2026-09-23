@@ -153,9 +153,15 @@ type DecimalsAssetWriter interface {
 // 7, since the table's CHECK forbids storing 7).
 //
 // Satisfied by *timescale.Store. The Writer option is type-asserted for it
-// in New so no wiring changes; the compile-time assertion below is what
-// stops that optional seam from becoming a silent opt-out if the store ever
-// stops matching.
+// in New (`reconciler, _ := opts.Writer.(DecimalsAssetReconciler)`), so no
+// wiring change is needed for the bare store. GH-1059: the compile-time
+// assertion below only proves *timescale.Store itself satisfies the seam —
+// it says nothing about what New actually RECEIVES at runtime. A decorator
+// wrapping the writer (metrics, retry) that does not forward this interface
+// disarms Reconcile silently: the type assertion fails, reconciler is nil,
+// Reconcile no-ops, and nothing logs or errors. Verify the concrete value
+// passed as Options.Writer implements DecimalsAssetReconciler wherever it is
+// wrapped, not just that the unwrapped store does.
 type DecimalsAssetReconciler interface {
 	DecimalsAssetWriter
 	LoadNonstandardDecimalsAssets(ctx context.Context) ([]timescale.NonstandardDecimalsAsset, error)
@@ -545,11 +551,22 @@ func (g *Guard) Reconcile(ctx context.Context) error {
 	return nil
 }
 
+// reconcileRowReadTimeout bounds a single lake decimals() read inside
+// reconcileRow. GH-1059: Reconcile ran every row on the aggregator's root
+// tick context with no per-row budget, so one hung ClickHouse query stalled
+// the whole tick (Reconcile runs serially after Sweep). The table is
+// bounded by construction (confirmed offenders only, single digits in
+// production — see [Guard.Reconcile]), so this is defence in depth, not a
+// throughput fix.
+const reconcileRowReadTimeout = 5 * time.Second
+
 // reconcileRow checks one persisted row against a fresh lake read and
 // repairs it on a mismatch. Reports whether a repair was WRITTEN (a
 // mismatch whose write failed reports false and is retried next tick).
 func (g *Guard) reconcileRow(ctx context.Context, row timescale.NonstandardDecimalsAsset) bool {
-	lake, found, rerr := g.resolver.TokenDecimals(ctx, row.Asset)
+	rctx, cancel := context.WithTimeout(ctx, reconcileRowReadTimeout)
+	defer cancel()
+	lake, found, rerr := g.resolver.TokenDecimals(rctx, row.Asset)
 	if rerr != nil {
 		g.logger.Debug("decimals-guard: lockstep lake read failed; leaving row as-is", "asset", row.Asset, "err", rerr)
 		return false
