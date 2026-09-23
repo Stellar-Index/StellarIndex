@@ -2,6 +2,7 @@ package explorer
 
 import (
 	"context"
+	"encoding/base64"
 	"net/http"
 	"strconv"
 	"time"
@@ -65,10 +66,17 @@ type TxSummaryView struct {
 	Result   string `json:"result"`
 	MemoType string `json:"memo_type,omitempty"`
 	Memo     string `json:"memo,omitempty"`
+	// MemoBase64 is the lossless byte-for-byte copy of a MEMO_TEXT memo.
+	// MEMO_TEXT is opaque XDR bytes, not guaranteed UTF-8 (exchange deposit
+	// tokens are frequently binary/latin-1); encoding/json silently replaces
+	// invalid bytes in Memo with U+FFFD, which breaks deposit-attribution
+	// reconciliation with no signal that anything changed. Present only for
+	// memo_type "text" — Memo stays the best-effort display value.
+	MemoBase64 string `json:"memo_base64,omitempty"`
 }
 
 func txSummaryView(t clickhouse.TxSummary) TxSummaryView {
-	return TxSummaryView{
+	v := TxSummaryView{
 		Hash:           t.TxHash,
 		Ledger:         t.Seq,
 		CloseTime:      t.CloseTime.UTC().Format(time.RFC3339),
@@ -83,6 +91,10 @@ func txSummaryView(t clickhouse.TxSummary) TxSummaryView {
 		MemoType:       xdrjson.MemoTypeName(t.MemoType),
 		Memo:           t.Memo,
 	}
+	if v.MemoType == "text" {
+		v.MemoBase64 = base64.StdEncoding.EncodeToString([]byte(t.Memo))
+	}
+	return v
 }
 
 // LedgersListView is the wire response for GET /v1/ledgers. NextBefore is the

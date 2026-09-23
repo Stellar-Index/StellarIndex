@@ -1344,7 +1344,17 @@ func accountTransactionsQuery(hasCursor bool) string {
 	// `LIMIT 1 BY ledger_seq, tx_index` on the key table replaces the old
 	// DISTINCT: it collapses the several ops_by_source rows one tx
 	// contributes (tx-sentinel + per-op) to one key before the arm's LIMIT.
-	return `SELECT ` + txCols + ` FROM stellar.transactions
+	//
+	// FINAL on the hydration, not a plain SELECT (same tie-break argument
+	// txByLedgerAndHash documents in full: ingested_at is one-second
+	// resolution, so a same-second re-derive can leave two ReplacingMergeTree
+	// parts a bare SELECT can't correctly order, and this route would then
+	// silently keep serving the stale pre-fix row while /v1/tx/{hash} — which
+	// DOES use FINAL — served the corrected one). Stays cheap for the same
+	// reason: the WHERE is a bounded IN over at most `limit` PK points, each
+	// pruned by partition + primary-key prefix, so FINAL only merges the
+	// handful of parts those specific keys touch, not the table.
+	return `SELECT ` + txCols + ` FROM stellar.transactions FINAL
 		WHERE (ledger_seq, tx_index) IN (
 		  SELECT ledger_seq, tx_index FROM (
 		    (SELECT ledger_seq, tx_index FROM stellar.ops_by_source
@@ -1500,7 +1510,11 @@ func accountOperationsQuery(hasCursor, hasBound bool) string {
 	// asserts every non-final page of this listing is FULL
 	// (test/integration/account_operations_pk_pruning_test.go), which is
 	// what would catch a violation of that invariant.
-	return `SELECT ` + opCols + ` FROM stellar.operations
+	//
+	// FINAL on the hydration — same rationale as accountTransactionsQuery's
+	// (and txByLedgerAndHash's) tie-break argument, and equally cheap here:
+	// the WHERE is a bounded IN over at most `limit` PK points.
+	return `SELECT ` + opCols + ` FROM stellar.operations FINAL
 		WHERE (ledger_seq, tx_index, op_index) IN (
 		  SELECT ledger_seq, tx_index, op_index FROM (
 		    (SELECT ledger_seq, tx_index, op_index FROM stellar.ops_by_source

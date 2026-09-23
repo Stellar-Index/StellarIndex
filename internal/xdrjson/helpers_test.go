@@ -1,6 +1,7 @@
 package xdrjson
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -65,5 +66,55 @@ func TestTrustLineAssetIDRejectsInvalidCode(t *testing.T) {
 	got := TrustLineAssetID(tl)
 	if got != "unknown_asset" {
 		t.Fatalf("TrustLineAssetID(control-byte code) = %q, want \"unknown_asset\"", got)
+	}
+}
+
+// TestChangeTrustAssetPoolShare pins GH-1139: a change_trust op on a
+// liquidity-pool share must render the SAME "pool:<hex>" id the resulting
+// trustline gets from TrustLineAssetID — not the old opaque
+// "liquidity_pool_share" marker, which discarded AssetA/AssetB/Fee entirely.
+// The hex is independently re-derived here via xdr.NewPoolId (the network's
+// own pool-id hash) to prove it's a real, byte-exact identity, not a
+// re-spelling of the old marker string.
+func TestChangeTrustAssetPoolShare(t *testing.T) {
+	issuer := xdr.MustAddress(issuerAccount)
+	assetB := xdr.Asset{
+		Type:      xdr.AssetTypeAssetTypeCreditAlphanum4,
+		AlphaNum4: &xdr.AlphaNum4{AssetCode: [4]byte{'U', 'S', 'D', 'C'}, Issuer: issuer},
+	}
+	assetA := xdr.MustNewNativeAsset()
+	const fee = xdr.Int32(30)
+
+	wantID, err := xdr.NewPoolId(assetA, assetB, fee)
+	if err != nil {
+		t.Fatalf("xdr.NewPoolId: %v", err)
+	}
+
+	line := xdr.ChangeTrustAsset{
+		Type: xdr.AssetTypeAssetTypePoolShare,
+		LiquidityPool: &xdr.LiquidityPoolParameters{
+			Type: xdr.LiquidityPoolTypeLiquidityPoolConstantProduct,
+			ConstantProduct: &xdr.LiquidityPoolConstantProductParameters{
+				AssetA: assetA,
+				AssetB: assetB,
+				Fee:    fee,
+			},
+		},
+	}
+
+	got := changeTrustAsset(line)
+	want := "pool:" + hex.EncodeToString(wantID[:])
+	if got != want {
+		t.Fatalf("changeTrustAsset(pool share) = %q, want %q", got, want)
+	}
+	if got == "liquidity_pool_share" {
+		t.Fatalf("changeTrustAsset still returns the old opaque marker")
+	}
+
+	// Matches TrustLineAssetID's spelling for the SAME pool — same concept,
+	// one spelling.
+	tl := xdr.TrustLineAsset{Type: xdr.AssetTypeAssetTypePoolShare, LiquidityPoolId: &wantID}
+	if tlGot := TrustLineAssetID(tl); tlGot != got {
+		t.Fatalf("change_trust line %q disagrees with the trustline's own id %q for the same pool", got, tlGot)
 	}
 }

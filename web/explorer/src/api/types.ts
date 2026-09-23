@@ -5242,7 +5242,16 @@ export interface components {
             result?: string;
             /** @description Normalised: none|text|id|hash|return. */
             memo_type?: string;
+            /** @description Best-effort display value. For memo_type=text, bytes that are not valid UTF-8 are replaced with U+FFFD; use memo_base64 for the exact bytes. */
             memo?: string;
+            /**
+             * Format: byte
+             * @description Standard base64 of the raw MEMO_TEXT bytes, byte-for-byte as they
+             *     appear on chain. MEMO_TEXT is opaque bytes, not guaranteed UTF-8
+             *     (exchange deposit tokens are often binary), so this is the value to
+             *     reconcile against. Present only when memo_type=text.
+             */
+            memo_base64?: string;
         };
         /** @description An operation decoded from XDR into clean JSON. */
         Operation: {
