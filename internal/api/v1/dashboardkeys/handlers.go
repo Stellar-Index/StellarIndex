@@ -457,7 +457,7 @@ func parseCreateRequest(r *http.Request) (createRequest, int, string) {
 		return req, http.StatusBadRequest, "name must be 200 chars or fewer"
 	}
 	if req.RateLimitPerMin <= 0 {
-		req.RateLimitPerMin = 1000
+		req.RateLimitPerMin = platform.DashboardKeyDefaultRateLimitPerMin
 	}
 	if req.RateLimitPerMin > 100000 {
 		return req, http.StatusBadRequest, "rate_limit_per_min must be ≤ 100000"

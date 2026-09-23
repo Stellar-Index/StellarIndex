@@ -498,10 +498,8 @@ func TestAdminAccountView_OverrideFieldsSurviveZeroValue(t *testing.T) {
 // TestAdminAccountView_EffectiveLimits — GH-1074: the staff cockpit
 // fetched rate_limit_per_min_override / monthly_request_quota_override
 // but had no way to see what they actually RESOLVE to without doing the
-// tier-ceiling math by hand. adminAccountView must fold the override in
-// the same direction platform.Account's cascade does: the rate limit
-// override only ever raises above the ceiling, the quota override only
-// ever lowers below it.
+// tier-ceiling math by hand. adminAccountView must report what auth
+// enforces on a default-minted key, never the tier ceiling.
 func TestAdminAccountView_EffectiveLimits(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -512,8 +510,14 @@ func TestAdminAccountView_EffectiveLimits(t *testing.T) {
 		{
 			name:      "partner comped below the tier ceiling",
 			acct:      platform.Account{Tier: platform.TierPartner, RateLimitPerMinOverride: 5000, MonthlyRequestQuotaOverride: 200_000},
-			wantRate:  100_000, // override is a floor: 5000 < 100_000 ceiling, ceiling wins
-			wantQuota: 200_000, // override is a ceiling: 200_000 < 1_000_000_000 ceiling, override wins
+			wantRate:  5000,    // a default-minted key (1000) raised to the override floor
+			wantQuota: 200_000, // a default-minted key stores 0 and inherits the override
+		},
+		{
+			name:      "partner, no overrides: not the 100k ceiling",
+			acct:      platform.Account{Tier: platform.TierPartner},
+			wantRate:  1000,
+			wantQuota: 1_000_000_000,
 		},
 		{
 			name:      "free account raised above its default",
@@ -522,7 +526,7 @@ func TestAdminAccountView_EffectiveLimits(t *testing.T) {
 			wantQuota: 1_000_000,
 		},
 		{
-			name:      "no override: tier ceiling both ways",
+			name:      "no override: the default key's budgets",
 			acct:      platform.Account{Tier: platform.TierFree},
 			wantRate:  1000,
 			wantQuota: 1_000_000,

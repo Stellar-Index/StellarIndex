@@ -13,6 +13,7 @@ import (
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // fakeAccountStore is the handler-level test double for
@@ -156,21 +157,27 @@ func TestAccountMe_Authenticated(t *testing.T) {
 	}
 }
 
-// TestAccountMe_SessionEffectiveLimits — GH-1074: a magic-link session
-// caller's /v1/account/me must serve the EFFECTIVE (override-resolved)
-// rate limit and monthly quota, not the tier ceiling. Pre-fix,
-// AccountInfo carried no such field at all — a partner account comped
-// below the tier ceiling was indistinguishable from one sitting at it.
+// TestAccountMe_SessionEffectiveLimits — GH-1074: a session caller's
+// /v1/account/me serves what auth enforces on a default-minted key,
+// derived from the account through platform's cascade — for a partner
+// comped to 5,000/min that is 5,000, never the 100,000 tier ceiling.
+// cmd/stellarindex-api's sessionPeekerAdapter test pins the same
+// derivation on the production adapter.
 func TestAccountMe_SessionEffectiveLimits(t *testing.T) {
+	acct := platform.Account{
+		Tier:                        platform.TierPartner,
+		RateLimitPerMinOverride:     5000,
+		MonthlyRequestQuotaOverride: 200_000,
+	}
 	srv := v1.New(v1.Options{
 		Auth: fakeAuthMiddleware(auth.Subject{}),
 		SessionPeeker: &fakeSessionPeeker{ok: true, info: v1.SessionInfo{
 			AccountID:                  "acct-1",
 			AccountSlug:                "acme",
-			AccountTier:                "partner",
+			AccountTier:                string(acct.Tier),
 			AccountStatus:              "active",
-			AccountRateLimitPerMin:     100_000,
-			AccountMonthlyRequestQuota: 200_000,
+			AccountRateLimitPerMin:     acct.EffectiveRateLimitPerMin(),
+			AccountMonthlyRequestQuota: acct.EffectiveMonthlyQuota(),
 		}},
 	})
 	ts := httptest.NewServer(srv.Handler())
@@ -193,11 +200,11 @@ func TestAccountMe_SessionEffectiveLimits(t *testing.T) {
 	if env.Data.AccountInfo == nil {
 		t.Fatal("AccountInfo is nil")
 	}
-	if env.Data.AccountInfo.RateLimitPerMin != 100_000 {
-		t.Errorf("AccountInfo.RateLimitPerMin = %d, want 100000 (the effective limit, not the ceiling)", env.Data.AccountInfo.RateLimitPerMin)
+	if got := env.Data.AccountInfo.RateLimitPerMin; got != 5000 {
+		t.Errorf("AccountInfo.RateLimitPerMin = %d, want 5000 (the comped override auth enforces; 100000 is the partner tier ceiling)", got)
 	}
-	if env.Data.AccountInfo.MonthlyRequestQuota != 200_000 {
-		t.Errorf("AccountInfo.MonthlyRequestQuota = %d, want 200000 (the effective quota, an override below the tier ceiling)", env.Data.AccountInfo.MonthlyRequestQuota)
+	if got := env.Data.AccountInfo.MonthlyRequestQuota; got != 200_000 {
+		t.Errorf("AccountInfo.MonthlyRequestQuota = %d, want 200000 (the quota override a default key inherits)", got)
 	}
 }
 

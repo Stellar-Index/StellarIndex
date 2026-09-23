@@ -64,13 +64,10 @@ type AccountUser struct {
 
 // AccountInfo is the magic-link-session caller's parent account.
 //
-// RateLimitPerMin / MonthlyRequestQuota are the EFFECTIVE (resolved)
-// values, not the tier ceiling — GH-1074: a partner account comped
-// below the tier ceiling by [platform.Account.RateLimitPerMinOverride]
-// was invisible here, so every plan surface showed the ceiling as if
-// it were the customer's limit. [platform.Account.EffectiveRateLimitPerMin]
-// / [platform.Account.EffectiveMonthlyQuota] fold the override in the
-// same direction the auth-time cascade does (internal/auth/apikey_postgres.go).
+// RateLimitPerMin / MonthlyRequestQuota are what auth enforces on a key
+// minted at the dashboard defaults, account override included
+// ([platform.Account.EffectiveRateLimitPerMin]) — not the tier ceiling.
+// Limits are per key, so an explicitly budgeted key can differ.
 type AccountInfo struct {
 	ID                  string `json:"id"`
 	Name                string `json:"name,omitempty"`
@@ -100,7 +97,7 @@ type SessionInfo struct {
 	AccountTier   string
 	AccountStatus string
 	// AccountRateLimitPerMin / AccountMonthlyRequestQuota are the
-	// EFFECTIVE (override-resolved) budgets — see [AccountInfo].
+	// default-key enforced budgets — see [AccountInfo].
 	AccountRateLimitPerMin     int
 	AccountMonthlyRequestQuota int64
 }

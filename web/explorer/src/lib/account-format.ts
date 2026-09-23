@@ -70,12 +70,9 @@ export function tierLabel(tier: string | null | undefined): string {
 }
 
 /**
- * The per-minute rate CEILING for a tier, or null if unknown. This is
- * NOT necessarily what an account is actually limited to: a staff
- * override (`account.rate_limit_per_min` on the /v1/account/me
- * response) can sit below this ceiling for a comped partner. Prefer
- * the account payload's own `rate_limit_per_min` where present;
- * fall back to this only when that field is absent (GH-1074).
+ * The per-minute plan ceiling for a tier (the most a key may be minted
+ * with), or null if unknown. Not a limit anything is enforced at: show
+ * it labelled "Plan ceiling", beside the served `rate_limit_per_min`.
  */
 export function tierCeiling(tier: string | null | undefined): number | null {
   if (!tier) return null;

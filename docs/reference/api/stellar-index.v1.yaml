@@ -18670,7 +18670,7 @@ components:
         account:
           type: object
           additionalProperties: true
-          description: "Session caller's parent account (id, name, slug, tier, status) — present on cookie-session responses only (account.go AccountInfo)."
+          description: "Session caller's parent account (id, name, slug, tier, status, rate_limit_per_min, monthly_request_quota) — present on cookie-session responses only (account.go AccountInfo). `rate_limit_per_min` / `monthly_request_quota` are what auth enforces on a key minted without explicit limits, account overrides included; limits are per key, and neither is the tier's plan ceiling."
         key_id:           { type: string }
         label:            { type: string }
         key_prefix:
@@ -18804,6 +18804,13 @@ components:
           type: integer
           format: int64
           description: 0 = inherit the tier default; positive = metered cap applied when a key has no per-key quota.
+        effective_rate_limit_per_min:
+          type: integer
+          description: Per-minute limit auth enforces on a key minted without an explicit limit, override included. Limits are per key; an explicitly budgeted key can differ.
+        effective_monthly_quota:
+          type: integer
+          format: int64
+          description: Monthly quota auth enforces on a key minted without an explicit quota, override included (0 = unmetered).
       required: [id, name, slug, tier, status, rate_limit_per_min_override, monthly_request_quota_override]
 
     AdminAccountEnvelope:

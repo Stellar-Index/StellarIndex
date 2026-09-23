@@ -139,7 +139,11 @@ function CustomerLookup() {
       // render under a "Not found" title, which reads as "this customer
       // doesn't exist" when the actual failure is unrelated to the query.
       if (err instanceof ApiError && err.status === 404) {
-        setState({ kind: 'error', title: 'Not found', message: 'No matching customer.' });
+        setState({
+          kind: 'error',
+          title: 'Not found',
+          message: 'No matching customer.',
+        });
       } else if (err instanceof ApiError) {
         setState({
           kind: 'error',
@@ -147,7 +151,11 @@ function CustomerLookup() {
           message: err.detail ?? `${err.status} ${err.message}`,
         });
       } else {
-        setState({ kind: 'error', title: 'Look-up failed', message: 'Look-up failed.' });
+        setState({
+          kind: 'error',
+          title: 'Look-up failed',
+          message: 'Look-up failed.',
+        });
       }
     }
   }
@@ -221,7 +229,7 @@ function LookupResult({ result }: { result: AdminLookupResult }) {
         </div>
         <div>
           <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-            Rate limit
+            Default-key rate limit
           </div>
           <div className="text-ink-body tnum mt-0.5 font-mono">
             {fmtInt(a.effective_rate_limit_per_min)}
@@ -232,7 +240,7 @@ function LookupResult({ result }: { result: AdminLookupResult }) {
         </div>
         <div>
           <div className="text-ink-muted text-[11px] tracking-wider uppercase">
-            Monthly quota
+            Default-key monthly quota
           </div>
           <div className="text-ink-body tnum mt-0.5 font-mono">
             {fmtInt(a.effective_monthly_quota)}

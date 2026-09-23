@@ -1433,6 +1433,10 @@ type AccountOrg struct {
 	Slug   string `json:"slug,omitempty"`
 	Tier   string `json:"tier,omitempty"`
 	Status string `json:"status,omitempty"`
+	// RateLimitPerMin / MonthlyRequestQuota are what auth enforces on a
+	// key minted without explicit limits, account overrides included.
+	RateLimitPerMin     int   `json:"rate_limit_per_min,omitempty"`
+	MonthlyRequestQuota int64 `json:"monthly_request_quota,omitempty"`
 }
 
 // ─── RWA value over time (/v1/rwa/history) ──────────────────────────

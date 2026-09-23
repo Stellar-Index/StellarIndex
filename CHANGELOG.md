@@ -15,6 +15,17 @@ against.
 
 ## [Unreleased]
 
+- **account / dashboard — plan surfaces show the enforced rate limit,
+  not the tier ceiling (GH-1074):** `/v1/account/me` now serves
+  `account.rate_limit_per_min` / `monthly_request_quota` — what auth
+  enforces on a key minted without explicit limits, account overrides
+  included — and the staff views serve the same as
+  `effective_rate_limit_per_min` / `effective_monthly_quota`. The per-key
+  cascade moved onto `platform.Account` so auth and every view resolve it
+  from one place. A partner comped to 5,000/min now reads 5,000, not
+  100,000; the tier number is labelled "Plan ceiling". Login no longer
+  byte-truncates a User-Agent into invalid UTF-8 (GH-1303).
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

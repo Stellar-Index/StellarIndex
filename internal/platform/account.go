@@ -254,34 +254,48 @@ type Account struct {
 	MonthlyRequestQuotaOverride int64 // 0 = inherit tier default
 }
 
-// EffectiveRateLimitPerMin returns the per-minute rate limit actually
-// enforced for this account: the tier ceiling, raised by
-// RateLimitPerMinOverride when the override is set higher (the
-// override is a FLOOR — see [Tier.MaxRateLimitPerMin]). Mirrors the
-// per-key cascade in internal/auth/apikey_postgres.go's Validate, so
-// the account-level view and the auth-time cascade agree on what
-// "effective" means; GH-1074 (a partner comped below the tier ceiling
-// otherwise reads the ceiling as their limit and gets 429s at a
-// fraction of it).
-func (a Account) EffectiveRateLimitPerMin() int {
-	limit := a.Tier.MaxRateLimitPerMin()
-	if a.RateLimitPerMinOverride > limit {
-		limit = a.RateLimitPerMinOverride
+// DashboardKeyDefaultRateLimitPerMin is the rate_limit_per_min a
+// dashboard-minted key gets when the create request leaves it unset.
+const DashboardKeyDefaultRateLimitPerMin = 1000
+
+// ResolveKeyRateLimitPerMin is the per-minute limit auth enforces for
+// one of this account's keys: the account override is a FLOOR over the
+// key's own budget, so it only ever raises it.
+func (a Account) ResolveKeyRateLimitPerMin(keyRate int) int {
+	if a.RateLimitPerMinOverride > keyRate {
+		return a.RateLimitPerMinOverride
 	}
-	return limit
+	return keyRate
 }
 
-// EffectiveMonthlyQuota returns the monthly request quota actually
-// enforced for this account: the tier ceiling, lowered by
-// MonthlyRequestQuotaOverride when the override is set and below it
-// (the override is a CEILING — see [Tier.MaxMonthlyQuota]). Mirrors
-// the per-key cascade in internal/auth/apikey_postgres.go's Validate.
-func (a Account) EffectiveMonthlyQuota() int64 {
-	quota := a.Tier.MaxMonthlyQuota()
-	if a.MonthlyRequestQuotaOverride > 0 && a.MonthlyRequestQuotaOverride < quota {
-		quota = a.MonthlyRequestQuotaOverride
+// ResolveKeyMonthlyQuota is the monthly quota auth enforces for one of
+// this account's keys (0 = unmetered): a key at 0 inherits the account
+// override, and a set override is a CEILING over any other key value.
+func (a Account) ResolveKeyMonthlyQuota(keyQuota int64) int64 {
+	override := a.MonthlyRequestQuotaOverride
+	if keyQuota == 0 || (override > 0 && override < keyQuota) {
+		return override
 	}
-	return quota
+	return keyQuota
+}
+
+// EffectiveRateLimitPerMin is what auth enforces on a key minted at the
+// dashboard defaults. Limits are per key, so a key minted with an
+// explicit budget can differ; the tier ceiling is only a mint-time cap.
+func (a Account) EffectiveRateLimitPerMin() int {
+	minted := min(DashboardKeyDefaultRateLimitPerMin, a.Tier.MaxRateLimitPerMin())
+	return a.ResolveKeyRateLimitPerMin(minted)
+}
+
+// EffectiveMonthlyQuota is what auth enforces on a key minted at the
+// dashboard defaults: it stores 0 (inherit) under an override, else the
+// tier ceiling.
+func (a Account) EffectiveMonthlyQuota() int64 {
+	var minted int64
+	if a.MonthlyRequestQuotaOverride <= 0 {
+		minted = a.Tier.MaxMonthlyQuota()
+	}
+	return a.ResolveKeyMonthlyQuota(minted)
 }
 
 // AccountStore is the persistence boundary for [Account].

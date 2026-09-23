@@ -10591,7 +10591,7 @@ export interface components {
             user?: {
                 [key: string]: unknown;
             };
-            /** @description Session caller's parent account (id, name, slug, tier, status) — present on cookie-session responses only (account.go AccountInfo). */
+            /** @description Session caller's parent account (id, name, slug, tier, status, rate_limit_per_min, monthly_request_quota) — present on cookie-session responses only (account.go AccountInfo). `rate_limit_per_min` / `monthly_request_quota` are what auth enforces on a key minted without explicit limits, account overrides included; limits are per key, and neither is the tier's plan ceiling. */
             account?: {
                 [key: string]: unknown;
             };
@@ -10703,6 +10703,13 @@ export interface components {
              * @description 0 = inherit the tier default; positive = metered cap applied when a key has no per-key quota.
              */
             monthly_request_quota_override: number;
+            /** @description Per-minute limit auth enforces on a key minted without an explicit limit, override included. Limits are per key; an explicitly budgeted key can differ. */
+            effective_rate_limit_per_min?: number;
+            /**
+             * Format: int64
+             * @description Monthly quota auth enforces on a key minted without an explicit quota, override included (0 = unmetered).
+             */
+            effective_monthly_quota?: number;
         };
         AdminAccountEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["AdminAccountView"];
