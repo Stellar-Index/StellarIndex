@@ -128,6 +128,10 @@ func TestHandler_ExposesMetrics(t *testing.T) {
 		"stellarindex_dex_tvl_refresh_total",
 		"stellarindex_sdex_orderbook_maintain_total",
 		"stellarindex_explorer_swr_refresh_total",
+		// The tip-producer ceiling's only operator-visible signals.
+		"stellarindex_api_tip_producers",
+		`stellarindex_api_tip_producers_refused_total{reason="caller_quota"}`,
+		`stellarindex_api_tip_producers_refused_total{reason="global_ceiling"}`,
 		// Language-native + process metrics from collectors.
 		"go_goroutines",
 		"process_open_fds",

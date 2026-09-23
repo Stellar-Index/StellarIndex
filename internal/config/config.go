@@ -1451,6 +1451,14 @@ type StreamingConfig struct {
 	// but nothing called it, so every deployment silently ran the
 	// package-level hardcoded default (8192) with no operator control.
 	MaxConcurrentStreams int64 `toml:"max_concurrent_streams" doc:"Global cap on simultaneous SSE connections across all stream endpoints, independent of the per-IP cap (guards against a flood of DISTINCT client IPs). Over the cap, a new connection is rejected with 503. <= 0 disables the global cap." default:"8192"`
+
+	// MaxTipProducers caps distinct shared tip-stream producers (one
+	// compute loop per (asset, quote, window)). Negative disables it.
+	MaxTipProducers int `toml:"max_tip_producers" doc:"Global cap on distinct shared tip-stream producers (one compute loop per watched (asset, quote, window) triple), independent of connection counts — a detached producer outlives the connection that minted it for a linger window. Guards against an unauthenticated abort-loop flood enumerating the key space (UNAUTH-DOS-1). Negative disables the ceiling; 0 keeps the built-in default." default:"512"`
+
+	// MaxTipProducersPerCaller caps the [MaxTipProducers] slots one
+	// client-IP-derived caller may hold minted. Negative disables it.
+	MaxTipProducersPerCaller int `toml:"max_tip_producers_per_caller" doc:"Per-caller cap on minted shared tip-stream producers, charged to the client-IP-derived principal for the life of the registry entry (through its linger). Prevents one address from filling the whole MaxTipProducers pool. Negative disables the per-caller quota; 0 keeps the built-in default." default:"24"`
 }
 
 // SEP10Config configures the SEP-10 Web Auth validator. Both
@@ -1868,10 +1876,12 @@ func defaultAPIConfig() APIConfig {
 			CookieSecure:        true, // dev (http://localhost) overrides to false
 		},
 		Streaming: StreamingConfig{
-			Pairs:                [][]string{},
-			PollInterval:         5 * time.Second,
-			MaxStreamsPerIP:      20,
-			MaxConcurrentStreams: 8192,
+			Pairs:                    [][]string{},
+			PollInterval:             5 * time.Second,
+			MaxStreamsPerIP:          20,
+			MaxConcurrentStreams:     8192,
+			MaxTipProducers:          512,
+			MaxTipProducersPerCaller: 24,
 		},
 	}
 }

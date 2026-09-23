@@ -9,9 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/Stellar-Index/StellarIndex/internal/api/streaming"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
@@ -149,13 +152,27 @@ type tipProducer struct {
 	// The charge is held for the entry's whole life — through the linger
 	// — and released only when the entry is deleted.
 	minter string
+	// start and logger are kept so [tipProducerRegistry.respawnIfLive]
+	// can relaunch the compute loop for THIS entry.
+	start  func(ctx context.Context)
+	logger *slog.Logger
 }
+
+// tipProducerRestartBackoff bounds how fast a producer that keeps
+// exiting on its own (e.g. a panic on every tick) respawns, so a
+// systematically broken pair degrades into a slow, logged retry loop
+// rather than a tight spin that pegs a core and floods
+// stellarindex_worker_panics_total.
+const tipProducerRestartBackoff = time.Second
 
 type tipProducerRegistry struct {
 	mu     sync.Mutex
 	active map[tipProducerKey]*tipProducer
 	// lingerFor overrides tipProducerLinger when > 0 (tests).
 	lingerFor time.Duration
+	// gauge overrides obs.APITipProducers when non-nil (tests: the
+	// package-level gauge also moves with other tests' linger timers).
+	gauge prometheus.Gauge
 	// maxProducers overrides defaultMaxTipProducers when > 0. A negative
 	// value disables the ceiling (an operator's explicit choice, and the
 	// escape hatch if the default is ever wrong for a deployment).
@@ -192,6 +209,20 @@ func (r *tipProducerRegistry) callerLimit() int {
 		return r.maxPerCaller
 	}
 	return defaultMaxTipProducersPerCaller
+}
+
+// producersGauge is the registered-producer gauge this registry moves.
+func (r *tipProducerRegistry) producersGauge() prometheus.Gauge {
+	if r.gauge != nil {
+		return r.gauge
+	}
+	return obs.APITipProducers
+}
+
+// refuseTipProducer counts a refusal by its reason and returns it.
+func refuseTipProducer(o tipProducerOutcome) tipProducerOutcome {
+	obs.APITipProducersRefusedTotal.WithLabelValues(o.String()).Inc()
+	return o
 }
 
 // chargeLocked records that caller minted one more producer.
@@ -271,18 +302,19 @@ func (r *tipProducerRegistry) acquireFor(
 		if q := r.callerLimit(); q > 0 && caller != unattributedTipCaller && r.minted[caller] >= q {
 			r.refused++
 			r.refusedPerCaller++
-			return nil, tipProducerAtCallerQuota
+			return nil, refuseTipProducer(tipProducerAtCallerQuota)
 		}
 		if lim := r.limit(); lim > 0 && len(r.active) >= lim {
 			r.refused++
-			return nil, tipProducerAtGlobalCeiling
+			return nil, refuseTipProducer(tipProducerAtGlobalCeiling)
 		}
 		// The cancel func is NOT lost (gosec G118 false positive): it is
 		// stored on the producer record and invoked by the linger timer
 		// in release() once the last reference is gone.
 		ctx, cancel := context.WithCancel(context.Background()) //nolint:gosec
-		p = &tipProducer{refs: 1, cancel: cancel, minter: caller}
+		p = &tipProducer{refs: 1, cancel: cancel, minter: caller, start: start, logger: logger}
 		r.active[key] = p
+		r.producersGauge().Inc()
 		r.chargeLocked(caller)
 		// `start` is a func VALUE, so the guard inside the producer it
 		// wraps (runSharedTipProducer defers recoverStreamProducer) is
@@ -290,15 +322,11 @@ func (r *tipProducerRegistry) acquireFor(
 		// this file's goroutines guarded. Registering it HERE makes the
 		// guarantee checkable at the `go` statement, and it is a genuine
 		// backstop for any future caller that passes an unguarded start.
-		// Recovering leaves this producer stopped with its registry
-		// entry live; that entry is not a permanent wedge — release()
-		// still decrements, and the linger timer deletes it once the
-		// last subscriber leaves, so a new producer starts for the next
-		// subscriber after them.
-		go func() {
-			defer worker.Recover(logger, "api-sse-price_tip_shared")
-			start(ctx)
-		}()
+		// A producer that exits without being cancelled (a recovered
+		// panic) is relaunched on the same entry by
+		// [tipProducerRegistry.respawnIfLive], so a CURRENT subscriber is
+		// not left with heartbeats only until every viewer leaves.
+		r.spawn(ctx, key, p)
 	}
 	return func() { r.release(key) }, tipProducerAdmitted
 }
@@ -328,12 +356,51 @@ func (r *tipProducerRegistry) release(key tipProducerKey) {
 		}
 		cur.cancel()
 		delete(r.active, key)
+		r.producersGauge().Dec()
 		// The minter's quota slot comes back only HERE, when the entry
 		// actually leaves the registry. Releasing it when the connection
 		// closed would hand the slot back while the producer is still
 		// running out its linger — which is precisely the window the
 		// abort-loop flood exploits.
 		r.dischargeLocked(cur.minter)
+	})
+}
+
+// spawn runs p.start on a goroutine guarded by worker.Recover and hands
+// its exit to [tipProducerRegistry.respawnIfLive]. ctx must be the
+// context p.cancel cancels.
+func (r *tipProducerRegistry) spawn(ctx context.Context, key tipProducerKey, p *tipProducer) {
+	go func() {
+		defer worker.Recover(p.logger, "api-sse-price_tip_shared")
+		defer r.respawnIfLive(ctx, key, p)
+		p.start(ctx)
+	}()
+}
+
+// respawnIfLive is spawn's exit hook. A recovered panic leaves the
+// registry entry live with refs>0 but nothing computing, and release()
+// only starts the linger once refs reaches 0 — so without a respawn a
+// still-connected subscriber would get heartbeats only for as long as it
+// stayed connected.
+//
+// ctx.Err() != nil means release()'s linger cancelled this producer
+// deliberately: the normal stop path, never respawned. Otherwise, after
+// [tipProducerRestartBackoff], the loop is relaunched on the same,
+// still-live context if key's entry is still THIS record (not deleted,
+// not replaced by a later acquire). refs and the caller charge are
+// untouched: the entry never left the registry.
+func (r *tipProducerRegistry) respawnIfLive(ctx context.Context, key tipProducerKey, p *tipProducer) {
+	if ctx.Err() != nil {
+		return
+	}
+	time.AfterFunc(tipProducerRestartBackoff, func() {
+		r.mu.Lock()
+		cur, still := r.active[key]
+		r.mu.Unlock()
+		if !still || cur != p || ctx.Err() != nil {
+			return
+		}
+		r.spawn(ctx, key, p)
 	})
 }
 

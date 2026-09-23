@@ -164,7 +164,12 @@ func registerAPIServingMetrics() {
 		APISparkline7dRowsTotal,
 		APIStreamSubscribeTotal,
 		APICORSDecisionsTotal,
+		APITipProducers,
+		APITipProducersRefusedTotal,
 	)
+	for _, reason := range []string{"caller_quota", "global_ceiling"} {
+		APITipProducersRefusedTotal.WithLabelValues(reason)
+	}
 }
 
 // registerFreezeLifecycleMetrics registers the ADR-0019 freeze-lifecycle
@@ -2912,6 +2917,26 @@ var APIStreamSubscribeTotal = prometheus.NewCounterVec(
 		Help: "Closed-bucket Redis pub/sub messages processed by the API subscriber, labelled by outcome.",
 	},
 	[]string{"outcome"},
+)
+
+// APITipProducers — shared /v1/price/tip/stream producers currently
+// registered (running or lingering). Bounded by
+// api.streaming.max_tip_producers; a count that climbs while SSE
+// connections do not is the abort-loop flood the ceiling exists for.
+var APITipProducers = prometheus.NewGauge(prometheus.GaugeOpts{
+	Name: "stellarindex_api_tip_producers",
+	Help: "Shared tip-stream producers currently registered (running or lingering).",
+})
+
+// APITipProducersRefusedTotal — tip-stream producer mints refused, by
+// reason: caller_quota (one client at max_tip_producers_per_caller) or
+// global_ceiling (the registry at max_tip_producers).
+var APITipProducersRefusedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_tip_producers_refused_total",
+		Help: "Shared tip-stream producer mints refused, labelled by reason (caller_quota, global_ceiling).",
+	},
+	[]string{"reason"},
 )
 
 // CustomerWebhookDeliveryAttemptsTotal — outcome of every

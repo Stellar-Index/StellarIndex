@@ -240,3 +240,95 @@ func TestTipProducerRegistry_NegativeCeilingDisablesTheBound(t *testing.T) {
 		t.Errorf("running() = %d, want 64 with the ceiling disabled", got)
 	}
 }
+
+// TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected
+// is the Q164 regression.
+//
+// worker.Recover stops a panicking compute loop's goroutine without
+// releasing the registry entry: refs stays whatever it was, since
+// release() is never called on a panic. Before this fix, nothing
+// re-invoked start while refs > 0 — release()'s linger only fires once
+// the LAST subscriber leaves, so an existing, still-connected subscriber
+// (the one holding rel below) got heartbeats only, forever, for as long
+// as it stayed connected: exactly the "no new emits" symptom the finding
+// names.
+func TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected(t *testing.T) {
+	reg := &tipProducerRegistry{}
+	var starts atomic.Int32
+	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 5}
+
+	rel, ok := reg.acquire(key, nil, func(ctx context.Context) {
+		if starts.Add(1) == 1 {
+			panic("boom") // recovered by worker.Recover inside spawn
+		}
+		<-ctx.Done()
+	})
+	if !ok {
+		t.Fatal("acquire refused")
+	}
+	defer rel()
+
+	if !waitFor(time.Second, func() bool { return starts.Load() >= 1 }) {
+		t.Fatal("producer never started")
+	}
+	if !waitFor(3*time.Second, func() bool { return starts.Load() >= 2 }) {
+		t.Fatalf("producer never respawned after a recovered panic (starts=%d) — "+
+			"the still-connected subscriber holding rel would see no new emits "+
+			"until every viewer of this pair disconnected", starts.Load())
+	}
+	if got := reg.running(); got != 1 {
+		t.Fatalf("running() = %d after respawn, want 1 (same entry, not a duplicate)", got)
+	}
+}
+
+// TestTipProducerRegistry_RespawnsAfterStartReturnsWhileSubscriberStillConnected
+// is the production shape of the same defect: runSharedTipProducer
+// recovers its own panic (recoverStreamProducer) and RETURNS normally, so
+// the registry sees an uncancelled exit rather than a panic.
+func TestTipProducerRegistry_RespawnsAfterStartReturnsWhileSubscriberStillConnected(t *testing.T) {
+	reg := &tipProducerRegistry{}
+	var starts atomic.Int32
+	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 7}
+
+	rel, ok := reg.acquire(key, nil, func(ctx context.Context) {
+		if starts.Add(1) == 1 {
+			return // an internally-recovered panic looks exactly like this
+		}
+		<-ctx.Done()
+	})
+	if !ok {
+		t.Fatal("acquire refused")
+	}
+	defer rel()
+
+	if !waitFor(3*time.Second, func() bool { return starts.Load() >= 2 }) {
+		t.Fatalf("producer never respawned after exiting uncancelled (starts=%d)", starts.Load())
+	}
+}
+
+// TestTipProducerRegistry_DoesNotRespawnAfterDeliberateStop pins the other
+// side: a producer stopped by the linger must stay stopped.
+func TestTipProducerRegistry_DoesNotRespawnAfterDeliberateStop(t *testing.T) {
+	reg := &tipProducerRegistry{lingerFor: 10 * time.Millisecond}
+	var starts atomic.Int32
+	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 8}
+
+	rel, ok := reg.acquire(key, nil, func(ctx context.Context) {
+		starts.Add(1)
+		<-ctx.Done()
+	})
+	if !ok {
+		t.Fatal("acquire refused")
+	}
+	if !waitFor(time.Second, func() bool { return starts.Load() == 1 }) {
+		t.Fatal("producer never started")
+	}
+	rel()
+	if !waitFor(time.Second, func() bool { return reg.running() == 0 }) {
+		t.Fatal("producer never stopped after the linger")
+	}
+	time.Sleep(1500 * time.Millisecond) // > tipProducerRestartBackoff
+	if got := starts.Load(); got != 1 {
+		t.Fatalf("starts = %d after a deliberate stop, want 1 (no respawn)", got)
+	}
+}
