@@ -1683,7 +1683,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		// old 30s TTL the cache expired for 30 of every 60 seconds
 		// between prewarm passes, so every probe landing in that window
 		// (the status page polls /v1/assets/native every 30s) paid the
-		// full cold-rebuild cost and inflated API p95/p99 (#52 / rc.67).
+		// full cold-rebuild cost and inflated API p95/p99 (see CHANGELOG).
 		// 120s = one full prewarm interval of headroom; matches the
 		// sibling F2-path caches (1–2 min TTL, same 60s prewarm).
 		// Underlying data updates per-minute at fastest; 120s staleness

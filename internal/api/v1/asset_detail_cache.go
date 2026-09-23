@@ -41,7 +41,7 @@ type assetDetailEntry struct {
 // selfPrewarmAssetEndpoints cadence so the prewarm pass always
 // refreshes an entry before it expires — otherwise the cache is
 // cold for the gap between TTL expiry and the next prewarm, and
-// every request in that window pays the full handler cost (#52).
+// every request in that window pays the full handler cost.
 // The underlying data updates per-minute (closed-bucket prices_1m)
 // and per-tx (volume / supply); 120s staleness is well inside the
 // "closed-bucket only" API contract per ADR-0015.
