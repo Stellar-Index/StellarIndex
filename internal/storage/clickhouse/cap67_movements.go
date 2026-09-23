@@ -45,24 +45,85 @@ func cap67WatermarkOn(ctx context.Context, conn driver.Conn) (uint32, error) {
 	return wm, nil
 }
 
+// cap67WMTTL is how long a successful watermark read is served from cache.
+const cap67WMTTL = time.Minute
+
+// cap67WMRetryAfter is how long a failed watermark read is answered from
+// cache (as the same error) before the store is asked again, matching
+// [schemaProbeRetryAfter]: an outage costs one query per window, not one
+// per /movements request.
+const cap67WMRetryAfter = schemaProbeRetryAfter
+
 // Cap67MovementsWatermark (method form) serves the explorer handler's
 // per-request floor read through a ~60s cache — the watermark advances
 // every derive window (~minutes), so staleness within the cache TTL
 // only makes the Postgres tail serve slightly more than strictly
 // necessary, never a gap (the handler ALSO ceilings the CH arm at the
 // same cached value, so the two arms stay consistent with each other).
+//
+// The round-trip runs OUTSIDE the mutex as a single flight: concurrent
+// callers wait on the flight or their own ctx, whichever ends first, so
+// a slow store cannot queue every request behind a context-blind lock.
 func (r *ExplorerReader) Cap67MovementsWatermark(ctx context.Context) (uint32, error) {
+	for {
+		flight, owner, hit, wm, err := r.cap67WMClaim(time.Now())
+		switch {
+		case hit:
+			return wm, err
+		case owner:
+			return r.refreshCap67WM(ctx, flight)
+		}
+		select {
+		case <-flight:
+		case <-ctx.Done():
+			return 0, fmt.Errorf("clickhouse: cap67 watermark: %w", ctx.Err())
+		}
+	}
+}
+
+// cap67WMClaim answers from cache (hit) — a fresh value, or a recent
+// failure still inside its back-off — or else hands back the flight to
+// wait on, creating it when this caller is the owner.
+func (r *ExplorerReader) cap67WMClaim(now time.Time) (flight chan struct{}, owner, hit bool, wm uint32, err error) {
 	r.cap67WMMu.Lock()
 	defer r.cap67WMMu.Unlock()
-	if time.Since(r.cap67WMAt) < time.Minute && r.cap67WMAt != (time.Time{}) {
-		return r.cap67WM, nil
+	if !r.cap67WMAt.IsZero() && now.Sub(r.cap67WMAt) < cap67WMTTL {
+		return nil, false, true, r.cap67WM, nil
 	}
-	wm, err := cap67WatermarkOn(ctx, r.conn)
-	if err != nil {
-		return 0, err
+	if r.cap67WMErr != nil && now.Sub(r.cap67WMErrAt) < cap67WMRetryAfter {
+		return nil, false, true, 0, r.cap67WMErr
 	}
-	r.cap67WM, r.cap67WMAt = wm, time.Now()
-	return wm, nil
+	if r.cap67WMFlight != nil {
+		return r.cap67WMFlight, false, false, 0, nil
+	}
+	r.cap67WMFlight = make(chan struct{})
+	return r.cap67WMFlight, true, false, 0, nil
+}
+
+// refreshCap67WM runs the owned flight and publishes its outcome. The
+// flight is released even on panic, so one bad read cannot wedge every
+// later caller on a channel that never closes.
+func (r *ExplorerReader) refreshCap67WM(ctx context.Context, flight chan struct{}) (wm uint32, err error) {
+	completed := false
+	defer func() {
+		r.cap67WMMu.Lock()
+		now := time.Now()
+		switch {
+		case !completed:
+		case err == nil:
+			r.cap67WM, r.cap67WMAt, r.cap67WMErr = wm, now, nil
+		case !errors.Is(ctx.Err(), context.Canceled):
+			// A caller's own disconnect says nothing about the store; a
+			// deadline or backend error does, and backs everyone off.
+			r.cap67WMErr, r.cap67WMErrAt = err, now
+		}
+		r.cap67WMFlight = nil
+		r.cap67WMMu.Unlock()
+		close(flight)
+	}()
+	wm, err = cap67WatermarkOn(ctx, r.conn)
+	completed = true
+	return wm, err
 }
 
 // ErrCap67MovementsHole reports a REFUSED watermark advance: the lake does
