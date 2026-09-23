@@ -336,3 +336,53 @@ func TestDecoder_pathPaymentStrictReceive_end2end(t *testing.T) {
 		t.Fatalf("got %d trades, want 1", len(out))
 	}
 }
+
+// A trade op whose inner result is a failure code carries no Success
+// arm; every op type must short-circuit on the code rather than reach
+// MustSuccess (which would panic) or read claims from a failed op.
+func TestExtractClaimAtoms_nonSuccessInnerCode_returnsNil(t *testing.T) {
+	sellFail := &xdr.ManageSellOfferResult{Code: xdr.ManageSellOfferResultCodeManageSellOfferUnderfunded}
+	cases := []struct {
+		name string
+		op   xdr.OperationType
+		tr   xdr.OperationResultTr
+	}{
+		{"manage_sell", xdr.OperationTypeManageSellOffer, xdr.OperationResultTr{
+			Type: xdr.OperationTypeManageSellOffer, ManageSellOfferResult: sellFail,
+		}},
+		{"manage_buy", xdr.OperationTypeManageBuyOffer, xdr.OperationResultTr{
+			Type: xdr.OperationTypeManageBuyOffer, ManageBuyOfferResult: &xdr.ManageBuyOfferResult{
+				Code: xdr.ManageBuyOfferResultCodeManageBuyOfferUnderfunded,
+			},
+		}},
+		{"passive_own_arm", xdr.OperationTypeCreatePassiveSellOffer, xdr.OperationResultTr{
+			Type: xdr.OperationTypeCreatePassiveSellOffer, CreatePassiveSellOfferResult: sellFail,
+		}},
+		{"passive_manage_sell_arm", xdr.OperationTypeCreatePassiveSellOffer, xdr.OperationResultTr{
+			Type: xdr.OperationTypeManageSellOffer, ManageSellOfferResult: sellFail,
+		}},
+		{"path_strict_receive", xdr.OperationTypePathPaymentStrictReceive, xdr.OperationResultTr{
+			Type: xdr.OperationTypePathPaymentStrictReceive, PathPaymentStrictReceiveResult: &xdr.PathPaymentStrictReceiveResult{
+				Code: xdr.PathPaymentStrictReceiveResultCodePathPaymentStrictReceiveOverSendmax,
+			},
+		}},
+		{"path_strict_send", xdr.OperationTypePathPaymentStrictSend, xdr.OperationResultTr{
+			Type: xdr.OperationTypePathPaymentStrictSend, PathPaymentStrictSendResult: &xdr.PathPaymentStrictSendResult{
+				Code: xdr.PathPaymentStrictSendResultCodePathPaymentStrictSendUnderDestmin,
+			},
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			op := xdr.Operation{Body: xdr.OperationBody{Type: tc.op}}
+			tr := tc.tr
+			res := xdr.OperationResult{Code: xdr.OperationResultCodeOpInner, Tr: &tr}
+			if got := extractClaimAtoms(op, res); got != nil {
+				t.Fatalf("got %d claims from a failed %s op, want nil", len(got), tc.name)
+			}
+			if claims, drops := AuditOp(op, res); claims != 0 || drops != nil {
+				t.Fatalf("AuditOp = (%d, %v), want (0, nil)", claims, drops)
+			}
+		})
+	}
+}
