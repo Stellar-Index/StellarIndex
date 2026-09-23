@@ -282,8 +282,8 @@ func TestPrices1mRetention_0165ReattachesTheSamePolicy(t *testing.T) {
 		"migrations/0165_twap_notional_floor.down.sql",
 	} {
 		sql := stripSQLComments(readRepoFile(t, path))
-		added := addRetentionRe.FindAllStringSubmatch(sql, -1)
-		if len(added) != 1 || added[0][1] != "prices_1m" {
+		added := retentionRelationsFromCalls(t, addRetentionCallRe, sql, path)
+		if len(added) != 1 || added[0] != "prices_1m" {
 			t.Errorf("%s re-attaches %v, want exactly one policy naming prices_1m", path, added)
 		}
 		for _, want := range []string{"INTERVAL '90 days'", "scheduled => false", "RAISE EXCEPTION"} {
