@@ -100,7 +100,7 @@ func servedValuesVerdict(w io.Writer, results []servedValueResult, list *reserve
 			status = "FAIL"
 			failed++
 		}
-		fmt.Fprintf(w, "verify-served-values: %-28s %-4s configured=%d published=%d missing=%v extra=%v (%s)\n",
+		_, _ = fmt.Fprintf(w, "verify-served-values: %-28s %-4s configured=%d published=%d missing=%v extra=%v (%s)\n",
 			sdfReserveListCheck, status, len(list.configured), len(list.published), list.drift.missing, list.drift.extra, list.note)
 	}
 	for _, r := range results {
@@ -115,7 +115,7 @@ func servedValuesVerdict(w io.Writer, results []servedValueResult, list *reserve
 			status = "FAIL"
 			failed++
 		}
-		fmt.Fprintf(w, "verify-served-values: %-28s %-4s served=%s truth=%s rel_err=%.4f tol=%.4f (%s)\n",
+		_, _ = fmt.Fprintf(w, "verify-served-values: %-28s %-4s served=%s truth=%s rel_err=%.4f tol=%.4f (%s)\n",
 			r.name, status, r.served, r.truth, r.relErr, r.tolerance, r.note)
 	}
 	return servedValuesExitError(len(results), failed, skipped)
