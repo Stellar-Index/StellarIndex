@@ -291,7 +291,7 @@ var sponsorsRollupStatements = []rollupStep{
 	 )
 	 ` + boundedScanSettings + `, max_execution_time = 3600`},
 	{sql: `INSERT INTO stellar.account_sponsors_stats_staging (metric, value)
-	 WITH` + perTxCTE + `
+	 WITH` + perTxCTE + `,` + factsCTE + `
 	 SELECT metric, value FROM (
 	     SELECT 'sponsors_total' AS metric, toInt64(count()) AS value
 	     FROM stellar.account_sponsors_rollup_staging
@@ -299,8 +299,8 @@ var sponsorsRollupStatements = []rollupStep{
 	     SELECT 'sponsorships_total', toInt64(sum(sponsorships_started))
 	     FROM stellar.account_sponsors_rollup_staging
 	     UNION ALL
-	     SELECT 'distinct_sponsored_total', toInt64(sum(distinct_sponsored))
-	     FROM stellar.account_sponsors_rollup_staging
+	     SELECT 'distinct_sponsored_total', toInt64(uniqExactIf(counterparty, kind = 'end'))
+	     FROM facts
 	     UNION ALL
 	     SELECT 'revocations_total', toInt64(sum(revocations_issued))
 	     FROM stellar.account_sponsors_rollup_staging
@@ -322,10 +322,13 @@ var sponsorsRollupStatements = []rollupStep{
 	// row per distinct (sponsor, sponsored) pair, in both sort orders so
 	// each direction is a primary-key range read. Derived from the same
 	// per-transaction attribution the board uses and from the same
-	// working table, so the two cannot describe different data: measured
-	// on r1 2026-09-09 the pair count equals the board's
-	// distinct_sponsored_total (4,088,814) and the event sum equals its
-	// sponsorships_total (9,987,381), exactly.
+	// working table, so the two cannot describe different data: the
+	// event sum equals the board's sponsorships_total exactly. The pair
+	// count is NOT the board's distinct_sponsored_total — an account
+	// sponsored by more than one sponsor contributes one pair per
+	// sponsor but counts once in distinct_sponsored_total, which is a
+	// global distinct over sponsored accounts, not a sum of per-sponsor
+	// distinct counts.
 	{sql: `TRUNCATE TABLE stellar.account_sponsor_edges_staging`},
 	{sql: `TRUNCATE TABLE stellar.account_sponsor_edges_by_sponsored_staging`},
 	{sql: `INSERT INTO stellar.account_sponsor_edges_staging
