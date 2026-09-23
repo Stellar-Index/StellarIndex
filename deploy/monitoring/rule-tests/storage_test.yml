@@ -586,6 +586,77 @@ tests:
         alertname: stellarindex_timescale_cagg_stale
         exp_alerts: []
 
+  # ══ stellarindex_timescale_cagg_refresh_missing ═══════════════════
+  # A DROPPED refresh policy removes the cagg's row from the probe's
+  # query entirely, so its stellarindex_cagg_last_refresh_unix series
+  # goes absent rather than stale — stellarindex_timescale_cagg_stale
+  # above cannot fire over an absent series. Pin the case it exists for:
+  # the series reports for a while, then stops.
+  - interval: 1m
+    name: a cagg whose refresh policy was dropped tickets on the missing series
+    input_series:
+      - series: 'stellarindex_cagg_last_refresh_unix{job="node_exporter",instance="r1:9100",cagg="prices_1m"}'
+        values: '0+60x65 _x40'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_timescale_cagg_refresh_missing
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              cagg: prices_1m
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+              summary: "Continuous aggregate prices_1m has stopped reporting refresh status"
+              description: |
+                prices_1m was reporting
+                stellarindex_cagg_last_refresh_unix in the last day and is not
+                now — its refresh policy was dropped or renamed rather than
+                merely late, which stellarindex_timescale_cagg_stale cannot
+                see (an absent series never satisfies `time() - x > N`).
+                Check timescaledb_information.jobs for a
+                policy_refresh_continuous_aggregate row on prices_1m.
+                If this is a deliberate decommission, silence the alert
+                rather than changing the probe query.
+      # Three hours on, the policy is still gone and the ticket must
+      # still be open, not resolved by its own lookback running out.
+      - eval_time: 4h
+        alertname: stellarindex_timescale_cagg_refresh_missing
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              cagg: prices_1m
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+              summary: "Continuous aggregate prices_1m has stopped reporting refresh status"
+              description: |
+                prices_1m was reporting
+                stellarindex_cagg_last_refresh_unix in the last day and is not
+                now — its refresh policy was dropped or renamed rather than
+                merely late, which stellarindex_timescale_cagg_stale cannot
+                see (an absent series never satisfies `time() - x > N`).
+                Check timescaledb_information.jobs for a
+                policy_refresh_continuous_aggregate row on prices_1m.
+                If this is a deliberate decommission, silence the alert
+                rather than changing the probe query.
+
+  - interval: 1m
+    name: a cagg still reporting every minute raises nothing
+    input_series:
+      - series: 'stellarindex_cagg_last_refresh_unix{job="node_exporter",instance="r1:9100",cagg="prices_1m"}'
+        values: '0+60x150'
+    alert_rule_test:
+      - eval_time: 90m
+        alertname: stellarindex_timescale_cagg_refresh_missing
+        exp_alerts: []
+
   # ══ stellarindex_timescale_compression_lag ════════════════════════
   # for: 24h — the series must stay non-zero for a full day.
   #
@@ -1363,6 +1434,12 @@ tests:
                 Check max_parallel_workers / timescaledb.max_background_workers
                 headroom first; "failed to start job" in the job_errors view means
                 starvation, not a broken job body.
+
+                The counter above says only that policy_compression is
+                failing, never why. Query
+                stellarindex_timescale_job_last_failure_reason_info{job_id="1000"}
+                for the most recent job_errors.err_message text without a
+                psql round trip.
 
   # ── a slow job that fails ONCE in three days is not a ticket ─────
   # The threshold has to leave the fleet's ordinary retry noise alone:

@@ -65,7 +65,11 @@ the retention edge loses its left-hand samples silently.
     ORDER BY total_failures DESC LIMIT 10;
    ```
 
-2. **Read the actual error** — this is the branch point:
+2. **Read the actual error** — this is the branch point. The most recent
+   message per job is already in Prometheus as the `reason` label of
+   `stellarindex_timescale_job_last_failure_reason_info{job_id="…"}`
+   (truncated to 200 characters, braces shown as parentheses); for the
+   full history:
 
    ```sql
    SELECT job_id, proc_name, err_message, finish_time

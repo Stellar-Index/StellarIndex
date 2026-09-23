@@ -398,6 +398,53 @@ groups:
             overdue. API reads from this CAGG will return stale data until it
             refreshes; check timescaledb job-scheduler health.
 
+      # A DROPPED refresh policy makes that one CAGG's series vanish
+      # from stellarindex_cagg_last_refresh_unix entirely — the probe
+      # (10-observability.yml) enumerates via
+      # timescaledb_information.jobs, so a cagg with no policy has no
+      # row and no series, not a stale one. stellarindex_cagg_stale
+      # above cannot see that: `time() - x` over an absent series is
+      # itself absent and never fires. stellarindex_timescale_probe_rows
+      # only catches the WHOLE cagg_refresh family going to zero
+      # (already covered by stellarindex_timescale_probe_degraded
+      # below); one cagg out of several dropping out leaves rows > 0
+      # and both of those blind.
+      #
+      # "Reported within the last day, absent now". Not
+      # `x offset 1h unless x`: that stops matching an hour after the
+      # drop, so the ticket would resolve itself while the policy is
+      # still gone. `for: 15m` absorbs a probe restart or a short
+      # scrape gap.
+      #
+      # Deliberately decommissioning a CAGG (dropping both its policy
+      # and the view) trips this for a day — silence it rather than
+      # "fixing" the probe query into a join on
+      # continuous_aggregates, which the comment above the query
+      # explains yields NULL and drops every series instead of one.
+      - alert: stellarindex_timescale_cagg_refresh_missing
+        expr: |
+          last_over_time(stellarindex_cagg_last_refresh_unix[1d])
+          unless
+          stellarindex_cagg_last_refresh_unix
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: storage
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cagg-stale.md
+          summary: "Continuous aggregate {{ $labels.cagg }} has stopped reporting refresh status"
+          description: |
+            {{ $labels.cagg }} was reporting
+            stellarindex_cagg_last_refresh_unix in the last day and is not
+            now — its refresh policy was dropped or renamed rather than
+            merely late, which stellarindex_timescale_cagg_stale cannot
+            see (an absent series never satisfies `time() - x > N`).
+            Check timescaledb_information.jobs for a
+            policy_refresh_continuous_aggregate row on {{ $labels.cagg }}.
+            If this is a deliberate decommission, silence the alert
+            rather than changing the probe query.
+
       - alert: stellarindex_timescale_job_failures_climbing
         # Producer: timescale-jobs-probe.timer (every 60s), same probe as
         # the two alerts above.
@@ -483,6 +530,12 @@ groups:
             Check max_parallel_workers / timescaledb.max_background_workers
             headroom first; "failed to start job" in the job_errors view means
             starvation, not a broken job body.
+
+            The counter above says only that {{ $labels.proc }} is
+            failing, never why. Query
+            stellarindex_timescale_job_last_failure_reason_info{job_id="{{ $labels.job_id }}"}
+            for the most recent job_errors.err_message text without a
+            psql round trip.
 
       # Judged against each policy's OWN window, per hypertable.
       #

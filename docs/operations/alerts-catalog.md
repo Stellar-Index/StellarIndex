@@ -27,7 +27,7 @@ enforced 2026-04-23 onward).
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 58 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 179 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 180 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -154,6 +154,7 @@ signal lands.
 | `stellarindex_timescale_lock_table_pressure` | `sum by (instance)(pg_locks_count) / on (instance)(pg_settings_max_locks_per_transaction * pg_settings_max_connections)` | > 70 % for > 5 min | ticket | [pg-conns-saturated](runbooks/pg-conns-saturated.md) |
 | `stellarindex_systemd_unit_failed` | `node_systemd_unit_state{state="failed"}` (catch-all, minus dedicated-alert units) | in `failed` 15m | ticket | [systemd-unit-failed](runbooks/systemd-unit-failed.md) |
 | `stellarindex_timescale_cagg_stale` | `time() - stellarindex_cagg_last_refresh_unix` per CAGG | > 5× its refresh interval | ticket | [cagg-stale](runbooks/cagg-stale.md) |
+| `stellarindex_timescale_cagg_refresh_missing` | `last_over_time(stellarindex_cagg_last_refresh_unix[1d]) unless stellarindex_cagg_last_refresh_unix` per CAGG — a dropped/renamed refresh policy removes the cagg's row from the probe entirely, which `stellarindex_timescale_cagg_stale` cannot see (an absent series never satisfies `time() - x > N`) | a cagg series present within the last day is absent now, for ≥ 15 min | ticket | [cagg-stale](runbooks/cagg-stale.md) |
 | `stellarindex_timescale_job_failures_climbing` | `increase(stellarindex_timescale_job_failures_total[6h])` per job | > 10 failures in 6h, 30m | ticket | [timescale-job-failures-climbing](runbooks/timescale-job-failures-climbing.md) |
 | `stellarindex_timescale_compression_lag` | `stellarindex_timescale_chunks_overdue_compression` | > 0 for > 24 h | informational | [compression-lag](runbooks/compression-lag.md) |
 | `stellarindex_timescale_probe_degraded` | `stellarindex_timescale_probe_query_ok` / `_probe_rows` / `_probe_last_run_unix` | a query errored, a query returned no rows, the file stopped being rewritten (> 10 min), or it was never written — for > 15 min | ticket | [timescale-probe-degraded](runbooks/timescale-probe-degraded.md) |

@@ -5,15 +5,15 @@ status: current
 severity: P2
 ---
 
-# Runbook — `stellarindex_timescale_cagg_stale`
+# Runbook — `stellarindex_timescale_cagg_stale` / `_cagg_refresh_missing`
 
 ## At a glance
 
 | Field | Value |
 | ----- | ----- |
-| Alert | `stellarindex_timescale_cagg_stale` |
+| Alerts | `stellarindex_timescale_cagg_stale` (a cagg's refresh is > 5x its interval overdue — the series exists but is old) / `stellarindex_timescale_cagg_refresh_missing` (the cagg's series existed within the last day and is absent now — its refresh policy was dropped or renamed, which `_cagg_stale`'s `time() - x` cannot see over an absent series). Both `severity: ticket`. |
 | Severity | P2 (`severity: ticket`) |
-| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: ticket`, `for: 5m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** both metrics (`stellarindex_cagg_last_refresh_unix`, `stellarindex_cagg_refresh_interval_seconds`) come from `timescale-jobs-probe.timer` (every 60 s), a shell probe installed by `configs/ansible/roles/archival-node/tasks/10-observability.yml` that writes `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom` for the node_exporter textfile collector. If the probe stops, or its refresh-policy query fails or returns nothing, the series go **absent** and this alert goes blind rather than quiet — it does not fire. That state is now itself alerted as `stellarindex_timescale_probe_degraded` ([timescale-probe-degraded](timescale-probe-degraded.md)). |
+| Detected by | `configs/prometheus/rules.r1/storage.yml` (group `stellarindex.storage`, `severity: ticket`, `for: 5m` / `for: 15m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/storage.yml`. **Producer:** both metrics (`stellarindex_cagg_last_refresh_unix`, `stellarindex_cagg_refresh_interval_seconds`) come from `timescale-jobs-probe.timer` (every 60 s), a shell probe installed by `configs/ansible/roles/archival-node/tasks/10-observability.yml` that writes `/var/lib/node_exporter/textfile_collector/timescale_jobs.prom` for the node_exporter textfile collector. If the probe stops ENTIRELY, or its refresh-policy query fails or returns zero rows, the series all go **absent** and both alerts go blind rather than quiet — that state is alerted separately as `stellarindex_timescale_probe_degraded` ([timescale-probe-degraded](timescale-probe-degraded.md)). `_cagg_refresh_missing` covers the narrower case the probe-health alert cannot: ONE cagg's row disappearing while the probe and every other cagg keep reporting fine. |
 | Typical MTTR | 15–60 min |
 | Impact | A continuous aggregate is > 5× its refresh interval overdue. `/v1/vwap`, `/v1/twap`, `/v1/ohlc` rely on these — API queries either read stale windows or fall back to raw aggregation (slow). Price data accuracy for aggregate endpoints degrades. |
 

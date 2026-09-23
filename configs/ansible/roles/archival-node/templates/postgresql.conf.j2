@@ -34,6 +34,29 @@ unix_socket_directories   = '/var/run/postgresql'
 # inherits the sizing automatically.
 max_locks_per_transaction = {{ postgres_max_locks_per_transaction | default(4096) }}
 
+# Nothing on this host ever terminated a session that opened a
+# transaction and then went idle inside it — grepping the whole repo
+# for pg_terminate_backend/pg_cancel_backend turns up only the
+# by-hand recovery in the 2026-09-10 lock-convoy incident
+# (deploy/monitoring/rules/storage.yml), never an automated one. An
+# app-level bug that opens a tx and never commits/rolls back (or an
+# operator's psql session left mid-transaction) holds whatever locks
+# it acquired — including chunk locks sized by max_locks_per_transaction
+# above — until someone notices and kills it by hand.
+#
+# 30min: the Go pool already reaps a checked-in-but-unused connection
+# after 5min (store.go's PoolConnMaxIdleTime) — this is the
+# server-side backstop for the case that knob cannot reach, a
+# connection an app bug is still HOLDING open with a stalled
+# transaction. Deliberately looser than that 5min: it must clear
+# every legitimate multi-statement transaction on this host (the
+# freeze/trades-chunk writers in internal/storage/timescale run
+# tight SQL-only transactions, no external I/O between BEGIN and
+# COMMIT, so 30min is slack, not a tight fit) while still bounding a
+# forgotten transaction to a single-digit number of incidents per day
+# instead of "until someone notices".
+idle_in_transaction_session_timeout = 30min
+
 # ─── Memory (~25% shared_buffers, ~50% effective_cache_size) ────────
 shared_buffers            = {{ postgres_shared_buffers }}
 effective_cache_size      = {{ postgres_effective_cache_size }}
