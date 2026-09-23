@@ -846,13 +846,16 @@ type Account struct {
 // one (date, endpoint family) aggregate. Endpoint is the route
 // PATTERN requests matched (e.g. "/v1/assets/{asset_id}"); it is
 // empty on the server's legacy fallback shape (one row per day).
-// Requests counts allowed traffic; Errors is 4xx (excl. 429) + 5xx;
+// Requests counts non-429 traffic (5xx included, except on the legacy
+// shape); Billable is what the monthly quota counts (ok + 4xx) and
+// means the same on both shapes; Errors is 4xx (excl. 429) + 5xx;
 // Throttled is 429 rate-limit rejections (never counted against
 // monthly quota).
 type UsageRow struct {
 	Date      string `json:"date"`
 	Endpoint  string `json:"endpoint,omitempty"`
 	Requests  int    `json:"requests"`
+	Billable  int    `json:"billable"`
 	Errors    int    `json:"errors"`
 	Throttled int    `json:"throttled"`
 }

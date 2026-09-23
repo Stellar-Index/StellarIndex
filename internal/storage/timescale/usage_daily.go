@@ -124,8 +124,8 @@ func (s *Store) upsertUsageDailyChunk(ctx context.Context, rows []usage.RollupRo
 
 // UsageDailyRow is one persisted (day, subject, endpoint) aggregate
 // read back from `usage_daily`. Counts mirror the table columns —
-// the API layer derives requests = OK + ClientErrors + ServerErrors
-// and errors = ClientErrors + ServerErrors.
+// the API layer derives requests = OK + ClientErrors + ServerErrors,
+// billable = OK + ClientErrors and errors = ClientErrors + ServerErrors.
 type UsageDailyRow struct {
 	Day          string // YYYY-MM-DD UTC
 	Subject      string

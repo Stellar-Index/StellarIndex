@@ -4995,9 +4995,7 @@ func usageRollupReaderOrNil(s *timescale.Store) v1.UsageRollupReader {
 }
 
 // usageRollupReaderAdapter bridges *timescale.Store.ReadUsageDaily
-// to v1.UsageRollupReader, deriving the wire semantics from the
-// granular columns: requests = allowed traffic (ok + 4xx + 5xx),
-// errors = 4xx (excl. 429) + 5xx, throttled = 429s.
+// to v1.UsageRollupReader; see usageEndpointDay for the derivation.
 type usageRollupReaderAdapter struct{ s *timescale.Store }
 
 func (a usageRollupReaderAdapter) ReadRollup(ctx context.Context, subject string, days int) ([]v1.UsageEndpointDay, error) {
@@ -5007,15 +5005,25 @@ func (a usageRollupReaderAdapter) ReadRollup(ctx context.Context, subject string
 	}
 	out := make([]v1.UsageEndpointDay, len(rows))
 	for i, r := range rows {
-		out[i] = v1.UsageEndpointDay{
-			Date:      r.Day,
-			Endpoint:  r.Endpoint,
-			Requests:  r.OK + r.ClientErrors + r.ServerErrors,
-			Errors:    r.ClientErrors + r.ServerErrors,
-			Throttled: r.Throttled,
-		}
+		out[i] = usageEndpointDay(r)
 	}
 	return out, nil
+}
+
+// usageEndpointDay derives the wire semantics from the granular
+// columns: requests = every non-429 outcome (ok + 4xx + 5xx),
+// billable = ok + 4xx — the classes middleware.billableClass lets into
+// the MonthlyQuota counter, so it equals the legacy per-day total —
+// errors = 4xx (excl. 429) + 5xx, throttled = 429s.
+func usageEndpointDay(r timescale.UsageDailyRow) v1.UsageEndpointDay {
+	return v1.UsageEndpointDay{
+		Date:      r.Day,
+		Endpoint:  r.Endpoint,
+		Requests:  r.OK + r.ClientErrors + r.ServerErrors,
+		Billable:  r.OK + r.ClientErrors,
+		Errors:    r.ClientErrors + r.ServerErrors,
+		Throttled: r.Throttled,
+	}
 }
 
 // sessionPeekerAdapter bridges dashboardauth.SessionFromContext
