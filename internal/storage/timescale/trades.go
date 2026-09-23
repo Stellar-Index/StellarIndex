@@ -2216,9 +2216,10 @@ func (s *Store) TradesInRangeAfter(
 //     ticker within [fxQuotesSnapLookback] wins; USD legs are exact 1
 //     (rate_usd is USD-anchored). See [fxSnapFromRows] for the exact-
 //     Rat cross/inversion math.
-//  2. `trades` — the legacy connector-path fallback (exchangeratesapi /
-//     exchangeratesapi rows; disabled in production but kept for
-//     compatibility if re-enabled). Fires only when fx_quotes has no
+//  2. `trades` filtered by `fxSources` — structurally empty today: no
+//     FXSources() member writes trades (massive writes fx_quotes,
+//     exchangeratesapi writes oracle_updates), so re-enabling a
+//     connector does not feed it. Fires only when fx_quotes has no
 //     row in the lookback. When multiple FX sources have a quote
 //     at-or-before cutoff, the one with the largest ts wins; ties are
 //     broken by source-name DESC ordering (deterministic across

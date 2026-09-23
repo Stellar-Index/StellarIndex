@@ -6,8 +6,8 @@
 //
 // Role: NOT primary pricing (cadence too slow — published once per
 // TARGET business day ~4pm CET). Not for triangulation either
-// (the triangulation forex-snap reads the `massive` feed's fx_quotes,
-// with ExchangeRatesApi as the connector-path fallback). ECB's
+// (the triangulation forex-snap reads the `massive` feed's fx_quotes
+// and has no fallback feed). ECB's
 // value is that it's the EU's official reference rate — if our
 // computed EUR/USD ever diverges > 50 bps from ECB's daily close,
 // we want to know, because one of our upstream feeds is drifting.

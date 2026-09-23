@@ -1,6 +1,6 @@
 ---
 title: Runbook — aggregator-fx-snap-fallback-dominant
-last_verified: 2026-09-04
+last_verified: 2026-09-23
 status: current
 severity: P3
 ---
@@ -32,11 +32,10 @@ in the **API binary** (`internal/sources/external/forex`), keyed on
 `MASSIVE_API_KEY`, writing hourly `rate_usd` rows to the
 `fx_quotes` hypertable. `FXQuoteAtOrBefore`
 (`internal/storage/timescale/trades.go`) reads `fx_quotes` FIRST
-(7-day lookback) and only then falls back to `trades` — the legacy
-connector path (`exchangeratesapi` rows), disabled in production but
-kept for compatibility if re-enabled. On r1 that legacy connector is
-not configured, so its `trades` queries return nothing and its
-`source_events` series does not exist — do not diagnose it.
+(7-day lookback) and only then reads `trades` filtered by
+`FXSources()`. That second read is always empty: no FX source writes
+`trades` (`exchangeratesapi`, disabled on r1, writes `oracle_updates`),
+and re-enabling it does not change that — do not diagnose it.
 
 When neither table yields a quote (`ErrNoFXQuote`), the
 orchestrator tries the cached-VWAP fallback and increments
@@ -159,6 +158,9 @@ Capture for the postmortem:
 
 ## Changelog
 
+- 2026-09-23 — the `trades` arm is described as always empty rather
+  than as an `exchangeratesapi` fallback kept for re-enabling; that
+  poller writes `oracle_updates` only. The diagnosis is unchanged.
 - 2026-09-04 — the former duplicate FX connector for the same
   upstream as `massive` was removed from the registry (#466); the
   connector-path fallback is `exchangeratesapi` alone. Body text
