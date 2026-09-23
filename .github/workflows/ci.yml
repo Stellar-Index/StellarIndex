@@ -193,6 +193,13 @@ jobs:
       # the jobs were first written).
       - name: lint-go-toolchain-parity
         run: ./scripts/ci/lint-go-toolchain-parity.sh
+      # VERSIONS.md's pinned go-stellar-sdk tag must track go.mod's require
+      # line, or a reader following VERSIONS.md's re-verifiability claim
+      # checks out the wrong upstream commit (Q274).
+      - name: lint-sdk-version-pin self-test
+        run: ./scripts/ci/lint-sdk-version-pin-test.sh
+      - name: lint-sdk-version-pin
+        run: ./scripts/ci/lint-sdk-version-pin.sh
       # §C: a language/runtime-version bump is a deliberate decision, not
       # a dependency patch — #495 raised go.mod's `go` directive
       # 1.25.10 -> 1.26.0 and dropped `toolchain` inside a grouped

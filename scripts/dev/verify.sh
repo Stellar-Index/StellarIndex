@@ -257,6 +257,10 @@ echo "=== Dependabot toolchain-bump guard self-test ===" && ./scripts/ci/check-d
 # toolchain bump makes the vulnerability gate fail to parse the module graph
 # instead of reporting on it.
 echo "=== Go toolchain parity (govulncheck) ===" && ./scripts/ci/lint-go-toolchain-parity.sh
+# VERSIONS.md's pinned go-stellar-sdk tag must track go.mod's require line
+# (Q274: the row drifted to v0.6.0 while go.mod moved to v0.7.3).
+echo "=== SDK version pin self-test ===" && ./scripts/ci/lint-sdk-version-pin-test.sh
+echo "=== SDK version pin ===" && ./scripts/ci/lint-sdk-version-pin.sh
 echo "=== Dead scheduled-control detector self-test ===" && ./scripts/ci/check-scheduled-controls-test.sh
 echo "=== Archive tier-D self-test ===" && ./scripts/ci/verify-archive-tier-d-test.sh
 echo "=== Coverage floor self-test ===" && ./scripts/ci/coverage-floor-test.sh
