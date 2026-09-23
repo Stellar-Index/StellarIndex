@@ -233,17 +233,6 @@ type Projector struct {
 	// soroban_events read.
 	chAddr string
 
-	// wmMu guards wmReader: the pooled ClickHouse connection resolveTip
-	// reuses for every ContiguousWatermark poll (T360 — dialing fresh per
-	// call is wasteful on the projector's per-Interval cadence, one dial
-	// per active source per cycle). Opened lazily on first use rather than
-	// eagerly in SetClickHouseSource (which runs before a context exists)
-	// and retried on failure rather than cached with sync.Once, so a
-	// transient dial failure at startup does not latch forever (the same
-	// C1-048 shape schema_probe.go's TransientErrorDoesNotLatch fixed).
-	wmMu     sync.Mutex
-	wmReader *clickhouse.WatermarkReader
-
 	// cursorMu guards lastCursor: the last cursor position each source
 	// observed at the top of its cycle, published by cycleOneSource and
 	// read by the single replay-window watcher. Keeping it in memory is
@@ -655,16 +644,62 @@ func (p *Projector) runOneSource(ctx context.Context, src Source) {
 	// ambiguity this signal exists to remove).
 	var wedge wedgeTracker
 	obs.ProjectorWedged.WithLabelValues(src.Name).Set(0)
+	// This source's own ClickHouse connection (CH feed-switch mode), owned
+	// here for the same reason: no dial per cycle, and a slow watermark scan
+	// on one source never queues another source behind a shared pool.
+	lake := &sourceLake{open: func(ctx context.Context) (lakeReader, error) {
+		r, err := clickhouse.NewWatermarkReader(ctx, p.chAddr)
+		if err != nil {
+			return nil, err
+		}
+		return r, nil
+	}}
+	defer lake.close()
 	// First cycle runs immediately so a fresh deploy starts
 	// catching up without waiting Interval.
-	p.cycleOneSource(ctx, src, &window, &tracker, &wedge)
+	p.cycleOneSource(ctx, src, &window, &tracker, &wedge, lake)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			p.cycleOneSource(ctx, src, &window, &tracker, &wedge)
+			p.cycleOneSource(ctx, src, &window, &tracker, &wedge, lake)
 		}
+	}
+}
+
+// lakeReader is the ClickHouse read surface a CH-mode cycle needs;
+// *clickhouse.WatermarkReader satisfies it.
+type lakeReader interface {
+	ContiguousWatermark(ctx context.Context, from uint32) (uint32, error)
+	LakeMinLedger(ctx context.Context) (uint32, error)
+	Close() error
+}
+
+// sourceLake is one source goroutine's lazily-opened lake connection. A
+// failed open is not cached, so a ClickHouse outage at start self-heals on a
+// later cycle instead of latching. Not safe for concurrent use: exactly one
+// goroutine (runOneSource) owns it.
+type sourceLake struct {
+	open func(ctx context.Context) (lakeReader, error)
+	r    lakeReader
+}
+
+func (s *sourceLake) reader(ctx context.Context) (lakeReader, error) {
+	if s.r == nil {
+		r, err := s.open(ctx)
+		if err != nil {
+			return nil, err
+		}
+		s.r = r
+	}
+	return s.r, nil
+}
+
+func (s *sourceLake) close() {
+	if s.r != nil {
+		_ = s.r.Close()
+		s.r = nil
 	}
 }
 
@@ -839,17 +874,6 @@ func (p *Projector) commitCursor(ctx context.Context, source string, read timesc
 // defect is fixed. What the cursor advance buys is that the OTHER rows of a
 // sole-writer domain keep flowing meanwhile.
 //
-// freshSourceFloor is the first ledger a brand-new projected source (no
-// cursor row yet) scans from in CH feed-switch mode. Every net's lake begins
-// at ledger 2 (genesis is never exported), so an empty-lake lakeMin of 0
-// floors at 1 rather than 0 — ledger 0 does not exist, and [watermark]
-// underflows on it (RLT-154 / GH #623). Mirrors ch-cap67-movements'
-// resolveStart for the same reason: ContiguousWatermark treats a `from` the
-// lake does not hold as a boundary hole and stalls the source there forever.
-func freshSourceFloor(lakeMin uint32) uint32 {
-	return max(1, lakeMin)
-}
-
 // cycleOneSource is intentionally a single linear cycle: read cursor → resolve
 // durable tip → scan the window → classify each event's sink outcome (decode
 // soft-fail / transient-hold / permanent-skip) → advance the cursor only to the
@@ -859,7 +883,7 @@ func freshSourceFloor(lakeMin uint32) uint32 {
 // invariant, so it is suppressed rather than fragmented.
 //
 //nolint:gocognit,funlen // linear cycle (cursor read → tip → scan → cursor write) with a source branch (soroban_events vs CH); splitting into helpers would scatter the cycle's success/failure metric emissions and make the control flow harder to audit.
-func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32, tracker *poisonTracker, wedge *wedgeTracker) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
+func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint32, tracker *poisonTracker, wedge *wedgeTracker, lake *sourceLake) { //nolint:gocyclo // essential, cohesive durability classification (C2-1)
 	start := time.Now()
 	cycleCtx, cancel := context.WithTimeout(ctx, PerSourceTimeout)
 	defer cancel()
@@ -886,22 +910,15 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// commit, so a held cursor keeps reporting its true position.
 		p.recordCursor(src.Name, cursor.LastLedger)
 	} else if p.chAddr != "" {
-		// Fresh source (no cursor row yet) in CH feed-switch mode: clamp the
-		// floor up to the lake's first present ledger, mirroring
-		// ch-cap67-movements' resolveStart. ContiguousWatermark treats a
-		// `from` the lake does not hold as a boundary hole and answers
-		// from-1 — at fromLedger==0 that underflows uint32 to 4294967295,
-		// which resolveTip reads as "the lake is complete forever" and the
-		// clamp becomes a permanent no-op for exactly this caller (RLT-154 /
-		// GH #623). Every net's lake begins at ledger 2 (genesis is never
-		// exported), so 0 is never a real floor either way.
-		lakeMin, lerr := clickhouse.LakeMinLedger(cycleCtx, p.chAddr)
-		if lerr != nil {
-			p.logger.Warn("projector: lake min ledger failed", "source", src.Name, "err", lerr)
+		// Fresh source in CH feed-switch mode: start at the lake's first
+		// ledger, as ch-cap67-movements' resolveStart does. 0 is not a
+		// ledger, and a floor below the lake's start is a boundary hole the
+		// watermark would stall on forever.
+		if fromLedger, err = freshSourceFloor(cycleCtx, lake); err != nil {
+			p.logger.Warn("projector: lake min ledger failed", "source", src.Name, "err", err)
 			obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
 			return
 		}
-		fromLedger = freshSourceFloor(lakeMin)
 	}
 
 	// Upper bound: live tip from ledgerstream. Without a tip we
@@ -911,7 +928,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	// never gets ahead of "what we promise is durable." In CH
 	// feed-switch mode the bound is additionally clamped to the
 	// lake's provably-complete watermark (see resolveTip).
-	tip, err := p.resolveTip(cycleCtx, fromLedger)
+	tip, err := p.resolveTip(cycleCtx, lake, fromLedger)
 	if err != nil {
 		p.logger.Warn("projector: tip resolve failed", "source", src.Name, "err", err)
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
@@ -1382,25 +1399,6 @@ func recoverWindow(current uint32) uint32 {
 	return next
 }
 
-// watermarkReader lazily opens (once) and returns the pooled ClickHouse
-// connection resolveTip polls ContiguousWatermark on. A failed open is not
-// cached — the next call retries — so a ClickHouse outage at process start
-// self-heals once it clears, instead of latching resolveTip onto an error
-// forever.
-func (p *Projector) watermarkReader(ctx context.Context) (*clickhouse.WatermarkReader, error) {
-	p.wmMu.Lock()
-	defer p.wmMu.Unlock()
-	if p.wmReader != nil {
-		return p.wmReader, nil
-	}
-	r, err := clickhouse.NewWatermarkReader(ctx, p.chAddr)
-	if err != nil {
-		return nil, err
-	}
-	p.wmReader = r
-	return p.wmReader, nil
-}
-
 // resolveTip returns the upper scan bound for one cycle. The base
 // bound is the live ledgerstream cursor's last_ledger — the same
 // approach as the gap detector (gap_detector.go::resolveGapDetectorTip)
@@ -1413,7 +1411,7 @@ func (p *Projector) watermarkReader(ctx context.Context) (*clickhouse.WatermarkR
 // events (the cursor advances to the bound unconditionally). Clamping
 // to the watermark stalls the source AT a hole until the catch-up
 // timer heals it, instead of skipping over it (ADR-0034 #10).
-func (p *Projector) resolveTip(ctx context.Context, from uint32) (uint32, error) {
+func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint32) (uint32, error) {
 	c, err := p.store.GetCursor(ctx, "ledgerstream", "")
 	if err != nil {
 		if errors.Is(err, timescale.ErrNotFound) {
@@ -1423,7 +1421,7 @@ func (p *Projector) resolveTip(ctx context.Context, from uint32) (uint32, error)
 	}
 	tip := c.LastLedger
 	if p.chAddr != "" {
-		reader, rerr := p.watermarkReader(ctx)
+		reader, rerr := lake.reader(ctx)
 		if rerr != nil {
 			return 0, fmt.Errorf("ch watermark conn: %w", rerr)
 		}
@@ -1436,4 +1434,19 @@ func (p *Projector) resolveTip(ctx context.Context, from uint32) (uint32, error)
 		}
 	}
 	return tip, nil
+}
+
+// freshSourceFloor is the first ledger a source with no cursor row scans in
+// CH feed-switch mode: the lake's first present ledger, and never 0 even on
+// an empty lake.
+func freshSourceFloor(ctx context.Context, lake *sourceLake) (uint32, error) {
+	r, err := lake.reader(ctx)
+	if err != nil {
+		return 0, err
+	}
+	lakeMin, err := r.LakeMinLedger(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return max(1, lakeMin), nil
 }

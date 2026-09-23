@@ -7,37 +7,36 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// wmFakeRow scans back a fixed (chMax, firstGap, minPresent) triple —
-// the exact shape contiguousWatermarkOn's query scans into.
+// wmFakeRow scans back fixed uint64 values, one per destination.
 type wmFakeRow struct {
 	driver.Row
-	chMax, firstGap, minPresent uint64
+	vals []uint64
 }
 
 func (r *wmFakeRow) Scan(dest ...any) error {
-	*dest[0].(*uint64) = r.chMax
-	*dest[1].(*uint64) = r.firstGap
-	*dest[2].(*uint64) = r.minPresent
+	for i := range dest {
+		*dest[i].(*uint64) = r.vals[i]
+	}
 	return nil
 }
 
-// wmFakeConn counts QueryRow calls so a test can prove a WatermarkReader
-// issues one query per call on ONE connection, never re-dialing.
+// wmFakeConn answers the watermark query (three columns) and the lake-min
+// query (one column), counting every QueryRow on this one connection.
 type wmFakeConn struct {
 	driver.Conn
 	queryRowCalls int
 }
 
-func (c *wmFakeConn) QueryRow(context.Context, string, ...any) driver.Row {
+func (c *wmFakeConn) QueryRow(_ context.Context, q string, _ ...any) driver.Row {
 	c.queryRowCalls++
-	return &wmFakeRow{chMax: 200, firstGap: 0, minPresent: 100}
+	if q == `SELECT toUInt64(min(ledger_seq)) FROM stellar.ledgers` {
+		return &wmFakeRow{vals: []uint64{2}}
+	}
+	return &wmFakeRow{vals: []uint64{200, 0, 100}} // chMax, firstGap, minPresent
 }
 
-// TestWatermarkReader_ReusesConnectionAcrossCalls pins T360: ContiguousWatermark
-// dials a fresh connection (openRead) and tears it down on every single call —
-// wasteful for a caller that polls it on a cadence (the real-time projector,
-// every cycle). WatermarkReader must issue one query per call on the SAME
-// connection it opened once, not re-dial.
+// TestWatermarkReader_ReusesConnectionAcrossCalls: every read a
+// WatermarkReader serves runs on the one connection it holds.
 func TestWatermarkReader_ReusesConnectionAcrossCalls(t *testing.T) {
 	conn := &wmFakeConn{}
 	w := &WatermarkReader{conn: conn}
@@ -52,8 +51,14 @@ func TestWatermarkReader_ReusesConnectionAcrossCalls(t *testing.T) {
 			t.Fatalf("call %d: ContiguousWatermark = %d, want 200", i, got)
 		}
 	}
-	if conn.queryRowCalls != 3 {
-		t.Fatalf("queryRowCalls = %d, want 3 (one WatermarkReader, one query per call, no re-dial)",
-			conn.queryRowCalls)
+	lo, err := w.LakeMinLedger(ctx)
+	if err != nil {
+		t.Fatalf("LakeMinLedger: %v", err)
+	}
+	if lo != 2 {
+		t.Fatalf("LakeMinLedger = %d, want 2", lo)
+	}
+	if conn.queryRowCalls != 4 {
+		t.Fatalf("queryRowCalls = %d, want 4 (every read on the reader's one connection)", conn.queryRowCalls)
 	}
 }

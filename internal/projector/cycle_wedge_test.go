@@ -186,7 +186,7 @@ func (h *wedgeHarness) cycle() {
 }
 
 func (h *wedgeHarness) cycleCtx(ctx context.Context) {
-	h.proj.cycleOneSource(ctx, h.src, &h.window, &h.tracker, &h.wedge)
+	h.proj.cycleOneSource(ctx, h.src, &h.window, &h.tracker, &h.wedge, nil)
 }
 
 // ledgerEchoDecoder matches every row and emits one consumer.Event carrying
@@ -545,7 +545,7 @@ func TestCycle_DecoderRegressionMarksRunDegradedNotOK(t *testing.T) {
 	var tracker poisonTracker
 	var wedge wedgeTracker
 
-	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge)
+	p.cycleOneSource(context.Background(), src, &window, &tracker, &wedge, nil)
 
 	// The cursor still advances past the broken class (poison-row escape /
 	// COR-11 — do NOT re-wedge a sole-writer source on a deterministic fault).

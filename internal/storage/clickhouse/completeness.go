@@ -139,19 +139,14 @@ func contiguousWatermarkOn(ctx context.Context, conn driver.Conn, from uint32) (
 	return watermark(from, uint32(chMax), uint32(firstGap), uint32(minPresent)), nil
 }
 
-// WatermarkReader holds one pooled connection for repeated
-// ContiguousWatermark reads (T360). ContiguousWatermark itself dials a
-// fresh connection and tears it down on every call — fine for an
-// occasional read, but a caller that polls it on a cadence (the
-// real-time projector, every [Interval]) pays a full dial for a query
-// that is otherwise cheap once a source has caught up. Open once per
-// process lifetime and reuse; safe for concurrent use, the same
-// guarantee any driver.Conn gives.
+// WatermarkReader holds one connection for repeated ContiguousWatermark and
+// LakeMinLedger reads, so a caller polling on a cadence (the projector, once
+// per source per Interval) does not dial a fresh connection per call.
 type WatermarkReader struct {
 	conn driver.Conn
 }
 
-// NewWatermarkReader opens the pooled connection.
+// NewWatermarkReader opens the reader's connection.
 func NewWatermarkReader(ctx context.Context, addr string) (*WatermarkReader, error) {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -160,13 +155,17 @@ func NewWatermarkReader(ctx context.Context, addr string) (*WatermarkReader, err
 	return &WatermarkReader{conn: conn}, nil
 }
 
-// ContiguousWatermark is [ContiguousWatermark] on the reader's pooled
-// connection instead of a fresh dial per call.
+// ContiguousWatermark is [ContiguousWatermark] on the reader's connection.
 func (w *WatermarkReader) ContiguousWatermark(ctx context.Context, from uint32) (uint32, error) {
 	return contiguousWatermarkOn(ctx, w.conn, from)
 }
 
-// Close releases the pooled connection.
+// LakeMinLedger is [LakeMinLedger] on the reader's connection.
+func (w *WatermarkReader) LakeMinLedger(ctx context.Context) (uint32, error) {
+	return lakeMinLedgerOn(ctx, w.conn)
+}
+
+// Close releases the reader's connection.
 func (w *WatermarkReader) Close() error { return w.conn.Close() }
 
 // LakeMinLedger returns the lowest ledger_seq present in stellar.ledgers
@@ -183,6 +182,10 @@ func LakeMinLedger(ctx context.Context, addr string) (uint32, error) {
 		return 0, err
 	}
 	defer func() { _ = conn.Close() }()
+	return lakeMinLedgerOn(ctx, conn)
+}
+
+func lakeMinLedgerOn(ctx context.Context, conn driver.Conn) (uint32, error) {
 	// min() over an empty table yields the UInt32 default 0, which reads
 	// as "no ledger present" — the same convention as lakeTipLedger.
 	var lo uint64
@@ -375,13 +378,9 @@ func substrateHeadProblem(from, to uint32, present bool, haveMin uint32) (proble
 // takes precedence over an interior gap that may co-exist above the boundary hole.
 func watermark(from, chMax, firstGap, minPresent uint32) uint32 {
 	if from == 0 {
-		// Ledger 0 does not exist (sequences start at 1) — a caller with no
-		// cursor yet (a brand-new projected source) can reach this with
-		// from=0, and the two guards below both return from-1 on a miss.
-		// Left unclamped that underflows uint32 to 4294967295, which
-		// resolveTip reads as "the lake is complete forever" and the
-		// stall-at-a-hole clamp becomes a silent no-op for exactly the
-		// caller that needs it most (RLT-154 / GH #623).
+		// Ledger 0 does not exist, and both guards below answer from-1: at
+		// from=0 that wraps to MaxUint32, which a caller reads as "complete
+		// forever" and so scans straight past any hole.
 		from = 1
 	}
 	if chMax < from {
