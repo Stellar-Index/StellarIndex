@@ -1677,7 +1677,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		verifiedCurrencies:      opts.VerifiedCurrencies,
 		backfillCoverage:        opts.BackfillCoverage,
 		nonstandardDecimals:     opts.NonstandardDecimals,
-		globalPrice:             opts.GlobalPrice,
+		globalPrice:             newDecimalsCorrectedGlobalReader(opts.GlobalPrice, opts.NonstandardDecimals),
 		globalPriceOpts:         globalPriceOptsWithDefaults(opts.GlobalPriceOpts),
 		sacWrappers:             opts.SACWrappers,
 		networkPassphrase:       opts.NetworkPassphrase,

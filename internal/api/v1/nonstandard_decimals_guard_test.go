@@ -583,3 +583,88 @@ func TestTWAP_NonstandardDecimals_Normalizes(t *testing.T) {
 		t.Errorf("body missing normalized price 2.5000000000: %s", body)
 	}
 }
+
+// TestHistorySinceInception_NonstandardDecimals_NormalizesPrice pins that
+// /v1/history/since-inception serves the corrected CAGG VWAP, like the
+// /v1/chart series it shares a read chain with: `p` = raw ratio × K
+// (10^(9−7) = 100), `v_usd` untouched.
+func TestHistorySinceInception_NonstandardDecimals_NormalizesPrice(t *testing.T) {
+	vusd := "1234.56"
+	reader := &stubHistoryReader{points: []v1.HistoryPoint{{
+		Bucket: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC), VWAP: "41.32", VolumeUSD: &vusd,
+	}}}
+	srv := v1.New(v1.Options{
+		History:             reader,
+		NonstandardDecimals: nonstandardDecimalsCacheWith(t, flaggedAsset, 9),
+	})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/history/since-inception?asset="+flaggedAsset+"&quote="+classicUSDC)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"p":"4132.0000000000"`) {
+		t.Errorf("since-inception must serve the corrected price 4132.0000000000 (raw 41.32 × 100): %s", body)
+	}
+	if !strings.Contains(body, `"v_usd":"1234.56"`) {
+		t.Errorf("since-inception v_usd must be untouched (already USD-anchored): %s", body)
+	}
+}
+
+// globalViewPrice serves /v1/assets/usdc against a tier-1 VWAP of vwap and
+// returns price_usd (nil when every tier missed).
+func globalViewPrice(t *testing.T, vwap string, decimals *v1.NonstandardDecimalsCache) *string {
+	t.Helper()
+	reader := &stubGlobalPriceReader{}
+	reader.vwap.price = vwap
+	reader.vwap.asOf = time.Now().UTC().Truncate(time.Second)
+	reader.vwap.tradeCount = 12
+	reader.vwap.ok = true
+	srv := v1.New(v1.Options{
+		VerifiedCurrencies:  newTestCatalogue(t),
+		GlobalPrice:         reader,
+		NonstandardDecimals: decimals,
+	})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/assets/usdc")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.GlobalAssetView `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	return env.Data.PriceUSD
+}
+
+// TestGlobalAsset_NonstandardDecimals_NormalizesVWAPTier pins that the
+// global view's vwap_native tier serves the corrected price, not the raw
+// prices_1m ratio its reader returns. The tier reads `crypto:USDC` /
+// `fiat:USD`; flagging the base at 9dp gives K = 10^(9−7) = 100.
+func TestGlobalAsset_NonstandardDecimals_NormalizesVWAPTier(t *testing.T) {
+	got := globalViewPrice(t, "41.32", nonstandardDecimalsCacheWith(t, "crypto:USDC", 9))
+	if got == nil || *got != "4132.0000000000" {
+		t.Errorf("price_usd = %s, want 4132.0000000000 (raw 41.32 × 100)", deref(got))
+	}
+}
+
+// TestGlobalAsset_NonstandardDecimals_UnflaggedByteIdentical — with the
+// cache wired but neither leg flagged, the tier-1 string passes through
+// byte-identical (no re-render at a fixed digit count).
+func TestGlobalAsset_NonstandardDecimals_UnflaggedByteIdentical(t *testing.T) {
+	got := globalViewPrice(t, "1.00050000000000", nonstandardDecimalsCacheWith(t, flaggedAsset, 9))
+	if got == nil || *got != "1.00050000000000" {
+		t.Errorf("price_usd = %s, want byte-identical 1.00050000000000", deref(got))
+	}
+}
+
+// TestGlobalAsset_NonstandardDecimals_UnparseableFlaggedWithheld — a
+// flagged pair's ratio that cannot be parsed cannot be corrected, and
+// serving it raw is the defect, so the tier reads as a miss.
+func TestGlobalAsset_NonstandardDecimals_UnparseableFlaggedWithheld(t *testing.T) {
+	got := globalViewPrice(t, "not-a-number", nonstandardDecimalsCacheWith(t, "crypto:USDC", 9))
+	if got != nil {
+		t.Errorf("price_usd = %q, want nil (an uncorrectable flagged ratio must not be served)", *got)
+	}
+}

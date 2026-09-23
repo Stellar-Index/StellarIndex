@@ -3540,7 +3540,8 @@ func (r redisTriangulatedLooker) LookupCompositeMeta(
 // triangulated looker to aggregate.GlobalPriceReader (R-018 Phase
 // 1.4a). Each method maps to one tier of ComputeGlobalPrice:
 //
-//   - LatestVWAP → Store.LatestClosedVWAP1mForPair (tier 1)
+//   - LatestVWAP → Store.LatestClosedVWAP1mForPair (tier 1); the raw
+//     ratio, decimals-corrected by v1's decimalsCorrectedGlobalReader
 //   - LatestAggregatorPrices → Store.LatestAggregatorPricesForPair (tier 2)
 //   - LookupTriangulated → wraps redisTriangulatedLooker (tier 3)
 //
