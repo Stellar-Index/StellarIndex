@@ -158,10 +158,13 @@ func TestDecoder_Decode_depositEmitsLiquidityEvent(t *testing.T) {
 	}
 }
 
-// An UNSEEDED pair still emits the liquidity row — with empty token
-// identities — rather than dropping the event. This is the every-event
-// guarantee: token resolution is best-effort, the event is not.
-func TestDecoder_Decode_withdrawUnseededPairStillEmits(t *testing.T) {
+// TestDecoder_Decode_withdrawUnseededPairInIsolationStillEmits exercises
+// Decode directly, bypassing the dispatcher's Matches gate, to pin
+// Decode's own behaviour: called on an unseeded pair, it still emits
+// the liquidity row with empty token identities rather than dropping
+// the event. This is NOT the production path — see the sibling test
+// below for what actually reaches an unseeded pair's events.
+func TestDecoder_Decode_withdrawUnseededPairInIsolationStillEmits(t *testing.T) {
 	d := NewDecoder()
 	pair := makeContractStrkey(t, 0x21) // never SeedPair'd
 	provider := makeContractStrkey(t, 0x98)
@@ -186,5 +189,25 @@ func TestDecoder_Decode_withdrawUnseededPairStillEmits(t *testing.T) {
 	}
 	if le.Amount0.String() != "9" || le.Liquidity.String() != "7" {
 		t.Errorf("amounts wrong: %+v", le)
+	}
+}
+
+// TestDecoder_Matches_withdrawUnseededPairIsRejected pins the actual
+// production behaviour for the same unseeded pair: the dispatcher
+// calls Matches before Decode, and Matches returns false for a
+// pair-contract event whose pair was never registered via SeedPair or
+// a factory new_pair event. Decode's every-event emission above is
+// therefore unreachable for an unseeded pair on the live ingest path.
+func TestDecoder_Matches_withdrawUnseededPairIsRejected(t *testing.T) {
+	d := NewDecoder()
+	pair := makeContractStrkey(t, 0x21) // never SeedPair'd
+	provider := makeContractStrkey(t, 0x98)
+
+	wd := makeLiquidityEvent(t, pair, EventWithdraw,
+		big.NewInt(9), big.NewInt(8), big.NewInt(7),
+		big.NewInt(6), big.NewInt(5), provider)
+
+	if d.Matches(wd) {
+		t.Fatalf("Matches = true for an unseeded pair, want false (production ingest never reaches Decode for it)")
 	}
 }
