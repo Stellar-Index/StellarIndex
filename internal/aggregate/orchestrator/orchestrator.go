@@ -546,6 +546,20 @@ type Config struct {
 	// latency is acceptable per ADR-0019.
 	DivergenceMinInterval time.Duration
 
+	// DivergenceMinSources is the floor on a cached divergence result's
+	// SuccessCount before the confidence step's cross-oracle factor
+	// trusts it (see confidence.go's lookupCrossOracle). Must equal
+	// `cfg.Divergence.MinSourcesForWarning` — the same quorum the
+	// divergence worker gates WarningFired on and the API's
+	// divergenceAdapter gates `divergence_checked` on (GH-1046: these
+	// were three independent copies, one of them a hardcoded const,
+	// and raising the operator knob alone let the freeze's
+	// corroboration and release paths keep trusting a quorum the API
+	// had stopped publishing). <= 0 takes
+	// [defaultDivergenceMinSources], matching divergence.NewService's
+	// own fallback for an unset value.
+	DivergenceMinSources int
+
 	// StreamPublisher, when non-nil, is called once per successful
 	// closed-bucket VWAP write to fan the event out to API-side SSE
 	// subscribers (`/v1/price/stream`). Production wiring is the

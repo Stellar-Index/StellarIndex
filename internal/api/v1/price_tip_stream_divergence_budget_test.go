@@ -51,7 +51,7 @@ func newGatedDivergenceLooker(firing, checked bool) *gatedDivergenceLooker {
 	}
 }
 
-func (g *gatedDivergenceLooker) DivergenceFiringFor(ctx context.Context, _ canonical.Asset) (firing, checked bool, err error) {
+func (g *gatedDivergenceLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, err error) {
 	g.calls.Add(1)
 	g.once.Do(func() { close(g.entered) })
 	select {
@@ -154,7 +154,7 @@ type timedLooker struct {
 	calls   atomic.Int32
 }
 
-func (l *timedLooker) DivergenceFiringFor(ctx context.Context, _ canonical.Asset) (firing, checked bool, err error) {
+func (l *timedLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.Asset) (firing, checked bool, err error) {
 	l.calls.Add(1)
 	t := time.NewTimer(l.delay)
 	defer t.Stop()
@@ -559,7 +559,7 @@ type storeDownLooker struct{ calls atomic.Int32 }
 
 var errDivergenceStoreDown = errors.New("divergence: cache get div:crypto:BTC/fiat:USD: dial tcp: connect: connection refused")
 
-func (l *storeDownLooker) DivergenceFiringFor(context.Context, canonical.Asset) (firing, checked bool, err error) {
+func (l *storeDownLooker) DivergenceFiringFor(context.Context, canonical.Asset, canonical.Asset) (firing, checked bool, err error) {
 	l.calls.Add(1)
 	return false, false, errDivergenceStoreDown
 }

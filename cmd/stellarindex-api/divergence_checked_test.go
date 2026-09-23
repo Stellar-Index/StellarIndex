@@ -141,7 +141,7 @@ func TestDivergenceAdapter_ChecksMatchWorkerQuorum(t *testing.T) {
 			seedCachedDivergence(t, rdb, pair, cached)
 
 			adapter := newDivergenceAdapter(svc)
-			firing, checked, err := adapter.DivergenceFiringFor(context.Background(), xlm)
+			firing, checked, err := adapter.DivergenceFiringFor(context.Background(), xlm, usd)
 			if err != nil {
 				t.Fatalf("DivergenceFiringFor: %v", err)
 			}
@@ -153,6 +153,62 @@ func TestDivergenceAdapter_ChecksMatchWorkerQuorum(t *testing.T) {
 					checked, tc.wantChecked, tc.cached.SuccessCount, minSources, tc.why)
 			}
 		})
+	}
+}
+
+// TestDivergenceAdapter_QuoteSpecific pins GH-1045: a diverging
+// XLM/GBP verdict must never attach to an XLM/USD response. The
+// pre-fix adapter called svc.LookupCached(ctx, asset), which reads the
+// per-base index set and ORs every quote's WarningFired together — so
+// a GBP-only divergence made every quote of XLM, including a clean
+// USD, report firing=true.
+func TestDivergenceAdapter_QuoteSpecific(t *testing.T) {
+	const minSources = 2
+
+	xlm := canonical.NativeAsset()
+	usd, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		t.Fatalf("build fiat:USD: %v", err)
+	}
+	gbp, err := canonical.NewFiatAsset("GBP")
+	if err != nil {
+		t.Fatalf("build fiat:GBP: %v", err)
+	}
+	usdPair := canonical.Pair{Base: xlm, Quote: usd}
+	gbpPair := canonical.Pair{Base: xlm, Quote: gbp}
+
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	svc, err := divergence.NewService(divergence.ServiceOptions{
+		Cache:                rdb,
+		Threshold:            5.0,
+		MinSourcesForWarning: minSources,
+		PerReferenceTimeout:  time.Second,
+	})
+	if err != nil {
+		t.Fatalf("divergence.NewService: %v", err)
+	}
+
+	// GBP diverges; USD is clean.
+	seedCachedDivergence(t, rdb, gbpPair, divergence.CachedResult{
+		SuccessCount: 3, DivergencePct: 18.0, AgreementCount: 0, WarningFired: true,
+	})
+	seedCachedDivergence(t, rdb, usdPair, divergence.CachedResult{
+		SuccessCount: 3, DivergencePct: 0.1, AgreementCount: 3, WarningFired: false,
+	})
+
+	adapter := newDivergenceAdapter(svc)
+	firing, checked, err := adapter.DivergenceFiringFor(context.Background(), xlm, usd)
+	if err != nil {
+		t.Fatalf("DivergenceFiringFor: %v", err)
+	}
+	if !checked {
+		t.Fatalf("checked = false, want true — the USD pair has its own quorum-meeting cached result")
+	}
+	if firing {
+		t.Errorf("firing = true for XLM/USD, want false — GBP's divergence must not leak onto a different quote of the same base")
 	}
 }
 
@@ -182,62 +238,12 @@ func TestDivergenceAdapter_UnsetQuorumIsNotAlwaysChecked(t *testing.T) {
 		seedCachedDivergence(t, rdb, canonical.Pair{Base: xlm, Quote: usd}, divergence.CachedResult{
 			SuccessCount: 1, AgreementCount: 1, ComputedAt: time.Now().UTC(),
 		})
-		_, checked, err := newDivergenceAdapter(svc).DivergenceFiringFor(context.Background(), xlm)
+		_, checked, err := newDivergenceAdapter(svc).DivergenceFiringFor(context.Background(), xlm, usd)
 		if err != nil {
 			t.Fatalf("DivergenceFiringFor: %v", err)
 		}
 		if checked {
 			t.Errorf("min_sources_for_warning=%d: one reference read as checked; the unset quorum must default to 2", raw)
 		}
-	}
-}
-
-// TestDivergenceAdapter_CheckedIsAnAssetLevelFact — `checked` answers
-// "was this asset cross-checked", so it is true when ANY of the base's
-// quotes met the quorum. native/USD checked against four references must
-// not read as unchecked because native/GBP, with one direct reference and
-// a larger delta on a thin book, was picked as the representative row.
-func TestDivergenceAdapter_CheckedIsAnAssetLevelFact(t *testing.T) {
-	const minSources = 2
-	xlm := canonical.NativeAsset()
-	usd, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		t.Fatalf("build fiat:USD: %v", err)
-	}
-	gbp, err := canonical.NewFiatAsset("GBP")
-	if err != nil {
-		t.Fatalf("build fiat:GBP: %v", err)
-	}
-
-	mr := miniredis.RunT(t)
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	t.Cleanup(func() { _ = rdb.Close() })
-	svc, err := divergence.NewService(divergence.ServiceOptions{
-		Cache:                rdb,
-		Threshold:            5.0,
-		MinSourcesForWarning: minSources,
-		PerReferenceTimeout:  time.Second,
-	})
-	if err != nil {
-		t.Fatalf("divergence.NewService: %v", err)
-	}
-	now := time.Now().UTC()
-	seedCachedDivergence(t, rdb, canonical.Pair{Base: xlm, Quote: usd}, divergence.CachedResult{
-		SuccessCount: 4, AgreementCount: 4, DivergencePct: 0.05, ComputedAt: now,
-	})
-	seedCachedDivergence(t, rdb, canonical.Pair{Base: xlm, Quote: gbp}, divergence.CachedResult{
-		SuccessCount: 1, AgreementCount: 1, DivergencePct: 1.5, ComputedAt: now,
-	})
-
-	firing, checked, err := newDivergenceAdapter(svc).DivergenceFiringFor(context.Background(), xlm)
-	if err != nil {
-		t.Fatalf("DivergenceFiringFor: %v", err)
-	}
-	if firing {
-		t.Error("firing = true; neither quote fired")
-	}
-	if !checked {
-		t.Error("checked = false; native/fiat:USD met the quorum with four references, " +
-			"so the asset was cross-checked whatever the below-quorum GBP quote says")
 	}
 }

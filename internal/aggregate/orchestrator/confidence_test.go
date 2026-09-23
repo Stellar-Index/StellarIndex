@@ -325,6 +325,72 @@ func TestConfidence_DivergenceLowSuccessCountIgnored(t *testing.T) {
 	}
 }
 
+// TestConfidence_DivergenceMinSourcesFromConfig — GH-1046: the
+// confidence step's cross-oracle trust floor must follow
+// Config.DivergenceMinSources, not a hardcoded 2. A cached result with
+// SuccessCount=2 clears the package default (2) but must be ignored
+// once the operator raises the configured quorum to 3 — mirroring the
+// divergence worker's own MinSourcesForWarning and the API adapter's
+// mirror of it.
+func TestConfidence_DivergenceMinSourcesFromConfig(t *testing.T) {
+	pair := xlmUSDPair(t)
+	now := time.Now().UTC()
+	bsrc := stubBaselineSource{
+		multi: baseline.MultiBaseline{
+			Day30: &baseline.Baseline{Median: 0.0001, MAD: 0.001, N: 1000},
+		},
+		computedAt: now,
+	}
+
+	store := &mockStore{
+		trades: []canonical.Trade{
+			makeXLMUSDTrade(t, "soroswap", 1_000_000, 1_242_000, now.Add(-30*time.Second)),
+		},
+	}
+	rdb, _ := newTestRedis(t)
+
+	body, _ := json.Marshal(&divergence.CachedResult{
+		PairID:         pair.String(),
+		DivergencePct:  0.3, // would be in-tolerance if trusted
+		SuccessCount:   2,   // clears the package default (2)…
+		AgreementCount: 2,
+	})
+	if err := rdb.Set(context.Background(),
+		cachekeys.Divergence(pair).String(), body, 5*time.Minute).Err(); err != nil {
+		t.Fatalf("seed cache set: %v", err)
+	}
+
+	orch := New(store, rdb, Config{
+		Pairs:     []canonical.Pair{pair},
+		Windows:   []time.Duration{1 * time.Minute},
+		Interval:  1 * time.Hour,
+		Baselines: bsrc,
+		// … but the operator raised the quorum to 3 after a
+		// flaky-reference incident. The confidence step must respect it.
+		DivergenceMinSources: 3,
+	})
+	_ = orch.Tick(context.Background())
+	nextBucket(orch)
+	_ = orch.Tick(context.Background())
+
+	scoreBody, err := rdb.Get(context.Background(),
+		cachekeys.Confidence(pair.Base, pair.Quote, time.Minute).String()).Bytes()
+	if err != nil {
+		t.Fatalf("confidence read: %v", err)
+	}
+	var s confidence.Score
+	if err := json.Unmarshal(scoreBody, &s); err != nil {
+		t.Fatalf("confidence unmarshal: %v", err)
+	}
+	if s.Factors.CrossOracleChecked {
+		t.Error("CrossOracleChecked = true below the CONFIGURED quorum (3), want false — SuccessCount=2 only clears the stale hardcoded default")
+	}
+	const wantNeutral = 0.7
+	if s.Factors.CrossOracle < wantNeutral-1e-6 || s.Factors.CrossOracle > wantNeutral+1e-6 {
+		t.Errorf("CrossOracle factor = %v, want %v (neutral; below configured quorum)", s.Factors.CrossOracle, wantNeutral)
+	}
+}
+
 // TestDistinctSourceClassCount — exchange + oracle + aggregator
 // are three distinct classes in the registry. Verifies the
 // registry-backed implementation collapses same-class trades

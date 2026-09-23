@@ -18,14 +18,33 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
-// divergenceMinSources is the floor on a cached divergence result's
-// SuccessCount before its DivergencePct is trusted as a confidence
-// input. Below this we pass the "no cross-oracle data" sentinel —
-// safer to neutralise the factor than to score a single reference's
-// hiccup as a multi-source signal.
+// defaultDivergenceMinSources is the fallback applied when
+// Config.DivergenceMinSources is unset (<= 0) — mirrors
+// divergence.NewService's own fallback and the API's
+// defaultDivergenceMinSources so an operator who never touches
+// `divergence.min_sources_for_warning` gets the same quorum on all
+// three consumers.
+const defaultDivergenceMinSources = 2
+
+// divergenceMinSources returns the floor on a cached divergence
+// result's SuccessCount before its DivergencePct is trusted as a
+// confidence input. Below this we pass the "no cross-oracle data"
+// sentinel — safer to neutralise the factor than to score a single
+// reference's hiccup as a multi-source signal.
 //
-// Matches the divergence Service's default minSources gate.
-const divergenceMinSources = 2
+// Sourced from Config.DivergenceMinSources (GH-1046) — previously a
+// hardcoded const, independent of the operator's
+// `divergence.min_sources_for_warning`. Raising that knob moved the
+// worker's own WarningFired gate and the API's divergence_checked
+// predicate, but not this one: a pair below the RAISED quorum still
+// counted as corroborated here, so Phase 2's freeze could hold and
+// release on a cross-oracle signal the API had stopped publishing.
+func (o *Orchestrator) divergenceMinSources() int {
+	if o.cfg.DivergenceMinSources > 0 {
+		return o.cfg.DivergenceMinSources
+	}
+	return defaultDivergenceMinSources
+}
 
 // BaselineSource is the read-side interface the confidence step
 // uses to look up a per-pair MultiBaseline. Production wiring
@@ -286,7 +305,7 @@ func (o *Orchestrator) lookupCrossOracle(ctx context.Context, pair canonical.Pai
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("divergence_decode_error").Inc()
 		return noCrossOracle
 	}
-	if cached.SuccessCount < divergenceMinSources {
+	if cached.SuccessCount < o.divergenceMinSources() {
 		// Single-reference signal: don't trust as a multi-source
 		// divergence input. Pass "no data" sentinels.
 		return noCrossOracle

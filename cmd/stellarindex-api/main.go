@@ -2680,29 +2680,23 @@ func newDivergenceAdapter(svc *divergence.Service) divergenceAdapter {
 	return divergenceAdapter{svc: svc}
 }
 
-// DivergenceFiringFor reads both flags from the asset-level verdict. The
-// quorum behind `checked` is the service's own, so it cannot drift from
-// the one WarningFired was gated on, and (firing=true, checked=false)
-// cannot occur: a firing pair met the quorum.
-//
-// COR-14 (audit-2026-07-23): a below-quorum refresh is UNCHECKED — the
-// worker carries its last evaluated WarningFired forward rather than
-// asserting false (worker.go: `checked := res.SuccessCount >=
-// s.minSources`), so a pair whose last verdict was firing can read
-// (firing=true, checked=false): the standing warning is kept, and
-// checked=false says it is not fresh. Reporting checked=true alongside
-// a forced-false warning would tell consumers "we cross-checked this
-// price" when no cross-check verdict was reached — the exact
-// misreading CS-087 added the flag to prevent.
-func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (firing, checked bool, err error) {
-	verdict, found, err := a.svc.LookupCached(ctx, asset)
-	if err != nil {
-		return false, false, err
-	}
-	if !found {
+// DivergenceFiringFor reads the cached verdict for the EXACT (asset,
+// quote) pair — never another quote of the same base. GH-1045: the
+// prior implementation called LookupCached(asset), which ORs every
+// quote's WarningFired together, so a diverging XLM/GBP flagged a
+// clean XLM/USD response. A pair that fails to construct (asset ==
+// quote — callers should never reach this, since parsing already
+// rejects an identity price) reports unchecked rather than panicking.
+// The quorum behind `checked` (LookupCachedPairVerdict) is the
+// service's own, so it cannot drift from the one WarningFired was
+// gated on, and (firing=true, checked=false) cannot occur: a firing
+// pair met the quorum.
+func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset, quote canonical.Asset) (firing, checked bool, err error) {
+	pair, perr := canonical.NewPair(asset, quote)
+	if perr != nil {
 		return false, false, nil
 	}
-	return verdict.Firing, verdict.Checked, nil
+	return a.svc.LookupCachedPairVerdict(ctx, pair)
 }
 
 // storeChecker adapts *timescale.Store to the v1.ReadyChecker
