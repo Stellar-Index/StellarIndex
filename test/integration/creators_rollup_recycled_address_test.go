@@ -156,4 +156,23 @@ func TestCreatorsRollup_RecycledAddressCountsOnce(t *testing.T) {
 	if liveStroops.Cmp(big.NewInt(balance)) != 0 {
 		t.Errorf("live_stroops = %s, want %d (the address's one true balance, not summed once per creation event)", liveStroops.String(), balance)
 	}
+
+	reader, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("NewExplorerReader: %v", err)
+	}
+	t.Cleanup(func() { _ = reader.Close() })
+	hit, ok, err := reader.AccountCreators(ctx, 10, creator)
+	if err != nil || !ok || len(hit.Board) != 1 {
+		t.Fatalf("AccountCreators(keyed hit) = %d rows, ok %v, err %v", len(hit.Board), ok, err)
+	}
+	// A keyed miss still reports the cycle's time, never the zero time.
+	miss, ok, err := reader.AccountCreators(ctx, 10, gAccountFromSeed(t, 0x7e))
+	if err != nil || !ok {
+		t.Fatalf("AccountCreators(keyed miss) = ok %v, err %v", ok, err)
+	}
+	if len(miss.Board) != 0 {
+		t.Fatalf("keyed miss Board = %+v, want empty", miss.Board)
+	}
+	assertCycleTime(t, miss.ComputedAt, hit.ComputedAt)
 }

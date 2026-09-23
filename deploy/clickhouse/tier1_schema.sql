@@ -913,7 +913,9 @@ CREATE TABLE IF NOT EXISTS stellar.account_creators_rollup
     last_ledger      UInt32,
     first_created_at DateTime('UTC'),
     last_created_at  DateTime('UTC'),
-    computed_at      DateTime DEFAULT now()
+    computed_at      DateTime DEFAULT now(),
+    -- The sort key serves the top-N page; this serves ?account=.
+    INDEX idx_creators_rollup_creator creator TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = MergeTree
 ORDER BY rank;
@@ -1014,7 +1016,9 @@ CREATE TABLE IF NOT EXISTS stellar.account_sponsors_rollup
     last_ledger          UInt32,
     first_seen_at        DateTime('UTC'),
     last_seen_at         DateTime('UTC'),
-    computed_at          DateTime DEFAULT now()
+    computed_at          DateTime DEFAULT now(),
+    -- The sort key serves the top-N page; this serves ?account=.
+    INDEX idx_sponsors_rollup_sponsor sponsor TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = MergeTree
 ORDER BY rank;

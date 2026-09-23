@@ -105,4 +105,26 @@ func TestSponsorsRollup_DistinctSponsoredTotalIsGlobal(t *testing.T) {
 		t.Fatalf("DistinctSponsoredTotal = %d, want %d (one account sponsored by two sponsors "+
 			"counts once across the whole board, not once per sponsor)", got, want)
 	}
+
+	// A keyed miss still reports the cycle's time, never the zero time.
+	miss, ok, err := reader.AccountSponsors(ctx, 10, gAccountFromSeed(t, 0x44))
+	if err != nil || !ok {
+		t.Fatalf("AccountSponsors(keyed miss) = ok %v, err %v", ok, err)
+	}
+	if len(miss.Board) != 0 {
+		t.Fatalf("keyed miss Board = %+v, want empty", miss.Board)
+	}
+	assertCycleTime(t, miss.ComputedAt, board.ComputedAt)
+}
+
+// assertCycleTime pins a keyed miss's computed_at to the same cycle as the
+// board's: the stats and board rows are written seconds apart.
+func assertCycleTime(t *testing.T, got, board time.Time) {
+	t.Helper()
+	if got.IsZero() {
+		t.Fatalf("keyed miss ComputedAt is the zero time; want the cycle's (%s)", board)
+	}
+	if d := got.Sub(board); d < -time.Minute || d > time.Minute {
+		t.Fatalf("keyed miss ComputedAt = %s, want the board cycle's %s", got, board)
+	}
 }

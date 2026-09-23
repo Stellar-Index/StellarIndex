@@ -152,13 +152,26 @@ CREATE TABLE IF NOT EXISTS stellar.account_creators_rollup
     last_ledger      UInt32,
     first_created_at DateTime('UTC'),
     last_created_at  DateTime('UTC'),
-    computed_at      DateTime DEFAULT now()
+    computed_at      DateTime DEFAULT now(),
+    -- ORDER BY rank serves the top-N page. GET /v1/accounts/creators?account=
+    -- filters on creator instead, which without this index reads every
+    -- granule of the board to return at most one row.
+    INDEX idx_creators_rollup_creator creator TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = MergeTree
 ORDER BY rank;
 
 CREATE TABLE IF NOT EXISTS stellar.account_creators_rollup_staging
 AS stellar.account_creators_rollup;
+
+-- A board created before the index existed keeps its old definition under
+-- IF NOT EXISTS, so add it to both halves of the EXCHANGE pair. No
+-- MATERIALIZE INDEX: every cycle TRUNCATEs staging and rewrites the whole
+-- board, so the first cycle after this lands an indexed live table.
+ALTER TABLE stellar.account_creators_rollup
+    ADD INDEX IF NOT EXISTS idx_creators_rollup_creator creator TYPE bloom_filter(0.01) GRANULARITY 1;
+ALTER TABLE stellar.account_creators_rollup_staging
+    ADD INDEX IF NOT EXISTS idx_creators_rollup_creator creator TYPE bloom_filter(0.01) GRANULARITY 1;
 
 -- Metric-keyed like accounts_stats so a new figure is an INSERT rather
 -- than a schema migration. Carries the totals AND the data-derived
