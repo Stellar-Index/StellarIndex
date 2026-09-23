@@ -747,6 +747,38 @@ func TestDecode_MalformedBody(t *testing.T) {
 	}
 }
 
+// TestDecode_OverlongVecBodyRejected: every Vec-bodied backstop event
+// is a fixed 2-tuple on the wire. A third element means a different
+// WASM (or a foreign shape), and positionally promoting the first two
+// would record an amount whose meaning nobody audited — reject it.
+func TestDecode_OverlongVecBodyRejected(t *testing.T) {
+	t.Parallel()
+	pool := b64SV(t, contractAddrSV(t, contractStrkey(t, 0x11)))
+	user := b64SV(t, accountAddrSV(t, accountStrkey(t, 0x22)))
+	addr := contractAddrSV(t, contractStrkey(t, 0x33))
+	one := i128SV(big.NewInt(1))
+	cases := []struct {
+		name   string
+		decode func(*events.Event) (decoded, error)
+		topics []string
+		body   xdr.ScVal
+	}{
+		{"deposit", decodeDeposit, []string{TopicSymbolDeposit, pool, user}, vecSV(one, one, one)},
+		{"withdraw", decodeWithdraw, []string{TopicSymbolWithdraw, pool, user}, vecSV(one, one, one)},
+		{"gulp_emissions_v2", decodeGulpEmissions, []string{TopicSymbolGulpEmissions, pool}, vecSV(one, one, one)},
+		{"queue_withdrawal", decodeQueueWithdrawal, []string{TopicSymbolQueueWithdrawal, pool, user}, vecSV(one, u64SV(7), one)},
+		{"draw", decodeDraw, []string{TopicSymbolDraw, pool}, vecSV(addr, one, one)},
+		{"rw_zone_add", decodeRwZoneAdd, []string{TopicSymbolRwZoneAdd}, vecSV(addr, voidSV(), addr)},
+		{"rw_zone", decodeRwZone, []string{TopicSymbolRwZone}, vecSV(addr, addr, addr)},
+	}
+	for _, c := range cases {
+		e := &events.Event{Topic: c.topics, Value: b64SV(t, c.body)}
+		if d, err := c.decode(e); !errors.Is(err, ErrMalformedBody) {
+			t.Errorf("%s with a 3-element body: got (%+v, %v), want ErrMalformedBody", c.name, d, err)
+		}
+	}
+}
+
 // ─── topic-symbol encoding stability ─────────────────────────────
 
 func TestTopicSymbol_StableEncoding(t *testing.T) {
