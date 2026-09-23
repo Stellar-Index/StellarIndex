@@ -121,11 +121,6 @@ func registerAppMetrics() {
 		SEP41SupplyRollupAdvancesTotal,
 		AggregatorConfidenceComputeTotal,
 
-		VerifyArchiveLedgersVerified,
-		VerifyArchiveCurrentLedger,
-		VerifyArchiveCheckpointsTotal,
-		VerifyArchiveMismatchesTotal,
-
 		ChLiveSinkLedgersTotal,
 
 		MarketsSkippedRowsTotal,
@@ -208,6 +203,11 @@ func registerFreezeLifecycleMetrics() {
 // registerAppMetrics).
 func registerAppMetricsTail() {
 	Registry.MustRegister(
+		VerifyArchiveLedgersVerified,
+		VerifyArchiveCurrentLedger,
+		VerifyArchiveCheckpointsTotal,
+		VerifyArchiveMismatchesTotal,
+
 		// Readiness-check gauge (#371 F2) — the only alertable signal
 		// ClickHouse has, since it is the one dependency on r1 with no
 		// Prometheus exporter of its own.
