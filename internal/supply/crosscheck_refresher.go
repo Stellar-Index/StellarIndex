@@ -72,27 +72,27 @@ const (
 	// CrossCheckOutcomeMissing — at least one of (classic, SAC) has
 	// no snapshot in storage yet. Common during early bring-up
 	// before either side's refresher has produced its first row.
-	// Gauge is NOT updated — operators see the bootstrap signal
-	// via the missing-side counter rather than a misleading zero
-	// gauge that would imply "checked, agreed".
+	// The pair's gauge series is CLEARED — operators see the bootstrap
+	// signal via the counter (and its alert) rather than a zero or a
+	// stale reading that would imply "checked, agreed".
 	CrossCheckOutcomeMissing CrossCheckOutcomeKind = "missing_snapshot"
 
 	// CrossCheckOutcomeReadError — a transient storage error fired
-	// while reading either side. Gauge is NOT updated; the surface
-	// is the counter so operators can chart sustained read failure
-	// rate on this pair.
+	// while reading either side. The gauge series is CLEARED; the
+	// surface is the counter so operators can chart and alert on a
+	// sustained read-failure rate.
 	CrossCheckOutcomeReadError CrossCheckOutcomeKind = "read_error"
 
 	// CrossCheckOutcomeMisaligned — both snapshots loaded, but their
 	// LedgerSequences are further apart than
 	// [CrossCheckLedgerTolerance], so the invariant is not evaluable
-	// (MNY-04). Neither passes nor pages: the gauge is NOT updated
-	// (a stale reading must not be recorded as agreement) and no
+	// (MNY-04). Neither passes nor pages: the gauge series is CLEARED
+	// (a stale reading must not be served as agreement) and no
 	// divergence is computed (a lagging snapshot on either side makes
 	// the subset bound meaningless in BOTH directions — a stale
 	// classic total can sit below a fresh SAC total with no over-mint
 	// whatsoever, and a stale SAC total can hide a real one).
-	// Operators chart this via the counter.
+	// Operators chart and alert on this via the counter.
 	CrossCheckOutcomeMisaligned CrossCheckOutcomeKind = "misaligned"
 )
 
@@ -155,6 +155,14 @@ type CrossCheckEmitter interface {
 	// is already zero in the benign partial-wrap case (see
 	// [CrossCheckSubsetBound]).
 	Divergence(classicKey string, wrapClass WrapClass, stroops float64)
+
+	// ClearDivergence removes the pair's gauge series. Called on
+	// every outcome that evaluated nothing (Missing / ReadError /
+	// Misaligned): a gauge left at its last value is re-exported on
+	// every scrape, so a stalled pair would read as its last verdict
+	// indefinitely. Absence is the honest state; the outcome counter
+	// carries the reason.
+	ClearDivergence(classicKey string, wrapClass WrapClass)
 
 	// Outcome increments the per-outcome counter, labelled by
 	// WrapClass. Called for every outcome (including Missing /
@@ -232,13 +240,12 @@ func (r *CrossCheckRefresher) Tick(ctx context.Context) []CrossCheckOutcome {
 		wrapClass := normalizeWrapClass(p.WrapClass)
 		outcome := r.tickOne(ctx, p)
 		r.emitter.Outcome(outcome.Kind, wrapClass)
-		// Only outcomes with a computed divergence emit the stroops gauge;
-		// Missing / ReadError have no divergence to report.
-		//exhaustive:ignore
 		switch outcome.Kind {
 		case CrossCheckOutcomeWithin, CrossCheckOutcomeOver:
 			stroops, _ := outcome.Result.DivergenceStroops.Float64()
 			r.emitter.Divergence(p.ClassicKey, wrapClass, stroops)
+		case CrossCheckOutcomeMissing, CrossCheckOutcomeReadError, CrossCheckOutcomeMisaligned:
+			r.emitter.ClearDivergence(p.ClassicKey, wrapClass)
 		}
 		out = append(out, outcome)
 	}

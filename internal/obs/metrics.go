@@ -3343,10 +3343,10 @@ var SupplyCrossCheckDivergenceStroops = prometheus.NewGaugeVec(
 )
 
 // SupplyCrossCheckTotal — counter of cross-check evaluations per
-// outcome (within | over | missing_snapshot | read_error) and
-// wrap_class (full_wrap | partial_wrap — 2026-07-08, BACKLOG #59).
-// Drives the alert's rate-of-failure view and gives operators a "is
-// the cross-checker even running" check orthogonal to the gauge.
+// outcome (within | over | missing_snapshot | read_error | misaligned)
+// and wrap_class (full_wrap | partial_wrap — 2026-07-08, BACKLOG #59).
+// The last three outcomes delete the pair's divergence gauge series,
+// so stellarindex_supply_cross_check_unevaluable alerts on them here.
 //
 // `missing_snapshot` is emitted while either side of the pair has no
 // snapshot in `asset_supply_history` yet — the bootstrap state.
@@ -3356,7 +3356,7 @@ var SupplyCrossCheckDivergenceStroops = prometheus.NewGaugeVec(
 var SupplyCrossCheckTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_supply_cross_check_total",
-		Help: "Cross-check evaluations, labelled by outcome (within|over|missing_snapshot|read_error) and wrap_class (full_wrap|partial_wrap).",
+		Help: "Cross-check evaluations, labelled by outcome (within|over|missing_snapshot|read_error|misaligned) and wrap_class (full_wrap|partial_wrap).",
 	},
 	[]string{"outcome", "wrap_class"},
 )

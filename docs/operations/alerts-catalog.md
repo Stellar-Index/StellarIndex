@@ -577,6 +577,7 @@ auto-unfreeze at all. Rules in
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_supply_cross_check_divergence` | `stellarindex_supply_cross_check_divergence_stroops` per `classic_key` | > 1 stroop for > 5 min | ticket | [supply-cross-check-divergence](runbooks/supply-cross-check-divergence.md) |
+| `stellarindex_supply_cross_check_unevaluable` | `increase(stellarindex_supply_cross_check_total{outcome=~"missing_snapshot\|read_error\|misaligned"}[30m])` per `outcome` × `wrap_class` | > 0 for ≥ 1 h (a pair is not being cross-checked, so the divergence alert cannot fire for it) | ticket | [supply-cross-check-unevaluable](runbooks/supply-cross-check-unevaluable.md) |
 | `stellarindex_supply_divergence_high` | `stellarindex_supply_divergence_ratio` per `asset` × `reference` | > 1% for ≥ 1 h | ticket | [supply-divergence](runbooks/supply-divergence.md) |
 | `stellarindex_supply_snapshot_unit_failed_alert` | `stellarindex_supply_snapshot_unit_failed` | > 0 for ≥ 30 min | ticket | [supply-snapshot-unit-failed](runbooks/supply-snapshot-unit-failed.md) |
 | `stellarindex_supply_snapshot_stale` | `time() - stellarindex_supply_snapshot_last_success_timestamp` | > 36 h for ≥ 5 min | ticket | [supply-snapshot-stale](runbooks/supply-snapshot-stale.md) |
