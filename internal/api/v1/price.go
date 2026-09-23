@@ -226,8 +226,14 @@ func priceWithheldReason(err error) PriceWithheldReason {
 // surface is a low-cardinality metric label constant identifying the
 // serving path ("tip", "price_read", …) — see
 // obs.PriceServeSubstanceWithheldTotal.
+//
+// Allowed fails open when the pair cannot be measured. Verdict reports
+// that case as measured=false (allowed=false) for surfaces that must
+// not publish an unverified price — the listing, see
+// [Server.listingSubstanceVerdict].
 type PriceSubstanceGate interface {
 	Allowed(ctx context.Context, base, quote canonical.Asset, surface string) bool
+	Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool)
 }
 
 // PriceScamGate is the serving-side scam-issuer gate seam: it withholds

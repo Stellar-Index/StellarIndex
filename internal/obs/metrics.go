@@ -103,6 +103,7 @@ func registerAppMetrics() {
 		AggregatorDroppedWindowsTotal,
 		AggregatorMinUSDVolumeUnvaluableTotal,
 		PriceServeSubstanceWithheldTotal,
+		PriceServeSubstanceUnmeasuredTotal,
 		PriceServeScamWithheldTotal,
 		PricingGuardTrailingFetchFailedTotal,
 
@@ -3247,6 +3248,24 @@ var PriceServeSubstanceWithheldTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_price_serve_substance_withheld_total",
 		Help: "Aggregated price serves withheld by the thin-market substance gate, labelled by serving surface.",
+	},
+	[]string{"surface"},
+)
+
+// PriceServeSubstanceUnmeasuredTotal — count of substance-gate verdicts
+// that could not be reached: the trailing-substance read errored or ran
+// out of request deadline, so the pair was neither cleared nor withheld
+// on evidence. What the surface does with it differs: a single price
+// lookup ("price_read", "tip", …) serves unguarded, while the listing
+// ("listing") withholds the row's price and stamps flags.stale on the
+// page (ADR-0018). Same `surface` constant set as
+// PriceServeSubstanceWithheldTotal. Expected zero; a sustained non-zero
+// rate means the substance store is too slow or down for the request
+// path. Dashboard-only, no alert rule.
+var PriceServeSubstanceUnmeasuredTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_price_serve_substance_unmeasured_total",
+		Help: "Substance-gate verdicts that could not be measured (store error or deadline), labelled by serving surface.",
 	},
 	[]string{"surface"},
 )

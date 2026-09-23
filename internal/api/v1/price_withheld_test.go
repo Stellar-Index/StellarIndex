@@ -68,6 +68,10 @@ func (g *stubSubstanceGate) Allowed(_ context.Context, _, _ canonical.Asset, sur
 	return g.allow
 }
 
+func (g *stubSubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool) {
+	return g.Allowed(ctx, base, quote, surface), true
+}
+
 func TestPriceTip_Withheld_Distinct404Type(t *testing.T) {
 	// The reader HAS a snapshot for the pair — proving the tip verdict
 	// comes from the gate, not from data absence.

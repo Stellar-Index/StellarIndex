@@ -2415,6 +2415,26 @@ rather than of request traffic, and a withheld leg shows up as a pool
 moving into `unpriced_pools` on `/v1/protocols` (the `≥` lower bound),
 never as a smaller number claiming to be exact.
 
+### `stellarindex_price_serve_substance_unmeasured_total`
+
+Counter, label `surface` (same set as
+`stellarindex_price_serve_substance_withheld_total`, plus `listing`).
+
+Fires once per substance-gate verdict that could not be reached: the
+trailing-substance read errored or ran out of request deadline, so the
+pair was neither cleared nor withheld on evidence. Unmeasured verdicts
+are not cached, so the counter tracks requests, not distinct pairs.
+What the surface did with the pair depends on the surface: a single
+price lookup (`price_read`, `tip`, …) served the price unguarded,
+while the `/v1/assets` listing (`surface="listing"`) withheld the
+row's `price_usd` — and so its `market_cap_usd` — and stamped
+`flags.stale` on the page (ADR-0018: listings and market caps use the
+guarded surface only).
+
+When to look at it: expected zero. A sustained non-zero rate means the
+substance store is too slow or down for the request path; correlate
+with the timescale readyz probe. Dashboard-only, no alert rule.
+
 ### `stellarindex_pricingguard_trailing_fetch_failed_total`
 
 Counter, label `path` (`latest` | `at`).
