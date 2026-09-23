@@ -1,34 +1,41 @@
 package chops
 
-import "testing"
+import (
+	"testing"
 
-// TestValidateCreatorsBoundary pins RLT-191: creatorsBoundary previously
-// returned a configured or fallback ledger with no sanity check at all, so
-// a mistyped or stale stellar.movements_floor_ledger silently mis-split
-// the classic/CAP-67 creation arms instead of erroring — the classic arm
-// scans nothing below a boundary the lake never reaches.
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
+)
+
+// TestValidateCreatorsBoundary: the boundary is rejected only when the
+// chain has not reached it. Test nets legitimately set it to 1, below the
+// lake's first ledger (2).
 func TestValidateCreatorsBoundary(t *testing.T) {
+	const (
+		testnetTip = 1_500_000
+		pubnetTip  = 63_000_000
+	)
 	for _, tc := range []struct {
 		name              string
-		boundary, lakeMin uint32
+		boundary, lakeTip uint32
 		wantErr           bool
 	}{
-		{"boundary below the lake's first ledger is rejected", 1, 2, true},
-		{"pubnet boundary against pubnet's populated lake is fine", 58_762_517, 2, false},
-		{"boundary equal to the lake's first ledger is fine", 2, 2, false},
-		{"boundary above the lake's first ledger is fine", 4_500_000, 2, false},
-		{"empty lake (lakeMin=0) skips the check", 0, 0, false},
-		{"zero boundary against a real lake is rejected", 0, 2, true},
+		{"pubnet boundary on a test net that never reached it", clickhouse.P23BoundaryLedger, testnetTip, true},
+		{"boundary one past the tip", testnetTip + 1, testnetTip, true},
+		{"test-net setting movements_floor_ledger=1", 1, testnetTip, false},
+		{"boundary equal to the lake's first ledger", 2, testnetTip, false},
+		{"boundary equal to the tip", testnetTip, testnetTip, false},
+		{"pubnet boundary on pubnet", clickhouse.P23BoundaryLedger, pubnetTip, false},
+		{"empty lake has nothing to split", clickhouse.P23BoundaryLedger, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateCreatorsBoundary(tc.boundary, tc.lakeMin)
+			err := validateCreatorsBoundary(tc.boundary, tc.lakeTip)
 			if tc.wantErr && err == nil {
-				t.Fatalf("validateCreatorsBoundary(boundary=%d, lakeMin=%d) = nil, want an error",
-					tc.boundary, tc.lakeMin)
+				t.Fatalf("validateCreatorsBoundary(boundary=%d, lakeTip=%d) = nil, want an error",
+					tc.boundary, tc.lakeTip)
 			}
 			if !tc.wantErr && err != nil {
-				t.Fatalf("validateCreatorsBoundary(boundary=%d, lakeMin=%d) = %v, want nil",
-					tc.boundary, tc.lakeMin, err)
+				t.Fatalf("validateCreatorsBoundary(boundary=%d, lakeTip=%d) = %v, want nil",
+					tc.boundary, tc.lakeTip, err)
 			}
 		})
 	}
