@@ -73,21 +73,6 @@ func NewFreezeEventSink(s *Store, opts ...FreezeEventSinkOption) *FreezeEventSin
 // FreezeEventSinkOption tunes a FreezeEventSink at construction.
 type FreezeEventSinkOption func(*FreezeEventSink)
 
-// WithFreezeClock injects a deterministic clock for tests.
-func WithFreezeClock(clock func() time.Time) FreezeEventSinkOption {
-	return func(s *FreezeEventSink) {
-		s.clock = clock
-	}
-}
-
-// WithFreezeLedgerProvider wires the ledger seam so inserts capture
-// frozen_at_ledger.
-func WithFreezeLedgerProvider(p LedgerProvider) FreezeEventSinkOption {
-	return func(s *FreezeEventSink) {
-		s.getLedger = p
-	}
-}
-
 // WithFreezeHook installs a post-insert side-effect closure.
 // Invoked AFTER a successful row insert (idempotent no-ops
 // don't fire). F-1249 (codex audit-2026-05-12): wired by the
@@ -976,19 +961,4 @@ func mapFreezeReason(decision anomaly.Decision) string {
 	// action on the anomalies timeline. Vocabulary extended by
 	// migration 0124.
 	return "other"
-}
-
-// noteForLogger returns nil because the log-on-failure semantics are
-// already handled by the freeze.Writer wrapper. Exposed for tests
-// that want to assert the sink swallows errors gracefully.
-//
-// (Currently unreferenced in production code; retained for future
-// use when the recovery worker lands.)
-//
-//nolint:unused // referenced from tests
-func noteForLogger(err error) error {
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	return err
 }
