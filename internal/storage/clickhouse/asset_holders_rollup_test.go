@@ -83,7 +83,7 @@ func TestHoldersRollupSwapIsAtomic(t *testing.T) {
 // explicit computed_at value at all, so this substring search fails.
 func TestHoldersRollupStatementsShareOneCycleStamp(t *testing.T) {
 	cycleAt := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
-	stamp := "toDateTime('" + cycleAt.Format(holdersRollupTimeLayout) + "')"
+	stamp := "toDateTime('" + cycleAt.Format(holdersRollupTimeLayout) + "', 'UTC')"
 
 	stmts := holdersRollupStatements(cycleAt)
 	checked := 0
@@ -115,7 +115,7 @@ func TestHoldersRollupStatementsShareOneCycleStamp(t *testing.T) {
 // balance=100 paired with total=999 — instead of retrying to the
 // self-consistent balance=200/total=500.
 func TestHoldersRollupBoard_RetriesOnceWhenACycleSwapsMidRead(t *testing.T) {
-	cycle1 := time.Date(2026, 9, 21, 12, 0, 0, 0, time.UTC)
+	cycle1 := time.Now().UTC().Truncate(time.Second).Add(-50 * time.Minute)
 	cycle2 := cycle1.Add(30 * time.Minute)
 
 	rowsCalls := 0

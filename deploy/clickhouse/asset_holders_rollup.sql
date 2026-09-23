@@ -29,7 +29,9 @@
 --
 -- The reader's requireRows probe refuses an entirely-empty live table
 -- (never-exchanged staging pathology) and falls back to the legacy
--- per-request scans — slow but correct.
+-- per-request scans — slow but correct. It does the same when the live
+-- cycle's computed_at is older than 2h (holdersRollupMaxAge): a wedged
+-- timer shows up as slow holders reads, never as a stale board.
 
 CREATE TABLE IF NOT EXISTS stellar.asset_holders_rollup
 (
