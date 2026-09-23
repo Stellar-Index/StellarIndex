@@ -140,7 +140,8 @@ func decodeRelayArgs( //nolint:gocognit,gocyclo,funlen // dispatch-heavy; splitt
 	// Such a relay is clamped here; it lands stamped at the close
 	// rather than its declared future time, which is the conservative
 	// direction.
-	if ts.After(closedAt.Add(bandMaxFutureResolveTime)) {
+	// Strict, like the contract: resolve_time == close + OFFSET is refused.
+	if !ts.Before(closedAt.Add(bandMaxFutureResolveTime)) {
 		ts = closedAt.UTC()
 	}
 
