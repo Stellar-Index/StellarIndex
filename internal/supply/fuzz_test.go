@@ -150,6 +150,7 @@ func FuzzClassicCompute(f *testing.F) {
 	f.Add([]byte{1}, []byte{}, []byte{}, []byte{}, []byte{2}, []byte{3}, []byte{}, uint8(0), "", true, uint32(1), uint32(1))
 	f.Add([]byte{1}, []byte{1}, []byte{1}, []byte{1}, []byte{1}, []byte{1}, []byte{1}, uint8(0x10), "-5", false, uint32(1), uint32(1))
 	f.Add([]byte{1}, []byte{}, []byte{}, []byte{}, []byte{}, []byte{}, []byte{}, uint8(0), "x", false, uint32(1), uint32(1))
+	f.Add([]byte{1}, []byte{}, []byte{}, []byte{7}, []byte{}, []byte{}, []byte{}, uint8(0x80), "", false, uint32(1), uint32(1))
 	f.Fuzz(func(t *testing.T, trust, claim, lp, sacw, issuerB, lockA, lockC []byte, negMask uint8, override string, lockedNonEmpty bool, ledger, minLedger uint32) {
 		vals := []*big.Int{
 			fuzzBig(trust, negMask&1 != 0), fuzzBig(claim, negMask&2 != 0), fuzzBig(lp, negMask&4 != 0),
@@ -165,6 +166,8 @@ func FuzzClassicCompute(f *testing.F) {
 			LPReserve: new(big.Int).Set(vals[2]), SACWrapped: new(big.Int).Set(vals[3]),
 			IssuerBalance: new(big.Int).Set(vals[4]), LockedAccountBalances: new(big.Int).Set(vals[5]),
 			LockedContractBalances: new(big.Int).Set(vals[6]), MinComponentLedger: minLedger,
+			// negMask's spare high bit drives the CS-087 gate: an unobserved SAC must yield nil.
+			SACObserved: negMask&0x80 == 0,
 		}
 		asset, err := canonical.NewClassicAsset("USDC", validIssuer)
 		if err != nil {
@@ -204,12 +207,18 @@ func FuzzClassicCompute(f *testing.F) {
 		if !eqBig(got.CirculatingSupply, refMaxZero(total, excluded)) {
 			t.Fatalf("circulating = %s, want max(0, %s-%s)", got.CirculatingSupply, total, excluded)
 		}
-		if !eqBig(got.SACWrappedStroops, vals[3]) {
+		switch {
+		case !comps.SACObserved:
+			if got.SACWrappedStroops != nil {
+				t.Fatalf("SACWrappedStroops = %s with no SAC observation, want nil", got.SACWrappedStroops)
+			}
+		case !eqBig(got.SACWrappedStroops, vals[3]):
 			t.Fatalf("SACWrappedStroops = %v, want %s", got.SACWrappedStroops, vals[3])
-		}
-		got.SACWrappedStroops.Add(got.SACWrappedStroops, big.NewInt(1))
-		if !eqBig(comps.SACWrapped, vals[3]) {
-			t.Fatal("SACWrappedStroops aliases the reader's component")
+		default:
+			got.SACWrappedStroops.Add(got.SACWrappedStroops, big.NewInt(1))
+			if !eqBig(comps.SACWrapped, vals[3]) {
+				t.Fatal("SACWrappedStroops aliases the reader's component")
+			}
 		}
 
 		wantBasis := supply.BasisIssuerExclusion
