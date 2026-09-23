@@ -141,5 +141,5 @@ journalctl -u stellarindex-aggregator --since "1 hour ago" -n 200 | \
 - 2026-04-30 — initial draft alongside #313 (supply-refresh
   alerts).
 - 2026-04-30 — quick-diagnosis #3 now references the
-  `asset_key` label (added in #314) so operators can confirm
+  `asset_key` label so operators can confirm
   whether the stall is fleet-wide or scoped to one asset.

@@ -594,6 +594,13 @@ stale_patterns=(
                                   # corresponding PR (repo max at the time
                                   # was far short of it), so the citation
                                   # 404s outright
+  "\(added in #314\)"             # dangling ref (RSWP-042) — the
+                                  # supply-refresh-error-dominant and
+                                  # supply-refresh-stalled runbooks cited
+                                  # this as the PR that added the
+                                  # asset_key label; #314 is now a real,
+                                  # unrelated merged PR (integration-suite
+                                  # 4-way sharding)
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
