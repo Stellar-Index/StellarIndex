@@ -448,3 +448,49 @@ func TestPrintReconcileReport_TruthUnavailableNotCountedAsError(t *testing.T) {
 		t.Fatalf("report should surface TRUTH_UNAVAILABLE; got:\n%s", out)
 	}
 }
+
+// ─── -sample frame: tip-relative floor + rotating seed (GH-1096) ───────────
+
+func TestReconcileSampleFloor_TrailsTip(t *testing.T) {
+	const window = defaultReconcileRecentLedgers
+	for _, tip := range []uint32{62_000_000, 70_000_000} {
+		got := reconcileSampleFloor(tip, reconcileSampleFrame{recentLedgers: window})
+		if got != tip-window {
+			t.Errorf("tip %d: floor = %d, want %d (the window must trail the tip, not stay pinned to one ledger)", tip, got, tip-window)
+		}
+	}
+	if got := reconcileSampleFloor(100, reconcileSampleFrame{recentLedgers: window}); got != 0 {
+		t.Errorf("window wider than tip: floor = %d, want 0", got)
+	}
+	pinned := reconcileSampleFrame{recentLedgers: window, minRecentLedger: 61_000_000, minSet: true}
+	if got := reconcileSampleFloor(70_000_000, pinned); got != 61_000_000 {
+		t.Errorf("explicit -min-recent-ledger: floor = %d, want 61000000", got)
+	}
+}
+
+func TestReconcileSampleSeed_RotatesUnlessPinned(t *testing.T) {
+	seen := map[uint64]bool{}
+	for range 8 {
+		seen[reconcileSampleSeed(reconcileSampleFrame{})] = true
+	}
+	if len(seen) < 8 {
+		t.Errorf("unpinned seeds: %d distinct of 8 — repeated runs would re-verify one cohort", len(seen))
+	}
+	if got := reconcileSampleSeed(reconcileSampleFrame{seed: 0, seedSet: true}); got != 0 {
+		t.Errorf("pinned seed 0: got %d, want 0", got)
+	}
+	if got := reconcileSampleSeed(reconcileSampleFrame{seed: 42, seedSet: true}); got != 42 {
+		t.Errorf("pinned seed 42: got %d, want 42", got)
+	}
+}
+
+func TestUint32FlagFunc_RejectsOverflow(t *testing.T) {
+	var v uint32
+	set := uint32FlagFunc(&v)
+	if err := set("61000000"); err != nil || v != 61_000_000 {
+		t.Fatalf("set(61000000) = %v, v=%d", err, v)
+	}
+	if err := set("4294967296"); err == nil {
+		t.Fatalf("set(2^32) accepted; a ledger floor must not silently truncate")
+	}
+}

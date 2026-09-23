@@ -5,6 +5,8 @@ package chops
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -40,8 +42,8 @@ import (
 // production code path depends on it.
 //
 // Usage: reconcile-balances (-account G... | -sample N) [-ch-addr H:P]
-// [-horizon URL] [-tolerance-stroops N] [-min-recent-ledger N]
-// [-sleep-ms N] [-timeout DUR]. Exactly one of -account/-sample is
+// [-horizon URL] [-tolerance-stroops N] [-recent-ledgers N]
+// [-min-recent-ledger N] [-sample-seed N] [-sleep-ms N] [-timeout DUR]. Exactly one of -account/-sample is
 // required. Exit code is the number of MISMATCHes (capped at 255); a run whose
 // ERROR rate exceeds -max-error-rate ALSO fails non-zero (C2-15 fail-open guard
 // — an all-errored run verified nothing and must not look clean), as does a
@@ -57,17 +59,24 @@ import (
 func reconcileBalances(args []string) error { //nolint:funlen // linear: flag parse+validate, resolve account set, per-account loop, report.
 	fs := flag.NewFlagSet("reconcile-balances", flag.ContinueOnError)
 	account := fs.String("account", "", "reconcile exactly this account (G...); mutually exclusive with -sample")
-	sample := fs.Int("sample", 0, "reconcile N accounts sampled from those active since -min-recent-ledger; mutually exclusive with -account")
+	sample := fs.Int("sample", 0, "reconcile N accounts sampled (seeded, see -sample-seed) from those active in the -recent-ledgers window; mutually exclusive with -account")
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address to read stellar.ledger_entry_changes from")
 	horizonBase := fs.String("horizon", "https://horizon.stellar.org", "Horizon base URL — the independent external reference balance source for this verifier (see doc comment: ADR-0001 scopes its Horizon ban to production ingest, not a one-off verifier)")
 	toleranceStroops := fs.Int64("tolerance-stroops", 0, "max |our_stroops - ref_stroops| still counted as MATCH")
-	minRecentLedger := fs.Uint("min-recent-ledger", 60_000_000, "for -sample: only consider accounts with a ledger_entry_changes 'account' row above this ledger, so their latest snapshot approximates current chain state")
+	frame := reconcileSampleFrame{recentLedgers: defaultReconcileRecentLedgers}
+	fs.Func("recent-ledgers", "for -sample: draw from accounts with a ledger_entry_changes 'account' row in the last N ledgers below the lake tip, so their latest snapshot approximates current chain state (default 17280, ~1 day)", uint32FlagFunc(&frame.recentLedgers))
+	fs.Func("min-recent-ledger", "for -sample: absolute ledger floor overriding -recent-ledgers (use to reproduce an earlier run's frame)", uint32FlagFunc(&frame.minRecentLedger))
+	fs.Uint64Var(&frame.seed, "sample-seed", 0, "for -sample: cohort seed; unset draws a fresh random seed each run (printed, so a run can be reproduced)")
 	sleepMS := fs.Int("sleep-ms", 250, "polite delay between Horizon requests (serial, not concurrent)")
 	timeout := fs.Duration("timeout", 15*time.Second, "per-request Horizon HTTP timeout")
 	maxErrorRate := fs.Float64("max-error-rate", 0.25, "fail the run (non-zero exit) when more than this FRACTION of checked accounts ERROR — an all-errored run must not exit 0/clean (C2-15 fail-open guard)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	fs.Visit(func(f *flag.Flag) {
+		frame.minSet = frame.minSet || f.Name == "min-recent-ledger"
+		frame.seedSet = frame.seedSet || f.Name == "sample-seed"
+	})
 
 	haveAccount := *account != ""
 	haveSample := *sample > 0
@@ -78,7 +87,7 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	accounts, err := reconcileResolveAccounts(ctx, *chAddr, *account, *sample, uint32(*minRecentLedger)) //nolint:gosec // ledger sequence, always in uint32 range for real usage.
+	accounts, err := reconcileResolveAccounts(ctx, *chAddr, *account, *sample, frame)
 	if err != nil {
 		return err
 	}
@@ -117,21 +126,84 @@ func reconcileBalances(args []string) error { //nolint:funlen // linear: flag pa
 	return exitErr
 }
 
+// defaultReconcileRecentLedgers is ~1 day of ledgers at ~5 s each: recent
+// enough that a snapshot approximates chain state, and a change-log window
+// small enough for the -sample GROUP BY to answer in seconds.
+const defaultReconcileRecentLedgers = 17_280
+
+// reconcileSampleFrame is the parsed -sample frame flags; the *Set fields
+// record whether the operator passed the flag explicitly.
+type reconcileSampleFrame struct {
+	recentLedgers   uint32
+	minRecentLedger uint32
+	minSet          bool
+	seed            uint64
+	seedSet         bool
+}
+
+// uint32FlagFunc parses a flag value into *dst, rejecting values that do not
+// fit a ledger sequence instead of truncating them.
+func uint32FlagFunc(dst *uint32) func(string) error {
+	return func(s string) error {
+		v, err := strconv.ParseUint(s, 10, 32)
+		if err != nil {
+			return err
+		}
+		*dst = uint32(v)
+		return nil
+	}
+}
+
+// reconcileSampleFloor is the -sample frame's ledger floor: an explicit
+// -min-recent-ledger wins, otherwise the window trails the lake tip, so it
+// stays the same width as the chain grows.
+func reconcileSampleFloor(tip uint32, f reconcileSampleFrame) uint32 {
+	if f.minSet {
+		return f.minRecentLedger
+	}
+	if f.recentLedgers >= tip {
+		return 0
+	}
+	return tip - f.recentLedgers
+}
+
+// reconcileSampleSeed returns the explicit -sample-seed, or a fresh random
+// one so repeated runs verify different cohorts rather than one frozen set.
+func reconcileSampleSeed(f reconcileSampleFrame) uint64 {
+	if f.seedSet {
+		return f.seed
+	}
+	var b [8]byte
+	_, _ = rand.Read(b[:]) // crypto/rand.Read never returns an error since Go 1.24.
+	return binary.LittleEndian.Uint64(b[:])
+}
+
 // reconcileResolveAccounts turns the parsed -account/-sample flags
 // into the concrete account list to check, doing the -sample
 // ClickHouse lookup when needed. Split out of reconcileBalances to
 // keep that function's flag-handling linear and this file's per-piece
 // testability high.
-func reconcileResolveAccounts(ctx context.Context, chAddr, account string, sample int, minRecentLedger uint32) ([]string, error) {
+func reconcileResolveAccounts(ctx context.Context, chAddr, account string, sample int, frame reconcileSampleFrame) ([]string, error) {
 	if account != "" {
 		return []string{account}, nil
 	}
-	ids, err := clickhouse.SampleAccountIDs(ctx, chAddr, minRecentLedger, sample)
+	var tip uint32
+	if !frame.minSet {
+		var err error
+		if tip, err = clickhouse.MaxLedger(ctx, chAddr); err != nil {
+			return nil, fmt.Errorf("reconcile-balances: lake tip for -sample frame: %w", err)
+		}
+	}
+	floor := reconcileSampleFloor(tip, frame)
+	seed := reconcileSampleSeed(frame)
+	fmt.Fprintf(os.Stderr, "reconcile-balances: -sample frame: ledger_entry_changes accounts above ledger %d (tip %d), seed %d — reproduce with -min-recent-ledger %d -sample-seed %d\n",
+		floor, tip, seed, floor, seed)
+	ids, err := clickhouse.SampleAccountIDs(ctx, chAddr, floor, seed, sample)
 	if err != nil {
 		return nil, fmt.Errorf("reconcile-balances: sample accounts: %w", err)
 	}
 	if len(ids) == 0 {
-		return nil, fmt.Errorf("reconcile-balances: -sample found no accounts with a ledger_entry_changes row above ledger %d — lower -min-recent-ledger or check -ch-addr", minRecentLedger)
+		return nil, fmt.Errorf("reconcile-balances: -sample found no accounts with a ledger_entry_changes row above ledger %d — widen -recent-ledgers or check -ch-addr", floor)
 	}
 	if len(ids) < sample {
 		fmt.Fprintf(os.Stderr, "reconcile-balances: WARNING requested -sample %d but only found %d eligible account(s)\n", sample, len(ids))

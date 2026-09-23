@@ -1111,7 +1111,7 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -source blend_backstop -from 51499546 \
                               -workers 6 -write
-  reconcile-balances (-account G... | -sample N) [-ch-addr H:P] [-horizon URL] [-tolerance-stroops N] [-min-recent-ledger N] [-sleep-ms N] [-timeout DUR]
+  reconcile-balances (-account G... | -sample N) [-ch-addr H:P] [-horizon URL] [-tolerance-stroops N] [-recent-ledgers N] [-min-recent-ledger N] [-sample-seed N] [-sleep-ms N] [-timeout DUR]
                           ADR-0033-style verification harness for the
                           "verified explorer" claim: proves
                           stellar.ledger_entry_changes reflects TRUE
@@ -1124,11 +1124,15 @@ Subcommands:
                           file's doc comment). Requires exactly one of
                           -account (reconcile one) or -sample N
                           (reconcile N accounts sampled from accounts
-                          with a ledger_entry_changes row above
-                          -min-recent-ledger, default 60000000, ordered
-                          by a deterministic cityHash64 pseudo-shuffle
-                          so their latest snapshot approximates current
-                          chain state). Per account: reads our balance
+                          with a ledger_entry_changes row in the last
+                          -recent-ledgers (default 17280, ~1 day) below
+                          the lake tip, or above an absolute
+                          -min-recent-ledger, so their latest snapshot
+                          approximates current chain state; ordered by
+                          cityHash64(account_id, -sample-seed), a fresh
+                          random seed per run unless pinned, printed
+                          with the floor so a run can be reproduced).
+                          Per account: reads our balance
                           via argMax(balance, ledger_seq) (zero rows =
                           NO_DATA, outside our coverage, not a
                           mismatch), fetches Horizon's current native
