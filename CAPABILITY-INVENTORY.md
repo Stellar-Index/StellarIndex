@@ -74,6 +74,7 @@ Intent-keyed: *Need to X → use `package.Symbol`*. Every symbol verified presen
 
 ## Storage connectors
 - Served tier (Timescale/PG) → `timescale.Open(ctx, dsn)` → `*Store`
+- One daemon per database → `Store.HoldInstanceLock(ctx, name, onLost, logger)` (session advisory lock, re-verified; indexer + aggregator use it)
 - ClickHouse lake → `clickhouse.NewExplorerReader`, `NewSupplyReader`, `clickhouse.Open` (sink), `NewLiveSink`
 - Redis client from config → `redisclient.Build(cfg)`, `redisclient.Mode(cfg)` ⚠ (not in AGENTS.md; handles sentinel vs single)
 

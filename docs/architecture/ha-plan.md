@@ -423,6 +423,16 @@ provisioned; cloud is pay-as-you-use for DR.
   single long-running daemon on one host. The Redis `SET key NX EX 30`
   leader-election description below was never implemented; treat it
   as removed, not as the target design.
+- **Enforcement:** the one-instance rule is enforced, not assumed.
+  At startup the aggregator takes the Postgres session advisory lock
+  `hashtext('instance:stellarindex-aggregator')`
+  (`timescale.Store.HoldInstanceLock`). While another process holds
+  it, the aggregator refuses to start and exits non-zero. It checks
+  the lock every 30 s. If the holding session dies, the aggregator
+  takes the lock again on a new session. If another process got there
+  first, it shuts down and exits non-zero. `-dry-run` takes no lock.
+  This is exclusivity, not failover: a standby cannot take over while
+  the holder is alive.
 - **Role:** on each tick (default 30 s) reads `trades`/indexer output,
   computes VWAP/TWAP + confidence, writes the result to Redis and to
   Timescale precompute tables.
@@ -446,6 +456,9 @@ provisioned; cloud is pay-as-you-use for DR.
   `consumer.Event` contract) and no `StreamLive` exists anywhere in the
   tree. Off-chain CEX/FX connectors still run their own goroutines, but
   inside the same binary and outside the dispatcher path.
+- **Enforcement:** as in §3.7, with the lock
+  `hashtext('instance:stellarindex-indexer')`. A second indexer against
+  the same database refuses to start.
 - **Cursors:** persisted in Timescale per-source
   (`cursor(<source_id>)`). On restart the indexer resumes from the
   saved cursor.

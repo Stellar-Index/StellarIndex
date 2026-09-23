@@ -267,6 +267,17 @@ func run(cfgPath string, dryRun bool) error {
 			logger.Warn("storage close", "err", err)
 		}
 	}()
+	// One indexer per database. Deferred before cancel so the lock is held
+	// through the drain; a dry-run takes none so it can run beside the daemon.
+	var instanceLock *timescale.InstanceLock
+	if !dryRun {
+		instanceLock, err = store.HoldInstanceLock(rootCtx, timescale.IndexerInstanceLockName, cancel, logger.With("component", "instance-lock"))
+		if err != nil {
+			cancel()
+			return instanceLockRefusal(err)
+		}
+		defer releaseInstanceLock(instanceLock, logger)
+	}
 	// F-1350: register cancel AFTER store.Close so LIFO runs cancel
 	// FIRST on shutdown — workers see context cancellation and unwind
 	// BEFORE the store they depend on is closed. Registering it before
@@ -1039,7 +1050,23 @@ func run(cfgPath string, dryRun bool) error {
 	// Surface the producer's failure only now that everything it had
 	// already produced has been persisted. The exit code is unchanged;
 	// what changed is that the buffer is not thrown away first.
-	return fatalErr
+	return errors.Join(fatalErr, instanceLock.Lost())
+}
+
+// instanceLockRefusal names the other indexer as the reason not to start.
+func instanceLockRefusal(err error) error {
+	if errors.Is(err, timescale.ErrInstanceLockHeld) {
+		return fmt.Errorf("refusing to start: another stellarindex-indexer is running against this database: %w", err)
+	}
+	return fmt.Errorf("instance lock: %w", err)
+}
+
+func releaseInstanceLock(l *timescale.InstanceLock, logger *slog.Logger) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := l.Release(ctx); err != nil {
+		logger.Warn("instance lock release", "err", err)
+	}
 }
 
 // waitBounded runs a blocking wait function on its own goroutine and
