@@ -126,8 +126,9 @@ type SessionPeeker interface {
 //
 // `billable` is the one column with the same meaning on both paths:
 // the request units the monthly quota counts (ok + 4xx; never 429 or
-// 5xx, see middleware.billableClass). Sum it by `date` to reconcile
-// against a quota 429's `month_to_date`.
+// platform-caused 5xx (COR-05), though not a timed-out read — see
+// middleware.billableClass). Sum it by `date` to reconcile against a
+// quota 429's `month_to_date`.
 type UsageRow struct {
 	Date      string `json:"date"`               // YYYY-MM-DD
 	Endpoint  string `json:"endpoint,omitempty"` // route pattern; empty on the legacy fallback

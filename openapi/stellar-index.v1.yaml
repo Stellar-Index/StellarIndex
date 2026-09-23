@@ -19064,9 +19064,12 @@ components:
             4xx-except-429 responses. 429s and platform-caused 5xx
             never consume quota (an outage on our side must not use
             up the quota you paid for); both are still reported
-            under `throttled` / `errors`. Same meaning on both
-            response shapes: summed over the current UTC month it is
-            the `month_to_date` a monthly-quota 429 reports.
+            under `throttled` / `errors`. The exception is a request
+            whose read ran out its server-side time budget (a
+            `…-timeout` 503 after the query ran): it is billed like
+            a served request. Same meaning on both response shapes:
+            summed over the current UTC month it is the
+            `month_to_date` a monthly-quota 429 reports.
         errors:
           type: integer
           description: 4xx (excluding 429) + 5xx responses.
