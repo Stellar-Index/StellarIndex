@@ -127,8 +127,10 @@ _ops_field() { # _ops_field <block> <key>
 }
 
 # oneshot_baseline prints the unit's completion token: the monotonic
-# microsecond stamp of the moment it last finished. `0` means it has not
-# completed once since boot.
+# microsecond stamps of the moment it last entered `active` and the
+# moment it last entered `inactive`/`failed`, joined as
+# "<active>:<inactive>". `0` in either slot means that transition has
+# not happened once since boot.
 #
 # This is the value wait_for_oneshot compares against, and it must be
 # read BEFORE the run is triggered. Nothing else on the unit
@@ -136,29 +138,28 @@ _ops_field() { # _ops_field <block> <key>
 # ExecMainStatus all survive a run and are all `success`-shaped on a
 # unit that has never executed.
 #
-# The token is InactiveEnterTimestampMonotonic for a
-# RemainAfterExit=no unit (which ends `inactive`) and
-# ActiveEnterTimestampMonotonic for a RemainAfterExit=yes one (which
-# ends `active` and would otherwise never satisfy the wait).
+# Both stamps are needed, not just the one matching RemainAfterExit:
+# ActiveEnterTimestampMonotonic only advances on entry to `active`, so
+# a RemainAfterExit=yes unit that FAILS (activating → failed, never
+# active) never moves it — but InactiveEnterTimestampMonotonic advances
+# on entry to `inactive` OR `failed` regardless of RemainAfterExit, so
+# it is the one wait_for_oneshot must compare a failure against.
 oneshot_baseline() { # oneshot_baseline <unit>
   local unit=${1:-}
   if [ -z "$unit" ]; then
     echo "oneshot_baseline: usage: oneshot_baseline <unit>" >&2
     return 4
   fi
-  local blob remain
-  blob=$(_ops_show "$unit" LoadState RemainAfterExit \
+  local blob active inactive
+  blob=$(_ops_show "$unit" LoadState \
     InactiveEnterTimestampMonotonic ActiveEnterTimestampMonotonic)
   if [ -z "$blob" ]; then
     echo "oneshot_baseline: $unit — systemctl show returned nothing" >&2
     return 4
   fi
-  remain=$(_ops_field "$blob" RemainAfterExit || echo no)
-  if [ "$remain" = yes ]; then
-    _ops_field "$blob" ActiveEnterTimestampMonotonic || echo 0
-  else
-    _ops_field "$blob" InactiveEnterTimestampMonotonic || echo 0
-  fi
+  active=$(_ops_field "$blob" ActiveEnterTimestampMonotonic || echo 0)
+  inactive=$(_ops_field "$blob" InactiveEnterTimestampMonotonic || echo 0)
+  printf '%s:%s\n' "${active:-0}" "${inactive:-0}"
 }
 
 # wait_for_oneshot waits for a oneshot unit to finish and reports its
@@ -190,6 +191,15 @@ oneshot_baseline() { # oneshot_baseline <unit>
 #      not advance past the baseline — a stale result, a run that never
 #      started (a failed Condition), or a reboot mid-wait
 #   4  usage or precondition error (no unit, not loaded, no systemctl)
+#
+# Which stamp proves a terminal state is NEW depends on the state
+# reached, not on RemainAfterExit: ActiveEnterTimestampMonotonic only
+# advances on entry to `active`, so a RemainAfterExit=yes unit that
+# FAILS (activating → failed, never active) never moves it.
+# InactiveEnterTimestampMonotonic advances on entry to `inactive` OR
+# `failed` regardless of RemainAfterExit, so `failed` is always checked
+# against it — otherwise a failed RemainAfterExit=yes run burns the
+# whole timeout and is reported "refused" instead of "failed".
 wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
   local unit=${1:-}
   local timeout=${2:-$OPS_VERDICT_TIMEOUT}
@@ -219,19 +229,30 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
   fi
   remain=$(_ops_field "$blob" RemainAfterExit || echo no)
 
-  local token=InactiveEnterTimestampMonotonic
-  local -a terminal=(inactive failed)
-  if [ "$remain" = yes ]; then
-    token=ActiveEnterTimestampMonotonic
-    terminal=(active failed)
-  fi
+  local success_state=inactive
+  if [ "$remain" = yes ]; then success_state=active; fi
+  local -a terminal=("$success_state" failed)
 
   if [ -z "$baseline" ]; then
     baseline=$(oneshot_baseline "$unit") || return 4
   fi
   case $baseline in
+    *:* ) ;;
+    *)
+      echo "wait_for_oneshot: $unit — baseline '$baseline' is not an <active>:<inactive> stamp pair" >&2
+      return 4
+      ;;
+  esac
+  local baseline_active=${baseline%%:*} baseline_inactive=${baseline#*:}
+  case $baseline_active in
     '' | *[!0-9]*)
-      echo "wait_for_oneshot: $unit — baseline '$baseline' is not a monotonic microsecond count" >&2
+      echo "wait_for_oneshot: $unit — baseline active stamp '$baseline_active' is not a monotonic microsecond count" >&2
+      return 4
+      ;;
+  esac
+  case $baseline_inactive in
+    '' | *[!0-9]*)
+      echo "wait_for_oneshot: $unit — baseline inactive stamp '$baseline_inactive' is not a monotonic microsecond count" >&2
       return 4
       ;;
   esac
@@ -245,20 +266,30 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
   esac
   if [ "$poll" -lt 1 ]; then poll=1; fi
 
-  local waited=0 state='' stamp=0 done_state=''
+  local waited=0 state='' done_state='' token_name='' stamp=0 stamp_baseline=0
   while :; do
     blob=$(_ops_show "$unit" ActiveState SubState Result ExecMainStatus \
-      ConditionResult "$token")
+      ConditionResult InactiveEnterTimestampMonotonic ActiveEnterTimestampMonotonic)
     state=$(_ops_field "$blob" ActiveState || echo "")
-    stamp=$(_ops_field "$blob" "$token" || echo 0)
     # `case` rather than `[ … ] && …`: a trailing false test would end
     # the loop body non-zero and kill a caller running under `set -e`.
     done_state=''
     case " ${terminal[*]} " in
       *" $state "*) done_state=$state ;;
     esac
+    # The stamp that proves freshness follows the STATE reached, not
+    # RemainAfterExit: `failed` is always InactiveEnter (see header).
+    if [ "$done_state" = active ]; then
+      token_name=ActiveEnterTimestampMonotonic
+      stamp=$(_ops_field "$blob" ActiveEnterTimestampMonotonic || echo 0)
+      stamp_baseline=$baseline_active
+    else
+      token_name=InactiveEnterTimestampMonotonic
+      stamp=$(_ops_field "$blob" InactiveEnterTimestampMonotonic || echo 0)
+      stamp_baseline=$baseline_inactive
+    fi
     # Terminal AND the stamp moved: this run is ours to report.
-    if [ -n "$done_state" ] && [ "${stamp:-0}" -gt "$baseline" ]; then
+    if [ -n "$done_state" ] && [ "${stamp:-0}" -gt "$stamp_baseline" ]; then
       break
     fi
     if [ "$waited" -ge "$timeout" ]; then
@@ -266,7 +297,7 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
         # Idle, but the stamp never advanced. Reporting Result here is
         # exactly the defect: it would quote the previous run.
         echo "wait_for_oneshot: unit=$unit verdict=stale-result state=$state" \
-          "$token=$stamp baseline=$baseline condition=$(_ops_field "$blob" ConditionResult || echo '?')" >&2
+          "$token_name=$stamp baseline=$stamp_baseline condition=$(_ops_field "$blob" ConditionResult || echo '?')" >&2
         echo "wait_for_oneshot: $unit never completed a NEW run in ${timeout}s — refusing to report a result from a previous one" >&2
         return 3
       fi
@@ -286,7 +317,7 @@ wait_for_oneshot() { # wait_for_oneshot <unit> [timeout_s] [baseline]
     return 1
   fi
   echo "wait_for_oneshot: unit=$unit verdict=success state=$state result=$result" \
-    "exec_status=${status:-?} waited=${waited}s $token=$stamp"
+    "exec_status=${status:-?} waited=${waited}s $token_name=$stamp"
   return 0
 }
 

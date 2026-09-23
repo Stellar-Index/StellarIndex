@@ -63,7 +63,12 @@ t() { test "$@"; }
 #   steps   one line per systemctl invocation, TAB-separated:
 #             <ActiveState> <SubState> <token> <Result> <ExecMainStatus>
 #           The last line is sticky, so a unit that reaches a terminal
-#           state stays there however long a caller polls.
+#           state stays there however long a caller polls. `token` sets
+#           ActiveEnterTimestampMonotonic on an `active` line or
+#           InactiveEnterTimestampMonotonic on an `inactive`/`failed`
+#           line — whichever stamp real systemd would move — and is
+#           replayed from step 1 so each carries its last value through
+#           `activating`.
 #   cursor  index of the next step
 #
 # The stub answers `show` (KEY=VALUE for every property asked for) and
@@ -112,20 +117,29 @@ if [[ "$i" -lt "$n" ]]; then echo $((i + 1)) > "$d/cursor"; fi
 IFS=$'\t' read -r active sub token result status <<<"$line"
 case $cmd in
   show)
-    remain=$(sed -n 's/^RemainAfterExit=//p' "$d/props")
+    # Replay steps 1..i to derive BOTH monotonic stamps the way real
+    # systemd does: ActiveEnterTimestampMonotonic only moves on entry to
+    # `active`, InactiveEnterTimestampMonotonic only moves on entry to
+    # `inactive` OR `failed` — each carries its last value otherwise
+    # (e.g. through `activating`). A single token column serves both:
+    # its meaning is decided by the STATE of the line it is on.
+    active_ts=0; inactive_ts=0
+    for ((j = 1; j <= i; j++)); do
+      jline=$(sed -n "${j}p" "$d/steps")
+      IFS=$'\t' read -r jactive _ jtoken _ _ <<<"$jline"
+      case $jactive in
+        active) active_ts=$jtoken ;;
+        inactive | failed) inactive_ts=$jtoken ;;
+      esac
+    done
     {
       cat "$d/props"
       echo "ActiveState=$active"
       echo "SubState=$sub"
       echo "Result=$result"
       echo "ExecMainStatus=$status"
-      if [[ "$remain" == yes ]]; then
-        echo "ActiveEnterTimestampMonotonic=$token"
-        echo "InactiveEnterTimestampMonotonic=0"
-      else
-        echo "InactiveEnterTimestampMonotonic=$token"
-        echo "ActiveEnterTimestampMonotonic=0"
-      fi
+      echo "ActiveEnterTimestampMonotonic=$active_ts"
+      echo "InactiveEnterTimestampMonotonic=$inactive_ts"
     }
     exit 0
     ;;
@@ -194,7 +208,7 @@ mkunit creators-rollup.service no \
 
 # Take the baseline the way an operator does, then let the unit start.
 base=$(oneshot_baseline creators-rollup.service)
-res "$(t "$base" = "$PREV"; echo $?)" \
+res "$(t "$base" = "0:$PREV"; echo $?)" \
   "oneshot_baseline reads the previous run's completion stamp" "got '$base'"
 
 iterations=0
@@ -240,7 +254,7 @@ echo "ops-verdict-test: a result that predates the baseline is refused"
 
 # The unit never starts: idle at the same token the baseline holds.
 mkunit sponsors-rollup.service no "inactive|dead|$PREV|success|0"
-out=$(wait_for_oneshot sponsors-rollup.service 1 "$PREV" 2>&1); rc=$?
+out=$(wait_for_oneshot sponsors-rollup.service 1 "0:$PREV" 2>&1); rc=$?
 res "$(t "$rc" -eq 3; echo $?)" \
   "an unadvanced completion stamp returns 3 (refused), not 0" "rc=$rc out=$out"
 case $out in
@@ -256,7 +270,7 @@ esac
 # on r1's apport-autoreport.service. Baseline and token are both 0, so
 # the stamp cannot advance and the helper refuses.
 mkunit apport-autoreport.service no "inactive|dead|0|success|0"
-out=$(wait_for_oneshot apport-autoreport.service 1 0 2>&1); rc=$?
+out=$(wait_for_oneshot apport-autoreport.service 1 "0:0" 2>&1); rc=$?
 res "$(t "$rc" -eq 3; echo $?)" \
   "a unit that never ran (Result=success by default) is refused" "rc=$rc out=$out"
 
@@ -266,7 +280,7 @@ echo "ops-verdict-test: the other verdicts each have their own code"
 mkunit failing-rollup.service no \
   "activating|start|$PREV|success|0" \
   "failed|failed|$NEW|exit-code|2"
-out=$(wait_for_oneshot failing-rollup.service 30 "$PREV" 2>&1); rc=$?
+out=$(wait_for_oneshot failing-rollup.service 30 "0:$PREV" 2>&1); rc=$?
 res "$(t "$rc" -eq 1; echo $?)" "a NEW failed run returns 1" "rc=$rc out=$out"
 case $out in
   *"result=exit-code"*"exec_status=2"*) ok "…carrying Result and ExecMainStatus" ;;
@@ -274,7 +288,7 @@ case $out in
 esac
 
 mkunit stuck-rollup.service no "activating|start|$PREV|success|0"
-out=$(wait_for_oneshot stuck-rollup.service 1 "$PREV" 2>&1); rc=$?
+out=$(wait_for_oneshot stuck-rollup.service 1 "0:$PREV" 2>&1); rc=$?
 res "$(t "$rc" -eq 2; echo $?)" "a unit still activating at the timeout returns 2" "rc=$rc out=$out"
 
 out=$(wait_for_oneshot no-such-unit.service 1 0 2>&1); rc=$?
@@ -283,7 +297,7 @@ res "$(t "$rc" -eq 4; echo $?)" "an unloaded unit returns 4, not a verdict" "rc=
 out=$(wait_for_oneshot 2>&1); rc=$?
 res "$(t "$rc" -eq 4; echo $?)" "no unit name returns 4" "rc=$rc"
 
-out=$(wait_for_oneshot creators-rollup.service notanumber "$PREV" 2>&1); rc=$?
+out=$(wait_for_oneshot creators-rollup.service notanumber "0:$PREV" 2>&1); rc=$?
 res "$(t "$rc" -eq 4; echo $?)" "a non-numeric timeout returns 4 rather than looping" "rc=$rc"
 
 # No baseline argument at all: one is taken on entry, so a unit that had
@@ -307,11 +321,30 @@ mkunit apparmor.service yes \
   "activating|start|0|success|0" \
   "active|exited|$NEW|success|0"
 base=$(oneshot_baseline apparmor.service)
-res "$(t "$base" = 0; echo $?)" \
+res "$(t "$base" = "0:0"; echo $?)" \
   "oneshot_baseline reads ActiveEnterTimestamp for RemainAfterExit=yes" "got '$base'"
 out=$(wait_for_oneshot apparmor.service 30 "$base" 2>&1); rc=$?
 res "$(t "$rc" -eq 0; echo $?)" \
   "…and the wait ends on the active state rather than timing out" "rc=$rc out=$out"
+
+# A RemainAfterExit=yes unit that FAILS goes activating → failed and
+# never enters `active` at all, so ActiveEnterTimestampMonotonic never
+# moves — GH #562 / RLT-053. The unit's failure is proven instead by
+# InactiveEnterTimestampMonotonic, which real systemd advances on entry
+# to `failed` regardless of RemainAfterExit.
+mkunit failing-apparmor.service yes \
+  "inactive|dead|0|success|0" \
+  "activating|start|0|success|0" \
+  "failed|failed|$NEW|exit-code|1"
+base=$(oneshot_baseline failing-apparmor.service)
+out=$(wait_for_oneshot failing-apparmor.service 1 "$base" 2>&1); rc=$?
+res "$(t "$rc" -eq 1; echo $?)" \
+  "a RemainAfterExit=yes unit that FAILS returns 1, not 3 after burning the timeout" \
+  "rc=$rc out=$out"
+case $out in
+  *"result=exit-code"*"exec_status=1"*) ok "…carrying Result and ExecMainStatus" ;;
+  *) bad "…carrying Result and ExecMainStatus — got '$out'" ;;
+esac
 
 # ─── 6. gate_passed ─────────────────────────────────────────────────
 echo "ops-verdict-test: gate_passed reads the sentinel, never an exit code"
