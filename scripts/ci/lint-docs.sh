@@ -99,7 +99,8 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
   # a route that was in the spec the whole time. Empty until a route is
   # actually kept undocumented on purpose.
   internal_routes_re='^$'
-  grep -rhoE 'Handle(Func)?\("[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
+  # handlePublic( and public.Handle(mux, mount credential-optional routes; tests register fixtures.
+  grep -rhoE --exclude='*_test.go' '(Handle(Func)?\(|handlePublic\(|\.Handle\(mux, )"[A-Z]+ /v1[^"]*"' internal/api/v1/ 2>/dev/null | \
     sed -E 's|.*"[A-Z]+ /v1||; s|"$||' | \
     sed -E 's|^$|/|' | \
     sort -u | while IFS= read -r route; do
@@ -131,8 +132,10 @@ if [ -d internal/api/v1 ] && [ -f openapi/stellar-index.v1.yaml ]; then
       found=0
       for method in GET POST PUT PATCH DELETE; do
         # CS-052: check both HandleFunc( and mux.Handle( registrations.
-        if grep -qrF "HandleFunc(\"${method} /v1${route}\"" internal/api/v1/ 2>/dev/null \
-          || grep -qrF "Handle(\"${method} /v1${route}\"" internal/api/v1/ 2>/dev/null; then
+        if grep -qrF --exclude='*_test.go' \
+          -e "HandleFunc(\"${method} /v1${route}\"" -e "Handle(\"${method} /v1${route}\"" \
+          -e "handlePublic(\"${method} /v1${route}\"" -e ".Handle(mux, \"${method} /v1${route}\"" \
+          internal/api/v1/ 2>/dev/null; then
           found=1
           break
         fi
