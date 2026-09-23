@@ -306,14 +306,19 @@ func decodeVaultFlow(e *events.Event, kind string) (VaultFlow, error) {
 //
 //	Map{ distributed_fees: Vec[ (token Address<contract>, amount i128) ] }
 //
-// The tuple is Soroban's Vec-encoded 2-tuple (scval.AsTupleN). An
-// EMPTY distributed_fees Vec is a real observed shape — a distribution
-// ran with nothing to distribute — and yields ZERO entries with NO
-// error, keeping live-decode and the completeness re-derive
-// count-consistent (both emit 0 outputs). Field pulled by name
-// (decode-by-name per contract-schema-evolution.md). A body that
-// doesn't match this proven schema is ErrMalformedPayload — fail loud,
-// never silent-drop.
+// The tuple is Soroban's Vec-encoded tuple. We read positions 0
+// (token) and 1 (amount) and tolerate any trailing elements beyond
+// those two — an additive per-entry field added by a future vault
+// upgrade must not error the whole event decode, mirroring the
+// decode-by-name tolerance for Map fields elsewhere in this file. A
+// Vec of FEWER than 2 elements is still ErrMalformedPayload: token
+// and amount are the documented minimum shape. An EMPTY
+// distributed_fees Vec is a real observed shape — a distribution ran
+// with nothing to distribute — and yields ZERO entries with NO error,
+// keeping live-decode and the completeness re-derive count-consistent
+// (both emit 0 outputs). Field pulled by name (decode-by-name per
+// contract-schema-evolution.md). A body that doesn't match this
+// proven schema is ErrMalformedPayload — fail loud, never silent-drop.
 func decodeDFees(e *events.Event) ([]DFee, error) {
 	closedAt, err := e.EventClosedAt()
 	if err != nil {
@@ -339,9 +344,12 @@ func decodeDFees(e *events.Event) ([]DFee, error) {
 
 	fees := make([]DFee, 0, len(elems))
 	for i, sv := range elems {
-		pair, err := scval.AsTupleN(sv, 2)
+		pair, err := scval.AsVec(sv)
 		if err != nil {
 			return nil, fmt.Errorf("%w: dfees.distributed_fees[%d]: %w", ErrMalformedPayload, i, err)
+		}
+		if len(pair) < 2 {
+			return nil, fmt.Errorf("%w: dfees.distributed_fees[%d]: want tuple (Vec) of at least 2, got Vec of length %d", ErrMalformedPayload, i, len(pair))
 		}
 		token, err := scval.AsAddressStrkey(pair[0])
 		if err != nil {
