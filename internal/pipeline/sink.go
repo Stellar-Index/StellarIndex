@@ -1428,11 +1428,13 @@ func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t can
 	if err := retryInfra(ctx, logger, "insert_trade", func(c context.Context) error {
 		return w.InsertTrade(c, t)
 	}); err != nil {
-		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, "trade").Inc()
 		if isCtxErr(err) {
 			// Shutdown / cycle-timeout mid-retry — the raw op is durable in
 			// the CH lake (ADR-0034), so this row is re-derivable; surface it
 			// loudly AND return it so a bounded-ctx caller gates the cursor.
+			// Its own kind: kind="trade" means a row is GONE, and the
+			// any-rate persist_drop tripwire keys on it.
+			obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, obs.InsertErrorKindTradeAbandoned).Inc()
 			logger.Error("insert trade abandoned on shutdown — recoverable from the CH lake (ADR-0034); re-derive",
 				"source", t.Source, "ledger", t.Ledger, "tx_hash", t.TxHash, "op_index", t.OpIndex, "err", err)
 			return err
@@ -1441,6 +1443,7 @@ func persistTrade(ctx context.Context, logger *slog.Logger, w tradeWriter, t can
 		// retry) and REPORT the drop. The typed error unwraps to a permanent
 		// fault, which the projector skips rather than holds, so a poison row
 		// still cannot loop it (RLT-132: nil here read as "landed").
+		obs.SourceInsertErrorsTotal.WithLabelValues(t.Source, obs.InsertErrorKindTradeDropped).Inc()
 		logger.Error("insert trade failed (permanent data fault — row skipped)",
 			"source", t.Source,
 			"ledger", t.Ledger,

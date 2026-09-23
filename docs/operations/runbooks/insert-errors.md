@@ -19,7 +19,7 @@ severity: P2
 
 ## Symptoms
 
-- `stellarindex_source_insert_errors_total{source=...,kind=...}` rises above 6/min sustained. `kind` is not just `trade|oracle`: the counter also carries `panic` (unhandled decode/persist panic, recovered in the sink), `dropped` (external retry-buffer overflow, ADR-0041), and the per-domain persist kinds — of which the money-flow set `soroswap_router_swap` / `defindex_flow_strategy` / `defindex_flow_vault` has its own SENSITIVE any-nonzero tripwire (`stellarindex_ingestion_persist_drop`, `increase(...[15m]) > 0`) that shares this runbook_url, because a low-rate silent drop sits below the 0.1/s threshold here.
+- `stellarindex_source_insert_errors_total{source=...,kind=...}` rises above 6/min sustained. `kind` is not just `trade|oracle`: `trade` is a permanently dropped trade and `trade_abandoned` a retry abandoned on shutdown / cycle timeout (cursor held, re-derivable — not a loss); the counter also carries `panic` (unhandled decode/persist panic, recovered in the sink), `dropped` (external retry-buffer overflow, ADR-0041), and the per-domain persist kinds — of which the money-flow set `trade` / `soroswap_router_swap` / `defindex_flow_strategy` / `defindex_flow_vault` has its own SENSITIVE any-nonzero tripwire (`stellarindex_ingestion_persist_drop`, `increase(...[15m]) > 0`) that shares this runbook_url, because a low-rate silent drop sits below the 0.1/s threshold here.
 - `stellarindex_source_events_total` may still rise — the consumer is pulling events, it's the writer that's failing.
 - Dashboard view: *Ingestion → Insert errors* panel non-zero for > 5 min.
 - The offending source's `stellarindex_source_last_event_unix` may freeze (if persistence blocks until retry).

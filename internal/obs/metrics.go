@@ -1891,17 +1891,29 @@ var MonthlyQuotaFailClosedTotal = prometheus.NewCounter(
 // failures (DB connection lost, constraint violation, etc.).
 // Separate from decode errors because operators respond differently:
 // decode errors mean the source schema drifted; insert errors mean
-// the storage layer is struggling. kind="trade"|"oracle"|"panic"|
-// "unhandled" lets dashboards split trade vs oracle-update writes,
-// flag recovered sink panics distinctly from storage-layer rejects,
-// and surface half-wired sources whose event type the sink's
-// type-switch doesn't recognise.
+// the storage layer is struggling. kind="trade"|"trade_abandoned"|
+// "oracle"|"panic"|"unhandled" lets dashboards split trade vs
+// oracle-update writes, flag recovered sink panics distinctly from
+// storage-layer rejects, and surface half-wired sources whose event
+// type the sink's type-switch doesn't recognise.
 var SourceInsertErrorsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_source_insert_errors_total",
-		Help: "Events that failed to persist to the store, per source + kind (trade/oracle/panic).",
+		Help: "Events that failed to persist to the store, per source + kind (trade/trade_abandoned/oracle/panic).",
 	},
 	[]string{"source", "kind"},
+)
+
+// SourceInsertErrorsTotal kinds for trades. The any-rate
+// stellarindex_ingestion_persist_drop tripwire keys on the dropped kind,
+// so an abandon (re-derivable, cursor held) must never share it.
+const (
+	// InsertErrorKindTradeDropped: a trade permanently dropped on a data
+	// fault — the row is not in the served tier.
+	InsertErrorKindTradeDropped = "trade"
+	// InsertErrorKindTradeAbandoned: a trade whose infra-fault retry was
+	// abandoned on ctx cancellation; re-derivable from the CH lake.
+	InsertErrorKindTradeAbandoned = "trade_abandoned"
 )
 
 // CursorLastLedger — per-source gauge, the last-committed cursor

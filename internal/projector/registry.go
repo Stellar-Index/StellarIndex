@@ -158,6 +158,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:        sushiswap_v3.SourceName,
 			Decoder:     sushiDec,
 			ContractIDs: sushiDec.GatedContractSet(),
+			Genesis:     sushiswap_v3.FactoryGenesisLedger,
 		}, true, nil
 	case upshift.SourceName:
 		// ADR-0035/0040: contract-gated (curated set — the vaults have no
@@ -173,6 +174,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:        upshift.SourceName,
 			Decoder:     upshiftDec,
 			ContractIDs: upshiftDec.GatedContractSet(),
+			Genesis:     upshift.GenesisLedger,
 		}, true, nil
 	case comet.SourceName:
 		// ADR-0035/0040: contract-gated (curated set — comet has no
@@ -200,6 +202,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:              blend.SourceName,
 			Decoder:           blend.NewDecoder(gated[blend.SourceName]...),
 			ExcludeTopic0Syms: firehoseExcludeSyms,
+			Genesis:           blend.FactoryGenesisLedger,
 		}, true, nil
 	case blend_backstop.SourceName:
 		return Source{
@@ -241,6 +244,7 @@ func buildSource(name string, oracle config.OracleConfig, watchedSEP41 []string,
 			Name:       sorocredit.SourceName,
 			Decoder:    sorocredit.NewDecoder(),
 			Topic0Syms: sorocredit.EventSymbols(),
+			Genesis:    sorocredit.GenesisLedger,
 		}, true, nil
 	case defindex.SourceName:
 		return Source{

@@ -143,6 +143,27 @@ against.
   `asset_id` and used as the Hub topic key; it is now counted as
   `malformed` and dropped.
 
+- **alerting — a permanently dropped trade tickets at any rate (GH-612):**
+  `stellarindex_ingestion_persist_drop` now includes
+  `source_insert_errors_total{kind="trade"}`, so a low-rate trade drop on
+  sdex or an external source (the dispatcher path, which never reaches the
+  projector's `sink_permanent` alert) is no longer silent below the coarse
+  0.1/s `insert_errors` line. A trade retry abandoned on shutdown or the
+  projector's cycle timeout — cursor held, row re-derivable — now counts
+  as `kind="trade_abandoned"` instead of sharing `trade`, so the label
+  means "row gone" and the tripwire does not fire on an abandon.
+
+- **projector — a newly enabled source starts at its genesis, not ledger 0
+  (GH-567):** `projector.Source` gains `Genesis`, set for `upshift`,
+  `sushiswap_v3`, `sorocredit` and `blend` from each package's verified
+  first-event ledger. A source with no cursor row starts there (raised to
+  the lake floor in CH mode) instead of crawling ~85 h of ledgers that
+  cannot hold its events. `TestProjectedSourcesDeclareGenesis` makes every
+  new projected source either declare one or be listed as a lake-floor
+  crawler. `projector-replay` with a `-from` the cursor has not reached
+  now says "nothing to rewind" and how far the cursor has to go, instead
+  of "already at ledger N".
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

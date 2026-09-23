@@ -1083,9 +1083,16 @@ noise on one event.
 
 ### `stellarindex_source_insert_errors_total`
 
-Counter, labels `source`, `kind` (`trade` / `oracle` / `panic` /
-`unhandled` / `dropped` / `soroswap_router_swap` /
+Counter, labels `source`, `kind` (`trade` / `trade_abandoned` /
+`oracle` / `panic` / `unhandled` / `dropped` / `soroswap_router_swap` /
 `defindex_flow_strategy` / `defindex_flow_vault`).
+
+`trade` is a trade permanently dropped on a data fault — the row is not
+in the served tier — and is alerted at any rate by
+`stellarindex_ingestion_persist_drop`. `trade_abandoned` is a trade
+whose infra-fault retry was abandoned on shutdown or the projector's
+cycle timeout: the cursor is held and the row re-derives from the CH
+lake, so it is not a drop.
 
 The `soroswap_router_swap` / `defindex_flow_*` kinds were added
 audit-2026-07-16 (C4-3): those persist paths previously logged a Warn

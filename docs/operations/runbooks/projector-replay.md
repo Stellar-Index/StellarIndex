@@ -103,7 +103,12 @@ the authority. The `sep41_*` and `blend_*` sources are **underscored**
 (`sep41_transfers`, `sep41_supply`, `blend_backstop`); the hyphenated
 per-table target names `find-data-gaps` prints are not valid here. An
 unknown `-source` fails with a non-zero exit rather than printing
-"no action".
+"no action". So does a source that has never run: it has no cursor row
+until its first cycle, which starts at the source's declared
+`Source.Genesis` (or the lake floor), so there is nothing to rewind yet.
+A `-from` at or above the current cursor exits 0 with "nothing to
+rewind" and the number of ledgers still ahead of the cursor — the
+forward pass has not reached that range yet; it has not been projected.
 
 ## After the rewind: the command waits, then refreshes the price CAGGs
 

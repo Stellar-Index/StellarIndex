@@ -216,6 +216,15 @@ type Source struct {
 	// lookups. Today only redstone (exact accepted-feed subset attribution
 	// for freshness-filtered write_prices batches).
 	NeedsStateWriteKeys bool
+
+	// Genesis is the first ledger at which this source can have an event
+	// (its protocol's verified first-event / factory-genesis ledger), or 0
+	// when none is declared. A source with NO cursor row starts here rather
+	// than at ledger 0 / the lake floor, so a newly enabled source does not
+	// crawl tens of millions of ledgers that cannot hold its events at the
+	// BatchLimit-per-cycle ceiling. It must never be ABOVE the true first
+	// event — that would skip it — so only exact or rounded-down values.
+	Genesis uint32
 }
 
 // Registry is the set of sources the projector handles. Built
@@ -1467,16 +1476,13 @@ func (p *Projector) seedFromLedger(ctx context.Context, src Source, lake *source
 // the one-ledger scan [tip, tip] then writes the cursor. settled is false
 // while nothing is durable at or above the floor; the caller seeks again.
 //
-// In CH feed-switch mode the floor is freshSourceFloor — the lake's own
-// first present ledger, read on the source's own connection — not a
-// hardcoded constant, so the seek and cycleOneSource's fresh-source start
-// can never disagree about where the lake begins.
+// The floor is freshSourceStart: the source's Genesis, raised in CH
+// feed-switch mode to the lake's own first present ledger, so the seek
+// never scans ledgers before the source existed or the lake begins.
 func (p *Projector) findSeed(ctx context.Context, src Source, lake *sourceLake) (seed uint32, settled bool, err error) {
-	floor := uint32(0)
-	if p.chAddr != "" {
-		if floor, err = freshSourceFloor(ctx, lake); err != nil {
-			return 0, false, err
-		}
+	floor, err := p.freshSourceStart(ctx, src, lake)
+	if err != nil {
+		return 0, false, err
 	}
 	tip, _, err := p.resolveTip(ctx, lake, floor)
 	if err != nil {
@@ -1545,8 +1551,22 @@ func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint3
 	return scanTip, durableTip, nil
 }
 
-// freshSourceFloor is the first ledger a source with no cursor row scans in
-// CH feed-switch mode: the lake's first present ledger, and never 0 even on
+// freshSourceStart is the first ledger a source with no cursor row scans:
+// its declared [Source.Genesis], raised in CH feed-switch mode to the lake's
+// first ledger (as ch-cap67-movements' resolveStart does) — a floor below the
+// lake's start is a boundary hole the watermark would stall on forever.
+func (p *Projector) freshSourceStart(ctx context.Context, src Source, lake *sourceLake) (uint32, error) {
+	if p.chAddr == "" {
+		return src.Genesis, nil
+	}
+	floor, err := freshSourceFloor(ctx, lake)
+	if err != nil {
+		return 0, err
+	}
+	return max(src.Genesis, floor), nil
+}
+
+// freshSourceFloor is the lake's first present ledger, and never 0 even on
 // an empty lake.
 func freshSourceFloor(ctx context.Context, lake *sourceLake) (uint32, error) {
 	r, err := lake.reader(ctx)
