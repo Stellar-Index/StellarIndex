@@ -1922,15 +1922,9 @@ func (s *Server) handleChartMarketCap(
 
 	wire := make([]HistoryPointWire, 0, len(points))
 	for _, p := range points {
-		if p.InverseUSD <= 0 {
-			continue
-		}
-		// market_cap = supply × rate, exact big.Rat. The rate is a
-		// float64 from the FX feed; convert via its shortest round-trip
-		// decimal so the multiplication itself introduces no float
-		// rounding (only the source rate's own precision, which the
-		// crypto path's usdMarketValue shares).
-		rate, ok := new(big.Rat).SetString(strconv.FormatFloat(p.InverseUSD, 'f', -1, 64))
+		// market_cap = supply × rate, exact big.Rat over the stored
+		// NUMERIC rate text — no float anywhere in the product.
+		rate, ok := p.inverseUSDRat()
 		if !ok {
 			continue
 		}

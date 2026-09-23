@@ -5,7 +5,6 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -38,7 +37,7 @@ type GlobalAssetView struct {
 	// ─── Headline price (from ComputeGlobalPrice's three-tier
 	// fallback chain, R-018 Phase 1.3a) ─────────────────────────────
 	//
-	// All four fields are null/empty together when no tier produced
+	// All four fields are null/empty together when nothing produced
 	// a price (typically a Stellar-only token like AQUA where neither
 	// CEX nor reference-aggregator coverage exists — consumers
 	// should drill into the canonical /v1/assets/{asset_id} surface
@@ -50,7 +49,9 @@ type GlobalAssetView struct {
 	// here. PriceAsOf carries the tier's own observation time and is
 	// the field to read for freshness; for the fiat class it is an
 	// fx_quotes point from the DAILY ECB reference series, so a fiat
-	// price_usd can legitimately be up to ~24 h old. The package doc's
+	// price_usd can legitimately be days old over a weekend. It is null
+	// only under price_authority onchain_listing, whose listing row
+	// carries no observation time. The package doc's
 	// "Current-price surfaces and their windows" section maps every
 	// price surface.
 	PriceUSD       *string                  `json:"price_usd,omitempty"`
@@ -114,13 +115,11 @@ func (s *Server) buildGlobalAssetView(ctx context.Context, vc *currency.Verified
 		view.SupplyDecimals = vc.SupplyDecimals
 	}
 
-	// Fiat goes through PriceReader (s.prices) — different reader
-	// from crypto/stablecoin's ComputeGlobalPrice because fiat:fiat
-	// FX rates live in the aggregator's Redis triangulated cache,
-	// not in the prices_1m CAGG. See fiatMarketCapUSD's docstring
-	// for the full rationale. Handled BEFORE the s.globalPrice nil
-	// guard so a deployment with only PriceReader wired still
-	// populates fiat fully.
+	// Fiat is priced from FX reference rates (fx_quotes, then
+	// PriceReader) via [Server.fiatUSDPriceFor], not ComputeGlobalPrice:
+	// fiat:fiat rates are not in the prices_1m CAGG. Handled BEFORE the
+	// s.globalPrice nil guard so a deployment with only those readers
+	// wired still populates fiat fully.
 	if vc.Class == currency.ClassFiat {
 		return s.populateFiatView(ctx, view, vc)
 	}
@@ -194,13 +193,11 @@ func (s *Server) populateGlobalCryptoPrice(ctx context.Context, view GlobalAsset
 // only set it when the per-asset reader returns a non-nil PriceUSD
 // for the twin asset_id.
 //
-// Disclosure: authority is stamped AuthorityVWAPNative (the price IS
-// the Stellar-network on-chain VWAP), price_sources carries a
-// "stellar_onchain" marker so consumers can tell the headline came
-// from the network rather than the global CEX tier, and price_as_of
-// is left nil — the listing query's row carries no per-read
-// timestamp; the value tracks the recent (≤24h) prices_1m working
-// set. No-op when the price is already set, no per-asset reader is
+// Disclosure: authority is AuthorityOnChainListing, not vwap_native —
+// the listing price clears no trade-count floor and no freshness
+// ceiling. price_sources carries a "stellar_onchain" marker, and
+// price_as_of is left nil because the listing row carries no
+// observation time. No-op when the price is already set, no per-asset reader is
 // wired, or the catalogue entry has no Stellar issuance.
 func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAssetView, vc *currency.VerifiedCurrency) GlobalAssetView {
 	if view.PriceUSD != nil || s.assetsReader == nil {
@@ -215,7 +212,7 @@ func (s *Server) fillGlobalPriceFromOnChain(ctx context.Context, view GlobalAsse
 		return view
 	}
 	view.PriceUSD = price
-	view.PriceAuthority = aggregate.AuthorityVWAPNative
+	view.PriceAuthority = aggregate.AuthorityOnChainListing
 	view.PriceSources = []string{"stellar_onchain"}
 	return view
 }
@@ -230,7 +227,7 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 		identity := "1.00000000000000"
 		asOf := time.Now().UTC()
 		view.PriceUSD = &identity
-		view.PriceAuthority = aggregate.AuthorityVWAPNative
+		view.PriceAuthority = aggregate.AuthorityIdentity
 		view.PriceSources = []string{"identity"}
 		view.PriceAsOf = wireTimePtr(&asOf)
 		view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, identity)
@@ -244,7 +241,7 @@ func (s *Server) populateFiatView(ctx context.Context, view GlobalAssetView, vc 
 		return view
 	}
 	view.PriceUSD = &price
-	view.PriceAuthority = aggregate.AuthorityVWAPNative
+	view.PriceAuthority = aggregate.AuthorityReferenceRate
 	view.PriceSources = sources
 	view.PriceAsOf = wireTimePtr(&obs)
 	view.MarketCapUSD = computeFiatMarketCap(vc.CirculatingSupply, price)
@@ -338,13 +335,13 @@ func (s *Server) fiatUSDPriceFor(ctx context.Context, ticker string) (price stri
 		now := time.Now().UTC()
 		points, err := s.fxHistory.ListFXHistory(ctx, ticker, now.AddDate(0, 0, -7), now)
 		if err == nil && len(points) > 0 {
-			// oldest→newest; take the most recent usable point.
+			// oldest→newest; take the most recent usable point. The
+			// served price is the stored NUMERIC text, never the float.
 			for i := len(points) - 1; i >= 0; i-- {
-				if points[i].InverseUSD > 0 {
+				if _, usable := points[i].inverseUSDRat(); usable {
 					// FXQuotePoint carries no source label; fx_quotes is
 					// Frankfurter/ECB-backed by construction.
-					return strconv.FormatFloat(points[i].InverseUSD, 'f', -1, 64),
-						points[i].Bucket, []string{"fx_quotes"}, true
+					return points[i].InverseUSDText, points[i].Bucket, []string{"fx_quotes"}, true
 				}
 			}
 		}

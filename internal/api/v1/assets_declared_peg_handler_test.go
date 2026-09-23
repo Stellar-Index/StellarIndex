@@ -36,7 +36,7 @@ func pegHandlerTestServer(t *testing.T, allow bool, row timescale.AssetRow) *v1.
 		AssetsReader: &stubAssetsReaderExt{row: row},
 		Substance:    &stubSubstanceGate{allow: allow},
 		FXHistory: &stubFXHistoryReader{points: []v1.FXQuotePoint{
-			{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655},
+			{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1.5267, InverseUSD: 0.655, InverseUSDText: "0.655"},
 		}},
 		FiatPeggedClassics: map[string]canonical.Asset{pegHandlerTestAUDD: aud},
 	})

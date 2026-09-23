@@ -296,7 +296,7 @@ func TestAssetsVerified_FiatMarketCap_FXHistoryOnlyNoPriceReader(t *testing.T) {
 	cat := newTestCatalogue(t)
 	// USD-base rate for CNY: 1 USD = 7.14286 CNY → InverseUSD ~= 0.14.
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: time.Now().UTC(), RateUSD: 1 / 0.14, InverseUSD: 0.14},
+		{Bucket: time.Now().UTC(), RateUSD: 1 / 0.14, InverseUSD: 0.14, InverseUSDText: "0.14"},
 	}}
 
 	srv := v1.New(v1.Options{
@@ -413,7 +413,7 @@ func TestAssetGet_NonUSDFiat_ServesPriceFromFXQuotes(t *testing.T) {
 	// 1 EUR = 1.17 USD.
 	const inverse = 1.17
 	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
-		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1 / inverse, InverseUSD: inverse},
+		{Bucket: time.Now().UTC().Add(-24 * time.Hour), RateUSD: 1 / inverse, InverseUSD: inverse, InverseUSDText: "1.17"},
 	}}
 	srv := v1.New(v1.Options{
 		VerifiedCurrencies: newTestCatalogue(t),

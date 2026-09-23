@@ -619,3 +619,53 @@ func TestComputeGlobalPrice_VWAPTierReachesSACOnlyLast(t *testing.T) {
 		}
 	}
 }
+
+// A VWAP that clears the trade floor but is days old must not beat a
+// minute-old aggregator reading: tier order ranks trust between current
+// prices, it does not make a stale tier-1 price current.
+func TestComputeGlobalPrice_StaleVWAPYieldsToFreshAggregator(t *testing.T) {
+	reader := &stubGlobalReader{}
+	reader.vwap.price = "0.50000000000000"
+	reader.vwap.asOf = time.Now().UTC().Add(-9 * 24 * time.Hour)
+	reader.vwap.tradeCount = 40
+	reader.vwap.ok = true
+	price, _ := new(big.Int).SetString("100000000", 10) // 1.00 @ 8dp
+	reader.agg.rows = []canonical.OracleUpdate{{
+		Source: "coingecko", Timestamp: time.Now().UTC().Add(-time.Minute),
+		Price: canonical.NewAmount(price), Decimals: 8,
+	}}
+
+	base, quote := usdcUSDPair(t)
+	opts := DefaultGlobalPriceOptions()
+	opts.AggregatorSources = []string{"coingecko"}
+	res, err := ComputeGlobalPrice(context.Background(), base, quote, reader, opts)
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice: %v", err)
+	}
+	if res.Authority != AuthorityAggregatorAvg || res.Price != "1.00000000000000" {
+		t.Errorf("got %s %q, want aggregator_avg 1.00000000000000 over the 9-day-old VWAP", res.Authority, res.Price)
+	}
+}
+
+// With no fresher tier the stale VWAP is still the best price there is:
+// it is served with its own observation time rather than dropped.
+func TestComputeGlobalPrice_StaleVWAPIsLastResort(t *testing.T) {
+	reader := &stubGlobalReader{}
+	asOf := time.Now().UTC().Add(-9 * 24 * time.Hour)
+	reader.vwap.price = "0.50000000000000"
+	reader.vwap.asOf = asOf
+	reader.vwap.tradeCount = 40
+	reader.vwap.ok = true
+
+	base, quote := usdcUSDPair(t)
+	res, err := ComputeGlobalPrice(context.Background(), base, quote, reader, DefaultGlobalPriceOptions())
+	if err != nil {
+		t.Fatalf("ComputeGlobalPrice: %v", err)
+	}
+	if res.Authority != AuthorityVWAPNative || res.Price != "0.50000000000000" || !res.AsOf.Equal(asOf) {
+		t.Errorf("got %s %q as of %v, want the stale VWAP as of %v", res.Authority, res.Price, res.AsOf, asOf)
+	}
+	if reader.triCalls == 0 {
+		t.Error("the triangulated tier must be tried before a stale VWAP is served")
+	}
+}

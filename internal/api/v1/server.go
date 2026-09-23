@@ -1878,6 +1878,9 @@ func globalPriceOptsWithDefaults(o aggregate.GlobalPriceOptions) aggregate.Globa
 	if o.MaxAggregatorAge == 0 {
 		o.MaxAggregatorAge = defaults.MaxAggregatorAge
 	}
+	if o.MaxVWAPAge == 0 {
+		o.MaxVWAPAge = defaults.MaxVWAPAge
+	}
 	return o
 }
 
