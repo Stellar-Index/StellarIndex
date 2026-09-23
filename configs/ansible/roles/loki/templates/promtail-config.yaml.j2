@@ -38,5 +38,5 @@ scrape_configs:
         target_label: severity
       # Drop journal-internal noise (low signal:noise from these).
       - source_labels: ['__journal__systemd_unit']
-        regex: '^(systemd-tmpfiles-clean|systemd-logind|cron)\\.service$'
+        regex: '^(systemd-tmpfiles-clean|systemd-logind|cron)\.service$'
         action: drop
