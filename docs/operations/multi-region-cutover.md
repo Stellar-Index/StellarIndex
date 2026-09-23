@@ -1,7 +1,7 @@
 ---
 title: Multi-region cutover runbook (L4.14 → L4.17 + L5.8)
 last_verified: 2026-05-03
-status: operator runbook
+status: superseded by ADR-0050 / [multi-region-ha.md](../architecture/multi-region-ha.md) (2026-08-21) — see the banner below; do not run
 ---
 
 # Multi-region cutover runbook
@@ -62,7 +62,14 @@ shape per region.
 
 ### Deploy
 
+> This step is dead: `configs/ansible/site.yml` does not exist (see the
+> SUPERSEDED banner above). Do not run the command below. The current
+> bring-up sequence lives in
+> [`multi-region-ha.md`](../architecture/multi-region-ha.md)'s Phase 2/3.
+
 ```sh
+# DEAD — configs/ansible/site.yml does not exist; kept only as a record
+# of what Model A's bringup used to invoke.
 ansible-playbook -i configs/ansible/inventory/r2.yml \
   configs/ansible/site.yml
 ```
@@ -107,7 +114,14 @@ L4.14 ✅ when these all pass + the row in
 
 ### Deploy
 
+> This step is dead: `configs/ansible/site.yml` does not exist (see the
+> SUPERSEDED banner above). Do not run the command below. The current
+> bring-up sequence lives in
+> [`multi-region-ha.md`](../architecture/multi-region-ha.md)'s Phase 2/3.
+
 ```sh
+# DEAD — configs/ansible/site.yml does not exist; kept only as a record
+# of what Model A's bringup used to invoke.
 ansible-playbook -i configs/ansible/inventory/r3.yml \
   configs/ansible/site.yml
 ```
