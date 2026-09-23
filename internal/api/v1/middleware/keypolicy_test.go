@@ -158,6 +158,17 @@ func TestKeyPolicy_Permissions(t *testing.T) {
 			wantStatus: http.StatusForbidden,
 		},
 		{
+			// A prefix without a trailing slash must still respect a
+			// path-segment boundary: "/v1/price" must not match a sibling
+			// route like "/v1/pricealerts" that merely shares the string
+			// prefix.
+			name:       "prefix does not match unrelated sibling route",
+			path:       "/v1/pricealerts",
+			method:     http.MethodGet,
+			allow:      []auth.SubjectPermissionEntry{{EndpointPrefix: "/v1/price"}},
+			wantStatus: http.StatusForbidden,
+		},
+		{
 			name:       "deny overrides allow-all",
 			path:       "/v1/admin/something",
 			method:     http.MethodGet,

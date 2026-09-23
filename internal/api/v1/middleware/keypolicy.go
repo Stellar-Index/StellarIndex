@@ -226,11 +226,26 @@ func permissionMatches(r *http.Request, entries []auth.SubjectPermissionEntry) b
 		if e.Endpoint != "" && e.Endpoint == exact {
 			return true
 		}
-		if e.EndpointPrefix != "" && strings.HasPrefix(r.URL.Path, e.EndpointPrefix) {
+		if e.EndpointPrefix != "" && prefixMatchesPathSegment(r.URL.Path, e.EndpointPrefix) {
 			return true
 		}
 	}
 	return false
+}
+
+// prefixMatchesPathSegment reports whether path is prefix or lies under it
+// as a path segment, e.g. prefix "/v1/admin" matches "/v1/admin/keys" but
+// not "/v1/administer" — a bare strings.HasPrefix would let a permission
+// entry scoped to one route leak onto an unrelated sibling route that
+// merely shares a string prefix.
+func prefixMatchesPathSegment(path, prefix string) bool {
+	if !strings.HasPrefix(path, prefix) {
+		return false
+	}
+	if strings.HasSuffix(prefix, "/") {
+		return true
+	}
+	return len(path) == len(prefix) || path[len(prefix)] == '/'
 }
 
 // writeKeyPolicyDenied emits an RFC 9457 problem+json 403 with a
