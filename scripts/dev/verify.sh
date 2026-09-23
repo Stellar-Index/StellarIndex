@@ -347,6 +347,7 @@ if [ -z "${BASE_SHA:-}" ] && git rev-parse -q --verify origin/main >/dev/null 2>
 fi
 echo "=== Baseline-growth tripwire ===" && ./scripts/ci/lint-baseline-growth.sh
 echo "=== Restore-drill contract + abort-path tests ===" && bash scripts/ops/restore-drill-test.sh && bash scripts/ops/restore-drill-run-test.sh
+echo "=== config-assertions live-guard tests ===" && bash scripts/ops/config-assertions_test.sh
 # BASE_SHA-gated like lint-baseline-growth.sh: self-skips locally, real in CI.
 echo "=== Replay-plan tripwire ===" && ./scripts/ci/lint-replay-plan.sh
 echo "=== External channels ===" && ./scripts/ci/lint-external-channels.sh

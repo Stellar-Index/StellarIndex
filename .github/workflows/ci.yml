@@ -823,6 +823,11 @@ jobs:
         # A gate only the local pre-push hook runs is a gate that rots
         # unobserved — main sat red on `make verify` until wave D.
         run: bash scripts/ops/ch-ops-user-test.sh
+      - name: config-assertions live-guard tests
+        # Drives the real config-assertions.sh with a fake psql/curl: the
+        # Postgres worker headroom pair and the ClickHouse drop-guard
+        # ceiling, including its lockstep with the ansible role default.
+        run: bash scripts/ops/config-assertions_test.sh
       - name: Restore trusted gate scripts from the base ref
         # CID-03 (audit-2026-07-23): every step below runs from the
         # PR-head checkout, including the SCRIPT FILES themselves — so
