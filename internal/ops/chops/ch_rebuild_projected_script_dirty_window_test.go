@@ -246,19 +246,10 @@ func TestChRebuildProjectedScript_DirtyMarkerThatFailsMidRunStopsBeforeTheDelete
 	}
 }
 
-// TestChRebuildProjectedScript_FilesTheEmptiedWindowItself is the leg of
-// F075 this unit could NOT land: the script prints the record command but
-// does not run it, so the obligation is only filed if an operator reads the
-// log. Wiring the call adds one `$OPS ... -record-dirty-window` invocation
-// per emptied window, which breaks two exact call-trace assertions in files
-// outside this unit's scope fence —
-// internal/ops/chops/ch_rebuild_projected_script_scope_test.go:251,268
-// (sequence() renders the new call as `write@…`) — and wants a `record@`
-// case in scriptRun.sequence(), in
-// internal/ops/chops/ch_rebuild_projected_script_test.go. Unskip together
-// with that change; the assertions below are what the wiring must satisfy.
+// TestChRebuildProjectedScript_FilesTheEmptiedWindowItself: F075's filing
+// leg — the script RUNS the record command, it does not only print it.
 func TestChRebuildProjectedScript_FilesTheEmptiedWindowItself(t *testing.T) {
-	t.Skip("NEEDS-COORDINATION: wiring the call requires ch_rebuild_projected_script{,_scope}_test.go, outside this unit's fence")
+	t.Parallel()
 	run := runProjectedScript(t, "", map[string]string{
 		"SRC":                  "soroswap,cctp",
 		"STUB_FAIL_WRITE_FROM": "61000000",

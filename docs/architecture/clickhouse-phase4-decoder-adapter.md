@@ -204,13 +204,13 @@ Four rules bound the DELETE, and the script's header is their source of truth:
    sources that were deleted, whatever `SRC/FROM/TO` it is given.
 4. **Never let an emptied window be certified complete.** `$DIRTY` is local and
    the ADR-0033 completeness verdict cannot see it, so every state that leaves a
-   window emptied prints a `TELL THE VERDICT` line with the command that files
-   the range as a projection dirty window:
-   `ch-rebuild -from LO -to HI -sources <deleted> -record-dirty-window`.
-   compute-completeness then re-reconciles that range instead of carrying its
-   prior clean claim over it, and clears the obligation only with the verdict
-   that discharges it. **Filing is currently the operator's step** — the script
-   prints the command, it does not run it. A *successful* window files nothing,
+   window emptied files the range as a projection dirty window by running
+   `ch-rebuild -from LO -to HI -sources <deleted> -record-dirty-window`, and
+   prints that command after a `TELL THE VERDICT` line so an operator can re-run
+   it when the filing itself fails (`COULD NOT FILE`). compute-completeness then
+   re-reconciles that range instead of carrying its prior clean claim over it,
+   and clears the obligation only with the verdict that discharges it. A
+   *successful* window files nothing,
    on purpose (#408): one obligation per routine window would point the next
    nightly at ~12.9 M ledgers × 8 un-prefiltered sources and time every source's
    verdict out, which is worse than the stale claim it would fix.
