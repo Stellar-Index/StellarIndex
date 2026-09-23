@@ -70,11 +70,7 @@ export function HBarList({
   if (max <= 0) return null;
 
   return (
-    <ul
-      role="img"
-      aria-label={ariaLabel}
-      className={cn('space-y-1.5', className)}
-    >
+    <ul aria-label={ariaLabel} className={cn('space-y-1.5', className)}>
       {finite.map((it) => (
         <li
           key={it.label}
@@ -183,7 +179,7 @@ export function PairedBars({
           {bLabel}
         </li>
       </ul>
-      <ul role="img" aria-label={ariaLabel} className="space-y-2.5">
+      <ul aria-label={ariaLabel} className="space-y-2.5">
         {finite.map((r) => (
           <li
             key={r.label}

@@ -19,9 +19,12 @@ describe('HBarList', () => {
         ]}
       />,
     );
-    expect(
-      screen.getByRole('img', { name: 'ops by type' }),
-    ).toBeInTheDocument();
+    // Each row must be exposed as its own accessible list item — role="img"
+    // on the list would collapse every row's label/value/annotation into
+    // the single aria-label string, per T280.
+    expect(screen.queryByRole('img', { name: 'ops by type' })).toBeNull();
+    expect(screen.getByRole('list', { name: 'ops by type' })).toBeInTheDocument();
+    expect(screen.getAllByRole('listitem')).toHaveLength(2);
     expect(screen.getByText('payment')).toBeInTheDocument();
     expect(screen.getByText('120')).toBeInTheDocument();
     expect(screen.getByText('(classic)')).toBeInTheDocument();
@@ -53,6 +56,14 @@ describe('PairedBars', () => {
         ]}
       />,
     );
+    // The per-row scale-bar list must stay a real list, not a single opaque
+    // image, so each row's series values are individually reachable.
+    expect(
+      screen.queryByRole('img', { name: 'supplied vs borrowed' }),
+    ).toBeNull();
+    expect(
+      screen.getByRole('list', { name: 'supplied vs borrowed' }),
+    ).toBeInTheDocument();
     expect(screen.getByText('Supplied')).toBeInTheDocument();
     expect(screen.getByText('Borrowed')).toBeInTheDocument();
     expect(screen.getByText('$100')).toBeInTheDocument();
