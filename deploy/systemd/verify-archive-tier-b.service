@@ -130,7 +130,12 @@ ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
   -textfile-output ${VERIFY_ARCHIVE_TEXTFILE} \
   -fail-on-missed
 
-User=root
+# De-privileged to match the deployed template (CS-118): writes only the
+# state file under /var/lib/stellarindex and the textfile metric, both
+# stellarindex-owned. A manual install needs that user and directory
+# first (04-users.yml).
+User=stellarindex
+Group=stellarindex
 
 # Hardening. Reads /etc/stellarindex.toml + the /srv/history-archive
 # mirror; writes only the state file (logs go to journald).
