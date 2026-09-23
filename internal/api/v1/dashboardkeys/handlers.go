@@ -125,7 +125,7 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // COOKIE, so a cross-site page could otherwise mint or revoke a
 // logged-in customer's API keys. Reads stay unwrapped — safe
 // methods change nothing.
-func (h *Handlers) Mount(mux *http.ServeMux) {
+func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	idem := middleware.Idempotency(h.cfg.idempotency, sessionAccountSubject)
 	mux.HandleFunc("GET /v1/dashboard/keys", h.HandleList)

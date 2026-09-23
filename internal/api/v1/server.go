@@ -571,7 +571,10 @@ type Server struct {
 	// to inline-build (the legacy 200-500ms path) in that case.
 	ingestionSnapshot atomic.Pointer[ingestionSnapshotEntry]
 	mux               *http.ServeMux
-	started           time.Time
+	// publicRoutes records every route mounted via handlePublic; Handler
+	// wires its Mark middleware outside Auth.
+	publicRoutes *middleware.PublicRoutes
+	started      time.Time
 	// requestTimeout bounds every non-streaming request's context via
 	// the RequestTimeout middleware (see Handler). Defaulted in New to
 	// [defaultRequestTimeout] when Options.RequestTimeout is unset. The
@@ -632,7 +635,9 @@ const maxHandlerBudget = defaultRequestTimeout - 3*time.Second
 // both of which are leaf packages, and main.go wires the result
 // into v1.Options).
 type DashboardAuthMounter interface {
-	Mount(mux *http.ServeMux)
+	// Mount registers the login entry points through public so they
+	// answer without an API key or SEP-10 JWT under every auth_mode.
+	Mount(mux *http.ServeMux, public *middleware.PublicRoutes)
 }
 
 // Options configures a [Server] at construction.
@@ -1692,6 +1697,7 @@ func New(opts Options) *Server { //nolint:funlen // pure field-mapping construct
 		// produces (see assetDetailResponseCache doc comment).
 		assetDetailCache: newAssetDetailResponseCache(120 * time.Second),
 		mux:              http.NewServeMux(),
+		publicRoutes:     middleware.NewPublicRoutes(),
 		started:          time.Now().UTC(),
 		pegDeclaredAt:    timeOr(opts.PegDeclaredAt, time.Now().UTC()),
 		requestTimeout:   durationOr(opts.RequestTimeout, defaultRequestTimeout),
@@ -1943,8 +1949,10 @@ func (s *Server) Handler() http.Handler {
 	// Auth runs INSIDE CORS (so preflight OPTIONS short-circuits
 	// before any credential check) but OUTSIDE RateLimit (so
 	// per-tier limits see the authenticated Subject in context).
+	// publicRoutes.Mark sits directly outside it so routes mounted via
+	// handlePublic are credential-optional under every auth_mode.
 	if s.auth != nil {
-		stack = append(stack, s.auth)
+		stack = append(stack, s.publicRoutes.Mark(), s.auth)
 	}
 	// KeyPolicy runs after Auth (so the Subject is on context) but
 	// before RateLimit (so a policy-denied 403 never spends a
@@ -2080,6 +2088,15 @@ func loopbackOnly(next http.Handler) http.Handler {
 	})
 }
 
+// handlePublic mounts a route that is unauthenticated by design (a
+// credential bootstrap or a public status surface) so it answers without
+// an API key or SEP-10 JWT under every auth_mode. Its OpenAPI operation
+// must declare `security: []`; TestPublicRoutes_MatchOpenAPISecurityNone
+// holds the two in lockstep.
+func (s *Server) handlePublic(pattern string, h http.HandlerFunc) {
+	s.publicRoutes.Handle(s.mux, pattern, h)
+}
+
 func (s *Server) mountRoutes() { //nolint:funlen // route registration is intentionally one block for grep-ability; splitting into sub-functions makes "where is /v1/X served?" harder to answer.
 	// Health / meta endpoints. Deliberately NOT behind rate-limit
 	// middleware — infra (k8s probes, load balancers) hits these.
@@ -2177,12 +2194,12 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/readyz", s.handleReadyz)
 	s.mux.HandleFunc("GET /v1/livez/lake", s.handleLivezLake)
 	s.mux.HandleFunc("GET /v1/version", s.handleVersion)
-	s.mux.HandleFunc("GET /v1/status", s.handleStatus)
+	s.handlePublic("GET /v1/status", s.handleStatus)
 	// Public list of ACTIVE operator-posted status banners (incident
 	// tooling, admin Phase 1.5). Anonymous-friendly; the status page
 	// renders these alongside the Alertmanager-derived /v1/status
 	// incidents block. Empty (`{"notices":[]}`) when unwired.
-	s.mux.HandleFunc("GET /v1/status/notices", s.handleStatusNotices)
+	s.handlePublic("GET /v1/status/notices", s.handleStatusNotices)
 
 	// Prometheus scrape endpoint. Deliberately unversioned — it's
 	// operator-facing, not part of the public API contract.
@@ -2407,16 +2424,16 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	s.mux.HandleFunc("GET /v1/admin/status-notices", s.handleAdminStatusNoticesList)
 	s.mux.HandleFunc("POST /v1/admin/status-notices", s.handleAdminStatusNoticeCreate)
 	s.mux.HandleFunc("POST /v1/admin/status-notices/{id}/resolve", s.handleAdminStatusNoticeResolve)
-	s.mux.HandleFunc("POST /v1/signup", s.handleSignup)
+	s.handlePublic("POST /v1/signup", s.handleSignup)
 	// Open registration — the curl-first agent onboarding path:
 	// creates a free-tier platform account + first API key in one
 	// unauthenticated POST. Shares /v1/signup's per-IP throttle.
-	s.mux.HandleFunc("POST /v1/register", s.handleRegister)
+	s.handlePublic("POST /v1/register", s.handleRegister)
 	// F-1218 (codex audit-2026-05-12): email-ownership-proof
 	// flow. The signup handler issues a token (subsequent
 	// wave) and emails it; this endpoint consumes the token
 	// from the click-through link.
-	s.mux.HandleFunc("GET /v1/signup/verify", s.handleSignupVerify)
+	s.handlePublic("GET /v1/signup/verify", s.handleSignupVerify)
 
 	// Customer-dashboard magic-link auth — POST /v1/auth/login +
 	// GET /v1/auth/callback + POST /v1/auth/logout. Mounted only
@@ -2424,24 +2441,24 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// reachable + cfg.API.Dashboard.BaseURL non-empty); otherwise
 	// the routes don't exist and ServeMux returns the standard 404.
 	if s.dashboardAuth != nil {
-		s.dashboardAuth.Mount(s.mux)
+		s.dashboardAuth.Mount(s.mux, s.publicRoutes)
 	}
 
 	// Dashboard key-management routes — gated internally on the
 	// session cookie planted by DashboardAuth's middleware. Mount
 	// only when main.go wired Postgres for the platform stores.
 	if s.dashboardKeys != nil {
-		s.dashboardKeys.Mount(s.mux)
+		s.dashboardKeys.Mount(s.mux, s.publicRoutes)
 	}
 	// Dashboard webhook-management routes (F-1270). Same
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
 	if s.dashboardWebhooks != nil {
-		s.dashboardWebhooks.Mount(s.mux)
+		s.dashboardWebhooks.Mount(s.mux, s.publicRoutes)
 	}
 	// Dashboard price-alert-management routes (BACKLOG #60). Same
 	// session-cookie + Postgres-wiring gate as dashboardKeys above.
 	if s.dashboardPriceAlerts != nil {
-		s.dashboardPriceAlerts.Mount(s.mux)
+		s.dashboardPriceAlerts.Mount(s.mux, s.publicRoutes)
 	}
 
 	// SEP-10 Web Auth. Both endpoints are unauthenticated by design
@@ -2449,8 +2466,8 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the JWT issued by /token is what authenticates subsequent
 	// requests. The validator is wired only when the binary has
 	// the server-signing seed + JWT secret configured.
-	s.mux.HandleFunc("GET /v1/auth/sep10/challenge", s.handleSEP10Challenge)
-	s.mux.HandleFunc("POST /v1/auth/sep10/token", s.handleSEP10Token)
+	s.handlePublic("GET /v1/auth/sep10/challenge", s.handleSEP10Challenge)
+	s.handlePublic("POST /v1/auth/sep10/token", s.handleSEP10Token)
 
 	// Bare-root welcome. GET / lands accidental visitors on a
 	// friendly envelope pointing at the docs. The `{$}` anchor means
@@ -2479,7 +2496,7 @@ func (s *Server) mountRoutes() { //nolint:funlen // route registration is intent
 	// the disclosure email here without having to traverse to the
 	// explorer subdomain. The Canonical: directive points at the
 	// explorer's copy so the two stay aligned without drift.
-	s.mux.HandleFunc("GET /.well-known/security.txt", s.handleSecurityTxt)
+	s.handlePublic("GET /.well-known/security.txt", s.handleSecurityTxt)
 
 	// /errors/{slug} — dereferenceable RFC 9457 (7807) problem `type`
 	// URIs. Every problem+json response we emit carries

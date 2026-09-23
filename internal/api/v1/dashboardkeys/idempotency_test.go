@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 // TestMount_CreateIdempotencyKey_ReplaysInsteadOfMinting proves T284:
@@ -16,7 +18,7 @@ import (
 func TestMount_CreateIdempotencyKey_ReplaysInsteadOfMinting(t *testing.T) {
 	h, store, sc := newTestRig(t)
 	mux := http.NewServeMux()
-	h.Mount(mux)
+	h.Mount(mux, middleware.NewPublicRoutes())
 
 	body := createRequest{Name: "production", RateLimitPerMin: 1000}
 

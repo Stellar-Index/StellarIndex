@@ -25,6 +25,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -519,7 +520,7 @@ func TestPasskeyListAndDelete_OwnerScoped(t *testing.T) {
 func TestMount_PasskeyRoutesGated(t *testing.T) {
 	plain := newTestRig(t) // no Passkeys store
 	mux := http.NewServeMux()
-	plain.h.Mount(mux)
+	plain.h.Mount(mux, middleware.NewPublicRoutes())
 	req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, req)
@@ -529,7 +530,7 @@ func TestMount_PasskeyRoutesGated(t *testing.T) {
 
 	rig := newPasskeyRig(t)
 	mux = http.NewServeMux()
-	rig.h.Mount(mux)
+	rig.h.Mount(mux, middleware.NewPublicRoutes())
 	req = httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
 	// Same-origin write: the RequireSameSiteWrite gate compares the
 	// Origin header against the request's own scheme://host.

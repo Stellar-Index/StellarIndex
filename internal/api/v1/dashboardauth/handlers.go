@@ -239,10 +239,11 @@ func NewHandlers(cfg *Config) (*Handlers, error) {
 //	DELETE /v1/auth/passkey/credentials/{id}  — remove one (session-gated)
 //
 // Caller wires the result into the regular middleware stack
-// (RequestID + Logger + Recoverer + RateLimit + ...). These
-// routes intentionally do NOT pass through the API-key auth
-// middleware — they're the entry point for unauthenticated
-// users.
+// (RequestID + Logger + Recoverer + RateLimit + ...). The login
+// entry points (login, callback, verify-code, logout, passkey
+// begin/finish-login) are mounted through public, so the API-key /
+// SEP-10 Auth middleware admits them without a credential under
+// every auth_mode. The session-gated routes are NOT public.
 //
 // The three POSTs are wrapped in [middleware.RequireSameSiteWrite]
 // (C3-031 / C3-057). They are state-changing and browser-driven:
@@ -252,12 +253,12 @@ func NewHandlers(cfg *Config) (*Handlers, error) {
 // consumes a session cookie. `GET /v1/auth/callback` is a
 // top-level navigation from an email client and carries no usable
 // Origin; it is bound instead by [LoginIntentCookieName] (C3-030).
-func (h *Handlers) Mount(mux *http.ServeMux) {
+func (h *Handlers) Mount(mux *http.ServeMux, public *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
-	mux.Handle("POST /v1/auth/login", sameSite(http.HandlerFunc(h.HandleLogin)))
-	mux.HandleFunc("GET /v1/auth/callback", h.HandleCallback)
-	mux.Handle("POST /v1/auth/verify-code", sameSite(http.HandlerFunc(h.HandleVerifyCode)))
-	mux.Handle("POST /v1/auth/logout", sameSite(http.HandlerFunc(h.HandleLogout)))
+	public.Handle(mux, "POST /v1/auth/login", sameSite(http.HandlerFunc(h.HandleLogin)))
+	public.Handle(mux, "GET /v1/auth/callback", http.HandlerFunc(h.HandleCallback))
+	public.Handle(mux, "POST /v1/auth/verify-code", sameSite(http.HandlerFunc(h.HandleVerifyCode)))
+	public.Handle(mux, "POST /v1/auth/logout", sameSite(http.HandlerFunc(h.HandleLogout)))
 	// Staff customer look-up — session-gated (RequireSession) AND staff-gated
 	// (HandleAdminLookup checks IsStaff). Backs /dashboard/admin's first tool.
 	//
@@ -278,9 +279,9 @@ func (h *Handlers) Mount(mux *http.ServeMux) {
 	// login-CSRF primitive exactly as verify-code is (C3-031/C3-057).
 	if h.cfg.Passkeys != nil {
 		requireSession := RequireSession(h.cfg)
-		mux.Handle("POST /v1/auth/passkey/begin-login",
+		public.Handle(mux, "POST /v1/auth/passkey/begin-login",
 			sameSite(http.HandlerFunc(h.HandlePasskeyBeginLogin)))
-		mux.Handle("POST /v1/auth/passkey/finish-login",
+		public.Handle(mux, "POST /v1/auth/passkey/finish-login",
 			sameSite(http.HandlerFunc(h.HandlePasskeyFinishLogin)))
 		mux.Handle("POST /v1/auth/passkey/begin-register",
 			requireSession(sameSite(http.HandlerFunc(h.HandlePasskeyBeginRegister))))
@@ -827,6 +828,7 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	if err != nil {
 		return fmt.Errorf("mint session token: %w", err)
 	}
+	h.revokePresentedSession(r)
 
 	sess, err := h.cfg.Users.CreateSession(r.Context(), platform.Session{
 		UserID:       user.ID,
@@ -857,6 +859,23 @@ func (h *Handlers) mintSession(w http.ResponseWriter, r *http.Request, user plat
 	// was just issued. See [SessionHintCookieName].
 	h.setSessionHintCookie(w, sess.ExpiresAt)
 	return nil
+}
+
+// revokePresentedSession revokes the session the browser is replacing, so
+// a stolen copy of the old cookie dies when the victim logs in again.
+// Best-effort like HandleLogout: a failed revoke must not block login.
+func (h *Handlers) revokePresentedSession(r *http.Request) {
+	c, err := r.Cookie(SessionCookieName)
+	if err != nil || c.Value == "" {
+		return
+	}
+	sess, err := h.cfg.Users.GetSessionByTokenHash(r.Context(), HashSessionToken(c.Value))
+	if err != nil {
+		return
+	}
+	if err := h.cfg.Users.RevokeSession(r.Context(), sess.ID); err != nil {
+		h.cfg.Logger.Warn("revoke replaced session at login", "err", err, "session_id", sess.ID)
+	}
 }
 
 // HandleLogout revokes the current session and clears the

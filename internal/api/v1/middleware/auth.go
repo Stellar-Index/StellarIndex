@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -177,6 +178,62 @@ func isUnauthenticatedInfraPath(path string) bool {
 	return strings.HasPrefix(path, "/errors/")
 }
 
+// PublicRoutes is the set of route patterns that are unauthenticated by
+// design: credential bootstraps (signup, register, SEP-10, dashboard login)
+// and public status surfaces. Mounting a route through [PublicRoutes.Handle]
+// exempts it from [Auth]'s credential requirement in the same call, so
+// "mounted public" and "exempt from auth" are one fact — a hand-kept path
+// list cannot notice the next bootstrap route.
+//
+// Unlike [isUnauthenticatedInfraPath], a public route is credential-OPTIONAL,
+// not credential-blind: a presented key or JWT is still verified (and a bad
+// one rejected), so signup can keep refusing already-authenticated callers.
+type PublicRoutes struct {
+	match    *http.ServeMux
+	patterns []string
+}
+
+// NewPublicRoutes returns an empty public-route set.
+func NewPublicRoutes() *PublicRoutes {
+	return &PublicRoutes{match: http.NewServeMux()}
+}
+
+// Handle mounts h on mux under pattern and records pattern as public.
+func (p *PublicRoutes) Handle(mux *http.ServeMux, pattern string, h http.Handler) {
+	mux.Handle(pattern, h)
+	// A second mux reuses ServeMux's own method/wildcard/precedence
+	// matching, so the exemption covers exactly what the route serves.
+	p.match.Handle(pattern, h)
+	p.patterns = append(p.patterns, pattern)
+}
+
+// Patterns returns the recorded public patterns in registration order.
+func (p *PublicRoutes) Patterns() []string {
+	return append([]string(nil), p.patterns...)
+}
+
+// Mark returns a middleware that flags a request whose method and path
+// match a public pattern, so [Auth] admits it without a credential. Wire
+// it immediately outside Auth.
+func (p *PublicRoutes) Mark() Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, pattern := p.match.Handler(r); pattern != "" {
+				r = r.WithContext(context.WithValue(r.Context(), publicRouteKey{}, true))
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+type publicRouteKey struct{}
+
+// isPublicRoute reports whether [PublicRoutes.Mark] flagged r.
+func isPublicRoute(r *http.Request) bool {
+	v, _ := r.Context().Value(publicRouteKey{}).(bool)
+	return v
+}
+
 // isCredentialRejection reports whether err is a caller-supplied
 // bad-credential outcome (as opposed to a server-side misconfiguration).
 // Only these count against the per-IP failed-auth budget — a 503
@@ -272,7 +329,7 @@ func authenticate(r *http.Request, mode AuthMode, opts AuthOptions) (auth.Subjec
 	case AuthModeAPIKey:
 		key := bearerOrXKey(r)
 		if key == "" {
-			return auth.Subject{}, auth.ErrUnauthorized
+			return missingCredential(r)
 		}
 		if opts.APIKey == nil {
 			// Mis-configuration: mode says apikey but no validator
@@ -301,7 +358,7 @@ func authenticate(r *http.Request, mode AuthMode, opts AuthOptions) (auth.Subjec
 	case AuthModeSEP10:
 		jwt := bearerOnly(r)
 		if jwt == "" {
-			return auth.Subject{}, auth.ErrUnauthorized
+			return missingCredential(r)
 		}
 		if opts.SEP10 == nil {
 			return auth.Subject{}, auth.ErrNotImplemented
@@ -313,6 +370,15 @@ func authenticate(r *http.Request, mode AuthMode, opts AuthOptions) (auth.Subjec
 	// validation rejects unknown modes at startup so this branch
 	// shouldn't fire in production.
 	return auth.Subject{}, auth.ErrNotImplemented
+}
+
+// missingCredential answers a credential-required mode's empty-credential
+// case: anonymous on a public route, 401 everywhere else.
+func missingCredential(r *http.Request) (auth.Subject, error) {
+	if isPublicRoute(r) {
+		return auth.Anonymous(anonymousIdentifier(r)), nil
+	}
+	return auth.Subject{}, auth.ErrUnauthorized
 }
 
 // writeAuthError translates a sentinel auth error to an RFC 9457
@@ -424,18 +490,15 @@ func bearerOrXKey(r *http.Request) string {
 }
 
 // bearerOnly extracts the token from `Authorization: Bearer <token>`.
-// Empty string if the header is missing or doesn't start with
-// "Bearer ". Trims surrounding whitespace from the token.
+// Empty string if the header is missing or its scheme is not Bearer.
+// The scheme is matched case-insensitively (RFC 7235 §2.1). Trims
+// surrounding whitespace from the token.
 func bearerOnly(r *http.Request) string {
-	h := r.Header.Get("Authorization")
-	if h == "" {
+	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
 		return ""
 	}
-	const prefix = "Bearer "
-	if !strings.HasPrefix(h, prefix) {
-		return ""
-	}
-	return strings.TrimSpace(h[len(prefix):])
+	return strings.TrimSpace(token)
 }
 
 // anonymousIdentifier builds a stable per-request identifier for

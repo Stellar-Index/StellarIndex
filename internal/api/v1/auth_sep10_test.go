@@ -378,9 +378,17 @@ func TestSEP10Unavailable_TellsTheCallerWhatToDoInstead(t *testing.T) {
 			}
 			details[tc.name] = prob.Detail
 
-			// Why it refuses. Not an outage: a deployment posture.
-			if !strings.Contains(prob.Detail, "signing seed") {
-				t.Errorf("detail does not name the missing signing seed as the cause: %q", prob.Detail)
+			// Why it refuses. The Noop is installed for ANY validator
+			// construction failure (#1322), so the body must not assert
+			// one cause it never checked, and must name every
+			// prerequisite plus where the real error is logged.
+			if strings.Contains(prob.Detail, "no server signing seed is configured") {
+				t.Errorf("detail asserts a missing seed as THE cause without checking it: %q", prob.Detail)
+			}
+			for _, prereq := range []string{"signing seed", "at least 32 bytes", "web_auth_domain", "home_domain", "Redis", "startup log"} {
+				if !strings.Contains(prob.Detail, prereq) {
+					t.Errorf("detail does not name SEP-10 prerequisite %q: %q", prereq, prob.Detail)
+				}
 			}
 			// What works instead. This is the half a bare code cannot
 			// carry, and the half that makes the answer actionable.

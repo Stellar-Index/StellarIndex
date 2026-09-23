@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 // TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering proves
@@ -17,7 +19,7 @@ import (
 func TestMount_CreateIdempotencyKey_ReplaysInsteadOfRegistering(t *testing.T) {
 	h, store, sc := newTestRig(t, nil)
 	mux := http.NewServeMux()
-	h.Mount(mux)
+	h.Mount(mux, middleware.NewPublicRoutes())
 
 	body := validCreate()
 

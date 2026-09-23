@@ -529,3 +529,78 @@ func TestAuth_InfraPathsBypassCredentials(t *testing.T) {
 		})
 	}
 }
+
+// TestAuth_PublicRouteIsCredentialOptional pins #1314: a route mounted via
+// PublicRoutes.Handle answers an uncredentialed caller under the
+// credential-required modes, still verifies a presented credential, and the
+// exemption does not widen to another method or a neighbouring path.
+func TestAuth_PublicRouteIsCredentialOptional(t *testing.T) {
+	modes := map[middleware.AuthMode]middleware.AuthOptions{
+		middleware.AuthModeAPIKey: {Mode: middleware.AuthModeAPIKey, APIKey: stubAPIKeyValidator{knownKey: "sip_good"}},
+		middleware.AuthModeSEP10:  {Mode: middleware.AuthModeSEP10, SEP10: stubSEP10Validator{knownJWT: "good.jwt"}},
+	}
+	for mode, opts := range modes {
+		t.Run(string(mode), func(t *testing.T) {
+			var captured auth.Subject
+			mux := http.NewServeMux()
+			pub := middleware.NewPublicRoutes()
+			pub.Handle(mux, "POST /v1/signup", captureSubject(&captured))
+			mux.Handle("GET /v1/signup", captureSubject(&captured))
+			mux.Handle("POST /v1/signupx", captureSubject(&captured))
+			h := middleware.Chain(mux, pub.Mark(), middleware.Auth(opts))
+
+			serve := func(method, path, bearer string) int {
+				r := httptest.NewRequest(method, path, nil)
+				if bearer != "" {
+					r.Header.Set("Authorization", "Bearer "+bearer)
+				}
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, r)
+				return w.Code
+			}
+
+			if code := serve(http.MethodPost, "/v1/signup", ""); code != http.StatusOK {
+				t.Fatalf("public route, no credential: status = %d, want 200", code)
+			}
+			if captured.Tier != auth.TierAnonymous || captured.Identifier == "" {
+				t.Errorf("public route subject = %+v, want an identified anonymous subject", captured)
+			}
+			if code := serve(http.MethodPost, "/v1/signup", "wrong"); code != http.StatusUnauthorized {
+				t.Errorf("public route, bad credential: status = %d, want 401 (a presented credential is still verified)", code)
+			}
+			if code := serve(http.MethodGet, "/v1/signup", ""); code != http.StatusUnauthorized {
+				t.Errorf("other method on a public path: status = %d, want 401", code)
+			}
+			if code := serve(http.MethodPost, "/v1/signupx", ""); code != http.StatusUnauthorized {
+				t.Errorf("neighbouring path: status = %d, want 401", code)
+			}
+			if got := pub.Patterns(); len(got) != 1 || got[0] != "POST /v1/signup" {
+				t.Errorf("Patterns() = %v, want [POST /v1/signup]", got)
+			}
+		})
+	}
+}
+
+// TestAuth_BearerSchemeIsCaseInsensitive pins #1322: RFC 7235 §2.1 makes
+// the auth-scheme token case-insensitive, so `bearer <key>` must
+// authenticate exactly like `Bearer <key>` under apikey and sep10.
+func TestAuth_BearerSchemeIsCaseInsensitive(t *testing.T) {
+	want := auth.Subject{Identifier: "k1", Tier: auth.TierAPIKey}
+	modes := map[middleware.AuthMode]middleware.AuthOptions{
+		middleware.AuthModeAPIKey: {Mode: middleware.AuthModeAPIKey, APIKey: stubAPIKeyValidator{knownKey: "sip_good", subject: want}},
+		middleware.AuthModeSEP10:  {Mode: middleware.AuthModeSEP10, SEP10: stubSEP10Validator{knownJWT: "sip_good", subject: want}},
+	}
+	for mode, opts := range modes {
+		for _, scheme := range []string{"bearer", "BEARER", "BeArEr"} {
+			var captured auth.Subject
+			h := middleware.Auth(opts)(captureSubject(&captured))
+			r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+			r.Header.Set("Authorization", scheme+" sip_good")
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != http.StatusOK || captured.Identifier != want.Identifier {
+				t.Errorf("%s: %q scheme: status %d subject %+v, want 200 as %q", mode, scheme, w.Code, captured, want.Identifier)
+			}
+		}
+	}
+}
