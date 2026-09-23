@@ -5285,7 +5285,7 @@ export interface components {
             domain?: string;
             /** @description Upstream tag registry values (always present, possibly empty). */
             tags: string[];
-            /** @description Upstream set the label came from ("stellar-expert"). */
+            /** @description Upstream set the label came from ("stellar-expert"), or "operator-override" when an operator reviewed an upstream scam-class tag as a false positive and removed it; name, domain and the other tags are the upstream's. */
             source: string;
         };
         /** @description A ledger header from the certified lake. */

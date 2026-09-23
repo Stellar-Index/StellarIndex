@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -18,19 +19,20 @@ import (
 // across every gated surface, and a hand `UPDATE` is overwritten by the
 // next daily directory-sync. See timescale.DirectoryOperatorOverrideSource.
 //
-//	stellarindex-ops directory-override -config PATH -address G… -clear-scam-flag -write
+//	stellarindex-ops directory-override -config PATH -address G… -clear-scam-flag -reason TEXT -write
 //	stellarindex-ops directory-override -config PATH -address G… -delete -write
 
 // directoryOverrideStore is the storage seam; *timescale.Store satisfies it.
 type directoryOverrideStore interface {
 	DirectoryEntryByAddress(ctx context.Context, address string) (timescale.DirectoryEntry, bool, error)
-	ClearDirectoryScamFlag(ctx context.Context, address string) (before, after timescale.DirectoryEntry, found bool, err error)
+	ClearDirectoryScamFlag(ctx context.Context, address, reason string) (before, after timescale.DirectoryEntry, found bool, err error)
 	DeleteDirectoryOverride(ctx context.Context, address string) (bool, error)
 }
 
 type directoryOverrideRequest struct {
 	address       string
 	clearScamFlag bool
+	reason        string
 	remove        bool
 	write         bool
 }
@@ -42,6 +44,9 @@ func (r directoryOverrideRequest) validate() error {
 	if r.clearScamFlag == r.remove {
 		return errors.New("pass exactly one of -clear-scam-flag or -delete")
 	}
+	if r.clearScamFlag && strings.TrimSpace(r.reason) == "" {
+		return errors.New("-clear-scam-flag needs -reason: why the upstream flag is a false positive is stored with the override for review")
+	}
 	return nil
 }
 
@@ -50,6 +55,7 @@ func directoryOverride(args []string) error {
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
 	address := fs.String("address", "", "G… account or C… contract strkey whose directory row to override (required)")
 	clearScam := fs.Bool("clear-scam-flag", false, "Take the row over as operator-override with its scam-class tags removed; name, domain and every other tag are kept")
+	reason := fs.String("reason", "", "Why the upstream scam flag is a false positive (required with -clear-scam-flag); stored as the row's override_reason")
 	remove := fs.Bool("delete", false, "Remove the operator override; the next directory-sync restores the upstream row")
 	timeout := fs.Duration("timeout", time.Minute, "Wall-clock timeout for the whole run")
 	if err := fs.Parse(args); err != nil {
@@ -58,7 +64,7 @@ func directoryOverride(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
-	req := directoryOverrideRequest{address: *address, clearScamFlag: *clearScam, remove: *remove, write: gate.Enabled()}
+	req := directoryOverrideRequest{address: *address, clearScamFlag: *clearScam, reason: *reason, remove: *remove, write: gate.Enabled()}
 	if err := req.validate(); err != nil {
 		return err
 	}
@@ -101,19 +107,19 @@ func runDirectoryOverrideClear(ctx context.Context, st directoryOverrideStore, w
 		return fmt.Errorf("%w: %s (tags %v)", timescale.ErrDirectoryNotScamFlagged, req.address, cur.Tags)
 	}
 	if !req.write {
-		_, _ = fmt.Fprintf(w, "Would take over %s (source=%s → %s): tags %v → %v; name %q and domain %q kept. Dry run — nothing written.\n",
-			req.address, cur.Source, timescale.DirectoryOperatorOverrideSource, cur.Tags, kept, cur.Name, cur.Domain)
+		_, _ = fmt.Fprintf(w, "Would take over %s (source=%s → %s): tags %v → %v; name %q and domain %q kept; reason %q. Dry run — nothing written.\n",
+			req.address, cur.Source, timescale.DirectoryOperatorOverrideSource, cur.Tags, kept, cur.Name, cur.Domain, req.reason)
 		return nil
 	}
-	before, after, found, err := st.ClearDirectoryScamFlag(ctx, req.address)
+	before, after, found, err := st.ClearDirectoryScamFlag(ctx, req.address, req.reason)
 	if err != nil {
 		return err
 	}
 	if !found {
 		return fmt.Errorf("directory-override: %s vanished before the takeover — nothing written", req.address)
 	}
-	_, _ = fmt.Fprintf(w, "Override written for %s (source=%s → %s): tags %v → %v. The price gate stops withholding within its cache TTL.\n",
-		req.address, before.Source, after.Source, before.Tags, after.Tags)
+	_, _ = fmt.Fprintf(w, "Override written for %s (source=%s → %s): tags %v → %v; reason %q. The price gate stops withholding within its cache TTL.\n",
+		req.address, before.Source, after.Source, before.Tags, after.Tags, req.reason)
 	return nil
 }
 

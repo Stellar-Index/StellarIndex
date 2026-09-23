@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { render, screen } from '@testing-library/react';
 
-import { DIRECTORY_SCAM_FLAG_TAGS } from '@/lib/directory-tags';
+import {
+  DIRECTORY_OPERATOR_OVERRIDE_SOURCE,
+  DIRECTORY_SCAM_FLAG_TAGS,
+} from '@/lib/directory-tags';
 
 import { DirectoryLabel } from './DirectoryLabel';
 
@@ -43,6 +46,42 @@ describe('DirectoryLabel', () => {
     );
     expect(screen.getByText(/Flagged malicious/i)).toBeInTheDocument();
     expect(screen.getByText(/treat with caution/i)).toBeInTheDocument();
+  });
+
+  it('says an operator override lifted the upstream flag', () => {
+    // The Go constant is timescale.DirectoryOperatorOverrideSource; the
+    // served `source` is that string verbatim.
+    expect(DIRECTORY_OPERATOR_OVERRIDE_SOURCE).toBe('operator-override');
+    render(
+      <DirectoryLabel
+        info={{
+          name: 'Rio Issuer',
+          tags: ['issuer'],
+          source: DIRECTORY_OPERATOR_OVERRIDE_SOURCE,
+        }}
+      />,
+    );
+    expect(screen.getByText('flag lifted on review')).toBeInTheDocument();
+    expect(
+      screen.getByText(/operator reviewed as a false positive and removed/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('link', { name: /StellarExpert public directory/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('does not claim an override on an upstream label', () => {
+    render(
+      <DirectoryLabel
+        info={{
+          name: 'Binance Hot',
+          tags: ['exchange'],
+          source: 'stellar-expert',
+        }}
+      />,
+    );
+    expect(screen.queryByText('flag lifted on review')).not.toBeInTheDocument();
+    expect(screen.queryByText(/operator reviewed/i)).not.toBeInTheDocument();
   });
 
   it('renders no warning line for benign tags', () => {

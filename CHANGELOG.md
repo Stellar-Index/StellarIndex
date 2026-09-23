@@ -402,6 +402,20 @@ against.
   comments to describe the per-tick write they get. Dropping the old
   key and `SET NOT NULL` is a later release's migration.
 
+- **directory — operator override records its reason (GH #858):** an
+  operator override of a false-positive scam flag republishes a flagged
+  issuer's price but recorded no justification. Migration 0170 adds
+  `account_directory.override_reason` with a CHECK that an
+  `operator-override` row carries a non-blank reason and an upstream row
+  none; `stellarindex-ops directory-override -clear-scam-flag` now
+  requires `-reason TEXT` and stores it. Pre-existing override rows are
+  backfilled with a named placeholder.
+- **explorer — directory label names an operator override (GH #858):** a
+  label whose served `source` is `operator-override` was still attributed
+  wholly to the StellarExpert directory. `DirectoryLabel` now badges it
+  "flag lifted on review" and says the upstream scam-class flag was
+  reviewed as a false positive and removed; the OpenAPI `DirectoryInfo.source`
+  description names the value.
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

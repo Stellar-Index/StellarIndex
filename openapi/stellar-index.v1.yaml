@@ -12758,7 +12758,7 @@ components:
         name: { type: string, description: "Human label, e.g. \"SDF Growth 3\"." }
         domain: { type: string, description: Domain the upstream set associates with the address; absent when none. }
         tags: { type: array, items: { type: string }, description: "Upstream tag registry values (always present, possibly empty)." }
-        source: { type: string, description: Upstream set the label came from ("stellar-expert"). }
+        source: { type: string, description: "Upstream set the label came from (\"stellar-expert\"), or \"operator-override\" when an operator reviewed an upstream scam-class tag as a false positive and removed it; name, domain and the other tags are the upstream's." }
     Ledger:
       type: object
       description: A ledger header from the certified lake.
