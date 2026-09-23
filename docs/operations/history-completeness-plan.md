@@ -233,10 +233,10 @@ from timescaledb_information.chunks where hypertable_name='trades' group by 1`:
 This matters more than any other operational fact in Project A. The known
 worst case for `ch-rebuild -sdex` is upserting into *populated compressed*
 chunks — measured at 620 rows/s, ~47 h for a 72-day span
-(`docs/operations/evidence/2026-07-30-verify-usd-volume-30d.md:82-84`), with
+([2026-07-30-verify-usd-volume-30d.md:82-84](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-verify-usd-volume-30d.md#L82-L84)), with
 a ~100× improvement from decompressing first (52 min → 36 s on the same
 2,000 ledgers,
-`docs/operations/evidence/2026-08-04-usd-volume-rederive.md:25-32`).
+[2026-08-04-usd-volume-rederive.md:25-32](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-08-04-usd-volume-rederive.md#L25-L32)).
 
 The target range does not look like that. 2015-2017 and 2022-2023 have **no
 chunks at all** — those inserts create fresh, uncompressed chunks. 2018-2021
@@ -307,8 +307,8 @@ itself the finding.
 
 | anchor | per row | per window |
 |---|---|---|
-| upsert into populated compressed chunks — 47 h / ~105M rows / ~22 windows (`evidence/2026-07-30-verify-usd-volume-30d.md:82-84`) | 620 rows/s → **49.6 d** | ~2.1 h/window → **108 d** |
-| decompress-first — 1h44m / ~21.7M rows / 5 windows (`evidence/2026-08-04-usd-volume-rederive.md:25-32`) | ≈3,474 rows/s → **8.8 d** | ~21 min/window → **18 d** |
+| upsert into populated compressed chunks — 47 h / ~105M rows / ~22 windows ([2026-07-30-verify-usd-volume-30d.md:82-84](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-verify-usd-volume-30d.md#L82-L84)) | 620 rows/s → **49.6 d** | ~2.1 h/window → **108 d** |
+| decompress-first — 1h44m / ~21.7M rows / 5 windows ([2026-08-04-usd-volume-rederive.md:25-32](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-08-04-usd-volume-rederive.md#L25-L32)) | ≈3,474 rows/s → **8.8 d** | ~21 min/window → **18 d** |
 
 At 1,233 windows (§2.2), the range is **9 to 108 days.**
 

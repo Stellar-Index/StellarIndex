@@ -224,7 +224,7 @@ identity was the insert path: the 2026-07-30 sweep measured
 **[2026-05-12, 2026-07-22], 66 dirty days, every violation a
 `[base_pegged] sdex` USDC-base row** valued by the resolver's VWAP
 (~+0.7%) instead of `base_amount / 10^7` (evidence:
-`evidence/2026-07-30-verify-usd-volume-30d.md`). That night's fix was a
+[2026-07-30-verify-usd-volume-30d.md](https://github.com/Stellar-Index/StellarIndex/blob/0023bb9aefa96fb8231d9eabd160e6133eca39e9/docs/operations/evidence/2026-07-30-verify-usd-volume-30d.md)). That night's fix was a
 hand SQL UPDATE; `usd-volume-restamp` is that UPDATE as a tool, with the
 discipline built in — use it for any exact-tier violation
 `verify-usd-volume` reports from now on.
