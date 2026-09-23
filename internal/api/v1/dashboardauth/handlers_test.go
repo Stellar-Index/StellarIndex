@@ -735,4 +735,25 @@ func TestHandleLogin_ThrottleErrors_FailsOpen(t *testing.T) {
 	}
 }
 
+// TestTruncateUA_RuneSafe — GH-1303: a multi-byte rune straddling the
+// byte-256 truncation boundary must not be split. A byte-slice
+// truncation (the pre-fix behaviour) cuts the leading bytes of "€"
+// (E2 82 AC) off mid-sequence and hands Postgres invalid UTF-8, which
+// `user_agent text NOT NULL` (migration 0027) refuses — after the
+// login token has already been consumed, burning the attempt.
+func TestTruncateUA_RuneSafe(t *testing.T) {
+	prefix := strings.Repeat("a", 255)
+	ua := prefix + "€" + "xyz" // rune 256 is the 3-byte "€", straddling byte offset 256
+
+	got := truncateUA(ua)
+
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateUA(%d-byte UA) = %q, not valid UTF-8", len(ua), got)
+	}
+	want := prefix + "€"
+	if got != want {
+		t.Errorf("truncateUA(%d-byte UA) = %q, want %q (256 runes, not 256 bytes)", len(ua), got, want)
+	}
+}
+
 // TestMaskEmail moved to internal/pii with the implementation (#346 F8).
