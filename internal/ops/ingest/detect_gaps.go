@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"text/tabwriter"
@@ -68,24 +69,41 @@ func detectGaps(args []string) error {
 		return err
 	}
 
-	// Per-source min across sub_source rows.
+	minBySource := minLedgerBySource(cursors)
+	if len(minBySource) == 0 {
+		fmt.Printf("(no cursors stored — nothing to check against tip %d)\n", tip.Sequence)
+		return nil
+	}
+
+	lagging := writeGapReport(os.Stdout, minBySource, tip.Sequence, uint32(*threshold))
+	if len(lagging) > 0 {
+		return fmt.Errorf("%d source(s) lagging past threshold %d: %v",
+			len(lagging), *threshold, lagging)
+	}
+	return nil
+}
+
+// minLedgerBySource reduces cursors to the minimum LastLedger per source.
+// For sources that track multiple sub-cursors (Soroswap per-pair cursors),
+// this is the slowest position, not the fastest.
+func minLedgerBySource(cursors []timescale.Cursor) map[string]uint32 {
 	minBySource := map[string]uint32{}
 	for _, c := range cursors {
 		if cur, ok := minBySource[c.Source]; !ok || c.LastLedger < cur {
 			minBySource[c.Source] = c.LastLedger
 		}
 	}
+	return minBySource
+}
 
-	if len(minBySource) == 0 {
-		fmt.Printf("(no cursors stored — nothing to check against tip %d)\n", tip.Sequence)
-		return nil
-	}
-
+// writeGapReport prints the SOURCE/LAST LEDGER/TIP/LAG/STATUS table to w
+// and returns the sources lagging past threshold. Iteration is sorted by
+// source so output is reproducible across invocations — operators pipe
+// into diff / grep and expect stable ordering.
+func writeGapReport(w io.Writer, minBySource map[string]uint32, tipSeq, threshold uint32) []string {
 	var lagging []string
-	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintf(w, "SOURCE\tLAST LEDGER\tTIP\tLAG\tSTATUS\n")
-	// Sorted iteration so output is reproducible across invocations
-	// — operators pipe into diff / grep and expect stable ordering.
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintf(tw, "SOURCE\tLAST LEDGER\tTIP\tLAG\tSTATUS\n")
 	sources := make([]string, 0, len(minBySource))
 	for s := range minBySource {
 		sources = append(sources, s)
@@ -94,21 +112,16 @@ func detectGaps(args []string) error {
 	for _, source := range sources {
 		last := minBySource[source]
 		lag := uint32(0)
-		if tip.Sequence > last {
-			lag = tip.Sequence - last
+		if tipSeq > last {
+			lag = tipSeq - last
 		}
 		status := "ok"
-		if lag > uint32(*threshold) {
+		if lag > threshold {
 			status = "LAGGING"
 			lagging = append(lagging, source)
 		}
-		_, _ = fmt.Fprintf(w, "%s\t%d\t%d\t%d\t%s\n", source, last, tip.Sequence, lag, status)
+		_, _ = fmt.Fprintf(tw, "%s\t%d\t%d\t%d\t%s\n", source, last, tipSeq, lag, status)
 	}
-	_ = w.Flush()
-
-	if len(lagging) > 0 {
-		return fmt.Errorf("%d source(s) lagging past threshold %d: %v",
-			len(lagging), *threshold, lagging)
-	}
-	return nil
+	_ = tw.Flush()
+	return lagging
 }
