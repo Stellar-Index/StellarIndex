@@ -26,7 +26,7 @@ import (
 // threads is the real lever. The explicit 8 GiB tracked ceiling
 // (8589934592) makes a future part-layout shift fail the ONE query loudly
 // instead of silently starving the shared host — same posture as
-// classifyTTLLivenessBatch / boundedScanSettings / liveOfferScanSettings.
+// ttlLivenessBatchQuery / boundedScanSettings / liveOfferScanSettings.
 //
 // Keyed point reads (PK-prefix lookups on (entry_type, key_xdr), per-ledger
 // partition-pruned reads) are measured fast (0.08s) and deliberately do NOT

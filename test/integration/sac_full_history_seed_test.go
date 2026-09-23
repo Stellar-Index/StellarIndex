@@ -253,9 +253,19 @@ func TestSACFullHistorySeed_SameLedgerRemovalCoherence(t *testing.T) {
 	}
 
 	watched := map[string]string{sac: asset}
-	var resurrected int
+	// A retraction tombstone (IsRemoval=true, Balance=0) for this holder is
+	// the CORRECT outcome: the removal is the genuine latest
+	// intra-ledger state and must overwrite any prior observation. Only a
+	// live, nonzero-balance emission would mean the deleted balance was
+	// RESURRECTED — that's what this test guards against.
+	var resurrected, tombstones int
 	if err := chstore.StreamSACBalanceSeedsFullHistory(ctx, addr, watched, func(seed chstore.SACBalanceSeed) error {
-		if seed.Holder == holder {
+		if seed.Holder != holder {
+			return nil
+		}
+		if seed.IsRemoval && seed.Balance.Sign() == 0 && seed.LedgerSeq == ledger {
+			tombstones++
+		} else {
 			resurrected++
 		}
 		return nil
@@ -263,7 +273,10 @@ func TestSACFullHistorySeed_SameLedgerRemovalCoherence(t *testing.T) {
 		t.Fatalf("StreamSACBalanceSeedsFullHistory: %v", err)
 	}
 	if resurrected != 0 {
-		t.Errorf("removed-in-same-ledger holder was emitted %d time(s) — the deleted balance was RESURRECTED (column-incoherent argMax tie): the latest intra-ledger change is 'removed'", resurrected)
+		t.Errorf("removed-in-same-ledger holder was emitted %d time(s) with a live balance — the deleted balance was RESURRECTED (column-incoherent argMax tie): the latest intra-ledger change is 'removed'", resurrected)
+	}
+	if tombstones != 1 {
+		t.Errorf("emitted %d removal tombstones at ledger %d for the removed holder, want exactly 1", tombstones, ledger)
 	}
 }
 
