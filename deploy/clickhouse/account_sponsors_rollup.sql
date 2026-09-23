@@ -163,13 +163,26 @@ CREATE TABLE IF NOT EXISTS stellar.account_sponsors_rollup
     last_ledger          UInt32,
     first_seen_at        DateTime('UTC'),
     last_seen_at         DateTime('UTC'),
-    computed_at          DateTime DEFAULT now()
+    computed_at          DateTime DEFAULT now(),
+    -- ORDER BY rank serves the top-N page. GET /v1/accounts/sponsors?account=
+    -- and the sponsor-graph read filter on sponsor instead, which without
+    -- this index reads every granule of the board to return at most one row.
+    INDEX idx_sponsors_rollup_sponsor sponsor TYPE bloom_filter(0.01) GRANULARITY 1
 )
 ENGINE = MergeTree
 ORDER BY rank;
 
 CREATE TABLE IF NOT EXISTS stellar.account_sponsors_rollup_staging
 AS stellar.account_sponsors_rollup;
+
+-- A board created before the index existed keeps its old definition under
+-- IF NOT EXISTS, so add it to both halves of the EXCHANGE pair. No
+-- MATERIALIZE INDEX: every cycle TRUNCATEs staging and rewrites the whole
+-- board, so the first cycle after this lands an indexed live table.
+ALTER TABLE stellar.account_sponsors_rollup
+    ADD INDEX IF NOT EXISTS idx_sponsors_rollup_sponsor sponsor TYPE bloom_filter(0.01) GRANULARITY 1;
+ALTER TABLE stellar.account_sponsors_rollup_staging
+    ADD INDEX IF NOT EXISTS idx_sponsors_rollup_sponsor sponsor TYPE bloom_filter(0.01) GRANULARITY 1;
 
 -- Metric-keyed, like the sibling rollups. Carries the exact totals, the
 -- data-derived coverage span, and ambiguous_txs — the attribution

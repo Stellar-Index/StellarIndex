@@ -534,25 +534,27 @@ func (r *ExplorerReader) AccountCreators(ctx context.Context, limit int, account
 	return out, true, nil
 }
 
+const creatorsBoardCols = `rank, creator, accounts_created, funded_stroops, live_accounts, live_stroops,
+	       first_ledger, last_ledger, first_created_at, last_created_at, computed_at`
+
+// creatorsBoardKeyedSQL is the ?account= read. It carries no ORDER BY and no
+// LIMIT because the cycle writes exactly one row per creator, so it selects
+// at most one row and its precomputed `rank` is the true rank over the whole
+// aggregation. The table is ORDER BY rank for the top-N page, so this
+// predicate is served by the idx_creators_rollup_creator skip index.
+const creatorsBoardKeyedSQL = `SELECT ` + creatorsBoardCols + `
+	FROM stellar.account_creators_rollup WHERE creator = ?`
+
 func (r *ExplorerReader) readCreatorsBoard(ctx context.Context, out *AccountCreators, limit int, account string) error {
-	const cols = `rank, creator, accounts_created, funded_stroops, live_accounts, live_stroops,
-		       first_ledger, last_ledger, first_created_at, last_created_at, computed_at`
-	// Two shapes, one row-scan. The keyed arm carries no ORDER BY and no
-	// LIMIT because the rollup holds exactly one row per creator — the
-	// primary key is the creator — so the filter selects at most one row
-	// and its precomputed `rank` is the true rank over the whole
-	// aggregation, not a position within a page.
 	var (
 		rows driver.Rows
 		err  error
 	)
 	if account != "" {
-		rows, err = r.conn.Query(ctx, `
-		SELECT `+cols+`
-		FROM stellar.account_creators_rollup WHERE creator = ?`, account)
+		rows, err = r.conn.Query(ctx, creatorsBoardKeyedSQL, account)
 	} else {
 		rows, err = r.conn.Query(ctx, `
-		SELECT `+cols+`
+		SELECT `+creatorsBoardCols+`
 		FROM stellar.account_creators_rollup ORDER BY rank LIMIT ?`, limit)
 	}
 	if err != nil {
@@ -581,21 +583,25 @@ func (r *ExplorerReader) readCreatorsBoard(ctx context.Context, out *AccountCrea
 // creatorsStatsMetrics maps the metric-keyed stats table onto the
 // snapshot. A metric absent from the table leaves its field zero, which
 // AccountCreators' ThruLedger guard turns into "warming" rather than a
-// span claim nothing backs.
+// span claim nothing backs. It runs after readCreatorsBoard: when the board
+// scanned no row (a keyed miss), the cycle's time comes from these rows.
 func (r *ExplorerReader) readCreatorsStats(ctx context.Context, out *AccountCreators) error {
-	rows, err := r.conn.Query(ctx, `SELECT metric, value FROM stellar.account_creators_stats`)
+	rows, err := r.conn.Query(ctx, `SELECT metric, value, computed_at FROM stellar.account_creators_stats`)
 	if err != nil {
 		return fmt.Errorf("clickhouse: account creators stats: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	var statsAt time.Time
 	for rows.Next() {
 		var (
-			metric string
-			value  int64
+			metric     string
+			value      int64
+			computedAt time.Time
 		)
-		if err := rows.Scan(&metric, &value); err != nil {
+		if err := rows.Scan(&metric, &value, &computedAt); err != nil {
 			return fmt.Errorf("clickhouse: scan account creators stat: %w", err)
 		}
+		statsAt = laterTime(statsAt, computedAt)
 		switch metric {
 		case "creators_total":
 			out.CreatorsTotal = value
@@ -613,7 +619,17 @@ func (r *ExplorerReader) readCreatorsStats(ctx context.Context, out *AccountCrea
 			out.ThruTime = time.Unix(value, 0).UTC()
 		}
 	}
+	if out.ComputedAt.IsZero() {
+		out.ComputedAt = statsAt
+	}
 	return rows.Err()
+}
+
+func laterTime(a, b time.Time) time.Time {
+	if b.After(a) {
+		return b
+	}
+	return a
 }
 
 // clampLedger narrows a stats Int64 to the uint32 a ledger sequence is,

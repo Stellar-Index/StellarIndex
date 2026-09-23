@@ -396,23 +396,25 @@ func (r *ExplorerReader) AccountSponsors(ctx context.Context, limit int, account
 	return out, true, nil
 }
 
+const sponsorsBoardCols = `rank, sponsor, sponsorships_started, distinct_sponsored, revocations_issued,
+	       first_ledger, last_ledger, first_seen_at, last_seen_at, computed_at`
+
+// sponsorsBoardKeyedSQL is the ?account= read, shaped like the creator
+// board's: one row per sponsor carrying its whole-aggregation rank, served by
+// the idx_sponsors_rollup_sponsor skip index because the table is ORDER BY rank.
+const sponsorsBoardKeyedSQL = `SELECT ` + sponsorsBoardCols + `
+	FROM stellar.account_sponsors_rollup WHERE sponsor = ?`
+
 func (r *ExplorerReader) readSponsorsBoard(ctx context.Context, out *AccountSponsors, limit int, account string) error {
-	const cols = `rank, sponsor, sponsorships_started, distinct_sponsored, revocations_issued,
-		       first_ledger, last_ledger, first_seen_at, last_seen_at, computed_at`
-	// Same two shapes as the creator board, and the same reason: the
-	// rollup is keyed by sponsor, so the filtered read returns at most
-	// one row carrying its whole-aggregation rank.
 	var (
 		rows driver.Rows
 		err  error
 	)
 	if account != "" {
-		rows, err = r.conn.Query(ctx, `
-		SELECT `+cols+`
-		FROM stellar.account_sponsors_rollup WHERE sponsor = ?`, account)
+		rows, err = r.conn.Query(ctx, sponsorsBoardKeyedSQL, account)
 	} else {
 		rows, err = r.conn.Query(ctx, `
-		SELECT `+cols+`
+		SELECT `+sponsorsBoardCols+`
 		FROM stellar.account_sponsors_rollup ORDER BY rank LIMIT ?`, limit)
 	}
 	if err != nil {
@@ -435,20 +437,25 @@ func (r *ExplorerReader) readSponsorsBoard(ctx context.Context, out *AccountSpon
 	return rows.Err()
 }
 
+// readSponsorsStats runs after readSponsorsBoard: when the board scanned no
+// row (a keyed miss), the cycle's time comes from the stats rows.
 func (r *ExplorerReader) readSponsorsStats(ctx context.Context, out *AccountSponsors) error {
-	rows, err := r.conn.Query(ctx, `SELECT metric, value FROM stellar.account_sponsors_stats`)
+	rows, err := r.conn.Query(ctx, `SELECT metric, value, computed_at FROM stellar.account_sponsors_stats`)
 	if err != nil {
 		return fmt.Errorf("clickhouse: account sponsors stats: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
+	var statsAt time.Time
 	for rows.Next() {
 		var (
-			metric string
-			value  int64
+			metric     string
+			value      int64
+			computedAt time.Time
 		)
-		if err := rows.Scan(&metric, &value); err != nil {
+		if err := rows.Scan(&metric, &value, &computedAt); err != nil {
 			return fmt.Errorf("clickhouse: scan account sponsors stat: %w", err)
 		}
+		statsAt = laterTime(statsAt, computedAt)
 		switch metric {
 		case "sponsors_total":
 			out.SponsorsTotal = value
@@ -469,6 +476,9 @@ func (r *ExplorerReader) readSponsorsStats(ctx context.Context, out *AccountSpon
 		case "thru_time":
 			out.ThruTime = time.Unix(value, 0).UTC()
 		}
+	}
+	if out.ComputedAt.IsZero() {
+		out.ComputedAt = statsAt
 	}
 	return rows.Err()
 }
