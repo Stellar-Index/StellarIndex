@@ -83,7 +83,12 @@ func TestStellarDashboardReference_DerivesCirculating(t *testing.T) {
 }
 
 func TestStellarDashboardReference_PrefersExplicitField(t *testing.T) {
-	const body = `{"totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000","circulatingSupply":"34740000000"}`
+	// The component formula (total − mandate − upgrade − feePool) gives
+	// 34,740,000,000 here — deliberately NOT what circulatingSupply
+	// says (34,000,000,000), so a regression that deletes the explicit
+	// branch and falls through to the derived formula changes the
+	// asserted value instead of leaving it coincidentally correct.
+	const body = `{"totalSupply":"50000000000","sdfMandate":"15000000000","upgradeReserve":"250000000","feePool":"10000000","circulatingSupply":"34000000000"}`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, body)
 	}))
@@ -94,11 +99,11 @@ func TestStellarDashboardReference_PrefersExplicitField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LookupCirculatingSupply: %v", err)
 	}
-	// Explicit circulatingSupply (34.74B) must win over the component
-	// formula (which would give 34.74B here too — pick a value that
-	// differs to prove the field is used).
-	if math.Abs(got-34_740_000_000) > 1.0 {
-		t.Errorf("circulating = %.2f, want 34740000000 (explicit field)", got)
+	// Explicit circulatingSupply (34.0B) must win over the component
+	// formula (34.74B) — the two differ, so this fails if the explicit
+	// field is ever ignored.
+	if math.Abs(got-34_000_000_000) > 1.0 {
+		t.Errorf("circulating = %.2f, want 34000000000 (explicit field)", got)
 	}
 }
 

@@ -41,16 +41,27 @@ import (
 // exactly one — `api_usage_events` — before 0156.
 
 var (
-	// `add_retention_policy(<relation>` / `add_retention_policy (<relation>`,
-	// with the relation allowed to sit on a later line (0156 spells its
-	// arguments one per line).
+	// addRetentionCallRe / removeRetentionCallRe match one call to
+	// each function and capture its whole argument list, so the
+	// relation is pulled from the ARGUMENTS rather than assumed to be
+	// the first quoted string after the paren — 0156 already mixes a
+	// positional relation with named `drop_after` / `if_not_exists`,
+	// and a future call may name `relation =>` too.
 	// Comment lines are dropped first ([stripSQLComments], shared with
 	// the compression ledger) so the prose in 0034 / 0115 / 0116 —
 	// which all discuss `add_retention_policy` without calling it —
-	// never registers as a policy.
-	addRetentionRe = regexp.MustCompile(`add_retention_policy\s*\(\s*'([a-z0-9_]+)'`)
-	// The same for the removal side.
-	removeRetentionRe = regexp.MustCompile(`remove_retention_policy\s*\(\s*'([a-z0-9_]+)'`)
+	// never registers as a call.
+	addRetentionCallRe    = regexp.MustCompile(`add_retention_policy\s*\(([^)]*)\)`)
+	removeRetentionCallRe = regexp.MustCompile(`remove_retention_policy\s*\(([^)]*)\)`)
+	// namedRelationArgRe / positionalRelationArgRe pull the relation
+	// out of one call's argument list: named `relation => '<name>'`
+	// first (order-independent within the arg list), else the first
+	// positional quoted argument. The class includes `.` so a
+	// schema-qualified relation (`'public.trades'`) is captured whole;
+	// [normalizeRelationName] strips the schema before it is used as
+	// a ledger key.
+	namedRelationArgRe      = regexp.MustCompile(`relation\s*=>\s*'([a-zA-Z0-9_.]+)'`)
+	positionalRelationArgRe = regexp.MustCompile(`^\s*'([a-zA-Z0-9_.]+)'`)
 	// A leading `--` marker, removed so a command written inside a
 	// header comment reads as the command it is.
 	commentMarkerRe = regexp.MustCompile(`(?m)^\s*--\s?`)
@@ -60,6 +71,52 @@ var (
 	// command and must not be held to the command's rules.
 	refreshCallStartRe = regexp.MustCompile(`refresh_continuous_aggregate\s*\(\s*'`)
 )
+
+// relationFromRetentionArgs extracts the target relation from one
+// add_retention_policy / remove_retention_policy call's argument
+// list, however it is spelled. ok=false means neither the named nor
+// the positional shape matched — callers must fail loudly on that,
+// never silently skip the call, or a call the ledger cannot parse
+// reads as a call that was never made.
+func relationFromRetentionArgs(args string) (string, bool) {
+	if m := namedRelationArgRe.FindStringSubmatch(args); m != nil {
+		return normalizeRelationName(m[1]), true
+	}
+	if m := positionalRelationArgRe.FindStringSubmatch(args); m != nil {
+		return normalizeRelationName(m[1]), true
+	}
+	return "", false
+}
+
+// normalizeRelationName drops a schema qualifier (`'public.trades'`
+// → `trades`) so a schema-qualified call registers under the same
+// key the declared set and the pinning tests use.
+func normalizeRelationName(raw string) string {
+	if i := strings.LastIndexByte(raw, '.'); i >= 0 {
+		return raw[i+1:]
+	}
+	return raw
+}
+
+// retentionRelationsFromCalls finds every call `callRe` matches in
+// `sql` and returns the relation each one names. A matched call whose
+// relation cannot be extracted fails the test naming `file` — a
+// spelling the extractor cannot parse must not silently vanish from
+// the ledger, which is exactly how a `relation => 'trades'` policy
+// would have gone unnoticed before this function existed.
+func retentionRelationsFromCalls(t *testing.T, callRe *regexp.Regexp, sql, file string) []string {
+	t.Helper()
+	var relations []string
+	for _, call := range callRe.FindAllStringSubmatch(sql, -1) {
+		rel, ok := relationFromRetentionArgs(call[1])
+		if !ok {
+			t.Fatalf("%s: retention call %q — could not extract its relation "+
+				"(named `relation =>` or positional first argument)", file, call[0])
+		}
+		relations = append(relations, rel)
+	}
+	return relations
+}
 
 // retentionLedger replays every up-migration in numeric order and
 // returns the relations left holding a retention policy.
@@ -84,12 +141,12 @@ func retentionLedger(t *testing.T) map[string]string {
 		}
 		sql := stripSQLComments(string(b))
 		name := filepath.Base(path)
-		for _, m := range removeRetentionRe.FindAllStringSubmatch(sql, -1) {
-			delete(held, m[1])
+		for _, rel := range retentionRelationsFromCalls(t, removeRetentionCallRe, sql, name) {
+			delete(held, rel)
 			sawAny = true
 		}
-		for _, m := range addRetentionRe.FindAllStringSubmatch(sql, -1) {
-			held[m[1]] = name
+		for _, rel := range retentionRelationsFromCalls(t, addRetentionCallRe, sql, name) {
+			held[rel] = name
 			sawAny = true
 		}
 	}
@@ -181,12 +238,12 @@ func TestRetentionPolicies_OnlyTheMinuteAggregateIsBounded(t *testing.T) {
 func TestPrices1mRetention_HorizonIsNinetyDaysAndNamesOneRelation(t *testing.T) {
 	sql := stripSQLComments(readRepoFile(t, "migrations/0156_prices_1m_retention.up.sql"))
 
-	added := addRetentionRe.FindAllStringSubmatch(sql, -1)
+	added := retentionRelationsFromCalls(t, addRetentionCallRe, sql, "0156_prices_1m_retention.up.sql")
 	if len(added) != 1 {
 		t.Fatalf("0156 issues %d add_retention_policy calls, want exactly 1", len(added))
 	}
-	if added[0][1] != "prices_1m" {
-		t.Errorf("0156 attaches retention to %q, want prices_1m", added[0][1])
+	if added[0] != "prices_1m" {
+		t.Errorf("0156 attaches retention to %q, want prices_1m", added[0])
 	}
 	if !strings.Contains(sql, "INTERVAL '90 days'") {
 		t.Errorf("0156 no longer states `INTERVAL '90 days'` — the horizon moved without this "+
@@ -207,9 +264,10 @@ func TestPrices1mRetention_HorizonIsNinetyDaysAndNamesOneRelation(t *testing.T) 
 	}
 	// A destructive migration's down must detach the policy, or a
 	// rollback leaves the drops running.
-	removed := removeRetentionRe.FindAllStringSubmatch(
-		stripSQLComments(readRepoFile(t, "migrations/0156_prices_1m_retention.down.sql")), -1)
-	if len(removed) != 1 || removed[0][1] != "prices_1m" {
+	removed := retentionRelationsFromCalls(t, removeRetentionCallRe,
+		stripSQLComments(readRepoFile(t, "migrations/0156_prices_1m_retention.down.sql")),
+		"0156_prices_1m_retention.down.sql")
+	if len(removed) != 1 || removed[0] != "prices_1m" {
 		t.Errorf("0156 down removes %v, want exactly one removal naming prices_1m", removed)
 	}
 }
@@ -422,5 +480,32 @@ func TestPrices1mRetention_DoesNotClaimTheFalse0115Distinction(t *testing.T) {
 	if !strings.Contains(text, "ONE-OFF") {
 		t.Error("0156 does not state the real difference from 0115 / 0147: those were one-off " +
 			"drops over a static hole, while this policy drops daily forever")
+	}
+}
+
+// The ledger must see a retention policy on `trades` however the call
+// spells the relation — named argument, schema-qualified, or both —
+// because [TestRetentionPolicies_TradesStaysPermanentWhilePrices1mIsBounded]
+// only catches a re-armed `trades` policy if the ledger extracted it
+// in the first place.
+func TestRelationFromRetentionArgs_CatchesEveryTradesSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args string
+	}{
+		{"positional", `'trades'`},
+		{"named", `relation => 'trades', drop_after => INTERVAL '180 days'`},
+		{"schema-qualified positional", `'public.trades'`},
+		{"schema-qualified named", `relation => 'public.trades', drop_after => INTERVAL '180 days'`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rel, ok := relationFromRetentionArgs(tc.args)
+			if !ok {
+				t.Fatalf("relationFromRetentionArgs(%q) found no relation", tc.args)
+			}
+			if rel != "trades" {
+				t.Errorf("relationFromRetentionArgs(%q) = %q, want %q", tc.args, rel, "trades")
+			}
+		})
 	}
 }
