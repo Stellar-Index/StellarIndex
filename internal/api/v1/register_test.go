@@ -510,11 +510,17 @@ func TestRegister_MirrorsKeyIntoValidatorStore(t *testing.T) {
 	if mirror.got.Plaintext != env.Data.APIKey {
 		t.Errorf("mirrored plaintext does not match the key handed to the caller — one secret must validate on either backend")
 	}
-	if mirror.got.KeyID != env.Data.KeyID {
-		t.Errorf("mirrored KeyID = %q, want %q (revocation must line up across stores)", mirror.got.KeyID, env.Data.KeyID)
+	if mirror.got.Record.KeyID != env.Data.KeyID {
+		t.Errorf("mirrored KeyID = %q, want %q (revocation must line up across stores)", mirror.got.Record.KeyID, env.Data.KeyID)
 	}
-	if mirror.got.Identifier == "" {
+	if mirror.got.Record.Identifier == "" {
 		t.Error("mirrored Identifier is empty — the validator keys records by account identifier")
+	}
+	if !mirror.got.Record.PermissionsAll {
+		t.Error("mirrored PermissionsAll = false — the management row grants full access; the permission middleware would 403 every request")
+	}
+	if mirror.got.Record.MonthlyQuota != 1_000_000 {
+		t.Errorf("mirrored MonthlyQuota = %d, want 1000000 (free-tier cap; 0 is unmetered)", mirror.got.Record.MonthlyQuota)
 	}
 }
 

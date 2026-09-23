@@ -215,9 +215,8 @@ func TestAPIKeyIndex_RealRedisACL(t *testing.T) {
 			t.Fatalf("script flush: %v", err)
 		}
 		mirrored := auth.MirroredKey{
-			Plaintext:  "sip_" + strings.Repeat("cd", 32),
-			KeyID:      "kid_acl_mirror",
-			Identifier: owner,
+			Plaintext: "sip_" + strings.Repeat("cd", 32),
+			Record:    auth.APIKeyRecord{KeyID: "kid_acl_mirror", Identifier: owner},
 		}
 		if err := store.CreateWithSecret(ctx, mirrored); err != nil {
 			t.Fatalf("CreateWithSecret after SCRIPT FLUSH: %v", err)

@@ -41,9 +41,11 @@ redis_password: ""
 # password-only path is REJECTED because the default user is off.
 redis_acl_lockdown: false
 
-# Memory + eviction. Cache-only deployment, allkeys-lru is the
-# only sane default — keys older than working set get evicted
-# before OOM kills the process.
+# Memory + eviction. allkeys-lru evicts least-recently-used keys
+# before OOM kills the process. NOT cache-only: this instance also
+# holds the `apikey:` credential records, which allkeys-lru evicts
+# regardless of TTL — an evicted record is an unrecoverable key
+# (GH #1317, open).
 redis_maxmemory: "4gb"
 redis_maxmemory_policy: allkeys-lru
 

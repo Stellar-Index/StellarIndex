@@ -60,9 +60,8 @@ func TestCreateWithSecret_WritesBoundedIdleTTL(t *testing.T) {
 	const plaintext = "sip_" + "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	store := NewRedisAPIKeyStore(rdb)
 	if err := store.CreateWithSecret(context.Background(), MirroredKey{
-		Plaintext:  plaintext,
-		KeyID:      "kid_ttl",
-		Identifier: AccountIdentifier("reg-ttl"),
+		Plaintext: plaintext,
+		Record:    APIKeyRecord{KeyID: "kid_ttl", Identifier: AccountIdentifier("reg-ttl")},
 	}); err != nil {
 		t.Fatalf("CreateWithSecret: %v", err)
 	}

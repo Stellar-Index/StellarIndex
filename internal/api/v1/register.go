@@ -254,13 +254,13 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 	// idle TTL that re-warms on use (CreateWithSecret) so it cannot grow the
 	// allkeys-lru keyspace without bound (W1-flow-register-2).
 	if s.apiKeyBudgets.RedisMirror != nil {
+		mirrored, err := auth.APIKeyRecordFromPlatform(rec, auth.AccountIdentifier(acct.Slug))
+		if err != nil {
+			return "", platform.APIKey{}, fmt.Errorf("mirror api key to validator store: %w", err)
+		}
 		if err := s.apiKeyBudgets.RedisMirror.CreateWithSecret(ctx, auth.MirroredKey{
-			Plaintext:       plaintext,
-			KeyID:           rec.ID,
-			Identifier:      auth.AccountIdentifier(acct.Slug),
-			Label:           rec.Name,
-			RateLimitPerMin: rec.RateLimitPerMin,
-			MonthlyQuota:    rec.MonthlyQuota,
+			Plaintext: plaintext,
+			Record:    mirrored,
 		}); err != nil {
 			// No management row committed yet — refuse rather than hand back
 			// a key that silently fails, and leave no durable orphan.

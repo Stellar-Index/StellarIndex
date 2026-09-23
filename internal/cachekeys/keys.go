@@ -553,7 +553,9 @@ const FreezeTTL = 5 * time.Minute
 //
 // No TTL: API keys are long-lived; expiry + revocation are encoded
 // in the JSON record, not at the Redis layer. An operator rotating
-// keys deletes the record explicitly.
+// keys deletes the record explicitly. No TTL does NOT protect a record
+// from an allkeys-* eviction policy, and the plaintext cannot be
+// re-issued (GH #1317, open).
 
 // APIKeyRecordKey is the typed Redis key for the
 // `apikey:<sha256-hex>` family. Named distinctly from the [APIKey]

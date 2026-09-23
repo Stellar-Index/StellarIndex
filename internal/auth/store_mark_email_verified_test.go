@@ -104,9 +104,8 @@ func TestMarkEmailVerified_PreservesMirroredKeyTTL(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.CreateWithSecret(ctx, MirroredKey{
-		Plaintext:  "sip_mirrored_verify",
-		KeyID:      "kid_mirrored_verify",
-		Identifier: AccountIdentifier("acme"),
+		Plaintext: "sip_mirrored_verify",
+		Record:    APIKeyRecord{KeyID: "kid_mirrored_verify", Identifier: AccountIdentifier("acme")},
 	}); err != nil {
 		t.Fatalf("CreateWithSecret: %v", err)
 	}

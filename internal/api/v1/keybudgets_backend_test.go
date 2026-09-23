@@ -41,11 +41,14 @@ func registerStyleFixture(
 	}
 	if budgets.RedisMirror != nil {
 		if err := budgets.RedisMirror.CreateWithSecret(context.Background(), auth.MirroredKey{
-			Plaintext:       plaintext,
-			KeyID:           row.ID,
-			Identifier:      auth.AccountIdentifier(acct.Slug),
-			Label:           "registration key",
-			RateLimitPerMin: row.RateLimitPerMin,
+			Plaintext: plaintext,
+			Record: auth.APIKeyRecord{
+				KeyID:           row.ID,
+				Identifier:      auth.AccountIdentifier(acct.Slug),
+				Label:           "registration key",
+				RateLimitPerMin: row.RateLimitPerMin,
+				PermissionsAll:  true,
+			},
 		}); err != nil {
 			t.Fatalf("mirror fixture credential: %v", err)
 		}

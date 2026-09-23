@@ -124,9 +124,8 @@ func TestUpdateRateLimit_PreservesMirroredKeyTTL(t *testing.T) {
 	ctx := context.Background()
 
 	if err := store.CreateWithSecret(ctx, MirroredKey{
-		Plaintext:  "sip_mirrored_secret",
-		KeyID:      "kid_mirrored",
-		Identifier: AccountIdentifier("acme"),
+		Plaintext: "sip_mirrored_secret",
+		Record:    APIKeyRecord{KeyID: "kid_mirrored", Identifier: AccountIdentifier("acme")},
 	}); err != nil {
 		t.Fatalf("CreateWithSecret: %v", err)
 	}

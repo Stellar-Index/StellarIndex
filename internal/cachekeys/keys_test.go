@@ -2,6 +2,7 @@ package cachekeys_test
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -503,4 +504,35 @@ func TestTypedKeysAreDistinctFamilies(t *testing.T) {
 	//   // rdb.Get
 
 	_ = usdc // keep the import path exercised even if unused above
+}
+
+// TestAPIKeyRecords_NotOnAnEvictingInstance is the GH-1317 reproduction.
+// `apikey:` records are the credential of record for signup, admin and
+// mint-key issued keys (the plaintext is unrecoverable by contract), and
+// APIKeyTTL=0 only makes them durable on an instance that cannot evict
+// them. The codified instance runs an allkeys-* policy, which evicts
+// regardless of TTL, so memory pressure silently deletes live credentials.
+// Skipped until the records move to a noeviction instance or Postgres
+// becomes canonical; remove the Skip with that fix.
+func TestAPIKeyRecords_NotOnAnEvictingInstance(t *testing.T) {
+	if os.Getenv("STELLARINDEX_REPRO_GH1317") == "" {
+		t.Skip("GH-1317 open: credential records share the allkeys-lru cache instance; set STELLARINDEX_REPRO_GH1317=1 to reproduce")
+	}
+
+	raw, err := os.ReadFile("../../configs/ansible/roles/redis-sentinel/defaults/main.yml")
+	if err != nil {
+		t.Fatalf("read redis-sentinel defaults: %v", err)
+	}
+	policy := ""
+	for _, line := range strings.Split(string(raw), "\n") {
+		if v, ok := strings.CutPrefix(line, "redis_maxmemory_policy:"); ok {
+			policy = strings.TrimSpace(v)
+		}
+	}
+	if policy == "" {
+		t.Fatal("redis_maxmemory_policy not found in redis-sentinel defaults")
+	}
+	if cachekeys.APIKeyTTL == 0 && strings.HasPrefix(policy, "allkeys-") {
+		t.Errorf("maxmemory-policy %q evicts apikey: records written with APIKeyTTL=0; an evicted record is an unrecoverable credential (silent permanent 401)", policy)
+	}
 }
