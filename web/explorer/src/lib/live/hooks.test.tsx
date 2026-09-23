@@ -121,4 +121,48 @@ describe('usePricePoll', () => {
 
     vi.useRealTimers();
   });
+
+  // T323: switching `asset` mid-flight must not keep serving the OLD
+  // asset's price while the new asset's poll is still pending — the hook
+  // has to reset synchronously on the asset change, not only once the
+  // fetch resolves.
+  it('resets price/observedAt synchronously when the asset changes', async () => {
+    let resolveNative: ((r: Response) => void) | undefined;
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('asset=native')) {
+        return new Promise<Response>((resolve) => {
+          resolveNative = resolve;
+        });
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            data: { price: '9', observed_at: '2026-02-01T00:00:00Z' },
+            flags: {},
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        ),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ asset }) => usePricePoll({ asset, quote: 'fiat:USD' }),
+      { initialProps: { asset: 'other' } },
+    );
+
+    await waitFor(() => expect(result.current.polled).toBe(true));
+    expect(result.current.price).toBe(9);
+
+    // Switch to an asset whose fetch never resolves within this test —
+    // the old price must not linger.
+    rerender({ asset: 'native' });
+
+    expect(result.current.price).toBeNull();
+    expect(result.current.observedAt).toBeNull();
+    expect(result.current.polled).toBe(false);
+
+    resolveNative?.(new Response(null, { status: 404 }));
+  });
 });

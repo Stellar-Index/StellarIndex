@@ -396,6 +396,23 @@ export function usePricePoll({
     withheld: false,
     polled: false,
   });
+  // Reset during render when the asset/quote pair changes (mirrors
+  // useStreamJSON's prevUrl pattern above) — a stale price from the OLD
+  // pair must never be served against the new one while the next poll
+  // (fired from the effect below) is still in flight (T323).
+  const pollKey = `${asset}|${quote}`;
+  const [prevPollKey, setPrevPollKey] = useState(pollKey);
+  if (pollKey !== prevPollKey) {
+    setPrevPollKey(pollKey);
+    setState({
+      price: null,
+      observedAt: null,
+      stale: false,
+      triangulated: false,
+      withheld: false,
+      polled: false,
+    });
+  }
 
   useEffect(() => {
     // Test nets run no aggregator, so /v1/price always 404s (any quote) — the
