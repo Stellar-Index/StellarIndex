@@ -217,7 +217,13 @@ func takeFailedAuth(r *http.Request, limiter *ratelimit.Bucket) (throttled bool,
 		// skip the throttle (fail-closed for the throttle itself).
 		ip = "unknown"
 	}
-	res, err := limiter.Take(r.Context(), "failauth:"+ip)
+	// Detach from the request's cancellation — see [throttleContext]:
+	// ratelimit.Bucket cannot tell a client abort from a Redis outage,
+	// so a caller that RSTs mid-take must not arm the fail-closed dwell
+	// clock for this shared bucket (REL-06 F059 / Q153).
+	takeCtx, takeCancel := throttleContext(r)
+	defer takeCancel()
+	res, err := limiter.Take(takeCtx, "failauth:"+ip)
 	if err != nil {
 		if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
 			// Sustained outage: fail CLOSED, mirroring
