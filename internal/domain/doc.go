@@ -14,12 +14,10 @@
 // internal/aggregate/baseline) purely to reference the plain data
 // shape a Store method reads or writes — e.g. mev.StoredEvent,
 // accounts.Observation, blend.PositionEvent. That inversion made
-// "storage is the persistence tier below compute" (the D8 dependency-
-// direction map, docs/maintainability-audit-2026-07-01/
-// D8-dependency-direction.md) unstatable and un-enforceable: the
-// import-lint's L/storage-below-compute rule
-// (scripts/ci/lint-imports.sh) had to grandfather the whole set via
-// scripts/ci/lint-imports.baseline.
+// "storage is the persistence tier below compute" — the rule
+// scripts/ci/lint-imports.sh's L/storage-below-compute rule enforces
+// — unstatable and un-enforceable: the import-lint had to grandfather
+// the whole set via scripts/ci/lint-imports.baseline.
 //
 // The fix: the struct definitions live HERE — a leaf package with NO
 // internal dependency beyond internal/canonical (itself dependency-
