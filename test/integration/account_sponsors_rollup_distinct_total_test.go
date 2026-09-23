@@ -30,7 +30,9 @@ func TestSponsorsRollup_DistinctSponsoredTotalIsGlobal(t *testing.T) {
 	sponsorA := gAccountFromSeed(t, 0x41)
 	sponsorB := gAccountFromSeed(t, 0x42)
 	sponsored := gAccountFromSeed(t, 0x43)
-	closeTime := time.Date(2027, 9, 2, 0, 0, 50, 0, time.UTC)
+	// Early close time: a later one becomes the lake's max(close_time) and
+	// shifts NetworkThroughput's window off TestNetworkThroughput_* fixtures.
+	closeTime := time.Date(2024, 1, 1, 0, 0, 50, 0, time.UTC)
 
 	sink, err := chstore.Open(ctx, addr, 1000)
 	if err != nil {
