@@ -107,7 +107,7 @@ allowlist)?
 
 | Layer (topic[0]) | topic[1] examples | Where it lands |
 |---|---|---|
-| `DeFindexFactory` | `create`, `n_fee` | registers the vault |
+| `DeFindexFactory` | `create`, `n_fee` | recognised only — body not decoded, no registration (curated `MainnetVaults`/`MainnetStrategies` set is the sole trust root; see header) |
 | `DeFindexVault` | `deposit`, `withdraw`, `rebalance`, `n_wasm`, … | `defindex_flows` (vault layer) |
 | `BlendStrategy` | `deposit`, `withdraw`, `harvest` | `defindex_flows` (strategy layer) |
 
@@ -408,19 +408,48 @@ extension) + `projector-replay`.
    verified `protocol_contracts` row.
 2. Re-derive: `projector-replay -source defindex -from 57056338` (under
    `run-heavy-job.sh`). Replay is upsert-only, so ALSO delete the flagged
-   contracts' rows:
+   contracts' rows.
+
+   The `contract_id` list is the correctness predicate. The
+   `ledger_close_time` bound is there only for chunk exclusion
+   (`defindex_flows` is partitioned on it, migrations/0050). Take the
+   bound from the flagged rows themselves, not from the replay's
+   `-from 57056338`: the census above has flagged rows from ledger
+   55466585 (`CDXXQPPZ…`), well before the replay start. Paste it in as
+   a literal. A subquery that returns NULL would make the DELETE match
+   nothing and still report success.
 
    ```sql
-   DELETE FROM defindex_flows WHERE contract_id IN (
-     'CAQKDOORT6G3VP7MTQ6NEFQOYLSJFER7M7Z4BCQ6IWW7DVA2TUHQYEHO',
-     'CBGCGVKHVA4TG6MGQ3XTOEHEJXK4DYLOKTMR4UT4PZFPTQKLYXYRF6KV',
-     'CC6YDVFTWSHFWTIK5FLLN4TOSE3L7M6TLRA6UPR524GY2T3NIPAVNUXD',
-     'CCMJUJW6Z7I3TYDCJFGTI3A7QA3ASMYAZ5PSRRWBBIJQPKI2GXL5DW5D',
-     'CCTLQXYSIUN3OSZLZ7O7MIJC6YCU3QLLS6TUM3P2CD6DAVELMWC3QV4E',
-     'CCY2V6WZDC7UZL225KHUE6YZOM44XCU3CNE5WYQGTDKP67QQ6U6W46UD',
-     'CDX7DJZFV2DWP2JGI7DNB4XLLLI4JFZ52235A2YO25RZ2UQEPSJ4FDEO',
-     'CDXXQPPZPDY4TMRDOM4RCL6NEUPDGYTYEYN4BVRVDDJT5MVILVH7L7WF',
-     'CDXZESX452QH2NIINQDTJ2S7G2CF2QCL43Q3K2VN3VAVKIE4QRS43GHC');
+   -- 1. Count the rows and find the earliest one. Stop if count is 0.
+   SELECT count(*), min(ledger), min(ledger_close_time)
+     FROM defindex_flows
+    WHERE contract_id IN (
+      'CAQKDOORT6G3VP7MTQ6NEFQOYLSJFER7M7Z4BCQ6IWW7DVA2TUHQYEHO',
+      'CBGCGVKHVA4TG6MGQ3XTOEHEJXK4DYLOKTMR4UT4PZFPTQKLYXYRF6KV',
+      'CC6YDVFTWSHFWTIK5FLLN4TOSE3L7M6TLRA6UPR524GY2T3NIPAVNUXD',
+      'CCMJUJW6Z7I3TYDCJFGTI3A7QA3ASMYAZ5PSRRWBBIJQPKI2GXL5DW5D',
+      'CCTLQXYSIUN3OSZLZ7O7MIJC6YCU3QLLS6TUM3P2CD6DAVELMWC3QV4E',
+      'CCY2V6WZDC7UZL225KHUE6YZOM44XCU3CNE5WYQGTDKP67QQ6U6W46UD',
+      'CDX7DJZFV2DWP2JGI7DNB4XLLLI4JFZ52235A2YO25RZ2UQEPSJ4FDEO',
+      'CDXXQPPZPDY4TMRDOM4RCL6NEUPDGYTYEYN4BVRVDDJT5MVILVH7L7WF',
+      'CDXZESX452QH2NIINQDTJ2S7G2CF2QCL43Q3K2VN3VAVKIE4QRS43GHC');
+
+   -- 2. Delete from the step-1 min(ledger_close_time) onwards.
+   BEGIN;
+   DELETE FROM defindex_flows
+    WHERE contract_id IN (
+      'CAQKDOORT6G3VP7MTQ6NEFQOYLSJFER7M7Z4BCQ6IWW7DVA2TUHQYEHO',
+      'CBGCGVKHVA4TG6MGQ3XTOEHEJXK4DYLOKTMR4UT4PZFPTQKLYXYRF6KV',
+      'CC6YDVFTWSHFWTIK5FLLN4TOSE3L7M6TLRA6UPR524GY2T3NIPAVNUXD',
+      'CCMJUJW6Z7I3TYDCJFGTI3A7QA3ASMYAZ5PSRRWBBIJQPKI2GXL5DW5D',
+      'CCTLQXYSIUN3OSZLZ7O7MIJC6YCU3QLLS6TUM3P2CD6DAVELMWC3QV4E',
+      'CCY2V6WZDC7UZL225KHUE6YZOM44XCU3CNE5WYQGTDKP67QQ6U6W46UD',
+      'CDX7DJZFV2DWP2JGI7DNB4XLLLI4JFZ52235A2YO25RZ2UQEPSJ4FDEO',
+      'CDXXQPPZPDY4TMRDOM4RCL6NEUPDGYTYEYN4BVRVDDJT5MVILVH7L7WF',
+      'CDXZESX452QH2NIINQDTJ2S7G2CF2QCL43Q3K2VN3VAVKIE4QRS43GHC')
+      AND ledger_close_time >= '<step_1_min_ledger_close_time>'::timestamptz;
+   -- DELETE n must equal step 1's count. If it does not, ROLLBACK.
+   COMMIT;
    ```
 
    (`defindex_flows` keys rows by the emitting contract, so unlike the
