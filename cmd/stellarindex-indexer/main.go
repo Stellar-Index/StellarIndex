@@ -9,7 +9,14 @@
 // production code path. No stellar-rpc client, no per-source
 // goroutines, no poll loops. One goroutine drives ledgerstream +
 // dispatcher; a second drains the resulting consumer.Events to
-// Timescale with panic isolation.
+// Timescale. That second goroutine is deliberately unguarded, not
+// panic-isolated (#368 M4): a recover() there would be cosmetic
+// (the writes happen in PersistEvents' fanned-out persistWorker
+// goroutines, whose panics end the process regardless), and
+// swallowing the panic would leave the process answering
+// /metrics and /healthz with a frozen cursor while persisting
+// nothing. Crashing lets systemd restart from the last cursor
+// instead.
 //
 // Flags:
 //
