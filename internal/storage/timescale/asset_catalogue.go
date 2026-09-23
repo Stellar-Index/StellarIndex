@@ -884,9 +884,9 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q, typ string, order Asse
 		// assets have no SEP-1 code or issuer account), so without
 		// the asset_id fallback this predicate was NULL for every
 		// such row and type=soroban&q=... matched nothing.
-		args = append(args, "%"+q+"%")
+		args = append(args, "%"+escapeLikePattern(q)+"%")
 		conds = append(conds, fmt.Sprintf(
-			"(LOWER(ca.code) LIKE LOWER($%d) OR LOWER(COALESCE(ca.slug, ca.code, ca.asset_id)) LIKE LOWER($%d) OR LOWER(ca.issuer_g_strkey) LIKE LOWER($%d))",
+			"(LOWER(ca.code) LIKE LOWER($%d) ESCAPE '\\' OR LOWER(COALESCE(ca.slug, ca.code, ca.asset_id)) LIKE LOWER($%d) ESCAPE '\\' OR LOWER(ca.issuer_g_strkey) LIKE LOWER($%d) ESCAPE '\\')",
 			len(args), len(args), len(args)))
 	}
 	args = append(args, assetsCursorArgs(cursor, order)...)
@@ -901,6 +901,16 @@ func buildAssetsQuery(limit int, issuer, code, cursor, q, typ string, order Asse
 		where = " WHERE " + strings.Join(conds, " AND ")
 	}
 	return listAssetsBaseSelectSQL(order) + where + assetsOrderBy(order) + " LIMIT " + limitPlaceholder, args, nil
+}
+
+// escapeLikePattern escapes the three characters that carry meaning
+// inside a Postgres LIKE pattern — the escape character itself, then
+// the wildcards `%` and `_` — so a caller's own literal `q` is matched
+// as literal text rather than as wildcards once buildAssetsQuery wraps
+// it in `%...%` for a substring search. Callers pair this with an
+// explicit `ESCAPE '\'` clause on every LIKE it feeds.
+func escapeLikePattern(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 // assetsTypeCondition maps the structural `type` filter onto the only
