@@ -19,6 +19,7 @@ Wants=network-online.target
 Type=oneshot
 EnvironmentFile=-/etc/default/archive-completeness
 EnvironmentFile=-/etc/default/stellarindex
+EnvironmentFile=-/etc/default/stellarindex-ops
 # ARCHIVE_TO is computed at start time from the indexer cursor —
 # compute-archive-to.sh writes ARCHIVE_TO=<n> to the runtime env
 # file below, which then overrides the Environment= default.
