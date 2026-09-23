@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
@@ -25,6 +27,27 @@ func newAdminTestServer(t *testing.T, subject auth.Subject, store v1.AccountStor
 		Auth:     fakeAuthMiddleware(subject),
 		Accounts: store,
 		Audit:    sink,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	return ts
+}
+
+// newAdminTestServerWithPlatformKeys additionally wires a Postgres
+// [platform.APIKeyStore] behind APIKeyBudgets.Platform plus the account
+// store that proves a row's owner — needed for the GH-978
+// revoke-both-stores regressions, where the shared credential has a
+// durable management row alongside its Redis record.
+func newAdminTestServerWithPlatformKeys(
+	t *testing.T, subject auth.Subject, store v1.AccountStore,
+	platformKeys platform.APIKeyStore, platformAccounts v1.PlatformAccountStore,
+) *httptest.Server {
+	t.Helper()
+	srv := v1.New(v1.Options{
+		Auth:             fakeAuthMiddleware(subject),
+		Accounts:         store,
+		APIKeyBudgets:    v1.APIKeyBudgetStores{Platform: platformKeys},
+		PlatformAccounts: platformAccounts,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
@@ -246,5 +269,124 @@ func TestAccountKeysCreate_WithScopes(t *testing.T) {
 	}
 	if store2.calls != 0 {
 		t.Errorf("store.Create called despite invalid scope")
+	}
+}
+
+// seedOwnedPlatformKey seeds one Postgres api_keys row owned by the
+// account whose slug is ownerSlug and returns both stores behind it.
+func seedOwnedPlatformKey(ownerSlug, keyID string) (*fakeRegisterKeyStore, *fakePlatformAccountStore) {
+	owner := platform.Account{ID: uuid.New(), Slug: ownerSlug}
+	keys := newFakeRegisterKeyStore()
+	keys.byID[keyID] = platform.APIKey{ID: keyID, AccountID: owner.ID}
+	return keys, newFakePlatformAccountStore(owner)
+}
+
+func assertPlatformKeyLive(t *testing.T, keys *fakeRegisterKeyStore, keyID string) {
+	t.Helper()
+	if len(keys.revokedIDs) != 0 || !keys.byID[keyID].RevokedAt.IsZero() {
+		t.Errorf("another account's api_keys row was revoked: revokedIDs = %v, RevokedAt = %v — "+
+			"the Postgres leg must be scoped to the identifier's own keys (GH-978)",
+			keys.revokedIDs, keys.byID[keyID].RevokedAt)
+	}
+}
+
+// TestAdminKeysRevoke_RevokesPostgresManagementRowToo is the GH-978
+// regression: DELETE /v1/admin/keys/{kid} must revoke the credential
+// in BOTH stores a /v1/register-minted key lives in, not just Redis —
+// otherwise the api_keys row keeps revoked_at NULL, stays listed and
+// counts toward the active-key ceiling. The row belongs to the
+// account behind identifier=acct:reg-abc123.
+func TestAdminKeysRevoke_RevokesPostgresManagementRowToo(t *testing.T) {
+	platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
+	ts := newAdminTestServerWithPlatformKeys(t, operatorSubject(), &fakeAccountStore{}, platformKeys, accts)
+
+	resp := doWithReason(t, http.MethodDelete,
+		ts.URL+"/v1/admin/keys/kid_shared01?identifier=acct:reg-abc123", "leaked key", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+
+	if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != "kid_shared01" {
+		t.Errorf("postgres management row not revoked: revokedIDs = %v, want [kid_shared01] — "+
+			"the row stays revoked_at NULL, still counted active and listed (GH-978)", platformKeys.revokedIDs)
+	}
+}
+
+// TestAdminKeysRevoke_NonOwnerIdentifierLeavesPostgresRowLive pins the
+// route's identifier=<owner> contract on the Postgres leg: Revoke is
+// keyed by id alone, so naming the wrong owner must not reach another
+// account's row. 204 either way, so key ids can't be enumerated.
+func TestAdminKeysRevoke_NonOwnerIdentifierLeavesPostgresRowLive(t *testing.T) {
+	platformKeys, accts := seedOwnedPlatformKey("victim-co", "kid_victim01")
+	ts := newAdminTestServerWithPlatformKeys(t, operatorSubject(), &fakeAccountStore{}, platformKeys, accts)
+
+	resp := doWithReason(t, http.MethodDelete,
+		ts.URL+"/v1/admin/keys/kid_victim01?identifier=acct:attacker-co", "leaked key", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (a non-owner revoke is a silent no-op)", resp.StatusCode)
+	}
+	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
+}
+
+// TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive is the
+// self-service form of the same check: a customer's DELETE
+// /v1/account/keys/{kid} with another account's key id in the path
+// must not revoke that account's api_keys row.
+func TestAccountKeysRevoke_CrossAccountLeavesPostgresRowLive(t *testing.T) {
+	platformKeys, accts := seedOwnedPlatformKey("victim-co", "kid_victim01")
+	attacker := auth.Subject{Identifier: "acct:attacker-co", Tier: auth.TierAPIKey, KeyID: "kid_attacker"}
+	ts := newAdminTestServerWithPlatformKeys(t, attacker, &fakeAccountStore{}, platformKeys, accts)
+
+	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_victim01", "", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (a non-owner revoke is a silent no-op)", resp.StatusCode)
+	}
+	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
+}
+
+// TestAccountKeysRevoke_OwnerRevokesPostgresRow is the positive
+// self-service case: the owner's revoke clears the management row.
+func TestAccountKeysRevoke_OwnerRevokesPostgresRow(t *testing.T) {
+	platformKeys, accts := seedOwnedPlatformKey("reg-abc123", "kid_shared01")
+	owner := auth.Subject{Identifier: "acct:reg-abc123", Tier: auth.TierAPIKey, KeyID: "kid_other"}
+	ts := newAdminTestServerWithPlatformKeys(t, owner, &fakeAccountStore{}, platformKeys, accts)
+
+	resp := doWithReason(t, http.MethodDelete, ts.URL+"/v1/account/keys/kid_shared01", "", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+	if len(platformKeys.revokedIDs) != 1 || platformKeys.revokedIDs[0] != "kid_shared01" {
+		t.Errorf("owner's postgres management row not revoked: revokedIDs = %v, want [kid_shared01]", platformKeys.revokedIDs)
+	}
+}
+
+// TestAdminKeysRevoke_NoAccountStoreLeavesPostgresRowLive: with no
+// account store the owner can't be proven, so the Postgres leg fails
+// closed rather than revoking by id alone.
+func TestAdminKeysRevoke_NoAccountStoreLeavesPostgresRowLive(t *testing.T) {
+	platformKeys, _ := seedOwnedPlatformKey("victim-co", "kid_victim01")
+	ts := newAdminTestServerWithPlatformKeys(t, operatorSubject(), &fakeAccountStore{}, platformKeys, nil)
+
+	resp := doWithReason(t, http.MethodDelete,
+		ts.URL+"/v1/admin/keys/kid_victim01?identifier=acct:attacker-co", "leaked key", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", resp.StatusCode)
+	}
+	assertPlatformKeyLive(t, platformKeys, "kid_victim01")
+}
+
+// TestAdminKeysRevoke_TolerantOfRedisOnlyKey pins the other half: a
+// key that was minted through an admin/self-service path (Redis
+// only, no Postgres row) must still revoke cleanly — the Postgres
+// leg is best-effort and ErrNotFound there is not a failure.
+func TestAdminKeysRevoke_TolerantOfRedisOnlyKey(t *testing.T) {
+	platformKeys := newFakeRegisterKeyStore() // no row for kid_redisonly
+	ts := newAdminTestServerWithPlatformKeys(t, operatorSubject(), &fakeAccountStore{}, platformKeys,
+		newFakePlatformAccountStore(platform.Account{ID: uuid.New(), Slug: "partner-co"}))
+
+	resp := doWithReason(t, http.MethodDelete,
+		ts.URL+"/v1/admin/keys/kid_redisonly?identifier=acct:partner-co", "leaked key", "")
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (a Redis-only key with no Postgres row must still revoke)", resp.StatusCode)
 	}
 }

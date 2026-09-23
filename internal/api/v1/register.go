@@ -131,17 +131,20 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 
 	plaintext, rec, err := s.mintRegisterKey(r.Context(), acct)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
-			return
-		}
 		// The account row exists but its first credential never reached
 		// the validator store — an orphan (NS-3). Quarantine it as a
 		// suspended `signup-race:` orphan so the signupreaper reclaims it
 		// (suspended + reason + no child users/api_keys), instead of
 		// leaving a permanent active account that can never authenticate.
+		// This runs for EVERY mint failure, including a client disconnect:
+		// the account row is already durable, so a canceled request
+		// context must not skip cleanup of state that outlives it.
 		s.logger.Error("register: key mint failed after account create (orphan account)",
 			"err", err, "account_id", acct.ID)
 		s.suspendRegisterOrphan(r.Context(), acct.ID, err)
+		if clientAborted(r, err) {
+			return
+		}
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/internal",
 			"Internal error", http.StatusInternalServerError,
@@ -277,11 +280,19 @@ func (s *Server) mintRegisterKey(ctx context.Context, acct platform.Account) (st
 		// effort: the account is suspended + reaped and the mirror carries
 		// an idle TTL, so even a failed rollback self-heals rather than
 		// persisting a working orphan credential.
+		//
+		// Detached from ctx: a canceled/deadline-exceeded request context
+		// is the common trigger for this rollback (the Create call above
+		// just failed on it), so rolling back on the SAME dead context
+		// guarantees the rollback also fails, leaving a live credential
+		// for the mirror's full idle TTL.
 		if s.apiKeyBudgets.RedisMirror != nil {
-			if rbErr := s.apiKeyBudgets.RedisMirror.RevokeKeyByID(ctx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil {
+			rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			if rbErr := s.apiKeyBudgets.RedisMirror.RevokeKeyByID(rbCtx, auth.AccountIdentifier(acct.Slug), rec.ID); rbErr != nil {
 				s.logger.Error("register: mirror rollback after management-row create failed",
 					"err", rbErr, "account_id", acct.ID, "key_id", rec.ID)
 			}
+			cancel()
 		}
 		return "", platform.APIKey{}, fmt.Errorf("create api key: %w", err)
 	}
