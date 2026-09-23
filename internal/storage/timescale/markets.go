@@ -1195,6 +1195,13 @@ type pairKey = string
 // spelling of them (aliasSpellingKeys), $3 the alias-fold map. Rows and
 // requests meet on the alias-folded key, so a listing row folded onto
 // its classic legs still gets its SAC-spelled venues' volume.
+//
+// Every spliced fragment is aliasFoldSQL's own compile-time-constant SQL
+// (a COALESCE over a fixed placeholder and column name); no caller value
+// is ever concatenated in — those travel as $1/$2/$3 — so gosec G202 is a
+// false positive here.
+//
+//nolint:gosec // no caller-supplied text reaches the statement
 var pairsVolumeHistory24hQuery = `
 		WITH hours AS (
 		  SELECT generate_series(
