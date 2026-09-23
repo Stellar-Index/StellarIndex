@@ -308,6 +308,7 @@ func TestClassic_Compute_PreservesSACWrappedComponent(t *testing.T) {
 		Claimable:              bigInt(3_000_000),
 		LPReserve:              bigInt(11_000_000),
 		SACWrapped:             bigInt(sacWrapped),
+		SACObserved:            true,
 		IssuerBalance:          bigInt(0),
 		LockedAccountBalances:  bigInt(0),
 		LockedContractBalances: bigInt(0),
@@ -347,6 +348,7 @@ func TestClassic_Compute_SACWrappedIsDefensiveCopy(t *testing.T) {
 		Claimable:              bigInt(0),
 		LPReserve:              bigInt(0),
 		SACWrapped:             shared,
+		SACObserved:            true,
 		IssuerBalance:          bigInt(0),
 		LockedAccountBalances:  bigInt(0),
 		LockedContractBalances: bigInt(0),
@@ -362,5 +364,43 @@ func TestClassic_Compute_SACWrappedIsDefensiveCopy(t *testing.T) {
 	shared.SetInt64(999_999_999)
 	if got.SACWrappedStroops.Cmp(big.NewInt(500_000)) != 0 {
 		t.Errorf("SACWrappedStroops = %s after mutating the reader's component, want 500000 — Compute must return a copy", got.SACWrappedStroops)
+	}
+}
+
+// TestClassic_Compute_UnobservedSACLeavesWrappedStroopsNil — RLT-248.
+// SumSACBalancesAtOrBefore's SQL COALESCEs "no sac_balance_observations
+// row found" down to a plain 0, indistinguishable from a genuine zero
+// reading. Compute must consult SACObserved rather than trust
+// SACWrapped's non-nilness, or [Supply.SACWrappedStroops] is never nil
+// and [CrossCheckSubsetBound]'s CS-087 escrow-bound gate
+// (`if classic.SACWrappedStroops != nil`) always evaluates — even for
+// an asset with literally no SAC-balance observation on record — so a
+// "checked, no violation" result is published for a leg that was never
+// actually evaluated.
+func TestClassic_Compute_UnobservedSACLeavesWrappedStroopsNil(t *testing.T) {
+	reader := &stubClassicReader{comps: supply.ClassicSupplyComponents{
+		Trustline:              bigInt(1_000_000),
+		Claimable:              bigInt(0),
+		LPReserve:              bigInt(0),
+		SACWrapped:             bigInt(0), // the COALESCE-to-zero value a reader with no rows returns
+		SACObserved:            false,
+		IssuerBalance:          bigInt(0),
+		LockedAccountBalances:  bigInt(0),
+		LockedContractBalances: bigInt(0),
+	}}
+	computer, err := supply.NewClassicComputer(supply.Policy{}, reader)
+	if err != nil {
+		t.Fatalf("NewClassicComputer: %v", err)
+	}
+	got, err := computer.Compute(context.Background(), mustClassic(t, "USDC", validIssuer), 70_000_000, time.Now())
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if got.SACWrappedStroops != nil {
+		t.Errorf("SACWrappedStroops = %s, want nil — SACObserved=false must stay the CS-087 unchecked state, not a false green zero reading", got.SACWrappedStroops)
+	}
+	// The fold must still include the (zero) component in total_supply.
+	if got.TotalSupply.Cmp(big.NewInt(1_000_000)) != 0 {
+		t.Errorf("TotalSupply = %s, want 1000000 — SACObserved must not affect the fold", got.TotalSupply)
 	}
 }

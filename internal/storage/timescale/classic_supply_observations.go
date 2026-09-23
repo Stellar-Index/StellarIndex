@@ -447,6 +447,30 @@ func (s *Store) SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, a
 	return scanSum(ctx, s.db, q, assetKey, int(asOfLedger))
 }
 
+// SACBalanceObservationsExist reports whether at least one
+// sac_balance_observations row exists for the asset at-or-before the
+// given ledger, regardless of is_removal — i.e. whether the asset has
+// a genuine SAC-balance reading at all, as distinct from
+// SumSACBalancesAtOrBefore's COALESCE(sum(...), 0), which cannot tell
+// "summed to zero from real rows" apart from "no rows found" (RLT-248:
+// the CS-087 escrow-bound gate in CrossCheckSubsetBound read the
+// latter as the former and was never actually unchecked).
+func (s *Store) SACBalanceObservationsExist(ctx context.Context, assetKey string, asOfLedger uint32) (bool, error) {
+	const q = `
+        SELECT EXISTS (
+            SELECT 1
+              FROM sac_balance_observations
+             WHERE asset_key = $1
+               AND ledger    <= $2
+        )
+    `
+	var exists bool
+	if err := s.db.QueryRowContext(ctx, q, assetKey, int(asOfLedger)).Scan(&exists); err != nil {
+		return false, fmt.Errorf("timescale: SACBalanceObservationsExist %s: %w", assetKey, err)
+	}
+	return exists, nil
+}
+
 // TrustlineBalanceForAccountAtOrBefore returns the most-recent
 // trustline balance for the (account, asset) pair at-or-before
 // the supplied ledger. Returns zero (non-nil) when the account

@@ -26,6 +26,15 @@ type ClassicSupplyStore interface {
 	SumLPReservesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error)
 	SumSACBalancesAtOrBefore(ctx context.Context, assetKey string, asOfLedger uint32) (*big.Int, error)
 
+	// SACBalanceObservationsExist reports whether at least one
+	// sac_balance_observations row exists for the asset at-or-before
+	// asOfLedger, regardless of value. SumSACBalancesAtOrBefore alone
+	// cannot distinguish "no rows, COALESCEd to zero" from "rows exist
+	// and genuinely sum to zero" — this method supplies that signal so
+	// [ClassicSupplyComponents.SACObserved] (and in turn
+	// [Supply.SACWrappedStroops]'s nil-ness) reflects reality (RLT-248).
+	SACBalanceObservationsExist(ctx context.Context, assetKey string, asOfLedger uint32) (bool, error)
+
 	TrustlineBalanceForAccountAtOrBefore(ctx context.Context, accountID, assetKey string, asOfLedger uint32) (*big.Int, error)
 	SACBalanceForContractAtOrBefore(ctx context.Context, contractHolder, assetKey string, asOfLedger uint32) (*big.Int, error)
 
@@ -121,6 +130,10 @@ func (r *StorageClassicSupplyReader) ClassicSupplyAt(ctx context.Context, asset 
 	if err != nil {
 		return ClassicSupplyComponents{}, fmt.Errorf("supply: sac sum for %s: %w", assetKey, err)
 	}
+	sacObserved, err := r.store.SACBalanceObservationsExist(ctx, assetKey, ledger)
+	if err != nil {
+		return ClassicSupplyComponents{}, fmt.Errorf("supply: sac observation-existence check for %s: %w", assetKey, err)
+	}
 
 	issuerBalance, err := r.store.TrustlineBalanceForAccountAtOrBefore(ctx, asset.Issuer, assetKey, ledger)
 	if err != nil {
@@ -159,6 +172,7 @@ func (r *StorageClassicSupplyReader) ClassicSupplyAt(ctx context.Context, asset 
 		Claimable:              claimable,
 		LPReserve:              lpReserve,
 		SACWrapped:             sacWrapped,
+		SACObserved:            sacObserved,
 		IssuerBalance:          issuerBalance,
 		LockedAccountBalances:  lockedAccounts,
 		LockedContractBalances: lockedContracts,

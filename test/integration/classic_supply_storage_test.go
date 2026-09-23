@@ -199,6 +199,44 @@ func TestClassicSupplyObservationsRoundTrip(t *testing.T) {
 		if got.Cmp(big.NewInt(999)) != 0 {
 			t.Errorf("isolated asset sum = %s, want 999", got)
 		}
+
+		// RLT-248: SACBalanceObservationsExist must distinguish "no
+		// observation at all" from "observations exist and (possibly)
+		// sum to zero" — SumSACBalancesAtOrBefore's COALESCE(sum, 0)
+		// alone can't tell those apart, and CrossCheckSubsetBound's
+		// CS-087 escrow gate relies on that distinction.
+		const neverSeenAsset = "SHX:GDNEVERSEENSACBALANCEOBSERVATIONFORTHISASSETXXXXXXXXXXXX"
+		exists, err := store.SACBalanceObservationsExist(ctx, neverSeenAsset, 5000)
+		if err != nil {
+			t.Fatalf("SACBalanceObservationsExist(never seen): %v", err)
+		}
+		if exists {
+			t.Error("SACBalanceObservationsExist(never seen) = true, want false")
+		}
+
+		exists, err = store.SACBalanceObservationsExist(ctx, assetUSDC, 5000)
+		if err != nil {
+			t.Fatalf("SACBalanceObservationsExist(assetUSDC): %v", err)
+		}
+		if !exists {
+			t.Error("SACBalanceObservationsExist(assetUSDC) = false, want true — real rows were inserted above")
+		}
+
+		// All holders removed: sum is genuinely zero, but the asset WAS
+		// observed — that must still read true, not collapse to the
+		// "never seen" case.
+		insertSAC(t, ctx, store, sacContract, holderB, assetUSDC, 4000, 0, t0.Add(3*time.Hour), true)
+		got, _ = store.SumSACBalancesAtOrBefore(ctx, assetUSDC, 5000)
+		if got.Sign() != 0 {
+			t.Errorf("Sum after all holders removed = %s, want 0", got)
+		}
+		exists, err = store.SACBalanceObservationsExist(ctx, assetUSDC, 5000)
+		if err != nil {
+			t.Fatalf("SACBalanceObservationsExist(all removed): %v", err)
+		}
+		if !exists {
+			t.Error("SACBalanceObservationsExist(all removed) = false, want true — a genuine zero-balance reading must not read as unobserved")
+		}
 	})
 }
 

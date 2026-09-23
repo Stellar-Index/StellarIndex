@@ -30,12 +30,20 @@ groups:
       # standing false positives. Served supply was never wrong; only
       # the comparison was. The metric itself is now wrap_class-aware
       # (internal/supply.WrapClass — see crosscheck.go):
-      #   - wrap_class="partial_wrap" (the default): the gauge is
-      #     max(0, sac_total − classic_total) — zero in the expected
-      #     benign state, positive only when the SAC reports MORE than
-      #     the classic total could possibly back (impossible under
-      #     correct accounting — a genuine "escrow != minted"
-      #     violation).
+      #   - wrap_class="partial_wrap" (the default): the gauge is leg 2
+      #     (audit E4/N-F3(b), 2026-07-25), max(0, classic.sac_wrapped −
+      #     sac_total) — zero in the expected benign state, positive
+      #     only when more is escrowed inside the SAC than it ever
+      #     net-minted (impossible under correct accounting — a genuine
+      #     "escrow != minted" violation). Zero (unevaluated, not
+      #     "passing") when the classic snapshot carries no sac_wrapped
+      #     component. Leg 1, max(0, sac_total − classic_total), is
+      #     still computed and exposed as OverMintStroops for triage but
+      #     is DIAGNOSTIC-ONLY since 2026-08-05 (BLND/PHO false-paged a
+      #     week on legitimate classic-side burns/redistribution that
+      #     leg 1's premise doesn't account for) and no longer feeds
+      #     this gauge — see internal/supply/crosscheck.go's
+      #     CrossCheckSubsetBound.
       #   - wrap_class="full_wrap" (operator-attested via
       #     `[supply].fully_wrapped_sacs`; none configured as of
       #     2026-07-08): the gauge is the ORIGINAL |classic − sac|
