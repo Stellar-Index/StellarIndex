@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -125,12 +126,15 @@ func storedFrom(c Candidate) (StoredEvent, error) {
 // wired, and persists new candidates. Idempotent via the dedup key,
 // so overlapping windows are safe.
 type Worker struct {
-	scanner   TradeScanner
-	sink      Sink
-	oracles   OracleScanner   // optional
-	auctions  AuctionScanner  // optional
-	order     TxOrderResolver // optional
-	pruner    Pruner          // optional
+	scanner  TradeScanner
+	sink     Sink
+	oracles  OracleScanner  // optional
+	auctions AuctionScanner // optional
+	// order is optional and may be wired after construction (SetOrder) by
+	// a background dial retry (K024), while Run is already ticking on
+	// another goroutine — hence atomic rather than a plain field.
+	order     atomic.Pointer[TxOrderResolver]
+	pruner    Pruner // optional
 	logger    *slog.Logger
 	window    time.Duration
 	scanLimit int
@@ -189,12 +193,11 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 	if obs == nil {
 		obs = nopObserver{}
 	}
-	return &Worker{
+	w := &Worker{
 		scanner:   scanner,
 		sink:      sink,
 		oracles:   cfg.Oracles,
 		auctions:  cfg.Auctions,
-		order:     cfg.Order,
 		pruner:    cfg.Pruner,
 		logger:    cfg.Logger,
 		window:    cfg.Window,
@@ -202,6 +205,19 @@ func NewWorker(scanner TradeScanner, sink Sink, cfg WorkerConfig) *Worker {
 		retention: cfg.Retention,
 		obs:       obs,
 	}
+	if cfg.Order != nil {
+		w.SetOrder(cfg.Order)
+	}
+	return w
+}
+
+// SetOrder wires (or re-wires) the tx-order resolver after construction.
+// Safe to call concurrently with Run: a background ClickHouse dial retry
+// (K024) arms the sandwich/oracle-sandwich detectors once the lake
+// answers, rather than the worker either blocking start on that dial or
+// giving up on it forever after one failure.
+func (w *Worker) SetOrder(o TxOrderResolver) {
+	w.order.Store(&o)
 }
 
 // RunOnce scans the trailing window once and persists new MEV events
@@ -319,14 +335,16 @@ func (w *Worker) scanOracles(ctx context.Context, since time.Time) []OracleRef {
 // lookup is prefiltered to hashes that could matter
 // (OrderingTxHashes), so the lake round-trip stays bounded.
 func (w *Worker) orderedCandidates(ctx context.Context, trades []canonical.Trade, usd []string, oracles []OracleRef) []Candidate {
-	if w.order == nil {
+	orderPtr := w.order.Load()
+	if orderPtr == nil {
 		return nil
 	}
+	order := *orderPtr
 	hashes := OrderingTxHashes(trades, oracles)
 	if len(hashes) == 0 {
 		return nil
 	}
-	txIdx, err := w.order.TxIndexes(ctx, hashes)
+	txIdx, err := order.TxIndexes(ctx, hashes)
 	if err != nil {
 		if ctx.Err() == nil {
 			w.logger.Warn("mev: lake tx-order lookup failed — skipping sandwich detectors this tick", "err", err, "hashes", len(hashes))

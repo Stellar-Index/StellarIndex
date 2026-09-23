@@ -905,23 +905,33 @@ func run(cfgPath string, dryRun bool) error {
 		// unbounded without losing anything the /mev feed shows.
 		Pruner: store,
 	}
+	mevWorker := mev.NewWorker(store, store, mevCfg)
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		if txr, err := clickhouse.NewTxIndexReader(rootCtx, addr); err != nil {
-			// Best-effort degradation: without the lake's tx-order
-			// signal the ordering-dependent detectors (sandwich,
-			// oracle_sandwich) stay off; everything else still runs.
-			logger.Warn("mev: ClickHouse tx-order resolver unavailable — sandwich/oracle-sandwich detection disabled",
-				"addr", addr, "err", err)
-		} else {
-			mevCfg.Order = txr
+		// The tx-order dial used to happen once, inline, here: a single
+		// failure disabled the sandwich/oracle_sandwich detectors for the
+		// process lifetime, the same cold-boot-race shape F040 fixed for
+		// the decimals guard (K024). Retry in the background instead and
+		// arm the detectors the moment the lake answers; everything else
+		// the worker does starts immediately, unaffected.
+		refresherWG.Add(1)
+		go func() {
+			defer worker.Recover(logger, "mev-order-dial")
+			defer refresherWG.Done()
+			txr, ok := dialLakeReaderWithRetry(rootCtx, logger, addr, clickhouse.NewTxIndexReader,
+				"mev: ClickHouse tx-order resolver unavailable — sandwich/oracle-sandwich detection NOT YET armed, retrying",
+				"mev: ClickHouse tx-order resolver reached — sandwich/oracle-sandwich detection armed")
+			if !ok {
+				return // shutdown before the lake ever answered
+			}
 			defer func() { _ = txr.Close() }()
-		}
+			mevWorker.SetOrder(txr)
+			<-rootCtx.Done()
+		}()
 	}
 	refresherWG.Add(1)
 	go func() {
 		defer worker.Recover(logger, "mev")
 		defer refresherWG.Done()
-		mevWorker := mev.NewWorker(store, store, mevCfg)
 		if err := mevWorker.Run(rootCtx, 5*time.Minute); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("mev worker exited with error", "err", err)
 		}
@@ -1070,24 +1080,39 @@ func run(cfgPath string, dryRun bool) error {
 		Logger:   logger.With("component", "priceless-coverage"),
 		IsPriced: store.AssetIsPriced,
 	}
+	pricelessTripwire := pricelesscoverage.New(store, pricelessOpts)
 	// A Soroban-venue trade is keyed by the token contract; a SAC's price
 	// is served under its classic asset. Resolve the one to the other from
 	// the lake so a wrapped classic asset is not ticketed as priceless.
+	//
+	// The dial used to happen once, inline, here: a single failure left
+	// SAC candidates read as given for the process lifetime, the same
+	// cold-boot-race shape F040 fixed for the decimals guard (K024).
+	// Retry in the background instead and arm the alias resolution the
+	// moment the lake answers; the sweep itself starts immediately,
+	// unaffected.
 	if addr := cfg.Storage.ClickHouseAddr; addr != "" {
-		if sacReader, err := clickhouse.NewExplorerReader(rootCtx, addr); err != nil {
-			logger.Warn("priceless-coverage: ClickHouse SAC resolver unavailable — SAC candidates are read as given", "addr", addr, "err", err)
-		} else {
+		refresherWG.Add(1)
+		go func() {
+			defer worker.Recover(logger, "priceless-coverage-sac-dial")
+			defer refresherWG.Done()
+			sacReader, ok := dialLakeReaderWithRetry(rootCtx, logger, addr, clickhouse.NewExplorerReader,
+				"priceless-coverage: ClickHouse SAC resolver unavailable — SAC candidates read as given, retrying",
+				"priceless-coverage: ClickHouse SAC resolver reached — SAC alias resolution armed")
+			if !ok {
+				return // shutdown before the lake ever answered
+			}
 			defer func() { _ = sacReader.Close() }()
-			pricelessOpts.ResolveSAC = func(ctx context.Context, contractID string) (string, bool) {
+			pricelessTripwire.SetResolveSAC(func(ctx context.Context, contractID string) (string, bool) {
 				name, ok, err := sacReader.SACClassicAssetName(ctx, contractID)
 				if err != nil || !ok {
 					return "", false
 				}
 				return canonicalSACName(name)
-			}
-		}
+			})
+			<-rootCtx.Done()
+		}()
 	}
-	pricelessTripwire := pricelesscoverage.New(store, pricelessOpts)
 	refresherWG.Add(1)
 	go func() {
 		defer worker.Recover(logger, "priceless-coverage")
@@ -2645,26 +2670,47 @@ func dialDecimalsResolver(
 	addr string,
 	dial func(context.Context, string) (*clickhouse.ExplorerReader, error),
 ) (reader *clickhouse.ExplorerReader, ok bool) {
+	return dialLakeReaderWithRetry(ctx, logger, addr, dial,
+		"decimals-guard: ClickHouse decimals resolver unavailable — non-7-decimal DEX-token detection NOT YET armed, retrying",
+		"decimals-guard: ClickHouse decimals resolver reached — non-7-decimal DEX-token detection armed")
+}
+
+// dialLakeReaderWithRetry generalizes the backoff loop above (K024) to the
+// two other best-effort ClickHouse-lake readers that were still
+// single-shot-then-permanent-degrade: the MEV tx-order resolver and the
+// priceless-coverage SAC resolver. The cold-boot race dialDecimalsResolver
+// exists for — clickhouse-server spending minutes loading metadata for the
+// 150B-row lake while the unit's After= ordering does not wait for it —
+// applies equally to every reader dialled against the same ClickHouse, so
+// "retry until it answers or shutdown" is the shared correctness property,
+// not something specific to the decimals guard.
+func dialLakeReaderWithRetry[T any](
+	ctx context.Context,
+	logger *slog.Logger,
+	addr string,
+	dial func(context.Context, string) (T, error),
+	unavailableMsg, armedMsg string,
+) (reader T, ok bool) {
 	backoff := decimalsResolverRetryMin
 	for attempt := 1; ; attempt++ {
-		er, err := dial(ctx, addr)
+		r, err := dial(ctx, addr)
 		if err == nil {
 			if attempt > 1 {
-				logger.Info("decimals-guard: ClickHouse decimals resolver reached — non-7-decimal DEX-token detection armed",
-					"addr", addr, "attempts", attempt)
+				logger.Info(armedMsg, "addr", addr, "attempts", attempt)
 			}
-			return er, true
+			return r, true
 		}
 		if ctx.Err() != nil {
-			return nil, false
+			var zero T
+			return zero, false
 		}
 		if attempt == 1 || backoff >= decimalsResolverRetryMax {
-			logger.Warn("decimals-guard: ClickHouse decimals resolver unavailable — non-7-decimal DEX-token detection NOT YET armed, retrying",
-				"addr", addr, "err", err, "attempt", attempt, "retry_in", backoff)
+			logger.Warn(unavailableMsg, "addr", addr, "err", err, "attempt", attempt, "retry_in", backoff)
 		}
 		select {
 		case <-ctx.Done():
-			return nil, false
+			var zero T
+			return zero, false
 		case <-time.After(backoff):
 		}
 		if backoff < decimalsResolverRetryMax {

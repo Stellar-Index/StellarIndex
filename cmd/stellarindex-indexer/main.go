@@ -557,10 +557,17 @@ func run(cfgPath string, dryRun bool) error {
 	// inline (non-blocking), keeping the Tier-1 lake within ~seconds of the
 	// chain for the real-time block explorer — vs the ~10-min ch-live-catchup
 	// timer (which stays as the completeness backstop for anything this sink
-	// drops under CH pressure). ON since ADR-0041, so a host with no
-	// ClickHouse must set clickhouse_live_sink = false or NewLiveSink below
-	// fails the boot. The sink itself never blocks ingest.
-	var chLiveSink *clickhouse.LiveSink
+	// drops under CH pressure). ON since ADR-0041. The sink itself never
+	// blocks ingest — including its own dial: a ClickHouse that is not
+	// answering YET at boot (the expected shape of a cold reboot — the same
+	// race startSignerTagger's docstring describes) must delay the sink, not
+	// take the whole indexer down over an inline mirror that already has a
+	// completeness backstop. The dial used to happen inline here and a
+	// single failure returned a fatal boot error, so a host whose
+	// ClickHouse was still loading metadata after a shared reboot could not
+	// ingest a single ledger until an operator noticed and restarted it
+	// (K024). chLiveSink.Load() is nil until the dial succeeds.
+	var chLiveSink atomic.Pointer[clickhouse.LiveSink]
 	if cfg.Storage.ClickHouseLiveSink {
 		// The struct-tag default is example/docs-only (not applied at runtime),
 		// so fall back to the local CH default if the operator enabled the sink
@@ -569,39 +576,11 @@ func run(cfgPath string, dryRun bool) error {
 		if chAddr == "" {
 			chAddr = "127.0.0.1:9300"
 		}
-		chLiveSink, err = clickhouse.NewLiveSink(rootCtx, chAddr, clickhouse.LiveSinkOptions{
-			Logger: logger.With("component", "ch-live-sink"),
-		})
-		if err != nil {
-			return fmt.Errorf("clickhouse live-sink: %w", err)
-		}
-		chLiveSink.Start()
-		// G12-02: sample the LiveSink's monotonic counters and emit the
-		// stellarindex_ch_live_sink_ledgers_total delta on a short interval, so a
-		// CH write stall (buffered climbing past written) or a bounded-drop
-		// surfaces in Prometheus, not just the shutdown log line.
-		chSinkMetricsStop, chSinkMetricsDone := watchCHLiveSink(chLiveSink, logger.With("component", "ch-live-sink"))
+		chSinkStop, chSinkDone := startCHLiveSink(rootCtx, chAddr, &chLiveSink, logger.With("component", "ch-live-sink"))
 		defer func() {
-			// Order matters: drain the sink FIRST, then stop the watcher.
-			// The watcher's exit path runs one final flush, so stopping
-			// it last is what carries the drain's written/dropped/errored
-			// deltas into Prometheus. The previous order stopped the
-			// watcher before Stop() had moved a single counter, leaving
-			// those deltas in the log line below and nowhere else
-			// (#368 LOW).
-			chLiveSink.Stop()
-			chSinkMetricsStop()
-			<-chSinkMetricsDone
-			logger.Info("ch live-sink drained on shutdown",
-				"written", chLiveSink.WrittenCount(),
-				"buffered", chLiveSink.BufferedCount(),
-				"dropped", chLiveSink.DroppedCount(),
-				"errored", chLiveSink.ErroredCount())
+			chSinkStop()
+			<-chSinkDone
 		}()
-		// G20-06: log the EFFECTIVE address (post-fallback), not the raw
-		// possibly-empty cfg value — the prior line printed "" when the operator
-		// enabled the sink without setting clickhouse_addr.
-		logger.Info("ClickHouse real-time dual-sink enabled", "addr", chAddr)
 	}
 
 	setSourceEnabled(cfg.Ingestion.EnabledSources, true)
@@ -888,7 +867,7 @@ func run(cfgPath string, dryRun bool) error {
 				// a slow CH never stalls ingest — drops are backstopped by the
 				// catch-up timer). Extract is a 2nd decode of the LCM, negligible
 				// at the live rate.
-				if chLiveSink != nil {
+				if sink := chLiveSink.Load(); sink != nil {
 					ext, eerr := clickhouse.ExtractLedger(lcm, cfg.Stellar.Passphrase())
 					if eerr != nil {
 						// G20-06: do NOT silently swallow the extract error — a
@@ -912,7 +891,7 @@ func run(cfgPath string, dryRun bool) error {
 								"tx_event_read_errors", ext.TxEventReadErrors,
 								"entry_meta_unsupported", ext.EntryMetaUnsupported)
 						}
-						chLiveSink.PushLedger(ext)
+						sink.PushLedger(ext)
 					}
 				}
 				return nil
@@ -1477,6 +1456,79 @@ const (
 	signerDialMinBackoff = 5 * time.Second
 	signerDialMaxBackoff = time.Minute
 )
+
+// Backoff bounds for the ClickHouse live-sink's dial. Mirrors
+// signerDialMinBackoff/Max for the same reason: the thing being waited on
+// is an operator action, a deploy, or a cold-boot metadata load, not
+// transient packet loss.
+const (
+	chLiveSinkDialMinBackoff = 5 * time.Second
+	chLiveSinkDialMaxBackoff = time.Minute
+)
+
+// startCHLiveSink dials the ClickHouse real-time dual-sink (ADR-0034 #18)
+// in its own goroutine, retrying with backoff until it succeeds or ctx
+// ends, and only then starts it and its metrics watcher — see the K024
+// docstring at the call site for why the dial must not be able to fail the
+// boot. sink.Load() is nil until the dial succeeds; the ledgerstream
+// callback already treats that as "skip this ledger's push", exactly as it
+// does today while the sink is still dialling.
+//
+// Follows the (cancel, done) shape so main's shutdown sequence stays
+// uniform; the caller MUST call cancel() and wait on done before
+// returning, since the shutdown drain runs inside this goroutine.
+func startCHLiveSink(parent context.Context, chAddr string, sink *atomic.Pointer[clickhouse.LiveSink], logger *slog.Logger) (context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// RECOVER: the sink is a best-effort mirror with a completeness
+		// backstop (the ch-live-catchup timer); its own dial/watch loop
+		// dying must cost the lake's real-time edge, never ingest.
+		defer worker.Recover(logger, "ch-live-sink-dial")
+		var live *clickhouse.LiveSink
+		ok := retryUntil(ctx, logger, "ch live-sink: ClickHouse unavailable",
+			chLiveSinkDialMinBackoff, chLiveSinkDialMaxBackoff,
+			func(ctx context.Context) error {
+				l, err := clickhouse.NewLiveSink(ctx, chAddr, clickhouse.LiveSinkOptions{Logger: logger})
+				if err != nil {
+					return err
+				}
+				live = l
+				return nil
+			})
+		if !ok {
+			return // ctx cancelled while waiting to retry
+		}
+		live.Start()
+		sink.Store(live)
+		// G20-06: log the EFFECTIVE address (post-fallback), not the raw
+		// possibly-empty cfg value — the operator may have enabled the
+		// sink without setting clickhouse_addr.
+		logger.Info("ClickHouse real-time dual-sink enabled", "addr", chAddr)
+		// G12-02: sample the LiveSink's monotonic counters and emit the
+		// stellarindex_ch_live_sink_ledgers_total delta on a short interval, so a
+		// CH write stall (buffered climbing past written) or a bounded-drop
+		// surfaces in Prometheus, not just the shutdown log line.
+		metricsStop, metricsDone := watchCHLiveSink(live, logger)
+		<-ctx.Done()
+		// Order matters: drain the sink FIRST, then stop the watcher.
+		// The watcher's exit path runs one final flush, so stopping it
+		// last is what carries the drain's written/dropped/errored
+		// deltas into Prometheus. The previous (inline) order stopped
+		// the watcher before Stop() had moved a single counter, leaving
+		// those deltas in the log line below and nowhere else (#368 LOW).
+		live.Stop()
+		metricsStop()
+		<-metricsDone
+		logger.Info("ch live-sink drained on shutdown",
+			"written", live.WrittenCount(),
+			"buffered", live.BufferedCount(),
+			"dropped", live.DroppedCount(),
+			"errored", live.ErroredCount())
+	}()
+	return cancel, done
+}
 
 // retryUntil calls attempt until it succeeds or ctx ends, backing off
 // from minBackoff to maxBackoff (doubling). It reports whether attempt
