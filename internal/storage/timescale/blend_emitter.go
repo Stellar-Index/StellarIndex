@@ -156,8 +156,10 @@ func execBlendEmitterRow(
 // InsertBlendEmitterDistribute appends one `distribute` row.
 // Idempotent on the (ledger_close_time, contract_id, ledger, tx_hash,
 // op_index, event_kind, event_index, recipient_index) PK — a
-// projector-replay over the same range writes the same row (ON
-// CONFLICT DO NOTHING).
+// projector-replay over the same range writes the same row via the
+// generation-guarded corrective upsert (INV-3, migration 0110): the
+// row is only overwritten when the incoming derive_generation is >=
+// the stored one, so a stale replay can't revert a later correction.
 //
 // Defensive: rejects empty ContractID / TxHash / BackstopID and a
 // non-positive Amount before touching the DB — the decoder already
@@ -189,8 +191,8 @@ func (s *Store) InsertBlendEmitterDistribute(ctx context.Context, e BlendEmitter
 // InsertBlendEmitterDrop appends one `drop` event, fanned to one row
 // per recipient (recipient_index = slice position). Runs in a single
 // transaction so a partial fan-out (some recipients landed, others
-// didn't) can't happen. Idempotent per-row on the same PK as
-// InsertBlendEmitterDistribute.
+// didn't) can't happen. Idempotent per-row on the same PK and the
+// same generation-guarded upsert as InsertBlendEmitterDistribute.
 //
 // Defensive: rejects empty ContractID / TxHash, an empty recipient
 // list, and (per-recipient) an empty address or non-positive amount.
@@ -235,7 +237,8 @@ func (s *Store) InsertBlendEmitterDrop(ctx context.Context, e BlendEmitterDropEv
 }
 
 // InsertBlendEmitterSwapConfig appends one `q_swap` / `swap` row.
-// Idempotent on the same PK shape as the other two writers.
+// Idempotent on the same PK shape and generation-guarded upsert as
+// the other two writers.
 //
 // Defensive: rejects empty ContractID / TxHash / NewBackstop /
 // NewBackstopToken and a Kind other than BlendEmitterQSwap /
