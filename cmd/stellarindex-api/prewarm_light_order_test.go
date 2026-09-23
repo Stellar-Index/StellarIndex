@@ -95,8 +95,10 @@ func TestPrewarmLight_NativeAndVerifiedAssetWarmsRunBeforeMarketsLoops(t *testin
 	}, 0)
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
+	// catalogueLen large enough that catalogueFillPrewarmOptions adds
+	// nothing here — this test is about T653's call ordering, not T279.
 	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers,
-		[]string{"USDC-GDHUXCJQVGYUYVYEPCTAZ7WMHNMTZJWKUANE2LFXTYUZ3YPDN2PDM26"}, nil, nil)
+		[]string{"USDC-GDHUXCJQVGYUYVYEPCTAZ7WMHNMTZJWKUANE2LFXTYUZ3YPDN2PDM26"}, nil, nil, noCatalogueFillTestLen)
 
 	names := order.snapshot()
 

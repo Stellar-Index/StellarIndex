@@ -48,7 +48,9 @@ func TestPrewarmLightWarmsNetworkStats(t *testing.T) {
 	assets := v1.NewCachedAssetsReader(&stubAssetsReader{}, 0)
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
-	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, cached)
+	// catalogueLen large enough that catalogueFillPrewarmOptions adds
+	// nothing here — this test is about the network-stats slot, not T279.
+	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, cached, noCatalogueFillTestLen)
 
 	if got := rec.seen(); got != 1 {
 		t.Fatalf("network stats prewarm calls = %d, want 1 — the /v1/network/stats "+

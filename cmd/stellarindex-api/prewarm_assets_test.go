@@ -9,6 +9,12 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
+// noCatalogueFillTestLen is a catalogueLen so far above any real
+// assetListingPrewarmLimits value (max 500) that catalogueFillPrewarmOptions
+// always returns empty — used by tests unrelated to T279 so they keep
+// exercising exactly the call set they were written against.
+const noCatalogueFillTestLen = 1 << 20
+
 // The /v1/assets listing handler overfetches by one —
 // `ListAssetsOptions{Limit: limit + 1}` — so a `?limit=50` request looks
 // up the cache key for 51. The prewarm never mirrored that, so the route
@@ -105,5 +111,57 @@ func TestPrewarmAssetListingsCoversTheObservedHotShapes(t *testing.T) {
 // detached, so neither a nil reader nor an absent snapshot store (Redis
 // unconfigured) may take the whole cadence down.
 func TestPrewarmAssetListingsNilReaderIsSafe(t *testing.T) {
-	prewarmAssetListings(context.Background(), discardLogger(), nil, nil)
+	prewarmAssetListings(context.Background(), discardLogger(), nil, nil, 45)
+}
+
+// TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler is the T279
+// guard: the unified (asset_class=all) landing page's catalogue phase
+// (serveCatalogueUnifiedPage) fills any shortfall below the user's limit
+// from the classic phase with a limit of (userLimit-catalogueLen)+
+// AssetsListOverfetchBy, Order=Volume24hUSDDesc — NOT the userLimit+1 key
+// assetListingPrewarmOptions warms. On the real catalogue (~45 Stellar-
+// issued rows), only userLimit 50/100/500 overrun it (5/55/455 remaining);
+// 1/5/10 never reach the classic phase at all. Pre-fix, none of these
+// catalogue-fill keys were warmed, so the explorer's default ?limit=100
+// landing-page load (remaining 55, Limit 56) paid the cold read on every
+// restart.
+func TestCatalogueFillPrewarmOptionsMirrorsTheUnifiedHandler(t *testing.T) {
+	const catalogueLen = 45 // matches serveCatalogueUnifiedPage's own doc comment
+	opts := catalogueFillPrewarmOptions(catalogueLen)
+
+	got := map[int]bool{}
+	for _, o := range opts {
+		if o.Order != timescale.AssetsOrderVolume24hUSDDesc {
+			t.Fatalf("catalogueFillPrewarmOptions returned order %v, want %v — "+
+				"fetchClassicUnifiedRows never varies the classic-phase order",
+				o.Order, timescale.AssetsOrderVolume24hUSDDesc)
+		}
+		got[o.Limit] = true
+	}
+
+	// userLimit 50 → remaining 5 → Limit 6.
+	// userLimit 100 (the explorer's default landing-page load) →
+	//   remaining 55 → Limit 56.
+	// userLimit 500 → remaining 455 → Limit 456.
+	want := map[int]bool{6: true, 56: true, 456: true}
+	if len(got) != len(want) {
+		t.Fatalf("catalogueFillPrewarmOptions(%d) = %v, want exactly Limits %v",
+			catalogueLen, opts, want)
+	}
+	for l := range want {
+		if !got[l] {
+			t.Fatalf("catalogueFillPrewarmOptions(%d) = %v, missing Limit %d",
+				catalogueLen, opts, l)
+		}
+	}
+	// userLimit 1/5/10 never reach the classic phase (the catalogue alone
+	// covers them) — Limit 2/6/11 (the DIRECT handler's own overfetch
+	// keys, from a different function) must not appear here.
+	for _, l := range []int{2, 11} {
+		if got[l] {
+			t.Fatalf("catalogueFillPrewarmOptions(%d) = %v warms Limit %d, "+
+				"but the catalogue alone satisfies that userLimit — the classic "+
+				"phase is never reached, so this is a phantom slot", catalogueLen, opts, l)
+		}
+	}
 }

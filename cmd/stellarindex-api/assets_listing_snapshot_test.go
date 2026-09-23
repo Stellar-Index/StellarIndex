@@ -316,7 +316,12 @@ func TestSnapshotsAreNeverLaunderedFresh(t *testing.T) {
 		}
 	}
 
-	prewarmAssetListings(ctx, discardLogger(), reader, snaps)
+	// catalogueLen large enough that catalogueFillPrewarmOptions adds
+	// nothing here — a second lookup on the SAME cache key as
+	// assetListingPrewarmOptions' own userLimit=1 entry would otherwise
+	// race the stale-while-revalidate refresh the first lookup triggers,
+	// which is exactly the laundering this test exists to catch.
+	prewarmAssetListings(ctx, discardLogger(), reader, snaps, noCatalogueFillTestLen)
 
 	for _, o := range assetListingPrewarmOptions() {
 		snap, ok := snaps.load(ctx, o)

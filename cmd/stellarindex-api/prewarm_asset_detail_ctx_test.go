@@ -60,7 +60,9 @@ func TestPrewarmLight_NativeAssetRowSurvivesSlowListingWarm(t *testing.T) {
 	markets := v1.NewCachedMarketsReader(&recordingMarketsReader{log: newCallLog()}, 0)
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
-	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil)
+	// catalogueLen large enough that catalogueFillPrewarmOptions adds
+	// nothing here — this test is about T661's context budget, not T279.
+	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil, noCatalogueFillTestLen)
 
 	if probe.nativeCtxErr != nil {
 		t.Fatalf("GetNativeAssetRow saw ctx.Err() = %v — the native asset-catalogue "+

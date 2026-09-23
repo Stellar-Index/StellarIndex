@@ -42,7 +42,9 @@ func TestPrewarmCaches_FiresBothPassesBeforeTheFirstTick(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		prewarmCaches(ctx, discardLogger(), stats, markets, assets, issuers, nil, nil, nil)
+		// catalogueLen large enough that catalogueFillPrewarmOptions adds
+		// nothing here — this test is about pass ordering, not T279.
+		prewarmCaches(ctx, discardLogger(), stats, markets, assets, issuers, nil, nil, nil, noCatalogueFillTestLen)
 	}()
 
 	// Both passes must complete well inside the shorter (60s) cadence,

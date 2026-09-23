@@ -246,7 +246,10 @@ func runPrewarmLightForParity(t *testing.T) *callLog {
 	assets := v1.NewCachedAssetsReader(&stubAssetsReader{}, 0)
 	issuers := v1.NewCachedIssuersReader(&stubIssuersReader{}, 0)
 
-	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil)
+	// catalogueLen large enough that catalogueFillPrewarmOptions adds
+	// nothing here — this test is about markets-reader call parity, not
+	// T279.
+	prewarmLight(context.Background(), discardLogger(), markets, assets, issuers, nil, nil, nil, noCatalogueFillTestLen)
 	return log
 }
 
