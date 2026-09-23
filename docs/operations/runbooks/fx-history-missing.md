@@ -174,7 +174,10 @@ upserts on `(ticker, bucket)` so re-running on the same range
 is a no-op.
 
 The script logs one line per chunk to stderr; on completion it
-writes a final summary (total chunks, total rows, elapsed).
+writes a final summary (total chunks, failed chunks, total rows,
+elapsed). It exits non-zero if any chunk failed or the run was
+interrupted before covering the whole window. Re-run the `--from`/`--to`
+range of each `chunk failed` line until the script exits 0.
 
 ## Prevention
 
