@@ -35,7 +35,12 @@ migrate -path migrations -database "${STELLARINDEX_POSTGRES_DSN}" down 1
 2. **Numbering must be dense** — no gaps, no duplicates.
    (Historical exception, recorded 2026-08-04: 0075, 0077, 0078, 0079
    and 0084 are unused. They were never present in the tree and nothing
-   was ever deleted — the rule applies going forward.)
+   was ever deleted — the rule applies going forward.) "Going forward"
+   is enforced, not just written down: `lint-migrations.sh` fails any
+   NEW migration numbered at or below the head that existed before it
+   (GH-1164) — a file back-numbered into one of the five historical
+   gaps above, or any other, is invisible to `migrate up` on a
+   deployment already past that number.
 3. **Changes to TimescaleDB features** (hypertables, compression,
    continuous aggregates) must be done with the extension's API
    (`create_hypertable`, `add_compression_policy`,
