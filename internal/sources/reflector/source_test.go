@@ -449,14 +449,6 @@ func TestDecoder_NamesPerVariant(t *testing.T) {
 			}
 		})
 	}
-
-	// WithDecoderDecimals option round-trips through the decoder's
-	// internal scaling field — wire-level coverage is the
-	// real-fixture test; this just checks the plumbing.
-	d := NewDecoder(VariantDEX, "Ccontract", WithDecoderDecimals(10))
-	if d.decimals != 10 {
-		t.Errorf("WithDecoderDecimals not applied: got %d", d.decimals)
-	}
 }
 
 func TestUpdateEvent_sourceMatchesUpdate(t *testing.T) {
