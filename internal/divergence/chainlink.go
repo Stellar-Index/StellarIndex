@@ -172,15 +172,17 @@ const (
 // When opts.FeedMap is empty, the reference falls back to a built-in
 // default covering the major crypto and fiat AggregatorV3 contracts
 // on Ethereum mainnet (BTC/USD, ETH/USD, LINK/USD, EUR/USD, GBP/USD,
-// JPY/USD). Without this fallback every divergence cross-check call
-// for a default-config deployment returned ErrAssetUnsupported and
-// `divergence_observations` stayed empty for any operator who hadn't
-// manually populated `[divergence.chainlink].feed_map` — same shape
-// as the CoinGecko default-IDMap gap fixed in #1249.
+// JPY/USD) — same shape as the CoinGecko default-IDMap fallback
+// (#1249). Unlike CoinGecko's, this fallback is currently unreachable
+// from the aggregator binary: its wiring (cmd/stellarindex-aggregator
+// buildDivergenceReferences) skips constructing the reference at all
+// when Enabled=true but FeedMap is empty, logging a WARN instead. The
+// fallback still applies to any direct caller (tests, or a future
+// wiring path) that constructs a [ChainlinkReference] with no FeedMap.
 //
-// Operator-supplied entries merge OVER the defaults (operator wins),
-// so an operator can still narrow the set, override an address, or
-// flip an Invert flag.
+// Operator-supplied entries merge OVER the defaults (operator wins):
+// an entry can be overridden or a new one added, but a default entry
+// cannot be removed by omission — the merge only adds/overrides keys.
 //
 // Pinned to Ethereum mainnet AggregatorV3 contract addresses; these
 // are immutable proxies in practice — Chainlink upgrades the
@@ -445,38 +447,6 @@ func decodeChainlinkRoundData(hexStr string) (*big.Int, time.Time, error) {
 		return nil, time.Time{}, fmt.Errorf("updatedAt overflows int64: %s", updatedRaw.String())
 	}
 	return answer, time.Unix(updatedRaw.Int64(), 0).UTC(), nil
-}
-
-// decodeChainlinkInt256 parses a 0x-prefixed hex string returned by
-// eth_call into a *big.Int interpreted as a signed 256-bit value
-// (two's complement). Handles negative answers (rare but possible
-// for some feed types).
-func decodeChainlinkInt256(hexStr string) (*big.Int, error) {
-	hexStr = strings.TrimPrefix(hexStr, "0x")
-	// Pad to 32 bytes if shorter (defensive — the RPC always
-	// returns 32 bytes for an int256, but a malformed proxy could
-	// trim leading zeros).
-	if len(hexStr)%2 != 0 {
-		hexStr = "0" + hexStr
-	}
-	if len(hexStr) > 64 {
-		return nil, fmt.Errorf("hex too long (%d chars, want ≤64)", len(hexStr))
-	}
-	for len(hexStr) < 64 {
-		hexStr = "0" + hexStr
-	}
-	raw, err := hex.DecodeString(hexStr)
-	if err != nil {
-		return nil, fmt.Errorf("hex decode: %w", err)
-	}
-	// int256 is two's complement: top bit set → negative.
-	val := new(big.Int).SetBytes(raw)
-	if raw[0]&0x80 != 0 {
-		// Negative — subtract 2^256.
-		twoTo256 := new(big.Int).Lsh(big.NewInt(1), 256)
-		val = new(big.Int).Sub(val, twoTo256)
-	}
-	return val, nil
 }
 
 // scaleChainlinkAnswer divides answer by 10^decimals and returns

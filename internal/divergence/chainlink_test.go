@@ -176,30 +176,6 @@ func TestChainlink_LookupPrice_RPCError(t *testing.T) {
 	}
 }
 
-func TestChainlink_DecodeInt256_Negative(t *testing.T) {
-	// -1 in two's complement int256 = all ones (0xFFF...FF).
-	hexStr := "0x" + strings.Repeat("f", 64)
-	got, err := decodeChainlinkInt256(hexStr)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.Cmp(big.NewInt(-1)) != 0 {
-		t.Errorf("decoded -1 as %s", got.String())
-	}
-}
-
-func TestChainlink_DecodeInt256_Positive(t *testing.T) {
-	// 100 = 0x64
-	hexStr := "0x" + strings.Repeat("0", 62) + "64"
-	got, err := decodeChainlinkInt256(hexStr)
-	if err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.Cmp(big.NewInt(100)) != 0 {
-		t.Errorf("decoded 100 as %s", got.String())
-	}
-}
-
 func TestChainlink_ScaleAnswer(t *testing.T) {
 	// 12_345_678 * 10^8 should scale to 0.12345678
 	got, err := scaleChainlinkAnswer(big.NewInt(12_345_678), 8)

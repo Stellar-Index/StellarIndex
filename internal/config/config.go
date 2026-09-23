@@ -417,10 +417,13 @@ func (dc DecimalsGuardConfig) validate() error {
 
 // DivergenceConfig wires the cross-check references the divergence
 // service consults. Each enabled reference is constructed in the
-// API binary and passed to divergence.NewService; the worker then
-// runs them every refresh cycle and the result populates the
-// `divergence_warning` envelope flag when the median deviation
-// exceeds [Threshold].
+// AGGREGATOR binary and passed to divergence.NewService there; the
+// aggregator's orchestrator calls Service.RefreshPair every refresh
+// cycle and writes the result to the shared Redis cache. The API
+// binary never constructs references or runs a refresh — it builds
+// its own divergence.Service with no References, solely to read that
+// cache (Service.LookupCached) and populate the `divergence_warning`
+// envelope flag when the cached median deviation exceeds [Threshold].
 //
 // Empty config = no references = service runs but writes no
 // entries (handler keeps the flag unset). This matches the

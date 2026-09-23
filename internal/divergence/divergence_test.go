@@ -471,47 +471,6 @@ func TestCoinGecko_BatchedAcrossPairs(t *testing.T) {
 	}
 }
 
-// TestCoinGecko_LookupPricesBatched — the public LookupPrices entry
-// point is the explicit batched call site. Verify it issues a
-// single HTTP request and returns one entry per known pair.
-func TestCoinGecko_LookupPricesBatched(t *testing.T) {
-	var hits int64
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		atomic.AddInt64(&hits, 1)
-		w.Header().Set("Content-Type", "application/json")
-		now := time.Now().Unix()
-		_, _ = fmt.Fprintf(w, `{
-			"stellar": {"usd": 0.16, "last_updated_at": %[1]d},
-			"bitcoin": {"usd": 67000, "last_updated_at": %[1]d}
-		}`, now)
-	}))
-	defer ts.Close()
-
-	ref := divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
-		BaseURL:  ts.URL,
-		IDMap:    map[string]string{"native": "stellar", "crypto:BTC": "bitcoin"},
-		QuoteMap: map[string]string{"fiat:USD": "usd"},
-		BatchTTL: time.Hour,
-	})
-
-	usd := mustParseAsset(t, "fiat:USD")
-	btc := mustParseAsset(t, "crypto:BTC")
-	pairs := []canonical.Pair{
-		{Base: canonical.NativeAsset(), Quote: usd},
-		{Base: btc, Quote: usd},
-	}
-	got, err := ref.LookupPrices(context.Background(), pairs)
-	if err != nil {
-		t.Fatalf("LookupPrices: %v", err)
-	}
-	if len(got) != 2 {
-		t.Errorf("LookupPrices returned %d entries, want 2: %+v", len(got), got)
-	}
-	if atomic.LoadInt64(&hits) != 1 {
-		t.Errorf("HTTP requests = %d, want 1", atomic.LoadInt64(&hits))
-	}
-}
-
 // TestCoinGecko_BatchTTLExpires — once the batch TTL elapses, the
 // next LookupPrice MUST re-fetch (otherwise we'd serve stale prices
 // indefinitely on a long-running process).

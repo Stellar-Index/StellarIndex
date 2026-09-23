@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -24,9 +25,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/auth/sep10"
-	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
-	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/usage"
 )
@@ -66,153 +65,29 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func TestBuildDivergenceReferences_DefaultsCoinGeckoOnly(t *testing.T) {
-	cfg := config.DivergenceConfig{
-		CoinGecko: config.DivergenceCoinGeckoConfig{Enabled: true},
-		Chainlink: config.DivergenceChainlinkConfig{Enabled: false},
+// TestDivergenceServiceHasNoReferences guards GH-1004(b): the API
+// binary must never construct divergence.References — it only calls
+// Service.LookupCached (reading the aggregator's Redis cache), never
+// RefreshPair, so a reference list here is inert at best and
+// misleading at worst (the startup log would claim a capability the
+// binary doesn't exercise). Source-scans main.go for the symbols a
+// reintroduced reference builder would need, rather than exercising
+// main() itself (which requires a live Postgres/Redis).
+func TestDivergenceServiceHasNoReferences(t *testing.T) {
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
 	}
-	refs := buildDivergenceReferences(cfg, nil, discardLogger())
-	if len(refs) != 1 {
-		t.Fatalf("len(refs) = %d, want 1 (CoinGecko only)", len(refs))
+	forbidden := []string{
+		"buildDivergenceReferences",
+		"divergence.NewCoinGeckoReference",
+		"divergence.NewChainlinkReference",
+		"divergence.NewOracleReference",
 	}
-	if got := refs[0].Name(); got != "coingecko" {
-		t.Errorf("refs[0].Name() = %q, want %q", got, "coingecko")
-	}
-}
-
-func TestBuildDivergenceReferences_BothWiredWhenChainlinkConfigured(t *testing.T) {
-	cfg := config.DivergenceConfig{
-		CoinGecko: config.DivergenceCoinGeckoConfig{Enabled: true},
-		Chainlink: config.DivergenceChainlinkConfig{
-			Enabled: true,
-			FeedMap: map[string]config.ChainlinkFeedConfig{
-				"fiat:EUR/fiat:USD": {
-					Address:  "0xb49f677943BC038e9857d61E7d053CaA2C1734C1",
-					Decimals: 8,
-				},
-			},
-		},
-	}
-	refs := buildDivergenceReferences(cfg, nil, discardLogger())
-	// Three since PR #149: chainlink alone provides BOTH synthetic leg
-	// classes (crypto/USD base feeds + fiat/USD fx feeds route by pair
-	// within one FeedMap), so the USD-cross constructs even in this
-	// minimal config — a chainlink-composed cross is still a second,
-	// CoinGecko-independent reference.
-	if len(refs) != 3 {
-		t.Fatalf("len(refs) = %d, want 3", len(refs))
-	}
-	wantSet := map[string]bool{
-		"coingecko": true, "chainlink": true,
-		divergence.SyntheticCrossName: true,
-	}
-	for _, r := range refs {
-		if !wantSet[r.Name()] {
-			t.Errorf("unexpected reference: %q", r.Name())
+	for _, sym := range forbidden {
+		if bytes.Contains(src, []byte(sym)) {
+			t.Errorf("main.go references %q — the API binary must build only the cache-reading divergence.Service, never a References list (GH-1004b)", sym)
 		}
-	}
-}
-
-func TestBuildDivergenceReferences_ChainlinkEnabledButEmptyFeedMap_Skips(t *testing.T) {
-	cfg := config.DivergenceConfig{
-		CoinGecko: config.DivergenceCoinGeckoConfig{Enabled: false},
-		Chainlink: config.DivergenceChainlinkConfig{
-			Enabled: true,
-			FeedMap: map[string]config.ChainlinkFeedConfig{},
-		},
-	}
-	refs := buildDivergenceReferences(cfg, nil, discardLogger())
-	if len(refs) != 0 {
-		t.Fatalf("len(refs) = %d, want 0 (empty FeedMap should not wire Chainlink)", len(refs))
-	}
-}
-
-func TestBuildDivergenceReferences_AllDisabled(t *testing.T) {
-	cfg := config.DivergenceConfig{
-		CoinGecko: config.DivergenceCoinGeckoConfig{Enabled: false},
-		Chainlink: config.DivergenceChainlinkConfig{Enabled: false},
-	}
-	refs := buildDivergenceReferences(cfg, nil, discardLogger())
-	if len(refs) != 0 {
-		t.Fatalf("len(refs) = %d, want 0", len(refs))
-	}
-}
-
-// nopOracleReader satisfies divergence.OracleReader for wiring
-// tests — never returns a row (the builder only needs non-nil).
-type nopOracleReader struct{}
-
-func (nopOracleReader) LatestOracleObservation(_ context.Context, _ string, _, _ []string) (*canonical.OracleUpdate, error) {
-	return nil, nil
-}
-
-// TestBuildDivergenceReferences_OnChainOraclesWired — the default-ON
-// [divergence.{reflector,redstone,band}] gates wire five on-chain
-// references (Reflector expands to its three per-contract variants)
-// when an oracle_updates reader is available, plus the synthetic
-// USD-cross derived from them (PR #149: reflector-cex/redstone/band
-// base legs × reflector-fx fx leg — both leg classes present here, so
-// the cross constructs).
-func TestBuildDivergenceReferences_OnChainOraclesWired(t *testing.T) {
-	cfg := config.DivergenceConfig{
-		Reflector: config.DivergenceOracleConfig{Enabled: true},
-		Redstone:  config.DivergenceOracleConfig{Enabled: true},
-		Band:      config.DivergenceOracleConfig{Enabled: true},
-	}
-	refs := buildDivergenceReferences(cfg, nopOracleReader{}, discardLogger())
-	got := make(map[string]bool, len(refs))
-	for _, r := range refs {
-		got[r.Name()] = true
-	}
-	for _, want := range []string{
-		divergence.OracleSourceReflectorDEX,
-		divergence.OracleSourceReflectorCEX,
-		divergence.OracleSourceReflectorFX,
-		divergence.OracleSourceRedstone,
-		divergence.OracleSourceBand,
-		divergence.SyntheticCrossName,
-	} {
-		if !got[want] {
-			t.Errorf("missing reference %q (got %v)", want, got)
-		}
-	}
-	if len(refs) != 6 {
-		t.Errorf("len(refs) = %d, want 6", len(refs))
-	}
-}
-
-// TestBuildDivergenceReferences_SyntheticNeedsBothLegClasses — with the
-// FX leg class absent (reflector disabled ⇒ no reflector-fx, chainlink
-// disabled ⇒ no fiat feeds), the synthetic must NOT construct: a cross
-// with a missing leg would only add a permanent failure row to every
-// result. Redstone+band alone provide base legs only.
-func TestBuildDivergenceReferences_SyntheticNeedsBothLegClasses(t *testing.T) {
-	cfg := config.DivergenceConfig{
-		Redstone: config.DivergenceOracleConfig{Enabled: true},
-		Band:     config.DivergenceOracleConfig{Enabled: true},
-	}
-	refs := buildDivergenceReferences(cfg, nopOracleReader{}, discardLogger())
-	for _, r := range refs {
-		if r.Name() == divergence.SyntheticCrossName {
-			t.Fatalf("synthetic cross constructed without an FX leg class")
-		}
-	}
-	if len(refs) != 2 {
-		t.Errorf("len(refs) = %d, want 2 (redstone + band only)", len(refs))
-	}
-}
-
-// TestBuildDivergenceReferences_OnChainOraclesSkippedWithoutReader —
-// enabled gates with a nil reader (no Postgres) skip cleanly rather
-// than wiring references that would nil-deref on every tick.
-func TestBuildDivergenceReferences_OnChainOraclesSkippedWithoutReader(t *testing.T) {
-	cfg := config.DivergenceConfig{
-		Reflector: config.DivergenceOracleConfig{Enabled: true},
-		Redstone:  config.DivergenceOracleConfig{Enabled: true},
-		Band:      config.DivergenceOracleConfig{Enabled: true},
-	}
-	if refs := buildDivergenceReferences(cfg, nil, discardLogger()); len(refs) != 0 {
-		t.Fatalf("len(refs) = %d, want 0 (nil reader must skip on-chain oracles)", len(refs))
 	}
 }
 

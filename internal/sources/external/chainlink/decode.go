@@ -142,9 +142,8 @@ func decodeAnswerUpdatedLog(entry LogEntry) (Round, error) {
 }
 
 // decodeInt256 parses a 32-byte big-endian two's-complement integer
-// into a *big.Int. Identical semantics to
-// internal/divergence/chainlink.go's decodeChainlinkInt256 — kept
-// local to avoid a cross-package dep just for one function.
+// into a *big.Int. Same semantics as the inline answer decode in
+// internal/divergence/chainlink.go's decodeChainlinkRoundData.
 func decodeInt256(b []byte) *big.Int {
 	v := new(big.Int).SetBytes(b)
 	if len(b) == 32 && b[0]&0x80 != 0 {

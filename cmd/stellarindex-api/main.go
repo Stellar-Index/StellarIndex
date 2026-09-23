@@ -563,16 +563,18 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	}
 
 	// Divergence lookup adapter. Only wired when Redis is reachable
-	// (the worker's cached results live there). References are
-	// constructed from cfg.Divergence; CoinGecko is on by default
-	// (free tier, no auth required) so divergence_warning fires
-	// out of the box; Chainlink is opt-in via cfg.Divergence.Chainlink.
+	// (the aggregator's cached results live there). The API binary
+	// builds NO References — it only ever calls LookupCached, never
+	// RefreshPair, so constructing CoinGecko/Chainlink/oracle
+	// references here would be dead weight that also mislead the
+	// startup log into claiming a capability (running the cross-check)
+	// this binary doesn't have. The aggregator is the sole RefreshPair
+	// caller (internal/aggregate/orchestrator/divergence_refresh.go);
+	// see DivergenceConfig's doc comment.
 	var divergenceLooker v1.DivergenceLooker
 	if rdb != nil {
-		refs := buildDivergenceReferences(cfg.Divergence, store, logger)
 		divSvc, err := divergence.NewService(divergence.ServiceOptions{
 			Cache:                rdb,
-			References:           refs,
 			Threshold:            cfg.Divergence.Threshold,
 			MinSourcesForWarning: cfg.Divergence.MinSourcesForWarning,
 			PerReferenceTimeout: time.Duration(
@@ -583,13 +585,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			return fmt.Errorf("divergence service: %w", err)
 		}
 		divergenceLooker = newDivergenceAdapter(divSvc, cfg.Divergence.MinSourcesForWarning)
-		names := make([]string, len(refs))
-		for i, r := range refs {
-			names[i] = r.Name()
-		}
-		logger.Info("divergence service wired",
-			"reference_count", len(refs),
-			"references", names,
+		logger.Info("divergence cache reader wired",
 			"threshold_pct", cfg.Divergence.Threshold,
 			"min_sources_for_warning", cfg.Divergence.MinSourcesForWarning)
 	}
@@ -2613,165 +2609,6 @@ func buildSEP10Validator(cfg config.SEP10Config, passphrase string, rdb redis.Un
 		return nil, fmt.Errorf("sep10: NewValidator: %w", err)
 	}
 	return v, nil
-}
-
-// buildDivergenceReferences turns DivergenceConfig into the
-// concrete []divergence.Reference list the service consumes.
-//
-// CoinGecko is on by default (free tier, no auth required); when
-// the operator's IDMap is empty, the reference falls back to the
-// built-in defaults inside CoinGeckoReference (covers XLM + major
-// stables).
-//
-// Chainlink is on only when both Enabled=true AND a non-empty
-// FeedMap is set. An empty FeedMap with Enabled=true logs a WARN
-// and skips Chainlink rather than wiring it as a no-op (every
-// LookupPrice call would return ErrAssetUnsupported, which is
-// noisy and a misconfiguration signal).
-//
-// The on-chain oracle references (reflector-dex/cex/fx, redstone,
-// band) read the served oracle_updates rows via `oracles`; nil
-// (no Postgres) skips them with a warning when any is enabled.
-// Kept in lockstep with the aggregator binary's helper of the same
-// name — drift here would mean the aggregator and API see different
-// divergence semantics for the same pair.
-func buildDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
-	var refs []divergence.Reference
-
-	if cfg.CoinGecko.Enabled {
-		refs = append(refs, divergence.NewCoinGeckoReference(divergence.CoinGeckoOptions{
-			BaseURL: cfg.CoinGecko.BaseURL,
-			IDMap:   cfg.CoinGecko.IDMap,
-			MaxAge:  time.Duration(cfg.CoinGecko.MaxAgeMinutes) * time.Minute,
-		}))
-	}
-
-	if cfg.Chainlink.Enabled {
-		if len(cfg.Chainlink.FeedMap) == 0 {
-			logger.Warn("divergence: chainlink enabled but FeedMap is empty — skipping")
-		} else {
-			feedMap := make(map[string]divergence.ChainlinkFeed, len(cfg.Chainlink.FeedMap))
-			for pair, f := range cfg.Chainlink.FeedMap {
-				feedMap[pair] = divergence.ChainlinkFeed{
-					Address:  f.Address,
-					Decimals: f.Decimals,
-					Invert:   f.Invert,
-					MaxAge:   time.Duration(f.MaxAgeHours) * time.Hour,
-				}
-			}
-			refs = append(refs, divergence.NewChainlinkReference(divergence.ChainlinkOptions{
-				RPCURL:  cfg.Chainlink.RPCURL,
-				Logger:  logger,
-				FeedMap: feedMap,
-			}))
-		}
-	}
-
-	refs = append(refs, buildOracleDivergenceReferences(cfg, oracles, logger)...)
-	return appendSyntheticCrossReference(refs, logger)
-}
-
-// appendSyntheticCrossReference derives the USD-cross reference from
-// the ALREADY-GATED reference set — no config conditional of its own
-// (the config-A/config-B wiring lesson: a new gate is a new way for a
-// feature to silently not exist). It exists whenever its ingredients
-// do: at least one USD-quoted oracle leg (reflector-cex / chainlink /
-// redstone / band — deliberately NOT CoinGecko, which is the one
-// existing DIRECT reference for non-USD-fiat pairs; using it as a leg
-// would correlate the synthetic with the only source it is meant to
-// corroborate) and the reflector-fx fiat leg.
-//
-// Purpose (2026-08-24): gives EUR/GBP-quoted pairs a second reference
-// so SuccessCount reaches the divergence trust floor and the
-// corroborated-release gate can auto-release genuine repricings
-// unattended instead of paging an operator per freeze.
-func appendSyntheticCrossReference(refs []divergence.Reference, logger *slog.Logger) []divergence.Reference {
-	byName := make(map[string]divergence.Reference, len(refs))
-	for _, r := range refs {
-		byName[r.Name()] = r
-	}
-	pick := func(names ...string) []divergence.Reference {
-		var out []divergence.Reference
-		for _, n := range names {
-			if r, ok := byName[n]; ok {
-				out = append(out, r)
-			}
-		}
-		return out
-	}
-	// Chainlink serves BOTH legs: its FeedMap carries crypto/USD feeds
-	// (base leg) and direct fiat/USD feeds (r1 configures
-	// fiat:EUR/fiat:USD + fiat:GBP/fiat:USD) — the reference routes by
-	// pair, answering only what its FeedMap lists, so membership in both
-	// leg sets cannot double-answer one leg. In the FX legs it is the
-	// FALLBACK after reflector-fx (on-chain rows we already index; no
-	// extra RPC) and the only proven GBP/USD source — reflector-fx's
-	// mainnet GBP coverage is unconfirmed (verification panel
-	// 2026-08-24), so without chainlink here XLM/GBP would stay
-	// single-reference, which is two of the three freezes that motivated
-	// this feature.
-	usdLegs := pick(
-		divergence.OracleSourceReflectorCEX,
-		divergence.ChainlinkSourceName,
-		divergence.OracleSourceRedstone,
-		divergence.OracleSourceBand,
-	)
-	fxLegs := pick(
-		divergence.OracleSourceReflectorFX,
-		divergence.ChainlinkSourceName,
-	)
-	syn, err := divergence.NewSyntheticCrossReference(divergence.SyntheticCrossOptions{
-		USDLegs: usdLegs,
-		FXLegs:  fxLegs,
-	})
-	if err != nil {
-		// Missing a leg class — expected on minimal configs; the
-		// non-USD-fiat pairs then simply keep their single direct
-		// reference (and their operator-release posture).
-		logger.Info("divergence: synthetic USD-cross reference not constructed", "reason", err)
-		return refs
-	}
-	return append(refs, syn)
-}
-
-// buildOracleDivergenceReferences constructs the on-chain oracle
-// reference set (reflector-dex/cex/fx + redstone + band) per the
-// `[divergence.{reflector,redstone,band}]` gates. Split from
-// buildDivergenceReferences to stay under the funlen ceiling; same
-// lockstep rule with the aggregator binary applies.
-func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles divergence.OracleReader, logger *slog.Logger) []divergence.Reference {
-	anyEnabled := cfg.Reflector.Enabled || cfg.Redstone.Enabled || cfg.Band.Enabled
-	if oracles == nil {
-		if anyEnabled {
-			logger.Warn("divergence: on-chain oracle references enabled but no oracle_updates reader — skipping")
-		}
-		return nil
-	}
-	var refs []divergence.Reference
-	add := func(source string, gate config.DivergenceOracleConfig) {
-		if !gate.Enabled {
-			return
-		}
-		ref, err := divergence.NewOracleReference(divergence.OracleReferenceOptions{
-			Source: source,
-			Reader: oracles,
-			MaxAge: time.Duration(gate.MaxAgeMinutes) * time.Minute,
-		})
-		if err != nil {
-			// Unreachable with non-empty Source + non-nil Reader;
-			// warn-and-skip keeps the rest of the reference set alive.
-			logger.Warn("divergence: oracle reference construction failed",
-				"source", source, "err", err)
-			return
-		}
-		refs = append(refs, ref)
-	}
-	add(divergence.OracleSourceReflectorDEX, cfg.Reflector)
-	add(divergence.OracleSourceReflectorCEX, cfg.Reflector)
-	add(divergence.OracleSourceReflectorFX, cfg.Reflector)
-	add(divergence.OracleSourceRedstone, cfg.Redstone)
-	add(divergence.OracleSourceBand, cfg.Band)
-	return refs
 }
 
 // divergenceAdapter wraps *divergence.Service to satisfy the v1

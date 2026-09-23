@@ -158,8 +158,9 @@ const coinGeckoLastUpdatedKey = "last_updated_at"
 // `ErrAssetUnsupported` and `divergence_observations` stays empty
 // for any operator who hasn't manually populated `[divergence.coingecko].id_map`
 // — which the type-level docs already promised wouldn't happen.
-// Operator-supplied entries merge OVER the defaults (operator wins),
-// so an operator can still narrow the set or override a slug.
+// Operator-supplied entries merge OVER the defaults (operator wins):
+// an entry can be overridden or a new one added, but a default entry
+// cannot be removed by omission — the merge only adds/overrides keys.
 func NewCoinGeckoReference(opts CoinGeckoOptions) *CoinGeckoReference {
 	httpClient := opts.HTTPClient
 	if httpClient == nil {
@@ -247,9 +248,8 @@ func (c *CoinGeckoReference) Name() string { return "coingecko" }
 // to observedAt (the bucket-end comparison time Compare passes
 // through; zero falls back to wall time defensively) — mirroring the
 // Chainlink and on-chain oracle references so a stale reference reads
-// as "unavailable", never as agreement or divergence. When CoinGecko
-// omits last_updated_at for the id (older/compat endpoints) the gate
-// no-ops for that id.
+// as "unavailable", never as agreement or divergence. See staleness
+// below for the missing-timestamp case (rejected, not waved through).
 //
 // Internally this delegates to the per-tick batched fetcher: the
 // first call within batchTTL issues ONE HTTP request covering every
@@ -319,57 +319,6 @@ func (c *CoinGeckoReference) staleness(cgID string, updatedAt map[string]time.Ti
 			ErrPriceUnavailable, cgID, age.Truncate(time.Second), c.maxAge)
 	}
 	return nil
-}
-
-// LookupPrices returns the CoinGecko-reported price for each pair in
-// a single batched fetch. Missing assets / quotes / non-finite
-// prices are simply absent from the returned map (the caller can
-// detect a per-pair miss by absence). Transport-level failures
-// (network error, HTTP 429, malformed JSON) surface as a non-nil
-// error and an empty/partial map.
-//
-// Use this when you have a known pair set up-front and want to
-// avoid the per-pair LookupPrice indirection. The underlying HTTP
-// call is identical to what LookupPrice triggers on cache miss; the
-// per-pair LookupPrice path remains available for the [Reference]
-// interface contract.
-func (c *CoinGeckoReference) LookupPrices(ctx context.Context, pairs []canonical.Pair) (map[canonical.Pair]float64, error) {
-	out := make(map[canonical.Pair]float64, len(pairs))
-	if len(pairs) == 0 {
-		return out, nil
-	}
-	data, updatedAt, err := c.ensureBatch(ctx)
-	if err != nil {
-		return out, err
-	}
-	// No per-pair observedAt on the batch path — gate against wall
-	// time (staleness passes zero, which falls back to nowFn).
-	for _, p := range pairs {
-		cgID, ok := c.idMap[p.Base.String()]
-		if !ok {
-			continue
-		}
-		cgQuote, ok := c.quoteMap[p.Quote.String()]
-		if !ok {
-			continue
-		}
-		idEntry, ok := data[cgID]
-		if !ok {
-			continue
-		}
-		price, ok := idEntry[cgQuote]
-		if !ok {
-			continue
-		}
-		if !isFinitePositive(price) {
-			continue
-		}
-		if c.staleness(cgID, updatedAt, time.Time{}) != nil {
-			continue
-		}
-		out[p] = price
-	}
-	return out, nil
 }
 
 // ensureBatch returns the cached batched response if it's within
