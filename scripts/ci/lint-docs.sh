@@ -532,6 +532,10 @@ stale_patterns=(
                                   # bump note cited this as its PR; #1370 is
                                   # now a real, unrelated dependabot PR
                                   # (npm-minor-patch group bump)
+  "#1262\b"                      # dangling ref (RSWP-138) — coverage-matrix's
+                                  # R-007 OHLC outlier-filter entry cited a PR
+                                  # number that never existed; #1262 is now a
+                                  # real, unrelated issue
 )
 for pattern in "${stale_patterns[@]}"; do
   matches=$(grep -rnE "$pattern" \
