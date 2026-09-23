@@ -109,7 +109,7 @@ func (s *Server) handleObservations(w http.ResponseWriter, r *http.Request) {
 	// O(rows_in_pair) fan-out that was once measured.
 
 	// 8s ceiling on the trades hypertable scan. Same pattern as
-	// #1082, #1099-#1106. The deliberate 2026-05-08 prod test
+	// #1082. The deliberate 2026-05-08 prod test
 	// (asset=native&quote=USDC-G…) hit a 10s curl timeout against
 	// the unguarded handler — the cold-cache "latest trade per
 	// source" scan over a high-traffic pair can run several seconds
