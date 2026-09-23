@@ -847,8 +847,9 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	// aggregate seq-scans multi-million-row materialized chunks →
 	// ~8s+, blowing BOTH the 8s handler ceiling and the prewarm
 	// budget, so the cache never warmed and /v1/markets 503'd for
-	// real users (#20). The earlier "prices_1m alone, ~0.46s"
-	// measurement (2026-05-11) no longer holds at this data scale.
+	// real users (fix commit cc4ed08ae, 2026-05-19). The earlier
+	// "prices_1m alone, ~0.46s" measurement (2026-05-11) no longer
+	// holds at this data scale.
 	//
 	// Right-granularity rewrite. NO data or precision loss anywhere
 	// data is consumed at resolution — prices_1m and every detail
@@ -868,8 +869,8 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
 	//     a coarser CAGG: measured on r1, prices_1h understated the
 	//     all-pairs 24h volume ~9% vs prices_1m ($3.60B vs $3.97B —
 	//     boundary mismatch + prices_1h refresh-lag near the tip).
-	//     The #20 perf problem was ONLY the 14d × ~52k-pair
-	//     enumeration (now on prices_1d); a 24h prices_1m sum is
+	//     The perf problem fixed in cc4ed08ae was ONLY the 14d ×
+	//     ~52k-pair enumeration (now on prices_1d); a 24h prices_1m sum is
 	//     chunk-pruned to the last day's chunks → ~160ms all-pairs
 	//     on r1 — fast AND exact, so the user-facing 24h figure
 	//     stays prices_1m-accurate. (Corrects an earlier prices_1h
