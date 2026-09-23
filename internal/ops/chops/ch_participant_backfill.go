@@ -37,6 +37,7 @@ func chParticipantBackfill(args []string) error {
 	from := fs.Uint("from", 2, "first ledger (inclusive; resume point from a previous run's output)")
 	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = the live-capture floor − 1, i.e. exactly the gap operation_participants doesn't already cover)")
 	window := fs.Uint("window", 500_000, "ledgers per read-decode-insert window (smaller = finer resume granularity)")
+	maxDecodeErrs := registerDecodeBudget(fs)
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -65,13 +66,16 @@ func chParticipantBackfill(args []string) error {
 	fmt.Fprintf(os.Stderr, "ch-participant-backfill: %s — filling stellar.operation_participants for ledgers %d..%d (window %d) on %s\n",
 		mode, *from, last, *window, *chAddr)
 
-	stats, berr := clickhouse.BackfillOperationParticipants(ctx, *chAddr, uint32(*from), last, uint32(*window), dryRun,
+	stats, berr := backfillOperationParticipants(ctx, *chAddr, uint32(*from), last, uint32(*window), dryRun,
 		func(format string, a ...any) {
 			fmt.Fprintf(os.Stderr, "ch-participant-backfill: "+format+"\n", a...)
 		})
 
 	fmt.Fprintln(os.Stderr, participantBackfillSummary(stats, dryRun, berr))
-	return berr
+	if berr != nil {
+		return berr
+	}
+	return enforceDecodeBudget("ch-participant-backfill", stats.DecodeErrors, *maxDecodeErrs)
 }
 
 // participantBackfillSummary is the run's final stderr line. Participants
@@ -89,6 +93,10 @@ func participantBackfillSummary(stats clickhouse.ParticipantBackfillStats, dryRu
 	return fmt.Sprintf("ch-participant-backfill: done — scanned %d ops, %s %d participant rows (%d decode-errors)",
 		stats.OpsScanned, verb, stats.Participants, stats.DecodeErrors)
 }
+
+// backfillOperationParticipants is the lake pass, a var so the exit-status
+// contract is testable without a live ClickHouse.
+var backfillOperationParticipants = clickhouse.BackfillOperationParticipants
 
 // resolveParticipantTo resolves the inclusive upper ledger. A non-zero toFlag is
 // honoured as-is. toFlag==0 auto-targets the gap below live capture: the

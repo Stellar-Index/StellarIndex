@@ -54,6 +54,7 @@ func chCap67Movements(args []string) error {
 	follow := fs.Bool("follow", false, "run continuously as a daemon: after each catch-up, sleep -follow-interval and derive again, following the lake tip. The movement feed's real-time mechanism (a user watches their transactions land). Always resumes from the watermark to the CONTIGUOUS tip — ignores -from/-to.")
 	followInterval := fs.Duration("follow-interval", 1*time.Second, "sleep between catch-ups in -follow mode. Kept ≥~0.5s: each tick re-scans the derive window, and sub-second ticks add ClickHouse read + small-write pressure for a latency gain the ~5s ledger cadence + upstream ingest already dominate.")
 	floorLedger := fs.Uint("floor-ledger", uint(timescale.SEP41MovementsFloorLedger), "first-run watermark floor — the P23/CAP-67 boundary this derive starts from BEFORE any watermark exists. Defaults to the pubnet P23 boundary; set to the chain's start on testnet/futurenet, where the whole chain is post-P23 (otherwise the derive floors ABOVE every ledger the net has and produces nothing). A first run clamps the floor UP to the lake's first ledger (no lake holds genesis=1), so 1 and 2 behave alike.")
+	maxDecodeErrs := registerDecodeBudget(fs)
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -82,11 +83,17 @@ func chCap67Movements(args []string) error {
 		return runCap67Follow(ctx, *chAddr, uint32(*window), dryRun, *followInterval, uint32(*floorLedger)) //nolint:gosec // window/floor fit uint32
 	}
 
-	if _, err := runCap67CatchUp(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun, uint32(*floorLedger)); err != nil { //nolint:gosec // ledger sequences fit uint32
+	res, err := cap67CatchUpOnce(ctx, *chAddr, uint32(*from), uint32(*to), uint32(*window), dryRun, uint32(*floorLedger)) //nolint:gosec // ledger sequences fit uint32
+	if err != nil {
 		return err
 	}
-	return nil
+	return enforceDecodeBudget("ch-cap67-movements", res.skipped, *maxDecodeErrs)
 }
+
+// cap67CatchUpOnce is the one-shot derive, a var so the exit-status contract
+// is testable without a live ClickHouse. -follow keeps the per-window log
+// only: a daemon cannot exit on a deterministic skip without crash-looping.
+var cap67CatchUpOnce = runCap67CatchUp
 
 // cap67CatchUp is what one catch-up did: the range it resolved and the
 // movement rows it derived. Idle (nothing to do) is a property of the
@@ -97,6 +104,7 @@ func chCap67Movements(args []string) error {
 type cap67CatchUp struct {
 	start, last uint32
 	rows        int64
+	skipped     uint64 // transfer events dropped as undecodable
 }
 
 // idle reports that the resolved range was empty: the watermark already
@@ -127,11 +135,12 @@ func runCap67CatchUp(ctx context.Context, chAddr string, from, to, window uint32
 		if rem := last - lo; rem >= window {
 			hi = lo + window - 1
 		}
-		n, err := deriveCap67MovementsWindow(ctx, chAddr, lo, hi, dryRun)
+		n, skipped, err := deriveCap67MovementsWindow(ctx, chAddr, lo, hi, dryRun)
 		if err != nil {
 			return res, fmt.Errorf("window [%d,%d]: %w — resume with -from %d (or no -from: the watermark holds)", lo, hi, err, lo)
 		}
 		res.rows += n
+		res.skipped += skipped
 		if !dryRun {
 			// The advance re-proves [lo,hi] hole-free at the write and
 			// REFUSES otherwise (ErrCap67MovementsHole): the range was
@@ -376,8 +385,9 @@ func Cap67Range(ctx context.Context, chAddr string, from, to, floorLedger uint32
 const cap67InsertBatch = 50_000
 
 // deriveCap67MovementsWindow streams one ledger window's transfer events
-// and writes the fanned-out movement rows.
-func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32, dryRun bool) (int64, error) {
+// and writes the fanned-out movement rows, returning rows written and events
+// skipped as undecodable.
+func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32, dryRun bool) (int64, uint64, error) {
 	// Decoder with an empty watched set: Decode() classifies by topic
 	// alone; Matches() (the watched-set gate) is deliberately NOT
 	// consulted — this job's whole point is covering the unwatched
@@ -387,7 +397,7 @@ func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32,
 	var (
 		batch   []clickhouse.AccountMovement
 		written int64
-		decErrs int64
+		decErrs uint64
 	)
 	flush := func() error {
 		if len(batch) == 0 || dryRun {
@@ -422,18 +432,19 @@ func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32,
 			return nil
 		})
 	if err != nil {
-		return written, err
+		return written, decErrs, err
 	}
 	if err := flush(); err != nil {
-		return written, err
+		return written, decErrs, err
 	}
 	if decErrs > 0 {
-		// Visible, not fatal: a deterministically undecodable transfer
+		// Not fatal per window: a deterministically undecodable transfer
 		// event re-fails on every retry; the raw event stays in
-		// contract_events for audit.
+		// contract_events for audit. The one-shot run's exit status
+		// accounts for it via enforceDecodeBudget.
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d]: %d events skipped (decode)\n", lo, hi, decErrs)
 	}
-	return written, nil
+	return written, decErrs, nil
 }
 
 // cap67MovementFromEvent decodes one transfer event to its movement.
