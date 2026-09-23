@@ -1,6 +1,6 @@
 ---
 title: Runbook — fx-feed-stale
-last_verified: 2026-09-04
+last_verified: 2026-09-23
 status: draft
 severity: P2
 ---
@@ -100,22 +100,22 @@ string.
       `forex: fx_quotes persisted` and the gauge re-stamps — the alert
       clears at the next evaluation.
 
-### massive stays dry — re-enable the ECB / Frankfurter fallback
+### massive stays dry — there is no FX fallback
 
-If `massive` cannot be restored quickly, the connector-path FX
-fallback can serve the forex-snap in the interim. Per
-`internal/sources/external/registry.go`, `exchangeratesapi` is the only
-other `SubclassFX` source (currently disabled); `ecb` is an
-authority-sanity cross-check outside `FXSources()` and is never read
-here. The forex-snap reads `fx_quotes`-first and falls back to
-`trades` filtered by `FXSources()`, so re-enabling `exchangeratesapi`
-keeps fiat pairs priced while `massive` is down.
+No other feed can serve the forex-snap. It reads `fx_quotes` (written
+only by `massive`) and then `trades` filtered by `FXSources()`, but no
+`FXSources()` member writes `trades`. `exchangeratesapi` writes
+`oracle_updates` only, so re-enabling it does not price fiat pairs.
+`ecb` is an authority-sanity cross-check outside `FXSources()` and is
+never read here.
 
-- [ ] Enable a fallback via its `cfg.<venue>.enabled` gate and redeploy
-      the indexer (these run under the dispatcher-parallel external
-      path, not the API's forex worker).
-- [ ] Note: `ecb` is daily-grain sovereign FX (fallback quality, not
-      primary) — acceptable as a stopgap, not a long-term substitute.
+- [ ] Treat restoring `massive` as the only fix. The 7-day
+      `fx_quotes` lookback is the time you have before fiat-quoted pairs
+      stop pricing.
+- [ ] If the outage will outlast that window, escalate. Keeping fiat
+      pairs priced then needs a code change to the read path in
+      `internal/storage/timescale/trades.go` (`FXQuoteAtOrBefore`), not
+      a config flip.
 
 ### Worker not running at all (`absent` alert)
 
@@ -163,5 +163,8 @@ per ticker (`SELECT ticker, MAX(bucket) FROM fx_quotes GROUP BY ticker`).
 
 ## Changelog
 
+- 2026-09-23 — removed the "re-enable `exchangeratesapi`" mitigation.
+  Its poller writes `oracle_updates`, never `trades`, so it could not
+  serve the forex-snap; the section now states there is no fallback.
 - 2026-07-07 — initial draft. Closes the missing-staleness-alert gap for
   the active fiat-FX feed found silent ~4h with no page.

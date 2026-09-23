@@ -147,14 +147,12 @@ var Registry = map[string]Metadata{
 	// /v1/sources classifies it as external FX (SubclassFX → IsOnChain=false)
 	// instead of fail-closing through Lookup's unknown-source fallback.
 	//
-	// `exchangeratesapi` is a SAME-role external.Connector implementation
-	// (trades-path, currently disabled). The X2.5 triangulation forex-snap
-	// (FXQuoteAtOrBefore) reads fx_quotes-FIRST (the massive feed's table;
-	// BACKLOG #42) and only falls back to `trades` filtered by FXSources()
-	// when fx_quotes has no row in the lookback — so these connector-path
-	// sources serve the snap only when re-enabled AND the massive feed is dry.
-	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8 —
-	// AmountDecimals:6 so the USD-volume gate scales them right (CS-040).
+	// `exchangeratesapi` (currently disabled) is NOT a forex-snap fallback:
+	// its poller emits OracleUpdates only (oracle_updates), never trades or
+	// fx_quotes, so FXQuoteAtOrBefore's `trades` arm finds nothing from it
+	// and nothing serves the snap while the massive feed is dry.
+	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8;
+	// AmountDecimals:6 records that for the USD-volume gate (CS-040).
 	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
 	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
 

@@ -48,8 +48,7 @@ func (v Variant) SourceName() string {
 // DefaultDecimals is the canonical Reflector price scale (verified
 // from `reflector-contract/pulse-contract/src/lib.rs` during
 // Phase-1 audit). Individual contracts technically publish their
-// own `decimals()` SEP-40 method; the consumer can override via
-// Option but this is the safe default.
+// own `decimals()` SEP-40 method; every Decoder uses this value.
 //
 // CAVEAT — 14 is contract-confirmed for DEX only; ASSUMED for CEX/FX.
 // The DEX oracle's SEP-40 decimals() was checked on-chain (=14,
@@ -60,9 +59,9 @@ func (v Variant) SourceName() string {
 // ingest-pipeline.md). This is safe for the three current mainnet
 // oracles, but a future Reflector v4 — or any CEX/FX contract
 // re-pointed via `[oracle.reflector]` config — that published at a
-// different scale would mis-scale prices SILENTLY. Operator action when
-// re-pointing CEX/FX: confirm the target's decimals() and pass
-// WithDecoderDecimals if it differs from 14.
+// different scale would mis-scale prices SILENTLY. There is no config
+// override: before re-pointing CEX/FX, confirm the target's decimals()
+// is 14; any other scale needs a code change here.
 const DefaultDecimals uint8 = 14
 
 // DefaultResolutionSeconds is the uniform 5-min cadence every

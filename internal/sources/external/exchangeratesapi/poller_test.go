@@ -232,6 +232,32 @@ func TestPollOnce_HTTP5xxErrors(t *testing.T) {
 	}
 }
 
+// The access_key rides in the query string, so a redirect would hand it
+// to the next hop in the Referer header; the poller must not follow one.
+func TestPollOnce_RedirectNotFollowed(t *testing.T) {
+	var leaked bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		leaked = true
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"success":true,"timestamp":1745000000,"base":"USD","rates":{"EUR":0.9}}`)
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+LatestPath, http.StatusFound)
+	}))
+	defer origin.Close()
+
+	p, _ := NewPoller("TEST_KEY")
+	p.Endpoint = origin.URL
+	_, _, err := p.PollOnce(context.Background(), buildPairs(t))
+	if leaked {
+		t.Error("poller followed a redirect with the access_key in its Referer")
+	}
+	if err == nil {
+		t.Error("expected an error when the endpoint redirects")
+	}
+}
+
 func TestPollInterval_DefaultsTo60s(t *testing.T) {
 	p, _ := NewPoller("TEST_KEY")
 	if p.PollInterval() != 60*time.Second {

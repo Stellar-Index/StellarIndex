@@ -92,8 +92,8 @@ linked design doc has the full detail.
   route** — it was removed for want of consumers; the FX snapshot
   survives only as the in-process `CurrenciesReader` seam, so don't go
   looking for an HTTP surface.
-  `exchangeratesapi` is a same-role trades-path connector, currently
-  disabled; `ecb` is `ClassAuthoritySanity` (standby cross-check, NOT
+  `exchangeratesapi` (currently disabled) writes `oracle_updates`, not
+  `trades` or `fx_quotes`, so it is no forex-snap fallback; `ecb` is `ClassAuthoritySanity` (standby cross-check, NOT
   a VWAP contributor). Full detail in the
   registry comment at `internal/sources/external/registry.go`.
 - **Stablecoin fiat-proxy is aggregator policy, not decoder

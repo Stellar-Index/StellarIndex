@@ -128,3 +128,58 @@ func TestGetBody_redactsTransportError(t *testing.T) {
 		t.Errorf("transport error should carry the redacted URL form: %v", err)
 	}
 }
+
+// A request whose URL carries a secret (RedactURL set) must not follow
+// a redirect: Go copies the full previous URL, query included, into the
+// next hop's Referer header.
+func TestGetBody_refusesRedirectWhenURLCarriesSecret(t *testing.T) {
+	const canary = "LEAK-CANARY"
+	var hops int
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hops++
+		if strings.Contains(r.Header.Get("Referer"), canary) {
+			t.Errorf("redirect target received the secret in Referer: %q", r.Header.Get("Referer"))
+		}
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/moved", http.StatusFound)
+	}))
+	defer origin.Close()
+
+	_, _, err := GetBody(context.Background(), GetRequest{
+		URL:        origin.URL + "/latest?access_key=" + canary,
+		LimitBytes: 10,
+		RedactURL:  origin.URL + "/latest",
+	})
+	if hops != 0 {
+		t.Errorf("redirect target was requested %d time(s), want 0", hops)
+	}
+	if err == nil {
+		t.Fatal("GetBody followed a redirect for a secret-bearing URL; want an error")
+	}
+	if strings.Contains(err.Error(), canary) {
+		t.Errorf("redirect error leaked the query string: %v", err)
+	}
+}
+
+// Requests without a URL secret keep following redirects.
+func TestGetBody_followsRedirectWithoutURLSecret(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer target.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusFound)
+	}))
+	defer origin.Close()
+
+	status, body, err := GetBody(context.Background(), GetRequest{URL: origin.URL, LimitBytes: 10})
+	if err != nil {
+		t.Fatalf("GetBody: %v", err)
+	}
+	if status != http.StatusOK || string(body) != "ok" {
+		t.Errorf("got status %d body %q, want 200 \"ok\"", status, body)
+	}
+}

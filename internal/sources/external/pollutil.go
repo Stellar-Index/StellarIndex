@@ -41,8 +41,12 @@ type GetRequest struct {
 	// access_key) leak the key through *url.Error, which embeds the
 	// full request URL — pass the query-less endpoint here and the
 	// error is rewritten with the query string redacted (G10-04).
+	// Setting it also refuses redirects, because Go copies the full
+	// previous URL into the next hop's Referer header.
 	RedactURL string
 }
+
+var errRedirectRefused = errors.New("redirect refused: request URL carries a secret")
 
 // GetBody performs one GET with the shared poller conventions: a
 // context-scoped request, a 30s-timeout client, and a size-capped
@@ -61,6 +65,9 @@ func GetBody(ctx context.Context, r GetRequest) (int, []byte, error) {
 	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
+	if r.RedactURL != "" {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return errRedirectRefused }
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		if r.RedactURL != "" {

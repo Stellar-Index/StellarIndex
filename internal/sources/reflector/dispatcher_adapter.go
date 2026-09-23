@@ -42,12 +42,6 @@ func NewDecoder(variant Variant, contractID string, opts ...DecoderOption) *Deco
 // DecoderOption configures a Decoder at construction.
 type DecoderOption func(*Decoder)
 
-// WithDecoderDecimals overrides the default 14 if an operator knows
-// a specific contract's scale differs.
-func WithDecoderDecimals(d uint8) DecoderOption {
-	return func(r *Decoder) { r.decimals = d }
-}
-
 // WithDecoderObserver stamps an observer strkey on every emitted
 // OracleUpdate. The observer is typically the tx source account
 // (the relayer); when left blank the update's Observer column
