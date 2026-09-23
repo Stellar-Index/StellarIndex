@@ -451,6 +451,14 @@ stale_patterns=(
                                   # as the tracking issue; #975 now
                                   # resolves to an unrelated, currently-open
                                   # streaming-docs-vs-hub drift finding
+  "#1196\b"                       # dangling ref (RSWP-111) — CHANGELOG's
+                                  # cache_ops_total counter + coins/
+                                  # sources_stats entries, and the
+                                  # cache-miss-rate-high runbook's history,
+                                  # cited this as the counter's landing PR
+                                  # and as a motivating bug; #1196 is now a
+                                  # real, unrelated live issue (BigQuery
+                                  # subcommands uncapped byte billing)
   "PR #1198"                     # dangling ref (RSWP-113) — CHANGELOG's
                                   # coins/sources_stats cache-ops entry cited
                                   # a PR number that didn't exist yet;

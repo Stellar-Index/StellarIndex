@@ -27918,7 +27918,7 @@ rc.48 deploy to R1.
   tests + log-greps and only surfaced from live latency probes
   ("dex pools take forever"). With this counter an alert on
   `rate(...{result="miss"}[5m]) / rate(...[5m]) > 0.5` sustained
-  catches the next drift in minutes instead of days. (PR #1196)
+  catches the next drift in minutes instead of days.
 - **Prometheus alert `stellarindex_api_cache_miss_rate_high`** wired
   to the new counter. Fires P2/ticket when miss rate > 50% sustained
   10 min on any (cache, op) with ≥ 0.1 req/s traffic. The traffic
@@ -27930,7 +27930,7 @@ rc.48 deploy to R1.
   (which is what we did manually for #1185 / #1194 / the Limit dimension).
   (PR #1197)
 - **`stellarindex_api_cache_ops_total` extended to `coins` and
-  `sources_stats` cache wrappers.** PR #1196 only instrumented
+  `sources_stats` cache wrappers.** The counter above only instrumented
   `markets`; this fills in the other two so the existing alert
   (#1197) catches drift on every cached endpoint, not just the
   ones that motivated the original bugs. New op labels:
