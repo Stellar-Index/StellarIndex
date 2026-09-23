@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // txHashIndexBackfillQuery backs BackfillTxHashIndex's per-window
@@ -45,12 +47,25 @@ func BackfillTxHashIndex(ctx context.Context, addr string, from, to, window uint
 	}
 	defer func() { _ = conn.Close() }()
 
+	return runWindowedBackfill(ctx, conn, from, to, window, "tx-hash-index",
+		func(ctx context.Context, conn driver.Conn, lo, hi uint32) error {
+			return conn.Exec(ctx, txHashIndexBackfillQuery, lo, hi)
+		}, logf)
+}
+
+// runWindowedBackfill walks [from, to] in windows of `window` ledgers,
+// running exec once per window and reporting progress (+ the exact resume
+// point) after each. Shared loop shell behind BackfillTxHashIndex and
+// BackfillContractInstanceChanges — only the query (baked into exec) and the
+// error-message label differ between them; keep the resume-point wording
+// identical, operators paste `-from %d` back in on restart.
+func runWindowedBackfill(ctx context.Context, conn driver.Conn, from, to, window uint32, label string, exec func(ctx context.Context, conn driver.Conn, lo, hi uint32) error, logf func(format string, args ...any)) error {
 	start := time.Now()
 	for lo := from; ; {
 		hi := ledgerWindowHi(lo, to, window)
 		wStart := time.Now()
-		if err := conn.Exec(ctx, txHashIndexBackfillQuery, lo, hi); err != nil {
-			return fmt.Errorf("clickhouse: tx-hash-index window [%d,%d]: %w — resume with -from %d", lo, hi, err, lo)
+		if err := exec(ctx, conn, lo, hi); err != nil {
+			return fmt.Errorf("clickhouse: %s window [%d,%d]: %w — resume with -from %d", label, lo, hi, err, lo)
 		}
 		logf("window [%d,%d] done in %s (total %s; resume point -from %d)",
 			lo, hi, time.Since(wStart).Round(time.Second), time.Since(start).Round(time.Second), hi+1)
