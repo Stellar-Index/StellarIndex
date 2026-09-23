@@ -17,7 +17,7 @@ import { sourceToneClass } from '@/lib/pillTone';
 import type { Source as SourceRow } from '@/api/hooks';
 import type { components } from '@/api/types';
 
-import { Container } from '@/components/ui';
+import { Container, Th, Td } from '@/components/ui';
 type OracleStream = components['schemas']['OracleReading'];
 
 // Oracle capture-totality: /v1/oracle/streams omits `raw:<symbol>` rows
@@ -415,38 +415,5 @@ export function OraclesView() {
         </p>
       </Panel>
     </Container>
-  );
-}
-
-function Th({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <th
-      scope="col"
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({
-  children,
-  align,
-}: {
-  children: React.ReactNode;
-  align?: 'left' | 'right';
-}) {
-  return (
-    <td
-      className={`px-4 py-2 ${align === 'right' ? 'text-right' : 'text-left'}`}
-    >
-      {children}
-    </td>
   );
 }
