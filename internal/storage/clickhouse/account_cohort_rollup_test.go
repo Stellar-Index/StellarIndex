@@ -1,6 +1,9 @@
 package clickhouse
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -172,4 +175,48 @@ func TestCohortExchangeSQLNamesEveryPair(t *testing.T) {
 	if strings.Count(got, " AND ") != len(cohortStagingTables) {
 		t.Errorf("exchange pairs: %d, want %d: %s", strings.Count(got, " AND "), len(cohortStagingTables), got)
 	}
+}
+
+// ClickHouse sum() keeps its argument's width and wraps on overflow, so a
+// toInt128 around an aggregate widens a value that has already wrapped:
+// every money sum in this package must widen its argument instead.
+func TestNoAggregateThenWidenInPackageSQL(t *testing.T) {
+	widenAfter := regexp.MustCompile(`toInt(128|256)\(\s*sum(If)?\(`)
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		for _, loc := range widenAfter.FindAllIndex(src, -1) {
+			line := 1 + strings.Count(string(src[:loc[0]]), "\n")
+			t.Errorf("%s:%d widens after summing (%s): write sum(toInt128(x))", f, line, src[loc[0]:loc[1]])
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("scanned no package sources")
+	}
+}
+
+// The holdings fold sums Int64 trustline balances: two members at 2^62
+// in one asset must reach the Int128 column as 2^63, not wrapped.
+func TestCohortHoldingsWidenBeforeSumming(t *testing.T) {
+	for _, step := range cohortRollupStatements {
+		if !strings.Contains(step.sql, "INSERT INTO stellar.account_cohort_holdings_staging") {
+			continue
+		}
+		if !strings.Contains(step.sql, "sum(toInt128(e.balance))") {
+			t.Errorf("holdings fold must widen each balance before summing:\n%s", step.sql)
+		}
+		return
+	}
+	t.Fatal("no holdings fold statement")
 }

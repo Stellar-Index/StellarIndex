@@ -179,7 +179,7 @@ const accountGraphOutboundQuery = `
 	SELECT '` + GraphRelationCreated + `' AS rel,
 	       toUInt64(count()) AS accounts,
 	       toUInt64(sum(creations)) AS events,
-	       toInt128(sum(funded_stroops)) AS funded,
+	       sum(toInt128(funded_stroops)) AS funded,
 	       toUInt32(min(first_ledger)) AS first_ledger,
 	       toUInt32(max(last_ledger)) AS last_ledger,
 	       min(first_at) AS first_at,
