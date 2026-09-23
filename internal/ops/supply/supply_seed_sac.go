@@ -37,7 +37,10 @@ import (
 // (contract_id, holder, ledger, observed_at)). Because the served-tier
 // readers pick the most-recent row per (contract_id, holder) by ledger
 // DESC (SumSACBalancesAtOrBefore / SACBalanceForContractAtOrBefore),
-// seeding at an OLD ledger can never clobber a newer live observation.
+// seeding at an OLD ledger can never clobber a newer live observation. A
+// removed or TTL-archived entry is written as an is_removal tombstone at its
+// removal / archival ledger, retracting a balance served before it left live
+// state; tombstones are tallied as retractions, never as holders.
 //
 // Unlike `supply seed-sep41-genesis` (which sums replay-derived
 // pre-Soroban flows), this seed reads AUTHORITATIVE current on-chain
@@ -136,9 +139,7 @@ func supplySeedSACBalances(args []string) error {
 			t = &sacSeedTally{sum: big.NewInt(0)}
 			tallies[seed.ContractID] = t
 		}
-		t.holders++
-		t.sum.Add(t.sum, seed.Balance)
-		t.observe(seed.LedgerSeq)
+		t.add(seed)
 		total++
 		if dryRun {
 			return nil
@@ -150,6 +151,7 @@ func supplySeedSACBalances(args []string) error {
 			Ledger:     seed.LedgerSeq,
 			ObservedAt: seed.CloseTime,
 			Balance:    seed.Balance,
+			IsRemoval:  seed.IsRemoval,
 			// The seed is the authoritative reconstructed FINAL state for its
 			// ledger (latest lake entry), so it sits at the top of the
 			// intra-ledger order — a live per-ledger change can never
@@ -175,10 +177,25 @@ func supplySeedSACBalances(args []string) error {
 // provenance record.
 type sacSeedTally struct {
 	holders          int
+	retracted        int
 	sum              *big.Int
 	minLedger        uint32
 	maxLedger        uint32
 	haveLedgerBounds bool
+}
+
+// add folds one streamed seed into the tally. A tombstone (IsRemoval) is a
+// retraction, not a holder: it is counted apart and kept out of the sum and
+// the ledger bounds, so provenance's holders_seeded and min/max_ledger_seen
+// describe only balances actually seeded.
+func (t *sacSeedTally) add(seed clickhouse.SACBalanceSeed) {
+	if seed.IsRemoval {
+		t.retracted++
+		return
+	}
+	t.holders++
+	t.sum.Add(t.sum, seed.Balance)
+	t.observe(seed.LedgerSeq)
 }
 
 // observe folds one seeded entry's ledger into the tally's [min, max]
@@ -247,23 +264,26 @@ func printSACSeedSummary(watched map[string]string, tallies map[string]*sacSeedT
 		return rows[i].contractID < rows[j].contractID
 	})
 
-	var withBalances int
+	var withBalances, retracted int
 	for _, r := range rows {
 		t := tallies[r.contractID]
-		holders, sum := 0, big.NewInt(0)
+		holders, removed, sum := 0, 0, big.NewInt(0)
 		if t != nil {
-			holders, sum = t.holders, t.sum
+			holders, removed, sum = t.holders, t.retracted, t.sum
+			retracted += removed
+		}
+		if holders > 0 {
 			withBalances++
 		}
-		fmt.Printf("SEED  %-56s  %-32s  holders=%-6d  sum=%s\n", r.contractID, r.assetKey, holders, sum.String())
+		fmt.Printf("SEED  %-56s  %-32s  holders=%-6d  retracted=%-6d  sum=%s\n", r.contractID, r.assetKey, holders, removed, sum.String())
 	}
 
 	label := "seeded"
 	if dryRun {
 		label = "would seed (dry-run)"
 	}
-	fmt.Printf("\n%s %d Balance rows across %d/%d SAC wrappers (%d wrappers had ≥1 current Balance entry)\n",
-		label, total, withBalances, len(watched), withBalances)
+	fmt.Printf("\n%s %d Balance rows (%d holders, %d retractions) across %d/%d SAC wrappers (%d wrappers had ≥1 current Balance entry)\n",
+		label, total, total-retracted, retracted, withBalances, len(watched), withBalances)
 	if dryRun {
 		fmt.Println("─── DRY RUN ─── nothing written to sac_balance_observations.")
 	}
