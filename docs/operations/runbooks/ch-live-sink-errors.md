@@ -117,7 +117,7 @@ The alert clears on its own 30 minutes after the last error.
 - [ch-live-sink-drops](ch-live-sink-drops.md) — the sibling outcome on
   the same counter: load shed by a sink that *did* see the ledger.
   Different remedy; check which outcome fired before acting.
-- `docs/adr/0034-clickhouse-raw-lake.md` — the lake the live edge feeds.
+- `docs/adr/0034-tiered-clickhouse-architecture.md` — the lake the live edge feeds.
 - `docs/adr/0041-ingest-durability-semantics.md` — the drop/heal
   contract this alert sits beside.
 - `internal/storage/clickhouse/live_sink.go` — the sink's `Add`/`Flush`

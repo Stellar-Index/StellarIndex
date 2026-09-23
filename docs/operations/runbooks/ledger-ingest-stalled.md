@@ -63,7 +63,7 @@ ssh root@136.243.90.96 'systemctl is-active minio galexie'
 
 # Where is the committed cursor vs the bucket?
 ssh root@136.243.90.96 "runuser -u postgres -- psql -d stellarindex -c \
-  \"SELECT source, sub, last_ledger, updated_at FROM ingestion_cursors WHERE source = 'ledgerstream'\""
+  \"SELECT source, sub_source, last_ledger, last_updated FROM ingestion_cursors WHERE source = 'ledgerstream'\""
 ```
 
 Key signals:

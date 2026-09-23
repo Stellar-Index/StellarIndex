@@ -13,7 +13,7 @@ severity: P2
 | ----- | ----- |
 | Alert | `stellarindex_host_swap_activity` |
 | Severity | P2 (ticket) |
-| Detected by | `configs/prometheus/rules.r1/galexie-archive.yml` (group `stellarindex.galexie_archive`; `expr: rate(node_vmstat_pswpout[10m]) > 100`, `severity: ticket`, `for: 15m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/galexie-archive.yml`. |
+| Detected by | `configs/prometheus/rules.r1/galexie-archive.yml` (group `stellarindex.galexie_archive_tip_lag`; `expr: rate(node_vmstat_pswpout[10m]) > 100`, `severity: ticket`, `for: 15m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/galexie-archive.yml`. |
 | Typical MTTR | 15 min (stop the over-budget job) – hours (re-plan the workload) |
 | Impact | Not customer-visible on its own. It is the early warning for the pressure class that wedged galexie's captive core for 11 h on 2026-07-05: a process that swaps mid-write can come back with invalid local state. |
 
@@ -54,7 +54,7 @@ ssh root@136.243.90.96 'for p in /proc/[0-9]*; do s=$(awk "/VmSwap/{print \$2}" 
 
 # Is an UNWRAPPED heavy job the consumer? A scoped one cannot swap
 # (MemorySwapMax=0), so anything swapping is outside the fence.
-ssh root@136.243.90.96 'systemctl status "run-heavy-*.scope" --no-pager; systemd-cgtop --order=memory --iterations=2 -n 20'
+ssh root@136.243.90.96 'systemctl status "heavy-*.scope" --no-pager; systemd-cgtop --order=memory --iterations=2 -n 20'
 ```
 
 ## Typical root causes

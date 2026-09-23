@@ -47,7 +47,7 @@ ssh root@136.243.90.96 'dmesg -T | grep -i "out of memory\|killed process" | tai
 
 # Is a fenced heavy job the consumer (or was one just killed at
 # its 20G MemoryMax wall)?
-ssh root@136.243.90.96 'systemctl status "run-heavy-*.scope" --no-pager'
+ssh root@136.243.90.96 'systemctl status "heavy-*.scope" --no-pager'
 ```
 
 ## Typical root causes
