@@ -31,12 +31,13 @@ import (
 //     touches a served price.
 //
 //   - Combine statistic: the RE combines surviving composites with a
-//     WEIGHTED MEAN (CalculateAverageRate). We combine with the exact
-//     MEDIAN instead, to match this repo's masking-resistant
-//     robust-statistics posture (robust.go / FilterOutliers /
-//     GuardServedVWAP all centre on the median). The median is not
-//     dragged by a single divergent survivor the way a mean is. See
-//     [CombineRoutes].
+//     WEIGHTED MEAN (CalculateAverageRate). We combine with a MEMBER
+//     MEDIAN of the highest-confidence tier instead (never a blend of
+//     two disagreeing co-equal routes — see [highestConfidencePrice]),
+//     to match this repo's masking-resistant robust-statistics posture
+//     (robust.go / FilterOutliers / GuardServedVWAP all centre on the
+//     median). It is not dragged by a single divergent survivor the
+//     way a mean is. See [CombineRoutes].
 //
 // Confidence (weakest-link). A cross-rate is only as trustworthy as
 // its flimsiest leg: a single dust SDEX print (0.00001 units for $10 →

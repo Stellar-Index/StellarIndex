@@ -197,7 +197,7 @@ func (s *Server) handleOHLCSeries(
 	defer hCancel()
 	// One row past the cap: the only way to KNOW the window held more
 	// than `limit` buckets. See [capOHLCSeriesNewest].
-	bars, err := s.ohlcSeriesWithAliases(hCtx, pair, interval, from, to, limit+1)
+	bars, proxied, err := s.ohlcSeriesWithAliases(hCtx, pair, interval, from, to, limit+1)
 	if errors.Is(err, ErrUnknownGranularity) {
 		// Shouldn't fire — handler validated the interval — but guard
 		// against a future code path that wires the storage layer
@@ -278,10 +278,13 @@ func (s *Server) handleOHLCSeries(
 		To:        WireTime(to),
 		Intervals: bars,
 	}
-	// Fiat-quoted series are combined from USD/EUR-pegged stablecoin
-	// constituents (late-bound proxy) — flag it, mirroring the single-bar
-	// /v1/ohlc stablecoin-fallback path.
-	flags := Flags{Triangulated: pair.Quote.Type == canonical.AssetFiat && len(bars) > 0}
+	// Triangulated fires only when a bar that actually contributed came
+	// through a proxy constituent (a peg's classic/SAC form or a
+	// stablecoin backer) — mirroring the single-bar /v1/ohlc
+	// stablecoin-fallback path. A fiat series served entirely by a
+	// directly-quoted market (e.g. crypto:XLM/fiat:USD itself) is not
+	// triangulated just because the quote asset is fiat.
+	flags := Flags{Triangulated: proxied}
 	// An empty series is the ambiguous answer — "quiet market" and
 	// "before anything held for this pair" are the same bytes — and
 	// `to` is the window's exclusive end, so a window that ends at or
@@ -417,13 +420,17 @@ func parseOHLCSeriesFromTo(
 // `?base=crypto:XLM` served a full series. Bars are aggregates;
 // cross-alias bar FUSION is a separate design decision — first-hit
 // matches the single-bar endpoint's semantics.
+// The bool return is `proxied` (drives `flags.triangulated`) — see
+// [Server.ohlcSeriesFiatCombined]. The non-fiat first-hit path always
+// returns false: it serves one directly-stored spelling of the pair,
+// never a chain-priced pivot.
 func (s *Server) ohlcSeriesWithAliases(
 	ctx context.Context,
 	pair canonical.Pair,
 	interval ohlcInterval,
 	from, to time.Time,
 	limit int,
-) ([]OHLCSeriesBar, error) {
+) ([]OHLCSeriesBar, bool, error) {
 	// Fiat-denominated quotes (fiat:USD, fiat:EUR, …) have no deep
 	// trade stream of their own — the multi-year history lives under the
 	// USD/EUR-pegged stablecoin pairs. Combine those constituents per
@@ -440,11 +447,11 @@ func (s *Server) ohlcSeriesWithAliases(
 			}
 			bars, err := s.history.OHLCSeries(ctx, ap, string(interval), from, to, limit)
 			if err != nil || len(bars) > 0 {
-				return bars, err
+				return bars, false, err
 			}
 		}
 	}
-	return nil, nil
+	return nil, false, nil
 }
 
 // adjustOHLCSeriesBars applies the dex-nonstandard-decimals forward

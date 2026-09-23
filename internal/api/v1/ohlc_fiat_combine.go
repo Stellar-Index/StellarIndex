@@ -95,18 +95,24 @@ import (
 //
 // Each constituent read goes through the cached HistoryReader, so repeat
 // requests hit the per-pair cache.
+// The bool return is `proxied` — true when at least one bar that
+// actually contributed to the response came from a constituent whose
+// own quote leg differs from `pair.Quote` (a peg's classic/SAC form, or
+// a stablecoin backer), mirroring [Server.mergeConstituentTrades]'
+// `proxied` on the point path. It drives `flags.triangulated`.
 func (s *Server) ohlcSeriesFiatCombined(
 	ctx context.Context,
 	pair canonical.Pair,
 	interval ohlcInterval,
 	from, to time.Time,
 	limit int,
-) ([]OHLCSeriesBar, error) {
+) ([]OHLCSeriesBar, bool, error) {
 	established, heldBack := s.usdPeggedConstituentSets(pair)
 
 	c := newFiatCombine()
-	if err := s.combineConstituentBars(ctx, c, established, interval, from, to, limit, nil); err != nil {
-		return nil, err
+	estProxied, err := s.combineConstituentBars(ctx, c, established, pair, interval, from, to, limit, nil)
+	if err != nil {
+		return nil, false, err
 	}
 	// Which buckets the established spellings answered, snapshotted
 	// BEFORE the held-back pass so two held-back constituents sharing an
@@ -119,12 +125,13 @@ func (s *Server) ohlcSeriesFiatCombined(
 		_, taken := answered[t]
 		return !taken
 	}
-	if err := s.combineConstituentBars(ctx, c, heldBack, interval, from, to, limit, unanswered); err != nil {
-		return nil, err
+	heldBackProxied, err := s.combineConstituentBars(ctx, c, heldBack, pair, interval, from, to, limit, unanswered)
+	if err != nil {
+		return nil, false, err
 	}
 	acc := c.acc
 	if len(acc) == 0 {
-		return nil, nil
+		return nil, false, nil
 	}
 
 	out := make([]OHLCSeriesBar, 0, len(acc))
@@ -132,7 +139,7 @@ func (s *Server) ohlcSeriesFiatCombined(
 		out = append(out, a.finalize(t))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].T.Time().Before(out[j].T.Time()) })
-	return newestCombinedBars(out, limit), nil
+	return newestCombinedBars(out, limit), estProxied || heldBackProxied, nil
 }
 
 // newestCombinedBars keeps the NEWEST `limit` of an ascending merged
@@ -617,30 +624,39 @@ func (c *fiatCombine) add(b *OHLCSeriesBar) {
 // Constituent read errors PROPAGATE: dropping one would silently narrow
 // the methodology, and a quietly-narrower money answer is worse than a
 // 500. This matches [Server.fiatCombinedTrades].
+//
+// Returns `proxied`: true when a bar that was actually admitted came
+// from a constituent pair `sp` whose quote leg differs from `pair`'s —
+// the series-path twin of [Server.mergeConstituentTrades]' `proxied`.
 func (s *Server) combineConstituentBars(
 	ctx context.Context,
 	c *fiatCombine,
 	pairs []canonical.Pair,
+	pair canonical.Pair,
 	interval ohlcInterval,
 	from, to time.Time,
 	limit int,
 	admit func(time.Time) bool,
-) error {
+) (bool, error) {
+	proxied := false
 	for _, sp := range pairs {
 		bars, err := s.history.OHLCSeries(ctx, sp, string(interval), from, to, limit)
 		if err != nil {
 			// A constituent that simply has no rows returns an empty
 			// slice + nil, not an error.
-			return err
+			return false, err
 		}
 		for i := range bars {
 			if admit != nil && !admit(bars[i].T.Time()) {
 				continue
 			}
 			c.add(&bars[i])
+			if !sp.Quote.Equal(pair.Quote) {
+				proxied = true
+			}
 		}
 	}
-	return nil
+	return proxied, nil
 }
 
 // ohlcBucketAcc accumulates the combine across constituent bars sharing a

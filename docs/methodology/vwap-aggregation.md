@@ -1,6 +1,6 @@
 ---
 title: VWAP & price-aggregation methodology
-last_verified: 2026-09-02
+last_verified: 2026-09-23
 status: current
 ---
 
@@ -48,7 +48,7 @@ The **filtered** price flows through one ordered path
 
 | Step | Default | What it does |
 |---|---|---|
-| 1. Stablecoin expansion | OFF (operator opt-in) | Expand a fiat-quote target (`XLM/fiat:USD`) to its direct pair + stablecoin-backed pairs, rewriting the quote side |
+| 1. Stablecoin expansion | OFF (operator opt-in; the code default in `internal/config` is `false`) | Expand a fiat-quote target (`XLM/fiat:USD`) to its direct pair + stablecoin-backed pairs, rewriting the quote side |
 | 2. Source-class filter | ON | Drop every trade whose source is not a VWAP-eligible exchange (see below) |
 | 3. Outlier filter | ON (σ = 4.0) | Time-local robust filter: drop a print only when it sits more than σ × scale from **every** reference — the whole window's median/MAD band, its own and the neighbouring 1-minute buckets, or the nearest prints (see "Outlier filtering" below) |
 | 4. Min-USD-volume gate + freeze | ON | Suppress a window that clears too little USD volume; on a single-venue anomaly, first rebuild the pair's composite reference (e.g. XLM/USD × USD/GBP) on the **same** bucket — if it corroborates the move within 0.75 % the freeze is suppressed, otherwise serve last-known-good; a held freeze auto-releases when the composite agrees with the fresh candidate within 2 % **or** the cross-oracle median agrees within 5 % (`phase2_freeze.go`) — the composite is the tighter of two lenses, not the only one, and a pair outside the composite allow-list has only the median |
@@ -57,6 +57,15 @@ The **filtered** price flows through one ordered path
 The class filter runs **before** the outlier filter so outlier statistics
 are computed only over eligible exchange trades, not contaminated by
 oracle/aggregator rows.
+
+Step 1's default is per-deployment, not universal: the reference
+deployment (r1) runs with `enable_stablecoin_fiat_proxy = true`
+(`configs/ansible/roles/archival-node/templates/stellarindex.toml.j2`)
+because the dominant XLM/USD volume on Stellar is quoted in classic
+Circle USDC, not the abstract stablecoin map, and without the
+expansion the headline `native/fiat:USD` VWAP had no trades to compute
+from (PR #629). A deployment starting from `configs/example.toml`
+gets the code default, OFF.
 
 ### Two serving paths — the direct read and its guard
 
@@ -107,11 +116,12 @@ are `Class = Exchange` AND `IncludeInVWAP = true` contribute to VWAP.**
 
 | Class | Examples | In VWAP? |
 |---|---|---|
-| Exchange | Soroswap, Aquarius, Phoenix, Comet, SDEX (on-chain DEX); Binance, Kraken, Coinbase, Bitstamp (CEX); FX feeds | **Yes** — genuine executed trades |
+| Exchange | Soroswap, Aquarius, Phoenix, Comet, SDEX, SushiSwap V3 (on-chain DEX); Binance, Kraken, Coinbase, Bitstamp (CEX); FX feeds | **Yes** — genuine executed trades |
 | Oracle | Reflector, RedStone, Band, Chainlink | No — **reported alongside**, not counted |
 | Aggregator | CoinGecko, CoinMarketCap, CryptoCompare | No — divergence cross-check only |
-| Lending | Blend | No — auction/stress prices reported as a secondary signal |
-| Router / Bridge | Soroswap-Router, DeFindex, CCTP, Rozo | No — they emit no independent trades (they invoke other contracts, which do) |
+| Lending | Blend, Blend's emitter, Sorocredit | No — auction/stress prices (or, for the emitter, protocol-emissions plumbing) reported as a secondary signal |
+| Router | Soroswap-Router, DeFindex, Upshift | No — they emit no independent trades (they invoke other contracts, which do) |
+| Bridge | CCTP, Rozo | No — cross-chain transfer, not a priced trade |
 | Authority-sanity | ECB daily FX | No — sanity check only |
 
 Why exclude oracles and aggregators: they publish **already-aggregated,
@@ -244,12 +254,19 @@ price(A→C) = price(A→B) × price(B→C)          (e.g. XLM/USD × USD/EUR = 
 enumerates every independent shortest path from base to quote through
 the hub assets (XLM, USD, BTC, …), composites each path in exact
 `*big.Rat`, gates each route on a weakest-link confidence floor, and
-combines the surviving routes with the exact **median** (not a mean). A
-zero or negative leg cannot form an edge, so a degenerate chain fails
-closed. A triangulated response carries `flags.triangulated: true` so
-the derivation is never hidden. For chained-fiat legs a forex snapshot
-(`FXQuoteAtOrBefore`) supplies the FX rate at-or-before the trade time
-from the active FX feed's `fx_quotes` table.
+serves the **member median** (never an averaged mean) of only the
+highest-confidence tier among the gated routes — a lower-confidence
+route can corroborate or trip divergence, but it can never outvote or
+evict the top tier as a price-median outlier (`highestConfidencePrice`).
+Within a co-equal top tier of ≥3 routes, a divergent minority is
+dropped before the median-of-members is taken, so the served value is
+always a price some route actually produced, never a blended midpoint
+of two disagreeing routes. A zero or negative leg cannot form an edge,
+so a degenerate chain fails closed. A triangulated response carries
+`flags.triangulated: true` so the derivation is never hidden. For
+chained-fiat legs a forex snapshot (`FXQuoteAtOrBefore`) supplies the
+FX rate at-or-before the trade time from the active FX feed's
+`fx_quotes` table.
 
 ## Closed-bucket serving (cross-region determinism)
 
@@ -267,25 +284,33 @@ sees exactly which window the rate covers.
 The direct-read path serves the `prices_*` continuous aggregates
 (`migrations/0002…`). Two honest notes on how those columns are computed:
 
-- **The `vwap` column is `sum((quote/base)·base) / sum(base)`.** That is
-  algebraically identical to the exact `Σquote / Σbase` documented above,
-  but it is written as a per-row divide-then-multiply in NUMERIC, so the
-  intermediate `quote/base` is rounded to NUMERIC's division scale before
-  being re-multiplied — a negligible-but-nonzero difference from the exact
-  single-division form that `internal/aggregate/vwap.go` (the Redis/tip
-  path) computes in `*big.Int`. Editing the applied migration 0002 in place
-  is not possible, and recreating seven CAGGs over a decade of history to
-  save that rounding is not worth the re-materialisation risk, so the form
-  stands and is documented here instead.
+- **The `vwap` column is the single-division `sum(quote_amount) / sum(base_amount)`.**
+  Migration 0002's original CAGGs computed it as a per-row
+  divide-then-multiply (`sum((quote/base)·base) / sum(base)`), which
+  rounded the intermediate `quote/base` at NUMERIC's division scale
+  before re-multiplying — measured on r1 2026-07-02 at ≤1.0e-16 relative
+  divergence from the exact form, below the 12-decimal wire truncation.
+  Migration 0147 (already needed for a deterministic open/close
+  tie-break) moved the seven `prices_*` views' `vwap` to the
+  single-division form and recreated `twap_1h` / `twap_1d` unchanged.
+  That removed the per-row divide-then-multiply but leaves one NUMERIC
+  division, which still rounds at NUMERIC's division scale (about 16
+  significant digits). The column can therefore still differ from the
+  exact `big.Rat` that `internal/aggregate/vwap.go` (the Redis/tip path)
+  computes by about 1e-16 relative — below the 12-decimal wire
+  truncation, so the two agree at wire precision, not byte-for-byte
+  (`migrations/README.md` rule 8).
 - **The `twap` column is `avg(quote/base)` — an unweighted per-trade
   mean, NOT a time-weighted average.** Despite the name it carries no time
-  weighting. It has exactly one consumer: the `twap_1h` / `twap_1d`
-  aggregates (`migrations/0081…`) are `avg(prices_1m.twap)`, and they
-  serve `/v1/chart?price_type=twap` — a minute-resolution approximation
-  of a time-weighted mean, documented in 0081's own header. `/v1/twap`
-  reads no CAGG at all: it computes a genuinely time-weighted TWAP on
-  demand from raw trades (`internal/aggregate/twap.go`). Treat the
-  column itself as a legacy equal-weight mean.
+  weighting; migration 0147 left this formula unchanged. It has exactly
+  one consumer: the `twap_1h` / `twap_1d` aggregates (`migrations/0081…`,
+  recreated verbatim by migration 0147) are `avg(prices_1m.twap)`, and
+  they serve `/v1/chart?price_type=twap` — a minute-resolution
+  approximation of a time-weighted mean, documented in 0081's own header.
+  `/v1/twap` reads no CAGG at all: it computes a genuinely time-weighted
+  TWAP on demand from raw trades (`internal/aggregate/twap.go`). Treat the
+  column itself as a legacy equal-weight mean — but not a dead one; it is
+  read by `twap_1h`/`twap_1d` on every refresh.
 - **Every column above assumes both legs are 7-decimal.** `quote_amount`
   and `base_amount` are smallest-unit integers; the ratio only equals the
   true price when both assets share a decimals scale. As of 2026-07-10
@@ -297,8 +322,14 @@ The direct-read path serves the `prices_*` continuous aggregates
   `/v1/pairs`, and the SEP-40 oracle passthroughs) — corrects for a
   confirmed non-7-decimals leg via a read-time `10^(dec_base−dec_quote)`
   scalar (`internal/aggregate.AdjustPrice`) applied to the finished
-  ratio at serve time; nothing declines anymore — see
-  `docs/operations/runbooks/dex-nonstandard-decimals.md`. The stored
+  ratio at serve time; a price no longer declines for this reason — see
+  `docs/operations/runbooks/dex-nonstandard-decimals.md`. This is scoped
+  to the price ratio only: `market_cap_usd`/`fdv_usd` is a separate
+  computation and is still withheld when the decimals resolver
+  disagrees with the on-chain value (`MarketCapDecimalsMismatch`,
+  `internal/api/v1/assets.go`, v0.91.0) — that guard exists precisely
+  because a wrong decimals count would misprice supply, not the trade
+  ratio this section covers. The stored
   `prices_*` CAGG columns documented above remain RAW — a consumer
   querying them directly via SQL must apply the same factor by hand.
   Volume columns are NOT price-corrected: OHLC base/quote volumes are
@@ -315,15 +346,25 @@ both plainly rather than imply a single 30s number for every surface:
 
 | Endpoint | Contract | Typical `observed_at` age |
 |---|---|---|
-| **`/v1/price/tip`** (+ SSE stream) | rolling-window VWAP over the freshest trades, recomputed per request/tick | **≤ 5s** — the ≤30s SLA surface |
+| **`/v1/price/tip`** (+ SSE stream) | rolling-window VWAP over the freshest trades, recomputed per request/tick | **≤ 30s** — the SLA surface |
 | `/v1/price` | last-closed bucket (cross-region-deterministic, cacheable) | **30–150s by design** (1-minute bucket close + aggregation cycle) |
 
-The `/v1/price` **30–150s** figure is a structural property of closing a
-1-minute bucket and running the aggregation cycle on top — it is **not**
-a sub-30s number, and we do not advertise it as one. Integrators pick per
-use case: `/v1/price/tip` for a live wallet asset page, `/v1/price` for
-anything that must agree across replicas, audits, or CDN caches. Full
-detail: `docs/architecture/freshness-definition.md`.
+`/v1/price/tip`'s primary window is 5s wide, but a quiet 5s window
+escalates to a 30s retry window before falling through to the
+closed-bucket last-good value (`internal/api/v1/price_tip.go`,
+`tipEscalationWindowSeconds`) — so **≤5s is the common case, not the
+contract**; the SLA this surface is held to, and the target the SLA
+probe checks, is ≤30s. A quiet pair beyond that window is served the
+last-good closed-bucket price with no synthetic age cap: read the
+response body's own `observed_at` for the real sample age — the
+envelope's `as_of` is always the response instant on every surface, not
+a measure of staleness. The `/v1/price` **30–150s** figure is a
+structural property of closing a 1-minute bucket and running the
+aggregation cycle on top — it is **not** a sub-30s number, and we do not
+advertise it as one. Integrators pick per use case: `/v1/price/tip` for
+a live wallet asset page, `/v1/price` for anything that must agree
+across replicas, audits, or CDN caches. Full detail:
+`docs/architecture/freshness-definition.md`.
 
 ## What this methodology deliberately does NOT do
 

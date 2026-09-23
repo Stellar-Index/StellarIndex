@@ -380,6 +380,44 @@ func TestOHLCSeries_FiatCombinesUSDPeggedConstituents(t *testing.T) {
 	}
 }
 
+// TestOHLCSeries_TriangulatedFalseForDirectlyQuotedFiatSeries — GH-1081
+// finding 3: a fiat-quoted series served ENTIRELY by the directly-quoted
+// market (crypto:XLM/fiat:USD itself, not a stablecoin/SAC proxy) must
+// not be flagged triangulated just because the quote asset is fiat.
+func TestOHLCSeries_TriangulatedFalseForDirectlyQuotedFiatSeries(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	reader := &stubHistoryReader{
+		ohlcSeriesFn: func(_ context.Context, pair canonical.Pair, _ string, _, _ time.Time, _ int) ([]v1.OHLCSeriesBar, error) {
+			if pair.Base.String() == "crypto:XLM" && pair.Quote.String() == "fiat:USD" {
+				return []v1.OHLCSeriesBar{mkSeriesBar(t0, "1.2", "1.3", "1.0", "1.25", "300", "360", 5)}, nil
+			}
+			return nil, nil
+		},
+	}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=fiat:USD&interval=1h")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	body, _ := readAll(resp)
+	var env struct {
+		Data  v1.OHLCSeriesResponse `json:"data"`
+		Flags v1.Flags              `json:"flags"`
+	}
+	if err := json.Unmarshal([]byte(body), &env); err != nil {
+		t.Fatalf("decode: %v (%s)", err, body)
+	}
+	if len(env.Data.Intervals) != 1 {
+		t.Fatalf("want 1 bucket, got %d: %s", len(env.Data.Intervals), body)
+	}
+	if env.Flags.Triangulated {
+		t.Error("flags.triangulated = true, want false — every contributing bar came from " +
+			"crypto:XLM/fiat:USD itself, no proxy/peg constituent was involved")
+	}
+}
+
 func mustFloat(t *testing.T, s string) float64 {
 	t.Helper()
 	f, err := strconv.ParseFloat(s, 64)
