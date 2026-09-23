@@ -490,7 +490,7 @@ The aggregator-refresh metric labels each tick with one of:
 | `ok` | Snapshot written | none — steady state |
 | `no_ledger` | No chain position to stamp the snapshot at: no `ledgerstream` cursor, or no `stellar.ledgers` row in the 512 ledgers below it (the window the lake lookup reads, and the whole range the clamp would accept) | wait for the indexer's first cursor; otherwise check the CH sink — the ordinary seconds-long cursor-ahead-of-lake lead is clamped away, so this means the lake is empty, gapped, or stalled |
 | `no_observation` | Live reader has no row + static fallback empty | bootstrap window — wait for backfill OR populate static config |
-| `missing_baseline` | SEP-41 total went negative AND the contract's pre-Soroban genesis baseline hasn't been seeded (a SAC-wrapper issued before Soroban, reading Σburn > Σmint over the Soroban-era-only window) | run `stellarindex-ops supply seed-sep41-genesis` once (idempotent). Benign — excluded from `error_dominant` |
+| `missing_baseline` | SEP-41 total went negative AND the contract's pre-Soroban genesis baseline hasn't been seeded (a SAC-wrapper issued before Soroban, reading Σburn > Σmint over the Soroban-era-only window) | run `stellarindex-ops supply seed-sep41-genesis -write` (idempotent; rebuilds each contract's fold, one contract at a time — see below). Benign — excluded from `error_dominant` |
 | `compute_error` | Algorithm returned non-OK for a genuine reason (e.g. SEP-41 total negative **after** the genesis baseline is seeded — physically impossible) | code bug or upstream data inconsistency; check logs + roll back if recent deploy |
 | `write_error` | `InsertSupply` failed | storage layer down; route to `pg-conns-saturated` runbook |
 
@@ -528,6 +528,21 @@ differ — CH is used only for the pre-Soroban slice PG has no data for.
 Operator step: `stellarindex-ops supply seed-sep41-genesis -config PATH -write`
 (fail-closed: without `-write` it only previews; idempotent — re-run
 after any lake re-derive below the boundary).
+
+Each write also rebuilds the contract's rollup fold under the seeded
+floor in the same transaction, so re-running with the same inputs
+converges on the same row. The rebuild is what repairs a contract the
+aggregator folded at floor 0 before its first seed: that fold holds the
+pre-boundary band, which the baseline would otherwise count a second
+time. Because the fold never drops back to `last_ledger = 0`, the
+serving read stays on its checkpoint path throughout. Each rebuild is
+one floored aggregate over that contract's Soroban-era events, run one
+contract at a time. It holds the contract's rollup row while it runs;
+an aggregator pass that reaches the row yields after a 10 s
+`lock_timeout` (an `error` outcome on
+`stellarindex_sep41_supply_rollup_advances_total`) and retries on the
+next cadence. A seed that finds the row held by a pass fails the same
+way. Re-run it.
 
 **Provenance (ADR-0033 substrate reproducibility).** The pre-Soroban
 `contract_events` / `supply_flows` rows are **replay-derived**: a

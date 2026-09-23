@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -797,9 +799,10 @@ func TestSEP41SupplyRollupFoldReset(t *testing.T) {
 // Three legs, each asserting the exact corrected lifetime total (not merely
 // "non-nil"):
 //
-//   - first seed onto an unfloored fold zeroes the worker-owned columns, so the
-//     next read serves the floored full-sum fallback: each row counted ONCE;
-//   - a REPEAT seed of the SAME boundary leaves the fold exactly as it was (the
+//   - first seed onto an unfloored fold rebuilds the fold under the new floor
+//     in the same transaction, so the served read stays on the checkpoint fast
+//     path (last_ledger at the settled tip, never 0) and counts each row ONCE;
+//   - a REPEAT seed of the SAME boundary converges on the same fold (the
 //     "idempotent" the runbook promises is preserved, not traded away);
 //   - a CORRECTING seed that MOVES the boundary re-zeroes the fold, so the
 //     re-partitioned genesis/Soroban slices still conserve the same total.
@@ -906,9 +909,9 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 	// ─── Leg 1: the remedy seed must not re-add the band it already holds ──
 	seed(preMint, boundary)
 	r := readFold()
-	if r.mint != "0" || r.lastLedger != 0 {
-		t.Errorf("post-seed fold = mint %s last_ledger %d; want 0 / 0 (a moved floor invalidates the fold beneath it)",
-			r.mint, r.lastLedger)
+	if r.mint != "100" || r.lastLedger != int64(lSeam) {
+		t.Errorf("post-seed fold = mint %s last_ledger %d; want 100 / %d (the seed re-folds under the new floor, excluding the pre-boundary row, and leaves the checkpoint at the settled tip rather than 0)",
+			r.mint, r.lastLedger, lSeam)
 	}
 	if r.genesisMint != "900" || !r.genesisLedger.Valid || r.genesisLedger.Int64 != int64(boundary) {
 		t.Errorf("post-seed genesis = mint %s ledger %v; want 900 / %d", r.genesisMint, r.genesisLedger, boundary)
@@ -917,7 +920,7 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 		t.Errorf("lifetime mint after seed-onto-unfloored-fold = %d; want %d (pre-Soroban band counted ONCE)", got, wantLifetime)
 	}
 
-	// ─── Leg 2: a repeat seed of the SAME boundary leaves the fold alone ───
+	// ─── Leg 2: a repeat seed of the SAME boundary converges on the same fold
 	if _, err := store.AdvanceSEP41SupplyRollup(ctx, contractID); err != nil {
 		t.Fatalf("advance (post-seed re-fold): %v", err)
 	}
@@ -927,7 +930,7 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 	}
 	seed(preMint, boundary)
 	if r := readFold(); r.mint != "100" || r.lastLedger != int64(lSeam) {
-		t.Errorf("fold after a repeat seed of the same boundary = mint %s last_ledger %d; want 100 / %d (idempotent: no reset)",
+		t.Errorf("fold after a repeat seed of the same boundary = mint %s last_ledger %d; want 100 / %d (idempotent: the rebuilt fold is the same fold)",
 			r.mint, r.lastLedger, lSeam)
 	}
 	if got := lifetimeMint(); got != wantLifetime {
@@ -951,6 +954,161 @@ func TestSEP41GenesisBaseline_SeedAfterUnflooredFold(t *testing.T) {
 	}
 	if got := lifetimeMint(); got != wantLifetime {
 		t.Errorf("lifetime mint after the corrected re-fold = %d; want %d", got, wantLifetime)
+	}
+}
+
+// TestSEP41GenesisBaseline_ReseedRepairsFoldPoisonedUnderSameFloor pins the
+// half of #596 a floor-move trigger cannot reach: a row that was ALREADY
+// seeded while its fold still held the pre-boundary band (the 13 contracts
+// measured on r1 2026-08-04, written before the seed touched the fold at all).
+// Re-running the seed with the same boundary is the documented remedy, and it
+// must repair the row even though the floor does not move.
+func TestSEP41GenesisBaseline_ReseedRepairsFoldPoisonedUnderSameFloor(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
+	rawdb, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	t.Cleanup(func() { _ = rawdb.Close() })
+
+	const (
+		contractID = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+
+		boundary uint32 = 50457424
+		lPre     uint32 = 50456424 // CAP-67-replayed mint, BELOW the boundary
+		lSeam    uint32 = 50457424
+		lTip     uint32 = 50557424 // deferred by the < max(ledger) guard
+		readAt   uint32 = 60000000
+
+		preMint  int64 = 10_000_000_000
+		seamMint int64 = 8_762_638_133
+		tipMint  int64 = 1
+
+		wantLifetime int64 = preMint + seamMint + tipMint
+	)
+	t0 := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	for i, ev := range []struct {
+		ledger uint32
+		amount int64
+	}{{lPre, preMint}, {lSeam, seamMint}, {lTip, tipMint}} {
+		if err := store.InsertSEP41SupplyEvent(ctx, timescale.SEP41SupplyEvent{
+			ContractID: contractID, Ledger: ev.ledger, TxHash: fmt.Sprintf("%064x", i+1), OpIndex: 0,
+			ObservedAt: t0, Kind: timescale.SEP41EventMint, Amount: big.NewInt(ev.amount), Counterparty: "GA1",
+		}); err != nil {
+			t.Fatalf("insert mint@%d: %v", ev.ledger, err)
+		}
+	}
+	seed := func() {
+		t.Helper()
+		if err := store.UpsertSEP41GenesisBaseline(ctx, contractID,
+			timescale.SEP41KindTotals{Mint: big.NewInt(preMint), Burn: big.NewInt(0), Clawback: big.NewInt(0)},
+			boundary); err != nil {
+			t.Fatalf("UpsertSEP41GenesisBaseline: %v", err)
+		}
+	}
+
+	// The already-poisoned production state: seeded at `boundary`, and a fold
+	// that swept the pre-boundary row in at floor 0 before the seed existed.
+	seed()
+	if _, err := rawdb.ExecContext(ctx, `
+		UPDATE sep41_supply_rollup
+		   SET mint_total = $2, burn_total = 0, clawback_total = 0, last_ledger = $3
+		 WHERE contract_id = $1`, contractID, fmt.Sprint(preMint+seamMint), int64(lSeam)); err != nil {
+		t.Fatalf("arm poisoned fold: %v", err)
+	}
+	if got := lifetimeSEP41Mint(t, ctx, store, contractID, readAt); got != wantLifetime+preMint {
+		t.Fatalf("precondition: poisoned lifetime mint = %d; want %d (pre-boundary band counted twice)", got, wantLifetime+preMint)
+	}
+
+	// The remedy: the same seed, same boundary.
+	seed()
+	var mint string
+	var lastLedger int64
+	if err := rawdb.QueryRowContext(ctx, `
+		SELECT mint_total::text, last_ledger FROM sep41_supply_rollup WHERE contract_id = $1`, contractID).
+		Scan(&mint, &lastLedger); err != nil {
+		t.Fatalf("read rollup row: %v", err)
+	}
+	if mint != fmt.Sprint(seamMint) || lastLedger != int64(lSeam) {
+		t.Errorf("fold after a same-boundary re-seed = mint %s last_ledger %d; want %d / %d (rebuilt under the seeded floor)",
+			mint, lastLedger, seamMint, lSeam)
+	}
+	if got := lifetimeSEP41Mint(t, ctx, store, contractID, readAt); got != wantLifetime {
+		t.Errorf("lifetime mint after a same-boundary re-seed = %d; want %d (pre-boundary band counted ONCE)", got, wantLifetime)
+	}
+}
+
+// TestSEP41SupplyRollup_ContendedWritersYield pins #1086's convoy: a fold
+// writer blocked on another writer's row lock must give up after the bounded
+// lock_timeout (SQLSTATE 55P03) rather than wait out a cold full-history fold,
+// because the aggregator advances contracts sequentially and every later
+// contract in the pass would wait behind it.
+func TestSEP41SupplyRollup_ContendedWritersYield(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	settleSEP41Cursor(t, ctx, store, sep41SettledTestCursorLedger)
+	rawdb, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("raw open: %v", err)
+	}
+	t.Cleanup(func() { _ = rawdb.Close() })
+
+	const contractID = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+	if _, err := store.AdvanceSEP41SupplyRollup(ctx, contractID); err != nil {
+		t.Fatalf("materialise rollup row: %v", err)
+	}
+
+	// The holder: a writer mid-way through a long fold, holding the row.
+	holder, err := rawdb.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("holder begin: %v", err)
+	}
+	defer func() { _ = holder.Rollback() }()
+	if _, err := holder.ExecContext(ctx,
+		`SELECT 1 FROM sep41_supply_rollup WHERE contract_id = $1 FOR UPDATE`, contractID); err != nil {
+		t.Fatalf("holder lock: %v", err)
+	}
+
+	// Well past the 10s bound, well short of forever.
+	const deadline = 45 * time.Second
+	writers := map[string]func(context.Context) error{
+		"advance": func(c context.Context) error {
+			_, err := store.AdvanceSEP41SupplyRollup(c, contractID)
+			return err
+		},
+		"seed": func(c context.Context) error {
+			return store.UpsertSEP41GenesisBaseline(c, contractID,
+				timescale.SEP41KindTotals{Mint: big.NewInt(1), Burn: big.NewInt(0), Clawback: big.NewInt(0)}, 50457424)
+		},
+	}
+	for name, write := range writers {
+		wctx, wcancel := context.WithTimeout(ctx, deadline)
+		start := time.Now()
+		err := write(wctx)
+		wcancel()
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
+			t.Errorf("%s under a held row lock returned after %s with err=%v; want SQLSTATE 55P03 (lock_timeout), not a wait bounded only by the caller's context",
+				name, time.Since(start).Round(time.Millisecond), err)
+		}
 	}
 }
 

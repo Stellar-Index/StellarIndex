@@ -4509,6 +4509,18 @@ doesn't serve that)**, first `verify-usd-volume -days 30` → calibrate the
 C4-055/066 alert. Also: SEV-1/2 paging drill + rollback rehearsal —
 evidence files have never been produced across three generations of plans.
 
+**Open data step (#596).** The 13 SEP-41 contracts measured on r1
+2026-08-04 (worst case CCUMQ5V3… served 18,762,638,134 for a true
+8,762,638,134, +114%) were seeded over a fold that already held their
+pre-boundary band, and deploying a code fix does not touch rows already
+written. Once the binary whose seed rebuilds the fold is deployed, re-run
+`stellarindex-ops supply seed-sep41-genesis -config PATH -write` on r1.
+The rebuild runs one contract at a time. Then
+`stellarindex-ops supply verify-rollup -config PATH` must report zero drift, and the
+lifetime supply of CCUMQ5V3… must match the lake. File both outputs under
+`evidence/`. Until that is done, those contracts' served supply remains
+double-counted.
+
 ### 2.6b Final pre-launch passes (added 2026-07-31, the maintainer's ask)
 **Grounding incident (2026-07-31 ~09:45Z, the maintainer's live-site reports):**
 CCTP page missing its visual suite + roster "0 events" + /network/

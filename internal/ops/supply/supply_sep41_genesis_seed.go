@@ -35,11 +35,17 @@ import (
 // and thus core-version-dependent; genesis_baseline_ledger + genesis_seeded_at
 // record the boundary + capture time so a re-seed is auditable.
 //
-// Idempotent: the baseline is SET (not added) — re-running overwrites with the
-// (deterministic) CH sum, never double-counts. A Soroban-only contract (no
-// pre-genesis flows) is seeded with a zero baseline, leaving its served total
-// unchanged. NOTE: if the CH supply_flows history below the boundary is
-// re-derived, re-run this seed to refresh the baseline.
+// Idempotent: the baseline is SET (not added), and the rollup fold beneath it
+// is rebuilt under the new floor in the same transaction
+// ([timescale.Store.UpsertSEP41GenesisBaseline]), so re-running converges on
+// the same row and also repairs a fold that swept the pre-boundary band in
+// before the contract was first seeded. That rebuild is one floored aggregate
+// over the contract's Soroban-era events, run one contract at a time; it holds
+// the contract's rollup row while it runs, and a contending aggregator pass
+// yields rather than waits. A Soroban-only contract (no pre-genesis flows) is
+// seeded with a zero baseline, leaving its served total unchanged. NOTE: if the
+// CH supply_flows history below the boundary is re-derived, re-run this seed
+// to refresh the baseline.
 //
 // Flags:
 //
@@ -109,7 +115,11 @@ func supplySeedSEP41Genesis(args []string) error {
 	boundary := uint32(genesis)
 	var seeded, nonzero int
 	for _, contractID := range watched {
-		isNonZero, err := seedOneSEP41Genesis(ctx, reader, store, contractID, boundary, dryRun)
+		// Per contract, not per run: each write now carries a cold fold, so
+		// a run-wide budget would shrink with the size of the watch-list.
+		cctx, ccancel := context.WithTimeout(context.Background(), 15*time.Minute)
+		isNonZero, err := seedOneSEP41Genesis(cctx, reader, store, contractID, boundary, dryRun)
+		ccancel()
 		if err != nil {
 			return err
 		}
