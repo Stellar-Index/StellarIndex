@@ -47,6 +47,31 @@ func fuzzAccountChange(ct xdr.LedgerEntryChangeType, aid xdr.AccountId, balance 
 	return c
 }
 
+// refAccountID is the G-strkey of the AccountEntry a change touches, or
+// "" when it touches anything else.
+func refAccountID(c xdr.LedgerEntryChange) string {
+	var e *xdr.LedgerEntry
+	switch c.Type {
+	case xdr.LedgerEntryChangeTypeLedgerEntryRemoved:
+		if k, ok := c.MustRemoved().GetAccount(); ok {
+			return k.AccountId.Address()
+		}
+		return ""
+	case xdr.LedgerEntryChangeTypeLedgerEntryCreated:
+		e = c.Created
+	case xdr.LedgerEntryChangeTypeLedgerEntryUpdated:
+		e = c.Updated
+	case xdr.LedgerEntryChangeTypeLedgerEntryRestored:
+		e = c.Restored
+	default:
+		return ""
+	}
+	if a, ok := e.Data.GetAccount(); ok {
+		return a.AccountId.Address()
+	}
+	return ""
+}
+
 // FuzzObserverDecode drives arbitrary LedgerEntryChange XDR through the
 // observer. Properties: Matches fires exactly for a watched AccountEntry
 // in any change variant; a matched change always decodes to one
@@ -84,10 +109,10 @@ func FuzzObserverDecode(f *testing.F) {
 		if err := xdr.SafeUnmarshal(changeXDR, &change); err != nil {
 			return
 		}
-		id, idErr := accountIDFromChange(change)
-		wantMatch := idErr == nil && (id == watched || id == fuzzAccountID(0x03).Address())
+		id := refAccountID(change)
+		wantMatch := id == watched || id == fuzzAccountID(0x03).Address()
 		if got := obs.Matches(change); got != wantMatch {
-			t.Fatalf("Matches=%v, want %v (id=%q err=%v)", got, wantMatch, id, idErr)
+			t.Fatalf("%s: Matches=%v, want %v (id=%q)", change.Type, got, wantMatch, id)
 		}
 		if !wantMatch {
 			return
