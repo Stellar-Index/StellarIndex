@@ -1,90 +1,58 @@
 package v1
 
 import (
-	"os"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
 // TestOpenAPIAccountTierEnumMatchesAuthTier pins Account.tier's documented
-// enum to the values /v1/account/me actually serves (string(subject.Tier),
-// account.go). The spec previously listed `partner` — not a real auth.Tier
-// value — and omitted `sep10` and `operator`, both of which the handler
-// serves live (RLT-073 / T527).
+// enum to the values the Account schema can actually carry: every auth.Tier
+// constant except TierAnonymous. /v1/account/me and /v1/account/keys serve
+// string(Tier) verbatim, and both 401 an anonymous caller before building
+// an Account (asserted below), so `anonymous` in the enum is a documented
+// value no response can hold. The constants are read from source so a new
+// tier fails here until the spec names it.
 func TestOpenAPIAccountTierEnumMatchesAuthTier(t *testing.T) {
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var specPath string
-	for i := 0; i < 8; i++ {
-		try := filepath.Join(dir, "openapi", "stellar-index.v1.yaml")
-		if _, statErr := os.Stat(try); statErr == nil {
-			specPath = try
-			break
+	var want []string
+	for _, tier := range goStringConsts(t, filepath.Join("internal", "auth"), "Tier") {
+		if tier != string(auth.TierAnonymous) {
+			want = append(want, tier)
 		}
-		dir = filepath.Dir(dir)
 	}
-	if specPath == "" {
-		t.Fatal("could not locate openapi/stellar-index.v1.yaml from cwd")
-	}
-	body, err := os.ReadFile(specPath) //nolint:gosec // repo-relative path resolved above
-	if err != nil {
-		t.Fatalf("read spec: %v", err)
+	if len(want) == 0 {
+		t.Fatal("found no non-anonymous auth.Tier constants — the source walk is broken")
 	}
 
-	var doc map[string]any
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		t.Fatalf("parse spec: %v", err)
+	got := specEnumAt(t, loadSpecDoc(t), "components", "schemas", "Account", "properties", "tier")
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("openapi Account.tier enum = %v, want %v (every auth.Tier except %q) — "+
+			"account.go serves string(Tier) directly, so an undocumented or "+
+			"unreachable enum value here is a client-visible contract gap",
+			got, want, auth.TierAnonymous)
 	}
-	node := doc
-	for _, key := range []string{"components", "schemas"} {
-		next, ok := node[key].(map[string]any)
-		if !ok {
-			t.Fatalf("spec missing %q", key)
+}
+
+// TestAccountSchemaRoutesRejectAnonymousTier holds the premise that keeps
+// `anonymous` out of the Account.tier enum: an explicitly anonymous
+// subject never reaches a response built from the Account schema.
+func TestAccountSchemaRoutesRejectAnonymousTier(t *testing.T) {
+	anon := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			s := auth.Subject{Tier: auth.TierAnonymous, Identifier: "192.0.2.1"}
+			next.ServeHTTP(w, r.WithContext(auth.WithSubject(r.Context(), s)))
+		})
+	}
+	h := New(Options{Auth: anon}).Handler()
+	for _, path := range []string{"/v1/account/me", "/v1/account/keys"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("GET %s as tier %q = %d, want 401", path, auth.TierAnonymous, rec.Code)
 		}
-		node = next
-	}
-	account, ok := node["Account"].(map[string]any)
-	if !ok {
-		t.Fatal("spec missing components.schemas.Account")
-	}
-	props, ok := account["properties"].(map[string]any)
-	if !ok {
-		t.Fatal("Account has no properties")
-	}
-	tier, ok := props["tier"].(map[string]any)
-	if !ok {
-		t.Fatal("Account.properties has no tier")
-	}
-	rawEnum, ok := tier["enum"].([]any)
-	if !ok {
-		t.Fatal("Account.tier has no enum")
-	}
-
-	var specEnum []string
-	for _, v := range rawEnum {
-		specEnum = append(specEnum, v.(string))
-	}
-	sort.Strings(specEnum)
-
-	want := []string{
-		string(auth.TierAnonymous),
-		string(auth.TierAPIKey),
-		string(auth.TierSEP10),
-		string(auth.TierOperator),
-	}
-	sort.Strings(want)
-
-	if strings.Join(specEnum, ",") != strings.Join(want, ",") {
-		t.Errorf("openapi Account.tier enum = %v, want %v (every auth.Tier value) — "+
-			"account.go serves string(subject.Tier) directly, so an undocumented or "+
-			"nonexistent enum value here is a client-visible contract gap", specEnum, want)
 	}
 }

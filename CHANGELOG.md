@@ -36,6 +36,31 @@ against.
   A new guard fails on any pair-bound `prices_1m` read without a
   closed-bucket predicate.
 
+- **api — `AccountActivity.trades_total_since` and `AccountTrade.signer`
+  documented (#573):** both fields were on the wire but absent from the
+  spec, so the generated types and spec-driven clients could not see
+  them — and `trades_total_since` changes `trades_total` from all-time
+  to "since this date". Both are now in the spec (with that meaning
+  stated on `trades_total`), and the handler-vs-spec field test covers
+  the two explorer structs.
+
+- **api — `Account.tier` enum no longer lists `anonymous` (#572):**
+  `/v1/account/me` and `/v1/account/keys` 401 an anonymous caller before
+  an Account is built, so the value was documented but unreachable. The
+  enum is now `[apikey, sep10, operator]`, and the spec test derives it
+  from the `auth.Tier` constants minus `TierAnonymous` while a second
+  test holds the 401 premise that justifies the exclusion.
+
+- **api — `bridge` source class accepted by `/v1/sources?class=` and
+  listed in both spec enums (#571):** the registry serves `cctp` and
+  `rozo` as `class: "bridge"` and `/v1/methodology` describes the class,
+  but the `?class=` allow-list rejected it with a 400 whose message named
+  four of the six values it did accept, and the `?class=` and
+  `source_classes[].name` enums stopped at six. The allow-list now
+  carries every `external.Class`, the 400 detail is rendered from it,
+  and `TestSourceClassSurfacesAgree` pins the constants, the allow-list,
+  the served glossary and all three spec enums together.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

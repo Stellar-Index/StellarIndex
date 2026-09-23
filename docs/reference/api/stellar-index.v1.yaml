@@ -6368,7 +6368,7 @@ paths:
             split the catalogue by role.
           schema:
             type: string
-            enum: [exchange, aggregator, oracle, authority_sanity, lending, router]
+            enum: [exchange, aggregator, oracle, authority_sanity, lending, router, bridge]
         - name: include
           in: query
           required: false
@@ -12882,10 +12882,20 @@ components:
           type: integer
           format: int64
           description: |
-            All-time attributed trade count (taker or maker side) — the
-            same attribution scope /accounts/{g_strkey}/trades documents
+            Attributed trade count (taker or maker side) — the same
+            attribution scope /accounts/{g_strkey}/trades documents
             (soroswap + off-chain trades carry no account and are not
-            counted). Absent = the segment could not be read, not zero.
+            counted). All-time ONLY when trades_total_since is absent;
+            when it is present this counts trades from that date
+            onward. Absent = the segment could not be read, not zero.
+        trades_total_since:
+          type: string
+          format: date
+          description: |
+            When present, the UTC date (YYYY-MM-DD) trades_total counts
+            FROM: the trades compression horizon, before which rows are
+            not yet searchable per account. Absent = trades_total is
+            all-time.
         defi_actions:
           type: array
           items: { $ref: "#/components/schemas/AccountDefiActionCount" }
@@ -13122,6 +13132,14 @@ components:
             Descriptive, first-wins metadata from the trade's own routing
             structure — not authenticated provenance and not a price input
             (see the same field on the trade-history schema).
+        signer:
+          type: string
+          description: |
+            The transaction source account (fee-payer / initiator)
+            behind an AMM or Soroban swap, where the recorded taker is
+            a router or contract. Absent for non-AMM trades and for
+            trades the signer sweeper has not yet tagged (migration
+            0150).
       required: [ts, source, base_asset, quote_asset, base_amount, quote_amount, tx_hash, ledger, op_index, role]
     AccountTrades:
       type: object
@@ -18692,7 +18710,7 @@ components:
             properties:
               name:
                 type: string
-                enum: [exchange, aggregator, oracle, authority_sanity, lending, router]
+                enum: [exchange, aggregator, oracle, authority_sanity, lending, router, bridge]
               contributes_to_vwap: { type: boolean }
               description:         { type: string }
             required: [name, contributes_to_vwap, description]
@@ -18794,9 +18812,11 @@ components:
             prefix feature shipped.
         tier:
           type: string
-          enum: [anonymous, apikey, sep10, operator]
+          enum: [apikey, sep10, operator]
           description: |
             The auth.Tier value actually served (internal/auth/subject.go).
+            Never `anonymous`: an unauthenticated caller receives 401, not
+            an Account.
             `operator` is an internal credential, reserved for admin
             endpoints; never issued to a public caller.
         rate_limit_per_min: { type: integer }

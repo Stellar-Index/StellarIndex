@@ -648,7 +648,8 @@ type OHLCBar struct {
 // venues + oracles + aggregators the deployment can ingest from).
 //
 // Class is one of: `exchange` / `aggregator` / `oracle` /
-// `authority_sanity`. Per the v1 aggregator policy, only
+// `authority_sanity` / `lending` / `router` / `bridge`. Per the v1
+// aggregator policy, only
 // `exchange` contributes to VWAP — the others are reported
 // alongside but excluded (mixing them double-counts upstream
 // markets or imposes their methodology on our output).

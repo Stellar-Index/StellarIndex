@@ -123,9 +123,9 @@ type Source struct {
 }
 
 // validSourceClasses is the allow-list of values accepted for the
-// `class` query parameter. Mirrors external.Class — we deliberately
-// duplicate the strings here so the API surface stays stable if the
-// internal package ever renames a constant.
+// `class` query parameter: every external.Class, because every class is
+// served on some row. TestSourceClassSurfacesAgree holds it to the
+// constants and to both spec enums.
 var validSourceClasses = map[string]bool{
 	string(external.ClassExchange):        true,
 	string(external.ClassAggregator):      true,
@@ -133,6 +133,18 @@ var validSourceClasses = map[string]bool{
 	string(external.ClassAuthoritySanity): true,
 	string(external.ClassLending):         true,
 	string(external.ClassRouter):          true,
+	string(external.ClassBridge):          true,
+}
+
+// sourceClassList renders validSourceClasses for the invalid-class 400,
+// so the message cannot drift from what the filter accepts.
+func sourceClassList() string {
+	names := make([]string, 0, len(validSourceClasses))
+	for c := range validSourceClasses {
+		names = append(names, c)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
 }
 
 // handleSources serves GET /v1/sources.
@@ -143,9 +155,8 @@ var validSourceClasses = map[string]bool{
 // (~25 entries today) that pagination would be over-engineering.
 //
 // Query parameters:
-//   - class (optional): filter by source class
-//     (`exchange` / `aggregator` / `oracle` / `authority_sanity`).
-//     Unknown value → 400.
+//   - class (optional): filter by source class (any value in
+//     validSourceClasses). Unknown value → 400 naming the accepted set.
 //
 // This endpoint is the operator-facing rendering of the same
 // metadata the aggregator's class filter consults internally —
@@ -160,7 +171,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-class",
 			"Invalid class", http.StatusBadRequest,
-			"class must be one of: exchange, aggregator, oracle, authority_sanity")
+			"class must be one of: "+sourceClassList())
 		return
 	}
 

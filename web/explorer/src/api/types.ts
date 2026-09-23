@@ -5495,12 +5495,22 @@ export interface components {
             ops_by_type?: components["schemas"]["AccountOpTypeCount"][];
             /**
              * Format: int64
-             * @description All-time attributed trade count (taker or maker side) — the
-             *     same attribution scope /accounts/{g_strkey}/trades documents
+             * @description Attributed trade count (taker or maker side) — the same
+             *     attribution scope /accounts/{g_strkey}/trades documents
              *     (soroswap + off-chain trades carry no account and are not
-             *     counted). Absent = the segment could not be read, not zero.
+             *     counted). All-time ONLY when trades_total_since is absent;
+             *     when it is present this counts trades from that date
+             *     onward. Absent = the segment could not be read, not zero.
              */
             trades_total?: number;
+            /**
+             * Format: date
+             * @description When present, the UTC date (YYYY-MM-DD) trades_total counts
+             *     FROM: the trades compression horizon, before which rows are
+             *     not yet searchable per account. Absent = trades_total is
+             *     all-time.
+             */
+            trades_total_since?: string;
             /**
              * @description Per-(protocol, action) DeFi event counts over the served-tier
              *     tables that genuinely carry a per-account column: blend
@@ -5732,6 +5742,14 @@ export interface components {
              *     (see the same field on the trade-history schema).
              */
             routed_via?: string;
+            /**
+             * @description The transaction source account (fee-payer / initiator)
+             *     behind an AMM or Soroban swap, where the recorded taker is
+             *     a router or contract. Absent for non-AMM trades and for
+             *     trades the signer sweeper has not yet tagged (migration
+             *     0150).
+             */
+            signer?: string;
         };
         /**
          * @description An address's attributed historic trades, newest first,
@@ -10600,7 +10618,7 @@ export interface components {
             };
             source_classes: {
                 /** @enum {string} */
-                name: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router";
+                name: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router" | "bridge";
                 contributes_to_vwap: boolean;
                 description: string;
             }[];
@@ -10660,11 +10678,13 @@ export interface components {
             key_prefix?: string;
             /**
              * @description The auth.Tier value actually served (internal/auth/subject.go).
+             *     Never `anonymous`: an unauthenticated caller receives 401, not
+             *     an Account.
              *     `operator` is an internal credential, reserved for admin
              *     endpoints; never issued to a public caller.
              * @enum {string}
              */
-            tier?: "anonymous" | "apikey" | "sep10" | "operator";
+            tier?: "apikey" | "sep10" | "operator";
             rate_limit_per_min?: number;
             /** Format: date-time */
             created_at?: string;
@@ -17133,7 +17153,7 @@ export interface operations {
                  *     given class are returned. Useful for dashboards that
                  *     split the catalogue by role.
                  */
-                class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router";
+                class?: "exchange" | "aggregator" | "oracle" | "authority_sanity" | "lending" | "router" | "bridge";
                 /**
                  * @description Opt-in extras. `stats` populates each row's
                  *     `trade_count_24h` from a single GROUP BY on the trades

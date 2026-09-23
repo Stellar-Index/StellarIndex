@@ -90,6 +90,10 @@ func TestSources_FilterByClass(t *testing.T) {
 			class: "authority_sanity",
 			want:  map[string]bool{"ecb": true},
 		},
+		{
+			class: "bridge",
+			want:  map[string]bool{"cctp": true, "rozo": true},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.class, func(t *testing.T) {
