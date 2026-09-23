@@ -42,6 +42,18 @@ func TestHandleErrorDoc(t *testing.T) {
 		}
 	})
 
+	t.Run("unknown slug 404s", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/errors/retired-slug-that-never-shipped", nil)
+		req.SetPathValue("slug", "retired-slug-that-never-shipped")
+		s.handleErrorDoc(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404 for a slug matching the kebab-case "+
+				"charset but naming no real error type", rec.Code)
+		}
+	})
+
 	t.Run("html", func(t *testing.T) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/errors/rate-limited", nil)
