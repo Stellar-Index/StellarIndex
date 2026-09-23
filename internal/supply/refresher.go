@@ -436,12 +436,3 @@ func (r *Refresher) applyStaleComponentGate(ctx context.Context, snap Supply) (O
 	}
 	return Outcome{Kind: OutcomeKindDormant, Snapshot: snap}, true
 }
-
-// String renders the outcome for log lines / test fixtures. Stable
-// across versions.
-func (o Outcome) String() string {
-	if o.Err != nil {
-		return fmt.Sprintf("%s: %v", o.Kind, o.Err)
-	}
-	return string(o.Kind)
-}
