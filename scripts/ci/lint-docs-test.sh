@@ -75,6 +75,14 @@ check "a reintroduced 'PR #1230' citation in CHANGELOG.md is caught" red
 git checkout -- CHANGELOG.md
 check "clean tree passes again after revert" ok
 
+# RSWP-128: CHANGELOG's /v1/coins/{slug} canonical asset_id entry cited
+# "(PR #1231)" but #1231 is a real, currently-open, unrelated issue
+# (${EXTRA_FLAGS} brace-form word-split), not that PR.
+echo "(PR #1231)" >> CHANGELOG.md
+check "a reintroduced 'PR #1231' citation in CHANGELOG.md is caught" red
+git checkout -- CHANGELOG.md
+check "clean tree passes again after revert" ok
+
 # RSWP-086: CHANGELOG's r1-smoke.sh budget-bump entry cited a PR number
 # (#1108) that never identified the actual PR; #1108 now resolves to a
 # real, unrelated issue, not a 404.

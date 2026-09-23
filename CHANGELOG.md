@@ -27995,7 +27995,6 @@ rc.48 deploy to R1.
   the #45 scam-token disambiguation guard). Handler adds a
   `canonical.ParseAsset` short-circuit so the canonical-form
   path skips the case-insensitive retry it doesn't need.
-  (PR #1231)
 - **`/v1/oracle/prices` now applies the same X/fiat:USD → X/<peg>
   stablecoin-fiat proxy fallback** as `/v1/oracle/lastprice`
   (#1220) and the other X/fiat:USD surfaces. Pre-fix, the SEP-40

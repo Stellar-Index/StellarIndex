@@ -456,6 +456,13 @@ stale_patterns=(
                                   # a PR number that didn't exist yet;
                                   # #1198 is now a real, unrelated live issue
                                   # (trim-galexie-archive delete-key drift)
+  "PR #1231"                     # dangling ref (RSWP-128) — CHANGELOG's
+                                  # /v1/coins/{slug} canonical asset_id
+                                  # entry cited this as its PR; #1231 is now
+                                  # a real, currently-open, unrelated issue
+                                  # (${EXTRA_FLAGS} brace-form word-split on
+                                  # direct-exec systemd units), not the
+                                  # asset_id fix it names
   "#201\b"                        # dangling ref (RSWP-001) — semver-policy.md's
                                   # and CHANGELOG's pkg/client SDK skeleton
                                   # entries cited "#201" as the landing PR;
