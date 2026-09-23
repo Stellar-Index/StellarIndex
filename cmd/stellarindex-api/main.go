@@ -62,6 +62,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	workerpkg "github.com/Stellar-Index/StellarIndex/internal/worker"
 
 	"github.com/redis/go-redis/v9"
@@ -1394,6 +1395,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		Cursors:            store,
 		CoverageReader:     store,
 		CompletenessReader: store,
+		AuditedSources:     completeness.AuditedSources(cfg),
 		// Protocols pillar (/v1/protocols*): contract registry, 24h
 		// event census, soroswap pair registry. All three optional —
 		// the directory degrades to zeros/empties when absent.

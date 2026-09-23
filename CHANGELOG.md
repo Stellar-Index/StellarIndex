@@ -220,6 +220,15 @@ against.
   contract in the pass. The rows already poisoned on r1 still need one
   re-run of the seed after deploy (docs/operations/v1-launch-plan.md
   §2.6).
+- **completeness / `/v1/coverage` — vacuous verdicts and the denominator
+  (#607):** a source whose reconcile targets all hold no served rows
+  (expected ∅ = served ∅, or no targets at all) now publishes
+  `projection_ok: false` with a `no evidence` detail. It no longer
+  publishes a `true` that looks like a real proof. `/v1/coverage` gains
+  `unverified_sources`, which lists each audited source with no verdict
+  row. `total_sources` now counts those sources, so a first-pass failure
+  shrinks the numerator instead of vanishing from both sides.
+
 - **completeness — `contract_events` census on `-ch` (#806):** the
   substrate axis proved only `stellar.ledgers`, while recognition and
   projection read `stellar.contract_events`. A dropped or unrestored event

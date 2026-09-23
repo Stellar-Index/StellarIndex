@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
@@ -1734,6 +1735,63 @@ func TestProjectionFloor_CleanPriorKeepsTheCheapResume(t *testing.T) {
 	failing := priorProjection{known: true, ok: false, tip: sushiTip}
 	if got := projectionFloor(sushiGenesis, true, failing, sushiTip, 0); got != sushiGenesis {
 		t.Errorf("failing-prior floor = %d, want genesis %d — a red source has no verified ground to resume from", got, sushiGenesis)
+	}
+}
+
+// TestProjectionWithoutEvidence pins #607: expected ∅ vs served ∅ must not
+// publish projection_ok=true. It feeds the real reconcile primitives for a
+// source whose served tier is empty and whose re-derive expects nothing (a
+// wrong or redeployed contract identity) and asserts the claim is refused,
+// while a source with served rows keeps its clean verdict.
+func TestProjectionWithoutEvidence(t *testing.T) {
+	const genesis, hi = uint32(57_056_338), uint32(64_000_000)
+	empty := []servedFloor{{present: false}, {present: false}}
+	servedFrom := targetScope(hi, false, genesis, 0, hi).From
+	delta, runDetail := strictPerLedgerDelta("trades", map[uint32]int{}, map[uint32]int{}, servedFrom, hi)
+	projOK, _ := projectionClaim(servedFrom, servedFrom, hi, delta == 0, runDetail, priorProjection{})
+	if !projOK {
+		t.Fatal("precondition: projectionClaim certifies ∅ == ∅ over the full range — the vacuous green this gate exists to refuse")
+	}
+	vacuous, d := projectionWithoutEvidence(projOK, len(empty), empty, genesis, hi)
+	if !vacuous || !strings.Contains(d, "no evidence") || !strings.Contains(d, "[57056338,64000000]") {
+		t.Errorf("empty served tier + empty expectation = (%v, %q), want refused with a no-evidence detail naming the range", vacuous, d)
+	}
+	if vacuous, _ := projectionWithoutEvidence(true, 0, nil, genesis, hi); !vacuous {
+		t.Error("a source with no reconcile targets proves nothing and must be refused")
+	}
+	served := []servedFloor{{present: false}, {min: 60_000_000, present: true}}
+	if vacuous, d := projectionWithoutEvidence(true, len(served), served, genesis, hi); vacuous {
+		t.Errorf("a target holding served rows is evidence; the clean claim must stand, got %q", d)
+	}
+	if vacuous, _ := projectionWithoutEvidence(false, len(empty), empty, genesis, hi); vacuous {
+		t.Error("an already-failing claim needs no second refusal")
+	}
+}
+
+// TestAuditedSources_LockstepWithCatalogue holds /v1/coverage's denominator
+// (completeness.AuditedSources, which the API can import) equal to the set of
+// sources this catalogue publishes verdicts for (#607), under each config gate.
+func TestAuditedSources_LockstepWithCatalogue(t *testing.T) {
+	withSEP41 := testConfigWithAllSources()
+	withSEP41.Supply.WatchedSEP41Contracts = []string{"CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"}
+	for name, cfg := range map[string]config.Config{
+		"bare":        {},
+		"all oracles": testConfigWithAllSources(),
+		"with sep41":  withSEP41,
+	} {
+		cat, _, err := buildReconciliationCatalogue(cfg)
+		if err != nil {
+			t.Fatalf("%s: build catalogue: %v", name, err)
+		}
+		got := make([]string, 0, len(cat))
+		for _, src := range cat {
+			got = append(got, src.name)
+		}
+		sort.Strings(got)
+		want := completeness.AuditedSources(cfg)
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s: catalogue sources = %v, completeness.AuditedSources = %v — keep them in lockstep", name, got, want)
+		}
 	}
 }
 

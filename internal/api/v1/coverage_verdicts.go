@@ -188,7 +188,7 @@ type CoverageVerdictsView struct {
 	// CompleteSources / TotalSources summarize the headline ("20/20") for
 	// the served/combined axis (Complete). SOURCES ONLY — a system audit
 	// axis is not a source and is neither numerator nor denominator.
-	// TotalSources always equals len(Sources).
+	// TotalSources is len(Sources) + len(UnverifiedSources).
 	CompleteSources int `json:"complete_sources"`
 	TotalSources    int `json:"total_sources"`
 	// LakeCompleteSources tallies the lake (archive) axis (LakeComplete)
@@ -206,6 +206,41 @@ type CoverageVerdictsView struct {
 	// NotApplicableSources names the sources that do not exist on this
 	// network. Always empty on pubnet.
 	NotApplicableSources []NotApplicableSourceView `json:"not_applicable_sources"`
+	// UnverifiedSources names the audited sources (completeness.AuditedSources)
+	// applicable on this network that have NO verdict row. They count in
+	// TotalSources, so a source whose first audit failed shrinks the
+	// numerator rather than vanishing from both sides of the headline.
+	UnverifiedSources []UnverifiedSourceView `json:"unverified_sources"`
+}
+
+// UnverifiedSourceView is one audited source with no verdict row.
+type UnverifiedSourceView struct {
+	Source string `json:"source"`
+	Reason string `json:"reason"`
+}
+
+// unverifiedSourceReason is [UnverifiedSourceView.Reason].
+const unverifiedSourceReason = "no completeness verdict has ever been computed for this source on this deployment " +
+	"(its audit has not completed, or the row was cleared) — counted in total_sources, not as complete"
+
+// unverifiedSources lists, in audited's order, every audited source applicable
+// on network with no row in snaps.
+func unverifiedSources(audited []string, snaps []timescale.CompletenessSnapshot, network string) []UnverifiedSourceView {
+	have := make(map[string]struct{}, len(snaps))
+	for _, sn := range snaps {
+		have[sn.Source] = struct{}{}
+	}
+	out := make([]UnverifiedSourceView, 0)
+	for _, name := range audited {
+		if _, ok := have[name]; ok {
+			continue
+		}
+		if ok, _ := sourcenet.Applicable(name, network); !ok {
+			continue
+		}
+		out = append(out, UnverifiedSourceView{Source: name, Reason: unverifiedSourceReason})
+	}
+	return out
 }
 
 // coverageVerdictStaleLedgers bounds how far the LIVE ingest frontier
@@ -319,7 +354,8 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 			view.LakeCompleteSources++
 		}
 	}
-	view.TotalSources = len(view.Sources)
+	view.UnverifiedSources = unverifiedSources(s.auditedSources, snaps, network)
+	view.TotalSources = len(view.Sources) + len(view.UnverifiedSources)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	writeJSON(w, view, Flags{Stale: s.coverageVerdictsStale(r.Context(), snaps)})

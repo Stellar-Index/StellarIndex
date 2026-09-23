@@ -662,6 +662,10 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 					projOK = false
 					detail = append(detail, floorLoss...)
 				}
+				if vacuous, d := projectionWithoutEvidence(projOK, len(src.targets), servedMins, genesis, srW.Ledger); vacuous {
+					projOK, projVerifiedFrom = false, 0
+					detail = append(detail, d)
+				}
 			} else {
 				detail = append(detail, "projection: not evaluated (earlier claim failed at genesis)")
 			}
@@ -1397,6 +1401,25 @@ func projectionClaim(servedFrom, runFrom, hi uint32, runClean bool, runDetail st
 	default:
 		return true, fmt.Sprintf("projection: verified [%d,%d]; %s carried from the prior clean verdict (tip=%d), not re-verified this run", runFrom, hi, skipped, prior.tip)
 	}
+}
+
+// projectionWithoutEvidence refuses a clean projection claim that no served
+// row stands behind: when none of the source's targets holds a row anywhere in
+// [genesis, hi] (or it has no targets), a clean reconcile means expected ∅ ==
+// served ∅. That is byte-identical on the wire to a real proof, and it is
+// exactly what a wrong or redeployed contract identity produces. It returns
+// vacuous=true with the detail naming why. Pure.
+func projectionWithoutEvidence(projOK bool, nTargets int, servedMins []servedFloor, genesis, hi uint32) (bool, string) {
+	if !projOK {
+		return false, ""
+	}
+	for _, m := range servedMins {
+		if m.present {
+			return false, ""
+		}
+	}
+	return true, fmt.Sprintf("projection: no evidence — none of this source's %d target table(s) holds a row in [%d,%d], so the clean reconcile compared nothing with nothing; "+
+		"an empty served tier matching an empty expectation is not a verification (check the catalogue's contract identities)", nTargets, genesis, hi)
 }
 
 // dirtyReconcileFloor lowers an incremental run's projection reconcile floor
