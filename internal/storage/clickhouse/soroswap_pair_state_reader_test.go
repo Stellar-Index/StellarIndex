@@ -2,11 +2,38 @@ package clickhouse
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
+
+// TestSoroswapQueryShapesHaveGuardRailSettings pins the SQL to the
+// repo's bounded-lake-read conventions: current-state table with
+// FINAL dedup, keyed probe, empty-entry filter, and the guard-rail
+// SETTINGS the sibling readers pin (cometPoolStateQuery /
+// phoenixPoolStateQuery) — an unbounded FINAL scan on this host must
+// fail loudly, not fan out on the shared host.
+func TestSoroswapQueryShapesHaveGuardRailSettings(t *testing.T) {
+	for name, q := range map[string]string{
+		"soroswapPairStateQuery": soroswapPairStateQuery,
+		"tokenDisplaysQuery":     tokenDisplaysQuery,
+	} {
+		for _, s := range []string{
+			"FROM stellar.ledger_entries_current FINAL",
+			"entry_type = 'contract_data'",
+			"key_xdr IN (?)",
+			"entry_xdr != ''",
+			"max_threads = 4",
+			"max_memory_usage = 8000000000",
+		} {
+			if !strings.Contains(q, s) {
+				t.Errorf("%s missing %q", name, s)
+			}
+		}
+	}
+}
 
 // mkSoroswapPairEntry builds a base64 instance LedgerEntry matching the
 // empirically-verified Soroswap pair layout: u32-keyed Token0/Token1
