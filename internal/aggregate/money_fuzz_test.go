@@ -591,10 +591,16 @@ func FuzzFilterOutliers(f *testing.F) {
 			}
 			return
 		}
-		if len(valid)%2 == 1 && len(got) == 0 {
-			t.Fatal("odd window dropped its own median")
+		band := refFilterOutliers(valid, sigma)
+		if len(valid)%2 == 1 && len(band) == 0 {
+			t.Fatal("odd window's band excluded its own median")
 		}
-		if want := refFilterOutliers(valid, sigma); !sameKeys(got, want) {
+		// Survivors lighter than what the band drops withhold the window.
+		want := band
+		if bandVol := baseVolume(band); bandVol.Lsh(bandVol, 1).Cmp(baseVolume(valid)) < 0 {
+			want = nil
+		}
+		if !sameKeys(got, want) {
 			t.Fatalf("FilterOutliers kept %d, documented band keeps %d", len(got), len(want))
 		}
 		// Price scale invariance: multiplying every quote by k keeps the set.
@@ -667,6 +673,14 @@ func refFilterOutliers(valid []canonical.Trade, sigma float64) []canonical.Trade
 		}
 	}
 	return out
+}
+
+func baseVolume(trades []canonical.Trade) *big.Int {
+	sum := new(big.Int)
+	for _, tr := range trades {
+		sum.Add(sum, tr.BaseAmount.BigInt())
+	}
+	return sum
 }
 
 func sameKeys(a, b []canonical.Trade) bool {
