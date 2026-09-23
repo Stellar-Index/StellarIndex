@@ -79,7 +79,7 @@ func NewHandlers(cfg Config) (*Handlers, error) {
 // logged-in customer's behalf — registering an endpoint that
 // exfiltrates the victim's webhook payloads is the concrete attack.
 // Reads stay unwrapped — safe methods change nothing.
-func (h *Handlers) Mount(mux *http.ServeMux) {
+func (h *Handlers) Mount(mux *http.ServeMux, _ *middleware.PublicRoutes) {
 	sameSite := middleware.RequireSameSiteWrite(h.cfg.Logger)
 	mux.HandleFunc("GET /v1/dashboard/webhooks", h.HandleList)
 	mux.Handle("POST /v1/dashboard/webhooks", sameSite(http.HandlerFunc(h.HandleCreate)))

@@ -21,6 +21,10 @@ func TestRequiredScope(t *testing.T) {
 		"/v1/dashboard/keys":        platform.KeyScopeDashboard,
 		"/v1/dashboard/webhooks/xy": platform.KeyScopeDashboard,
 		"/v1/admin/keys":            platform.KeyScopeAdmin,
+		// Staff PII lookup nested in the self-service family (#1322).
+		"/v1/account/admin/lookup": platform.KeyScopeAdmin,
+		"/v1/dashboard/admin/x":    platform.KeyScopeAdmin,
+		"/v1/account/administer":   platform.KeyScopeAccount,
 	}
 	for path, want := range cases {
 		if got := auth.RequiredScope(path); got != want {

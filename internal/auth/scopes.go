@@ -13,7 +13,8 @@ import (
 // scoped key must carry to call it. Families are derived from the
 // /v1 route table (see internal/api/v1/server.go mountRoutes):
 //
-//   - /v1/admin/*     → platform.KeyScopeAdmin
+//   - /v1/admin/*, /v1/account/admin/*, /v1/dashboard/admin/*
+//     → platform.KeyScopeAdmin
 //   - /v1/account/*   → platform.KeyScopeAccount
 //   - /v1/dashboard/* → platform.KeyScopeDashboard
 //   - everything else → platform.KeyScopeRead (public data surfaces)
@@ -21,12 +22,17 @@ import (
 // The mapping is prefix-based rather than a per-route table so a
 // new data endpoint is read-scoped by default and a new management
 // endpoint under an existing family inherits the right scope with
-// zero wiring. Enforcement lives in the KeyPolicy middleware and
+// zero wiring. A staff surface nested inside a self-service family
+// (POST /v1/account/admin/lookup returns customer PII) must not
+// inherit that family's least-privileged scope, so the admin arms
+// match first. Enforcement lives in the KeyPolicy middleware and
 // only applies to subjects whose Scopes list is non-empty
 // (empty = full access, the pre-scopes posture).
 func RequiredScope(path string) string {
 	switch {
-	case strings.HasPrefix(path, "/v1/admin/"):
+	case strings.HasPrefix(path, "/v1/admin/"),
+		strings.HasPrefix(path, "/v1/account/admin/"),
+		strings.HasPrefix(path, "/v1/dashboard/admin/"):
 		return platform.KeyScopeAdmin
 	case strings.HasPrefix(path, "/v1/account/"):
 		return platform.KeyScopeAccount

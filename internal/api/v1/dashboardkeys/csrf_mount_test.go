@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
 )
 
 // TestMount_CrossSiteWriteBlockedBeforeHandler is the C3-031 / C3-057
@@ -18,7 +20,7 @@ import (
 func TestMount_CrossSiteWriteBlockedBeforeHandler(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	mux := http.NewServeMux()
-	h.Mount(mux)
+	h.Mount(mux, middleware.NewPublicRoutes())
 
 	for _, tc := range []struct {
 		name, method, target string
@@ -66,7 +68,7 @@ func TestMount_CrossSiteWriteBlockedBeforeHandler(t *testing.T) {
 func TestMount_SameSiteWriteReachesHandler(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	mux := http.NewServeMux()
-	h.Mount(mux)
+	h.Mount(mux, middleware.NewPublicRoutes())
 
 	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{
 		Name:            "production",

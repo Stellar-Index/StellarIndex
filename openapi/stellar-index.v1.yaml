@@ -8445,6 +8445,7 @@ paths:
     post:
       operationId: registerApiKey
       tags: [account]
+      security: []
       summary: Open registration — create a free account + first API key in one call.
       description: |
         Public, anonymous-tier, and deliberately friction-free — the
@@ -8550,6 +8551,7 @@ paths:
     post:
       operationId: signup
       tags: [account]
+      security: []
       summary: Self-service signup — mint a first API key by email.
       description: |
         Public, anonymous-tier endpoint. Hit it once with an email
@@ -8637,6 +8639,7 @@ paths:
     get:
       operationId: verifySignup
       tags: [account]
+      security: []
       summary: Confirm email ownership for a signup-issued API key.
       description: |
         F-1218 (codex audit-2026-05-12): closes the email-
@@ -9278,6 +9281,7 @@ paths:
     post:
       operationId: requestMagicLink
       tags: [auth]
+      security: []
       summary: Customer dashboard — request a magic-link sign-in email.
       description: |
         Mints a single-use magic-link token (valid 15 minutes) and
@@ -9348,6 +9352,7 @@ paths:
     get:
       operationId: consumeMagicLink
       tags: [auth]
+      security: []
       summary: Customer dashboard — consume a magic-link token + mint a session cookie.
       description: |
         Reads the `token` query parameter, atomically marks it
@@ -9416,6 +9421,7 @@ paths:
     post:
       operationId: verifyLoginCode
       tags: [auth]
+      security: []
       summary: Customer dashboard — exchange the 6-digit email code for a session cookie.
       description: |
         The paste-friendly alternative to clicking the magic link. The
@@ -9497,6 +9503,7 @@ paths:
     post:
       operationId: logout
       tags: [auth]
+      security: []
       summary: Customer dashboard — revoke the current session + clear the cookie.
       description: |
         Idempotent. Calling without a session cookie is still a 200
@@ -9531,6 +9538,7 @@ paths:
     post:
       operationId: beginPasskeyLogin
       tags: [auth]
+      security: []
       summary: Customer dashboard — begin a passkey (WebAuthn) sign-in.
       description: |
         Returns the WebAuthn credential-request options the browser
@@ -9577,6 +9585,7 @@ paths:
     post:
       operationId: finishPasskeyLogin
       tags: [auth]
+      security: []
       summary: Customer dashboard — finish a passkey sign-in; mints the session cookie.
       description: |
         Verifies the authenticator's assertion (the JSON produced by
@@ -9840,6 +9849,7 @@ paths:
     get:
       operationId: getSep10Challenge
       tags: [auth]
+      security: []
       summary: SEP-10 Web Auth — issue a challenge transaction.
       description: |
         Returns a Stellar challenge transaction the client must sign
@@ -9899,6 +9909,7 @@ paths:
     post:
       operationId: createSep10Token
       tags: [auth]
+      security: []
       summary: SEP-10 Web Auth — exchange a signed challenge for a JWT.
       description: |
         Accepts a signed challenge transaction and returns a JWT
