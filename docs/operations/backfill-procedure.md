@@ -594,7 +594,7 @@ Reaping is a two-step procedure, and the first step is the decision:
    cursor and skips the ones sibling coverage already closed:
 
    ```sh
-   stellarindex-ops resume-stalled -config /etc/stellarindex/config.toml -dry-run
+   stellarindex-ops resume-stalled -config /etc/stellarindex.toml -dry-run
    ```
 
    A shard with real remaining work should be resumed, not reaped.
@@ -602,8 +602,8 @@ Reaping is a two-step procedure, and the first step is the decision:
 2. **Reap.** Previews by default; `-write` applies:
 
    ```sh
-   stellarindex-ops reap-cursors -config /etc/stellarindex/config.toml
-   stellarindex-ops reap-cursors -config /etc/stellarindex/config.toml -write
+   stellarindex-ops reap-cursors -config /etc/stellarindex.toml
+   stellarindex-ops reap-cursors -config /etc/stellarindex.toml -write
    ```
 
    `-older-than` (default `168h`, floor `24h`) sets the cutoff and

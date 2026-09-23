@@ -27,10 +27,10 @@ severity: P2
 
 ```sh
 # Which source + how far back is the cursor?
-stellarindex-ops list-cursors -config /etc/stellarindex/config.toml
+stellarindex-ops list-cursors -config /etc/stellarindex.toml
 
 # How does that compare to the network tip?
-stellarindex-ops detect-gaps -config /etc/stellarindex/config.toml -threshold 100
+stellarindex-ops detect-gaps -config /etc/stellarindex.toml -threshold 100
 
 # If detect-gaps says "ok" but the alert fires: the source isn't
 # lagging, it's just not seeing events. Check SourceEventsTotal

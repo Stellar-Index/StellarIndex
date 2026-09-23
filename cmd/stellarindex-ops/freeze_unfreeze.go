@@ -84,6 +84,14 @@ func freezeUnfreeze(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Checked before Postgres is opened: the marker is the serving path's
+	// freeze authority, so without Redis there is nothing to list or clear.
+	rdb := redisclient.Build(cfg.Storage)
+	if rdb == nil {
+		return errors.New("redis is not configured (storage.redis_addr / redis_sentinel_addrs both empty) — freeze-unfreeze requires Redis")
+	}
+	defer func() { _ = rdb.Close() }()
+
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
@@ -92,9 +100,6 @@ func freezeUnfreeze(args []string) error {
 		return fmt.Errorf("storage open: %w", err)
 	}
 	defer func() { _ = store.Close() }()
-
-	rdb := redisclient.Build(cfg.Storage)
-	defer func() { _ = rdb.Close() }()
 
 	sink := timescale.NewFreezeEventSink(store)
 	writer, err := newFreezeWriterForOps(rdb, sink)
