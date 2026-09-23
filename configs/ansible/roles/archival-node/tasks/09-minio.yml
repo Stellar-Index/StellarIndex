@@ -108,9 +108,8 @@
   # execve records) for the life of the call — the comment here used to
   # claim env-based auth while the task passed the root password on argv
   # (2026-08-28 audit). MC_HOST_<alias> env would also avoid argv but is
-  # transient; the root-run ops scripts (node-healthcheck.sh,
-  # galexie-archive-*.sh) rely on the PERSISTED `local` alias, so stdin it
-  # is. no_log prevents Ansible from echoing the stdin/vars on failure.
+  # transient; the root-run ops scripts (galexie-archive-*.sh) rely on the
+  # PERSISTED `local` alias, so stdin it is. no_log prevents Ansible from echoing the stdin/vars on failure.
   # Guarded by scripts/ci/lint-ansible-tasks.sh (secret-on-argv).
   ansible.builtin.command:
     argv:

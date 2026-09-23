@@ -19,3 +19,16 @@ ExecStart=/usr/local/bin/pgbackrest-backup.sh
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
+
+# Hardening. ProtectSystem=full (not strict) keeps /var writable for
+# repo1 (/var/lib/pgbackrest), pgbackrest's log and spool dirs and the
+# textfile metric; nothing here writes under /usr, /boot or /etc.
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+# PrivateTmp is deliberately NOT set: pgbackrest.conf leaves lock-path at
+# its default /tmp/pgbackrest, where archive-push, an operator's manual
+# backup and `pgbackrest stop` also take and read their locks. A private
+# /tmp would hide all three from this job.

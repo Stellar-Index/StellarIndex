@@ -5,14 +5,22 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-# Script reads /etc/default/node-healthcheck for the ping URL.
+# The ping URL lives in /etc/default/node-healthcheck (root:root 0600).
+# systemd reads it as root before dropping to the dynamic user; the
+# script only sources the file itself when run by hand as root.
+EnvironmentFile=-/etc/default/node-healthcheck
 ExecStart=/usr/local/bin/node-healthcheck.sh
 
-# Lock it down — this script only needs to run a few curls, read
-# /info and /getHealth over localhost, call systemctl, and run
-# zpool/df.
+# Unprivileged: curl over localhost, `systemctl is-active/cat/show`,
+# `zpool list` (/dev/zfs is 0666) and df all work without root, and the
+# only write is a scratch file in the private /tmp.
+DynamicUser=yes
+
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
 ReadOnlyPaths=/
 PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true

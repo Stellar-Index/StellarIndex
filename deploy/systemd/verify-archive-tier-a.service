@@ -124,7 +124,12 @@ ExecStart=/usr/local/bin/stellarindex-ops verify-archive \
   -safety-overlap ${VERIFY_ARCHIVE_SAFETY_OVERLAP} \
   -textfile-output ${VERIFY_ARCHIVE_TEXTFILE}
 
-User=root
+# De-privileged to match the deployed template (CS-118): writes only the
+# state file under /var/lib/stellarindex and the textfile metric, both
+# stellarindex-owned. A manual install needs that user and directory
+# first (04-users.yml).
+User=stellarindex
+Group=stellarindex
 
 # Hardening. The binary reads /etc/stellarindex.toml; it doesn't
 # need write access to the filesystem (logs go to journald).

@@ -25,7 +25,9 @@
 set -uo pipefail
 
 # --- Load config ------------------------------------------------
-if [ -f /etc/default/node-healthcheck ]; then
+# Under the unit this file is root-only and systemd has already loaded it
+# via EnvironmentFile=; sourcing is for a by-hand run as root.
+if [ -r /etc/default/node-healthcheck ]; then
   # shellcheck disable=SC1091
   . /etc/default/node-healthcheck
 fi
