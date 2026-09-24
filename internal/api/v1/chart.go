@@ -380,6 +380,19 @@ func (s *Server) dispatchSpecialisedChart(
 	return false
 }
 
+// fiatChartGranularity snaps an arbitrary requested chart granularity
+// onto the one grain fx_quotes actually serves: the Massive worker (and
+// the Frankfurter backfill behind it) writes exactly one row per ticker
+// per UTC day, so every fiat:fiat chart — direct or cross-triangulated —
+// is a daily series regardless of what was asked. Mirrors
+// [twapChartGranularity]'s snap-then-report pattern: handleChartFiat and
+// handleChartFiatCross stamp the SNAPPED value back on the response so
+// [markDiscontinuity] and the retention-truncation check measure the
+// grid the series is actually on, not the one the caller requested.
+func fiatChartGranularity(string) string {
+	return string(timescale.Granularity1d)
+}
+
 // twapChartGranularity snaps an arbitrary requested chart granularity
 // onto one of the two grains backed by a TWAP CAGG (migration 0081):
 // sub-daily → 1h, daily+ → 1d. The TWAP surface is deliberately coarser
@@ -623,11 +636,12 @@ func (s *Server) handleChartFiat(
 	tfRaw, gran, priceType string,
 	from time.Time,
 ) {
+	gran = fiatChartGranularity(gran)
 	series := ChartSeries{
 		AssetID:     pair.Base.String(),
 		Quote:       pair.Quote.String(),
 		Timeframe:   tfRaw,
-		Granularity: gran,
+		Granularity: gran, // the grain actually served (snapped)
 		PriceType:   priceType,
 		Points:      []HistoryPointWire{},
 	}
