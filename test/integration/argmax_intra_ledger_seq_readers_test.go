@@ -43,7 +43,7 @@ func TestQueryAccountBalance_SameLedgerLastChangeWins(t *testing.T) {
 
 	const (
 		account  = "c24c-sibling-account-balance-GTEST"
-		key      = "c24c-account-balance-same-ledger-key"
+		key      = "YzI0Yy1hY2NvdW50LWJhbGFuY2Utc2FtZS1sZWRnZXIta2V5" // base64("c24c-account-balance-same-ledger-key")
 		ledger   = uint32(71_000_001)
 		staleBal = int64(100)
 		finalBal = int64(200)
@@ -263,7 +263,8 @@ func TestNativeLiquidityPoolsRanked_SameLedgerLastChangeWins(t *testing.T) {
 	addr := clickhouseAddr(t)
 
 	const (
-		key      = "c24c-native-lp-same-ledger-key"
+		// Valid base64: lake-wide scans (the SAC full-history seed) base64Decode every key_xdr.
+		key      = "YzI0Yy1uYXRpdmUtbHAtc2FtZS1sZWRnZXIta2V5" // base64("c24c-native-lp-same-ledger-key")
 		ledger   = uint32(72_000_001)
 		staleRes = int64(111_0000000)
 		finalRes = int64(222_0000000)
