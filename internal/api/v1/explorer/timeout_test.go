@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -55,33 +56,43 @@ func (p *deadlineProbe) record(ctx context.Context) {
 // first lake read without needing real data.
 type capReader struct{ probe *deadlineProbe }
 
-func (r *capReader) Cap67MovementsWatermark(context.Context) (uint32, error) { return 0, nil }
+func (r *capReader) Cap67MovementsWatermark(ctx context.Context) (uint32, error) {
+	r.probe.record(ctx)
+	return 0, nil
+}
 
-func (r *capReader) AccountsStats(context.Context) (clickhouse.AccountsStats, bool, error) {
+func (r *capReader) AccountsStats(ctx context.Context) (clickhouse.AccountsStats, bool, error) {
+	r.probe.record(ctx)
 	return clickhouse.AccountsStats{}, false, nil
 }
 
-func (r *capReader) AccountCreators(context.Context, int, string) (clickhouse.AccountCreators, bool, error) {
+func (r *capReader) AccountCreators(ctx context.Context, _ int, _ string) (clickhouse.AccountCreators, bool, error) {
+	r.probe.record(ctx)
 	return clickhouse.AccountCreators{}, false, nil
 }
 
-func (r *capReader) AccountSponsors(context.Context, int, string) (clickhouse.AccountSponsors, bool, error) {
+func (r *capReader) AccountSponsors(ctx context.Context, _ int, _ string) (clickhouse.AccountSponsors, bool, error) {
+	r.probe.record(ctx)
 	return clickhouse.AccountSponsors{}, false, nil
 }
 
-func (r *capReader) AccountGraph(context.Context, string, string, int, string) (clickhouse.AccountGraph, bool, error) {
+func (r *capReader) AccountGraph(ctx context.Context, _, _ string, _ int, _ string) (clickhouse.AccountGraph, bool, error) {
+	r.probe.record(ctx)
 	return clickhouse.AccountGraph{}, false, nil
 }
 
-func (r *capReader) AccountGraphHistory(context.Context, string) (clickhouse.AccountGraphHistory, bool, error) {
+func (r *capReader) AccountGraphHistory(ctx context.Context, _ string) (clickhouse.AccountGraphHistory, bool, error) {
+	r.probe.record(ctx)
 	return clickhouse.AccountGraphHistory{}, false, nil
 }
 
-func (r *capReader) AccountCohort(context.Context, string, string) (clickhouse.AccountCohort, bool, error) {
+func (r *capReader) AccountCohort(ctx context.Context, _, _ string) (clickhouse.AccountCohort, bool, error) {
+	r.probe.record(ctx)
 	return clickhouse.AccountCohort{}, false, nil
 }
 
-func (r *capReader) ContractActivitySummaryFor(context.Context, string, int) (clickhouse.ContractActivitySummary, bool, error) {
+func (r *capReader) ContractActivitySummaryFor(ctx context.Context, _ string, _ int) (clickhouse.ContractActivitySummary, bool, error) {
+	r.probe.record(ctx)
 	return clickhouse.ContractActivitySummary{}, false, nil
 }
 
@@ -360,6 +371,12 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 		{"AccountState", "/v1/accounts/" + validTestAccount, map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountState},
 		{"AssetHolders", "/v1/assets/native/holders", map[string]string{"asset_id": "native"}, (*Handler).AssetHolders},
 		{"AccountPositions", "/v1/accounts/" + validTestAccount + "/positions", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountPositions},
+		{"AccountsStats", "/v1/accounts/stats", nil, (*Handler).AccountsStats},
+		{"AccountCreators", "/v1/accounts/creators", nil, (*Handler).AccountCreators},
+		{"AccountSponsors", "/v1/accounts/sponsors", nil, (*Handler).AccountSponsors},
+		{"AccountGraph", "/v1/accounts/" + validTestAccount + "/graph", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraph},
+		{"AccountGraphHistory", "/v1/accounts/" + validTestAccount + "/graph/history", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraphHistory},
+		{"AccountGraphCohort", "/v1/accounts/" + validTestAccount + "/graph/cohort?relation=created", map[string]string{"g_strkey": validTestAccount}, (*Handler).AccountGraphCohort},
 	}
 
 	for _, tc := range cases {
@@ -429,6 +446,44 @@ func TestExplorerReads_BoundedByReadTimeout(t *testing.T) {
 					tc.name, probe.budget, wantBudget)
 			}
 		})
+	}
+}
+
+// TestCapReader_EveryMethodRecordsDeadline keeps the route table honest: a
+// stub that returns without recording its context makes a route over it
+// look unreachable, so the route never gets added and its deadline goes
+// unguarded. Every ExplorerReader / PositionsReader method must record.
+func TestCapReader_EveryMethodRecordsDeadline(t *testing.T) {
+	probe := &deadlineProbe{}
+	stubs := []struct {
+		iface reflect.Type
+		impl  any
+	}{
+		{reflect.TypeOf((*ExplorerReader)(nil)).Elem(), &capReader{probe: probe}},
+		{reflect.TypeOf((*PositionsReader)(nil)).Elem(), &capPositions{probe: probe}},
+	}
+	ctxType := reflect.TypeOf((*context.Context)(nil)).Elem()
+	for _, st := range stubs {
+		impl := reflect.ValueOf(st.impl)
+		for i := 0; i < st.iface.NumMethod(); i++ {
+			name := st.iface.Method(i).Name
+			m := impl.MethodByName(name)
+			args := make([]reflect.Value, m.Type().NumIn())
+			for j := range args {
+				args[j] = reflect.Zero(m.Type().In(j))
+			}
+			if len(args) == 0 || m.Type().In(0) != ctxType {
+				continue
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), explorerReadTimeout)
+			args[0] = reflect.ValueOf(ctx)
+			*probe = deadlineProbe{}
+			m.Call(args)
+			cancel()
+			if !probe.sawCall || !probe.hasDL {
+				t.Errorf("%s.%s does not record its context on the deadline probe", st.iface.Name(), name)
+			}
+		}
 	}
 }
 
