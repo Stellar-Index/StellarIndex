@@ -60,7 +60,7 @@ cf. PR #253).`
   ```sh
   ssh root@136.243.90.96
   set -a; source /etc/default/stellarindex-ops; set +a
-  /usr/local/sbin/run-heavy-job.sh va-manual \
+  /usr/local/sbin/run-heavy-job.sh verify-archive \
     /usr/local/bin/stellarindex-ops verify-archive \
     -config /etc/stellarindex.toml \
     -from 2 \

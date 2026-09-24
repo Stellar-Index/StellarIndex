@@ -165,6 +165,21 @@ Independently: `curl -s localhost:9090/api/v1/rules | grep -c alert`.
 > surface.
 
 ### systemd units
+
+> `deploy/systemd/` is **mixed authority** (`scripts/ci/lint-deploy-systemd-authority.sh`):
+> most units there are a REFERENCE copy only — the archival-node role ships its
+> own `.j2` for the same unit, and that template is what actually runs. Scp-ing
+> the reference copy for one of those deploys stale content (no
+> `run-heavy-job.sh` wrap, wrong `User=`, wrong resource caps — see
+> `deploy/systemd/DIVERGENCES` for the known gaps) that the next `ansible-playbook`
+> run silently overwrites, so the drift shows up only if you page in between.
+> Before scp-ing, confirm the unit is in the AUTHORITATIVE set:
+> `python3 scripts/ci/deploy-systemd-authoritative.py configs/ansible/roles/archival-node`.
+> If it is not in that list, it is templated — apply it via the `archival-node`
+> ansible role instead of scp, or if the role apply is unavailable, template the
+> `.j2` in `configs/ansible/roles/archival-node/templates/systemd/` by hand
+> rather than trusting the reference copy.
+
 ```
 scp deploy/systemd/<unit>.{service,timer} r1:/etc/systemd/system/
 ssh r1 'systemctl daemon-reload && systemctl enable --now <unit>.timer'
