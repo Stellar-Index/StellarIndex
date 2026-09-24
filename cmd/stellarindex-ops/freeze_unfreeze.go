@@ -68,7 +68,7 @@ func freezeUnfreeze(args []string) error {
 	list := fs.Bool("list", false, "list every currently-open freeze with its ladder state, and exit without changing anything")
 	assetFlag := fs.String("asset", "", "asset to unfreeze, canonical wire form (native | CODE-ISSUER | C-strkey)")
 	quoteFlag := fs.String("quote", "", "quote asset of the frozen pair, canonical wire form")
-	reason := fs.String("reason", "", "why this freeze is being lifted (required for a mutation; recorded in audit_log)")
+	reasonFlag := fs.String("reason", "", "why this freeze is being lifted (required for a mutation; recorded in audit_log)")
 	actorFlag := fs.String("actor", "", "who is lifting it; recorded in audit_log. Defaults to the OS user.")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
@@ -77,24 +77,9 @@ func freezeUnfreeze(args []string) error {
 	if *cfgPath == "" {
 		return errors.New("-config is required")
 	}
-	if !*list {
-		if *assetFlag == "" || *quoteFlag == "" {
-			return errors.New("-asset and -quote are required (or pass -list to see what is frozen)")
-		}
-		if strings.TrimSpace(*reason) == "" {
-			return errors.New("-reason is required: an unfreeze overrides an automated safety control on a money surface, so the record has to say why")
-		}
-		if err := validateOpsKeyReason(*reason); err != nil {
-			return err
-		}
-	}
-	actor := ""
-	if !*list {
-		a, err := resolveOpsActor(*actorFlag)
-		if err != nil {
-			return err
-		}
-		actor = a
+	reason, actor, err := resolveUnfreezeMutationInputs(*list, *assetFlag, *quoteFlag, *reasonFlag, *actorFlag)
+	if err != nil {
+		return err
 	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
@@ -146,8 +131,31 @@ func freezeUnfreeze(args []string) error {
 	gate.Banner()
 	audit := postgresstore.NewAuditStore(postgresstore.New(store.DB()))
 	return unfreezePair(ctx, audit, sink, writer, unfreezeRequest{
-		asset: asset, quote: quote, actor: actor, reason: strings.TrimSpace(*reason), dryRun: gate.DryRun(),
+		asset: asset, quote: quote, actor: actor, reason: reason, dryRun: gate.DryRun(),
 	})
+}
+
+// resolveUnfreezeMutationInputs validates and resolves the reason/actor a
+// mutation needs; -list needs neither and short-circuits to zero values.
+func resolveUnfreezeMutationInputs(list bool, assetFlag, quoteFlag, reasonFlag, actorFlag string) (reason, actor string, err error) {
+	if list {
+		return "", "", nil
+	}
+	if assetFlag == "" || quoteFlag == "" {
+		return "", "", errors.New("-asset and -quote are required (or pass -list to see what is frozen)")
+	}
+	reason = strings.TrimSpace(reasonFlag)
+	if reason == "" {
+		return "", "", errors.New("-reason is required: an unfreeze overrides an automated safety control on a money surface, so the record has to say why")
+	}
+	if err := validateOpsKeyReason(reason); err != nil {
+		return "", "", err
+	}
+	actor, err = resolveOpsActor(actorFlag)
+	if err != nil {
+		return "", "", err
+	}
+	return reason, actor, nil
 }
 
 // newFreezeWriterForOps builds the freeze.Writer this command reads and
