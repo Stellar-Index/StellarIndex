@@ -51,7 +51,7 @@ The full policy lives in docs/engineering-standards.md.
 - [ ] Coverage on changed packages did not decrease.
 - [ ] No `TODO` / `FIXME` without a linked issue.
 - [ ] Every new exported symbol has a Godoc comment.
-- [ ] If OpenAPI changed, reference regenerated (`make docs-api`).
+- [ ] If OpenAPI changed, all three references regenerated (`make docs-api`, `make docs-postman`, `make web-generate-api`).
 - [ ] If config changed, reference regenerated (`make docs-config`).
 
 ### Judgement (reviewer checks)
