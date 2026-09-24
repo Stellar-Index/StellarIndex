@@ -508,7 +508,10 @@ Operator notes:
   separate from the global rate-limit middleware. See F-1232 in
   `docs/audit-2026-05-12/`.
 
-Response headers on every successful request:
+Response headers on every successful request, except a GET/HEAD
+response a shared cache may reuse without revalidating (the `public`
+Cache-Control bands), which omits them so a CDN cannot replay one
+caller's budget to another:
 
 ```
 X-RateLimit-Limit: 1000
@@ -623,7 +626,8 @@ clients get `instance` + `request_id` to open a support ticket.
 
 ## 12. Observability surface (exposed)
 
-- `X-Request-ID` header on every response. Clients may set it; if the
+- `X-Request-ID` header on every response except a shared-cacheable
+  GET/HEAD one (as with `X-RateLimit-*` above). Clients may set it; if the
   value is absent or rejected as unsafe/oversize, the server mints a
   fresh 32-character hex token.
 - The current stack does not expose `Server-Timing` or

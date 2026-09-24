@@ -69,9 +69,94 @@ func CacheControlWithCDN(cdnEnabled bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", policyForPath(r.URL.Path, cdnEnabled))
+			if r.Method == http.MethodGet || r.Method == http.MethodHead {
+				w = &perCallerHeaderStripper{ResponseWriter: w}
+			}
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// perCallerHeaders describe one request and one caller: the limiter's
+// account for that caller and the request's correlation id. A shared
+// cache replays a stored response to later callers without asking the
+// origin, so it would hand one caller's budget and request id to
+// everyone, as a limit no longer tied to any charge.
+var perCallerHeaders = [...]string{
+	"X-RateLimit-Limit",
+	"X-RateLimit-Remaining",
+	"X-RateLimit-Reset",
+	HeaderRequestID,
+}
+
+// perCallerHeaderStripper drops [perCallerHeaders] from a response a
+// shared cache may reuse. It decides when the header is committed, not
+// when the middleware runs, because handlers and problem writers
+// override Cache-Control in between. Stripped rather than listed in
+// Vary: a per-request Vary key would make every response a CDN miss.
+type perCallerHeaderStripper struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (s *perCallerHeaderStripper) commit() {
+	if s.committed {
+		return
+	}
+	s.committed = true
+	h := s.Header()
+	if !sharedCacheReusable(h.Values("Cache-Control")) {
+		return
+	}
+	for _, name := range perCallerHeaders {
+		h.Del(name)
+	}
+}
+
+// WriteHeader commits on the final status; a 1xx interim response does
+// not fix the final header set.
+func (s *perCallerHeaderStripper) WriteHeader(status int) {
+	if status >= http.StatusOK {
+		s.commit()
+	}
+	s.ResponseWriter.WriteHeader(status)
+}
+
+func (s *perCallerHeaderStripper) Write(p []byte) (int, error) {
+	s.commit()
+	return s.ResponseWriter.Write(p)
+}
+
+// Flush preserves http.Flusher for SSE handlers; a Flush before any
+// WriteHeader commits an implicit 200.
+func (s *perCallerHeaderStripper) Flush() {
+	s.commit()
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap exposes the underlying writer to http.NewResponseController.
+func (s *perCallerHeaderStripper) Unwrap() http.ResponseWriter {
+	return s.ResponseWriter
+}
+
+// sharedCacheReusable reports whether a shared cache may store the
+// response and serve it again without the origin (RFC 9111 §3, §5.2.2).
+// Bare `private` and `no-store` forbid storing; bare `no-cache` forces a
+// revalidation whose 304 restates the current request's headers. The
+// field-qualified forms leave the rest of the response reusable, so they
+// do not count.
+func sharedCacheReusable(values []string) bool {
+	for _, v := range values {
+		for _, d := range strings.Split(v, ",") {
+			switch strings.ToLower(strings.TrimSpace(d)) {
+			case "private", "no-store", "no-cache":
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // policyForPath classifies a request path into a Cache-Control

@@ -11075,7 +11075,7 @@ export interface components {
                 "X-RateLimit-Limit"?: number;
                 /** @description Requests left in the current window AFTER this request. 0 means the next request in this window will be 429'd. */
                 "X-RateLimit-Remaining"?: number;
-                /** @description Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). All three X-RateLimit-* headers ride every response the rate limiter evaluates — 2xx included, not just 429s — but are absent on deployments running without a rate limiter and on requests served fail-open during a Redis outage. */
+                /** @description Unix-epoch seconds at which the current fixed-window bucket resets. Clients compute `seconds_until_reset = X-RateLimit-Reset - now` to back off proactively (GitHub / Twitter header semantics). All three X-RateLimit-* headers ride every response the rate limiter evaluates — 2xx included, not just 429s — except a GET/HEAD response whose Cache-Control lets a shared cache reuse it without revalidating (the `public` bands), which omits them and X-Request-ID so a CDN cannot replay one caller's values to another. They are also absent on deployments running without a rate limiter and on requests served fail-open during a Redis outage. */
                 "X-RateLimit-Reset"?: number;
                 [name: string]: unknown;
             };

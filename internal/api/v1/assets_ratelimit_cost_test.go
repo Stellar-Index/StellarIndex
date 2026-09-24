@@ -3,6 +3,7 @@ package v1_test
 import (
 	"context"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -88,26 +89,35 @@ func TestAssetList_ChargesByThePlanSelected(t *testing.T) {
 			if resp.StatusCode != tc.wantStatus {
 				t.Fatalf("status = %d, want %d", resp.StatusCode, tc.wantStatus)
 			}
-			if got := resp.Header.Get("X-RateLimit-Remaining"); got != tc.wantRemaining {
+			got := resp.Header.Get("X-RateLimit-Remaining")
+			if resp.StatusCode == http.StatusOK {
+				got = strconv.Itoa(remainingBeforeProbe(t, resp, ts.URL+assetsProbe))
+			}
+			if got != tc.wantRemaining {
 				t.Fatalf("X-RateLimit-Remaining = %q, want %q", got, tc.wantRemaining)
 			}
 		})
 	}
 }
 
+// assetsProbe is rejected before any plan is chosen (the "invalid
+// order_by" case above pins it at the base token) and answered no-store.
+const assetsProbe = "/v1/assets?order_by=bogus"
+
 // TestAssetList_DeniedPlanDoesNoRead: the surcharge lands before the
 // read. A caller with 2 tokens left cannot buy a 10-token plan, and the
-// store is not touched finding that out.
+// store is not touched finding that out. The budget is 13 because the
+// probe that reads the remainder spends one of the 3 the plan leaves.
 func TestAssetList_DeniedPlanDoesNoRead(t *testing.T) {
-	ts, reader := newAssetsLimitedServer(t, 12, true)
+	ts, reader := newAssetsLimitedServer(t, 13, true)
 	url := ts.URL + "/v1/assets?order_by=volume_24h_usd_desc&limit=2"
 
 	resp := mustGet(t, url)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("first request: status = %d, want 200", resp.StatusCode)
 	}
-	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "2" {
-		t.Fatalf("X-RateLimit-Remaining = %q, want 2", got)
+	if got := remainingBeforeProbe(t, resp, ts.URL+assetsProbe); got != 3 {
+		t.Fatalf("X-RateLimit-Remaining = %d, want 3", got)
 	}
 
 	before := reader.lists.Load()
@@ -132,8 +142,8 @@ func TestAssetList_NoStoreNoSurcharge(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "99" {
-		t.Fatalf("X-RateLimit-Remaining = %q, want 99", got)
+	if got := remainingBeforeProbe(t, resp, ts.URL+assetsProbe); got != 99 {
+		t.Fatalf("X-RateLimit-Remaining = %d, want 99", got)
 	}
 }
 

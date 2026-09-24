@@ -32,6 +32,10 @@ func batchIDs(n int) []string {
 	return ids
 }
 
+// batchProbe is over the GET ceiling, so it is a no-store 400 that costs
+// only the base token (TestPriceBatch_ChargeFollowsTheWorkDone pins it).
+var batchProbe = "/v1/price/batch?asset_ids=" + strings.Join(batchIDs(101), ",")
+
 // newBatchLimitedServer wires the price-batch routes behind the
 // PRODUCTION limiter constructor — middleware.RateLimitBySubject, the
 // one cmd/stellarindex-api builds — over a Redis-backed anonymous
@@ -74,18 +78,20 @@ func TestPriceBatch_ChargesOneTokenPerID(t *testing.T) {
 	ts, reader := newBatchLimitedServer(t, 100)
 	url := ts.URL + "/v1/price/batch?asset_ids=" + strings.Join(batchIDs(40), ",")
 
-	for i, wantRemaining := range []string{"60", "20"} {
+	// Each probe that reads the remainder spends one token of its own.
+	for i, wantRemaining := range []int{60, 19} {
 		resp := mustGet(t, url)
 		if resp.StatusCode != http.StatusOK {
 			t.Fatalf("batch %d: status = %d, want 200", i+1, resp.StatusCode)
 		}
-		if got := resp.Header.Get("X-RateLimit-Remaining"); got != wantRemaining {
-			t.Fatalf("batch %d: X-RateLimit-Remaining = %q, want %q (40 ids must cost 40 tokens)",
+		if got := remainingBeforeProbe(t, resp, ts.URL+batchProbe); got != wantRemaining {
+			t.Fatalf("batch %d: X-RateLimit-Remaining = %d, want %d (40 ids must cost 40 tokens)",
 				i+1, got, wantRemaining)
 		}
 	}
 
-	// 80 spent; a third 40-id batch does not fit in the remaining 20.
+	// 80 spent on batches, 2 on probes; a third 40-id batch does not fit
+	// in the remaining 18.
 	served := reader.calls.Load()
 	resp := mustGet(t, url)
 	if resp.StatusCode != http.StatusTooManyRequests {
@@ -154,18 +160,19 @@ func TestPriceBatch_ChargeFollowsTheWorkDone(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "99" {
-		t.Fatalf("40 duplicates of one id: X-RateLimit-Remaining = %q, want 99", got)
+	if got := remainingBeforeProbe(t, resp, ts.URL+batchProbe); got != 99 {
+		t.Fatalf("40 duplicates of one id: X-RateLimit-Remaining = %d, want 99", got)
 	}
 
-	// 101 ids on the GET route is a 400 (ceiling 100): base token only.
+	// 101 ids on the GET route is a 400 (ceiling 100): base token only,
+	// on top of the probe's.
 	before := reader.calls.Load()
 	resp = mustGet(t, ts.URL+"/v1/price/batch?asset_ids="+strings.Join(batchIDs(101), ","))
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
-	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "98" {
-		t.Fatalf("a rejected batch: X-RateLimit-Remaining = %q, want 98 (base token only)", got)
+	if got := resp.Header.Get("X-RateLimit-Remaining"); got != "97" {
+		t.Fatalf("a rejected batch: X-RateLimit-Remaining = %q, want 97 (base token only)", got)
 	}
 	if got := reader.calls.Load(); got != before {
 		t.Fatalf("a 400 resolved %d price(s)", got-before)
