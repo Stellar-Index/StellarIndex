@@ -79,6 +79,44 @@ func TestChart_Fiat_CNYtoUSD_UsesInverse(t *testing.T) {
 	}
 }
 
+// TestChart_Fiat_GranularitySnappedToDaily covers CA2-A02-correct-2:
+// fx_quotes is a one-row-per-UTC-day series, so a fiat:fiat chart must
+// report granularity=1d (never the requested sub-daily grain) and must
+// not raise truncated/discontinuous against a daily grid it was never
+// measured on.
+func TestChart_Fiat_GranularitySnappedToDaily(t *testing.T) {
+	from := time.Now().UTC().Add(-24 * time.Hour)
+	d1 := from.Add(2 * time.Hour) // 2h after `from`: > 15m grace, < 24h grace
+	d2 := d1.Add(24 * time.Hour)  // contiguous daily bucket
+	fx := &stubFXHistoryReader{points: []v1.FXQuotePoint{
+		{Bucket: d1, RateUSD: 1.08, InverseUSD: 1 / 1.08},
+		{Bucket: d2, RateUSD: 1.09, InverseUSD: 1 / 1.09},
+	}}
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}, FXHistory: fx})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/chart?asset=fiat:EUR&quote=fiat:USD&timeframe=24h&granularity=15m")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data v1.ChartSeries `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+
+	if env.Data.Granularity != "1d" {
+		t.Errorf("Granularity = %q, want %q (snapped to the grid fx_quotes actually serves)",
+			env.Data.Granularity, "1d")
+	}
+	if env.Data.Truncated {
+		t.Errorf("Truncated = true, want false: first bucket is 2h after `from`, well inside "+
+			"a daily series' 24h grace (data_starts_at=%v)", env.Data.DataStartsAt)
+	}
+	if env.Data.Discontinuous {
+		t.Errorf("Discontinuous = true, want false: the two points are one contiguous daily "+
+			"bucket apart (gap %v -> %v)", env.Data.GapStartsAt, env.Data.GapEndsAt)
+	}
+}
+
 // tickerFXHistoryReader serves a distinct daily series per ticker so
 // cross-fiat tests can hand each USD leg its own rates.
 type tickerFXHistoryReader struct {
