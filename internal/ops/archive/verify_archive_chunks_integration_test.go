@@ -61,7 +61,6 @@ func TestRunVerifyChunks_FilesystemBackend_ParallelWalk(t *testing.T) {
 
 	results, err := runVerifyChunks(
 		ctx, lsCfg, chunks,
-		true,  // doChain
 		false, // doCheckpoint — no Tier B fixtures wired in this test
 		filepath.Join(dir, "no-archive-root"),
 		time.Now(),
@@ -124,7 +123,7 @@ func TestRunVerifyChunks_FilesystemBackend_SerialPath(t *testing.T) {
 	chunks := opsutil.SplitRange(from, to, 1)
 	results, err := runVerifyChunks(
 		ctx, filesystemLedgerstreamConfig(dir), chunks,
-		true, false, "",
+		false, "",
 		time.Now(), 1*time.Hour,
 		chunkOrchestratorOpts{},
 	)
@@ -139,6 +138,45 @@ func TestRunVerifyChunks_FilesystemBackend_SerialPath(t *testing.T) {
 	}
 	if err := stitchChunks(results); err != nil {
 		t.Errorf("single-chunk stitch should pass: %v", err)
+	}
+}
+
+// TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak is the
+// GH-694 regression: a checkpoint-only run (Tier B, the nightly —
+// doCheckpoint=true, no "chain" tier requested) used to skip the
+// internal sequence/hash continuity check entirely, because it was
+// gated on a doChain flag runVerifyChunks/verifyChunk no longer
+// accept. A hash break planted mid-chunk must still be caught.
+func TestRunVerifyChunks_CheckpointOnly_StillDetectsChainBreak(t *testing.T) {
+	const (
+		from = uint32(300)
+		to   = uint32(310)
+	)
+
+	dir := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	seqs := make([]uint32, 0, to-from+1)
+	for s := from; s <= to; s++ {
+		seqs = append(seqs, s)
+	}
+	// Ledger 305's PreviousLedgerHash is corrupted — every other
+	// ledger keeps the trivially-matching zero hash.
+	const brokenSeq = uint32(305)
+	seedLedgersWithBrokenChain(t, ctx, dir, seqs, brokenSeq)
+
+	chunks := opsutil.SplitRange(from, to, 1)
+	_, err := runVerifyChunks(
+		ctx, filesystemLedgerstreamConfig(dir), chunks,
+		false, "", // doCheckpoint=false: this is NOT the "chain" tier either — a
+		// bare walk should still catch the break, matching Tier B's
+		// doCheckpoint=true/doChain=false shape.
+		time.Now(), 1*time.Hour,
+		chunkOrchestratorOpts{},
+	)
+	if err == nil {
+		t.Fatalf("runVerifyChunks: got nil error, want a chain-break error at ledger %d", brokenSeq)
 	}
 }
 
@@ -194,6 +232,62 @@ func seedEmptyLedgers(t *testing.T, ctx context.Context, dir string, seqs []uint
 				LedgerHeader: xdr.LedgerHeaderHistoryEntry{
 					Header: xdr.LedgerHeader{LedgerSeq: xdr.Uint32(seq)},
 				},
+				TxSet: xdr.GeneralizedTransactionSet{
+					V:       1,
+					V1TxSet: &xdr.TransactionSetV1{},
+				},
+			},
+		}
+		batch := xdr.LedgerCloseMetaBatch{
+			StartSequence:    xdr.Uint32(seq),
+			EndSequence:      xdr.Uint32(seq),
+			LedgerCloseMetas: []xdr.LedgerCloseMeta{lcm},
+		}
+		encoder := compressxdr.NewXDREncoder(compressxdr.DefaultCompressor, batch)
+		var buf bytes.Buffer
+		if _, err := encoder.WriteTo(&buf); err != nil {
+			t.Fatalf("encode batch seq=%d: %v", seq, err)
+		}
+		key := cfg.Schema.GetObjectKeyFromSequenceNumber(seq)
+		if err := store.PutFile(ctx, key, byteSliceWriterTo(buf.Bytes()), nil); err != nil {
+			t.Fatalf("put seq=%d: %v", seq, err)
+		}
+	}
+}
+
+// seedLedgersWithBrokenChain is seedEmptyLedgers with one ledger's
+// PreviousLedgerHash set to a non-zero value that does not match its
+// predecessor's (zero) hash — a planted chain break used to prove
+// the internal sequence/hash check still fires when it runs outside
+// the "chain" tier.
+func seedLedgersWithBrokenChain(t *testing.T, ctx context.Context, dir string, seqs []uint32, brokenSeq uint32) { //nolint:revive // ctx-second matches seedEmptyLedgers
+	t.Helper()
+	store, err := datastore.NewFilesystemDataStoreWithPath(dir)
+	if err != nil {
+		t.Fatalf("open filesystem datastore: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	cfg := datastore.DataStoreConfig{
+		Type:              "Filesystem",
+		Params:            map[string]string{"destination_path": dir},
+		Schema:            datastore.DataStoreSchema{LedgersPerFile: 1, FilesPerPartition: 1},
+		NetworkPassphrase: testPassphrase,
+		Compression:       "zstd",
+	}
+	if _, _, err := datastore.PublishConfig(ctx, store, cfg); err != nil {
+		t.Fatalf("publish manifest: %v", err)
+	}
+
+	for _, seq := range seqs {
+		header := xdr.LedgerHeader{LedgerSeq: xdr.Uint32(seq)}
+		if seq == brokenSeq {
+			header.PreviousLedgerHash = xdr.Hash{0xde, 0xad, 0xbe, 0xef}
+		}
+		lcm := xdr.LedgerCloseMeta{
+			V: 1,
+			V1: &xdr.LedgerCloseMetaV1{
+				LedgerHeader: xdr.LedgerHeaderHistoryEntry{Header: header},
 				TxSet: xdr.GeneralizedTransactionSet{
 					V:       1,
 					V1TxSet: &xdr.TransactionSetV1{},

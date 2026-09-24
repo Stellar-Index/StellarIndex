@@ -559,7 +559,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 
 	results, walkErr := runVerifyChunks(
 		ctx, lsCfg, filteredChunks,
-		doChain, doCheckpoint, archiveRoot,
+		doCheckpoint, archiveRoot,
 		startedAt, progressEvery,
 		chunkOrchestratorOpts{
 			MirrorCoverage: mirrorCoverage,
@@ -607,7 +607,11 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 
 	// Stitch cross-chunk boundary chain integrity. Skip on walkErr
 	// (chunks may have aborted mid-flight; boundary check would be
-	// noisy on partial results).
+	// noisy on partial results). Runs whenever a walk happened at
+	// all (doChain or doCheckpoint) — gap detection is intrinsic to
+	// the LCM stream, not specific to the "chain" tier (GH-694): a
+	// checkpoint-only run (Tier B, the nightly) is the one this
+	// mattered for, since it previously had no gap detection.
 	//
 	// The stitch runs over the FULL plan, not over the chunks this run
 	// happened to walk: a resumed run supplies the skipped chunks'
@@ -618,7 +622,7 @@ func verifyArchiveLCMWalk(cfg config.Config, bucket string, from, to uint32, max
 	// reported it as a gap that does not exist.
 	var stitchErr error
 	planResults := results
-	if walkErr == nil && doChain {
+	if walkErr == nil {
 		planResults, stitchErr = fullPlanStitchInput(priorState, tier, len(chunks), chunkIdxs, results)
 		if stitchErr == nil {
 			stitchErr = stitchChunks(planResults)
@@ -818,32 +822,69 @@ func (g *watchdogGate) shouldPing() bool {
 	return true
 }
 
+// peerTipStalenessWindow bounds how far a peer's published tip may
+// trail the freshest responding peer before it is treated as an
+// abandoned/stale archive rather than a live one lagging by normal
+// upload latency. ~24h at ~5s/ledger close (GH-725): without this, a
+// single peer that stopped publishing months ago but still serves a
+// frozen .well-known file silently became the "lowest peer archive
+// tip" and every run since sampled only genesis-adjacent history.
+const peerTipStalenessWindow = 17280
+
 // peerArchiveTip resolves how far the peer archives have actually
 // published, by reading each one's .well-known/stellar-history.json —
 // the same schema as a checkpoint file, whose currentLedger IS the
-// archive's tip. Returns the LOWEST tip across the responding peers:
-// a checkpoint above that hasn't been uploaded by everyone yet, so
+// archive's tip. Returns the LOWEST tip among peers within
+// peerTipStalenessWindow of the freshest responding peer: a checkpoint
+// above that hasn't been uploaded by everyone still-live yet, so
 // sampling it would diff a missing file against a present one and read
-// as a phantom divergence. ok=false when no peer answered at all —
-// the caller refuses to guess a range rather than inventing one.
+// as a phantom divergence. A peer trailing the freshest tip by more
+// than the staleness window is excluded from that computation and
+// logged — it no longer gets to silently cap the whole run's verified
+// window. ok=false when no peer answered at all — the caller refuses
+// to guess a range rather than inventing one.
 func peerArchiveTip(client *http.Client, peers []string) (uint32, bool) {
-	var tip uint32
-	found := false
+	tips := make(map[string]uint32, len(peers))
+	var maxTip uint32
 	for _, p := range peers {
 		cp, err := fetchHistoryCheckpoint(client, strings.TrimRight(p, "/")+"/.well-known/stellar-history.json")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "verify-archive: peer tip probe failed for %s: %v\n", p, err)
 			continue
 		}
-		if cp.CurrentLedger == 0 {
+		tips[p] = cp.CurrentLedger
+		if cp.CurrentLedger > maxTip {
+			maxTip = cp.CurrentLedger
+		}
+	}
+	if len(tips) == 0 {
+		return 0, false
+	}
+
+	var tip uint32
+	found := false
+	for p, t := range tips {
+		if maxTip-t > peerTipStalenessWindow {
+			fmt.Fprintf(os.Stderr, "verify-archive: peer %s tip %d trails freshest tip %d by >%d ledgers — excluded as stale, not used to bound the verified window\n",
+				p, t, maxTip, peerTipStalenessWindow)
 			continue
 		}
-		if !found || cp.CurrentLedger < tip {
-			tip = cp.CurrentLedger
+		if !found || t < tip {
+			tip = t
 			found = true
 		}
 	}
 	return tip, found
+}
+
+// peerCheckpointQuorum is the minimum number of responding peers
+// required before agreement among them is reported as network
+// consensus: a strict majority of the configured peer set. Two
+// survivors of seven configured peers no longer count as "N peers
+// agree" (GH-725) — five unreachable peers means the sample is
+// inconclusive, not verified.
+func peerCheckpointQuorum(numPeers int) int {
+	return numPeers/2 + 1
 }
 
 // peerCheckpointBounds returns the first and last checkpoint ledger
@@ -936,6 +977,13 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 		fmt.Fprintf(os.Stderr, "  peer: %s\n", p)
 	}
 
+	// A majority of the configured peers must respond before "all
+	// responders agree" is reported as network consensus (GH-725): two
+	// survivors of seven unreachable peers is one operator's opinion,
+	// not "N peers agree". peerCheckpointQuorum names the same floor
+	// verifyArchivePeers enforces below.
+	quorum := peerCheckpointQuorum(len(peers))
+
 	matches, mismatches := 0, 0
 	for _, seq := range samples {
 		hexSeq := fmt.Sprintf("%08x", seq)
@@ -952,9 +1000,9 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 			}
 			observed[peer] = cp
 		}
-		if len(observed) < 2 {
-			fmt.Fprintf(os.Stderr, "  ledger %d: only %d peers responded; skipping (inconclusive)\n",
-				seq, len(observed))
+		if len(observed) < quorum {
+			fmt.Fprintf(os.Stderr, "  ledger %d: only %d of %d peers responded (need ≥%d for quorum); skipping (inconclusive)\n",
+				seq, len(observed), len(peers), quorum)
 			continue
 		}
 
@@ -981,7 +1029,7 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 		}
 		if allAgree {
 			matches++
-			fmt.Fprintf(os.Stderr, "  ledger %d: %d peers agree ✓\n", seq, len(observed))
+			fmt.Fprintf(os.Stderr, "  ledger %d: %d of %d peers agree ✓\n", seq, len(observed), len(peers))
 		}
 	}
 
@@ -1076,6 +1124,15 @@ func fetchHistoryCheckpoint(client *http.Client, url string) (historyCheckpoint,
 	var cp historyCheckpoint
 	if err := json.Unmarshal(body, &cp); err != nil {
 		return historyCheckpoint{}, fmt.Errorf("parse: %w", err)
+	}
+	// A 200 response that isn't a real checkpoint (an error envelope,
+	// `null`, or a not-yet-uploaded object behind a CDN that 200s on a
+	// miss) decodes to the historyCheckpoint zero value. Reject it here
+	// — the single fetch chokepoint both peerArchiveTip and the
+	// checkpoint-diff sampler go through — rather than letting two
+	// zero checkpoints compare equal downstream (GH-725).
+	if cp.CurrentLedger == 0 {
+		return historyCheckpoint{}, fmt.Errorf("%s: decoded to CurrentLedger=0 (not a real checkpoint)", url)
 	}
 	return cp, nil
 }

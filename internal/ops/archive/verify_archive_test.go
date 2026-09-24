@@ -219,6 +219,85 @@ func TestPeerArchiveTip(t *testing.T) {
 	}
 }
 
+// TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger is the GH-725
+// regression: a 200 response that isn't a real checkpoint (an error
+// envelope, `null`, or a not-yet-uploaded object behind a CDN that
+// 200s on a miss) decodes to the historyCheckpoint zero value. Before
+// the fix, fetchHistoryCheckpoint returned that zero value as success,
+// and checkpointsEqual on two such zero values reported "peers agree"
+// with zero bytes of checkpoint data actually compared.
+func TestFetchHistoryCheckpoint_RejectsZeroCurrentLedger(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		// A missing-key error envelope that still 200s, e.g. behind a
+		// misconfigured CDN — the observed real-world shape.
+		_, _ = fmt.Fprint(w, `{"error":"NoSuchKey"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	_, err := fetchHistoryCheckpoint(client, srv.URL)
+	if err == nil {
+		t.Fatal("fetchHistoryCheckpoint: got nil error for a CurrentLedger=0 body, want an error")
+	}
+}
+
+// TestPeerCheckpointQuorum_RequiresMajority is the GH-725 regression:
+// two survivors of a seven-peer set must not be reported as network
+// consensus — quorum is a strict majority of the configured peers,
+// not a flat floor of 2.
+func TestPeerCheckpointQuorum_RequiresMajority(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		numPeers, quorum int
+	}{
+		{2, 2},
+		{7, 4},
+		{3, 2},
+	}
+	for _, tc := range cases {
+		got := peerCheckpointQuorum(tc.numPeers)
+		if got != tc.quorum {
+			t.Errorf("peerCheckpointQuorum(%d) = %d, want %d", tc.numPeers, got, tc.quorum)
+		}
+	}
+	// 2 of 7 responders must fall below quorum(7)=4.
+	if 2 >= peerCheckpointQuorum(7) {
+		t.Fatalf("2 responders must be below quorum(7)=%d", peerCheckpointQuorum(7))
+	}
+}
+
+// TestPeerArchiveTip_ExcludesStalePeer is the GH-725 regression: a
+// peer whose published tip trails the freshest responding peer by
+// more than peerTipStalenessWindow (an abandoned-but-still-serving
+// archive) must not silently become the resolved -to and cap the
+// verified window at its stale tip.
+func TestPeerArchiveTip_ExcludesStalePeer(t *testing.T) {
+	t.Parallel()
+	newPeer := func(t *testing.T, currentLedger uint32) string {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = fmt.Fprintf(w, `{"currentLedger":%d,"currentBuckets":[]}`, currentLedger)
+		}))
+		t.Cleanup(srv.Close)
+		return srv.URL
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	fresh := newPeer(t, 60_000_000)
+	// Abandoned three months ago, still serving a frozen file — far
+	// more than peerTipStalenessWindow behind the fresh peer.
+	stale := newPeer(t, 58_000_000)
+
+	tip, ok := peerArchiveTip(client, []string{fresh, stale})
+	if !ok {
+		t.Fatal("peerArchiveTip: ok = false, want a resolved tip")
+	}
+	if tip != 60_000_000 {
+		t.Errorf("tip = %d, want 60000000 (the fresh peer; the stale one must be excluded)", tip)
+	}
+}
+
 // TestDefaultTier1Peers_AllHTTPS is the RLT-308 regression: Tier D
 // exists to detect on-path forks across the archive network, so a
 // plaintext http:// entry in defaultTier1Peers is forgeable by

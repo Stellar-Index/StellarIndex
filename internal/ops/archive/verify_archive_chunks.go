@@ -257,8 +257,11 @@ func classifyCheckpointAnchor(archiveRoot string, seq uint32, ourHash sdkxdr.Has
 // chunks. Pure walk-logic — no parent-context creation, no flag
 // parsing; the caller controls those.
 //
-// chainCheckInternal: when true, validates ledger N's
-// PreviousLedgerHash against ledger N-1's hash within this chunk.
+// Every chunk validates ledger N's PreviousLedgerHash against ledger
+// N-1's hash within this chunk (GH-694: this used to be gated on the
+// "chain" tier only, so a checkpoint-only run — Tier B, the nightly —
+// had no gap detection at all; sequence/hash continuity is intrinsic
+// to the LCM stream and costs nothing extra, so it always runs).
 // Cross-chunk boundaries are validated by stitchChunks instead.
 //
 // Errors abort the chunk's walk; the orchestrator's errgroup
@@ -271,7 +274,7 @@ func verifyChunk(
 	lsCfg ledgerstream.Config,
 	chunk opsutil.RangeChunk,
 	idx int,
-	chainCheckInternal, doCheckpoint bool,
+	doCheckpoint bool,
 	archiveRoot string,
 	mirrorCoverage archiveMirrorCoverage,
 	progressMu *sync.Mutex,
@@ -304,7 +307,7 @@ func verifyChunk(
 				res.FirstPrevHash = header.PreviousLedgerHash
 			}
 
-			if chainCheckInternal && hasPrev {
+			if hasPrev {
 				if seq != prevSeq+1 {
 					res.Mismatches++
 					obs.VerifyArchiveMismatchesTotal.WithLabelValues(chunkLabel, "sequence").Inc()
@@ -412,7 +415,7 @@ func runVerifyChunks(
 	ctx context.Context,
 	lsCfg ledgerstream.Config,
 	chunks []opsutil.RangeChunk,
-	doChain, doCheckpoint bool,
+	doCheckpoint bool,
 	archiveRoot string,
 	startedAt time.Time,
 	progressEvery time.Duration,
@@ -451,7 +454,7 @@ func runVerifyChunks(
 		g.Go(func() error {
 			res, err := verifyChunk(
 				gctx, lsCfg, chunk, originalIdx,
-				doChain, doCheckpoint, archiveRoot, opts.MirrorCoverage,
+				doCheckpoint, archiveRoot, opts.MirrorCoverage,
 				&progressMu, startedAt, progressEvery,
 				&totalVerified,
 			)
