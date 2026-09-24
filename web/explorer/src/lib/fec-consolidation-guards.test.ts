@@ -166,6 +166,20 @@ describe('FEC guards (repo-walk)', () => {
     expect(offenders).toEqual([]);
   });
 
+  // T308: a cursor-paged board that follows ledger closes must gate the
+  // follow on its first page, or every close re-runs the deeper page's
+  // keyset query and reshuffles the rows under the reader.
+  it('every paged ledger follow is gated on the pager atTip', () => {
+    const offenders = sources
+      .filter((f) => f.text.includes('useCursorPager('))
+      .flatMap((f) =>
+        [...f.text.matchAll(/useLedgerFollow\(([\s\S]*?)\);/g)]
+          .filter((m) => !/\batTip\b/.test(m[1]))
+          .map(() => f.rel),
+      );
+    expect(offenders).toEqual([]);
+  });
+
   it('SortPill is defined only in components/SortPill.tsx', () => {
     const offenders = sources
       .filter((f) => /(const|function)\s+SortPill\b/.test(f.text))

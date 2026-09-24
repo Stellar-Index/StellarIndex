@@ -32,6 +32,9 @@ export function useCursorPager() {
 
   return {
     cursor,
+    /** On the first page — gate a `useLedgerFollow` with this so a
+     * ledger close never re-runs a deeper page's keyset query. */
+    atTip: cursor === '',
     /** 0-based page depth — row offset = depth * pageLimit + i. */
     depth: stack.length,
     /** 1-based page number for "page N" footers. */

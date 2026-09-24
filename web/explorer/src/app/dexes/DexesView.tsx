@@ -83,7 +83,7 @@ export function DexesView() {
 
   // Live (RT-2): follow ledger closes so the pools board + prices tick —
   // this was the one price table left static after the live-data sweep.
-  useLedgerFollow(['/v1/pools']);
+  useLedgerFollow(['/v1/pools'], undefined, pager.atTip);
   const q = useQuery<{ pools: Pool[]; nextCursor?: string }>({
     queryKey: ['/v1/pools', order, cursor, sourceFilter],
     queryFn: async () => {
