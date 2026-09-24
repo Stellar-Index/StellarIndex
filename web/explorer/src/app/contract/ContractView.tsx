@@ -324,7 +324,7 @@ function SacIdentity({ id }: { id: string }) {
   if (!isSac) return null;
   const code = sacAsset ? sacAsset.split(/[:-]/)[0] : null;
   return (
-    <div className="bg-surface-sunken rounded-md px-3 py-2.5 text-sm">
+    <div className="bg-surface-subtle rounded-md px-3 py-2.5 text-sm">
       <div className="flex flex-wrap items-center gap-2">
         <span className="bg-brand-100 text-brand-700 rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase">
           Stellar Asset Contract

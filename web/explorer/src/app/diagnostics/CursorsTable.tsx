@@ -179,10 +179,10 @@ export function CursorsTable() {
 function LagPill({ seconds }: { seconds: number }) {
   const tone =
     seconds <= 60
-      ? 'bg-up-soft text-up-strong'
+      ? 'bg-up-subtle text-up-strong'
       : seconds <= 600
         ? 'bg-warn-50 text-warn-700'
-        : 'bg-down-soft text-down-strong';
+        : 'bg-down-subtle text-down-strong';
   return (
     <span
       className={`inline-block rounded-sm px-1.5 py-0.5 font-mono text-[11px] tabular-nums ${tone}`}

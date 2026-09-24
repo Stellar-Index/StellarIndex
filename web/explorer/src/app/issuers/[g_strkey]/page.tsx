@@ -306,7 +306,7 @@ export default async function IssuerDetailPage({ params }: { params: Params }) {
               ) : (
                 <span
                   title="Unverified — this organisation name is self-declared in the issuer's SEP-1 toml and is NOT cross-confirmed by the organisation. Do not treat it as a verified identity."
-                  className="bg-surface-sunk text-ink-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase"
+                  className="bg-surface-subtle text-ink-muted rounded-sm px-1.5 py-0.5 text-[10px] font-medium tracking-wider uppercase"
                 >
                   Unverified
                 </span>
