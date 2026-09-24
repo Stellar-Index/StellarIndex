@@ -52,12 +52,38 @@ type SEP41TransferRow struct {
 // derive_generation (INV-3 / migration 0110): a higher-or-equal-
 // generation replay corrects the row in place, a stale
 // lower-generation one is a no-op.
+//
+//nolint:gocognit,gocyclo // per-row validation + 12-col placeholder builder; linear.
 func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41TransferRow) error {
 	if len(rows) == 0 {
 		return nil
 	}
-	if err := validateSEP41TransferRows("InsertSEP41TransferBatch", rows); err != nil {
-		return err
+	for i := range rows {
+		r := &rows[i]
+		if r.ContractID == "" {
+			return fmt.Errorf("timescale: InsertSEP41TransferBatch: row %d empty ContractID", i)
+		}
+		if r.TxHash == "" {
+			return fmt.Errorf("timescale: InsertSEP41TransferBatch: row %d empty TxHash", i)
+		}
+		if !r.Kind.IsValid() {
+			return fmt.Errorf("timescale: InsertSEP41TransferBatch: row %d invalid Kind %q", i, r.Kind)
+		}
+		// Only value-bearing kinds require a non-negative Amount; SetAdmin /
+		// SetAuthorized carry no amount (Authorized is checked separately below).
+		//exhaustive:ignore
+		switch r.Kind {
+		case SEP41Transfer, SEP41Approve:
+			if r.Amount == nil {
+				return fmt.Errorf("timescale: InsertSEP41TransferBatch: row %d %s missing Amount", i, r.Kind)
+			}
+			if r.Amount.Sign() < 0 {
+				return fmt.Errorf("timescale: InsertSEP41TransferBatch: row %d %s negative Amount %s", i, r.Kind, r.Amount)
+			}
+		}
+		if r.Kind == SEP41SetAuthorized && r.Authorized == nil {
+			return fmt.Errorf("timescale: InsertSEP41TransferBatch: row %d set_authorized missing Authorized", i)
+		}
 	}
 
 	// INV-3 (migration 0110): the batch upsert below is now ON CONFLICT DO
@@ -121,40 +147,6 @@ func (s *Store) InsertSEP41TransferBatch(ctx context.Context, rows []SEP41Transf
 
 	if _, err := s.db.ExecContext(ctx, sb.String(), args...); err != nil {
 		return fmt.Errorf("timescale: InsertSEP41TransferBatch (%d rows): %w", len(insertRows), err)
-	}
-	return nil
-}
-
-// validateSEP41TransferRows is the row contract every sep41_transfers writer
-// enforces before touching the database, so the per-row and COPY paths cannot
-// disagree on what a storable row is. op names the caller in the error.
-func validateSEP41TransferRows(op string, rows []SEP41TransferRow) error {
-	for i := range rows {
-		r := &rows[i]
-		if r.ContractID == "" {
-			return fmt.Errorf("timescale: %s: row %d empty ContractID", op, i)
-		}
-		if r.TxHash == "" {
-			return fmt.Errorf("timescale: %s: row %d empty TxHash", op, i)
-		}
-		if !r.Kind.IsValid() {
-			return fmt.Errorf("timescale: %s: row %d invalid Kind %q", op, i, r.Kind)
-		}
-		// Only value-bearing kinds require a non-negative Amount; SetAdmin /
-		// SetAuthorized carry no amount (Authorized is checked separately below).
-		//exhaustive:ignore
-		switch r.Kind {
-		case SEP41Transfer, SEP41Approve:
-			if r.Amount == nil {
-				return fmt.Errorf("timescale: %s: row %d %s missing Amount", op, i, r.Kind)
-			}
-			if r.Amount.Sign() < 0 {
-				return fmt.Errorf("timescale: %s: row %d %s negative Amount %s", op, i, r.Kind, r.Amount)
-			}
-		}
-		if r.Kind == SEP41SetAuthorized && r.Authorized == nil {
-			return fmt.Errorf("timescale: %s: row %d set_authorized missing Authorized", op, i)
-		}
 	}
 	return nil
 }

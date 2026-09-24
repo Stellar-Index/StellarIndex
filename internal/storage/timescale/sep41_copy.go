@@ -27,11 +27,6 @@ func (s *Store) CopyMergeSEP41Transfers(ctx context.Context, rows []SEP41Transfe
 	if len(rows) == 0 {
 		return nil
 	}
-	// Same row contract as the per-row path; on a rejected batch ch-rebuild
-	// falls back per-row, which isolates the offending row.
-	if err := validateSEP41TransferRows("CopyMergeSEP41Transfers", rows); err != nil {
-		return err
-	}
 	values := make([][]any, len(rows))
 	for i := range rows {
 		r := &rows[i]
