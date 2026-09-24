@@ -1,6 +1,6 @@
 // Stellar Index design-system component library.
 // The single import surface for UI primitives: `import { Card, Button, … } from '@/components/ui'`.
-// Tokens live in tailwind.config.ts; guide at /dev/primitives + docs/architecture/design-system.md.
+// Tokens live in the Tailwind v4 `@theme` block of src/app/globals.css; guide at /dev/primitives + docs/architecture/design-system.md.
 
 export { Button, ButtonLink } from './Button';
 export type { ButtonVariant, ButtonSize } from './Button';
