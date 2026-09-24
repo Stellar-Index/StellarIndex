@@ -1612,6 +1612,11 @@ export interface paths {
          *     heatmap block — `null` when not requested, `[]` when requested
          *     and the window holds zero freezes). 200 + empty payload when
          *     the reader isn't wired.
+         *
+         *     An event whose market `/v1/price` withholds (a directory-flagged
+         *     issuer on either leg, or a market below the substance floor) is
+         *     omitted from `events`, since `frozen_value` is that market's
+         *     price; `firing_count` and the tallies still count it.
          */
         get: operations["listAnomalies"];
         put?: never;
@@ -1642,7 +1647,9 @@ export interface paths {
          *     threshold at its latest observation — the signal behind
          *     `flags.divergence_warning`. `?firing=true` restricts to those;
          *     `?window_days=` (default 7); `?limit=` (default 100, max 500).
-         *     200 + empty payload when the reader isn't wired.
+         *     200 + empty payload when the reader isn't wired. A row whose
+         *     market `/v1/price` withholds is omitted: `our_price` is that
+         *     market's price.
          */
         get: operations["getDivergenceBoard"];
         put?: never;
@@ -1678,8 +1685,11 @@ export interface paths {
          *     band). `?pair=` is `<asset_id>~<quote_id>` (the markets slug
          *     convention); `?reference=` one of the board's reference
          *     names; `?days=` ∈ {1, 7, 30} (default 7) — other values
-         *     return 400. 200 + empty `points` when the reader isn't wired
-         *     or the triple has no observations in the window.
+         *     return 400, as does a leg that is not a valid asset id. 200 +
+         *     empty `points` when the reader isn't wired or the triple has no
+         *     observations in the window. 404 `price-withheld` when
+         *     `/v1/price` withholds the pair's market (every point carries
+         *     `our_price`).
          */
         get: operations["getDivergenceSeries"];
         put?: never;
@@ -14692,6 +14702,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+            404: components["responses"]["NotFound"];
         };
     };
     listOracleStreams: {

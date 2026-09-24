@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -138,13 +140,19 @@ func (s *Server) handleAnomalies(w http.ResponseWriter, r *http.Request) {
 	out := AnomaliesView{
 		FiringCount: firingCount,
 		ReasonTally: make([]ReasonCountV, len(tally)),
-		Events:      make([]FreezeEventView, len(events)),
+		Events:      make([]FreezeEventView, 0, len(events)),
 	}
 	for i, t := range tally {
 		out.ReasonTally[i] = ReasonCountV{Reason: t.Reason, Count: t.Count}
 	}
-	for i, e := range events {
-		out.Events[i] = freezeEventView(e)
+	// frozen_value is the market's aggregated price: an event for a market
+	// /v1/price withholds is omitted. The counts carry no price and keep it.
+	withheld := s.storedMarketGate(anomaliesGateSurface)
+	for _, e := range events {
+		if w, _ := withheld(r.Context(), e.AssetID, e.QuoteID); w {
+			continue
+		}
+		out.Events = append(out.Events, freezeEventView(e))
 	}
 	// Opt-in day×reason tally (`?include=daily`) — same window as the
 	// reason tally. Kept opt-in so the default response stays one
@@ -255,9 +263,15 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, r, "https://api.stellarindex.io/errors/internal", "Internal error", http.StatusInternalServerError, "")
 		return
 	}
-	out := DivergenceView{Observations: make([]DivergenceObsV, len(rows))}
-	for i, d := range rows {
-		out.Observations[i] = DivergenceObsV{
+	// our_price is the market's aggregated price, and ref_price with
+	// delta_pct restates it: a row for a market /v1/price withholds is omitted.
+	withheld := s.storedMarketGate(divergenceGateSurface)
+	out := DivergenceView{Observations: make([]DivergenceObsV, 0, len(rows))}
+	for _, d := range rows {
+		if w, _ := withheld(r.Context(), d.AssetID, d.QuoteID); w {
+			continue
+		}
+		out.Observations = append(out.Observations, DivergenceObsV{
 			AssetID:          d.AssetID,
 			QuoteID:          d.QuoteID,
 			Reference:        d.Reference,
@@ -267,9 +281,47 @@ func (s *Server) handleDivergence(w http.ResponseWriter, r *http.Request) {
 			RefPrice:         d.RefPrice,
 			DeltaPct:         d.DeltaPct,
 			Status:           d.Status,
-		}
+		})
 	}
 	writeJSON(w, out, Flags{})
+}
+
+// Surfaces labelling the withholding metrics on the anomaly/divergence reads.
+const (
+	anomaliesGateSurface  = "anomalies"
+	divergenceGateSurface = "divergence"
+)
+
+// storedMarketGate returns /v1/price's withholding verdict for stored rows
+// keyed on (asset_id, quote_id), memoised per market for one response.
+// Decided at read time, like /v1/changes: a newly flagged issuer or a
+// market gone thin takes effect on rows written before it. With a gate
+// wired, an id that does not parse names no market that can be vetted and
+// is withheld; with neither gate wired nothing is withheld.
+func (s *Server) storedMarketGate(surface string) func(ctx context.Context, assetID, quoteID string) (bool, PriceWithheldReason) {
+	type verdict struct {
+		withheld bool
+		reason   PriceWithheldReason
+	}
+	seen := make(map[[2]string]verdict)
+	return func(ctx context.Context, assetID, quoteID string) (bool, PriceWithheldReason) {
+		if s.substance == nil && s.scam == nil {
+			return false, ""
+		}
+		key := [2]string{assetID, quoteID}
+		if v, ok := seen[key]; ok {
+			return v.withheld, v.reason
+		}
+		v := verdict{withheld: true, reason: PriceWithheldUnattributed}
+		base, berr := canonical.ParseAsset(assetID)
+		quote, qerr := canonical.ParseAsset(quoteID)
+		if berr == nil && qerr == nil {
+			w := withheldBy(ctx, s.substance, s.scam, base, quote, surface)
+			v = verdict{withheld: w != pricingguard.NotWithheld, reason: withheldReasonFor(w)}
+		}
+		seen[key] = v
+		return v.withheld, v.reason
+	}
 }
 
 // ── /v1/divergence/series ────────────────────────────────────────
@@ -369,6 +421,9 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 		ThresholdPct:  s.divergenceThresholdPct,
 		Points:        []DivergenceSeriesPointV{},
 	}
+	if s.divergenceSeriesWithheld(w, r, base, quote) {
+		return
+	}
 	if s.divergences == nil {
 		writeJSON(w, out, Flags{})
 		return
@@ -393,6 +448,25 @@ func (s *Server) handleDivergenceSeries(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	writeJSON(w, out, Flags{})
+}
+
+// divergenceSeriesWithheld writes the response and reports true when the
+// requested legs do not parse (400) or /v1/price withholds the market
+// (404, with the gate's reason): every point carries our_price.
+func (s *Server) divergenceSeriesWithheld(w http.ResponseWriter, r *http.Request, base, quote string) bool {
+	baseAsset, berr := canonical.ParseAsset(base)
+	quoteAsset, qerr := canonical.ParseAsset(quote)
+	if berr != nil || qerr != nil {
+		writeProblem(w, r, "https://api.stellarindex.io/errors/invalid-parameter",
+			"Invalid pair", http.StatusBadRequest,
+			"pair must be <asset_id>~<quote_id> with both legs valid asset ids, e.g. crypto:BTC~fiat:USD")
+		return true
+	}
+	if withheld, reason := s.storedMarketGate(divergenceGateSurface)(r.Context(), base, quote); withheld {
+		writePriceWithheldProblem(w, r, baseAsset, quoteAsset, reason)
+		return true
+	}
+	return false
 }
 
 // parseWindowDays reads an optional ?window_days= positive int,

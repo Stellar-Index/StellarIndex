@@ -14703,7 +14703,7 @@
           "request": {
             "name": "Freeze-event timeline (ADR-0019).",
             "description": {
-              "content": "The durable freeze-event mirror (`freeze_events`, ADR-0019):\nevery clear→firing price-freeze transition, newest first, plus\nthe live firing-now count and a per-reason tally over the\nwindow. While frozen, `/v1/price` still serves the last good\nvalue with `flags.frozen=true`; this endpoint is the history +\ncurrent state of those decisions.\n\n`?firing=true` restricts the event list to currently-firing\npairs; `?window_days=` scopes the reason tally (default 30);\n`?limit=` (default 100, max 500); `?include=daily` adds the\nday×reason tally over the same window (`daily`, the calendar-\nheatmap block — `null` when not requested, `[]` when requested\nand the window holds zero freezes). 200 + empty payload when\nthe reader isn't wired.\n",
+              "content": "The durable freeze-event mirror (`freeze_events`, ADR-0019):\nevery clear→firing price-freeze transition, newest first, plus\nthe live firing-now count and a per-reason tally over the\nwindow. While frozen, `/v1/price` still serves the last good\nvalue with `flags.frozen=true`; this endpoint is the history +\ncurrent state of those decisions.\n\n`?firing=true` restricts the event list to currently-firing\npairs; `?window_days=` scopes the reason tally (default 30);\n`?limit=` (default 100, max 500); `?include=daily` adds the\nday×reason tally over the same window (`daily`, the calendar-\nheatmap block — `null` when not requested, `[]` when requested\nand the window holds zero freezes). 200 + empty payload when\nthe reader isn't wired.\n\nAn event whose market `/v1/price` withholds (a directory-flagged\nissuer on either leg, or a market below the substance floor) is\nomitted from `events`, since `frozen_value` is that market's\nprice; `firing_count` and the tallies still count it.\n",
               "type": "text/plain"
             },
             "url": {
@@ -14923,7 +14923,7 @@
           "request": {
             "name": "Cross-reference divergence board (ADR-0019).",
             "description": {
-              "content": "The current divergence board: the latest comparison per\n(asset, quote, reference) over the trailing window, from\n`divergence_observations`. Each row is our VWAP vs one external\nreference (CoinGecko / Chainlink / Reflector DEX·CEX·FX /\nRedstone / Band) with `delta_pct = (our − ref) / ref × 100`.\nOrdered widest |delta_pct| first.\n\nA row with `status: firing` breached its per-(reference, pair)\nthreshold at its latest observation — the signal behind\n`flags.divergence_warning`. `?firing=true` restricts to those;\n`?window_days=` (default 7); `?limit=` (default 100, max 500).\n200 + empty payload when the reader isn't wired.\n",
+              "content": "The current divergence board: the latest comparison per\n(asset, quote, reference) over the trailing window, from\n`divergence_observations`. Each row is our VWAP vs one external\nreference (CoinGecko / Chainlink / Reflector DEX·CEX·FX /\nRedstone / Band) with `delta_pct = (our − ref) / ref × 100`.\nOrdered widest |delta_pct| first.\n\nA row with `status: firing` breached its per-(reference, pair)\nthreshold at its latest observation — the signal behind\n`flags.divergence_warning`. `?firing=true` restricts to those;\n`?window_days=` (default 7); `?limit=` (default 100, max 500).\n200 + empty payload when the reader isn't wired. A row whose\nmarket `/v1/price` withholds is omitted: `our_price` is that\nmarket's price.\n",
               "type": "text/plain"
             },
             "url": {
@@ -15114,7 +15114,7 @@
               "request": {
                 "name": "Δ% time-series for one (pair, reference).",
                 "description": {
-                  "content": "The history companion to the `/v1/divergence` board: the\nbucketed Δ% series for ONE (asset, quote, reference) triple\nfrom `divergence_observations`. Each point is the LAST\nobservation inside its bucket (last-value downsampling — the\nboard semantics, not an average); `firing` is true when ANY\nobservation in the bucket breached its threshold, so a brief\nbreach never disappears into a bucket. `bucket_seconds`\nreports the effective resolution (1d → 5 min, 7d → 30 min,\n30d → 2 h; every response is ≤ ~360 points).\n\n`threshold_pct` is the operator's configured alert threshold\n(`divergence.threshold_pct`) — the band a chart shades;\nomitted when the deployment has none configured (draw no\nband). `?pair=` is `<asset_id>~<quote_id>` (the markets slug\nconvention); `?reference=` one of the board's reference\nnames; `?days=` ∈ {1, 7, 30} (default 7) — other values\nreturn 400. 200 + empty `points` when the reader isn't wired\nor the triple has no observations in the window.\n",
+                  "content": "The history companion to the `/v1/divergence` board: the\nbucketed Δ% series for ONE (asset, quote, reference) triple\nfrom `divergence_observations`. Each point is the LAST\nobservation inside its bucket (last-value downsampling — the\nboard semantics, not an average); `firing` is true when ANY\nobservation in the bucket breached its threshold, so a brief\nbreach never disappears into a bucket. `bucket_seconds`\nreports the effective resolution (1d → 5 min, 7d → 30 min,\n30d → 2 h; every response is ≤ ~360 points).\n\n`threshold_pct` is the operator's configured alert threshold\n(`divergence.threshold_pct`) — the band a chart shades;\nomitted when the deployment has none configured (draw no\nband). `?pair=` is `<asset_id>~<quote_id>` (the markets slug\nconvention); `?reference=` one of the board's reference\nnames; `?days=` ∈ {1, 7, 30} (default 7) — other values\nreturn 400, as does a leg that is not a valid asset id. 200 +\nempty `points` when the reader isn't wired or the triple has no\nobservations in the window. 404 `price-withheld` when\n`/v1/price` withholds the pair's market (every point carries\n`our_price`).\n",
                   "type": "text/plain"
                 },
                 "url": {
@@ -15283,6 +15283,69 @@
                   },
                   "status": "Bad Request",
                   "code": 400,
+                  "header": [
+                    {
+                      "key": "Content-Type",
+                      "value": "application/problem+json"
+                    }
+                  ],
+                  "body": "{\n  \"type\": \"<uri>\",\n  \"title\": \"<string>\",\n  \"status\": \"<integer>\",\n  \"detail\": \"<string>\",\n  \"instance\": \"<string>\",\n  \"request_id\": \"<string>\",\n  \"coverage_from\": \"<dateTime>\",\n  \"outside_coverage\": \"<boolean>\"\n}",
+                  "cookie": [],
+                  "_postman_previewlanguage": "json"
+                },
+                {
+                  "name": "Not found.",
+                  "originalRequest": {
+                    "url": {
+                      "path": [
+                        "divergence",
+                        "series"
+                      ],
+                      "host": [
+                        "{{baseUrl}}"
+                      ],
+                      "query": [
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) `<asset_id>~<quote_id>`, e.g. `crypto:BTC~fiat:USD`.",
+                            "type": "text/plain"
+                          },
+                          "key": "pair",
+                          "value": "<string>"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "(Required) External reference to plot against. (This can only be one of chainlink,coingecko,reflector-cex,reflector-fx,reflector-dex,redstone,band,synthetic-usd-cross)",
+                            "type": "text/plain"
+                          },
+                          "key": "reference",
+                          "value": "reflector-fx"
+                        },
+                        {
+                          "disabled": false,
+                          "description": {
+                            "content": "Trailing window; whitelisted to 1, 7 or 30 (default 7). (This can only be one of 1,7,30)",
+                            "type": "text/plain"
+                          },
+                          "key": "days",
+                          "value": "7"
+                        }
+                      ],
+                      "variable": []
+                    },
+                    "header": [
+                      {
+                        "key": "Accept",
+                        "value": "application/problem+json"
+                      }
+                    ],
+                    "method": "GET",
+                    "body": {}
+                  },
+                  "status": "Not Found",
+                  "code": 404,
                   "header": [
                     {
                       "key": "Content-Type",
