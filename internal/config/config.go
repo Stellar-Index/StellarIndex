@@ -1156,9 +1156,15 @@ type IngestionConfig struct {
 // them through the projector alone whenever it is enabled, regardless
 // of this flag, so no value of it can drop their rows (the F-1316
 // foot-gun). See pipeline.IsSoleWriterProjected.
+//
+// Low lag alone does not make Phase 4 safe: one lake hole stalls the
+// projector, and an aggregate whose refresh lookback is shorter than the
+// stall never materializes the late rows. pipeline.VerifySoleWriterCAGGCoverage
+// refuses the Phase-4 start until every aggregate's lookback covers
+// pipeline.ProjectorStallBound.
 type ProjectorConfig struct {
 	Enabled          bool `toml:"enabled"            doc:"Master switch. When false the projector goroutines are not started." default:"false"`
-	PersistPerSource bool `toml:"persist_per_source" doc:"When false (Phase 4+), the dispatcher's events-goroutine skips Soroban-derived events so the projector is sole writer. Requires Enabled=true. Defaults true (Phase 3 parallel mode); operator flips to false once projector lag is verified low. The sep41 domain is exempt — the projector is always its sole writer (F-1316 / TASK #16b)." default:"true"`
+	PersistPerSource bool `toml:"persist_per_source" doc:"When false (Phase 4+), the dispatcher's events-goroutine skips Soroban-derived events so the projector is sole writer. Requires Enabled=true. Defaults true (Phase 3 parallel mode); flipping it to false needs more than low projector lag: the indexer refuses to start in that mode unless every continuous aggregate's refresh start_offset covers the projector's stall bound (pipeline.VerifySoleWriterCAGGCoverage), because rows the projector delivers late are otherwise never materialized. The sep41 domain is exempt — the projector is always its sole writer (F-1316 / TASK #16b)." default:"true"`
 }
 
 // AnomalyConfig configures both phases of ADR-0019 anomaly

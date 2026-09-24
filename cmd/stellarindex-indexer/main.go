@@ -630,6 +630,9 @@ func run(cfgPath string, dryRun bool) error {
 	// Non-Soroban events (sdex, external, band, supply observers)
 	// always ride this path regardless of mode.
 	sinkMode := pipeline.SinkModeForProjector(cfg.Ingestion.Projector.Enabled, cfg.Ingestion.Projector.PersistPerSource)
+	if err := pipeline.VerifySoleWriterCAGGCoverage(rootCtx, store, sinkMode); err != nil {
+		return fmt.Errorf("refusing to start: %w", err)
+	}
 	switch sinkMode {
 	case pipeline.SinkModeSkipProjected:
 		logger.Info("dispatcher events-goroutine: SKIP-PROJECTED mode — projector is sole writer for Soroban-derived events (ADR-0032 Phase 4)")

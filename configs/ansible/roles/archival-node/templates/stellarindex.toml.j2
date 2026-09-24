@@ -84,6 +84,9 @@ backfill_from_ledger  = {{ stellarindex_backfill_from_ledger | int }}
 
 [ingestion.projector]
 # ADR-0031/0032 one-writer projector — enabled everywhere since rc.97.
+# persist_per_source = false (Phase 4) is refused at indexer start until
+# every CAGG's refresh start_offset covers the projector's stall bound
+# (pipeline.VerifySoleWriterCAGGCoverage); low projector lag is not enough.
 enabled            = true
 persist_per_source = true
 

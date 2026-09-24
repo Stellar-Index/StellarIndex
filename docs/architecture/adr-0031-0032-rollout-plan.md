@@ -195,6 +195,13 @@ but its `consumer.Event` outputs are dropped.
   default false post-Phase-4, the consumer.Event return path
   remains for tests.
 
+**Pre-flip gate:** the indexer refuses to start with
+`persist_per_source = false` unless every continuous aggregate's
+refresh `start_offset` covers `pipeline.ProjectorStallBound`
+(`pipeline.VerifySoleWriterCAGGCoverage`). Low projector lag is not
+sufficient: a lake hole stalls the projector, and a shorter lookback
+never materializes the rows it delivers late.
+
 **Verification:**
 - Per-source row rates remain constant (only projector writing
   now; should be identical to Phase 3 since ON CONFLICT was
