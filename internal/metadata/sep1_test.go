@@ -111,6 +111,30 @@ func TestResolver_RejectsRedirectToDifferentHost(t *testing.T) {
 	}
 }
 
+// TestResolver_RejectsRedirectToSameHostOtherPort drives the redirect
+// end-to-end: the issuer's server 302s to a second server on the same
+// host but another port. Following it would cache the other port's
+// TOML under the issuer's key and, in production, dial an arbitrary port.
+func TestResolver_RejectsRedirectToSameHostOtherPort(t *testing.T) {
+	other := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(fixtureTOML))
+	}))
+	defer other.Close()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+"/.well-known/stellar.toml", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	r := newLocalResolver(t, srv)
+	_, err := r.Resolve(context.Background(), hostOf(t, srv))
+	if err == nil {
+		t.Fatal("expected error on same-host other-port redirect")
+	}
+	if !strings.Contains(err.Error(), "cross-host") {
+		t.Errorf("error should flag cross-origin redirect: %v", err)
+	}
+}
+
 func TestResolver_RejectsHTTPDowngrade(t *testing.T) {
 	// Issuer redirects https → http. We refuse — SEP-1 transit must
 	// stay encrypted.
