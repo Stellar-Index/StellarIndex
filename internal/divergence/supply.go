@@ -611,6 +611,17 @@ func (r *StellarDashboardReference) getLumens(ctx context.Context) ([]byte, erro
 
 // ─── CoinGecko supply reference ──────────────────────────────────────
 
+// coinGeckoDefaultBaseURL is the public / free-tier REST base.
+const coinGeckoDefaultBaseURL = "https://api.coingecko.com/api/v3"
+
+// coinGeckoProBaseURL is the paid-tier REST base. A Pro key 404s
+// against coinGeckoDefaultBaseURL, so NewCoinGeckoSupplyReference
+// auto-switches to this host when APIKey is set and BaseURL wasn't
+// explicitly overridden — mirroring
+// internal/sources/external/coingecko/poller.go's DefaultEndpoint /
+// ProEndpoint switch.
+const coinGeckoProBaseURL = "https://pro-api.coingecko.com/api/v3"
+
 // CoinGeckoSupplyReference reads `market_data.circulating_supply` from
 // CoinGecko's `/coins/{id}` endpoint. OFF by default: the free tier has
 // been 429-throttled since 2026-06-19 (pending the Pro key), so
@@ -635,7 +646,10 @@ type CoinGeckoSupplyOptions struct {
 	// HTTPClient — nil falls back to a 10s-timeout client.
 	HTTPClient *http.Client
 	// BaseURL overrides the API base. Empty defaults to
-	// "https://api.coingecko.com/api/v3".
+	// coinGeckoDefaultBaseURL, UNLESS APIKey is also set, in which
+	// case it defaults to coinGeckoProBaseURL (a Pro key 404s against
+	// the public host). An explicit BaseURL always wins over that
+	// auto-switch.
 	BaseURL string
 	// APIKey, when non-empty, is sent as the `x-cg-pro-api-key` header
 	// (the Pro-tier auth that lifts the free-tier 429 ceiling).
@@ -660,7 +674,16 @@ func NewCoinGeckoSupplyReference(opts CoinGeckoSupplyOptions) *CoinGeckoSupplyRe
 	}
 	baseURL := opts.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.coingecko.com/api/v3"
+		// A Pro key 404s against the public host — auto-switch to the
+		// Pro host, mirroring the ingest poller's
+		// APIKey!=""&&endpoint==DefaultEndpoint check (poller.go).
+		// Only applies when the operator hasn't set an explicit
+		// base_url; an explicit override always wins.
+		if opts.APIKey != "" {
+			baseURL = coinGeckoProBaseURL
+		} else {
+			baseURL = coinGeckoDefaultBaseURL
+		}
 	}
 	idMap := opts.IDMap
 	if len(idMap) == 0 {

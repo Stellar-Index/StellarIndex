@@ -523,7 +523,7 @@ type DivergenceSupplyCoinGeckoConfig struct {
 	// TOML fallback for local-dev only. Sent as the x-cg-pro-api-key
 	// header (Pro-tier auth that lifts the 429 ceiling).
 	APIKey  string            `toml:"api_key" doc:"CoinGecko Pro API key, sent as x-cg-pro-api-key. Prefer env var COINGECKO_API_KEY." env:"COINGECKO_API_KEY" default:""`
-	BaseURL string            `toml:"base_url" doc:"CoinGecko API base. Empty defaults to https://api.coingecko.com/api/v3." default:""`
+	BaseURL string            `toml:"base_url" doc:"CoinGecko API base. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when api_key is set (a Pro key 404s the public host)." default:""`
 	IDMap   map[string]string `toml:"id_map" doc:"Maps canonical asset_id → CoinGecko coin id for the supply lookup. Empty falls back to the built-in default (native/crypto:XLM → stellar)." default:"{}"`
 }
 
