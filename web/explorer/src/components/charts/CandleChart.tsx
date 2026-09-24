@@ -24,6 +24,7 @@ import {
   baseChartOptions,
   type ChartTheme,
 } from './chartTheme';
+import { formatSubunitPrice } from '@/lib/format';
 
 export type CandlePoint = {
   /** Unix epoch seconds */
@@ -252,7 +253,7 @@ function maxPrice(points: CandlePoint[]): number {
 // lightweight-charts' PriceFormatter throws on more than 16 fractional digits.
 export const MAX_FIXED_DECIMALS = 16;
 // Below this, 16 fixed decimals keep fewer than 5 significant digits
-// (and print 0 under 1e-16), so priceFormatFor switches to scientific.
+// (and print 0 under 1e-16), so priceFormatFor switches to a custom formatter.
 const MIN_FIXED_PRICE = 1e-12;
 
 // pricePrecisionFor picks the axis decimal count from the series'
@@ -273,8 +274,9 @@ export function pricePrecisionFor(points: CandlePoint[]): number {
 }
 
 // priceFormatFor is the series priceFormat: fixed decimals from
-// pricePrecisionFor, or scientific notation for a sub-1e-12 series so a
-// non-zero price never renders as zero.
+// pricePrecisionFor, or the plain-decimal formatSubunitPrice for a
+// sub-1e-12 series so a non-zero price never renders as zero (and never
+// in scientific notation: operator call, 2026-08-06).
 export function priceFormatFor(points: CandlePoint[]): PriceFormat {
   const max = maxPrice(points);
   if (max === 0 || max >= MIN_FIXED_PRICE) {
@@ -284,7 +286,7 @@ export function priceFormatFor(points: CandlePoint[]): PriceFormat {
   const decimals = Math.ceil(-Math.log10(max)) + 4;
   return {
     type: 'custom',
-    formatter: (price: number) => price.toExponential(4),
+    formatter: (price: number) => formatSubunitPrice(price),
     minMove: 10 ** -decimals,
     base: 10 ** decimals,
   };
