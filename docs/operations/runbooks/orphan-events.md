@@ -12,8 +12,8 @@ severity: P3
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_ingestion_orphan_events` |
-| Severity | P3 (`severity: informational`) |
-| Detected by | `configs/prometheus/rules.r1/ingestion.yml` (group `stellarindex.ingestion`, `severity: informational`, `for: 15m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/ingestion.yml`. |
+| Severity | P3 (`severity: ticket`) |
+| Detected by | `configs/prometheus/rules.r1/ingestion.yml` (group `stellarindex.ingestion`, `severity: ticket`, `for: 15m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/ingestion.yml`. |
 | Typical MTTR | hours-to-days (investigation) |
 | Impact | Losing individual swap / oracle updates. Not urgent unless the rate spikes to double-digit events/sec. |
 
@@ -57,11 +57,11 @@ ssh root@136.243.90.96 "journalctl -u stellarindex-indexer -n 1000 --no-pager" \
 
 ## Mitigation (≤ 15 min)
 
-**No live-fix path** — this is an informational alert. Don't
-restart or roll back on the basis of orphan-events alone; orphans
-are a subset of events that couldn't be correlated, not a blocking
-failure. The conventional mitigation step is "investigate upstream"
-— see the next section.
+**No live-fix path** — this is a `severity: ticket` alert, not a
+page. Don't restart or roll back on the basis of orphan-events alone;
+orphans are a subset of events that couldn't be correlated, not a
+blocking failure. The conventional mitigation step is "investigate
+upstream" — see the next section.
 
 If the rate is genuinely catastrophic (`> 100/sec`, see "When to
 escalate" below), promote to a `source-stopped` response: the
@@ -69,7 +69,7 @@ source is effectively not working, not just dropping a few rows.
 
 ## Investigation
 
-This alert is informational; there's no live-fix path. Instead, gather:
+This alert is a ticket, not a page; there's no live-fix path. Instead, gather:
 
 - [ ] Sample a few orphan group-keys from the logs. Query a public
       stellar-rpc directly for their tx_hash (r1 doesn't run its
@@ -107,3 +107,6 @@ This alert is informational; there's no live-fix path. Instead, gather:
   a decode rejection or a contract-schema shift, not transport
   reordering), r1 command shapes (indexer :9464, r1 IP), dual-tree
   Detected-by. Status draft → current.
+- 2026-09-24 — corrected `severity: informational` to `severity: ticket`
+  throughout; both rule trees have always set `ticket` for this alert
+  (#1354).

@@ -11,7 +11,7 @@ severity: P2 for `_stale`; P3 for `_stale_ecb` + `_error_rate_high`
 
 | Field | Value |
 | ----- | ----- |
-| Alerts (three route here) | `stellarindex_external_poller_stale` (> 1800 s, `{source!="ecb"}`, `for: 5m`, `severity: ticket`)<br>`stellarindex_external_poller_stale_ecb` (> 43200 s = 12 h, `for: 10m`, `severity: informational`)<br>`stellarindex_external_poller_error_rate_high` (> 50 % errors, `for: 15m`, `severity: informational`) |
+| Alerts (three route here) | `stellarindex_external_poller_stale` (> 1800 s, `{source!="ecb"}`, `for: 5m`, `severity: ticket`)<br>`stellarindex_external_poller_stale_ecb` (> 43200 s = 12 h, `for: 10m`, `severity: ticket`)<br>`stellarindex_external_poller_error_rate_high` (> 50 % errors, `for: 15m`, `severity: informational`) |
 | Severity | P2 for `_stale`; P3 for `_stale_ecb` + `_error_rate_high` |
 | Detected by | `configs/prometheus/rules.r1/external-pollers.yml` (the overlay r1 actually loads); multi-host template: `deploy/monitoring/rules/external-pollers.yml`. Both trees carry the same exprs. |
 | Typical MTTR | 5–30 min for a config/key issue; vendor outages can run hours |
@@ -36,7 +36,7 @@ budget is NOT 30 minutes for every source:**
 | Alert | Matcher | Stale after | `for:` | Severity |
 | ----- | ------- | ----------- | ------ | -------- |
 | `stellarindex_external_poller_stale` | `{source!="ecb"}` | 1800 s (30 min) | 5 m | ticket (P2) |
-| `stellarindex_external_poller_stale_ecb` | `{source="ecb"}` | 43200 s (**12 h**) | 10 m | informational (P3) |
+| `stellarindex_external_poller_stale_ecb` | `{source="ecb"}` | 43200 s (**12 h**) | 10 m | ticket (P3) |
 
 ECB is split out because it publishes once per EU business day and
 the poller's own interval is 6 h
@@ -196,3 +196,6 @@ later, from F-1208 (codex audit-2026-05-13): the original blanket
   `/etc/default/stellarindex` via ansible-vault; verification curl
   → `:9464` on r1's loopback. Dropped the dead PR references
   (#1139/#1140 predate this repository's numbering).
+- 2026-09-24 — corrected `severity: informational` to `severity: ticket`
+  for `_stale_ecb`; both rule trees have always set `ticket` for it
+  (#1354).
