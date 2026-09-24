@@ -636,6 +636,23 @@ func APIKey(keyHash string) APIKeyRecordKey {
 // (ErrTokenExpired vs ErrUnauthorized).
 const APIKeyTTL = time.Duration(0)
 
+// APIKeyCacheKey is the typed Redis key for the `apikey-cache:<sha256-hex>`
+// family: the auth_backend=postgres validator's read-through cache of
+// api_keys rows, written with a finite TTL. Kept outside `apikey:` so
+// no reader of canonical records (the redis-backend validator, whose
+// refresh-on-use slides any TTL-bearing `apikey:` record to 90 days;
+// the `apikey:*` record walk) can mistake a cache row for a credential.
+type APIKeyCacheKey string
+
+// String returns the wire-format key.
+func (k APIKeyCacheKey) String() string { return string(k) }
+
+// APIKeyCache returns the read-through cache key for keyHash, the
+// hex-encoded SHA-256 of the plaintext key.
+func APIKeyCache(keyHash string) APIKeyCacheKey {
+	return APIKeyCacheKey("apikey-cache:" + keyHash)
+}
+
 // ─── API-key lookup index ─────────────────────────────────────────
 //
 // Wire shape: `apikey-index:v1` — ONE Redis HASH, fields:

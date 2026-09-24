@@ -199,6 +199,13 @@ export interface APIKey {
 
 interface KeyListResponse {
   keys: APIKey[];
+  max_active_keys?: number;
+}
+
+/** The key list plus the cap POST enforces (null from an older API). */
+export interface KeyList {
+  keys: APIKey[];
+  maxActiveKeys: number | null;
 }
 
 export interface CreateKeyRequest {
@@ -219,8 +226,15 @@ export interface CreateKeyResponse {
 
 /** GET /v1/dashboard/keys — every key on the session's account. */
 export async function listKeys(signal?: AbortSignal): Promise<APIKey[]> {
+  return (await listKeysWithLimit(signal)).keys;
+}
+
+/** GET /v1/dashboard/keys, keeping the served `max_active_keys`. */
+export async function listKeysWithLimit(
+  signal?: AbortSignal,
+): Promise<KeyList> {
   const r = await accountFetch<KeyListResponse>('/dashboard/keys', { signal });
-  return r.keys ?? [];
+  return { keys: r.keys ?? [], maxActiveKeys: r.max_active_keys ?? null };
 }
 
 /** POST /v1/dashboard/keys — mint a key; plaintext returned once. */
@@ -285,17 +299,24 @@ export type UpdatePriceAlertRequest =
 
 interface PriceAlertListResponse {
   alerts: DashboardPriceAlert[];
+  max_alerts?: number;
+}
+
+/** The alert list plus the cap POST enforces (null from an older API). */
+export interface PriceAlertList {
+  alerts: DashboardPriceAlert[];
+  maxAlerts: number | null;
 }
 
 /** GET /v1/dashboard/price-alerts — every alert on the session's account. */
 export async function listPriceAlerts(
   signal?: AbortSignal,
-): Promise<DashboardPriceAlert[]> {
+): Promise<PriceAlertList> {
   const r = await accountFetch<PriceAlertListResponse>(
     '/dashboard/price-alerts',
     { signal },
   );
-  return r.alerts ?? [];
+  return { alerts: r.alerts ?? [], maxAlerts: r.max_alerts ?? null };
 }
 
 /** POST /v1/dashboard/price-alerts — register a new alert (409 at quota). */

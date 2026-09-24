@@ -16,6 +16,7 @@ import { type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import { ApiError, listKeys, type APIKey } from '@/api/account';
+import { isKeyLive } from '@/lib/api-key-status';
 import type { MeResponse } from '@/api/hooks';
 import {
   Badge,
@@ -120,7 +121,9 @@ function MetricStrip({ me, keys }: { me: MeResponse; keys: APIKey[] | null }) {
 
   const tier = accountTier(me);
   const status = me.account?.status;
-  const active = keys.filter((k) => !k.revoked_at);
+  const active = keys.filter((k) => isKeyLive(k));
+  const revokedCount = keys.filter((k) => k.revoked_at).length;
+  const expiredCount = keys.length - active.length - revokedCount;
   const lastUsedAt = keys
     .map((k) => k.last_used_at)
     .filter((d): d is string => Boolean(d))
@@ -137,7 +140,12 @@ function MetricStrip({ me, keys }: { me: MeResponse; keys: APIKey[] | null }) {
           value={fmtInt(active.length)}
           sub={
             keys.length > active.length
-              ? `${fmtInt(keys.length - active.length)} revoked`
+              ? [
+                  expiredCount > 0 && `${fmtInt(expiredCount)} expired`,
+                  revokedCount > 0 && `${fmtInt(revokedCount)} revoked`,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')
               : 'all active'
           }
         />
@@ -177,7 +185,7 @@ function GettingStarted({
   me: MeResponse;
   keys: APIKey[] | null;
 }) {
-  const hasKey = keys !== null && keys.some((k) => !k.revoked_at);
+  const hasKey = keys !== null && keys.some((k) => isKeyLive(k));
   const hasTraffic = keys !== null && keys.some((k) => Boolean(k.last_used_at));
   const email = me.user?.email;
 

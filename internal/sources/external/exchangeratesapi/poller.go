@@ -219,7 +219,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		}
 		// Invert: we want "price of symAsset in baseAsset units."
 		// venueRate = base per 1 symbol  →  our price = 1 / venueRate.
-		inverted := scale.InvertScaled(scaled, int(DefaultDecimals))
+		inverted := scale.InvertScaledToDecimals(scaled, int(DefaultDecimals), int(InvertedDecimals))
 		if inverted.Sign() <= 0 {
 			continue
 		}
@@ -234,7 +234,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			Asset:      symAsset,
 			Quote:      baseAsset,
 			Price:      canonical.NewAmount(inverted),
-			Decimals:   DefaultDecimals,
+			Decimals:   InvertedDecimals,
 			Observer:   "",
 		}
 		updates = append(updates, u)

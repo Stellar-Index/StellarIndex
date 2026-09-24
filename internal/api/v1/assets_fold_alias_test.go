@@ -4,9 +4,11 @@
 package v1
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // The realistic USDC classic + a valid, distinct C-strkey standing in for
@@ -49,7 +51,7 @@ func TestFoldAliasTwins_MergesSACIntoClassic(t *testing.T) {
 		{AssetID: foldUSDCSAC, Code: "USDC", VolumeUSD24h: strp("9000000"), TradeCount24h: i64(3000)},
 	}
 
-	out := s.foldAliasTwins(rows)
+	out, _ := s.foldAliasTwins(rows)
 
 	if len(out) != 1 {
 		t.Fatalf("fold returned %d rows, want 1 merged canonical row: %+v", len(out), out)
@@ -80,7 +82,7 @@ func TestFoldAliasTwins_SuppressesLoneSAC(t *testing.T) {
 		{AssetID: "AQUA-" + foldUSDCIssuer, Code: "AQUA", VolumeUSD24h: strp("1234")},
 	}
 
-	out := s.foldAliasTwins(rows)
+	out, _ := s.foldAliasTwins(rows)
 
 	if len(out) != 1 {
 		t.Fatalf("fold returned %d rows, want 1 (lone SAC suppressed): %+v", len(out), out)
@@ -101,8 +103,78 @@ func TestFoldAliasTwins_FractionalVolumesSumExactly(t *testing.T) {
 		{AssetID: foldUSDCClassic, VolumeUSD24h: strp("0.1")},
 		{AssetID: foldUSDCSAC, VolumeUSD24h: strp("0.2")},
 	}
-	out := s.foldAliasTwins(rows)
+	out, _ := s.foldAliasTwins(rows)
 	if len(out) != 1 || out[0].VolumeUSD24h == nil || *out[0].VolumeUSD24h != "0.3" {
 		t.Fatalf("0.1 + 0.2 folded volume = %v, want exact \"0.3\" (big.Rat, not float)", out[0].VolumeUSD24h)
 	}
+}
+
+// offPageSpine is a listing spine whose page carries only `page`, while
+// the point reader also resolves `offPage`: the rows the volume-ranked
+// keyset put on some other page of the same listing.
+type offPageSpine struct {
+	*armFilteringAssets
+	offPage []timescale.AssetRow
+}
+
+func (a *offPageSpine) GetAssetByAssetID(ctx context.Context, assetID string) (timescale.AssetRow, error) {
+	for _, row := range a.offPage {
+		if row.AssetID == assetID {
+			return row, nil
+		}
+	}
+	return a.armFilteringAssets.GetAssetByAssetID(ctx, assetID)
+}
+
+// TestAssetsUnifiedFoldsContractArmWhateverItsPage pins CA2-A01-correct-4.
+// A Soroban-heavy wrapper outranks its own classic row on the
+// volume-desc spine, so the two land out of order on one page or on
+// different pages. Either way the classic row must publish the classic +
+// contract sum on an unfiltered request, and a wrapper merged in-page
+// must not be added a second time by the off-page point read.
+func TestAssetsUnifiedFoldsContractArmWhateverItsPage(t *testing.T) {
+	installSpineFoldRegistry(t)
+	classic := timescale.AssetRow{AssetID: spineClassic, Code: "TESTX", IssuerGStrkey: spineIssuer, Volume24hUSD: strp("1000")}
+	sac := timescale.AssetRow{AssetID: spineSAC, Volume24hUSD: strp("400000")}
+
+	for _, tc := range []struct {
+		name  string
+		spine AssetsReader
+	}{
+		{
+			name:  "wrapper ranks above its classic row on the same page",
+			spine: &armFilteringAssets{rows: []timescale.AssetRow{sac, classic}},
+		},
+		{
+			name: "wrapper paged elsewhere",
+			spine: &offPageSpine{
+				armFilteringAssets: &armFilteringAssets{rows: []timescale.AssetRow{classic}},
+				offPage:            []timescale.AssetRow{sac},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := shippedServer(t, tc.spine)
+			rows := decodeAssetRows(t, serveAssets(t, s, "/v1/assets?asset_class=all&limit=200"))
+			if got := volumeOf(rowByAssetID(t, rows, spineClassic)); got != "401000" {
+				t.Errorf("classic row volume_24h_usd = %q, want \"401000\" (1000 classic + 400000 contract arm, once)", got)
+			}
+			for _, row := range rows {
+				if row.AssetID == spineSAC {
+					t.Errorf("SAC wrapper served as its own row; it must fold onto %s", spineClassic)
+				}
+			}
+		})
+	}
+
+	t.Run("type=classic keeps the classic arm alone", func(t *testing.T) {
+		s := shippedServer(t, &offPageSpine{
+			armFilteringAssets: &armFilteringAssets{rows: []timescale.AssetRow{classic}},
+			offPage:            []timescale.AssetRow{sac},
+		})
+		rows := decodeAssetRows(t, serveAssets(t, s, "/v1/assets?asset_class=all&type=classic&limit=200"))
+		if got := volumeOf(rowByAssetID(t, rows, spineClassic)); got != "1000" {
+			t.Errorf("type=classic volume_24h_usd = %q, want the classic arm \"1000\"", got)
+		}
+	})
 }

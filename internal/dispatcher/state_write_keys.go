@@ -34,8 +34,8 @@ import (
 //   - changed    = post exists AND (no pre-image OR pre.Val != post.Val).
 //
 // `removed` is a deletion, not a value write. P23 `restored` changes are
-// ignored on BOTH sides (the lake's extract_entry_changes.go does not
-// capture them): a restored-then-rewritten-unchanged entry therefore has
+// ignored on BOTH sides (the lake twin's query selects only
+// state/created/updated rows): a restored-then-rewritten-unchanged entry therefore has
 // no visible pre-image and would count as changed on both paths equally —
 // consumers treat StateWriteKeys as best-effort input with their own
 // arity check + fallback (Redstone falls back to payload-median

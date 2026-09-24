@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/netip"
+	"reflect"
 	"testing"
 	"time"
 
@@ -284,5 +286,70 @@ func TestRedisAPIKey_LookupMapsMonthlyQuota(t *testing.T) {
 	}
 	if got.MonthlyQuota != 1_000_000 {
 		t.Errorf("MonthlyQuota = %d, want 1000000 — the quota middleware short-circuits on <= 0, so an unmapped quota means the cap is silently unenforced", got.MonthlyQuota)
+	}
+}
+
+// fullSubject sets EVERY Subject field to a non-zero value, and fails the
+// test when a field is left zero — so a field added to Subject must be
+// added here, which then forces the round-trip tests below to carry it.
+func fullSubject(t *testing.T) Subject {
+	t.Helper()
+	at := func(day int) time.Time { return time.Date(2026, 3, day, 12, 0, 0, 0, time.UTC) }
+	sub := Subject{
+		Identifier:          "signup-roundtrip",
+		Tier:                TierOperator,
+		Scopes:              []string{"read", "account"},
+		KeyID:               "kid_roundtrip",
+		RateLimitPerMin:     4321,
+		CreatedAt:           at(1),
+		Label:               "ci-bot",
+		KeyPrefix:           "sip_roundtri",
+		IPAllowlist:         []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")},
+		RefererAllowlist:    []string{"example.com"},
+		AllowAllPermissions: true,
+		AllowPermissions:    []SubjectPermissionEntry{{Endpoint: "GET /v1/price"}},
+		DenyPermissions:     []SubjectPermissionEntry{{EndpointPrefix: "/v1/account/"}},
+		MonthlyQuota:        9_000_000,
+		EmailVerifiedAt:     at(2),
+		ExpiresAt:           at(28),
+	}
+	rv := reflect.ValueOf(sub)
+	for i := range rv.NumField() {
+		if rv.Field(i).IsZero() {
+			t.Fatalf("fullSubject leaves Subject.%s zero — populate it so the round-trip tests cover it", rv.Type().Field(i).Name)
+		}
+	}
+	return sub
+}
+
+// TestPostgresValidator_CacheRoundTripCarriesEverySubjectField pins
+// GH-1321: the Postgres validator's read-through cache must hand back the
+// Subject it was given, field for field. The cache-store used to rebuild
+// the record by hand and dropped EmailVerifiedAt, so a verified signup
+// customer served from a cache hit read as permanently unverified.
+func TestPostgresValidator_CacheRoundTripCarriesEverySubjectField(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	v := &PostgresAPIKeyValidator{cache: rdb, now: fixedClock(time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC)), cacheTTL: time.Hour}
+
+	want := fullSubject(t)
+	const hexHash = "ab12"
+	v.cacheStore(context.Background(), hexHash, want)
+	got, hit, err := v.cacheLookup(context.Background(), hexHash)
+	if err != nil || !hit {
+		t.Fatalf("cacheLookup = hit %v, err %v; want a hit", hit, err)
+	}
+	assertSameSubject(t, got, want)
+}
+
+// assertSameSubject reports every Subject field that differs, by name.
+func assertSameSubject(t *testing.T, got, want Subject) {
+	t.Helper()
+	gv, wv := reflect.ValueOf(got), reflect.ValueOf(want)
+	for i := range wv.NumField() {
+		if !reflect.DeepEqual(gv.Field(i).Interface(), wv.Field(i).Interface()) {
+			t.Errorf("Subject.%s = %v, want %v", wv.Type().Field(i).Name, gv.Field(i).Interface(), wv.Field(i).Interface())
+		}
 	}
 }

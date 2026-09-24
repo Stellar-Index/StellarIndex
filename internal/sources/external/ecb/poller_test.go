@@ -94,13 +94,14 @@ func TestPollOnce_HappyPath(t *testing.T) {
 		t.Errorf("USD quote = %+v want EUR", usdU.Quote)
 	}
 	// ECB: 1 EUR = 1.0825 USD → 1 USD = 1/1.0825 EUR ≈ 0.9238 EUR.
-	// At 10^6 → 923788 (give or take rounding).
+	// Emitted at InvertedDecimals (12dp, not the rate's 6dp — GH-945):
+	// 923787528868 / 10^12.
 	priceInt := usdU.Price.BigInt().Int64()
-	if priceInt < 923_000 || priceInt > 925_000 {
-		t.Errorf("USD price (1/1.0825 at 10^6) = %d want ~923788", priceInt)
+	if priceInt < 923_000_000_000 || priceInt > 925_000_000_000 {
+		t.Errorf("USD price (1/1.0825 at 10^12) = %d want ~923787528868", priceInt)
 	}
-	if usdU.Decimals != 6 {
-		t.Errorf("decimals = %d want 6", usdU.Decimals)
+	if usdU.Decimals != InvertedDecimals {
+		t.Errorf("decimals = %d want %d", usdU.Decimals, InvertedDecimals)
 	}
 	if len(usdU.TxHash) != 64 {
 		t.Errorf("tx_hash len = %d", len(usdU.TxHash))
@@ -204,13 +205,38 @@ func TestInversionMath_MatchesExpected(t *testing.T) {
 	// Direct check of the inversion pipeline: ECB's rate=1.0825 →
 	// emitted price should be 1/1.0825 = 0.92378... at 10^6 scale
 	// ≈ 923787.
-	scaled, err := scale.FloatToScaledInt(1.0825, 6)
+	scaled, err := scale.FloatToScaledInt(1.0825, int(DefaultDecimals))
 	if err != nil {
 		t.Fatalf("floatToScaledInt: %v", err)
 	}
-	// We don't invert inside floatToScaledInt — that's the
-	// Poller's responsibility. Just verify the scaled value.
 	if scaled.Int64() != 1_082_500 {
 		t.Errorf("1.0825 at 10^6 = %d want 1082500", scaled.Int64())
+	}
+
+	// GH-945: inverting a weak-currency rate at the SAME scale as the
+	// input quantises it hard. VND at "1 EUR = 25335 VND": inverting
+	// at 6dp gives round(10^12/25_335_000_000) = 39 → 0.000039, vs
+	// the true 0.00003947 — about -1.2% error. The poller must widen
+	// the output scale (InvertedDecimals) instead of reusing
+	// DefaultDecimals for both directions.
+	vndRateScaled, err := scale.FloatToScaledInt(25335, int(DefaultDecimals))
+	if err != nil {
+		t.Fatalf("floatToScaledInt(VND rate): %v", err)
+	}
+	gotBad := scale.InvertScaled(vndRateScaled, int(DefaultDecimals))
+	wantBadUlp := int64(39)
+	if gotBad.Int64() != wantBadUlp {
+		t.Fatalf("sanity: same-scale invert of VND rate = %d want %d (confirms the quantisation the fix avoids)", gotBad.Int64(), wantBadUlp)
+	}
+
+	gotFixed := scale.InvertScaledToDecimals(vndRateScaled, int(DefaultDecimals), int(InvertedDecimals))
+	// True value is 10^18/25_335_000_000 = 39_471_087 (at 12dp, i.e.
+	// 0.000039471087) — matching 1/25335 to full precision, nowhere
+	// near the ~1.2% same-scale error above.
+	wantFixedLow := int64(39_471_000)
+	wantFixedHigh := int64(39_471_200)
+	if gotFixed.Int64() < wantFixedLow || gotFixed.Int64() > wantFixedHigh {
+		t.Errorf("InvertScaledToDecimals(VND rate, 6, 12) = %d want in [%d, %d] (~0.000039471087)",
+			gotFixed.Int64(), wantFixedLow, wantFixedHigh)
 	}
 }

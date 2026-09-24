@@ -1,32 +1,24 @@
 # Public status page — `status.stellarindex.io`
 
-The status page is a custom Next.js static-export app at
-[`web/status/`](../../web/status). It replaces the previous
-cstate (Hugo) implementation that was vendored under this
-directory — see git history if you need the old version.
+`status.stellarindex.io` (this Cloudflare Pages project,
+`stellarindex-status`) is now a **redirect-only stub**. The status
+page itself moved to `stellarindex.io/status` (one site, unified
+nav) — see [`docs/operations/status-page-setup.md`](../../docs/operations/status-page-setup.md)
+for the live page.
 
 ## What ships from the codebase
 
+- [`public/_redirects`](../../web/status/public/_redirects) 301s
+  every path (`/*`) to `https://stellarindex.io/status/:splat`,
+  preserving any incident deep-link.
 - [`web/status/src/app/page.tsx`](../../web/status/src/app/page.tsx)
-  is the single page. It polls `/v1/status` every 30 s and
-  renders:
-    - Overall status banner (ok / degraded / down)
-    - Per-service heartbeats (api, indexer, aggregator) with
-      "last seen X ago" timestamps
-    - Request-latency strip (p50 / p95 / p99 over 5 min,
-      coloured against SLA targets 50 / 200 / 500 ms)
-    - Ingest freshness (last aggregator tick + active source
-      count)
-    - Active incidents — sourced from Alertmanager via
-      `/v1/status`; severity-coloured, runbook-linked
-    - Public endpoint matrix grouped by surface (Health,
-      Pricing, Catalogue, Oracle, Auth)
-    - Incident history — currently empty; past incidents will
-      land here once the auto-posting pipeline ships
-
-The endpoint list in `page.tsx` is intentionally curated —
-operator-only surfaces (`/metrics`, `/v1/diagnostics/*`) are
-excluded so the page focuses on what customers actually consume.
+  is a static fallback (`StatusMovedPage`) for the rare case a
+  visitor bypasses the edge redirect — it shows a "the status page
+  has moved" message with a link, and
+  [`RedirectToStatus.tsx`](../../web/status/src/app/RedirectToStatus.tsx)
+  does a client-side `window.location.replace` to the same target,
+  forwarding the current path/query/hash the same way the `:splat`
+  rule does.
 
 ## Hosting
 

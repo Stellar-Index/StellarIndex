@@ -179,3 +179,50 @@ func TestSweepEndedSessions_BoundedPerCall(t *testing.T) {
 		t.Errorf("rows remaining after second call = %d, want 0", remaining)
 	}
 }
+
+// CA2-A33-harden-1 — SweepLoginCodeLockouts reports whether it stopped
+// at the per-call cap. The reaper re-sweeps promptly on that signal
+// instead of waiting a full Interval, so the signal must be true exactly
+// when every batch came back full, and false once the backlog is gone.
+func TestSweepLoginCodeLockouts_ReportsCapHit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	const batchSize = 4
+	const perCallCap = batchSize * 25 // matches postgresstore.sweepMaxBatchesPerCall
+	const seedRows = perCallCap + 10
+
+	tokens := postgresstore.NewTokenStore(postgresstore.New(db)).WithSweepBatchSize(batchSize)
+	if _, err := db.ExecContext(ctx,
+		`INSERT INTO login_code_lockouts (email, failed_count, updated_at)
+		 SELECT 'bulk-' || g || '@example.com', 1, now() - interval '72 hours'
+		   FROM generate_series(1, $1::int) AS g`, seedRows); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	cutoff := time.Now().UTC().Add(-48 * time.Hour)
+	deleted, more, err := tokens.SweepLoginCodeLockouts(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+	if deleted != perCallCap || !more {
+		t.Errorf("first call = (%d, more=%v), want (%d, more=true)", deleted, more, perCallCap)
+	}
+
+	deleted, more, err = tokens.SweepLoginCodeLockouts(ctx, cutoff)
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if want := int64(seedRows - perCallCap); deleted != want || more {
+		t.Errorf("second call = (%d, more=%v), want (%d, more=false)", deleted, more, want)
+	}
+}

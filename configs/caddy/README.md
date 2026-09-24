@@ -17,19 +17,22 @@ When we add R2 / R3, Cloudflare in front of all three regions becomes the right 
 
 ## Operator install (R1)
 
-Caddy is already installed + running on R1 as of 2026-05-05. To re-install on a fresh box:
+Caddy install + config are now managed by ansible:
+[`configs/ansible/roles/archival-node/tasks/19-caddy.yml`](../ansible/roles/archival-node/tasks/19-caddy.yml)
+installs the package from the official apt repo and templates
+[`Caddyfile.j2`](../ansible/roles/archival-node/templates/Caddyfile.j2)
+to `/etc/caddy/Caddyfile` (validated via `caddy validate --adapter caddyfile`,
+reloaded on change). `Caddyfile.api` in this directory is the
+reference/manual-recovery copy the template is derived from — run the
+role rather than hand-copying it:
 
 ```sh
-# Caddy stable APT repo
-apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-  | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-  > /etc/apt/sources.list.d/caddy-stable.list
-apt-get update
-apt-get install -y caddy
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags caddy
+```
 
-# Drop the Caddyfile + reload
+Manual recovery only (role unavailable):
+
+```sh
 cp configs/caddy/Caddyfile.api /etc/caddy/Caddyfile
 caddy validate --config /etc/caddy/Caddyfile
 systemctl reload caddy

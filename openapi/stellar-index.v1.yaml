@@ -8883,6 +8883,7 @@ paths:
                   last_used_at: '2026-07-03T08:59:41Z'
                   created_at: '2026-06-12T08:30:00Z'
                 revoked_truncated: false
+                max_active_keys: 25
               schema:
                 type: object
                 properties:
@@ -8894,7 +8895,13 @@ paths:
                     description: |
                       True when the account holds more revoked keys than
                       the 100 most recent returned in `keys`.
-                required: [keys, revoked_truncated]
+                  max_active_keys:
+                    type: integer
+                    description: |
+                      The key cap POST enforces for this account. It
+                      counts every unrevoked key, expired ones included,
+                      so an expired key holds its slot until revoked.
+                required: [keys, revoked_truncated, max_active_keys]
         "401":
           description: No valid session cookie.
           content:
@@ -9257,13 +9264,19 @@ paths:
                   enabled: true
                   created_at: '2026-07-05T10:00:00Z'
                   updated_at: '2026-07-05T10:00:00Z'
+                max_alerts: 25
               schema:
                 type: object
                 properties:
                   alerts:
                     type: array
                     items: { $ref: "#/components/schemas/DashboardPriceAlert" }
-                required: [alerts]
+                  max_alerts:
+                    type: integer
+                    description: |
+                      The alert cap POST enforces for this account. It
+                      counts every alert, paused ones included.
+                required: [alerts, max_alerts]
         "401":
           description: No valid session cookie.
           content:

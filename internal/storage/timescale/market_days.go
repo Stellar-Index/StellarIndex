@@ -33,7 +33,8 @@ import (
 type MarketDay struct {
 	// Day is the UTC day bucket (time_bucket('1 day', bucket)).
 	Day time.Time
-	// AssetID is the base asset's canonical string, exactly as stored.
+	// AssetID is the requested asset's string. Rows stored under any
+	// alias spelling of it (its SAC wrapper) are folded onto it.
 	AssetID string
 	// VWAP is the day's volume-weighted average price in dollars, as
 	// exact NUMERIC text (ADR-0003 — never a float). Weighted by BASE
@@ -77,6 +78,18 @@ type MarketDay struct {
 // is the alias union [pricingguard.SubstanceGate] applies before
 // measuring substance, and the same USD-quote set
 // [Store.GetAssetATH] already treats as one dollar.
+//
+// # The base leg is unioned the same way
+//
+// A token with a SAC wrapper trades under both spellings (Soroban AMMs
+// store the SAC form; nothing canonicalises at ingest), so every
+// [canonical.AssetAliases] form of each requested asset is bound and
+// mapped back onto it IN SQL. Grouping by that member key rather than
+// by the stored spelling is what keeps `hours` a count of DISTINCT hour
+// buckets and `span_seconds` a min/max over the union: an hour traded
+// under both spellings counts once, which a per-spelling fold in Go
+// could not get right. A spelling shared by two requested assets is
+// credited to the first only, so no row is counted for two members.
 //
 // # Why prices_1h, and not prices_1d or prices_1m
 //
@@ -130,14 +143,19 @@ type MarketDay struct {
 // [recentClosedVWAP1mForPairQuery] already are — an in-function query
 // is invisible to those guards however careful the author (RLT-042).
 const dailyMarketDaysQuery = `
+        WITH family AS (
+            SELECT spelling, member
+              FROM unnest($1::text[], $5::text[]) AS f(spelling, member)
+        )
         SELECT time_bucket('1 day', bucket)                                     AS day,
-               base_asset,
+               family.member,
                (sum(vwap * volume) / sum(volume))::text                         AS vwap,
                COALESCE(sum(volume_usd), 0)::text                               AS volume_usd,
                count(DISTINCT bucket)                                           AS hours,
                COALESCE(EXTRACT(EPOCH FROM (max(bucket) - min(bucket)))::bigint, 0) AS span_seconds,
                COALESCE(sum(trade_count), 0)                                    AS trades
           FROM prices_1h
+          JOIN family ON family.spelling = prices_1h.base_asset
          WHERE base_asset  = ANY($1)
            AND quote_asset = ANY($2)
            AND bucket <= now() - INTERVAL '1 hour'
@@ -145,8 +163,8 @@ const dailyMarketDaysQuery = `
            AND bucket <  $4::timestamptz + INTERVAL '1 day'
            AND vwap IS NOT NULL
            AND volume > 0
-         GROUP BY day, base_asset
-         ORDER BY day ASC, base_asset ASC
+         GROUP BY day, family.member
+         ORDER BY day ASC, family.member ASC
     `
 
 func (s *Store) DailyMarketDays(
@@ -157,10 +175,7 @@ func (s *Store) DailyMarketDays(
 	if len(assets) == 0 || len(quotes) == 0 {
 		return nil, nil
 	}
-	baseKeys := make([]string, len(assets))
-	for i, a := range assets {
-		baseKeys[i] = a.String()
-	}
+	spellings, members := marketDayFamilies(assets)
 	quoteKeys := make([]string, len(quotes))
 	for i, q := range quotes {
 		quoteKeys[i] = q.String()
@@ -169,8 +184,8 @@ func (s *Store) DailyMarketDays(
 	// at the SESSION timezone, so a server whose TimeZone is not UTC
 	// would cut days somewhere other than midnight UTC — and the two
 	// legs of a premium would then be bucketed on different clocks.
-	rows, err := s.db.QueryContext(ctx, dailyMarketDaysQuery, baseKeys, quoteKeys,
-		from.UTC().Truncate(24*time.Hour), to.UTC().Truncate(24*time.Hour))
+	rows, err := s.db.QueryContext(ctx, dailyMarketDaysQuery, spellings, quoteKeys,
+		from.UTC().Truncate(24*time.Hour), to.UTC().Truncate(24*time.Hour), members)
 	if err != nil {
 		return nil, fmt.Errorf("timescale: DailyMarketDays: %w", err)
 	}
@@ -190,4 +205,29 @@ func (s *Store) DailyMarketDays(
 		return nil, fmt.Errorf("timescale: DailyMarketDays rows: %w", err)
 	}
 	return out, nil
+}
+
+// marketDayFamilies binds every alias spelling of each requested asset
+// ($1) alongside the requested asset it folds onto ($5), as parallel
+// arrays. Each spelling is bound once: a requested asset always keeps
+// its own spelling, and an alias form goes to the first asset naming it.
+func marketDayFamilies(assets []canonical.Asset) (spellings, members []string) {
+	seen := make(map[string]struct{}, len(assets)*2)
+	claim := func(form, member string) {
+		if _, dup := seen[form]; dup {
+			return
+		}
+		seen[form] = struct{}{}
+		spellings = append(spellings, form)
+		members = append(members, member)
+	}
+	for _, a := range assets {
+		claim(a.String(), a.String())
+	}
+	for _, a := range assets {
+		for _, form := range canonical.AssetAliasStrings(a) {
+			claim(form, a.String())
+		}
+	}
+	return spellings, members
 }

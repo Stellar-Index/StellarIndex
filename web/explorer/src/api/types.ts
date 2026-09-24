@@ -19829,7 +19829,8 @@ export interface operations {
                      *           "created_at": "2026-06-12T08:30:00Z"
                      *         }
                      *       ],
-                     *       "revoked_truncated": false
+                     *       "revoked_truncated": false,
+                     *       "max_active_keys": 25
                      *     }
                      */
                     "application/json": {
@@ -19839,6 +19840,12 @@ export interface operations {
                          *     the 100 most recent returned in `keys`.
                          */
                         revoked_truncated: boolean;
+                        /**
+                         * @description The key cap POST enforces for this account. It
+                         *     counts every unrevoked key, expired ones included,
+                         *     so an expired key holds its slot until revoked.
+                         */
+                        max_active_keys: number;
                     };
                 };
             };
@@ -20303,11 +20310,17 @@ export interface operations {
                      *           "created_at": "2026-07-05T10:00:00Z",
                      *           "updated_at": "2026-07-05T10:00:00Z"
                      *         }
-                     *       ]
+                     *       ],
+                     *       "max_alerts": 25
                      *     }
                      */
                     "application/json": {
                         alerts: components["schemas"]["DashboardPriceAlert"][];
+                        /**
+                         * @description The alert cap POST enforces for this account. It
+                         *     counts every alert, paused ones included.
+                         */
+                        max_alerts: number;
                     };
                 };
             };

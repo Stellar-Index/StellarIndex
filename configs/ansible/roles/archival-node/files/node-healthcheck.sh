@@ -5,13 +5,16 @@
 # on success and (with diagnostic body) on failure.
 #
 # Checks (all must pass for SUCCESS):
-#   1. All 7 systemd services are `active`
-#   2. stellar-core's /info reports state == "Synced!"
-#   3. stellar-core's last-closed-ledger age < threshold
+#   1. All 9 systemd services are `active`
+#   1b. stellarindex-api's /v1/healthz returns 200
+#   4.5. galexie's most recent MinIO upload isn't stale
 #      (proves we're tracking network head, not stuck on an old one)
-#   4. stellar-rpc responds to getHealth JSON-RPC
 #   5. ZFS data pool state == ONLINE
-#   6. /var/lib/stellar-core has ≥ 10% free capacity
+#   6. galexie/stellar-rpc captive-core dirs have < 90% disk used
+#
+# stellar-core's /info and stellar-rpc's getHealth were removed
+# 2026-04-23 along with those services themselves; see Check 1's
+# comment block below.
 #
 # Ping URL lives in /etc/default/node-healthcheck as
 # HEALTHCHECK_PING_URL. That file is rendered by Ansible from a

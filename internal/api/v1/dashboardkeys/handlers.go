@@ -223,6 +223,9 @@ type listResponse struct {
 	// RevokedTruncated is true when older revoked keys exist beyond the
 	// listRevokedLimit most recent ones returned.
 	RevokedTruncated bool `json:"revoked_truncated"`
+	// MaxActiveKeys is the ceiling create enforces (checkQuota), so the
+	// dashboard can show "N of M" before the 409 rather than after.
+	MaxActiveKeys int `json:"max_active_keys"`
 }
 
 // HandleList returns every active key plus the most recently created
@@ -239,7 +242,11 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	out := listResponse{Keys: make([]keyDTO, 0, len(keys)), RevokedTruncated: moreRevoked}
+	out := listResponse{
+		Keys:             make([]keyDTO, 0, len(keys)),
+		RevokedTruncated: moreRevoked,
+		MaxActiveKeys:    h.maxKeysFor(sc.Account.Tier),
+	}
 	for _, k := range keys {
 		out.Keys = append(out.Keys, toDTO(k))
 	}
@@ -375,7 +382,7 @@ func (h *Handlers) HandleCreate(w http.ResponseWriter, r *http.Request) {
 		// precheck would have.
 		if errors.Is(err, platform.ErrAPIKeyQuotaExceeded) {
 			writeProblem(w, http.StatusConflict,
-				fmt.Sprintf("account already has %d active keys (max %d for the %s tier) — revoke one first", maxKeys, maxKeys, sc.Account.Tier),
+				keyQuotaProblem(maxKeys, maxKeys),
 				r.URL.Path)
 			return
 		}
@@ -681,10 +688,17 @@ func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxKeys int)
 		return http.StatusInternalServerError, "internal error"
 	}
 	if active >= maxKeys {
-		return http.StatusConflict,
-			fmt.Sprintf("account already has %d active keys (max %d) — revoke one first", active, maxKeys)
+		return http.StatusConflict, keyQuotaProblem(active, maxKeys)
 	}
 	return 0, ""
+}
+
+// keyQuotaProblem is the 409 detail for a create over the key cap. The cap
+// counts every unrevoked key, expired ones included (the capped INSERT and
+// CountActiveForAccount both test revoked_at alone), so the message says so
+// rather than calling expired keys "active".
+func keyQuotaProblem(held, maxKeys int) string {
+	return fmt.Sprintf("account already has %d unrevoked keys (max %d) — expired keys hold their slot until revoked; revoke one first", held, maxKeys)
 }
 
 // canManageKeys gates create/revoke on role. Owner + admin can

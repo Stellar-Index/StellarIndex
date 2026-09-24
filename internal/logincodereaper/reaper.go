@@ -40,9 +40,12 @@
 // sweep has already elapsed its window and its next failure would have
 // restarted the count from 1 regardless.
 //
-// The worker is the same small ticker loop as internal/signupreaper
-// (sweep immediately, then every Interval), runs in the API binary, and
-// is bounded to the process root context.
+// The worker sweeps immediately, then every Interval, runs in the API
+// binary, and is bounded to the process root context. Unlike
+// internal/signupreaper it does not leave a capped pass's remainder for
+// the next Interval: the store deletes at most a fixed number of rows
+// per call, and one IP at the anonymous rate limit can insert more than
+// that per hour, so a capped pass re-sweeps after [DefaultDrainPause].
 //
 // # Not operator-tunable
 //
@@ -65,10 +68,14 @@ import (
 
 // Defaults for a zero Options.
 const (
-	// DefaultInterval is the sweep cadence. Hourly is far more often
-	// than needed to hold the table flat, and cheap: one indexed range
-	// DELETE plus one count.
+	// DefaultInterval is the sweep cadence. Hourly is cheap: bounded
+	// indexed range DELETEs plus one count.
 	DefaultInterval = time.Hour
+	// DefaultDrainPause is the gap between passes while a sweep keeps
+	// hitting the store's per-call cap. The insert rate is
+	// attacker-driven, so a capped pass must not wait a full Interval:
+	// that would bound the drain rate below the insert rate.
+	DefaultDrainPause = 5 * time.Second
 	// DefaultRetention is how long a settled row is kept. MUST stay
 	// longer than dashboardauth.durableCodeFailureWindow (24 h) so a
 	// sweep can never shorten a live counting window; 48 h leaves a
@@ -84,9 +91,10 @@ const (
 // reasoning as signupreaper.OrphanStore.
 type LockoutStore interface {
 	// SweepLoginCodeLockouts deletes settled rows whose updated_at is
-	// before olderThan, returning the number removed. Never deletes a
-	// row whose lock is still in force.
-	SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, error)
+	// before olderThan, returning the number removed and whether the
+	// call stopped at its per-call cap with settled rows possibly left.
+	// Never deletes a row whose lock is still in force.
+	SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, bool, error)
 	// CountLoginCodeLockouts returns the current row count.
 	CountLoginCodeLockouts(ctx context.Context) (int64, error)
 }
@@ -98,7 +106,10 @@ type Options struct {
 	// Retention is the settled-row age threshold. <= 0 falls back to
 	// DefaultRetention.
 	Retention time.Duration
-	Logger    *slog.Logger
+	// DrainPause is the gap before re-sweeping after a capped pass.
+	// <= 0 falls back to DefaultDrainPause.
+	DrainPause time.Duration
+	Logger     *slog.Logger
 	// Clock lets tests pin "now". Defaults to time.Now().UTC.
 	Clock func() time.Time
 }
@@ -106,11 +117,12 @@ type Options struct {
 // Reaper periodically deletes settled login-code lockout rows and
 // publishes the table's size.
 type Reaper struct {
-	store     LockoutStore
-	interval  time.Duration
-	retention time.Duration
-	logger    *slog.Logger
-	now       func() time.Time
+	store      LockoutStore
+	interval   time.Duration
+	retention  time.Duration
+	drainPause time.Duration
+	logger     *slog.Logger
+	now        func() time.Time
 }
 
 // New builds a Reaper. Panics if store is nil (a wiring bug — the
@@ -120,11 +132,12 @@ func New(store LockoutStore, opts Options) *Reaper {
 		panic("logincodereaper: New requires a non-nil store")
 	}
 	r := &Reaper{
-		store:     store,
-		interval:  opts.Interval,
-		retention: opts.Retention,
-		logger:    opts.Logger,
-		now:       opts.Clock,
+		store:      store,
+		interval:   opts.Interval,
+		retention:  opts.Retention,
+		drainPause: opts.DrainPause,
+		logger:     opts.Logger,
+		now:        opts.Clock,
 	}
 	if r.interval <= 0 {
 		r.interval = DefaultInterval
@@ -132,6 +145,9 @@ func New(store LockoutStore, opts Options) *Reaper {
 	obs.AuthReaperIntervalSeconds.WithLabelValues(obs.AuthReaperLoginCode).Set(r.interval.Seconds())
 	if r.retention <= 0 {
 		r.retention = DefaultRetention
+	}
+	if r.drainPause <= 0 {
+		r.drainPause = DefaultDrainPause
 	}
 	if r.logger == nil {
 		r.logger = slog.Default()
@@ -144,34 +160,40 @@ func New(store LockoutStore, opts Options) *Reaper {
 
 // Run drives the sweep loop until ctx is cancelled. Sweeps once
 // immediately — a process that has just started may be inheriting a
-// table that grew while it was down — then every Interval.
+// table that grew while it was down — then every Interval, or after
+// DrainPause while a pass reports a backlog left behind its cap.
 func (r *Reaper) Run(ctx context.Context) error {
-	tick := time.NewTicker(r.interval)
-	defer tick.Stop()
 	r.logger.Info("login-code-lockout reaper started",
 		"interval", r.interval, "retention", r.retention)
 	for {
-		r.Sweep(ctx)
+		wait := r.interval
+		if r.Sweep(ctx) {
+			wait = r.drainPause
+		}
+		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return ctx.Err()
-		case <-tick.C:
+		case <-timer.C:
 		}
 	}
 }
 
-// Sweep runs one retention pass and refreshes the row-count gauge.
-// Exported so tests can drive a single pass deterministically.
+// Sweep runs one retention pass and refreshes the row-count gauge. It
+// reports true when the store stopped at its per-call cap, so settled
+// rows may remain. Exported so tests can drive a single pass
+// deterministically.
 //
 // Errors are recorded on [obs.LoginCodeLockoutErrorsTotal] and
 // swallowed: this is a background janitor, and a failed sweep is
 // retried next tick. The gauge is refreshed even when the DELETE failed
 // — that is exactly when an operator most needs to see the row count.
-func (r *Reaper) Sweep(ctx context.Context) {
-	deleted, err := r.store.SweepLoginCodeLockouts(ctx, r.now().Add(-r.retention))
+func (r *Reaper) Sweep(ctx context.Context) bool {
+	deleted, more, err := r.store.SweepLoginCodeLockouts(ctx, r.now().Add(-r.retention))
 	switch {
 	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-		return // clean shutdown, not a failure
+		return false // clean shutdown, not a failure
 	case err != nil:
 		obs.LoginCodeLockoutErrorsTotal.WithLabelValues(obs.LoginCodeLockoutOpSweep).Inc()
 		r.logger.Warn("login-code-lockout reaper: sweep failed", "err", err)
@@ -183,6 +205,7 @@ func (r *Reaper) Sweep(ctx context.Context) {
 	// Liveness (#368 M5): the sweep COMPLETED — including the failure arm
 	// above; only the cancelled early return skips this.
 	obs.AuthReaperLastSweepUnix.WithLabelValues(obs.AuthReaperLoginCode).Set(float64(r.now().Unix()))
+	return err == nil && more
 }
 
 // refreshGauge publishes the current row count. A count failure is

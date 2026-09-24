@@ -1,6 +1,10 @@
 package clickhouse
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -308,5 +312,106 @@ func TestExtractLedgerEntryChanges_FeePhasePrecedesApplyPhase(t *testing.T) {
 	}
 	if ext.Changes[1].ChangeIndex != 0 {
 		t.Errorf("tx2 fee change_index = %d, want 0", ext.Changes[1].ChangeIndex)
+	}
+}
+
+// A P23 restoration emits [RESTORED data, RESTORED ttl] with no later update
+// when nothing else touches the entry. Both are post-images (the SDK's
+// ingest.Change reads RESTORED as Pre=nil, Post=entry); dropping the TTL row
+// leaves stellar.ttl_live_until on the lapsed pre-archival value, so the
+// liveness filter serves the restored entry as archived.
+func TestExtractLedgerEntryChanges_RestoredEntryAndTTLAreRecorded(t *testing.T) {
+	const restoredUntil = uint32(5_000_000)
+	contractID := xdr.ContractId{0xC0}
+	dataEntry := xdr.LedgerEntry{
+		LastModifiedLedgerSeq: 100,
+		Data: xdr.LedgerEntryData{
+			Type: xdr.LedgerEntryTypeContractData,
+			ContractData: &xdr.ContractDataEntry{
+				Contract:   xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: &contractID},
+				Key:        xdr.ScVal{Type: xdr.ScValTypeScvLedgerKeyContractInstance},
+				Durability: xdr.ContractDataDurabilityPersistent,
+				Val:        xdr.ScVal{Type: xdr.ScValTypeScvVoid},
+			},
+		},
+	}
+	dataKey, err := dataEntry.LedgerKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyBin, err := dataKey.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyHash := xdr.Hash(sha256.Sum256(keyBin))
+	ttlEntry := xdr.LedgerEntry{
+		LastModifiedLedgerSeq: 100,
+		Data: xdr.LedgerEntryData{
+			Type: xdr.LedgerEntryTypeTtl,
+			Ttl:  &xdr.TtlEntry{KeyHash: keyHash, LiveUntilLedgerSeq: xdr.Uint32(restoredUntil)},
+		},
+	}
+	restored := func(e *xdr.LedgerEntry) xdr.LedgerEntryChange {
+		return xdr.LedgerEntryChange{Type: xdr.LedgerEntryChangeTypeLedgerEntryRestored, Restored: e}
+	}
+	tx := ingest.LedgerTransaction{
+		Result: xdr.TransactionResultPair{TransactionHash: xdr.Hash{0x0A}},
+		UnsafeMeta: xdr.TransactionMeta{
+			V: 4,
+			V4: &xdr.TransactionMetaV4{Operations: []xdr.OperationMetaV2{{
+				Changes: xdr.LedgerEntryChanges{restored(&dataEntry), restored(&ttlEntry)},
+			}}},
+		},
+	}
+
+	var ext LedgerExtract
+	extractLedgerEntryChanges(&ext, []ingest.LedgerTransaction{tx}, 1000, time.Unix(0, 0).UTC())
+
+	if len(ext.Changes) != 2 {
+		t.Fatalf("extracted %d changes, want 2 (restored contract_data + restored ttl)", len(ext.Changes))
+	}
+	data, ttl := ext.Changes[0], ext.Changes[1]
+	if data.ChangeType != "restored" || data.EntryType != "contract_data" || data.EntryXDR == "" {
+		t.Errorf("data row = %q/%q entry_xdr empty=%v, want restored/contract_data with entry", data.ChangeType, data.EntryType, data.EntryXDR == "")
+	}
+	if ttl.ChangeType != "restored" || ttl.EntryType != "ttl" {
+		t.Fatalf("ttl row change/entry type = %q/%q, want restored/ttl", ttl.ChangeType, ttl.EntryType)
+	}
+	if ttl.IntraLedgerSeq <= data.IntraLedgerSeq {
+		t.Errorf("ttl intra_ledger_seq %d must follow data's %d", ttl.IntraLedgerSeq, data.IntraLedgerSeq)
+	}
+
+	// Decode the way the stellar.ttl_live_until MV does (deploy/clickhouse/
+	// ttl_live_until.sql): a 36-byte key whose bytes [4,36) are the key hash,
+	// and a 48-byte entry whose big-endian bytes [40,44) are live_until.
+	rawKey, err := base64.StdEncoding.DecodeString(ttl.KeyXDR)
+	if err != nil || len(rawKey) != 36 || !bytes.Equal(rawKey[4:36], keyHash[:]) {
+		t.Fatalf("ttl key_xdr does not carry the restored entry's key hash (len=%d err=%v)", len(rawKey), err)
+	}
+	rawEntry, err := base64.StdEncoding.DecodeString(ttl.EntryXDR)
+	if err != nil || len(rawEntry) != 48 {
+		t.Fatalf("ttl entry_xdr is not a 48-byte TTLEntry (len=%d err=%v)", len(rawEntry), err)
+	}
+	if got := binary.BigEndian.Uint32(rawEntry[40:44]); got != restoredUntil {
+		t.Errorf("ttl live_until = %d, want the restored %d", got, restoredUntil)
+	}
+}
+
+// Every change type the pinned XDR defines must map to a named lake value; a
+// new variant falling through to "unknown" fails here.
+func TestChangeTypeName_CoversEveryXDRVariant(t *testing.T) {
+	seen := 0
+	for v := int32(0); v < 256; v++ {
+		ct := xdr.LedgerEntryChangeType(v)
+		if !ct.ValidEnum(v) {
+			continue
+		}
+		seen++
+		if name := changeTypeName(ct); name == "unknown" {
+			t.Errorf("change type %s (%d) maps to %q", ct, v, name)
+		}
+	}
+	if seen < 5 {
+		t.Fatalf("only %d valid change types enumerated; the pinned XDR defines at least 5", seen)
 	}
 }

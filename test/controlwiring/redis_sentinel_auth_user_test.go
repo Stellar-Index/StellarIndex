@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +51,32 @@ func TestRedisSentinelACL_DefinesSentinelUser(t *testing.T) {
 		t.Fatalf("%s: no `user sentinel on >{{ redis_password }}` ACL entry — "+
 			"sentinel.conf.j2's `sentinel auth-user` would name a user that does "+
 			"not exist under lockdown", path)
+	}
+}
+
+// The postgres-backend API-key validator caches api_keys rows under
+// `apikey-cache:` (cachekeys.APIKeyCache), outside `apikey:` on purpose,
+// so the lockdown app user must admit that family by name.
+func TestRedisACL_AppUserAdmitsAPIKeyCache(t *testing.T) {
+	path := filepath.Join(repoRoot(t), "configs", "ansible", "roles", "redis-sentinel",
+		"templates", "users.acl.j2")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var rule []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if len(rule) == 0 && !strings.HasPrefix(trimmed, "user stellarindex ") {
+			continue
+		}
+		rule = append(rule, strings.Fields(strings.TrimSuffix(trimmed, "\\"))...)
+		if !strings.HasSuffix(trimmed, "\\") {
+			break
+		}
+	}
+	if !slices.Contains(rule, "~apikey-cache:*") {
+		t.Fatalf("%s: the stellarindex user rule does not admit ~apikey-cache:* — "+
+			"under lockdown every postgres-backend key-cache read and write is NOPERM", path)
 	}
 }

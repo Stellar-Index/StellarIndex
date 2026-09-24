@@ -76,9 +76,29 @@ describe('Passkeys settings section', () => {
     expect(await screen.findByText('No passkeys yet')).toBeInTheDocument();
   });
 
+  // GH-1073: removal is destructive, so it confirms like key revoke and
+  // alert delete; declining must not call the DELETE endpoint.
+  it('asks for confirmation and removes nothing when declined', async () => {
+    listPasskeys.mockResolvedValue([passkey()]);
+    deletePasskey.mockResolvedValue(undefined);
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
+
+    renderPasskeys();
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: /Remove passkey MacBook Touch ID/,
+      }),
+    );
+
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect(deletePasskey).not.toHaveBeenCalled();
+    confirmSpy.mockRestore();
+  });
+
   it('removes a passkey via the DELETE endpoint and refreshes the list', async () => {
     listPasskeys.mockResolvedValue([passkey()]);
     deletePasskey.mockResolvedValue(undefined);
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
 
     renderPasskeys();
     fireEvent.click(

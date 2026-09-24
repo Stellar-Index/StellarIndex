@@ -41,14 +41,18 @@ func TestNewKeyCacheInvalidatorForBackend(t *testing.T) {
 		t.Fatal("postgres backend: got nil, want an invalidator")
 	}
 	const hexHash = "00ff"
-	entry := cachekeys.APIKey(hexHash).String()
-	if err := mr.Set(entry, `{"identifier":"account:cached"}`); err != nil {
-		t.Fatalf("seed cache entry: %v", err)
+	entries := []string{cachekeys.APIKeyCache(hexHash).String(), cachekeys.APIKey(hexHash).String()}
+	for _, entry := range entries {
+		if err := mr.Set(entry, `{"identifier":"account:cached"}`); err != nil {
+			t.Fatalf("seed cache entry: %v", err)
+		}
 	}
 	if err := inv.InvalidateCachedKey(context.Background(), hexHash); err != nil {
 		t.Fatalf("InvalidateCachedKey: %v", err)
 	}
-	if mr.Exists(entry) {
-		t.Errorf("postgres backend: cache entry %s survived eviction", entry)
+	for _, entry := range entries {
+		if mr.Exists(entry) {
+			t.Errorf("postgres backend: cache entry %s survived eviction", entry)
+		}
 	}
 }

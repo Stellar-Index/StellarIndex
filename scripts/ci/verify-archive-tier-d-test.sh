@@ -261,6 +261,56 @@ else
   bad "Tier D bypasses run-heavy-job.sh, shares tier A/B's lock, or starts in the heavy band"
 fi
 
+# ── 6. testnet/futurenet get no peer region to cross-check — cron must be absent ─
+network_ok=0
+"$PY" - "$TASK_FILE" <<'PY_NETWORK_EOF' || network_ok=1
+import sys
+
+import jinja2
+import yaml
+
+TASK_NAME = "Install Tier D verify-archive weekly cron"
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    tasks = yaml.safe_load(fh)
+
+cron = None
+for task in tasks or []:
+    if isinstance(task, dict) and task.get("name") == TASK_NAME:
+        cron = task.get("ansible.builtin.cron") or {}
+if not cron or "state" not in cron:
+    print(f"  FAIL — task {TASK_NAME!r} has no `state:` — nothing gates it off a network "
+          "with no peer region (testnet/futurenet)")
+    sys.exit(1)
+
+env = jinja2.Environment()
+env.filters["bool"] = bool
+template = env.from_string(cron["state"])
+failures = 0
+
+# verify_archive_tier_d_enabled (defaults/main.yml) mirrors verify_archive_tier_d_enabled's
+# own network derivation: pubnet-only.
+CASES = [
+    ("pubnet (r1/r2/r3)", True, "present"),
+    ("testnet", False, "absent"),
+    ("futurenet", False, "absent"),
+]
+for label, enabled, want in CASES:
+    got = template.render(verify_archive_tier_d_enabled=enabled)
+    if got == want:
+        print(f"  ok   — {label}: Tier D cron state={got}")
+    else:
+        print(f"  FAIL — {label}: Tier D cron state={got!r}, expected {want!r}")
+        failures += 1
+
+sys.exit(1 if failures else 0)
+PY_NETWORK_EOF
+if [ "$network_ok" -eq 0 ]; then
+  ok "Tier D cron is absent on networks with no peer region to cross-check"
+else
+  bad "Tier D cron installs on a network with no peer region (testnet/futurenet)"
+fi
+
 echo
 echo "verify-archive-tier-d-test: $pass passed, $fail failed"
 [ "$fail" -eq 0 ] || exit 1

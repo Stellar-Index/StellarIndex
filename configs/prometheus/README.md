@@ -14,8 +14,10 @@ to the ansible role topology.
 ## Files
 
 - `prometheus.r1.yml` — `/etc/prometheus/prometheus.yml` on r1.
-  Scrapes node_exporter + stellarindex-{indexer,aggregator,api} +
-  caddy + galexie. Sends alerts to local Alertmanager on `:9093`.
+  Scrapes prometheus, node_exporter, stellarindex-{indexer,aggregator,api},
+  caddy, galexie, redis_exporter, alertmanager, postgres_exporter,
+  pgbackrest_exporter, clickhouse and minio (13 jobs). Sends alerts to
+  local Alertmanager on `:9093`.
 
 ## Operator install (on a fresh R1-shaped box)
 
@@ -31,28 +33,27 @@ systemctl restart prometheus-alertmanager
 
 # Drop our config + reload
 cp configs/prometheus/prometheus.r1.yml /etc/prometheus/prometheus.yml
-mkdir -p /etc/prometheus/rules.d
+mkdir -p /etc/prometheus/rules.r1
 promtool check config /etc/prometheus/prometheus.yml
 systemctl reload prometheus
 
-# Verify all 7 targets are UP
+# Verify all 13 targets are UP
 sleep 15
 curl -sS localhost:9090/api/v1/targets \
   | jq -r '.data.activeTargets[] | "\(.labels.job) \(.health)"'
 ```
 
-Expected: `caddy up | galexie up | node_exporter up | prometheus up | stellarindex-aggregator up | stellarindex-api up | stellarindex-indexer up`.
+Expected: `prometheus up | node_exporter up | stellarindex-indexer up | stellarindex-api up | stellarindex-aggregator up | caddy up | galexie up | redis_exporter up | alertmanager up | postgres_exporter up | pgbackrest_exporter up | clickhouse up | minio up`.
 
 ## Alert routing
 
 `/etc/prometheus/alertmanager.yml` ships with a default that has
-no real receivers. Operator adds webhook secrets when ready. The
-existing alert rule files in
-[`deploy/monitoring/rules/`](../../deploy/monitoring/rules/) were
-written for the multi-host topology and reference labels (`region`,
-`replica`) the single-host scrape doesn't emit; **don't symlink
-them blindly into `/etc/prometheus/rules.d/`** — review per-rule
-first so we don't get alert spam on labels that match nothing.
+no real receivers. Operator adds webhook secrets when ready.
+Rule files live at `/etc/prometheus/rules.r1/` — see
+[`rules.r1/README.md`](rules.r1/README.md) for which files ship
+here (R1-tuned copies of [`deploy/monitoring/rules/`](../../deploy/monitoring/rules/))
+and [`apply-rules.sh`](apply-rules.sh) for how they're installed
+and verified, rather than symlinked or hand-copied.
 
 ## Web UI
 

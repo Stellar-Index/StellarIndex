@@ -8,6 +8,14 @@
 # battery weekly against production and on demand.
 #
 # Read-only: ~80 GETs against the public site + API, no secrets.
+#
+# T332: a regression here used to just turn the Actions tab red with no
+# escalation — indistinguishable from every other quiet failure until
+# someone went looking. Same idempotent open/update/close tracking-issue
+# shape as public-dataset-check.yml and dns-perimeter-check.yml: this
+# checks a deployed, external artifact (production), not repo state at
+# HEAD, so it never fails the scheduled run red — it pages through the
+# issue instead.
 
 name: site-crawl
 
@@ -18,6 +26,15 @@ on:
 
 permissions:
   contents: read
+  issues: write
+
+concurrency:
+  group: site-crawl
+  cancel-in-progress: false
+
+env:
+  ISSUE_LABEL: site-crawl-drift
+  ISSUE_TITLE: "Site crawl regression (stellarindex.io)"
 
 jobs:
   crawl:
@@ -27,5 +44,57 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
       - name: Run the site crawl battery
-        run: bash scripts/ci/site-crawl-check.sh
+        id: crawl
+        run: |
+          set -uo pipefail
+          # Capture the exit code directly. Piping this into tee or sed
+          # would report the pipe's last status, not the gate's.
+          bash scripts/ci/site-crawl-check.sh > /tmp/site-crawl.txt 2>&1
+          rc=$?
+          cat /tmp/site-crawl.txt
+          {
+            echo "verdict_rc=${rc}"
+            echo "report<<REPORT_EOF"
+            cat /tmp/site-crawl.txt
+            echo "REPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue (site crawl regressed)
+        if: steps.crawl.outputs.verdict_rc != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          REPORT: ${{ steps.crawl.outputs.report }}
+        run: |
+          set -euo pipefail
+          gh label create "$ISSUE_LABEL" --color B60205 \
+            --description "scripts/ci/site-crawl-check.sh found a regression against production" 2>/dev/null || true
+
+          body="$(printf '%s\n\n---\n_Auto-managed by the site-crawl workflow (run %s). Closes automatically once site-crawl-check.sh is clean again._\n' \
+            "$REPORT" "${GITHUB_RUN_ID:-?}")"
+
+          existing="$(gh issue list --label "$ISSUE_LABEL" --state open \
+            --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body "$body"
+            echo "Updated existing site-crawl-drift issue #$existing."
+          else
+            gh issue create --title "$ISSUE_TITLE" --label "$ISSUE_LABEL" --body "$body"
+            echo "Opened new site-crawl-drift issue."
+          fi
+          echo "::warning::site-crawl-check.sh found a regression — see the tracking issue. (Scheduled run deliberately not failed.)"
+
+      - name: Close the tracking issue (site crawl clean)
+        if: steps.crawl.outputs.verdict_rc == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          for n in $(gh issue list --label "$ISSUE_LABEL" --state open \
+              --json number --jq '.[].number' || true); do
+            gh issue close "$n" --comment "site-crawl-check.sh is clean again — site-crawl closing automatically."
+            echo "Closed site-crawl-drift issue #$n."
+          done

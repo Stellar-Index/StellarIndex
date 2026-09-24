@@ -104,16 +104,17 @@ func TestPollOnce_HappyPath(t *testing.T) {
 		t.Errorf("EUR quote = %+v want USD", eurUpdate.Quote)
 	}
 	// Venue said USD→EUR = 0.9235. We invert to EUR→USD = 1 / 0.9235
-	// ≈ 1.0828 at 10^6 → 1082836. Verify ±rounding tolerance.
+	// ≈ 1.0828. Emitted at InvertedDecimals (12dp, not the rate's
+	// 6dp — GH-945): ~1082837033027. Verify ±rounding tolerance.
 	priceInt := eurUpdate.Price.BigInt().Int64()
-	if priceInt < 1_080_000 || priceInt > 1_085_000 {
-		t.Errorf("EUR price (inverted) = %d, want ~1082836", priceInt)
+	if priceInt < 1_080_000_000_000 || priceInt > 1_085_000_000_000 {
+		t.Errorf("EUR price (inverted) = %d, want ~1082837033027", priceInt)
 	}
 	if eurUpdate.Timestamp.Unix() != 1_745_000_000 {
 		t.Errorf("timestamp = %d want 1745000000", eurUpdate.Timestamp.Unix())
 	}
-	if eurUpdate.Decimals != 6 {
-		t.Errorf("decimals = %d want 6", eurUpdate.Decimals)
+	if eurUpdate.Decimals != InvertedDecimals {
+		t.Errorf("decimals = %d want %d", eurUpdate.Decimals, InvertedDecimals)
 	}
 	if len(eurUpdate.TxHash) != 64 {
 		t.Errorf("tx_hash len = %d want 64", len(eurUpdate.TxHash))
@@ -262,6 +263,56 @@ func TestPollInterval_DefaultsTo60s(t *testing.T) {
 	p, _ := NewPoller("TEST_KEY")
 	if p.PollInterval() != 60*time.Second {
 		t.Errorf("default interval = %v want 60s", p.PollInterval())
+	}
+}
+
+// TestPollOnce_WeakCurrencyInversionPrecision pins GH-945: inverting a
+// weak-currency rate (large magnitude, e.g. VND) at the SAME scale as
+// the input rate quantises the emitted price by up to ~1.2%. The
+// poller must emit at InvertedDecimals, not DefaultDecimals.
+func TestPollOnce_WeakCurrencyInversionPrecision(t *testing.T) {
+	srv := newTestServer(t, `{
+      "success": true,
+      "timestamp": 1745000000,
+      "base": "USD",
+      "date": "2026-04-24",
+      "rates": {
+        "VND": 25335
+      }
+    }`, http.StatusOK)
+	defer srv.Close()
+
+	vnd, _ := canonical.NewFiatAsset("VND")
+
+	p, err := NewPoller("TEST_KEY")
+	if err != nil {
+		t.Fatalf("NewPoller: %v", err)
+	}
+	p.Endpoint = srv.URL
+
+	usd, _ := canonical.NewFiatAsset("USD")
+	pair, _ := canonical.NewPair(vnd, usd)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, updates, err := p.PollOnce(ctx, []canonical.Pair{pair})
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 update (VND), got %d", len(updates))
+	}
+	u := updates[0]
+	if u.Decimals != InvertedDecimals {
+		t.Fatalf("decimals = %d want %d", u.Decimals, InvertedDecimals)
+	}
+	// True value: 1/25335 = 0.0000394710873... at 10^12 → 39471087.
+	// The pre-fix same-scale inversion (round(10^12/25_335_000_000))
+	// would have produced 39 (0.000039), a ~1.2% error.
+	got := u.Price.BigInt().Int64()
+	const want = 39_471_087
+	if got < want-100 || got > want+100 {
+		t.Errorf("VND price (inverted at 12dp) = %d, want ~%d (pre-fix same-scale bug would give 39)", got, want)
 	}
 }
 

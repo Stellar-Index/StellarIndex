@@ -74,8 +74,19 @@ const DefaultPollInterval = 60 * time.Second
 
 // DefaultDecimals is the precision at which we scale the incoming
 // float64 rates. Five decimal places is enough for G10 cross-rates
-// (typical precision ~4dp); 6 gives headroom for EM currencies.
+// (typical precision ~4dp); 6 gives headroom for EM currencies. This
+// is the scale of the venue's RATE, not the price we emit — see
+// InvertedDecimals.
 const DefaultDecimals uint8 = 6
+
+// InvertedDecimals is the scale of the EMITTED price, after
+// inverting the venue's base-per-symbol rate. Inverting at the same
+// scale as the input quantises weak-currency prices by up to ~1.2%
+// (GH-945): a rate in the tens of thousands leaves only 1-2
+// significant digits once re-expressed at 6dp. Widening the output
+// to 12dp keeps the round-trip accurate regardless of the rate's
+// magnitude.
+const InvertedDecimals uint8 = 12
 
 // DefaultBase is the base currency we query when operator doesn't
 // override. USD is chosen because: (1) it's our primary quote asset,

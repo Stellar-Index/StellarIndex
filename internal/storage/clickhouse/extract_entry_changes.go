@@ -125,8 +125,11 @@ func emitChangeSet(changes []xdr.LedgerEntryChange, opIdx int, emit func(int, xd
 
 // entryChangeRow builds one LedgerEntryChangeRow from an xdr.LedgerEntryChange.
 // ok=false when the change can't be marshalled (skip + tolerate). For
-// created/updated/state the key is derived from the entry and the entry XDR is
-// retained; for removed only the key is present.
+// created/updated/state/restored the key is derived from the entry and the
+// entry XDR is retained; for removed only the key is present. A P23 `restored`
+// change is a post-image (the SDK's ingest.Change reads it as Pre=nil,
+// Post=entry): dropping it leaves a restored entry's TTL row at its lapsed
+// value, and the lake liveness filter then serves the live entry as archived.
 func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int32, changeIdx uint32, c xdr.LedgerEntryChange) (LedgerEntryChangeRow, bool) {
 	row := LedgerEntryChangeRow{
 		LedgerSeq:   seq,
@@ -139,7 +142,8 @@ func entryChangeRow(seq uint32, closeTime time.Time, txHash string, opIndex int3
 
 	var key xdr.LedgerKey
 	switch c.Type {
-	case xdr.LedgerEntryChangeTypeLedgerEntryCreated, xdr.LedgerEntryChangeTypeLedgerEntryUpdated, xdr.LedgerEntryChangeTypeLedgerEntryState:
+	case xdr.LedgerEntryChangeTypeLedgerEntryCreated, xdr.LedgerEntryChangeTypeLedgerEntryUpdated,
+		xdr.LedgerEntryChangeTypeLedgerEntryState, xdr.LedgerEntryChangeTypeLedgerEntryRestored:
 		entry, ok := ledgerEntryOf(c)
 		if !ok {
 			return LedgerEntryChangeRow{}, false
@@ -235,7 +239,7 @@ func entryBalance(e xdr.LedgerEntry) int64 {
 	return 0
 }
 
-// ledgerEntryOf returns the LedgerEntry for a created/updated/state change.
+// ledgerEntryOf returns the LedgerEntry for a created/updated/state/restored change.
 func ledgerEntryOf(c xdr.LedgerEntryChange) (xdr.LedgerEntry, bool) {
 	switch c.Type {
 	case xdr.LedgerEntryChangeTypeLedgerEntryCreated:
@@ -244,6 +248,8 @@ func ledgerEntryOf(c xdr.LedgerEntryChange) (xdr.LedgerEntry, bool) {
 		return c.GetUpdated()
 	case xdr.LedgerEntryChangeTypeLedgerEntryState:
 		return c.GetState()
+	case xdr.LedgerEntryChangeTypeLedgerEntryRestored:
+		return c.GetRestored()
 	default:
 		return xdr.LedgerEntry{}, false
 	}
@@ -260,6 +266,8 @@ func changeTypeName(t xdr.LedgerEntryChangeType) string {
 		return "removed"
 	case xdr.LedgerEntryChangeTypeLedgerEntryState:
 		return "state"
+	case xdr.LedgerEntryChangeTypeLedgerEntryRestored:
+		return "restored"
 	default:
 		return "unknown"
 	}

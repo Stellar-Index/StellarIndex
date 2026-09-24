@@ -111,7 +111,13 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 		if err != nil {
 			return nil, fmt.Errorf("not a decimal: %q", s)
 		}
-		s = strconv.FormatFloat(f, 'f', targetDecimals+2, 64)
+		// Format to EXACTLY targetDecimals places, same as
+		// FloatToScaledInt, so strconv.FormatFloat performs the
+		// rounding (round-to-nearest) instead of DecimalStringToScaledInt
+		// truncating two extra digits toward zero (GH-998: a one-signed
+		// downward bias, the same class ADR-0003 rejects — see
+		// FloatToScaledInt's comment above).
+		s = strconv.FormatFloat(f, 'f', targetDecimals, 64)
 	}
 	return DecimalStringToScaledInt(s, targetDecimals)
 }
@@ -138,9 +144,30 @@ func SciDecimalStringToScaledInt(s string, targetDecimals int) (*big.Int, error)
 // The formula mirrors [redstone.reciprocalAtScale], which already did
 // this correctly for its Invert feeds — same operation, and the two
 // implementations disagreeing was the actual defect (audit MNY-06).
+//
+// InvertScaled is the srcDecimals == dstDecimals case of
+// [InvertScaledToDecimals]; see that doc for why a caller inverting a
+// weak-currency rate should usually widen the output scale instead.
 func InvertScaled(v *big.Int, decimals int) *big.Int {
-	p := Pow10(decimals)
-	num := new(big.Int).Mul(p, p) // 10^(2*decimals)
+	return InvertScaledToDecimals(v, decimals, decimals)
+}
+
+// InvertScaledToDecimals returns the multiplicative inverse of a
+// positive integer scaled at srcDecimals, re-expressed at dstDecimals:
+// round_half_up(10^(srcDecimals+dstDecimals) / v).
+//
+// Precision needed for a value and precision available for its
+// reciprocal are different quantities: a rate scaled at srcDecimals
+// significant digits (e.g. "1 EUR = 25335 VND" at 6dp) inverts to a
+// value whose true magnitude is far smaller (~0.0000395), and
+// re-emitting that inverse at the SAME scale as the input rate leaves
+// only one or two significant digits — a ~1.2% quantisation error for
+// VND, more than double the 50bps divergence threshold this feed
+// exists to police (GH-945). dstDecimals lets a caller widen the
+// output scale independently of the scale it inverted, without
+// touching the source rate's own precision.
+func InvertScaledToDecimals(v *big.Int, srcDecimals, dstDecimals int) *big.Int {
+	num := Pow10(srcDecimals + dstDecimals)
 	// round half-up = floor((2*num + v) / (2*v)) for v > 0.
 	twoNum := new(big.Int).Lsh(num, 1)
 	twoNum.Add(twoNum, v)
