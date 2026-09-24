@@ -14,6 +14,8 @@
 # URLs by design) or the og image Function, so a broken one went unnoticed.
 # Q225: nothing compared the deployed BUILD_SHA against main or measured
 # its wall-clock age.
+# T331: listing->detail closure probed only the API issuer endpoint —
+# never the site pages the listings link to, and never the asset listing.
 #
 # Run: bash scripts/ci/site-crawl-check-test.sh
 set -uo pipefail
@@ -84,6 +86,7 @@ chmod +x "$TMP/bin/curl"
 build_manifest() {
   SITE="$SITE" API="$API" FRESH_SHA="$FRESH_SHA" \
     ISSUERS_BODY="${ISSUERS_BODY-}" \
+    ASSETS_BODY="${ASSETS_BODY-}" \
     OG_STATUS="${OG_STATUS-}" \
     OG_CONTENT_TYPE="${OG_CONTENT_TYPE-}" \
     HOME_BADGE_TIME="${HOME_BADGE_TIME-}" \
@@ -118,7 +121,7 @@ exact = [
     {"url": f"{SITE}/", "body": home_html},
     {
         "url": f"{API}/v1/assets?asset_class=all&limit=100",
-        "body": json.dumps({"data": assets_rows}),
+        "body": os.environ["ASSETS_BODY"] or json.dumps({"data": assets_rows}),
     },
     {
         "url": f"{API}/v1/issuers?limit=20",
@@ -196,7 +199,7 @@ expect_fail() {
 }
 
 # --- happy path: every section (including the new 6/7/8) passes clean ---
-unset ISSUERS_BODY OG_STATUS OG_CONTENT_TYPE COMPARE_BODY PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS HOME_BADGE_TIME
+unset ISSUERS_BODY ASSETS_BODY OG_STATUS OG_CONTENT_TYPE COMPARE_BODY PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS HOME_BADGE_TIME
 run
 expect_pass "healthy site: ALL CHECKS PASSED"
 
@@ -206,6 +209,40 @@ ISSUERS_BODY="not json" run
 expect_fail "F136: unparseable issuer listing fails the check" \
   "issuer listing unfetchable or unparseable"
 unset ISSUERS_BODY
+
+# --- T331: the issuer page the /issuers listing links to must resolve on
+# the SITE, not only its API detail endpoint ---
+PROBE_OVERRIDE_MATCH="$SITE/issuers/GISSUERONE" PROBE_OVERRIDE_STATUS=404 run
+expect_fail "T331: a dead site issuer page for a listed issuer is caught" \
+  "listed issuer GISSUERONE[A-Z]* → site page HTTP 404"
+unset PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
+
+# --- T331: a listed asset whose detail endpoint is dead is caught. The
+# probe key is the row's slug (what the explorer links), not asset_id. ---
+PROBE_OVERRIDE_MATCH="$API/v1/assets/asset3" PROBE_OVERRIDE_STATUS=404 run
+expect_fail "T331: a dead API asset detail for a listed asset is caught" \
+  "listed asset asset3 → detail HTTP 404"
+unset PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
+
+# --- T331: a listed asset whose site page is dead is caught ---
+PROBE_OVERRIDE_MATCH="$SITE/assets/asset7" PROBE_OVERRIDE_STATUS=404 run
+expect_fail "T331: a dead site asset page for a listed asset is caught" \
+  "listed asset asset7 → site page HTTP 404"
+unset PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
+
+# --- T331: a row with no slug is linked by asset_id, so that is the key ---
+ASSETS_BODY='{"data":[{"asset_id":"CODE-GNOSLUGISSUER","slug":null}]}' \
+  PROBE_OVERRIDE_MATCH="$API/v1/assets/CODE-GNOSLUGISSUER" PROBE_OVERRIDE_STATUS=404 run
+expect_fail "T331: a slug-less row is probed by its asset_id" \
+  "listed asset CODE-GNOSLUGISSUER → detail HTTP 404"
+unset ASSETS_BODY PROBE_OVERRIDE_MATCH PROBE_OVERRIDE_STATUS
+
+# --- T331: an unparseable asset listing fails the closure check rather
+# than silently iterating zero rows ---
+ASSETS_BODY="not json" run
+expect_fail "T331: unparseable asset listing fails the closure check" \
+  "asset listing unfetchable or unparseable"
+unset ASSETS_BODY
 
 # --- T328/T300: a broken long-tail shell (CF Pages Function fallback)
 # must be caught — the sitemap/hub sample structurally cannot reach it ---
