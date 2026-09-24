@@ -1719,6 +1719,17 @@ was 404s on rewritten pairs because `flags.stale` was not flipped
 publish). Operators alert on `rate(...[5m]) > 0` for ≥ 2 min as
 the upstream-of-stale signal.
 
+### `stellarindex_aggregator_contribution_write_errors_total`
+
+Counter, no labels.
+
+Cumulative count of per-(pair, window) source-contribution batches the
+aggregator's `ContributionSink` failed to persist to
+`price_source_contributions`. The batch is written in one transaction,
+so a failure loses that bucket's whole breakdown rather than leaving a
+partial one whose weights do not sum to 1. A sustained rate means the
+source-contribution donut is serving an older bucket.
+
 ### `stellarindex_aggregator_empty_windows_total`
 
 Counter, no labels.

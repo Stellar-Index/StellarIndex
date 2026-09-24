@@ -128,7 +128,7 @@ func TestRefresh_TrendingMarketDoesNotFreezeAtWindowBoundaries(t *testing.T) {
 				Interval:     30 * time.Second,
 				FreezeWriter: writer,
 				Baselines: stubBaselineSource{multi: baseline.MultiBaseline{
-					Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 60_000},
+					Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 43_199},
 				}},
 			})
 			now := start.Add(2*time.Hour + 10*time.Second)
