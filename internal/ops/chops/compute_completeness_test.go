@@ -301,6 +301,28 @@ func TestCombineWatermark_LakeIncompleteStaysIncomplete(t *testing.T) {
 	}
 }
 
+// combineWatermark leaves FirstProblem at 0 for a failed CH
+// reconcile, so the find itself must be reported for the verdict write.
+func TestProjectionFoundProblem(t *testing.T) {
+	cases := []struct {
+		name      string
+		delta     int
+		blind     completeness.BlindSpots
+		floorLoss []string
+		want      bool
+	}{
+		{"clean", 0, completeness.BlindSpots{}, nil, false},
+		{"nonzero delta", -3, completeness.BlindSpots{}, nil, true},
+		{"blind spots", 0, completeness.BlindSpots{Ledgers: []uint32{62_000_001}, UndecodableMatched: 1}, nil, true},
+		{"floor loss", 0, completeness.BlindSpots{}, []string{"projection: served floor rose"}, true},
+	}
+	for _, tc := range cases {
+		if got := projectionFoundProblem(tc.delta, tc.blind, tc.floorLoss); got != tc.want {
+			t.Errorf("%s: projectionFoundProblem = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 // oldRetentionStart reproduces the PRE-FIX projection floor exactly as
 // compute-completeness computed it (`retentionStart = tip - 1_500_000`, applied
 // to any source with a trades target). It exists only so the tests below can

@@ -304,6 +304,97 @@ func TestUpsertCompletenessSnapshot_ProblemArmNeverLowersTip(t *testing.T) {
 	}
 }
 
+func storedVerdict(t *testing.T, ctx context.Context, store *timescale.Store) timescale.CompletenessSnapshot { //nolint:revive // t-first matches the package's other helpers.
+	t.Helper()
+	snaps, err := store.ListCompletenessSnapshots(ctx)
+	if err != nil {
+		t.Fatalf("list snapshots: %v", err)
+	}
+	for _, s := range snaps {
+		if s.Source == verdictPublishSource {
+			return s
+		}
+	}
+	t.Fatalf("no stored verdict for %s", verdictPublishSource)
+	return timescale.CompletenessSnapshot{}
+}
+
+// Finding T213: the ClickHouse projection reconcile is an aggregate, so a
+// failed reconcile (nonzero delta, blind spots, floor loss) leaves
+// first_problem_ledger at 0. A lower-tip run whose reconcile FOUND a
+// mismatch therefore missed the guard's problem arm and was dropped,
+// leaving the stored complete=true standing over a projection the run had
+// just proven wrong. RED on the unfixed guard (problem arm keyed on
+// first_problem_ledger alone): Applied=false and complete stays true.
+func TestPublishCompletenessVerdict_LowerTipReconcileFailureIsRecorded(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store := openVerdictStore(t, ctx, dsn)
+
+	if err := store.UpsertCompletenessSnapshot(ctx, verdictSnap(63_500_000)); err != nil {
+		t.Fatalf("seed stored verdict: %v", err)
+	}
+
+	// Clean substrate + recognition (lake_complete, first_problem 0); the
+	// reconcile over [50.0M, 63.0M] found delta != 0.
+	failed := verdictSnap(63_000_000)
+	failed.Complete, failed.ProjectionOK, failed.FoundProblem = false, false, true
+	failed.Detail = "projection: delta=-3 over [50000000,63000000]"
+	pub, err := store.PublishCompletenessVerdict(ctx, failed, nil)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if !pub.Applied {
+		t.Fatal("Applied = false: a lower-tip run whose reconcile found a mismatch was discarded by the never-regress guard")
+	}
+	got := storedVerdict(t, ctx, store)
+	if got.Complete || got.ProjectionOK {
+		t.Errorf("stored complete=%v projection_ok=%v, want both false (the found mismatch must replace the stale clean verdict)", got.Complete, got.ProjectionOK)
+	}
+	if !got.LakeComplete {
+		t.Error("stored lake_complete = false, want true (a projection failure never gates the lake axis)")
+	}
+	if got.Tip != 63_500_000 {
+		t.Errorf("tip_ledger = %d, want 63500000 (the problem arm must not regress the monotonic tip)", got.Tip)
+	}
+}
+
+// The problem arm must admit only a FOUND failure. A lower-tip run whose
+// projection was not evaluated (e.g. `-pass -to` below the stored
+// watermark: complete=false, projection_ok=false, projection_verified_from
+// 0, no problem ledger) proved nothing and must not replace the stored
+// clean verdict.
+func TestPublishCompletenessVerdict_LowerTipNotEvaluatedIsRejected(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store := openVerdictStore(t, ctx, dsn)
+
+	if err := store.UpsertCompletenessSnapshot(ctx, verdictSnap(63_500_000)); err != nil {
+		t.Fatalf("seed stored verdict: %v", err)
+	}
+
+	notEvaluated := verdictSnap(63_000_000)
+	notEvaluated.Complete, notEvaluated.ProjectionOK = false, false
+	notEvaluated.ProjectionVerifiedFrom = 0
+	notEvaluated.Detail = "projection: not evaluated (earlier claim failed at genesis)"
+	pub, err := store.PublishCompletenessVerdict(ctx, notEvaluated, nil)
+	if err != nil {
+		t.Fatalf("publish: %v", err)
+	}
+	if pub.Applied {
+		t.Error("Applied = true: a lower-tip run that evaluated nothing overwrote the stored verdict")
+	}
+	got := storedVerdict(t, ctx, store)
+	if !got.Complete || !got.ProjectionOK || got.ProjectionVerifiedFrom != 50_000_000 || got.Tip != 63_500_000 {
+		t.Errorf("stored verdict changed: complete=%v projection_ok=%v projection_verified_from=%d tip=%d, want true/true/50000000/63500000",
+			got.Complete, got.ProjectionOK, got.ProjectionVerifiedFrom, got.Tip)
+	}
+}
+
 // done2finished adapts the publish's result channel to the waiter's
 // "did it already finish?" probe WITHOUT consuming the result.
 func done2finished[T any](done chan T) func() bool {

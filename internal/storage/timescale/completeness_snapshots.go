@@ -23,6 +23,12 @@ type CompletenessSnapshot struct {
 	// notes/DECISION-genesis-complete-verdict-2026-07-16.md Option B.
 	LakeComplete bool
 	FirstProblem uint32 // 0 = none
+	// FoundProblem is write-only (no column): this run's own check found a
+	// failure that FirstProblem cannot localise — the ClickHouse projection
+	// reconcile is an aggregate, so a nonzero delta, blind spots or floor
+	// loss name no ledger. Never set for a claim that was merely not
+	// evaluated. See [CompletenessSnapshot.foundProblem].
+	FoundProblem bool
 	// ProjectionVerifiedFrom is the PROJECTION axis's floor (migration
 	// 0155): the lowest ledger the served tier holds any row at for this
 	// source, computed by chops.projectionScopes as the minimum over the
@@ -76,15 +82,23 @@ const upsertCompletenessSnapshotQuery = `
         -- if it lowers the watermark). The tip is monotonic (network head
         -- only grows), so a smaller tip means a stale/partial run — the
         -- problem arm still records the problem but tip_ledger itself is
-        -- floored at GREATEST above, never regressed.
+        -- floored at GREATEST above, never regressed. $14 is the problem
+        -- arm, computed by CompletenessSnapshot.foundProblem.
         WHERE EXCLUDED.tip_ledger >= completeness_snapshots.tip_ledger
-           OR EXCLUDED.first_problem_ledger > 0`
+           OR $14::boolean`
 
 // snapshotExecer is the slice of *sql.DB / *sql.Tx the verdict write
 // needs, so the same statement runs standalone or inside
 // [Store.PublishCompletenessVerdict]'s transaction.
 type snapshotExecer interface {
 	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// foundProblem is the CS-083 guard's problem arm: this run's own checks
+// found a failure, located (FirstProblem) or not (FoundProblem). A verdict
+// that is false only because a claim was not evaluated does not qualify.
+func (snap CompletenessSnapshot) foundProblem() bool {
+	return snap.FirstProblem > 0 || snap.FoundProblem
 }
 
 // execCompletenessSnapshot runs the verdict write and reports whether it
@@ -97,6 +111,7 @@ func execCompletenessSnapshot(ctx context.Context, ex snapshotExecer, snap Compl
 		snap.CoveragePct, snap.Complete, snap.LakeComplete, int64(snap.FirstProblem),
 		int64(snap.ProjectionVerifiedFrom),
 		snap.SubstrateOK, snap.RecognitionOK, snap.ProjectionOK, snap.Detail,
+		snap.foundProblem(),
 	)
 	if err != nil {
 		return false, err
