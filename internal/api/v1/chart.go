@@ -40,6 +40,10 @@ type ChartSeries struct {
 	Discontinuous bool               `json:"discontinuous"`            // true when points skip at least one whole bucket between two served buckets
 	GapStartsAt   *WireTime          `json:"gap_starts_at,omitempty"`  // last bucket before the WIDEST interior gap; only populated when Discontinuous
 	GapEndsAt     *WireTime          `json:"gap_ends_at,omitempty"`    // first bucket after it; only populated when Discontinuous
+	// MarketCapLowLiquidity: price_type=market_cap only. The series is
+	// withheld (empty points) for the reason /v1/assets/{id} withholds
+	// market_cap_usd and raises the same-named flag.
+	MarketCapLowLiquidity bool `json:"market_cap_low_liquidity,omitempty"`
 }
 
 // markDiscontinuity stamps the interior-gap signal onto a series that is
@@ -2156,13 +2160,18 @@ func (s *Server) handleChartMarketCapCrypto(
 	}
 
 	wire := marketCapPoints(pricePts, supPts, baseDec)
+	refused, lowLiquidity := s.marketCapSeriesRefused(ctx, pair.Base, wire)
+	if refused {
+		wire = []HistoryPointWire{}
+	}
 	series := ChartSeries{
-		AssetID:     pair.Base.String(),
-		Quote:       pair.Quote.String(),
-		Timeframe:   tfRaw,
-		Granularity: gran,
-		PriceType:   "market_cap",
-		Points:      wire,
+		AssetID:               pair.Base.String(),
+		Quote:                 pair.Quote.String(),
+		Timeframe:             tfRaw,
+		Granularity:           gran,
+		PriceType:             "market_cap",
+		Points:                wire,
+		MarketCapLowLiquidity: lowLiquidity,
 	}
 	if !from.IsZero() && len(wire) > 0 {
 		if grace := chartGranularityGrace(gran); wire[0].T.Time().Sub(from) > grace {
@@ -2174,6 +2183,34 @@ func (s *Server) handleChartMarketCapCrypto(
 		}
 	}
 	writeChartJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
+}
+
+// marketCapSeriesRefused applies the detail page's valuation guards
+// ([Server.marketCapRefused], then the turnover ceiling on the latest cap) to
+// a market-cap series, so the chart cannot plot a valuation the headline
+// refuses. It is today's verdict applied to the whole series: the guards'
+// inputs (venue count, trailing-24h volume) are current readings, and the
+// history of an asset that is not credibly valued now is withheld with it.
+// Unmeasured inputs never refuse, as in the guards themselves.
+func (s *Server) marketCapSeriesRefused(ctx context.Context, base canonical.Asset, wire []HistoryPointWire) (refused, lowLiquidity bool) {
+	if len(wire) == 0 {
+		return false, false
+	}
+	var probe AssetDetail
+	if s.minMarketCapVolumeUSD > 0 || s.maxMarketCapVolumeRatio > 0 {
+		s.populateVolume24h(ctx, &probe, base)
+	}
+	sources := 0
+	if probe.VolumeUSD24h != nil && s.minMarketCapVolumeUSD > 0 {
+		_, sources, _ = s.lookupUSDPriceWithSources(ctx, base)
+	}
+	if refused, lowLiquidity = s.marketCapRefused(base, sources, probe.VolumeUSD24h); refused {
+		return refused, lowLiquidity
+	}
+	if capExceedsObservedTurnover(wire[len(wire)-1].P, probe.VolumeUSD24h, s.maxMarketCapVolumeRatio) {
+		return true, true
+	}
+	return false, false
 }
 
 // marketCapPoints forward-fills daily supply onto the daily USD-price

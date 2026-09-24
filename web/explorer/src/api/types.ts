@@ -10337,6 +10337,21 @@ export interface components {
                  *     present when `discontinuous=true`.
                  */
                 gap_ends_at?: string;
+                /**
+                 * @description `price_type=market_cap` only. True when the series is
+                 *     withheld (`points` empty) because the asset's current
+                 *     market cannot support a valuation: the same FLOOR
+                 *     (single venue AND trailing-24h volume below
+                 *     aggregate.min_market_cap_volume_usd) and CEILING
+                 *     (latest cap above aggregate.max_market_cap_volume_ratio
+                 *     times trailing-24h volume) that set
+                 *     `Asset.market_cap_low_liquidity` on `/assets/{id}`.
+                 *     A classic asset whose code collides with a verified
+                 *     currency under another issuer also gets an empty
+                 *     series, without this flag, as the detail page withholds
+                 *     its cap. Omitted when false.
+                 */
+                market_cap_low_liquidity?: boolean;
             };
         };
         TradeRow: {
