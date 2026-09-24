@@ -679,6 +679,54 @@ func TestHistory_NativeReadsCryptoXLMAlias(t *testing.T) {
 	}
 }
 
+// TestHistory_PaginationUnionsInterleavedAliasForms pins
+// CA2-A04-harden-7: with two alias forms of the SAME asset both
+// populated and their rows genuinely interleaved in time, a first-hit
+// gate (whichever alias form's page came back non-empty on THAT
+// request) serves the leading form until it drains, then falls through
+// to the sibling form with a cursor already past that sibling's earlier
+// rows — losing them permanently, not just serving them out of order.
+//
+// Six rows: native/usdc at sec 10, 20, 90; crypto:XLM/usdc at sec 30,
+// 40, 50 — interleaved so the native form's LAST row (sec 90) sits after
+// every crypto:XLM row. Draining at limit=1 must still return the full
+// union in strict timestamp order; the pre-fix first-hit gate returns
+// only the three native rows (10, 20, 90) and silently drops all three
+// crypto:XLM rows once the native form drains past them.
+func TestHistory_PaginationUnionsInterleavedAliasForms(t *testing.T) {
+	t.Parallel()
+	native := mustParseAsset(t, "native")
+	xlmAlias := mustParseAsset(t, "crypto:XLM")
+	usdc := mustParseAsset(t, usdcClassicID)
+
+	rows := []canonical.Trade{
+		storedTrade(t, "sdex", 10, "1a", native, usdc, 1, 1),
+		storedTrade(t, "sdex", 20, "2a", native, usdc, 1, 1),
+		storedTrade(t, "coinbase", 30, "1b", xlmAlias, usdc, 1, 1),
+		storedTrade(t, "coinbase", 40, "2b", xlmAlias, usdc, 1, 1),
+		storedTrade(t, "coinbase", 50, "3b", xlmAlias, usdc, 1, 1),
+		storedTrade(t, "sdex", 90, "3a", native, usdc, 1, 1),
+	}
+	store := &orientedTradeStore{rows: rows}
+	ts := httpTestServer(t, v1.New(v1.Options{History: store}))
+
+	served, sizes := drainHistory(t, ts, orientationQuery(native, usdc, 1))
+	if len(served) != len(rows) {
+		t.Fatalf("drained %d rows in pages %v, want %d — the crypto:XLM form's rows must not be "+
+			"dropped once the native form drains past them", len(served), sizes, len(rows))
+	}
+	wantTxSuffix := []string{"1a", "2a", "1b", "2b", "3b", "3a"}
+	for i, row := range served {
+		if !strings.HasSuffix(row.TxHash, wantTxSuffix[i]) {
+			t.Errorf("row %d tx_hash = %s, want suffix %q — the union must be in strict timestamp order",
+				i, row.TxHash, wantTxSuffix[i])
+		}
+		if i > 0 && !served[i-1].Timestamp.Time().Before(row.Timestamp.Time()) {
+			t.Errorf("row %d ts %s is not after row %d ts %s", i, row.Timestamp, i-1, served[i-1].Timestamp)
+		}
+	}
+}
+
 // ─── /v1/history/since-inception ────────────────────────────────
 
 func TestHistorySinceInception_503WhenReaderNil(t *testing.T) {

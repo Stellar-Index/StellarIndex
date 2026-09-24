@@ -440,8 +440,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) { //nolin
 
 // historyNextCursor renders the page's next-cursor, or nil when the
 // window is drained. Where the resume point comes from — and why it is
-// not always the last row's own key — is [mergeTradeDirections]'s
-// [pageCursor]; this only puts it on the wire.
+// not always the last row's own key — is [mergeTradeStreams]'s
+// [streamPageCursor]; this only puts it on the wire.
 func historyNextCursor(next *historyCursor) *Pagination {
 	if next == nil {
 		return nil
@@ -841,11 +841,9 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, series, Flags{Triangulated: walk.proxied, Stale: walk.degraded})
 }
 
-// tradesInRangeAfterWithAliases reads one page of raw trades trying each
-// XLM dual-form alias pair and returns the FIRST alias form that holds
-// rows — the raw-trade twin of [Server.chartMergeAliasPairs], and
-// the first-hit gate [Server.tradesInRangeWithStablecoinFallback]
-// already applies to a non-fiat quote on the /v1/vwap side.
+// tradesInRangeAfterWithAliases reads one page of raw trades UNIONED
+// across every XLM dual-form alias pair — the raw-trade twin of
+// [Server.chartMergeAliasPairs].
 //
 // A literal-keyed read is blind to every venue publishing XLM under
 // the other id: `?base=native&quote=fiat:USD` served an empty page while
@@ -856,168 +854,49 @@ func (s *Server) handleHistorySinceInception(w http.ResponseWriter, r *http.Requ
 // reader to first.
 //
 // Each alias form is read in BOTH stored directions
-// ([Server.tradesInRangeAfterBothDirections]). A market has no stored
-// direction of its own — the SDEX decoder records XLM/USDC and USDC/XLM
-// as separate rows — and [HistoryReader.TradesInRangeAfter] keys on
-// (base_asset, quote_asset) literally, so reading one direction answered
-// `?base=AQUA&quote=USDC` with an empty page for every market recorded
-// the other way round, while /v1/ohlc and /v1/chart served the same
-// window from the same rows through a store read that folds the two
-// directions in SQL ([Store.OHLCSeries]).
+// ([readAliasFormStreams]). A market has no stored direction of its own —
+// the SDEX decoder records XLM/USDC and USDC/XLM as separate rows — and
+// [HistoryReader.TradesInRangeAfter] keys on (base_asset, quote_asset)
+// literally, so reading one direction answered `?base=AQUA&quote=USDC`
+// with an empty page for every market recorded the other way round,
+// while /v1/ohlc and /v1/chart served the same window from the same rows
+// through a store read that folds the two directions in SQL
+// ([Store.OHLCSeries]).
 //
-// First-hit ACROSS alias forms is unchanged: the endpoint's ordering
-// contract is per-pair — rows come back ordered (ts, ledger, tx_hash,
-// op_index, source) and `cursor` resumes on that tuple — so serving one
-// alias form per page keeps the cursor monotonic over exactly the
-// population it was minted from. Cross-form trade FUSION is the same
-// separate design decision [Server.chartMergeAliasPairs] defers on
-// the bucket side — it ranks the forms per bucket rather than blending
-// them; direction is not a form, it is the same market.
+// UNION, not first-hit. Serving the first alias form with a non-empty
+// page is unsound under pagination: the cursor carries no asset/form
+// field ([historyCursor]), so once the form that minted a cursor drains,
+// the next page fell through to a SIBLING form and resumed it from a
+// `ts` bound that excludes every one of ITS rows at or before that
+// point — not spliced in with a jump, silently gone (traced against a
+// two-form timeline with interleaved timestamps, CA2-A04-harden-7).
+// [mergeTradeStreams] instead merges every alias form's both-direction
+// streams into one keyset-ordered page under a single cursor over the
+// whole union — the same tie-group completion the two-direction merge
+// already needed, generalised across however many streams
+// [readAliasFormStreams] built. The literal form still leads on a tie
+// (ties break on stream order, earliest first), so a populated literal
+// pair still answers with its own rows first; it is just no longer the
+// ONLY form a page can ever carry.
+//
+// Cross-form trade FUSION at the bucket granularity remains
+// [Server.chartMergeAliasPairs]'s separate design decision to rank forms
+// per bucket rather than blend them: a bucket aggregates to one number,
+// so ranking picks the venue that answers it; a raw trade row does not
+// aggregate, so the correct union is every row, not a pick.
 //
 // The returned cursor is the read's own answer about where the next page
 // resumes, nil when the window is drained. It is deliberately NOT
 // derived from `len(page) == limit`: the merge can cut a page short
 // while rows remain (see the tie-group rule below), a page can run OVER
 // `limit`, and the resume point is not always the last row's own key
-// ([pageCursor]).
+// ([streamPageCursor]).
 //
 // Non-XLM pairs have exactly one spelling, so they cost one page read
-// per direction; the literal form is tried first, so a populated pair
-// answers on its first form. The caller's deadline covers ALL scans
-// (same rule as [Server.computeObservations]). The first error
-// propagates unchanged.
+// per direction, same as a single alias form always did. The caller's
+// deadline covers ALL scans (same rule as [Server.computeObservations]).
+// The first error propagates unchanged.
 func (s *Server) tradesInRangeAfterWithAliases(
-	ctx context.Context,
-	reader HistoryReader,
-	pair canonical.Pair,
-	from, to, afterTs time.Time,
-	afterLedger uint32,
-	afterTxHash, afterSource string,
-	afterOpIndex uint32,
-	limit int,
-) ([]canonical.Trade, *historyCursor, error) {
-	for _, b := range assetAliases(pair.Base) {
-		for _, q := range assetAliases(pair.Quote) {
-			ap, perr := canonical.NewPair(b, q)
-			if perr != nil {
-				continue // degenerate alias combination (identity pair)
-			}
-			page, next, err := s.tradesInRangeAfterBothDirections(ctx, reader, ap,
-				from, to, afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, limit)
-			if err != nil || len(page) > 0 {
-				return page, next, err
-			}
-		}
-	}
-	return nil, nil, nil
-}
-
-// tieGroupReadMax is the size of the ONE re-read that completes a tie
-// group, and it is [Store.TradesInRangeAfter]'s own clamp.
-//
-// A tie group is the set of rows sharing (ts, ledger, tx_hash,
-// op_index). The trades primary key (source, ledger, tx_hash, op_index,
-// ts) makes them differ only in `source`, so a group is one operation
-// attributed to several connectors and cannot hold more rows than there
-// are distinct sources — 28 in the live registry. Reading straight to
-// the store's maximum therefore ends the question in one go: a
-// direction that came back still inside the group after asking for
-// 10,000 rows would need 10,000 sources on one operation.
-//
-// It replaces a 1 -> 34 -> 100 -> 232 ladder with an attempt budget,
-// whose exhaustion branch cut a page THROUGH the group and minted a
-// last-row cursor — the round-one loss shape, in the branch documented
-// as the safe one, reachable at a 233-row group. One wider read in a
-// case that already needs a 29th source is the better trade than an
-// unreachable lossy path.
-const tieGroupReadMax = 10000
-
-// tradesInRangeAfterBothDirections reads `pair` and its flip, re-expresses
-// every row in `pair`'s orientation, and merges the two streams into one
-// page carrying the keyset order the store returned each of them in.
-//
-// CURSOR. The cursor tuple (ts, ledger, tx_hash, op_index, source) names
-// no asset, so the same `after*` values bound both directions and the
-// database applies them with its own comparison. The two streams are
-// disjoint: the trades primary key holds no asset column, so one stored
-// row satisfies exactly one direction's (base_asset, quote_asset)
-// predicate.
-//
-// ORDER. Both streams arrive ordered (ts, ledger, tx_hash, op_index,
-// source) ASC. The merge compares (ts, ledger, tx_hash, op_index) only,
-// and keeps each stream's own order for rows that tie on all four. That
-// is the whole point: ts, ledger and op_index are numeric, and tx_hash
-// is fixed-width lowercase hex, so Go's comparison of those four agrees
-// with the database's for every value the columns can hold. `source` is
-// the one component whose Go byte order can disagree with the database's
-// collation — source names carry `-` and `_`, which a non-C collation
-// weighs differently from their code points — so the merge never
-// compares it, and never cuts a page THROUGH a tie group either: a page
-// ending inside one would mint a cursor the database may order after a
-// row that was dropped, and that row would never be served. The cut
-// retreats to the group's LOWER edge, which is always union-correct.
-//
-// THE OVER-LIMIT PAGE, and the invariant that makes it safe. A group
-// that both opens the page and still holds rows at index `limit` cannot
-// take the lower edge — that edge is index 0, and a page of no rows
-// carrying a cursor stalls the client. Such a page runs to the group's
-// UPPER edge instead, over `limit`. It may do so ONLY IF THE GROUP IS
-// COMPLETE IN BOTH DIRECTIONS ([tieGroupFetched]): a direction whose
-// read stopped ON the group holds further rows of it that this page
-// cannot see, and the cursor — minted from the other direction's row —
-// would exclude them under the database's own `source` comparison. They
-// would never be served. So the group is COMPLETED FIRST, by re-reading
-// the truncated direction with a raised limit; a group is bounded by the
-// number of sources that can record one operation, so the raise
-// terminates. If it somehow does not, the page cuts at `limit` rather
-// than serving past rows it has not read.
-//
-// EXACTLY ONCE, and this is where that is won. A cursor naming the last
-// served ROW re-serves the rows of its group that the database orders
-// above it — the merge puts the requested orientation's rows first on a
-// tie and the database orders them by `source`, so the two disagree by
-// construction. A page that ends on a COMPLETE group therefore resumes
-// past the whole group by key instead ([tieGroupCursor]), which is
-// possible only because completeness is established here rather than
-// assumed. The over-limit page has no other case to fall to: a group it
-// would serve past is completed first, at the store's maximum read, and
-// the branch that used to cut through an incomplete one is gone
-// ([tieGroupReadMax]).
-//
-// PAGE. Each direction is asked for `limit` rows, so the first `limit`
-// of the merge are the first `limit` of the union. A page is short only
-// when both directions came back short, i.e. both are drained — except
-// at a tie-group cut, which is why the drained/not-drained answer rides
-// on the returned cursor rather than on the page length. Every page
-// advances: the resume point is at or past the last row served, and
-// strictly past the point it resumed from.
-//
-// COST, and it is not free. This is TWO store reads per alias form where
-// there was one, run in sequence, under the SAME 8s ceiling the caller
-// sets over every scan — so that budget now covers twice the reads. The
-// two halves of that pull in opposite directions and it is worth being
-// exact about which:
-//
-//   - The wide case is cheap. Only a pair with NO rows fans out over
-//     every alias form (first-hit stops at the first form that answers),
-//     and proving a form empty is the bounded index probe
-//     [HistoryReader.LatestTradePerSource]'s note measures at tens of
-//     milliseconds on this index family. A three-form empty pair costs
-//     six such probes.
-//   - The expensive case is narrow but real. A POPULATED pair answers on
-//     its first form and so costs two reads, not six — but a long cold
-//     window whose single-direction read already ran 4-8s now runs
-//     roughly twice that and reaches the ceiling. Such a request is
-//     answered with the endpoint's documented 503 problem, which is
-//     retryable and honest, rather than with half a market; narrowing
-//     `from`/`to` or lowering `limit` is the caller-side answer, and
-//     both were already the guidance for this ceiling.
-//
-// The two reads are deliberately NOT run concurrently. It would halve
-// the wall clock, but it doubles the in-flight database work per request
-// on a shared pool, and it makes the read ORDER unobservable — the
-// literal alias form leading is a property this endpoint pins.
-func (s *Server) tradesInRangeAfterBothDirections(
 	ctx context.Context,
 	reader HistoryReader,
 	pair canonical.Pair,
@@ -1031,88 +910,142 @@ func (s *Server) tradesInRangeAfterBothDirections(
 		return reader.TradesInRangeAfter(ctx, p, from, to,
 			afterTs, afterLedger, afterTxHash, afterSource, afterOpIndex, n)
 	}
-	// Requested orientation first — the order this endpoint pins.
-	stored, err := read(pair, limit)
+	streams, err := readAliasFormStreams(pair, limit, read)
 	if err != nil {
 		return nil, nil, err
 	}
-	flipped, err := read(pair.Flip(), limit)
-	if err != nil {
+	if streams, err = s.completeOverLimitTieGroup(streams, read, limit); err != nil {
 		return nil, nil, err
 	}
-	pages := directionPages{
-		stored: stored, flipped: flipped,
-		storedLimit: limit, flippedLimit: limit,
-	}
-	if pages, err = s.completeOverLimitTieGroup(pages, read, pair, limit); err != nil {
-		return nil, nil, err
-	}
-	page, next := mergeTradeDirections(pages, pair, limit)
+	page, next := mergeTradeStreams(streams, pair, limit)
 	return page, next, nil
 }
 
-// directionPages is one page read of each stored orientation, with the
-// limits the two reads were GIVEN. Those limits, not `limit`, are what
-// says whether a stream is drained: completing a tie group can raise one
-// of them.
-type directionPages struct {
-	stored, flipped           []canonical.Trade
-	storedLimit, flippedLimit int
+// readAliasFormStreams reads one both-direction page of every alias form
+// [tradesInRangeAfterWithAliases] must union, deduping a form pair that
+// canonicalises identically to one already read under a different
+// (base, quote) spelling. Requested orientation of the literal form
+// leads the returned slice — the order this endpoint pins on a tie.
+func readAliasFormStreams(
+	pair canonical.Pair, limit int,
+	read func(canonical.Pair, int) ([]canonical.Trade, error),
+) ([]tradeStream, error) {
+	var streams []tradeStream
+	seen := map[canonical.Pair]bool{}
+	for _, b := range assetAliases(pair.Base) {
+		for _, q := range assetAliases(pair.Quote) {
+			ap, perr := canonical.NewPair(b, q)
+			if perr != nil {
+				continue // degenerate alias combination (identity pair)
+			}
+			if seen[ap] {
+				continue
+			}
+			seen[ap] = true
+			stored, err := read(ap, limit)
+			if err != nil {
+				return nil, err
+			}
+			flipped, err := read(ap.Flip(), limit)
+			if err != nil {
+				return nil, err
+			}
+			streams = append(streams,
+				tradeStream{pair: ap, rows: stored, limit: limit},
+				tradeStream{pair: ap.Flip(), rows: flipped, limit: limit})
+		}
+	}
+	return streams, nil
 }
 
-// completeOverLimitTieGroup re-reads whichever direction stopped ON the
-// tie group that a `limit`-row page would have to be served past, so
-// that the merge may serve the group whole. Returns `pages` untouched
-// when no group straddles the page edge, which is every ordinary
-// request: this path needs more rows sharing one
-// (ts, ledger, tx_hash, op_index) than the caller asked for in total.
+// tieGroupReadMax is the size of the ONE re-read that completes a tie
+// group, and it is [Store.TradesInRangeAfter]'s own clamp.
 //
-// One re-read, straight to [tieGroupReadMax], and then the group is
-// whole — see that constant for why there is no second round and no
-// budget to exhaust. The remaining check exists only to make the
-// impossible state LOUD: it does not branch, because a branch here
-// cannot both serve the group and keep the cursor honest, and the state
-// it reports needs 10,000 sources on a single operation.
+// A tie group is the set of rows sharing (ts, ledger, tx_hash,
+// op_index). The trades primary key (source, ledger, tx_hash, op_index,
+// ts) makes them differ only in `source`, so a group is one operation
+// attributed to several connectors and cannot hold more rows than there
+// are distinct sources — 28 in the live registry. Reading straight to
+// the store's maximum therefore ends the question in one go: a stream
+// that came back still inside the group after asking for 10,000 rows
+// would need 10,000 sources on one operation.
 //
-// See [Server.tradesInRangeAfterBothDirections] for why a group served
-// incomplete loses rows.
+// It replaces a 1 -> 34 -> 100 -> 232 ladder with an attempt budget,
+// whose exhaustion branch cut a page THROUGH the group and minted a
+// last-row cursor — the round-one loss shape, in the branch documented
+// as the safe one, reachable at a 233-row group. One wider read in a
+// case that already needs a 29th source is the better trade than an
+// unreachable lossy path.
+const tieGroupReadMax = 10000
+
+// tradeStream is one raw keyset-ordered page read behind the
+// alias/direction fan-in [readAliasFormStreams] builds: the pair it was
+// read with (so a tie group straddling it can be re-read with the right
+// argument) and the limit it was actually GIVEN, which is not always the
+// page's `limit` once [Server.completeOverLimitTieGroup] raises it — that
+// per-stream limit, not the page limit, is what says a stream is
+// drained.
+type tradeStream struct {
+	pair  canonical.Pair
+	rows  []canonical.Trade
+	limit int
+}
+
+// completeOverLimitTieGroup re-reads every stream that stopped ON the
+// tie group a `limit`-row page would have to serve past, so the merge
+// may serve the group whole. Returns `streams` untouched when no group
+// straddles the page edge, which is every ordinary request: this path
+// needs more rows sharing one (ts, ledger, tx_hash, op_index) than the
+// caller asked for in total, across every alias form.
+//
+// A group that both opens the page and still holds rows at index
+// `limit` cannot take the lower edge — that edge is index 0, and a page
+// of no rows carrying a cursor would stall the client — so it must run
+// to the group's UPPER edge instead, over `limit`. That is only safe if
+// the group is COMPLETE across every stream that could hold more of it
+// ([tieGroupFetched]): a stream whose read stopped ON the group may hold
+// further rows differing only in `source`, and a cursor minted past the
+// group would exclude them under the database's own comparison. So the
+// group is completed here first — one re-read per under-read stream,
+// straight to [tieGroupReadMax] (see that constant for why one read
+// ends the question). The remaining check exists only to make the
+// impossible state LOUD: a group needing more rows than there are
+// distinct sources.
 func (s *Server) completeOverLimitTieGroup(
-	pages directionPages,
+	streams []tradeStream,
 	read func(canonical.Pair, int) ([]canonical.Trade, error),
-	pair canonical.Pair,
 	limit int,
-) (directionPages, error) {
-	group, straddles := overLimitTieGroup(pages.stored, pages.flipped, limit)
+) ([]tradeStream, error) {
+	group, straddles := overLimitTieGroup(streams, limit)
 	if !straddles {
-		return pages, nil
+		return streams, nil
 	}
-	var err error
-	if !tieGroupFetched(pages.stored, group, pages.storedLimit) {
-		pages.storedLimit = tieGroupReadMax
-		if pages.stored, err = read(pair, pages.storedLimit); err != nil {
-			return pages, err
+	complete := true
+	for i := range streams {
+		if tieGroupFetched(streams[i].rows, group, streams[i].limit) {
+			continue
+		}
+		rows, err := read(streams[i].pair, tieGroupReadMax)
+		if err != nil {
+			return streams, err
+		}
+		streams[i].rows, streams[i].limit = rows, tieGroupReadMax
+		if !tieGroupFetched(streams[i].rows, group, streams[i].limit) {
+			complete = false
 		}
 	}
-	if !tieGroupFetched(pages.flipped, group, pages.flippedLimit) {
-		pages.flippedLimit = tieGroupReadMax
-		if pages.flipped, err = read(pair.Flip(), pages.flippedLimit); err != nil {
-			return pages, err
-		}
-	}
-	if !tieGroupFetched(pages.stored, group, pages.storedLimit) ||
-		!tieGroupFetched(pages.flipped, group, pages.flippedLimit) {
+	if !complete {
 		// Not survivable as a silent state: the page below WILL serve
 		// the group and mint a cursor past it, so a row this read never
 		// saw would be skipped. Error, not Warn — it means the trades
 		// table holds more rows on one operation than there are sources,
 		// which is a data-integrity failure, not a busy market.
 		s.logger.Error("history page: tie group larger than the store's maximum read",
-			"base", pair.Base.String(), "quote", pair.Quote.String(),
 			"ts", group.Timestamp, "ledger", group.Ledger,
 			"tx_hash", group.TxHash, "op_index", group.OpIndex,
 			"read_limit", tieGroupReadMax)
 	}
-	return pages, nil
+	return streams, nil
 }
 
 // overLimitTieGroup returns the tie group a page would have to serve
@@ -1120,34 +1053,46 @@ func (s *Server) completeOverLimitTieGroup(
 // merge and still holds rows at index `limit` — and whether there is
 // one.
 //
-// Computed from the two streams rather than from the merged slice: rows
-// of one group are contiguous at the head of each stream (both arrive
-// key-ordered), so counting the two heads answers it without building
+// Computed from the streams rather than from the merged slice: rows of
+// one group are contiguous at the head of each stream (every stream
+// arrives key-ordered), so summing the heads answers it without building
 // the merge. Every other cut retreats to a group's lower edge and never
 // serves past `limit`, so this is the only shape whose completeness
 // matters.
-func overLimitTieGroup(stored, flipped []canonical.Trade, limit int) (canonical.Trade, bool) {
+func overLimitTieGroup(streams []tradeStream, limit int) (canonical.Trade, bool) {
 	var none canonical.Trade
 	if limit < 1 {
 		return none, false
 	}
-	var head canonical.Trade
-	switch {
-	case len(stored) == 0 && len(flipped) == 0:
+	head, ok := earliestStreamHead(streams)
+	if !ok {
 		return none, false
-	case len(stored) == 0:
-		head = flipped[0]
-	case len(flipped) == 0:
-		head = stored[0]
-	case tradeOrderLess(flipped[0], stored[0]):
-		head = flipped[0]
-	default:
-		head = stored[0]
 	}
-	if leadingTieGroupLen(stored, head)+leadingTieGroupLen(flipped, head) <= limit {
+	total := 0
+	for _, st := range streams {
+		total += leadingTieGroupLen(st.rows, head)
+	}
+	if total <= limit {
 		return none, false
 	}
 	return head, true
+}
+
+// earliestStreamHead returns the smallest first row across every
+// stream's head by [tradeOrderLess], and whether any stream held a row
+// at all.
+func earliestStreamHead(streams []tradeStream) (canonical.Trade, bool) {
+	var head canonical.Trade
+	found := false
+	for _, st := range streams {
+		if len(st.rows) == 0 {
+			continue
+		}
+		if !found || tradeOrderLess(st.rows[0], head) {
+			head, found = st.rows[0], true
+		}
+	}
+	return head, found
 }
 
 // leadingTieGroupLen counts the rows at the head of one key-ordered
@@ -1161,18 +1106,18 @@ func leadingTieGroupLen(rows []canonical.Trade, probe canonical.Trade) int {
 	return n
 }
 
-// tieGroupFetched reports whether one direction's read returned EVERY
-// row it holds in `probe`'s tie group.
+// tieGroupFetched reports whether one stream's read returned EVERY row
+// it holds in `probe`'s tie group.
 //
 // True when the read came back SHORT of the limit it was given — the
-// direction is drained, so it holds nothing unfetched at all — or when
-// its LAST row falls outside the group: rows arrive in key order, so a
-// last row past the group proves the group ended inside what was read.
+// stream is drained, so it holds nothing unfetched at all — or when its
+// LAST row falls outside the group: rows arrive in key order, so a last
+// row past the group proves the group ended inside what was read.
 //
 // False is the state that loses rows. The read stopped ON the group, so
-// the direction may hold further rows of it, differing from the fetched
+// the stream may hold further rows of it, differing from the fetched
 // ones only in `source`. A page served past such a group mints its
-// cursor from the other direction's row, and the database's own
+// cursor from another stream's row, and the database's own
 // `(ts, ledger, tx_hash, op_index, source) >` predicate then excludes
 // every unfetched row whose source it orders below that one. Proven
 // against a three-source group at limit=1, where the page served two
@@ -1184,48 +1129,59 @@ func tieGroupFetched(rows []canonical.Trade, probe canonical.Trade, readLimit in
 	return !sameTradeOrderKey(rows[len(rows)-1], probe)
 }
 
-// mergeTradeDirections merges two keyset-ordered pages of the same
-// market into one page in `want`'s orientation, cuts it without
-// splitting a tie group, and reports whether rows remain behind the cut.
+// mergeTradeStreams merges every alias-form/direction stream
+// [readAliasFormStreams] built into one page in `want`'s orientation,
+// cuts it without splitting a tie group, and reports whether rows
+// remain behind the cut.
 //
-// storedLimit / flippedLimit are the limits the two reads were actually
-// GIVEN, which is not `limit` once a group has been completed by a
-// raised re-read — they are what says whether a stream is drained. See
-// [Server.tradesInRangeAfterBothDirections] for why the comparison stops
-// at op_index and what the over-limit page requires.
-func mergeTradeDirections(pages directionPages, want canonical.Pair, limit int) ([]canonical.Trade, *historyCursor) {
+// A k-way generalisation of the endpoint's original two-stream
+// (stored/flipped) merge: on a tie, the earlier stream in the slice
+// wins, so the literal alias form's requested orientation still leads.
+// `st.limit`, not the page `limit`, is what says a stream is drained —
+// completing a tie group can raise it ([completeOverLimitTieGroup]).
+// Every stream arrives ordered (ts, ledger, tx_hash, op_index, source)
+// ASC; the merge compares the first four only and keeps stream order on
+// a tie, for the same reason the two-stream merge always did — Go's
+// comparison of those four agrees with the database's for every value
+// the columns can hold, but `source`'s Go byte order can disagree with
+// the database's collation, so the merge never compares it and never
+// cuts a page THROUGH a tie group.
+func mergeTradeStreams(streams []tradeStream, want canonical.Pair, limit int) ([]canonical.Trade, *historyCursor) {
 	if limit < 1 {
 		limit = 1
 	}
-	stored, flipped := pages.stored, pages.flipped
-	// A direction that filled its own read may hold more rows behind it
-	// even when nothing survives the cut below, so the drained answer is
-	// taken from the reads, not from the merged length.
-	full := len(stored) >= pages.storedLimit || len(flipped) >= pages.flippedLimit
-
-	merged := make([]canonical.Trade, 0, len(stored)+len(flipped))
-	take := func(t canonical.Trade) {
-		merged = append(merged, orientTradeTo(t, want))
-	}
-	i, j := 0, 0
-	for i < len(stored) && j < len(flipped) {
-		if tradeOrderLess(flipped[j], stored[i]) {
-			take(flipped[j])
-			j++
-			continue
+	total, full := 0, false
+	for _, st := range streams {
+		total += len(st.rows)
+		if len(st.rows) >= st.limit {
+			// A stream that filled its own read may hold more rows
+			// behind it even when nothing survives the cut below, so
+			// the drained answer is taken from the reads, not from the
+			// merged length.
+			full = true
 		}
-		take(stored[i])
-		i++
 	}
-	for ; i < len(stored); i++ {
-		take(stored[i])
-	}
-	for ; j < len(flipped); j++ {
-		take(flipped[j])
+	merged := make([]canonical.Trade, 0, total)
+	idx := make([]int, len(streams))
+	for {
+		best := -1
+		for i, st := range streams {
+			if idx[i] >= len(st.rows) {
+				continue
+			}
+			if best == -1 || tradeOrderLess(st.rows[idx[i]], streams[best].rows[idx[best]]) {
+				best = i
+			}
+		}
+		if best == -1 {
+			break
+		}
+		merged = append(merged, orientTradeTo(streams[best].rows[idx[best]], want))
+		idx[best]++
 	}
 
 	if limit >= len(merged) {
-		return merged, pageCursor(merged, len(merged), pages, full)
+		return merged, streamPageCursor(merged, len(merged), streams, full)
 	}
 	cut := limit
 	for cut > 0 && sameTradeOrderKey(merged[cut-1], merged[cut]) {
@@ -1235,21 +1191,19 @@ func mergeTradeDirections(pages directionPages, want canonical.Pair, limit int) 
 		// The group opens the page and reaches past `limit`, so the
 		// lower edge is index 0 and a page of no rows carrying a cursor
 		// would stall the client. Run to the group's UPPER edge instead.
-		// [Server.completeOverLimitTieGroup] has already read both
-		// directions to the store's maximum if it had to, so the group
-		// is whole and the cursor this mints has no unread row behind
-		// it. There is deliberately no other branch here: the one this
-		// replaced cut through the group and lost a row.
+		// [completeOverLimitTieGroup] has already read every stream to
+		// the store's maximum if it had to, so the group is whole and
+		// the cursor this mints has no unread row behind it.
 		cut = 1
 		for cut < len(merged) && sameTradeOrderKey(merged[cut-1], merged[cut]) {
 			cut++
 		}
 	}
-	return merged[:cut], pageCursor(merged, cut, pages, cut < len(merged) || full)
+	return merged[:cut], streamPageCursor(merged, cut, streams, cut < len(merged) || full)
 }
 
-// pageCursor is where the next page resumes after `merged[:cut]`, or nil
-// when the window is drained.
+// streamPageCursor is where the next page resumes after `merged[:cut]`,
+// or nil when the window is drained.
 //
 // TWO FORMS, and which one is used is the difference between
 // exactly-once and at-least-once pagination on this endpoint.
@@ -1257,38 +1211,25 @@ func mergeTradeDirections(pages directionPages, want canonical.Pair, limit int) 
 // The default names the LAST SERVED ROW's primary key. It never skips —
 // but a row tying with it on (ts, ledger, tx_hash, op_index) and served
 // EARLIER on the same page comes back when the database orders that
-// row's `source` above the cursor's, and is served twice. The merge puts
-// the requested orientation's rows before the flipped one's on a tie,
-// and the database orders the group by `source`, so the two disagree by
-// construction whenever a group spans both directions.
+// row's `source` above the cursor's, and is served twice. The merge
+// puts earlier streams' rows before later ones' on a tie, and the
+// database orders the group by `source`, so the two can disagree by
+// construction whenever a group spans more than one stream.
 //
-// So when the page ends on a tie group that is COMPLETE in both
-// directions — no fetched row of it left behind the cut, and neither
-// read stopped inside it — the cursor steps past the whole group by key
-// instead ([tieGroupCursor]). Every row of the group has been served, so
-// nothing is skipped, and no row of it can return.
-//
-// Completeness is REQUIRED, not assumed: it is the same
-// [tieGroupFetched] predicate the over-limit page turns on. Where it
-// does not hold, the last-row cursor stands — and it is exact there
-// too, for a reason worth writing down rather than trusting. A page can
-// only END on a group whose fetched rows all came from ONE direction:
-// the cut retreats BELOW any group it straddles, so a group at the
-// page's edge is one the page holds whole, and holding a group whole
-// from both directions while a direction is still inside it needs more
-// rows than the page has room for. Within one direction the database's
-// own ordering governs the cursor, so nothing of that group repeats and
-// nothing of it is skipped. The measured sweeps agree: zero duplicates
-// across every drain.
-func pageCursor(merged []canonical.Trade, cut int, pages directionPages, more bool) *historyCursor {
+// So when the page ends on a tie group that is COMPLETE across every
+// stream that could hold more of it — no fetched row of it left behind
+// the cut, and no stream stopped inside it ([tieGroupFetched]) — the
+// cursor steps past the whole group by key instead ([tieGroupCursor]).
+// Every row of the group has been served, so nothing is skipped, and no
+// row of it can return. Where completeness does not hold, the last-row
+// cursor stands.
+func streamPageCursor(merged []canonical.Trade, cut int, streams []tradeStream, more bool) *historyCursor {
 	if !more || cut < 1 || cut > len(merged) {
 		return nil
 	}
 	last := merged[cut-1]
 	endsGroup := cut == len(merged) || !sameTradeOrderKey(last, merged[cut])
-	if endsGroup &&
-		tieGroupFetched(pages.stored, last, pages.storedLimit) &&
-		tieGroupFetched(pages.flipped, last, pages.flippedLimit) {
+	if endsGroup && allStreamsFetchedGroup(streams, last) {
 		if c, ok := tieGroupCursor(last); ok {
 			return &c
 		}
@@ -1300,6 +1241,17 @@ func pageCursor(merged []canonical.Trade, cut int, pages directionPages, more bo
 		txHash:  last.TxHash,
 		opIndex: last.OpIndex,
 	}
+}
+
+// allStreamsFetchedGroup reports whether every stream that could hold
+// more of `last`'s tie group has already been read in full.
+func allStreamsFetchedGroup(streams []tradeStream, last canonical.Trade) bool {
+	for _, st := range streams {
+		if !tieGroupFetched(st.rows, last, st.limit) {
+			return false
+		}
+	}
+	return true
 }
 
 // tieGroupCursor is the resume point strictly PAST a tie group whose
@@ -1382,8 +1334,7 @@ func orientTradeTo(t canonical.Trade, want canonical.Pair) canonical.Trade {
 // tradeOrderLess is the endpoint's keyset order, stopping at op_index —
 // the four components Go and the database compare identically. Rows that
 // tie on all four are ordered by `source` in the database and are left
-// in their stream's order here; see
-// [Server.tradesInRangeAfterBothDirections].
+// in their stream's order here; see [mergeTradeStreams].
 func tradeOrderLess(a, b canonical.Trade) bool {
 	switch {
 	case !a.Timestamp.Equal(b.Timestamp):
