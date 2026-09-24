@@ -77,6 +77,7 @@ func decodeRouterCallsFromOp(t *testing.T, op sdkxdr.Operation, ledger uint32, t
 			Args:              call.Args,
 			CallPath:          call.CallPath,
 			CallPathContracts: call.CallPathContracts,
+			AuthOccurrence:    call.AuthOccurrence,
 		})
 		if err != nil {
 			t.Fatalf("Decode: %v", err)

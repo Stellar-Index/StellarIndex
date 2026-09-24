@@ -63,5 +63,6 @@ func (d *Decoder) Decode(ctx dispatcher.ContractCallContext) ([]consumer.Event, 
 	if err != nil {
 		return nil, err
 	}
+	swap.AuthOccurrence = ctx.AuthOccurrence
 	return []consumer.Event{Event{Swap: *swap}}, nil
 }

@@ -70,3 +70,29 @@ func TestCallSig(t *testing.T) {
 		t.Errorf("CallSig len = %d, want 32 hex chars", len(base.CallSig()))
 	}
 }
+
+// TestCallSig_AuthOccurrence pins that occurrence 0 hashes exactly as stored
+// rows were keyed (a changed sig would re-insert every row beside its old PK)
+// and that each later occurrence gets its own sig.
+func TestCallSig_AuthOccurrence(t *testing.T) {
+	t.Parallel()
+	base := RouterSwap{
+		Function:  FnSwapExactTokensForTokens,
+		Recipient: "GRECIPIENT",
+		Path:      []string{"CTOKENA", "CTOKENB"},
+		AmountIn:  canonical.NewAmount(big.NewInt(1_000_000)),
+		AmountOut: canonical.NewAmount(big.NewInt(2_000_000)),
+	}
+	if got, want := base.CallSig(), "1e3e6d4d561957e6db1756237ec46e8e"; got != want {
+		t.Fatalf("occurrence-0 CallSig = %q, want the stored %q", got, want)
+	}
+	seen := map[string]int{base.CallSig(): 0}
+	for n := 1; n <= 3; n++ {
+		v := base
+		v.AuthOccurrence = n
+		if prev, dup := seen[v.CallSig()]; dup {
+			t.Errorf("occurrence %d shares CallSig with occurrence %d", n, prev)
+		}
+		seen[v.CallSig()] = n
+	}
+}

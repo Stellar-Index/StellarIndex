@@ -144,7 +144,9 @@ not silently dropped:
 - `events.go` — `RouterSwap` event type + canonical contract IDs +
   `CallKind*` constants + `CallSig()` (PK discriminator; tree
   position deliberately excluded from the hash so auth-tree
-  duplicates of the same call still dedup).
+  duplicates of the same call still dedup; only the per-auth-entry
+  `AuthOccurrence` ordinal enters it, so a second identical call in
+  one entry is kept).
 - `decode.go` — pure SCVal-args → `RouterSwap` parser.
 - `consumer.go` — legacy log-only sink shim (persistence is
   `internal/pipeline/sink.go`).
