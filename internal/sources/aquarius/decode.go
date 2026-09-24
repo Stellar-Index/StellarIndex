@@ -218,7 +218,8 @@ func decodeReserves(e *events.Event, closedAt time.Time, kind string) (ReservesE
 //	        [amount_0, …, amount_{n-1}, share_amount]
 //
 // where n = len(topics) - 1 is the pool's token count (2 for a
-// volatile pool, 3–4 for stableswap — all three widths observed live).
+// volatile pool, 3–4 for stableswap; real fixtures cover 2 and 3,
+// the 4-token width is covered by an SDK-built test only).
 // The trailing body element is the LP-share amount minted (deposit) /
 // burned (withdraw). Decode by the (topic-count, body-length)
 // relationship rather than a fixed 2-token assumption so N-token

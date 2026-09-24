@@ -52,9 +52,11 @@ below. Reserves/liquidity/rewards/admin are ADDITIVE analytics —
 Aquarius has no published price, so these rows never reach VWAP.
 
 `update_reserves` and the liquidity events fire on N-token pools
-(topic_count 3/4/5 observed live for 2/3/4-token pools); the decoder
-fans out one row per token position rather than assuming a 2-token
-(a/b) shape, so stableswap events are captured, not dropped.
+(topic_count 3/4/5 for 2/3/4-token pools); the decoder fans out one
+row per token position rather than assuming a 2-token (a/b) shape, so
+stableswap events are captured, not dropped. Real lake fixtures in
+`liquidity_decode_test.go` pin the 2-token and 3-token widths; the
+4-token width (topic_count 5) is pinned by an SDK-built event only.
 
 ## Quirks
 

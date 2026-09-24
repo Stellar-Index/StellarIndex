@@ -197,6 +197,58 @@ func TestDecodeLiquidity_real3TokenDeposit(t *testing.T) {
 	}
 }
 
+// TestDecodeLiquidity_4TokenStableswap pins the widest stableswap
+// shape (topic_count 5, body length 5). No real lake fixture exists
+// for it, so the event is SDK-built; it must fan out to four exact
+// (token, amount) pairs, and a body sized for three tokens must be
+// rejected rather than silently re-sliced.
+func TestDecodeLiquidity_4TokenStableswap(t *testing.T) {
+	tokens := make([]string, 4)
+	topics := []string{realDeposit3Topic0}
+	for i := range tokens {
+		tokens[i] = makeContractStrkey(t, byte(0x41+i))
+		topics = append(topics, encodeContractAddrFromStrkey(t, tokens[i]))
+	}
+	amounts := []*big.Int{
+		big.NewInt(1_000_0000000),
+		big.NewInt(2_000_0000000),
+		mustBig(t, "123456789012345678901234567890"),
+		big.NewInt(0),
+	}
+	shares := big.NewInt(42_0000000)
+	e := &events.Event{
+		ContractID: "CC3HFYXIBYO3NPPKHQMWZDNSGSTZ6DUG26WHDF2UGTC3VBY56SESDFQM",
+		Topic:      topics,
+		Value:      encodeAmountVec(t, append(append([]*big.Int{}, amounts...), shares)...),
+	}
+	if got := classify(e); got != EventDepositLiquidity {
+		t.Fatalf("classify 4-token deposit = %q, want %q", got, EventDepositLiquidity)
+	}
+	lq, err := decodeLiquidity(e, LiquidityDeposit, closedAtTest)
+	if err != nil {
+		t.Fatalf("decodeLiquidity(4-token deposit): %v", err)
+	}
+	if len(lq.Tokens) != 4 || len(lq.Amounts) != 4 {
+		t.Fatalf("tokens=%d amounts=%d, want 4/4", len(lq.Tokens), len(lq.Amounts))
+	}
+	for i := range tokens {
+		if lq.Tokens[i] != tokens[i] {
+			t.Errorf("token[%d] = %s, want %s", i, lq.Tokens[i], tokens[i])
+		}
+		if lq.Amounts[i].String() != amounts[i].String() {
+			t.Errorf("amount[%d] = %s, want %s", i, lq.Amounts[i], amounts[i])
+		}
+	}
+	if lq.Shares.String() != shares.String() {
+		t.Errorf("shares = %s, want %s", lq.Shares, shares)
+	}
+
+	e.Value = encodeAmountVec(t, amounts[0], amounts[1], amounts[2], shares)
+	if _, err := decodeLiquidity(e, LiquidityDeposit, closedAtTest); !errors.Is(err, ErrMalformedPayload) {
+		t.Errorf("4 topics-of-tokens with a 3-token body: err = %v, want ErrMalformedPayload", err)
+	}
+}
+
 // ─── i128 discipline + malformed rejection (SDK-built) ───────────
 
 // encodeAmountVec builds a Vec<i128> body from arbitrary big.Ints —
