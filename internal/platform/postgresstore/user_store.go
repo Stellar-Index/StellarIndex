@@ -16,10 +16,22 @@ import (
 )
 
 // UserStore implements [platform.UserStore] against Postgres.
-type UserStore struct{ s *Store }
+type UserStore struct {
+	s              *Store
+	sweepBatchRows int
+}
 
 // NewUserStore returns the Postgres-backed implementation.
-func NewUserStore(s *Store) *UserStore { return &UserStore{s: s} }
+func NewUserStore(s *Store) *UserStore {
+	return &UserStore{s: s, sweepBatchRows: defaultSweepBatchRows}
+}
+
+// WithSweepBatchSize overrides the per-statement row cap of
+// SweepEndedSessions so tests can reach a batch boundary cheaply.
+func (r *UserStore) WithSweepBatchSize(n int) *UserStore {
+	r.sweepBatchRows = n
+	return r
+}
 
 const userColumns = `
 	id, account_id, email,
@@ -370,7 +382,7 @@ func (r *UserStore) SweepEndedSessions(ctx context.Context, olderThan time.Time)
 		      LIMIT $2
 		 )
 	`
-	return r.s.deleteInBatches(ctx, "sweep ended sessions", q, olderThan, defaultSweepBatchRows)
+	return r.s.deleteInBatches(ctx, "sweep ended sessions", q, olderThan, r.sweepBatchRows)
 }
 
 // Compile-time interface check.

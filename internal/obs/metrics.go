@@ -4831,9 +4831,9 @@ var WorkerPanicsTotal = prometheus.NewCounterVec(
 	[]string{"worker"},
 )
 
-// Auth-reaper liveness (#368 M5). Three background reapers bound the
-// attacker-fillable / speculative auth tables (login_code_lockouts,
-// magic_link_tokens, speculative-account orphans). Each already reports
+// Auth-reaper liveness (#368 M5). Background reapers bound the
+// attacker-fillable / speculative / PII auth tables (login_code_lockouts,
+// magic_link_tokens, speculative-account orphans, ended sessions). Each reports
 // WHAT it did — rows deleted, errors, row-count gauges — but none reported
 // THAT it ran. A reaper that dies (panic, hung Postgres call, never
 // started) leaves every one of those signals frozen at a healthy-looking
