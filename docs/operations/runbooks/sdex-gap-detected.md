@@ -18,7 +18,7 @@ severity: P1
 
 This is the SDEX-specific surface of [ingest-gap-detected](ingest-gap-detected.md). SDEX is classic-DEX and does NOT flow through `soroban_events`; its rows land in the unified `trades` hypertable filtered by `source = 'sdex'`. Symmetric to the Soroban path, an SDEX-side cascade (Postgres back-pressure halting the SDEX writer goroutine while the rest of ingest stays healthy) used to be invisible at the data layer. This alert closes that gap.
 
-**Sibling target:** the gap detector registers a separate `sdex-offers` target over the `sdex_offer_events` hypertable (OfferCreated/OfferUpdated/OfferRemoved). An offer-events writer halt does NOT show in this trades gauge — it fires the same alert with `source="sdex-offers"`.
+**No offer-events coverage:** `sdex_offer_events` (OfferCreated/OfferUpdated/OfferRemoved) has NO gap-detector target and never has — migration 0026 created the table but no writer has ever existed, so a target here would scan a permanently-empty table and page on a phantom source (`per_source_gaps.go`, #358, 2026-09-02). This alert covers only the `trades`-table SDEX gauge; an offer-events writer halt (if one ever ships) will not page until a target is added alongside its writer.
 
 **Scan-window caveat (applies to both the gauge and this alert):** the detector scans only a trailing window below tip — `GapDetectorSafetyLookback` = 200,000 ledgers steady-state, `GapDetectorFirstScanCap` = 2,000,000 on a target's first-ever scan (`internal/storage/timescale/gap_detector.go`). A gap deeper in history than the scan window never appears in the gauge; deep-history assurance belongs to the ADR-0033 completeness verdict, and full-range diagnosis to `find-data-gaps -from/-to`.
 
@@ -94,11 +94,12 @@ There is no per-source `*-backfill` subcommand for any source — the whole `*-b
 
 ## Related
 
-- [ingest-gap-detected.md](ingest-gap-detected.md) — the parent alert (matches any `source=` label; the `sdex-offers` sibling target for `sdex_offer_events` fires through the same rule)
+- [ingest-gap-detected.md](ingest-gap-detected.md) — the parent alert (matches any `source=` label)
 - [projector-replay.md](projector-replay.md) — Soroban equivalent for the per-source projection tables (ADR-0032 supersedes the former `cascade-window-drain` subcommand)
 - ADR-0030 — per-source coverage invariant; SDEX target is the canonical example of a non-Soroban source registered in the same scheme
 - ADR-0033 — the completeness verdict that owns deep-history assurance beyond the detector's trailing scan window
 
 ## Changelog
 
+- 2026-09-24 — removed the claimed `sdex-offers` gap-detector target: it was never wired (no `sdex_offer_events` writer ever existed) and was explicitly deleted from `per_source_gaps.go` in #358 (2026-09-02) rather than shipped; the runbook still promised a page that cannot fire.
 - 2026-08-29 — first re-verification against HEAD: frontmatter added; fictional `--parallel 8` backfill replaced with the real flag set (`-config` required, dry-run → `-resume`, run-heavy-job.sh on r1); "30-min detector cycle" corrected to the sdex target's 6h `ScanCadence` (skipped cycles retain last-known-good); the "raise min-gap-size" follow-up bullet replaced with the shipped facts (per-target `MinGapSizeOverride` exists and sdex's is 1M ledgers; detector scans only a trailing window — 200K steady / 2M first-scan); "batch-write log line every ~5s" corrected (healthy writes are silent — use `stellarindex_source_last_insert_unix{source="sdex"}`); `last_insert_at` renamed to the real metric; projector-replay note updated to the ClickHouse-lake default (ADR-0034); duplicate Trigger line dropped; `sdex-offers` sibling target cross-referenced; dual-tree Detected-by. Status → current.

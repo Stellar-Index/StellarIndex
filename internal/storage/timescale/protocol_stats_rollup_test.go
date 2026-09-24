@@ -44,6 +44,26 @@ func TestRefreshProtocolEventsUpsert_shape(t *testing.T) {
 	}
 }
 
+// TestCountRecentEventsQuery_aquariusCoversNonTradeTables asserts the
+// census sums aquarius's non-trade hypertables into the 'aquarius'
+// source, not just its trades leg — otherwise events_24h undercounts
+// every rewards/admin/reserves-sync/governance action Aquarius emits.
+func TestCountRecentEventsQuery_aquariusCoversNonTradeTables(t *testing.T) {
+	for _, table := range []string{
+		"aquarius_liquidity",
+		"aquarius_reserves",
+		"aquarius_reserves_sync",
+		"aquarius_rewards_events",
+		"aquarius_admin",
+		"aquarius_protocol_fee",
+		"aquarius_kill_switches",
+	} {
+		if !strings.Contains(countRecentEventsQuery, "'aquarius', count(*) FROM "+table) {
+			t.Errorf("countRecentEventsQuery missing an 'aquarius' leg over %s:\n%s", table, countRecentEventsQuery)
+		}
+	}
+}
+
 // TestRefreshProtocolEventsPrune_sargable asserts the prune deletes on a
 // bare computed_at comparison (index-friendly, no function on the
 // column) so the stale-source sweep stays cheap.
