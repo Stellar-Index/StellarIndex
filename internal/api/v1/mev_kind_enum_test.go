@@ -86,9 +86,9 @@ func TestMEVKind_HandlerEnforcesSpecEnum(t *testing.T) {
 	}
 
 	reader.kinds = nil
-	rec := get("oracle_sandwhich")
+	rec := get("oracle_sandwhich") //nolint:misspell // deliberately invalid kind
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "invalid-kind") {
-		t.Fatalf("?kind=oracle_sandwhich: status %d, want 400 invalid-kind: %s", rec.Code, rec.Body.String())
+		t.Fatalf("?kind=oracle_sandwhich: status %d, want 400 invalid-kind: %s", rec.Code, rec.Body.String()) //nolint:misspell // deliberately invalid kind
 	}
 	if len(reader.kinds) != 0 {
 		t.Errorf("an invalid kind reached the store: %v", reader.kinds)

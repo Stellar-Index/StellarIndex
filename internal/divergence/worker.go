@@ -620,28 +620,12 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Asse
 		bestDelta float64 // |DivergencePct| of the representative pair held in `agg`
 	)
 	for _, q := range quotes {
-		quote, perr := canonical.ParseAsset(q)
-		if perr != nil {
-			// A malformed member can't be turned back into a key; skip
-			// it rather than fail the whole lookup. The index is
-			// worker-written from canonical assets, so this is a
-			// defensive guard, not an expected path.
+		cached, ok, qerr := s.lookupCachedQuote(ctx, asset, q)
+		if qerr != nil {
+			return AssetVerdict{}, false, qerr
+		}
+		if !ok {
 			continue
-		}
-		pair := canonical.Pair{Base: asset, Quote: quote}
-		key := cachekeys.Divergence(pair)
-		raw, gerr := s.cache.Get(ctx, key.String()).Bytes()
-		if errors.Is(gerr, redis.Nil) {
-			// Value expired but the index member lingered (the set's
-			// own TTL hasn't fired yet). Treat as "no contribution".
-			continue
-		}
-		if gerr != nil {
-			return AssetVerdict{}, false, fmt.Errorf("divergence: cache get %s: %w", key, gerr)
-		}
-		var cached CachedResult
-		if uerr := json.Unmarshal(raw, &cached); uerr != nil {
-			return AssetVerdict{}, false, fmt.Errorf("divergence: unmarshal cached result: %w", uerr)
 		}
 		if cached.WarningFired {
 			warning = true
@@ -670,4 +654,38 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Asse
 		return AssetVerdict{}, false, nil
 	}
 	return AssetVerdict{Firing: warning, Checked: checked, Detail: agg}, true, nil
+}
+
+// lookupCachedQuote reads and decodes one BASE/quote pair's cached
+// divergence result. ok is false when the pair contributes nothing to
+// the aggregate (unparseable index member or expired cache entry);
+// err is non-nil only for a real cache error that should abort the
+// whole lookup.
+func (s *Service) lookupCachedQuote(ctx context.Context, asset canonical.Asset, q string) (result CachedResult, ok bool, err error) {
+	quote, perr := canonical.ParseAsset(q)
+	if perr != nil {
+		// A malformed member can't be turned back into a key; skip it
+		// rather than fail the whole lookup. The index is
+		// worker-written from canonical assets, so this is a
+		// defensive guard, not an expected path.
+		return CachedResult{}, false, nil //nolint:nilerr // malformed index member is skipped, not a propagated error
+	}
+	pair := canonical.Pair{Base: asset, Quote: quote}
+	key := cachekeys.Divergence(pair)
+	raw, gerr := s.cache.Get(ctx, key.String()).Bytes()
+	if errors.Is(gerr, redis.Nil) {
+		// Value expired but the index member lingered (the set's own
+		// TTL hasn't fired yet). Treat as "no contribution", not an
+		// error — redis.Nil is an expected miss, per LookupCached's
+		// doc comment.
+		return CachedResult{}, false, nil //nolint:nilerr // redis.Nil is a cache miss, not a propagated error
+	}
+	if gerr != nil {
+		return CachedResult{}, false, fmt.Errorf("divergence: cache get %s: %w", key, gerr)
+	}
+	var cached CachedResult
+	if uerr := json.Unmarshal(raw, &cached); uerr != nil {
+		return CachedResult{}, false, fmt.Errorf("divergence: unmarshal cached result: %w", uerr)
+	}
+	return cached, true, nil
 }
