@@ -46,7 +46,7 @@ func (s *Store) CAGGRefreshWindows(ctx context.Context) ([]CAGGRefreshWindow, er
 	if err != nil {
 		return nil, fmt.Errorf("timescale: list cagg refresh policies: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []CAGGRefreshWindow
 	for rows.Next() {
 		var (
