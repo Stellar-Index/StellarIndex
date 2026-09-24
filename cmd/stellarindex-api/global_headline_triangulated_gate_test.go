@@ -56,6 +56,12 @@ func headlineCacheFixture(
 	); err != nil {
 		t.Fatalf("seed provenance key: %v", err)
 	}
+	if err := mr.Set(
+		cachekeys.VWAPObservedAt(base, quote, window).String(),
+		cachekeys.FormatVWAPObservedAt(time.Now()),
+	); err != nil {
+		t.Fatalf("seed observed_at key: %v", err)
+	}
 
 	dir := &flaggingScamDirectory{flagged: flagged}
 	return globalPriceReader{

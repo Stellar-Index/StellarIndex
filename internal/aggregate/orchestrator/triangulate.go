@@ -423,14 +423,18 @@ func (o *Orchestrator) publishComposite(
 	}
 
 	// R-2: the value never lands without its qualifiers (the quality-flags
-	// meta and the triangulated-provenance marker the API sets
-	// flags.triangulated from). One MULTI/EXEC: a reader sees the previous
-	// state or all three, never the value under a prior tick's flags or
-	// provenance, and a failed write leaves the previous state whole.
+	// meta, the triangulated-provenance marker the API sets
+	// flags.triangulated from, and the observed-at stamp it serves as
+	// observed_at). One MULTI/EXEC: a reader sees the previous state or
+	// all of them, never the value under a prior tick's flags, provenance
+	// or stamp, and a failed write leaves the previous state whole.
 	provKey := cachekeys.VWAPProvenance(chain.Target.Base, chain.Target.Quote, window)
+	atKey := cachekeys.VWAPObservedAt(chain.Target.Base, chain.Target.Quote, window)
+	bucketEnd := o.tickClock().Truncate(closedBucket)
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Set(ctx, metaKey.String(), metaBody, ttl)
 		p.Set(ctx, provKey.String(), cachekeys.VWAPProvenanceTriangulated, ttl)
+		p.Set(ctx, atKey.String(), cachekeys.FormatVWAPObservedAt(bucketEnd), ttl)
 		p.Set(ctx, key.String(), value, ttl)
 		return nil
 	}); err != nil {
@@ -441,7 +445,7 @@ func (o *Orchestrator) publishComposite(
 
 	// The stream carries the value /v1/price serves at this window, on the
 	// same once-per-closed-bucket contract as the direct path.
-	o.streamBucketOnce(ctx, chain.Target, window, value, o.tickClock().Truncate(closedBucket))
+	o.streamBucketOnce(ctx, chain.Target, window, value, bucketEnd)
 
 	// The served VWAP key was just written, so this pair published this
 	// tick: stamp the pair-level write clock the staleness gauge reads

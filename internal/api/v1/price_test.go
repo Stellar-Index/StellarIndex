@@ -185,8 +185,8 @@ type stubTriangulatedPriceLooker struct {
 
 func (s *stubTriangulatedPriceLooker) LookupTriangulatedVWAP(
 	_ context.Context, _, _ canonical.Asset, _ time.Duration,
-) (string, bool, bool, error) {
-	return s.value, s.isTriangulated, s.found, s.err
+) (v1.CachedVWAP, bool, error) {
+	return v1.CachedVWAP{Value: s.value, Triangulated: s.isTriangulated, ObservedAt: time.Now().UTC()}, s.found, s.err
 }
 
 // TestPrice_RedisVWAPFallback_DirectRewriteServes — when prices_1m
@@ -340,8 +340,8 @@ type stubCompositeMetaLooker struct {
 
 func (s *stubCompositeMetaLooker) LookupTriangulatedVWAP(
 	_ context.Context, _, _ canonical.Asset, _ time.Duration,
-) (string, bool, bool, error) {
-	return s.value, s.isTriangulated, s.found, nil
+) (v1.CachedVWAP, bool, error) {
+	return v1.CachedVWAP{Value: s.value, Triangulated: s.isTriangulated, ObservedAt: time.Now().UTC()}, s.found, nil
 }
 
 func (s *stubCompositeMetaLooker) LookupCompositeMeta(

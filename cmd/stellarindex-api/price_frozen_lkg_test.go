@@ -75,6 +75,10 @@ func TestFrozenPairServesHeldValueThroughProductionAdapters(t *testing.T) {
 	if err := rdb.Set(ctx, cachekeys.VWAP(xlm, gbp, window).String(), held, 35*time.Minute).Err(); err != nil {
 		t.Fatalf("seed held VWAP: %v", err)
 	}
+	stamp := cachekeys.FormatVWAPObservedAt(time.Now().Add(-20 * time.Minute).Truncate(time.Minute))
+	if err := rdb.Set(ctx, cachekeys.VWAPObservedAt(xlm, gbp, window).String(), stamp, 35*time.Minute).Err(); err != nil {
+		t.Fatalf("seed held VWAP stamp: %v", err)
+	}
 	writer, err := freeze.NewWriter(rdb, cachekeys.FreezeTTL)
 	if err != nil {
 		t.Fatalf("freeze writer: %v", err)

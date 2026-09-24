@@ -83,9 +83,9 @@ type cachedVWAPLooker struct {
 
 func (l *cachedVWAPLooker) LookupTriangulatedVWAP(
 	_ context.Context, _, _ canonical.Asset, _ time.Duration,
-) (string, bool, bool, error) {
+) (v1.CachedVWAP, bool, error) {
 	l.calls++
-	return l.value, true, true, nil
+	return v1.CachedVWAP{Value: l.value, Triangulated: true, ObservedAt: time.Now().UTC()}, true, nil
 }
 
 // TestPriceFallbackWithholdsScamFlaggedBase is the headline case: the
