@@ -660,7 +660,9 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (30s per target)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 166 targets at the 3s floor plus ~3s of startup each is ~17 min when a
+    # PR touches every fuzzed package; a normal PR smokes a handful at 30s.
+    timeout-minutes: 25
     needs: [preflight]
     # §B: pure Go work, gated on the `go` class with STEP-level `if:`
     # (see the REQUIRED-CHECK NOTE on `preflight`).
@@ -694,8 +696,12 @@ jobs:
         # The target list is discovered from the tree, not listed here,
         # so a newly-added target is covered without a second edit — see
         # the script's header for why, and for its fail-closed behaviour
-        # when discovery returns nothing.
+        # when discovery returns nothing. On a PR only the targets of the
+        # packages it changed run (FUZZ_BASE); the per-target time is
+        # derived from a fixed job budget, capped at 30s.
         if: needs.preflight.outputs.go == 'true'
+        env:
+          FUZZ_BASE: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci/fuzz-smoke.sh
 
   doc-checks:

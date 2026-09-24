@@ -26,12 +26,24 @@
 # deliverable: commit it as a seed-corpus entry and the crasher becomes
 # a permanent regression test that runs under plain `go test`.
 #
+# Scope and budget
+# ----------------
+# Discovery covers the whole tree (fail-closed on zero), but a PR smokes
+# only the targets of the packages it changed: FUZZ_BASE (CI passes the
+# PR's base sha) selects them. Unset, every target runs. The per-target
+# time is min(30s, FUZZ_BUDGET / selected), never under 3s, so a wave
+# that adds 160 targets still fits the job instead of being cancelled at
+# the timeout with nothing reported (the tree went 5 -> 166 targets in
+# one PR; 166 x 30s is 83 min). The accounting line prints the budget
+# actually used.
+#
 # Usage:
-#   bash scripts/ci/fuzz-smoke.sh            # 30s per target
-#   FUZZTIME=5s bash scripts/ci/fuzz-smoke.sh
+#   bash scripts/ci/fuzz-smoke.sh                        # every target, budget-derived time
+#   FUZZ_BASE=origin/main bash scripts/ci/fuzz-smoke.sh  # targets in packages changed since main
+#   FUZZTIME=5s bash scripts/ci/fuzz-smoke.sh            # explicit per-target time
 set -euo pipefail
 
-FUZZTIME="${FUZZTIME:-30s}"
+FUZZ_BUDGET="${FUZZ_BUDGET:-600}" # seconds of generative fuzzing per job
 
 command -v go >/dev/null 2>&1 || {
 	echo "::error::go is not on PATH — the fuzz smoke did NOT run"
@@ -84,7 +96,31 @@ if [ "$FOUND" -eq 0 ]; then
 	exit 1
 fi
 
-echo "fuzz-smoke: discovered ${FOUND} target(s), budget ${FUZZTIME} each"
+SELECTED="$HITS_FILE"
+if [ -n "${FUZZ_BASE:-}" ]; then
+	# A shallow CI checkout lacks the base commit; fetching it alone is enough
+	# for a tree-to-tree diff, no history needed.
+	git cat-file -e "${FUZZ_BASE}^{commit}" 2>/dev/null || git fetch -q --depth=1 origin "$FUZZ_BASE"
+	DIRS_FILE="$(mktemp)"
+	git diff --name-only "$FUZZ_BASE" HEAD -- '*.go' | while IFS= read -r f; do
+		printf './%s\n' "$(dirname "$f")"
+	done | sort -u >"$DIRS_FILE"
+	SELECTED="${HITS_FILE}.selected"
+	awk -F'\t' 'NR==FNR{d[$1]=1;next} ($1 in d)' "$DIRS_FILE" "$HITS_FILE" >"$SELECTED"
+	rm -f "$DIRS_FILE"
+fi
+SEL="$(wc -l <"$SELECTED" | tr -d ' ')"
+if [ "$SEL" -eq 0 ]; then
+	echo "fuzz-smoke: discovered ${FOUND} target(s); none in the packages changed since ${FUZZ_BASE} — nothing to smoke"
+	exit 0
+fi
+if [ -z "${FUZZTIME:-}" ]; then
+	PER=$((FUZZ_BUDGET / SEL))
+	[ "$PER" -gt 30 ] && PER=30
+	[ "$PER" -lt 3 ] && PER=3
+	FUZZTIME="${PER}s"
+fi
+echo "fuzz-smoke: discovered ${FOUND} target(s), selected ${SEL}, budget ${FUZZTIME} each"
 
 RUN=0
 PASSED=0
@@ -109,7 +145,7 @@ while IFS="$(printf '\t')" read -r pkg target; do
 	# The loop body runs in a subshell under `while read < file`, so the
 	# counters are echoed out and re-read below rather than mutated here.
 	printf '%s\t%s\t%s\n' "$RUN" "$PASSED" "$FAILED_TARGETS" >"${HITS_FILE}.tally"
-done <"$HITS_FILE"
+done <"$SELECTED"
 
 if [ -f "${HITS_FILE}.tally" ]; then
 	IFS="$(printf '\t')" read -r RUN PASSED FAILED_TARGETS <"${HITS_FILE}.tally"
@@ -119,11 +155,11 @@ fi
 # Self-accounting: a reader can check FOUND against
 # `grep -rn 'func Fuzz' --include='*_test.go' .`. A run that smoked
 # fewer targets than it discovered did not do its job.
-echo "fuzz-smoke: ${PASSED} passed of ${RUN} run (${FOUND} discovered), ${FUZZTIME} each"
+echo "fuzz-smoke: ${PASSED} passed of ${RUN} run (${SEL} selected of ${FOUND} discovered), ${FUZZTIME} each"
 
-if [ "$RUN" -ne "$FOUND" ]; then
-	echo "::error::fuzz-smoke ran ${RUN} of ${FOUND} discovered targets — the loop did not"
-	echo "::error::cover everything it found. Failing closed."
+if [ "$RUN" -ne "$SEL" ]; then
+	echo "::error::fuzz-smoke ran ${RUN} of ${SEL} selected targets — the loop did not"
+	echo "::error::cover everything it selected. Failing closed."
 	exit 1
 fi
 
@@ -132,7 +168,7 @@ if [ -n "$(printf '%s' "$FAILED_TARGETS" | tr -d ' ')" ]; then
 	exit 1
 fi
 
-if [ "$PASSED" -ne "$FOUND" ]; then
-	echo "::error::fuzz-smoke: ${PASSED} passed but ${FOUND} discovered — failing closed."
+if [ "$PASSED" -ne "$SEL" ]; then
+	echo "::error::fuzz-smoke: ${PASSED} passed but ${SEL} selected — failing closed."
 	exit 1
 fi
