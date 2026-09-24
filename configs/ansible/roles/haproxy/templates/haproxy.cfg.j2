@@ -22,6 +22,10 @@ defaults
     timeout connect 5s
     timeout client  60s
     timeout server  60s
+    # Without this, a client that opens a connection but trickles the
+    # request headers (slowloris) holds a server slot for the full
+    # 60s client timeout instead of being dropped.
+    timeout http-request 10s
     retries 3
     errorfile 400 /etc/haproxy/errors/400.http
     errorfile 403 /etc/haproxy/errors/403.http

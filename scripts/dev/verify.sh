@@ -565,6 +565,7 @@ lane_d() { # everything else
     echo "=== Promtail server listen-address self-test ===" && ./scripts/ci/promtail-listen-address-test.sh
     echo "=== Ansible README parity self-test ===" && ./scripts/ci/ansible-readme-parity-test.sh
     echo "=== Ansible keepalived healthcheck self-test ===" && ./scripts/ci/ansible-keepalived-healthcheck-test.sh
+    echo "=== HAProxy http-request timeout self-test ===" && ./scripts/ci/haproxy-http-request-timeout-test.sh
     # CI's import-checks job runs these gate scripts too; verify.sh must mirror
     # them or it issues a green CI won't honour (W5-ci-6, enforced by the parity
     # check above). All are deterministic + network-free.
