@@ -670,7 +670,8 @@ func normaliseNumeric(v any) string {
 // ─── SSRF guard ───────────────────────────────────────────────────
 
 // ssrfDialer wraps net.Dialer + blocks dials to private / loopback
-// / link-local / multicast addresses. The block happens AFTER DNS
+// / link-local / multicast addresses and, outside test mode, any port
+// other than [standardTLSPort]. The block happens AFTER DNS
 // resolution + BEFORE TCP connect, so it catches rebind attacks
 // where a hostname resolves differently each call.
 type ssrfDialer struct {
