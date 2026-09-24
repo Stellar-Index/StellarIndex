@@ -343,8 +343,8 @@ textfile collector.
 | `stellarindex_stellar_stack_lagging` | `stellarindex_stellar_stack_version_lag` per `component` | >= 1 for 2 d | ticket | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
 | `stellarindex_stellar_stack_protocol_lag` | same | >= 2 for 6 h | page | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
 | `stellarindex_stellar_stack_probe_degraded` | `stellarindex_stellar_stack_probe_success`, plus `node_textfile_mtime_seconds` for the probe's own file | a run could not classify an installed component, the file has not been rewritten in 48 h, or the canary was never written — for > 1 h | ticket | [stellar-stack-version-lag](runbooks/stellar-stack-version-lag.md) |
-| `stellarindex_ledger_meta_decode_failing` | `stellarindex_ledger_meta_decode_failures_total` per `unit` | > 0 for 10 m | page | [protocol-upgrades](protocol-upgrades.md) |
-| `stellarindex_ledger_meta_decode_probe_stale` | `stellarindex_ledger_meta_decode_probe_updated_seconds` | age > 1 h for 30 m | ticket | [protocol-upgrades](protocol-upgrades.md) |
+| `stellarindex_ledger_meta_decode_failing` | `stellarindex_ledger_meta_decode_failures_total` per `unit` | > 0 for 10 m | page | [ledger-meta-decode-failing](runbooks/ledger-meta-decode-failing.md) |
+| `stellarindex_ledger_meta_decode_probe_stale` | `stellarindex_ledger_meta_decode_probe_updated_seconds` | age > 1 h for 30 m | ticket | [ledger-meta-decode-failing](runbooks/ledger-meta-decode-failing.md) |
 
 The two decode alerts are the REACTIVE backstop to the version-lag pair above.
 
