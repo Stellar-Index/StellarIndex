@@ -2202,6 +2202,14 @@ jobs:
         # Structural grep, no hosts, no network.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-caddy-key-pipefail-test.sh
+      - name: promtail server listen-address test (T573/T594)
+        # The archival-node role's rendered promtail config and its r1
+        # hand-installed twin set http_listen_port/grpc_listen_port with
+        # no matching *_listen_address, so dskit/weaveworks server
+        # semantics bind both listeners to every interface. Structural
+        # grep, no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/promtail-listen-address-test.sh
       - name: ansible README <-> archival-node role parity (Q252)
         # The README's first-run bootstrap prescribed a --tags subset that
         # skipped users/redis/clickhouse/minio/binaries/hardening/caddy and
