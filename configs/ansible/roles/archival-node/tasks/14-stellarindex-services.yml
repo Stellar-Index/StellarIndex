@@ -1251,6 +1251,13 @@
 # clear of the nightly heavy band (02:17 archive-completeness through
 # 06:00 ch-supply, incl. tier A 03:23 and tier B 04:37). Both pinned by
 # scripts/ci/verify-archive-tier-d-test.sh.
+#
+# Gated on verify_archive_tier_d_enabled (defaults/main.yml): Tier D
+# cross-checks a region's own PEERS (R1/R2/R3), so a single-VM testnet/
+# futurenet host has no peer region to cross-check against. Ungated it
+# still installed everywhere, unconditionally — same drift class the
+# invalid-flag fix above closed, left open here. Same gating shape as
+# Tier E just below.
 
 - name: Install Tier D verify-archive weekly cron
   ansible.builtin.cron:
@@ -1260,6 +1267,7 @@
     minute: "23"
     hour: "10"
     weekday: "0"   # Sunday, after the nightly heavy-job band
+    state: "{{ 'present' if (verify_archive_tier_d_enabled | bool) else 'absent' }}"
     # The -ops file is read VERBATIM (systemd EnvironmentFile syntax is not
     # shell — `source` would expand `$` / split on `;` inside a secret;
     # deploy-ansible-secrets-5). No `%` here: cron turns it into a newline.

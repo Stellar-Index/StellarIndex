@@ -824,6 +824,13 @@ stellar_movements_floor_ledger: "{{ 58762517 if stellar_network == 'pubnet' else
 # in that inventory.
 verify_archive_tier_b_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
 
+# verify-archive Tier D (multi-peer fork-detection, ADR-0016 §7.4) cross-checks
+# each region's OWN peers' .well-known/stellar-history.json — R1/R2/R3, the
+# pubnet fleet. testnet/futurenet are single-VM nets with no peer region to
+# cross-check against; installing this cron there is a weekly no-op job for
+# a control that does not apply, same class of drift Tier B guards against.
+verify_archive_tier_d_enabled: "{{ (stellar_network | default('pubnet')) == 'pubnet' }}"
+
 # archive-completeness verify. Its report has exactly ONE section —
 # `cross_anchor` — measured against VERIFY/ARCHIVE root /srv/history-archive,
 # the same pubnet-only local mirror Tier B anchors on. There is no
