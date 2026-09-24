@@ -1635,7 +1635,14 @@ describe('sumStablecoins', () => {
           additional_value_usd: '558700000.00',
           combined_value_usd: '560024956.69',
           verified_value_usd: '1324956.69',
-          census: { entries: 1, priced: 1, stale: 0 },
+          census: {
+            entries: 1,
+            contracts: 1,
+            classic: 0,
+            priced: 1,
+            priced_classic: 0,
+            stale: 0,
+          },
           // A published block beside per-asset rows: reachable by API
           // contract, and the state where the comparison grid sits
           // under the published panel.
@@ -1700,7 +1707,14 @@ describe('sumStablecoins', () => {
           also_verified: 0,
           assets_valued: 0,
           verified_value_usd: '1324956.69',
-          census: { entries: 0, priced: 0, stale: 0 },
+          census: {
+            entries: 0,
+            contracts: 0,
+            classic: 0,
+            priced: 0,
+            priced_classic: 0,
+            stale: 0,
+          },
           basis:
             'Rows a named third-party curator lists as tokenized real-world assets on Stellar. Nothing here is verified by this index.',
         },
@@ -1724,7 +1738,14 @@ describe('sumStablecoins', () => {
           also_verified: 0,
           assets_valued: 0,
           verified_value_usd: '345599978.73',
-          census: { entries: 0, priced: 0, stale: 0 },
+          census: {
+            entries: 0,
+            contracts: 0,
+            classic: 0,
+            priced: 0,
+            priced_classic: 0,
+            stale: 0,
+          },
           published: {
             total_usd: '4004795860.00',
             as_of: '2025-08-31',
@@ -1784,7 +1805,14 @@ describe('sumStablecoins', () => {
           assets: 0,
           also_verified: 0,
           assets_valued: 0,
-          census: { entries: 0, priced: 0, stale: 0 },
+          census: {
+            entries: 0,
+            contracts: 0,
+            classic: 0,
+            priced: 0,
+            priced_classic: 0,
+            stale: 0,
+          },
           basis: '',
         },
       }),

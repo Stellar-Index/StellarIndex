@@ -120,6 +120,9 @@ func (s *Server) readRWACurated(ctx context.Context) rwaCurated {
 		s.logger.Warn("rwa curated directory read failed", "err", err)
 		return rwaCurated{published: published, wired: true, observedAt: time.Now()}
 	}
+	if why := census.Check(); why != "" {
+		s.logger.Warn("rwa curated directory: census does not balance", "why", why)
+	}
 	if len(rows) == 0 {
 		if published == nil {
 			s.logger.Warn("rwa curated directory: no fresh rows and nothing published", "stale", census.Stale)
@@ -147,11 +150,16 @@ type RWACurator struct {
 }
 
 // RWACuratedCensus is the storage layer's account of the curator cache.
+// Entries = Contracts + Classic; only Contracts rows can be served, so
+// Classic is the part of the curator's list the arm leaves out.
 type RWACuratedCensus struct {
-	Entries    int       `json:"entries"`
-	Priced     int       `json:"priced"`
-	Stale      int       `json:"stale"`
-	ObservedAt *WireTime `json:"observed_at,omitempty"`
+	Entries       int       `json:"entries"`
+	Contracts     int       `json:"contracts"`
+	Classic       int       `json:"classic"`
+	Priced        int       `json:"priced"`
+	PricedClassic int       `json:"priced_classic"`
+	Stale         int       `json:"stale"`
+	ObservedAt    *WireTime `json:"observed_at,omitempty"`
 }
 
 // RWACuratedPublishedSplit is one line of the curator's own subclass
@@ -296,6 +304,8 @@ func rwaCuratedMembership(snap rwaCurated, verified []RWAAsset) []rwaCuratedMemb
 	}
 	out := make([]rwaCuratedMember, 0, len(snap.byAddress))
 	for addr, e := range snap.byAddress {
+		// A classic `CODE-GISSUER` row has no contract path to serve it
+		// through; it is counted in census.classic instead.
 		if !rwaCuratedAddressIsContract(addr) {
 			continue
 		}
@@ -391,7 +401,8 @@ func rwaCuratedSummarise(snap rwaCurated, rows []RWAAsset, verifiedRef *string, 
 		Curator: rwaCuratorDune,
 		Basis:   rwaCuratedBasisProse,
 		Census: RWACuratedCensus{
-			Entries: snap.census.Entries, Priced: snap.census.Priced, Stale: snap.census.Stale,
+			Entries: snap.census.Entries, Contracts: snap.census.Contracts, Classic: snap.census.Classic,
+			Priced: snap.census.Priced, PricedClassic: snap.census.PricedClassic, Stale: snap.census.Stale,
 		},
 		VerifiedValueUSD: verifiedRef,
 	}
