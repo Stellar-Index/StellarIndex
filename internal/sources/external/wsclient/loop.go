@@ -46,6 +46,12 @@ const (
 	DefaultPingTimeout  = 10 * time.Second
 )
 
+// DefaultDialTimeout bounds one whole dial attempt: TCP connect, TLS and the
+// HTTP upgrade round trip. The transport's own timeouts stop at TLS and the
+// ping watchdog only starts once Dial returns, so without this a venue that
+// accepts the connection but never answers the upgrade wedges the loop.
+const DefaultDialTimeout = 30 * time.Second
+
 // Loop is the shared connect → subscribe → read → reconnect lifecycle
 // used by every external WS streamer (binance / kraken / coinbase /
 // bitstamp). It owns the dial (via [KeepAliveHTTPClient]), the read
@@ -94,6 +100,11 @@ type Loop struct {
 	// connection with [ErrStreamStalled] (metric reason "stall"). <=0
 	// defaults to [DefaultPingTimeout].
 	PingTimeout time.Duration
+
+	// DialTimeout bounds each dial attempt including the upgrade
+	// handshake; exceeding it returns a "dial" disconnect and the loop
+	// reconnects with backoff. <=0 defaults to [DefaultDialTimeout].
+	DialTimeout time.Duration
 
 	// Subscribe, if non-nil, is called once per connection immediately
 	// after a successful dial to register channels (venues whose
@@ -219,14 +230,9 @@ func (l *Loop) Run(ctx context.Context, out chan<- canonical.Trade) {
 //
 //nolint:gocognit // dial + subscribe + read-loop with per-venue hooks; linear despite the branch count
 func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
-	conn, resp, err := websocket.Dial(ctx, l.URL, &websocket.DialOptions{
-		HTTPClient: KeepAliveHTTPClient(),
-	})
+	conn, err := l.dial(ctx)
 	if err != nil {
-		return fmt.Errorf("dial: %w", err)
-	}
-	if resp != nil && resp.Body != nil {
-		_ = resp.Body.Close()
+		return err
 	}
 	defer func() {
 		_ = conn.Close(websocket.StatusNormalClosure, "client shutdown")
@@ -281,6 +287,29 @@ func (l *Loop) runOnce(ctx context.Context, out chan<- canonical.Trade) error {
 			}
 		}
 	}
+}
+
+// dial performs one upgrade dial under a per-attempt deadline so a venue
+// that stalls anywhere in the handshake surfaces as a "dial" disconnect.
+// The deadline covers only the handshake: the returned conn is not tied to
+// dialCtx, so the read loop keeps running on the caller's ctx.
+func (l *Loop) dial(ctx context.Context) (*websocket.Conn, error) {
+	timeout := l.DialTimeout
+	if timeout <= 0 {
+		timeout = DefaultDialTimeout
+	}
+	dialCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	conn, resp, err := websocket.Dial(dialCtx, l.URL, &websocket.DialOptions{
+		HTTPClient: KeepAliveHTTPClient(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("dial: %w", err)
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	return conn, nil
 }
 
 // pingWatchdog actively probes the connection every PingInterval and
