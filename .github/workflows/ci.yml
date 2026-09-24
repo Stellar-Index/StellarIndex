@@ -305,11 +305,30 @@ jobs:
               # (gated on needs.preflight.outputs.go) skips every one of
               # them — RLT-169.
               - 'openapi/**'
+              # go:embed inputs are not *.go files, so a diff confined to
+              # one of them also set `go=false` and skipped the test job
+              # that decodes it (pairs_test.go, circulation_test.go, the
+              # currency-catalogue tests, incidents_test.go) — RLT-046.
+              - 'internal/sources/external/binance/pairs.yaml'
+              - 'internal/sources/external/forex/circulation_data.csv'
+              - 'internal/currency/data/seed.yaml'
+              - 'internal/incidents/data/**'
+              # testdata/ is Go's fixture convention; the clickhouse
+              # package also go:embeds its .tsv/.wasm fixtures from there.
+              - '**/testdata/**'
             web:
               - 'web/**'
               - 'openapi/**'
             ansible:
               - 'configs/ansible/**'
+              # clickhouse-exporter-test.sh (ansible-check job) pins the
+              # Prometheus port + job name across the scrape config and
+              # both rule trees below, but neither lives under
+              # configs/ansible/**, so a diff confined to one of them set
+              # `ansible=false` and skipped the only test that reads
+              # them — RLT-046.
+              - 'configs/prometheus/**'
+              - 'deploy/monitoring/**'
       # dorny/paths-filter's glob matching cannot be exercised offline
       # (no Docker/`act`), so its rule is restated in plain shell at
       # scripts/ci/check-change-class.sh and proven against fixtures

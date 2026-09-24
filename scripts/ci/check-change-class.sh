@@ -46,9 +46,18 @@
 #                  migrations/**, scripts/ops/**, test/integration/**,
 #                  test/harness/**, go.mod
 #   go           — any *.go file, go.mod, go.sum, openapi/** (Go spec-parity
-#                  tests read the spec directly)
+#                  tests read the spec directly), and the go:embed inputs
+#                  (internal/sources/external/binance/pairs.yaml,
+#                  internal/sources/external/forex/circulation_data.csv,
+#                  internal/currency/data/seed.yaml,
+#                  internal/incidents/data/**) and any testdata/** dir —
+#                  none of those are *.go files but each is read by a Go
+#                  test (test/controlwiring/rlt046_ci_class_trigger_test.go
+#                  walks every //go:embed and fails on an uncovered input)
 #   web          — web/**, openapi/**
-#   ansible      — configs/ansible/**
+#   ansible      — configs/ansible/**, configs/prometheus/**,
+#                  deploy/monitoring/** (clickhouse-exporter-test.sh reads
+#                  the latter two and only that job runs it)
 #
 # Usage:
 #   git diff --name-only "$BASE" "$HEAD" | check-change-class.sh <class>
@@ -70,7 +79,9 @@ class_go() {
   # handler_spec_fields_test.go and its spec-parity siblings read the spec
   # file directly), not just a web one — a diff confined to it must still
   # trigger the go-test job. Mirrored in ci.yml's preflight `go` filter.
-  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/'
+  # The four data paths are go:embed inputs and testdata/ is Go's test
+  # fixture convention: not *.go files, but each is read by a Go test.
+  grep -E '(^|/)[^/]+\.go$|^go\.mod$|^go\.sum$|^openapi/|^internal/sources/external/binance/pairs\.yaml$|^internal/sources/external/forex/circulation_data\.csv$|^internal/currency/data/seed\.yaml$|^internal/incidents/data/|(^|/)testdata/'
 }
 
 class_web() {
@@ -78,7 +89,10 @@ class_web() {
 }
 
 class_ansible() {
-  grep -E '^configs/ansible/'
+  # configs/prometheus/** and deploy/monitoring/** are read by
+  # clickhouse-exporter-test.sh, which only the ansible-check job runs —
+  # a diff confined to either set ansible=false and skipped it — RLT-046.
+  grep -E '^(configs/ansible/|configs/prometheus/|deploy/monitoring/)'
 }
 
 usage() {
