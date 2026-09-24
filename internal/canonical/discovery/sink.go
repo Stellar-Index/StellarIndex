@@ -16,14 +16,21 @@ import (
 // up dispatch.
 //
 // In-process dedup: the Recorder upserts on (contract_id, event_type),
-// so re-pushing the same key is a no-op write that pointlessly
-// occupies a buffer slot. AsyncSink keeps a process-local set of
-// (ContractID, EventType) keys it has already enqueued and silently
-// skips repeats. The skip counter is exposed via [AsyncSink.SkippedCount]
-// alongside [AsyncSink.DroppedCount] so operators can see how much
-// of the pre-dedup volume was duplicates. A process restart resets
-// the set; the first Push for any key after restart still records
-// (the recorder's upsert handles the already-known case).
+// so re-pushing the same key doesn't need a channel-buffer slot of its
+// own. AsyncSink keeps a process-local set of (ContractID, EventType)
+// keys it has already enqueued and skips sending repeats to the
+// channel — but it does NOT discard them: each skipped Push increments
+// an in-memory delta (count + latest ledger/observed-at) for that key,
+// which [AsyncSink.Stop] flushes as a single Record call carrying
+// [Hit.Count] set to the true accumulated observation count. Without
+// this, event_count and last_seen_ledger would advance only once per
+// (key, process lifetime) instead of tracking real event volume
+// (CA2-A10-correct-4). The skip counter is exposed via
+// [AsyncSink.SkippedCount] alongside [AsyncSink.DroppedCount] so
+// operators can see how much of the pre-dedup volume was duplicates.
+// A process restart resets the set; the first Push for any key after
+// restart still records (the recorder's upsert handles the
+// already-known case).
 //
 // Buffer-full policy: when the channel is full, Push silently
 // drops the new Hit. Discovery is best-effort — losing one record
@@ -58,6 +65,19 @@ type AsyncSink struct {
 	skipped uint64
 	failed  uint64
 	seen    map[string]struct{}
+	// pending accumulates the count + latest ledger/observed-at for
+	// keys already in `seen` whose repeat Pushes were skipped rather
+	// than enqueued. Flushed to the Recorder on Stop.
+	pending map[string]*pendingDelta
+}
+
+// pendingDelta is the accumulated-but-not-yet-recorded observation
+// count for one dedup key, plus the most recent hit that produced it
+// (so the eventual flush carries the true last-seen ledger/timestamp,
+// not the first one).
+type pendingDelta struct {
+	hit   Hit
+	count int64
 }
 
 // seenKey is the in-process dedup key for a Hit. Single definition
@@ -132,6 +152,7 @@ func NewAsyncSink(rec Recorder, opts AsyncSinkOptions) *AsyncSink {
 		ch:           make(chan Hit, opts.BufferSize),
 		done:         make(chan struct{}),
 		seen:         make(map[string]struct{}),
+		pending:      make(map[string]*pendingDelta),
 	}
 }
 
@@ -145,7 +166,8 @@ func (s *AsyncSink) Start() {
 // Push enqueues a Hit. Non-blocking. Behaviour:
 //   - After [AsyncSink.Stop] → dropped, DroppedCount incremented.
 //   - Already-enqueued (ContractID, Kind, EventType, Symbol) →
-//     silently skipped, SkippedCount incremented.
+//     SkippedCount incremented and the hit is folded into that key's
+//     pending delta (see [AsyncSink.pending]) instead of being sent.
 //   - Channel full → dropped, DroppedCount incremented.
 //   - Otherwise → marked seen and enqueued.
 //
@@ -175,6 +197,14 @@ func (s *AsyncSink) Push(hit Hit) {
 	}
 	if _, ok := s.seen[key]; ok {
 		s.skipped++
+		if p, ok := s.pending[key]; ok {
+			p.count++
+			if hit.Ledger >= p.hit.Ledger {
+				p.hit = hit
+			}
+		} else {
+			s.pending[key] = &pendingDelta{hit: hit, count: 1}
+		}
 		return
 	}
 	s.seen[key] = struct{}{}
@@ -294,5 +324,38 @@ func (s *AsyncSink) run() {
 				"event_type", hit.EventType)
 		}
 		cancel()
+	}
+	s.flushPending()
+}
+
+// flushPending records the accumulated-but-not-yet-written observation
+// deltas for every key whose repeat Pushes were skipped by in-process
+// dedup (see [AsyncSink.pending]). Called once, after the input channel
+// has fully drained (Stop closes it), so it runs at most once per
+// Stop. Best-effort: a failed flush is logged and counted in
+// FailedCount, not retried — the process is shutting down, and the
+// same key's delta will start accumulating again from the next Push
+// after restart.
+func (s *AsyncSink) flushPending() {
+	s.mu.Lock()
+	batch := s.pending
+	s.pending = make(map[string]*pendingDelta)
+	s.mu.Unlock()
+
+	for _, p := range batch {
+		hit := p.hit
+		hit.Count = p.count
+		ctx, cancel := context.WithTimeout(s.drainCtx, s.timeout)
+		err := s.rec.Record(ctx, hit)
+		cancel()
+		if err != nil {
+			s.mu.Lock()
+			s.failed++
+			s.mu.Unlock()
+			s.logger.Warn("discovery: flush pending delta failed",
+				"err", err,
+				"contract_id", hit.ContractID,
+				"count", p.count)
+		}
 	}
 }

@@ -97,6 +97,13 @@ type Hit struct {
 	// boundary). Kept as string so the sniffer is allocation-light
 	// in the hot dispatch path.
 	ObservedAtRFC3339 string
+	// Count is how many real observations this Record call represents.
+	// Zero means 1, the common single-observation case (every sniffer
+	// and hand-built Hit leaves it unset). [AsyncSink] sets it
+	// explicitly when flushing an accumulated in-process-dedup delta,
+	// so a Recorder can increment event_count by the true observed
+	// volume instead of by 1 per call (CA2-A10-correct-4).
+	Count int64
 }
 
 // Sniff inspects an event and reports whether it matches a SEP-41

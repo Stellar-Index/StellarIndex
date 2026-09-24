@@ -71,12 +71,16 @@ func (r *InMemoryRecorder) Record(_ context.Context, hit Hit) error {
 	if hit.ContractID == "" {
 		return errors.New("discovery: cannot record hit with empty ContractID")
 	}
+	delta := hit.Count
+	if delta <= 0 {
+		delta = 1
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, ok := r.hits[hit.ContractID]; !ok {
 		r.hits[hit.ContractID] = hit
 	}
-	r.count[hit.ContractID]++
+	r.count[hit.ContractID] += int(delta)
 	return nil
 }
 
