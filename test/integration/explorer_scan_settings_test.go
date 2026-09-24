@@ -4,9 +4,12 @@ package integration_test
 
 import (
 	"context"
+	"encoding/hex"
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 
@@ -273,5 +276,117 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	holders, total, err := r.AssetHolders(ctx, assetID, 5)
 	if err != nil || total != 1 || len(holders) != 1 || holders[0].Balance != 42 {
 		t.Errorf("AssetHolders = %v total=%d err=%v, want the one seeded holder", holders, total, err)
+	}
+}
+
+// TestContractCodeHistory_ServesTheSeededTimeline asserts ContractCodeHistory's
+// returned VALUES on a real server, down both of its paths: first served by
+// the keyed contract_instance_changes index (populated by the shipped MV),
+// then — with this contract's index rows deleted while the table stays
+// non-empty — by the legacy SETTINGS-pinned scan the index miss must fall
+// through to. The seeded timeline carries an instance-storage rewrite that
+// keeps the executable (must collapse onto the FIRST ledger that installed
+// it) and is inserted out of order (the read must sort by ledger).
+func TestContractCodeHistory_ServesTheSeededTimeline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	addr := clickhouseAddr(t)
+
+	var cidRaw, keeperRaw xdr.Hash
+	copy(cidRaw[:], "t427-code-history-timeline-cid")
+	copy(keeperRaw[:], "t427-code-history-keeper-cid")
+	cid, keeper := xdr.ContractId(cidRaw), xdr.ContractId(keeperRaw)
+	contract, err := strkey.Encode(strkey.VersionByteContract, cidRaw[:])
+	if err != nil {
+		t.Fatalf("encode contract strkey: %v", err)
+	}
+	h0, h1, hKeeper := t356Hash(0x70), t356Hash(0x71), t356Hash(0x72)
+	instKey, entry0 := t356InstanceKeyAndEntry(t, cid, h0)
+	_, entry1 := t356InstanceKeyAndEntry(t, cid, h1)
+	keeperKey, keeperEntry := t356InstanceKeyAndEntry(t, keeper, hKeeper)
+
+	const deploy, rewrite, upgrade = uint32(72_427_010), uint32(72_427_020), uint32(72_427_030)
+	t1 := time.Date(2025, 4, 1, 0, 0, 10, 0, time.UTC)
+	t2, t3 := t1.Add(10*time.Second), t1.Add(20*time.Second)
+	rows := []chstore.LedgerEntryChangeRow{
+		{
+			LedgerSeq: upgrade, CloseTime: t3, TxHash: "t427-upgrade", IntraLedgerSeq: 5,
+			ChangeType: "updated", EntryType: "contract_data", KeyXDR: instKey, EntryXDR: entry1,
+		},
+		{
+			LedgerSeq: deploy, CloseTime: t1, TxHash: "t427-deploy", IntraLedgerSeq: 2,
+			ChangeType: "created", EntryType: "contract_data", KeyXDR: instKey, EntryXDR: entry0,
+		},
+		{
+			LedgerSeq: rewrite, CloseTime: t2, TxHash: "t427-storage", IntraLedgerSeq: 7,
+			ChangeType: "updated", EntryType: "contract_data", KeyXDR: instKey, EntryXDR: entry0,
+		},
+		{
+			LedgerSeq: deploy, CloseTime: t1, TxHash: "t427-keeper", IntraLedgerSeq: 3,
+			ChangeType: "created", EntryType: "contract_data", KeyXDR: keeperKey, EntryXDR: keeperEntry,
+		},
+	}
+	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
+		t.Fatalf("InsertEntryChanges: %v", err)
+	}
+	want := []chstore.ContractCodeVersion{
+		{Ledger: deploy, CloseTime: t1, WasmHash: hex.EncodeToString(h0[:])},
+		{Ledger: upgrade, CloseTime: t3, WasmHash: hex.EncodeToString(h1[:])},
+	}
+
+	conn := dialClickHouse(t, ctx, "stellar")
+	cidHex, keeperHex := hex.EncodeToString(cidRaw[:]), hex.EncodeToString(keeperRaw[:])
+	if n := countInstanceIndexRows(t, ctx, conn, cidHex); n != 3 {
+		t.Fatalf("contract_instance_changes holds %d rows for the contract, want the 3 seeded writes", n)
+	}
+	assertCodeHistory(t, ctx, addr, contract, "index-served", want)
+
+	// Index miss for this contract on a non-empty (so "available") index:
+	// the reader must not trust the empty indexed answer.
+	syncCtx := clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{"mutations_sync": "2"}))
+	if err := conn.Exec(syncCtx,
+		`ALTER TABLE stellar.contract_instance_changes DELETE WHERE contract_hash = ?`, cidHex); err != nil {
+		t.Fatalf("delete index rows: %v", err)
+	}
+	if n := countInstanceIndexRows(t, ctx, conn, cidHex); n != 0 {
+		t.Fatalf("contract_instance_changes still holds %d rows for the contract after the delete", n)
+	}
+	if n := countInstanceIndexRows(t, ctx, conn, keeperHex); n != 1 {
+		t.Fatalf("keeper contract has %d index rows, want 1 (the index must stay non-empty)", n)
+	}
+	assertCodeHistory(t, ctx, addr, contract, "legacy-scan fallback", want)
+}
+
+func countInstanceIndexRows(t *testing.T, ctx context.Context, conn driver.Conn, contractHash string) uint64 {
+	t.Helper()
+	var n uint64
+	if err := conn.QueryRow(ctx, `SELECT count() FROM stellar.contract_instance_changes FINAL
+		WHERE contract_hash = ?`, contractHash).Scan(&n); err != nil {
+		t.Fatalf("count contract_instance_changes: %v", err)
+	}
+	return n
+}
+
+// assertCodeHistory reads through a FRESH reader so its index-availability
+// probe reflects the table as it is now, not a cached earlier verdict.
+func assertCodeHistory(t *testing.T, ctx context.Context, addr, contract, leg string, want []chstore.ContractCodeVersion) {
+	t.Helper()
+	r, err := chstore.NewExplorerReader(ctx, addr)
+	if err != nil {
+		t.Fatalf("%s: NewExplorerReader: %v", leg, err)
+	}
+	defer func() { _ = r.Close() }()
+	got, err := r.ContractCodeHistory(ctx, contract)
+	if err != nil {
+		t.Fatalf("%s: ContractCodeHistory: %v", leg, err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%s: code history = %+v, want %+v", leg, got, want)
+	}
+	for i := range want {
+		if got[i].Ledger != want[i].Ledger || got[i].WasmHash != want[i].WasmHash ||
+			!got[i].CloseTime.Equal(want[i].CloseTime) {
+			t.Fatalf("%s: code history[%d] = %+v, want %+v (full %+v)", leg, i, got[i], want[i], got)
+		}
 	}
 }
