@@ -362,9 +362,10 @@ func (s *Store) aquariusReserveBlocks(ctx context.Context, blk *BespokeBlock, wi
 // backfilled on r1 (7.3M+ events) but previously served nowhere. Adds:
 //
 //   - lifetime + windowed KPIs: total rewards-gauge events (lifetime), 30d
-//     claim_reward count/volume/distinct claimants, and governance events
-//     (lifetime).
-//   - a lifetime per-kind breakdown table (all 12 rewards-gauge kinds).
+//     claim_reward count/distinct claimants (+ volume when a single reward
+//     token was claimed), and governance events (lifetime).
+//   - a 30d claim_reward volume table, one row per reward token.
+//   - a lifetime per-kind event-count table (all 12 rewards-gauge kinds).
 //   - a recent-governance-events table (kind/contract/admin/target/ledger,
 //     newest first, across all 8 admin kinds) — mirrors
 //     lendingAuctionBlocks' "Recent auctions" shape.
@@ -414,11 +415,7 @@ func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, wi
 		})
 	}
 	if claims != nil {
-		blk.KPIs = append(blk.KPIs,
-			BespokeKPI{Label: "Reward claims (30d)", Value: strconv.FormatInt(claims.Events, 10), Hint: "claim_reward events in the trailing 30 days"},
-			BespokeKPI{Label: "Reward volume (30d)", Value: claims.Amount.String(), Unit: "token-units", Hint: "summed claim_reward amount over 30d, reward-token base units — Aquarius reward tokens have no published price at this layer, so this is NOT USD"},
-			BespokeKPI{Label: "Distinct claimants (30d)", Value: strconv.FormatInt(claims.DistinctClaimants, 10), Hint: "distinct user addresses claiming a reward in the trailing 30 days"},
-		)
+		blk.KPIs = append(blk.KPIs, aquariusClaimKPIs(claims)...)
 	}
 	if adminLifetime > 0 {
 		blk.KPIs = append(blk.KPIs, BespokeKPI{
@@ -429,16 +426,20 @@ func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, wi
 	}
 
 	if rewardsLifetime > 0 {
-		tbl := BespokeTable{Title: "Rewards events by kind (lifetime)", Columns: []string{"Kind", "Events", "Amount (token-units)"}}
+		tbl := BespokeTable{Title: "Rewards events by kind (lifetime)", Columns: []string{"Kind", "Events"}}
 		for _, k := range byKind {
 			if k.Events == 0 {
 				continue
 			}
-			tbl.Rows = append(tbl.Rows, []string{string(k.Kind), strconv.FormatInt(k.Events, 10), k.Amount.String()})
+			tbl.Rows = append(tbl.Rows, []string{string(k.Kind), strconv.FormatInt(k.Events, 10)})
 		}
 		if len(tbl.Rows) > 0 {
 			blk.Tables = append(blk.Tables, tbl)
 		}
+	}
+
+	if claims != nil {
+		blk.Tables = append(blk.Tables, aquariusClaimVolumeTable(claims))
 	}
 
 	if err := s.aquariusGovernanceTable(ctx, blk); err != nil {
@@ -454,9 +455,42 @@ func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, wi
 	}
 
 	blk.Notes = append(blk.Notes,
-		"Rewards-gauge + governance figures are from the v0.12 full-history backfill (aquarius_rewards_events, migration 0099; aquarius_admin, migration 0100). Amounts are reward-token base units (per-asset decimals) — Aquarius has no published price for reward tokens at this layer, so these are never USD and never feed VWAP. Fields marked '(lifetime)' are unwindowed all-time totals; the claim_reward drill-down is a fixed trailing-30-day window regardless of the page's overall analytics window; the daily series follows the page's overall window.",
+		"Rewards-gauge + governance figures are from the v0.12 full-history backfill (aquarius_rewards_events, migration 0099; aquarius_admin, migration 0100). Reward volume is reported per reward token, in that token's base units (per-asset decimals), and never summed across tokens — Aquarius has no published price for reward tokens at this layer, so these are never USD and never feed VWAP. Fields marked '(lifetime)' are unwindowed all-time totals; the claim_reward drill-down is a fixed trailing-30-day window regardless of the page's overall analytics window; the daily series follows the page's overall window.",
 	)
 	return nil
+}
+
+// aquariusClaimKPIs renders the 30d claim_reward KPIs. "Reward volume (30d)"
+// is a single figure only when every claim in the window paid the same
+// reward token; otherwise volume lives solely in the per-token table,
+// because base units of different tokens do not add.
+func aquariusClaimKPIs(claims *AquariusClaimRewardWindow) []BespokeKPI {
+	kpis := []BespokeKPI{{Label: "Reward claims (30d)", Value: strconv.FormatInt(claims.Events, 10), Hint: "claim_reward events in the trailing 30 days"}}
+	if len(claims.ByToken) == 1 {
+		t := claims.ByToken[0]
+		kpis = append(kpis, BespokeKPI{
+			Label: "Reward volume (30d)", Value: t.Amount.String(), Unit: "token-units",
+			Hint: "summed claim_reward amount over 30d in base units of the only reward token claimed (" + aquariusRewardTokenLabel(t.RewardToken) + ") — Aquarius reward tokens have no published price at this layer, so this is NOT USD",
+		})
+	}
+	return append(kpis, BespokeKPI{Label: "Distinct claimants (30d)", Value: strconv.FormatInt(claims.DistinctClaimants, 10), Hint: "distinct user addresses claiming a reward in the trailing 30 days"})
+}
+
+// aquariusClaimVolumeTable renders the 30d claim_reward volume per reward
+// token, busiest token first.
+func aquariusClaimVolumeTable(claims *AquariusClaimRewardWindow) BespokeTable {
+	tbl := BespokeTable{Title: "Reward volume by token (30d)", Columns: []string{"Reward token", "Claims", "Amount (token base units)"}}
+	for _, t := range claims.ByToken {
+		tbl.Rows = append(tbl.Rows, []string{aquariusRewardTokenLabel(t.RewardToken), strconv.FormatInt(t.Events, 10), t.Amount.String()})
+	}
+	return tbl
+}
+
+func aquariusRewardTokenLabel(token string) string {
+	if token == "" {
+		return "unrecorded"
+	}
+	return token
 }
 
 // aquariusGovernanceTable adds the "Recent governance events" table
