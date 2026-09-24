@@ -138,50 +138,6 @@ const (
 // hours and NO output until the end: the reduction can only emit once the last
 // window has been folded, so every insert lands after the scan rather than
 // interleaved with it. Silence is not a hang.
-// claimableSeedWindow carries the adaptive ledger-window width for the seed
-// walk: narrow on a ClickHouse memory-limit error, widen again after sustained
-// success. Extracted from the walk loop so the policy is testable on its own
-// and the walk stays under the gocognit ceiling.
-//
-// The asymmetry is deliberate. Narrowing is immediate (one failure halves the
-// width) because a failed window is a wasted scan; widening needs
-// claimableSeedWidenAfter consecutive clean windows because re-widening into a
-// range that just failed would oscillate. The per-query memory ceiling is
-// never raised — only the amount of chain per query changes.
-type claimableSeedWindow struct {
-	width uint32
-	clean int // consecutive scans with no memory-limit error
-}
-
-func (w *claimableSeedWindow) reset() {
-	w.width = claimableSeedLedgerWindow
-	w.clean = 0
-}
-
-func (w *claimableSeedWindow) canNarrow() bool {
-	return w.width > claimableSeedMinLedgerWindow
-}
-
-func (w *claimableSeedWindow) narrow() {
-	w.width /= 2
-	if w.width < claimableSeedMinLedgerWindow {
-		w.width = claimableSeedMinLedgerWindow
-	}
-	w.clean = 0
-}
-
-func (w *claimableSeedWindow) succeeded() {
-	w.clean++
-	if w.clean < claimableSeedWidenAfter || w.width >= claimableSeedLedgerWindow {
-		return
-	}
-	w.width *= 2
-	if w.width > claimableSeedLedgerWindow {
-		w.width = claimableSeedLedgerWindow
-	}
-	w.clean = 0
-}
-
 func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[string]struct{}, fn func(ClaimableBalanceSeed) error) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
@@ -195,29 +151,15 @@ func StreamClaimableBalanceSeeds(ctx context.Context, addr string, assets map[st
 	}
 
 	red := newClaimableSeedReducer(assets)
-	var win claimableSeedWindow
-	win.reset()
-	for start := minLedger; ; {
-		end := start + win.width - 1
-		if end < start || end > maxLedger { // uint32 overflow guard + clamp
-			end = maxLedger
-		}
-		if err := red.startWindow(start); err != nil {
+	win := newAdaptiveLedgerWindow(claimableSeedLedgerWindow, claimableSeedMinLedgerWindow, claimableSeedWidenAfter)
+	err = walkLedgerWindows(minLedger, maxLedger, win, func(from, to uint32) error {
+		if err := red.startWindow(from); err != nil {
 			return err
 		}
-		switch err := scanClaimableSeedWindow(ctx, conn, start, end, red); {
-		case err == nil:
-			win.succeeded()
-		case isMemoryLimitExceeded(err) && win.canNarrow():
-			win.narrow()
-			continue // retry the SAME start, narrower
-		default:
-			return err
-		}
-		if end >= maxLedger {
-			break
-		}
-		start = end + 1
+		return scanClaimableSeedWindow(ctx, conn, from, to, red)
+	})
+	if err != nil {
+		return err
 	}
 	return red.emit(fn)
 }

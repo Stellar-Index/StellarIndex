@@ -7,6 +7,16 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
+// TestSupplySeedSACBalances_AcceptsTimeout pins the -timeout flag: the
+// full-history pass writes only after the whole lake scan, so its deadline must
+// be operator-settable rather than a fixed budget that silently loses the pass.
+func TestSupplySeedSACBalances_AcceptsTimeout(t *testing.T) {
+	err := supplySeedSACBalances([]string{"-timeout", "20h"})
+	if err == nil || err.Error() != "-config is required" {
+		t.Fatalf("err = %v, want flag parsing to accept -timeout and stop at the missing -config", err)
+	}
+}
+
 // TestSacSeedTally_ObserveTracksMinMaxLedger covers the min/max-ledger
 // bookkeeping that feeds sac_balance_seed_provenance.min_ledger_seen /
 // max_ledger_seen (migration 0102) — the evidence that a -full-history
