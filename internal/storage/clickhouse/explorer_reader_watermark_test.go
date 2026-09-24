@@ -31,13 +31,15 @@ func isAccountActivityLookup(q string) bool {
 		strings.Contains(q, "WHERE account_id = ?")
 }
 
-// watermarkStubConn routes the account_activity probe + lookup to real
-// single-column rows (so the reader takes the bounded path) and everything
-// else to `rows`.
+// watermarkStubConn routes the ops_by_source probe and the account_activity
+// probe + lookup to real single-column rows (so the reader takes the bounded
+// path) and everything else to `rows`.
 func watermarkStubConn(watermark uint32, rows *stubRows) *stubConn {
 	conn := &stubConn{}
 	conn.respond = func(q string) (driver.Rows, error) {
 		switch {
+		case isOpsBySourceProbe(q):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
 		case isAccountActivityProbe(q):
 			return &stubRows{data: [][]any{{watermark}}}, nil
 		case isAccountActivityLookup(q):

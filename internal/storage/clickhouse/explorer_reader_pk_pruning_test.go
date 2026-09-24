@@ -110,7 +110,7 @@ func TestAccountListings_ArmsPageAccountKeyedTables(t *testing.T) {
 // the reader's args slice must still line up with the emitted SQL.
 func TestAccountOperations_BoundArgsBindInsideKeyArms(t *testing.T) {
 	conn := &stubConn{}
-	conn.respond = func(string) (driver.Rows, error) { return &stubRows{}, nil }
+	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
 	r := &ExplorerReader{conn: conn}
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
 	if _, err := r.AccountOperations(context.Background(), "GTEST", 9, cur); err != nil {

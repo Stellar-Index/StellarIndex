@@ -49,7 +49,7 @@ func keysetMergeStage(t *testing.T, q string) string {
 func emittedAccountQuery(t *testing.T, call func(*ExplorerReader) error) string {
 	t.Helper()
 	conn := &stubConn{}
-	conn.respond = func(string) (driver.Rows, error) { return &stubRows{}, nil }
+	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
 	if err := call(&ExplorerReader{conn: conn}); err != nil {
 		t.Fatalf("reader call: %v", err)
 	}
