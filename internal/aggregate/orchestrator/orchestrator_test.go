@@ -2348,3 +2348,80 @@ func TestFlushContributions_SinkFailureIsCounted(t *testing.T) {
 		t.Errorf("contribution_write_errors_total delta = %v, want 1", got)
 	}
 }
+
+// wholeXLMTrade builds an XLM/USDT print of `xlm` whole units at num/den
+// USDT, stamped at the source's registered amount scale.
+func wholeXLMTrade(t *testing.T, source string, xlm, num, den int64, ts time.Time) canonical.Trade {
+	t.Helper()
+	unit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(amountScaleDecimalsFor(source))), nil)
+	base := new(big.Int).Mul(big.NewInt(xlm), unit)
+	quote := new(big.Int).Quo(new(big.Int).Mul(base, big.NewInt(num)), big.NewInt(den))
+	return buildTradeFrom(t, source, base, quote, ts)
+}
+
+// The outlier centre is a per-print median, so the trade-count trim share
+// cannot tell a trimmed honest block from trimmed dust. window_base_volume
+// publishes each stage's base volume in whole units on every window, so the
+// volume trim share is readable wherever the filter runs.
+func TestRefreshPairWindow_RecordsWindowBaseVolumePerStage(t *testing.T) {
+	t0 := time.Now().Add(-4 * time.Minute)
+	at := func(s int) time.Time { return t0.Add(time.Duration(s) * time.Second) }
+	cases := []struct {
+		name                string
+		trades              []canonical.Trade
+		wantClass, wantKept float64
+	}{
+		{
+			// 3 × 1,000,000 XLM at 0.100 against 4 × 30,000 XLM of wash at
+			// 0.114: the count majority would drop the honest block, so the
+			// window is withheld and the whole class volume reads as removed.
+			name: "dust count majority over an honest block",
+			trades: []canonical.Trade{
+				wholeXLMTrade(t, "kraken", 1_000_000, 100, 1000, at(0)),
+				wholeXLMTrade(t, "kraken", 30_000, 114, 1000, at(5)),
+				wholeXLMTrade(t, "kraken", 1_000_000, 100, 1000, at(10)),
+				wholeXLMTrade(t, "kraken", 30_000, 114, 1000, at(15)),
+				wholeXLMTrade(t, "kraken", 1_000_000, 100, 1000, at(20)),
+				wholeXLMTrade(t, "kraken", 30_000, 114, 1000, at(25)),
+				wholeXLMTrade(t, "kraken", 30_000, 114, 1000, at(35)),
+			},
+			wantClass: 3_120_000,
+			wantKept:  0,
+		},
+		{
+			// A lone 8dp fat finger among 7dp honest prints is trimmed. Both
+			// stages are in whole units, so the all-7dp survivors compare to
+			// the 8dp-bearing class set without a 10x scale error.
+			name: "fat finger trimmed across mixed scales",
+			trades: []canonical.Trade{
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(0)),
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(1)),
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(2)),
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(3)),
+				wholeXLMTrade(t, "sdex", 1_000_000, 100, 1000, at(4)),
+				wholeXLMTrade(t, "kraken", 10_000, 200, 1000, at(6)),
+			},
+			wantClass: 5_010_000,
+			wantKept:  5_000_000,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb, _ := newTestRedis(t)
+			pair := xlmUsdtPair(t)
+			orch := New(&mockStore{trades: tc.trades}, rdb, Config{
+				Pairs:                 []canonical.Pair{pair},
+				Windows:               []time.Duration{5 * time.Minute},
+				OutlierSigmaThreshold: 4.0,
+			})
+			if err := orch.Tick(context.Background()); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			class := testutil.ToFloat64(obs.AggregatorWindowBaseVolume.WithLabelValues(pair.String(), "5m", "class"))
+			kept := testutil.ToFloat64(obs.AggregatorWindowBaseVolume.WithLabelValues(pair.String(), "5m", "outlier"))
+			if class != tc.wantClass || kept != tc.wantKept {
+				t.Fatalf("window_base_volume class=%v outlier=%v, want class=%v outlier=%v", class, kept, tc.wantClass, tc.wantKept)
+			}
+		})
+	}
+}

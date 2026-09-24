@@ -403,10 +403,14 @@ the survivors carry less base volume than the dropped prints, the
 window is withheld (`keepIfVolumeMajority`, `internal/aggregate/outliers.go`),
 so a dust burst cannot outvote a large block and one large print cannot
 outvote the rest. Withheld windows surface as all-dropped `outlier`
-drops and empty windows; there is no dedicated contested-window metric.
-The alerting half is now two rules,
-`stellarindex_aggregator_outlier_storm` and
-`..._outlier_trim_fraction` (`configs/prometheus/rules.r1/aggregator.yml:61,115`).
+drops, empty windows, and a `stellarindex_aggregator_window_base_volume`
+of 0 at the `outlier` stage against a non-zero `class` stage.
+The alerting half is three rules,
+`stellarindex_aggregator_outlier_storm` (venue disagreement, ≥ 2 venues),
+`..._outlier_trim_fraction` (trade-count trim share, 24h window) and
+`..._outlier_volume_trim_fraction` (base-volume trim share on every
+window, so a single-venue withhold on 5m or 1h is visible)
+(`configs/prometheus/rules.r1/aggregator.yml`).
 **Still not built:** automatic *source*-level exclusion on sustained
 outlier-storm; that remains an operator action per runbook.
 

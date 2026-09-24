@@ -1407,7 +1407,7 @@ func (o *Orchestrator) decideBucket(
 	// outlier_storm alert reads per-venue DISAGREEMENT from this, not
 	// the trim re-count (2026-08-28).
 	recordWindowStage(pair, window, "fetched", preFilter)
-	recordWindowStage(pair, window, "class", len(trades))
+	recordWindowStageVolume(pair, window, "class", trades)
 	o.recordVenueVWAPs(pair, window, trades)
 	if o.cfg.OutlierSigmaThreshold > 0 {
 		preOutlier := len(trades)
@@ -1427,7 +1427,7 @@ func (o *Orchestrator) decideBucket(
 			obs.AggregatorDroppedTradesTotal.WithLabelValues("outlier", pair.String()).Add(float64(dropped))
 		}
 	}
-	recordWindowStage(pair, window, "outlier", len(trades))
+	recordWindowStageVolume(pair, window, "outlier", trades)
 	if len(trades) == 0 {
 		o.mu.Lock()
 		o.emptyWindows++

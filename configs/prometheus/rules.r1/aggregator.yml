@@ -146,6 +146,47 @@ groups:
             for the pair; see the spam-wave signature in the runbook.
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
 
+      # The count share above cannot see WHICH prints were trimmed: the
+      # outlier centre is a per-print median, so a few wash prints can
+      # outvote one honest block. The filter withholds a window whose trim
+      # would discard the volume majority (keepIfVolumeMajority), which
+      # turns that attack into a silent withhold on the short windows the
+      # 24h count rule skips. This rule reads base VOLUME per stage on
+      # EVERY window: > 20% of the traded money trimmed for 15m, and 100%
+      # when the window is being withheld as contested. Covered by
+      # rule-tests/aggregator_test.yml (the dust-over-block worked example
+      # fires on 5m; a fat-finger trim stays silent).
+      - alert: stellarindex_aggregator_outlier_volume_trim_fraction
+        expr: |
+          (
+            1 -
+            stellarindex_aggregator_window_base_volume{stage="outlier"}
+            / ignoring (stage)
+            stellarindex_aggregator_window_base_volume{stage="class"}
+          ) > 0.2
+          and ignoring (stage)
+          stellarindex_aggregator_window_base_volume{stage="class"} > 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: aggregator
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+          summary: "{{ $labels.pair }} outlier filter removing >20% of the {{ $labels.window }} window's volume for 15m (P3)"
+          description: |
+            The outlier filter has removed more than 20% of the base volume
+            in {{ $labels.pair }}'s {{ $labels.window }} window for 15m+
+            (stellarindex_aggregator_window_base_volume, stage=outlier vs
+            stage=class). At 100% the window is withheld: a count majority
+            of prints disagrees with the volume majority, the shape of wash
+            prints set against an honest block, and no price is published
+            for that window. Compare window_trades for the same window —
+            many prints but little volume removed is dust; few prints and
+            much volume is a large print outside the band. Diagnose from
+            the trades table for the pair.
+            Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/aggregator-outlier-storm.md
+
       - alert: stellarindex_aggregator_fx_snap_fallback_dominant
         expr: |
           sum(rate(stellarindex_aggregator_fx_snap_fallback_total[15m]))
