@@ -24,6 +24,13 @@ const (
 // target RMT collapses re-runs of overlapping windows, so the backfill
 // is idempotent and resumable. table is one of the two constants above,
 // never caller text (BackfillContractInstanceChangesInto checks).
+//
+// FINAL on the source read, for txHashIndexBackfillQuery's reason:
+// ledger_entry_changes is ReplacingMergeTree(ingested_at), so a window a
+// corrected re-ingest touched can hold the stale part beside the fix. Both
+// would land in one INSERT whose target rows tie on their DEFAULT now()
+// ingested_at, leaving the pre-fix wasm_hash free to survive the collapse.
+// FINAL is bounded by the same ledger_seq window predicate.
 func contractInstanceBackfillQuery(table string) string {
 	return fmt.Sprintf(`
 	INSERT INTO stellar.%s
@@ -38,7 +45,7 @@ func contractInstanceBackfillQuery(table string) string {
 		toUInt8(substring(tryBase64Decode(entry_xdr), 61, 4) = unhex('00000001')),
 		if(substring(tryBase64Decode(entry_xdr), 61, 4) = unhex('00000000'),
 		   lower(hex(substring(tryBase64Decode(entry_xdr), 65, 32))), '')
-	FROM stellar.ledger_entry_changes
+	FROM stellar.ledger_entry_changes FINAL
 	WHERE ledger_seq BETWEEN ? AND ?
 	  AND entry_type = 'contract_data'
 	  AND length(key_xdr) = 64

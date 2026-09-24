@@ -23,7 +23,7 @@ func chContractLedgersBackfill(args []string) error {
 	fs := flag.NewFlagSet("ch-contract-ledgers-backfill", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	from := fs.Uint("from", 2, "first ledger (inclusive; resume point from a previous run's output)")
-	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current lake tip)")
+	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = the contiguous lake tip from -from)")
 	window := fs.Uint("window", 1_000_000, "ledgers per INSERT…SELECT window")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -35,13 +35,9 @@ func chContractLedgersBackfill(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	last := uint32(*to)
-	if last == 0 {
-		tip, err := clickhouse.MaxLedger(ctx, *chAddr)
-		if err != nil {
-			return fmt.Errorf("resolve lake tip: %w", err)
-		}
-		last = tip
+	last, err := resolveBackfillTop(ctx, *chAddr, uint32(*from), uint32(*to))
+	if err != nil {
+		return err
 	}
 	if last < uint32(*from) {
 		return fmt.Errorf("-to (%d) is below -from (%d)", last, *from)

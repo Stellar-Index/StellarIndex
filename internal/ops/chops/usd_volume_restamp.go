@@ -228,6 +228,10 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	if err := restampLiveOverlapGuard(ctx, store, from, to, *allowLiveOverlap); err != nil {
 		return err
 	}
+	finishLock, err := holdInPlaceRestampLock(ctx, store, write, *chunks, os.Stderr)
+	if err != nil {
+		return err
+	}
 
 	hb := opsutil.NewJobHeartbeat("usd-volume-restamp", *heartbeat, nil)
 	if hb.Enabled() {
@@ -272,6 +276,7 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 		default:
 			rerr = runCEXFiatRestamp(ctx, store, *cfgPath, from, to, xopts, *fxMaxStaleness)
 		}
+		rerr = finishLock(rerr)
 		ok = rerr == nil
 		return rerr
 	}
@@ -300,10 +305,13 @@ func usdVolumeRestamp(args []string) error { //nolint:gocognit,gocyclo,funlen //
 	for day := from; !day.After(to); day = day.AddDate(0, 0, 1) {
 		rows, groups, derr := run.day(ctx, day)
 		if derr != nil {
-			return derr
+			return finishLock(derr)
 		}
 		totalRows += rows
 		totalGroups += groups
+	}
+	if err := finishLock(nil); err != nil {
+		return err
 	}
 	ok = true
 	fmt.Print(exactRestampSummary(*cfgPath, from, to, totalRows, totalGroups, write))

@@ -1008,8 +1008,10 @@ Subcommands:
                           resumable INSERT…SELECT chunks (idempotent —
                           ReplacingMergeTree keyed on tx_hash). The
                           tx_hash_index_mv MV covers post-deploy ingest;
-                          this covers the history behind it. -to 0 = lake
-                          tip. A bare invocation is REFUSED: -full runs the
+                          this covers the history behind it. -to 0 = the
+                          CONTIGUOUS lake tip from -from; an explicit -to
+                          above it is refused (a hole in stellar.ledgers
+                          below it). A bare invocation is REFUSED: -full runs the
                           whole ledger-2..tip history (~10.2B rows), or pass
                           an explicit -from (resume point) / -to bound.
                           Prints a resume point per window; serialize it and
@@ -1022,9 +1024,13 @@ Subcommands:
                           NOT a Galexie re-walk (BACKLOG #59). Reuses the live
                           extractor's participant derivation, so the fill is
                           byte-identical to live capture. -to 0 = the
-                          live-capture floor − 1 (exactly the gap). Windowed,
-                          resumable (idempotent ReplacingMergeTree), prints a
-                          resume point per window. -dry-run counts what WOULD
+                          live-capture floor − 1 (exactly the gap). Either
+                          bound must lie within the CONTIGUOUS lake tip from
+                          -from, else the run is refused (no MV re-derives a
+                          ledger read as a hole). Windowed, resumable
+                          (idempotent ReplacingMergeTree), prints a resume
+                          point (-from AND -to: a resumed run reads its own
+                          rows as the floor) per window. -dry-run counts what WOULD
                           be written. Run under run-heavy-job.sh on r1.
                           Exits non-zero when more op bodies failed to
                           decode than -max-decode-errors (default 0).

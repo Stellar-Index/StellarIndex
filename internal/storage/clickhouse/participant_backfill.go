@@ -133,11 +133,11 @@ func BackfillOperationParticipants(ctx context.Context, addr string, from, to, w
 		stats.Participants += ws.Participants
 		stats.DecodeErrors += ws.DecodeErrors
 		if werr != nil {
-			return stats, fmt.Errorf("clickhouse: participant window [%d,%d]: %w — resume with -from %d", lo, hi, werr, lo)
+			return stats, fmt.Errorf("clickhouse: participant window [%d,%d]: %w — resume with -from %d -to %d", lo, hi, werr, lo, to)
 		}
-		logf("window [%d,%d] done in %s (total %s; ops=%d %s participants=%d decode-errors=%d; resume point -from %d)",
+		logf("window [%d,%d] done in %s (total %s; ops=%d %s participants=%d decode-errors=%d; resume point -from %d -to %d)",
 			lo, hi, time.Since(wStart).Round(time.Second), time.Since(start).Round(time.Second),
-			ws.OpsScanned, verb, ws.Participants, ws.DecodeErrors, hi+1)
+			ws.OpsScanned, verb, ws.Participants, ws.DecodeErrors, hi+1, to)
 		if hi >= to {
 			return stats, nil
 		}

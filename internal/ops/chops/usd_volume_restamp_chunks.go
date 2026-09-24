@@ -507,7 +507,7 @@ func takeRestampLock(ctx context.Context, store chunkRestampStore, errw io.Write
 	release, err := store.TryUSDVolumeRestampLock(ctx)
 	if err != nil {
 		if errors.Is(err, timescale.ErrUSDVolumeRestampLockHeld) {
-			return nil, fmt.Errorf("usd-volume-restamp: -write refuses to start: %w. Another usd-volume-restamp -chunks -write run is alive. "+
+			return nil, fmt.Errorf("usd-volume-restamp: -write refuses to start: %w. Another usd-volume-restamp -write run is alive. "+
 				"run-heavy-job.sh's lock is per job NAME and every attempt takes a new name, so the wrapper does not stop a second attempt; this lock does: "+
 				"two runs on one hypertable would each pause and re-enable the compression policy on their own schedule, the second's exit would hand the "+
 				"first's open chunk to the policy's next fire, and the span would end at two generations. Find the holder:\n    %s\nand let it finish "+
@@ -518,6 +518,22 @@ func takeRestampLock(ctx context.Context, store chunkRestampStore, errw io.Write
 	_, _ = fmt.Fprintf(errw, "usd-volume-restamp: holding session advisory lock hashtext('%s') for this run; released at exit, or by the server when the connection drops\n",
 		timescale.USDVolumeRestampLockName)
 	return release, nil
+}
+
+// holdInPlaceRestampLock takes the run lock for an in-place (-chunks
+// unset) -write walk, whose UPDATEs would otherwise contend with a second
+// restamp over the same rows; the chunk walks take it in
+// beginChunkWriteRun. The returned finish releases it and folds a release
+// failure into the run's error; a dry run or a chunk run gets a no-op.
+func holdInPlaceRestampLock(ctx context.Context, store chunkRestampStore, write, chunks bool, errw io.Writer) (func(error) error, error) {
+	if !write || chunks {
+		return func(runErr error) error { return runErr }, nil
+	}
+	release, err := takeRestampLock(ctx, store, errw)
+	if err != nil {
+		return nil, err
+	}
+	return func(runErr error) error { return releaseRestampLock(ctx, release, errw, runErr) }, nil
 }
 
 // releaseRestampLock releases the run lock on a context detached from the
