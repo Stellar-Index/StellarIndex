@@ -27,6 +27,15 @@ against.
   value, and the API serves it. A cached value with no readable stamp is
   not served. Deploy the aggregator before, or with, the API: until it
   has written stamps, the API's cache-backed prices miss.
+- **migrations — divergence row status no longer claims to be the flag:**
+  the stored comment on `divergence_observations.status` said the API's
+  divergence flag is "any reference firing" and that the threshold is
+  per-(reference, pair). A row is one reference against the worker's
+  single `threshold_pct`; `flags.divergence_warning` additionally needs
+  `min_sources_for_warning` answering references, a median breach or
+  zero agreeing references, and a 5-minute persistence debounce.
+  Migration 0173 re-issues the comment; catalog-only, and its down
+  restores 0019's string verbatim.
 
 - **ops — per-source genesis ledgers locked in step (#898):** the
   reconciliation catalogue and the gap detector's
