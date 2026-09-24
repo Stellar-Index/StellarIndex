@@ -31,10 +31,12 @@
       ACTIVE=0
       systemctl is-active --quiet keepalived && ACTIVE=1
 
-      # ip -4 a show <iface> | grep <vip> returns 0 only when this
-      # host currently owns the VIP (i.e. is MASTER).
+      # ip a show <iface> | grep <vip> returns 0 only when this
+      # host currently owns the VIP (i.e. is MASTER). Deliberately
+      # not scoped to -4/-6: keepalived_vip may be an IPv6 address,
+      # and -4 would silently exclude it from ownership detection.
       MASTER=0
-      ip -4 a show {{ keepalived_iface }} 2>/dev/null \
+      ip a show {{ keepalived_iface }} 2>/dev/null \
         | grep -q "{{ haproxy_vip | default('0.0.0.0') }}" && MASTER=1
 
       cat > "$TMP" <<EOF
