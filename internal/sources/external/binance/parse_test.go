@@ -119,6 +119,26 @@ func TestParseAggTradeFrame_BrokenJSON(t *testing.T) {
 	}
 }
 
+func TestParseAggTradeFrame_ZeroTradeTimeRejected(t *testing.T) {
+	// A frame missing "T" (or carrying it as literal 0) must not
+	// silently decode to the Unix epoch: time.UnixMilli(0) is a
+	// valid non-zero time.Time, so canonical.Trade.Validate's
+	// IsZero() check can never catch it downstream.
+	raw := []byte(`{"stream":"xlmusdt@aggTrade","data":{"e":"aggTrade","s":"XLMUSDT","a":1,"p":"0.1","q":"1","T":0,"m":false}}`)
+	_, err := parseAggTradeFrame(raw, buildPairMap(t))
+	if !errors.Is(err, ErrMalformedFrame) {
+		t.Errorf("expected ErrMalformedFrame for zero trade time, got %v", err)
+	}
+
+	// Field entirely absent from the payload (schema drift / partial
+	// body) unmarshals TradeTime to its zero value too — same guard.
+	rawMissing := []byte(`{"stream":"xlmusdt@aggTrade","data":{"e":"aggTrade","s":"XLMUSDT","a":1,"p":"0.1","q":"1","m":false}}`)
+	_, err = parseAggTradeFrame(rawMissing, buildPairMap(t))
+	if !errors.Is(err, ErrMalformedFrame) {
+		t.Errorf("expected ErrMalformedFrame for missing trade time, got %v", err)
+	}
+}
+
 func TestDecimalStringToScaledInt(t *testing.T) {
 	cases := []struct {
 		in          string

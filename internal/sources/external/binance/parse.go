@@ -77,6 +77,12 @@ func parseAggTradeFrame(raw []byte, pairMap map[string]canonical.Pair) (canonica
 	if ev.EventType != "aggTrade" {
 		return canonical.Trade{}, fmt.Errorf("%w: unexpected event type %q", ErrMalformedFrame, ev.EventType)
 	}
+	if ev.TradeTime == 0 {
+		// canonical.Trade.Validate only rejects the zero time.Time, and
+		// time.UnixMilli(0) (1970-01-01) is not that — so a missing or
+		// literal-zero "T" must be caught here, not relied on downstream.
+		return canonical.Trade{}, fmt.Errorf("%w: missing or zero trade time", ErrMalformedFrame)
+	}
 	pair, ok := pairMap[strings.ToUpper(ev.Symbol)]
 	if !ok {
 		return canonical.Trade{}, fmt.Errorf("%w: %q", ErrUnknownSymbol, ev.Symbol)
