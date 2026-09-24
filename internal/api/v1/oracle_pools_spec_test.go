@@ -1,8 +1,11 @@
 package v1
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"gopkg.in/yaml.v3"
@@ -21,11 +24,27 @@ import (
 // see into an allOf branch or an array item schema) because both gaps
 // live one level below that.
 
+// specDoc caches the parsed spec: callers only read it, and re-parsing the
+// whole YAML per schema pair cost api/v1 ~20 s under -race.
+var specDoc struct {
+	once sync.Once
+	doc  map[string]any
+	err  error
+}
+
 func loadSpecDoc(t *testing.T) map[string]any {
 	t.Helper()
+	specDoc.once.Do(func() { specDoc.doc, specDoc.err = readSpecDoc() })
+	if specDoc.err != nil {
+		t.Fatal(specDoc.err)
+	}
+	return specDoc.doc
+}
+
+func readSpecDoc() (map[string]any, error) {
 	dir, err := os.Getwd()
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	var specPath string
 	for i := 0; i < 8; i++ {
@@ -37,17 +56,17 @@ func loadSpecDoc(t *testing.T) map[string]any {
 		dir = filepath.Dir(dir)
 	}
 	if specPath == "" {
-		t.Fatal("could not locate openapi/stellar-index.v1.yaml from cwd")
+		return nil, errors.New("could not locate openapi/stellar-index.v1.yaml from cwd")
 	}
 	body, err := os.ReadFile(specPath) //nolint:gosec // repo-relative path resolved above
 	if err != nil {
-		t.Fatalf("read spec: %v", err)
+		return nil, fmt.Errorf("read spec: %w", err)
 	}
 	var doc map[string]any
 	if err := yaml.Unmarshal(body, &doc); err != nil {
-		t.Fatalf("yaml decode: %v", err)
+		return nil, fmt.Errorf("yaml decode: %w", err)
 	}
-	return doc
+	return doc, nil
 }
 
 func TestOraclePricesSpecDocumentsAsset(t *testing.T) {

@@ -1,14 +1,10 @@
 package v1
 
 import (
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 
 	explorerpkg "github.com/Stellar-Index/StellarIndex/internal/api/v1/explorer"
 )
@@ -209,38 +205,11 @@ func structJSONTags(t reflect.Type) map[string]bool {
 // components.schemas.
 func specSchemaProps(t *testing.T, schema string) map[string]bool {
 	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	var specPath string
-	for i := 0; i < 8; i++ {
-		try := filepath.Join(dir, "openapi", "stellar-index.v1.yaml")
-		if _, err := os.Stat(try); err == nil {
-			specPath = try
-			break
-		}
-		dir = filepath.Dir(dir)
-	}
-	if specPath == "" {
-		t.Fatal("could not locate openapi/stellar-index.v1.yaml from cwd")
-	}
-	body, err := os.ReadFile(specPath) //nolint:gosec // repo-relative path resolved above
-	if err != nil {
-		t.Fatalf("read spec: %v", err)
-	}
-	var doc struct {
-		Components struct {
-			Schemas map[string]struct {
-				Properties map[string]any `yaml:"properties"`
-			} `yaml:"schemas"`
-		} `yaml:"components"`
-	}
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		t.Fatalf("yaml decode: %v", err)
-	}
-	out := map[string]bool{}
-	for k := range doc.Components.Schemas[schema].Properties {
+	schemas, _ := loadSpecDoc(t)["components"].(map[string]any)["schemas"].(map[string]any)
+	s, _ := schemas[schema].(map[string]any)
+	props, _ := s["properties"].(map[string]any)
+	out := make(map[string]bool, len(props))
+	for k := range props {
 		out[k] = true
 	}
 	return out
