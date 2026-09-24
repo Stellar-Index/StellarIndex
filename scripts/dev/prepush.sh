@@ -106,6 +106,10 @@ else
       pnpm --dir "$app" install --frozen-lockfile
     done
     make verify
+    if ! git diff --exit-code --stat; then
+      echo "prepush: FAIL: a formatter or generator changed committed HEAD" >&2
+      exit 1
+    fi
   )
 fi
 
