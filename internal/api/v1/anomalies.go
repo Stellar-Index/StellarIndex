@@ -330,9 +330,8 @@ var divergenceReferences = map[string]bool{
 // reference names), `?days=` ∈ {1, 7, 30} (default 7). The history
 // companion to the /v1/divergence board.
 //
-// Cache policy: falls through to policyForPath's conservative default
-// (private, no-store) — deliberately matching its sibling
-// /v1/divergence rather than introducing a divergent policy here.
+// Cache policy: private, no-store, set by an explicit policyForPath arm
+// it shares with its sibling /v1/divergence and with /v1/anomalies.
 //
 // 200 + empty points when no reader is wired or the triple has no
 // observations in the window.

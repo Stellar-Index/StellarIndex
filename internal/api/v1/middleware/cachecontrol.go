@@ -104,6 +104,12 @@ var (
 	// name, nothing after /tvl, so the directory row and detail routes
 	// beside it keep the handler-set policy they already have.
 	protocolTVLPath = regexp.MustCompile(`^/v1/protocols/[^/]+/tvl$`)
+	// contractDetailPath is /v1/contracts/{id} and its /interactions,
+	// /code-history and /transfers children. /wasm is excluded: its handler
+	// sets its own directive.
+	contractDetailPath = regexp.MustCompile(`^/v1/contracts/[^/]+(/interactions|/code-history|/transfers)?$`)
+	// lendingReservesPath is /v1/lending/pools/{pool}/reserves.
+	lendingReservesPath = regexp.MustCompile(`^/v1/lending/pools/[^/]+/reserves$`)
 )
 
 // ledgerPolicy classifies the operator probes and the explorer's ledger/tx
@@ -148,6 +154,14 @@ var (
 //     nothing in it is per-user or auth-tied. The EXACT-path match matters:
 //     /v1/contracts/{id} is a different surface and keeps its own
 //     adjudication.
+//
+//   - /v1/contracts/{id}, /interactions and /code-history take the same band:
+//     they are served through contractDetailCached, the same
+//     stale-while-revalidate shape as recentContractsCached, so a long edge
+//     TTL would compound real staleness. /transfers is not cached server-side
+//     but is the contract's latest-N transfer listing with no cursor — its
+//     first page moves with every new transfer, so it is tip-advancing, not
+//     closed history, and gets the short band rather than the catalogue one.
 func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	// Operator endpoints — probed by systemd/Prometheus/uptime checks; a
@@ -161,7 +175,8 @@ func ledgerPolicy(path string, cdnEnabled bool) (string, bool) {
 		}
 		return "public, max-age=60", true
 	case path == "/v1/ledgers", path == "/v1/network/throughput",
-		path == "/v1/operations", path == "/v1/contracts":
+		path == "/v1/operations", path == "/v1/contracts",
+		contractDetailPath.MatchString(path):
 		if cdnEnabled {
 			return "public, max-age=10, s-maxage=15", true
 		}
@@ -250,7 +265,15 @@ func shortBandPolicy(path string, cdnEnabled bool) (string, bool) {
 		// /v1/pools/reserves, served from a 10-minute in-process
 		// snapshot; the same short band keeps a CDN entry from
 		// outliving a refresh while absorbing explorer polling.
-		protocolTVLPath.MatchString(path):
+		protocolTVLPath.MatchString(path),
+		// Lending-pool reserves — current state decoded from the pool
+		// contract's storage in the lake (ADR-0039), the same nature as
+		// /v1/pools/reserves.
+		lendingReservesPath.MatchString(path),
+		// The non-Stellar half of the /v1/assets catalogue (LC-001): same
+		// wire shape and the same live valuations, so the same band.
+		path == "/v1/external/assets",
+		strings.HasPrefix(path, "/v1/external/assets/"):
 		if cdnEnabled {
 			return "public, max-age=30, s-maxage=60", true
 		}
@@ -273,19 +296,35 @@ func policyForPath(path string, cdnEnabled bool) string {
 	if p, ok := shortBandPolicy(path, cdnEnabled); ok {
 		return p
 	}
+	if p, ok := routePolicy(path, cdnEnabled); ok {
+		return p
+	}
+	// Default — be conservative: an unknown path must not let the CDN cache
+	// something that turns out to be auth-tied later. A registered public GET
+	// route must not rely on this;
+	// TestPolicyForPath_EveryRegisteredGETRouteIsAdjudicated fails on one
+	// that reaches it without an allowlist entry.
+	return defaultPolicy
+}
+
+// defaultPolicy is what an unclassified path gets.
+const defaultPolicy = "private, no-store"
+
+// routePolicy is policyForPath's main table. ok=false means no arm matched.
+func routePolicy(path string, cdnEnabled bool) (string, bool) {
 	switch {
 	// ─── Operator endpoints — never cached ──────────────────────
 
 	// ─── Account endpoints — auth-tied, MUST NOT hit CDN ────────
 	case strings.HasPrefix(path, "/v1/account/"):
-		return "private, no-store"
+		return "private, no-store", true
 
 	// ─── SEP-10 Web Auth — credential exchange MUST NOT hit CDN ─
 	// Caching the challenge would let a future request reuse a
 	// nonce; caching the token would expose it to anyone the CDN
 	// serves. Both unconditionally bypass cache.
 	case strings.HasPrefix(path, "/v1/auth/sep10"):
-		return "private, no-store"
+		return "private, no-store", true
 
 	// ─── Magic-link auth + dashboard — same trust class as SEP-10
 	// F-1225 (audit-2026-05-12): /v1/auth/{login,callback,logout}
@@ -294,34 +333,34 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// have cached /v1/auth/callback's session-cookie response and
 	// re-issued it to subsequent requests. /v1/signup is also a
 	// credential / state-changing surface that must never cache.
-	// /v1/methodology
-	// + /v1/incidents.atom + /v1/price/stream are not credential
-	// surfaces but had no explicit policy — fold them in here so
-	// no v1 route reaches the no-match default branch.
+	// /v1/methodology, /v1/incidents.atom and /v1/price/stream got
+	// explicit arms below at the same time. Routes that still reach
+	// the default are listed, with a reason each, in the test's
+	// defaultPolicyAllowlist.
 	case strings.HasPrefix(path, "/v1/auth/"),
 		strings.HasPrefix(path, "/v1/dashboard/"),
 		path == "/v1/signup":
-		return "private, no-store"
+		return "private, no-store", true
 
 	// ─── SSE streams — bypass CDN cache; the response is a long-
 	// lived event stream, not a cacheable body. Without this CDNs
 	// may try to buffer + replay.
 	case strings.HasPrefix(path, "/v1/price/stream"):
-		return "no-store"
+		return "no-store", true
 
 	// ─── Public-but-policy-opinionated paths that lacked an
 	// explicit case before F-1225. Methodology page is mostly
 	// static prose; the atom feed is poll-cadence content.
 	case path == "/v1/methodology":
 		if cdnEnabled {
-			return "public, max-age=300, s-maxage=600"
+			return "public, max-age=300, s-maxage=600", true
 		}
-		return "public, max-age=300"
+		return "public, max-age=300", true
 	case path == "/v1/incidents.atom":
 		if cdnEnabled {
-			return "public, max-age=60, s-maxage=120"
+			return "public, max-age=60, s-maxage=120", true
 		}
-		return "public, max-age=60"
+		return "public, max-age=60", true
 
 	// ─── Tip + observations — private surfaces (ADR-0018) ───────
 	// Tip has no cross-region consistency contract; caching
@@ -330,7 +369,7 @@ func policyForPath(path string, cdnEnabled bool) string {
 		strings.HasPrefix(path, "/v1/price/tip/"),
 		path == "/v1/observations",
 		strings.HasPrefix(path, "/v1/observations/"):
-		return "private, no-cache, must-revalidate"
+		return "private, no-cache, must-revalidate", true
 
 	// ─── Diagnostics — operator-facing live data ────────────────
 	// /v1/diagnostics/cursors is polled every 15s by the explorer
@@ -338,7 +377,7 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// indexer tick" UX. Same shape as tip/observations: tight
 	// freshness, never CDN-cached.
 	case strings.HasPrefix(path, "/v1/diagnostics/"):
-		return "private, no-cache, must-revalidate"
+		return "private, no-cache, must-revalidate", true
 
 	// ─── Per-source health — same freshness class as diagnostics ──
 	// /v1/sources/{name}/health serves the 15s-refreshed ingestion-
@@ -346,7 +385,7 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// trailing slash: the exact-match `/v1/sources` catalogue path in
 	// the closed-bucket block below is unaffected.
 	case strings.HasPrefix(path, "/v1/sources/"):
-		return "private, no-cache, must-revalidate"
+		return "private, no-cache, must-revalidate", true
 
 	// ─── Status — customer-facing health rollup ─────────────────
 	// /v1/status is what the explorer /status page polls every 10 s
@@ -354,12 +393,13 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// longer interval. A 10 s cache absorbs the polling fan-out
 	// without delaying alert-state propagation enough to matter —
 	// the underlying signals (Prometheus heartbeats, incident counts)
-	// already have 15 s scrape granularity.
-	case path == "/v1/status":
+	// already have 15 s scrape granularity. /v1/status/notices is the
+	// active operator banner list the same page renders beside it.
+	case path == "/v1/status", path == "/v1/status/notices":
 		if cdnEnabled {
-			return "public, max-age=10, s-maxage=15"
+			return "public, max-age=10, s-maxage=15", true
 		}
-		return "public, max-age=10"
+		return "public, max-age=10", true
 
 	// ─── Historical / closed-bucket / catalogue — longer cache ──
 	// Closed buckets are immutable per ADR-0015 but the
@@ -373,7 +413,16 @@ func policyForPath(path string, cdnEnabled bool) string {
 		path == "/v1/vwap",
 		path == "/v1/twap",
 		path == "/v1/markets",
+		// Trailing-24h volume-by-source aggregate behind the market and
+		// asset pages; the same cadence as /v1/markets.
+		path == "/v1/markets/sources",
 		path == "/v1/pairs",
+		// Auto-flagged MEV feed. The detector worker writes it every
+		// 5 min, so a 300 s edge entry adds at most one sweep of lag.
+		path == "/v1/mev",
+		// Pure strkey/hash-shape classification of ?q= — no lake read,
+		// so the answer for a given query never changes.
+		path == "/v1/search",
 		path == "/v1/sources",
 		strings.HasPrefix(path, "/v1/oracle/"),
 		// /v1/chart is closed-bucket OHLCV (ADR-0015 contract);
@@ -433,9 +482,9 @@ func policyForPath(path string, cdnEnabled bool) string {
 		// series behind the same 10-minute assembly TTL.
 		path == "/v1/rwa/premium":
 		if cdnEnabled {
-			return "public, max-age=60, s-maxage=300"
+			return "public, max-age=60, s-maxage=300", true
 		}
-		return "public, max-age=60"
+		return "public, max-age=60", true
 
 	// ─── Explorer account surface — same private, no-store as its
 	// siblings ───────────────────────────────────────────────────
@@ -453,13 +502,20 @@ func policyForPath(path string, cdnEnabled bool) string {
 	// keyset-paginated over the current lake tip, and an address is a
 	// poor shared-CDN cache key regardless.
 	case path == "/v1/accounts", strings.HasPrefix(path, "/v1/accounts/"):
-		return "private, no-store"
+		return "private, no-store", true
 
-	// ─── Default — be conservative ──────────────────────────────
-	// Unknown path: don't accidentally let the CDN cache something
-	// that turns out to be auth-tied later. Matches /v1/account/*
-	// stance.
-	default:
-		return "private, no-store"
+	// ─── Live freeze + divergence state — never shared-cached ───
+	// /v1/anomalies reports the LIVE firing count and, with
+	// ?firing=true, the freezes firing right now (ADR-0019);
+	// /v1/divergence is the current cross-reference board and
+	// /series its history companion. A consumer reads these to decide
+	// whether a price is trustworthy, so an edge copy would extend the
+	// window in which a recovered freeze still reads as firing, or a
+	// new one reads as absent — the same hazard shortBandPolicy bounds
+	// to 5 s for /v1/price's `frozen` flag. Explicit, not the default.
+	case path == "/v1/anomalies", path == "/v1/divergence", path == "/v1/divergence/series":
+		return "private, no-store", true
+
 	}
+	return "", false
 }
