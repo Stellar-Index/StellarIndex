@@ -656,6 +656,10 @@ type ProtocolDetailView struct {
 	// verification write-up, absent when none exists yet.
 	VerificationPage string `json:"verification_page,omitempty"`
 
+	// verdictsStale is the /v1/coverage freshness gate over the verdict
+	// the embedded completeness summary republishes; it raises flags.stale.
+	verdictsStale bool
+
 	// ─── Lake analytics (populated when the activity reader is wired) ──
 
 	// EventBreakdown is the event-type distribution (topic[0] symbol →
@@ -715,7 +719,7 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	// comment above) — the directory has no per-row analytics.status to
 	// carry a health signal, unlike the detail path.
 	events, _ := s.protocolEvents24h(ctx)
-	verdicts := s.protocolVerdicts(ctx)
+	verdicts, verdictsStale := s.protocolVerdicts(ctx)
 	tvls, tvlTotal := s.protocolTVLsAndTotal()
 
 	view := ProtocolsView{Protocols: make([]ProtocolView, 0, len(protocolRegistry))}
@@ -737,7 +741,9 @@ func (s *Server) handleProtocolsList(w http.ResponseWriter, r *http.Request) {
 	view.CoverageNote = protocolsCoverageNote(degraded)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{})
+	// Every row's completeness summary republishes a /v1/coverage verdict,
+	// so the envelope carries that surface's freshness gate too.
+	writeJSON(w, view, Flags{Stale: verdictsStale})
 }
 
 // protocolsCoverageNote is the directory's honest-degrade statement
@@ -831,7 +837,8 @@ func (s *Server) handleProtocolDetail(w http.ResponseWriter, r *http.Request) {
 	// last-good cache past its horizon is still stale data, and the wire
 	// contract is that analytics.status="stale" always travels with
 	// flags.stale (openapi: "flags.stale is set on the envelope too").
-	staleFlag := stale || (view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
+	staleFlag := stale || view.verdictsStale ||
+		(view.Analytics != nil && view.Analytics.Status == protocolAnalyticsStale)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	writeJSON(w, view, Flags{Stale: staleFlag})
@@ -865,8 +872,10 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	s.enrichContractTokens(ctx, meta, contracts)
 	contractCount, contractCountOK := s.detailContractCount(ctx, meta, contracts)
 	events, eventsOK := s.protocolEvents24h(ctx)
+	verdicts, verdictsStale := s.protocolVerdicts(ctx)
 	v := ProtocolDetailView{
-		ProtocolView:     buildProtocolView(meta, contractCount, events, s.protocolVerdicts(ctx)),
+		ProtocolView:     buildProtocolView(meta, contractCount, events, verdicts),
+		verdictsStale:    verdictsStale,
 		Contracts:        contracts,
 		EventKinds:       append([]string{}, meta.EventKinds...),
 		VerificationPage: meta.VerificationPage,
@@ -1425,23 +1434,24 @@ func (s *Server) protocolEvents24h(ctx context.Context) (map[string]int64, bool)
 	return counts, true
 }
 
-// protocolVerdicts reads the latest completeness verdict per source,
-// degrading to an empty map (verdict summaries absent) when the reader
-// is nil or errors.
-func (s *Server) protocolVerdicts(ctx context.Context) map[string]timescale.CompletenessSnapshot {
+// protocolVerdicts reads the latest completeness verdict per source plus
+// the /v1/coverage freshness gate over them, degrading to an empty map
+// (verdict summaries absent, nothing to qualify) when the reader is nil
+// or errors.
+func (s *Server) protocolVerdicts(ctx context.Context) (map[string]timescale.CompletenessSnapshot, bool) {
 	if s.completenessReader == nil {
-		return nil
+		return nil, false
 	}
-	snaps, err := s.completenessReader.ListCompletenessSnapshots(ctx)
+	snaps, stale, err := s.completenessVerdicts(ctx)
 	if err != nil {
 		s.logger.Warn("protocols completeness read failed", "err", err)
-		return nil
+		return nil, false
 	}
 	out := make(map[string]timescale.CompletenessSnapshot, len(snaps))
 	for _, sn := range snaps {
 		out[sn.Source] = sn
 	}
-	return out
+	return out, stale
 }
 
 // protocolContractsErr returns name's registered instances in the unified

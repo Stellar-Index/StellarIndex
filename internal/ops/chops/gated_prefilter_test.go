@@ -170,7 +170,7 @@ func TestGatedPrefilter_identicalCountsSelfSeedPreserved(t *testing.T) {
 
 	// Build the prefilter.
 	pfStreamed := 0
-	pf, err := gatedPrefilter(context.Background(), countingEventStreamer{evs: evs, streamed: &pfStreamed}, src, hi)
+	pf, _, err := gatedPrefilter(context.Background(), countingEventStreamer{evs: evs, streamed: &pfStreamed}, src, hi)
 	if err != nil {
 		t.Fatalf("gatedPrefilter: %v", err)
 	}

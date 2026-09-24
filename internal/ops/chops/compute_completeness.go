@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -311,12 +312,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if recErr != nil {
 		return recErr
 	}
-	ownerOf := map[string]string{} // contract_id → source name (contract-pinned sources)
-	for _, src := range catalogue {
-		for _, c := range src.contractIDs {
-			ownerOf[c] = src.name
-		}
-	}
+	ownerOf := contractOwners(catalogue)
 	// W1-flowcompleteness-1: the TOPIC-MATCHED sources (soroswap/aquarius/
 	// phoenix/comet/defindex/blend — empty contractIDs) never appeared in
 	// ownerOf, so a dropped/altered topic on one of THEIR pools (the phoenix
@@ -933,7 +929,7 @@ func runRecognitionScan(skip bool, scan func() ([]completeness.RecognitionGap, e
 //
 // The DB reads live here; the pure fold is [mergeRegistryOwners] so the
 // attribution → verdict chain is unit-testable without a live store.
-func loadRegistryOwners(ctx context.Context, store *timescale.Store, ownerOf map[string]string) error {
+func loadRegistryOwners(ctx context.Context, store *timescale.Store, ownerOf map[string][]string) error {
 	gatedChildren := make(map[string][]string)
 	for _, source := range pipeline.GatedSourceNames() {
 		ids, err := store.LoadProtocolContracts(ctx, source)
@@ -958,22 +954,49 @@ func loadRegistryOwners(ctx context.Context, store *timescale.Store, ownerOf map
 // ownerOf: gatedChildren maps a factory-anchored source name to its
 // protocol_contracts children, and soroswapPairs is the soroswap_pairs
 // registry (all owned by "soroswap"). A contract ALREADY pinned by a source's
-// static contractIDs is never reassigned — the static catalogue pin wins, so a
-// curated contract-pinned source keeps its exact attribution. Pure —
-// unit-testable. The "soroswap" literal mirrors the catalogue entry's own
-// literal name (reconciliation_catalogue.go).
-func mergeRegistryOwners(ownerOf map[string]string, gatedChildren map[string][]string, soroswapPairs []string) {
+// static contractIDs gains no registry owner — the static catalogue pin wins,
+// so a curated contract-pinned source keeps its exact attribution. A contract
+// two registries both claim gets both owners. Pure — unit-testable. The
+// "soroswap" literal mirrors the catalogue entry's own literal name
+// (reconciliation_catalogue.go).
+func mergeRegistryOwners(ownerOf map[string][]string, gatedChildren map[string][]string, soroswapPairs []string) {
+	pinned := make(map[string]bool, len(ownerOf))
+	for c := range ownerOf {
+		pinned[c] = true
+	}
 	for source, ids := range gatedChildren {
 		for _, c := range ids {
-			if _, taken := ownerOf[c]; !taken {
-				ownerOf[c] = source
+			if !pinned[c] {
+				addOwner(ownerOf, c, source)
 			}
 		}
 	}
 	for _, p := range soroswapPairs {
-		if _, taken := ownerOf[p]; !taken {
-			ownerOf[p] = "soroswap"
+		if !pinned[p] {
+			addOwner(ownerOf, p, "soroswap")
 		}
+	}
+}
+
+// contractOwners maps every catalogue source's static contractIDs to EVERY
+// source that pins it. Sharing a contract set is a supported configuration
+// (sep41_transfers and sep41_supply are both gated on the watched SEP-41
+// list), so a single-owner map would hand all of one source's contracts to
+// whichever was catalogued last and leave the other's recognition axis
+// unable to fail.
+func contractOwners(catalogue []reconSource) map[string][]string {
+	ownerOf := map[string][]string{}
+	for _, src := range catalogue {
+		for _, c := range src.contractIDs {
+			addOwner(ownerOf, c, src.name)
+		}
+	}
+	return ownerOf
+}
+
+func addOwner(ownerOf map[string][]string, contract, source string) {
+	if !slices.Contains(ownerOf[contract], source) {
+		ownerOf[contract] = append(ownerOf[contract], source)
 	}
 }
 
@@ -982,14 +1005,19 @@ func mergeRegistryOwners(ownerOf map[string]string, gatedChildren map[string][]s
 // source owns), using ownerOf. A gap on an owned contract caps its owning
 // source's recognition axis; an unattributed gap flows to the system
 // `recognition` snapshot. Pure — unit-testable.
-func attributeRecognitionGaps(ownerOf map[string]string, gaps []completeness.RecognitionGap) (map[string][]uint32, []completeness.RecognitionGap) {
+func attributeRecognitionGaps(ownerOf map[string][]string, gaps []completeness.RecognitionGap) (map[string][]uint32, []completeness.RecognitionGap) {
 	recBySource := map[string][]uint32{}
 	var unattributed []completeness.RecognitionGap
 	for _, g := range gaps {
-		if owner, ok := ownerOf[g.ContractID]; ok {
-			recBySource[owner] = append(recBySource[owner], g.MinLedger)
-		} else {
+		owners := ownerOf[g.ContractID]
+		if len(owners) == 0 {
 			unattributed = append(unattributed, g)
+			continue
+		}
+		// A gap on a shared contract caps every source that owns it: none
+		// of them recognised the shape, and no one of them may read clean.
+		for _, owner := range owners {
+			recBySource[owner] = append(recBySource[owner], g.MinLedger)
 		}
 	}
 	return recBySource, unattributed
@@ -1881,10 +1909,13 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// Adding it here makes the watchdog self-maintaining. (Reads the Postgres
 		// soroban_events landing zone for the rare, indexed creation events; a
 		// CH-native preseed for full -ch purity is a follow-up.)
+		var walkBlind completeness.BlindSpots
 		if len(src.factories) > 0 {
-			if err := preseedFactoryChildren(ctx, store, src, lo); err != nil {
+			pb, err := preseedFactoryChildren(ctx, store, src, lo)
+			if err != nil {
 				return nil, completeness.BlindSpots{}, fmt.Errorf("%s preseed: %w", src.name, err)
 			}
+			walkBlind = pb
 		}
 		// Factory-anchored IDENTITY-gated sources (aquarius, phoenix) opt into a
 		// contract-id PREFILTER so the re-derive reads only the gated pool set
@@ -1895,16 +1926,18 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 		// gate, so the counts are byte-identical (see gatedPrefilter).
 		contractIDs := src.contractIDs
 		if src.newGatedDec != nil {
-			pf, pferr := gatedPrefilter(ctx, chStreamer, src, hi)
+			pf, pfBlind, pferr := gatedPrefilter(ctx, chStreamer, src, hi)
 			if pferr != nil {
 				return nil, completeness.BlindSpots{}, fmt.Errorf("%s gated prefilter: %w", src.name, pferr)
 			}
 			contractIDs = pf
+			walkBlind = walkBlind.Merge(pfBlind)
 		}
 		byKind, blind, err := completeness.ReDeriveOutputCountsByKindFromEvents(ctx, chStreamer, src.dec, contractIDs, src.topic0Syms, lo, hi)
 		if err != nil {
 			return nil, completeness.BlindSpots{}, err
 		}
+		blind = blind.Merge(walkBlind)
 		// Each table receives only the kinds it is registered for; counting
 		// every output would overcount any table that receives a subset.
 		return func(tgt reconTarget) map[uint32]int { return completeness.SumKinds(byKind, tgt.kinds...) }, blind, nil
@@ -1949,8 +1982,15 @@ func expectedProjection(ctx context.Context, store *timescale.Store, chStreamer 
 // (internal/storage/clickhouse/event_reader.go topic0Predicate) — before it
 // did, a walk over a String-topic factory returned zero rows and (b)
 // contributed nothing, silently degrading the prefilter to (a) alone (F048).
-func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, src reconSource, hi uint32) ([]string, error) {
+//
+// The walk runs the throwaway decoder under completeness.Guard: a creation
+// event whose decoder panics leaves its child unregistered on the expected
+// side, so it is returned as a blind spot rather than crashing the audit.
+// (The preseed or the re-derive proper may count the same row again; the
+// merge dedupes its ledger, and over-reporting blindness only fails closed.)
+func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, src reconSource, hi uint32) ([]string, completeness.BlindSpots, error) {
 	set := make(map[string]struct{})
+	blind := completeness.NewBlindTracker()
 	// (a) the registry the real re-derive starts the stream with.
 	if g, ok := src.dec.(gatedContractSetter); ok {
 		for _, c := range g.GatedContractSet() {
@@ -1967,17 +2007,21 @@ func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, 
 		}
 		werr := chStreamer.StreamContractEvents(ctx, src.genesis, hi, []string{f}, []string{src.creationSym},
 			func(ev events.Event) error {
-				if fresh.Matches(ev) {
-					// Decode registers the announced child in `fresh`'s registry
-					// (its only side effect for a creation event); a decode error
-					// on a malformed creation event is soft-failed exactly as the
-					// re-derive would, so the walk stays non-fatal.
-					_, _ = fresh.Decode(ev)
+				if perr := completeness.Guard(func() {
+					if fresh.Matches(ev) {
+						// Decode registers the announced child in `fresh`'s registry
+						// (its only side effect for a creation event); a decode error
+						// on a malformed creation event is soft-failed exactly as the
+						// re-derive would, so the walk stays non-fatal.
+						_, _ = fresh.Decode(ev)
+					}
+				}); perr != nil {
+					blind.Undecodable(ev.Ledger)
 				}
 				return nil
 			})
 		if werr != nil {
-			return nil, fmt.Errorf("walk %s creation events: %w", src.name, werr)
+			return nil, completeness.BlindSpots{}, fmt.Errorf("walk %s creation events: %w", src.name, werr)
 		}
 	}
 	for _, c := range fresh.GatedContractSet() {
@@ -1988,7 +2032,7 @@ func gatedPrefilter(ctx context.Context, chStreamer completeness.EventStreamer, 
 		out = append(out, c)
 	}
 	sort.Strings(out)
-	return out, nil
+	return out, blind.Result(), nil
 }
 
 // gatedContractSetter is the read-only half of gatedDecoder — a decoder that
@@ -2057,15 +2101,24 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 			// DecodeCounted additionally reports how many claim atoms in
 			// this op failed to decode, so a failure marks the ledger
 			// BLIND (C4-059) instead of silently reading as zero trades.
-			outs, failed := dec.DecodeCounted(dispatcher.OpContext{
-				Ledger:   op.Ledger,
-				ClosedAt: op.ClosedAt,
-				TxHash:   op.TxHash,
-				TxSource: op.Source,
-				OpIndex:  int(op.OpIndex),
-				Op:       op.Op,
-				OpResult: op.OpResult,
-			})
+			var outs []consumer.Event
+			var failed int
+			if perr := completeness.Guard(func() {
+				outs, failed = dec.DecodeCounted(dispatcher.OpContext{
+					Ledger:   op.Ledger,
+					ClosedAt: op.ClosedAt,
+					TxHash:   op.TxHash,
+					TxSource: op.Source,
+					OpIndex:  int(op.OpIndex),
+					Op:       op.Op,
+					OpResult: op.OpResult,
+				})
+			}); perr != nil {
+				// The dispatcher recovers this panic and skips the op; the
+				// census counts it blind instead of crashing the audit.
+				blind.Undecodable(op.Ledger)
+				return nil
+			}
 			for i := 0; i < failed; i++ {
 				blind.Undecodable(op.Ledger)
 			}
@@ -2234,10 +2287,32 @@ func decodeContractCallTree(
 	fn func(ledger uint32, ev consumer.Event) error,
 ) error {
 	for _, call := range calls {
-		if !dec.Matches(call.ContractID, call.FunctionName) {
+		evs, matched, derr := decodeContractCall(op, call, dec)
+		if !matched {
 			continue
 		}
-		evs, derr := dec.Decode(dispatcher.ContractCallContext{
+		if derr != nil {
+			blind.Undecodable(op.Ledger)
+			continue
+		}
+		for _, ev := range evs {
+			if ferr := fn(op.Ledger, ev); ferr != nil {
+				return ferr
+			}
+		}
+	}
+	return nil
+}
+
+// decodeContractCall runs dec over one call under completeness.Guard. A panic
+// in Matches or Decode comes back as a decode error on a matched call, so the
+// caller records it blind exactly as the dispatcher skips it on the live path.
+func decodeContractCall(op clickhouse.ContractCallOp, call dispatcher.ContractCall, dec dispatcher.ContractCallDecoder) (evs []consumer.Event, matched bool, err error) {
+	if perr := completeness.Guard(func() {
+		if matched = dec.Matches(call.ContractID, call.FunctionName); !matched {
+			return
+		}
+		evs, err = dec.Decode(dispatcher.ContractCallContext{
 			Ledger:            op.Ledger,
 			ClosedAt:          op.ClosedAt,
 			TxHash:            op.TxHash,
@@ -2251,17 +2326,10 @@ func decodeContractCallTree(
 			CallPathContracts: call.CallPathContracts,
 			AuthOccurrence:    call.AuthOccurrence,
 		})
-		if derr != nil {
-			blind.Undecodable(op.Ledger)
-			continue
-		}
-		for _, ev := range evs {
-			if ferr := fn(op.Ledger, ev); ferr != nil {
-				return ferr
-			}
-		}
+	}); perr != nil {
+		return nil, true, fmt.Errorf("decoder panicked: %w", perr)
 	}
-	return nil
+	return evs, matched, err
 }
 
 func absDiff(a, b int) int {

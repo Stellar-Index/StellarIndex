@@ -116,13 +116,15 @@ func verifyReconciliation(args []string) error { //nolint:gocognit,gocyclo,funle
 			// from the factory's creation events [genesis, lo) before the
 			// re-derive, so a custom -from sub-range doesn't drop the events
 			// of children deployed before the range (false-delta guard).
-			if perr := preseedFactoryChildren(ctx, store, src, lo); perr != nil {
+			pblind, perr := preseedFactoryChildren(ctx, store, src, lo)
+			if perr != nil {
 				return fmt.Errorf("%s: %w", src.name, perr)
 			}
 			bk, blind, derr := completeness.ReDeriveOutputCountsByKind(ctx, store, src.dec, src.contractIDs, src.topic0Syms, lo, hi)
 			if derr != nil {
 				return fmt.Errorf("%s: re-derive: %w", src.name, derr)
 			}
+			blind = blind.Merge(pblind)
 			byKind = bk
 			// C4-059: rows the re-derive could not decode are dropped from
 			// the EXPECTED side, and the projector dropped them from the

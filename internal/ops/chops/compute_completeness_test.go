@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -1378,16 +1379,16 @@ func TestRecognitionAttribution_TopicMatchedSourceFailsOnItsPoolGap(t *testing.T
 
 	// ownerOf as computeCompleteness builds it: static contractIDs first
 	// (empty for the topic-matched sources), then the registry fold.
-	ownerOf := map[string]string{}
+	ownerOf := map[string][]string{}
 	mergeRegistryOwners(ownerOf,
 		map[string][]string{"phoenix": {phoenixChild}}, // protocol_contracts child
 		[]string{soroswapPool},                         // soroswap_pairs registry
 	)
-	if ownerOf[soroswapPool] != "soroswap" {
-		t.Fatalf("soroswap pool not attributed: ownerOf[%s]=%q, want soroswap", soroswapPool, ownerOf[soroswapPool])
+	if !reflect.DeepEqual(ownerOf[soroswapPool], []string{"soroswap"}) {
+		t.Fatalf("soroswap pool not attributed: ownerOf[%s]=%q, want [soroswap]", soroswapPool, ownerOf[soroswapPool])
 	}
-	if ownerOf[phoenixChild] != "phoenix" {
-		t.Fatalf("phoenix child not attributed: ownerOf[%s]=%q, want phoenix", phoenixChild, ownerOf[phoenixChild])
+	if !reflect.DeepEqual(ownerOf[phoenixChild], []string{"phoenix"}) {
+		t.Fatalf("phoenix child not attributed: ownerOf[%s]=%q, want [phoenix]", phoenixChild, ownerOf[phoenixChild])
 	}
 
 	gaps := []completeness.RecognitionGap{
@@ -1462,9 +1463,9 @@ func TestSourceRecognitionOK_SkipRecognitionCarriesRatherThanAsserts(t *testing.
 // curated contract-pinned source (cctp/oracles) keeps its exact attribution.
 func TestMergeRegistryOwners_StaticPinWins(t *testing.T) {
 	const pinned = "CCCTPCONTRACTxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-	ownerOf := map[string]string{pinned: "cctp"}
+	ownerOf := map[string][]string{pinned: {"cctp"}}
 	mergeRegistryOwners(ownerOf, map[string][]string{"phoenix": {pinned}}, []string{pinned})
-	if ownerOf[pinned] != "cctp" {
+	if !reflect.DeepEqual(ownerOf[pinned], []string{"cctp"}) {
 		t.Fatalf("static contractID pin lost: ownerOf[%s]=%q, want cctp", pinned, ownerOf[pinned])
 	}
 }

@@ -293,7 +293,7 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 			"this deployment has no CompletenessReader wired — check binary configuration")
 		return
 	}
-	snaps, err := s.completenessReader.ListCompletenessSnapshots(r.Context())
+	snaps, verdictsStale, err := s.completenessVerdicts(r.Context())
 	if err != nil {
 		if clientAborted(r, err) {
 			return
@@ -358,7 +358,20 @@ func (s *Server) handleCoverageVerdicts(w http.ResponseWriter, r *http.Request) 
 	view.TotalSources = len(view.Sources) + len(view.UnverifiedSources)
 
 	w.Header().Set("Cache-Control", "public, max-age=60")
-	writeJSON(w, view, Flags{Stale: s.coverageVerdictsStale(r.Context(), snaps)})
+	writeJSON(w, view, Flags{Stale: verdictsStale})
+}
+
+// completenessVerdicts is the one read of the completeness verdict rows
+// for every surface that republishes a claim from them: the rows plus
+// [Server.coverageVerdictsStale] over them, so a second publisher cannot
+// serve the rows without the freshness verdict that qualifies them.
+// Callers must check completenessReader != nil first.
+func (s *Server) completenessVerdicts(ctx context.Context) ([]timescale.CompletenessSnapshot, bool, error) {
+	snaps, err := s.completenessReader.ListCompletenessSnapshots(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	return snaps, s.coverageVerdictsStale(ctx, snaps), nil
 }
 
 // recognitionAxisView projects the system recognition snapshot onto its

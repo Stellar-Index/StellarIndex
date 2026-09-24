@@ -126,6 +126,22 @@ type BlindSpots struct {
 	Unreconstructable int
 }
 
+// Merge returns the union of b and o: counts summed, ledgers deduped and
+// sorted ascending.
+func (b BlindSpots) Merge(o BlindSpots) BlindSpots {
+	t := NewBlindTracker()
+	for _, l := range b.Ledgers {
+		t.mark(l)
+	}
+	for _, l := range o.Ledgers {
+		t.mark(l)
+	}
+	out := t.Result()
+	out.UndecodableMatched = b.UndecodableMatched + o.UndecodableMatched
+	out.Unreconstructable = b.Unreconstructable + o.Unreconstructable
+	return out
+}
+
 // Rows is the total blind-row count across both classes.
 func (b BlindSpots) Rows() int { return b.UndecodableMatched + b.Unreconstructable }
 
@@ -210,12 +226,27 @@ func (t *BlindTracker) Result() BlindSpots {
 // path a returned decode error takes feeds it the SAME blind-spot accounting,
 // so `delta==0 && !blind.Any()` correctly stays false.
 func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error) {
+	if perr := Guard(func() { outs, err = dec.Decode(ev) }); perr != nil {
+		return nil, fmt.Errorf("decoder panicked on event shape: %w", perr)
+	}
+	return outs, err
+}
+
+// Guard runs fn under a recover and returns a recovered panic as an error
+// (nil when fn returns normally). It is the one panic guard every
+// completeness oracle runs decoder code under — the re-derives here and the
+// census / preseed / prefilter walks in internal/ops/chops — so a decoder
+// the production dispatcher recovers per input (dispatcher.recordDecoderPanic)
+// becomes a blind spot on the audit path rather than a crash that freezes
+// every remaining source's verdict (see [safeDecode]).
+func Guard(fn func()) (err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
-			outs, err = nil, fmt.Errorf("decoder panicked on event shape: %v", rec)
+			err = fmt.Errorf("recovered: %v", rec)
 		}
 	}()
-	return dec.Decode(ev)
+	fn()
+	return nil
 }
 
 // safeMatches runs dec.Matches under the same per-event recover as
@@ -227,12 +258,10 @@ func safeDecode(dec Decoder, ev events.Event) (outs []consumer.Event, err error)
 // decode failure: the row is skipped AND recorded as a blind spot, so a
 // ledger the re-derive could not evaluate can never be certified clean.
 func safeMatches(dec Decoder, ev events.Event) (matched bool, err error) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			matched, err = false, fmt.Errorf("decoder panicked matching event shape: %v", rec)
-		}
-	}()
-	return dec.Matches(ev), nil
+	if perr := Guard(func() { matched = dec.Matches(ev) }); perr != nil {
+		return false, fmt.Errorf("decoder panicked matching event shape: %w", perr)
+	}
+	return matched, nil
 }
 
 // ReDeriveOutputCounts re-runs the decoder over the raw events in
