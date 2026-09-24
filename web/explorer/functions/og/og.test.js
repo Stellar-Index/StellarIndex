@@ -186,9 +186,11 @@ describe('liveSubline — upstream circuit breaker (F101)', () => {
     }
     expect(fetchSpy).toHaveBeenCalledTimes(5);
 
-    // The next call should short-circuit: no further network call made.
+    // The next call should short-circuit: no further network call made, and
+    // the result is marked degraded (GH-893) — an attempted-but-failed fetch,
+    // not "no live data applies here".
     const result = await liveSubline('markets', id);
-    expect(result).toBeNull();
+    expect(result).toEqual({ sub: null, degraded: true });
     expect(fetchSpy).toHaveBeenCalledTimes(5);
   });
 });
@@ -196,14 +198,16 @@ describe('liveSubline — upstream circuit breaker (F101)', () => {
 describe('liveSubline — asset-shape guard (SEC-15)', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('does not call fetch when a leg contains markup/garbage', async () => {
+  it('does not call fetch when a leg contains markup/garbage, and is not degraded', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch');
     const result = await liveSubline(
       'markets',
       '<img src=x>~native',
       'https://api.stellarindex.io',
     );
-    expect(result).toBeNull();
+    // No fetch was ever attempted, so this is not an upstream failure
+    // (GH-893) — distinct from the breaker-open/fetch-failed cases above.
+    expect(result).toEqual({ sub: null, degraded: false });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -219,7 +223,44 @@ describe('liveSubline — asset-shape guard (SEC-15)', () => {
       'https://api.stellarindex.io',
     );
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(result).toBe('1 XLM = 0.1235 USDC');
+    expect(result).toEqual({ sub: '1 XLM = 0.1235 USDC', degraded: false });
+  });
+
+  it('is degraded when the upstream responds but with no price data', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: {} }), { status: 200 }),
+    );
+    const result = await liveSubline(
+      'markets',
+      'native~USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      'https://api.stellarindex.io',
+    );
+    expect(result).toEqual({ sub: null, degraded: true });
+  });
+});
+
+describe('og function — degraded card cache-control (GH-893)', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it('uses the normal 60s policy when no live fetch applies (non-markets type)', async () => {
+    const res = await onRequest(makeContext('/og/assets/usdc'));
+    expect(res.headers.get('cache-control')).toBe(
+      'public, s-maxage=60, stale-while-revalidate=300',
+    );
+  });
+
+  it('shortens the cache window when the upstream price fetch failed', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('boom', { status: 500 }),
+    );
+    const res = await onRequest(makeContext('/og/markets/native~usdc'));
+    expect(res.status).toBe(200);
+    // Distinct from and shorter than CARD_CACHE_CONTROL's 60s/300s window —
+    // a swallowed upstream failure must not pin a price-less card as long as
+    // a genuinely live one (GH-893).
+    expect(res.headers.get('cache-control')).toBe(
+      'public, s-maxage=15, stale-while-revalidate=15',
+    );
   });
 });
 

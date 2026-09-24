@@ -20,10 +20,12 @@ const SITE_OG_IMAGE_PATH = '/og.png';
 
 /**
  * URL for the dynamic OG card (the CF Pages Function at functions/og/[[path]]).
- * Per-entity 1200×630 PNG, edge-cached — beats the single static /og.png for
- * social shares. Relative so Next's metadataBase resolves it to the prod
- * origin. (Live-data enrichment of the card is a follow-up; v1 is branded +
- * entity-labelled.)
+ * Per-entity 1200×630 PNG with a public Cache-Control policy — beats the
+ * single static /og.png for social shares. Relative so Next's metadataBase
+ * resolves it to the prod origin. The function sets Cache-Control but never
+ * calls Cloudflare's Cache API, so whether a repeat request is actually
+ * served from Cloudflare's edge cache depends on zone cache config, not just
+ * this header (GH-893/K060 — do not describe this as "edge-cached").
  */
 export function ogImageFor(type: string, id: string): string {
   return `/og/${type}/${encodeURIComponent(id)}`;

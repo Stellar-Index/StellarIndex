@@ -1,11 +1,16 @@
 import { ImageResponse, loadGoogleFont } from 'workers-og';
 
 // Dynamic OG card generator (SEO plan D7). GET /og/{type}/{id} → a 1200×630 PNG
-// (satori + resvg-wasm on CF Pages Functions), edge-cached. Market cards carry
-// the LIVE price (near-real-time via the 60s edge cache + a tight upstream
-// timeout, guarded by a circuit breaker below). NB the live fetch hits our
-// public API from the edge; a per-IP rate limit (K067) bounds a single
-// client's request volume in addition to the OG_DISABLED kill-switch.
+// (satori + resvg-wasm on CF Pages Functions). The response carries a public
+// Cache-Control policy (CARD_CACHE_CONTROL) for downstream CDN/browser caches;
+// this function never calls Cloudflare's Cache API itself, so whether a repeat
+// request actually gets served from Cloudflare's edge cache depends on zone
+// cache config, not just this header (GH-893/K060 — do not call this
+// "edge-cached" without that caveat). Market cards carry the LIVE price
+// (near-real-time via the 60s cache window + a tight upstream timeout,
+// guarded by a circuit breaker below). NB the live fetch hits our public API
+// from the edge; a per-IP rate limit (K067) bounds a single client's request
+// volume in addition to the OG_DISABLED kill-switch.
 
 function code(s) {
   if (!s) return '';
@@ -203,9 +208,20 @@ function loadCardFont() {
   return cardFont;
 }
 
+const CARD_CACHE_CONTROL = 'public, s-maxage=60, stale-while-revalidate=300';
+
+// GH-893: liveSubline swallows every upstream failure and returns a
+// subline-less card so the request still succeeds — but that card must not
+// sit behind the same cache window as a genuinely live one, or a transient
+// upstream blip pins a price-less card for up to 5 minutes. A short TTL lets
+// the next request retry the live fetch promptly instead.
+const DEGRADED_CARD_CACHE_CONTROL =
+  'public, s-maxage=15, stale-while-revalidate=15';
+
 // Buffers the render so a font or satori/resvg failure is catchable here
-// instead of erroring the body of an already-sent, edge-cacheable 200.
-async function renderCard(html) {
+// instead of erroring the body of an already-sent 200. `cacheControl` lets
+// the caller distinguish a normal card from a degraded one (GH-893).
+async function renderCard(html, cacheControl) {
   const fontData = await loadCardFont();
   const res = new ImageResponse(html, {
     width: 1200,
@@ -218,7 +234,7 @@ async function renderCard(html) {
     // (not overridden), producing a doubled header value. Match the exact
     // casing so this key overrides the library's default instead.
     headers: {
-      'Cache-Control': 'public, s-maxage=60, stale-while-revalidate=300',
+      'Cache-Control': cacheControl,
     },
   });
   const png = await res.arrayBuffer();
@@ -244,37 +260,48 @@ function staticCardFallback(requestUrl) {
 // stellarindex.io, bare for mainnet) with its own DNS-only API origin
 // (api.{that same hostname}), and onRequest derives it from the inbound
 // request — this function has no business guessing a network.
+// Returns `{ sub, degraded }`. `sub` is the live subline text or null.
+// `degraded` distinguishes "an upstream fetch was attempted and failed" (the
+// card is a fallback, GH-893) from "no live fetch applies to this request"
+// (wrong type, malformed pair) — a null `sub` alone conflates the two and the
+// caller needs to know which one happened to pick a cache TTL.
 export async function liveSubline(type, rawId, apiOrigin) {
+  if (!(type === 'markets' && rawId.includes('~'))) {
+    return { sub: null, degraded: false };
+  }
+  const [base, quote] = rawId.split('~');
+  if (!ASSET_LEG_RE.test(base) || !ASSET_LEG_RE.test(quote)) {
+    return { sub: null, degraded: false };
+  }
+  if (upstreamBreakerOpen()) {
+    return { sub: null, degraded: true };
+  }
   try {
-    if (type === 'markets' && rawId.includes('~')) {
-      const [base, quote] = rawId.split('~');
-      if (!ASSET_LEG_RE.test(base) || !ASSET_LEG_RE.test(quote)) return null;
-      if (upstreamBreakerOpen()) return null;
-      const r = await fetch(
-        `${apiOrigin}/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
-        {
-          signal: AbortSignal.timeout(2500),
-          headers: { 'user-agent': 'stellarindex-og/1' },
-        },
-      );
-      recordUpstreamOutcome(r.ok);
-      if (r.ok) {
-        const p = (await r.json())?.data?.price;
-        if (p != null) {
-          const n = Number(p);
-          const fmt =
-            n >= 1
-              ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
-              : formatSubPriceDecimal(n);
-          return `1 ${code(base)} = ${fmt} ${code(quote)}`;
-        }
+    const r = await fetch(
+      `${apiOrigin}/v1/price?asset=${encodeURIComponent(base)}&quote=${encodeURIComponent(quote)}`,
+      {
+        signal: AbortSignal.timeout(2500),
+        headers: { 'user-agent': 'stellarindex-og/1' },
+      },
+    );
+    recordUpstreamOutcome(r.ok);
+    if (r.ok) {
+      const p = (await r.json())?.data?.price;
+      if (p != null) {
+        const n = Number(p);
+        const fmt =
+          n >= 1
+            ? n.toLocaleString('en-US', { maximumFractionDigits: 2 })
+            : formatSubPriceDecimal(n);
+        return { sub: `1 ${code(base)} = ${fmt} ${code(quote)}`, degraded: false };
       }
     }
+    return { sub: null, degraded: true };
   } catch {
     recordUpstreamOutcome(false);
-    /* fall through to label-only card */
+    /* fall through to label-only, degraded card */
+    return { sub: null, degraded: true };
   }
-  return null;
 }
 
 // F101: a rejection is fully determined by the URL (unknown type / oversized
@@ -349,7 +376,7 @@ export async function onRequest(context) {
   // network's Pages project serves this same function under its own
   // hostname, so the origin must come from the request, not a constant.
   const apiOrigin = `https://api.${url.hostname}`;
-  const sub = await liveSubline(type, rawId, apiOrigin);
+  const { sub, degraded } = await liveSubline(type, rawId, apiOrigin);
 
   // CS-009: HTML-escape every interpolated value. Unescaped attacker input
   // reaching satori markup lets an injected `<img src=…>` trigger an
@@ -378,7 +405,10 @@ export async function onRequest(context) {
     </div>`;
 
   try {
-    return await renderCard(html);
+    return await renderCard(
+      html,
+      degraded ? DEGRADED_CARD_CACHE_CONTROL : CARD_CACHE_CONTROL,
+    );
   } catch (err) {
     console.error('og render failed', err);
     return staticCardFallback(request.url);
