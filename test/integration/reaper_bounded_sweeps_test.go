@@ -5,9 +5,11 @@ package integration_test
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
@@ -91,6 +93,85 @@ func TestSweepExpiredMagicLinkTokens_BoundedPerCall(t *testing.T) {
 
 	if err := db.QueryRowContext(ctx,
 		`SELECT count(*) FROM magic_link_tokens WHERE email = 'bulk-expired@example.com'`,
+	).Scan(&remaining); err != nil {
+		t.Fatalf("count final: %v", err)
+	}
+	if remaining != 0 {
+		t.Errorf("rows remaining after second call = %d, want 0", remaining)
+	}
+}
+
+// T371/T372/T374 — SweepEndedSessions shares deleteInBatches with the
+// sweeps above, but nothing proved its own call site actually threads
+// the per-call cap: a bug pinning it to defaultSweepBatchRows instead of
+// r.sweepBatchRows would still pass the table-driven correctness test in
+// platform_retention_reaper_test.go, since that test never seeds past
+// one batch.
+func TestSweepEndedSessions_BoundedPerCall(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	pg := postgresstore.New(db)
+	accounts := postgresstore.NewAccountStore(pg)
+	acct, err := accounts.Create(ctx, platform.Account{
+		Name: "Bounded Sweep Co", Slug: "bounded-sweep-co",
+		BillingEmail: "billing@bounded-sweep.example",
+		Tier:         platform.TierFree, Status: platform.AccountActive,
+	})
+	if err != nil {
+		t.Fatalf("create account: %v", err)
+	}
+	users := postgresstore.NewUserStore(pg)
+	user, err := users.CreateUser(ctx, platform.User{
+		AccountID: acct.ID, Email: "owner@bounded-sweep.example", Role: platform.RoleOwner,
+	})
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	const batchSize = 4
+	const perCallCap = batchSize * 25 // matches postgresstore.sweepMaxBatchesPerCall
+	const seedRows = perCallCap + 10  // exceeds one call's cap
+
+	for i := 0; i < seedRows; i++ {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO sessions (token_hash, user_id, expires_at, ip_first_seen, ip_last_seen, user_agent)
+			 VALUES ($1, $2, now() - interval '1 hour', '203.0.113.9', '203.0.113.9', 'bulk')`,
+			[]byte(fmt.Sprintf("bounded-sweep-session-%04d", i)), user.ID); err != nil {
+			t.Fatalf("seed row %d: %v", i, err)
+		}
+	}
+
+	sessions := users.WithSweepBatchSize(batchSize)
+
+	deletedFirstCall, err := sessions.SweepEndedSessions(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("first sweep: %v", err)
+	}
+	if deletedFirstCall != perCallCap {
+		t.Errorf("first call deleted = %d, want exactly the per-call cap %d", deletedFirstCall, perCallCap)
+	}
+
+	deletedSecondCall, err := sessions.SweepEndedSessions(ctx, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("second sweep: %v", err)
+	}
+	if wantRemaining := int64(seedRows - perCallCap); deletedSecondCall != wantRemaining {
+		t.Errorf("second call deleted = %d, want %d (the remainder)", deletedSecondCall, wantRemaining)
+	}
+
+	var remaining int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM sessions WHERE user_id = $1`, user.ID,
 	).Scan(&remaining); err != nil {
 		t.Fatalf("count final: %v", err)
 	}
