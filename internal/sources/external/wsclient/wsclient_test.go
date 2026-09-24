@@ -152,3 +152,105 @@ func TestLoop_PingStallDropsConnection(t *testing.T) {
 		t.Errorf("stall detected after %v, want < 1s (PingInterval 50ms + PingTimeout 150ms)", elapsed)
 	}
 }
+
+// TestLoop_DialTimeoutBoundsSilentUpgrade pins GH-996: a venue that
+// completes TCP (and, in production, TLS) but never answers the HTTP
+// upgrade must fail the dial attempt within DialTimeout. The transport's
+// timeouts stop at TLS and the ping watchdog starts only after Dial
+// returns, so before the per-attempt deadline runOnce blocked on the loop
+// context indefinitely: no error, no "dial" disconnect, no reconnect.
+func TestLoop_DialTimeoutBoundsSilentUpgrade(t *testing.T) {
+	wedged := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select { // never write the 101 response
+		case <-wedged:
+		case <-r.Context().Done():
+		}
+	}))
+	defer func() {
+		close(wedged)
+		srv.Close()
+	}()
+
+	l := &Loop{
+		Source:      "silentupgrade",
+		URL:         "ws" + strings.TrimPrefix(srv.URL, "http"),
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DialTimeout: 150 * time.Millisecond,
+		HandleFrame: func([]byte) ([]canonical.Trade, error) {
+			return nil, nil
+		},
+	}
+
+	// The ctx deadline is the failure mode: without a per-attempt dial
+	// deadline runOnce blocks until it fires.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	start := time.Now()
+	err := l.runOnce(ctx, make(chan canonical.Trade, 1))
+	elapsed := time.Since(start)
+
+	if ctx.Err() != nil {
+		t.Fatalf("runOnce returned %v only after the loop ctx expired (%v) — the upgrade wait is unbounded", err, elapsed)
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("runOnce on a silent upgrade returned %v after %v, want a dial deadline error", err, elapsed)
+	}
+	if got := ClassifyDisconnect(err); got != "dial" {
+		t.Errorf("ClassifyDisconnect(%v) = %q, want %q", err, got, "dial")
+	}
+	if elapsed > time.Second {
+		t.Errorf("dial failed after %v, want < 1s (DialTimeout 150ms)", elapsed)
+	}
+}
+
+// TestLoop_DialTimeoutDoesNotLimitConnection guards the other side of
+// GH-996: the dial deadline must cover only the handshake. A connection
+// that outlives DialTimeout must keep delivering frames.
+func TestLoop_DialTimeoutDoesNotLimitConnection(t *testing.T) {
+	const dialTimeout = 100 * time.Millisecond
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		time.Sleep(3 * dialTimeout)
+		if err := c.Write(r.Context(), websocket.MessageText, []byte("trade")); err != nil {
+			return
+		}
+		_, _, _ = c.Read(r.Context()) // hold open until the client leaves
+	}))
+	defer srv.Close()
+
+	want := canonical.Trade{Source: "latevenue"}
+	l := &Loop{
+		Source:      "latevenue",
+		URL:         "ws" + strings.TrimPrefix(srv.URL, "http"),
+		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DialTimeout: dialTimeout,
+		HandleFrame: func([]byte) ([]canonical.Trade, error) {
+			return []canonical.Trade{want}, nil
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan canonical.Trade, 1)
+	done := make(chan error, 1)
+	go func() { done <- l.runOnce(ctx, out) }()
+
+	select {
+	case got := <-out:
+		if got.Source != want.Source {
+			t.Errorf("trade source = %q, want %q", got.Source, want.Source)
+		}
+	case err := <-done:
+		t.Fatalf("runOnce returned %v before the post-DialTimeout frame arrived — the dial deadline leaked into the connection", err)
+	case <-time.After(3 * time.Second):
+		t.Fatal("no frame received within 3s")
+	}
+	cancel()
+	<-done
+}
