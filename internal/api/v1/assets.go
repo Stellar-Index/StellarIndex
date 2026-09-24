@@ -3174,10 +3174,16 @@ func (s *Server) fetchClassicUnifiedRows(
 	// an empty page over the exact rows the store was holding. Nothing
 	// is lost by skipping it either — the arm the fold merges INTO is
 	// the one the caller filtered out, and no duplicate can exist among the classic↔SAC and XLM alias families the registry builds (a family with two contract members — a SAC-wrapper value that is itself a C-strkey, which config validation permits — would put both in this arm unfolded).
+	var mergedAliases map[string]struct{}
 	if filters.typ != "soroban" {
-		out = s.foldAliasTwins(out)
+		out, mergedAliases = s.foldAliasTwins(out)
 	}
 	out = s.suppressCatalogueTwins(out)
+	// After the catalogue suppression (no read for a row about to be
+	// dropped) and before the gate and cap fill that weigh the volume.
+	if filters.unfiltered() {
+		s.restoreOffPageContractArms(r.Context(), out, mergedAliases)
+	}
 	s.stampListingCollisions(out)
 	unmeasured := s.applySubstanceGateToListing(r.Context(), out)
 	s.fillMarketCapsFromSupply(r.Context(), out, assetRowSourceCounts(rows))
@@ -4524,31 +4530,56 @@ func (s *Server) suppressCatalogueTwins(rows []AssetDetail) []AssetDetail {
 //
 // Runs BEFORE suppressCatalogueTwins so a family whose canonical form is a
 // verified currency (USDC, XLM) folds its SAC volume onto the classic twin
-// first. When the canonical row is NOT present in the page — its classic
-// twin was already the verified-catalogue row served in the catalogue
-// phase, or it paged elsewhere — the lone alias row is still suppressed:
-// its identity is represented by the canonical row on another surface, and
-// a stray SAC row in the directory is exactly the duplicate this removes.
-func (s *Server) foldAliasTwins(rows []AssetDetail) []AssetDetail {
+// first. An alias row folds onto its canonical row wherever the two sit in
+// the page: the page is volume-ranked on UNFOLDED per-arm volume, so a
+// Soroban-heavy wrapper routinely outranks its own classic row. When the
+// canonical row is NOT in the page at all the lone alias row is still
+// suppressed as a duplicate, and its volume is NOT represented here: the
+// returned set names the alias ids that WERE merged, so
+// [Server.restoreOffPageContractArms] can point-read the rest onto the
+// canonical row on whichever page serves it.
+func (s *Server) foldAliasTwins(rows []AssetDetail) ([]AssetDetail, map[string]struct{}) {
 	// canonical asset_id → index of the surviving primary row in `out`.
 	primaryIdx := make(map[string]int, len(rows))
-	out := rows[:0]
+	out := make([]AssetDetail, 0, len(rows))
+	var aliases []AssetDetail
 	for _, row := range rows {
 		canonID := canonicalAssetID(row.AssetID)
-		if canonID == row.AssetID {
-			// Canonical (or unaliased) form — keep it and remember where,
-			// so a later alias form in the same page can aggregate onto it.
-			primaryIdx[canonID] = len(out)
-			out = append(out, row)
+		if canonID != row.AssetID {
+			aliases = append(aliases, row)
 			continue
 		}
-		// Non-canonical alias form (SAC / crypto:XLM): fold onto its
-		// canonical primary if present, otherwise suppress the stray twin.
-		if i, ok := primaryIdx[canonID]; ok {
-			mergeAliasVolume(&out[i], row)
+		primaryIdx[canonID] = len(out)
+		out = append(out, row)
+	}
+	merged := make(map[string]struct{}, len(aliases))
+	for _, alias := range aliases {
+		if i, ok := primaryIdx[canonicalAssetID(alias.AssetID)]; ok {
+			mergeAliasVolume(&out[i], alias)
+			merged[alias.AssetID] = struct{}{}
 		}
 	}
-	return out
+	return out, merged
+}
+
+// restoreOffPageContractArms adds, onto each classic row of an UNFILTERED
+// page, the trailing-24h volume of every SAC wrapper foldAliasTwins did
+// not merge in-page. Without it a wrapper that paged elsewhere was
+// suppressed there and absent here, so the classic row published its
+// classic arm alone as the asset's volume, and the dust-liquidity guard
+// weighed that understated figure. Rows with no configured wrapper cost
+// no read. Row filters keep the arm they admitted, as on the catalogue
+// path. The listing's ORDER is still per-arm volume: re-ranking needs the
+// fold inside the spine's keyset, which this does not attempt.
+func (s *Server) restoreOffPageContractArms(ctx context.Context, rows []AssetDetail, merged map[string]struct{}) {
+	if s.assetsReader == nil {
+		return
+	}
+	readCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	forEachBounded(s.logger, len(rows), readFanoutConcurrency, func(i int) {
+		s.mergeContractArmVolumeExcept(readCtx, &rows[i], rows[i].AssetID, merged)
+	})
 }
 
 // canonicalAssetID resolves an asset_id string to its equivalence-class
@@ -4758,12 +4789,21 @@ func (s *Server) fillCatalogueStatsForPage(ctx context.Context, page []AssetDeta
 // documents. One point read per catalogue row that HAS a configured
 // wrapper, inside the caller's bounded fan-out and its 8s budget.
 func (s *Server) mergeContractArmVolume(ctx context.Context, dst *AssetDetail, assetID string) {
+	s.mergeContractArmVolumeExcept(ctx, dst, assetID, nil)
+}
+
+// mergeContractArmVolumeExcept is [Server.mergeContractArmVolume] minus
+// the wrapper ids in skip, which the caller has already merged.
+func (s *Server) mergeContractArmVolumeExcept(ctx context.Context, dst *AssetDetail, assetID string, skip map[string]struct{}) {
 	asset, err := canonical.ParseAsset(assetID)
 	if err != nil || asset.Type != canonical.AssetClassic {
 		return
 	}
 	for _, alias := range canonical.AssetAliases(asset) {
 		if alias.Type != canonical.AssetSoroban {
+			continue
+		}
+		if _, done := skip[alias.String()]; done {
 			continue
 		}
 		row, err := s.assetsReader.GetAssetByAssetID(ctx, alias.String())

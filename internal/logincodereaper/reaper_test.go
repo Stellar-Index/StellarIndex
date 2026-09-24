@@ -38,16 +38,31 @@ type fakeLockoutStore struct {
 	sweepErr  error
 	countErr  error
 	countCall int
+	// backlog > 0 switches to a table model: each call deletes at most
+	// perCallCap settled rows and reports more when it stopped at the cap.
+	backlog    int64
+	perCallCap int64
 }
 
-func (f *fakeLockoutStore) SweepLoginCodeLockouts(_ context.Context, olderThan time.Time) (int64, error) {
+func (f *fakeLockoutStore) SweepLoginCodeLockouts(_ context.Context, olderThan time.Time) (int64, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, sweepCall{olderThan: olderThan})
 	if f.sweepErr != nil {
-		return 0, f.sweepErr
+		return 0, false, f.sweepErr
 	}
-	return f.deleted, nil
+	if f.backlog > 0 {
+		n := min(f.backlog, f.perCallCap)
+		f.backlog -= n
+		return n, n == f.perCallCap, nil
+	}
+	return f.deleted, false, nil
+}
+
+func (f *fakeLockoutStore) remaining() int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.backlog
 }
 
 func (f *fakeLockoutStore) CountLoginCodeLockouts(_ context.Context) (int64, error) {
@@ -222,6 +237,43 @@ func TestRun_SweepsImmediately(t *testing.T) {
 			t.Fatal("Run did not sweep within 2s of starting")
 		case <-time.After(5 * time.Millisecond):
 		}
+	}
+}
+
+// TestRun_DrainsBacklogBeyondOnePassCap pins CA2-A33-harden-1: the store
+// deletes at most a fixed number of rows per call, and one anonymous IP
+// can insert more than that per hour. If a capped pass waited a full
+// Interval the table would grow without bound, so one tick must keep
+// sweeping until the backlog is gone, then settle back to the Interval.
+func TestRun_DrainsBacklogBeyondOnePassCap(t *testing.T) {
+	const perCallCap = 50
+	store := &fakeLockoutStore{backlog: 3*perCallCap + 5, perCallCap: perCallCap}
+	r := logincodereaper.New(store, logincodereaper.Options{
+		Interval: time.Hour, DrainPause: time.Millisecond, Logger: silent(),
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = r.Run(ctx)
+	}()
+	defer func() { cancel(); <-done }()
+
+	deadline := time.After(2 * time.Second)
+	for store.remaining() > 0 {
+		select {
+		case <-deadline:
+			t.Fatalf("backlog = %d after 2s, want 0: a capped pass waited for the next Interval (1h)",
+				store.remaining())
+		case <-time.After(time.Millisecond):
+		}
+	}
+	time.Sleep(50 * time.Millisecond)
+	store.mu.Lock()
+	calls := len(store.calls)
+	store.mu.Unlock()
+	if calls != 4 {
+		t.Errorf("sweep calls = %d, want 4 (three capped passes, one short pass, then idle until Interval)", calls)
 	}
 }
 

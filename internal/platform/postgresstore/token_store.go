@@ -59,9 +59,10 @@ func (r *TokenStore) WithSweepBatchSize(n int) *TokenStore {
 // the same connection pool the request path shares. Each sweep now
 // issues bounded `DELETE ... WHERE pk IN (SELECT pk ... LIMIT
 // defaultSweepBatchRows)` statements in a loop, capped at
-// sweepMaxBatchesPerCall batches per call — the remainder, if any,
-// waits for the reaper's next tick rather than holding one
-// unbounded transaction open.
+// sweepMaxBatchesPerCall batches per call rather than holding one
+// unbounded transaction open. The remainder waits for the next call:
+// the login-code reaper, whose insert rate an anonymous caller drives,
+// re-sweeps after a short pause; the others wait for their next tick.
 const (
 	defaultSweepBatchRows  = 2000
 	sweepMaxBatchesPerCall = 25
@@ -356,7 +357,11 @@ func (r *TokenStore) ClearLoginCodeLockout(ctx context.Context, email string) er
 // longer than the counting window, so a sweepable row's window has
 // already elapsed and its next failure would have restarted the count
 // anyway.
-func (r *TokenStore) SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, error) {
+//
+// The bool reports that the call stopped at its per-call cap with every
+// batch full, so settled rows may remain; the reaper re-sweeps on that
+// signal instead of leaving the backlog for its next hourly tick.
+func (r *TokenStore) SweepLoginCodeLockouts(ctx context.Context, olderThan time.Time) (int64, bool, error) {
 	const q = `
 		DELETE FROM login_code_lockouts
 		 WHERE email IN (
@@ -366,22 +371,22 @@ func (r *TokenStore) SweepLoginCodeLockouts(ctx context.Context, olderThan time.
 		      LIMIT $3
 		 )
 	`
-	var total int64
+	var deleted int64
 	for i := 0; i < sweepMaxBatchesPerCall; i++ {
 		res, err := r.s.db.ExecContext(ctx, q, olderThan, r.now(), r.sweepBatchRows)
 		if err != nil {
-			return total, fmt.Errorf("sweep login code lockouts: %w", err)
+			return deleted, false, fmt.Errorf("sweep login code lockouts: %w", err)
 		}
 		n, err := res.RowsAffected()
 		if err != nil {
-			return total, fmt.Errorf("sweep login code lockouts: rows affected: %w", err)
+			return deleted, false, fmt.Errorf("sweep login code lockouts: rows affected: %w", err)
 		}
-		total += n
+		deleted += n
 		if n < int64(r.sweepBatchRows) {
-			break
+			return deleted, false, nil
 		}
 	}
-	return total, nil
+	return deleted, true, nil
 }
 
 // CountLoginCodeLockouts returns the current row count. Feeds the

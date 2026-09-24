@@ -265,7 +265,7 @@ func TestLoginCodeLockout(t *testing.T) {
 			t.Fatalf("seed bystander token: %v", err)
 		}
 
-		deleted, err := tokens.SweepLoginCodeLockouts(ctx, time.Now().UTC().Add(-retention))
+		deleted, _, err := tokens.SweepLoginCodeLockouts(ctx, time.Now().UTC().Add(-retention))
 		if err != nil {
 			t.Fatalf("sweep: %v", err)
 		}
