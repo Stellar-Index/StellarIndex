@@ -308,3 +308,20 @@ func TestDailyMarketDaysQueryShape(t *testing.T) {
 			"bucket index or prune chunks at plan time")
 	}
 }
+
+// TestDailyMarketDaysQueryReadsWholeLastDay pins the upper bound to the
+// END of the `to` day. prices_1h holds hour buckets, so `bucket <= $4`
+// with `to` at a day start read the last day from its 00:00 hour alone:
+// the premium caller's newest complete day could never clear the
+// two-hour floor and was reported as withheld or reference-only.
+// The bound stays on the parameter, so it stays sargable.
+func TestDailyMarketDaysQueryReadsWholeLastDay(t *testing.T) {
+	q := dailyMarketDaysQuery
+
+	if strings.Contains(q, "bucket <= $4") {
+		t.Error("query bounds hour buckets by `bucket <= $4`: a day-start `to` admits only that day's 00:00 hour")
+	}
+	if !strings.Contains(q, "bucket <  $4::timestamptz + INTERVAL '1 day'") {
+		t.Error("query missing the exclusive end-of-day upper bound `bucket < $4::timestamptz + INTERVAL '1 day'`")
+	}
+}
