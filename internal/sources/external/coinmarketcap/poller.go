@@ -226,6 +226,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	}
 
 	updates := make([]canonical.OracleUpdate, 0, len(r.Data))
+	undated := 0
 	for sym, coins := range r.Data {
 		if len(coins) == 0 {
 			continue
@@ -267,9 +268,13 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			if err != nil || scaled.Sign() <= 0 {
 				continue
 			}
+			// An unparseable or absent last_updated drops the quote rather
+			// than stamping our poll time, which would present a quote of
+			// unknown age as fresh to every freshness gate downstream.
 			ts, err := time.Parse(time.RFC3339Nano, quote.LastUpdated)
 			if err != nil {
-				ts = time.Now().UTC()
+				undated++
+				continue
 			}
 			u := canonical.OracleUpdate{
 				Source:     SourceName,
@@ -286,6 +291,10 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			}
 			updates = append(updates, u)
 		}
+	}
+	if len(updates) == 0 && undated > 0 {
+		return nil, nil, fmt.Errorf("%w: %d quote(s) returned no parseable last_updated (freshness unverifiable)",
+			ErrMalformedResponse, undated)
 	}
 	return nil, updates, nil
 }

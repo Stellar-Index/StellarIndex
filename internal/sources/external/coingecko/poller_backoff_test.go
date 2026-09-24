@@ -110,7 +110,7 @@ func TestPollOnce_SuccessResetsBackoff(t *testing.T) {
 	srv, _ := newCountingServer(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(int(status.Load()))
 		if status.Load() == http.StatusOK {
-			_, _ = w.Write([]byte(`{"stellar":{"usd":0.17}}`))
+			_, _ = w.Write([]byte(`{"stellar":{"usd":0.17,"last_updated_at":1710000000}}`))
 		}
 	})
 

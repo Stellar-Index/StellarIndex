@@ -228,6 +228,43 @@ func TestPollOnce_IDModeUsesNumericIDs(t *testing.T) {
 	}
 }
 
+// TestPollOnce_UndatedQuoteFailsClosed pins that a quote whose
+// last_updated is absent or unparseable is dropped, never stamped with
+// our poll time, and that a response with no datable quote is an error.
+func TestPollOnce_UndatedQuoteFailsClosed(t *testing.T) {
+	srv := newTestServer(t, `{
+      "status": {"error_code": 0, "error_message": null},
+      "data": {
+        "XLM": [{"symbol": "XLM", "quote": {"USD": {"price": 0.17, "last_updated": "2026-04-24T00:00:00Z"}}}],
+        "BTC": [{"symbol": "BTC", "quote": {"USD": {"price": 50000.0, "last_updated": "not-a-time"}}}]
+      }
+    }`, http.StatusOK)
+	defer srv.Close()
+	p, _ := NewPoller("TEST")
+	p.Endpoint = srv.URL
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(updates) != 1 || updates[0].Asset.Code != "XLM" {
+		t.Fatalf("expected only the dated XLM row, got %d update(s)", len(updates))
+	}
+
+	allUndated := newTestServer(t, `{
+      "status": {"error_code": 0, "error_message": null},
+      "data": {"XLM": [{"symbol": "XLM", "quote": {"USD": {"price": 0.17}}}]}
+    }`, http.StatusOK)
+	defer allUndated.Close()
+	p.Endpoint = allUndated.URL
+	_, updates, err = p.PollOnce(context.Background(), buildPairs(t))
+	if !errors.Is(err, ErrMalformedResponse) {
+		t.Fatalf("err = %v, want ErrMalformedResponse", err)
+	}
+	if len(updates) != 0 {
+		t.Errorf("expected no updates, got %d", len(updates))
+	}
+}
+
 func TestPollInterval_Default(t *testing.T) {
 	p, _ := NewPoller("TEST")
 	if p.PollInterval() != 60*time.Second {
