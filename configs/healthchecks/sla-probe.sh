@@ -84,10 +84,9 @@ fi
 # argv: process arguments are world-readable (`ps`, /proc/<pid>/cmdline)
 # to any local user, which would leak the key. The unit's
 # EnvironmentFile sets the variable directly in this process's
-# environment, so it is already exported and the probe binary's own
-# `-api-key` flag default (`os.Getenv("STELLARINDEX_PROBE_API_KEY")`,
-# cmd/stellarindex-sla-probe/main.go) picks it up on inheritance —
-# no flag needed.
+# environment, so it is already exported and the probe binary falls
+# back to it when `-api-key` is empty (resolveAPIKey,
+# cmd/stellarindex-sla-probe/main.go) — no flag needed.
 OUT="$(
   "$PROBE_BIN" \
     -base-url "$BASE_URL" \
