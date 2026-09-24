@@ -75,7 +75,7 @@ func (s *Server) handleMEVEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Hard 8s ceiling — companion to the same fix on /v1/pools and
-	// /v1/markets (#1082): without it a cold-cache scan hangs until
+	// /v1/markets: without it a cold-cache scan hangs until
 	// the ingress times out instead of returning a fast, retryable 503.
 	mCtx, mCancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer mCancel()

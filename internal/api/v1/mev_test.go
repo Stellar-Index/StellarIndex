@@ -3,6 +3,8 @@ package v1_test
 import (
 	"context"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -64,7 +66,7 @@ func TestMEVEvents_InvalidKindIs400(t *testing.T) {
 // TestMEVEvents_PerHandlerTimeoutCeiling pins NS24: ListMEVEvents must
 // be called against a context bounded by a per-handler ceiling well
 // under the blanket RequestTimeout — the same pattern /v1/pools and
-// /v1/markets use (#1082). Without it, a cold mev_events scan holds the
+// /v1/markets use. Without it, a cold mev_events scan holds the
 // connection until the 60s blanket deadline (or the ingress) gives up
 // instead of returning a fast, retryable 503.
 func TestMEVEvents_PerHandlerTimeoutCeiling(t *testing.T) {
@@ -101,5 +103,35 @@ func TestMEVEvents_DeadlineExceededIs503(t *testing.T) {
 	}
 	if !strings.Contains(body, "mev-timeout") {
 		t.Errorf("expected the `mev-timeout` problem type in the body, got: %s", body)
+	}
+}
+
+// TestNoDanglingCeilingIssueReference pins RSWP-072: the 8s-ceiling
+// comments must not cite issue 1082. It was never a live tracking reference
+// and now resolves to an unrelated issue, so a reader following it lands
+// on the wrong thing. Every non-test handler file is scanned, not a fixed
+// list, so a citation re-added to any handler fails here.
+func TestNoDanglingCeilingIssueReference(t *testing.T) {
+	stale := "#" + "1082" // split so this file does not match itself
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	scanned := 0
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") && f != "mev_test.go" {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		scanned++
+		if strings.Contains(string(b), stale) {
+			t.Errorf("%s cites %s, which resolves to an unrelated issue; describe the 8s-ceiling pattern in prose instead", f, stale)
+		}
+	}
+	if scanned < 2 {
+		t.Fatalf("scanned %d files; the glob did not reach the handler sources", scanned)
 	}
 }

@@ -533,7 +533,7 @@ func (s *Server) handleChartTWAP(
 		twapChartGranularity(gran), chartTimeframes[tfRaw].Duration)
 
 	// 8s ceiling covering the CAGG scan + the proxy fallback retry,
-	// matching the VWAP path (#1082 …).
+	// matching the VWAP path.
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 
