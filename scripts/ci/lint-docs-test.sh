@@ -26,8 +26,9 @@ UNTRACKED_README="docs/zz-lint-docs-fixture/README.md"
 RUNBOOK="docs/operations/runbooks/aggregator-class-drop-spike.md"
 SPEC="openapi/stellar-index.v1.yaml"
 EXPLORER_README="web/explorer/README.md"
+COMMS_README="deploy/comms/README.md"
 EDITED=(CHANGELOG.md docs/architecture/coverage-matrix.md docs/remediation-2026-07-01/STATUS.md
-        docs/adr/README.md docs/protocols/README.md "$RUNBOOK" "$SPEC" "$EXPLORER_README")
+        docs/adr/README.md docs/protocols/README.md "$RUNBOOK" "$SPEC" "$EXPLORER_README" "$COMMS_README")
 BACKUP=$(mktemp -d); OUT=$(mktemp)
 PASS=0; FAIL=0
 
@@ -137,6 +138,10 @@ echo "$PHOENIX_FAKE_XLM_SAC" >> docs/protocols/README.md
 # shellcheck disable=SC2016  # literal Markdown backticks, not a substitution
 printf '\n```sh\npnpm lint               # next lint\n```\n\nMDX via `@next/mdx`; account at `/account/*`.\n' >> "$EXPLORER_README"
 
+# §22: a comms README claiming a runbook calls a template it never links.
+# shellcheck disable=SC2016  # literal Markdown backticks, not a substitution
+printf -- '- [`docs/operations/sev-playbook.md`](../../docs/operations/sev-playbook.md)\n  — calls `maintenance-window.md`.\n' >> "$COMMS_README"
+
 bash "$GATE" > "$OUT" 2>&1; rc=$?
 red=1; [ "$rc" -gt 0 ] && red=0
 result "the fixture tree is red (rc=$rc)" "$red"
@@ -168,6 +173,8 @@ absent  "an untracked README with the fake SAC is ignored" "$UNTRACKED_README"
 present "an explorer README script documented as the wrong command is caught" "documents 'pnpm lint' as 'next lint' but package\.json runs 'eslint \.'"
 present "an explorer README naming an undeclared package is caught" "names package '@next/mdx' but web/explorer/package\.json"
 present "an explorer README naming a missing route is caught" "names route '/account/\*' but web/explorer/src/app/account/"
+present "a comms README naming a caller that never links the template is caught" "says docs/operations/sev-playbook\.md calls 'maintenance-window\.md' but"
+absent  "rollback.md links the rollback-update template it is said to call" "calls 'rollback-update\.md'"
 
 if [ "$FAIL" -gt 0 ]; then echo "--- lint output ---"; grep -E 'ERROR|WARN: doc .docs/operations/zz' "$OUT"; fi
 cleanup; trap - EXIT

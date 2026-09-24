@@ -1649,7 +1649,54 @@ PY
   fi
 fi
 
-# ─── Summary ────────────────────────────────────────────────────────────────
+# ─── 22. deploy/comms/README.md's "calls X.md" claims must be true ─────────
+#
+# The comms README tells an operator which runbook step sends which
+# template. A runbook that never links its template leaves the operator
+# drafting from a blank page mid-incident, so each claim is re-derived.
+echo "Checking customer-comms template callers..."
+COMMS_README="deploy/comms/README.md"
+if [ ! -f "$COMMS_README" ]; then
+  echo "  (skipped §22 — $COMMS_README is gone)"
+else
+  comms_out=$(python3 - "$COMMS_README" <<'PY'
+import os, re, sys
+
+readme = sys.argv[1]
+base = os.path.dirname(readme)
+text = open(readme, encoding="utf-8").read()
+m = re.search(r"^## Cross-references\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+if not m:
+    print(f"{readme} has no '## Cross-references' section")
+    sys.exit(0)
+for bullet in re.split(r"^- ", m.group(1), flags=re.M)[1:]:
+    calls = re.findall(r"calls `([\w.-]+\.md)`", bullet)
+    link = re.search(r"\]\(([^)#\s]+)", bullet)
+    if not calls or not link:
+        continue
+    doc = os.path.normpath(os.path.join(base, link.group(1)))
+    if not os.path.isfile(doc):
+        print(f"{readme} names caller '{doc}' but that file does not exist")
+        continue
+    doc_text = open(doc, encoding="utf-8").read()
+    targets = {
+        os.path.normpath(os.path.join(os.path.dirname(doc), t))
+        for t in re.findall(r"\]\(([^)#\s]+)", doc_text)
+    }
+    for tmpl in calls:
+        want = os.path.normpath(os.path.join(base, tmpl))
+        if want not in targets:
+            print(f"{readme} says {doc} calls '{tmpl}' but {doc} never links {want}")
+PY
+)
+  if [ -n "$comms_out" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && err "$line — link the template from the step that sends it, or correct the README"
+    done <<< "$comms_out"
+  fi
+fi
+
+# ─── Summary────────────────────────────────────────────────────────────────
 
 count=$(cat "$ERROR_FILE")
 rm "$ERROR_FILE"
