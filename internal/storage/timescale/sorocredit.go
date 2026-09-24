@@ -316,8 +316,9 @@ type CreditAnalyticsSummary struct {
 	Settlements      int64
 	SettlementVolume canonical.Amount
 
-	Withdrawals      int64
-	WithdrawalVolume canonical.Amount
+	// Withdrawals is a count only: credit_events.amount is per `asset`, so
+	// a volume would have to be grouped by asset to mean anything.
+	Withdrawals int64
 
 	// LatestActivity is the most recent ledger_close_time across all four
 	// credit_* tables in the window (a freshness signal).
@@ -389,10 +390,9 @@ func (s *Store) CreditWindowAnalytics(ctx context.Context, windowDays int) (*Cre
 
 	if err := s.db.QueryRowContext(ctx, `
 		SELECT count(*) FILTER (WHERE event_type = 'withdrawal'),
-		       COALESCE(sum(amount) FILTER (WHERE event_type = 'withdrawal'),0)::text,
 		       max(ledger_close_time) FILTER (WHERE event_type = 'withdrawal')
 		  FROM credit_events WHERE ledger_close_time > now() - $1::interval`, since).
-		Scan(&out.Withdrawals, &out.WithdrawalVolume, &wdLatest); err != nil {
+		Scan(&out.Withdrawals, &wdLatest); err != nil {
 		return nil, fmt.Errorf("timescale: CreditWindowAnalytics withdrawals: %w", err)
 	}
 

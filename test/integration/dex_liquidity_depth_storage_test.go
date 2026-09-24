@@ -279,11 +279,11 @@ func TestSoroswapSkimAndBespoke(t *testing.T) {
 	if sk.Skims != 2 {
 		t.Errorf("Skims = %d, want 2", sk.Skims)
 	}
-	if sk.Amount0.BigInt().Cmp(wantAmt0) != 0 {
-		t.Errorf("Amount0 = %s, want %s — i128/NUMERIC lost precision", sk.Amount0, wantAmt0)
+	if sk.Pairs != 1 || len(sk.ByPair) != 1 {
+		t.Fatalf("Pairs = %d, ByPair = %d rows, want 1 / 1", sk.Pairs, len(sk.ByPair))
 	}
-	if sk.Pairs != 1 {
-		t.Errorf("Pairs = %d, want 1", sk.Pairs)
+	if got := sk.ByPair[0].Amount0; got.BigInt().Cmp(wantAmt0) != 0 {
+		t.Errorf("ByPair[0].Amount0 = %s, want %s — i128/NUMERIC lost precision", got, wantAmt0)
 	}
 
 	blk, err := store.BuildProtocolBespoke(ctx, "soroswap", "amm", 90)
@@ -295,7 +295,96 @@ func TestSoroswapSkimAndBespoke(t *testing.T) {
 	}
 	kpis := kpiMap(blk)
 	assertKPI(t, kpis, "Skim events (90d)", "2")
-	assertKPI(t, kpis, "Skimmed token0 (90d)", wantAmt0.String())
+	rows := skimTableByPair(t, blk)
+	if got := rows[dexCometToken]; len(got) != 6 || got[3] != wantAmt0.String() || got[5] != "300" {
+		t.Errorf("Skims by pair[%s] = %v, want token0 %s / token1 300", dexCometToken, got, wantAmt0)
+	}
+}
+
+// TestSoroswapSkimBespokeNeverSumsAcrossPairs pins that the served Soroswap
+// block keeps skim amounts per pair. token0 of one pair and token0 of another
+// are different tokens with different decimals; adding their base units into
+// one "Skimmed token0" figure publishes a quantity of no currency at all.
+func TestSoroswapSkimBespokeNeverSumsAcrossPairs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	// Pair A wraps a 7-decimal token; pair B an 18-decimal one.
+	pairA, pairB := dexCometPool, dexPhoenixPool
+	if err := store.UpsertSoroswapPair(ctx, pairA, dexTokenA, dexTokenB); err != nil {
+		t.Fatalf("UpsertSoroswapPair A: %v", err)
+	}
+	if err := store.UpsertSoroswapPair(ctx, pairB, dexLPToken, dexTokenA); err != nil {
+		t.Fatalf("UpsertSoroswapPair B: %v", err)
+	}
+	base := time.Now().UTC().Add(-6 * time.Hour)
+	for i, e := range []timescale.SoroswapSkimEvent{
+		{ContractID: pairA, Amount0: "10000000", Amount1: "7"},
+		{ContractID: pairB, Amount0: "500000000000000000", Amount1: "3"},
+	} {
+		tx := make([]byte, 32)
+		tx[31] = byte(10 + i)
+		e.Ledger, e.LedgerCloseTime, e.TxHash = uint32(59_100_000+i), base.Add(time.Duration(i)*time.Minute), tx
+		if err := store.InsertSoroswapSkimEvent(ctx, e); err != nil {
+			t.Fatalf("InsertSoroswapSkimEvent %d: %v", i, err)
+		}
+	}
+
+	blk, err := store.BuildProtocolBespoke(ctx, "soroswap", "amm", 90)
+	if err != nil {
+		t.Fatalf("BuildProtocolBespoke soroswap: %v", err)
+	}
+	if blk == nil {
+		t.Fatal("BuildProtocolBespoke soroswap = nil, want a block carrying the skim KPIs")
+	}
+	kpis := kpiMap(blk)
+	assertKPI(t, kpis, "Skim events (90d)", "2")
+	assertKPI(t, kpis, "Pairs skimmed (90d)", "2")
+	for _, k := range blk.KPIs {
+		if k.Value == "500000000010000000" || k.Value == "10" {
+			t.Errorf("KPI %q = %q is a cross-pair sum of different tokens' base units", k.Label, k.Value)
+		}
+	}
+
+	rows := skimTableByPair(t, blk)
+	want := map[string][]string{
+		pairA: {pairA, "1", dexTokenA, "10000000", dexTokenB, "7"},
+		pairB: {pairB, "1", dexLPToken, "500000000000000000", dexTokenA, "3"},
+	}
+	if len(rows) != len(want) {
+		t.Errorf("Skims by pair has %d rows, want %d: %v", len(rows), len(want), rows)
+	}
+	for pair, w := range want {
+		if got := rows[pair]; strings.Join(got, "|") != strings.Join(w, "|") {
+			t.Errorf("Skims by pair[%s] = %v, want %v", pair, got, w)
+		}
+	}
+}
+
+// skimTableByPair returns the "Skims by pair" table rows keyed by pair id,
+// failing the test when the table is absent.
+func skimTableByPair(t *testing.T, blk *timescale.BespokeBlock) map[string][]string {
+	t.Helper()
+	for _, tb := range blk.Tables {
+		if tb.Title != "Skims by pair" {
+			continue
+		}
+		out := map[string][]string{}
+		for _, r := range tb.Rows {
+			out[r[0]] = r
+		}
+		return out
+	}
+	t.Fatal(`Soroswap block has no "Skims by pair" table`)
+	return nil
 }
 
 // kpiMap indexes a bespoke block's KPIs by label.

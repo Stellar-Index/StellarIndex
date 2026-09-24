@@ -433,7 +433,7 @@ func truncLendingID(id string) string {
 // off-chain (e.g. Ethereum) 6-decimal USDC convention (AGENTS.md: "NEVER
 // assume off-chain amount scaling is uniform").
 const (
-	creditAmountUnitsNote      = "Amounts are in token base units (USDC settlements/withdrawals at 7-decimal USDC base units; statement amounts at the protocol's i128 scale) — NOT USD. sorocredit has no published price and never contributes to VWAP."
+	creditAmountUnitsNote      = "Amounts are in token base units (USDC settlements at 7-decimal USDC base units; statement amounts at the protocol's i128 scale) — NOT USD. sorocredit has no published price and never contributes to VWAP."
 	creditSettlementVolumeHint = "summed scheduled-settlement amount in 7-decimal USDC base units (NOT a liquidation/risk signal)"
 )
 
