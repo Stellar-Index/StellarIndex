@@ -1959,7 +1959,13 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// `feedback_prewarm_handler_drift` this is the canonical pattern
 	// when handler fan-out is wider than the prewarm goroutine knows
 	// about.
-	go selfPrewarmAssetEndpoints(rootCtx, logger.With("component", "self-prewarm"), cfg.API.ListenAddr, verifiedAssetIDs)
+	if selfPrewarmAdmitted(cfg.API.AuthMode) {
+		go selfPrewarmAssetEndpoints(rootCtx, logger.With("component", "self-prewarm"), cfg.API.ListenAddr, verifiedAssetIDs)
+	} else {
+		logger.Warn("self-prewarm disabled: auth_mode requires a credential the self-call does not carry",
+			"auth_mode", cfg.API.AuthMode,
+			"effect", "/v1/assets/{id} caches outside prewarmCaches' SWR slots warm on first user request")
+	}
 
 	select {
 	case <-rootCtx.Done():
@@ -5762,6 +5768,18 @@ func prewarmAssetCall(ctx context.Context, logger *slog.Logger, name, assetID st
 		logger.Debug("prewarm asset call failed", "reader", name, "asset_id", assetID, "err", err)
 	}
 	_ = ctx // each fn already captures the context; arg kept for symmetry / future timeout pattern.
+}
+
+// selfPrewarmAdmitted reports whether authMode lets the self-prewarm's
+// credential-less GET /v1/assets/{id} through Auth. Under apikey and sep10
+// every such request 401s and spends the loopback failed-auth budget, so
+// the loop must not start. Unknown modes are refused (fail closed).
+func selfPrewarmAdmitted(authMode string) bool {
+	switch authMode {
+	case "", "none", "apikey_optional":
+		return true
+	}
+	return false
 }
 
 // selfPrewarmAssetEndpoints loops every 60s and HTTP-GETs
