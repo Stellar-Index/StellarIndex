@@ -203,7 +203,7 @@ func decodeStatement(e *events.Event, closedAt time.Time) (decoded, error) {
 //	topics = [Symbol("Liquidation"), Address(collateral_contract),
 //	          String(position_uuid), String(statement_uuid)]
 //	data   = Vec[ Address(settler/keeper), Vec[Address](debt_assets),
-//	              Vec[i128](amounts), … protocol-internal trailing fields ]
+//	              Vec[i128](amounts), 4 protocol-internal trailing fields ]
 //
 // The settler (data[0]) is the single recurring keeper. debt_asset +
 // settled_amount are the FIRST element of the parallel debt-asset /
@@ -234,8 +234,10 @@ func decodeSettlement(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("%w: Liquidation body: %w", ErrMalformedPayload, err)
 	}
-	if len(vec) < 3 {
-		return decoded{}, fmt.Errorf("%w: Liquidation body not a >=3-Vec (len=%d)", ErrMalformedPayload, len(vec))
+	// Exactly the audited arity (wasm-audits/sorocredit.md: Vec[7]): the
+	// fields are promoted by position, which only holds for that shape.
+	if len(vec) != settlementBodyLen {
+		return decoded{}, fmt.Errorf("%w: Liquidation body not a %d-Vec (len=%d)", ErrMalformedPayload, settlementBodyLen, len(vec))
 	}
 	settler, err := scval.AsAddressStrkey(vec[0])
 	if err != nil {
@@ -248,32 +250,7 @@ func decodeSettlement(e *events.Event) (decoded, error) {
 	// storing it directly is the lossless capture; scval.Parse decodes it
 	// back on demand.
 	attrs := map[string]any{"body": e.Value}
-	// Primary debt-asset leg: data[1] is Vec[Address], data[2] is
-	// Vec[i128]. Promote the first of each; a shape mismatch degrades
-	// into an attribute note rather than failing the whole row. Nested
-	// Vec elements are kept in := inferred locals and fed straight back
-	// into scval.As* — this file never NAMES the xdr type (ADR-0013).
-	var asset, amount string
-	if assets, verr := scval.AsVec(vec[1]); verr == nil && len(assets) > 0 {
-		if a, aerr := scval.AsAddressStrkey(assets[0]); aerr == nil {
-			asset = a
-		} else {
-			attrs["debt_asset_error"] = aerr.Error()
-		}
-	} else {
-		attrs["debt_asset_error"] = "not a non-empty Vec"
-	}
-	if amounts, verr := scval.AsVec(vec[2]); verr == nil && len(amounts) > 0 {
-		if amt, aerr := scval.AsAmountFromI128(amounts[0]); aerr == nil {
-			amount = amt.String()
-		} else {
-			attrs["settled_amount_error"] = aerr.Error()
-			obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
-		}
-	} else {
-		attrs["settled_amount_error"] = "not a non-empty Vec"
-		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
-	}
+	asset, amount := settlementLeg(vec[1], vec[2], attrs)
 	return decoded{
 		CollateralContract: collateral,
 		PositionUUID:       posUUID,
@@ -283,6 +260,45 @@ func decodeSettlement(e *events.Event) (decoded, error) {
 		Amount:             amount,
 		Attributes:         attrs,
 	}, nil
+}
+
+// settlementBodyLen is the Liquidation body arity ratified by the WASM audit.
+const settlementBodyLen = 7
+
+// settlementLeg promotes the primary (debt_asset, settled_amount) leg from
+// the parallel data[1] Vec[Address] / data[2] Vec[i128]. A shape mismatch
+// degrades into an attribute note rather than failing the whole row; so
+// does a length mismatch, because index pairing is then unproven and
+// promoting amounts[0] could stamp it on the wrong asset.
+func settlementLeg(assetsSV, amountsSV scval.ScVal, attrs map[string]any) (asset, amount string) {
+	assets, aerr := scval.AsVec(assetsSV)
+	amounts, merr := scval.AsVec(amountsSV)
+	assetsOK := aerr == nil && len(assets) > 0
+	amountsOK := merr == nil && len(amounts) > 0
+	if assetsOK && amountsOK && len(assets) != len(amounts) {
+		note := fmt.Sprintf("debt_assets/amounts not parallel (len %d vs %d)", len(assets), len(amounts))
+		attrs["debt_asset_error"] = note
+		attrs["settled_amount_error"] = note
+		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
+		return "", ""
+	}
+	if !assetsOK {
+		attrs["debt_asset_error"] = "not a non-empty Vec"
+	} else if a, err := scval.AsAddressStrkey(assets[0]); err == nil {
+		asset = a
+	} else {
+		attrs["debt_asset_error"] = err.Error()
+	}
+	if !amountsOK {
+		attrs["settled_amount_error"] = "not a non-empty Vec"
+		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
+	} else if amt, err := scval.AsAmountFromI128(amounts[0]); err == nil {
+		amount = amt.String()
+	} else {
+		attrs["settled_amount_error"] = err.Error()
+		obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount").Inc()
+	}
+	return asset, amount
 }
 
 // decodeWithdrawal:

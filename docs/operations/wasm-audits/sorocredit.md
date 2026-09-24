@@ -221,7 +221,7 @@ Each observed shape is exactly what the decoder expects:
 | --- | --- | --- | --- | --- |
 | `NewCollateralContract` | `decodeNewCollateralContract` | topics ≥2 (`addr@1`); body `Vec≥2` (`String@0`, `Address@1`) | `[Symbol,Address]` + `Vec[String,Address]` | ✓ |
 | `StatementPublished` | `decodeStatement` | topics ≥3 (`str@1,@2`); body `Vec≥3` (`i128@0`,`Address@1`,`u64@2`) | `[Symbol,String,String]` + `Vec[i128,Address,u64]` | ✓ |
-| `Liquidation`→settlement | `decodeSettlement` | topics ≥4 (`addr@1`,`str@2,@3`); body `Vec≥3` (`Address@0`,`Vec[Address]@1`,`Vec[i128]@2`, …) | `[Symbol,Address,String,String]` + `Vec[Address, Vec, Vec, …]` (7 elems) | ✓ |
+| `Liquidation`→settlement | `decodeSettlement` | topics ≥4 (`addr@1`,`str@2,@3`); body exactly `Vec[7]` (`Address@0`,`Vec[Address]@1`,`Vec[i128]@2` parallel, …) | `[Symbol,Address,String,String]` + `Vec[Address, Vec, Vec, …]` (7 elems) | ✓ |
 | `Withdrawal` | `decodeWithdrawal` | topics ≥2 (`addr@1`); body `Vec≥3` (`Address@0`,`Address@1`,`i128@2`) | `[Symbol,Address]` + `Vec[Address,Address,i128]` | ✓ |
 | `SupportedAssetAdded` | `decodeSupportedAssetAdded` | topics ≥2 (`addr@1`); body captured | `[Symbol,Address]` + `Vec[7 config]` | ✓ |
 | `BeaconUpdated` | `decodeConfigBody` | topics ≥1; body captured | `[Symbol]` + `Vec[Void,Address]` | ✓ |
