@@ -257,6 +257,38 @@ func TestSweep_DoesNotStampHeartbeatOnEnumerationFailure(t *testing.T) {
 	}
 }
 
+// TestMarkEnabled_SeedsHeartbeatUntilFirstSweep pins the never-armed arm of
+// stellarindex_decimals_guard_sweep_stale: an enabled guard whose lake dial
+// or Backfill is still running must read "enabled at T", not the Unix epoch
+// (which the alert used to read as 56 years stale from the first scrape), and
+// a failed pass must leave that seed in place rather than refresh it.
+func TestMarkEnabled_SeedsHeartbeatUntilFirstSweep(t *testing.T) {
+	obs.DecimalsGuardSweepLastSuccessUnix.Set(0)
+	enabledAt := time.Unix(1_700_000_000, 0)
+
+	MarkEnabled(enabledAt)
+	if got := testutil.ToFloat64(obs.DecimalsGuardSweepLastSuccessUnix); got != float64(enabledAt.Unix()) {
+		t.Fatalf("after MarkEnabled heartbeat = %v, want %d", got, enabledAt.Unix())
+	}
+
+	failing := New(&fakeReader{err: errors.New("lake still loading")}, &fakeResolver{}, Options{Window: time.Minute})
+	if err := failing.Sweep(context.Background()); err == nil {
+		t.Fatal("expected enumeration error to propagate")
+	}
+	if got := testutil.ToFloat64(obs.DecimalsGuardSweepLastSuccessUnix); got != float64(enabledAt.Unix()) {
+		t.Fatalf("after failed sweep heartbeat = %v, want the enable seed %d", got, enabledAt.Unix())
+	}
+
+	before := time.Now().Unix()
+	ok := New(&fakeReader{}, &fakeResolver{decimals: map[string]uint32{}}, Options{Window: time.Minute})
+	if err := ok.Sweep(context.Background()); err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if got := int64(testutil.ToFloat64(obs.DecimalsGuardSweepLastSuccessUnix)); got < before {
+		t.Fatalf("after successful sweep heartbeat = %d, want >= %d (the real stamp replaces the seed)", got, before)
+	}
+}
+
 // fakeWriter records every UpsertNonstandardDecimalsAsset call so tests can
 // assert the confirmed-offender persistence side of report().
 type fakeWriter struct {

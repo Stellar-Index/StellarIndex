@@ -3,6 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"log/slog"
 	"math/big"
@@ -634,4 +637,61 @@ func TestLazyCloseTimeReader_LatestLedgerAtOrBefore_UnblocksOnShutdown(t *testin
 	case <-time.After(2 * time.Second):
 		t.Fatal("LatestLedgerAtOrBefore blocked past shutdown instead of returning")
 	}
+}
+
+// TestDecimalsGuardHeartbeatSeededBeforeDial pins the wiring half of the
+// never-armed arm of stellarindex_decimals_guard_sweep_stale. Unseeded, the
+// gauge reads 0 through the cold-boot lake dial and the startup Backfill, so
+// time()-0 tickets 15 minutes after every restart, and a lake-less aggregator
+// cannot be told apart from a wedged one. The seed must be set inside the
+// lake-configured branch and before either of those can block.
+func TestDecimalsGuardHeartbeatSeededBeforeDial(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse main.go: %v", err)
+	}
+	var guardBranch *ast.BlockStmt
+	ast.Inspect(f, func(n ast.Node) bool {
+		ifs, ok := n.(*ast.IfStmt)
+		if ok && firstCallPos(ifs.Body, "", "dialDecimalsResolver") != token.NoPos {
+			guardBranch = ifs.Body
+		}
+		return true
+	})
+	if guardBranch == nil {
+		t.Fatal("no if-branch in main.go calls dialDecimalsResolver; update this test with the guard's new wiring")
+	}
+	seed := firstCallPos(guardBranch, "decimalsguard", "MarkEnabled")
+	dial := firstCallPos(guardBranch, "", "dialDecimalsResolver")
+	if seed == token.NoPos {
+		t.Fatal("decimalsguard.MarkEnabled is not called in the lake-configured decimals-guard branch — " +
+			"the sweep heartbeat stays 0 until the first Sweep, so the staleness alert fires on every cold boot")
+	}
+	if seed > dial {
+		t.Errorf("decimalsguard.MarkEnabled is called after dialDecimalsResolver — a cold lake still reads as epoch-stale")
+	}
+}
+
+// firstCallPos returns the position of the first call to pkg.name (or the
+// bare identifier name when pkg is empty) under n, or token.NoPos.
+func firstCallPos(n ast.Node, pkg, name string) token.Pos {
+	pos := token.NoPos
+	ast.Inspect(n, func(c ast.Node) bool {
+		call, ok := c.(*ast.CallExpr)
+		if !ok || pos != token.NoPos {
+			return pos == token.NoPos
+		}
+		switch fn := call.Fun.(type) {
+		case *ast.Ident:
+			if pkg == "" && fn.Name == name {
+				pos = call.Pos()
+			}
+		case *ast.SelectorExpr:
+			if x, isIdent := fn.X.(*ast.Ident); isIdent && x.Name == pkg && fn.Sel.Name == name {
+				pos = call.Pos()
+			}
+		}
+		return pos == token.NoPos
+	})
+	return pos
 }

@@ -415,3 +415,145 @@ tests:
       - eval_time: 45m
         alertname: stellarindex_nonstandard_decimals_correction_failing
         exp_alerts: []
+
+  # ── stellarindex_decimals_guard_sweep_stale ──────────────────────
+  # The aggregator seeds the heartbeat with its start time
+  # (decimalsguard.MarkEnabled) before the lake dial and the startup
+  # Backfill; Sweep stamps it on every completed pass. promtool's clock
+  # starts at unix 0, so "started at 1m" is a seed of 60.
+  #
+  # PROVEN-RED: drop the `> 0` arm from the expr and the lake-less case
+  # fires (time()-0 is 4200 at 70m); widen the job selector and the
+  # non-aggregator case fires.
+
+  # Never armed: seeded at start, the lake never answers, no pass ever
+  # completes. time()-60 > 2700 from 47m, held 15m → firing by 62m.
+  - interval: 1m
+    name: a guard that never completes a pass after start tickets at 60m, not 15m
+    input_series:
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}'
+        values: '60x120'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []
+      - eval_time: 55m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []
+      - eval_time: 70m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              job: stellarindex-aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+              summary: "Decimals-guard sweep has not completed in over 45 min — guard health is unknown"
+              description: |
+                The aggregator's decimals-assumption guard
+                (internal/decimalsguard) has not completed a Sweep pass in
+                over 45 minutes (three sweep intervals) plus a 15-minute
+                for-duration, counted from its last completed pass or, if it
+                has never completed one, from aggregator start: either it
+                never armed (the ClickHouse lake dial is still retrying or
+                the startup Backfill is still running) or it has wedged.
+                The offender counters
+                (stellarindex_dex_trade_nonstandard_decimals_total,
+                stellarindex_nonstandard_decimals_lockstep_mismatch_total)
+                are now UNTRUSTWORTHY: a healthy zero and "the guard never
+                armed" look identical without this heartbeat. Check the
+                aggregator's `decimals-guard: ClickHouse decimals resolver
+                unavailable` / `decimals-guard started` / `decimals-guard
+                exited with error` log lines and ClickHouse reachability,
+                then the runbook.
+
+  # Cold boot: a 25-minute lake dial + Backfill, then 15-minute sweeps.
+  # The shape that used to ticket 15 minutes after every restart.
+  - interval: 1m
+    name: a slow cold boot followed by healthy sweeps never tickets
+    input_series:
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}'
+        values: '60x24 1500x14 2400x14 3300x14 4200x14 5100x14'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []
+      - eval_time: 95m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []
+
+  # Wedged after arming: last pass at 30m, frozen after. time()-1800 >
+  # 2700 from 76m, held 15m → firing by 91m.
+  - interval: 1m
+    name: a guard that stops sweeping after arming tickets
+    input_series:
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}'
+        values: '60x14 900x14 1800x90'
+    alert_rule_test:
+      - eval_time: 85m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []
+      - eval_time: 100m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: aggregator
+              job: stellarindex-aggregator
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
+              summary: "Decimals-guard sweep has not completed in over 45 min — guard health is unknown"
+              description: |
+                The aggregator's decimals-assumption guard
+                (internal/decimalsguard) has not completed a Sweep pass in
+                over 45 minutes (three sweep intervals) plus a 15-minute
+                for-duration, counted from its last completed pass or, if it
+                has never completed one, from aggregator start: either it
+                never armed (the ClickHouse lake dial is still retrying or
+                the startup Backfill is still running) or it has wedged.
+                The offender counters
+                (stellarindex_dex_trade_nonstandard_decimals_total,
+                stellarindex_nonstandard_decimals_lockstep_mismatch_total)
+                are now UNTRUSTWORTHY: a healthy zero and "the guard never
+                armed" look identical without this heartbeat. Check the
+                aggregator's `decimals-guard: ClickHouse decimals resolver
+                unavailable` / `decimals-guard started` / `decimals-guard
+                exited with error` log lines and ClickHouse reachability,
+                then the runbook.
+
+  # Lake-less aggregator (storage.clickhouse_addr empty): the guard is
+  # disabled by configuration and never seeds the gauge. Disabled is not
+  # stale — this must not hold a permanent ticket.
+  - interval: 1m
+    name: a lake-less aggregator with the guard disabled never tickets
+    input_series:
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}'
+        values: '0x300'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []
+      - eval_time: 300m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []
+
+  # The api/indexer binaries register the gauge from the shared obs
+  # package but never run the guard. The job selector alone must exclude
+  # them: the stale NONZERO api series below would fire if it did not.
+  - interval: 1m
+    name: a stale gauge on a non-aggregator job never tickets
+    input_series:
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-api"}'
+        values: '60x90'
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-indexer"}'
+        values: '0x90'
+    alert_rule_test:
+      - eval_time: 70m
+        alertname: stellarindex_decimals_guard_sweep_stale
+        exp_alerts: []

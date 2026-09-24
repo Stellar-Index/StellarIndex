@@ -3469,7 +3469,10 @@ Gauge, no labels.
 
 Unix seconds of the most recent successful decimals-guard `Sweep` pass
 (`internal/decimalsguard.Guard.Sweep`), stamped whether or not that pass
-found an offender. Without it, `time() - this` is the staleness signal:
+found an offender. Before the first pass completes it holds the time the
+aggregator enabled the guard (`decimalsguard.MarkEnabled`, called before
+the lake dial and the startup Backfill); it stays 0 on an aggregator with
+no lake configured, where the guard is disabled. Without it, `time() - this` is the staleness signal:
 the offender counters above
 (`stellarindex_dex_trade_nonstandard_decimals_total`,
 `stellarindex_nonstandard_decimals_lockstep_mismatch_total`) sitting at a
@@ -3478,7 +3481,8 @@ nothing" versus "the guard never armed" — a ClickHouse that is still
 loading metadata for the 150B-row lake at aggregator boot used to disable
 the guard for the whole process lifetime with no metric surfacing it
 (audit-2026-09-02 F040). Alert: `stellarindex_decimals_guard_sweep_stale`
-(> 45 min, three sweep intervals, `for: 15m`), scoped to
+(> 45 min, three sweep intervals, `for: 15m`; a gauge at 0 — guard
+disabled — never fires), scoped to
 `job="stellarindex-aggregator"` so the indexer/api binaries — which
 register every metric in `internal/obs` at its Go zero-value even though
 they never call `Sweep` — cannot hold the series at a permanent 0 and page
@@ -3906,6 +3910,11 @@ them absent; this is the only series that can see that.
 
 ## Changelog
 
+- 2026-09-24 — `stellarindex_decimals_guard_sweep_last_success_unix` is
+  seeded with the aggregator's start time before the first `Sweep`, and
+  `stellarindex_decimals_guard_sweep_stale` gains a `> 0` arm, so a cold
+  boot no longer tickets 15 min after every restart and a lake-less
+  aggregator no longer holds a permanent ticket.
 - 2026-09-18 — added `stellarindex_decimals_guard_sweep_last_success_unix`
   (gauge, no labels), emitted by the aggregator's decimals-guard
   (`internal/decimalsguard.Guard.Sweep`) on every completed pass. Closes

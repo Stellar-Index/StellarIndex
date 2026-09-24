@@ -273,6 +273,14 @@ func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 	}
 }
 
+// MarkEnabled seeds the sweep heartbeat with the time the guard was enabled.
+// Called once at startup, before the lake dial and Backfill, so staleness is
+// measured from process start rather than the Unix epoch until the first
+// Sweep completes; a gauge still at 0 then means the guard is not enabled.
+func MarkEnabled(now time.Time) {
+	obs.DecimalsGuardSweepLastSuccessUnix.Set(float64(now.Unix()))
+}
+
 // Run sweeps immediately (so a standing offender is caught at startup, not
 // one interval later) and then every interval until ctx is cancelled. A
 // failed sweep is logged and retried next tick — a transient lake/DB blip
