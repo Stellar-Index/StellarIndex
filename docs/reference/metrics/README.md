@@ -2177,10 +2177,12 @@ Alert: `stellarindex_login_code_lockout_table_growing` →
 
 ### `stellarindex_auth_reaper_last_sweep_unix`
 
-Gauge, labelled `reaper` ∈ {`login_code`, `magic_link`, `signup`}. Set at
-the END of every completed sweep of the three auth-table reapers in the
-API binary (`internal/logincodereaper`, `internal/magiclinkreaper`,
-`internal/signupreaper`) — including sweeps that FAILED (a failing reaper
+Gauge, labelled `reaper` ∈ {`login_code`, `magic_link`, `signup`,
+`session`, `webhook_delivery`}. Set at the END of every completed sweep of
+the platform-table reapers in the API binary (`internal/logincodereaper`,
+`internal/magiclinkreaper`, `internal/signupreaper`, and the two
+`internal/retentionreaper` instances for ended `sessions` and finished
+`webhook_deliveries`) — including sweeps that FAILED (a failing reaper
 is alive; its errors counter reports the failure), excluding the
 ctx-cancelled early return (that is the reaper going away).
 
@@ -2202,6 +2204,21 @@ Gauge, labelled `reaper` (same values). The configured sweep cadence,
 published once at construction so the stalled alert's threshold
 (3 × interval) follows each deployment's own setting instead of a
 hard-coded hour.
+
+### `stellarindex_retention_reaper_rows_deleted_total`
+
+Counter, labelled `reaper` ∈ {`session`, `webhook_delivery`}. Rows removed
+by `internal/retentionreaper`: sessions that expired or were revoked more
+than 90 days ago, and webhook deliveries created more than 30 days ago that
+were delivered or failed permanently. A delivery still carrying
+`next_attempt_at` (queued, or parked behind a suspended account) is never
+removed. `audit_log` is deliberately not swept.
+
+### `stellarindex_retention_reaper_errors_total`
+
+Counter, labelled `reaper` (same values), pre-seeded at 0. Failed
+retention sweeps; each is retried on the next hourly tick. Non-zero and
+rising means the table is growing again.
 
 ### `stellarindex_login_code_lockout_rows_deleted_total`
 

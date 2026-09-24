@@ -71,6 +71,7 @@ status: living doc
 │   ├── signupreaper/             deletes orphan speculative-account rows
 │   ├── logincodereaper/          bounds the login_code_lockouts table
 │   ├── magiclinkreaper/          bounds the magic_link_tokens table
+│   ├── retentionreaper/          deletes ended sessions (90 d) and finished webhook_deliveries (30 d)
 │   ├── currency/                 verified-currency catalogue (hand-curated seed; R-018)
 │   ├── divergence/               cross-check against CoinGecko + Chainlink-HTTP (a CMC poller exists under sources/external/ but is not wired into divergence)
 │   ├── customerwebhook/          drains the webhook delivery queue — HMAC-signs + POSTs pending rows, backoff/retry on failure

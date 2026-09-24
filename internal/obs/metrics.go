@@ -332,8 +332,8 @@ func registerAppMetricsTail() {
 	seedBoundedLabelSeries()
 }
 
-// registerAuthReaperMetrics registers the three auth-table reapers' metrics
-// (signup, login-code, magic-link); split out of registerAppMetricsTail for funlen.
+// registerAuthReaperMetrics registers the platform-table reapers' metrics
+// (signup, login-code, magic-link, retention); split out of registerAppMetricsTail for funlen.
 func registerAuthReaperMetrics() {
 	Registry.MustRegister(
 		SignupReaperRunsTotal,
@@ -352,7 +352,14 @@ func registerAuthReaperMetrics() {
 
 		AuthReaperLastSweepUnix,
 		AuthReaperIntervalSeconds,
+
+		RetentionReaperRowsDeletedTotal,
+		RetentionReaperErrorsTotal,
 	)
+	for _, reaper := range []string{AuthReaperSession, AuthReaperWebhookDelivery} {
+		RetentionReaperRowsDeletedTotal.WithLabelValues(reaper)
+		RetentionReaperErrorsTotal.WithLabelValues(reaper)
+	}
 }
 
 // seedBoundedLabelSeries pre-registers the zero-valued label combinations
@@ -4850,13 +4857,38 @@ const (
 	AuthReaperLoginCode = "login_code"
 	AuthReaperMagicLink = "magic_link"
 	AuthReaperSignup    = "signup"
+	// The two internal/retentionreaper instances publish on the same
+	// liveness gauges so the existing stalled alert covers them.
+	AuthReaperSession         = "session"
+	AuthReaperWebhookDelivery = "webhook_delivery"
 )
 
 // AuthReaperLastSweepUnix — see the auth-reaper liveness note above.
 var AuthReaperLastSweepUnix = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_auth_reaper_last_sweep_unix",
-		Help: "Unix time of the most recent COMPLETED sweep of each auth-table reaper (login_code|magic_link|signup); failed sweeps count, cancelled ones do not.",
+		Help: "Unix time of the most recent COMPLETED sweep of each platform-table reaper (login_code|magic_link|signup|session|webhook_delivery); failed sweeps count, cancelled ones do not.",
+	},
+	[]string{"reaper"},
+)
+
+// RetentionReaperRowsDeletedTotal — rows removed by the
+// internal/retentionreaper sweeps (ended sessions, finished webhook
+// deliveries), labelled by `reaper`.
+var RetentionReaperRowsDeletedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_retention_reaper_rows_deleted_total",
+		Help: "Rows deleted by the platform retention sweeps, by reaper (session|webhook_delivery).",
+	},
+	[]string{"reaper"},
+)
+
+// RetentionReaperErrorsTotal — failed internal/retentionreaper sweeps.
+// Pre-seeded so a never-failed reaper reads 0, not absent.
+var RetentionReaperErrorsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_retention_reaper_errors_total",
+		Help: "Platform retention sweep failures, by reaper (session|webhook_delivery). Non-zero = the table is not being bounded.",
 	},
 	[]string{"reaper"},
 )
@@ -4865,7 +4897,7 @@ var AuthReaperLastSweepUnix = prometheus.NewGaugeVec(
 var AuthReaperIntervalSeconds = prometheus.NewGaugeVec(
 	prometheus.GaugeOpts{
 		Name: "stellarindex_auth_reaper_interval_seconds",
-		Help: "Configured sweep cadence of each auth-table reaper, in seconds (the stalled alert's threshold is 3x this).",
+		Help: "Configured sweep cadence of each platform-table reaper, in seconds (the stalled alert's threshold is 3x this).",
 	},
 	[]string{"reaper"},
 )

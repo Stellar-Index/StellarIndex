@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -351,6 +352,25 @@ func ipString(ip net.IP) (string, error) {
 		return "", errNilClientIP
 	}
 	return ip.String(), nil
+}
+
+// SweepEndedSessions deletes sessions that expired or were revoked
+// before olderThan, returning how many were removed. Drives the
+// session reaper (internal/retentionreaper).
+//
+// Both states are terminal: every lookup filters `revoked_at IS NULL`,
+// the dashboard middleware refuses a row whose expires_at has passed,
+// and nothing moves expires_at forward.
+func (r *UserStore) SweepEndedSessions(ctx context.Context, olderThan time.Time) (int64, error) {
+	const q = `
+		DELETE FROM sessions
+		 WHERE id IN (
+		     SELECT id FROM sessions
+		      WHERE expires_at < $1 OR revoked_at < $1
+		      LIMIT $2
+		 )
+	`
+	return r.s.deleteInBatches(ctx, "sweep ended sessions", q, olderThan, defaultSweepBatchRows)
 }
 
 // Compile-time interface check.

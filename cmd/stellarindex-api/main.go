@@ -1915,6 +1915,11 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			"retention", magiclinkreaper.DefaultRetention)
 	}
 
+	// Ended sessions and finished webhook deliveries (Q146). Ungated for
+	// the same reason as the two reapers above: a PII bound with an off
+	// switch is not a bound.
+	startRetentionReapers(rootCtx, &bgWG, logger, retentionReaperTargets(dashboardBundle, logger))
+
 	serveErr := make(chan error, 1)
 	go func() {
 		logger.Info("http listening", "addr", httpSrv.Addr)
@@ -2145,7 +2150,9 @@ type dashboardBundle struct {
 	// tokens is the same store the auth handlers write magic-link rows
 	// and C3-032 lockout rows through; exposed so the login-code-lockout
 	// reaper can bind to its narrow sweep seam.
-	tokens      platform.TokenStore
+	tokens platform.TokenStore
+	// users carries the sessions table the session retention reaper sweeps.
+	users       platform.UserStore
 	pgValidator *auth.PostgresAPIKeyValidator
 	// sender + emailFrom are exported so the public-API signup
 	// flow (F-1218 wave 44) can re-use the same Resend / Noop
@@ -2516,6 +2523,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		keysStore:    keysStore,
 		accounts:     accounts,
 		tokens:       tokens,
+		users:        users,
 		pgValidator:  pgValidator,
 		sender:       sender,
 		emailFrom:    cfg.EmailFrom,

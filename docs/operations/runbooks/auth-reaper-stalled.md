@@ -13,7 +13,7 @@ severity: ticket
 | **Fires when** | `time() - stellarindex_auth_reaper_last_sweep_unix{reaper}` exceeds `3 × stellarindex_auth_reaper_interval_seconds{reaper}` for 15 min |
 | **Severity** | ticket (P3) — table growth is slow; hours, not minutes |
 | **Component** | `api` — the reapers run inside `stellarindex-api` |
-| **Blast radius** | one of `login_code_lockouts` / `magic_link_tokens` / speculative-account orphans is no longer bounded; its rows gauge is frozen, not healthy |
+| **Blast radius** | one of `login_code_lockouts` / `magic_link_tokens` / speculative-account orphans / ended `sessions` / finished `webhook_deliveries` is no longer bounded; its rows gauge (where it has one) is frozen, not healthy |
 | **First action** | `journalctl -u stellarindex-api --since -6h | grep -iE "reaper|panic"` |
 
 ## Why this exists
@@ -40,7 +40,11 @@ cadence, so the threshold follows the deployment's own interval.
 
 ## Symptoms
 
-- One `reaper` label (`login_code`, `magic_link`, `signup`) in the alert.
+- One `reaper` label (`login_code`, `magic_link`, `signup`, `session`,
+  `webhook_delivery`) in the alert. The last two are the
+  `internal/retentionreaper` sweeps of ended `sessions` (90-day retention)
+  and finished `webhook_deliveries` (30-day retention); they have no rows
+  gauge — check `stellarindex_retention_reaper_errors_total{reaper}`.
 - The matching rows gauge (`stellarindex_login_code_lockout_rows`,
   `stellarindex_magic_link_token_rows`) has been perfectly flat since the
   last sweep timestamp — flat is the symptom, not reassurance.
