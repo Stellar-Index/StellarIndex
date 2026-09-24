@@ -9,6 +9,7 @@ import (
 	"github.com/stellar/go-stellar-sdk/xdr"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sdexclaim"
 	"github.com/Stellar-Index/StellarIndex/internal/xdrjson"
 )
 
@@ -411,7 +412,7 @@ func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.Clai
 	}
 	var total xdr.Int64
 	for i, atom := range offers {
-		boughtAsset, boughtAmount, ok := claimAtomBoughtSide(atom)
+		boughtAsset, boughtAmount, ok := sdexclaim.BoughtSide(atom)
 		if !ok {
 			return 0, fmt.Errorf("claim atom %d: unrecognized ClaimAtomType %d", i, atom.Type)
 		}
@@ -427,29 +428,6 @@ func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.Clai
 		return 0, fmt.Errorf("derived source amount is non-positive: %d", total)
 	}
 	return total, nil
-}
-
-// claimAtomBoughtSide extracts (AssetBought, AmountBought) from a
-// ClaimAtom regardless of its concrete variant (OrderBook,
-// LiquidityPool, or the legacy pre-CAP-27 V0 shape) — the "what did
-// the taker pay into this offer" side, mirroring
-// internal/sources/sdex/decode.go's decodeClaimAtom field mapping
-// (AssetSold/AmountSold is what the taker RECEIVED; AssetBought/
-// AmountBought is what the taker PAID).
-func claimAtomBoughtSide(atom xdr.ClaimAtom) (xdr.Asset, xdr.Int64, bool) {
-	switch atom.Type {
-	case xdr.ClaimAtomTypeClaimAtomTypeOrderBook:
-		ob := atom.MustOrderBook()
-		return ob.AssetBought, ob.AmountBought, true
-	case xdr.ClaimAtomTypeClaimAtomTypeLiquidityPool:
-		lp := atom.MustLiquidityPool()
-		return lp.AssetBought, lp.AmountBought, true
-	case xdr.ClaimAtomTypeClaimAtomTypeV0:
-		v0 := atom.MustV0()
-		return v0.AssetBought, v0.AmountBought, true
-	default:
-		return xdr.Asset{}, 0, false
-	}
 }
 
 // ─── Phase 3: ClaimableBalance create/claim/clawback + Clawback ───

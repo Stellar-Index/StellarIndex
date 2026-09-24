@@ -1026,18 +1026,22 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// round trip. Table is tiny (offenders should be near-zero), so the
 	// full read is cheap; refresh cadence controls how quickly a fix
 	// (row removed) or a new confirmation propagates.
+	//
+	// The initial refresh is fatal, as in the aggregator: a cold cache
+	// has no last-good snapshot, so every confirmed non-7-decimals leg
+	// would be served unnormalized (wrong by 10^(7-decimals)) until the
+	// first successful tick. Only the periodic refresh fails open.
+	const nonstandardDecimalsRefreshTimeout = 30 * time.Second
 	nonstandardDecimalsCache := v1.NewNonstandardDecimalsCache(store, logger.With("component", "nonstandard-decimals-cache"))
+	decimalsInitCtx, decimalsInitCancel := context.WithTimeout(rootCtx, nonstandardDecimalsRefreshTimeout)
+	defer decimalsInitCancel()
+	if err := nonstandardDecimalsCache.Refresh(decimalsInitCtx); err != nil {
+		return fmt.Errorf("nonstandard-decimals cache initial refresh (refusing to serve unnormalized prices): %w", err)
+	}
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
 		defer recoverBackgroundWorker(logger, "nonstandard-decimals-cache")
-		const refreshTimeout = 30 * time.Second
-
-		initCtx, initCancel := context.WithTimeout(rootCtx, refreshTimeout)
-		defer initCancel()
-		if err := nonstandardDecimalsCache.Refresh(initCtx); err != nil {
-			logger.Warn("nonstandard-decimals cache initial refresh", "err", err)
-		}
 		tick := time.NewTicker(v1.NonstandardDecimalsRefreshInterval)
 		defer tick.Stop()
 		for {
@@ -1045,7 +1049,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 			case <-rootCtx.Done():
 				return
 			case <-tick.C:
-				refreshCtx, cancel := context.WithTimeout(rootCtx, refreshTimeout)
+				refreshCtx, cancel := context.WithTimeout(rootCtx, nonstandardDecimalsRefreshTimeout)
 				if err := nonstandardDecimalsCache.Refresh(refreshCtx); err != nil {
 					logger.Warn("nonstandard-decimals cache periodic refresh", "err", err)
 				}

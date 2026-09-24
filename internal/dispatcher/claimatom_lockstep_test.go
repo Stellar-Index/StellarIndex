@@ -11,7 +11,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"path/filepath"
 	"testing"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -257,10 +256,15 @@ func TestClaimAtomCount_LockStepWithDecoder(t *testing.T) {
 func TestClaimAtomCount_BothCountersDelegate(t *testing.T) {
 	t.Parallel()
 
-	for _, f := range []struct{ label, path string }{
-		{"dispatcher census", filepath.Join("census.go")},
-		{"clickhouse lake extract", filepath.Join("..", "storage", "clickhouse", "extract.go")},
-	} {
+	// Discovered, not listed: a third claimAtomCount copy is checked the
+	// moment it exists.
+	counters := goSourcesContaining(t, "func claimAtomCount(")
+	if len(counters) < 2 {
+		t.Fatalf("found claimAtomCount in %v, want at least the census and lake copies — "+
+			"the scan would pass vacuously", counters)
+	}
+	for _, path := range counters {
+		f := struct{ label, path string }{path, path}
 		fset := token.NewFileSet()
 		file, err := parser.ParseFile(fset, f.path, nil, 0)
 		if err != nil {

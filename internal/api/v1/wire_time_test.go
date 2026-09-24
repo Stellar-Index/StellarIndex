@@ -124,84 +124,171 @@ func TestWireTime_OutOfRangeYearRendersNull(t *testing.T) {
 // TestWireTime_NoRawTimeOnTheWire is the structural ratchet.
 //
 // The payload scan in wire_time_payload_test.go can only see the
-// endpoints it lists. This one sees every response struct in the
-// package, including ones nobody has written a test for yet: it
-// parses the package's own source and fails if any json-tagged field
-// is a raw time.Time. Such a field renders in whatever location its
-// value happens to carry, which is precisely how /v1/price/at and
+// endpoints it lists. This one sees every struct in every package under
+// internal/api — the v1 handlers, their sub-packages and the SSE
+// producers — including ones nobody has written a test for yet: it
+// parses the source and fails if any json-tagged field is a raw
+// time.Time. Such a field renders in whatever location its value happens
+// to carry, which is precisely how /v1/price/at and
 // /v1/history/since-inception came to serve `+02:00` and `+01:00`.
 //
-// A new endpoint that reaches for time.Time on the wire fails HERE,
-// at the point the field is declared, rather than in production.
+// The package set is walked, not listed, so a new package that marshals
+// to a client is covered the day it is created. A struct that is not on
+// the wire, or a known offender, is named in wireTimeExclusions.
 func TestWireTime_NoRawTimeOnTheWire(t *testing.T) {
-	// Both directories that marshal JSON to a v1 client: the handlers,
-	// and the SSE producer whose payload is documented as field-
-	// compatible with /v1/price. The producer is a separate package and
-	// was leaking the same way — an envelope built there is no less on
-	// the wire for living next door.
-	dirs := []string{".", filepath.Join("..", "streampublish")}
-
 	fset := token.NewFileSet()
-	var pkgFiles []*ast.File
-	for _, dir := range dirs {
-		pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
-			return !strings.HasSuffix(fi.Name(), "_test.go")
-		}, 0)
-		if err != nil {
-			t.Fatalf("parse %s: %v", dir, err)
-		}
-		if len(pkgs) == 0 {
-			t.Fatalf("parsed no packages in %s — the scan would pass vacuously", dir)
-		}
-		for _, pkg := range pkgs {
-			for _, file := range pkg.Files {
-				pkgFiles = append(pkgFiles, file)
-			}
-		}
-	}
+	byDir := parseAPITree(t, fset)
 
-	var offenders []string
-	files := 0
-	fieldsChecked := 0
-	for _, file := range pkgFiles {
-		files++
-		ast.Inspect(file, func(n ast.Node) bool {
-			st, ok := n.(*ast.StructType)
-			if !ok || st.Fields == nil {
-				return true
+	files, fieldsChecked := 0, 0
+	excludedSeen := map[string]bool{}
+	for dir, dirFiles := range byDir {
+		for _, file := range dirFiles {
+			files++
+			checked, raw := rawTimeWireFields(fset, dir, file)
+			fieldsChecked += checked
+			for _, f := range raw {
+				if _, ok := wireTimeExclusions[f.key]; ok {
+					excludedSeen[f.key] = true
+					continue
+				}
+				t.Errorf("json-tagged time.Time on the v1 wire (use WireTime): %s: %s field %s",
+					f.pos, f.key, f.name)
 			}
-			for _, f := range st.Fields.List {
-				if f.Tag == nil {
-					continue
-				}
-				tag, err := strconv.Unquote(f.Tag.Value)
-				if err != nil {
-					continue
-				}
-				if _, ok := reflect.StructTag(tag).Lookup("json"); !ok {
-					continue
-				}
-				fieldsChecked++
-				if !isRawTimeTime(f.Type) {
-					continue
-				}
-				name := "<embedded>"
-				if len(f.Names) > 0 {
-					name = f.Names[0].Name
-				}
-				offenders = append(offenders, fmt.Sprintf("%s: field %s",
-					fset.Position(f.Pos()), name))
-			}
-			return true
-		})
+		}
 	}
 	if files == 0 || fieldsChecked == 0 {
 		t.Fatalf("scanned %d files / %d json-tagged fields — the scan would pass vacuously",
 			files, fieldsChecked)
 	}
-	for _, o := range offenders {
-		t.Errorf("json-tagged time.Time on the v1 wire (use WireTime): %s", o)
+	for key, why := range wireTimeExclusions {
+		if !excludedSeen[key] {
+			t.Errorf("wireTimeExclusions entry %s (%s) no longer has a raw time.Time field — delete it "+
+				"so the list only shrinks", key, why)
+		}
 	}
+}
+
+// wireTimeExclusions names, as "<dir under internal/api>.<TypeName>", the
+// structs TestWireTime_NoRawTimeOnTheWire tolerates.
+var wireTimeExclusions = map[string]string{
+	"streaming/redispub.ClosedBucketEvent": "aggregator-to-API Redis message; the subscriber " +
+		"validates it and re-marshals the client frame, so this struct never reaches a client",
+
+	// Known offenders: these reach a client as raw time.Time. The packages
+	// cannot import WireTime (v1's tests import redispub; the dashboard
+	// packages sit beside v1), so fixing them means moving WireTime to a
+	// leaf package. Remove each entry as it is fixed; never add one.
+	"streaming/redispub.closedBucketEnvelope": "known offender: /v1/price/stream frame as_of",
+	"streaming/redispub.closedBucketWireData": "known offender: /v1/price/stream frame observed_at",
+	"v1/dashboardkeys.keyDTO":                 "known offender: Postgres-sourced key timestamps",
+	"v1/dashboardwebhooks.webhookDTO":         "known offender: Postgres-sourced webhook timestamps",
+	"v1/dashboardwebhooks.deliveryDTO":        "known offender: Postgres-sourced delivery timestamps",
+	"v1/dashboardpricealerts.priceAlertDTO":   "known offender: Postgres-sourced alert timestamps",
+}
+
+// parseAPITree parses the non-test sources of every package under
+// internal/api, keyed by directory relative to it ("v1", "streampublish",
+// "v1/dashboardkeys", …).
+func parseAPITree(t *testing.T, fset *token.FileSet) map[string][]*ast.File {
+	t.Helper()
+	root := ".."
+	byDir := map[string][]*ast.File{}
+	err := filepath.WalkDir(root, func(dir string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return err
+		}
+		if d.Name() == "testdata" {
+			return filepath.SkipDir
+		}
+		pkgs, err := parser.ParseDir(fset, dir, func(fi fs.FileInfo) bool {
+			return !strings.HasSuffix(fi.Name(), "_test.go")
+		}, 0)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", dir, err)
+		}
+		rel, err := filepath.Rel(root, dir)
+		if err != nil {
+			return err
+		}
+		for _, pkg := range pkgs {
+			for _, file := range pkg.Files {
+				byDir[filepath.ToSlash(rel)] = append(byDir[filepath.ToSlash(rel)], file)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk internal/api: %v", err)
+	}
+	// The two packages the scan has always covered must still be found.
+	for _, must := range []string{"v1", "streampublish"} {
+		if len(byDir[must]) == 0 {
+			t.Fatalf("walk found no sources in internal/api/%s — the scan would pass vacuously", must)
+		}
+	}
+	return byDir
+}
+
+type rawWireTimeField struct{ key, pos, name string }
+
+// rawTimeWireFields counts file's json-tagged struct fields and returns the
+// raw time.Time ones, keyed "<dir>.<enclosing type>" (anonymous structs
+// outside a type declaration key as "<dir>.<anonymous>").
+func rawTimeWireFields(fset *token.FileSet, dir string, file *ast.File) (checked int, raw []rawWireTimeField) {
+	owner := map[*ast.StructType]string{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		ts, ok := n.(*ast.TypeSpec)
+		if !ok {
+			return true
+		}
+		ast.Inspect(ts.Type, func(m ast.Node) bool {
+			if st, ok := m.(*ast.StructType); ok {
+				owner[st] = ts.Name.Name
+			}
+			return true
+		})
+		return true
+	})
+	ast.Inspect(file, func(n ast.Node) bool {
+		st, ok := n.(*ast.StructType)
+		if !ok || st.Fields == nil {
+			return true
+		}
+		typeName := owner[st]
+		if typeName == "" {
+			typeName = "<anonymous>"
+		}
+		for _, f := range st.Fields.List {
+			if !hasJSONTag(f) {
+				continue
+			}
+			checked++
+			if !isRawTimeTime(f.Type) {
+				continue
+			}
+			name := "<embedded>"
+			if len(f.Names) > 0 {
+				name = f.Names[0].Name
+			}
+			raw = append(raw, rawWireTimeField{
+				key: dir + "." + typeName, pos: fset.Position(f.Pos()).String(), name: name,
+			})
+		}
+		return true
+	})
+	return checked, raw
+}
+
+func hasJSONTag(f *ast.Field) bool {
+	if f.Tag == nil {
+		return false
+	}
+	tag, err := strconv.Unquote(f.Tag.Value)
+	if err != nil {
+		return false
+	}
+	_, ok := reflect.StructTag(tag).Lookup("json")
+	return ok
 }
 
 // isRawTimeTime reports whether an AST type expression is `time.Time`
@@ -237,30 +324,16 @@ type Bad struct {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	checked, raw := rawTimeWireFields(fset, "p", file)
 	var hits []string
-	ast.Inspect(file, func(n ast.Node) bool {
-		st, ok := n.(*ast.StructType)
-		if !ok || st.Fields == nil {
-			return true
-		}
-		for _, f := range st.Fields.List {
-			if f.Tag == nil {
-				continue
-			}
-			tag, err := strconv.Unquote(f.Tag.Value)
-			if err != nil {
-				continue
-			}
-			if _, ok := reflect.StructTag(tag).Lookup("json"); !ok {
-				continue
-			}
-			if isRawTimeTime(f.Type) && len(f.Names) > 0 {
-				hits = append(hits, f.Names[0].Name)
-			}
-		}
-		return true
-	})
-	if got, want := strings.Join(hits, ","), "C,D"; got != want {
+	for _, f := range raw {
+		hits = append(hits, f.key+"."+f.name)
+	}
+	// The key names the enclosing type: wireTimeExclusions matches on it.
+	if got, want := strings.Join(hits, ","), "p.Bad.C,p.Bad.D"; got != want {
 		t.Errorf("planted scan found %q, want %q", got, want)
+	}
+	if checked != 3 {
+		t.Errorf("planted scan checked %d json-tagged fields, want 3", checked)
 	}
 }
