@@ -23,7 +23,8 @@ severity: P2
   for some `cagg` label for ≥ 5 min.
 - `timescaledb_information.job_stats` shows `last_run_status != 'Success'`
   or `last_successful_finish` well behind expected;
-  `timescaledb_information.job_errors` has the error text.
+  `timescaledb_information.job_errors` has the error text when it has a
+  row for the run — it often does not (see below).
 - `/v1/vwap` responses have `observed_at` that doesn't track
   recent trades.
 
@@ -56,6 +57,8 @@ SELECT job_id, finish_time, sqlerrcode, err_message
 FROM timescaledb_information.job_errors
 ORDER BY finish_time DESC LIMIT 10;
 SQL
+# No job_errors row for the stale cagg's job does NOT mean no error:
+# read it from the server log instead (next paragraph).
 
 # Is the timescaledb scheduler even running?
 runuser -u postgres -- psql -d stellarindex -c \
@@ -66,6 +69,15 @@ runuser -u postgres -- psql -d stellarindex -c \
   "CALL refresh_continuous_aggregate('<cagg_name>', NULL, NULL);"
 ```
 
+**`job_errors` empty while the job is failing.** `total_failures` is a
+lifetime counter; `job_errors` keeps only what TimescaleDB's
+history-retention job has not dropped, and a run whose worker died
+before its error handler (crash, OOM kill, restart mid-run) may leave
+no row at all — r1 has shown failing jobs with the view empty. Take the
+error text from `/var/log/postgresql/postgresql-15-main.log` by the
+job's `application_name`, using the commands in
+[timescale-job-failures-climbing step 2](timescale-job-failures-climbing.md#quick-diagnosis--5-min).
+
 ## Typical root causes
 
 1. **Refresh job encountering an error** that gets swallowed into
@@ -74,7 +86,8 @@ runuser -u postgres -- psql -d stellarindex -c \
    - Lock conflict with a concurrent vacuum/migration
    - Out-of-memory for a window function on a large window
    - Mitigation: read `err_message` from
-     `timescaledb_information.job_errors`; address the specific error.
+     `timescaledb_information.job_errors` — or, if it has no row for the
+     job, from the server log as above; address the specific error.
 
 2. **timescaledb-scheduler hung**. The background scheduler
    worker can wedge (rarely). Restart Postgres (or just the
@@ -95,7 +108,8 @@ runuser -u postgres -- psql -d stellarindex -c \
 ## Mitigation
 
 - [ ] Step 1 — read `err_message` in
-      `timescaledb_information.job_errors` for the specific error.
+      `timescaledb_information.job_errors` for the specific error; if
+      it has no row for the job, read the server log as above.
 - [ ] Step 2 — manually refresh: `CALL refresh_continuous_aggregate(...)`
       to see if it's a one-off.
 - [ ] Step 3 — fix the underlying error (schema / constraint /
@@ -108,7 +122,8 @@ runuser -u postgres -- psql -d stellarindex -c \
 
 ## Root cause analysis
 
-- `timescaledb_information.job_errors` rows for every recent run.
+- `timescaledb_information.job_errors` rows for every recent run, and
+  the server-log ERROR lines for the runs it has no row for.
 - timescaledb version + known bug tracker.
 - Were there schema changes on the source hypertable recently?
 - Is the CAGG definition using a pattern known to be expensive
@@ -137,6 +152,11 @@ runuser -u postgres -- psql -d stellarindex -c \
   above: what to do when the probe itself is what is broken.
 
 ## Changelog
+
+- 2026-09-24 — an empty `job_errors` no longer reads as "no error": it is
+  retention-pruned and can miss crashed runs while `total_failures`
+  climbs, so every step that reads it now falls back to the Postgres
+  server log.
 
 - 2026-09-05 — producer health: the probe now publishes
   `stellarindex_timescale_probe_query_ok`, `_probe_rows` and
