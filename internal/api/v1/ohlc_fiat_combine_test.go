@@ -249,3 +249,62 @@ func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 			"fallback of 7 and lifting it would serve 10500", bar.VBase)
 	}
 }
+
+// TestCombinedBarStatesScaleOnWire pins F015's narrowed remainder: a
+// combined bucket must STATE the smallest-unit scale its v_base/v_quote
+// were lifted to, not just carry it internally. Before this, finalize
+// left VBaseDecimals/VQuoteDecimals at Go's zero value regardless of the
+// bucket's actual lift target — indistinguishable on the wire from a
+// genuine 0dp scale, and silently wrong for the (overwhelmingly common)
+// 7dp/8dp buckets this file lifts.
+func TestCombinedBarStatesScaleOnWire(t *testing.T) {
+	acc := newOHLCBucketAcc()
+	acc.add(&OHLCSeriesBar{
+		O: "0.10", H: "0.10", L: "0.10", C: "0.10",
+		VBase: "10000000", VQuote: "1000000", N: 1,
+	}, onChainScale)
+	acc.add(&OHLCSeriesBar{
+		O: "0.12", H: "0.12", L: "0.12", C: "0.12",
+		VBase: "100000000", VQuote: "12000000", N: 1,
+	}, cexScale)
+
+	bar := finalizeCombined(t, acc, time.Unix(1_750_000_000, 0).UTC(), onChainScale, cexScale)
+	if bar.VBaseDecimals == nil || *bar.VBaseDecimals != cexScale {
+		t.Errorf("VBaseDecimals = %v, want %d (the bucket's lift target, "+
+			"cexScale) — a consumer dividing by 10^VBaseDecimals must land on "+
+			"the actual scale of the served v_base integer", derefScale(bar.VBaseDecimals), cexScale)
+	}
+	if bar.VQuoteDecimals == nil || *bar.VQuoteDecimals != cexScale {
+		t.Errorf("VQuoteDecimals = %v, want %d", derefScale(bar.VQuoteDecimals), cexScale)
+	}
+}
+
+// TestCombinedBarWithUnknownScaleStatesNone: a bucket holding an
+// unknown-scale bar sums its unlifted integers beside lifted ones, so no
+// single scale describes v_base/v_quote. It must state null, not the lift
+// target of the known bars and never the -1 sentinel.
+func TestCombinedBarWithUnknownScaleStatesNone(t *testing.T) {
+	acc := newOHLCBucketAcc()
+	acc.add(&OHLCSeriesBar{
+		O: "0.10", H: "0.10", L: "0.10", C: "0.10",
+		VBase: "1000", VQuote: "100", N: 1,
+	}, ohlcBarScaleUnknown)
+	acc.add(&OHLCSeriesBar{
+		O: "0.10", H: "0.10", L: "0.10", C: "0.10",
+		VBase: "500", VQuote: "50", N: 1,
+	}, cexScale)
+	bar := finalizeCombined(t, acc, time.Unix(1_750_000_000, 0).UTC(), ohlcBarScaleUnknown, cexScale)
+	if bar.VBaseDecimals != nil || bar.VQuoteDecimals != nil {
+		t.Errorf("decimals = %v/%v, want null/null — the bucket mixes an "+
+			"unknown-scale sum with an 8dp one", derefScale(bar.VBaseDecimals),
+			derefScale(bar.VQuoteDecimals))
+	}
+}
+
+// derefScale renders a nullable wire scale for a failure message.
+func derefScale(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return *p
+}
