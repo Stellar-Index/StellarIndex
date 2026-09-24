@@ -806,6 +806,14 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 		stale, viaFallback = true, true
 	}
 
+	s.handlePriceTail(w, r, asset, quote, served, snapshot, sources, stale, triangulated, viaFallback, frozen, frozenChecked)
+}
+
+// handlePriceTail continues handlePrice — normalization, confidence/flags
+// assembly and the response write — split out purely to keep handlePrice
+// under the funlen ceiling as its flag set has grown (same reason
+// [registerAppMetricsTail] was peeled off registerAppMetrics).
+func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, quote, served canonical.Asset, snapshot PriceSnapshot, sources []string, stale, triangulated, viaFallback, frozen, frozenChecked bool) {
 	// dex-nonstandard-decimals forward normalization (2026-07-10, closing
 	// the deferred CAGG-reading tail from docs/operations/runbooks/
 	// dex-nonstandard-decimals.md): only when the snapshot came from the
