@@ -1,6 +1,6 @@
 ---
 title: Incident (SEV) Playbook
-last_verified: 2026-09-22
+last_verified: 2026-09-24
 status: ratified
 ---
 
@@ -126,6 +126,12 @@ re-probe.
          ▼                        ▼
  schedule postmortem  ──── final "all clear" status
 ```
+
+**If personal data may be involved** — at any severity, including an
+exposure found in code review rather than paged — the IC also starts the
+[§6.6 breach-notification assessment](#66-personal-data-breach-notification-assessment)
+at declaration. Its regulator deadline runs from when we became aware,
+not from resolution or the postmortem.
 
 ### 4.1 Acknowledgement (SEV-1/2)
 
@@ -373,6 +379,89 @@ release cycle as the fix, not deferred as postmortem action items:
    exposed this way gets targeted rotation offered to its owner;
    PII exposure gets an affected-customer notification. Neither is
    satisfied by the redaction fix landing.
+3. **Run the [§6.6 breach-notification assessment](#66-personal-data-breach-notification-assessment)**
+   for any PII exposure. Its 72-hour clock started when the exposure
+   was found, not when the fix shipped; whether a regulator must also
+   be told is its call, and an affected-customer notice does not
+   settle it.
+
+### 6.6 Personal-data breach notification assessment
+
+A personal-data breach is any security incident that leads to
+personal data we hold being accessed, disclosed, altered, lost or
+made unavailable without authorisation (GDPR Art. 4(12)). Staff
+reading data they had no need to see counts: the 2026-09-02 log-store
+exposure (`internal/incidents/data/2026-09-02-log-store-credential-pii-exposure.md`)
+is one. So is losing a table we cannot restore.
+
+**What we hold** (`migrations/0027_platform_v1_schema.up.sql`):
+account billing and user emails, display names, the IP addresses of
+sessions, magic-link requests, API-key use, audit-log entries and
+API usage events, and credentials stored only as SHA-256 hashes
+(`api_keys.key_hash`, `magic_link_tokens.token_hash`, MFA recovery
+codes). Logs can hold whatever a request carried; see §6.5.
+
+**Jurisdiction.** Our governing jurisdiction is not yet settled; the
+draft terms still carry unresolved jurisdiction placeholders. Sign-up
+is open worldwide. Until that changes, assess every breach against
+both **UK GDPR** (regulator: the ICO) and **EU GDPR** (the
+supervisory authority of each member state where affected people
+live, since we have no EU establishment to give us a lead
+authority), and apply the stricter outcome. If affected people live
+elsewhere, for example in US states whose breach laws each set their
+own triggers and deadlines, list those places in the assessment and
+take legal advice before the 72-hour mark. Meeting GDPR does not
+mean we have met their laws.
+
+**The clock.** Notify the regulator without undue delay and within
+**72 hours** of becoming aware of the breach (Art. 33(1)). "Aware"
+means we are reasonably certain that personal data was affected. It
+does not mean we have finished investigating or fixed the problem.
+Record that timestamp at declaration. If a processor (hosting, email
+delivery) reports a breach to us, the clock starts at their report.
+If we do not have every fact by the deadline, notify with what we
+know and send the rest later (Art. 33(4)). If we miss the deadline,
+the notification must say why.
+
+**Assessment.** The IC owns it and completes it within 24 hours of
+awareness, which leaves time to notify:
+
+1. **Scope.** Which categories of data from the list above were
+   affected, roughly how many people, where they live (use the
+   billing country, or IP geolocation as a fallback), the exposure
+   window, and who could have read the data (staff who already had
+   access, staff who did not, the public, or an unknown third party).
+2. **Risk to the people affected.** Consider identity theft,
+   phishing aimed at a known customer email, and account takeover
+   from a usable credential. A hash with no plaintext exposed is
+   lower risk. Data readable only by staff already authorised to see
+   it is lower risk. An email tied to a paying account is not.
+3. **Decide:**
+   - **Unlikely to result in a risk:** no regulator notification.
+     Record the reasoning (step 4).
+   - **Risk:** notify the ICO and each affected EU authority under
+     Art. 33. Include the nature of the breach, the categories and
+     approximate number of people and records, a contact point, the
+     likely consequences, and what we have done about it.
+   - **High risk:** also tell the affected people without undue
+     delay, in plain language (Art. 34), using the incident-comms
+     path in §5.3 and the customer steps in
+     [`runbooks/credential-exposure-redaction-fix.md`](runbooks/credential-exposure-redaction-fix.md).
+     Art. 34(3) exemptions apply only when the data was unintelligible
+     to whoever got it, when our later measures removed the high risk,
+     or when individual notices would take disproportionate effort, in
+     which case we make a public announcement instead.
+   - **Undecided 48 hours after awareness:** notify. The default
+     fails closed. An unnecessary notification costs little. A
+     missed one breaches Art. 33 in its own right.
+4. **Record every breach, whether or not we notify** (Art. 33(5)).
+   The record goes under a `Breach assessment` heading in the
+   incident's postmortem (§6.1), which we write for any breach even
+   below SEV-2. It holds the awareness timestamp, the facts, the
+   effects, the remediation, the decision and the reasoning behind
+   it, and what was sent to whom and when. The customer-facing
+   record under `internal/incidents/data/` holds only what §5.4
+   allows.
 
 ---
 

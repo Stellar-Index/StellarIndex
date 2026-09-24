@@ -1,6 +1,6 @@
 ---
 title: Runbook — credential-exposure redaction fix
-last_verified: 2026-09-21
+last_verified: 2026-09-24
 status: ratified
 severity: P2
 ---
@@ -69,6 +69,9 @@ declared per
      data was written to an internal log store the given class of
      staff can read, what staff access that log store, and how long
      the exposure lasted.
+     Whether a regulator must also be told, and by when, is decided by
+     [`sev-playbook.md` §6.6](../sev-playbook.md#66-personal-data-breach-notification-assessment).
+     Its 72-hour clock started when the exposure was found.
 
 5. **Close the loop in the incident record.** Once rotation/
    notification is sent, update the record's timeline with the
