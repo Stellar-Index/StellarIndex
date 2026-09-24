@@ -61,11 +61,11 @@ func TestDecoder_SweepOrphansGroupMissingOfferAmount(t *testing.T) {
 	bodies := map[string]string{
 		TopicSymbolSender:         b64Marshal(t, senderVal),
 		TopicSymbolSellToken:      b64Marshal(t, contractVal(t, sell)),
-		TopicSymbolActualReceived: b64Marshal(t, i128Val(0, 10)),
+		TopicSymbolActualReceived: b64Marshal(t, i128HiLo(0, 10)),
 		TopicSymbolBuyToken:       b64Marshal(t, contractVal(t, buy)),
-		TopicSymbolReturnAmount:   b64Marshal(t, i128Val(0, 20)),
-		TopicSymbolSpreadAmount:   b64Marshal(t, i128Val(0, 1)),
-		TopicSymbolReferralFee:    b64Marshal(t, i128Val(0, 0)),
+		TopicSymbolReturnAmount:   b64Marshal(t, i128HiLo(0, 20)),
+		TopicSymbolSpreadAmount:   b64Marshal(t, i128HiLo(0, 1)),
+		TopicSymbolReferralFee:    b64Marshal(t, i128HiLo(0, 0)),
 	}
 	for topic, body := range bodies {
 		if out, err := d.Decode(makeFieldEventAt(t, topic, body, "old", "2026-04-23T12:00:00Z")); err != nil || len(out) != 0 {

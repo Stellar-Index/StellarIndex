@@ -32,7 +32,7 @@ func i128Ref(hi int64, lo uint64) *big.Int {
 	return v.Add(v, new(big.Int).SetUint64(lo))
 }
 
-func i128Val(hi int64, lo uint64) xdr.ScVal {
+func i128HiLo(hi int64, lo uint64) xdr.ScVal {
 	p := xdr.Int128Parts{Hi: xdr.Int64(hi), Lo: xdr.Uint64(lo)}
 	return xdr.ScVal{Type: xdr.ScValTypeScvI128, I128: &p}
 }
@@ -109,7 +109,7 @@ func FuzzSdkDecodeI128(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, hi int64, lo uint64) {
 		want := i128Ref(hi, lo)
-		got, err := sdkDecodeI128(b64Marshal(t, i128Val(hi, lo)))
+		got, err := sdkDecodeI128(b64Marshal(t, i128HiLo(hi, lo)))
 		if err != nil {
 			t.Fatalf("sdkDecodeI128(%d,%d): %v", hi, lo, err)
 		}
@@ -164,10 +164,10 @@ func FuzzDecodeSwapMap(f *testing.F) {
 		senderVal, sender := accountVal(t, sellSeed^buySeed)
 		sell, buy := makeC(t, sellSeed), makeC(t, buySeed)
 		vals := [len(mapSwapKeys)]xdr.ScVal{
-			senderVal, contractVal(t, sell), i128Val(offerHi, offerLo),
-			contractVal(t, buy), i128Val(retHi, retLo),
-			i128Val(offerHi, offerLo), // actual_received_amount == offer on the wire
-			i128Val(0, 424242), i128Val(0, 0),
+			senderVal, contractVal(t, sell), i128HiLo(offerHi, offerLo),
+			contractVal(t, buy), i128HiLo(retHi, retLo),
+			i128HiLo(offerHi, offerLo), // actual_received_amount == offer on the wire
+			i128HiLo(0, 424242), i128HiLo(0, 0),
 		}
 
 		wantOK := offer.Sign() > 0 && ret.Sign() > 0 && sellSeed != buySeed
@@ -271,9 +271,9 @@ func FuzzDecoderStringSwap(f *testing.F) {
 		senderVal, sender := accountVal(t, 0x33)
 		bodies := [SwapFieldCount]string{
 			b64Marshal(t, senderVal), b64Marshal(t, contractVal(t, sell)),
-			b64Marshal(t, i128Val(offerHi, offerLo)), b64Marshal(t, i128Val(offerHi, offerLo)),
-			b64Marshal(t, contractVal(t, buy)), b64Marshal(t, i128Val(retHi, retLo)),
-			b64Marshal(t, i128Val(0, 424242)), b64Marshal(t, i128Val(0, 0)),
+			b64Marshal(t, i128HiLo(offerHi, offerLo)), b64Marshal(t, i128HiLo(offerHi, offerLo)),
+			b64Marshal(t, contractVal(t, buy)), b64Marshal(t, i128HiLo(retHi, retLo)),
+			b64Marshal(t, i128HiLo(0, 424242)), b64Marshal(t, i128HiLo(0, 0)),
 		}
 		d := newTestDecoder()
 		wantOK := offer.Sign() > 0 && ret.Sign() > 0
@@ -288,7 +288,10 @@ func FuzzDecoderStringSwap(f *testing.F) {
 				continue
 			}
 			if !wantOK {
-				if !errors.Is(err, ErrMalformedPayload) || len(out) != 0 {
+				// A negative leg is malformed; a zero leg is a determinate dust
+				// swap that projects no row and is not an error (checkSwapAmounts).
+				negative := offer.Sign() < 0 || ret.Sign() < 0
+				if len(out) != 0 || (negative && !errors.Is(err, ErrMalformedPayload)) || (!negative && err != nil) {
 					t.Fatalf("non-positive swap (offer %s, return %s): out=%v err=%v", offer, ret, out, err)
 				}
 				return
@@ -354,7 +357,7 @@ func FuzzDecoderLiquidityStakeAmounts(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, aHi int64, aLo uint64, bHi int64, bLo uint64, cHi int64, cLo uint64, order uint64) {
 		a, b, c := i128Ref(aHi, aLo), i128Ref(bHi, bLo), i128Ref(cHi, cLo)
-		aB, bB, cB := b64Marshal(t, i128Val(aHi, aLo)), b64Marshal(t, i128Val(bHi, bLo)), b64Marshal(t, i128Val(cHi, cLo))
+		aB, bB, cB := b64Marshal(t, i128HiLo(aHi, aLo)), b64Marshal(t, i128HiLo(bHi, bLo)), b64Marshal(t, i128HiLo(cHi, cLo))
 		userVal, user := accountVal(t, 0x41)
 		userB := b64Marshal(t, userVal)
 		tokA, tokB := makeC(t, 0x42), makeC(t, 0x43)
