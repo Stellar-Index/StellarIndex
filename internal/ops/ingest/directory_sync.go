@@ -169,8 +169,8 @@ func directorySync(args []string) error {
 	}
 	hb.Progress(uint64(res.Upserted+res.Existing), 0) //nolint:gosec // non-negative row counts
 	exitOK = true
-	fmt.Printf("Synced: %d upserted, %d pruned, %d newly scam-flagged, %d held before (source=%s).\n",
-		res.Upserted, res.Pruned, res.NewlyFlagged, res.Existing, directorySource)
+	fmt.Printf("Synced: %d upserted, %d pruned, %d newly scam-flagged, %d held before, %d shadowed by another owner (source=%s).\n",
+		res.Upserted, res.Pruned, res.NewlyFlagged, res.Existing, res.Shadowed, directorySource)
 	return nil
 }
 

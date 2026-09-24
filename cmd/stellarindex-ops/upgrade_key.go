@@ -10,6 +10,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 )
 
@@ -133,7 +134,7 @@ func parseUpgradeKeyFlags(args []string) (upgradeKeyOpts, error) {
 	if err := validateOpsKeyReason(*reason); err != nil {
 		return upgradeKeyOpts{}, err
 	}
-	a, err := resolveOpsActor(*actor)
+	a, err := opsutil.ResolveActor(*actor)
 	if err != nil {
 		return upgradeKeyOpts{}, err
 	}

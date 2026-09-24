@@ -80,8 +80,8 @@ const directoryUpsertChunk = 500
 // column: ReplaceDirectory only ever touches rows carrying ITS source
 // (see buildDirectoryUpsert) and prunes only rows carrying its source,
 // so a row owned by this one survives every sync of every upstream.
-// Write it with `stellarindex-ops directory-override -clear-scam-flag -reason`
-// ([Store.ClearDirectoryScamFlag]); undo it with `-delete`
+// Write it with `stellarindex-ops directory-override -clear-scam-flag -reason
+// [-actor]` ([Store.ClearDirectoryScamFlag]); undo it with `-delete`
 // ([Store.DeleteDirectoryOverride]), after which the next sync restores
 // the upstream row.
 //
@@ -101,6 +101,11 @@ var ErrDirectoryNotScamFlagged = errors.New("directory: row carries no scam-clas
 // [Store.ClearDirectoryScamFlag] for a blank reason: lifting a safety
 // gate without a recorded why leaves nothing to review.
 var ErrDirectoryOverrideReasonRequired = errors.New("directory: an operator override needs a non-blank reason")
+
+// ErrDirectoryOverrideOperatorRequired is returned by
+// [Store.ClearDirectoryScamFlag] for a blank operator: a lifted safety
+// gate with no named decider leaves a reviewer nobody to ask.
+var ErrDirectoryOverrideOperatorRequired = errors.New("directory: an operator override needs a non-blank operator")
 
 // DirectoryTagsWithoutScamFlags returns tags with every scam-class tag
 // removed and every other tag kept, in order.
@@ -177,6 +182,10 @@ type DirectorySyncResult struct {
 	Pruned       int64
 	NewlyFlagged int64 // addresses of this source carrying a scam tag now that did not before
 	Existing     int64 // rows the source held before the sync
+	// Shadowed counts snapshot addresses another source (or an operator
+	// override) owns: the sync leaves those rows alone, so without this
+	// count a second source's shared addresses vanish from its result.
+	Shadowed int64
 }
 
 // ReplaceDirectory is [Store.ReplaceDirectoryWithin] under
@@ -250,6 +259,8 @@ func (s *Store) ReplaceDirectoryWithin(ctx context.Context, source string, entri
 		n, _ := r.RowsAffected()
 		res.Upserted += n
 	}
+	// A conflict row the ownership arm skips is not counted as affected.
+	res.Shadowed = int64(len(entries)) - res.Upserted
 
 	r, execErr := tx.ExecContext(ctx, `
 		DELETE FROM account_directory
@@ -385,8 +396,9 @@ func dedupDirectoryEntriesByAddress(entries []DirectoryEntry) []DirectoryEntry {
 // this was found — an operator's hand-held correction was adopted into
 // the upstream snapshot and overwritten within 24 hours, so there was
 // no durable override for a false-positive scam flag at all. Rows the
-// chunk conflicts with but does not own are left untouched (no error);
-// they simply do not count towards ReplaceDirectory's `upserted`.
+// chunk conflicts with but does not own are left untouched (no error)
+// and reported as [DirectorySyncResult.Shadowed]: the first source to
+// hold an address keeps it, and the other's prune never sees it.
 func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any) {
 	var (
 		sb   strings.Builder
@@ -429,12 +441,16 @@ func buildDirectoryUpsert(chunk []DirectoryEntry, source string) (string, []any)
 // wholesale clears the flag and silently drops the issuer from that
 // funnel.
 //
-// reason is stored in override_reason (migration 0170) so the lifted
-// flag can be reviewed; a blank one is refused before anything is read.
+// operator and reason are stored in override_by (migration 0177) and
+// override_reason (0170) so the lifted flag can be reviewed; a blank
+// either is refused before anything is read.
 //
 // found=false (no error) means the address has no row. A row with no
 // scam-class tag is refused with [ErrDirectoryNotScamFlagged].
-func (s *Store) ClearDirectoryScamFlag(ctx context.Context, address, reason string) (before, after DirectoryEntry, found bool, err error) {
+func (s *Store) ClearDirectoryScamFlag(ctx context.Context, address, operator, reason string) (before, after DirectoryEntry, found bool, err error) {
+	if strings.TrimSpace(operator) == "" {
+		return before, after, false, ErrDirectoryOverrideOperatorRequired
+	}
 	if strings.TrimSpace(reason) == "" {
 		return before, after, false, ErrDirectoryOverrideReasonRequired
 	}
@@ -465,8 +481,8 @@ func (s *Store) ClearDirectoryScamFlag(ctx context.Context, address, reason stri
 	}
 	if _, err = tx.ExecContext(ctx, `
 		UPDATE account_directory
-		   SET tags = $2, source = $3, override_reason = $4, synced_at = now()
-		 WHERE address = $1`, address, after.Tags, after.Source, reason); err != nil {
+		   SET tags = $2, source = $3, override_reason = $4, override_by = $5, synced_at = now()
+		 WHERE address = $1`, address, after.Tags, after.Source, reason, strings.TrimSpace(operator)); err != nil {
 		return before, after, true, fmt.Errorf("directory: clear scam flag %s: %w", address, err)
 	}
 	if err = tx.Commit(); err != nil {
