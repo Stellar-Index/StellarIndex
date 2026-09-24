@@ -22,8 +22,8 @@ func TestSorobanVolume24hUSDQueryShape(t *testing.T) {
 	if strings.Count(q, "bucket >= now() - INTERVAL '24 hours'") < 2 {
 		t.Error("query missing the 24h lower bound on the anchor CTE and/or the outer scan")
 	}
-	if !strings.Contains(q, "AND bucket < now()") {
-		t.Error("query missing the closed `bucket < now()` upper bound on the outer scan")
+	if !strings.Contains(q, "AND bucket <= now() - INTERVAL '1 minute'") {
+		t.Error("query missing the closed-bucket `bucket <= now() - 1 minute` upper bound on the outer scan")
 	}
 
 	// USD-pegged legs come from the insert-time volume_usd (kept), XLM legs

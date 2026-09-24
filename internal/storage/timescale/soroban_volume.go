@@ -70,7 +70,7 @@ const sorobanVolume24hUSDQuery = `
           FROM prices_1m
          WHERE (base_asset = $1 OR quote_asset = $1)
            AND bucket >= now() - INTERVAL '24 hours'
-           AND bucket  < now()
+           AND bucket <= now() - INTERVAL '1 minute'
     `
 
 // SorobanVolume24hUSDForAsset is the XLM-anchored trailing-24h USD-volume

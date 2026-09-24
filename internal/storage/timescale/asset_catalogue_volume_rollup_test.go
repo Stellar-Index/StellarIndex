@@ -62,7 +62,7 @@ func TestRefreshAssetVolumeUpsert_shape(t *testing.T) {
 }
 
 // TestRefreshAssetVolumeUpsert_sargable asserts the window predicate is
-// a bare `bucket >= … AND bucket < now()` comparison — no function
+// a bare `bucket >= … AND bucket <= now() - 1 minute` comparison — no function
 // wrapped around the indexed `bucket` column (the class of bug the
 // price-latency-sargable incident fixed). A function on bucket would
 // defeat chunk pruning and re-introduce the full-history scan.
@@ -70,8 +70,8 @@ func TestRefreshAssetVolumeUpsert_sargable(t *testing.T) {
 	if !strings.Contains(refreshAssetVolumeUpsert, "bucket >= now() - INTERVAL '24 hours'") {
 		t.Errorf("upsert must use a bare `bucket >= now() - INTERVAL` floor:\n%s", refreshAssetVolumeUpsert)
 	}
-	if !strings.Contains(refreshAssetVolumeUpsert, "bucket  <  now()") {
-		t.Errorf("upsert must use a bare `bucket < now()` ceiling:\n%s", refreshAssetVolumeUpsert)
+	if !strings.Contains(refreshAssetVolumeUpsert, "bucket <= now() - INTERVAL '1 minute'") {
+		t.Errorf("upsert must use a bare closed-bucket `bucket <= now() - INTERVAL '1 minute'` ceiling:\n%s", refreshAssetVolumeUpsert)
 	}
 	for _, banned := range []string{"date_trunc(", "time_bucket(", "bucket + INTERVAL", "bucket - INTERVAL"} {
 		if strings.Contains(refreshAssetVolumeUpsert, banned) {
