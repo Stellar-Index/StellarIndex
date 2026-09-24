@@ -59,6 +59,8 @@ func TestTrade_Validate_errors(t *testing.T) {
 		"zero timestamp":     func(t *c.Trade) { t.Timestamp = time.Time{} },
 		"zero base amount":   func(t *c.Trade) { t.BaseAmount = c.NewAmount(big.NewInt(0)) },
 		"neg quote amount":   func(t *c.Trade) { t.QuoteAmount = c.NewAmount(big.NewInt(-1)) },
+		"zero quote amount":  func(t *c.Trade) { t.QuoteAmount = c.NewAmount(big.NewInt(0)) },
+		"neg base amount":    func(t *c.Trade) { t.BaseAmount = c.NewAmount(big.NewInt(-1)) },
 		"self-pair":          func(t *c.Trade) { t.Pair = c.Pair{Base: c.NativeAsset(), Quote: c.NativeAsset()} },
 	}
 	for name, mutate := range cases {

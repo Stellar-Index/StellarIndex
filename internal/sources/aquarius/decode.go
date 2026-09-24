@@ -542,6 +542,9 @@ func decodeClaimFee(e *events.Event, sv scval.ScVal, fe *FeeEvent) error {
 	if fe.Amount, err = scval.AsAmountFromI128(vec[1]); err != nil {
 		return fmt.Errorf("%w: claim_protocol_fee amount: %w", ErrMalformedPayload, err)
 	}
+	if fe.Amount.Sign() < 0 {
+		return fmt.Errorf("%w: claim_protocol_fee amount negative: %s", ErrMalformedPayload, fe.Amount)
+	}
 	if len(e.Topic) < 2 {
 		return fmt.Errorf("%w: claim_protocol_fee has %d topics, want token address at topic[1]", ErrMalformedPayload, len(e.Topic))
 	}

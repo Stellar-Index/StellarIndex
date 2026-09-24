@@ -211,3 +211,33 @@ func mustPair(t *testing.T) canonical.Pair {
 	}
 	return p
 }
+
+// TestSelectGuardedVWAP1mAt_StalenessBoundaryIsTheBucketClose pins both
+// edges of the at-or-before contract: the substitute's age is measured
+// from its bucket CLOSE (start + 1m), and a gap exactly equal to
+// maxStaleness is still inside it.
+func TestSelectGuardedVWAP1mAt_StalenessBoundaryIsTheBucketClose(t *testing.T) {
+	candidate := mkRow(0, "100.0")
+	rows := make([]timescale.Vwap1mRow, 12)
+	for i := range rows {
+		rows[i] = mkRow(i+11, "1.0") // newest clean bucket closes exactly 11m before baseTS
+	}
+	served, ok := SelectGuardedVWAP1mAt(candidate, rows, baseTS, 11*time.Minute)
+	if !ok || !served.Bucket.Equal(rows[0].Bucket) {
+		t.Fatalf("gap == maxStaleness (11m from the bucket close) must serve the last-known-good; ok=%v served=%+v", ok, served)
+	}
+	if _, ok := SelectGuardedVWAP1mAt(candidate, rows, baseTS, 11*time.Minute-time.Nanosecond); ok {
+		t.Fatal("a gap 1ns past maxStaleness must withhold")
+	}
+}
+
+// TestSelectGuardedVWAP1m_UnparseableCandidateIsNotRejected: a candidate
+// the guard cannot parse is served as-is — never reported as a rejection
+// (which would make GuardServedVWAP1mConfidence flag it substituted).
+func TestSelectGuardedVWAP1m_UnparseableCandidateIsNotRejected(t *testing.T) {
+	candidate := mkRow(0, "not-a-number")
+	served, rejected := SelectGuardedVWAP1m(candidate, steadyRows(12))
+	if rejected || served.VWAP != candidate.VWAP || !served.Bucket.Equal(candidate.Bucket) {
+		t.Fatalf("unparseable candidate: served %+v rejected=%v, want the candidate unchanged, not rejected", served, rejected)
+	}
+}

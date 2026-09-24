@@ -233,6 +233,14 @@ jobs:
         run: |
           set -euo pipefail
           ZERO_SHA="0000000000000000000000000000000000000000"
+          # A pull_request run checks out refs/pull/N/merge, whose first parent is the
+          # base tip that merge was built on. event.pull_request.base.sha is the tip at
+          # PR creation and goes stale as the base moves: a 2-dot diff from it drags in
+          # every file other PRs merged since, and the classifier then disagrees with
+          # dorny's PR-scoped file list (web/ansible "drift" on a Go-only PR).
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && git rev-parse -q --verify 'HEAD^2' >/dev/null 2>&1; then
+            BASE_SHA_IN="$(git rev-parse 'HEAD^1')"
+          fi
           if [ -z "${BASE_SHA_IN:-}" ] || [ "$BASE_SHA_IN" = "$ZERO_SHA" ] || ! git cat-file -e "${BASE_SHA_IN}^{commit}" 2>/dev/null; then
             echo "::notice::preflight: no usable comparison base (first push / shallow history) — every path class will be treated as changed."
             echo "resolved=" >> "$GITHUB_OUTPUT"
@@ -660,7 +668,9 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (30s per target)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 166 targets at the 8s floor plus ~3s of startup each is ~30 min when a
+    # PR touches every fuzzed package; a normal PR smokes a handful at 30s.
+    timeout-minutes: 40
     needs: [preflight]
     # §B: pure Go work, gated on the `go` class with STEP-level `if:`
     # (see the REQUIRED-CHECK NOTE on `preflight`).
@@ -694,8 +704,12 @@ jobs:
         # The target list is discovered from the tree, not listed here,
         # so a newly-added target is covered without a second edit — see
         # the script's header for why, and for its fail-closed behaviour
-        # when discovery returns nothing.
+        # when discovery returns nothing. On a PR only the targets of the
+        # packages it changed run (FUZZ_BASE); the per-target time is
+        # derived from a fixed job budget, capped at 30s.
         if: needs.preflight.outputs.go == 'true'
+        env:
+          FUZZ_BASE: ${{ github.event.pull_request.base.sha }}
         run: bash scripts/ci/fuzz-smoke.sh
 
   doc-checks:

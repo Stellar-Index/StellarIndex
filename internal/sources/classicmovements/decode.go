@@ -3,6 +3,7 @@ package classicmovements
 import (
 	"encoding/hex"
 	"fmt"
+	"math"
 	"math/big"
 	"time"
 
@@ -421,6 +422,14 @@ func pathPaymentStrictReceiveSourceAmount(sendAsset xdr.Asset, offers []xdr.Clai
 				return 0, fmt.Errorf("first offer's AssetBought does not match SendAsset — hop-order assumption violated")
 			}
 			break // past the first hop; later offers convert a different asset pair
+		}
+		// Core bounds this sum by SendMax, so a negative atom or an int64
+		// overflow is corrupt input; reject it rather than net or wrap it.
+		if boughtAmount < 0 {
+			return 0, fmt.Errorf("claim atom %d: negative AmountBought %d", i, boughtAmount)
+		}
+		if total > math.MaxInt64-boughtAmount {
+			return 0, fmt.Errorf("claim atom %d: derived source amount overflows int64", i)
 		}
 		total += boughtAmount
 	}

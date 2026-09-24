@@ -96,19 +96,6 @@ var ErrMalformedTopic = errors.New("blend_backstop: malformed event topics")
 // erroring the whole row.
 var ErrMalformedBody = errors.New("blend_backstop: malformed event body")
 
-// errOrShort returns vecErr when the Vec parse itself failed, else a
-// "too short" error describing the element count (every backstop Vec
-// body needs at least 2 elements). It guarantees a non-nil error so
-// callers can wrap it with %w (errorlint) — the AsVec path returns
-// nil-error-but-short-slice, which would otherwise leave the wrap verb
-// with a nil to format.
-func errOrShort(vecErr error, got int) error {
-	if vecErr != nil {
-		return vecErr
-	}
-	return fmt.Errorf("got %d elements, want >= 2", got)
-}
-
 // Classify reports which backstop event the given Event is, or empty
 // string if topic[0] doesn't match. Contract-ID filtering happens
 // DOWNSTREAM (Matches) — these symbols overlap with Blend POOL events,
@@ -200,9 +187,9 @@ func twoI128(e *events.Event, kind string) (a, b string, err error) {
 	if perr != nil {
 		return "", "", fmt.Errorf("blend_backstop: %s body parse: %w", kind, perr)
 	}
-	vec, verr := scval.AsVec(body)
-	if verr != nil || len(vec) < 2 {
-		return "", "", fmt.Errorf("%w: %s body not a 2-Vec: %w", ErrMalformedBody, kind, errOrShort(verr, len(vec)))
+	vec, verr := scval.AsTupleN(body, 2)
+	if verr != nil {
+		return "", "", fmt.Errorf("%w: %s body not a 2-Vec: %w", ErrMalformedBody, kind, verr)
 	}
 	av, aerr := scval.AsAmountFromI128(vec[0])
 	if aerr != nil {
@@ -296,9 +283,9 @@ func decodeQueueWithdrawal(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("blend_backstop: queue_withdrawal body parse: %w", err)
 	}
-	vec, err := scval.AsVec(body)
-	if err != nil || len(vec) < 2 {
-		return decoded{}, fmt.Errorf("%w: queue_withdrawal body not a 2-Vec: %w", ErrMalformedBody, errOrShort(err, len(vec)))
+	vec, err := scval.AsTupleN(body, 2)
+	if err != nil {
+		return decoded{}, fmt.Errorf("%w: queue_withdrawal body not a 2-Vec: %w", ErrMalformedBody, err)
 	}
 	shares, err := scval.AsAmountFromI128(vec[0])
 	if err != nil {
@@ -428,9 +415,9 @@ func decodeDraw(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("blend_backstop: draw body parse: %w", err)
 	}
-	vec, err := scval.AsVec(body)
-	if err != nil || len(vec) < 2 {
-		return decoded{}, fmt.Errorf("%w: draw body not a 2-Vec: %w", ErrMalformedBody, errOrShort(err, len(vec)))
+	vec, err := scval.AsTupleN(body, 2)
+	if err != nil {
+		return decoded{}, fmt.Errorf("%w: draw body not a 2-Vec: %w", ErrMalformedBody, err)
 	}
 	amount, err := scval.AsAmountFromI128(vec[1])
 	if err != nil {
@@ -462,9 +449,9 @@ func decodeRwZoneAdd(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("blend_backstop: rw_zone_add body parse: %w", err)
 	}
-	vec, err := scval.AsVec(body)
-	if err != nil || len(vec) < 2 {
-		return decoded{}, fmt.Errorf("%w: rw_zone_add body not a 2-Vec: %w", ErrMalformedBody, errOrShort(err, len(vec)))
+	vec, err := scval.AsTupleN(body, 2)
+	if err != nil {
+		return decoded{}, fmt.Errorf("%w: rw_zone_add body not a 2-Vec: %w", ErrMalformedBody, err)
 	}
 	pool, err := scval.AsAddressStrkey(vec[0])
 	if err != nil {
@@ -494,9 +481,9 @@ func decodeRwZone(e *events.Event) (decoded, error) {
 	if err != nil {
 		return decoded{}, fmt.Errorf("blend_backstop: rw_zone body parse: %w", err)
 	}
-	vec, err := scval.AsVec(body)
-	if err != nil || len(vec) < 2 {
-		return decoded{}, fmt.Errorf("%w: rw_zone body not a 2-Vec: %w", ErrMalformedBody, errOrShort(err, len(vec)))
+	vec, err := scval.AsTupleN(body, 2)
+	if err != nil {
+		return decoded{}, fmt.Errorf("%w: rw_zone body not a 2-Vec: %w", ErrMalformedBody, err)
 	}
 	pool, err := scval.AsAddressStrkey(vec[0])
 	if err != nil {
