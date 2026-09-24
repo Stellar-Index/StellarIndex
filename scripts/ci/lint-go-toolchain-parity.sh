@@ -124,44 +124,51 @@ fi
 DOCKERFILES=()
 while IFS= read -r df; do
   DOCKERFILES+=("$df")
-done < <(find docker -type f -name 'Dockerfile*' 2>/dev/null | sort)
+done < <(find docker -type f \( -name 'Dockerfile*' -o -name '*.Dockerfile' \) 2>/dev/null | sort)
 
-if [[ "${#DOCKERFILES[@]}" -gt 0 ]]; then
-  want="$(awk '/^toolchain[ \t]+go/ { sub(/^go/, "", $2); print $2; exit }' go.mod)"
-  if [[ -z "$want" ]]; then
-    want="$(awk '/^go[ \t]+[0-9]/ { print $2; exit }' go.mod)"
-  fi
-  if [[ -z "$want" ]]; then
-    echo "lint-go-toolchain-parity: FAIL — go.mod declares neither a toolchain nor a go version" >&2
-    exit 1
-  fi
-  PINS=0
-  for df in "${DOCKERFILES[@]}"; do
-    while IFS= read -r hit; do
-      [ -z "$hit" ] && continue
-      ln="${hit%%:*}"
-      tag="${hit#*:}"
-      PINS=$((PINS + 1))
-      # Compare on major.minor.patch when the tag carries one, else major.minor.
-      case "$tag" in
-        "$want"|"$want"-*)                   ;;
-        "${want%.*}"|"${want%.*}"-*)         ;;
-        *)
-          echo "lint-go-toolchain-parity: $df:$ln pins golang:$tag but go.mod resolves to $want"
-          FAIL=$((FAIL + 1))
-          ;;
-      esac
-    done < <(grep -nE '^[[:space:]]*FROM[[:space:]]+golang:' "$df" 2>/dev/null \
-             | sed -E 's/^([0-9]+):[[:space:]]*FROM[[:space:]]+golang:([^[:space:]]+).*/\1:\2/')
-  done
-  if [[ "$FAIL" -gt 0 ]]; then
-    echo
-    echo "lint-go-toolchain-parity: FAIL — a container Go pin disagrees with go.mod."
-    echo "  The container is what \`make prepush\` runs; a stale pin grades the push"
-    echo "  with a different compiler than CI and production use (see F-1240)."
-    exit 1
-  fi
-  echo "lint-go-toolchain-parity: OK — $PINS container Go pin(s) across ${#DOCKERFILES[@]} Dockerfile(s) match go.mod ($want)"
+if [[ "${#DOCKERFILES[@]}" -eq 0 ]]; then
+  echo "lint-go-toolchain-parity: FAIL — no Dockerfile found under docker/; the container-pin check would be vacuous" >&2
+  exit 1
 fi
+
+want="$(awk '/^toolchain[ \t]+go/ { sub(/^go/, "", $2); print $2; exit }' go.mod)"
+if [[ -z "$want" ]]; then
+  want="$(awk '/^go[ \t]+[0-9]/ { print $2; exit }' go.mod)"
+fi
+if [[ -z "$want" ]]; then
+  echo "lint-go-toolchain-parity: FAIL — go.mod declares neither a toolchain nor a go version" >&2
+  exit 1
+fi
+PINS=0
+for df in "${DOCKERFILES[@]}"; do
+  while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    ln="${hit%%:*}"
+    tag="${hit#*:}"
+    PINS=$((PINS + 1))
+    # Compare on major.minor.patch when the tag carries one, else major.minor.
+    case "$tag" in
+      "$want"|"$want"-*)                   ;;
+      "${want%.*}"|"${want%.*}"-*)         ;;
+      *)
+        echo "lint-go-toolchain-parity: $df:$ln pins golang:$tag but go.mod resolves to $want"
+        FAIL=$((FAIL + 1))
+        ;;
+    esac
+  done < <(grep -nE '^[[:space:]]*FROM[[:space:]]+golang:' "$df" 2>/dev/null \
+           | sed -E 's/^([0-9]+):[[:space:]]*FROM[[:space:]]+golang:([^[:space:]]+).*/\1:\2/')
+done
+if [[ "$PINS" -eq 0 ]]; then
+  echo "lint-go-toolchain-parity: FAIL — 0 container Go pin(s) across ${#DOCKERFILES[@]} Dockerfile(s); the container-pin check would be vacuous" >&2
+  exit 1
+fi
+if [[ "$FAIL" -gt 0 ]]; then
+  echo
+  echo "lint-go-toolchain-parity: FAIL — a container Go pin disagrees with go.mod."
+  echo "  The container is what \`make prepush\` runs; a stale pin grades the push"
+  echo "  with a different compiler than CI and production use (see F-1240)."
+  exit 1
+fi
+echo "lint-go-toolchain-parity: OK — $PINS container Go pin(s) across ${#DOCKERFILES[@]} Dockerfile(s) match go.mod ($want)"
 
 echo "lint-go-toolchain-parity: OK — $STEPS actions/setup-go step(s) in ${#FILES[@]} workflow file(s), all resolve from go.mod"

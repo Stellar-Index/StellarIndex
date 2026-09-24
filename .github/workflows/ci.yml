@@ -7,7 +7,7 @@ on:
     # still hit the full matrix via the doc-code consistency job.
     paths-ignore:
       - 'CHANGELOG.md'
-      - '**.md'
+      - '*.md'
       - 'docs/**'
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
@@ -37,7 +37,7 @@ on:
     branches: [main]
     paths-ignore:
       - 'CHANGELOG.md'
-      - '**.md'
+      - '*.md'
       - 'docs/**'
       - 'LICENSE'
       - '.github/ISSUE_TEMPLATE/**'
