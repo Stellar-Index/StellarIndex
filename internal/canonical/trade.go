@@ -61,10 +61,12 @@ type Trade struct {
 	// base, in the quote asset's smallest unit.
 	QuoteAmount Amount `json:"quote_amount"`
 
-	// Maker is the account that placed the resting offer (SDEX) or
-	// the AMM-pool identity (Soroban DEX). Optional — empty string
-	// means "unknown / not applicable". Intentionally not part of
-	// trade identity.
+	// Maker is the account that placed the resting offer (SDEX).
+	// No Soroban DEX decoder sets it — those rows leave Maker empty
+	// and carry only Taker (the on-chain caller); the pool that
+	// produced the trade is not recorded on Trade. Optional — empty
+	// string means "unknown / not applicable". Intentionally not
+	// part of trade identity.
 	Maker string `json:"maker,omitempty"`
 
 	// Taker is the account that consumed the offer. Optional.
