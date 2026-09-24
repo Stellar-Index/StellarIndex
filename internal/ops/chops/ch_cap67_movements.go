@@ -401,7 +401,7 @@ func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32,
 	)
 	flush := func() error {
 		if len(batch) == 0 || dryRun {
-			written += int64(len(batch))
+			written += cap67FannedOutRows(batch)
 			batch = batch[:0]
 			return nil
 		}
@@ -414,7 +414,7 @@ func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32,
 		return nil
 	}
 
-	err := clickhouse.StreamContractEventsFiltered(ctx, addr, lo, hi,
+	err := streamCap67TransferEvents(ctx, addr, lo, hi,
 		nil, []string{"transfer"}, nil,
 		false, // no FINAL — RMT dups collapse in the idempotent target
 		false, // no OpArgs
@@ -445,6 +445,21 @@ func deriveCap67MovementsWindow(ctx context.Context, addr string, lo, hi uint32,
 		fmt.Fprintf(os.Stderr, "ch-cap67-movements: window [%d,%d]: %d events skipped (decode)\n", lo, hi, decErrs)
 	}
 	return written, decErrs, nil
+}
+
+// streamCap67TransferEvents is clickhouse.StreamContractEventsFiltered, a
+// var so a window's derive is testable without a live lake.
+var streamCap67TransferEvents = clickhouse.StreamContractEventsFiltered
+
+// cap67FannedOutRows is the row count InsertAccountMovements writes for
+// batch — one or two rows per movement — so a dry run reports the same unit
+// a write run does.
+func cap67FannedOutRows(batch []clickhouse.AccountMovement) int64 {
+	var n int64
+	for _, m := range batch {
+		n += int64(len(clickhouse.FanOutAccountMovement(m)))
+	}
+	return n
 }
 
 // cap67MovementFromEvent decodes one transfer event to its movement.

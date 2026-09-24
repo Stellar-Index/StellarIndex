@@ -33,7 +33,7 @@ import (
 type txIndexBackfillPlan struct {
 	chAddr string
 	from   uint32
-	to     uint32 // 0 = resolve to the current lake tip at run time
+	to     uint32 // 0 = resolve to the contiguous lake tip at run time
 	window uint32
 }
 
@@ -45,7 +45,7 @@ func parseTxIndexBackfillFlags(args []string) (txIndexBackfillPlan, error) {
 	fs := flag.NewFlagSet("ch-txindex-backfill", flag.ContinueOnError)
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	from := fs.Uint("from", 2, "first ledger (inclusive; resume point from a previous run's output)")
-	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = current lake tip)")
+	to := fs.Uint("to", 0, "last ledger (inclusive; 0 = the contiguous lake tip from -from)")
 	window := fs.Uint("window", 5_000_000, "ledgers per INSERT…SELECT window")
 	full := fs.Bool("full", false, "run the ENTIRE history (ledger 2 .. current lake tip, ~10.2B rows). Required to run without an explicit -from/-to, so a bare invocation never starts the full backfill by accident.")
 	if err := fs.Parse(args); err != nil {
@@ -81,13 +81,9 @@ func chTxIndexBackfill(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	last := plan.to
-	if last == 0 {
-		tip, err := clickhouse.MaxLedger(ctx, plan.chAddr)
-		if err != nil {
-			return fmt.Errorf("resolve lake tip: %w", err)
-		}
-		last = tip
+	last, err := resolveBackfillTop(ctx, plan.chAddr, plan.from, plan.to)
+	if err != nil {
+		return err
 	}
 	if last < plan.from {
 		return fmt.Errorf("-to (%d) is below -from (%d)", last, plan.from)

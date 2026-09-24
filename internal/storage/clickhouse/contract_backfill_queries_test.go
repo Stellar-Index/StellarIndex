@@ -160,6 +160,13 @@ func TestContractInstanceBackfillQuery_MatchesTheMaterializedView(t *testing.T) 
 		t.Fatalf("has %d placeholders, but the walk binds 2 (lo, hi):\n%s", got, q)
 	}
 
+	// FINAL on the RMT source: without it a corrected re-ingest's stale part
+	// rides the same INSERT as the fix and ties it on the target's now()
+	// version, so code-history can serve the pre-fix wasm_hash.
+	if !strings.Contains(q, "FROM stellar.ledger_entry_changes FINAL\n\tWHERE ledger_seq BETWEEN ? AND ?") {
+		t.Errorf("contractInstanceBackfillQuery must read `stellar.ledger_entry_changes FINAL` bounded by the window predicate:\n%s", q)
+	}
+
 	// Column order is load-bearing: this is an INSERT…SELECT, so the SELECT
 	// list is matched to the column list POSITIONALLY. is_sac and wasm_hash
 	// swapping would write a hex hash into a UInt8 flag.

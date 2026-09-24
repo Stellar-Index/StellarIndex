@@ -18,6 +18,7 @@ func TestChParticipantBackfillDecodeErrorsFailTheRun(t *testing.T) {
 	backfillOperationParticipants = func(context.Context, string, uint32, uint32, uint32, bool, func(string, ...any)) (clickhouse.ParticipantBackfillStats, error) {
 		return clickhouse.ParticipantBackfillStats{OpsScanned: 10, Participants: 4, DecodeErrors: 3}, nil
 	}
+	stubLakeContiguousThrough(t, 10)
 	base := []string{"-from", "2", "-to", "10"}
 
 	err := chParticipantBackfill(base)

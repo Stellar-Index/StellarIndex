@@ -51,7 +51,7 @@ func chParticipantBackfill(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
-	last, err := resolveParticipantTo(ctx, *chAddr, uint32(*to))
+	last, err := resolveParticipantTo(ctx, *chAddr, uint32(*from), uint32(*to))
 	if err != nil {
 		return err
 	}
@@ -83,7 +83,7 @@ func chParticipantBackfill(args []string) error {
 // clean run; a failed run says so and defers to the error's resume point.
 func participantBackfillSummary(stats clickhouse.ParticipantBackfillStats, dryRun bool, berr error) string {
 	if berr != nil {
-		return fmt.Sprintf("ch-participant-backfill: FAILED — scanned %d ops, derived %d participant rows, not all confirmed written (%d decode-errors); re-run from the -from resume point in the error",
+		return fmt.Sprintf("ch-participant-backfill: FAILED — scanned %d ops, derived %d participant rows, not all confirmed written (%d decode-errors); re-run with the -from and -to resume point in the error",
 			stats.OpsScanned, stats.Participants, stats.DecodeErrors)
 	}
 	verb := "wrote"
@@ -98,31 +98,40 @@ func participantBackfillSummary(stats clickhouse.ParticipantBackfillStats, dryRu
 // contract is testable without a live ClickHouse.
 var backfillOperationParticipants = clickhouse.BackfillOperationParticipants
 
-// resolveParticipantTo resolves the inclusive upper ledger. A non-zero toFlag is
-// honoured as-is. toFlag==0 auto-targets the gap below live capture: the
-// live-capture floor minus one (min ledger in operation_participants). If the
-// table is empty (no live capture yet) it falls back to the lake tip.
-func resolveParticipantTo(ctx context.Context, chAddr string, toFlag uint32) (uint32, error) {
+// minParticipantLedger is clickhouse.MinParticipantLedger, a var so the
+// bound resolution is testable without a live lake.
+var minParticipantLedger = clickhouse.MinParticipantLedger
+
+// resolveParticipantTo resolves the inclusive upper ledger, always within the
+// lake's contiguous tip from `from` (resolveBackfillTop): operation_participants
+// has no MV, so a ledger this pass reads across as a hole is never derived.
+// toFlag==0 auto-targets the gap below live capture: the live-capture floor
+// minus one (min ledger in operation_participants), or the contiguous tip when
+// the table is empty. That floor is read from the table this backfill writes,
+// so it is the live floor only on a first run — a resumed run must carry the
+// -to its first run resolved, which every resume line prints.
+func resolveParticipantTo(ctx context.Context, chAddr string, from, toFlag uint32) (uint32, error) {
 	if toFlag != 0 {
-		return toFlag, nil
+		return resolveBackfillTop(ctx, chAddr, from, toFlag)
 	}
-	floor, ok, err := clickhouse.MinParticipantLedger(ctx, chAddr)
+	floor, ok, err := minParticipantLedger(ctx, chAddr)
 	if err != nil {
 		return 0, fmt.Errorf("resolve live-capture floor: %w", err)
 	}
 	switch {
-	case ok && floor > 1:
+	case ok && floor > from:
 		last := floor - 1
 		fmt.Fprintf(os.Stderr, "ch-participant-backfill: live-capture floor is ledger %d; backfilling the gap up to %d\n", floor, last)
-		return last, nil
-	case ok: // floor is at or below the first ledger — nothing beneath it
-		return 0, fmt.Errorf("operation_participants already starts at ledger %d; nothing to backfill (pass -to explicitly to force)", floor)
+		return resolveBackfillTop(ctx, chAddr, from, last)
+	case ok:
+		return 0, fmt.Errorf("operation_participants already holds ledger %d, at or below -from %d: live capture covers it, or this resumes an interrupted run and those are that run's own rows — pass the -to the first run printed (or -to explicitly to force)",
+			floor, from)
 	default:
-		tip, terr := clickhouse.MaxLedger(ctx, chAddr)
+		tip, terr := resolveBackfillTop(ctx, chAddr, from, 0)
 		if terr != nil {
 			return 0, fmt.Errorf("resolve lake tip (operation_participants empty): %w", terr)
 		}
-		fmt.Fprintf(os.Stderr, "ch-participant-backfill: operation_participants is empty; backfilling to lake tip %d\n", tip)
+		fmt.Fprintf(os.Stderr, "ch-participant-backfill: operation_participants is empty; backfilling to contiguous lake tip %d\n", tip)
 		return tip, nil
 	}
 }
