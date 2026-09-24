@@ -211,7 +211,8 @@ func TestLatestAquariusReserves(t *testing.T) {
 		tokenA = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
 		tokenB = "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY"
 	)
-	base := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	// Relative to now: LatestAquariusReserves filters on a trailing 90-day window.
+	base := time.Now().UTC().Truncate(time.Hour).Add(-48 * time.Hour)
 	huge, _ := new(big.Int).SetString("98765432109876543210987654321", 10)
 
 	// Older snapshot — must be shadowed by the newer one below.
