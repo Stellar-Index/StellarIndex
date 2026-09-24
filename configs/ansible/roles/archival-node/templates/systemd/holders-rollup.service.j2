@@ -1,13 +1,11 @@
-# systemd unit: cap67 movements derive (inventory #1).
+# systemd unit: asset-holders rollup recompute (inventory #4).
 #
-# Rendered by Ansible. Derives post-P23 account movements for EVERY
-# asset (native XLM included) from the lake's CAP-67 transfer events
-# into stellar.account_movements (provenance cap67_derived), resuming
-# from stellar.cap67_movements_watermark. One invocation catches up to
-# the lake tip and exits; the companion 5-minute timer keeps the archive
-# following. The FIRST run after provisioning is the multi-hour
-# P23→tip backfill — systemd's one-instance rule makes timer fires
-# no-ops while it runs.
+# Rendered by Ansible. Recomputes every asset's holders board and holder
+# count plus the accounts analytics into staging tables, checks them
+# against the live tables (shrink guard), then EXCHANGEs them live in one
+# atomic swap (deploy/clickhouse/asset_holders_rollup.sql). Every run is
+# a full recompute — there is no watermark and no backfill. The companion
+# timer re-runs it 30 minutes after each run ends.
 
 [Unit]
 Description=Stellar Index — asset-holders rollup recompute
@@ -48,11 +46,12 @@ ProtectControlGroups=true
 # the shared, already stellarindex-owned data dir, not under /tmp.
 ReadWritePaths=/var/lib/stellarindex
 
-# The initial backfill is a long catch-up; steady-state runs are
-# minutes. No TimeoutStartSec ceiling would risk a wedged run holding
-# the slot forever — 12h covers the backfill with margin and a killed
-# run resumes from the watermark.
-TimeoutStartSec=30min
+# The cycle runs its statements serially and seven of them cap
+# themselves at max_execution_time=600, so ClickHouse allows a cycle up
+# to 70 min. The unit ceiling sits above that sum so systemd never kills
+# a cycle ClickHouse would still let finish (a killed run publishes
+# nothing), while still releasing a wedged slot. Raise it with the caps.
+TimeoutStartSec=80min
 
 # Memory ceiling — the rollup's window functions spill externally at
 # 4GB (SETTINGS in the job SQL); this is the host-level backstop

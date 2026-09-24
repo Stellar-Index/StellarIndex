@@ -275,10 +275,11 @@ func runHoldersRollupSteps(ctx context.Context, conn holdersRollupConn, logf fun
 }
 
 // holdersRollupMaxAge is the oldest cycle stamp holdersRollupBoard will serve.
-// The stamp is taken when a run starts; a healthy chain of runs keeps it under
-// ~92 min (holders-rollup.service TimeoutStartSec=30min, then the timer's
-// OnUnitInactiveSec=30min + RandomizedDelaySec=2min, then up to 30min for the
-// next run to swap in). Past this, at least one cycle has been missed.
+// The stamp is taken when a run starts and is replaced when the next run swaps
+// in: run + the timer's OnUnitInactiveSec=30min + RandomizedDelaySec=2min +
+// next run. Runs under ~44 min each stay inside this; slower runs (the unit
+// allows up to TimeoutStartSec=80min) let the board age out between swaps, and
+// readers fall back to the per-request scans rather than serve it stale.
 const holdersRollupMaxAge = 2 * time.Hour
 
 // holdersRollupBoard is AssetHolders' precomputed fast path: keyed
