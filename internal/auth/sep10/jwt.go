@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/stellar/go-stellar-sdk/network"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
@@ -23,6 +26,9 @@ type claims struct {
 	Iat int64  `json:"iat"`           // issued at (unix seconds)
 	Exp int64  `json:"exp"`           // expiry (unix seconds)
 	Nbf int64  `json:"nbf,omitempty"` // not before — same as iat
+	// Network is the hex network ID (SHA-256 of the passphrase), so a token
+	// minted on one network is refused by a deployment on another.
+	Network string `json:"network_id"`
 }
 
 // jwtHeader is the fixed-shape JWT header. We only support
@@ -38,11 +44,12 @@ var (
 // without padding.
 func (v *Validator) issueJWT(subject string, issuedAt, expiresAt time.Time) (string, error) {
 	body, err := json.Marshal(claims{
-		Iss: v.homeDomain,
-		Sub: subject,
-		Iat: issuedAt.Unix(),
-		Exp: expiresAt.Unix(),
-		Nbf: issuedAt.Unix(),
+		Iss:     v.homeDomain,
+		Sub:     subject,
+		Iat:     issuedAt.Unix(),
+		Exp:     expiresAt.Unix(),
+		Nbf:     issuedAt.Unix(),
+		Network: v.networkID(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("sep10: marshal claims: %w", err)
@@ -108,7 +115,17 @@ func (v *Validator) parseJWT(token string) (claims, error) {
 		return claims{}, fmt.Errorf("%w: JWT iss claim %q doesn't match home domain %q",
 			auth.ErrUnauthorized, c.Iss, v.homeDomain)
 	}
+	if c.Network != v.networkID() {
+		return claims{}, fmt.Errorf("%w: JWT network_id claim %q doesn't match this network",
+			auth.ErrUnauthorized, c.Network)
+	}
 	return c, nil
+}
+
+// networkID is the hex-encoded Stellar network ID of the configured passphrase.
+func (v *Validator) networkID() string {
+	id := network.ID(v.network)
+	return hex.EncodeToString(id[:])
 }
 
 // Compile-time guard against accidentally breaking the body-encode
