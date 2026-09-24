@@ -128,7 +128,9 @@ type RWAAssetsView struct {
 	CuratedAssets []RWAAsset `json:"curated_assets,omitempty"`
 	// Curated is the curated arm's own total and status.
 	Curated *RWACuratedSummary `json:"curated,omitempty"`
-	// ByIssuer totals the set per issuer G-address.
+	// ByIssuer totals the set per issuer G-address. Contract-issued
+	// rows have no issuer account and are not in it; ByClass and
+	// Summary still count them.
 	ByIssuer []RWAIssuerTotal `json:"by_issuer"`
 	// Refused counts the candidates each requirement turned away, so
 	// the served set is never mistaken for the whole population of
@@ -630,7 +632,9 @@ func rwaBoundInstruments() []RWABoundInstrument {
 
 // RWASummary aggregates the served set.
 type RWASummary struct {
-	Assets  int `json:"assets"`
+	Assets int `json:"assets"`
+	// Issuers is rwaIssuerCount: distinct issuer G-addresses plus one per
+	// contract-issued row, whose address is its whole identity.
 	Issuers int `json:"issuers"`
 	// MarketCapUSD is the exact sum of the PUBLISHED per-asset market
 	// caps, as a decimal string. ABSENT — not "0.00" — when no asset in
@@ -853,12 +857,15 @@ type RWAAsset struct {
 	// entry. Issuer-authored display text.
 	Name string `json:"name,omitempty"`
 	// HomeDomain is the domain the issuer account set ON CHAIN, from
-	// which the attestation was fetched.
+	// which the attestation was fetched. Empty on a contract-issued row:
+	// a contract has no issuer account and no attestation was fetched.
 	HomeDomain string `json:"home_domain,omitempty"`
-	// IssuerDirectoryName and IssuerDirectoryTags are the independent
-	// third-party label on the issuer G-address — the evidence for R3.
-	IssuerDirectoryName string   `json:"issuer_directory_name,omitempty"`
-	IssuerDirectoryTags []string `json:"issuer_directory_tags,omitempty"`
+	// IssuerDirectoryName, IssuerDirectoryTags and IssuerDirectoryDomain
+	// are the independent third-party label on the issuer — the evidence
+	// for R3 or C2. The domain is the directory's, not an on-chain one.
+	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
+	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
+	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
 	// Basis names which requirement-4 arm admitted this asset.
 	Basis string `json:"basis"`
 	// Recognition names WHICH independent party's naming satisfied the
@@ -2565,6 +2572,11 @@ func rwaByIssuer(assets []RWAAsset) []RWAIssuerTotal {
 	order := make([]string, 0, 8)
 	byIssuer := map[string][]RWAAsset{}
 	for _, a := range assets {
+		// A contract row's empty Issuer is not a key: grouping on it
+		// merged every contract-issued asset into one blank issuer.
+		if a.Issuer == "" {
+			continue
+		}
 		if _, ok := byIssuer[a.Issuer]; !ok {
 			order = append(order, a.Issuer)
 		}

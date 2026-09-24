@@ -859,17 +859,17 @@ func rwaContractAssetRows(members []rwaContractMember, rows map[string]AssetDeta
 			// refuses to identify anything by. The symbol is served under
 			// its own name so a reader can see it is metadata, not
 			// identity.
-			Symbol:              m.symbol,
-			Slug:                d.Slug,
-			Name:                rwaContractName(m),
-			HomeDomain:          m.dirDomain,
-			IssuerDirectoryName: m.dirName,
-			IssuerDirectoryTags: d.IssuerDirectoryTags,
-			Basis:               m.basis,
-			Recognition:         m.recognition,
-			AnchorClass:         m.class,
-			Valuation:           rwaValuationOf(d),
-			CirculatingSupply:   d.CirculatingSupply,
+			Symbol:                m.symbol,
+			Slug:                  d.Slug,
+			Name:                  rwaContractName(m),
+			IssuerDirectoryName:   m.dirName,
+			IssuerDirectoryTags:   d.IssuerDirectoryTags,
+			IssuerDirectoryDomain: m.dirDomain,
+			Basis:                 m.basis,
+			Recognition:           m.recognition,
+			AnchorClass:           m.class,
+			Valuation:             rwaValuationOf(d),
+			CirculatingSupply:     d.CirculatingSupply,
 			// The contract's REAL declared scale, overlaid by
 			// fillContractDecimals — not the 7 assetDetailFromAssetRow
 			// starts every row at, which is served as null instead.

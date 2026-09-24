@@ -7985,7 +7985,11 @@ export interface components {
             assets: components["schemas"]["RWAAsset"][];
             /** @description Per-declared-class totals. Assets admitted on the oracle basis declare no class and group under `unclassified`. */
             by_class: components["schemas"]["RWAGroupTotal"][];
-            /** @description Per-issuer totals, keyed on the G-address. */
+            /**
+             * @description Per-issuer totals, keyed on the G-address. Contract-issued
+             *     rows have no issuer account and are not in this breakdown;
+             *     `by_class` and `summary` still count them.
+             */
             by_issuer: components["schemas"]["RWAIssuerTotal"][];
             /**
              * @description Rows a named third-party curator lists as tokenized real-world
@@ -8428,12 +8432,26 @@ export interface components {
             slug?: string;
             /** @description [[CURRENCIES]] name from the issuer-bound SEP-1 entry. Issuer-authored display text. */
             name?: string;
-            /** @description The domain the issuer account set ON CHAIN, from which the attestation was fetched. */
+            /**
+             * @description The domain the issuer account set ON CHAIN, from which the
+             *     attestation was fetched. Absent on a contract-issued row: a
+             *     contract has no issuer account and no attestation was
+             *     fetched for it — the directory's domain for its entity is
+             *     `issuer_directory_domain`.
+             */
             home_domain?: string;
             /** @description Independent third-party label on the issuer G-address — the evidence for requirement 3. */
             issuer_directory_name?: string;
             /** @description Curated third-party tags on the issuer G-address. */
             issuer_directory_tags?: string[];
+            /**
+             * @description The domain the curated third-party directory records for
+             *     the issuing entity. Directory-authored, never read on chain
+             *     and never the domain an attestation was fetched from; served
+             *     under its own name so it is not mistaken for `home_domain`.
+             *     Present on contract-issued rows.
+             */
+            issuer_directory_domain?: string;
             /**
              * @description Which final requirement admitted this asset. The first two
              *     belong to the classic arm, the last two to the contract arm.

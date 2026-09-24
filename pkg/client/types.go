@@ -1741,7 +1741,9 @@ type RWAAssetsView struct {
 	// RESPONSE's instant and moves between requests.
 	Membership *RWAMembershipSet `json:"membership,omitempty"`
 	ByClass    []RWAGroupTotal   `json:"by_class"`
-	ByIssuer   []RWAIssuerTotal  `json:"by_issuer"`
+	// ByIssuer is keyed on the issuer G-address; contract-issued rows,
+	// which have none, are not in it.
+	ByIssuer []RWAIssuerTotal `json:"by_issuer"`
 	// Refused is the ordered requirement tally over the candidates
 	// that reached the full evaluation — not the whole population. Read
 	// Funnel for that.
@@ -2150,13 +2152,17 @@ type RWAAsset struct {
 	// Symbol is the token symbol the CONTRACT declares on chain.
 	// Contract-authored display text, never identity — two contracts may
 	// declare the same symbol and they are different assets.
-	Symbol              string   `json:"symbol,omitempty"`
-	Slug                string   `json:"slug,omitempty"`
-	Name                string   `json:"name,omitempty"`
-	HomeDomain          string   `json:"home_domain,omitempty"`
-	IssuerDirectoryName string   `json:"issuer_directory_name,omitempty"`
-	IssuerDirectoryTags []string `json:"issuer_directory_tags,omitempty"`
-	Basis               string   `json:"basis"`
+	Symbol string `json:"symbol,omitempty"`
+	Slug   string `json:"slug,omitempty"`
+	Name   string `json:"name,omitempty"`
+	// HomeDomain is the issuer account's on-chain domain the attestation
+	// was fetched from; empty on a contract-issued row, whose curated
+	// directory domain is IssuerDirectoryDomain instead.
+	HomeDomain            string   `json:"home_domain,omitempty"`
+	IssuerDirectoryName   string   `json:"issuer_directory_name,omitempty"`
+	IssuerDirectoryTags   []string `json:"issuer_directory_tags,omitempty"`
+	IssuerDirectoryDomain string   `json:"issuer_directory_domain,omitempty"`
+	Basis                 string   `json:"basis"`
 	// Recognition names the route by which the row's issuer (or
 	// contract) counts as independently recognised; the routes are not
 	// the same strength of evidence.
