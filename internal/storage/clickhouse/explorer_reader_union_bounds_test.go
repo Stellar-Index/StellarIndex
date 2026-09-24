@@ -137,7 +137,7 @@ func TestAccountTransactions_BoundsEachUnionArm(t *testing.T) {
 func TestAccountOperations_PerArmLimitPreservesCursorArgOrder(t *testing.T) {
 	const limit = 9
 	conn := &stubConn{}
-	conn.respond = func(string) (driver.Rows, error) { return &stubRows{}, nil }
+	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
 	r := &ExplorerReader{conn: conn}
 
 	cur := ExplorerCursor{Ledger: 63_000_000, A: 4, B: 2}
@@ -213,7 +213,7 @@ func TestUnionArmTopN_MatchesUnboundedMerge(t *testing.T) {
 	// Read the per-arm page size out of the query the reader emits, so this
 	// property is anchored to the implementation rather than to a constant.
 	conn := &stubConn{}
-	conn.respond = func(string) (driver.Rows, error) { return &stubRows{}, nil }
+	conn.respond = withOpsBySourceRows(func(string) (driver.Rows, error) { return &stubRows{}, nil })
 	r := &ExplorerReader{conn: conn}
 	if _, err := r.AccountOperations(context.Background(), "GTEST", limit, ExplorerCursor{}); err != nil {
 		t.Fatalf("AccountOperations: %v", err)

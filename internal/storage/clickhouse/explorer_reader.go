@@ -343,9 +343,9 @@ type ExplorerReader struct {
 
 	// opsBySourceProbe probes whether stellar.ops_by_source (the slim
 	// sourced-history projection, deploy/clickhouse/ops_by_source.sql)
-	// exists. The account-history readers REFUSE without it — a silent
-	// bloom-scan fallback would quietly restore the 6s sourced arm, and a
-	// silent empty arm would hide the account's own transactions.
+	// exists and holds rows. The account-history readers REFUSE without it —
+	// a silent bloom-scan fallback would quietly restore the 6s sourced arm,
+	// and a silent empty arm would hide the account's own transactions.
 	opsBySourceProbe schemaProbe
 
 	// accountActivityProbe probes stellar.account_activity (the per-account
@@ -1881,19 +1881,22 @@ func (r *ExplorerReader) contractActiveLedgers(ctx context.Context, contractID s
 }
 
 // errOpsBySourceMissing — the sourced-history projection has not been
-// provisioned on this ClickHouse. Fail-loud by design (same contract as
-// ttl_live_until): the pre-projection bloom-scan arm is DELETED, and a
-// silent fallback or empty arm would either restore the 6-second read or
-// hide the account's own history.
+// provisioned (or populated) on this ClickHouse. Fail-loud by design (same
+// contract as ttl_live_until): the pre-projection bloom-scan arm is DELETED,
+// and a silent fallback or empty arm would either restore the 6-second read
+// or hide the account's own history.
 var errOpsBySourceMissing = errors.New(
-	"clickhouse: stellar.ops_by_source does not exist — apply deploy/clickhouse/ops_by_source.sql " +
+	"clickhouse: stellar.ops_by_source does not exist or is empty — apply deploy/clickhouse/ops_by_source.sql " +
 		"(table + both MVs, then its Step-2 windowed backfills) before serving account history; " +
 		"there is no scan fallback")
 
-// opsBySourceAvailable reports whether stellar.ops_by_source exists.
+// opsBySourceAvailable reports whether stellar.ops_by_source exists AND holds
+// rows: the readers serve an empty sourced arm as "this account sourced
+// nothing", so an unfed or TRUNCATEd projection must refuse (the "presence +
+// non-empty" operator contract, deploy/clickhouse/contract_active_ledgers.sql).
 func (r *ExplorerReader) opsBySourceAvailable(ctx context.Context) bool {
 	return r.probeSchema(ctx, &r.opsBySourceProbe,
-		`SELECT ledger_seq FROM stellar.ops_by_source LIMIT 1`, false)
+		`SELECT ledger_seq FROM stellar.ops_by_source LIMIT 1`, true)
 }
 
 // accountActivityAvailable reports whether stellar.account_activity (the
