@@ -9,6 +9,7 @@ import {
 import { generateMetadata as assetMetadata } from './assets/[slug]/page';
 import { metadata as contractMeta } from './contract/page';
 import { metadata as ledgerMeta } from './ledger/page';
+import { generateMetadata as issuerMetadata } from './issuers/[g_strkey]/page';
 import { generateMetadata as poolMetadata } from './lending/[pool]/page';
 import { generateMetadata as pairMetadata } from './markets/[pair]/page';
 import { metadata as operationMeta } from './operation/page';
@@ -269,6 +270,15 @@ describe('long-tail shell metadata', () => {
         index: false,
       });
     }
+  });
+
+  it('keeps the /issuers shell out of the index', async () => {
+    const meta = await issuerMetadata({
+      params: Promise.resolve({ g_strkey: 'shell' }),
+    });
+    expect(meta.robots, '/issuers/shell is indexable').toMatchObject({
+      index: false,
+    });
   });
 
   /**
