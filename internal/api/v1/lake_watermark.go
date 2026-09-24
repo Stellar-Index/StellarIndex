@@ -64,10 +64,11 @@ const (
 
 // lakeWatermark returns the cached lake watermark: the ledger to stamp as
 // `as_of_ledger` and whether the response must carry `flags.stale` per
-// lakeStaleThreshold. ok=false when no watermark reader is wired, no read has
-// succeeded yet, or the lake is empty — callers then omit `as_of_ledger` and
-// leave flags untouched (graceful, matching every other nil-reader degrade in
-// this package).
+// lakeStaleThreshold. ok=false means there is no ledger to stamp, and callers
+// omit `as_of_ledger`. stale is the verdict on its own and fails CLOSED: a
+// wired reader that has no measurement (no read has succeeded yet, or the lake
+// is empty) reports stale=true, since unknown freshness is not fresh. Only an
+// unwired reader reports stale=false — the deployment has no lake to judge.
 //
 // STALE-SERVE (RLT-095, 2026-09-19), the same posture as nativeLPListing
 // (#332 F4). The refresh used to run under lakeWMMu on the caller's own
@@ -98,7 +99,7 @@ func (s *Server) lakeWatermark(ctx context.Context) (ledger uint32, stale bool, 
 		l, closedAt = s.waitForLakeWatermark(ctx)
 	}
 	if l == 0 {
-		return 0, false, false
+		return 0, true, false
 	}
 	return l, time.Since(closedAt) > lakeStaleThreshold, true
 }

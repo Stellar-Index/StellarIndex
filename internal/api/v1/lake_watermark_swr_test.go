@@ -4,9 +4,13 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/big"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
 // slowWatermark models the PRODUCTION lake reader's shape rather than a
@@ -152,5 +156,52 @@ func TestLakeWatermark_LapsedEntryServedWithoutWaitingOnTheLake(t *testing.T) {
 	}
 	if got := wm.callCount(); got != 1 {
 		t.Errorf("lake reads = %d, want 1 — a failed refresh must back off for the retry gap", got)
+	}
+}
+
+// TestLakeWatermark_UnmeasuredFailsClosed: every lake-backed route discards ok
+// and serves flags.stale straight from lakeWatermark, so a wired reader with
+// no measurement must report stale=true — "unknown" served as fresh is the
+// defect. Only an unwired reader (no lake to judge) stays stale=false.
+func TestLakeWatermark_UnmeasuredFailsClosed(t *testing.T) {
+	cases := []struct {
+		name      string
+		wm        LakeWatermarkReader
+		wantStale bool
+	}{
+		{"cold read failed", &slowWatermark{err: errors.New("lake down")}, true},
+		{"lake empty", &slowWatermark{}, true},
+		{"no reader wired", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{lakeWatermarkReader: tc.wm, logger: slog.Default()}
+			ledger, stale, ok := s.lakeWatermark(context.Background())
+			if ok || ledger != 0 {
+				t.Fatalf("watermark = (%d, ok=%v), want (0, false) with no measurement", ledger, ok)
+			}
+			if stale != tc.wantStale {
+				t.Errorf("stale = %v, want %v", stale, tc.wantStale)
+			}
+		})
+	}
+}
+
+// TestAssetSupply_UnmeasuredWatermarkServesStale drives the same property
+// through a route: the lake is wired but its watermark read fails, so the
+// supply response must carry flags.stale=true and no as_of_ledger.
+func TestAssetSupply_UnmeasuredWatermarkServesStale(t *testing.T) {
+	f := &fakeTokenSupply{supply: clickhouse.TokenSupply{
+		ContractID: supplyContractID,
+		Total:      big.NewInt(9), Mint: big.NewInt(9), Burn: big.NewInt(0), Clawback: big.NewInt(0),
+		FlowCount: 1,
+	}}
+	rec := serveSupplyWM(t, f, nil, &stubWatermark{err: errors.New("lake down")}, supplyContractID)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	got, flags := decodeSupplyEnvelope(t, rec.Body.Bytes())
+	if got.AsOfLedger != 0 || !flags.Stale {
+		t.Errorf("as_of_ledger = %d stale = %v, want 0/true when the wired lake watermark is unmeasured", got.AsOfLedger, flags.Stale)
 	}
 }
