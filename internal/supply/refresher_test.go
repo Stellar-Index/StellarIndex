@@ -504,7 +504,7 @@ func TestRefresher_PerAssetStaleComponentOverride(t *testing.T) {
 	r := NewRefresher(
 		stubLedgers{ledger: 50_001_500, observedAt: time.Unix(1_770_000_000, 0).UTC()},
 		stubComputer{out: Supply{
-			AssetKey:           "PHO-GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6",
+			AssetKey:           "PHO:GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6",
 			TotalSupply:        big.NewInt(1_000_000),
 			CirculatingSupply:  big.NewInt(900_000),
 			Basis:              BasisXLMSDFReserveExclusion,
@@ -514,7 +514,7 @@ func TestRefresher_PerAssetStaleComponentOverride(t *testing.T) {
 		inserter,
 		discardLogger(),
 		WithStaleComponentLedgers(1000), // global default — would reject
-		WithStaleComponentLedgersFor("PHO-GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6", 5000),
+		WithStaleComponentLedgersFor("PHO:GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6", 5000),
 	)
 	out := r.Tick(context.Background())
 	if out.Kind != OutcomeKindOK {
@@ -544,7 +544,7 @@ func TestRefresher_PerAssetStaleComponentDoesNotLoosenOthers(t *testing.T) {
 		inserter,
 		discardLogger(),
 		WithStaleComponentLedgers(1000),
-		WithStaleComponentLedgersFor("PHO-GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6", 5000),
+		WithStaleComponentLedgersFor("PHO:GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6", 5000),
 	)
 	out := r.Tick(context.Background())
 	if out.Kind != OutcomeKindStaleComponent {

@@ -266,7 +266,7 @@ USDC through):
 [supply.stale_component_ledgers_by_asset]
 # asset_key (CODE:ISSUER for classic, bare contract id for SEP-41)
 # = relaxed threshold in ledgers. ≈5000 ≈ 7 h.
-"PHO:GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6" = 5000
+"PHO:GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO" = 5000
 ```
 
 Identify *which* asset to override from the per-asset metric — the
@@ -277,8 +277,13 @@ code option behind the TOML key is
 `supply.WithStaleComponentLedgersFor(assetKey, maxLag)`; the
 aggregator wires it automatically from
 `[supply.stale_component_ledgers_by_asset]`, so operators only
-touch the TOML. A value of `0` disables the gate for that one asset
-while keeping the global default for all others.
+touch the TOML. Keys are canonicalised to the `asset_key` form, so
+`PHO-G…` and `native` resolve the same as `PHO:G…` and `XLM`. A key
+that does not parse, names an asset outside `watched_classic_assets`
+/ `watched_sep41_contracts` (XLM is always watched), or duplicates
+another spelling of the same asset fails config validation at boot.
+A value of `0` disables the gate for that one asset while keeping the
+global default for all others.
 
 After the F-1320 dormancy fix a per-asset override is no longer
 *required* to keep a dormant asset's supply row fresh — the gate

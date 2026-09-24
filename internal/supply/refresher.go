@@ -157,11 +157,11 @@ func WithStaleComponentLedgers(maxLag uint32) RefresherOption {
 // observer lag the snapshot ledger by ~1200 ledgers (~100 min) —
 // past the 1000-ledger global default. A per-asset override lets
 // operators relax the gate for known-low-activity assets without
-// loosening it for high-traffic XLM / USDC. Pass assetKey as the
-// `canonical.Asset.String()` form (e.g. "PHO-GDSTRSHX..." for a
-// classic asset). Repeated calls layer additively; the last
-// per-asset value wins. assetKey lookup is exact-match, so the
-// caller is responsible for normalising via canonical.ParseAsset.
+// loosening it for high-traffic XLM / USDC. Pass assetKey in the
+// [AssetKey] form the computers stamp on each snapshot ("XLM",
+// "PHO:GAX5TXB5...", or a bare contract id); lookup is exact-match,
+// so normalise operator input via [CanonicalizeStaleComponentLedgers].
+// Repeated calls layer additively; the last per-asset value wins.
 //
 // A zero per-asset value disables the gate for that asset alone
 // (the global default still applies to other assets); use the
