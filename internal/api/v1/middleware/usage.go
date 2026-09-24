@@ -72,12 +72,13 @@ func UsageTracker(counter *usage.Counter, logger *slog.Logger) Middleware {
 			}
 			deadlineFired := new(atomic.Bool)
 			reqCtx := r.Context()
-			r = r.WithContext(context.WithValue(reqCtx, readDeadlineKey{}, deadlineFired))
+			dispatchCtx := context.WithValue(reqCtx, readDeadlineKey{}, deadlineFired)
+			r = r.WithContext(dispatchCtx)
 			rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 			units := &usageUnits{n: 1}
 			// endpointFamily reads the dispatched copy: its r.Pattern
 			// fallback is set on the request the mux actually received.
-			inner := r.WithContext(context.WithValue(r.Context(), usageUnitsKey{}, units))
+			inner := r.WithContext(context.WithValue(dispatchCtx, usageUnitsKey{}, units))
 			next.ServeHTTP(rec, inner)
 			subject, ok := auth.SubjectFrom(reqCtx)
 			if !ok {

@@ -431,7 +431,7 @@ tests:
   - interval: 1m
     name: a guard that never completes a pass after start tickets at 60m, not 15m
     input_series:
-      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}'
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_aggregator"}'
         values: '60x120'
     alert_rule_test:
       - eval_time: 30m
@@ -447,7 +447,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: aggregator
-              job: stellarindex-aggregator
+              job: stellarindex_aggregator
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
               summary: "Decimals-guard sweep has not completed in over 45 min — guard health is unknown"
@@ -474,7 +474,7 @@ tests:
   - interval: 1m
     name: a slow cold boot followed by healthy sweeps never tickets
     input_series:
-      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}'
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_aggregator"}'
         values: '60x24 1500x14 2400x14 3300x14 4200x14 5100x14'
     alert_rule_test:
       - eval_time: 20m
@@ -492,7 +492,7 @@ tests:
   - interval: 1m
     name: a guard that stops sweeping after arming tickets
     input_series:
-      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}'
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_aggregator"}'
         values: '60x14 900x14 1800x90'
     alert_rule_test:
       - eval_time: 85m
@@ -505,7 +505,7 @@ tests:
               severity: ticket
               team: stellarindex
               component: aggregator
-              job: stellarindex-aggregator
+              job: stellarindex_aggregator
             exp_annotations:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/dex-nonstandard-decimals.md
               summary: "Decimals-guard sweep has not completed in over 45 min — guard health is unknown"
@@ -533,7 +533,7 @@ tests:
   - interval: 1m
     name: a lake-less aggregator with the guard disabled never tickets
     input_series:
-      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-aggregator"}'
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_aggregator"}'
         values: '0x300'
     alert_rule_test:
       - eval_time: 70m
@@ -549,9 +549,9 @@ tests:
   - interval: 1m
     name: a stale gauge on a non-aggregator job never tickets
     input_series:
-      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-api"}'
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_api"}'
         values: '60x90'
-      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex-indexer"}'
+      - series: 'stellarindex_decimals_guard_sweep_last_success_unix{job="stellarindex_indexer"}'
         values: '0x90'
     alert_rule_test:
       - eval_time: 70m
