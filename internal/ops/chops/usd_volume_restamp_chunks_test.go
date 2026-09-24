@@ -1080,9 +1080,9 @@ func TestValidateRestampGeneration(t *testing.T) {
 
 // ─── one run at a time: the run lock ─────────────────────────────────────
 //
-// run-heavy-job.sh's lock is per job NAME and the runbook mandates a
-// unique name per attempt, so the wrapper does not stop a second -write
-// from starting beside a live one. The session advisory lock does.
+// run-heavy-job.sh's lock is per job NAME, so the wrapper does not stop a
+// second -write launched under another name from starting beside a live
+// one. The session advisory lock does.
 
 func TestXLMBaseChunkRestamp_RefusesToStartWhileAnotherRunHoldsTheLock(t *testing.T) {
 	chunks, from, to := threeChunks()

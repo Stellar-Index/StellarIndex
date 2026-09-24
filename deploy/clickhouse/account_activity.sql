@@ -120,10 +120,11 @@ GROUP BY account_id;
 --  window and an unchecked one "succeeds" over nothing, so TIP is validated
 --  before anything runs (the windows are counted in bash, not by `seq`:
 --  BSD seq prints 2e+06 for a large value);
--- * run-heavy-job.sh finds the per-job lock held → it prints "skipping
---  this fire" and exits 0 WITHOUT running the payload. Exit status cannot
---  tell that from success, so each payload writes a marker file only
---  after its INSERT returns 0, and a job with no marker aborts the run;
+-- * run-heavy-job.sh finds the per-job lock held → a manual run is refused
+--  non-zero, but one launched from a systemd unit prints "skipping this
+--  fire" and exits 0 WITHOUT running the payload. Exit status cannot tell
+--  that from success, so each payload writes a marker file only after its
+--  INSERT returns 0, and a job with no marker aborts the run;
 -- * the closing count must see every job's marker (N of N, N > 0).
 -- The whole loop is ONE parenthesised subshell with the COMPLETE line
 -- chained behind `&&`: an abort ends the subshell, never the operator's

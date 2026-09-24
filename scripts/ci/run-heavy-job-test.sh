@@ -34,6 +34,15 @@
 #      every other spelling and anything under the 90 s floor (the
 #      systemd default this bound replaces), exiting 2 without running
 #      the payload.
+#   7. a held lock is a REFUSAL (exit 75, payload not run) for a caller
+#      systemd did not launch — an operator or a script, who would read
+#      an exit-0 skip as a finished run — and stays a clean exit-0 skip
+#      for a unit's overlapping fire ($INVOCATION_ID set).
+#   8. the disk watchdog does not hold the lock fd: an orphaned
+#      watchdog `sleep` held it past the job's exit, so a prompt
+#      relaunch of a failed job found it "held" and was skipped.
+#   9. no operator-facing text tells operators to use a UNIQUE job name
+#      per attempt: that is what defeated the per-name lock.
 #
 # Runs the wrapper's non-root exec path (no systemd-run / flock needed:
 # flock is stubbed on PATH so this runs on macOS too).
@@ -68,8 +77,24 @@ chmod +x "$TMP/run-heavy-job.sh"
 WRAP="$TMP/run-heavy-job.sh"
 
 mkdir -p "$TMP/bin" "$TMP/lock"
-printf '#!/usr/bin/env bash\nexit 0\n' > "$TMP/bin/flock"   # macOS has no flock
+# macOS has no flock; FLOCK_HELD answers "held" (case 7).
+cat > "$TMP/bin/flock" <<'FL'
+#!/usr/bin/env bash
+[ -n "${FLOCK_HELD:-}" ] && exit 1
+exit 0
+FL
 chmod +x "$TMP/bin/flock"
+# The watchdog's `sleep 30` is the one sleep the wrapper runs: record
+# whether it inherited fd 9 (the lock) into $FD9_REC, then fail so the
+# watchdog loop ends at once (case 8).
+cat > "$TMP/bin/sleep" <<'SL'
+#!/usr/bin/env bash
+if [ -n "${FD9_REC:-}" ]; then
+  if [ -e /dev/fd/9 ]; then echo "fd9=open" > "$FD9_REC"; else echo "fd9=closed" > "$FD9_REC"; fi
+fi
+exit 1
+SL
+chmod +x "$TMP/bin/sleep"
 # The wrapper branches on `id -u`: non-root execs the payload directly,
 # root wraps it in `systemd-run --scope --unit U -p K=V … CMD`. CI runners
 # and dev machines differ in uid, so a test keyed on the real uid exercised only one
@@ -113,6 +138,10 @@ cat > "$PAYLOAD" <<'SH'
 printf 'USER=%s\n' "${STELLARINDEX_CLICKHOUSE_OPS_USER-<unset>}"
 printf 'PASS=%s\n' "${STELLARINDEX_CLICKHOUSE_OPS_PASSWORD-<unset>}"
 printf 'AWS=%s\n'  "${AWS_ACCESS_KEY_ID-<unset>}"
+# Case 8: stay alive until the watchdog has run its first sleep.
+if [ -n "${FD9_REC:-}" ]; then
+  for _ in $(seq 50); do [ -s "$FD9_REC" ] && break; /bin/sleep 0.1; done
+fi
 SH
 chmod +x "$PAYLOAD"
 
@@ -134,7 +163,7 @@ PROPS="$TMP/props"
 
 rc=0
 run() { # run <extra env assignments...> — runs the wrapper, captures out/err/rc
-  env "$@" "$WRAP" test-job "$PAYLOAD" >"$TMP/out" 2>"$TMP/err"
+  env -u INVOCATION_ID "$@" "$WRAP" test-job "$PAYLOAD" >"$TMP/out" 2>"$TMP/err"
   rc=$?
 }
 out_has() { grep -qxF -- "$1" "$TMP/out"; }
@@ -220,11 +249,45 @@ else
   if err_has "TimeoutStopSec=infinity — a systemctl stop will NEVER escalate to SIGKILL"; then ok "infinity says on stderr that no stop will ever escalate"; else bad "infinity accepted silently ($(cat "$TMP/err"))"; fi
 fi
 
+# ── 7. a held lock: refusal for a manual run, skip for a unit's fire ──
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_HELD=1
+if [ "$rc" -eq 75 ] && [ ! -s "$TMP/out" ] && err_has "refusing to start test-job" && err_has "still alive"; then
+  ok "held lock, manual run: refused with exit 75, payload not run"
+else
+  bad "held lock, manual run not refused (rc=$rc, out='$(tr '\n' ' ' < "$TMP/out")', err='$(tr '\n' ' ' < "$TMP/err")')"
+fi
+run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_HELD=1 INVOCATION_ID=0123456789abcdef
+if [ "$rc" -eq 0 ] && [ ! -s "$TMP/out" ] && err_has "skipping this fire"; then
+  ok "held lock, systemd unit fire: skipped with exit 0, payload not run"
+else
+  bad "held lock, systemd unit fire not a clean skip (rc=$rc, err='$(tr '\n' ' ' < "$TMP/err")')"
+fi
+
+# ── 8. the watchdog does not hold the lock (root branch only) ────────
+if [ "$branch" != "non-root" ]; then
+  rm -f "$TMP/fd9"
+  run HEAVY_JOB_OPS_ENV="$OPS_ENV" FD9_REC="$TMP/fd9"
+  if [ "$rc" -eq 0 ] && grep -qx 'fd9=closed' "$TMP/fd9" 2>/dev/null; then
+    ok "the disk watchdog does not inherit the lock fd"
+  else
+    bad "the disk watchdog holds the lock fd, so it outlives the job (rc=$rc, $(cat "$TMP/fd9" 2>/dev/null || echo 'no record'))"
+  fi
+fi
+
 }
 mkdir -p "$TMP/userbin"; printf '#!/usr/bin/env bash\necho 1000\n' > "$TMP/userbin/id"; chmod +x "$TMP/userbin/id"
 PATH="$TMP/userbin:$PATH" run_cases "non-root"
 mkdir -p "$TMP/rootbin"; printf '#!/usr/bin/env bash\necho 0\n' > "$TMP/rootbin/id"; chmod +x "$TMP/rootbin/id"
 PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
+
+# ── 9. nothing tells an operator to pick a per-attempt job name ──────
+echo "  [operator-facing text]"
+if hits=$(grep -rnIiE 'unique (job )?name per attempt|with a unique job name|run-heavy-job\.sh [^ ]*-try[0-9<]' \
+    docs cmd internal deploy configs); then
+  bad "per-attempt job names defeat the per-name lock; use ONE name per job: $hits"
+else
+  ok "no runbook or help text prescribes a unique job name per attempt"
+fi
 
 echo "run-heavy-job-test: $pass passed, $fail failed"
 [[ "$fail" -eq 0 ]]

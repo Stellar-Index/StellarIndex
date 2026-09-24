@@ -627,8 +627,8 @@ func (s *Store) RestampExactTierUSDVolumeInChunk(ctx context.Context, c TradeChu
 
 // ─── one run per hypertable: the run lock ────────────────────────────────
 //
-// run-heavy-job.sh's flock is per JOB NAME, and the runbook mandates a
-// unique name per attempt — so as far as the wrapper is concerned two
+// run-heavy-job.sh's flock is per JOB NAME, and nothing stops an operator
+// launching under a second name — so as far as the wrapper is concerned two
 // `-chunks -write` runs can be alive at once. Two of them on one
 // hypertable is the one thing the policy dance cannot survive: the second
 // finds the policy already unscheduled, and re-enables it at ITS exit

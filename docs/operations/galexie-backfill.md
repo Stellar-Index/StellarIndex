@@ -81,9 +81,10 @@ afterwards to prove the bytes are canonical.
    weights, a singleton lock and the disk watchdog. This job is
    precisely the class the wrapper exists for — a multi-hour walk
    sharing a host with the consensus-critical live captive core, which
-   an unwrapped re-derive wedged for 11 hours on 2026-07-05. Use a
-   UNIQUE job name per attempt: a name whose lock is still held is
-   **skipped**, silently and with exit 0.
+   an unwrapped re-derive wedged for 11 hours on 2026-07-05. Use the
+   SAME job name on every attempt: the lock is per name, and a run
+   that finds it held is **refused** with exit 75 because the previous
+   run is still alive (`fuser -v` on the lock file names it).
 
    Run it from tmux or as a `galexie-backfill.service` oneshot systemd
    unit (which should itself call the wrapper) so it survives SSH
