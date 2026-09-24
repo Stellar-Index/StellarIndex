@@ -331,3 +331,27 @@ func TestTradeRowFrom_defaultDecimalsOnZero(t *testing.T) {
 			gotNeg.Price, got.Price)
 	}
 }
+
+// TestFindMatchingCachedCurrency_exactCaseWinsOverFold: when an issuer
+// lists two codes differing only in case, each asset gets its own entry;
+// a code matching both only case-insensitively gets neither.
+func TestFindMatchingCachedCurrency_exactCaseWinsOverFold(t *testing.T) {
+	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	sep := &timescale.IssuerSep1Cached{Currencies: []timescale.IssuerSep1Currency{
+		{Code: "usdx", Issuer: issuer, Name: "lower"},
+		{Code: "USDX", Issuer: issuer, Name: "upper"},
+	}}
+	for code, want := range map[string]string{"USDX": "upper", "usdx": "lower"} {
+		a, err := canonical.NewClassicAsset(code, issuer)
+		if err != nil {
+			t.Fatalf("NewClassicAsset(%s): %v", code, err)
+		}
+		if got := findMatchingCachedCurrency(sep, a); got == nil || got.Name != want {
+			t.Errorf("%s matched %+v, want the %q entry", code, got, want)
+		}
+	}
+	a, _ := canonical.NewClassicAsset("Usdx", issuer)
+	if got := findMatchingCachedCurrency(sep, a); got != nil {
+		t.Errorf("Usdx is ambiguous between two entries, matched %+v", got)
+	}
+}

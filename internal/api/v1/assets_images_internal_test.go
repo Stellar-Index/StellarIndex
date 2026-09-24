@@ -249,3 +249,31 @@ func TestHandleAssetListFromCatalogue_Sep1ImageOverlay(t *testing.T) {
 		t.Fatal("usdc row not found in asset_class=stablecoin listing")
 	}
 }
+
+// TestFillImagesFromSep1_CaseTwinsKeepTheirOwnLogo: asset codes are
+// case-sensitive, so an issuer's USDX and usdx are two assets and each
+// keeps the logo its own [[CURRENCIES]] entry declares. A mis-cased row
+// borrows a logo only when exactly one entry could be meant.
+func TestFillImagesFromSep1_CaseTwinsKeepTheirOwnLogo(t *testing.T) {
+	const upper, lower = "https://x.example/USDX.png", "https://x.example/usdx.png"
+	s := discardServer(&stubSep1ImagesReader{imgs: []timescale.Sep1Image{
+		{Code: "USDX", Issuer: imgIssuerUSDC, Image: upper},
+		{Code: "usdx", Issuer: imgIssuerUSDC, Image: lower},
+	}})
+	s.PrewarmSep1Images(context.Background())
+	rows := []AssetDetail{
+		{AssetID: "USDX-" + imgIssuerUSDC, Type: "classic", Code: "USDX", Issuer: ptr(imgIssuerUSDC)},
+		{AssetID: "usdx-" + imgIssuerUSDC, Type: "classic", Code: "usdx", Issuer: ptr(imgIssuerUSDC)},
+		{AssetID: "Usdx-" + imgIssuerUSDC, Type: "classic", Code: "Usdx", Issuer: ptr(imgIssuerUSDC)},
+	}
+	s.fillImagesFromSep1(context.Background(), rows)
+	if rows[0].Image == nil || *rows[0].Image != upper {
+		t.Errorf("USDX image = %v, want %s", rows[0].Image, upper)
+	}
+	if rows[1].Image == nil || *rows[1].Image != lower {
+		t.Errorf("usdx image = %v, want %s", rows[1].Image, lower)
+	}
+	if rows[2].Image != nil {
+		t.Errorf("Usdx matches two entries case-insensitively and must get neither logo, got %s", *rows[2].Image)
+	}
+}

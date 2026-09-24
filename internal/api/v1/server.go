@@ -334,7 +334,7 @@ type Server struct {
 	lakeSupplyFlight    chan struct{}
 	lakeSupplyAttemptAt time.Time
 	// Per-server stale-while-revalidate cache for the SEP-1 logo map
-	// (case-folded CODE-ISSUER → safe image URL), built from every
+	// ([buildSep1ImageMap] key → safe image URL), built from every
 	// verified issuer's cached sep1_payload in one scan. Backs the image
 	// fill on the /v1/assets listing so the homepage grid renders real
 	// logos instead of fallback avatars — see cachedSep1Images.

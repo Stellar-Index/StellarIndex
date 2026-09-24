@@ -3,7 +3,6 @@ package supply
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -48,19 +47,18 @@ func AssetKey(a canonical.Asset) (string, error) {
 // claimable / LP observers silently observed NOTHING — every classic
 // asset's served supply degraded to its SAC-held slice (USDC read
 // 40M vs ~266M real, an 85% under-read on the flagship stablecoin).
-// Entries already in colon form pass through; anything unparseable
-// is a loud error so a config typo can never silently zero a supply
-// component again.
+// Colon-form entries are parsed too (never passed through verbatim);
+// anything unparseable or non-classic is a loud error so a config typo
+// can never silently zero a supply component again.
 func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 	out := make([]string, 0, len(entries))
 	for _, e := range entries {
-		if strings.Contains(e, ":") { // already CODE:ISSUER
-			out = append(out, e)
-			continue
-		}
 		a, err := canonical.ParseAsset(e)
-		if err != nil || a.Type != canonical.AssetClassic {
+		if err != nil {
 			return nil, fmt.Errorf("supply: watched classic asset %q: want canonical CODE-ISSUER form: %w", e, err)
+		}
+		if a.Type != canonical.AssetClassic {
+			return nil, fmt.Errorf("supply: watched classic asset %q: want canonical CODE-ISSUER form, got a %s asset", e, a.Type)
 		}
 		out = append(out, a.Code+":"+a.Issuer)
 	}

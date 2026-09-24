@@ -4,6 +4,7 @@ import (
 	"context"
 	"math/big"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -1777,9 +1778,9 @@ func (s *Server) rwaListingRows(
 	}
 	sort.Strings(issuers)
 
-	wanted := make(map[string]struct{}, len(m.members))
+	codesByIssuer := make(map[string][]string, len(issuers))
 	for _, mem := range m.members {
-		wanted[rwaKey(mem.code, mem.issuer)] = struct{}{}
+		codesByIssuer[mem.issuer] = append(codesByIssuer[mem.issuer], strings.TrimSpace(mem.code))
 	}
 
 	out := make(map[string]AssetDetail, len(m.members))
@@ -1799,12 +1800,7 @@ func (s *Server) rwaListingRows(
 		if len(rows) >= rwaAssetsPerIssuer {
 			join.pagesTruncated++
 		}
-		keep := make([]timescale.AssetRow, 0, 8)
-		for _, row := range rows {
-			if _, ok := wanted[rwaKey(row.Code, row.IssuerGStrkey)]; ok {
-				keep = append(keep, row)
-			}
-		}
+		keep, memberCodes := rwaMatchMemberRows(codesByIssuer[issuer], rows)
 		if len(keep) == 0 {
 			continue
 		}
@@ -1843,8 +1839,8 @@ func (s *Server) rwaListingRows(
 		s.rwaFillMissingSupply(ctx, details)
 		s.fillDeclaredPegPricesInListing(ctx, details)
 		s.fillIssuerDirectoryTags(ctx, details)
-		for _, d := range details {
-			out[rwaKey(d.Code, issuer)] = d
+		for i, d := range details {
+			out[rwaKey(memberCodes[i], issuer)] = d
 		}
 	}
 	return out, join, nil
@@ -1893,11 +1889,40 @@ func (s *Server) rwaFillMissingSupply(ctx context.Context, rows []AssetDetail) {
 	}
 }
 
-// rwaKey is the membership join key: the code case-folded (the SEP-1
-// overlay matches codes case-insensitively, and so must the join that
-// reads its output) and the issuer G-address exact.
+// rwaKey is the membership join key: code and issuer both exact, since
+// asset codes are case-sensitive and USDX and usdx are two assets.
 func rwaKey(code, issuer string) string {
-	return strings.ToUpper(strings.TrimSpace(code)) + "-" + issuer
+	return strings.TrimSpace(code) + "-" + issuer
+}
+
+// rwaMatchMemberRows pairs one issuer's member codes with its listing
+// rows via [matchAssetCode], so a mis-cased declaration still reaches
+// its asset. A row two members resolve to goes to the member spelling
+// it exactly, or to neither: serving it twice would count it twice.
+func rwaMatchMemberRows(codes []string, rows []timescale.AssetRow) ([]timescale.AssetRow, []string) {
+	rowCodes := make([]string, len(rows))
+	for i := range rows {
+		rowCodes[i] = rows[i].Code
+	}
+	claims := make(map[int][]string, len(codes))
+	for _, c := range codes {
+		if i := matchAssetCode(c, rowCodes); i >= 0 {
+			claims[i] = append(claims[i], c)
+		}
+	}
+	keep := make([]timescale.AssetRow, 0, len(claims))
+	memberCodes := make([]string, 0, len(claims))
+	for i := range rows {
+		c := claims[i]
+		if len(c) > 1 && slices.Contains(c, rows[i].Code) {
+			c = []string{rows[i].Code}
+		}
+		if len(c) == 1 {
+			keep = append(keep, rows[i])
+			memberCodes = append(memberCodes, c[0])
+		}
+	}
+	return keep, memberCodes
 }
 
 // rwaAssetRows joins the membership evidence to the valued listing rows
