@@ -392,6 +392,32 @@ func verifyUSDVolumeDay(
 		}
 	}
 
+	nb, err := verifyXLMBounds(ctx, store, groups, spec, day, minRows, maxList)
+	if err != nil {
+		return 0, err
+	}
+	violations += nb
+
+	printUSDVolumeTierTable(rollups)
+	if parseErrs > 0 {
+		fmt.Printf("  %d group(s) could not be classified or parsed — listed on stderr above\n", parseErrs)
+	}
+	fmt.Printf("%s: %d violation(s)\n", day.Format(time.DateOnly), violations)
+	return violations, nil
+}
+
+// verifyXLMBounds runs the XLM-base and XLM-quote bounds for day against its
+// CEX-fed XLM/USD VWAP and returns their combined violation count.
+func verifyXLMBounds(
+	ctx context.Context,
+	store *timescale.Store,
+	groups []timescale.TradeValuationGroup,
+	spec *timescale.USDVolumeQuoteSpec,
+	day time.Time,
+	minRows int64,
+	maxList int,
+) (int, error) {
+	violations := 0
 	// XLM-BASE BOUND (2026-08-04): the estimated tiers were structurally
 	// unjudged — Exact() covers only the pegged tiers — which is why the
 	// tier-3b poisoning shipped invisible for 13 days. For groups whose
@@ -425,12 +451,6 @@ func verifyUSDVolumeDay(
 		}
 		violations += nq
 	}
-
-	printUSDVolumeTierTable(rollups)
-	if parseErrs > 0 {
-		fmt.Printf("  %d group(s) could not be classified or parsed — listed on stderr above\n", parseErrs)
-	}
-	fmt.Printf("%s: %d violation(s)\n", day.Format(time.DateOnly), violations)
 	return violations, nil
 }
 
