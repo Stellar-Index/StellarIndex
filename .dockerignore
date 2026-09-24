@@ -1,0 +1,31 @@
+# Build context for docker/stellarindex-*.Dockerfile (context = repo root).
+# Allowlist: the builder stage runs `COPY . .`, so only what is re-included
+# below reaches the daemon or a builder layer. .git, gitignored secrets,
+# ansible vault material and node_modules stay out.
+# test/controlwiring/dockerignore_test.go pins both directions.
+*
+!go.mod
+!go.sum
+!cmd/
+!internal/
+!pkg/
+!migrations/
+
+# Secret-shaped files stay out even inside the allowlisted trees
+# (mirrors the secret rules in .gitignore).
+**/.env
+**/.env.*
+**/*.env
+**/credentials*.json
+**/service-account*.json
+**/gcp-key*.json
+**/*.iam.gserviceaccount.com.json
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/*.jks
+**/*.keystore
+**/*.secret.yaml
+**/*.secrets.yml
+**/*.secrets.yaml
