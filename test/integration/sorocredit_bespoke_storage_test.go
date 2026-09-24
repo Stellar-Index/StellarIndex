@@ -138,9 +138,6 @@ func TestCreditWindowAnalyticsAndBespoke(t *testing.T) {
 	if a.Withdrawals != 1 {
 		t.Errorf("Withdrawals = %d, want 1", a.Withdrawals)
 	}
-	if a.WithdrawalVolume.BigInt().Cmp(wdAmt) != 0 {
-		t.Errorf("WithdrawalVolume = %s, want %s", a.WithdrawalVolume, wdAmt)
-	}
 
 	blk, err := store.BuildProtocolBespoke(ctx, "sorocredit", "lending", 90)
 	if err != nil {

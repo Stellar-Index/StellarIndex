@@ -708,9 +708,9 @@ func (s *Store) phoenixStakeKPIs(ctx context.Context, blk *BespokeBlock, windowD
 
 // soroswapSkimKPIs augments the Soroswap DEX block with skim KPIs derived
 // from soroswap_skim_events (migration 0043) — the caller-initiated claim of
-// pool balance above recorded reserves (rare). Amounts are native token base
-// units, not USD; skim is not a trade and never feeds VWAP. Empty-safe: a
-// no-op when no skim was captured.
+// pool balance above recorded reserves (rare). Amounts are served per pair
+// only, in native token base units, not USD; skim is not a trade and never
+// feeds VWAP. Empty-safe: a no-op when no skim was captured.
 func (s *Store) soroswapSkimKPIs(ctx context.Context, blk *BespokeBlock, windowDays int) error {
 	sk, err := s.SoroswapSkimWindowStats(ctx, windowDays)
 	if err != nil {
@@ -721,14 +721,41 @@ func (s *Store) soroswapSkimKPIs(ctx context.Context, blk *BespokeBlock, windowD
 	}
 	blk.KPIs = append(blk.KPIs,
 		BespokeKPI{Label: fmt.Sprintf("Skim events (%dd)", windowDays), Value: strconv.FormatInt(sk.Skims, 10), Hint: "caller-initiated claims of pool balance above recorded reserves (rare; not trades)"},
-		BespokeKPI{Label: fmt.Sprintf("Skimmed token0 (%dd)", windowDays), Value: sk.Amount0.String(), Unit: "token-units", Hint: "summed token0 excess skimmed (base units)"},
-		BespokeKPI{Label: fmt.Sprintf("Skimmed token1 (%dd)", windowDays), Value: sk.Amount1.String(), Unit: "token-units", Hint: "summed token1 excess skimmed (base units)"},
 		BespokeKPI{Label: fmt.Sprintf("Pairs skimmed (%dd)", windowDays), Value: strconv.FormatInt(sk.Pairs, 10)},
 	)
+	blk.Tables = append(blk.Tables, soroswapSkimPairTable(sk.ByPair))
 	blk.Notes = append(blk.Notes,
-		"Skim figures are summed soroswap_skim_events amounts (migration 0043) in native token base units — the excess pool balance a caller claimed above recorded reserves. Skim is not a trade and never feeds VWAP.",
+		"Skim amounts are summed soroswap_skim_events amounts (migration 0043) per pair, in that pair's native token base units — the excess pool balance a caller claimed above recorded reserves. They are never summed across pairs (each pair's token0/token1 is a different token). Skim is not a trade and never feeds VWAP.",
 	)
 	return nil
+}
+
+// soroswapSkimPairTableLimit caps the rendered per-pair skim table.
+const soroswapSkimPairTableLimit = 25
+
+// soroswapSkimPairTable renders the per-pair skim totals, most-skimmed first.
+func soroswapSkimPairTable(pairs []SoroswapSkimPairTotal) BespokeTable {
+	tbl := BespokeTable{
+		Title:   "Skims by pair",
+		Columns: []string{"Pair", "Skims", "Token0", "Token0 skimmed", "Token1", "Token1 skimmed"},
+	}
+	orDash := func(v string) string {
+		if v == "" {
+			return "—"
+		}
+		return v
+	}
+	for i, p := range pairs {
+		if i == soroswapSkimPairTableLimit {
+			break
+		}
+		tbl.Rows = append(tbl.Rows, []string{
+			p.ContractID, strconv.FormatInt(p.Skims, 10),
+			orDash(p.Token0), p.Amount0.String(),
+			orDash(p.Token1), p.Amount1.String(),
+		})
+	}
+	return tbl
 }
 
 func (s *Store) lendingEmissionKPIs(ctx context.Context, blk *BespokeBlock, windowDays int) error {

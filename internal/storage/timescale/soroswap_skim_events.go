@@ -106,23 +106,34 @@ func (s *Store) InsertSoroswapSkimEvent(ctx context.Context, e SoroswapSkimEvent
 }
 
 // SoroswapSkimSummary is the windowed Soroswap skim activity summary — the
-// READ side of soroswap_skim_events (migration 0043). Amount0 / Amount1 are
-// the summed token0 / token1 excess claimed above pool reserves, in native
-// token base units (i128/NUMERIC, never int64 — ADR-0003).
+// READ side of soroswap_skim_events (migration 0043). Skims and Pairs are
+// window totals; amounts exist only per pair in ByPair, because token0 and
+// token1 are different tokens (and decimals) in every pair and a cross-pair
+// sum would add unlike base units.
 type SoroswapSkimSummary struct {
 	Skims    int64
-	Amount0  canonical.Amount
-	Amount1  canonical.Amount
 	Pairs    int64
+	ByPair   []SoroswapSkimPairTotal
 	LatestAt time.Time
 }
 
-// SoroswapSkimWindowStats reads the windowed Soroswap skim summary (count +
-// token0/token1 skimmed excess + distinct pairs) from soroswap_skim_events.
-// Skim is the caller-initiated claim of pool balance above recorded reserves
-// (rare — single-digit rows/day expected); it is not a trade and never feeds
-// VWAP. Amounts are native token base units, preserved as canonical.Amount
-// (ADR-0003).
+// SoroswapSkimPairTotal is one pair's windowed skim total, in that pair's
+// native token0 / token1 base units (i128/NUMERIC, never int64 — ADR-0003).
+// Token0 / Token1 are "" when the pair is not yet in soroswap_pairs.
+type SoroswapSkimPairTotal struct {
+	ContractID string
+	Token0     string
+	Token1     string
+	Skims      int64
+	Amount0    canonical.Amount
+	Amount1    canonical.Amount
+}
+
+// SoroswapSkimWindowStats reads the windowed Soroswap skim summary (count,
+// distinct pairs, and per-pair token0/token1 skimmed excess) from
+// soroswap_skim_events. Skim is the caller-initiated claim of pool balance
+// above recorded reserves (rare — single-digit rows/day expected); it is not
+// a trade and never feeds VWAP. ByPair is ordered by skim count descending.
 //
 // Empty-safe: returns (nil, nil) when no skim exists in the window, so the
 // bespoke KPI is omitted cleanly. windowDays <= 0 is treated as 90.
@@ -132,26 +143,46 @@ func (s *Store) SoroswapSkimWindowStats(ctx context.Context, windowDays int) (*S
 	}
 	since := fmt.Sprintf("%d days", windowDays)
 
-	var (
-		out    SoroswapSkimSummary
-		latest sql.NullTime
-	)
-	if err := s.db.QueryRowContext(ctx, `
-		SELECT count(*),
-		       COALESCE(sum(amount_0),0)::text,
-		       COALESCE(sum(amount_1),0)::text,
-		       count(DISTINCT contract_id),
-		       max(ledger_close_time)
-		  FROM soroswap_skim_events WHERE ledger_close_time > now() - $1::interval`, since).
-		Scan(&out.Skims, &out.Amount0, &out.Amount1, &out.Pairs, &latest); err != nil {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT e.contract_id,
+		       COALESCE(p.token0_strkey, ''),
+		       COALESCE(p.token1_strkey, ''),
+		       count(*),
+		       COALESCE(sum(e.amount_0),0)::text,
+		       COALESCE(sum(e.amount_1),0)::text,
+		       max(e.ledger_close_time)
+		  FROM soroswap_skim_events e
+		  LEFT JOIN soroswap_pairs p ON p.pair_strkey = e.contract_id
+		 WHERE e.ledger_close_time > now() - $1::interval
+		 GROUP BY e.contract_id, p.token0_strkey, p.token1_strkey
+		 ORDER BY count(*) DESC, e.contract_id`, since)
+	if err != nil {
 		return nil, fmt.Errorf("timescale: SoroswapSkimWindowStats: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out SoroswapSkimSummary
+	for rows.Next() {
+		var (
+			pt     SoroswapSkimPairTotal
+			latest sql.NullTime
+		)
+		if err := rows.Scan(&pt.ContractID, &pt.Token0, &pt.Token1, &pt.Skims, &pt.Amount0, &pt.Amount1, &latest); err != nil {
+			return nil, fmt.Errorf("timescale: SoroswapSkimWindowStats scan: %w", err)
+		}
+		out.ByPair = append(out.ByPair, pt)
+		out.Skims += pt.Skims
+		if latest.Valid && latest.Time.After(out.LatestAt) {
+			out.LatestAt = latest.Time.UTC()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("timescale: SoroswapSkimWindowStats rows: %w", err)
 	}
 	if out.Skims == 0 {
 		return nil, nil
 	}
-	if latest.Valid {
-		out.LatestAt = latest.Time.UTC()
-	}
+	out.Pairs = int64(len(out.ByPair))
 	return &out, nil
 }
 
