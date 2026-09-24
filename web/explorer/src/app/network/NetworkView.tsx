@@ -207,7 +207,7 @@ export function NetworkView() {
                 onClick={() => setWindowDays(d)}
                 className={`rounded-md px-2.5 py-1 text-xs ${
                   windowDays === d
-                    ? 'bg-surface-strong text-ink'
+                    ? 'bg-line text-ink'
                     : 'border-line text-ink-body hover:border-brand-500 border'
                 }`}
               >

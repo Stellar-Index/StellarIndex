@@ -317,7 +317,7 @@ function Pill({
 }) {
   const cls =
     tone === 'up'
-      ? 'bg-up-soft text-up-strong'
+      ? 'bg-up-subtle text-up-strong'
       : tone === 'amber'
         ? 'bg-warn-50 text-warn-700'
         : 'bg-surface-subtle text-ink-body';

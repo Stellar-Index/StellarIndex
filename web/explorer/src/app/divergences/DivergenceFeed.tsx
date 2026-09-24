@@ -312,7 +312,7 @@ function DivergenceSeriesPanel({
             onClick={() => onDays(d)}
             className={`rounded-md px-2.5 py-1 text-xs ${
               days === d
-                ? 'bg-surface-strong text-ink'
+                ? 'bg-line text-ink'
                 : 'border-line text-ink-body hover:border-brand-500 border'
             }`}
           >

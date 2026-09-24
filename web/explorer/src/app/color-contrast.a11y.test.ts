@@ -135,7 +135,10 @@ function blankComments(body: string): string {
  * an inline ternary, typically), and those are found by the first two passes
  * as the separate elements they describe.
  */
-function classStrings(body: string): Array<[number, string]> {
+function classStrings(
+  body: string,
+  utility: RegExp = UTILITY,
+): Array<[number, string]> {
   const text = blankComments(body);
   const out: Array<[number, string]> = [];
   const passes: Array<[RegExp, boolean]> = [
@@ -148,10 +151,48 @@ function classStrings(body: string): Array<[number, string]> {
       let s = m[1];
       if (isTemplate) s = s.replace(/\$\{[^{}]*\}/g, ' ');
       if (!CLASS_SHAPE.test(s)) continue;
-      UTILITY.lastIndex = 0;
-      if (!UTILITY.test(` ${s} `)) continue;
+      // A global regex's test() advances lastIndex, and matchAll() starts
+      // from it — leave it at 0 or the callers' scans skip a prefix.
+      utility.lastIndex = 0;
+      const isClassString = utility.test(` ${s} `);
+      utility.lastIndex = 0;
+      if (!isClassString) continue;
       const line = text.slice(0, m.index).split('\n').length;
       out.push([line, s]);
+    }
+  }
+  return out;
+}
+
+/**
+ * A colour-taking utility. `layers()` skips a name the palette lacks, so an
+ * undefined token is invisible to the contrast matrix as well as to Tailwind,
+ * which emits no rule for it and leaves the element unstyled.
+ */
+const COLOUR_UTILITY =
+  /(?:^|\s)(?:[a-z-]+:)*(?:bg|text|border(?:-[trblxyse])?|ring|outline|divide|fill|stroke|from|via|to|decoration|accent|caret|placeholder)-([a-z0-9-]+)(?:\/\d{1,3})?(?=\s|$)/g;
+
+/** Tailwind's default palette, which the theme extends rather than resets. */
+const TAILWIND_PALETTE = new Set(
+  'slate gray zinc neutral stone red orange amber yellow lime green emerald teal cyan sky blue indigo violet purple fuchsia pink rose'.split(
+    ' ',
+  ),
+);
+const TAILWIND_STEP = /^(?:50|[1-9]00|950)$/;
+
+/** Utilities that claim a theme colour family but name no token in it. */
+function undefinedColours(files: Array<[string, string]>): string[] {
+  const families = new Set(Object.keys(T).map((n) => n.split('-')[0]));
+  const out: string[] = [];
+  for (const [path, body] of files) {
+    for (const [line, s] of classStrings(body, COLOUR_UTILITY)) {
+      for (const m of ` ${s} `.matchAll(COLOUR_UTILITY)) {
+        const [family, ...rest] = m[1].split('-');
+        if (!families.has(family) || T[m[1]]) continue;
+        const step = rest.join('-');
+        if (TAILWIND_PALETTE.has(family) && TAILWIND_STEP.test(step)) continue;
+        out.push(`${path}:${line} ${m[0].trim()}`);
+      }
     }
   }
   return out;
@@ -281,6 +322,25 @@ describe('the explorer ships one theme, and this matrix covers it', () => {
       .filter(([, body]) => /(?:^|\s|')dark:[a-z]/.test(blankComments(body)))
       .map(([path]) => path);
     expect(users).toEqual([]);
+  });
+});
+
+describe('every theme colour utility names a token the theme defines', () => {
+  it('rejects a near-miss of a real token', () => {
+    const probe = `const a = 'bg-up-soft text-up-strong border-surface-sunk';`;
+    expect(undefinedColours([['probe.tsx', probe]])).toEqual([
+      'probe.tsx:1 bg-up-soft',
+      'probe.tsx:1 border-surface-sunk',
+    ]);
+  });
+
+  it('accepts theme tokens and the default Tailwind steps of a shared family', () => {
+    const probe = `const a = 'bg-up-subtle hover:text-ink/80 bg-violet-500 border-b-2';`;
+    expect(undefinedColours([['probe.tsx', probe]])).toEqual([]);
+  });
+
+  it('finds none in the tree', () => {
+    expect(undefinedColours(sourceFiles())).toEqual([]);
   });
 });
 

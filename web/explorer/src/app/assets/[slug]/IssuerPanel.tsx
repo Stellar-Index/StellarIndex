@@ -249,7 +249,7 @@ function FlagPill({ on, label }: { on?: boolean; label: string }) {
       </span>
     );
   }
-  const cls = on ? 'bg-warn-50 text-warn-700' : 'bg-up-soft text-up-strong';
+  const cls = on ? 'bg-warn-50 text-warn-700' : 'bg-up-subtle text-up-strong';
   return (
     <span
       className={`inline-block rounded-sm px-1.5 py-0.5 text-[10px] tracking-wider uppercase ${cls}`}

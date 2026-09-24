@@ -152,7 +152,7 @@ export function AssetPathView() {
           initialProvenance={provenanceFromBasis(d.price_basis, 'vwap1m')}
         />
         {d.unverified_warning?.note && (
-          <p className="border-warn-300 bg-warn-50 text-warn-800 rounded-md border p-3 text-sm">
+          <p className="border-warn-300 bg-warn-50 text-warn-700 rounded-md border p-3 text-sm">
             {d.unverified_warning.note}
           </p>
         )}
