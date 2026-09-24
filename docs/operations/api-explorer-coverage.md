@@ -1,6 +1,6 @@
 ---
 title: API ↔ explorer coverage — every endpoint, and whether a reader can reach it
-last_verified: 2026-09-09
+last_verified: 2026-09-24
 status: active
 ---
 
@@ -41,15 +41,20 @@ level 3. The chain to `/` is what matters, not the hop count.
 
 | | Count |
 |---|---:|
-| Paths in the OpenAPI contract | **127** |
-| Level 3 — reachable | **102** |
+| Paths in the OpenAPI contract | **131** |
+| Level 3 — reachable | **108** |
 | Level 2 — consumed but unreachable | **0** |
-| Level 1 — not consumed | **21** |
+| Level 1 — not consumed | **19** |
 | Deliberately excluded (operational) | **4** |
+
+Re-derived against the repo on 2026-09-24: the endpoint table, these
+counts, and both guard tests below (green). The live probes quoted in the
+level-1 and spec-disagreement sections were not re-run and are as of
+2026-09-09.
 
 **Level 2 is empty, and that is enforced, not lucky.**
 `src/lib/route-reachability.test.ts` already walks the link graph from
-`/` and fails on any page without a click path. All 85 `page.tsx` routes
+`/` and fails on any page without a click path. All 88 `page.tsx` routes
 are reachable except nine that are exempt with a stated reason (iframe
 widgets, legacy redirect shims, the magic-link landing, the design-system
 reference). So there was no "just add a footer link" fix to make — the
@@ -179,6 +184,8 @@ page carries.
 | `/aggregators` | GET | 3 | app/aggregators/RoutedVolumePanel.tsx | /aggregators |
 | `/sac-wrappers` | GET | 3 | hooks.ts:useSACWrappers | /accounts, /anomalies, /assets/[slug], /contracts, /dexes +6 |
 | `/rwa/assets` | GET | 3 | app/rwa/RWAView.tsx | /rwa |
+| `/rwa/history` | GET | 3 | app/rwa/RWAHistoryPanel.tsx | /rwa |
+| `/rwa/premium` | GET | 3 | app/rwa/RWAPremiumPanel.tsx | /rwa |
 | `/pairs` | GET | 1 | — | — |
 | `/oracle/lastprice` | GET | 3 | app/oracles/OraclesView.tsx, app/status/StatusPageClient.tsx | /oracles, /status |
 | `/oracle/prices` | GET | 3 | app/oracles/OraclesView.tsx | /oracles |
@@ -198,8 +205,8 @@ page carries.
 | `/signup/verify` | GET | 1 | — | — |
 | `/dashboard/keys` | GET, POST | 3 | account.ts:createKey, account.ts:listKeys | /dashboard, /dashboard/keys, /dashboard/usage |
 | `/dashboard/keys/{id}` | DELETE | 3 | account.ts:revokeKey | /dashboard/keys |
-| `/dashboard/webhooks` | GET, POST | 1 | — | — |
-| `/dashboard/webhooks/{id}` | PATCH, DELETE | 1 | — | — |
+| `/dashboard/webhooks` | GET, POST | 3 | account.ts:createDashboardWebhook, account.ts:listDashboardWebhooks | /dashboard/webhooks |
+| `/dashboard/webhooks/{id}` | PATCH, DELETE | 3 | account.ts:deleteDashboardWebhook, account.ts:updateDashboardWebhook | /dashboard/webhooks |
 | `/dashboard/webhooks/{id}/deliveries` | GET | 1 | — | — |
 | `/dashboard/price-alerts` | GET, POST | 3 | account.ts:createPriceAlert, account.ts:listPriceAlerts | /dashboard/price-alerts |
 | `/dashboard/price-alerts/{id}` | PATCH, DELETE | 3 | account.ts:deletePriceAlert, account.ts:updatePriceAlert | /dashboard/price-alerts |
@@ -238,11 +245,13 @@ page carries.
 | `/accounts/{g_strkey}/trades` | GET | 3 | app/accounts/AccountTrades.tsx | /accounts, /accounts/[g] |
 | `/accounts/{g_strkey}/activity` | GET | 3 | app/accounts/AccountActivitySummary.tsx | /accounts, /accounts/[g] |
 | `/accounts/{g_strkey}/graph` | GET | 3 | app/accounts/AccountGraph.tsx | /accounts, /accounts/[g] |
+| `/accounts/{g_strkey}/graph/history` | GET | 3 | app/insights/AccountRelationHistory.tsx | /insights/creators/[address], /insights/sponsors/[address] |
+| `/accounts/{g_strkey}/graph/cohort` | GET | 3 | app/insights/AccountRelationCohort.tsx | /insights/creators/[address], /insights/sponsors/[address] |
 | `/search` | GET | 3 | components/nav/SearchModal.tsx | global nav chrome; /, /accounts, /accounts/[g] |
 
-## Level 1 — the 21 stranded endpoints
+## Level 1 — the 19 stranded endpoints
 
-Every one of these was probed live on 2026-09-09. **All 21 exist and
+Every one of these was probed live on 2026-09-09. **All 19 exist and
 answer** — none 404s at the route level. This is served data with no
 reader.
 
@@ -298,17 +307,16 @@ vendors", "canonical fiat rates" — so an exhaustive-list gate would be
 noise. Nothing *named* can be wrong; something registered can be
 unmentioned.
 
-### Account/admin surfaces with no UI (13)
+### Account/admin surfaces with no UI (11)
 
 Consistent gaps, all behind auth, all returning a correct `401` when
 probed unauthenticated:
 
-- **Webhooks (3)** — `/dashboard/webhooks`, `/dashboard/webhooks/{id}`,
-  `/dashboard/webhooks/{id}/deliveries`. There is **no webhooks UI at
-  all**, yet `/dashboard/price-alerts` exists and a firing alert enqueues
-  a `price.alert` webhook. So a user can create an alert whose delivery
-  mechanism they cannot see, configure, or debug. This is the largest and
-  most user-visible gap in the list.
+- **Webhook deliveries (1)** — `/dashboard/webhooks/{id}/deliveries`.
+  `/dashboard/webhooks` now lists, creates, edits and deletes endpoints,
+  but shows no delivery history, so a user can configure where a
+  `price.alert` goes and still cannot see whether it arrived or why it
+  failed.
 - **Staff admin (5)** — `/admin/keys`, `/admin/keys/{keyID}`,
   `/admin/accounts/{id}`, `/admin/status-notices`,
   `/admin/status-notices/{id}/resolve`. `/dashboard/admin` exists and
@@ -379,7 +387,7 @@ now, `follow: true` throughout so outbound links keep flowing.
 
 `n/a` in the sitemap column means the page is `noindex`, where absence
 from the sitemap is correct (a noindex URL in a sitemap is a Search
-Console error). 24 pages are noindex: the auth and dashboard surfaces,
+Console error). 27 pages are noindex: the auth and dashboard surfaces,
 the iframe widgets, the design-system reference, and the unbounded
 per-entity shells.
 
@@ -411,6 +419,7 @@ per-entity shells.
 | `/dashboard/price-alerts` | ✓ | ✓ | ✓ | — | n/a |
 | `/dashboard/settings` | ✓ | ✓ | ✓ | — | n/a |
 | `/dashboard/usage` | ✓ | ✓ | ✓ | — | n/a |
+| `/dashboard/webhooks` | ✓ | ✓ | ✓ | — | n/a |
 | `/dev/primitives` | ✓ | ✓ | ✓ | — | n/a |
 | `/dev/styleguide` | ✓ | ✓ | ✓ | — | n/a |
 | `/dexes` | ✓ | ✓ | ✓ | ✓ | ✓ |
@@ -427,7 +436,9 @@ per-entity shells.
 | `/external/assets/[slug]` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `/insights` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `/insights/creators` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `/insights/creators/[address]` | ✓ | ✓ | — | — | n/a |
 | `/insights/sponsors` | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `/insights/sponsors/[address]` | ✓ | ✓ | — | — | n/a |
 | `/issuers` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `/issuers/[g_strkey]` | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `/ledger` | ✓ | ✓ | ✓ | — | n/a |
