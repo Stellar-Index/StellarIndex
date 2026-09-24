@@ -167,3 +167,71 @@ func TestCheckXLMBaseBound_SubCentDust(t *testing.T) {
 		t.Errorf("footer does not state the sub-cent exemption:\n%s", footer)
 	}
 }
+
+// TestCheckXLMQuoteBound is [TestCheckXLMBaseBound]'s mirror (CA2-A17):
+// checkXLMBaseBound can never match a group whose XLM leg is the QUOTE
+// side (-tier xlm-quote), so before this fix a 10x-off xlm-quote rewrite
+// would report 0 violations from the "acceptance:" verify-usd-volume run
+// the tool itself prints after every estimated-tier restamp.
+func TestCheckXLMQuoteBound(t *testing.T) {
+	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rate := new(big.Rat).SetFloat64(0.16) // day VWAP $0.16/XLM
+
+	// 1,000 XLM quote (1e10 stroops) → expected ≈ $160.
+	group := func(sumUSD string) timescale.TradeValuationGroup {
+		return timescale.TradeValuationGroup{
+			Source: "sdex",
+			// On-chain base with NO peg on the (empty) spec →
+			// TierEstimated, XLM sitting in the QUOTE leg instead of base.
+			BaseAsset:      "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V",
+			QuoteAsset:     "native",
+			PricedRows:     10,
+			SumUSDVolume:   sumUSD,
+			SumQuoteAmount: "10000000000",
+		}
+	}
+
+	cases := []struct {
+		name   string
+		sumUSD string
+		want   int
+	}{
+		{"honest valuation passes", "160.00", 0},
+		{"within 30 percent passes", "130.00", 0},
+		{"10x overstatement caught", "1600.00", 1},
+		{"10x understatement caught", "16.00", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := checkXLMQuoteBound([]timescale.TradeValuationGroup{group(tc.sumUSD)}, spec, rate, 1, 20)
+			if got != tc.want {
+				t.Errorf("violations = %d, want %d", got, tc.want)
+			}
+		})
+	}
+
+	t.Run("non-XLM quote is out of scope", func(t *testing.T) {
+		g := group("999999")
+		g.QuoteAsset = "AQUA-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
+		if got := checkXLMQuoteBound([]timescale.TradeValuationGroup{g}, spec, rate, 1, 20); got != 0 {
+			t.Errorf("violations = %d, want 0 for non-XLM quote", got)
+		}
+	})
+
+	t.Run("XLM-base group is out of scope for the quote bound", func(t *testing.T) {
+		// The mirror population: base is XLM, quote is not — checkXLMBaseBound's
+		// territory, not checkXLMQuoteBound's.
+		g := group("1600.00")
+		g.BaseAsset, g.QuoteAsset = "native", "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V"
+		if got := checkXLMQuoteBound([]timescale.TradeValuationGroup{g}, spec, rate, 1, 20); got != 0 {
+			t.Errorf("violations = %d, want 0 — XLM-base groups belong to checkXLMBaseBound", got)
+		}
+	})
+
+	if footer := usdVolumeFooterText(0); !strings.Contains(footer, "XLM-base AND XLM-quote") {
+		t.Errorf("footer does not state xlm-quote is now a CHECKED tier:\n%s", footer)
+	}
+}

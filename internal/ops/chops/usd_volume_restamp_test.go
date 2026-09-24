@@ -74,3 +74,42 @@ func TestRestampSourceAllowList(t *testing.T) {
 		t.Errorf("allow list = %v", got)
 	}
 }
+
+// TestValidateRestampSourceAllowList_unknownNameRefused pins CA2-A13: an
+// estimated tier's -sources value that names a source outside the tier's
+// own registry must be refused, not silently dropped by
+// [timescale.restampScanSources] into an empty, "clean-looking" scan.
+func TestValidateRestampSourceAllowList_unknownNameRefused(t *testing.T) {
+	// sdex is a DEX source; -tier cex-fx only recognises CEX sources.
+	err := validateRestampSourceAllowList(restampTierCEXFX, restampSourceAllowList("sdex"))
+	if err == nil {
+		t.Fatal("validateRestampSourceAllowList(cex-fx, {sdex}) = nil — a DEX-only source on the CEX tier would scan nothing and exit 0")
+	}
+	if !strings.Contains(err.Error(), "sdex") {
+		t.Errorf("refusal must name the offending value; got: %v", err)
+	}
+	if !strings.Contains(err.Error(), restampTierCEXFX) {
+		t.Errorf("refusal must name the tier; got: %v", err)
+	}
+
+	// A plain typo on the DEX-anchored tiers is refused the same way.
+	if err := validateRestampSourceAllowList(restampTierXLMBase, restampSourceAllowList("soroswapp")); err == nil {
+		t.Fatal("validateRestampSourceAllowList(xlm-base, {soroswapp}) = nil — a typo would scan nothing and exit 0")
+	}
+}
+
+// TestValidateRestampSourceAllowList_knownNamesAccepted: a real source on
+// its own tier, and an unset -sources (nil allow-list, meaning "all"),
+// pass through untouched.
+func TestValidateRestampSourceAllowList_knownNamesAccepted(t *testing.T) {
+	if err := validateRestampSourceAllowList(restampTierXLMBase, restampSourceAllowList("sdex")); err != nil {
+		t.Errorf("known DEX source on xlm-base refused: %v", err)
+	}
+	if err := validateRestampSourceAllowList(restampTierCEXFX, nil); err != nil {
+		t.Errorf("nil allow-list (all sources) refused: %v", err)
+	}
+	// The exact tier is data-driven, not registry-checked here.
+	if err := validateRestampSourceAllowList(restampTierExact, restampSourceAllowList("not-a-real-source")); err != nil {
+		t.Errorf("exact tier must not be registry-gated by this guard: %v", err)
+	}
+}

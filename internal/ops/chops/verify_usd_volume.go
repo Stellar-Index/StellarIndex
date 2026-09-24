@@ -193,6 +193,27 @@ func xlmBaseLegScale(source string) *big.Rat {
 // Skips silently when the day has no XLM/USD bucket (rate unknowable —
 // printed by the caller).
 func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int) int {
+	return checkXLMLegBound(groups, spec, dayVWAP, minRows, maxList, "XLM-BASE",
+		func(g timescale.TradeValuationGroup) (asset, amount string) { return g.BaseAsset, g.SumBaseAmount })
+}
+
+// checkXLMQuoteBound is [checkXLMBaseBound]'s mirror for the `-tier
+// xlm-quote` population (CA2-A17): DEX trades where XLM sits in the
+// QUOTE leg instead of the base one. checkXLMBaseBound can never match
+// these rows (their BaseAsset is never an XLM form), so before this they
+// got no automated judgement at all — only counted into the printed
+// MEASURED rollup.
+func checkXLMQuoteBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int) int {
+	return checkXLMLegBound(groups, spec, dayVWAP, minRows, maxList, "XLM-QUOTE",
+		func(g timescale.TradeValuationGroup) (asset, amount string) { return g.QuoteAsset, g.SumQuoteAmount })
+}
+
+// checkXLMLegBound is the shared body of [checkXLMBaseBound] and
+// [checkXLMQuoteBound]: stored Σusd_volume must land within
+// [1−tol, 1+tol] × (Σleg/1e7 × dayVWAP), where `leg` picks out whichever
+// side (base or quote) of the group is being judged. `label` names the
+// bound in printed output.
+func checkXLMLegBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int, label string, leg func(timescale.TradeValuationGroup) (asset, amount string)) int {
 	xlmForms := map[string]bool{}
 	for _, a := range canonical.AssetAliases(canonical.NativeAsset()) {
 		xlmForms[a.String()] = true
@@ -202,10 +223,11 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 
 	var violations, listed, dust int
 	for _, g := range groups {
-		if !xlmForms[g.BaseAsset] || g.PricedRows < minRows {
+		legAsset, legAmount := leg(g)
+		if !xlmForms[legAsset] || g.PricedRows < minRows {
 			continue
 		}
-		stored, expected, ok := xlmBaseStoredAndExpected(g, spec, dayVWAP)
+		stored, expected, ok := xlmLegStoredAndExpected(g, spec, dayVWAP, legAmount)
 		if !ok {
 			continue
 		}
@@ -222,34 +244,36 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 		if listed < maxList {
 			listed++
 			ratio := new(big.Rat).Quo(stored, expected)
-			fmt.Printf("  XLM-BASE BOUND VIOLATION %s %s/%s rows=%d  stored=%s  expected≈%s  ratio=%s\n",
-				g.Source, g.BaseAsset, g.QuoteAsset, g.PricedRows,
+			fmt.Printf("  %s BOUND VIOLATION %s %s/%s rows=%d  stored=%s  expected≈%s  ratio=%s\n",
+				label, g.Source, g.BaseAsset, g.QuoteAsset, g.PricedRows,
 				stored.FloatString(2), expected.FloatString(2), ratio.FloatString(4))
 		} else if listed == maxList {
 			listed++
-			fmt.Printf("  … more XLM-base bound violations suppressed (raise -max-list)\n")
+			fmt.Printf("  … more %s bound violations suppressed (raise -max-list)\n", label)
 		}
 	}
 	if dust > 0 {
-		fmt.Printf("  XLM-BASE BOUND: %d sub-cent breach(es) not counted — stored and expected both round to $0.00\n", dust)
+		fmt.Printf("  %s BOUND: %d sub-cent breach(es) not counted — stored and expected both round to $0.00\n", label, dust)
 	}
 	return violations
 }
 
-// xlmBaseStoredAndExpected returns an estimated-tier group's stored
-// Σusd_volume and its expected Σbase × dayVWAP; ok is false when the group
-// is not estimated-tier or either side is unparseable or non-positive.
-func xlmBaseStoredAndExpected(g timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat) (stored, expected *big.Rat, ok bool) {
+// xlmLegStoredAndExpected returns an estimated-tier group's stored
+// Σusd_volume and its expected Σleg × dayVWAP, where `legAmount` is
+// whichever side (SumBaseAmount or SumQuoteAmount) the caller is
+// judging; ok is false when the group is not estimated-tier or either
+// side is unparseable or non-positive.
+func xlmLegStoredAndExpected(g timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, legAmount string) (stored, expected *big.Rat, ok bool) {
 	tier, _, cerr := timescale.ClassifyUSDVolumeTier(g.Source, g.BaseAsset, g.QuoteAsset, spec)
 	if cerr != nil || tier != timescale.TierEstimated {
 		return nil, nil, false
 	}
 	stored, sok := new(big.Rat).SetString(g.SumUSDVolume)
-	base, bok := new(big.Rat).SetString(g.SumBaseAmount)
-	if !sok || !bok || base.Sign() <= 0 {
+	leg, lok := new(big.Rat).SetString(legAmount)
+	if !sok || !lok || leg.Sign() <= 0 {
 		return nil, nil, false
 	}
-	expected = new(big.Rat).Quo(base, xlmBaseLegScale(g.Source))
+	expected = new(big.Rat).Quo(leg, xlmBaseLegScale(g.Source))
 	expected.Mul(expected, dayVWAP)
 	if expected.Sign() <= 0 {
 		return nil, nil, false
@@ -388,6 +412,18 @@ func verifyUSDVolumeDay(
 				n, xlmBaseBoundTolerance*100, rateRat.FloatString(6))
 		}
 		violations += n
+
+		// XLM-QUOTE BOUND (CA2-A17): the mirror population — DEX trades
+		// with XLM in the quote leg (-tier xlm-quote) — was structurally
+		// unjudged the same way tier-3b was before the XLM-base bound
+		// above: this command's own "acceptance" line reported 0
+		// violations for a tier it never looked at.
+		nq := checkXLMQuoteBound(groups, spec, rateRat, minRows, maxList)
+		if nq > 0 {
+			fmt.Printf("  XLM-QUOTE BOUND: %d violation(s) at ±%.0f%% vs day VWAP %s\n",
+				nq, xlmBaseBoundTolerance*100, rateRat.FloatString(6))
+		}
+		violations += nq
 	}
 
 	printUSDVolumeTierTable(rollups)
@@ -479,9 +515,10 @@ func usdVolumeFooterText(violations int) string {
 --- what this run proved ---
 CHECKED  quote_pegged + base_pegged: usd_volume == pegged_leg / 10^decimals,
          an exact identity with no tolerance.
-CHECKED  XLM-base estimated groups: Σusd_volume within ±%s%% of
-         Σbase/1e7 × the day's CEX XLM/USD VWAP. A breach where stored
-         and expected both round to $0.00 is printed, not counted.
+CHECKED  XLM-base AND XLM-quote estimated groups (-tier xlm-base,
+         -tier xlm-quote — whichever leg is an XLM form): Σusd_volume
+         within ±%s%% of Σ(that leg)/1e7 × the day's CEX XLM/USD VWAP. A
+         breach where stored and expected both round to $0.00 is printed, not counted.
          Read the bound honestly (#372 F1):
            - it FIRES at %sx overstatement / %sx understatement.
              10x-1,000,000x was the SIZE of the 2026-08-04 tier-3b
@@ -495,9 +532,11 @@ CHECKED  XLM-base estimated groups: Σusd_volume within ±%s%% of
              mean 1.0370, none reaching 1.30. It holds by 0.08 of
              measured headroom, not by construction.
          Total: %d violation(s) across both checked classes.
-MEASURED remaining estimated tiers (non-XLM-base FX/bridge rows): sums and
-         row counts printed only — genuinely inexact, no calibrated
-         threshold yet.
+MEASURED remaining estimated rows (-tier cex-fx pairs where NEITHER leg
+         is XLM, e.g. BTC/EUR, ETH/GBP): sums and row counts printed
+         only — no XLM anchor to bound against, no calibrated threshold
+         yet. This command's "acceptance:" line is NOT a pass/fail
+         verdict for these rows.
 
 A clean run does NOT certify that tier-3/4 usd_volume values are correct,
 and does not certify coverage (that is the standing
