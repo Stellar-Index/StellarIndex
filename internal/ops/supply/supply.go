@@ -488,8 +488,9 @@ func autoSnapshotLedger(cursors []timescale.Cursor) (ledger uint32, source strin
 // supply-divergence triage per docs/operations/runbooks/
 // supply-cross-check-divergence.md.
 //
-// Asset is the first positional arg in canonical wire form
-// (native | CODE-ISSUER | <C-strkey>). Flags:
+// Asset is the one positional arg in canonical wire form
+// (native | CODE-ISSUER | <C-strkey>), accepted before, between or after
+// the flags. Flags:
 //
 //	-config PATH            Required. TOML config (Postgres DSN).
 //	-cross-check <asset>    Other asset (typically the SAC
@@ -500,27 +501,12 @@ func autoSnapshotLedger(cursors []timescale.Cursor) (ledger uint32, source strin
 //	                        window so an operator sees the trend.
 //	                        Default 0 (latest only).
 func supplyAudit(args []string) error {
-	fs := flag.NewFlagSet("supply audit", flag.ContinueOnError)
-	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
-	crossCheck := fs.String("cross-check", "",
-		"Counterpart asset to compare against (canonical wire form). "+
-			"Typically the SAC contract id of a classic asset, or vice versa.")
-	historyHours := fs.Int("history-hours", 0,
-		"Trailing window of historical snapshots to print (hours). 0 = latest only.")
-	if err := fs.Parse(args); err != nil {
+	a, err := parseSupplyAuditArgs(args)
+	if err != nil {
 		return err
 	}
-	if fs.NArg() == 0 {
-		return errors.New("usage: supply audit <asset> [-config PATH] [-cross-check <asset>] [-history-hours N]")
-	}
-	if *cfgPath == "" {
-		return errors.New("-config is required")
-	}
-	if *historyHours < 0 {
-		return fmt.Errorf("-history-hours must be ≥ 0 (got %d)", *historyHours)
-	}
 
-	primaryRaw := fs.Arg(0)
+	primaryRaw := a.asset
 	primary, err := canonical.ParseAsset(primaryRaw)
 	if err != nil {
 		return fmt.Errorf("parse asset %q: %w", primaryRaw, err)
@@ -530,7 +516,7 @@ func supplyAudit(args []string) error {
 		return fmt.Errorf("asset %s has no supply key: %w", primaryRaw, err)
 	}
 
-	cfg, err := config.LoadWithEnv(*cfgPath)
+	cfg, err := config.LoadWithEnv(a.cfgPath)
 	if err != nil {
 		return err
 	}
@@ -550,19 +536,64 @@ func supplyAudit(args []string) error {
 	}
 	printSupplySnapshot("PRIMARY", primaryRaw, primaryKey, primarySnap)
 
-	if *historyHours > 0 {
-		if err := printSupplyHistory(ctx, store, primaryKey, *historyHours); err != nil {
+	if a.historyHours > 0 {
+		if err := printSupplyHistory(ctx, store, primaryKey, a.historyHours); err != nil {
 			return err
 		}
 	}
 
-	if *crossCheck != "" {
-		if err := runSupplyCrossCheck(ctx, store, *crossCheck, primaryKey, primarySnap,
-			crossCheckWrapClass(cfg.Supply.FullyWrappedSACs, *crossCheck)); err != nil {
+	if a.crossCheck != "" {
+		if err := runSupplyCrossCheck(ctx, store, a.crossCheck, primaryKey, primarySnap,
+			crossCheckWrapClass(cfg.Supply.FullyWrappedSACs, a.crossCheck)); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// supplyAuditArgs is supply audit's parsed command line.
+type supplyAuditArgs struct {
+	cfgPath, crossCheck, asset string
+	historyHours               int
+}
+
+const supplyAuditUsage = "usage: supply audit <asset> -config PATH [-cross-check <asset>] [-history-hours N]"
+
+// parseSupplyAuditArgs parses flags on both sides of the asset. Go's flag
+// package stops at the first positional, so a single fs.Parse left every
+// flag after the asset unread and the documented `supply audit native
+// -config PATH` failed with "-config is required".
+func parseSupplyAuditArgs(args []string) (supplyAuditArgs, error) {
+	var a supplyAuditArgs
+	fs := flag.NewFlagSet("supply audit", flag.ContinueOnError)
+	fs.StringVar(&a.cfgPath, "config", "", "Path to TOML config file (required)")
+	fs.StringVar(&a.crossCheck, "cross-check", "",
+		"Counterpart asset to compare against (canonical wire form). "+
+			"Typically the SAC contract id of a classic asset, or vice versa.")
+	fs.IntVar(&a.historyHours, "history-hours", 0,
+		"Trailing window of historical snapshots to print (hours). 0 = latest only.")
+	var positional []string
+	for {
+		if err := fs.Parse(args); err != nil {
+			return supplyAuditArgs{}, err
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positional = append(positional, fs.Arg(0))
+		args = fs.Args()[1:]
+	}
+	if len(positional) != 1 {
+		return supplyAuditArgs{}, fmt.Errorf("%s (got %d positional argument(s): %q)", supplyAuditUsage, len(positional), positional)
+	}
+	a.asset = positional[0]
+	if a.cfgPath == "" {
+		return supplyAuditArgs{}, errors.New("-config is required")
+	}
+	if a.historyHours < 0 {
+		return supplyAuditArgs{}, fmt.Errorf("-history-hours must be ≥ 0 (got %d)", a.historyHours)
+	}
+	return a, nil
 }
 
 // fetchSupplyOrReport fetches the latest supply for assetKey,
@@ -717,7 +748,7 @@ func reportCrossCheck(w io.Writer, result supply.CrossCheckResult, primaryKey st
 	case !result.WithinTolerance:
 		_, _ = fmt.Fprintf(w, "  status:               OVER TOLERANCE ✗ — investigate per supply-cross-check-divergence runbook\n")
 		_, _ = fmt.Fprintf(w, "  alert label:          classic_key=\"%s\"\n", primaryKey)
-		_, _ = fmt.Fprintln(w, "  next action:          stellarindex-ops supply audit <asset> -history-hours 24 to identify when divergence appeared")
+		_, _ = fmt.Fprintln(w, "  next action:          stellarindex-ops supply audit <asset> -config /etc/stellarindex.toml -history-hours 24 to identify when divergence appeared")
 	case unchecked:
 		_, _ = fmt.Fprintln(w, "  status:               UNCHECKED ? — escrow leg not evaluated; the classic snapshot carries no sac_wrapped_stroops, so divergence 0 verifies nothing")
 		_, _ = fmt.Fprintln(w, "  next action:          wait for a classic snapshot recorded after migration 0117, then re-run")

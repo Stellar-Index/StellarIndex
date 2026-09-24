@@ -457,10 +457,10 @@ func insertBackfilledTrades(ctx context.Context, store tradeInserter, trades []c
 	}
 	_, _ = fmt.Fprintf(log, "backfill-external: done — %d inserted, %d skipped in %v\n",
 		inserted, skipped, time.Since(t0).Round(time.Millisecond))
-	if skipped > 0 {
-		return fmt.Errorf("backfill-external: %d of %d trade(s) failed to insert (see per-row errors above) — rows were dropped with no dead-letter; refusing to exit 0", skipped, len(trades))
-	}
-	return nil
+	return opsutil.RunOutcome{
+		Verb: "backfill-external", Noun: "trade",
+		Attempted: len(trades), Written: inserted, Failed: skipped,
+	}.Err()
 }
 
 // buildBackfiller maps the -source flag to the venue's Backfiller

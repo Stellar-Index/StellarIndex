@@ -15,6 +15,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external/coingecko"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -192,6 +193,12 @@ func BackfillIndex(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "backfill-index: done — %d observation(s) over %d chunk(s), %d skipped, in %v\n",
 		inserted, chunks, skipped, time.Since(t0).Round(time.Second))
+	if err := (opsutil.RunOutcome{
+		Verb: "backfill-index", Noun: "observation",
+		Attempted: inserted + skipped, Written: inserted, Failed: skipped,
+	}).Err(); err != nil {
+		return err
+	}
 	if inserted == 0 {
 		// A zero-row "success" is the shape that hides a broken backfill,
 		// so it exits non-zero rather than reading as done.
@@ -246,8 +253,8 @@ func walkIndexRange(
 
 // insertIndexChunk writes one chunk's observations, counting rather than
 // aborting on a per-row failure: a single bad observation must not discard a
-// window that is otherwise good, and the caller's non-zero-exit-on-zero-rows
-// check is what catches a run where everything failed.
+// window that is otherwise good, and the caller's RunOutcome still fails the
+// run on any dropped row.
 //
 // inserted/skipped are passed in only so the progress line reports a running
 // total across chunks rather than restarting at each one.
