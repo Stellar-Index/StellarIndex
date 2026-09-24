@@ -46,6 +46,7 @@ func newReplayValidatorWithRedis(t *testing.T) (*sep10.Validator, *keypair.Full,
 		JWTTTL:            time.Hour,
 		JWTSecret:         testJWTSecret,
 		ReplayGuard:       sep10.NewRedisReplayGuard(rdb),
+		AccountLoader:     fakeAccounts{},
 	})
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)

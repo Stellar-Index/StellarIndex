@@ -341,6 +341,7 @@ func TestBuildAPIKeyValidator_BothFlagStates(t *testing.T) {
 //   - configured + NO Redis + auth_mode=sep10 → hard error (ErrReplayGuardUnavailable);
 //     never a guard-free validator.
 //   - configured + NO Redis + other mode      → Noop (503), binary still boots.
+//   - configured + NO account lake            → same policy via ErrAccountLoaderUnavailable.
 //   - unconfigured (no seed/jwt env)          → Noop (503), binary still boots
 //     (the common r1 auth_mode=apikey_optional case).
 func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
@@ -373,7 +374,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 		t.Cleanup(func() { _ = rdb.Close() })
 
 		for _, mode := range []string{"apikey_optional", "sep10"} {
-			v, err := resolveSEP10Validator(configured, mode, config.Default().Stellar.Passphrase(), rdb, discardLogger())
+			v, err := resolveSEP10Validator(configured, mode, config.Default().Stellar.Passphrase(), rdb, &lakeAccountSigners{}, discardLogger())
 			if err != nil {
 				t.Fatalf("mode=%s: unexpected error: %v", mode, err)
 			}
@@ -388,7 +389,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 
 	t.Run("configured + NO Redis + auth_mode=sep10 → fail closed", func(t *testing.T) {
 		setConfiguredEnv(t)
-		v, err := resolveSEP10Validator(configured, "sep10", config.Default().Stellar.Passphrase(), nil, discardLogger())
+		v, err := resolveSEP10Validator(configured, "sep10", config.Default().Stellar.Passphrase(), nil, &lakeAccountSigners{}, discardLogger())
 		if err == nil {
 			t.Fatalf("expected fail-closed error, got validator %T", v)
 		}
@@ -402,7 +403,7 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 
 	t.Run("configured + NO Redis + auth_mode=apikey_optional → Noop, boots", func(t *testing.T) {
 		setConfiguredEnv(t)
-		v, err := resolveSEP10Validator(configured, "apikey_optional", config.Default().Stellar.Passphrase(), nil, discardLogger())
+		v, err := resolveSEP10Validator(configured, "apikey_optional", config.Default().Stellar.Passphrase(), nil, &lakeAccountSigners{}, discardLogger())
 		if err != nil {
 			t.Fatalf("must degrade to Noop (not abort boot) outside auth_mode=sep10: %v", err)
 		}
@@ -411,11 +412,30 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 		}
 	})
 
+	t.Run("configured + Redis + NO account lake → fail closed / Noop", func(t *testing.T) {
+		setConfiguredEnv(t)
+		mr := miniredis.RunT(t)
+		rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+		t.Cleanup(func() { _ = rdb.Close() })
+
+		v, err := resolveSEP10Validator(configured, "sep10", config.Default().Stellar.Passphrase(), rdb, nil, discardLogger())
+		if !errors.Is(err, sep10.ErrAccountLoaderUnavailable) || v != nil {
+			t.Fatalf("auth_mode=sep10 without a signer lookup: got (%T, %v), want (nil, ErrAccountLoaderUnavailable)", v, err)
+		}
+		v, err = resolveSEP10Validator(configured, "apikey_optional", config.Default().Stellar.Passphrase(), rdb, nil, discardLogger())
+		if err != nil {
+			t.Fatalf("must degrade to Noop outside auth_mode=sep10: %v", err)
+		}
+		if _, ok := v.(auth.NoopSEP10Validator); !ok {
+			t.Errorf("got %T, want auth.NoopSEP10Validator (never a threshold-blind validator)", v)
+		}
+	})
+
 	t.Run("unconfigured → Noop, boots", func(t *testing.T) {
 		v, err := resolveSEP10Validator(config.SEP10Config{
 			WebAuthDomain: "auth.stellarindex.test",
 			HomeDomain:    "stellarindex.test",
-		}, "apikey_optional", config.Default().Stellar.Passphrase(), nil, discardLogger())
+		}, "apikey_optional", config.Default().Stellar.Passphrase(), nil, nil, discardLogger())
 		if err != nil {
 			t.Fatalf("an unconfigured SEP-10 deployment must boot with the Noop, got error: %v", err)
 		}
@@ -423,6 +443,16 @@ func TestResolveSEP10Validator_WiringByConfiguration(t *testing.T) {
 			t.Errorf("got %T, want auth.NoopSEP10Validator", v)
 		}
 	})
+}
+
+// Before the explorer reader is bound (or when its dial failed) the
+// SEP-10 signer lookup must error, so verification fails closed rather
+// than treating every account as not-yet-on-chain.
+func TestLakeAccountSignersUnboundFailsClosed(t *testing.T) {
+	_, err := (&lakeAccountSigners{}).LoadAccountSigners(context.Background(), keypair.MustRandom().Address())
+	if err == nil {
+		t.Fatal("unbound lake lookup returned no error")
+	}
 }
 
 // TestWarnUnsafeBind covers the C3-18 IPv6 parse fix: a public

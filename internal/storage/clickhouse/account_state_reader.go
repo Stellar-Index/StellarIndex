@@ -81,6 +81,43 @@ type AssetHolder struct {
 // the account_id skip-index (ADR-0038 Phase C). Returns Exists=false (no error)
 // for an unknown / merged account.
 func (r *ExplorerReader) AccountState(ctx context.Context, account string) (AccountState, error) {
+	st, err := r.accountEntry(ctx, account)
+	if errors.Is(err, errCorruptAccountEntry) {
+		// A corrupt stored entry degrades to "no state" rather than 500-ing
+		// the request — the row is the substrate's problem, not the caller's.
+		return AccountState{}, nil
+	}
+	if err != nil || !st.Exists {
+		return st, err
+	}
+
+	tl, err := r.accountTrustlines(ctx, account)
+	if err != nil {
+		return st, err
+	}
+	st.Trustlines = tl
+	of, err := r.accountOffers(ctx, account)
+	if err != nil {
+		return st, err
+	}
+	st.Offers = of
+	return st, nil
+}
+
+// AccountSigners returns the account's entry-level state (thresholds,
+// master weight, signers) without its trustlines and offers. Unlike
+// [ExplorerReader.AccountState], a corrupt stored entry is an error: an
+// authentication check must not read an unparseable entry as "no account".
+func (r *ExplorerReader) AccountSigners(ctx context.Context, account string) (AccountState, error) {
+	return r.accountEntry(ctx, account)
+}
+
+var errCorruptAccountEntry = errors.New("clickhouse: corrupt stored account entry")
+
+// accountEntry reads the latest AccountEntry. Exists=false (no error) for
+// an unknown or merged account; errCorruptAccountEntry when the stored
+// entry does not decode.
+func (r *ExplorerReader) accountEntry(ctx context.Context, account string) (AccountState, error) {
 	var st AccountState
 
 	// Account entry — the current-state projection (ledger_entries_current)
@@ -124,21 +161,8 @@ func (r *ExplorerReader) AccountState(ctx context.Context, account string) (Acco
 	}
 	st, ok := accountStateFromEntry(entryXDR, bal, ledgerSeq)
 	if !ok {
-		// A corrupt stored entry degrades to "no state" rather than 500-ing
-		// the request — the row is the substrate's problem, not the caller's.
-		return st, nil
+		return AccountState{}, fmt.Errorf("%w: %s", errCorruptAccountEntry, account)
 	}
-
-	tl, err := r.accountTrustlines(ctx, account)
-	if err != nil {
-		return st, err
-	}
-	st.Trustlines = tl
-	of, err := r.accountOffers(ctx, account)
-	if err != nil {
-		return st, err
-	}
-	st.Offers = of
 	return st, nil
 }
 

@@ -444,9 +444,10 @@ Two things follow for anyone reading this as a contract:
 Enabling it on a deployment is operator configuration:
 `STELLARINDEX_SEP10_SEED` + `STELLARINDEX_SEP10_JWT_SECRET`
 (names configurable under `[api.sep10]`), plus Redis for the replay
-guard. Whether the hosted deployment should adopt it — accepting the
-API-key trade-off and the master-key-only limitation documented in
-`internal/auth/sep10/doc.go` — is an open product decision.
+guard and the ClickHouse lake for the signer and medium-threshold check
+documented in `internal/auth/sep10/doc.go`. Whether the hosted
+deployment should adopt it — accepting the API-key trade-off — is an
+open product decision.
 
 mTLS for internal service-to-service only (see [HA plan §6](../architecture/ha-plan.md#6-security-posture)).
 
