@@ -273,6 +273,11 @@ func Stream(
 	} else {
 		ledgerRange = ledgerbackend.BoundedRange(from, to)
 	}
+	// Before any path opens a datastore: an inverted range must not cost a
+	// bucket round-trip, and the SDK default path never reaches walkDataStore.
+	if err := validateRange(ledgerRange); err != nil {
+		return err
+	}
 
 	// delivered counts every ledger actually handed to the caller's
 	// callback, regardless of which path below produced it. COR-01
@@ -296,8 +301,10 @@ func Stream(
 			// Walk it with our own backend loop instead — this is
 			// ch-live-catchup's tip-extend case whenever the timer
 			// fires exactly one ledger behind the galexie tip.
+			obs.LedgerstreamStreamPathTotal.WithLabelValues("hot_single_ledger").Inc()
 			return streamHot(ctx, cfg, ledgerRange, buffered, countingCallback)
 		default:
+			obs.LedgerstreamStreamPathTotal.WithLabelValues("sdk").Inc()
 			return ingest.ApplyLedgerMetadata(
 				ledgerRange,
 				ingest.PublisherConfig{
@@ -658,6 +665,7 @@ func streamTiered(
 		// cold-misconfig (region mismatch in r1's 2026-05-20 §3
 		// enable) into a backfill abort — opposite of the cold
 		// tier being optional.
+		obs.LedgerstreamStreamPathTotal.WithLabelValues("cold_degraded").Inc()
 		if cfg.Logger != nil {
 			cfg.Logger.WithField("err", err).Warn("ledgerstream: cold datastore init failed; falling back to hot-only single-source path")
 		}
@@ -718,6 +726,7 @@ func streamTiered(
 			hotSchema.LedgersPerFile, hotSchema.FilesPerPartition, hotSchema.FileExtension)
 	}
 
+	obs.LedgerstreamStreamPathTotal.WithLabelValues("tiered").Inc()
 	tiered := NewTieredDataStore(hot, cold)
 	return walkDataStore(ctx, cfg, tiered, ledgerRange, buffered, callback)
 }

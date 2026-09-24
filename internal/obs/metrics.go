@@ -335,6 +335,7 @@ func registerStorageAndExplorerMetrics() {
 		HashdbDriftTotal,
 
 		LedgerstreamTierReadTotal,
+		LedgerstreamStreamPathTotal,
 		LedgerstreamColdReadDurationSeconds,
 		LedgerstreamLiveStartRetriesTotal,
 
@@ -660,6 +661,9 @@ func seedBoundedLabelSeriesTail() {
 func seedLedgerstreamTierSeries() {
 	for _, outcome := range []string{"hot", "cold", "both_missing"} {
 		LedgerstreamTierReadTotal.WithLabelValues(outcome)
+	}
+	for _, path := range []string{"tiered", "cold_degraded", "hot_single_ledger", "sdk"} {
+		LedgerstreamStreamPathTotal.WithLabelValues(path)
 	}
 }
 
@@ -1860,6 +1864,19 @@ var LedgerstreamTierReadTotal = prometheus.NewCounterVec(
 		Help: "Tiered datastore reads partitioned by which tier served the request. hot=local MinIO; cold=AWS public bucket fallback; both_missing=neither tier has the object.",
 	},
 	[]string{"outcome"},
+)
+
+// LedgerstreamStreamPathTotal counts ledgerstream.Stream walks by the read
+// path chosen: tiered (hot + cold), cold_degraded (cold tier configured but
+// failed to open, so hot-only), hot_single_ledger, or sdk (the SDK's
+// ApplyLedgerMetadata loop). A rising cold_degraded rate is a configured cold
+// tier silently out of service.
+var LedgerstreamStreamPathTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ledgerstream_stream_path_total",
+		Help: "ledgerstream.Stream walks by read path: tiered, cold_degraded (configured cold tier failed to open; hot-only), hot_single_ledger, sdk.",
+	},
+	[]string{"path"},
 )
 
 // LedgerstreamColdReadDurationSeconds — latency of cold-tier (AWS public

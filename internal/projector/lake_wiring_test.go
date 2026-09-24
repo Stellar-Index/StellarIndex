@@ -16,11 +16,12 @@ type fakeLake struct {
 	wmFrom      []uint32
 	minCalls    int
 	closed      bool
+	wmErr       error
 }
 
 func (f *fakeLake) ContiguousWatermark(_ context.Context, from uint32) (uint32, error) {
 	f.wmFrom = append(f.wmFrom, from)
-	return f.wm, nil
+	return f.wm, f.wmErr
 }
 
 func (f *fakeLake) LakeMinLedger(context.Context) (uint32, error) {
