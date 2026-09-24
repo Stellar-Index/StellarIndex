@@ -283,3 +283,56 @@ func TestAcceptRate_HistoryConflictVetoReclassifiesWhenStuck(t *testing.T) {
 			g.conflictStuckCount, g.conflictStuckRate)
 	}
 }
+
+// persistedDayRate returns the RateUSD fx_quotes ends up holding for
+// (ticker, day) after the batch lands: InsertFXQuoteBatch upserts row by
+// row on (ticker, bucket), so the LAST matching row wins. -1 when absent.
+func persistedDayRate(batch []FXQuote, ticker string, day time.Time) float64 {
+	want := day.UTC().Truncate(24 * time.Hour)
+	got := -1.0
+	for _, q := range batch {
+		if q.Ticker == ticker && q.Bucket.Equal(want) {
+			got = q.RateUSD
+		}
+	}
+	return got
+}
+
+// TestGuardSnapshot_CachedTodayHistoryBarNeverOverwritesCurrentRow pins
+// CA2-A18-correct-1. The history window includes the publication date and
+// that bar is cached from the day's first fetch until the date rolls.
+// Appended after the current row, the per-row upsert let the frozen bar
+// replace every later refresh's current rate, so fx_quotes(EUR, today)
+// disagreed with the served cache all day. The current row must be the
+// only writer of today's bucket; today's bar stays in the served history.
+func TestGuardSnapshot_CachedTodayHistoryBarNeverOverwritesCurrentRow(t *testing.T) {
+	w, _ := bandTestWorker(io.Discard)
+	today := time.Date(2026, 9, 23, 0, 0, 0, 0, time.UTC)
+
+	snap := snapshotWithHistory(
+		map[string]float64{"EUR": 0.9290}, // 18:00 current close
+		map[string][]HistoryPoint{"EUR": {
+			{Date: today.Add(-2 * 24 * time.Hour), RateUSD: 0.9210},
+			{Date: today.Add(-1 * 24 * time.Hour), RateUSD: 0.9230},
+			{Date: today, RateUSD: 0.9200}, // cached at the day's first fetch
+		}},
+	)
+	snap.PublishedAt = today.Add(18 * time.Hour)
+
+	res := w.guardSnapshot(snap)
+	if got := persistedDayRate(res.batch, "EUR", today); got != 0.9290 {
+		t.Fatalf("fx_quotes(EUR, today) after upsert = %v, want the current rate 0.9290", got)
+	}
+	if got := persistedDayRate(res.batch, "EUR", today.Add(-24*time.Hour)); got != 0.9230 {
+		t.Fatalf("fx_quotes(EUR, today-1) = %v, want history bar 0.9230", got)
+	}
+	var sawToday bool
+	for _, p := range res.history["EUR"] {
+		if p.Date.Equal(today) && p.RateUSD == 0.9200 {
+			sawToday = true
+		}
+	}
+	if !sawToday {
+		t.Fatalf("served history lost today's bar: %+v", res.history["EUR"])
+	}
+}

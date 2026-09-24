@@ -543,9 +543,10 @@ func servedSnapshot(raw *Snapshot, res guardResult, prev *Snapshot) *Snapshot {
 //     "current" rate. Re-running upserts on the (ticker, today) PK so
 //     repeated refreshes within the same day idempotently update the
 //     row.
-//  2. Trailing-7d rows from `snap.History7d` — these only differ on
-//     the first install of each day (the worker's gap-detector
-//     short-circuits unchanged history).
+//  2. Trailing-7d rows from `snap.History7d`, EXCEPT an accepted bar
+//     dated today: that bar is cached from the day's first fetch, and
+//     upserted after the current row it would pin today's row to the
+//     stale value. It still feeds the served history and the band.
 //
 // Every "current" rate passes the [maxRateDeviation] sanity band before it
 // is written (C2-030): fx_quotes is the denominator of every fiat-quoted
@@ -627,8 +628,14 @@ func (w *Worker) guardSnapshot(snap *Snapshot) guardResult {
 				continue
 			}
 			res.history[ticker] = append(res.history[ticker], p)
+			bucket := p.Date.UTC().Truncate(24 * time.Hour)
+			// Today's history bar is cached from the day's first fetch; the
+			// current row is the sole writer of today's bucket.
+			if bucket.Equal(today) {
+				continue
+			}
 			batch = append(batch, FXQuote{
-				Bucket:     p.Date.UTC().Truncate(24 * time.Hour),
+				Bucket:     bucket,
 				Ticker:     ticker,
 				RateUSD:    p.RateUSD,
 				InverseUSD: 1.0 / p.RateUSD,
