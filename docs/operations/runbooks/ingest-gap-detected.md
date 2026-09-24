@@ -54,7 +54,7 @@ severity: P1
 Run the targeted backfill commands the diagnostic emitted:
 
 ```sh
-stellarindex-ops backfill --config /etc/stellarindex.toml \
+stellarindex-ops backfill -write --config /etc/stellarindex.toml \
   --from <gap.start> --to <gap.end> --source soroban-events
 ```
 

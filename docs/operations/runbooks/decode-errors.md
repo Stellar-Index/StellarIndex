@@ -110,7 +110,7 @@ This alert is P3 because there's no emergency runtime response — we can't un-d
         `═══ DRY RUN — no writes; pass -write to apply ═══` banner on stderr).
         Use `projected-rebuild` (same gate) for rewinds beyond roughly 1M ledgers.
       - **Non-projected sources** (`sdex`, external CEX/FX, `band`, `soroswap-router`) —
-        `stellarindex-ops backfill -config /etc/stellarindex.toml -from N -to N -source <name>`,
+        `stellarindex-ops backfill -write -config /etc/stellarindex.toml -from N -to N -source <name>`,
         which **refuses** any source that is not `BackfillSafe` in
         `internal/sources/external/registry.go`.
       Either way, on r1 a re-derive is a heavy one-shot: run it under

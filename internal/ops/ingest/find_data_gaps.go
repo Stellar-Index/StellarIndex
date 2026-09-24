@@ -227,11 +227,11 @@ func writeFindDataGapsText(r findDataGapsReport) {
 		switch r.Source {
 		case "soroban-events":
 			_, _ = fmt.Fprintf(os.Stdout,
-				"      %2d  stellarindex-ops backfill --config /etc/stellarindex.toml --from %d --to %d --source soroban-events\n",
+				"      %2d  stellarindex-ops backfill -write --config /etc/stellarindex.toml --from %d --to %d --source soroban-events\n",
 				i+1, g.Start, g.End)
 		case "sdex":
 			_, _ = fmt.Fprintf(os.Stdout,
-				"      %2d  stellarindex-ops backfill --config /etc/stellarindex.toml --from %d --to %d --source sdex\n",
+				"      %2d  stellarindex-ops backfill -write --config /etc/stellarindex.toml --from %d --to %d --source sdex\n",
 				i+1, g.Start, g.End)
 		default:
 			// r.Source is the gap detector's per-TABLE target name,

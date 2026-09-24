@@ -84,7 +84,7 @@ So the projection's stale rows must be **removed**, not merely out-written.
 ### 1. Repair the append log (`ledger_entry_changes`)
 
 ```
-stellarindex-ops ch-backfill -config /etc/stellarindex.toml -from {N} -to {M}
+stellarindex-ops ch-backfill -write -config /etc/stellarindex.toml -from {N} -to {M}
 ```
 
 `ch-backfill` is the writer for the Tier-1 `stellar.*` tables including

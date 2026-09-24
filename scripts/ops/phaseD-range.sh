@@ -44,7 +44,7 @@ while [ "$w" -le "$RTO" ]; do
   case "$avail" in ''|*[!0-9]*) sleep 60; continue ;; esac
   if [ "$avail" -lt "$FLOOR_KB" ]; then echo "$(date -u +%FT%TZ) [$RFROM] PAUSE <500G ($avail) before $w" >> "$LOG"; sleep 300; continue; fi
   echo "$(date -u +%FT%TZ) [$RFROM] window $w-$wto START avail=${avail}KiB" >> "$LOG"
-  if "$OPS" ch-backfill -config /etc/stellarindex.toml -bucket galexie-archive -parallel "$PAR" -flush-every 200 -from "$w" -to "$wto" >> "$LOG" 2>&1; then
+  if "$OPS" ch-backfill -write -config /etc/stellarindex.toml -bucket galexie-archive -parallel "$PAR" -flush-every 200 -from "$w" -to "$wto" >> "$LOG" 2>&1; then
     echo "$w" >> "$STATE"; echo "$(date -u +%FT%TZ) [$RFROM] window $w-$wto DONE (avail $(df --output=avail -k /var/lib/clickhouse | tail -1 | tr -d ' ')KiB)" >> "$LOG"
   else
     rc=$?; attempts=$((attempts + 1))

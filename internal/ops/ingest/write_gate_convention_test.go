@@ -30,15 +30,9 @@ import (
 // was an opt-in helper, so nothing noticed; this list is what makes the
 // convention a property instead of a habit. Add a mutating subcommand,
 // add it here.
-//
-// Two mutating subcommands are deliberately ABSENT and must be added by
-// whoever lands their flip: `backfill` and (in internal/ops/chops)
-// `ch-backfill` still default to WRITE with a -dry-run opt-out. Flipping
-// them is a caller-visible change — scripts/ops/ch-live-catchup.sh,
-// ch-full-backfill.sh, phaseD-*.sh, ordinal-rederive-chunks.sh and
-// restore-drill.sh all invoke ch-backfill with no mode flag and would
-// silently become previews — so it lands with those callers, not here.
 var mutatingIngestSubcommands = []string{
+	// Wrote unless -dry-run was passed (#868).
+	"backfill",
 	// Gated as part of K015.
 	"census-backfill",
 	"backfill-router",

@@ -53,7 +53,7 @@ Re-derive the flagged source from the certified lake, then re-verify:
 - **Non-projected** (`sdex`, soroban-events):
 
   ```sh
-  stellarindex-ops backfill -config /etc/stellarindex.toml \
+  stellarindex-ops backfill -write -config /etc/stellarindex.toml \
     -source <X> -from <F> -to <T>
   ```
 

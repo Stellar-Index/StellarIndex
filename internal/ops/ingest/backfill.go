@@ -3,7 +3,6 @@ package ingest
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -169,7 +168,7 @@ func backfill(args []string) error {
 		return err
 	}
 
-	if opts.dryRun {
+	if !opsutil.PrintWriteBanner(!opts.dryRun) {
 		chunks := planBackfillChunks(opts.from, opts.to, opts.parallel)
 		_, _ = fmt.Fprintf(os.Stderr,
 			"backfill dry-run:\n  range:    [%d, %d] (%d ledgers)\n  sources:  %v\n  bucket:   %s\n  parallel: %d (chunks: %d)\n",
@@ -906,7 +905,7 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 	var opts backfillOpts
 	var cfg config.Config
 
-	fs := flag.NewFlagSet("backfill", flag.ContinueOnError)
+	fs, gate := opsutil.NewMutatingFlagSet("backfill")
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
 	from := fs.Uint("from", 0, "starting ledger sequence (inclusive, required)")
 	to := fs.Uint("to", 0, "ending ledger sequence (inclusive, required)")
@@ -914,8 +913,6 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		"comma-separated source names; default = cfg.Ingestion.EnabledSources")
 	bucketOverride := fs.String("bucket", "",
 		"galexie bucket override; default = cfg.Storage.S3BucketArchive")
-	dryRun := fs.Bool("dry-run", false,
-		"validate config + sources + range, then exit without running")
 	resume := fs.Bool("resume", false,
 		"continue from a prior backfill cursor (keyed on -from/-to/-source). "+
 			"On a fresh range with no prior cursor, behaves the same as without "+
@@ -949,6 +946,9 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 
 	if err := validateBackfillRangeFlags(*cfgPath, *from, *to, *parallel); err != nil {
 		return opts, cfg, err
+	}
+	if err := gate.RequireStatedMode(); err != nil {
+		return opts, cfg, fmt.Errorf("backfill: %w", err)
 	}
 
 	loaded, err := config.LoadWithEnv(*cfgPath)
@@ -1001,7 +1001,7 @@ func parseBackfillFlags(args []string) (backfillOpts, config.Config, error) {
 		to:            uint32(*to),
 		sources:       sources,
 		bucket:        bucket,
-		dryRun:        *dryRun,
+		dryRun:        gate.DryRun(),
 		resume:        *resume,
 		parallel:      *parallel,
 		refreshCAGGs:  *refreshCAGGs,

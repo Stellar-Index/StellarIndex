@@ -45,7 +45,7 @@ while [ "$w" -le "$TO" ]; do
   fi
 
   echo "=== window $w-$wto  ($(date -u +%FT%TZ)) ==="
-  if "$OPS" ch-backfill -config "$CONFIG" -bucket "$BUCKET" \
+  if "$OPS" ch-backfill -write -config "$CONFIG" -bucket "$BUCKET" \
         -ch-addr "$CHADDR" -from "$w" -to "$wto" -parallel "$PAR" -flush-every "$FLUSH"; then
     echo "$w" >> "$STATE"
     elapsed=$(( $(date +%s) - started ))

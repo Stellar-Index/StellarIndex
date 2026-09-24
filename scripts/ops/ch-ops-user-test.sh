@@ -312,6 +312,9 @@ catchup_heals() {
   rc=$?
   got="$(sed -n 's/^ch-backfill .*-from \([0-9]*\) -to \([0-9]*\) .*/\1-\2/p' "$rec" | tr '\n' ' ')"
   want="$(printf '%s ' "$@")"
+  if awk '/^ch-backfill / && !/ -write / { f = 1 } END { exit !f }' "$rec"; then
+    bad "ch-live-catchup.sh: $label ⇒ a ch-backfill call omits -write, so it only previews (#868)"
+  fi
   if [ "$got" = "$want" ] && [ "$rc" -eq "$want_rc" ]; then
     ok "ch-live-catchup.sh: $label ⇒ heals '${want% }' (rc $rc)"
   else

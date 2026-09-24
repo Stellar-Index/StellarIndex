@@ -70,8 +70,8 @@ func (e *ExitCodeError) Error() string {
 
 func (e *ExitCodeError) Unwrap() error { return e.Err }
 
-// WriteGate is the shared fail-closed write toggle every mutating
-// stellarindex-ops subcommand registers, so the whole CLI shares ONE
+// WriteGate is the shared fail-closed write toggle mutating
+// stellarindex-ops subcommands register, so the CLI shares ONE
 // convention: a command previews by DEFAULT and applies changes only
 // when the operator passes -write. It replaces the old split where some
 // commands wrote UNLESS you passed -dry-run — a default-WRITE shape that
@@ -145,6 +145,21 @@ func Usage(usage string) error {
 
 // Enabled reports whether the operator opted into writing (passed -write).
 func (g *WriteGate) Enabled() bool { return *g.write }
+
+// ErrWriteModeUnstated is returned by [WriteGate.RequireStatedMode] when
+// a run passed neither -write nor -dry-run.
+var ErrWriteModeUnstated = errors.New("state the mode: pass -write to apply, or -dry-run to preview")
+
+// RequireStatedMode refuses a run that passed neither -write nor -dry-run.
+// Range walkers whose scripted callers treat exit 0 as "window done" use it,
+// so a caller written for the old default-WRITE contract fails loudly
+// instead of silently previewing and reporting success.
+func (g *WriteGate) RequireStatedMode() error {
+	if *g.write || *g.dryRun {
+		return nil
+	}
+	return ErrWriteModeUnstated
+}
 
 // DryRun reports whether this run writes nothing — the default unless
 // -write was passed. It is the exact negation of [WriteGate.Enabled],

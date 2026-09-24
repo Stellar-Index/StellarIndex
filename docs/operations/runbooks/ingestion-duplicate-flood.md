@@ -138,7 +138,7 @@ stellarindex-ops backfill -config /etc/stellarindex.toml \
 # process, chunks included: raise -parallel and you divide that
 # budget, you don't multiply it.
 sudo /usr/local/sbin/run-heavy-job.sh dupflood-backfill \
-  /usr/local/bin/stellarindex-ops backfill \
+  /usr/local/bin/stellarindex-ops backfill -write \
     -config /etc/stellarindex.toml \
     -from <max_ledger+1> -to <current_cursor> \
     -source sdex,aquarius,soroswap,phoenix,comet \
