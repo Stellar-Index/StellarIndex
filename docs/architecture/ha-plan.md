@@ -296,7 +296,7 @@ provisioned; cloud is pay-as-you-use for DR.
   > 2026-07-27 once the galexie trim cleared the capacity condition it
   > was gated on, and its cadence is **monthly** (first Saturday, 04:00
   > UTC) per ADR-0043 §1/§3 —
-  > `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:512-537`
+  > `configs/ansible/roles/archival-node/tasks/18-pgbackrest-backup.yml:598-623`
   > carries the enable task and the dated rationale. The drill's own
   > precondition check still refuses (exit 2, uncounted) if free space
   > regresses, so it is safe under capacity pressure.
