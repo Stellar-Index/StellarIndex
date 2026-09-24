@@ -8212,7 +8212,7 @@ export interface components {
              */
             as_of: string;
             /**
-             * @description WHAT KIND of figure this is. Two are published and they are
+             * @description WHAT KIND of figure this is. Four are published and they are
              *     not the same claim, so this is mandatory on every served
              *     reference rather than defaulted.
              *
@@ -8234,6 +8234,17 @@ export interface components {
              *     than the rows the listing admitted, since an address the
              *     curated directory attested on its own may also be named by
              *     the listing.
+             *     `prospectus_constant_nav` — the issuer's own prescribed NAV
+             *     for a share class whose fund rules fix it, bound on the
+             *     exact `(code, issuer)`. Weaker than the oracle arm — nobody
+             *     independent measured it — and taken only when neither an
+             *     oracle binding nor a listing price exists for the row.
+             *     Carries no premium, for the same reason a listing price
+             *     does not.
+             *     `curator_uploaded_price` — a curator's own uploaded price
+             *     per token, weaker still than a listing price: a listing
+             *     platform at least aggregates venues, an uploaded price is
+             *     whatever the curator typed. Carries no premium.
              * @enum {string}
              */
             provenance: "oracle_instrument_nav" | "listing_platform_price" | "curator_uploaded_price" | "prospectus_constant_nav";
@@ -8332,9 +8343,19 @@ export interface components {
              *     report the issuer's own claim as a market finding.
              *     `reference_not_positive` — the oracle published a
              *     non-positive value; nothing is divided by it.
+             *     `reference_is_a_prospectus_nav` — the row carries a
+             *     reference, and it is a prospectus's constant NAV rather than
+             *     an oracle's valuation of the instrument, so no premium may
+             *     be computed against it. `reference_is_a_listing_price`
+             *     applied here would misname the figure as a listing price,
+             *     which it is not.
+             *     `reference_is_a_curator_price` — the row carries a
+             *     reference, and it is a curator's uploaded price rather than
+             *     an oracle's valuation of the instrument, so no premium may
+             *     be computed against it.
              * @enum {string}
              */
-            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price";
+            status: "published" | "withheld_issuer_flagged" | "reference_not_bound" | "reference_contract_not_bound" | "no_reference_feed" | "reference_unavailable" | "reference_expired" | "reference_not_instrument_scoped" | "reference_not_usd_denominated" | "no_market_price" | "market_price_not_observed" | "reference_not_positive" | "reference_is_a_listing_price" | "reference_is_a_prospectus_nav" | "reference_is_a_curator_price";
             /**
              * @description (market − reference) ÷ reference × 100 as a decimal string:
              *     POSITIVE when the token trades above the instrument's

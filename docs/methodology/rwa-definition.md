@@ -1016,9 +1016,12 @@ gap between what the market pays and what the backing is independently
 worth; a listing price is an aggregate of the same markets our own price
 samples, so the gap between the two measures the disagreement of two
 samples of one market. The row carries `reference_is_a_listing_price` —
-the one status on this surface that refuses the premium while the
-reference valuation beside it is **published**, which is a genuine
-divergence of reasons rather than two accounts of one event.
+a status that refuses the premium while the reference valuation beside
+it is **published**, which is a genuine divergence of reasons rather
+than two accounts of one event. A prospectus constant NAV and a
+curator's uploaded price are refused the same way, each under its own
+status (`reference_is_a_prospectus_nav`, `reference_is_a_curator_price`)
+so the refusal always names the figure it refused.
 
 `summary.reference_valuation.provenances` lists the distinct kinds in
 the total, and the basis prose is **derived from the rows that

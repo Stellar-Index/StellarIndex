@@ -461,11 +461,12 @@ func TestRWAReferenceDropActors_CoverEveryStatusARowCanCarry(t *testing.T) {
 	// does not account for comparisons.
 	for _, premiumOnly := range []string{
 		RWAPremiumNoMarketPrice, RWAPremiumMarketNotObserved, RWAPremiumPublished,
-		// The listing-price refusal is premium-only BY DESIGN and is
-		// the one status that refuses a premium while the reference
-		// valuation beside it is published — so it must never appear
-		// as a valuation drop.
+		// The non-oracle refusals are premium-only BY DESIGN: each
+		// refuses a premium while the reference valuation beside it is
+		// published — so none may appear as a valuation drop.
 		RWAPremiumReferenceNotOracle,
+		RWAPremiumReferenceNotOracleCNAV,
+		RWAPremiumReferenceNotOracleCurator,
 	} {
 		if _, ok := rwaReferenceDropActors[premiumOnly]; ok {
 			t.Errorf("%q is a premium-only status and must not be a reference-valuation drop", premiumOnly)
