@@ -7,7 +7,9 @@
 # systemd-journal group.
 
 server:
+  http_listen_address: 127.0.0.1
   http_listen_port: 9080
+  grpc_listen_address: 127.0.0.1
   grpc_listen_port: 0
 
 positions:
