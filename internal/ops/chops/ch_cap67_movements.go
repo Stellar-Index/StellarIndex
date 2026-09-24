@@ -5,12 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/events"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 	"github.com/Stellar-Index/StellarIndex/internal/scval"
@@ -54,11 +54,17 @@ func chCap67Movements(args []string) error {
 	follow := fs.Bool("follow", false, "run continuously as a daemon: after each catch-up, sleep -follow-interval and derive again, following the lake tip. The movement feed's real-time mechanism (a user watches their transactions land). Always resumes from the watermark to the CONTIGUOUS tip — ignores -from/-to.")
 	followInterval := fs.Duration("follow-interval", 1*time.Second, "sleep between catch-ups in -follow mode. Kept ≥~0.5s: each tick re-scans the derive window, and sub-second ticks add ClickHouse read + small-write pressure for a latency gain the ~5s ledger cadence + upstream ingest already dominate.")
 	floorLedger := fs.Uint("floor-ledger", uint(timescale.SEP41MovementsFloorLedger), "first-run watermark floor — the P23/CAP-67 boundary this derive starts from BEFORE any watermark exists. Defaults to the pubnet P23 boundary; set to the chain's start on testnet/futurenet, where the whole chain is post-P23 (otherwise the derive floors ABOVE every ledger the net has and produces nothing). A first run clamps the floor UP to the lake's first ledger (no lake holds genesis=1), so 1 and 2 behave alike.")
+	network := fs.String("network", "pubnet", "Stellar network the lake belongs to (pubnet / testnet / futurenet). A CAP-67 transfer's asset label is trusted only when the emitting contract is that asset's SAC on THIS network; a wrong value labels every genuine SAC transfer by its contract id.")
 	maxDecodeErrs := registerDecodeBudget(fs)
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	passphrase, err := cap67NetworkPassphrase(*network)
+	if err != nil {
+		return err
+	}
+	canonical.InstallNetworkPassphrase(passphrase)
 	if *window == 0 {
 		return fmt.Errorf("-window must be > 0")
 	}
@@ -88,6 +94,16 @@ func chCap67Movements(args []string) error {
 		return err
 	}
 	return enforceDecodeBudget("ch-cap67-movements", res.skipped, *maxDecodeErrs)
+}
+
+// cap67NetworkPassphrase maps -network to the passphrase SAC ids derive
+// against; an unknown name is refused rather than defaulted.
+func cap67NetworkPassphrase(network string) (string, error) {
+	p := config.StellarConfig{Network: network}.Passphrase()
+	if p == "" {
+		return "", fmt.Errorf("-network %q: want pubnet, testnet or futurenet", network)
+	}
+	return p, nil
 }
 
 // cap67CatchUpOnce is the one-shot derive, a var so the exit-status contract
@@ -505,16 +521,13 @@ func scvalText(sv xdr.ScVal) (string, bool) {
 	return "", false
 }
 
-// sep0011Re matches the CAP-67 4th-topic asset string: "native" or
-// "CODE:GISSUER" (1-12 alphanumeric code).
-var sep0011Re = regexp.MustCompile(`^[A-Za-z0-9]{1,12}:G[A-Z2-7]{55}$`)
-
-// cap67AssetName resolves the movement's `asset` column value. 4-topic
-// CAP-67 events carry the sep0011 asset name in the trailing topic —
-// mapped to the archive's canonical form ("native" / "CODE-GISSUER",
-// matching every classic_derived row). 3-topic events are pure Soroban
-// tokens: the contract id IS the asset identity (same fallback the
-// Postgres-tail mapper uses).
+// cap67AssetName resolves the movement's `asset` column value. A 4-topic
+// transfer's trailing sep0011 name is mapped to the archive's canonical form
+// ("native" / "CODE-GISSUER", matching every classic_derived row) only when
+// the emitter is that asset's SAC: the stream is ungated, and any contract
+// can emit that topic to impersonate XLM or USDC. Everything else — a
+// spoofed or malformed name, or a 3-topic pure Soroban token — is the
+// emitting contract id, the same fallback as the Postgres-tail mapper.
 func cap67AssetName(ev *events.Event) string {
 	if len(ev.Topic) != 4 {
 		return ev.ContractID
@@ -527,11 +540,9 @@ func cap67AssetName(ev *events.Event) string {
 	if !ok {
 		return ev.ContractID
 	}
-	if s == "native" {
-		return "native"
+	asset, ok := canonical.SEP11SACAsset(s, ev.ContractID)
+	if !ok {
+		return ev.ContractID
 	}
-	if sep0011Re.MatchString(s) {
-		return strings.Replace(s, ":", "-", 1)
-	}
-	return ev.ContractID
+	return asset.String()
 }

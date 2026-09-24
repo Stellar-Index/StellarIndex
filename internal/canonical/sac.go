@@ -5,6 +5,7 @@ package canonical
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
@@ -64,4 +65,30 @@ func (a Asset) SacContractID() (string, error) {
 		return "", fmt.Errorf("canonical: SacContractID: derive: %w", err)
 	}
 	return strkey.MustEncode(strkey.VersionByteContract, raw[:]), nil
+}
+
+// SEP11SACAsset resolves a SEP-0011 asset name ("native" or "CODE:GISSUER",
+// as a CAP-67 event's trailing topic carries it) to the classic asset ONLY
+// when contractID is that asset's SAC on the configured network. Any
+// contract can emit that topic, so the name alone is never an identity; the
+// deterministic derivation is. ok=false means the claim must not be trusted.
+func SEP11SACAsset(name, contractID string) (Asset, bool) {
+	var asset Asset
+	if name == "native" {
+		asset = NativeAsset()
+	} else {
+		code, issuer, ok := strings.Cut(name, ":")
+		if !ok {
+			return Asset{}, false
+		}
+		var err error
+		if asset, err = NewClassicAsset(code, issuer); err != nil {
+			return Asset{}, false
+		}
+	}
+	derived, err := asset.SacContractID()
+	if err != nil || derived != contractID {
+		return Asset{}, false
+	}
+	return asset, true
 }

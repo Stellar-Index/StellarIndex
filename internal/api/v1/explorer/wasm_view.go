@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
@@ -215,22 +214,8 @@ func (h *Handler) sacAssetViaEvents(ctx context.Context, contractID string) (str
 	if err != nil || !found {
 		return "", false
 	}
-	var asset canonical.Asset
-	if name == "native" {
-		asset = canonical.NativeAsset()
-	} else {
-		code, issuer, ok := strings.Cut(name, ":")
-		if !ok {
-			return "", false
-		}
-		var aErr error
-		asset, aErr = canonical.NewClassicAsset(code, issuer)
-		if aErr != nil {
-			return "", false
-		}
-	}
-	derived, err := asset.SacContractID()
-	if err != nil || derived != contractID {
+	asset, ok := canonical.SEP11SACAsset(name, contractID)
+	if !ok {
 		return "", false
 	}
 	return asset.String(), true
