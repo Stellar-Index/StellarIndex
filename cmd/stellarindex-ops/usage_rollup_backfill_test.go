@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -53,56 +52,33 @@ func seedUsageDetail(t *testing.T, rdb redis.Cmdable, day time.Time, subject, en
 	}
 }
 
-// TestUsageRollupBackfill_RecoversADaySweepCannotReach pins COR-10
-// (audit-2026-07-23). The API's in-process rollup worker only ever
-// folds TODAY + YESTERDAY, so a day whose sweep never succeeded — sink
-// down, or the API process down, across a day boundary — is skipped
-// permanently even though Redis holds its counters for 35 days.
-//
-// This test asserts BOTH halves of that claim against the same seeded
-// Redis:
-//
-//	(a) the live worker's Sweep, run "today", recovers nothing for a
-//	    10-day-old day — the gap is real, not hypothetical; and
-//	(b) runUsageRollupBackfill folds that day's exact counters into
-//	    the sink — the gap is closed.
-//
-// Half (b) is what the fix adds; half (a) keeps this test honest by
-// proving the recovered rows genuinely lie outside the live window.
+// TestUsageRollupBackfill_RecoversADaySweepCannotReach — the manual
+// recovery path folds exactly the requested day's counters into the
+// sink, and not the day before it (it folds the days it is given, not
+// a live sweep window pinned to them).
 func TestUsageRollupBackfill_RecoversADaySweepCannotReach(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
 
-	today := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
-	lost := today.AddDate(0, 0, -10)
+	lost := time.Date(2026, 7, 14, 0, 0, 0, 0, time.UTC)
 	const (
 		subject  = "key:kid_test_fixture_not_a_secret"
 		endpoint = "/v1/assets/{asset_id}"
 	)
 	seedUsageDetail(t, rdb, lost, subject, endpoint, usage.ClassOK, 7)
 	seedUsageDetail(t, rdb, lost, subject, endpoint, usage.ClassThrottled, 3)
+	seedUsageDetail(t, rdb, lost.AddDate(0, 0, -1), subject, endpoint, usage.ClassOK, 4)
 
-	// (a) The live worker, sweeping "today", cannot see the lost day.
-	liveSink := &recordingUsageSink{}
-	liveCounter := usage.New(rdb, usage.WithClock(func() time.Time { return today }))
-	liveRollup := usage.NewRollup(liveCounter, liveSink, usage.DefaultRollupInterval, discardOpsLogger())
-	if _, err := liveRollup.Sweep(context.Background()); err != nil {
-		t.Fatalf("live Sweep: %v", err)
-	}
-	if len(liveSink.rows) != 0 {
-		t.Fatalf("live worker recovered %d row(s) for a 10-day-old day: %+v — "+
-			"the two-day window premise this backfill exists for no longer holds",
-			len(liveSink.rows), liveSink.rows)
-	}
-
-	// (b) The backfill recovers it.
 	sink := &recordingUsageSink{}
 	if err := runUsageRollupBackfill(context.Background(), rdb, sink, []time.Time{lost}, false); err != nil {
 		t.Fatalf("runUsageRollupBackfill: %v", err)
 	}
 
 	wantDay := lost.Format(usageRollupDateLayout)
+	if len(sink.rows) != 1 {
+		t.Errorf("backfill of %s upserted %d row(s), want exactly that day's 1: %+v", wantDay, len(sink.rows), sink.rows)
+	}
 	var got *usage.RollupRow
 	for i := range sink.rows {
 		if sink.rows[i].Day == wantDay && sink.rows[i].Endpoint == endpoint {
@@ -218,11 +194,3 @@ func TestUsageRollupDays(t *testing.T) {
 		})
 	}
 }
-
-func discardOpsLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(discardWriter{}, nil))
-}
-
-type discardWriter struct{}
-
-func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }

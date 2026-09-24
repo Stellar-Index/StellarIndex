@@ -1671,26 +1671,24 @@ Subcommands:
                               -config /etc/stellarindex.toml \
                               -slug 2026-05-12-redis-blip \
                               -event sev1
-  usage-rollup-backfill -config PATH -from YYYY-MM-DD [-to YYYY-MM-DD] [-dry-run] [-timeout DUR]
+  usage-rollup-backfill -config PATH -from YYYY-MM-DD [-to YYYY-MM-DD] [-write] [-timeout DUR]
                           Re-fold the Redis per-endpoint usage
                           counters into the usage_daily hypertable
                           for a past UTC date range. The API's
-                          in-process rollup worker only sweeps
-                          today + yesterday, so a sink outage (or an
-                          API process down) spanning a day boundary
-                          skips that day permanently — the live
-                          window has already moved past it. Redis
-                          keeps the source counters for 35 days;
-                          this is the recovery path within that
-                          window. Idempotent (GREATEST() merge), so
+                          in-process rollup worker re-folds days an
+                          outage skipped on its own, a week per
+                          sweep; this folds a range now, or with no
+                          API running. Redis keeps the source
+                          counters for 35 days, so neither reaches
+                          past that. Dry-run unless -write.
+                          Idempotent (GREATEST() merge), so
                           re-running is safe and can never lower an
-                          existing row. Reuses the worker's own
-                          Sweep with its clock pinned per day, so
-                          it also re-folds the day before -from.
+                          existing row. Folds exactly -from..-to
+                          with the worker's own grouping code.
                           Example:
                             stellarindex-ops usage-rollup-backfill \
                               -config /etc/stellarindex.toml \
-                              -from 2026-07-19 -to 2026-07-21
+                              -from 2026-07-19 -to 2026-07-21 -write
   freeze-unfreeze -config PATH [-list] [-asset A -quote Q -reason "..."] [-dry-run]
                           Manually lift an ADR-0019 price freeze. An
                           ESCALATED freeze (the 4x30m extension

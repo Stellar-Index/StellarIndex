@@ -33,15 +33,12 @@ const usageRollupMaxRangeDays = 35
 // into the `usage_daily` Timescale hypertable for an operator-chosen
 // UTC date range.
 //
-// COR-10 (audit-2026-07-23): the in-process rollup worker
-// ([usage.Rollup.Run], API binary) only ever sweeps TODAY + YESTERDAY.
-// If the sink is unreachable — Postgres down, or the API process
-// itself down — across a full day boundary, the day that never got a
-// successful sweep is skipped permanently: the next live sweep's
-// window has already moved past it and nothing else in the binary set
-// reads those counters. The Redis source data survives for 35 days,
-// so the loss is recoverable, but until now there was no code path
-// anywhere that could recover it. This is that path.
+// The in-process rollup worker ([usage.Rollup.Run], API binary)
+// re-folds on its own every retained day an outage skipped, a bounded
+// batch per sweep. This is the manual path for when that is not
+// enough or not soon enough: no API process running a rollup, an
+// operator who wants a range folded now, or a re-fold to check.
+// It cannot reach past the Redis counters' 35-day TTL either.
 //
 // Usage:
 //
@@ -56,14 +53,10 @@ const usageRollupMaxRangeDays = 35
 // merge over the cumulative per-day counters, so a repeat pass is a
 // no-op and can never regress a row a live sweep already wrote.
 //
-// Each day is folded by the SAME [usage.Rollup.Sweep] the live worker
-// runs, with the worker's clock pinned to that day — so the rows this
-// writes are byte-identical to the rows the worker would have written,
-// rather than a second implementation of the grouping that could drift.
-// One consequence of reusing the worker verbatim: its window is two
-// days wide, so the day immediately BEFORE -from is re-folded too.
-// That is harmless (same idempotent merge of that day's real counters)
-// and is reported in the output.
+// Each day is folded by [usage.Rollup.SweepDays], the same fold the
+// live worker's Sweep runs, so the rows this writes are byte-identical
+// to the rows the worker would have written rather than a second
+// implementation of the grouping that could drift.
 func usageRollupBackfill(args []string) error {
 	fs := flag.NewFlagSet("usage-rollup-backfill", flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "Path to TOML config file (required)")
@@ -163,27 +156,20 @@ func runUsageRollupBackfill(
 		sink = &countingUsageSink{}
 		fmt.Fprintln(os.Stderr, "DRY RUN — scanning Redis, no usage_daily writes")
 	}
-	fmt.Fprintf(os.Stderr, "Re-folding %d day(s): %s .. %s (plus %s, the worker's trailing window day)\n",
+	fmt.Fprintf(os.Stderr, "Re-folding %d day(s): %s .. %s\n",
 		len(days),
 		days[0].Format(usageRollupDateLayout),
 		days[len(days)-1].Format(usageRollupDateLayout),
-		days[0].AddDate(0, 0, -1).Format(usageRollupDateLayout),
 	)
 
+	rollup := usage.NewRollup(usage.New(rdb), sink, usage.DefaultRollupInterval,
+		logger.With("component", "usage-rollup-backfill"))
+	if rollup == nil {
+		return errors.New("usage.NewRollup returned nil — counter or sink missing")
+	}
 	var total int
 	for _, day := range days {
-		// Pin the worker's clock to noon on `day`: Sweep formats
-		// nowFn().UTC() (and the preceding day) into its Redis key
-		// suffixes, so noon UTC lands unambiguously inside the target
-		// day regardless of the host's local zone.
-		pinned := time.Date(day.Year(), day.Month(), day.Day(), 12, 0, 0, 0, time.UTC)
-		counter := usage.New(rdb, usage.WithClock(func() time.Time { return pinned }))
-		rollup := usage.NewRollup(counter, sink, usage.DefaultRollupInterval,
-			logger.With("component", "usage-rollup-backfill"))
-		if rollup == nil {
-			return errors.New("usage.NewRollup returned nil — counter or sink missing")
-		}
-		n, err := rollup.Sweep(ctx)
+		n, err := rollup.SweepDays(ctx, []string{day.Format(usageRollupDateLayout)})
 		if err != nil {
 			return fmt.Errorf("re-fold %s: %w", day.Format(usageRollupDateLayout), err)
 		}
