@@ -26,6 +26,12 @@ import (
 // rozo-intent-bridge) rather than renaming this one.
 const SourceName = "rozo"
 
+// GenesisLedger is the ledger of the first event across all four Rozo
+// contracts (lake-derived exact genesis, 2026-07-30); rozo_events is
+// projected to exactly here. protocols_registry.go's
+// ProtocolMeta.GenesisLedger for "rozo" must equal this.
+const GenesisLedger uint32 = 60_829_397
+
 // MainnetPaymentContract is the original verified deployment of the
 // v1 Payment contract on Stellar pubnet. Verified 2026-05-20 via
 // stellar.expert. Now part of [MainnetPaymentContracts] which lists
