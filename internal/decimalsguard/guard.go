@@ -65,9 +65,12 @@ const StandardDecimals = 7
 
 // Default sweep cadence. The window is >= the interval so consecutive
 // sweeps overlap and no trade falls between them: any Soroban token that
-// trades even once is enumerated by at least one sweep, and — because the
-// counter is monotonic and per-(source,asset) deduped — a single detection
-// latches a persistent alert for the process lifetime.
+// trades even once is enumerated by at least one sweep. The former
+// all-time informational alert (stellarindex_dex_nonstandard_decimals_detected)
+// that latched permanently on a single detection was removed 2026-08-05;
+// the action item today is stellarindex_nonstandard_decimals_correction_failing,
+// which fires only while the correction itself is failing (see
+// configs/prometheus/rules.r1/aggregator.yml).
 const (
 	DefaultInterval = 15 * time.Minute
 	DefaultWindow   = 20 * time.Minute
