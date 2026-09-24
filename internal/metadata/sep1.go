@@ -192,7 +192,8 @@ func NewResolver(opts Options) *Resolver {
 //
 //  1. Cap at 5 hops so a malicious domain can't burn our request
 //     budget with a redirect loop.
-//  2. Reject scheme downgrade (https → http).
+//  2. Reject scheme downgrade (https → http). An attacker controlling
+//     the domain MUST NOT force plaintext transit.
 //  3. Reject cross-origin redirects: host AND effective port must match
 //     the original request. SEP-1 is origin-scoped trust, and a
 //     same-host hop to another port would bypass the 443-only rule
@@ -727,11 +728,11 @@ func (d *ssrfDialer) DialContext(ctx context.Context, network, address string) (
 // SEP-1's stellar.toml is served over HTTPS on 443, and a Stellar
 // home_domain is a bare domain (no port) in practice. An issuer whose
 // on-chain home_domain carries any other port (":6379", ":8080") is
-// rejected: the SSRF guard filters by resolved-IP *range*, not port,
-// so a `<public-host>:<arbitrary-port>` home_domain would otherwise let
-// the sep1-refresh cron open a blind TLS+GET to any port on a public
-// host. Tests pass allowAnyPort=true so httptest servers (ephemeral
-// ports) still resolve.
+// rejected up front, and ssrfDialer refuses any other port on every hop,
+// so neither a `<public-host>:<arbitrary-port>` home_domain nor a
+// redirect to one lets the sep1-refresh cron open a blind TLS+GET to
+// any port on a public host. Tests pass allowAnyPort=true so httptest
+// servers (ephemeral ports) still resolve.
 const standardTLSPort = "443"
 
 // isValidDomainOrHostPort reports whether s is a syntactically valid
