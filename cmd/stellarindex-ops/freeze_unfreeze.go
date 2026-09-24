@@ -13,6 +13,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/redisclient"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -37,6 +38,10 @@ import (
 //  2. stamp `recovered_at` on the open `freeze_events` row
 //     (FreezeEventSink.MarkRecovered) — the durable timeline the explorer
 //     /anomalies view reads.
+//
+// Before either, it appends a "freeze.unfreeze" audit_log row (actor,
+// reason) and writes the freeze:override tombstone the aggregator reads to
+// count the release as an operator one rather than a lapse.
 //
 // Doing only (1) works eventually — the recovery worker polls and would
 // close the row within ~60 s — but doing both here means the operator's
@@ -63,7 +68,8 @@ func freezeUnfreeze(args []string) error {
 	list := fs.Bool("list", false, "list every currently-open freeze with its ladder state, and exit without changing anything")
 	assetFlag := fs.String("asset", "", "asset to unfreeze, canonical wire form (native | CODE-ISSUER | C-strkey)")
 	quoteFlag := fs.String("quote", "", "quote asset of the frozen pair, canonical wire form")
-	reason := fs.String("reason", "", "why this freeze is being lifted (required for a mutation; recorded in the run log)")
+	reason := fs.String("reason", "", "why this freeze is being lifted (required for a mutation; recorded in audit_log)")
+	actorFlag := fs.String("actor", "", "who is lifting it; recorded in audit_log. Defaults to the OS user.")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -78,6 +84,17 @@ func freezeUnfreeze(args []string) error {
 		if strings.TrimSpace(*reason) == "" {
 			return errors.New("-reason is required: an unfreeze overrides an automated safety control on a money surface, so the record has to say why")
 		}
+		if err := validateOpsKeyReason(*reason); err != nil {
+			return err
+		}
+	}
+	actor := ""
+	if !*list {
+		a, err := resolveOpsActor(*actorFlag)
+		if err != nil {
+			return err
+		}
+		actor = a
 	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
@@ -127,7 +144,10 @@ func freezeUnfreeze(args []string) error {
 		return fmt.Errorf("-quote %q: %w", *quoteFlag, err)
 	}
 	gate.Banner()
-	return unfreezePair(ctx, sink, writer, asset, quote, *reason, gate.DryRun())
+	audit := postgresstore.NewAuditStore(postgresstore.New(store.DB()))
+	return unfreezePair(ctx, audit, sink, writer, unfreezeRequest{
+		asset: asset, quote: quote, actor: actor, reason: strings.TrimSpace(*reason), dryRun: gate.DryRun(),
+	})
 }
 
 // newFreezeWriterForOps builds the freeze.Writer this command reads and
@@ -249,12 +269,27 @@ func listOpenFreezes(ctx context.Context, lister openFreezeLister, states freeze
 	return nil
 }
 
-// freezeClearer deletes a pair's Redis freeze marker.
+// freezeClearer records the operator-override tombstone and deletes a
+// pair's Redis freeze marker; freeze.Writer implements both.
 type freezeClearer interface {
+	RecordOverride(ctx context.Context, asset, quote canonical.Asset, actor, reason string) error
 	Clear(ctx context.Context, asset, quote canonical.Asset) error
 }
 
+// unfreezeRequest is one manual unfreeze: the pair, who asked, and why.
+type unfreezeRequest struct {
+	asset, quote  canonical.Asset
+	actor, reason string
+	dryRun        bool
+}
+
 // unfreezePair performs the two-step manual unfreeze and reports each half.
+//
+// The audit_log row and the override tombstone go first, and a failure of
+// either stops the run before the serving path changes: an unfreeze with
+// no record of who and why is the defect this ordering exists to prevent.
+// The row records the operator's decision, so a later half that fails is
+// reported here and the row still says who tried.
 //
 // Order matters: the Redis marker goes FIRST because it is the serving
 // path's authority — clearing it is what actually republishes the price.
@@ -263,15 +298,23 @@ type freezeClearer interface {
 // close the row on its next poll; the reverse order would leave a closed
 // timeline row next to a pair that is still frozen to every API caller,
 // which is the dishonest direction.
-func unfreezePair(ctx context.Context, recoverer freezeRecoverer, clearer freezeClearer, asset, quote canonical.Asset, reason string, dryRun bool) error {
-	if dryRun {
-		fmt.Printf("freeze-unfreeze: DRY RUN — would clear the Redis marker and stamp recovered_at for %s/%s (reason: %s)\n",
-			asset.String(), quote.String(), reason)
+func unfreezePair(ctx context.Context, audit keyAuditSink, recoverer freezeRecoverer, clearer freezeClearer, req unfreezeRequest) error {
+	asset, quote := req.asset, req.quote
+	if req.dryRun {
+		fmt.Printf("freeze-unfreeze: DRY RUN — would audit, clear the Redis marker and stamp recovered_at for %s/%s (actor: %s, reason: %s)\n",
+			asset.String(), quote.String(), req.actor, req.reason)
 		return nil
 	}
-	fmt.Fprintf(os.Stderr, "freeze-unfreeze: lifting freeze on %s/%s — reason: %s\n",
-		asset.String(), quote.String(), reason)
+	fmt.Fprintf(os.Stderr, "freeze-unfreeze: lifting freeze on %s/%s — actor: %s, reason: %s\n",
+		asset.String(), quote.String(), req.actor, req.reason)
 
+	target := asset.String() + "/" + quote.String()
+	if err := appendOpsAudit(ctx, audit, "freeze.unfreeze", "freeze-unfreeze", "freeze_pair", target, req.actor, req.reason, nil); err != nil {
+		return fmt.Errorf("audit_log append for %s failed, so NOTHING was changed: %w", target, err)
+	}
+	if err := clearer.RecordOverride(ctx, asset, quote, req.actor, req.reason); err != nil {
+		return fmt.Errorf("record the override tombstone for %s (NOTHING was changed on the serving path): %w", target, err)
+	}
 	if err := clearer.Clear(ctx, asset, quote); err != nil {
 		return fmt.Errorf("clear redis freeze marker for %s/%s (NOTHING was changed): %w", asset, quote, err)
 	}

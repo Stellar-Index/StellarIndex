@@ -69,6 +69,12 @@ func openKeyAudit(ctx context.Context, dsn string) (keyAuditSink, func(), error)
 
 // appendKeyAudit writes one staff-actor audit_log row for a CLI key action.
 func appendKeyAudit(ctx context.Context, sink keyAuditSink, action, command, keyID, actor, reason string, detail map[string]any) error {
+	return appendOpsAudit(ctx, sink, action, command, "api_key", keyID, actor, reason, detail)
+}
+
+// appendOpsAudit writes one staff-actor audit_log row for a privileged CLI
+// action on (targetKind, targetID).
+func appendOpsAudit(ctx context.Context, sink keyAuditSink, action, command, targetKind, targetID, actor, reason string, detail map[string]any) error {
 	meta := map[string]any{"actor": actor, "reason": strings.TrimSpace(reason), "via": "stellarindex-ops " + command}
 	for k, v := range detail {
 		meta[k] = v
@@ -80,8 +86,8 @@ func appendKeyAudit(ctx context.Context, sink keyAuditSink, action, command, key
 	return sink.Append(ctx, platform.AuditEntry{
 		ActorKind:  platform.ActorStaff,
 		Action:     action,
-		TargetKind: "api_key",
-		TargetID:   keyID,
+		TargetKind: targetKind,
+		TargetID:   targetID,
 		Metadata:   body,
 		UserAgent:  "stellarindex-ops " + command,
 		Timestamp:  time.Now().UTC(),

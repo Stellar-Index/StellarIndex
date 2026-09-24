@@ -191,6 +191,7 @@ func registerFreezeLifecycleMetrics() {
 		AnomalyFreezeExtensionsTotal,
 		AnomalyFreezeHeldUnscoredTotal,
 		AnomalyFreezeReleasedTotal,
+		AnomalyFreezeRefiredAfterOverrideTotal,
 		AnomalyFreezeActive,
 		AnomalyFreezeRecoveredTotal,
 		AnomalyFreezeLadderRehydratedTotal,
@@ -510,7 +511,7 @@ func seedBoundedLabelSeries() {
 	// calibration is producing freezes humans keep undoing", and until
 	// the first manual unfreeze it would otherwise be absent from
 	// scrape output — indistinguishable from a dead metric.
-	for _, mode := range []string{"auto", "operator"} {
+	for _, mode := range []string{"auto", "operator", "lapsed"} {
 		AnomalyFreezeReleasedTotal.WithLabelValues(mode)
 	}
 	// Durable-ladder write sites (migration 0119). Bounded set of two;
@@ -3808,11 +3809,24 @@ var AnomalyFreezeHeldUnscoredTotal = prometheus.NewCounter(
 	},
 )
 
+// AnomalyFreezeRefiredAfterOverrideTotal — counter of freezes that
+// re-fired inside the ADR-0019 override memory and resumed the ladder the
+// override ended (freeze.DefaultOverrideMemory). Non-zero means a pair a
+// human force-unfroze was still anomalous afterwards.
+var AnomalyFreezeRefiredAfterOverrideTotal = prometheus.NewCounter(
+	prometheus.CounterOpts{
+		Name: "stellarindex_anomaly_freeze_refired_after_override_total",
+		Help: "ADR-0019 freezes that re-fired after an override and resumed the overridden ladder.",
+	},
+)
+
 // AnomalyFreezeReleasedTotal — counter of freezes that ended,
 // labelled by how: `auto` (ADR-0019's auto-unfreeze condition —
 // confidence > 0.30 AND z < 3.0 for two consecutive buckets — held at
-// hold expiry) or `operator` (the marker was cleared out of band,
-// which is the ADR's "operator override always available").
+// hold expiry), `operator` (stellarindex-ops freeze-unfreeze cleared the
+// marker, which is the ADR's "operator override always available") or
+// `lapsed` (the marker and durable ladder expired with nobody refreshing
+// them and no operator tombstone).
 //
 // Pairs with AnomalyFreezeEngagedTotal: engaged increments on every
 // frozen tick, this one only on the ending transition, so the two are
@@ -3822,7 +3836,7 @@ var AnomalyFreezeHeldUnscoredTotal = prometheus.NewCounter(
 var AnomalyFreezeReleasedTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_anomaly_freeze_released_total",
-		Help: "Freezes ended, by mode. Mode ∈ {auto, operator}.",
+		Help: "Freezes ended, by mode. Mode ∈ {auto, operator, lapsed}.",
 	},
 	[]string{"mode"},
 )

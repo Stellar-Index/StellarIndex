@@ -3105,13 +3105,20 @@ permanently inert.
 
 ### `stellarindex_anomaly_freeze_released_total`
 
-Counter, label `mode` (`auto` / `operator`).
+Counter, label `mode` (`auto` / `operator` / `lapsed`).
 
 Freezes that ENDED, by how. `auto` = the ADR-0019 auto-unfreeze
 condition held (confidence > 0.30 AND z < 3.0 for two consecutive
-buckets, once the initial hold was served). `operator` = the marker
-was cleared out of band, which is ADR-0019's "operator override
-always available".
+buckets, once the initial hold was served). `operator` =
+`stellarindex-ops freeze-unfreeze` cleared the marker, which is
+ADR-0019's "operator override always available"; the command leaves a
+`freeze:override:<asset>:<quote>` tombstone the aggregator reads to
+tell the two apart. `lapsed` = the marker and durable ladder both
+expired with no tombstone: nobody refreshed the freeze for its hold
+plus the 5-minute grace, which means the aggregator stalled on the
+pair. One increment per (pair, window) released, on the aggregator's
+next tick; the `audit_log` row `freeze.unfreeze` is the per-command
+record of who and why.
 
 Not expected to balance against
 `stellarindex_anomaly_freeze_engaged_total`, which counts frozen
@@ -3119,6 +3126,17 @@ ticks rather than freezes. The label to watch is `operator`: a
 rising manual-unfreeze rate means the calibration is producing
 freezes humans keep having to undo, which is a threshold or
 baseline problem rather than an incident.
+
+### `stellarindex_anomaly_freeze_refired_after_override_total`
+
+Counter, no labels.
+
+Freezes that fired again within two hours of an override and picked
+up the ladder the override ended, instead of starting a new
+10-minute hold. An escalated pair comes back escalated, so
+`stellarindex_anomaly_freeze_escalated_total` increments again and
+the P1 pages again. Non-zero means a pair a human force-unfroze was
+still anomalous afterwards.
 
 ### `stellarindex_anomaly_warn_total`
 

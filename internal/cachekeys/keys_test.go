@@ -331,6 +331,15 @@ func TestFreeze(t *testing.T) {
 		t.Errorf("FreezeTTL = %v, want 5m (per cachekeys §Freeze design note)",
 			cachekeys.FreezeTTL)
 	}
+
+	// The override tombstone shares the ACL-covered `freeze:` prefix and
+	// must never be read as a marker: no asset id parses as "override".
+	if got, want := cachekeys.FreezeOverride(xlm, usdc).String(), "freeze:override:native:USDC-"+usdcIssuer; got != want {
+		t.Errorf("FreezeOverride = %q, want %q", got, want)
+	}
+	if _, err := canonical.ParseAsset("override"); err == nil {
+		t.Error(`"override" parses as an asset id, so freeze:override:* can collide with a freeze marker`)
+	}
 }
 
 // TestAPIKey pins the auth package's lookup contract: the key is

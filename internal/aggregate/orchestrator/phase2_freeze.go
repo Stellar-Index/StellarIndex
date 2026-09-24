@@ -209,6 +209,34 @@ func (o *Orchestrator) classOf(pair canonical.Pair) anomaly.AssetClass {
 	return anomaly.ClassDefault
 }
 
+// unpricedBucket is decideBucket's exit for a bucket that produced no
+// price: empty after filtering, under [Config.MinUSDVolume], or with no
+// computable VWAP. It publishes nothing, but a window that is already
+// frozen still advances its lifecycle here, because the marker TTL and
+// the durable ladder's liveness are refreshed only by that step. Skipping
+// it let hold + grace of thinness lapse the freeze, and the next priced
+// bucket read the lapse as the operator override.
+//
+// The signal is unscored: it resets the unfreeze streak, slides an expired
+// hold without spending an extension, and can never release.
+func (o *Orchestrator) unpricedBucket(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	now time.Time,
+) (*publishedBucket, error) {
+	stateKey := pair.String() + ":" + window.String()
+	if st, cached := o.freezeStates[stateKey]; !cached || st.Active() {
+		decision := anomaly.Decision{
+			Action: anomaly.ActionFreeze,
+			Class:  o.classOf(pair),
+			Reason: "phase2:unscored",
+		}
+		o.stepFreezeLifecycle(ctx, pair, window, stateKey, freeze.Signal{Now: now}, decision, o.prevVWAPs[stateKey])
+	}
+	return nil, nil
+}
+
 // stepPhase2Freeze translates one scored bucket into a [freeze.Signal]
 // and advances the ADR-0019 lifecycle. Returns true when the bucket
 // must be refused publication.
@@ -332,6 +360,9 @@ func (o *Orchestrator) stepFreezeLifecycle(
 	if !out.Frozen {
 		o.releaseFreeze(ctx, pair, window, stateKey, prev, out.Transition)
 		return false
+	}
+	if !prev.Active() && !out.State.OverriddenAt.IsZero() {
+		obs.AnomalyFreezeRefiredAfterOverrideTotal.Inc()
 	}
 	o.engageFreeze(ctx, pair, window, stateKey, decision, prevVWAP, out)
 	return true
@@ -533,6 +564,8 @@ func (o *Orchestrator) logFreezeTransition(
 			"reason", decision.Reason,
 			"hold_until", out.State.HoldUntil,
 			"corroborated", out.State.Corroborated,
+			"extensions_used", out.State.ExtensionsUsed,
+			"resumed_override_ladder", !out.State.OverriddenAt.IsZero(),
 			"writer_wired", o.cfg.FreezeWriter != nil)
 	case freeze.TransitionExtended:
 		obs.AnomalyFreezeExtensionsTotal.Inc()
@@ -552,6 +585,7 @@ func (o *Orchestrator) logFreezeTransition(
 			"class", string(decision.Class),
 			"fired_at", out.State.FiredAt,
 			"extensions_used", out.State.ExtensionsUsed,
+			"resumed_override_ladder", !out.State.OverriddenAt.IsZero(),
 			"reason", decision.Reason)
 	case freeze.TransitionHeldUnscored:
 		// The hold expired on a bucket the scorer could not evaluate
@@ -593,14 +627,17 @@ func (o *Orchestrator) releaseFreeze(
 	prev freeze.State,
 	transition freeze.Transition,
 ) {
-	o.freezeStates[stateKey] = freeze.State{}
 	if !prev.Active() {
-		return // nothing was frozen; nothing to release
+		// Nothing was frozen; keep any ladder an earlier override left.
+		o.freezeStates[stateKey] = prev
+		return
 	}
 
 	mode := "auto"
+	o.freezeStates[stateKey] = freeze.State{}
 	if transition == freeze.TransitionOverridden {
-		mode = "operator"
+		mode = o.overrideMode(ctx, pair)
+		o.freezeStates[stateKey] = prev.Overridden(o.clock())
 	}
 	obs.AnomalyFreezeReleasedTotal.WithLabelValues(mode).Inc()
 	o.logger.Info("freeze released",
@@ -651,6 +688,26 @@ func (o *Orchestrator) releaseFreeze(
 	}
 
 	o.clearReleasedMarker(ctx, pair, window)
+}
+
+// overrideMode labels a release the orchestrator detected as a missing
+// marker: "operator" when freeze-unfreeze left its tombstone (or the writer
+// cannot say), "lapsed" when the marker and ladder expired with no operator
+// involved, so the operator series counts only human force-unfreezes.
+func (o *Orchestrator) overrideMode(ctx context.Context, pair canonical.Pair) string {
+	if o.overrideReader == nil {
+		return "operator"
+	}
+	recorded, err := o.overrideReader.OverrideRecorded(ctx, pair.Base, pair.Quote)
+	if err != nil {
+		o.logger.Warn("freeze override tombstone read failed — counting the release as operator",
+			"pair", pair.String(), "err", err)
+		return "operator"
+	}
+	if recorded {
+		return "operator"
+	}
+	return "lapsed"
 }
 
 // clearReleasedMarker deletes the pair's freeze marker on the release of

@@ -566,6 +566,16 @@ func Freeze(asset, quote canonical.Asset) FreezeKey {
 	return FreezeKey("freeze:" + asset.String() + ":" + quote.String())
 }
 
+// FreezeOverride returns the key `stellarindex-ops freeze-unfreeze`
+// writes before it clears a pair's marker, so the aggregator can tell an
+// operator's force-unfreeze from a marker that lapsed on its own. Under
+// `freeze:` so the Redis ACL's `~freeze:*` covers it; no asset id
+// parses as `override`, so it cannot collide with [Freeze]. TTL:
+// [FreezeTTL], the aggregator's silence tolerance.
+func FreezeOverride(asset, quote canonical.Asset) FreezeKey {
+	return FreezeKey("freeze:override:" + asset.String() + ":" + quote.String())
+}
+
 // FreezeTTL is the SILENCE GRACE added to a freeze marker's
 // remaining hold when the aggregator writes the key — i.e. how long
 // `flags.frozen` keeps serving after the aggregator stops writing
