@@ -47,9 +47,10 @@ type AsyncSink struct {
 	drainCtx    context.Context
 	drainCancel context.CancelFunc
 
-	ch       chan Hit
-	stopOnce sync.Once
-	done     chan struct{}
+	ch        chan Hit
+	startOnce sync.Once
+	stopOnce  sync.Once
+	done      chan struct{}
 
 	mu      sync.Mutex
 	stopped bool
@@ -138,7 +139,7 @@ func NewAsyncSink(rec Recorder, opts AsyncSinkOptions) *AsyncSink {
 // no-op. Caller must Stop before the process exits to flush
 // pending records.
 func (s *AsyncSink) Start() {
-	go s.run()
+	s.startOnce.Do(func() { go s.run() })
 }
 
 // Push enqueues a Hit. Non-blocking. Behaviour:
