@@ -42,3 +42,31 @@ func TestCanonicalizeWatchedClassic(t *testing.T) {
 		t.Fatal("empty entry must error")
 	}
 }
+
+// TestCanonicalizeWatchedClassicRejectsInvalidColonForm: a colon-form
+// entry is parsed like any other, so a CODE:ISSUER typo or an off-chain
+// prefixed id fails loudly instead of joining the watched set verbatim
+// and matching nothing.
+func TestCanonicalizeWatchedClassicRejectsInvalidColonForm(t *testing.T) {
+	for _, e := range []string{
+		// Last character altered: the issuer strkey CRC16 fails.
+		"USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVM",
+		"USDC:not-a-strkey",
+		"TOOLONGASSETCODE:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		"fiat:USD",
+		"crypto:BTC",
+		"rwa:XAU",
+		"raw:anything",
+		":GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		"USDC:",
+	} {
+		if got, err := CanonicalizeWatchedClassic([]string{e}); err == nil {
+			t.Errorf("CanonicalizeWatchedClassic(%q) = %v, want a loud error", e, got)
+		}
+	}
+	// A valid colon-form entry still round-trips, code case preserved.
+	const yxlm = "yXLM:GARDNV3Q7YGT4AKSDF25LT32YSCCW4EV22Y2TV3I2PU2MMXJTEDL5T55"
+	if got, err := CanonicalizeWatchedClassic([]string{yxlm}); err != nil || len(got) != 1 || got[0] != yxlm {
+		t.Fatalf("valid colon form: got %v, %v; want [%s]", got, err, yxlm)
+	}
+}

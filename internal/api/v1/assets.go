@@ -2068,11 +2068,77 @@ const sep1ImagesRetryGap = 60 * time.Second
 // cache rather than being killed and repeated.
 const sep1ImagesBudget = 2 * time.Minute
 
-// sep1ImageKey is the join key shared by the logo-map build + lookup.
-// Asset codes are matched case-insensitively (as the per-asset SEP-1
-// overlay does via EqualFold); the issuer G-strkey must match exactly.
+// sep1ImageKey is the logo map's exact join key. Asset codes are
+// case-sensitive on the network, so the code keeps its case.
 func sep1ImageKey(code, issuer string) string {
-	return strings.ToUpper(strings.TrimSpace(code)) + "-" + issuer
+	return strings.TrimSpace(code) + "-" + issuer
+}
+
+// sep1ImageFoldKey keys the map's case-insensitive fallback entries.
+// The "fold:" prefix cannot collide with an exact key: codes are
+// alphanumeric.
+func sep1ImageFoldKey(code, issuer string) string {
+	return "fold:" + strings.ToUpper(strings.TrimSpace(code)) + "-" + issuer
+}
+
+// sep1ImageFor looks a logo up by exact code first, then through the
+// fallback entry [buildSep1ImageMap] writes only for unambiguous folds.
+func sep1ImageFor(images map[string]string, code, issuer string) string {
+	if img, ok := images[sep1ImageKey(code, issuer)]; ok {
+		return img
+	}
+	return images[sep1ImageFoldKey(code, issuer)]
+}
+
+// buildSep1ImageMap keys each safe logo by its exact (code, issuer) and,
+// where exactly one code spelling folds to it, under the case-insensitive
+// fallback key too, so a mis-cased stellar.toml still reaches its asset
+// but an issuer's USDX and usdx never share a logo.
+func buildSep1ImageMap(imgs []timescale.Sep1Image) map[string]string {
+	built := make(map[string]string, len(imgs))
+	spellings := map[string][]string{}
+	for _, img := range imgs {
+		if !isSafeImageURL(img.Image) {
+			continue
+		}
+		k := sep1ImageKey(img.Code, img.Issuer)
+		if _, dup := built[k]; !dup {
+			fk := sep1ImageFoldKey(img.Code, img.Issuer)
+			spellings[fk] = append(spellings[fk], k)
+		}
+		built[k] = img.Image
+	}
+	for fk, keys := range spellings {
+		if len(keys) == 1 {
+			built[fk] = built[keys[0]]
+		}
+	}
+	return built
+}
+
+// matchAssetCode returns the index in codes of the entry naming the
+// case-sensitive asset code want: its exact spelling if present, else
+// the one case-insensitive spelling (a mis-cased stellar.toml), else -1.
+// Two distinct case-insensitive spellings are ambiguous and match none.
+func matchAssetCode(want string, codes []string) int {
+	fold, ambiguous := -1, false
+	for i, c := range codes {
+		if c == want {
+			return i
+		}
+		if !strings.EqualFold(c, want) {
+			continue
+		}
+		if fold == -1 {
+			fold = i
+		} else if codes[fold] != c {
+			ambiguous = true
+		}
+	}
+	if ambiguous {
+		return -1
+	}
+	return fold
 }
 
 // sep1ImagesReader is the narrow capability the logo overlay needs. It is
@@ -2097,7 +2163,7 @@ type sep1ImagesReader interface {
 // front of this seam must be added here the same day.
 var _ sep1ImagesReader = (*timescale.Store)(nil)
 
-// cachedSep1Images returns the SEP-1 logo map (case-folded CODE-ISSUER →
+// cachedSep1Images returns the SEP-1 logo map ([buildSep1ImageMap] →
 // safe image URL) built from every verified issuer's cached payload.
 //
 // # It never blocks, and it never dies with its caller
@@ -2200,13 +2266,7 @@ func (s *Server) refreshSep1Images(reader sep1ImagesReader, done chan struct{}) 
 		return
 	}
 
-	built := make(map[string]string, len(imgs))
-	for _, img := range imgs {
-		if !isSafeImageURL(img.Image) {
-			continue
-		}
-		built[sep1ImageKey(img.Code, img.Issuer)] = img.Image
-	}
+	built := buildSep1ImageMap(imgs)
 
 	s.sep1ImagesMu.Lock()
 	s.sep1ImagesCache = built
@@ -2284,7 +2344,7 @@ func (s *Server) fillImagesFromSep1(ctx context.Context, rows []AssetDetail) {
 		if rows[i].Image != nil || rows[i].Issuer == nil || rows[i].Code == "" {
 			continue
 		}
-		if img := images[sep1ImageKey(rows[i].Code, *rows[i].Issuer)]; img != "" {
+		if img := sep1ImageFor(images, rows[i].Code, *rows[i].Issuer); img != "" {
 			v := img
 			rows[i].Image = &v
 		}
@@ -2587,7 +2647,7 @@ func catalogueRowImage(vc *currency.VerifiedCurrency, images map[string]string) 
 	if se == nil || se.Code == "" || se.Issuer == "" {
 		return ""
 	}
-	return images[sep1ImageKey(se.Code, se.Issuer)]
+	return sep1ImageFor(images, se.Code, se.Issuer)
 }
 
 // parseOffsetCursor parses an offset-style pagination cursor. The
@@ -4076,10 +4136,9 @@ func applySep1VerifiedFields(detail *AssetDetail, sep *timescale.IssuerSep1Cache
 
 // findMatchingCachedCurrency returns the SEP-1 currency entry in a
 // cached issuer payload whose (code, issuer) matches the requested
-// classic asset, or nil when there is no match. Code comparison is
-// case-insensitive; issuer must match exactly. Walks the
-// [timescale.IssuerSep1Cached] currencies slice. (The live-fetched
-// twin that this once mirrored was removed.)
+// classic asset, or nil when there is no match. The issuer must match
+// exactly and the code per [matchAssetCode]: exact spelling first, an
+// unambiguous case-insensitive one as fallback.
 func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical.Asset) *timescale.IssuerSep1Currency {
 	if asset.Type != canonical.AssetClassic {
 		return nil
@@ -4087,15 +4146,16 @@ func findMatchingCachedCurrency(sep *timescale.IssuerSep1Cached, asset canonical
 	if asset.Code == "" || asset.Issuer == "" {
 		return nil
 	}
+	codes := make([]string, 0, len(sep.Currencies))
+	at := make([]int, 0, len(sep.Currencies))
 	for i := range sep.Currencies {
-		c := &sep.Currencies[i]
-		if !strings.EqualFold(c.Code, asset.Code) {
-			continue
+		if c := &sep.Currencies[i]; c.Issuer != "" && c.Issuer == asset.Issuer {
+			codes = append(codes, c.Code)
+			at = append(at, i)
 		}
-		if c.Issuer == "" || c.Issuer != asset.Issuer {
-			continue
-		}
-		return c
+	}
+	if j := matchAssetCode(asset.Code, codes); j >= 0 {
+		return &sep.Currencies[at[j]]
 	}
 	return nil
 }

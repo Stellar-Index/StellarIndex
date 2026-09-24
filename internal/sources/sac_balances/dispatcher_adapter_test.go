@@ -16,6 +16,8 @@ const (
 	// time so the test fixture isn't dependent on encoding helpers.
 	cSAC    = "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4"
 	gHolder = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+	// A parseable classic asset_key: NewObserver validates it.
+	usdcKey = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 )
 
 func mustEdAccount(t *testing.T, gAddr string) [32]byte {
@@ -101,7 +103,7 @@ func TestNewObserver_RejectsEmpty(t *testing.T) {
 	if _, err := NewObserver(nil); !errors.Is(err, ErrEmptyWrapperMap) {
 		t.Errorf("nil: err=%v want ErrEmptyWrapperMap", err)
 	}
-	if _, err := NewObserver(map[string]string{"": "USDC:G..."}); err == nil {
+	if _, err := NewObserver(map[string]string{"": usdcKey}); err == nil {
 		t.Errorf("empty contract id should error")
 	}
 	if _, err := NewObserver(map[string]string{cSAC: ""}); err == nil {
@@ -110,7 +112,7 @@ func TestNewObserver_RejectsEmpty(t *testing.T) {
 }
 
 func TestObserver_MatchesWatchedSAC_I128Val(t *testing.T) {
-	o, err := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, err := NewObserver(map[string]string{cSAC: usdcKey})
 	if err != nil {
 		t.Fatalf("NewObserver: %v", err)
 	}
@@ -121,7 +123,7 @@ func TestObserver_MatchesWatchedSAC_I128Val(t *testing.T) {
 }
 
 func TestObserver_MatchesWatchedSAC_MapVal(t *testing.T) {
-	o, err := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, err := NewObserver(map[string]string{cSAC: usdcKey})
 	if err != nil {
 		t.Fatalf("NewObserver: %v", err)
 	}
@@ -135,7 +137,7 @@ func TestObserver_MatchesWatchedSAC_MapVal(t *testing.T) {
 // Key isn't a Balance entry (e.g. it's a metadata key). Match
 // should reject.
 func TestObserver_SkipsWrongKey(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
 	wrongSym := xdr.ScSymbol("Allowance")
 	wrongVec := xdr.ScVec{xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &wrongSym}}
 	wp := &wrongVec
@@ -147,7 +149,7 @@ func TestObserver_SkipsWrongKey(t *testing.T) {
 }
 
 func TestObserver_DecodeI128(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
 	change := makeContractDataChange(t, cSAC, makeBalanceKey(t, gHolder), makeI128Val(987_654_321))
 	outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{
 		Ledger: 1, Change: change, ClosedAt: time.Unix(1, 0).UTC(),
@@ -156,8 +158,8 @@ func TestObserver_DecodeI128(t *testing.T) {
 		t.Fatalf("Decode: %v", err)
 	}
 	obs := outs[0].(Observation)
-	if obs.AssetKey != "USDC:G..." {
-		t.Errorf("AssetKey=%q want USDC:G...", obs.AssetKey)
+	if obs.AssetKey != usdcKey {
+		t.Errorf("AssetKey=%q want %q", obs.AssetKey, usdcKey)
 	}
 	if obs.Holder != gHolder {
 		t.Errorf("Holder=%q want %q", obs.Holder, gHolder)
@@ -171,7 +173,7 @@ func TestObserver_DecodeI128(t *testing.T) {
 }
 
 func TestObserver_DecodeMapVal(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
 	change := makeContractDataChange(t, cSAC, makeBalanceKey(t, gHolder), makeBalanceMapVal(555))
 	outs, err := o.Decode(dispatcher.LedgerEntryChangeContext{
 		Ledger: 1, Change: change,
@@ -189,7 +191,7 @@ func TestObserver_DecodeMapVal(t *testing.T) {
 // IsRemoval=true with Balance=0. Asset_key still populates from
 // the operator map.
 func TestObserver_DecodeRemoved(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
 	cid := mustContractID(t, cSAC)
 	contract := xdr.ScAddress{Type: xdr.ScAddressTypeScAddressTypeContract, ContractId: (*xdr.ContractId)(&cid)}
 	change := xdr.LedgerEntryChange{
@@ -219,8 +221,8 @@ func TestObserver_DecodeRemoved(t *testing.T) {
 	if obs.Balance.Sign() != 0 {
 		t.Errorf("Balance=%s want 0 (removed)", obs.Balance)
 	}
-	if obs.AssetKey != "USDC:G..." {
-		t.Errorf("AssetKey=%q want USDC:G... (from operator map)", obs.AssetKey)
+	if obs.AssetKey != usdcKey {
+		t.Errorf("AssetKey=%q want %q (from operator map)", obs.AssetKey, usdcKey)
 	}
 }
 
@@ -283,7 +285,7 @@ func TestObserver_PureSEP41ContractIDPassesThrough(t *testing.T) {
 }
 
 func TestObserver_RoundTripThroughDispatcher(t *testing.T) {
-	o, _ := NewObserver(map[string]string{cSAC: "USDC:G..."})
+	o, _ := NewObserver(map[string]string{cSAC: usdcKey})
 	disp := dispatcher.New()
 	disp.AddEntryDecoder(o)
 

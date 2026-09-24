@@ -22,6 +22,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"slices"
+	"sort"
 	"testing"
 	"time"
 
@@ -592,5 +594,52 @@ func TestRWAAssets_MembershipIsCachedNotRebuiltPerRequest(t *testing.T) {
 	}
 	if sep1.calls != 1 {
 		t.Errorf("BoundSep1Currencies called %d times; the TTL cache should scan once", sep1.calls)
+	}
+}
+
+// TestRWAAssets_CodesDifferingOnlyInCaseAreDistinctAssets: Stellar asset
+// codes are case-sensitive, so one issuer's USTRY and ustry are two
+// assets. The membership join must attach the declaration to the asset
+// it names and never to its case twin.
+func TestRWAAssets_CodesDifferingOnlyInCaseAreDistinctAssets(t *testing.T) {
+	dir := map[string]timescale.DirectoryEntry{rwaGoodIssuer: recognisedIssuer(rwaGoodIssuer, "Etherfuse")}
+	twins := map[string][]timescale.AssetRow{
+		rwaGoodIssuer: {
+			rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312),
+			rwaRow("ustry", rwaGoodIssuer, sptr("0.02"), 12),
+		},
+	}
+
+	// Only USTRY is declared: its twin must not be served in its place.
+	v := getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond")}, dir, twins))
+	if got := rwaAssetIDs(v); len(got) != 1 || got[0] != "USTRY-"+rwaGoodIssuer {
+		t.Errorf("USTRY declared: assets = %v, want exactly [USTRY-%s]", got, rwaGoodIssuer)
+	}
+
+	// Both declared: both are members, each joined to its own row.
+	v = getRWA(t, rwaServer(t, []timescale.Sep1BoundCurrency{
+		rwaBound("USTRY", rwaGoodIssuer, "etherfuse.com", "bond"),
+		rwaBound("ustry", rwaGoodIssuer, "etherfuse.com", "bond"),
+	}, dir, twins))
+	got := rwaAssetIDs(v)
+	sort.Strings(got)
+	if want := []string{"USTRY-" + rwaGoodIssuer, "ustry-" + rwaGoodIssuer}; !slices.Equal(got, want) {
+		t.Errorf("both declared: assets = %v, want %v", got, want)
+	}
+
+	// A mis-cased declaration still reaches the one asset it can mean.
+	v = getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("Ustry", rwaGoodIssuer, "etherfuse.com", "bond")}, dir,
+		map[string][]timescale.AssetRow{rwaGoodIssuer: {rwaRow("USTRY", rwaGoodIssuer, sptr("1.0412"), 346312)}}))
+	if got := rwaAssetIDs(v); len(got) != 1 || got[0] != "USTRY-"+rwaGoodIssuer {
+		t.Errorf("mis-cased declaration: assets = %v, want [USTRY-%s]", got, rwaGoodIssuer)
+	}
+
+	// A mis-cased declaration that fits both twins names neither.
+	v = getRWA(t, rwaServer(t,
+		[]timescale.Sep1BoundCurrency{rwaBound("Ustry", rwaGoodIssuer, "etherfuse.com", "bond")}, dir, twins))
+	if got := rwaAssetIDs(v); len(got) != 0 {
+		t.Errorf("ambiguous mis-cased declaration: assets = %v, want none", got)
 	}
 }
