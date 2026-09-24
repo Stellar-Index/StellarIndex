@@ -124,6 +124,23 @@ for g in d.get("data",{}).get("groups",[]):
         if n: print(n)' 2>/dev/null | sort -u
 }
 
+# Parses the same JSON body, printing "name: health" for every rule whose
+# health equals $1 ("err" or "unknown"). A rule that loads and then never
+# leaves "unknown" is exactly as broken as one that never loaded — it is
+# not evaluating — so the caller polls this for "unknown" the same way it
+# polls parse_loaded_rule_names for the name, instead of accepting
+# "unknown" as healthy on a single immediate sample.
+rules_with_health() {
+  python3 -c 'import sys,json
+want=sys.argv[1]
+try: d=json.load(sys.stdin)
+except Exception: sys.exit(0)
+for g in d.get("data",{}).get("groups",[]):
+    for r in g.get("rules",[]):
+        if r.get("health")==want:
+            print(r.get("name")+": "+str(r.get("health")))' "$1" 2>/dev/null | sort -u
+}
+
 # ─── 1. Validate BEFORE touching anything ─────────────────────────
 #
 # On the host, not only in CI. CI validates the repo's copy; this
@@ -212,45 +229,46 @@ reload_prometheus() {
 reload_prometheus || { restore; die "could not reload prometheus"; }
 echo "apply-rules: reloaded"
 
-# ─── 4. Verify the rules actually loaded — POLLING ────────────────
+# ─── 4. Verify the rules actually loaded AND are healthy — POLLING ─
 #
 # Without this the script automates "copied a file", not "the alert is
 # watching production". With a single sample it would ALSO report a
 # working apply as broken, because the reload is asynchronous.
+#
+# A rule that loads but errors is a failed apply too — a bad expression
+# loads fine and then evaluates to errors, so name-presence alone is not
+# proof it works. "unknown" is the transient state before the FIRST
+# evaluation after a reload, so it is not failed YET, but it is not proof
+# of health either: it gets the same poll-until-it-settles treatment as
+# name-presence, not a pass on a single immediate sample. "err" never
+# gets better on its own and fails fast instead of waiting out the clock.
 deadline=$(( $(date +%s) + VERIFY_TIMEOUT_S ))
 while :; do
-  loaded="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null | parse_loaded_rule_names || true)"
-
+  rules_json="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null || true)"
+  loaded="$(printf '%s' "$rules_json" | parse_loaded_rule_names)"
   missing="$(comm -23 <(printf '%s\n' "$expected_alerts") <(printf '%s\n' "$loaded") || true)"
-  if [ -z "$missing" ]; then
-    echo "apply-rules: verified — all $expected_count alert(s) loaded"
+
+  errored="$(printf '%s' "$rules_json" | rules_with_health err)"
+  if [ -n "$errored" ]; then
+    echo "apply-rules: rule(s) loaded but errored:" >&2
+    printf '  %s\n' "$errored" >&2
+    restore
+    die "verification failed — rules restored from backup"
+  fi
+
+  pending="$(printf '%s' "$rules_json" | rules_with_health unknown)"
+  if [ -z "$missing" ] && [ -z "$pending" ]; then
+    echo "apply-rules: verified — all $expected_count alert(s) loaded and healthy"
     break
   fi
   if [ "$(date +%s)" -ge "$deadline" ]; then
-    echo "apply-rules: these alerts never loaded after ${VERIFY_TIMEOUT_S}s:" >&2
-    printf '  %s\n' "$missing" >&2
+    echo "apply-rules: never loaded/healthy after ${VERIFY_TIMEOUT_S}s:" >&2
+    printf '  %s\n' "$missing" "$pending" >&2
     restore
     die "verification failed — rules restored from backup"
   fi
   sleep 3
 done
-
-# Any rule group that loaded but is unhealthy is also a failed apply:
-# a group with a bad expression loads and then evaluates to errors, so
-# name-presence alone is not proof it works.
-unhealthy="$(curl -sf --max-time 10 "$PROM_URL/api/v1/rules" 2>/dev/null \
-  | python3 -c 'import sys,json
-d=json.load(sys.stdin)
-for g in d.get("data",{}).get("groups",[]):
-    for r in g.get("rules",[]):
-        if r.get("health") not in (None,"ok","unknown"):
-            print(f"{r.get(\"name\")}: {r.get(\"health\")}")' 2>/dev/null || true)"
-if [ -n "$unhealthy" ]; then
-  echo "apply-rules: rules loaded but are unhealthy:" >&2
-  printf '  %s\n' "$unhealthy" >&2
-  restore
-  die "verification failed — rules restored from backup"
-fi
 
 # ─── 5. Prune old backups ─────────────────────────────────────────
 #

@@ -25,20 +25,7 @@ adapted for the single-host scrape config in [`prometheus.r1.yml`](../prometheus
 | `zfs-snapshots.yml` | `zfs-snapshots.yml` | as-is (textfile metrics from `zfs-snapshot.sh`, archival-node role tag `zfs-snapshots`). |
 | `memory-mappings.yml` | `memory-mappings.yml` | as-is (textfile metrics from `memory-mappings.sh`, archival-node role tag `memory-mappings`). Thresholds are RATIOS of `vm.max_map_count`, so they travel to a host with a different limit unchanged. |
 | `clickhouse.yml` | `clickhouse.yml` | as-is (the `_server_down` selector is `job="clickhouse"` in both trees — clickhouse-server serves its own `/metrics` on 9363, so there is no exporter job name to diverge; the two `ClickHouseProfileEvents_*` rules select by metric name alone). Requires the archival-node role tag `clickhouse-exporter` and the `clickhouse` scrape job in `prometheus.r1.yml`. |
-
-The remaining files in `deploy/monitoring/rules/` are still
-intentionally NOT shipped here:
-
-<!-- 2026-08-28: the cache.yml/storage.yml bullet below was stale —
-     both files HAVE shipped here, and redis_exporter (:9121) +
-     postgres_exporter (:9187) ARE scraped on r1 (prometheus.r1.yml
-     jobs; provisioned by the archival-node role). The HA-label rules
-     inside them (role="master"/"primary", replication) evaluate over
-     empty vectors on the single-host deployment. -->
-- `stellar.yml` — references `stellar-core-prometheus-exporter`,
-  which is only installed when `run_stellar_core` is true (post
-  Phase-3 Tier-1 validator rollout per ADR-0004). Stays inert
-  until then.
+| `stellar.yml` | `stellar.yml` | as-is. The `stellar_core_*` / `stellar_rpc_lag` alerts are inert on r1 — it runs neither stellar-core nor stellar-rpc, so `stellar-core-prometheus-exporter` never produces those metrics (stays inert until the Phase-3 Tier-1 validator rollout per ADR-0004 flips `run_stellar_core` on). `stellarindex_stellar_archive_divergence` IS active: it reads the verify-archive textfile-collector counter, which has a real producer on r1 today. See the file header for the per-alert breakdown. |
 
 Each file added here is a strict subset of the multi-host rule set;
 adding a previously-skipped file is a deliberate operator action,
@@ -55,9 +42,20 @@ and the wrapper script defaults `SLA_PROBE_TEXTFILE_OUTPUT`.
 
 ## Apply to R1
 
+On every deploy, `.github/workflows/deploy.yml` scp's
+[`configs/prometheus/apply-rules.sh`](../apply-rules.sh) to the host and
+runs it over ssh — it validates with `promtool`, installs atomically with
+a restorable backup, prunes rule files removed from the repo, reloads
+Prometheus, and POLLS `/api/v1/rules` until every expected alert has
+loaded and is healthy (or restores the backup and fails). See that
+script's header for the outage history that made a bare copy-and-reload
+insufficient. Manual apply, same script:
+
 ```sh
-scp configs/prometheus/rules.r1/*.yml root@136.243.90.96:/etc/prometheus/rules.r1/
-ssh root@136.243.90.96 'systemctl reload prometheus'
+scp configs/prometheus/apply-rules.sh root@136.243.90.96:/tmp/apply-rules.sh
+ssh root@136.243.90.96 'mkdir -p /tmp/rules.r1.incoming'
+scp configs/prometheus/rules.r1/*.yml root@136.243.90.96:/tmp/rules.r1.incoming/
+ssh root@136.243.90.96 'bash /tmp/apply-rules.sh /tmp/rules.r1.incoming'
 ```
 
 `prometheus.r1.yml` loads `/etc/prometheus/rules.r1/*.yml`
