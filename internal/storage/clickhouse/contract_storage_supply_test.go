@@ -449,6 +449,61 @@ func TestDecimalsFromInstanceReadsConfigSpelling(t *testing.T) {
 	})
 }
 
+// TestDecimalsFromInstanceSkipsMapWithoutScaleField pins that a METADATA or
+// Config map carrying no scale field is not a declaration: a token-sdk token
+// that also keeps an admin `Config` struct still has its METADATA.decimal read,
+// while a present-but-invalid field still refuses the instance.
+func TestDecimalsFromInstanceSkipsMapWithoutScaleField(t *testing.T) {
+	scaleMap := func(mapName, fieldName string, scale uint32) xdr.ScMapEntry {
+		inner := xdr.ScMap{
+			{Key: symVal(fieldName), Val: xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: (*xdr.Uint32)(&scale)}},
+			{Key: symVal("name"), Val: symVal("Token")},
+		}
+		innerPtr := &inner
+		return xdr.ScMapEntry{Key: symVal(mapName), Val: xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &innerPtr}}
+	}
+	// A #[contracttype] struct stored under DataKey::Config: Vec[Symbol("Config")]
+	// keying a Symbol-keyed map with no scale field.
+	adminConfig := func(mapName string) xdr.ScMapEntry {
+		var admin xdr.AccountId
+		inner := xdr.ScMap{
+			{Key: symVal("admin"), Val: xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &xdr.ScAddress{
+				Type: xdr.ScAddressTypeScAddressTypeAccount, AccountId: &admin,
+			}}},
+			{Key: symVal("paused"), Val: xdr.ScVal{Type: xdr.ScValTypeScvBool, B: new(bool)}},
+		}
+		innerPtr := &inner
+		keyVec := xdr.ScVec{symVal(mapName)}
+		keyVecPtr := &keyVec
+		return xdr.ScMapEntry{
+			Key: xdr.ScVal{Type: xdr.ScValTypeScvVec, Vec: &keyVecPtr},
+			Val: xdr.ScVal{Type: xdr.ScValTypeScvMap, Map: &innerPtr},
+		}
+	}
+
+	cases := []struct {
+		name   string
+		st     xdr.ScMap
+		want   uint32
+		wantOK bool
+	}{
+		{"metadata plus scale-less Config", xdr.ScMap{scaleMap("METADATA", "decimal", 18), adminConfig("Config")}, 18, true},
+		{"scale-less Config before metadata", xdr.ScMap{adminConfig("Config"), scaleMap("METADATA", "decimal", 9)}, 9, true},
+		{"scale-less METADATA plus Config.decimals", xdr.ScMap{adminConfig("METADATA"), scaleMap("Config", "decimals", 6)}, 6, true},
+		{"no map carries a scale", xdr.ScMap{adminConfig("METADATA"), adminConfig("Config")}, 0, false},
+		{"invalid field still refuses", xdr.ScMap{scaleMap("METADATA", "decimal", 18), scaleMap("Config", "decimals", maxSaneTokenDecimals+1)}, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			st := tc.st
+			d, ok := decimalsFromInstance(xdr.ScContractInstance{Storage: &st})
+			if ok != tc.wantOK || d != tc.want {
+				t.Errorf("decimalsFromInstance = %d ok=%v, want %d ok=%v", d, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
 func symVal(s string) xdr.ScVal {
 	sym := xdr.ScSymbol(s)
 	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &sym}

@@ -167,11 +167,15 @@ func decimalsFromInstance(inst xdr.ScContractInstance) (uint32, bool) {
 			if !ok || name != want || kv.Val.Type != xdr.ScValTypeScvMap || kv.Val.Map == nil {
 				continue
 			}
-			d, ok := decimalsFromMetadataMap(**kv.Val.Map)
-			if !ok {
-				// A present-but-unusable map is a refusal for the whole
-				// instance, matching how a present-but-unusable field
-				// refuses the whole map.
+			d, decl := decimalsFromMetadataMap(**kv.Val.Map)
+			if decl == scaleAbsent {
+				// A map with no scale field (an admin Config struct) is
+				// not a declaration; the other spelling may still carry one.
+				break
+			}
+			if decl == scaleUnusable {
+				// A present-but-unusable declaration is a refusal for the
+				// whole instance, matching how it refuses the whole map.
 				return 0, false
 			}
 			if found && value != d {
@@ -184,8 +188,17 @@ func decimalsFromInstance(inst xdr.ScContractInstance) (uint32, bool) {
 	return value, found
 }
 
+// scaleDecl is what one instance map says about the token's scale.
+type scaleDecl int
+
+const (
+	scaleAbsent   scaleDecl = iota // no `decimal`/`decimals` field
+	scaleDeclared                  // one usable, self-consistent scale
+	scaleUnusable                  // a field mistyped, out of bounds, or two that disagree
+)
+
 // decimalsFromMetadataMap reads the scale out of one decoded METADATA map.
-func decimalsFromMetadataMap(entries []xdr.ScMapEntry) (uint32, bool) {
+func decimalsFromMetadataMap(entries []xdr.ScMapEntry) (uint32, scaleDecl) {
 	var (
 		found bool
 		value uint32
@@ -202,14 +215,17 @@ func decimalsFromMetadataMap(entries []xdr.ScMapEntry) (uint32, bool) {
 				// the whole entry, not a reason to try the other
 				// spelling: the contract answered, and the answer was
 				// not a scale.
-				return 0, false
+				return 0, scaleUnusable
 			}
 			if found && value != uint32(u) {
-				return 0, false
+				return 0, scaleUnusable
 			}
 			found, value = true, uint32(u)
 			break
 		}
 	}
-	return value, found
+	if !found {
+		return 0, scaleAbsent
+	}
+	return value, scaleDeclared
 }
