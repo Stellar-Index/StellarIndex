@@ -36,6 +36,16 @@ against.
   zero agreeing references, and a 5-minute persistence debounce.
   Migration 0173 re-issues the comment; catalog-only, and its down
   restores 0019's string verbatim.
+- **storage — `sep41_transfers` refuses negative or missing amounts on
+  every path (T090):** the ch-rebuild COPY writer
+  `CopyMergeSEP41Transfers` validated nothing, so a full-history
+  re-derive could store a negative transfer amount the per-row writer
+  refuses. Both writers now share `validateSEP41TransferRows`, and
+  migration 0174 adds `sep41_transfers_amount_check` as the database
+  backstop. The migration decompresses every chunk first: on
+  timescaledb 2.26.4 the CHECK fails with a corrupted-plan error over
+  two or more compressed chunks, which is what reverted the first
+  attempt.
 
 - **ops — per-source genesis ledgers locked in step (#898):** the
   reconciliation catalogue and the gap detector's

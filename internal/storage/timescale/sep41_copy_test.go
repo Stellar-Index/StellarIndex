@@ -1,8 +1,12 @@
 package timescale
 
 import (
+	"context"
+	"fmt"
+	"math/big"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestCopyMergeUpsertSQL_GenerationGuarded is the proven-red guard for
@@ -61,5 +65,63 @@ func TestCopyMergeUpsertSQL_GenerationGuarded(t *testing.T) {
 	wantGuard := target + ".derive_generation <= EXCLUDED.derive_generation"
 	if !strings.Contains(got, wantGuard) {
 		t.Fatalf("merge SQL missing the generation guard %q:\n%s", wantGuard, got)
+	}
+}
+
+// TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects pins that the
+// ch-rebuild COPY path refuses a negative or missing transfer/approve Amount
+// before any database access, exactly as InsertSEP41TransferBatch does (T090).
+// The zero Store has no *sql.DB, so a row that slips past validation fails in
+// copyMerge rather than with the validation error.
+func TestCopyMergeSEP41Transfers_RejectsRowsThePerRowPathRejects(t *testing.T) {
+	authorized := true
+	base := SEP41TransferRow{
+		ContractID: "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+		Ledger:     60_000_000,
+		TxHash:     "tx-t090",
+		ObservedAt: time.Unix(1_700_000_000, 0),
+		FromAddr:   "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ",
+		ToAddr:     "GB7TAYRUZGE6TVT7NHP5SMIZRNQA6PLM423EYISAOAP3MKYIQMVYP2JO",
+	}
+	cases := []struct {
+		name    string
+		mutate  func(*SEP41TransferRow)
+		wantErr string
+	}{
+		{"negative transfer", func(r *SEP41TransferRow) {
+			r.Kind, r.Amount = SEP41Transfer, big.NewInt(-1)
+		}, "row 1 transfer negative Amount -1"},
+		{"negative approve", func(r *SEP41TransferRow) {
+			r.Kind, r.Amount = SEP41Approve, new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), 100))
+		}, "row 1 approve negative Amount -1267650600228229401496703205376"},
+		{"nil transfer amount", func(r *SEP41TransferRow) {
+			r.Kind, r.Amount = SEP41Transfer, nil
+		}, "row 1 transfer missing Amount"},
+		{"set_authorized without flag", func(r *SEP41TransferRow) {
+			r.Kind, r.Authorized = SEP41SetAuthorized, nil
+		}, "row 1 set_authorized missing Authorized"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			good := base
+			good.Kind, good.Amount, good.Authorized = SEP41Transfer, big.NewInt(5), &authorized
+			bad := base
+			bad.OpIndex = 1
+			tc.mutate(&bad)
+
+			var err error
+			func() {
+				defer func() {
+					if p := recover(); p != nil {
+						err = fmt.Errorf("reached the database with an invalid row: %v", p)
+					}
+				}()
+				err = (&Store{}).CopyMergeSEP41Transfers(context.Background(), []SEP41TransferRow{good, bad})
+			}()
+			want := "timescale: CopyMergeSEP41Transfers: " + tc.wantErr
+			if err == nil || err.Error() != want {
+				t.Fatalf("CopyMergeSEP41Transfers err = %v, want %q", err, want)
+			}
+		})
 	}
 }
