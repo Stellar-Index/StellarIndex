@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/big"
+	"slices"
 	"testing"
 	"time"
 
@@ -13,13 +14,61 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
-// orderedCache records the order of writes to the keys it watches and can
-// fail the Del of one of them.
+// orderedCache records the order of writes to the keys it watches, with
+// the MULTI/EXEC boundaries around any it writes transactionally, and can
+// fail the Del of one of them (inside a transaction, the whole
+// transaction, as Redis discards a MULTI whose queued command was
+// refused).
 type orderedCache struct {
 	*redis.Client
 	watch   map[string]string // key → label
 	ops     []string
 	failDel string
+}
+
+// recordingPipe queues through the real transaction and records the
+// watched keys it writes.
+type recordingPipe struct {
+	redis.Pipeliner
+	c      *orderedCache
+	failed bool
+}
+
+func (p *recordingPipe) Set(ctx context.Context, key string, value any, exp time.Duration) *redis.StatusCmd {
+	if l, ok := p.c.watch[key]; ok {
+		p.c.ops = append(p.c.ops, "set "+l)
+	}
+	return p.Pipeliner.Set(ctx, key, value, exp)
+}
+
+func (p *recordingPipe) Del(ctx context.Context, keys ...string) *redis.IntCmd {
+	for _, k := range keys {
+		if l, ok := p.c.watch[k]; ok {
+			p.c.ops = append(p.c.ops, "del "+l)
+		}
+		if k == p.c.failDel {
+			p.failed = true
+		}
+	}
+	return p.Pipeliner.Del(ctx, keys...)
+}
+
+func (c *orderedCache) TxPipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	c.ops = append(c.ops, "multi")
+	cmds, err := c.Client.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		rp := &recordingPipe{Pipeliner: p, c: c}
+		if err := fn(rp); err != nil {
+			return err
+		}
+		if rp.failed {
+			return errors.New("injected del failure")
+		}
+		return nil
+	})
+	if err == nil {
+		c.ops = append(c.ops, "exec")
+	}
+	return cmds, err
 }
 
 func (c *orderedCache) Set(ctx context.Context, key string, value any, exp time.Duration) *redis.StatusCmd {
@@ -29,22 +78,9 @@ func (c *orderedCache) Set(ctx context.Context, key string, value any, exp time.
 	return c.Client.Set(ctx, key, value, exp)
 }
 
-func (c *orderedCache) Del(ctx context.Context, keys ...string) *redis.IntCmd {
-	for _, k := range keys {
-		if l, ok := c.watch[k]; ok {
-			c.ops = append(c.ops, "del "+l)
-		}
-		if k == c.failDel {
-			cmd := redis.NewIntCmd(ctx)
-			cmd.SetErr(errors.New("injected del failure"))
-			return cmd
-		}
-	}
-	return c.Client.Del(ctx, keys...)
-}
-
 // The direct refresh must clear a prior composite's "triangulated" marker
-// BEFORE writing its value, and must not publish when the clear fails:
+// in the same transaction as, and ahead of, its value, and must not
+// publish when the clear fails:
 // the API serves the Redis fallback only under that marker, so a direct
 // value landing beneath a stale one is served as a composite.
 func TestPublishDirect_ClearsProvenanceBeforeValueAndRefusesOnFailure(t *testing.T) {
@@ -76,8 +112,8 @@ func TestPublishDirect_ClearsProvenanceBeforeValueAndRefusesOnFailure(t *testing
 		}
 		got, _ := mr.Get(valueKey)
 		if !failDel {
-			if len(cache.ops) != 2 || cache.ops[0] != "del provenance" || cache.ops[1] != "set value" {
-				t.Errorf("write order = %v, want [del provenance, set value]", cache.ops)
+			if want := []string{"multi", "del provenance", "set value", "exec"}; !slices.Equal(cache.ops, want) {
+				t.Errorf("writes = %v, want %v: the clear and the value in one transaction", cache.ops, want)
 			}
 			if want := formatRatFixed(big.NewRat(lkgQuoteAmount, lkgBaseAmount), 12); got != want || mr.Exists(provKey) {
 				t.Errorf("value = %q, marker present = %v; want %q unmarked", got, mr.Exists(provKey), want)

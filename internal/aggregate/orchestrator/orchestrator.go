@@ -103,12 +103,12 @@ type Cache interface {
 	// a BoolCmd whose value is false when the key doesn't exist (no
 	// prior bucket to keep alive) — a normal, non-error outcome.
 	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
-	// Del removes keys. Used by the direct per-pair refresh to clear a
-	// stale triangulated-provenance marker when it overwrites the shared
-	// VWAP key with a DIRECT value (W1-flow-price-serve-2), so a prior
-	// composite's "triangulated" marker cannot outlive the composite it
-	// described. Deleting an absent key is a no-op, not an error.
-	Del(ctx context.Context, keys ...string) *redis.IntCmd
+	// TxPipelined writes a served value together with its provenance
+	// (and a composite's meta) in one MULTI/EXEC, so no reader observes
+	// one without the other: a direct value clears a prior composite's
+	// "triangulated" marker in the same transaction that writes it
+	// (W1-flow-price-serve-2).
+	TxPipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error)
 }
 
 // FreezeMarker is the side-effect interface the orchestrator uses
@@ -849,6 +849,18 @@ type Orchestrator struct {
 	// single-Tick-at-a-time invariant as prevVWAPs, so no lock is needed.
 	decidedBuckets map[string]decidedBucket
 
+	// heldDirect holds, per `pair:window` stateKey, the direct value of a
+	// triangulation target priced this tick until the triangulation pass
+	// decides whether it or the composite is served, so the shared served
+	// key has one writer per tick. Rebuilt every Tick; same
+	// single-Tick-at-a-time invariant as decidedBuckets.
+	heldDirect map[string]heldDirect
+
+	// streamedBuckets records, per `pair:window` stateKey, the closed
+	// bucket last published to the stream, so every bucket is streamed
+	// once whichever writer served it. Same invariant as decidedBuckets.
+	streamedBuckets map[string]time.Time
+
 	// tickEdgeQuotes accumulates, per window, the priced-pair VWAPs of
 	// the CURRENT tick as router edge inputs (aggregate.Quote). The
 	// per-pair refresh loop appends one entry per successfully-published
@@ -1062,6 +1074,7 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 	// [Orchestrator.tickLegRefs] / [Orchestrator.tickCompositeRefs].
 	o.tickLegRefs = make(map[time.Duration]map[string]legRef, len(o.cfg.Windows))
 	o.tickCompositeRefs = make(map[string]compositeReference)
+	o.heldDirect = make(map[string]heldDirect)
 
 	// Every store and cache call below runs on tickCtx, so none of them
 	// can outlive the tick's wedge guard — see [Config.TickTimeout].
@@ -1093,6 +1106,7 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 		// `flags.divergence_warning` reads from the cache this populates.
 		o.refreshDivergenceAll(tickCtx, now)
 	}
+	o.flushHeldDirect(tickCtx)
 
 	// The tick's own deadline fired (the caller's context is still
 	// live): some call stopped answering. The tick is an error, and it
@@ -1501,7 +1515,7 @@ func (o *Orchestrator) decideBucket(
 		edge: newEdgeQuote(pair, vwap, conf, confOK, trades),
 		leg:  o.newLegRef(pair, vwap, trades),
 	}
-	if err := o.publishDirect(ctx, pair, window, pub, now); err != nil {
+	if err := o.publishDirect(ctx, pair, window, pub, bucketEnd, now); err != nil {
 		return nil, err
 	}
 
@@ -1511,56 +1525,73 @@ func (o *Orchestrator) decideBucket(
 	// compares against; keeping the pinned value here as the sole
 	// comparator was the auto-unfreeze ratchet (see frozenPrevVWAPs).
 	o.prevVWAPs[stateKey] = vwap
-
-	// The SSE closed-bucket contract (ADR-0015, openapi price/stream)
-	// promises byte-identical payloads across every subscriber on the same
-	// (asset, quote, window) — including cross-region — so the event is
-	// stamped with the bucket it covers, not the tick's jittered clock.
-	// Published once per bucket: a replaying tick does not re-emit it.
-	o.publishToStream(ctx, pair, window, pub.value, bucketEnd)
 	return pub, nil
 }
 
-// publishDirect writes a decided bucket's direct VWAP to the shared value
-// key and records the per-tick state the triangulation pass reads. Shared
-// by the deciding tick and every replaying tick of the same bucket, so the
-// replay republishes exactly what was scored.
+// heldDirect is a triangulation target's priced direct bucket awaiting
+// the triangulation pass's decision (see [Orchestrator.heldDirect]).
+type heldDirect struct {
+	pair      canonical.Pair
+	window    time.Duration
+	pub       *publishedBucket
+	bucketEnd time.Time
+	now       time.Time
+}
+
+// publishDirect records a decided bucket's router edge and reference leg
+// for the triangulation pass and serves its direct VWAP. Shared by the
+// deciding tick and every replaying tick of the same bucket, so the
+// replay republishes exactly what was scored. A triangulation target's
+// value is held instead, for the triangulation pass to serve or drop
+// ([Orchestrator.settleDirect]): a replaying tick writing it would flip
+// the key back to the direct print under a composite on every tick.
 func (o *Orchestrator) publishDirect(
 	ctx context.Context,
 	pair canonical.Pair,
 	window time.Duration,
 	pub *publishedBucket,
-	now time.Time,
+	bucketEnd, now time.Time,
 ) error {
-	// W1-flow-price-serve-2: this DIRECT value is about to own the shared
-	// VWAP key, so any "triangulated" provenance marker a prior composite
-	// left on it must go FIRST, and the publish is refused if it cannot.
-	// The API serves the Redis fallback only when that marker is present,
-	// so a direct (possibly thin, single-source) value landing under a
-	// stale marker is served as a deep-market composite; with a failed
-	// clear that lasted until the marker's TTL. Clearing first makes the
-	// non-atomic window fail-safe, as publishComposite's qualifiers-first
-	// order does (R-2): a reader between the two writes sees the old value
-	// unlabelled, which the API refuses rather than mislabels. A confident
-	// same-tick triangulation re-stamps the marker in publishComposite.
-	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
-	if err := o.cache.Del(ctx, provKey.String()).Err(); err != nil {
-		obs.AggregatorVWAPCacheWriteErrorsTotal.Inc()
-		return fmt.Errorf("redis del %s: %w", provKey, err)
+	if o.isTriangulationTarget(pair) {
+		if o.heldDirect == nil {
+			o.heldDirect = make(map[string]heldDirect)
+		}
+		o.heldDirect[pair.String()+":"+window.String()] = heldDirect{
+			pair: pair, window: window, pub: pub, bucketEnd: bucketEnd, now: now,
+		}
+	} else if err := o.serveDirect(ctx, pair, window, pub, bucketEnd, now); err != nil {
+		return err
 	}
+	o.appendTickEdgeQuote(window, pub.edge)
+	o.setTickLegRef(pair, window, pub.leg)
+	return nil
+}
 
+// serveDirect writes a direct VWAP to the pair's served key and clears
+// any "triangulated" provenance a prior composite left there, in one
+// MULTI/EXEC: the API serves the Redis fallback only under that marker,
+// so a direct (possibly thin, single-source) value must never be
+// readable beneath it (W1-flow-price-serve-2). Then it streams the
+// bucket, once.
+func (o *Orchestrator) serveDirect(
+	ctx context.Context,
+	pair canonical.Pair,
+	window time.Duration,
+	pub *publishedBucket,
+	bucketEnd, now time.Time,
+) error {
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
-	ttl := cachekeys.VWAPTTL(window)
-	if err := o.cache.Set(ctx, key.String(), pub.value, ttl).Err(); err != nil {
-		// Bump the error counter so operators can alert on
-		// `rate(...vwap_cache_write_errors_total[5m]) > 0`. Without
-		// this counter, the May-10 incident class (Redis BGSAVE
-		// blocked → every Set returns MISCONF → /v1/price 404 on
-		// every cached pair) is invisible to monitoring until the
-		// downstream symptoms (404 rate spike, customer report)
-		// surface much later.
+	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
+	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Del(ctx, provKey.String())
+		p.Set(ctx, key.String(), pub.value, cachekeys.VWAPTTL(window))
+		return nil
+	}); err != nil {
+		// Operators alert on `rate(...vwap_cache_write_errors_total[5m])
+		// > 0`: without it a Redis that refuses every write (BGSAVE
+		// MISCONF, the May-10 incident) is invisible until /v1/price 404s.
 		obs.AggregatorVWAPCacheWriteErrorsTotal.Inc()
-		return fmt.Errorf("redis set %s: %w", key, err)
+		return fmt.Errorf("redis publish %s: %w", key, err)
 	}
 
 	// Cache write confidence (only on successful publish — frozen
@@ -1570,21 +1601,90 @@ func (o *Orchestrator) publishDirect(
 		o.cacheConfidence(ctx, pair, window, pub.score)
 	}
 
-	o.appendTickEdgeQuote(window, pub.edge)
-	o.setTickLegRef(pair, window, pub.leg)
-
 	o.mu.Lock()
 	o.vwapWrites++
 	o.mu.Unlock()
 	obs.AggregatorVWAPWritesTotal.Inc()
 
-	// F-1306 (codex audit-2026-05-13): record the wall-clock write
-	// time per pair so emitStalenessGauges can drive the
-	// `stellarindex_price_staleness_seconds` series the api alert
-	// rule queries. Pair-level (not pair×window) — staleness reads
-	// off the asset/quote shape that customers see via /v1/price.
+	// Pair-level write clock for `stellarindex_price_staleness_seconds`
+	// (F-1306).
 	o.recordPairWrite(pair, now)
+	o.streamBucketOnce(ctx, pair, window, pub.value, bucketEnd)
 	return nil
+}
+
+// isTriangulationTarget reports whether pair is the target of a
+// configured triangulation chain, i.e. its served key has a second,
+// composite writer.
+func (o *Orchestrator) isTriangulationTarget(pair canonical.Pair) bool {
+	for i := range o.cfg.Triangulations {
+		t := o.cfg.Triangulations[i].Target
+		if t.Base.Equal(pair.Base) && t.Quote.Equal(pair.Quote) {
+			return true
+		}
+	}
+	return false
+}
+
+// settleDirect resolves a target's held direct value once the
+// triangulation pass has decided (pair, window): published when the
+// composite was not served, otherwise dropped, keeping only the direct
+// market's confidence score, which the served composite carried before
+// the hold existed. Idempotent.
+func (o *Orchestrator) settleDirect(ctx context.Context, pair canonical.Pair, window time.Duration, compositeServed bool) {
+	k := pair.String() + ":" + window.String()
+	h, ok := o.heldDirect[k]
+	if !ok {
+		return
+	}
+	delete(o.heldDirect, k)
+	if compositeServed {
+		if h.pub.confOK {
+			o.cacheConfidence(ctx, pair, window, h.pub.score)
+		}
+		return
+	}
+	if err := o.serveDirect(ctx, h.pair, h.window, h.pub, h.bucketEnd, h.now); err != nil {
+		o.mu.Lock()
+		o.errors++
+		o.mu.Unlock()
+		o.logger.Warn("aggregator: direct publish of a triangulation target failed",
+			"pair", pair.String(), "window", window.String(), "err", err)
+	}
+}
+
+// flushHeldDirect runs after the triangulation pass. It serves any direct
+// value the pass left undecided, or drops them when the tick's context
+// has ended: a write on it cannot land, and the next tick replays the
+// bucket.
+func (o *Orchestrator) flushHeldDirect(ctx context.Context) {
+	for _, h := range o.heldDirect {
+		if ctx.Err() != nil {
+			delete(o.heldDirect, h.pair.String()+":"+h.window.String())
+			continue
+		}
+		o.settleDirect(ctx, h.pair, h.window, false)
+	}
+}
+
+// streamBucketOnce publishes a served closed bucket to the stream the
+// first time any writer serves it. The SSE contract (ADR-0015, openapi
+// price/stream) promises byte-identical payloads across subscribers and
+// regions on the same (asset, quote, window), so the event is stamped
+// with the bucket it covers, not the tick's jittered clock, and a
+// replaying tick does not re-emit it.
+func (o *Orchestrator) streamBucketOnce(
+	ctx context.Context, pair canonical.Pair, window time.Duration, value string, bucketEnd time.Time,
+) {
+	k := pair.String() + ":" + window.String()
+	if last, ok := o.streamedBuckets[k]; ok && last.Equal(bucketEnd) {
+		return
+	}
+	if o.streamedBuckets == nil {
+		o.streamedBuckets = make(map[string]time.Time)
+	}
+	o.streamedBuckets[k] = bucketEnd
+	o.publishToStream(ctx, pair, window, value, bucketEnd)
 }
 
 // replayDecidedBucket re-applies an already-decided closed bucket on a
@@ -1612,7 +1712,7 @@ func (o *Orchestrator) replayDecidedBucket(
 	if d.published == nil {
 		return nil
 	}
-	return o.publishDirect(ctx, pair, window, d.published, now)
+	return o.publishDirect(ctx, pair, window, d.published, d.end, now)
 }
 
 // computeNormalizedVWAP computes VWAP over trades and applies the

@@ -95,6 +95,7 @@ func (o *Orchestrator) triangulateAll(ctx context.Context) {
 		edges, legStatus := o.buildWindowEdges(ctx, window, bucketEnd)
 		for i := range o.cfg.Triangulations {
 			outcome := o.routeTarget(ctx, o.cfg.Triangulations[i], window, edges, legStatus[i])
+			o.settleDirect(ctx, o.cfg.Triangulations[i].Target, window, outcome == "ok")
 			obs.AggregatorTriangulationsTotal.WithLabelValues(outcome).Inc()
 		}
 	}
@@ -224,7 +225,7 @@ func (o *Orchestrator) resolveChainLegs(
 			st.frozenLeg = leg
 		case "redis_error", "parse_error":
 			st.hardErr = outcome
-		case "missing_leg":
+		case "missing_leg", outcomeStaleLeg:
 			// Leg absent this tick — leave it out of the graph. The router
 			// may still reach the target via an alternative route, or
 			// report the target unreachable (missing_leg) below. Record the
@@ -372,8 +373,8 @@ func (o *Orchestrator) routeTarget(
 }
 
 // publishComposite writes a CONFIDENT composite to the target's VWAP
-// cache key (replacing the direct print for the tick, provenance
-// stamped), records it as this tick's corroboration for the next tick,
+// cache key (served instead of the target's held direct print for the
+// tick, provenance stamped, and streamed), records it as this tick's corroboration for the next tick,
 // and carries its quality flags for Step 3. rerouted marks a publish that
 // came from a leg-substitution path (R3) — it cleared rerouteMinConfidence
 // so it publishes, but the substitution is flagged for observability.
@@ -407,43 +408,40 @@ func (o *Orchestrator) publishComposite(
 
 	key := cachekeys.VWAP(chain.Target.Base, chain.Target.Quote, window)
 	ttl := cachekeys.VWAPTTL(window)
-
-	// R-2: write the composite's QUALIFIERS (quality-flags meta and the
-	// triangulated-provenance marker) BEFORE the value they qualify, and
-	// refuse the publish if either fails. The served value is load-bearing
-	// and must never overwrite the direct price while its diverged/rerouted
-	// flags lag, are missing, or carry a prior tick's state. Ordering the
-	// dependents first makes the residual (non-atomic) read window
-	// fail-SAFE: a reader landing mid-write sees the OLD value with the NEW
-	// flags (over-warns) rather than the NEW value with stale clean flags
-	// (silently under-warns a diverged/rerouted composite).
-	if err := o.setCompositeMeta(ctx, chain.Target, window, compositeMeta{
+	metaKey := cachekeys.VWAPCompositeMeta(chain.Target.Base, chain.Target.Quote, window)
+	metaBody, err := json.Marshal(o.withCorroborationBasis(chain.Target, window, compositeMeta{
 		PathCount:          pathCount,
 		CombinedConfidence: combinedConf,
 		LowConfidence:      false,
 		Diverged:           diverged,
 		Rerouted:           rerouted,
-	}); err != nil {
-		o.logger.Warn("triangulation: composite meta set failed — refusing to publish",
+	}))
+	if err != nil {
+		o.logger.Warn("triangulation: composite meta encode failed — refusing to publish",
 			"chain", chain.Target.String(), "err", err)
-		return "redis_error"
+		return "parse_error"
 	}
 
-	// Provenance marker — lets the API set flags.triangulated=true on the
-	// Redis-fallback path.
+	// R-2: the value never lands without its qualifiers (the quality-flags
+	// meta and the triangulated-provenance marker the API sets
+	// flags.triangulated from). One MULTI/EXEC: a reader sees the previous
+	// state or all three, never the value under a prior tick's flags or
+	// provenance, and a failed write leaves the previous state whole.
 	provKey := cachekeys.VWAPProvenance(chain.Target.Base, chain.Target.Quote, window)
-	if err := o.cache.Set(ctx, provKey.String(), cachekeys.VWAPProvenanceTriangulated, ttl).Err(); err != nil {
-		o.logger.Warn("triangulation: provenance marker set failed — refusing to publish",
+	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, metaKey.String(), metaBody, ttl)
+		p.Set(ctx, provKey.String(), cachekeys.VWAPProvenanceTriangulated, ttl)
+		p.Set(ctx, key.String(), value, ttl)
+		return nil
+	}); err != nil {
+		o.logger.Warn("triangulation: composite publish failed — refusing to publish",
 			"chain", chain.Target.String(), "err", err)
 		return "redis_error"
 	}
 
-	// Value LAST: once it lands, its qualifiers are already in place.
-	if err := o.cache.Set(ctx, key.String(), value, ttl).Err(); err != nil {
-		o.logger.Warn("triangulation: cache set failed",
-			"chain", chain.Target.String(), "err", err)
-		return "redis_error"
-	}
+	// The stream carries the value /v1/price serves at this window, on the
+	// same once-per-closed-bucket contract as the direct path.
+	o.streamBucketOnce(ctx, chain.Target, window, value, o.tickClock().Truncate(closedBucket))
 
 	// The served VWAP key was just written, so this pair published this
 	// tick: stamp the pair-level write clock the staleness gauge reads
@@ -512,6 +510,18 @@ func (o *Orchestrator) appendTickEdgeQuote(window time.Duration, q aggregate.Quo
 		o.tickEdgeQuotes = make(map[time.Duration][]aggregate.Quote, len(o.cfg.Windows))
 	}
 	o.tickEdgeQuotes[window] = append(o.tickEdgeQuotes[window], q)
+}
+
+// tickEdgePrice returns the VWAP refreshPairWindow priced (pair, window)
+// at on the current tick — its router edge — and false when this tick
+// did not price it.
+func (o *Orchestrator) tickEdgePrice(pair canonical.Pair, window time.Duration) (*big.Rat, bool) {
+	for _, q := range o.tickEdgeQuotes[window] {
+		if q.Pair.Base.Equal(pair.Base) && q.Pair.Quote.Equal(pair.Quote) {
+			return new(big.Rat).Set(q.Price), true
+		}
+	}
+	return nil, false
 }
 
 // edgeConfidence derives a router edge's weakest-link confidence from
@@ -593,10 +603,10 @@ func (o *Orchestrator) withCorroborationBasis(target canonical.Pair, window time
 // Used by the branches that do NOT overwrite the served value (frozen
 // target, low-confidence / below-floor reroute) — there the meta is the
 // only artefact and a miss just leaves the untouched direct value
-// without flags. The value-overwriting path uses [setCompositeMeta]
-// instead, which propagates the error so the write can be made atomic
-// with the value it qualifies (R-2). TTL matches the VWAP key so the
-// flags can't outlive the price they describe.
+// without flags. The value-overwriting path writes the meta in the same
+// MULTI/EXEC as the value it qualifies instead ([publishComposite], R-2).
+// TTL matches the VWAP key so the flags can't outlive the price they
+// describe.
 func (o *Orchestrator) writeCompositeMeta(
 	ctx context.Context, target canonical.Pair, window time.Duration, meta compositeMeta,
 ) {
@@ -607,8 +617,7 @@ func (o *Orchestrator) writeCompositeMeta(
 }
 
 // setCompositeMeta writes the composite quality flags and returns any
-// error, so the publish path can refuse to overwrite the served value
-// when its qualifiers could not be persisted (R-2).
+// error.
 func (o *Orchestrator) setCompositeMeta(
 	ctx context.Context, target canonical.Pair, window time.Duration, meta compositeMeta,
 ) error {
@@ -726,6 +735,12 @@ func fxLegProvenance(leg canonical.Pair) []string {
 // publish" (MNY-22).
 const outcomeFrozenLeg = "frozen_leg"
 
+// outcomeStaleLeg is legPriceFromCache's refusal of a leg this
+// orchestrator refreshes itself but did not publish this tick. The
+// caller treats it as a dry leg: out of the graph, and any route
+// around it gated and flagged as a reroute.
+const outcomeStaleLeg = "stale_leg"
+
 // legPriceFromCache reads a leg's freshly-cached VWAP. Used for non-
 // FX legs and for FX legs when the snap path produced ErrNoFXQuote.
 //
@@ -738,6 +753,12 @@ const outcomeFrozenLeg = "frozen_leg"
 // manipulated leg reaches consumers anyway, one multiplication later,
 // looking fresh. The chain is refused instead, and the caller inherits
 // the freeze onto the target ([Orchestrator.inheritLegFreeze]).
+//
+// A pair the aggregator prices itself never reads the cache: it resolves
+// to this tick's own VWAP, or to [outcomeStaleLeg] when this tick priced
+// nothing for it (empty window, under min_usd_volume, no VWAP). Its cache
+// entry is then a previous tick's value, and admitting it would bypass
+// the very gate that refused the window (INV-11).
 func (o *Orchestrator) legPriceFromCache(
 	ctx context.Context,
 	chain TriangulationChain,
@@ -746,6 +767,12 @@ func (o *Orchestrator) legPriceFromCache(
 ) (*big.Rat, string) {
 	if o.frozenLeg(leg, window) {
 		return nil, outcomeFrozenLeg
+	}
+	if containsPair(o.cfg.Pairs, leg) {
+		if price, ok := o.tickEdgePrice(leg, window); ok {
+			return price, ""
+		}
+		return nil, outcomeStaleLeg
 	}
 	key := cachekeys.VWAP(leg.Base, leg.Quote, window)
 	raw, err := o.cache.Get(ctx, key.String()).Result()
@@ -816,6 +843,10 @@ func (o *Orchestrator) inheritLegFreeze(
 	window time.Duration,
 	leg canonical.Pair,
 ) {
+	// The target's own direct value, if it priced this tick, is what
+	// serves under the inherited flag and what the freeze row records.
+	o.settleDirect(ctx, chain.Target, window, false)
+
 	o.mu.Lock()
 	o.freezesEngaged++
 	o.mu.Unlock()
