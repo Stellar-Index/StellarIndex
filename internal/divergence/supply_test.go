@@ -251,6 +251,27 @@ func TestCoinGeckoSupplyReference_UnsupportedAsset(t *testing.T) {
 	}
 }
 
+// A Pro key 404s the public host (commit 3399fd536). With no explicit
+// BaseURL, an APIKey must auto-switch the host to the Pro tier — same
+// as the ingest poller's DefaultEndpoint/ProEndpoint switch — or every
+// supply lookup 404s and the cross-check the operator paid a Pro key
+// for stays permanently dark (CA2-A24-harden-4).
+func TestCoinGeckoSupplyReference_APIKeyAutoSwitchesToProHost(t *testing.T) {
+	ref := NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{APIKey: "pro-key-placeholder"}) // gitleaks:allow
+	if ref.baseURL != coinGeckoProBaseURL {
+		t.Fatalf("baseURL = %q, want %q (Pro host) when APIKey is set and BaseURL is empty", ref.baseURL, coinGeckoProBaseURL)
+	}
+}
+
+// An explicit BaseURL always wins over the auto-switch, e.g. for tests
+// pointing at an httptest.Server.
+func TestCoinGeckoSupplyReference_ExplicitBaseURLWinsOverAutoSwitch(t *testing.T) {
+	ref := NewCoinGeckoSupplyReference(CoinGeckoSupplyOptions{APIKey: "pro-key-placeholder", BaseURL: "http://127.0.0.1:9999"}) // gitleaks:allow
+	if ref.baseURL != "http://127.0.0.1:9999" {
+		t.Fatalf("baseURL = %q, want explicit override to win", ref.baseURL)
+	}
+}
+
 // ─── scaleServedSupply ───────────────────────────────────────────────
 
 func TestScaleServedSupply(t *testing.T) {

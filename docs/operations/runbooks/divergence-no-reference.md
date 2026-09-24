@@ -45,16 +45,22 @@ curl -fs http://localhost:9465/metrics | grep '^stellarindex_divergence_refresh_
 journalctl -u stellarindex-aggregator | grep 'divergence refresher wired' | tail -1
 
 # 3) Probe each reference from the aggregator host:
-curl -fs 'https://pro-api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd&x_cg_pro_api_key=REDACTED'   # CoinGecko Pro
+curl -fs 'https://api.coingecko.com/api/v3/simple/price?ids=stellar&vs_currencies=usd'   # CoinGecko (free tier, no key)
 #   Chainlink: grep 'rpc_url' the aggregator config, curl it with an eth_chainId JSON-RPC payload.
 ```
 
 ## Most likely causes (2026-07)
 
-1. **CoinGecko Pro key missing / unset** — the free tier has been 429ing
-   since 2026-06-19; the code auto-switches to the Pro endpoint when
-   `COINGECKO_API_KEY` is set (see the operator-actions register / P0-3). If
-   the key isn't set, CoinGecko is effectively dark.
+1. **CoinGecko free-tier 429 throttling** — this alert's `CoinGeckoReference`
+   (the PRICE reference, `divergence.coingecko`) is free-tier only; it has no
+   API key field and cannot auth as Pro. It has been 429-throttled since
+   2026-06-19 and there is no key-based fix for it — if CoinGecko is the
+   only reference covering a pair, expect intermittent `no_reference` until
+   another reference (Chainlink, an on-chain oracle) covers the pair too.
+   Do NOT confuse this with the separate SUPPLY cross-check
+   (`divergence.supply.coingecko`), which DOES take `COINGECKO_API_KEY` and
+   auto-switches to the Pro host when it's set — that key has no effect
+   here.
 2. **Chainlink RPC dark** — the divergence reference has its OWN `rpc_url`
    (separate from ingest). `llamarpc` now Cloudflare-challenges; confirm
    `CHAINLINK_RPC_URL` points at a working provider (it feeds both ingest +
@@ -64,8 +70,11 @@ curl -fs 'https://pro-api.coingecko.com/api/v3/simple/price?ids=stellar&vs_curre
 
 ## Mitigation (≤ 60 min)
 
-- [ ] Restore the failing reference (set `COINGECKO_API_KEY`; point
-      `CHAINLINK_RPC_URL` at a live provider), restart the aggregator.
+- [ ] Restore the failing reference: for CoinGecko wait out the 429 or add a
+      non-CoinGecko reference for the affected pair (`COINGECKO_API_KEY` only
+      helps the separate supply cross-check, not this price path); point
+      `CHAINLINK_RPC_URL` at a live provider. Restart the aggregator after
+      any config change.
 - [ ] If one reference will be down for a while, that's fine — the alert
       compares against `ok`, so ANY responding reference clears it. Only a
       *total* outage fires this.

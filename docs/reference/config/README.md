@@ -310,7 +310,7 @@ the `env:` column.
 | `divergence.supply.dashboard.base_url` | `string` | _(required)_ | — | Dashboard API base. Empty defaults to https://dashboard.stellar.org/api/v3. The reference GETs base_url + /lumens. |
 | `divergence.supply.coingecko.enabled` | `bool` | `false` | — | Whether the CoinGecko supply reference is consulted. Off by default (free tier 429-throttled). |
 | `divergence.supply.coingecko.api_key` | `string` | _(required)_ | `COINGECKO_API_KEY` | CoinGecko Pro API key, sent as x-cg-pro-api-key. Prefer env var COINGECKO_API_KEY. |
-| `divergence.supply.coingecko.base_url` | `string` | _(required)_ | — | CoinGecko API base. Empty defaults to https://api.coingecko.com/api/v3. |
+| `divergence.supply.coingecko.base_url` | `string` | _(required)_ | — | CoinGecko API base. Empty defaults to https://api.coingecko.com/api/v3, or https://pro-api.coingecko.com/api/v3 when api_key is set (a Pro key 404s the public host). |
 | `divergence.supply.coingecko.id_map` | `map` | `{}` | — | Maps canonical asset_id → CoinGecko coin id for the supply lookup. Empty falls back to the built-in default (native/crypto:XLM → stellar). |
 
 ### `[price_alerts]`
