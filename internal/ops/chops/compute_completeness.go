@@ -2117,7 +2117,7 @@ func reDeriveSDEXCensusViaDecoder(ctx context.Context, chAddr string, from, to u
 				// The dispatcher recovers this panic and skips the op; the
 				// census counts it blind instead of crashing the audit.
 				blind.Undecodable(op.Ledger)
-				return nil
+				return nil //nolint:nilerr // intentional: the op is counted blind via blind.Undecodable, not aborted
 			}
 			for i := 0; i < failed; i++ {
 				blind.Undecodable(op.Ledger)
