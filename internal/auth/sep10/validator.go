@@ -12,9 +12,9 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// ReplayGuard records the hash of every successfully-verified
-// challenge transaction so the same signed XDR can't be re-used to
-// mint multiple JWTs inside its time-bound window.
+// ReplayGuard makes every issued challenge transaction redeemable
+// exactly once, so the same signed XDR can't be re-used to mint
+// multiple JWTs inside its time-bound window.
 //
 // SEP-10 §3.4 acknowledges the replay risk and leaves implementations
 // to choose their own defence. Without one, a captured signed
@@ -23,16 +23,24 @@ import (
 // XDR (e.g. via an XSS exfil on the client wallet) to mint a steady
 // stream of JWTs even after the user closes the tab.
 //
-// MarkSeenIfFresh stores the hash with the supplied TTL (the
-// remaining lifetime of the challenge time-bound) and returns
-// [auth.ErrUnauthorized] when the hash is already present.
+// Reserve records a challenge's hash at issuance; Claim spends it at
+// verification and returns [auth.ErrUnauthorized] when no reservation
+// is present. Claim must require presence, not absence: a store that
+// can evict keys early (Redis allkeys-lru) then refuses a redemption
+// instead of re-admitting a replay.
 //
 // Wired in production via internal/auth/sep10/redisreplay.go
 // (Redis-backed). Nil ReplayGuard preserves prior behaviour for
 // callers that haven't opted in. F-1224 (audit-2026-05-12).
 type ReplayGuard interface {
-	MarkSeenIfFresh(ctx context.Context, txHash string, ttl time.Duration) error
+	Reserve(ctx context.Context, txHash string, ttl time.Duration) error
+	Claim(ctx context.Context, txHash string) error
 }
+
+// reservationSlack keeps a challenge's reservation alive past its
+// MaxTime, absorbing clock skew between this host and Redis so the
+// reservation never expires under a still-valid challenge.
+const reservationSlack = time.Minute
 
 // challengeTxHash returns the dedupe key the [ReplayGuard] stores: the
 // PARSED transaction's canonical hash (SHA-256 over the network-id-
@@ -104,8 +112,8 @@ type Options struct {
 	// Now overrides time.Now for tests. Production leaves this nil.
 	Now func() time.Time
 
-	// ReplayGuard, when non-nil, dedupes verified challenge
-	// transactions so a captured signed XDR cannot be re-submitted
+	// ReplayGuard, when non-nil, makes each issued challenge
+	// redeemable once so a captured signed XDR cannot be re-submitted
 	// inside its time-bound window. Nil = no replay defence (prior
 	// behaviour). See [ReplayGuard] for production wiring.
 	// F-1224 (audit-2026-05-12).
@@ -194,7 +202,7 @@ func NewValidator(opts Options) (*Validator, error) {
 // parseable G-strkey — better to fail loudly at challenge issuance
 // than to issue a valid-looking transaction the client can never
 // satisfy.
-func (v *Validator) Challenge(_ context.Context, clientAccount string) (auth.Challenge, error) {
+func (v *Validator) Challenge(ctx context.Context, clientAccount string) (auth.Challenge, error) {
 	if _, err := keypair.ParseAddress(clientAccount); err != nil {
 		return auth.Challenge{}, errors.Join(auth.ErrUnauthorized,
 			fmt.Errorf("parse clientAccount: %w", err))
@@ -211,6 +219,16 @@ func (v *Validator) Challenge(_ context.Context, clientAccount string) (auth.Cha
 	)
 	if err != nil {
 		return auth.Challenge{}, fmt.Errorf("sep10: BuildChallengeTx: %w", err)
+	}
+
+	if v.replayGuard != nil {
+		txHash, err := challengeTxHash(tx, v.network)
+		if err != nil {
+			return auth.Challenge{}, err
+		}
+		if err := v.replayGuard.Reserve(ctx, txHash, v.challengeTTL+reservationSlack); err != nil {
+			return auth.Challenge{}, err
+		}
 	}
 
 	xdr, err := tx.Base64()
@@ -274,15 +292,13 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 		return auth.Token{}, fmt.Errorf("%w: no signers verified", auth.ErrUnauthorized)
 	}
 
-	// F-1224 (audit-2026-05-12): replay defence. After signature
-	// verification succeeded, mark this challenge TRANSACTION as
-	// consumed for the remaining time-bound window — keyed on the
-	// parsed tx's canonical hash, not on the caller's spelling of the
-	// XDR (CON-05; see [challengeTxHash]). A second submission of the
-	// same challenge, however re-encoded, returns ErrUnauthorized
-	// before we issue a fresh JWT. Marking AFTER
-	// VerifyChallengeTxSigners keeps the dedupe namespace bounded —
-	// we never spend a slot on bogus / unsigned XDR.
+	// Replay defence: spend the reservation [Validator.Challenge] made
+	// for this challenge TRANSACTION — keyed on the parsed tx's
+	// canonical hash, not on the caller's spelling of the XDR (CON-05;
+	// see [challengeTxHash]). A second submission, however re-encoded,
+	// or one whose reservation was evicted, returns ErrUnauthorized
+	// before we issue a JWT. Claiming AFTER VerifyChallengeTxSigners
+	// means bogus / unsigned XDR can never burn a real reservation.
 	//
 	// Falls open (continues to issue JWT) when no ReplayGuard is
 	// configured, preserving prior behaviour for callers that
@@ -294,9 +310,7 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 			// CLOSED rather than issue a JWT we could not dedupe.
 			return auth.Token{}, hashErr
 		}
-		if err := v.replayGuard.MarkSeenIfFresh(
-			ctx, txHash, v.challengeTTL,
-		); err != nil {
+		if err := v.replayGuard.Claim(ctx, txHash); err != nil {
 			return auth.Token{}, err
 		}
 	}
