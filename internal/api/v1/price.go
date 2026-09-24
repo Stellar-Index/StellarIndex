@@ -471,6 +471,31 @@ type PriceSnapshot struct {
 	// that isn't live. See [Server.attachConfidence] /
 	// [Server.attachCompositeFlags].
 	Substituted bool `json:"-"`
+
+	// usdLeg is set only on an ADR-0051 cross
+	// ([Server.tryUSDAnchoredFiatCross]); see [usdLegFacts].
+	usdLeg *usdLegFacts
+}
+
+// usdLegFacts is what an ADR-0051 cross inherits from its USD leg. The
+// FX rate converts one market observation; it is not a second market,
+// and the pair the aggregator freezes is the USD leg, never the derived
+// fiat pair it has no key for.
+type usdLegFacts struct {
+	sources      []string        // the leg's own venues, without the FX credit
+	served       canonical.Asset // alias the leg's bucket was read under; zero when a fallback answered
+	rate         *big.Rat        // USD→quote rate the leg was converted at
+	fxObservedAt time.Time
+}
+
+// marketSingleSource is the single_source rule shared by every price
+// surface: exactly one market venue stands behind the value. An FX
+// conversion credited in sources[] does not count as a venue.
+func marketSingleSource(snap PriceSnapshot, sources []string) bool {
+	if leg := snap.usdLeg; leg != nil {
+		return len(leg.sources) == 1
+	}
+	return len(sources) == 1
 }
 
 // ConfidenceFactors mirrors `confidence.Factors` on the wire so
@@ -808,7 +833,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// comes from the aggregator's VWAP cache, so it takes the
 	// viaFallback treatment: already normalized upstream, and below
 	// this surface's closed-bucket baseline (stale, per F-1254).
-	held := s.resolveFrozenServe(r, asset, served, quote)
+	held := s.resolveFrozenServeFor(r, snapshot, asset, served, quote)
 	if held.outcome == frozenServeNothingHeld {
 		writeFrozenNothingHeldProblem(w, r, asset, quote)
 		return
@@ -816,7 +841,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	frozen := held.outcome == frozenServeHeld
 	frozenChecked := held.checked
 	if frozen {
-		snapshot, sources, triangulated = held.snapshot, []string{}, held.triangulated
+		snapshot, sources, triangulated = held.snapshot, held.sources, held.triangulated
 		stale, viaFallback = true, true
 	}
 
@@ -889,7 +914,7 @@ func (s *Server) handlePriceTail(w http.ResponseWriter, r *http.Request, asset, 
 	case freezeReadFailed:
 		flags.SingleSource = false
 	default:
-		flags.SingleSource = len(sources) == 1
+		flags.SingleSource = marketSingleSource(snapshot, sources)
 	}
 	// Start the verdict walk at the spelling the price was served from
 	// (frozenPairBase's resolution); the walk still falls through to
@@ -1488,7 +1513,7 @@ func (s *Server) tryUSDAnchoredFiatCross(
 		return PriceSnapshot{}, nil, false, false
 	}
 
-	usdSnap, usdSources, ok, withheld := s.resolveUSDLeg(ctx, asset)
+	usdSnap, usdSources, usdServed, ok, withheld := s.resolveUSDLeg(ctx, asset)
 	if withheld {
 		return PriceSnapshot{}, nil, false, true
 	}
@@ -1518,6 +1543,7 @@ func (s *Server) tryUSDAnchoredFiatCross(
 	// USD leg's timestamp alone — the pre-T650 behaviour — hid a stale
 	// FX component behind an observed_at that looked current.
 	out.ObservedAt = WireTime(olderNonZero(time.Time(usdSnap.ObservedAt), fxObservedAt))
+	out.usdLeg = &usdLegFacts{sources: usdSources, served: usdServed, rate: rateRat, fxObservedAt: fxObservedAt}
 	return out, appendFXSource(usdSources), true, false
 }
 
@@ -1567,31 +1593,34 @@ func fxCrossStale(observedAt time.Time, maxAge time.Duration) bool {
 //
 // The bool returns are (ok, withheld) with the same meaning as
 // elsewhere in this file: a withheld USD leg must NOT be served, and
-// must not be reported as absent either.
+// must not be reported as absent either. served is the alias the closed
+// bucket was read under, zero when a fallback layer answered — the
+// governing-pair input /v1/price's own freeze check takes.
+//
+// It reads no freeze marker: the tip and oracle surfaces that share it
+// are freeze-agnostic. The freeze-aware surfaces apply the leg's freeze
+// through [Server.resolveFrozenServeFor].
 func (s *Server) resolveUSDLeg(
 	ctx context.Context, asset canonical.Asset,
-) (PriceSnapshot, []string, bool, bool) {
-	usd, err := canonical.NewFiatAsset("USD")
-	if err != nil {
-		return PriceSnapshot{}, nil, false, false
-	}
-	snap, sources, _, err := s.readPriceWithAliases(ctx, s.prices, asset, usd)
+) (snap PriceSnapshot, sources []string, served canonical.Asset, ok, withheld bool) {
+	usd := defaultPriceQuote
+	snap, sources, _, served, err := s.readPriceWithAliasesServed(ctx, s.prices, asset, usd)
 	switch {
 	case errors.Is(err, ErrPriceWithheld):
-		return PriceSnapshot{}, nil, false, true
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, true
 	case err == nil:
-		return snap, sources, true, false
+		return snap, sources, served, true, false
 	case !errors.Is(err, ErrPriceNotFound):
-		return PriceSnapshot{}, nil, false, false
+		return PriceSnapshot{}, nil, canonical.Asset{}, false, false
 	}
 	if snap, srcs, _, ok := s.tryRedisVWAPFallback(ctx, asset, usd); ok {
-		return snap, srcs, true, false
+		return snap, srcs, canonical.Asset{}, true, false
 	}
 	snap, srcs, ok, withheld := s.tryStablecoinFiatProxy(ctx, asset, usd)
 	if ok {
-		return snap, srcs, true, false
+		return snap, srcs, canonical.Asset{}, true, false
 	}
-	return PriceSnapshot{}, nil, false, withheld
+	return PriceSnapshot{}, nil, canonical.Asset{}, false, withheld
 }
 
 // fxSourceName credits the forex feed a derived cross-rate leans on.
@@ -2592,7 +2621,8 @@ const (
 )
 
 // frozenResolution carries [Server.resolveFrozenServe]'s verdict.
-// snapshot and triangulated are meaningful only for frozenServeHeld.
+// snapshot, sources and triangulated are meaningful only for
+// frozenServeHeld.
 // checked is false when the freeze marker itself could not be read
 // (looker not wired, or the read failed) — outcome is then
 // frozenServeNotFrozen by construction, but that is "unknown",
@@ -2602,6 +2632,7 @@ type frozenResolution struct {
 	outcome      frozenServe
 	checked      bool
 	snapshot     PriceSnapshot
+	sources      []string
 	triangulated bool
 }
 
@@ -2672,6 +2703,7 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		return frozenResolution{
 			outcome:      frozenServeHeld,
 			checked:      true,
+			sources:      []string{},
 			triangulated: v.Triangulated,
 			snapshot: PriceSnapshot{
 				AssetID:   requested.String(),
@@ -2686,6 +2718,32 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 		}
 	}
 	return frozenResolution{outcome: frozenServeNothingHeld, checked: checked}
+}
+
+// resolveFrozenServeFor is [Server.resolveFrozenServe] for the snapshot
+// in hand. An ADR-0051 cross is governed by its USD leg's marker, read
+// exactly as /v1/price?quote=fiat:USD reads it, never by the derived
+// fiat pair's (no aggregator writes one). A frozen leg serves its held
+// value converted at the same rate, or nothing when none is held — never
+// the refused bucket times the rate.
+func (s *Server) resolveFrozenServeFor(r *http.Request, snap PriceSnapshot, requested, served, quote canonical.Asset) frozenResolution {
+	leg := snap.usdLeg
+	if leg == nil {
+		return s.resolveFrozenServe(r, requested, served, quote)
+	}
+	held := s.resolveFrozenServe(r, requested, leg.served, defaultPriceQuote)
+	if held.outcome != frozenServeHeld {
+		return held
+	}
+	usdHeld, ok := new(big.Rat).SetString(held.snapshot.Price)
+	if !ok {
+		return frozenResolution{outcome: frozenServeNothingHeld, checked: held.checked}
+	}
+	held.snapshot.Quote = quote.String()
+	held.snapshot.Price = formatCrossRate(new(big.Rat).Mul(usdHeld, leg.rate))
+	held.snapshot.ObservedAt = WireTime(olderNonZero(time.Time(held.snapshot.ObservedAt), leg.fxObservedAt))
+	held.sources, held.triangulated = []string{fxSourceName}, true
+	return held
 }
 
 // frozenPairBase reports which spelling of the pair carries the freeze
@@ -2705,8 +2763,8 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 //
 // When no bucket was read (`served` is zero — the fallback chain
 // answered) every spelling's marker governs: the fallback chain
-// resolves across the alias set (crossDeclaredPegThroughXLM,
-// resolveUSDLeg) without reporting which leg it served, so a freeze on
+// resolves across the alias set (crossDeclaredPegThroughXLM) without
+// reporting which leg it served, so a freeze on
 // `crypto:XLM/fiat:GBP` must not go unseen for a `native/fiat:GBP`
 // request. See [Server.frozenAnyAlias].
 func (s *Server) frozenPairBase(r *http.Request, requested, served, quote canonical.Asset) (asset canonical.Asset, frozen, checked bool) {
@@ -2765,7 +2823,7 @@ func writeFrozenNothingHeldProblem(w http.ResponseWriter, r *http.Request, asset
 // spelling of "no price for this asset" (it has no per-row problem
 // shape; callers probe /v1/price for the reason).
 func (s *Server) holdFrozenBatchRow(r *http.Request, row batchRowResult, served, quote canonical.Asset) batchRowResult {
-	held := s.resolveFrozenServe(r, row.asset, served, quote)
+	held := s.resolveFrozenServeFor(r, row.snap, row.asset, served, quote)
 	switch held.outcome {
 	case frozenServeNotFrozen:
 		return row
@@ -2774,7 +2832,7 @@ func (s *Server) holdFrozenBatchRow(r *http.Request, row batchRowResult, served,
 	case frozenServeHeld:
 	}
 	held.snapshot.Change24hPct = s.batchChange24h(r.Context(), row.asset, quote, held.snapshot.Price)
-	row.snap, row.sources, row.triangulated = held.snapshot, []string{}, held.triangulated
+	row.snap, row.sources, row.triangulated = held.snapshot, held.sources, held.triangulated
 	row.stale, row.frozen = true, true
 	return row
 }
@@ -3209,7 +3267,7 @@ func (s *Server) lookupPriceBatch(w http.ResponseWriter, r *http.Request, ids []
 		if row.frozen {
 			anyFrozen = true
 			anySingleSource = true // freeze implies single-source
-		} else if len(row.sources) == 1 {
+		} else if marketSingleSource(row.snap, row.sources) {
 			anySingleSource = true
 		}
 		out = append(out, row.snap)
