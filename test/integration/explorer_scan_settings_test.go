@@ -154,6 +154,13 @@ func TestExplorerScanQueries_ExecuteAgainstServer(t *testing.T) {
 	if _, err := chstore.InsertEntryChanges(ctx, addr, rows, 0); err != nil {
 		t.Fatalf("InsertEntryChanges: %v", err)
 	}
+	// The account-history readers refuse over an EMPTY ops_by_source, which
+	// would skip their builders; one sourced row keeps them under test.
+	raw := dialClickHouse(t, ctx, "stellar")
+	if err := raw.Exec(ctx, `INSERT INTO stellar.ops_by_source
+		(source_account, ledger_seq, tx_index, op_index) VALUES (?, 71000001, 0, 0)`, account); err != nil {
+		t.Fatalf("seed ops_by_source: %v", err)
+	}
 
 	r, err := chstore.NewExplorerReader(ctx, addr)
 	if err != nil {
