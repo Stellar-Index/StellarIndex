@@ -55,10 +55,8 @@ func ssrfGuardedDialContext(ctx context.Context, network, addr string) (net.Conn
 		}
 	}
 
-	// All resolved addresses are public — dial the first one
-	// explicitly rather than letting the kernel re-resolve.
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+	return nettools.DialFirstReachable(ctx, dialer, network, ips, port)
 }
 
 // IsReservedTLD reports a documentation/reserved TLD. Thin delegate to the

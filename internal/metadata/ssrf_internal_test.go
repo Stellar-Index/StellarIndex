@@ -248,3 +248,37 @@ func TestDialContext_ProductionRefusesNon443Port(t *testing.T) {
 		t.Errorf("test-mode DialContext(:6379) = %v, must not be port-blocked", err)
 	}
 }
+
+// TestDialContext_FailsOverToNextResolvedAddress pins that one dead
+// A/AAAA record does not fail the fetch: the dialer must fall through to
+// the next already-validated address instead of dialing only the first.
+// [::1] is refused because the listener is IPv4-only.
+func TestDialContext_FailsOverToNextResolvedAddress(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer func() { _ = ln.Close() }()
+	go func() {
+		if c, aerr := ln.Accept(); aerr == nil {
+			_ = c.Close()
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+
+	d := &ssrfDialer{
+		inner:           &net.Dialer{Timeout: 2 * time.Second},
+		allowPrivateIPs: true, // loopback listener
+		lookupIP: func(_ context.Context, _, _ string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("::1"), net.ParseIP("127.0.0.1")}, nil
+		},
+	}
+	conn, err := d.DialContext(context.Background(), "tcp", net.JoinHostPort("issuer.example", port))
+	if err != nil {
+		t.Fatalf("DialContext = %v, want fail-over to 127.0.0.1", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if got := conn.RemoteAddr().String(); got != ln.Addr().String() {
+		t.Errorf("connected to %s, want %s", got, ln.Addr())
+	}
+}
