@@ -23,6 +23,25 @@ export function fmtDate(iso: string | null | undefined): string {
   });
 }
 
+/**
+ * Absolute UTC calendar day, e.g. "17 Jun 2026" — for date-only (no
+ * time-of-day) UTC-day strings such as the usage rollup's `date`
+ * field. Formatting a date-only string with the browser's local zone
+ * shifts it a day early for every negative UTC offset; this pins the
+ * render to the same zone the string was computed in.
+ */
+export function fmtDateUTC(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
 /** Date + time, e.g. "17 Jun 2026, 14:32". */
 export function fmtDateTime(iso: string | null | undefined): string {
   if (!iso) return '—';
