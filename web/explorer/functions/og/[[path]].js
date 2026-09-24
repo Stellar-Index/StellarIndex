@@ -2,15 +2,16 @@ import { ImageResponse, loadGoogleFont } from 'workers-og';
 
 // Dynamic OG card generator (SEO plan D7). GET /og/{type}/{id} → a 1200×630 PNG
 // (satori + resvg-wasm on CF Pages Functions). The response carries a public
-// Cache-Control policy (CARD_CACHE_CONTROL) for downstream CDN/browser caches;
-// this function never calls Cloudflare's Cache API itself, so whether a repeat
-// request actually gets served from Cloudflare's edge cache depends on zone
-// cache config, not just this header (GH-893/K060 — do not call this
-// "edge-cached" without that caveat). Market cards carry the LIVE price
-// (near-real-time via the 60s cache window + a tight upstream timeout,
-// guarded by a circuit breaker below). NB the live fetch hits our public API
-// from the edge; a per-IP rate limit (K067) bounds a single client's request
-// volume in addition to the OG_DISABLED kill-switch.
+// Cache-Control policy (CARD_CACHE_CONTROL) for downstream CDN/browser caches
+// AND this function explicitly reads/writes Cloudflare's `caches.default`
+// edge cache (K060) — CF Pages does not cache a Function response from
+// Cache-Control alone (confirmed live, GH-893: `/og/*` returned
+// `cf-cache-status: DYNAMIC` with no `age` while a static asset on the same
+// zone returned `HIT`). Market cards carry the LIVE price (near-real-time
+// via the 60s cache window + a tight upstream timeout, guarded by a circuit
+// breaker below). NB the live fetch hits our public API from the edge; a
+// per-IP rate limit (K067) bounds a single client's request volume in
+// addition to the OG_DISABLED kill-switch.
 
 function code(s) {
   if (!s) return '';
@@ -317,6 +318,16 @@ function notFound() {
   });
 }
 
+// K060: writes behind the response so the caller returns immediately;
+// `context.waitUntil` keeps the isolate alive long enough for the put to
+// finish. Cloudflare's cache API reads the stored response's own
+// Cache-Control to decide freshness on a later `match`, so this is a
+// single put site regardless of which TTL the response carries.
+function cachePut(context, cache, cacheKey, response) {
+  if (cache) context.waitUntil(cache.put(cacheKey, response.clone()));
+  return response;
+}
+
 export async function onRequest(context) {
   const { request, env } = context;
 
@@ -327,6 +338,19 @@ export async function onRequest(context) {
     return new Response('OG image generation is temporarily disabled.', {
       status: 503,
     });
+  }
+
+  // K060: explicit edge cache — see the header comment. Keyed on the
+  // normalized GET request so query strings (there are none in linked
+  // og/* URLs) can't fragment the cache. A hit skips render, the K067
+  // rate-limit budget and the live price fetch entirely.
+  const cache = globalThis.caches?.default;
+  const cacheKey = new Request(new URL(request.url).toString(), {
+    method: 'GET',
+  });
+  if (cache) {
+    const cached = await cache.match(cacheKey);
+    if (cached) return cached;
   }
 
   // K067: per-IP gate ahead of everything else — cheaper than the 404
@@ -350,13 +374,13 @@ export async function onRequest(context) {
   // SEC-15: 404 unknown types before doing any work — 'home' is the only
   // pseudo-type without a TYPE_LABEL entry (the id-less site-wide card).
   if (type !== 'home' && !TYPE_LABEL.has(type)) {
-    return notFound();
+    return cachePut(context, cache, cacheKey, notFound());
   }
 
   let rawId = parts.slice(1).join('/') || '';
   // input-validation: reject oversized ids before decode/fetch/render.
   if (rawId.length > MAX_ID_LENGTH) {
-    return notFound();
+    return cachePut(context, cache, cacheKey, notFound());
   }
   // CS-009: decode the path segment AT MOST ONCE (the previous 2× loop
   // defeated the upstream ogImageFor encodeURIComponent, resurfacing raw
@@ -405,12 +429,15 @@ export async function onRequest(context) {
     </div>`;
 
   try {
-    return await renderCard(
+    const res = await renderCard(
       html,
       degraded ? DEGRADED_CARD_CACHE_CONTROL : CARD_CACHE_CONTROL,
     );
+    return cachePut(context, cache, cacheKey, res);
   } catch (err) {
     console.error('og render failed', err);
+    // Never cached: 'no-store' (staticCardFallback) so a transient font or
+    // render outage isn't pinned at the edge behind this cache key.
     return staticCardFallback(request.url);
   }
 }

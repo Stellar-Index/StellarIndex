@@ -412,3 +412,63 @@ describe('og function — headline renders identifiers only (T265)', () => {
     );
   });
 });
+
+// K060: Cache-Control alone does not make CF Pages cache a Function
+// response (confirmed live, GH-893) — the function must read/write
+// `caches.default` itself. A minimal in-memory stand-in for that API lets
+// these tests prove the write-then-read loop without a CF runtime.
+function makeFakeCache() {
+  const store = new Map();
+  return {
+    async match(req) {
+      return store.get(req.url);
+    },
+    async put(req, res) {
+      store.set(req.url, res.clone());
+    },
+  };
+}
+
+// `context.waitUntil` is fire-and-forget in production; tests collect the
+// promises so they can await the cache write before asserting on a
+// follow-up request.
+function makeCacheContext(pathname, env = {}) {
+  const pending = [];
+  return {
+    context: {
+      request: new Request(`https://stellarindex.io${pathname}`),
+      env,
+      waitUntil: (p) => pending.push(p),
+    },
+    pending,
+  };
+}
+
+describe('og function — edge cache (K060)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it('serves a repeat request from caches.default instead of re-rendering and re-fetching the live price', async () => {
+    vi.stubGlobal('caches', { default: makeFakeCache() });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ data: { price: '1.5' } }), {
+        status: 200,
+      }),
+    );
+
+    const first = makeCacheContext('/og/markets/native~usdc');
+    const res1 = await onRequest(first.context);
+    expect(res1.status).toBe(200);
+    await Promise.all(first.pending);
+
+    const second = makeCacheContext('/og/markets/native~usdc');
+    const res2 = await onRequest(second.context);
+    expect(res2.status).toBe(200);
+
+    // One live price fetch total: the second request was answered from the
+    // edge cache written by the first, not by re-rendering.
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
