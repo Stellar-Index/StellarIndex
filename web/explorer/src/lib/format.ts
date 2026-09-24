@@ -289,6 +289,29 @@ export function formatDecimalAmount(
 }
 
 /**
+ * multiplyDecimalStrings — exact product of two fixed-point decimal strings
+ * (the ADR-0003 wire shape) as a plain decimal string, trailing zeros
+ * trimmed. BigInt end to end, so a tiny product keeps every significant
+ * digit instead of rounding to a fixed number of places. `null` when either
+ * input is not a plain decimal.
+ */
+export function multiplyDecimalStrings(a: string, b: string): string | null {
+  const re = /^(-?)(\d+)(?:\.(\d+))?$/;
+  const ma = re.exec(a.trim());
+  const mb = re.exec(b.trim());
+  if (!ma || !mb) return null;
+  const [, signA, wholeA, fracA = ''] = ma;
+  const [, signB, wholeB, fracB = ''] = mb;
+  const scale = fracA.length + fracB.length;
+  const product = BigInt(wholeA + fracA) * BigInt(wholeB + fracB);
+  const digits = product.toString().padStart(scale + 1, '0');
+  const whole = digits.slice(0, digits.length - scale);
+  const frac = digits.slice(digits.length - scale).replace(/0+$/, '');
+  const out = frac ? `${whole}.${frac}` : whole;
+  return product !== 0n && signA !== signB ? `-${out}` : out;
+}
+
+/**
  * Truncate a long identifier (G-strkey, C-id, tx hash) to `head…tail`.
  * THE canonical for the whole app (FEC audit A2-06): server-safe here in
  * lib — the previous home (ui/Mono.tsx) is a 'use client' module, so

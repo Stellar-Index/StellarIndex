@@ -19,7 +19,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // 30 s is ~40x the idle cost, so a genuine hang still fails.
 vi.setConfig({ testTimeout: 30_000 });
 
-
 function envelopeResponse(body: Record<string, unknown>) {
   return new Response(JSON.stringify(body), {
     status: 200,
@@ -96,5 +95,53 @@ describe('fetchPriceDirect / fetchPrice — AGT-06 real flags.stale propagation'
     const result = await fetchPrice('SOME-ASSET');
     expect(result?.flags?.triangulated).toBe(true);
     expect(result?.flags?.stale).toBe(true);
+  });
+});
+
+// Serves `legs[quote]` as the price of each triangulation leg and 404s the
+// direct asset->USD quote, keyed on the request (see the stale test above).
+function triangulationFetch(legs: { native: string; usd: string }) {
+  return vi.fn(async (input: RequestInfo | URL) => {
+    const url = String(input instanceof Request ? input.url : input);
+    const q = new URL(url, 'http://x').searchParams;
+    const asset = q.get('asset') ?? '';
+    const quote = q.get('quote') ?? '';
+    if (quote === 'fiat:USD' && asset !== 'native') {
+      return new Response('not found', { status: 404 });
+    }
+    return envelopeResponse({
+      data: { price: quote === 'native' ? legs.native : legs.usd, quote },
+      as_of: new Date().toISOString(),
+      flags: { stale: false, triangulated: false },
+    });
+  });
+}
+
+describe('fetchPrice — triangulated product keeps its value', () => {
+  it('a sub-5e-13 product is served exactly, not rounded to a zero price', async () => {
+    vi.stubGlobal(
+      'fetch',
+      triangulationFetch({ native: '0.000000001', usd: '0.0003' }),
+    );
+    const { fetchPrice } = await import('./page');
+    const result = await fetchPrice('SOME-ASSET');
+    expect(result?.flags?.triangulated).toBe(true);
+    expect(result?.price).toBe('0.0000000000003');
+  });
+
+  it('multiplies the served decimal strings exactly', async () => {
+    vi.stubGlobal(
+      'fetch',
+      triangulationFetch({ native: '0.1234567891234567', usd: '0.3' }),
+    );
+    const { fetchPrice } = await import('./page');
+    const result = await fetchPrice('SOME-ASSET');
+    expect(result?.price).toBe('0.03703703673703701');
+  });
+
+  it('withholds the compose when a leg is not a plain decimal', async () => {
+    vi.stubGlobal('fetch', triangulationFetch({ native: '1e-9', usd: '0.3' }));
+    const { fetchPrice } = await import('./page');
+    expect(await fetchPrice('SOME-ASSET')).toBeNull();
   });
 });
