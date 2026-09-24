@@ -296,4 +296,30 @@ describe('FEC guards (repo-walk)', () => {
       .filter((r) => r !== 'lib/format.ts');
     expect(offenders).toEqual([]);
   });
+
+  // CA2-A35-harden-0 (audit 2 2026-09-23): a raw `fetch(` in a build-time
+  // (non-'use client') app/** file bypasses buildFetch.ts's fail-hard
+  // retry contract — a single transient 429/5xx during static export is
+  // then swallowed by a local try/catch and silently bakes a fallback or
+  // empty page instead of retrying and failing the build. Routed
+  // convert/[from]/[to]/page.tsx onto buildFetchData; the allowlist below
+  // is the SAME defect on sibling routes this finding also named, not yet
+  // migrated — extend it only by migrating a route off the allowlist, not
+  // by adding a new one.
+  it('build-time app/** pages fetch only through lib/buildFetch.ts', () => {
+    const allowed = new Set([
+      'app/embed/asset/[slug]/page.tsx',
+      'app/embed/currency/[ticker]/page.tsx',
+      'app/embed/pair/[pair]/page.tsx',
+      'app/external/assets/[slug]/page.tsx',
+      'app/assets/[slug]/LiquidityTabPanel.tsx',
+    ]);
+    const offenders = sources
+      .filter((f) => f.rel.startsWith('app/'))
+      .filter((f) => !/^'use client';/.test(f.text))
+      .filter((f) => /\bfetch\(/.test(f.text))
+      .map((f) => f.rel)
+      .filter((r) => !allowed.has(r));
+    expect(offenders).toEqual([]);
+  });
 });
