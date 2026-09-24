@@ -41,8 +41,8 @@ issue or PR restoring the `containers:` job in
 ## Image shape
 
 - **Base images are pinned by digest** — every `FROM` in the six
-  `stellarindex-*.Dockerfile`s reads `image:tag@sha256:…`. The tag
-  is kept for readability; the digest is what the build pulls, so a
+  `stellarindex-*.Dockerfile`s normally reads `image:tag@sha256:…`. The
+  tag is kept for readability; the digest is what the build pulls, so a
   re-tagged upstream image (or a compromised registry tag) cannot
   change what ships without a diff in this directory. Each pin is the
   multi-platform *index* digest (linux/amd64 + linux/arm64), resolved
@@ -51,7 +51,10 @@ issue or PR restoring the `containers:` job in
   ecosystem (`.github/dependabot.yml`, `directory: /docker`) opens
   the PR when the tag moves to a new digest. When refreshing by hand,
   update all six Dockerfiles in the same commit and keep the two
-  digests identical across them.
+  digests identical across them. A tag whose digest cannot be resolved
+  offline is left TAG-only with a `TODO(supply-chain, DEP-low)` comment
+  explaining why — never fabricate a digest — and gets pinned in the
+  PR that next has registry access.
 - **Builder stage** uses `golang:<major.minor>-alpine` and runs the same
   `go build -trimpath -buildvcs=true -ldflags=...` invocation the
   release workflow does, so the locally-built image and the
