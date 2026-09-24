@@ -37,7 +37,8 @@ import (
 // the emission point (internal/pipeline's oracle sink) is reached
 // through a chain of free functions that carry no config, and both the
 // declaration and the emission happen in one binary — the indexer
-// declares at dispatcher-build time, long before the first event is
+// declares on-chain oracles at dispatcher-build time and polled ones in
+// external.Run's preflight, both before that source's first event is
 // persisted.
 
 // OracleStaleBudgetMultiplier is how many declared resolutions an
@@ -119,8 +120,10 @@ func SetOracleStalenessOverrides(overrides []OracleStalenessOverride) {
 // resolution series had no right-hand side and could not alert at all.
 // +Inf keeps that silence while still emitting a series, so the gap is
 // visible on a dashboard instead of being an absent row nobody
-// notices. Every oracle source the dispatcher can enable declares one
-// (pinned by pipeline's TestBuildDispatcher_DeclaresBudgetForEveryOracleSource).
+// notices. Every oracle source the dispatcher can enable declares one,
+// and external.Run declares one for every poller (pinned by pipeline's
+// TestBuildDispatcher_DeclaresBudgetForEveryOracleSource and
+// TestExternalRun_DeclaresBudgetForEveryPolledOracleSource).
 func OracleStalenessBudget(source, asset string) float64 {
 	oracleStaleness.mu.RLock()
 	defer oracleStaleness.mu.RUnlock()

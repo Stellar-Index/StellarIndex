@@ -779,7 +779,7 @@ type OracleConfig struct {
 // plus headroom, and record the observation in Reason — the next
 // reader should be able to re-test the claim, not re-derive it.
 type OracleStalenessOverrideConfig struct {
-	Source        string `toml:"source" doc:"Oracle source name exactly as it appears in the metric's source label: reflector-dex, reflector-cex, reflector-fx, redstone, or band."`
+	Source        string `toml:"source" doc:"Oracle source name exactly as it appears in the metric's source label: an on-chain oracle (reflector-dex, reflector-cex, reflector-fx, redstone, band) or an oracle_updates poller (chainlink, coingecko, coinmarketcap, cryptocompare, ecb, exchangeratesapi)."`
 	Asset         string `toml:"asset" doc:"Canonical asset identifier exactly as it appears in the metric's asset label — \"crypto:DAI\", not \"DAI\". Oracle symbols pass through canonical.MapOracleSymbol (known fiat → fiat:CODE, known crypto → crypto:CODE, known RWA → rwa:CODE, anything else → raw:SYMBOL), so the label is the mapped form; a bare or non-round-tripping identifier is rejected at startup rather than silently matching no series."`
 	BudgetSeconds int    `toml:"budget_seconds" doc:"Seconds this pair may go without a publication before the alert tickets, replacing the source default (10 × declared resolution). Must be > 0."`
 	Reason        string `toml:"reason" doc:"Why this pair's publication rhythm differs from its source's cadence, with the observation behind the number. Required — an override without a stated reason is indistinguishable from a silenced alert."`

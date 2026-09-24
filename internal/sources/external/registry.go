@@ -1,6 +1,9 @@
 package external
 
-import "sort"
+import (
+	"sort"
+	"time"
+)
 
 // Registry is the source-of-truth metadata table for every source the
 // aggregator knows about — both external (this package's responsibility)
@@ -63,11 +66,11 @@ var Registry = map[string]Metadata{
 	// derived prices with their own governance and methodology. Reported
 	// alongside for transparency. Operator opts one in per-source via
 	// config if they want oracle-inclusive aggregation.
-	"reflector-dex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
-	"reflector-cex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
-	"reflector-fx":  {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/reflector.md */},
-	"redstone":      {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/redstone.md */},
-	"band":          {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/band.md */},
+	"reflector-dex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
+	"reflector-cex": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; v2 disassembly confirms compat. See docs/operations/wasm-audits/reflector.md */},
+	"reflector-fx":  {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 5 * time.Minute, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/reflector.md */},
+	"redstone":      {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: 24 * time.Hour, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/redstone.md */},
+	"band":          {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, OracleResolution: time.Hour, BackfillAvailable: true, BackfillSafe: true /* audited 2026-04-29; see docs/operations/wasm-audits/band.md */},
 
 	// ─── On-chain lending protocols ─────────────────────────────
 	// Auction events surface stress-prices during liquidations; we
@@ -153,16 +156,20 @@ var Registry = map[string]Metadata{
 	// and nothing serves the snap while the massive feed is dry.
 	// FX pollers stamp amounts at 1e6 (DefaultDecimals=6), NOT the CEX 1e8;
 	// AmountDecimals:6 records that for the USD-volume gate (CS-040).
+	// OracleResolution is a trading day: an FX rate legitimately holds
+	// through the ~48 h weekend close, which a minute cadence would ticket
+	// every Saturday.
 	"massive":          {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
-	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
+	"exchangeratesapi": {Class: ClassExchange, Subclass: SubclassFX, DefaultWeight: 100, IncludeInVWAP: true, Paid: true, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Aggregators (divergence signal; excluded from VWAP) ─────
-	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true},
-	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, BackfillSafe: true},
-	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, BackfillSafe: true},
+	"coingecko":     {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true, OracleResolution: 5 * time.Minute},
+	"coinmarketcap": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, BackfillSafe: true, OracleResolution: time.Minute},
+	"cryptocompare": {Class: ClassAggregator, DefaultWeight: 100, IncludeInVWAP: false, Paid: true, BackfillAvailable: true, BackfillSafe: true, OracleResolution: time.Minute},
 
 	// ─── Sovereign daily anchors (sanity check only) ─────────────
-	"ecb": {Class: ClassAuthoritySanity, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6},
+	// ECB publishes once per TARGET business day, hence a 24 h resolution.
+	"ecb": {Class: ClassAuthoritySanity, DefaultWeight: 100, IncludeInVWAP: false, Paid: false, BackfillAvailable: true, BackfillSafe: true, AmountDecimals: 6, OracleResolution: 24 * time.Hour},
 
 	// ─── Off-chain oracles (Chainlink via EVM RPC) ───────────────
 	// Chainlink is on Ethereum mainnet, not Stellar; we read it via
@@ -171,7 +178,9 @@ var Registry = map[string]Metadata{
 	// is true — off-chain HTTPS source, no on-chain Soroban WASM
 	// dependency to audit. Backfill via eth_getLogs walks
 	// AnswerUpdated events. See internal/sources/external/chainlink/.
-	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false /* Alchemy free tier covers 516-feed scale */, BackfillAvailable: true, BackfillSafe: true},
+	// OracleResolution is 24 h: Timestamp is the round's updatedAt, and
+	// the slowest feeds (FX) heartbeat daily and pause over the weekend.
+	"chainlink": {Class: ClassOracle, DefaultWeight: 100, IncludeInVWAP: false, Paid: false /* Alchemy free tier covers 516-feed scale */, BackfillAvailable: true, BackfillSafe: true, OracleResolution: 24 * time.Hour},
 }
 
 // Lookup returns metadata for a source, with a safe fallback for

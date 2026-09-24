@@ -1,12 +1,17 @@
 package pipeline
 
 import (
+	"context"
 	"math"
 	"testing"
+	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/consumer"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/band"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/redstone"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/reflector"
 )
@@ -71,6 +76,9 @@ func oracleSourceFixtures() map[string]oracleSourceFixture {
 func TestBuildDispatcher_DeclaresBudgetForEveryOracleSource(t *testing.T) {
 	fixtures := oracleSourceFixtures()
 	for source := range config.OracleSourceNames {
+		if _, onChain := config.KnownSources[source]; !onChain {
+			continue // a poller: TestExternalRun_DeclaresBudgetForEveryPolledOracleSource
+		}
 		fx, ok := fixtures[source]
 		if !ok {
 			t.Errorf("unhandled source %q: config.OracleSourceNames accepts staleness "+
@@ -96,7 +104,100 @@ func TestBuildDispatcher_DeclaresBudgetForEveryOracleSource(t *testing.T) {
 					"the pre-#478 threshold)",
 					source, got, want, obs.OracleStaleBudgetMultiplier, fx.resolutionSeconds)
 			}
+			if reg := external.Lookup(source).OracleResolution.Seconds(); reg != fx.resolutionSeconds {
+				t.Errorf("external.Registry[%q].OracleResolution = %vs, but the dispatcher "+
+					"declares %vs — the registry is the oracle-source authority and must "+
+					"state the same cadence", source, reg, fx.resolutionSeconds)
+			}
 		})
+	}
+}
+
+// budgetStubPoller is the smallest external.Poller: it names a source
+// and a cadence and emits nothing, so external.Run's own wiring is the
+// only thing that can give the source a budget.
+type budgetStubPoller struct {
+	name     string
+	interval time.Duration
+}
+
+func (p budgetStubPoller) Name() string                { return p.name }
+func (p budgetStubPoller) Class() external.Class       { return external.Lookup(p.name).Class }
+func (p budgetStubPoller) PollInterval() time.Duration { return p.interval }
+func (p budgetStubPoller) PollOnce(context.Context, []canonical.Pair) (
+	[]canonical.Trade, []canonical.OracleUpdate, error,
+) {
+	return nil, nil, nil
+}
+
+// TestExternalRun_DeclaresBudgetForEveryPolledOracleSource is the
+// poller-side twin of the dispatcher guard. Chainlink, CoinGecko, ECB
+// and the rest write oracle_updates through the same sink as the
+// on-chain oracles, so each must leave external.Run with a finite
+// budget of 10 × its registry cadence (floored at the poll interval).
+func TestExternalRun_DeclaresBudgetForEveryPolledOracleSource(t *testing.T) {
+	const pollInterval = time.Minute
+	polled := 0
+	for source := range config.OracleSourceNames {
+		if _, onChain := config.KnownSources[source]; onChain {
+			continue
+		}
+		polled++
+		t.Run(source, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			wait, err := external.Run(ctx, nil,
+				[]external.PollerSpec{{Poller: budgetStubPoller{name: source, interval: pollInterval}}},
+				make(chan consumer.Event, 1), nil)
+			if err != nil {
+				cancel()
+				t.Fatalf("external.Run: %v", err)
+			}
+			cancel()
+			wait()
+
+			got := obs.OracleStalenessBudget(source, "crypto:XLM")
+			if math.IsInf(got, 1) {
+				t.Fatalf("budget for %q is +Inf — external.Run did not declare its "+
+					"resolution, so stellarindex_oracle_stale can never fire for any "+
+					"of its assets", source)
+			}
+			res := max(external.Lookup(source).OracleResolution, pollInterval)
+			if want := obs.OracleStaleBudgetMultiplier * res.Seconds(); got != want {
+				t.Errorf("budget for %q = %v, want %v (%d × %v)",
+					source, got, want, obs.OracleStaleBudgetMultiplier, res)
+			}
+		})
+	}
+	if polled == 0 {
+		t.Fatal("no polled oracle source in config.OracleSourceNames — this check " +
+			"must not pass vacuously")
+	}
+}
+
+// TestOracleSourceNames_MatchRegistry is the lockstep between the two
+// spellings of "which sources write oracle_updates". config cannot
+// import external, so it mirrors the set by hand; a source missing from
+// the mirror is one no staleness override can reach, and a registry
+// row with no cadence is one whose budget falls back to its poll
+// interval instead of its real publication rhythm.
+func TestOracleSourceNames_MatchRegistry(t *testing.T) {
+	fromRegistry := map[string]struct{}{}
+	for name, m := range external.Registry {
+		if m.OracleResolution > 0 {
+			fromRegistry[name] = struct{}{}
+		}
+	}
+	for name := range fromRegistry {
+		if _, ok := config.OracleSourceNames[name]; !ok {
+			t.Errorf("external.Registry[%q] declares an OracleResolution but "+
+				"config.OracleSourceNames omits it — no staleness override can name it", name)
+		}
+	}
+	for name := range config.OracleSourceNames {
+		if _, ok := fromRegistry[name]; !ok {
+			t.Errorf("config.OracleSourceNames has %q but external.Registry declares "+
+				"no OracleResolution for it", name)
+		}
 	}
 }
 
