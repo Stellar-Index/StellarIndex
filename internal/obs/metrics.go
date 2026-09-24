@@ -1202,9 +1202,12 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 )
 
 // DecoderPanicsTotal — per-source counter of decoder PANICS the
-// dispatcher recovered and converted into a decode error (#371 F1).
+// dispatcher recovered and converted into a decode error (#371 F1), and
+// those the projector and projected-rebuild recovered on a lake row
+// (dispatcher.DecodeRow).
 //
-// A recovered panic is a strict SUBSET of SourceDecodeErrorsTotal: the
+// A dispatcher panic is a strict SUBSET of SourceDecodeErrorsTotal (a
+// projector one, of ProjectorEventsDecoded{outcome="decode_error"}): the
 // dispatcher counts both, because "this decoder refused the input" and
 // "this decoder crashed on the input" demand very different responses
 // even though the ingest-side handling is deliberately identical (skip
@@ -1229,7 +1232,7 @@ var SourceDecodeErrorsTotal = prometheus.NewCounterVec(
 var DecoderPanicsTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_decoder_panics_total",
-		Help: "Decoder panics recovered by the dispatcher and skipped as decode errors, per source. Non-zero means a decoder bug is dropping every event of that shape.",
+		Help: "Decoder panics recovered by the dispatcher or projector and skipped as decode errors, per source. Non-zero means a decoder bug is dropping every event of that shape.",
 	},
 	[]string{"source"},
 )

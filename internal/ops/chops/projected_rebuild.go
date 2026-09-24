@@ -918,28 +918,18 @@ func (s *windowScheduler) claim() (opsutil.RangeChunk, bool) {
 }
 
 // decodeProjectedEvent runs one ClickHouse-lake event through src's
-// decoder with the same Matches/Decode/panic-recover discipline as
-// internal/projector.processEventSafely (this tool is the bulk-parallel
-// twin of that function). A decode error is a data-level soft-fail —
-// logged and counted, NOT propagated — because a deterministically
+// decoder via [dispatcher.DecodeRow], the same Matches/Decode/panic-recover
+// discipline as internal/projector.processEventSafely (this tool is the
+// bulk-parallel twin of that function). A decode error or panic is a
+// data-level soft-fail — DecodeRow logs it (and counts a panic), the caller
+// counts it, and it is NOT propagated — because a deterministically
 // malformed row would just re-fail identically on any retry (same policy
-// the live projector applies). Kept as a small local twin here rather
-// than exporting projector's unexported helper: the panic-recover wrapper
-// is a few lines, not worth an exported cross-package contract for a
-// single consumer.
+// the live projector applies).
 func decodeProjectedEvent(name string, dec dispatcher.Decoder, ev events.Event, logger *slog.Logger) (outs []consumer.Event, softFail bool) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			outs, softFail = nil, true
-			logger.Error("projected-rebuild: decode panicked; skipping row",
-				"source", name, "ledger", ev.Ledger, "tx", ev.TxHash,
-				"op_index", ev.OperationIndex, "event_index", ev.EventIndex, "panic", rec)
-		}
-	}()
-	if !dec.Matches(ev) {
+	o, matched, derr := dispatcher.DecodeRow(name, dec, ev, logger)
+	if !matched {
 		return nil, false
 	}
-	o, derr := dec.Decode(ev)
 	if derr != nil {
 		return nil, true
 	}

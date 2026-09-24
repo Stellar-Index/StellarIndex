@@ -552,7 +552,9 @@ error (#371 F1). Incremented in `internal/dispatcher/panic_guard.go`
 from all four dispatch seams — Soroban events, contract calls, classic
 ops, ledger-entry changes — and covering `Matches` as well as `Decode`,
 because a decoder that crashes deciding whether it owns an input is as
-broken as one that crashes parsing it.
+broken as one that crashes parsing it. The projector and
+`stellarindex-ops projected-rebuild` count a panic on a lake row here too, through
+`dispatcher.DecodeRow`.
 
 **When to look at this:** the moment it is non-zero. A recovered panic
 means a decoder is dropping every event of that shape, silently, and

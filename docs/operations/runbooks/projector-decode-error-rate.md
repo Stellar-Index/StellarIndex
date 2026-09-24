@@ -44,7 +44,8 @@ regression (a **sustained** decode_error rate) from the odd poison row
   is sustained above `0.1/s` for one or more sources.
 - `stellarindex_projector_runs_total{source="X",outcome="decode_degraded"}`
   is incrementing (cycles that advanced the cursor while dropping rows).
-- Indexer journal: `projector decode panicked; skipping row` and/or the
+- Indexer journal: `decode failed; row SKIPPED` (carries `err`) or
+  `decoder panicked; row SKIPPED` (carries `stack`) per row, and/or the
   cycle summary log line shows a nonzero `decode_errors` for the source.
 - Projector lag (`stellarindex_projector_lag_ledgers`) may look HEALTHY —
   the cursor is advancing normally; that is exactly the trap this alert
@@ -58,7 +59,7 @@ curl -s http://indexer:9464/metrics | grep 'stellarindex_projector_events_decode
 
 # The decode failures themselves — panic stacks name the offending decoder.
 journalctl -u stellarindex-indexer --since -1h \
-  | grep -iE "projector decode panicked|decode_errors=[1-9]"
+  | grep -iE "row SKIPPED|decode_errors=[1-9]"
 ```
 
 A single source spiking right after a deploy that changed a decoder is the
