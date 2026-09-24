@@ -264,9 +264,10 @@ After any rollback above:
      command was; current state.
 3. **Customer comms.** If the broken release was live for any
    non-trivial window, send a follow-up to the launch-day comm
-   thread. Honest is better than apologetic — say what was
-   wrong, what was rolled back, what the customer-visible
-   impact was.
+   thread from
+   [`deploy/comms/rollback-update.md`](../../deploy/comms/rollback-update.md).
+   Honest is better than apologetic — say what was wrong, what
+   was rolled back, what the customer-visible impact was.
 4. **Open the postmortem.** Same template as any other SEV-1.
    Bias toward writing it the same day; details fade.
 5. **Block forward releases.** Until the postmortem identifies
@@ -288,3 +289,5 @@ After any rollback above:
   mechanics; rollback shape D references this.
 - [`docs/operations/postmortems/`](postmortems/) — where the
   postmortem lands after the dust settles.
+- [`deploy/comms/rollback-update.md`](../../deploy/comms/rollback-update.md)
+  — the customer follow-up template for the Customer comms step.

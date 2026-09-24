@@ -258,6 +258,10 @@ Status-page states (modelled after Atlassian Statuspage):
 
 ### 5.2 Update templates
 
+The one-liners below are for the status page. The longer
+customer-facing email and status-page body is
+[`deploy/comms/incident-update.md`](../../deploy/comms/incident-update.md).
+
 **Initial (SEV-1):**
 
 > We're investigating an incident affecting the Stellar Index API.
