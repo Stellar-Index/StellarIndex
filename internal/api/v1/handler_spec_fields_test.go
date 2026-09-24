@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -162,6 +163,30 @@ func TestHandlerResponseFieldsAreDocumented(t *testing.T) {
 					pair.typ.Name(), undocumented)
 			}
 		})
+	}
+}
+
+// TestOpenAPIAccountInfoStatusEnumMatchesPlatformAccountStatus is the
+// vocabulary-level counterpart to TestHandlerResponseFieldsAreDocumented
+// above: that test reconciles FIELD NAMES against the spec, but a field
+// whose name is documented can still carry an undocumented VALUE. account.go
+// serves AccountInfo.Status as string(platform.AccountStatus) verbatim
+// (account.go:267), so every platform.AccountStatus constant must appear
+// in the spec's AccountInfo.status enum or a schema-validating client
+// rejects an otherwise-successful response. The constants are read from
+// source so a new status fails here until the spec names it.
+func TestOpenAPIAccountInfoStatusEnumMatchesPlatformAccountStatus(t *testing.T) {
+	want := goStringConsts(t, filepath.Join("internal", "platform"), "AccountStatus")
+	if len(want) == 0 {
+		t.Fatal("found no platform.AccountStatus constants — the source walk is broken")
+	}
+
+	got := specEnumAt(t, loadSpecDoc(t), "components", "schemas", "AccountInfo", "properties", "status")
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("openapi AccountInfo.status enum = %v, want %v (every platform.AccountStatus "+
+			"constant) — account.go serves string(AccountStatus) directly, so an undocumented "+
+			"or unreachable enum value here is a client-visible contract gap",
+			got, want)
 	}
 }
 
