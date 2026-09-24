@@ -143,7 +143,7 @@ operator is in the best position to do.
 ```sh
 LOGFILE=$(mktemp /tmp/va-XXXXXX.log)
 trap 'gzip -9 "$LOGFILE" >/dev/null 2>&1; mv "${LOGFILE}.gz" /var/log/stellarindex/ 2>/dev/null || rm -f "$LOGFILE" "${LOGFILE}.gz"' EXIT
-/usr/local/sbin/run-heavy-job.sh va-manual \
+/usr/local/sbin/run-heavy-job.sh verify-archive \
   stellarindex-ops verify-archive --from "$FROM" --to "$TO" > "$LOGFILE" 2>&1
 ```
 

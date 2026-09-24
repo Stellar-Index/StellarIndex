@@ -18,11 +18,14 @@
 #   VERIFY_ARCHIVE_WORKERS                      Default 12 (parallel chunks).
 #   VERIFY_ARCHIVE_MAX_RUNTIME                  Default 16h cap here.
 #     NOTE (2026-08-28): r1's ansible-rendered unit (the authority,
-#     verify-archive-tier-a.service.j2) runs UNCAPPED (=0) because it
-#     pairs Type=notify with WatchdogSec=1h silence detection. This
-#     reference copy keeps a wall-clock cap because it has no
-#     watchdog wiring — if you adopt the uncapped setting, adopt the
-#     watchdog too.
+#     verify-archive-tier-a.service.j2) runs UNCAPPED (=0). This
+#     reference copy's [Service] block below carries the SAME
+#     Type=notify + WatchdogSec=1h wiring, so the 16h wall-clock cap
+#     here is not load-bearing for liveness — it was simply never
+#     updated when the template moved to uncapped. Declared in
+#     deploy/systemd/DIVERGENCES (verify-archive-tier-a.service:
+#     Environment:VERIFY_ARCHIVE_MAX_RUNTIME); do not treat this
+#     comment's old wording as a reason the two must differ.
 #
 # Workers + max-runtime were 8 / 8h until 2026-05-13. The 8h cap
 # was tight for a ~62.5M-ledger pubnet — the nightly run completed
