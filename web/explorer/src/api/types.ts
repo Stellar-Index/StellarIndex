@@ -10340,10 +10340,28 @@ export interface components {
             l: string;
             /** @description Close price (decimal string). */
             c: string;
-            /** @description Σ base_amount smallest units over the bucket (decimal string). Per BUCKET: where a bucket merges venues that stamp at different scales (an on-chain leg at 7 decimals beside an exchange leg at 8), its sum is taken at the finest scale present IN THAT BUCKET, so two buckets of one response may be summed at different scales and only `v_quote`/`v_base` — the price — is comparable across them. */
+            /** @description Σ base_amount smallest units over the bucket (decimal string). Per BUCKET: where a bucket merges venues that stamp at different scales (an on-chain leg at 7 decimals beside an exchange leg at 8), its sum is taken at the finest scale present IN THAT BUCKET, so two buckets of one response may be summed at different scales and only `v_quote`/`v_base` — the price — is comparable across them. Divide by 10^`v_base_decimals` to get asset units; dividing by a hardcoded 1e7 overstates any CEX-fed bucket tenfold. */
             v_base: string;
-            /** @description Σ quote_amount smallest units over the bucket (decimal string); same per-bucket scale rule as `v_base`, and the same for both legs of a bucket, so their ratio is a price. */
+            /** @description Σ quote_amount smallest units over the bucket (decimal string); same per-bucket scale rule as `v_base`, and the same for both legs of a bucket, so their ratio is a price. Divide by 10^`v_quote_decimals` to get asset units. */
             v_quote: string;
+            /**
+             * @description Decimal exponent of `v_base`: asset units = v_base /
+             *     10^v_base_decimals — the bucket's own lift target, the
+             *     maximum per-source scale (7dp on-chain, 8 CEX, 6 FX) among
+             *     the venues contributing to THIS bucket. Mirrors
+             *     `OHLCBar.base_volume_decimals` for the single-bar endpoint.
+             *     `null` when the bucket's scale is unknown (a contributing
+             *     venue was not recorded): `v_base` is then not convertible
+             *     to asset units and must not be divided by a guessed 1e7.
+             */
+            v_base_decimals: number | null;
+            /**
+             * @description Decimal exponent of `v_quote` — see `v_base_decimals`.
+             *     Equal to it today (a source stamps both legs of a trade at
+             *     one scale); carried separately because a scale belongs to
+             *     an amount, not to a pair.
+             */
+            v_quote_decimals: number | null;
             /**
              * Format: int64
              * @description Trade count in the bucket.
@@ -13431,6 +13449,8 @@ export interface operations {
                      *             "c": "0.2055899576",
                      *             "v_base": "1751598864823776",
                      *             "v_quote": "359971028467214.0000042405",
+                     *             "v_base_decimals": 8,
+                     *             "v_quote_decimals": 8,
                      *             "n": 11667
                      *           },
                      *           {
@@ -13441,6 +13461,8 @@ export interface operations {
                      *             "c": "0.2055593613",
                      *             "v_base": "844461854722825",
                      *             "v_quote": "173117716771324.0000032245",
+                     *             "v_base_decimals": 8,
+                     *             "v_quote_decimals": 8,
                      *             "n": 8497
                      *           }
                      *         ]

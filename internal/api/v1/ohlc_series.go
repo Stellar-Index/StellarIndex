@@ -22,23 +22,36 @@ import (
 // boundaries (1m → :00, 1h → top of hour, 1d → 00:00 UTC, 1w →
 // Monday 00:00 UTC). Bucket end = `T + interval`.
 type OHLCSeriesBar struct {
-	T         WireTime `json:"t"`
-	O         string   `json:"o"`
-	H         string   `json:"h"`
-	L         string   `json:"l"`
-	C         string   `json:"c"`
-	VBase     string   `json:"v_base"`
-	VQuote    string   `json:"v_quote"`
-	N         int64    `json:"n"`
-	Truncated bool     `json:"truncated,omitempty"`
+	T      WireTime `json:"t"`
+	O      string   `json:"o"`
+	H      string   `json:"h"`
+	L      string   `json:"l"`
+	C      string   `json:"c"`
+	VBase  string   `json:"v_base"`
+	VQuote string   `json:"v_quote"`
+	// VBaseDecimals / VQuoteDecimals state the smallest-unit scale of
+	// VBase/VQuote — the per-source scale [barScaleDecimals] resolves
+	// from the bucket's contributing venues (7dp on-chain, 8 CEX, 6
+	// FX), NOT a fixed stroop. Mirrors [OHLCBar.QuoteVolumeDecimals]
+	// (finding F096): a consumer that divided v_quote by a hardcoded
+	// 1e7 overstated a CEX-fed bucket tenfold. Equal to each other
+	// today (a source stamps both legs of a trade at one scale, and a
+	// combined bucket's lift target — [ohlcBucketAcc.commonScale] — is
+	// per bucket, not per leg). Null when the scale is unknown
+	// ([ohlcBarScaleUnknown]); see [wireScaleDecimals].
+	VBaseDecimals  *int  `json:"v_base_decimals"`
+	VQuoteDecimals *int  `json:"v_quote_decimals"`
+	N              int64 `json:"n"`
+	Truncated      bool  `json:"truncated,omitempty"`
 
 	// Sources is the set of venues that contributed to the bucket,
 	// carried from the CAGG's own `sources` column. It is deliberately
 	// OFF the wire (`json:"-"`): it exists so a caller that COMBINES
 	// bars across markets can lift them to a common smallest-unit
-	// scale first — see [Server.ohlcSeriesFiatCombined]. Adding it to
-	// the response would be a spec change; nothing here needs it to
-	// be one.
+	// scale first — see [Server.ohlcSeriesFiatCombined] — and so the
+	// non-combined path can resolve VBaseDecimals/VQuoteDecimals via
+	// [annotateOHLCSeriesBarScale]. The scale itself is on the wire;
+	// the venue list that produced it is not.
 	Sources []string `json:"-"`
 }
 
@@ -251,13 +264,11 @@ func (s *Server) handleOHLCSeries(
 	// on-chain, 8 CEX, 6 FX — which [barScaleDecimals] reads off the
 	// CAGG's own `sources` column. The single-bar path states that scale
 	// on the wire ([OHLCBar.QuoteVolumeDecimals], finding F096); a series
-	// bar still carries it only internally ([OHLCSeriesBar.Sources],
-	// `json:"-"`), so a consumer must not divide v_quote by a fixed 1e7
-	// either. Stating it here needs the fiat-combine accumulator to
-	// surface its per-bucket lift target
-	// (internal/api/v1/ohlc_fiat_combine.go's ohlcBucketAcc.commonScale,
-	// which finalize currently drops) — a separate change, not a claim
-	// this comment gets to make in advance.
+	// bar states it too ([OHLCSeriesBar.VBaseDecimals] /
+	// [OHLCSeriesBar.VQuoteDecimals]) — [annotateOHLCSeriesBarScale] for
+	// the non-combined path here, [ohlcBucketAcc.finalize]'s own
+	// commonScale for [Server.ohlcSeriesFiatCombined] — so a consumer
+	// must not divide v_quote by a fixed 1e7 either way.
 	baseDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Base)
 	quoteDec := aggregate.ResolveDecimals(s.nonstandardDecimals, pair.Quote)
 	bars = adjustOHLCSeriesBars(bars, baseDec, quoteDec)
@@ -440,11 +451,37 @@ func (s *Server) ohlcSeriesWithAliases(
 			}
 			bars, err := s.history.OHLCSeries(ctx, ap, string(interval), from, to, limit)
 			if err != nil || len(bars) > 0 {
+				annotateOHLCSeriesBarScale(bars)
 				return bars, err
 			}
 		}
 	}
 	return nil, nil
+}
+
+// annotateOHLCSeriesBarScale fills VBaseDecimals/VQuoteDecimals from each
+// bar's own Sources via [barScaleDecimals] — the non-combined path's
+// counterpart to [ohlcBucketAcc.finalize], which sets the combined path's
+// equivalent directly from its per-bucket commonScale (the two must not
+// share one code path: a combined bar's own Sources is unset — the
+// contributing venues live on the constituent bars finalize folded
+// together, not on the bucket it produced).
+func annotateOHLCSeriesBarScale(bars []OHLCSeriesBar) {
+	for i := range bars {
+		d := barScaleDecimals(bars[i].Sources)
+		bars[i].VBaseDecimals = wireScaleDecimals(d)
+		bars[i].VQuoteDecimals = wireScaleDecimals(d)
+	}
+}
+
+// wireScaleDecimals renders a smallest-unit scale for the wire. An
+// unknown scale is null, never -1: a consumer computing 10^-1 would
+// silently scale the volume up tenfold instead of refusing to render it.
+func wireScaleDecimals(scale int) *int {
+	if scale == ohlcBarScaleUnknown {
+		return nil
+	}
+	return &scale
 }
 
 // adjustOHLCSeriesBars applies the dex-nonstandard-decimals forward

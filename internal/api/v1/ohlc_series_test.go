@@ -70,6 +70,48 @@ func TestOHLCSeries_ReturnsIntervalsArray(t *testing.T) {
 	}
 }
 
+// TestOHLCSeries_StatesVolumeScaleOnWire pins F015's narrowed remainder
+// for the non-combined path: a series bar must state the smallest-unit
+// scale its v_base/v_quote are expressed in (v_base_decimals /
+// v_quote_decimals), resolved from the CAGG's own `sources` column —
+// mirroring [OHLCBar.QuoteVolumeDecimals] (F096) for the single-bar
+// path. A bar whose sources are unknown states null, never a guessed
+// scale and never the internal -1 sentinel.
+func TestOHLCSeries_StatesVolumeScaleOnWire(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	cex := mkSeriesBar(t0, "0.16", "0.17", "0.15", "0.165", "1000", "165", 4)
+	cex.Sources = []string{"binance"} // CEX venue — 8dp, not the 7dp on-chain default
+	unknown := mkSeriesBar(t0.Add(time.Hour), "0.165", "0.18", "0.16", "0.175", "1200", "200", 5)
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{cex, unknown}}
+	srv := v1.New(v1.Options{History: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=crypto:BTC&interval=1h&limit=24")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var body struct {
+		Data struct {
+			Intervals []map[string]json.RawMessage `json:"intervals"`
+		} `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if got := len(body.Data.Intervals); got != 2 {
+		t.Fatalf("len(intervals) = %d, want 2", got)
+	}
+	// 8 is binance's amountScaleDecimalsFor scale.
+	for i, want := range []string{"8", "null"} {
+		for _, key := range []string{"v_base_decimals", "v_quote_decimals"} {
+			got, ok := body.Data.Intervals[i][key]
+			if !ok || string(got) != want {
+				t.Errorf("intervals[%d].%s = %q (present=%v), want %s — a consumer "+
+					"dividing by 10^%s must land on the served integer's actual "+
+					"scale, or be told it is unknown", i, key, got, ok, want, key)
+			}
+		}
+	}
+}
+
 // TestOHLCSeries_InvalidInterval400 — unsupported interval values
 // 400 with the canonical errors/invalid-interval problem+json.
 func TestOHLCSeries_InvalidInterval400(t *testing.T) {

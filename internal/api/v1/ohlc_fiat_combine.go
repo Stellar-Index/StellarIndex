@@ -745,6 +745,12 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 	}
 	high := selectExtreme(a.highs, true)
 	low := selectExtreme(a.lows, false)
+	// A bucket holding an unknown-scale bar sums integers at no single
+	// scale (that bar was left unlifted), so it states none.
+	stated := a.commonScale
+	if _, unknown := a.byScale[ohlcBarScaleUnknown]; unknown {
+		stated = ohlcBarScaleUnknown
+	}
 	return OHLCSeriesBar{
 		T:      WireTime(t),
 		O:      ratToDecimal(open, ohlcPriceDigits),
@@ -753,7 +759,12 @@ func (a *ohlcBucketAcc) finalize(t time.Time) OHLCSeriesBar {
 		C:      ratToDecimal(closeP, ohlcPriceDigits),
 		VBase:  ratToDecimal(baseVol, 0),
 		VQuote: ratToDecimal(quoteVol, ohlcPriceDigits),
-		N:      a.n,
+		// The bucket's own lift target IS the scale VBase/VQuote ended
+		// up at — every scale present was multiplied up to it above, so
+		// stating anything else would mismatch the served integers.
+		VBaseDecimals:  wireScaleDecimals(stated),
+		VQuoteDecimals: wireScaleDecimals(stated),
+		N:              a.n,
 	}
 }
 
