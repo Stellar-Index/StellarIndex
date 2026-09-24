@@ -421,6 +421,40 @@ func TestBuildRangesFromTransitions(t *testing.T) {
 	})
 }
 
+// TestMergeWasmHistories_NoGapWhenLaterWorkerSeesNoTransition is the
+// regression test for CA2-A20-harden-4: worker 0's chunk sees hash
+// "a" deployed at ledger 100 and no further change before its chunk
+// ends at 500. Worker 1's chunk [501,1000] sees NO instance write at
+// all for this contract (the hash simply continued unchanged) — the
+// old worker-adjacency heuristic only stitched worker 1 into worker
+// 0's range when worker 1 contributed a transition landing exactly
+// on the chunk boundary, so a worker with zero writes left a
+// 500-ledger hole: the merged range stopped at worker 0's upperEnd
+// (500) instead of extending through the whole walk (1000).
+func TestMergeWasmHistories_NoGapWhenLaterWorkerSeesNoTransition(t *testing.T) {
+	var contract sdkxdr.Hash
+	contract[0] = 0x02
+	watch := map[sdkxdr.Hash]string{contract: "CCONTRACT"}
+
+	w0State := map[sdkxdr.Hash]*wasmContractState{}
+	recordWasmTransition(w0State, contract, "a", 100, nil)
+
+	workers := []workerResult{
+		{state: w0State, upperEnd: 500},
+		{state: map[sdkxdr.Hash]*wasmContractState{}, upperEnd: 1000}, // saw nothing
+	}
+
+	merged := mergeWasmHistories(workers, watch)
+	ranges := merged[contract]
+	if len(ranges) != 1 {
+		t.Fatalf("ranges = %+v, want exactly 1 continuous range", ranges)
+	}
+	want := wasmRange{WasmHash: "a", FromLedger: 100, ToLedger: 1000}
+	if ranges[0] != want {
+		t.Errorf("range = %+v, want %+v (no gap at the worker boundary)", ranges[0], want)
+	}
+}
+
 // TestReadTransitionJSONL_RoundTrip writes a synthetic JSONL file
 // (matching the shape `transitionLog.append` produces) and confirms
 // the merge tool's reader consumes it correctly.
@@ -435,12 +469,18 @@ func TestReadTransitionJSONL_RoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	transitions := make(map[string][]transitionRecord)
-	n, err := readTransitionJSONL(path, transitions)
+	n, extent, hasExtent, err := readTransitionJSONL(path, transitions)
 	if err != nil {
 		t.Fatalf("readTransitionJSONL: %v", err)
 	}
 	if n != 3 {
 		t.Errorf("count = %d, want 3", n)
+	}
+	if hasExtent {
+		t.Errorf("hasExtent = true, want false (no watermark line in fixture)")
+	}
+	if extent != 500 {
+		t.Errorf("extent = %d, want 500 (fallback: highest at_ledger observed)", extent)
 	}
 	if len(transitions["C1"]) != 2 {
 		t.Errorf("C1 transitions = %d, want 2", len(transitions["C1"]))
@@ -450,6 +490,40 @@ func TestReadTransitionJSONL_RoundTrip(t *testing.T) {
 	}
 	if transitions["C1"][0].WasmHash != "a" || transitions["C1"][1].WasmHash != "b" {
 		t.Errorf("C1 hashes = %v, want [a b]", transitions["C1"])
+	}
+}
+
+// TestReadTransitionJSONL_WatermarkAuthoritative proves the
+// regression fix for CA2-A20-correct-3: when a worker's JSONL file
+// carries a watermark line, that value — not the highest transition
+// at_ledger — is the returned extent, even when it's LOWER than the
+// last transition would suggest (the worker kept scanning after its
+// last transition but crashed before reaching -to).
+func TestReadTransitionJSONL_WatermarkAuthoritative(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/wasm-history-w0.jsonl"
+	contents := `{"contract":"C1","wasm_hash":"a","at_ledger":100}
+{"watermark":true,"at_ledger":9000}
+`
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	transitions := make(map[string][]transitionRecord)
+	n, extent, hasExtent, err := readTransitionJSONL(path, transitions)
+	if err != nil {
+		t.Fatalf("readTransitionJSONL: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("count = %d, want 1 (watermark line does not count as a transition)", n)
+	}
+	if !hasExtent {
+		t.Fatalf("hasExtent = false, want true")
+	}
+	if extent != 9000 {
+		t.Errorf("extent = %d, want 9000 (the watermark), not 100 (the last transition)", extent)
+	}
+	if len(transitions["C1"]) != 1 {
+		t.Errorf("C1 transitions = %d, want 1", len(transitions["C1"]))
 	}
 }
 
@@ -467,7 +541,7 @@ func TestReadTransitionJSONL_TruncatedTail(t *testing.T) {
 		t.Fatal(err)
 	}
 	transitions := make(map[string][]transitionRecord)
-	n, err := readTransitionJSONL(path, transitions)
+	n, _, _, err := readTransitionJSONL(path, transitions)
 	if err != nil {
 		t.Fatalf("readTransitionJSONL: %v", err)
 	}

@@ -385,27 +385,19 @@ func wasmHistoryMergeJSONL(args []string) error {
 	fmt.Fprintf(os.Stderr, "wasm-history-merge-jsonl: reading %d JSONL file(s) from %s\n",
 		len(paths), *checkpointDir)
 
-	// contract → transitions in observation order across all workers.
 	transitions := make(map[string][]transitionRecord)
-	totalLines := 0
-	for _, path := range paths {
-		n, err := readTransitionJSONL(path, transitions)
-		if err != nil {
-			return fmt.Errorf("read %s: %w", path, err)
-		}
-		fmt.Fprintf(os.Stderr, "  %s: %d transition(s)\n", filepath.Base(path), n)
-		totalLines += n
+	closeAt, err := readAllTransitionJSONL(paths, uint32(*to), transitions)
+	if err != nil {
+		return err
 	}
-	fmt.Fprintf(os.Stderr, "wasm-history-merge-jsonl: %d total transition lines across %d contract(s)\n",
-		totalLines, len(transitions))
 
 	// Per contract: sort by at_ledger, collapse adjacent same-hash,
 	// build ranges that close at the next transition's at_ledger - 1
-	// (or at -to for the last range).
+	// (or at closeAt for the last range).
 	out := make([]contractHistory, 0, len(transitions))
 	for contract, trs := range transitions {
 		sort.Slice(trs, func(i, j int) bool { return trs[i].AtLedger < trs[j].AtLedger })
-		ranges := buildRangesFromTransitions(trs, uint32(*to))
+		ranges := buildRangesFromTransitions(trs, closeAt)
 		if len(ranges) == 0 {
 			continue
 		}
@@ -433,23 +425,66 @@ func wasmHistoryMergeJSONL(args []string) error {
 	return nil
 }
 
-// readTransitionJSONL appends every record in path's JSONL to the
-// per-contract slice in `transitions`. Returns the number of lines
-// successfully decoded (corrupted or partial trailing lines are
-// logged + skipped — a crashed walk may have left a half-written
-// last line, and "recover what we have" beats "fail outright").
-func readTransitionJSONL(path string, transitions map[string][]transitionRecord) (int, error) {
+// readAllTransitionJSONL reads every path into `transitions` and
+// returns the ledger to close the last open range of each contract
+// at. It starts from the operator's requested `to` and is pulled
+// down to the least-far extent any worker file actually proves it
+// reached — a worker's own watermark line if present, else its
+// highest observed transition. Without this, a worker that died
+// mid-flight (the exact scenario this recovery tool exists for)
+// would have its last range published as extending all the way to
+// -to, an artefact nobody verified (CA2-A20-correct-3).
+func readAllTransitionJSONL(paths []string, to uint32, transitions map[string][]transitionRecord) (uint32, error) {
+	totalLines := 0
+	closeAt := to
+	sawExtent := false
+	for _, path := range paths {
+		n, extent, hasExtent, err := readTransitionJSONL(path, transitions)
+		if err != nil {
+			return 0, fmt.Errorf("read %s: %w", path, err)
+		}
+		fmt.Fprintf(os.Stderr, "  %s: %d transition(s)\n", filepath.Base(path), n)
+		totalLines += n
+		if !hasExtent && n == 0 {
+			continue // no information at all from this file
+		}
+		if !sawExtent || extent < closeAt {
+			closeAt = extent
+			sawExtent = true
+		}
+	}
+	fmt.Fprintf(os.Stderr, "wasm-history-merge-jsonl: %d total transition lines across %d contract(s)\n",
+		totalLines, len(transitions))
+	if sawExtent && closeAt < to {
+		fmt.Fprintf(os.Stderr,
+			"wasm-history-merge-jsonl: observed extent %d is short of requested -to %d — "+
+				"closing ranges at the last ledger actually observed, not -to\n",
+			closeAt, to)
+	}
+	return closeAt, nil
+}
+
+// readTransitionJSONL appends every transition record in path's
+// JSONL to the per-contract slice in `transitions`. Returns the
+// number of transition lines successfully decoded (corrupted or
+// partial trailing lines are logged + skipped — a crashed walk may
+// have left a half-written last line, and "recover what we have"
+// beats "fail outright"), plus this worker's observed extent: the
+// watermark line if present (hasExtent=true, authoritative), else
+// the highest AtLedger among its transitions as a conservative
+// fallback (the worker crashed before writing its watermark, but we
+// know it scanned at least that far).
+func readTransitionJSONL(path string, transitions map[string][]transitionRecord) (count int, extent uint32, hasExtent bool, err error) {
 	// gosec G304: path comes from -checkpoint-dir glob expansion; the
 	// merge tool is itself a privileged ops command that operators run
 	// against operator-chosen paths.
 	f, err := os.Open(path) //nolint:gosec // intentional ops-tool file read
 	if err != nil {
-		return 0, err
+		return 0, 0, false, err
 	}
 	defer func() { _ = f.Close() }()
 
 	dec := json.NewDecoder(f)
-	count := 0
 	for dec.More() {
 		var r transitionRecord
 		if err := dec.Decode(&r); err != nil {
@@ -458,10 +493,18 @@ func readTransitionJSONL(path string, transitions map[string][]transitionRecord)
 				filepath.Base(path), dec.InputOffset(), err)
 			break
 		}
+		if r.Watermark {
+			extent = r.AtLedger
+			hasExtent = true
+			continue
+		}
 		transitions[r.Contract] = append(transitions[r.Contract], r)
 		count++
+		if !hasExtent && r.AtLedger > extent {
+			extent = r.AtLedger
+		}
 	}
-	return count, nil
+	return count, extent, hasExtent, nil
 }
 
 // buildRangesFromTransitions converts a per-contract sorted
@@ -646,6 +689,14 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 		},
 	)
 	result.scanned = workerScanned
+	if tlog != nil {
+		// Record the true extent BEFORE the deferred Close runs, so
+		// a crash-recovery merge knows how far this worker got even
+		// if it saw zero transitions in its whole chunk.
+		if werr := tlog.setExtent(result.upperEnd); werr != nil {
+			fmt.Fprintf(os.Stderr, "wasm-history: w%d write extent watermark: %v\n", workerIdx, werr)
+		}
+	}
 	// Add the un-counted residue. F-1239 (codex audit-2026-05-12):
 	// `-progress-every 0` means "disable progress output"; the
 	// previous unconditional `workerScanned % progressEvery`
@@ -664,41 +715,56 @@ func runOneWasmHistoryWorker( //nolint:funlen,gocognit // worker hot path; refac
 }
 
 // mergeWasmHistories combines per-worker state maps into one
-// per-contract timeline. Open ranges from each worker (where the
-// worker exited mid-WASM-version) are closed at the worker's upper
-// bound, then the timelines are concatenated in worker-order.
-// Adjacent ranges with the same hash across worker boundaries are
-// collapsed into a single range.
+// per-contract timeline. Workers scan disjoint, ledger-ordered
+// chunks (opsutil.SplitRange gives worker i the i-th contiguous
+// range), so each worker's per-contract ranges are reconstructed
+// back into point transitions (one per range's FromLedger) and
+// concatenated in worker order — reproducing the same ordered
+// transition stream a single serial (-parallel 1) walk would have
+// produced. Feeding that through buildRangesFromTransitions (the
+// same primitive wasm-history-merge-jsonl's crash-recovery path
+// uses) collapses hash-unchanged worker boundaries correctly.
+//
+// The previous implementation only stitched a worker's LAST range
+// into the PRECEDING worker's range when the next worker's first
+// transition landed exactly on the chunk boundary — true only when
+// the version changed on the very first ledger of a chunk. Any
+// worker chunk with no instance write at all (the contract's hash
+// simply continued unchanged) contributed nothing, leaving a
+// silent hole in the reported timeline (CA2-A20-harden-4).
+//
+// The final range's close point is the LAST worker's upperEnd — the
+// true last ledger observed by the whole walk — not the operator's
+// requested -to, matching the RLT-282 fix already applied to each
+// worker's own open range.
 func mergeWasmHistories(
 	workers []workerResult,
 	watch map[sdkxdr.Hash]string,
 ) map[sdkxdr.Hash][]wasmRange {
-	merged := make(map[sdkxdr.Hash][]wasmRange)
+	if len(workers) == 0 {
+		return nil
+	}
+	closeAt := workers[len(workers)-1].upperEnd
+
+	byContract := make(map[sdkxdr.Hash][]transitionRecord)
 	for _, w := range workers {
 		for h, s := range w.state {
-			// Close the worker's open range at its upper bound.
-			if len(s.ranges) > 0 && s.ranges[len(s.ranges)-1].ToLedger == 0 {
-				s.ranges[len(s.ranges)-1].ToLedger = w.upperEnd
-			}
-			existing := merged[h]
+			name := watch[h]
 			for _, r := range s.ranges {
-				if len(existing) > 0 && existing[len(existing)-1].WasmHash == r.WasmHash &&
-					existing[len(existing)-1].ToLedger+1 == r.FromLedger {
-					// Adjacent same-hash → extend the prior range.
-					existing[len(existing)-1].ToLedger = r.ToLedger
-				} else {
-					existing = append(existing, r)
-				}
+				byContract[h] = append(byContract[h], transitionRecord{
+					Contract: name,
+					WasmHash: r.WasmHash,
+					AtLedger: r.FromLedger,
+				})
 			}
-			merged[h] = existing
 		}
 	}
-	// Reopen the LAST range of each contract — i.e. clear ToLedger
-	// if it hits the very last worker's upperEnd, since "we don't
-	// know yet" is more honest than "ends here" for the operator
-	// reading the JSON. Actually no — the operator scoped -to
-	// explicitly; closing at to is correct. Leave as-is.
-	_ = watch // referenced only for godoc symmetry; merging is keyed by Hash.
+
+	merged := make(map[sdkxdr.Hash][]wasmRange, len(byContract))
+	for h, trs := range byContract {
+		sort.Slice(trs, func(i, j int) bool { return trs[i].AtLedger < trs[j].AtLedger })
+		merged[h] = buildRangesFromTransitions(trs, closeAt)
+	}
 	return merged
 }
 
@@ -1125,9 +1191,14 @@ type transitionLog struct {
 }
 
 type transitionRecord struct {
-	Contract string `json:"contract"`
-	WasmHash string `json:"wasm_hash"`
+	Contract string `json:"contract,omitempty"`
+	WasmHash string `json:"wasm_hash,omitempty"`
 	AtLedger uint32 `json:"at_ledger"`
+	// Watermark marks this line as the worker's own record of how
+	// far it actually scanned (AtLedger holds that ledger), rather
+	// than a WASM-hash transition. Contract/WasmHash are empty on a
+	// watermark line.
+	Watermark bool `json:"watermark,omitempty"`
 }
 
 func newTransitionLog(path string, watch map[sdkxdr.Hash]string) (*transitionLog, error) {
@@ -1154,6 +1225,18 @@ func (t *transitionLog) append(contract sdkxdr.Hash, wasmHash string, seq uint32
 		WasmHash: wasmHash,
 		AtLedger: seq,
 	})
+}
+
+// setExtent appends a watermark line recording how far this worker
+// actually scanned (seq, its true upperEnd) — distinct from any
+// transition. wasmHistoryMergeJSONL needs this because a JSONL file
+// otherwise records only WHERE transitions landed, never HOW FAR the
+// worker got: a worker that crashed without seeing another
+// transition after ledger X would leave the merge tool no way to
+// distinguish "scanned through -to, hash never changed again" from
+// "crashed at X, everything after is unknown" (CA2-A20-correct-3).
+func (t *transitionLog) setExtent(seq uint32) error {
+	return t.enc.Encode(transitionRecord{AtLedger: seq, Watermark: true})
 }
 
 func (t *transitionLog) Close() error {
