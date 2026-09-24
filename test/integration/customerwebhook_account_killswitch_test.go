@@ -235,11 +235,11 @@ func assertWorkerDeliversToActiveOnly(
 	t.Helper()
 	cases := seedKillSwitchTrio(t, ctx, accounts, webhooks, "deliver", true)
 
-	w := customerwebhook.New(webhooks, customerwebhook.Options{
+	// httptest listens on 127.0.0.1 with a self-signed cert, both of
+	// which the production client rejects by design (SSRF guard,
+	// certificate verification).
+	w := customerwebhook.NewUnguardedForIntegrationTest(webhooks, customerwebhook.Options{
 		PollInterval: 50 * time.Millisecond,
-		// httptest listens on 127.0.0.1 with a self-signed cert, both of
-		// which the production client rejects by design (SSRF guard,
-		// certificate verification).
 		HTTPClient: &http.Client{
 			Timeout: 5 * time.Second,
 			Transport: &http.Transport{
