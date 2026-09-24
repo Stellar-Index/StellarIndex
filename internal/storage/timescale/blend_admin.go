@@ -106,6 +106,9 @@ func buildAdminAttributes(e domain.BlendAdminEvent) map[string]any {
 		if e.ReserveConfig != nil {
 			attrs["metadata"] = e.ReserveConfig
 		}
+		if len(e.ReserveConfigMissing) > 0 {
+			attrs["reserve_config_missing"] = e.ReserveConfigMissing
+		}
 	case domain.BlendEventSetReserve:
 		attrs["index"] = e.ReserveIndex
 	case domain.BlendEventSetStatus:

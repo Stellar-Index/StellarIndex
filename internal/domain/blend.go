@@ -149,6 +149,9 @@ type BlendAdminEvent struct {
 	// layer marshals it to jsonb). Nil when the event kind doesn't
 	// carry a ReserveConfig.
 	ReserveConfig map[string]any
+	// ReserveConfigMissing names the V2-only ReserveConfig fields
+	// (supply_cap, enabled) absent from a V1 pool's event.
+	ReserveConfigMissing []string
 
 	// new_liquidation_auction body fields (V1 pool-factory only — see
 	// BlendEventNewLiquidationAuction doc). Same {bid, lot, block}

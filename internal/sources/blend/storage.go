@@ -42,18 +42,25 @@ type ReserveData struct {
 type ReserveConfig struct {
 	Index      uint32
 	Decimals   uint32
-	CFactor    uint32 // collateral factor, 7 decimals
-	LFactor    uint32 // liability factor, 7 decimals
-	Util       uint32 // target utilization, 7 decimals
-	MaxUtil    uint32 // max utilization, 7 decimals
-	RBase      uint32 // R0 base rate, 7 decimals
-	ROne       uint32 // R1 slope, 7 decimals
-	RTwo       uint32 // R2 slope, 7 decimals
-	RThree     uint32 // R3 slope, 7 decimals
-	Reactivity uint32 // reactivity constant, 7 decimals
-	SupplyCap  *big.Int
-	Enabled    bool
+	CFactor    uint32   // collateral factor, 7 decimals
+	LFactor    uint32   // liability factor, 7 decimals
+	Util       uint32   // target utilization, 7 decimals
+	MaxUtil    uint32   // max utilization, 7 decimals
+	RBase      uint32   // R0 base rate, 7 decimals
+	ROne       uint32   // R1 slope, 7 decimals
+	RTwo       uint32   // R2 slope, 7 decimals
+	RThree     uint32   // R3 slope, 7 decimals
+	Reactivity uint32   // reactivity constant, 7 decimals
+	SupplyCap  *big.Int // nil for a V1 pool, which has no supply cap
+	Enabled    bool     // always true for a V1 pool, which cannot disable a reserve
 }
+
+// The ReserveConfig fields the V2 pool added; a V1 pool's config omits
+// both.
+const (
+	reserveConfigSupplyCap = "supply_cap"
+	reserveConfigEnabled   = "enabled"
+)
 
 // PoolConfig is the pool-wide config (instance storage, Symbol
 // "Config"). BstopRate is the backstop's cut of accrued debt interest
@@ -73,19 +80,19 @@ type PoolConfig struct {
 // storage entry is often uncaptured (set at reserve init, never
 // re-written), but the queue_set_reserve EVENT carries the same config.
 type reserveConfigMetadata struct {
-	Index      uint32 `json:"index"`
-	Decimals   uint32 `json:"decimals"`
-	CFactor    uint32 `json:"c_factor"`
-	LFactor    uint32 `json:"l_factor"`
-	Util       uint32 `json:"util"`
-	MaxUtil    uint32 `json:"max_util"`
-	RBase      uint32 `json:"r_base"`
-	ROne       uint32 `json:"r_one"`
-	RTwo       uint32 `json:"r_two"`
-	RThree     uint32 `json:"r_three"`
-	Reactivity uint32 `json:"reactivity"`
-	SupplyCap  string `json:"supply_cap"`
-	Enabled    bool   `json:"enabled"`
+	Index      uint32  `json:"index"`
+	Decimals   uint32  `json:"decimals"`
+	CFactor    uint32  `json:"c_factor"`
+	LFactor    uint32  `json:"l_factor"`
+	Util       uint32  `json:"util"`
+	MaxUtil    uint32  `json:"max_util"`
+	RBase      uint32  `json:"r_base"`
+	ROne       uint32  `json:"r_one"`
+	RTwo       uint32  `json:"r_two"`
+	RThree     uint32  `json:"r_three"`
+	Reactivity uint32  `json:"reactivity"`
+	SupplyCap  *string `json:"supply_cap"`
+	Enabled    *bool   `json:"enabled"`
 }
 
 // ParseReserveConfigMetadata builds a ReserveConfig from a
@@ -98,14 +105,18 @@ func ParseReserveConfigMetadata(b []byte) (ReserveConfig, error) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		return ReserveConfig{}, fmt.Errorf("blend: reserve config metadata: %w", err)
 	}
-	supplyCap, ok := new(big.Int).SetString(m.SupplyCap, 10)
-	if !ok {
-		supplyCap = big.NewInt(0)
+	var supplyCap *big.Int
+	if m.SupplyCap != nil {
+		var ok bool
+		if supplyCap, ok = new(big.Int).SetString(*m.SupplyCap, 10); !ok {
+			supplyCap = big.NewInt(0)
+		}
 	}
+	enabled := m.Enabled == nil || *m.Enabled
 	return ReserveConfig{
 		Index: m.Index, Decimals: m.Decimals, CFactor: m.CFactor, LFactor: m.LFactor,
 		Util: m.Util, MaxUtil: m.MaxUtil, RBase: m.RBase, ROne: m.ROne, RTwo: m.RTwo,
-		RThree: m.RThree, Reactivity: m.Reactivity, SupplyCap: supplyCap, Enabled: m.Enabled,
+		RThree: m.RThree, Reactivity: m.Reactivity, SupplyCap: supplyCap, Enabled: enabled,
 	}, nil
 }
 
@@ -144,7 +155,8 @@ func DecodeReserveData(v scval.ScVal) (ReserveData, error) {
 }
 
 // DecodeReserveConfig decodes a ReserveConfig ScVal (the value of a
-// ResConfig(asset) contract_data entry).
+// ResConfig(asset) contract_data entry). The V2-only fields are optional
+// so a V1 pool's entry decodes.
 func DecodeReserveConfig(v scval.ScVal) (ReserveConfig, error) {
 	m, err := scval.AsMap(v)
 	if err != nil {
@@ -173,14 +185,17 @@ func DecodeReserveConfig(v scval.ScVal) (ReserveConfig, error) {
 		}
 		*f.dst = v
 	}
-	if rc.SupplyCap, err = i128Field(m, "supply_cap"); err != nil {
-		return ReserveConfig{}, err
+	rc.Enabled = true
+	if _, ok := scval.MapField(m, reserveConfigSupplyCap); ok {
+		if rc.SupplyCap, err = i128Field(m, reserveConfigSupplyCap); err != nil {
+			return ReserveConfig{}, err
+		}
 	}
-	enabled, err := boolField(m, "enabled")
-	if err != nil {
-		return ReserveConfig{}, err
+	if _, ok := scval.MapField(m, reserveConfigEnabled); ok {
+		if rc.Enabled, err = boolField(m, reserveConfigEnabled); err != nil {
+			return ReserveConfig{}, err
+		}
 	}
-	rc.Enabled = enabled
 	return rc, nil
 }
 
