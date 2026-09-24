@@ -2672,7 +2672,8 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 }
 
 // frozenPairBase reports which spelling of the pair carries the freeze
-// marker that GOVERNS this response. Exactly one marker read.
+// marker that GOVERNS this response. One marker read when a bucket was
+// served; one per spelling of the requested asset when none was.
 //
 // When a closed bucket was read, that is the marker of the alias it was
 // read from, and nothing else: an unfrozen served pair is served as
@@ -2685,22 +2686,44 @@ func (s *Server) resolveFrozenServe(r *http.Request, requested, served, quote ca
 // same request served 200. A healthy alias wins, the same rule
 // [Server.readPriceWithAliasesServed] applies to a withheld alias.
 //
-// Only when no bucket was read (`served` is zero — the fallback chain
-// answered) is the requested literal's marker consulted: it is the only
-// pair there is to ask about.
+// When no bucket was read (`served` is zero — the fallback chain
+// answered) every spelling's marker governs: the fallback chain
+// resolves across the alias set (crossDeclaredPegThroughXLM,
+// resolveUSDLeg) without reporting which leg it served, so a freeze on
+// `crypto:XLM/fiat:GBP` must not go unseen for a `native/fiat:GBP`
+// request. See [Server.frozenAnyAlias].
 func (s *Server) frozenPairBase(r *http.Request, requested, served, quote canonical.Asset) (asset canonical.Asset, frozen, checked bool) {
-	governing := served
-	if governing.IsZero() {
-		governing = requested
+	if served.IsZero() {
+		return s.frozenAnyAlias(r, requested, quote)
 	}
-	frozen, checked = s.lookupFrozen(r, governing, quote)
+	frozen, checked = s.lookupFrozen(r, served, quote)
 	if !checked {
 		return canonical.Asset{}, false, false
 	}
 	if frozen {
-		return governing, true, true
+		return served, true, true
 	}
 	return canonical.Asset{}, false, true
+}
+
+// frozenAnyAlias reads the freeze marker of every spelling of requested
+// against quote. A frozen spelling governs at once. Otherwise checked
+// is true only when every marker was read: one failed read leaves that
+// spelling's verdict unknown, and "unknown" must not travel as
+// "confirmed not frozen".
+func (s *Server) frozenAnyAlias(r *http.Request, requested, quote canonical.Asset) (asset canonical.Asset, frozen, checked bool) {
+	allChecked := true
+	for _, alias := range assetAliases(requested) {
+		aliasFrozen, aliasChecked := s.lookupFrozen(r, alias, quote)
+		if !aliasChecked {
+			allChecked = false
+			continue
+		}
+		if aliasFrozen {
+			return alias, true, true
+		}
+	}
+	return canonical.Asset{}, false, allChecked
 }
 
 // writeFrozenNothingHeldProblem is the single-asset refusal for
