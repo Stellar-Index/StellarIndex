@@ -760,14 +760,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// Backs /v1/currencies. Worker survives upstream failures
 	// (logs at warn) — the cache holds the prior snapshot.
 	//
-	// API key comes from MASSIVE_API_KEY env var (passed through
-	// systemd EnvironmentFile=/etc/default/stellarindex on r1). When
-	// empty, the worker still constructs but every fetch returns
-	// 401; a stale cache stays in place and /v1/currencies serves
-	// "warming up" until the key is provided.
+	// API key is [external.massive] api_key, normally set by the
+	// MASSIVE_API_KEY env var (systemd EnvironmentFile=/etc/default/stellarindex
+	// on r1). When empty, the worker still constructs but every fetch
+	// returns 401; a stale cache stays in place and /v1/currencies
+	// serves "warming up" until the key is provided.
 	forexCache := forex.NewCache()
 	forexWorker := forex.NewWorker(
-		forex.NewClient(os.Getenv("MASSIVE_API_KEY")),
+		forex.NewClient(cfg.External.Massive.APIKey),
 		forexCache,
 		logger.With("component", "forex"),
 		time.Hour,

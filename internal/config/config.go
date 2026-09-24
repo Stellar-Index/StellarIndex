@@ -672,11 +672,13 @@ type ExternalConfig struct {
 	Bitstamp         ExternalVenueConfig         `toml:"bitstamp"         doc:"Bitstamp v2 WebSocket live_trades streamer (XLM/USD, XLM/EUR, XLM/GBP, XLM/BTC, BTC/USD, BTC/EUR, ETH/USD)."`
 	Coinbase         ExternalVenueConfig         `toml:"coinbase"         doc:"Coinbase Exchange WebSocket matches streamer (XLM-USD, BTC-USD, ETH-USD)."`
 	ExchangeRatesApi ExchangeRatesApiVenueConfig `toml:"exchangeratesapi" doc:"ExchangeRatesApi.io REST poller for fiat cross-rates (Professional tier required for USD base + 1-min cadence + redistribution)."`
-	CoinGecko        ExternalVenueConfig         `toml:"coingecko"        doc:"CoinGecko /simple/price poller. Class=aggregator (divergence-only). Free tier works; no auth."`
+	CoinGecko        CoinGeckoVenueConfig        `toml:"coingecko"        doc:"CoinGecko /simple/price poller. Class=aggregator (divergence-only). Its keys are also used by the backfill-index and listing-sync ops commands."`
 	CoinMarketCap    CoinMarketCapVenueConfig    `toml:"coinmarketcap"    doc:"CoinMarketCap /v2 quotes poller. Class=aggregator. Paid API key; Standard tier ($79/mo+) for commercial redistribution."`
 	CryptoCompare    CryptoCompareVenueConfig    `toml:"cryptocompare"    doc:"CryptoCompare /data/pricemulti poller. Class=aggregator. Paid API key via Authorization header."`
 	ECB              ExternalVenueConfig         `toml:"ecb"              doc:"European Central Bank daily FX reference rates. Class=authority_sanity (daily anchor, not VWAP). Free, no auth."`
 	Chainlink        ChainlinkVenueConfig        `toml:"chainlink"        doc:"Chainlink Data Feeds via EVM JSON-RPC (Alchemy / Infura / public). Class=oracle (no VWAP contribution). Lives parallel to internal/divergence/chainlink.go which is the synchronous cross-check."`
+	Massive          MassiveConfig               `toml:"massive"          doc:"massive.com forex rates behind /v1/currencies, fetched hourly by stellarindex-api."`
+	Dune             DuneConfig                  `toml:"dune"             doc:"Dune API read by the curated-rwa-sync ops command."`
 }
 
 // ExternalVenueConfig is the common per-venue toggle shape for
@@ -705,6 +707,25 @@ type ExchangeRatesApiVenueConfig struct {
 	Enabled bool   `toml:"enabled" doc:"Whether this connector runs. Off by default." default:"false"`
 	APIKey  string `toml:"api_key" doc:"ExchangeRatesApi access key. Prefer env var; TOML fallback exists for local-dev convenience." env:"EXCHANGERATESAPI_KEY" default:""`
 	Base    string `toml:"base" doc:"Base currency (USD, EUR, GBP, …). Defaults to USD. Free tier locked to EUR; paid tier accepts any allow-listed fiat." default:"USD"`
+}
+
+// CoinGeckoVenueConfig is [ExternalVenueConfig] plus CoinGecko's two key
+// tiers. Pro wins when both are set.
+type CoinGeckoVenueConfig struct {
+	Enabled      bool          `toml:"enabled" doc:"Whether this connector runs. Off by default — no network egress until operator opts in." default:"false"`
+	PollInterval time.Duration `toml:"poll_interval" doc:"Override the connector's built-in default poll cadence (e.g. \"120s\"). Empty/zero uses the connector default." default:""`
+	APIKey       string        `toml:"api_key" doc:"CoinGecko Pro API key, sent as x-cg-pro-api-key against the pro-api host; wins over demo_api_key. Prefer env var." env:"COINGECKO_API_KEY" default:""`
+	DemoAPIKey   string        `toml:"demo_api_key" doc:"CoinGecko Demo API key, sent as x-cg-demo-api-key. With api_key also empty, requests go out anonymously and are heavily 429-throttled. Prefer env var." env:"COINGECKO_DEMO_API_KEY" default:""`
+}
+
+// MassiveConfig carries the massive.com forex API key.
+type MassiveConfig struct {
+	APIKey string `toml:"api_key" doc:"massive.com API key. Empty still starts the forex worker, but every fetch 401s and /v1/currencies serves warming-up. Prefer env var." env:"MASSIVE_API_KEY" default:""`
+}
+
+// DuneConfig carries the Dune API key.
+type DuneConfig struct {
+	APIKey string `toml:"api_key" doc:"Dune API key, sent as X-Dune-API-Key. Empty makes curated-rwa-sync refuse the run and stamp its refused gauge. Prefer env var." env:"DUNE_API_KEY" default:""`
 }
 
 // CoinMarketCapVenueConfig carries the CMC Pro API auth + toggle.
@@ -2109,7 +2130,7 @@ func defaultExternalConfig() ExternalConfig {
 		Bitstamp:         ExternalVenueConfig{Enabled: false},
 		Coinbase:         ExternalVenueConfig{Enabled: false},
 		ExchangeRatesApi: ExchangeRatesApiVenueConfig{Enabled: false, Base: "USD"},
-		CoinGecko:        ExternalVenueConfig{Enabled: false},
+		CoinGecko:        CoinGeckoVenueConfig{Enabled: false},
 		CoinMarketCap:    CoinMarketCapVenueConfig{Enabled: false},
 		CryptoCompare:    CryptoCompareVenueConfig{Enabled: false},
 		ECB:              ExternalVenueConfig{Enabled: false},

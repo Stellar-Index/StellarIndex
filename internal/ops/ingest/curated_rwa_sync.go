@@ -119,14 +119,18 @@ func curatedRWASync(args []string) error {
 	if !strings.HasPrefix(*baseURL, "https://") {
 		return fmt.Errorf("-base-url must be https:// (got %q)", *baseURL)
 	}
-	key := strings.TrimSpace(os.Getenv("DUNE_API_KEY"))
+	cfg, err := config.LoadWithEnv(*cfgPath)
+	if err != nil {
+		return err
+	}
+	key := strings.TrimSpace(cfg.External.Dune.APIKey)
 	if key == "" {
 		// Refused, not failed: the run still stamps its textfile so the
 		// staleness alert measures the TIMER's cadence, and a separate
 		// `refused` gauge says why nothing was read. A fresh install's
 		// empty placeholder would otherwise read as a sync that never
 		// ran, which is a different problem with a different fix.
-		fmt.Fprintln(os.Stderr, "curated-rwa-sync: REFUSED — DUNE_API_KEY is not set; this run cannot read the curator and will not pretend it did")
+		fmt.Fprintln(os.Stderr, "curated-rwa-sync: REFUSED — DUNE_API_KEY ([external.dune] api_key) is not set; this run cannot read the curator and will not pretend it did")
 		if *textfile != "" {
 			if err := writeCuratedRWATextfile(*textfile, curatedRWACounts{}, true, true); err != nil {
 				fmt.Fprintf(os.Stderr, "curated-rwa-sync: WARN textfile: %v\n", err)
@@ -137,10 +141,6 @@ func curatedRWASync(args []string) error {
 	gate.Banner()
 	dryRun := gate.DryRun()
 
-	cfg, err := config.LoadWithEnv(*cfgPath)
-	if err != nil {
-		return err
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 

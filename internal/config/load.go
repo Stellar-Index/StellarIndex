@@ -138,11 +138,23 @@ func (c *Config) ApplyEnvOverrides() []string {
 		overridden = append(overridden, "external.cryptocompare.api_key")
 	}
 	if v := os.Getenv("COINGECKO_API_KEY"); v != "" {
-		// Feeds the divergence supply cross-check's CoinGecko reference
-		// (internal/divergence/supply.go) — the Pro key that lifts the
-		// free-tier 429 ceiling the reference otherwise hits.
+		// One Pro key feeds the aggregator poller and the divergence
+		// supply cross-check's CoinGecko reference (internal/divergence/supply.go).
+		c.External.CoinGecko.APIKey = v
 		c.Divergence.Supply.CoinGecko.APIKey = v
-		overridden = append(overridden, "divergence.supply.coingecko.api_key")
+		overridden = append(overridden, "external.coingecko.api_key", "divergence.supply.coingecko.api_key")
+	}
+	if v := os.Getenv("COINGECKO_DEMO_API_KEY"); v != "" {
+		c.External.CoinGecko.DemoAPIKey = v
+		overridden = append(overridden, "external.coingecko.demo_api_key")
+	}
+	if v := os.Getenv("MASSIVE_API_KEY"); v != "" {
+		c.External.Massive.APIKey = v
+		overridden = append(overridden, "external.massive.api_key")
+	}
+	if v := os.Getenv("DUNE_API_KEY"); v != "" {
+		c.External.Dune.APIKey = v
+		overridden = append(overridden, "external.dune.api_key")
 	}
 	if v := os.Getenv("CHAINLINK_RPC_URL"); v != "" {
 		c.External.Chainlink.RPCUrl = v

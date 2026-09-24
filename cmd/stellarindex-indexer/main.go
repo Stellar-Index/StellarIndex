@@ -1254,13 +1254,11 @@ func startExternalConnectors( //nolint:gocognit,gocyclo,funlen // dispatch-heavy
 		// CoinGecko's "public no-auth" tier was tightened in late 2024
 		// — unauthenticated requests get throttled aggressively or
 		// rejected outright (observed live on r1 2026-05-09 as one
-		// 429 per minute). Read the demo (free signup) and pro keys
-		// from env so operators can fix without a code-side toml
-		// schema change. Pro key wins when both are set.
-		if k := strings.TrimSpace(os.Getenv("COINGECKO_API_KEY")); k != "" {
+		// 429 per minute). Pro key wins when both are set.
+		if k := strings.TrimSpace(cfg.CoinGecko.APIKey); k != "" {
 			p.APIKey = k
 		}
-		if k := strings.TrimSpace(os.Getenv("COINGECKO_DEMO_API_KEY")); k != "" {
+		if k := strings.TrimSpace(cfg.CoinGecko.DemoAPIKey); k != "" {
 			p.DemoAPIKey = k
 		}
 		authMode := "anonymous"

@@ -139,14 +139,13 @@ func BackfillIndex(args []string) error {
 	}
 
 	poller := coingecko.NewPoller()
-	// Keys come from the ENVIRONMENT, not the toml — same as the live
-	// poller in cmd/stellarindex-indexer, so an operator sets one variable
-	// and both paths pick it up. Pro wins when both are set, and only Pro
-	// reaches past the demo tier's 365-day window.
-	if k := strings.TrimSpace(os.Getenv("COINGECKO_API_KEY")); k != "" {
+	// The same [external.coingecko] keys the live poller in
+	// cmd/stellarindex-indexer uses. Pro wins when both are set, and only
+	// Pro reaches past the demo tier's 365-day window.
+	if k := strings.TrimSpace(cfg.External.CoinGecko.APIKey); k != "" {
 		poller.APIKey = k
 	}
-	if k := strings.TrimSpace(os.Getenv("COINGECKO_DEMO_API_KEY")); k != "" {
+	if k := strings.TrimSpace(cfg.External.CoinGecko.DemoAPIKey); k != "" {
 		poller.DemoAPIKey = k
 	}
 	authMode := "anonymous"
