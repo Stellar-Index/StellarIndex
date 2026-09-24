@@ -1273,3 +1273,37 @@
       -from {{ stellarindex_archive_hot_floor | default(2) }}
       {{ ('-to ' ~ (stellarindex_live_seam_ledger | default(0) | int - 1)) if (stellarindex_live_seam_ledger | default(0) | int) > 0 else '' }}
       2>&1 | logger -t stellarindex-tier-d'
+
+# ── verify-archive Tier E — monthly archivist scan of the local mirror ──
+# ADR-0016 counts Tier E in R1's periodic integrity guarantee and R2/R3
+# delegate it to R1, so it runs on a schedule, not "occasionally". It is
+# the only tier that re-hashes /srv/history-archive itself: Tier B anchors
+# against that mirror's manifest and inherits any bit rot in it.
+# `-tier archivist` runs `stellar-archivist scan --verify` (every bucket's
+# sha256), which takes hours on r1-class disk: -archivist-timeout bounds a
+# hung scan, not a slow one. Same shape as Tier D: run-heavy-job.sh under
+# its own lock name, output to journald, plus -textfile-output so
+# stellarindex_verify_archive_last_success_unix{tier="archivist"} exists.
+# Gated like Tier B because it scans the same pubnet-only local mirror;
+# elsewhere the cron is removed. The 15th at 12:43 keeps it clear of the
+# nightly heavy band and Tier D's Sunday 10:23 slot.
+- name: Install Tier E verify-archive monthly cron
+  tags: [ops-jobs]
+  ansible.builtin.cron:
+    name: stellarindex-verify-archive-tier-e
+    cron_file: stellarindex-verify-archive-tier-e
+    user: root
+    minute: "43"
+    hour: "12"
+    day: "15"
+    state: "{{ 'present' if (verify_archive_tier_b_enabled | bool) else 'absent' }}"
+    job: >-
+      bash -c 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) export "$l";; esac; done < /etc/default/stellarindex-ops;
+      /usr/local/sbin/run-heavy-job.sh verify-archive-tier-e
+      /usr/local/bin/stellarindex-ops verify-archive
+      -config /etc/stellarindex.toml
+      -tier archivist
+      -archive-root /srv/history-archive
+      -archivist-timeout 48h
+      -textfile-output /var/lib/node_exporter/textfile_collector/verify_archive_tier_e.prom
+      2>&1 | logger -t stellarindex-tier-e'

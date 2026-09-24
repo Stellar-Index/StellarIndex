@@ -17,7 +17,6 @@
 # ops_batch identity logging, 14-stellarindex-services.yml); these
 # reference copies predate that wrapper and still show a bare ExecStart.
 archive-completeness.service:ExecStart
-galexie-archive-fill.service:ExecStart
 galexie-archive-trim.service:ExecStart
 verify-archive-tier-a.service:ExecStart
 verify-archive-tier-b.service:ExecStart

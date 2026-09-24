@@ -44,8 +44,8 @@ import (
 //     cross-compare history-XXXXXXXX.json across N tier-1
 //     validator archives. Consensus-level cryptographic
 //     agreement.
-//   - Tier E (archivist): shell out to stellar-archivist for a
-//     full bucket-by-bucket sha256 audit.
+//   - Tier E (archivist): `stellar-archivist scan --verify` of the
+//     archive: re-hashes every referenced bucket and checkpoint file.
 //
 // `-tier all` runs every tier sequentially. Any tier mismatch is
 // a hard stop with the diverging ledger numbers and hashes
@@ -74,11 +74,11 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 	peerSamples := fs.Int("peer-samples", 20,
 		"Number of checkpoints to sample for Tier D cross-peer diff")
 	archivistBin := fs.String("archivist-bin", "stellar-archivist",
-		"Path to rs-stellar-archivist binary for Tier E (used in archivist/all tier)")
+		"Path to the stellar-archivist binary for Tier E (used in archivist/all tier); run as `<bin> scan --verify <url>`")
 	archivistURL := fs.String("archivist-url", "",
 		"Archive URL for Tier E (empty → file://<archive-root>)")
 	archivistTimeout := fs.Duration("archivist-timeout", 30*time.Minute,
-		"Maximum runtime for the rs-stellar-archivist scan command")
+		"Maximum runtime for the stellar-archivist scan command")
 	failOnMissed := fs.Bool("fail-on-missed", false,
 		"Treat checkpointsMissed > 0 as a hard failure (ADR-0017 X1.7). "+
 			"Counts only checkpoints absent from INSIDE the mirror's own "+
@@ -384,7 +384,7 @@ func verifyArchive(args []string) (retErr error) { //nolint:funlen,gocognit,gocy
 		}
 	}
 
-	// Tier E (rs-stellar-archivist scan). Independent of LCM walk and peer diff.
+	// Tier E (stellar-archivist scan --verify). Independent of LCM walk and peer diff.
 	if doArchivist {
 		url := *archivistURL
 		if url == "" {
@@ -1045,22 +1045,20 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 	return nil
 }
 
-// verifyArchiveArchivist runs `<bin> scan <url>` against an archive
-// URL (file:// for the local mirror, https:// for any peer's
+// verifyArchiveArchivist runs `<bin> scan --verify <url>` against an
+// archive URL (file:// for the local mirror, https:// for any peer's
 // published archive) and surfaces the result.
 //
-// rs-stellar-archivist's scan walks every checkpoint in the
-// archive, fetches every referenced bucket file, recomputes the
-// sha256 of each, and confirms it matches the manifest. A
-// successful scan is a strong integrity signal — orthogonal to
-// Tier B (LCM-vs-checkpoint anchor) because Tier B trusts the
-// local mirror's manifest, while Tier E re-validates the manifest
-// itself by recomputing every bucket hash.
+// The hashing is what --verify buys: a bare `scan` only checks that
+// the files exist. With it, stellar-archivist (go-stellar-sdk
+// tools/stellar-archivist) walks every checkpoint, verifies the
+// checkpoint files, and recomputes the sha256 of every referenced
+// bucket against its name — orthogonal to Tier B, which trusts the
+// local mirror's manifest.
 //
-// We don't parse the binary's stdout structurally — formatting
-// shifts across rs-stellar-archivist releases. Instead we stream
-// the output to our stderr (so the operator sees progress) and
-// rely on the exit code.
+// We don't parse the binary's stdout structurally; we stream it to
+// our stderr (so the operator sees progress) and rely on the exit
+// code, which is non-zero when any object is missing or invalid.
 //
 // Failure modes:
 //   - bin not on $PATH                    → ErrNotFound, exits 127
@@ -1068,11 +1066,11 @@ func verifyArchivePeers(from, to uint32, peerList string, sampleN int) error { /
 //   - any checkpoint / bucket fails hash  → non-zero exit
 //   - takes longer than the timeout       → ctx cancel, killed
 //
-// The CLI flag default is "stellar-archivist" (the Go binary
-// shipped with stellar-archivist). Operators using the Rust port
-// (`rs-stellar-archivist`) override via `-archivist-bin`.
+// The CLI flag default is "stellar-archivist", the Go binary the
+// role apt-installs. A binary passed via -archivist-bin must accept
+// the same argv.
 func verifyArchiveArchivist(bin, url string, timeout time.Duration) error {
-	fmt.Fprintf(os.Stderr, "verify-archive: archivist scan bin=%s url=%s timeout=%s\n",
+	fmt.Fprintf(os.Stderr, "verify-archive: archivist scan --verify bin=%s url=%s timeout=%s\n",
 		bin, url, timeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -1082,7 +1080,7 @@ func verifyArchiveArchivist(bin, url string, timeout time.Duration) error {
 	// on a CLI that ALREADY shells the operator's environment —
 	// any "untrusted input" boundary at this point has already
 	// been crossed by the operator running this command at all.
-	cmd := exec.CommandContext(ctx, bin, "scan", url) //nolint:gosec // operator-supplied flags
+	cmd := exec.CommandContext(ctx, bin, "scan", "--verify", url) //nolint:gosec // operator-supplied flags
 
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr

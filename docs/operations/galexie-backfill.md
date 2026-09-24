@@ -20,7 +20,10 @@ afterwards to prove the bytes are canonical.
 > ⚠️ **"Genesis → live bucket" is the GREENFIELD shape, not r1's shape
 > today.** ADR-0027 trimmed `galexie-archive` on r1 to a **hot floor**
 > (`stellarindex_archive_hot_floor`, 49,984,000 as of 2026-09-02 —
-> `/etc/default/galexie-archive-fill` on the host). Everything below
+> `/etc/default/galexie-archive-fill` on the host). Once the monthly
+> trim timer runs, the fill's floor is the higher of that value and the
+> cutoff the last trim used, which `compute-trim-cutoff.sh` persists to
+> `/var/lib/galexie-archive/hot-floor` before deleting. Everything below
 > that floor is intentionally absent locally and lives in the cold
 > tier. So on r1:
 >
@@ -205,12 +208,15 @@ JSON fetches of ~1 KB each. Run on demand.
 
 ### Tier E — stellar-archivist scan of the source archive (housekeeping)
 
-Validates `/srv/history-archive` itself is internally consistent —
-that no checkpoint JSON files are corrupt, no ledger XDR blobs are
-missing, no SCP messages truncated.
+Validates `/srv/history-archive` itself: every checkpoint file is
+present and verifies, and every referenced bucket's sha256 is
+recomputed and checked against its name. Tier B anchors against this
+mirror's manifest, so this is the only tier that catches bit rot in
+the mirror.
 
 Wired into `verify-archive` as a tier — under the hood it shells
-out to `stellar-archivist scan <url>`. Defaults to scanning the
+out to `stellar-archivist scan --verify <url>` (without `--verify`
+a scan only checks that files exist). Defaults to scanning the
 local mirror at `file://<archive-root>`; pass `-archivist-url
 https://...` to scan a peer's published archive instead.
 
@@ -221,19 +227,21 @@ stellarindex-ops verify-archive -config /etc/stellarindex.toml \
 stellarindex-ops verify-archive -config /etc/stellarindex.toml \
   -tier archivist \
   -archivist-url https://history.stellar.org/prd/core-live/core_live_001
-# or with the Rust port:
-stellarindex-ops verify-archive -config /etc/stellarindex.toml \
-  -tier archivist -archivist-bin rs-stellar-archivist
 ```
 
-**Not scheduled by anything** — no unit, timer, cron or ansible task
-invokes `-tier archivist` (tracked in
-[#726](https://github.com/Stellar-Index/StellarIndex/issues/726)).
-Run it by hand; there is no cadence to rely on until that issue lands
-automation. It is still the right command to run immediately before
-kicking off a backfill, to catch disk corruption before building an
-hour of replay work on top of it. Long-running — gated by
-`-archivist-timeout` (default 30 min).
+**Scheduled monthly** on hosts with the local mirror (the same
+`verify_archive_tier_b_enabled` gate as Tier B): the
+`stellarindex-verify-archive-tier-e` cron (15th, 12:43) in
+`14-stellarindex-services.yml`, under `run-heavy-job.sh` with a 48 h
+`-archivist-timeout`, logging to journald as `stellarindex-tier-e`
+and writing
+`stellarindex_verify_archive_last_success_unix{tier="archivist"}`.
+No alert rule reads that series yet, so a failing run shows only in
+`journalctl -t stellarindex-tier-e`. Still run it by hand immediately
+before kicking off a backfill, to catch disk corruption before
+building hours of replay on top of it. The hashing scan is
+long-running: the flag default of 30 min is too short for the full
+pubnet mirror, so pass `-archivist-timeout 48h` by hand as well.
 
 ## Tuning — when 60 ledgers/sec isn't enough
 
@@ -438,6 +446,12 @@ explicit override:
 PARTIALS="PART1 PART2 PART3" galexie-archive-fill
 ```
 
+The script takes its own lock (`/run/lock/galexie-archive-fill.lock`)
+and works in a private `mktemp -d` directory, so a manual run cannot
+overlap the timer's run: if the timer's run is still going, the manual
+run exits 75 without touching anything. Wait for
+`galexie-archive-fill.service` to finish, then re-run.
+
 #### `mc mirror` gotcha — `--overwrite=false` doesn't mean what it says
 
 Verified against `mc RELEASE.2025-08-13T08-35-41Z` on r1 2026-04-26:
@@ -503,6 +517,7 @@ first.
 ## What we do today
 
 - **At backfill time:** Tier A + Tier B + Tier E.
+- **Monthly:** Tier E on the local mirror (cron, see Tier E above).
 - **First-pass disaster-recovery rehearsal:** Tier C once, to prove
   the path works.
 - **Periodic health check:** Tier D quarterly, or any time a
