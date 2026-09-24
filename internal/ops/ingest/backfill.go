@@ -160,7 +160,7 @@ func backfillCursorSub(opts backfillOpts) string {
 	sorted := make([]string, len(opts.sources))
 	copy(sorted, opts.sources)
 	sort.Strings(sorted)
-	return fmt.Sprintf("%d-%d:%s", opts.from, opts.to, strings.Join(sorted, ","))
+	return opsutil.RangeCursorKey(opts.from, opts.to) + ":" + strings.Join(sorted, ",")
 }
 
 func backfill(args []string) error {

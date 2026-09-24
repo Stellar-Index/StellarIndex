@@ -37,10 +37,11 @@ import (
 //
 // Idempotent + resumable: already-tagged rows never match
 // (routed_via IS NULL), and progress checkpoints into
-// ingestion_cursors as (source='tag-routed-via',
-// sub_source='soroswap-router') after each completed window.
-// Re-running resumes past the last completed window; -resume=false
-// re-sweeps from the start (harmless, just slower).
+// ingestion_cursors as (source='tag-routed-via', sub_source='<from>-<to>')
+// after each completed window. Re-running the same resolved -from/-to
+// (-resume defaults to true) resumes past the last completed window; a
+// different range, or -resume=false, sweeps from its start (harmless, just
+// slower).
 //
 // Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
 // reports the windows holding router swaps it WOULD tag, writing neither
@@ -51,7 +52,7 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 	from := fs.Uint("from", 0, "First ledger (inclusive). Default: min(ledger) in soroswap_router_swaps.")
 	to := fs.Uint("to", 0, "Last ledger (inclusive). Default: max(ledger) in soroswap_router_swaps.")
 	window := fs.Uint("window", 500_000, "Ledgers per UPDATE window")
-	resume := fs.Bool("resume", true, "Resume from the saved ingestion_cursors checkpoint")
+	resume := fs.Bool("resume", true, "Resume from the ingestion_cursors checkpoint of a prior run with the same -from/-to")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -99,22 +100,8 @@ func tagRoutedVia(args []string) error { //nolint:funlen,gocognit,gocyclo // lin
 		return fmt.Errorf("-to (%d) must be >= -from (%d)", toLedger, fromLedger)
 	}
 
-	const (
-		cursorSrc = "tag-routed-via"
-		cursorSub = soroswap_router.SourceName
-	)
-	start := fromLedger
-	if *resume {
-		prior, gerr := store.GetCursor(ctx, cursorSrc, cursorSub)
-		switch {
-		case gerr == nil && prior.LastLedger >= fromLedger:
-			start = prior.LastLedger + 1
-			fmt.Fprintf(os.Stderr, "tag-routed-via: resuming at ledger %d (checkpoint last_ledger=%d)\n",
-				start, prior.LastLedger)
-		case gerr != nil && !errors.Is(gerr, timescale.ErrNotFound):
-			fmt.Fprintf(os.Stderr, "tag-routed-via: read cursor failed (%v) — starting from -from\n", gerr)
-		}
-	}
+	const cursorSrc = "tag-routed-via"
+	start, cursorSub := resumeRangeStart(ctx, store, cursorSrc, fromLedger, toLedger, *resume)
 	if start > toLedger {
 		fmt.Fprintf(os.Stderr, "tag-routed-via: checkpoint already past -to (%d > %d) — nothing to do\n",
 			start, toLedger)

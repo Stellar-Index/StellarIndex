@@ -24,7 +24,8 @@ import (
 // primitive the live sweeper uses — so historical and live tagging cannot
 // drift. Idempotent + resumable: already-tagged rows never match
 // (signer IS NULL), and progress checkpoints into ingestion_cursors as
-// (source='tag-signer', sub_source='signer') after each completed window.
+// (source='tag-signer', sub_source='<from>-<to>') after each completed
+// window. -resume (default true) only resumes a run of the same -from/-to.
 //
 // Fail-closed (opsutil.WriteGate): the default run is a DRY RUN that
 // reads each window and reports how many trades it WOULD tag, writing
@@ -36,7 +37,7 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 	to := fs.Uint("to", 0, "Last ledger (inclusive) — required (the gap end)")
 	window := fs.Uint("window", 5_000, "Ledgers per read+tag window (each window is one lake read + one UPDATE)")
 	chAddr := fs.String("ch-addr", "", "ClickHouse native address (default: config clickhouse_addr)")
-	resume := fs.Bool("resume", true, "Resume from the saved ingestion_cursors checkpoint")
+	resume := fs.Bool("resume", true, "Resume from the ingestion_cursors checkpoint of a prior run with the same -from/-to")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -84,22 +85,8 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 
 	fromLedger, toLedger := uint32(*from), uint32(*to)
 
-	const (
-		cursorSrc = "tag-signer"
-		cursorSub = "signer"
-	)
-	start := fromLedger
-	if *resume {
-		prior, gerr := store.GetCursor(ctx, cursorSrc, cursorSub)
-		switch {
-		case gerr == nil && prior.LastLedger >= fromLedger:
-			start = prior.LastLedger + 1
-			fmt.Fprintf(os.Stderr, "tag-signer: resuming at ledger %d (checkpoint last_ledger=%d)\n",
-				start, prior.LastLedger)
-		case gerr != nil && !errors.Is(gerr, timescale.ErrNotFound):
-			fmt.Fprintf(os.Stderr, "tag-signer: read cursor failed (%v) — starting from -from\n", gerr)
-		}
-	}
+	const cursorSrc = "tag-signer"
+	start, cursorSub := resumeRangeStart(ctx, store, cursorSrc, fromLedger, toLedger, *resume)
 	if start > toLedger {
 		fmt.Fprintf(os.Stderr, "tag-signer: checkpoint already past -to (%d > %d) — nothing to do\n",
 			start, toLedger)
@@ -162,6 +149,31 @@ func tagSigner(args []string) error { //nolint:funlen,gocognit,gocyclo // linear
 	fmt.Fprintf(os.Stderr, "tag-signer: done. %d trades %s across ledgers %d..%d\n",
 		totalTagged, writeModeVerb(write, "tagged", "WOULD tag (upper bound)"), start, toLedger)
 	return nil
+}
+
+// rangeCursorReader is the slice of the store resumeRangeStart needs.
+type rangeCursorReader interface {
+	GetCursor(ctx context.Context, source, sub string) (timescale.Cursor, error)
+}
+
+// resumeRangeStart returns the first ledger a windowed [from, to] pass
+// processes and the checkpoint key it must write. The key carries the range,
+// so a completed later repair can never skip an earlier one.
+func resumeRangeStart(ctx context.Context, store rangeCursorReader, src string, from, to uint32, resume bool) (uint32, string) {
+	sub := opsutil.RangeCursorKey(from, to)
+	if !resume {
+		return from, sub
+	}
+	prior, err := store.GetCursor(ctx, src, sub)
+	switch {
+	case err == nil && prior.LastLedger >= from:
+		fmt.Fprintf(os.Stderr, "%s: resuming at ledger %d (checkpoint last_ledger=%d)\n",
+			src, prior.LastLedger+1, prior.LastLedger)
+		return prior.LastLedger + 1, sub
+	case err != nil && !errors.Is(err, timescale.ErrNotFound):
+		fmt.Fprintf(os.Stderr, "%s: read cursor failed (%v) — starting from -from\n", src, err)
+	}
+	return from, sub
 }
 
 // writeModeVerb renders a count's verb for the run's mode, so a preview's
