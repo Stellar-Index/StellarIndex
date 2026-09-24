@@ -180,3 +180,39 @@ func TestADR0026PinsThe1219AmendmentNotice(t *testing.T) {
 		t.Errorf("%s: original citation %q was rewritten or removed; ADR body text must only be amended, per docs/adr/README.md", path, original)
 	}
 }
+
+// TestADR0026PinsThe1217AmendmentNotice guards RSWP-116: ADR-0026's two
+// "#1217" citations are legacy numbers from the repo's pre-migration
+// PR sequence. The `/v1/price` fallback survives in history as commit
+// 6505934b5, while the current tracker's #1217 is an unrelated open
+// issue (the ADR-0019 parity-guard exponent). The amendment must name
+// the durable commit, say the number is legacy, and say the current
+// #1217 is unrelated, without rewriting the original citations.
+func TestADR0026PinsThe1217AmendmentNotice(t *testing.T) {
+	path := filepath.Join(repoRoot(t), "docs", "adr", "0026-stablecoin-fiat-proxy-late-binding.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	doc := string(b)
+
+	for _, want := range []string{
+		"Amendment (2026-09-24, RSWP-116)",
+		"legacy PR number",
+		"commit `6505934b5`",
+		"ADR-0019 parity-guard",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s is missing amendment text %q; the legacy #1217 citation is no longer tied to its durable commit and flagged as colliding with an unrelated issue", path, want)
+		}
+	}
+
+	for _, original := range []string{
+		"PRs #1217 / #1218 / #1224 / #1225 / #1226 (etc.) added",
+		"PR #1217 — `/v1/price` proxy fallback",
+	} {
+		if !strings.Contains(doc, original) {
+			t.Errorf("%s: original citation %q was rewritten or removed; ADR body text must only be amended, per docs/adr/README.md", path, original)
+		}
+	}
+}
