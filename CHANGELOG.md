@@ -15,6 +15,16 @@ against.
 
 ## [Unreleased]
 
+- **ops — per-source genesis ledgers locked in step (#898):** the
+  reconciliation catalogue and the gap detector's
+  `DefaultGapDetectorTargets` each restate every source's genesis ledger,
+  and nothing failed when one was corrected without the other. A new test
+  requires each catalogued source's genesis to equal the gap detector's
+  earliest floor for that source, and both to equal the package's
+  exported constant where one exists (blend, blend_backstop, sorocredit,
+  sushiswap_v3, upshift). The gap table keeps literals because storage
+  may not import `internal/sources`.
+
 - **explorer / lake — fee-bump transactions and per-op failure reasons
   (#1063):** `stellar.transactions` gains `inner_tx_hash`, `fee_account`,
   `fee_bump_fee` and `inner_result_code`, and a second materialized view
