@@ -102,6 +102,9 @@ EnvironmentFile=-/etc/default/stellarindex-ops
 # run re-walks from there (widening, not skipping). node_exporter's
 # systemd collector raises stellarindex_verify_archive_tier_b_unit_failed
 # (severity: ticket) — runbook docs/operations/runbooks/verify-archive-tier-b.md.
+# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# failure, but ExecMainStatus=75 keeps it distinct from a run.
+SuccessExitStatus=75
 ExecStart=/usr/local/sbin/run-heavy-job.sh verify-archive \
   /usr/local/bin/stellarindex-ops verify-archive \
   -config /etc/stellarindex.toml \

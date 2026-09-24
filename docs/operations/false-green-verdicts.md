@@ -106,12 +106,16 @@ already finished.
 | 2 | timed out — still `activating` when the timeout expired |
 | 3 | refused — idle, but the completion stamp did not advance |
 | 4 | usage or precondition error (no unit, not loaded, no systemctl) |
+| 5 | a NEW run completed with `ExecMainStatus=75` — `run-heavy-job.sh` found the job's lock held and skipped; the payload never ran |
 
 A distinct code per outcome, so a caller's `if` cannot inherit a meaning
 that was assigned to something else.
 
 A blocking `systemctl start <oneshot>` needs none of this — it waits and
-returns the job's own result. The helper is for the runs that cannot be
+returns the job's own result. The exception is a unit that runs under
+`run-heavy-job.sh`: it declares `SuccessExitStatus=75`, so a lock skip
+starts and finishes "successfully"; read `ExecMainStatus` or use the
+helper. The helper is for the runs that cannot be
 started that way: timer-driven runs, `--no-block`, a run started in
 another session, an ansible task that fires and moves on, and any poll
 of a remote host. For those, point the helper at the host:

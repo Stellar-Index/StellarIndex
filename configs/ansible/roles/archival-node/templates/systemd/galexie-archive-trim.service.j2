@@ -32,6 +32,9 @@ ExecStartPre=/usr/local/sbin/compute-trim-cutoff.sh
 EnvironmentFile=-/run/galexie-archive-trim.env
 EnvironmentFile=-/etc/default/stellarindex-ops
 
+# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# failure, but ExecMainStatus=75 keeps it distinct from a run.
+SuccessExitStatus=75
 ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-trim \
   /usr/local/bin/stellarindex-ops trim-galexie-archive \
   -older-than-ledger ${TRIM_CUTOFF} \
