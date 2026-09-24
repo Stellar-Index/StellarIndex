@@ -308,9 +308,16 @@ func TestBlendReserveConfigs_ParsesAndSkipsUnparseable(t *testing.T) {
 		"DISTINCT ON (asset)",
 		"event_kind = 'queue_set_reserve'",
 		"ORDER BY asset, ledger_close_time DESC",
+		// CA2-A10-correct-2: a queue_set_reserve alone is a proposal —
+		// only one immediately followed (same asset) by set_reserve
+		// is applied. A cancel_set_reserve, a superseding queue, or
+		// nothing yet must all be excluded (see the executing
+		// coverage in test/integration/blend_money_market_storage_test.go).
+		"LEAD(event_kind)",
+		"next_kind = 'set_reserve'",
 	} {
 		if !strings.Contains(stmt.sql, want) {
-			t.Errorf("BlendReserveConfigs SQL missing %q — it must take the LATEST config per reserve:\n%s", want, stmt.sql)
+			t.Errorf("BlendReserveConfigs SQL missing %q — it must take the LATEST APPLIED config per reserve, not merely the latest queued one:\n%s", want, stmt.sql)
 		}
 	}
 }

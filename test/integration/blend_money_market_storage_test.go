@@ -403,6 +403,102 @@ func TestBlendAdminRoundTrip(t *testing.T) {
 	}
 }
 
+// TestBlendReserveConfigs_AppliedCancelledPending pins the
+// queue/apply/cancel lifecycle BlendReserveConfigs must resolve
+// (CA2-A10-correct-2): a queue_set_reserve alone is a proposal, not
+// the live rate model. Four reserves exercise the four outcomes:
+//   - applied:   queue then set_reserve -> the queued config, live.
+//   - cancelled: queue then cancel_set_reserve -> no config at all.
+//   - pending:   queue only, still inside the timelock -> no config.
+//   - requeued:  an applied config followed by a second, still-
+//     pending queue -> the FIRST (applied) config, not the second.
+func TestBlendReserveConfigs_AppliedCancelledPending(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	const (
+		pool         = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+		assetApplied = "CAPPLIED0000000000000000000000000000000000000000000000000"
+		assetCancel  = "CCANCEL00000000000000000000000000000000000000000000000000"
+		assetPending = "CPENDING0000000000000000000000000000000000000000000000000"
+		assetRequeue = "CREQUEUE0000000000000000000000000000000000000000000000000"
+		admin        = "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTU56K"
+	)
+	t0 := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	cfg := func(decimals uint32) map[string]any {
+		return map[string]any{
+			"index": uint64(0), "decimals": uint64(decimals),
+			"c_factor": uint64(9_000_000), "l_factor": uint64(9_500_000),
+			"util": uint64(8_000_000), "max_util": uint64(9_500_000),
+			"r_base": uint64(50_000), "r_one": uint64(500_000),
+			"r_two": uint64(5_000_000), "r_three": uint64(15_000_000),
+			"reactivity": uint64(200), "enabled": true,
+		}
+	}
+
+	n := 0
+	next := func() (int64, string) {
+		n++
+		return 63_000_000 + int64(n), pad64("e", n)
+	}
+	admEvent := func(asset string, kind string, reserveConfig map[string]any, at time.Time) domain.BlendAdminEvent {
+		ledger, tx := next()
+		return domain.BlendAdminEvent(blend.AdminEvent{
+			ContractID: pool, Kind: kind, Admin: admin, Asset: asset,
+			ReserveConfig: reserveConfig,
+			Ledger:        uint32(ledger), TxHash: tx, OpIndex: 0, Timestamp: at,
+		})
+	}
+
+	rows := []domain.BlendAdminEvent{
+		// applied: queue then set_reserve.
+		admEvent(assetApplied, blend.EventQueueSetReserve, cfg(6), t0),
+		admEvent(assetApplied, blend.EventSetReserve, nil, t0.Add(time.Minute)),
+		// cancelled: queue then cancel_set_reserve.
+		admEvent(assetCancel, blend.EventQueueSetReserve, cfg(7), t0),
+		admEvent(assetCancel, blend.EventCancelSetReserve, nil, t0.Add(time.Minute)),
+		// pending: queue only, no apply/cancel yet.
+		admEvent(assetPending, blend.EventQueueSetReserve, cfg(8), t0),
+		// requeued: an applied config, then a second still-pending queue.
+		admEvent(assetRequeue, blend.EventQueueSetReserve, cfg(9), t0),
+		admEvent(assetRequeue, blend.EventSetReserve, nil, t0.Add(time.Minute)),
+		admEvent(assetRequeue, blend.EventQueueSetReserve, cfg(10), t0.Add(2*time.Minute)),
+	}
+	for _, ev := range rows {
+		if err := store.InsertBlendAdminEvent(ctx, ev); err != nil {
+			t.Fatalf("InsertBlendAdminEvent (%s/%s): %v", ev.Asset, ev.Kind, err)
+		}
+	}
+
+	got, err := store.BlendReserveConfigs(ctx, pool)
+	if err != nil {
+		t.Fatalf("BlendReserveConfigs: %v", err)
+	}
+
+	if cfg, ok := got[assetApplied]; !ok || cfg.Decimals != 6 {
+		t.Errorf("assetApplied = %+v, ok=%v, want the applied config (decimals=6)", cfg, ok)
+	}
+	if cfg, ok := got[assetCancel]; ok {
+		t.Errorf("assetCancel = %+v, want no config — it was cancelled", cfg)
+	}
+	if cfg, ok := got[assetPending]; ok {
+		t.Errorf("assetPending = %+v, want no config — still timelocked, never applied", cfg)
+	}
+	if cfg, ok := got[assetRequeue]; !ok || cfg.Decimals != 9 {
+		t.Errorf("assetRequeue = %+v, ok=%v, want the APPLIED config (decimals=9), not the pending requeue (decimals=10)", cfg, ok)
+	}
+}
+
 // pad64 builds a 64-char-hex-like string for a tx_hash slot —
 // deterministic per (seed, n) so tests stay reproducible.
 func pad64(seed string, n int) string {
