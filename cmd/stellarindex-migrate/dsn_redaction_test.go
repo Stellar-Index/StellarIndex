@@ -572,3 +572,52 @@ func TestMigrate_ScrubbingAKnownPasswordDoesNotMangleOrdinaryOutput(t *testing.T
 		t.Errorf("a parseable DSN must still reach the dial and report it verbatim; want %q in:\n%s", want, out)
 	}
 }
+
+// A DSN with its `//` left out parses — net/url reads `postgres:u:pw@h`
+// as opaque and `postgres:/u:pw@h` as a path — so the parse check let it
+// through to lib/pq, which does not see a `postgres://` prefix, reads it
+// as keyword/value, and fails with `missing "=" after "<the whole DSN>"`.
+// The scrubber anchored on `://` and `password=`, so the password reached
+// the deploy log whole. The tool refuses the shape itself, before the
+// driver sees it and before `down`'s prompt prints it.
+func TestMigrate_ADSNMissingItsSlashesIsRefusedWithoutEchoingIt(t *testing.T) {
+	bin, migDir := buildMigrate(t)
+	userinfo := "stellarindex:" + stemHead + "@" + redactionHost + ":5432/stellarindex"
+
+	for _, tc := range []struct{ name, dsn, keep string }{
+		{"no slashes", "postgres:" + userinfo, "missing the // after its scheme"},
+		{"one slash", "postgres:/" + userinfo, "missing the // after its scheme"},
+		{"postgresql, no slashes", "postgresql:" + userinfo, "missing the // after its scheme"},
+		{"with a query", "postgres:" + userinfo + "?sslmode=disable", "missing the // after its scheme"},
+		{"scheme left out", userinfo, "does not start with postgres://"},
+	} {
+		for route, inv := range map[string]struct {
+			env, args []string
+			from      string
+		}{
+			"flag":        {nil, []string{"-migrations", migDir, "up", "-dsn", tc.dsn}, "from -dsn"},
+			"env":         {[]string{"STELLARINDEX_POSTGRES_DSN=" + tc.dsn}, []string{"-migrations", migDir, "up"}, "from $STELLARINDEX_POSTGRES_DSN"},
+			"down prompt": {[]string{"STELLARINDEX_POSTGRES_DSN=" + tc.dsn}, []string{"-migrations", migDir, "-i-know", "down", "1"}, "from $STELLARINDEX_POSTGRES_DSN"},
+		} {
+			t.Run(tc.name+"/"+route, func(t *testing.T) {
+				out := runMigrate(t, bin, inv.env, inv.args)
+				assertWithheld(t, out, tc.dsn)
+				if strings.Contains(out, "open migrator") || strings.Contains(out, "not a TTY") {
+					t.Errorf("the DSN got past the check to the driver or the prompt:\n%s", out)
+				}
+				for _, keep := range []string{tc.keep, inv.from} {
+					if !strings.Contains(out, keep) {
+						t.Errorf("the %q diagnostic is missing:\n%s", keep, out)
+					}
+				}
+			})
+		}
+	}
+
+	// The libpq socket form has no host and must still reach the driver.
+	socket := "postgres:///stellarindex?host=/nonexistent-socket-dir-for-test"
+	out := runMigrate(t, bin, []string{"STELLARINDEX_POSTGRES_DSN=" + socket}, []string{"-migrations", migDir, "status"})
+	if !strings.Contains(out, "open migrator") {
+		t.Errorf("a hostless socket DSN was refused before the driver:\n%s", out)
+	}
+}

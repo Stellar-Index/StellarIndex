@@ -444,3 +444,74 @@ func TestKnownAppliedToTheStringItHolds(t *testing.T) {
 		}
 	}
 }
+
+// libpq reads a DSN missing its `//` as keyword/value and quotes the
+// whole string in `missing "=" after %q`. With no `://` to anchor on,
+// Known cut nothing and the password printed whole.
+func TestKnownCutsAPasswordFromADSNMissingItsSlashes(t *testing.T) {
+	const host = "@db.example.invalid:5432/stellarindex"
+	for pname, pw := range hostilePasswords {
+		for shape, dsn := range map[string]string{
+			"no slashes": "postgres:stellarindex:" + pw + host,
+			"one slash":  "postgres:/stellarindex:" + pw + host,
+			"no @":       "postgres:stellarindex:" + pw,
+		} {
+			if shape == "no @" && strings.Contains(pw, "@") {
+				continue // then it does have one, and what follows it reads as the host, as with `://`
+			}
+			for _, held := range []string{dsn, "-dsn=" + dsn} {
+				text := fmt.Sprintf(`failed to open database: missing "=" after %q in connection info string`, dsn)
+				t.Run(pname+"/"+shape+"/"+held[:4], func(t *testing.T) {
+					got := Known(text, held)
+					assertNoStems(t, text, got)
+					if !strings.Contains(got, `after "postgres:`) || !strings.Contains(got, "stellarindex:<redacted>") {
+						t.Errorf("lost the scheme or the user:\n  in:  %s\n  out: %s", text, got)
+					}
+				})
+			}
+		}
+	}
+
+	dsn := "postgres:stellarindex:" + sentinel + host
+	in := fmt.Sprintf(`missing "=" after %q in connection info string`, dsn)
+	want := `missing "=" after "postgres:stellarindex:<redacted>@db.example.invalid:5432/stellarindex" in connection info string`
+	if got := Known(in, dsn); got != want {
+		t.Errorf("the cut is not exactly the password:\n  got:  %s\n  want: %s", got, want)
+	}
+}
+
+// The `scheme:` reading must not arm on a value that merely has a colon:
+// a host:port, a path, a DSN with no password. The text repeats each one
+// and has to come back byte-identical.
+func TestKnownIgnoresColonValuesWithNoPassword(t *testing.T) {
+	values := []string{
+		"localhost:8080",
+		"/usr/local/share/with:colon",
+		"postgres:db.example.invalid:5432/app",
+		"postgres:user@db.example.invalid/app",
+		`C:\migrations`,
+		"hostaddr=::1 dbname=app",
+	}
+	in := "saw " + strings.Join(values, " and ") + " at 12:30"
+	for _, v := range values {
+		if got := Known(in, v); got != in {
+			t.Errorf("Known armed on %q:\n  in:  %s\n  out: %s", v, in, got)
+		}
+	}
+}
+
+// Any password in a DSN missing its `//` is cut from libpq's echo of it.
+func FuzzKnownCutsAPasswordFromADSNMissingItsSlashes(f *testing.F) {
+	for _, pw := range hostilePasswords {
+		f.Add(pw)
+	}
+	f.Fuzz(func(t *testing.T, middle string) {
+		dsn := "postgres:stellarindex:" + sentinel + middle + tailStem + "@db.example.invalid/app"
+		for _, text := range []string{
+			fmt.Sprintf(`missing "=" after %q in connection info string`, dsn),
+			"missing = after " + dsn,
+		} {
+			assertNoStems(t, text, Known(text, dsn))
+		}
+	})
+}
