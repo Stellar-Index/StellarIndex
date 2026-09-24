@@ -8,7 +8,8 @@
 //
 // If protocols_registry.go gains or drops a protocol, add/remove the row
 // here too — CI doesn't cross-check them, the static export simply won't
-// pre-render a slug that isn't listed.
+// pre-render a slug that isn't listed. The OG card function mirrors the name
+// set as PROTOCOL_NAMES in functions/og/[[path]].js; og.test.js pins the two.
 
 export interface ProtocolRegistryEntry {
   /** Canonical source name — the /v1/protocols/{name} path segment. */

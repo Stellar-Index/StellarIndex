@@ -16,13 +16,60 @@ function code(s) {
   return (dash > 0 ? s.slice(0, dash) : s).toUpperCase();
 }
 
+// The headline is the card's most prominent text on our own origin, so it
+// renders only an identifier-shaped value; anything else falls back to the
+// generic headline instead of echoing caller-chosen text under our brand.
+const ASSET_CODE_RE = /^[A-Z0-9]{1,12}$/;
+
+const ID_SHAPE = new Map([
+  ['accounts', /^(?:G[A-Z2-7]{55}|M[A-Z2-7]{68})$/],
+  ['issuers', /^G[A-Z2-7]{55}$/],
+  ['contracts', /^C[A-Z2-7]{55}$/],
+  ['transactions', /^[0-9a-fA-F]{64}$/],
+  ['ledgers', /^[1-9][0-9]{0,9}$/],
+]);
+
+// Mirrors the name set of src/app/protocols/registry.ts (Pages Functions
+// bundle standalone); og.test.js fails if the two drift.
+export const PROTOCOL_NAMES = new Set([
+  'sdex',
+  'soroswap',
+  'aquarius',
+  'phoenix',
+  'sushiswap_v3',
+  'comet',
+  'blend',
+  'sorocredit',
+  'upshift',
+  'defindex',
+  'cctp',
+  'rozo',
+  'soroswap-router',
+  'band',
+  'reflector-dex',
+  'reflector-cex',
+  'reflector-fx',
+  'redstone',
+]);
+
+function assetCode(leg) {
+  if (!ASSET_LEG_RE.test(leg)) return null;
+  const c = code(leg);
+  return ASSET_CODE_RE.test(c) ? c : null;
+}
+
 function prettyLabel(type, id) {
   if (!id) return null;
-  if (type === 'markets' && id.includes('~')) {
-    const [b, q] = id.split('~');
-    return `${code(b)} / ${code(q)}`;
+  if (type === 'markets') {
+    const legs = id.split('~');
+    if (legs.length !== 2) return null;
+    const [b, q] = legs.map(assetCode);
+    return b && q ? `${b} / ${q}` : null;
   }
-  if (type === 'assets') return code(id);
+  if (type === 'assets') return assetCode(id);
+  if (type === 'protocols') return PROTOCOL_NAMES.has(id) ? id : null;
+  const shape = ID_SHAPE.get(type);
+  if (!shape || !shape.test(id)) return null;
   return id.length > 24 ? `${id.slice(0, 10)}…${id.slice(-8)}` : id;
 }
 

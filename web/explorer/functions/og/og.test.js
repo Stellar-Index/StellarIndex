@@ -49,8 +49,13 @@ vi.mock('workers-og', () => ({
   },
 }));
 
-const { onRequest, liveSubline, TYPE_LABEL, resetOgGatesForTest } =
-  await import('./[[path]].js');
+const {
+  onRequest,
+  liveSubline,
+  TYPE_LABEL,
+  PROTOCOL_NAMES,
+  resetOgGatesForTest,
+} = await import('./[[path]].js');
 
 // Isolate each test from the rate limiter/circuit breaker's module-scope
 // state — without this, tests sharing the default (no `cf-connecting-ip`)
@@ -308,5 +313,61 @@ describe('og function — render failure path (T246)', () => {
     const res = await onRequest(makeContext('/og/assets/usdc'));
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('fake-png-bytes');
+  });
+});
+
+describe('og function — headline renders identifiers only (T265)', () => {
+  const issuerAccount =
+    'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN';
+  const txHash =
+    '3389e9f0f1a65f19736cacf544c2e825313e8447f569233bb8db39aa607c8889';
+  const GENERIC = 'Stellar pricing &amp; protocol explorer';
+
+  beforeEach(() => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response('down', { status: 503 }),
+    );
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  async function headline(pathname) {
+    const res = await onRequest(makeContext(pathname));
+    expect(res.status).toBe(200);
+    return capturedHtml.last.match(/font-size:76px[^>]*>([^<]*)</)[1];
+  }
+
+  it.each([
+    ['/og/accounts/BUY-XLM-NOW'],
+    ['/og/issuers/Official%20airdrop'],
+    ['/og/contracts/claim.example'],
+    ['/og/transactions/Send%20100%20XLM%20to%20claim'],
+    ['/og/ledgers/FREE'],
+    ['/og/protocols/free-xlm-giveaway'],
+    ['/og/assets/Visit%20claim.example'],
+    ['/og/assets/FREEXLMCLAIMNOW'],
+    ['/og/markets/Claim%20now~native'],
+    ['/og/markets/native~USDC~FREE'],
+  ])('falls back to the generic headline for free text: %s', async (path) => {
+    expect(await headline(path)).toBe(GENERIC);
+  });
+
+  it.each([
+    [`/og/accounts/${issuerAccount}`, 'GA5ZSEJYB3…34K4KZVN'],
+    [`/og/issuers/${issuerAccount}`, 'GA5ZSEJYB3…34K4KZVN'],
+    [`/og/transactions/${txHash}`, '3389e9f0f1…607c8889'],
+    ['/og/ledgers/51234567', '51234567'],
+    ['/og/protocols/soroswap', 'soroswap'],
+    ['/og/assets/usdc', 'USDC'],
+    [`/og/assets/USDC-${issuerAccount}`, 'USDC'],
+    [`/og/markets/native~USDC-${issuerAccount}`, 'XLM / USDC'],
+  ])('still labels a canonical id: %s', async (path, want) => {
+    expect(await headline(path)).toBe(want);
+  });
+
+  it('mirrors the protocol registry name set exactly', async () => {
+    const { PROTOCOLS } = await import('../../src/app/protocols/registry');
+    expect([...PROTOCOL_NAMES].sort()).toEqual(
+      PROTOCOLS.map((p) => p.name).sort(),
+    );
   });
 });
