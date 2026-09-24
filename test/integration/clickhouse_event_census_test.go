@@ -27,6 +27,17 @@ func TestEventCensusShortfalls_DroppedEventPartition(t *testing.T) {
 		t.Fatalf("open sink: %v", err)
 	}
 	t.Cleanup(func() { _ = sink.Close(ctx) })
+	// Left behind, these 2027-08-01 rows own the lake's max(close_time), which
+	// anchors clickhouse_storage_test's NetworkThroughput day window past its ledger.
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer ccancel()
+		conn := dialClickHouse(t, cctx, "stellar")
+		if err := conn.Exec(cctx, fmt.Sprintf(`ALTER TABLE stellar.ledgers DELETE
+			WHERE ledger_seq BETWEEN %d AND %d SETTINGS mutations_sync = 2`, p1-3, p1+2)); err != nil {
+			t.Errorf("purge census fixture ledgers: %v", err)
+		}
+	})
 
 	seed := func(seq, events uint32) {
 		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
