@@ -76,7 +76,7 @@ Recommendation: ship the namespace now (totality with zero migration); schedule 
 
 ### 2.3 Quote for unmapped rows
 
-- reflector-*: `usdFiat` (variant-implied for every row today — `quoteForVariant`).
+- reflector-*: variant-implied (`quoteForVariant`): the USDC SAC (the DEX oracle's `base()`) for reflector-dex, `usdFiat` for reflector-cex/-fx.
 - band: `fiat:USD` (as today).
 - redstone: if the feed_id ends in `/<ISO4217>` and `IsKnownFiat`, `fiat:<that>`; else `fiat:USD`. The full feed_id (including any suffix) is stored verbatim in the raw code. **No `Invert`** — orientation of an unmapped feed is unknown; unmapped rows are explicitly orientation-unknown and must never be compared. `mapped=false` is the only guard.
 
