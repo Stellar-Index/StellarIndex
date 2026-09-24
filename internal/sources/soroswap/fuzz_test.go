@@ -468,15 +468,21 @@ func FuzzClassify(f *testing.F) {
 }
 
 // FuzzBufferCorrelation drives the swap/sync buffer with an arbitrary
-// event sequence over colliding (ledger, tx, op, pool) keys and checks it against
-// a model: a completed pair's swap and sync share the full key including
-// the emitting pool (COR-08), the swap is the latest one absorbed for that
-// key, and nothing completes, vanishes or lingers that the model disagrees on.
+// event sequence over colliding (ledger, tx, op, pool) keys and checks it
+// against a model: a completed pair's swap and sync share the full key
+// including the emitting pool (COR-08); a same-kind event with a new
+// EventIndex on an occupied slot rotates the group out (swap-only as
+// completed, sync-only as evicted) while a redelivery (same EventIndex)
+// overwrites in place; and nothing completes, evicts or lingers that the
+// model disagrees on.
 func FuzzBufferCorrelation(f *testing.F) {
 	f.Add([]byte{0x00, 0x01})
 	f.Add([]byte{0x00, 0x04, 0x01, 0x05})
 	f.Add([]byte{0x00, 0x04, 0x05, 0x01, 0x02, 0x0b, 0x03})
 	f.Add([]byte{0x00, 0x20, 0x21, 0x01})
+	f.Add([]byte{0x00, 0x00, 0x01})
+	f.Add([]byte{0x01, 0x01, 0x00})
+	f.Add([]byte{0x00, 0x40, 0x01})
 	f.Fuzz(func(t *testing.T, script []byte) {
 		type key struct {
 			ledger   uint32
@@ -484,7 +490,27 @@ func FuzzBufferCorrelation(f *testing.F) {
 			op       int
 			contract string
 		}
-		type slot struct{ swap, sync *events.Event }
+		type slot struct {
+			swap, sync *events.Event
+			closedAt   time.Time
+		}
+		pairOf := func(k key, s *slot) RawPair {
+			return RawPair{
+				Ledger: k.ledger, TxHash: k.tx, OpIndex: uint32(k.op), Pair: k.contract,
+				ClosedAt: s.closedAt, Swap: s.swap, Sync: s.sync,
+			}
+		}
+		same := func(got, want []RawPair) bool {
+			if len(got) != len(want) {
+				return false
+			}
+			for i := range got {
+				if got[i] != want[i] {
+					return false
+				}
+			}
+			return true
+		}
 		b := newBuffer()
 		b.maxAge = 0
 		model := map[key]*slot{}
@@ -495,14 +521,35 @@ func FuzzBufferCorrelation(f *testing.F) {
 			if c&1 != 0 {
 				kind = EventSync
 			}
-			e := &events.Event{Ledger: k.ledger, TxHash: k.tx, OperationIndex: k.op, ContractID: k.contract, EventIndex: i}
-			completed, evicted := b.absorb(e, kind, closed.Add(time.Duration(i)*time.Hour))
-			if len(evicted) != 0 {
-				t.Fatalf("eviction with maxAge disabled: %+v", evicted)
-			}
+			at := closed.Add(time.Duration(i) * time.Hour)
 			s := model[k]
+			var prior *events.Event
+			if s != nil {
+				prior = s.swap
+				if kind == EventSync {
+					prior = s.sync
+				}
+			}
+			// Bit 6 redelivers the slot's current same-kind event (same EventIndex).
+			idx := i
+			if c&0x40 != 0 && prior != nil {
+				idx = prior.EventIndex
+			}
+			e := &events.Event{Ledger: k.ledger, TxHash: k.tx, OperationIndex: k.op, ContractID: k.contract, EventIndex: idx}
+			completed, evicted := b.absorb(e, kind, at)
+
+			var wantCompleted, wantEvicted []RawPair
+			if prior != nil && prior.EventIndex != idx {
+				// A complete group never stays buffered, so the rotated slot holds only the prior kind.
+				if s.swap != nil {
+					wantCompleted = append(wantCompleted, pairOf(k, s))
+				} else {
+					wantEvicted = append(wantEvicted, pairOf(k, s))
+				}
+				s = nil
+			}
 			if s == nil {
-				s = &slot{}
+				s = &slot{closedAt: at}
 				model[k] = s
 			}
 			if kind == EventSwap {
@@ -511,19 +558,24 @@ func FuzzBufferCorrelation(f *testing.F) {
 				s.sync = e
 			}
 			if s.swap != nil && s.sync != nil {
-				if len(completed) != 1 {
-					t.Fatalf("step %d: model completes %+v, buffer returned %d", i, k, len(completed))
-				}
-				p := completed[0]
-				if p.Swap != s.swap || p.Sync != s.sync || p.Pair != k.contract || p.Ledger != k.ledger || p.TxHash != k.tx || int(p.OpIndex) != k.op {
-					t.Fatalf("step %d: completed %+v does not match model slot %+v for %+v", i, p, s, k)
-				}
+				wantCompleted = append(wantCompleted, pairOf(k, s))
 				delete(model, k)
-			} else if len(completed) != 0 {
-				t.Fatalf("step %d: buffer completed %+v, model has only half of %+v", i, completed, k)
+			}
+			if !same(completed, wantCompleted) {
+				t.Fatalf("step %d (%+v %s): completed %+v, model %+v", i, k, kind, completed, wantCompleted)
+			}
+			if !same(evicted, wantEvicted) {
+				t.Fatalf("step %d (%+v %s): evicted %+v, model %+v", i, k, kind, evicted, wantEvicted)
 			}
 			if b.size() != len(model) {
 				t.Fatalf("step %d: buffer size %d, model %d", i, b.size(), len(model))
+			}
+		}
+		for _, p := range b.orphans() {
+			k := key{ledger: p.Ledger, tx: p.TxHash, op: int(p.OpIndex), contract: p.Pair}
+			s := model[k]
+			if s == nil || p != pairOf(k, s) {
+				t.Fatalf("remaining %+v, model slot %+v", p, s)
 			}
 		}
 	})
