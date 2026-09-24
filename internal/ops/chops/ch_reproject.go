@@ -107,8 +107,14 @@ func chReproject(args []string) error { //nolint:gocognit,gocyclo,funlen // line
 		if len(src.factories) == 0 {
 			continue
 		}
-		if perr := preseedFactoryChildren(ctx, store, src, lo); perr != nil {
+		pblind, perr := preseedFactoryChildren(ctx, store, src, lo)
+		if perr != nil {
 			return fmt.Errorf("%s: preseed factory children: %w", src.name, perr)
+		}
+		// A writer must not rebuild over a registry missing a child whose
+		// creation event its decoder could not evaluate.
+		if pblind.Any() {
+			return fmt.Errorf("%s: preseed factory children: %s", src.name, pblind.Detail())
 		}
 	}
 

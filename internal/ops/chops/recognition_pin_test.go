@@ -1,7 +1,10 @@
 package chops
 
 import (
+	"reflect"
 	"testing"
+
+	"github.com/stellar/go-stellar-sdk/strkey"
 
 	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
@@ -9,25 +12,24 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 )
 
-// staticOwners rebuilds the contract → source map the way
-// computeCompleteness seeds it BEFORE the registry fold: every catalogue
-// source's static contractIDs. rozo and blend_backstop are not
+// staticOwners builds the contract → sources map the way computeCompleteness
+// seeds it BEFORE the registry fold (contractOwners over every catalogue
+// source's static contractIDs). rozo and blend_backstop are not
 // gated-registry sources, so loadRegistryOwners (protocol_contracts +
 // soroswap_pairs) can never name their contracts; this static pass is the
 // only path that can put them in ownerOf.
-func staticOwners(t *testing.T) (map[string]string, []reconSource) {
+func staticOwners(t *testing.T) (map[string][]string, []reconSource) {
 	t.Helper()
-	cat, _, err := buildReconciliationCatalogue(config.Config{})
+	return staticOwnersFor(t, config.Config{})
+}
+
+func staticOwnersFor(t *testing.T, cfg config.Config) (map[string][]string, []reconSource) {
+	t.Helper()
+	cat, _, err := buildReconciliationCatalogue(cfg)
 	if err != nil {
 		t.Fatalf("buildReconciliationCatalogue: %v", err)
 	}
-	ownerOf := map[string]string{}
-	for _, src := range cat {
-		for _, c := range src.contractIDs {
-			ownerOf[c] = src.name
-		}
-	}
-	return ownerOf, cat
+	return contractOwners(cat), cat
 }
 
 func catalogueSource(t *testing.T, cat []reconSource, name string) reconSource {
@@ -97,6 +99,49 @@ func TestRecognitionAttribution_RozoAndBackstopOwnTheirContracts(t *testing.T) {
 	}
 }
 
+// TestRecognitionAttribution_EveryPinningSourceCanFail pins #1323: with the
+// SEP-41 pair configured (sep41_transfers and sep41_supply both gated on the
+// same watched list), a recognition gap on ANY pinned contract must cap EVERY
+// catalogue source that pins it. A single-owner map handed every watched
+// contract to sep41_supply (catalogued second), so sep41_transfers'
+// recognition_ok could not go false.
+func TestRecognitionAttribution_EveryPinningSourceCanFail(t *testing.T) {
+	sep41Contract, err := strkey.Encode(strkey.VersionByteContract, make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfg config.Config
+	cfg.Supply.WatchedSEP41Contracts = []string{sep41Contract}
+	ownerOf, cat := staticOwnersFor(t, cfg)
+
+	pinners := map[string][]string{}
+	for _, src := range cat {
+		for _, c := range src.contractIDs {
+			pinners[c] = append(pinners[c], src.name)
+		}
+	}
+	if len(pinners[sep41Contract]) < 2 {
+		t.Fatalf("watched SEP-41 contract pinned by %v, want both sep41 sources — the shared case is not exercised",
+			pinners[sep41Contract])
+	}
+	for c, want := range pinners {
+		const gapLedger = 60_000_000
+		recBySource, unattributed := attributeRecognitionGaps(ownerOf, []completeness.RecognitionGap{{
+			ContractID: c, Topic0Sym: "topic_no_arm_handles", MinLedger: gapLedger, MaxLedger: gapLedger, Count: 1,
+		}})
+		if len(unattributed) != 0 {
+			t.Errorf("gap on pinned contract %s fell into unattributed", c)
+		}
+		for _, name := range want {
+			ok, _ := sourceRecognitionOK(sorobanEraGenesis, gapLedger, recBySource[name], false, priorProjection{})
+			if ok {
+				t.Errorf("%s pins %s but recognition_ok stayed true over a gap on it (attributed: %v)",
+					name, c, recBySource)
+			}
+		}
+	}
+}
+
 // TestCatalogue_RecognitionPinsMatchDecoderIdentity holds the F071 pins in
 // step with each decoder's own identity gate. contractIDs is not only the
 // recognition owner map: ch-rebuild and ch-reproject use it as a HARD
@@ -114,7 +159,7 @@ func TestCatalogue_RecognitionPinsMatchDecoderIdentity(t *testing.T) {
 		}
 	}
 	for _, c := range rozo.MainnetPaymentContracts {
-		if ownerOf[c] != "rozo" {
+		if !reflect.DeepEqual(ownerOf[c], []string{"rozo"}) {
 			t.Errorf("rozo decoder claims %s but the catalogue attributes it to %q", c, ownerOf[c])
 		}
 	}
@@ -129,13 +174,13 @@ func TestCatalogue_RecognitionPinsMatchDecoderIdentity(t *testing.T) {
 		}
 	}
 	for _, c := range []string{blend_backstop.MainnetBackstopV2, blend_backstop.MainnetBackstopV1} {
-		if ownerOf[c] != blend_backstop.SourceName {
+		if !reflect.DeepEqual(ownerOf[c], []string{blend_backstop.SourceName}) {
 			t.Errorf("backstop decoder claims %s but the catalogue attributes it to %q", c, ownerOf[c])
 		}
 	}
 
-	// No OTHER source may pin one of these contracts: ownerOf is
-	// last-writer-wins, so a second pin would silently steal attribution.
+	// No OTHER source may pin one of these contracts: a second pin would
+	// charge that source with every rozo / backstop recognition gap.
 	pinned := map[string]string{}
 	for _, c := range rozoSrc.contractIDs {
 		pinned[c] = "rozo"
@@ -146,7 +191,7 @@ func TestCatalogue_RecognitionPinsMatchDecoderIdentity(t *testing.T) {
 	for _, src := range cat {
 		for _, c := range src.contractIDs {
 			if owner, ok := pinned[c]; ok && owner != src.name {
-				t.Errorf("%s also pins %s, which belongs to %s — ownerOf would be last-writer-wins", src.name, c, owner)
+				t.Errorf("%s also pins %s, which belongs to %s — it would share that source's recognition gaps", src.name, c, owner)
 			}
 		}
 	}

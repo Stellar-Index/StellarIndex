@@ -347,7 +347,31 @@ func (h *Handler) AccountMovements(w http.ResponseWriter, r *http.Request) {
 		// every subsequent page reuses it (W1-chrollup-2).
 		out.NextCursor = encodeMovementCursor(merged[len(merged)-1], wm)
 	}
-	h.WriteJSON(w, out, false)
+	h.WriteJSON(w, out, h.movementsStale(ctx, wm))
+}
+
+// cap67MovementsStaleLedgers is how far the lake tip may run past the
+// all-assets archive boundary before the feed is flagged stale: ~300 s of
+// ~5 s ledgers, the lake's own staleness horizon (lakeStaleThreshold). The
+// derive follows the contiguous tip on a 1-30 s tick, so a lag past this
+// means it stopped or hit a lake hole and everything above `wm` is
+// watched-tokens-only.
+const cap67MovementsStaleLedgers uint32 = 60
+
+// movementsStale is the feed's flags.stale: the lake itself is stale, or
+// the all-assets archive boundary `wm` trails the lake tip by more than
+// [cap67MovementsStaleLedgers]. wm == 0 (no archive) is not stale — the
+// coverage note already scopes that feed to watched tokens. No wired or
+// readable lake watermark degrades to not-stale, as on every lake surface.
+func (h *Handler) movementsStale(ctx context.Context, wm uint32) bool {
+	if h.LakeWatermark == nil {
+		return false
+	}
+	tip, lakeStale, ok := h.LakeWatermark(ctx)
+	if !ok {
+		return false
+	}
+	return lakeStale || (wm > 0 && tip > wm && tip-wm > cap67MovementsStaleLedgers)
 }
 
 // fetchSEP41MovementsTail reads + maps the Postgres recent-tail half
@@ -386,9 +410,12 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 // on EVERY response is what keeps a busy XLM account's feed from
 // masquerading as complete (the GATL report, site audit 2026-08-08).
 //
-// wm > 0: all assets are covered through the watermark; only the sliver
+// wm > 0: all assets are served through the watermark; only the sliver
 // above it (the derive follows the tip via a continuous follow daemon,
-// seconds behind) is watched-tokens-only.
+// seconds behind) is watched-tokens-only. The watermark is the derive's
+// progress marker, not a verdict: account_movements is not a reconcile
+// target and has no /v1/coverage row, so the note must not call it
+// complete.
 func movementsCoverageNote(wm uint32, tailNote string) string {
 	if tailNote != "" {
 		return tailNote
@@ -399,8 +426,10 @@ func movementsCoverageNote(wm uint32, tailNote string) string {
 			"(the full-history movement archive is being extended); see /accounts/{g}/operations " +
 			"for complete raw operation history"
 	}
-	return fmt.Sprintf("complete for all assets through ledger %d; more recent movements may include "+
-		"watched Soroban/SAC tokens only while the archive follows the tip (near real-time)", wm)
+	return fmt.Sprintf("all assets through ledger %d, from the movement archive derived from the "+
+		"CAP-67 event lake (derive progress, not a verified completeness verdict — this archive has no "+
+		"/v1/coverage entry); more recent movements may include watched Soroban/SAC tokens only while "+
+		"the archive follows the tip (near real-time)", wm)
 }
 
 // mapSEP41RowsToMovements converts sep41_transfers 'transfer' rows into

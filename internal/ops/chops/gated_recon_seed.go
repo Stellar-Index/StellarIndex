@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/Stellar-Index/StellarIndex/internal/completeness"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorobanevents"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
@@ -28,9 +29,14 @@ import (
 //
 // The walk is cheap: factory creation events are rare and the
 // (contract_id, topic_0_sym) index on soroban_events serves the filter.
-func preseedFactoryChildren(ctx context.Context, store *timescale.Store, src reconSource, to uint32) error {
+//
+// The decoder runs under completeness.Guard: a creation event whose decoder
+// panics leaves that child unseeded, so it is returned as a blind spot (the
+// child's rows are missing from the expected side) instead of crashing the
+// caller. Each caller decides what a blind preseed means for it.
+func preseedFactoryChildren(ctx context.Context, store *timescale.Store, src reconSource, to uint32) (completeness.BlindSpots, error) {
 	if len(src.factories) == 0 || src.dec == nil {
-		return nil
+		return completeness.BlindSpots{}, nil
 	}
 	// A factory whose own genesis is at/after `to` deployed no children
 	// BEFORE `to`, so the [genesis, to) preseed window holds nothing to
@@ -41,9 +47,10 @@ func preseedFactoryChildren(ctx context.Context, store *timescale.Store, src rec
 	// defindex's genesis). Skip the empty walk; the re-derive over [to, hi]
 	// self-seeds from the factory's in-range creation events.
 	if src.genesis >= to {
-		return nil
+		return completeness.BlindSpots{}, nil
 	}
 	seeded := 0
+	blind := completeness.NewBlindTracker()
 	err := store.StreamSorobanEvents(ctx, src.genesis, to,
 		src.factories, []string{src.creationSym}, nil,
 		func(row sorobanevents.Row) error {
@@ -51,18 +58,22 @@ func preseedFactoryChildren(ctx context.Context, store *timescale.Store, src rec
 			if rerr != nil {
 				return nil //nolint:nilerr // skip a broken row like the projector does
 			}
-			if src.dec.Matches(ev) {
-				if _, derr := src.dec.Decode(ev); derr == nil {
-					seeded++
+			if perr := completeness.Guard(func() {
+				if src.dec.Matches(ev) {
+					if _, derr := src.dec.Decode(ev); derr == nil {
+						seeded++
+					}
 				}
+			}); perr != nil {
+				blind.Undecodable(ev.Ledger)
 			}
 			return nil
 		})
 	if err != nil {
-		return fmt.Errorf("preseed %s factory children: %w", src.name, err)
+		return completeness.BlindSpots{}, fmt.Errorf("preseed %s factory children: %w", src.name, err)
 	}
 	fmt.Fprint(os.Stderr, preseedResultMessage(src.name, seeded))
-	return nil
+	return blind.Result(), nil
 }
 
 // preseedResultMessage reports the outcome of a factory preseed walk,
