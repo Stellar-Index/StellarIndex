@@ -12,9 +12,9 @@ severity: P3
 | | |
 | --- | --- |
 | **Severity** | ticket — no immediate customer impact, but the safety margin is gone |
-| **Fires when** | a single TimescaleDB background job accumulates **>10 failed runs in 6h**, or **3 or more in 3 days**, sustained 30m |
+| **Fires when** | a single TimescaleDB background job accumulates **>10 failed runs in 6h**, **3 or more in 3 days**, or failures covering **at least half the runs its `schedule_interval` gave it in 3 days** (failures × interval ≥ 36h), sustained 30m |
 | **Producer** | `timescale-jobs-probe.timer` on r1 (60s), writing `timescale_jobs.prom` into the node_exporter textfile dir. If that probe stops, or its `job_stats` query fails or returns nothing, this counter goes absent and the alert is blind rather than quiet — `stellarindex_timescale_probe_degraded` ([timescale-probe-degraded](timescale-probe-degraded.md)) is the standing signal for it. |
-| **Metric** | `stellarindex_timescale_job_failures_total{job_id,proc,hypertable}` |
+| **Metric** | `stellarindex_timescale_job_failures_total{job_id,proc,hypertable}`, weighted by `stellarindex_timescale_job_schedule_interval_seconds` (same labels, same probe) |
 | **Customer impact** | usually none *yet* — TimescaleDB retries on the next tick |
 
 **Why this alert exists at all.** r1 once failed **37–69 % of every CAGG
@@ -29,7 +29,7 @@ evidence was this counter, which no rule referenced until 2026-08-30
 So treat a firing here as **"the thing that hid the last incident is
 happening again"**, not as a broken job.
 
-**Why two windows.** The counter is per job
+**Why three arms.** The counter is per job
 (`{job_id,proc,hypertable}`), so a job scheduled every *T* can accrue at
 most `6h / T` failures — and `> 10 in 6h` therefore needs *T* under ~36
 minutes. Every compression policy (12h `schedule_interval`) and five of
@@ -40,6 +40,21 @@ the r1 probe found failing 66–81 %. The second arm, **3 or more failures
 in 3 days**, is the one that judges the slow half of the fleet: a job on
 a daily schedule failing every run trips it on the third day, a 12h
 compression policy inside two.
+
+The 3-day count still caps out: a job scheduled every *T* runs at most
+`3d / T` times in the window, so `≥ 3` is unreachable once *T* exceeds a
+day. The third arm is derived from the job's own `schedule_interval`
+instead of a fixed count: `increase(failures[3d]) × schedule_interval ≥
+129600` (36h, half the window) means at least half of the runs scheduled
+in 3 days failed, whatever *T* is — one failure for *T* ≥ 1.5 days, two
+of three for a daily job, three of six for a 12h policy (the same bar as
+the second arm). At a 1m schedule it needs 2160 failures, so fast jobs
+stay with the 6h arm. The probe emits the interval as
+`stellarindex_timescale_job_schedule_interval_seconds` with the
+counter's exact labels; a job whose interval does not parse still gets
+its counter (the first two arms still judge it) but no gauge, and the
+probe reports `query_ok{query="job_stats"} 0` so
+`stellarindex_timescale_probe_degraded` says the third arm is blind.
 
 Measured on r1 (2026-09-18) while adding it: `policy_compression` on
 `trades` (job 1000, 12h schedule) had failed **6 times in 7 days** with
@@ -111,7 +126,9 @@ and takes priority over this one.
 - **A short burst after a restart or a heavy one-shot job** is expected —
   contention clears and the counter stops climbing. The 6h window plus
   `for: 30m` is sized to ride those out. The 3-day arm needs three
-  failures, so a single retried blip does not reach it either.
+  failures, so a single retried blip does not reach it either — except
+  on a job scheduled every 1.5 days or slower, where one failed run is
+  already half of its runs in the window and is worth the ticket.
 - **This alert alone, with caggs fresh**, is not a customer-facing
   incident. It is a warning that the safety margin is gone.
 

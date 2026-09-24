@@ -501,10 +501,30 @@ groups:
         # days gives the slowest job on the box (schedule_interval 1 day)
         # three chances to fail and leaves the window well inside what is
         # stored.
+        #
+        # THIRD ARM, derived from schedule_interval, because both fixed
+        # counts still cap out: a job scheduled every T runs at most 3d/T
+        # times in the window, so `>= 3 in 3d` is unreachable once T
+        # exceeds a day, and any future slower policy (weekly retention,
+        # say) would be as unjudgeable as the compression policies were.
+        # failures x schedule_interval is the scheduled time those failed
+        # runs covered; >= half the window (36h) means at least half of the
+        # runs scheduled in 3 days failed, whatever T is — one failure for
+        # T >= 1.5d, two of three for a daily job, three of six at 12h
+        # (the same bar as the second arm). Fast jobs are left to the
+        # first arm: at 1m this needs 2160 failures. The producer emits
+        # the interval with the counter's exact label set, so the product
+        # is a one-to-one match; a job whose interval did not parse drops
+        # out of this arm only, and reports query_ok 0 (probe_degraded).
         expr: |
           increase(stellarindex_timescale_job_failures_total[6h]) > 10
             or
           increase(stellarindex_timescale_job_failures_total[3d]) >= 3
+            or
+          (
+            increase(stellarindex_timescale_job_failures_total[3d])
+              * stellarindex_timescale_job_schedule_interval_seconds
+          ) >= 129600
         for: 30m
         labels:
           severity: ticket
@@ -516,16 +536,19 @@ groups:
           description: |
             Job {{ $labels.job_id }} ({{ $labels.proc }} on
             {{ $labels.hypertable }}) is failing repeatedly: more than 10 runs in
-            6 hours, or 3 or more runs in 3 days. TimescaleDB retries on the next
+            6 hours, 3 or more runs in 3 days, or at least half of the runs its
+            schedule_interval gave it in 3 days. TimescaleDB retries on the next
             tick, so the caggs may look fresh and no staleness ticket will fire —
             that is exactly how the 2026 background-worker starvation stayed
             invisible.
 
-            The two windows are not redundant. This counter is per job, so a job
+            The three arms are not redundant. This counter is per job, so a job
             scheduled every T can accrue at most 6h/T failures and the 6h arm is
             unreachable for anything slower than ~36 minutes — every compression
-            policy and five of the CAGG refresh policies. The 3-day arm is what
-            judges those, and a slow job failing every run trips it in three days.
+            policy and five of the CAGG refresh policies. The 3-day count judges
+            those, but is itself unreachable once T exceeds a day; the
+            schedule_interval arm judges any T, and a job slower than 1.5 days
+            trips it on a single failed run.
 
             Check max_parallel_workers / timescaledb.max_background_workers
             headroom first; "failed to start job" in the job_errors view means

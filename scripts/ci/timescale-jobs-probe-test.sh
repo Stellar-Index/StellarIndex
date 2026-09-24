@@ -178,7 +178,8 @@ case "$kind" in
   cagg)        printf "${CAGG_ROWS:-prices_1m|1788598634|60
 oracle_prices_1m|1788598600|30}\n" ;;
   compression) printf 'trades|3\nfx_quotes|0\n' ;;
-  jobs)        printf 'policy_compression|trades|1001|0\npolicy_retention|-|1002|2\n' ;;
+  jobs)        printf "${JOB_ROWS:-policy_compression|trades|1001|0|43200
+policy_retention|-|1002|2|86400}\n" ;;
   # `-At` prints err_message verbatim: a quote, a backslash, a pipe and a
   # brace arrive raw, and a newline in the text starts an output line
   # that is NOT a new record.
@@ -203,12 +204,12 @@ export PATH="$TMP/bin:$PATH"
 export TEXTFILE_DIR="$TMP/textfile"
 PROM="$TEXTFILE_DIR/timescale_jobs.prom"
 
-# run <fail-queries> <empty-queries> [convoy-row] [cagg-rows] [job-errors]
+# run <fail-queries> <empty-queries> [convoy-row] [cagg-rows] [job-errors] [job-rows]
 # — one probe run; sets $RC and leaves the probe's stderr in $ERR.
 run() {
   rm -f "$PROM"
   ERR="$(FAIL_QUERIES="$1" EMPTY_QUERIES="$2" LOCK_CONVOY_ROW="${3:-}" CAGG_ROWS="${4:-}" \
-    JOB_ERRORS_ROWS="${5:-}" bash "$PROBE" 2>&1 >/dev/null)"
+    JOB_ERRORS_ROWS="${5:-}" JOB_ROWS="${6:-}" bash "$PROBE" 2>&1 >/dev/null)"
   RC=$?
 }
 
@@ -254,7 +255,8 @@ run "" ""
 eq 0 "$RC" "clean run exits 0"
 for f in stellarindex_cagg_last_refresh_unix \
          stellarindex_timescale_chunks_overdue_compression \
-         stellarindex_timescale_job_failures_total; do
+         stellarindex_timescale_job_failures_total \
+         stellarindex_timescale_job_schedule_interval_seconds; do
   holds "clean run emits $f" has_family "$f"
 done
 for qname in cagg_refresh compression job_stats; do
@@ -460,6 +462,34 @@ eq "$sentinel_before" "$(cat "$PROM")" "…and the previously-published file is 
 matches 'refusing to publish' "$ERR" "…and says why, on stderr"
 leftovers=$(find "$TEXTFILE_DIR" -type f ! -name 'timescale_jobs.prom' | wc -l | tr -d ' ')
 eq 0 "$leftovers" "…and leaves no half-written temp file behind"
+
+# 6f. The job schedule_interval gauge. The failures alert weighs a job's
+#     failures by the interval it is SCHEDULED on, so the interval has to
+#     arrive with exactly the counter's label set — a mismatch is an
+#     empty join, which is a blind arm rather than a quiet one.
+run "" ""
+eq 43200 "$(metric 'stellarindex_timescale_job_schedule_interval_seconds{job_id="1001",proc="policy_compression",hypertable="trades"}')" \
+  "clean run: a job's schedule_interval is emitted with the counter's labels"
+eq 86400 "$(metric 'stellarindex_timescale_job_schedule_interval_seconds{job_id="1002",proc="policy_retention",hypertable="-"}')" \
+  "…for every job, including one with no hypertable"
+eq 1 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_stats"}')" "clean run: job_stats still reports healthy"
+
+#     A NULL interval (an empty field under -At) costs only the gauge.
+#     The failure count beside it is still true and is still emitted;
+#     the query reports query_ok 0 so the blind interval arm is loud.
+run "" "" "" "" "" "policy_compression|trades|1001|4|
+policy_retention|-|1002|2|86400"
+parses "a NULL job interval still produces a parseable file"
+eq 4 "$(metric 'stellarindex_timescale_job_failures_total{job_id="1001",proc="policy_compression",hypertable="trades"}')" \
+  "a NULL interval does not suppress that job's failure counter"
+eq "" "$(metric 'stellarindex_timescale_job_schedule_interval_seconds{job_id="1001",proc="policy_compression",hypertable="trades"}')" \
+  "…emits no interval for it"
+eq 86400 "$(metric 'stellarindex_timescale_job_schedule_interval_seconds{job_id="1002",proc="policy_retention",hypertable="-"}')" \
+  "…and leaves its neighbour's interval intact"
+eq 0 "$(metric 'stellarindex_timescale_probe_query_ok{query="job_stats"}')" \
+  "…and reports query_ok 0 for job_stats"
+eq 2 "$(metric 'stellarindex_timescale_probe_rows{query="job_stats"}')" \
+  "…while rows still counts both emitted failure counters"
 
 # ─── 7. the job failure reason ──────────────────────────────────────
 #

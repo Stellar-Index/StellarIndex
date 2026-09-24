@@ -1420,16 +1420,19 @@ tests:
               description: |
                 Job 1000 (policy_compression on
                 trades) is failing repeatedly: more than 10 runs in
-                6 hours, or 3 or more runs in 3 days. TimescaleDB retries on the next
+                6 hours, 3 or more runs in 3 days, or at least half of the runs its
+                schedule_interval gave it in 3 days. TimescaleDB retries on the next
                 tick, so the caggs may look fresh and no staleness ticket will fire —
                 that is exactly how the 2026 background-worker starvation stayed
                 invisible.
 
-                The two windows are not redundant. This counter is per job, so a job
+                The three arms are not redundant. This counter is per job, so a job
                 scheduled every T can accrue at most 6h/T failures and the 6h arm is
                 unreachable for anything slower than ~36 minutes — every compression
-                policy and five of the CAGG refresh policies. The 3-day arm is what
-                judges those, and a slow job failing every run trips it in three days.
+                policy and five of the CAGG refresh policies. The 3-day count judges
+                those, but is itself unreachable once T exceeds a day; the
+                schedule_interval arm judges any T, and a job slower than 1.5 days
+                trips it on a single failed run.
 
                 Check max_parallel_workers / timescaledb.max_background_workers
                 headroom first; "failed to start job" in the job_errors view means
@@ -1449,6 +1452,85 @@ tests:
     input_series:
       - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1088",proc="policy_refresh_continuous_aggregate",hypertable="prices_1m"}'
         values: '0x71 1x72'
+    alert_rule_test:
+      - eval_time: 71h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts: []
+
+  # ── a job slower than a day, failing its run ─────────────────────
+  # The shape both fixed counts miss. A job scheduled every T runs at
+  # most 3d/T times in the 3-day window, so `>= 3 in 3d` is unreachable
+  # once T exceeds a day. A weekly policy failing its one run in the
+  # window is 100 % of its scheduled runs; failures x schedule_interval
+  # (604800) clears the 36h bar on that single failure.
+  #
+  # 1m samples, as the probe writes them: the interval is an INSTANT
+  # selector, so at a 30m input interval it would go stale 5m after each
+  # sample and the arm would flap under `for: 30m` instead of holding.
+  - interval: 1m
+    name: a weekly job failing its only run is caught by the schedule_interval arm
+    input_series:
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1002",proc="policy_retention",hypertable="fx_quotes"}'
+        values: '0x1230 1x200'
+      - series: 'stellarindex_timescale_job_schedule_interval_seconds{job="node_exporter",instance="r1:9100",job_id="1002",proc="policy_retention",hypertable="fx_quotes"}'
+        values: '604800x1440'
+    alert_rule_test:
+      - eval_time: 20h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts: []
+      - eval_time: 22h
+        alertname: stellarindex_timescale_job_failures_climbing
+        exp_alerts:
+          - exp_labels:
+              job: node_exporter
+              instance: r1:9100
+              job_id: "1002"
+              proc: policy_retention
+              hypertable: fx_quotes
+              severity: ticket
+              team: stellarindex
+              component: storage
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/timescale-job-failures-climbing.md
+              summary: "TimescaleDB job policy_retention failing repeatedly (fx_quotes)"
+              description: |
+                Job 1002 (policy_retention on
+                fx_quotes) is failing repeatedly: more than 10 runs in
+                6 hours, 3 or more runs in 3 days, or at least half of the runs its
+                schedule_interval gave it in 3 days. TimescaleDB retries on the next
+                tick, so the caggs may look fresh and no staleness ticket will fire —
+                that is exactly how the 2026 background-worker starvation stayed
+                invisible.
+
+                The three arms are not redundant. This counter is per job, so a job
+                scheduled every T can accrue at most 6h/T failures and the 6h arm is
+                unreachable for anything slower than ~36 minutes — every compression
+                policy and five of the CAGG refresh policies. The 3-day count judges
+                those, but is itself unreachable once T exceeds a day; the
+                schedule_interval arm judges any T, and a job slower than 1.5 days
+                trips it on a single failed run.
+
+                Check max_parallel_workers / timescaledb.max_background_workers
+                headroom first; "failed to start job" in the job_errors view means
+                starvation, not a broken job body.
+
+                The counter above says only that policy_retention is
+                failing, never why. Query
+                stellarindex_timescale_job_last_failure_reason_info{job_id="1002"}
+                for the most recent job_errors.err_message text without a
+                psql round trip.
+
+  # ── a 12h job failing a third of its runs is not a ticket ────────
+  # The interval arm is a ratio, not a lower bar for every job: two
+  # failures of a 12h policy in three days is 2 of 6 runs (86400 s of
+  # the 129600 s bar), under both the 3-day count and half-the-runs.
+  - interval: 1m
+    name: a 12h job failing two of six runs fires no arm
+    input_series:
+      - series: 'stellarindex_timescale_job_failures_total{job="node_exporter",instance="r1:9100",job_id="1000",proc="policy_compression",hypertable="trades"}'
+        values: '0x1439 1x1439 2x1440'
+      - series: 'stellarindex_timescale_job_schedule_interval_seconds{job="node_exporter",instance="r1:9100",job_id="1000",proc="policy_compression",hypertable="trades"}'
+        values: '43200x4320'
     alert_rule_test:
       - eval_time: 71h
         alertname: stellarindex_timescale_job_failures_climbing
