@@ -1,8 +1,11 @@
 package decimalsguard
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -285,6 +288,40 @@ func TestReconcile_DisabledWithoutReconciler(t *testing.T) {
 	}
 	if resolver.calls != 0 || writer.calls != 0 {
 		t.Fatalf("reconcile touched the lake/writer without a reconciler: resolver=%d writer=%d", resolver.calls, writer.calls)
+	}
+}
+
+// TestNew_LogsWhenWriterDisarmsReconcile: a non-nil Writer that does not
+// implement DecimalsAssetReconciler (a wrapper that forgot to forward it)
+// disarms the lockstep, and New must say so at ERROR naming the concrete
+// type. A full reconciler and a nil Writer (persistence deliberately off)
+// must stay quiet.
+func TestNew_LogsWhenWriterDisarmsReconcile(t *testing.T) {
+	cases := []struct {
+		name    string
+		writer  DecimalsAssetWriter
+		wantLog bool
+	}{
+		{"writer-only wrapper", &fakeWriter{}, true},
+		{"full reconciler", newFakeStore(), false},
+		{"nil writer", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			g := New(&fakeReader{}, &fakeResolver{decimals: map[string]uint32{}}, Options{Writer: tc.writer, Logger: logger})
+			out := buf.String()
+			logged := strings.Contains(out, "level=ERROR") &&
+				strings.Contains(out, "lockstep reconcile is DISABLED") &&
+				strings.Contains(out, "writer_type=*decimalsguard.fakeWriter")
+			if logged != tc.wantLog {
+				t.Fatalf("disarm ERROR logged=%v want %v; log=%q", logged, tc.wantLog, out)
+			}
+			if armed := g.reconciler != nil; armed != (tc.name == "full reconciler") {
+				t.Fatalf("reconciler armed=%v for %s", armed, tc.name)
+			}
+		})
 	}
 }
 
