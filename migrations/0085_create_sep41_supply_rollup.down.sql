@@ -1,7 +1,11 @@
 -- 0085 down — drop the SEP-41 supply rollup checkpoint.
 --
--- The reader (SEP41KindTotalsAtOrBefore) falls back to the full
--- per-contract aggregate over sep41_supply_events when the rollup is
--- absent, so dropping this table is correctness-safe — it only
--- restores the (slow) pre-0085 read path.
+-- Revert the code FIRST; this down is not safe under a binary that reads
+-- the table. SEP41KindTotalsAtOrBefore falls back to the full per-contract
+-- aggregate over sep41_supply_events only when a contract has no checkpoint
+-- ROW. With the TABLE absent, sep41RollupCheckpoint fails with 42P01
+-- (undefined_table), so every SEP-41 supply read errors, as do the rollup
+-- maintainer (AdvanceSEP41SupplyRollup) and the genesis-baseline writer.
+-- A binary predating 0085 sums sep41_supply_events directly and never
+-- names this table: deploy that binary, then run this down.
 DROP TABLE IF EXISTS sep41_supply_rollup;
