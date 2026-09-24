@@ -58,6 +58,37 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
 )
 
+// SorobanSourceNames lists every source name BuildDispatcher's switch
+// accepts whose decoder lands in the soroban_events catch-all (ADR-0029)
+// — i.e. every case except sdex.SourceName, which routes to opDecoders
+// and the classic trades table instead. Single source of truth for
+// "is this a Soroban-era decoder": internal/ops/ingest's resume-stalled
+// gate uses it to pick soroban_events vs trades[source='sdex'] gap
+// scans, so a case added here without a matching entry here leaves
+// that source's stalled backfill cursors mis-gated (CA2-A19-correct-3).
+// Keep in lockstep with BuildDispatcher's switch.
+var SorobanSourceNames = []string{
+	soroswap.SourceName,
+	aquarius.SourceName,
+	phoenix.SourceName,
+	comet.SourceName,
+	sushiswap_v3.SourceName,
+	upshift.SourceName,
+	reflector.SourceDEX,
+	reflector.SourceCEX,
+	reflector.SourceFX,
+	redstone.SourceName,
+	band.SourceName,
+	soroswap_router.SourceName,
+	defindex.SourceName,
+	blend.SourceName,
+	blend_backstop.SourceName,
+	blend_emitter.SourceName,
+	cctp.SourceName,
+	rozo.SourceName,
+	sorocredit.SourceName,
+}
+
 // BuildDispatcher constructs a dispatcher with decoders registered
 // for every name in `names`. Returns an error on unknown names or
 // when an oracle source is requested without its required contract
