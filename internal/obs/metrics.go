@@ -339,6 +339,7 @@ func registerStorageAndExplorerMetrics() {
 		SDEXOrderBookPendingOffers,
 		SDEXOrderBookUndecodableOffersTotal,
 		ExplorerSWRRefreshTotal, ExplorerSWRRefreshDurationSeconds,
+		ExplorerRefreshGateSaturatedTotal,
 		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal,
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
@@ -5014,6 +5015,21 @@ var ExplorerSWRRefreshTotal = prometheus.NewCounterVec(
 		Help: "Explorer stale-while-revalidate detached refresh outcomes per cache (accounts_wealth|asset_holders|contract_detail|contracts_dir|native_lp_listing|network_throughput|op_type_stats|ops_directory|protocol_bespoke|ttl_liveness × ok|error).",
 	},
 	[]string{"cache", "outcome"},
+)
+
+// ExplorerRefreshGateSaturatedTotal — detached refreshes the shared
+// clickhouse.RefreshGate REFUSED, by class and by which bound tripped
+// (`class` = the per-class half-limit, `global` = the pool-wide limit).
+// A refusal never reaches the SWR counter above (that fires only after a
+// slot is held), and at the API it surfaces as a 503 — so this is the only
+// signal separating an unauthenticated key-churn burst from real capacity
+// pressure. Counts skipped refreshes, not the requests waiting on them.
+var ExplorerRefreshGateSaturatedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_explorer_refresh_gate_saturated_total",
+		Help: "Detached explorer cache refreshes skipped because the shared refresh gate was saturated, by refresh class and the bound that refused (class|global).",
+	},
+	[]string{"class", "bound"},
 )
 
 // ExplorerSWRRefreshDurationSeconds — latency histogram for one
