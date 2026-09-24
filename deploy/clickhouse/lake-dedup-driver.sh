@@ -41,8 +41,8 @@
 # Progress + per-partition before/after row counts land in
 # /var/log/lake-dedup-<table>.log. Every partition logs rows_before,
 # rows_after, and dup_rows_removed — a partition whose counts do not
-# shrink was already clean (the driver skips single-ingest-month
-# partitions up front, so this should be rare).
+# shrink was already clean (the driver skips partitions with zero
+# measured duplicate rows up front, so this should be rare).
 set -uo pipefail
 
 T="${1:?usage: lake-dedup-driver.sh <table> [max_partitions]}"
@@ -76,16 +76,29 @@ require_number() {
 
 log "=== lake-dedup start table=$T max_partitions=$MAXP dry_run=$DRY_RUN ==="
 
-# Partitions holding rows from MORE THAN ONE ingest month are the dup
-# candidates (the two campaigns are a month apart). Single-month
-# partitions are already clean and are skipped without a rewrite.
-# Oldest first: coldest data, and failures surface before the big
-# recent partitions are touched.
+# The table's own ORDER BY key is the real duplicate identity: two rows
+# with the same key are the same ledger row seen twice (once per ingest
+# campaign), whatever their ingested_at happens to be. A months>1 proxy
+# both false-negatives (both campaigns' rows landing in the same
+# calendar month, e.g. a backfill re-run near a month boundary) and
+# false-positives (a partition that legitimately spans two months with
+# no duplicates at all, paying for an OPTIMIZE that finds nothing).
+SORTKEY=$($CH -q "SELECT sorting_key FROM system.tables WHERE database='stellar' AND name='${T}'" < /dev/null)
+sortkey_rc=$?
+if [ "$sortkey_rc" -ne 0 ] || [ -z "$SORTKEY" ]; then
+  log "ABORT: sorting-key lookup FAILED rc=$sortkey_rc sortkey='$SORTKEY' — cannot compute real dup counts"
+  exit 1
+fi
+
+# Partitions where the row count exceeds the distinct-key count actually
+# hold duplicate rows under the table's own ORDER BY — this is a direct
+# measurement, not a proxy. Oldest first: coldest data, and failures
+# surface before the big recent partitions are touched.
 PARTS=$($CH -q "
   SELECT partition FROM (
-    SELECT _partition_id AS partition, uniqExact(toYYYYMM(ingested_at)) AS months
+    SELECT _partition_id AS partition, count() - uniqExact((${SORTKEY})) AS dup_rows
     FROM stellar.${T} GROUP BY partition
-  ) WHERE months > 1 ORDER BY toUInt32OrZero(partition) ASC" < /dev/null)
+  ) WHERE dup_rows > 0 ORDER BY toUInt32OrZero(partition) ASC" < /dev/null)
 enum_rc=$?
 if [ "$enum_rc" -ne 0 ]; then
   log "ABORT: partition-enumeration query FAILED rc=$enum_rc — NOT reporting success on an unknown partition list"

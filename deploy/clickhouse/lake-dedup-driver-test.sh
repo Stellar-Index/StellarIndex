@@ -67,7 +67,14 @@ while [ $# -gt 0 ]; do
 done
 printf '%s\n' "$(printf '%s' "$sql" | tr '\n\t' '  ' | tr -s ' ')" >> "$CH_LOG"
 case "$sql" in
-  *"uniqExact(toYYYYMM"*)
+  *"sorting_key FROM system.tables"*)
+    if [ -n "${SORTKEY_FAIL:-}" ]; then
+      echo "Code: 60. DB::Exception: Table stellar.x does not exist." >&2
+      exit 1
+    fi
+    printf '%s\n' "${SORTKEY_ANSWER:-ledger_seq}"
+    ;;
+  *"dup_rows > 0"*)
     if [ -n "${ENUM_FAIL:-}" ]; then
       echo "Code: 210. DB::NetException: Connection refused." >&2
       exit 1
@@ -126,11 +133,11 @@ run() {
   shift   # the --
   LOG_STMT="$TMP/stmt.$name.log"; : > "$LOG_STMT"
   LOG="$TMP/log.$name"; : > "$LOG"
-  env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE \
+  env -u ENUM_FAIL -u STATS_FAIL -u OPT_FAIL -u AFTER_FAIL -u DF_GARBAGE -u SORTKEY_FAIL \
       PATH="$TMP/bin:$PATH" CH="$TMP/bin/fake-ch" CH_LOG="$LOG_STMT" \
       OUT="$LOG" STOP="$TMP/stop.$name" \
       STATS_BEFORE="$STATS_BEFORE_DEFAULT" ROWS_AFTER=50 DF_AVAIL=1000000000000 \
-      ENUM_PARTS='' \
+      ENUM_PARTS='' SORTKEY_ANSWER='ledger_seq' \
       ${envs[@]+"${envs[@]}"} bash "$DRIVER" "$@" >> "$LOG" 2>&1
   RC=$?
 }
@@ -243,6 +250,40 @@ if grep -q 'dup_removed=60' "$LOG"; then
 else
   bad "two clean candidate partitions ⇒ dup_removed not as expected"
   sed 's/^/       /' "$LOG"
+fi
+
+# ── 5b. sorting-key lookup FAILS ⇒ abort before the candidate query ──
+run sortkey_fail SORTKEY_FAIL=1 -- transactions
+if [ "$RC" -ne 0 ]; then
+  ok "sorting-key lookup failure ⇒ non-zero exit"
+else
+  bad "sorting-key lookup failure ⇒ exited 0"
+  sed 's/^/       /' "$LOG"
+fi
+if grep -q 'dup_rows > 0' "$LOG_STMT"; then
+  bad "sorting-key lookup failure ⇒ candidate query was issued anyway"
+  sed 's/^/       /' "$LOG_STMT"
+else
+  ok "sorting-key lookup failure ⇒ candidate query never issued"
+fi
+
+# ── 5c. the dup-candidate probe uses the table's real ORDER BY key, ──
+# not a toYYYYMM(ingested_at) proxy — a partition spanning two ingest
+# months with zero actual duplicate rows must not be flagged, and one
+# with duplicates inside a single ingest month must be. Both are the
+# same defect (T340/T357): a months-based proxy gets each case wrong.
+run real_dup_probe SORTKEY_ANSWER='ledger_seq, tx_index' ENUM_PARTS=$'0000000003\n' -- transactions
+if grep -q 'uniqExact((ledger_seq, tx_index))' "$LOG_STMT"; then
+  ok "candidate query measures real duplicates via the table's own ORDER BY key"
+else
+  bad "candidate query does not use the table's sorting key"
+  sed 's/^/       /' "$LOG_STMT"
+fi
+if grep -q 'toYYYYMM' "$LOG_STMT"; then
+  bad "candidate query still uses the toYYYYMM(ingested_at) proxy heuristic"
+  sed 's/^/       /' "$LOG_STMT"
+else
+  ok "candidate query no longer relies on the ingest-month proxy"
 fi
 
 # ── 6. the table argument is spliced into SQL: only lake tables pass ──
