@@ -256,10 +256,12 @@ paths:
           description: The lake is reachable — route lake traffic here.
           content:
             application/json:
+              schema: { $ref: "#/components/schemas/LakeHealthEnvelope" }
               example:
                 data:
                   status: ok
                 as_of: '2026-08-21T22:40:00Z'
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
         "503":
           description: |
             The lake is unreachable (`data.status` = `lake-unready`) or
@@ -274,11 +276,13 @@ paths:
             ping error is logged by the API server.
           content:
             application/json:
+              schema: { $ref: "#/components/schemas/LakeHealthEnvelope" }
               example:
                 data:
                   status: lake-unready
                   detail: "clickhouse ping failed — see the API server log for the underlying error"
                 as_of: '2026-08-21T22:40:00Z'
+                flags: { stale: false, reduced_redundancy: false, triangulated: false, divergence_warning: false }
 
   /version:
     get:
@@ -5675,31 +5679,13 @@ paths:
                             required: [contracts, event_kinds]
                             properties:
                               bespoke:
-                                type: object
-                                additionalProperties: true
+                                allOf: [{ $ref: "#/components/schemas/ProtocolBespoke" }]
                                 description: |
-                                  Per-category analytics block (dex / amm /
-                                  lending / yield / oracle / bridge — see
-                                  internal/api/v1/protocols.go ProtocolBespoke).
-                                  Top-level keys vary by protocol category;
-                                  documented as a free-form object because the
-                                  per-category sub-shapes evolve with each
-                                  protocol integration (spec'd loosely on
-                                  purpose, board #33 — x-stability:
+                                  Per-category analytics block. Absent when no bespoke reader is
+                                  wired or the category has none yet. The fixed top-level shape is
+                                  typed; the labels, series names and table titles inside it vary by
+                                  protocol category and evolve with each integration (x-stability:
                                   experimental per ADR-0042 applies).
-
-                                  Shared sub-shapes: `kpis` (label/value/
-                                  unit/hint cards), `series` (named
-                                  {date, value} time-series; values are
-                                  numeric STRINGS — ADR-0003), `tables`
-                                  (title/columns/rows), `notes` (caveat
-                                  lines), and — since 1.15.0 —
-                                  `breakdowns`: named composition datasets
-                                  for donut/pie rendering
-                                  ({title, unit, rows: [{label, value,
-                                  count}]}, value-sorted descending;
-                                  e.g. CCTP's "Inflows by source chain" /
-                                  "Outflows by destination chain").
                               contracts:
                                 type: array
                                 description: |
@@ -10163,8 +10149,8 @@ paths:
                     soroban_event_count: 1105
                     total_coins: '1054439020873472865'
                     fee_pool: '100768724524038'
-                    base_fee: 100
-                    base_reserve: 5000000
+                    base_fee: '100'
+                    base_reserve: '5000000'
                   - sequence: 63316165
                     close_time: '2026-07-03T22:36:56Z'
                     hash: 58aee267a054f990b426f932b5c518151f789da48e76153d9722769b4d7a8b08
@@ -10175,8 +10161,8 @@ paths:
                     soroban_event_count: 708
                     total_coins: '1054439020873472865'
                     fee_pool: '100768720236504'
-                    base_fee: 100
-                    base_reserve: 5000000
+                    base_fee: '100'
+                    base_reserve: '5000000'
                   next_before: 63316165
                 as_of: '2026-07-03T22:37:10.384389772Z'
                 flags:
@@ -10227,8 +10213,8 @@ paths:
                   soroban_event_count: 1105
                   total_coins: '1054439020873472865'
                   fee_pool: '100768724524038'
-                  base_fee: 100
-                  base_reserve: 5000000
+                  base_fee: '100'
+                  base_reserve: '5000000'
                 as_of: '2026-07-03T22:39:59.693177604Z'
                 flags:
                   stale: false
@@ -10275,8 +10261,8 @@ paths:
                     close_time: '2026-07-03T22:37:01Z'
                     index: 0
                     source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
-                    fee_charged: 600
-                    max_fee: 120000
+                    fee_charged: '600'
+                    max_fee: '120000'
                     operation_count: 6
                     successful: false
                     result_code: -1
@@ -10325,8 +10311,8 @@ paths:
                   close_time: '2026-07-03T22:37:01Z'
                   index: 0
                   source_account: GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP
-                  fee_charged: 600
-                  max_fee: 120000
+                  fee_charged: '600'
+                  max_fee: '120000'
                   operation_count: 6
                   successful: false
                   result_code: -1
@@ -11548,8 +11534,8 @@ paths:
                     close_time: '2026-07-03T21:02:29Z'
                     index: 7
                     source_account: GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N
-                    fee_charged: 200
-                    max_fee: 13935
+                    fee_charged: '200'
+                    max_fee: '13935'
                     operation_count: 1
                     successful: true
                     result_code: 1
@@ -12793,8 +12779,8 @@ components:
         soroban_event_count: { type: integer, description: "Contract events emitted by SUCCESSFUL transactions only: a failed transaction's events are rolled back by the protocol, so this count has a different basis from tx_count/op_count." }
         total_coins: { type: string, description: XLM stroops as a string (exceeds 2^53). }
         fee_pool: { type: string }
-        base_fee: { type: integer }
-        base_reserve: { type: integer }
+        base_fee: { type: string, description: "Base fee per operation in stroops, as a decimal string." }
+        base_reserve: { type: string, description: "Base reserve in stroops, as a decimal string." }
     TxSummary:
       type: object
       description: Transaction summary (in ledger + tx listings).
@@ -12804,8 +12790,8 @@ components:
         close_time: { type: string, format: date-time }
         index: { type: integer }
         source_account: { type: string }
-        fee_charged: { type: integer }
-        max_fee: { type: integer, description: "The fee bid that bounds fee_charged: on a fee bump, the fee payer's bid (the inner transaction's is fee_bump.inner_max_fee)." }
+        fee_charged: { type: string, description: "Fee charged in stroops, as a decimal string." }
+        max_fee: { type: string, description: "The fee bid that bounds fee_charged, as a decimal string: on a fee bump, the fee payer's bid (the inner transaction's is fee_bump.inner_max_fee)." }
         operation_count: { type: integer }
         successful: { type: boolean, description: "Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record)." }
         result_code: { type: integer, description: Raw XDR TransactionResultCode (0 = success; negatives are failure reasons). }
@@ -12833,7 +12819,7 @@ components:
           properties:
             fee_account: { type: string, description: The account that paid the fee. }
             inner_hash: { type: string, description: "The inner transaction's hash. Omitted when the result carried no inner result pair." }
-            inner_max_fee: { type: integer, description: "The inner transaction's own fee bid." }
+            inner_max_fee: { type: string, description: "The inner transaction's own fee bid, in stroops, as a decimal string." }
             inner_result_code: { type: integer, description: "Raw XDR TransactionResultCode of the inner transaction. Present with inner_hash." }
             inner_result: { type: string, description: "Human-readable slug for inner_result_code (e.g. tx_failed, tx_insufficient_balance) — why the inner transaction failed. Present with inner_hash." }
     Operation:
@@ -14329,6 +14315,97 @@ components:
 
     # One protocol-directory row (/protocols and the base of
     # /protocols/{name}'s detail view).
+    ProtocolBespoke:
+      type: object
+      description: |
+        Per-category protocol analytics (`GET /v1/protocols/{name}`
+        `data.bespoke`). Every value the server renders is a STRING it
+        formatted itself; numeric values are decimal strings (ADR-0003).
+      properties:
+        category:
+          type: string
+          description: Metric family, e.g. `dex`, `lending`, `yield`, `oracle`, `bridge`.
+        kpis:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeKPI" }
+        series:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeSeries" }
+        breakdowns:
+          type: array
+          description: Named composition datasets for donut/pie rendering, value-sorted descending.
+          items: { $ref: "#/components/schemas/BespokeBreakdown" }
+        tables:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeTable" }
+        notes:
+          type: array
+          description: Caveat / provenance lines rendered under the block.
+          items: { type: string }
+      required: [category]
+
+    BespokeKPI:
+      type: object
+      description: One headline metric card. `value` is pre-formatted; `unit` is advisory.
+      properties:
+        label: { type: string }
+        value: { type: string }
+        unit:  { type: string }
+        hint:  { type: string }
+      required: [label, value]
+
+    BespokeSeries:
+      type: object
+      description: A named time-series for a chart.
+      properties:
+        name:   { type: string }
+        unit:   { type: string }
+        points:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeSeriesPoint" }
+      required: [name, points]
+
+    BespokeSeriesPoint:
+      type: object
+      properties:
+        date:  { type: string }
+        value: { type: string, description: "Decimal string (ADR-0003)." }
+      required: [date, value]
+
+    BespokeBreakdown:
+      type: object
+      description: A named composition dataset, window-scoped.
+      properties:
+        title: { type: string }
+        unit:  { type: string }
+        rows:
+          type: array
+          items: { $ref: "#/components/schemas/BespokeBreakdownRow" }
+      required: [title, rows]
+
+    BespokeBreakdownRow:
+      type: object
+      properties:
+        label: { type: string }
+        value: { type: string, description: "Decimal string (ADR-0003)." }
+        count: { type: integer, format: int64, description: "Contributing transfers/events." }
+      required: [label, value, count]
+
+    BespokeTable:
+      type: object
+      description: A named top-N table; the server formats every cell.
+      properties:
+        title:   { type: string }
+        columns:
+          type: array
+          items: { type: string }
+        rows:
+          type: array
+          items:
+            type: array
+            items: { type: string }
+      required: [title, columns, rows]
+
     ProtocolRow:
       type: object
       required:
@@ -16990,6 +17067,30 @@ components:
             data: { $ref: "#/components/schemas/ReadyResponse" }
           required: [data]
 
+    # /livez/lake body (enveloped). See server.go computeLivezLake.
+    LakeHealth:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, lake-unready, lake-absent]
+          description: |
+            `ok` (HTTP 200) when the ClickHouse checker pinged;
+            `lake-unready` (503) when the ping failed; `lake-absent`
+            (503) when no lake is wired.
+        detail:
+          type: string
+          description: Fixed operator hint; present only on a 503. Never the driver error.
+      required: [status]
+
+    LakeHealthEnvelope:
+      allOf:
+        - { $ref: "#/components/schemas/EnvelopeMeta" }
+        - type: object
+          properties:
+            data: { $ref: "#/components/schemas/LakeHealth" }
+          required: [data]
+
     VersionResponse:
       allOf:
         - { $ref: "#/components/schemas/EnvelopeMeta" }
@@ -19027,13 +19128,11 @@ components:
       type: object
       properties:
         user:
-          type: object
-          additionalProperties: true
-          description: "Magic-link session caller's user info (id, email, display_name, role, is_staff, …) — present on cookie-session /v1/account/me responses only (account.go AccountUser)."
+          allOf: [{ $ref: "#/components/schemas/AccountUser" }]
+          description: "Magic-link session caller's user info — present on cookie-session /v1/account/me responses only."
         account:
-          type: object
-          additionalProperties: true
-          description: "Session caller's parent account (id, name, slug, tier, status, rate_limit_per_min, monthly_request_quota) — present on cookie-session responses only (account.go AccountInfo). `rate_limit_per_min` / `monthly_request_quota` are what auth enforces on a key minted without explicit limits, account overrides included; limits are per key, and neither is the tier's plan ceiling."
+          allOf: [{ $ref: "#/components/schemas/AccountInfo" }]
+          description: "Session caller's parent account — present on cookie-session responses only."
         key_id:           { type: string }
         label:            { type: string }
         key_prefix:
@@ -19055,6 +19154,52 @@ components:
             endpoints; never issued to a public caller.
         rate_limit_per_min: { type: integer }
         created_at:       { type: string, format: date-time }
+
+    AccountUser:
+      type: object
+      description: The magic-link session caller (a dashboard user).
+      properties:
+        id:           { type: string, format: uuid }
+        email:        { type: string }
+        display_name: { type: string }
+        role:
+          type: string
+          enum: [owner, admin, billing, member, viewer]
+          description: The user's role on the parent account.
+        is_staff:     { type: boolean, description: "Operator staff flag — gates the staff dashboard." }
+        email_verified_at: { type: string, format: date-time }
+        last_login_at:     { type: string, format: date-time }
+      required: [id, email, is_staff]
+
+    AccountInfo:
+      type: object
+      description: The session caller's parent account.
+      properties:
+        id:     { type: string, format: uuid }
+        name:   { type: string }
+        slug:   { type: string }
+        tier:
+          type: string
+          description: |
+            The stored account tier: `free` or `partner`, or a legacy
+            pre-free-platform value (`starter`, `pro`, `business`,
+            `enterprise`) still present on older rows.
+        status: { type: string, enum: [active, suspended, closed] }
+        rate_limit_per_min:
+          type: integer
+          description: |
+            Per-minute limit auth enforces on a key minted at the
+            dashboard defaults, account override included — not the
+            tier ceiling. Limits are per key; an explicitly budgeted
+            key can differ.
+        monthly_request_quota:
+          type: integer
+          format: int64
+          description: |
+            Monthly quota auth enforces on a key minted at the
+            dashboard defaults, account override included (0 =
+            unmetered).
+      required: [id]
 
     AccountEnvelope:
       allOf:
@@ -19093,9 +19238,12 @@ components:
             4xx-except-429 responses. 429s and platform-caused 5xx
             never consume quota (an outage on our side must not use
             up the quota you paid for); both are still reported
-            under `throttled` / `errors`. Same meaning on both
-            response shapes: summed over the current UTC month it is
-            the `month_to_date` a monthly-quota 429 reports.
+            under `throttled` / `errors`. The exception is a request
+            whose read ran out its server-side time budget (a
+            `…-timeout` 503 after the query ran): it is billed like
+            a served request. Same meaning on both response shapes:
+            summed over the current UTC month it is the
+            `month_to_date` a monthly-quota 429 reports.
         errors:
           type: integer
           description: 4xx (excluding 429) + 5xx responses.
@@ -19117,34 +19265,36 @@ components:
               items: { $ref: "#/components/schemas/UsageRow" }
           required: [data]
 
+    KeyCreated:
+      type: object
+      properties:
+        key_id:     { type: string }
+        plaintext:  { type: string, description: "Shown once. Store it now." }
+        key_prefix:
+          type: string
+          description: |
+            First 12 characters of the plaintext (e.g.
+            `sip_4f9c1d8b`). Safe to display in logs and
+            dashboards; customers use it to identify
+            which key matches a row in their secret
+            manager. Same value also returned by GET
+            `/v1/account/keys`.
+        label:      { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+          description: |
+            Capability scopes the key was minted with.
+            Absent/empty = full access (the pre-scopes
+            posture).
+      required: [key_id, plaintext, label]
+
     KeyCreatedEnvelope:
       allOf:
         - { $ref: "#/components/schemas/EnvelopeMeta" }
         - type: object
           properties:
-            data:
-              type: object
-              properties:
-                key_id:     { type: string }
-                plaintext:  { type: string, description: "Shown once. Store it now." }
-                key_prefix:
-                  type: string
-                  description: |
-                    First 12 characters of the plaintext (e.g.
-                    `sip_4f9c1d8b`). Safe to display in logs and
-                    dashboards; customers use it to identify
-                    which key matches a row in their secret
-                    manager. Same value also returned by GET
-                    `/v1/account/keys`.
-                label:      { type: string }
-                scopes:
-                  type: array
-                  items: { type: string }
-                  description: |
-                    Capability scopes the key was minted with.
-                    Absent/empty = full access (the pre-scopes
-                    posture).
-              required: [key_id, plaintext, label]
+            data: { $ref: "#/components/schemas/KeyCreated" }
           required: [data]
 
     AdminAccountView:
