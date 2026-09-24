@@ -78,6 +78,19 @@
       Set the vault entry before production.
   when: alertmanager_pagerduty_key | default('') | length == 0
 
+- name: warn when prometheus/alertmanager basic auth is unset (T643)
+  debug:
+    msg: >-
+      WARNING: prometheus_basic_auth_password_hash and/or
+      alertmanager_basic_auth_password_hash are empty — 9090/9093 are
+      reachable, unauthenticated, from anything in
+      prometheus_internal_cidrs (the firewall is the only control).
+      Set a vault-supplied bcrypt hash (`htpasswd -nBC 10 operator`)
+      before production.
+  when:
+    - prometheus_basic_auth_password_hash | default('') | length == 0
+      or alertmanager_basic_auth_password_hash | default('') | length == 0
+
 - name: warn when no Discord chat-fanout webhook is set
   debug:
     msg: >-

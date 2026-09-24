@@ -28,6 +28,19 @@ prometheus_retention_size: "0"   # 0 = no size limit; time-based eviction only
 # blocks public; SSH bypasses the firewall.
 prometheus_listen: "0.0.0.0:9090"
 alertmanager_listen: "0.0.0.0:9093"
+
+# T643: the firewall (06-firewall.yml, @internal_v4/@internal_v6) was the
+# ONLY control on 9090/9093 — anything inside prometheus_internal_cidrs
+# reached both with no credentials. Optional basic auth, layered on top
+# of (not instead of) the firewall. Vault-supplied bcrypt hash, e.g.
+# `htpasswd -nBC 10 operator`. Empty = preflight WARN, unauthenticated
+# (today's behaviour, unchanged) — matches the alertmanager_pagerduty_key
+# / discord webhook pattern below: a missing credential degrades, it
+# doesn't block the apply.
+prometheus_basic_auth_username: "operator"
+prometheus_basic_auth_password_hash: ""
+alertmanager_basic_auth_username: "operator"
+alertmanager_basic_auth_password_hash: ""
 # Cluster gossip between AlertManager peers. Bound to the host's
 # private IP (must be reachable from the peer).
 alertmanager_cluster_listen_port: 9094

@@ -1,4 +1,24 @@
 ---
+# T643: opt-in basic auth in front of the 0.0.0.0 listener, layered on
+# the firewall. No-op (file absent, flag unwired below) when
+# alertmanager_basic_auth_password_hash is unset.
+- name: render /etc/alertmanager/web-config.yml (basic auth)
+  template:
+    src: alertmanager-web-config.yml.j2
+    dest: /etc/alertmanager/web-config.yml
+    owner: root
+    group: "{{ alertmanager_user }}"
+    mode: "0640"
+  when: alertmanager_basic_auth_password_hash | length > 0
+  notify: "alertmanager config changed"
+
+- name: remove /etc/alertmanager/web-config.yml when basic auth is unset
+  file:
+    path: /etc/alertmanager/web-config.yml
+    state: absent
+  when: alertmanager_basic_auth_password_hash | length == 0
+  notify: "alertmanager config changed"
+
 - name: render /etc/alertmanager/alertmanager.yml
   template:
     src: alertmanager.yml.j2

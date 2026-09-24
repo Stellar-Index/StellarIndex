@@ -3,6 +3,26 @@
 # deploy/monitoring/rules/. Uses promtool to validate the
 # rendered config before reload — a malformed render never lands.
 
+# T643: opt-in basic auth in front of the 0.0.0.0 listener, layered on
+# the firewall. No-op (file absent, flag unwired below) when
+# prometheus_basic_auth_password_hash is unset.
+- name: render /etc/prometheus/web-config.yml (basic auth)
+  template:
+    src: prometheus-web-config.yml.j2
+    dest: /etc/prometheus/web-config.yml
+    owner: root
+    group: "{{ prometheus_user }}"
+    mode: "0640"
+  when: prometheus_basic_auth_password_hash | length > 0
+  notify: "prometheus config changed"
+
+- name: remove /etc/prometheus/web-config.yml when basic auth is unset
+  file:
+    path: /etc/prometheus/web-config.yml
+    state: absent
+  when: prometheus_basic_auth_password_hash | length == 0
+  notify: "prometheus config changed"
+
 - name: render /etc/prometheus/prometheus.yml
   template:
     src: prometheus.yml.j2

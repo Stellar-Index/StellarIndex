@@ -1,0 +1,5 @@
+{# Render-time — managed by ansible (prometheus role). #}
+# Alertmanager --web.config.file (T643). Only rendered/wired when
+# alertmanager_basic_auth_password_hash is set — see defaults/main.yml.
+basic_auth_users:
+  {{ alertmanager_basic_auth_username }}: {{ alertmanager_basic_auth_password_hash }}

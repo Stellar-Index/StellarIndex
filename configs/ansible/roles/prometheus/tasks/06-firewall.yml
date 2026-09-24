@@ -52,6 +52,32 @@
           }
         }
 
+        # SL13: IPv6 CIDRs were silently filtered out of the v4-only sets
+        # above and never placed in any set, so an operator adding an
+        # IPv6 CIDR to prometheus_internal_cidrs/prometheus_allowed_ssh_cidrs
+        # got no error and no rule — the entry just vanished. Mirror both
+        # sets for v6; empty is valid nftables and is today's default
+        # (no v6 CIDRs configured).
+        set internal_v6 {
+          type ipv6_addr
+          flags interval
+          elements = {
+      {% for cidr in prometheus_internal_cidrs if ':' in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+          }
+        }
+
+        set ssh_allowed_v6 {
+          type ipv6_addr
+          flags interval
+          elements = {
+      {% for cidr in prometheus_allowed_ssh_cidrs if ':' in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+          }
+        }
+
         chain input {
           type filter hook input priority filter; policy drop;
 
@@ -64,11 +90,14 @@
           ip6 nexthdr ipv6-icmp limit rate 10/second accept
 
           tcp dport 22 ip saddr @ssh_allowed_v4 ct state new limit rate 30/minute accept comment "ssh"
+          tcp dport 22 ip6 saddr @ssh_allowed_v6 ct state new limit rate 30/minute accept comment "ssh-v6"
 
           # Prometheus + Alertmanager API + gossip (TCP).
           tcp dport { 9090, 9093, {{ alertmanager_cluster_listen_port }} } ip saddr @internal_v4 accept comment "prometheus-stack-tcp"
+          tcp dport { 9090, 9093, {{ alertmanager_cluster_listen_port }} } ip6 saddr @internal_v6 accept comment "prometheus-stack-tcp-v6"
           # Alertmanager cluster gossip (UDP).
           udp dport {{ alertmanager_cluster_listen_port }} ip saddr @internal_v4 accept comment "alertmanager-cluster-udp"
+          udp dport {{ alertmanager_cluster_listen_port }} ip6 saddr @internal_v6 accept comment "alertmanager-cluster-udp-v6"
 
           limit rate 1/second log prefix "nft-drop: " flags all
         }
