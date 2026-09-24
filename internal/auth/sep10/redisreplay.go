@@ -11,24 +11,29 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
 )
 
-// RedisReplayGuard is the production [ReplayGuard] backed by Redis
-// SETNX with TTL. Each successfully-verified SEP-10 challenge tx
-// hash claims a key for the remaining challenge-window lifetime;
-// a second submission of the same signed XDR finds the key already
-// present and returns [auth.ErrUnauthorized].
+// RedisReplayGuard is the production [ReplayGuard]. [Validator.Challenge]
+// reserves each issued challenge transaction's hash and
+// [Validator.Verify] spends it with an atomic DEL, so a challenge mints
+// at most one JWT; a second submission of the same signed XDR finds no
+// reservation and returns [auth.ErrUnauthorized].
 //
-// F-1224 (audit-2026-05-12). The 15-min default ChallengeTTL means
-// the dedupe key set is bounded at ~ ChallengeTTL × max-verify-rate,
-// which on R1 is well under 1 MB even at 1k verifies/sec.
+// Eviction hardening: R1 runs `maxmemory-policy allkeys-lru`, which can
+// evict ANY key before its TTL. A SETNX spent-marker fails OPEN under
+// that — an evicted marker lets a captured XDR re-claim the slot and
+// mint a second JWT. Requiring the reservation to be PRESENT makes an
+// eviction refuse the redemption instead (the same protocol as
+// [auth.RedisPasskeyCeremonyGuard.Reserve] / ClaimReserved).
 //
-// Cache key prefix:
+// Cache key:
 //
-//	sep10:seen:<hex transaction hash>
+//	sep10:seen:live:<hex transaction hash>
 //
 // The suffix is the challenge TRANSACTION's canonical hash (see
 // [challengeTxHash]), never a digest of the caller-supplied XDR string:
 // the same transaction has many valid spellings, and keying on the
 // spelling let one redemption be replayed by re-encoding it (CON-05).
+// The key stays under the `sep10:seen:` prefix the Redis ACL allow-list
+// (configs/ansible/roles/redis-sentinel/templates/users.acl.j2) grants.
 //
 // Owned by this file rather than internal/cachekeys/ because the
 // SEP-10 replay set is conceptually an auth concern, not a price-
@@ -45,18 +50,31 @@ func NewRedisReplayGuard(rdb redis.UniversalClient) *RedisReplayGuard {
 	return &RedisReplayGuard{rdb: rdb}
 }
 
-// MarkSeenIfFresh claims the dedupe slot for txHash. Returns
-// [auth.ErrUnauthorized] when the slot is already taken (replay).
-// Other Redis errors propagate as-is so callers can distinguish
-// "rejected as replay" from "couldn't reach Redis to check".
-func (g *RedisReplayGuard) MarkSeenIfFresh(ctx context.Context, txHash string, ttl time.Duration) error {
+// Reserve records at challenge issuance that txHash is live and
+// redeemable once. A pre-existing reservation (SETNX false) cannot be a
+// collision — every challenge carries a random nonce — so it is not an
+// error. Redis errors propagate so issuance fails closed.
+func (g *RedisReplayGuard) Reserve(ctx context.Context, txHash string, ttl time.Duration) error {
 	key := redisReplayKey(txHash)
-	ok, err := g.rdb.SetNX(ctx, key, "1", ttl).Result()
-	if err != nil {
+	if _, err := g.rdb.SetNX(ctx, key, "1", ttl).Result(); err != nil {
 		return fmt.Errorf("sep10 replay-guard: SETNX %s: %w", key, err)
 	}
-	if !ok {
-		return fmt.Errorf("%w: challenge already redeemed", auth.ErrUnauthorized)
+	return nil
+}
+
+// Claim spends the reservation for txHash. It returns
+// [auth.ErrUnauthorized] when the reservation is absent for any reason
+// — already redeemed, never issued, expired or evicted — and propagates
+// other Redis errors so callers can tell "refused" from "couldn't
+// check". DEL is atomic, so concurrent submissions yield one claimant.
+func (g *RedisReplayGuard) Claim(ctx context.Context, txHash string) error {
+	key := redisReplayKey(txHash)
+	removed, err := g.rdb.Del(ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("sep10 replay-guard: DEL %s: %w", key, err)
+	}
+	if removed != 1 {
+		return fmt.Errorf("%w: challenge not reserved or already redeemed", auth.ErrUnauthorized)
 	}
 	return nil
 }
@@ -65,7 +83,7 @@ func (g *RedisReplayGuard) MarkSeenIfFresh(ctx context.Context, txHash string, t
 // challenge tx. Sole-builder pattern matches the cachekeys/
 // convention; tests can compare keys without re-deriving.
 func redisReplayKey(txHash string) string {
-	return "sep10:seen:" + txHash
+	return "sep10:seen:live:" + txHash
 }
 
 // Compile-time interface conformance check.

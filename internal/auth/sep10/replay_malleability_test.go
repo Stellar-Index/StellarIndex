@@ -21,6 +21,14 @@ import (
 // replay guard (miniredis), the production configuration for SEP-10 auth.
 func newReplayValidator(t *testing.T) (*sep10.Validator, *keypair.Full) {
 	t.Helper()
+	v, server, _ := newReplayValidatorWithRedis(t)
+	return v, server
+}
+
+// newReplayValidatorWithRedis is [newReplayValidator] that also hands
+// back the miniredis instance so a test can simulate key eviction.
+func newReplayValidatorWithRedis(t *testing.T) (*sep10.Validator, *keypair.Full, *miniredis.Miniredis) {
+	t.Helper()
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rdb.Close() })
@@ -42,7 +50,7 @@ func newReplayValidator(t *testing.T) (*sep10.Validator, *keypair.Full) {
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
 	}
-	return v, server
+	return v, server, mr
 }
 
 // TestVerify_ReplayGuard_RejectsSecondRedemption pins the F-1224
@@ -65,6 +73,52 @@ func TestVerify_ReplayGuard_RejectsSecondRedemption(t *testing.T) {
 	if _, err := v.Verify(ctx, signedXDR); !errors.Is(err, auth.ErrUnauthorized) {
 		t.Fatalf("second redemption: want auth.ErrUnauthorized, got %v", err)
 	}
+}
+
+// TestVerify_ReplayGuard_EvictedMarkerFailsClosed is the Q184
+// regression. R1's Redis runs `maxmemory-policy allkeys-lru`, which can
+// evict ANY key before its TTL. With a bare SETNX spent-marker, an
+// evicted marker re-opens the slot: a captured signed XDR replayed after
+// the eviction finds it free and mints a second JWT. The guard must
+// instead require a marker reserved at challenge issuance, so an
+// eviction refuses the redemption rather than re-admitting a replay.
+func TestVerify_ReplayGuard_EvictedMarkerFailsClosed(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("replay after eviction of the spent state is refused", func(t *testing.T) {
+		v, _, mr := newReplayValidatorWithRedis(t)
+		client, _ := keypair.Random()
+		ch, err := v.Challenge(ctx, client.Address())
+		if err != nil {
+			t.Fatalf("Challenge: %v", err)
+		}
+		signedXDR := signChallenge(t, ch.TransactionXDR, client)
+		if _, err := v.Verify(ctx, signedXDR); err != nil {
+			t.Fatalf("first redemption: %v", err)
+		}
+
+		mr.FlushAll() // allkeys-lru evicts every replay-guard key
+
+		if _, err := v.Verify(ctx, signedXDR); !errors.Is(err, auth.ErrUnauthorized) {
+			t.Fatalf("replay after eviction: want auth.ErrUnauthorized, got %v", err)
+		}
+	})
+
+	t.Run("eviction before redemption refuses rather than admits", func(t *testing.T) {
+		v, _, mr := newReplayValidatorWithRedis(t)
+		client, _ := keypair.Random()
+		ch, err := v.Challenge(ctx, client.Address())
+		if err != nil {
+			t.Fatalf("Challenge: %v", err)
+		}
+		signedXDR := signChallenge(t, ch.TransactionXDR, client)
+
+		mr.FlushAll()
+
+		if _, err := v.Verify(ctx, signedXDR); !errors.Is(err, auth.ErrUnauthorized) {
+			t.Fatalf("redemption of an unreserved challenge: want auth.ErrUnauthorized, got %v", err)
+		}
+	})
 }
 
 // reorderSignatures re-serialises signedXDR with its two decorated
