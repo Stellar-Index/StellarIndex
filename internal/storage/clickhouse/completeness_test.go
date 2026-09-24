@@ -101,6 +101,36 @@ func TestWatermark(t *testing.T) {
 	}
 }
 
+// TestSubstrateCountIntact pins FINDING CA2-A14: SubstrateProblem's endpoint
+// guard only tested `present > 0`, so a hole covering BOTH overlap ledgers of
+// a window seam (e.g. from=2, substrateWindow=5_000_000, ledgers 5_000_001
+// and 5_000_002 missing) sits outside every window's local gap/chain scan —
+// window 1 ends its present set at 5_000_000 (no interior gap), window 2's
+// first present row is 5_000_003 with an empty prior_hash (filtered out of
+// chainQ) — and both endpoint guards pass (haveMin=from, haveMax=to). The
+// fix compares the exact uniqExact `present` count (already computed) against
+// the full range size instead of merely testing it is nonzero.
+func TestSubstrateCountIntact(t *testing.T) {
+	const from, to = uint32(2), uint32(10_000_002)
+	full := uint64(to) - uint64(from) + 1
+
+	// The exact failure scenario: two missing ledgers straddling the window 1
+	// / window 2 seam at 5_000_001..5_000_002. Pre-fix, SubstrateProblem only
+	// checked `present > 0`, which is true here — a real hole reads as intact.
+	if substrateCountIntact(from, to, full-2) {
+		t.Fatalf("substrateCountIntact(present=%d, full=%d) = true, want false — a seam-straddling hole must not read as intact", full-2, full)
+	}
+	// The old check's own truth value stays true for this exact input — the
+	// defect was believing THAT signal instead of the exact count.
+	if !(full-2 > 0) {
+		t.Fatalf("test setup: present>0 must hold for this scenario (that's exactly what let the hole through pre-fix)")
+	}
+
+	if !substrateCountIntact(from, to, full) {
+		t.Fatalf("substrateCountIntact(present=%d, full=%d) = false, want true — a fully-present range must be intact", full, full)
+	}
+}
+
 // TestSubstrateHeadProblem pins the F1 consumer fail-open fix: the coverage
 // verdict must return a problem ledger that keeps the per-source consumer's
 // `problem < genesis ⟹ source-OK` test correct. Empty ⟹ tip (so every source

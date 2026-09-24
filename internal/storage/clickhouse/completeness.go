@@ -334,7 +334,54 @@ func SubstrateProblem(ctx context.Context, addr string, from, to uint32) (proble
 	if haveMax < uint64(to) {
 		return to, true, fmt.Sprintf("substrate: missing tail ledger(s) — last present is %d, expected %d", haveMax, to), nil
 	}
+	// Total-count guard (CA2-A14): consecutive windows share exactly one
+	// overlap ledger at each seam ([wlo-1,whi] then [whi-1,...]), so a hole
+	// spanning BOTH of a seam's overlap ledgers has no present ledger on
+	// either side of it in ANY window — gapQ and chainQ are structurally
+	// blind to it, and so is a two-ledger-partition drop that happens to land
+	// on a seam. `present` (uniqExact over the whole range) was already
+	// computed for the head guard above; it only had to be compared against
+	// the full range size instead of `present > 0`.
+	if !substrateCountIntact(from, to, present) {
+		return substrateLocateHole(ctx, addr, from, to)
+	}
 	return 0, false, "", nil
+}
+
+// substrateCountIntact is the pure total-count decision for the guard above.
+// Unit-testable without a live lake, matching substrateHeadProblem/watermark.
+func substrateCountIntact(from, to uint32, present uint64) bool {
+	return present == uint64(to)-uint64(from)+1
+}
+
+// substrateLocateHole pinpoints the first missing ledger once
+// substrateCountIntact has already proven a hole exists that the windowed
+// gap/chain scan did not find (the seam-straddling case). It tiles [from,to]
+// into non-overlapping substrateWindow-sized spans — existence, not the hash
+// link, is all that's needed here — and asks QueryMissingLedgerSeqs (bounded
+// per tile, same cost shape as the rest of this file) for the first tile with
+// a deficit.
+func substrateLocateHole(ctx context.Context, addr string, from, to uint32) (problem uint32, hasProblem bool, detail string, err error) {
+	werr := forEachLedgerWindow(from, to, substrateWindow, func(lo, hi uint32) error {
+		if hasProblem {
+			return nil
+		}
+		missing, merr := QueryMissingLedgerSeqs(ctx, addr, lo, hi)
+		if merr != nil {
+			return merr
+		}
+		if len(missing) > 0 {
+			problem, hasProblem = missing[0], true
+		}
+		return nil
+	})
+	if werr != nil {
+		return 0, false, "", werr
+	}
+	if !hasProblem {
+		return 0, false, "", fmt.Errorf("clickhouse: substrate presence count mismatch in [%d,%d] but no missing ledger located", from, to)
+	}
+	return problem, true, fmt.Sprintf("substrate: missing ledger at %d (window-seam hole)", problem), nil
 }
 
 // substrateHeadProblem is the pure low-ledger coverage decision for
