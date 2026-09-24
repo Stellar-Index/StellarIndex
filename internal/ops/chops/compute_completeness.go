@@ -2228,6 +2228,7 @@ func decodeContractCallTree(
 			Args:              call.Args,
 			CallPath:          call.CallPath,
 			CallPathContracts: call.CallPathContracts,
+			AuthOccurrence:    call.AuthOccurrence,
 		})
 		if derr != nil {
 			blind.Undecodable(op.Ledger)

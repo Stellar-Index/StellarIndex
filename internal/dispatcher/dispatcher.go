@@ -271,6 +271,13 @@ type ContractCallContext struct {
 	// identity enrichment that lets a decoder record WHO wrapped the
 	// call, not just at what tree depth.
 	CallPathContracts []string
+	// AuthOccurrence is how many byte-identical calls (same contract,
+	// function, args) precede this one in the SAME auth entry: 0 for the
+	// first. Each node of one entry authorizes its own execution, so a
+	// second identical node is a second call; the same call repeated in a
+	// DIFFERENT entry (co-signing) keeps its ordinal and stays a duplicate.
+	// A decoder keying rows on call content adds this to tell them apart.
+	AuthOccurrence int
 	// ExecutionCorroborated reports whether this routed invocation is
 	// backed by ACTUAL execution, not merely DECLARED in the
 	// attacker-controlled Soroban auth tree. It is true iff the call
@@ -993,6 +1000,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 						OpIndex:               opIdx,
 						CallPath:              call.CallPath,
 						CallPathContracts:     call.CallPathContracts,
+						AuthOccurrence:        call.AuthOccurrence,
 						ContractID:            call.ContractID,
 						FunctionName:          call.FunctionName,
 						Args:                  call.Args,
@@ -1730,6 +1738,8 @@ type invokeCall struct {
 	// Always length >= 1 (this call's own ContractID is always the
 	// last element) when non-nil.
 	CallPathContracts []string
+	// AuthOccurrence — see ContractCallContext.AuthOccurrence.
+	AuthOccurrence int
 }
 
 // buildInvokeCallFromArgs projects an [xdr.InvokeContractArgs]
@@ -1882,13 +1892,13 @@ func walkAuthEntries(auth []xdr.SorobanAuthorizationEntry, top *invokeCall) []*i
 				// No top-level call to root under (create-contract host
 				// function, or an unrenderable contract address). Walk
 				// the entries as their own roots — the pre-#48 shape.
-				walkAuthTree(&auth[j].RootInvocation, nil, nil, &calls)
+				walkAuthEntry(&auth[j].RootInvocation, nil, nil, &calls)
 				continue
 			}
 			// The auth roots are NESTED calls: the top-level call needed
 			// no auth of its own. Re-root them under it so nothing but
 			// the real root carries CallPath [] (C2-060).
-			walkAuthTree(&auth[j].RootInvocation, []int{j}, top.CallPathContracts, &calls)
+			walkAuthEntry(&auth[j].RootInvocation, []int{j}, top.CallPathContracts, &calls)
 		}
 		if top != nil {
 			calls = append([]*invokeCall{top}, calls...)
@@ -1898,7 +1908,7 @@ func walkAuthEntries(auth []xdr.SorobanAuthorizationEntry, top *invokeCall) []*i
 
 	// One entry IS the top-level call: walk it as the root so it and its
 	// authorized subtree carry their true paths.
-	walkAuthTree(&auth[topIdx].RootInvocation, nil, nil, &calls)
+	walkAuthEntry(&auth[topIdx].RootInvocation, nil, nil, &calls)
 
 	// Every other entry is a separately-authorized subtree whose real
 	// sub-invocation index the auth tree does not carry. Re-root them
@@ -1910,10 +1920,25 @@ func walkAuthEntries(auth []xdr.SorobanAuthorizationEntry, top *invokeCall) []*i
 		if j == topIdx {
 			continue
 		}
-		walkAuthTree(&auth[j].RootInvocation, []int{next}, top.CallPathContracts, &calls)
+		walkAuthEntry(&auth[j].RootInvocation, []int{next}, top.CallPathContracts, &calls)
 		next++
 	}
 	return calls
+}
+
+// walkAuthEntry walks one auth entry's tree onto out and numbers each
+// call's AuthOccurrence among that entry's calls only.
+func walkAuthEntry(root *xdr.SorobanAuthorizedInvocation, path []int, ancestorChain []string, out *[]*invokeCall) {
+	start := len(*out)
+	walkAuthTree(root, path, ancestorChain, out)
+	entry := (*out)[start:]
+	for i, c := range entry {
+		for _, prev := range entry[:i] {
+			if sameInvocation(prev, c) {
+				c.AuthOccurrence++
+			}
+		}
+	}
 }
 
 // containsCall reports whether calls already holds the same invocation as
@@ -1923,24 +1948,25 @@ func walkAuthEntries(auth []xdr.SorobanAuthorizationEntry, top *invokeCall) []*i
 // would double every downstream decode (C2-060).
 func containsCall(calls []*invokeCall, c *invokeCall) bool {
 	for _, existing := range calls {
-		if existing.ContractID != c.ContractID || existing.FunctionName != c.FunctionName {
-			continue
-		}
-		if len(existing.Args) != len(c.Args) {
-			continue
-		}
-		same := true
-		for i := range existing.Args {
-			if existing.Args[i] != c.Args[i] {
-				same = false
-				break
-			}
-		}
-		if same {
+		if sameInvocation(existing, c) {
 			return true
 		}
 	}
 	return false
+}
+
+// sameInvocation reports whether a and b invoke the same contract and
+// function with the same argument encoding, regardless of tree position.
+func sameInvocation(a, b *invokeCall) bool {
+	if a.ContractID != b.ContractID || a.FunctionName != b.FunctionName || len(a.Args) != len(b.Args) {
+		return false
+	}
+	for i := range a.Args {
+		if a.Args[i] != b.Args[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // extractInvokeContractCallTrees returns, per operation, the full
@@ -1982,8 +2008,10 @@ func containsCall(calls []*invokeCall, c *invokeCall) bool {
 //
 // Multiple auth entries (rare; co-signed multi-user txs) are walked
 // independently. Duplicate calls across entries are accepted at this
-// layer — dispatch-side dedup is the consumer's concern via the
-// CallPath identifier.
+// layer — dispatch-side dedup is the consumer's concern. AuthOccurrence
+// is what lets a content-keyed consumer tell a second identical call in
+// one entry (a real execution) from the same call re-listed by another
+// entry (a duplicate).
 func extractInvokeContractCallTrees(ops []xdr.Operation) [][]*invokeCall { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
 	if len(ops) == 0 {
 		return nil

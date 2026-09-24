@@ -23,6 +23,8 @@ type ContractCall struct {
 	// see ContractCallContext.CallPathContracts. Always ends in
 	// ContractID.
 	CallPathContracts []string
+	// AuthOccurrence — see ContractCallContext.AuthOccurrence.
+	AuthOccurrence int
 }
 
 // ExtractContractCallTree returns every InvokeContract call reachable from a
@@ -53,6 +55,7 @@ func ExtractContractCallTree(op xdr.Operation) []ContractCall {
 			Args:              c.Args,
 			CallPath:          c.CallPath,
 			CallPathContracts: c.CallPathContracts,
+			AuthOccurrence:    c.AuthOccurrence,
 		})
 	}
 	return out

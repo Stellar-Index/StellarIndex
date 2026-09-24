@@ -13,6 +13,7 @@ package soroswap_router
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,6 +135,10 @@ type RouterSwap struct {
 	// on directly (e.g. "what fraction of router activity is
 	// aggregator-routed").
 	CallKind string
+	// AuthOccurrence is dispatcher.ContractCallContext.AuthOccurrence:
+	// 0 for the first identical call in its auth entry, n for the
+	// (n+1)th. It enters CallSig so repeated executions stay distinct.
+	AuthOccurrence int
 }
 
 // Event wraps a RouterSwap so it satisfies consumer.Event for
@@ -172,11 +177,19 @@ func (e Event) Source() string { return SourceName }
 // swap. Including them would break the auth-tree-duplicate dedup this
 // doc comment describes — the same economic call surfacing at two
 // CallPaths in a co-signed tx must still collapse to one row.
+//
+// AuthOccurrence is the one positional input: two identical calls in ONE
+// auth entry are two executions and must not collapse, while a re-listing
+// in another entry keeps occurrence 0. Occurrence 0 adds nothing to the
+// hash, so every call_sig already stored is unchanged.
 func (s RouterSwap) CallSig() string {
-	parts := make([]string, 0, len(s.Path)+4)
+	parts := make([]string, 0, len(s.Path)+5)
 	parts = append(parts, s.Function, s.Recipient)
 	parts = append(parts, s.Path...)
 	parts = append(parts, s.AmountIn.String(), s.AmountOut.String())
+	if s.AuthOccurrence > 0 {
+		parts = append(parts, "occurrence="+strconv.Itoa(s.AuthOccurrence))
+	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:16])
 }
