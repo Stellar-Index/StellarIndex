@@ -90,6 +90,17 @@ WATCHED=(
   'internal/sources/*/events.go'
   'internal/sources/*/feeds.go'
   'internal/sources/*/pairs.go'
+  # correlation / scaling / reconstruction logic that decides a
+  # recorded value without living in a decode*.go file itself: the
+  # soroswap Swap/Sync reserve correlation, redstone's price median,
+  # classicmovements' liquidity-pool op decoders, sorobanevents'
+  # multi-event reconstruction, and the CEX/oracle amount scalers.
+  'internal/sources/*/consumer.go'
+  'internal/sources/*/payload.go'
+  'internal/sources/*/entrychanges.go'
+  'internal/sources/*/reconstruct.go'
+  'internal/sources/*/decimals.go'
+  'internal/sources/*/scale.go'
   ':(exclude)*_test.go'
 )
 

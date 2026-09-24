@@ -165,6 +165,14 @@ touch_commit internal/sources/demo/pairs.go "feat(demo): add three more pairs"
 runGate
 expect "venue pairs.go widening without a plan fails" 1 "~ internal/sources/demo/pairs.go"
 
+# --- 2d. a non-decode.go file that decides recorded amounts (CA2-A38-correct-4:
+# consumer.go correlates two events into the reserves it records — the
+# soroswap Swap/Sync class) is the same danger class as a decoder ------
+mkrepo 0
+touch_commit internal/sources/demo/consumer.go "fix(demo): change swap/sync correlation window"
+runGate
+expect "consumer.go change without a plan fails" 1 "~ internal/sources/demo/consumer.go"
+
 # --- 3. declared plan passes ------------------------------------------
 mkrepo 0
 touch_commit internal/canonical/asset_fiat.go "$(printf 'canonical: widen fiat allow-list\n\nReplay-Plan: stellarindex-ops projector-replay -source reflector-fx -from 61602787 on r1 after deploy')"
