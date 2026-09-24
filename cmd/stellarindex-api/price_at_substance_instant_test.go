@@ -40,12 +40,14 @@ type historyAwareSubstance struct {
 	askedAt   []time.Time
 }
 
-func (h *historyAwareSubstance) PairMarketSubstance(context.Context, canonical.Pair, time.Duration) (timescale.MarketSubstance, error) {
+func (h *historyAwareSubstance) PairMarketSubstance(
+	context.Context, []canonical.Asset, []canonical.Asset, time.Duration,
+) (timescale.MarketSubstance, error) {
 	return h.trailing, nil
 }
 
 func (h *historyAwareSubstance) PairMarketSubstanceAt(
-	_ context.Context, _ canonical.Pair, asOf time.Time, _ time.Duration, _ timescale.HistoryGranularity,
+	_ context.Context, _, _ []canonical.Asset, asOf time.Time, _ time.Duration, _ timescale.HistoryGranularity,
 ) (timescale.MarketSubstance, error) {
 	h.askedAt = append(h.askedAt, asOf)
 	return h.atInstant, nil

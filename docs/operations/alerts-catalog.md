@@ -516,7 +516,7 @@ Operator runbook walks through review + override.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_anomaly_freeze_engaged` | `stellarindex_anomaly_freeze_engaged_total` per class | rate > 0 over 5m | ticket | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
-| `stellarindex_anomaly_freeze_sustained` | `stellarindex_anomaly_freeze_engaged_total` per class | rate > 0 sustained 1h+ | page | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) + per-alert detail [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
+| `stellarindex_anomaly_freeze_sustained` | `stellarindex_anomaly_freeze_escalated_total` per class | increase > 0 over 1h, for 5m — a freeze exhausted its extension ladder and is now operator-only (engagement alone does not page) | page | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) + per-alert detail [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_recovery_stalled` | `stellarindex_anomaly_freeze_engaged_total` vs `_recovered_total` + `_recovery_sweeps_total{outcome!="ok"}` | engaged > recovered for 2h+ AND sweep errors in last 15m | ticket | [freeze-recovery-stalled](runbooks/freeze-recovery-stalled.md) |
 | `stellarindex_amm_self_pair_swap_burst` | `stellarindex_amm_self_pair_swap_total` per source | increase > 10 over 15m, sustained 2m — a burst of self-pair (token_in==token_out) swaps, the 2026-08 Blend/Comet exploit primitive; normally zero | ticket | [amm-self-pair-swap-burst](runbooks/amm-self-pair-swap-burst.md) |
 

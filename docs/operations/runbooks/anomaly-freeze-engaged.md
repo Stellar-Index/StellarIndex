@@ -144,9 +144,11 @@ Decision tree:
 - [ ] **Step 2 — decide: confirm or override.**
 
   **Confirming (manipulation suspected):** no action. The freeze
-  re-engages every tick while the condition holds and auto-clears
-  5 min after it stops. If it sustains 1h the P1 `_sustained` alert
-  escalates to human review by design.
+  holds for its initial hold, then auto-releases once the pair reads
+  healthy for two consecutive buckets (ADR-0019). Each hold expiry
+  without release extends it up the ladder; when the ladder is
+  exhausted the freeze escalates to operator-only and the P1
+  `_sustained` alert pages for human review by design.
 
   **Overriding (legitimate market event / mis-tune):** the freeze is
   config-driven — fix the config, not the marker:

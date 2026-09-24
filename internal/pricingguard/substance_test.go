@@ -87,29 +87,49 @@ func TestSubstanceGated_Applicability(t *testing.T) {
 	}
 }
 
-// fakeSubstanceReader returns canned substance per pair key and counts
-// calls.
+// fakeSubstanceReader returns the canned substance of the one pair key
+// the requested spelling sets cover, and counts calls. Canned aggregates
+// cannot be unioned (shared minutes are invisible in them), so a request
+// covering two canned keys is an error; minuteStore models that case.
 type fakeSubstanceReader struct {
 	byPair map[string]timescale.MarketSubstance
 	err    error
 	calls  int
 }
 
-func (f *fakeSubstanceReader) PairMarketSubstance(_ context.Context, p canonical.Pair, _ time.Duration) (timescale.MarketSubstance, error) {
+func (f *fakeSubstanceReader) PairMarketSubstance(
+	_ context.Context, bases, quotes []canonical.Asset, _ time.Duration,
+) (timescale.MarketSubstance, error) {
 	f.calls++
 	if f.err != nil {
 		return timescale.MarketSubstance{}, f.err
 	}
-	if sub, ok := f.byPair[p.String()]; ok {
-		return sub, nil
+	var hits []timescale.MarketSubstance
+	for _, b := range bases {
+		for _, q := range quotes {
+			pair, err := canonical.NewPair(b, q)
+			if err != nil {
+				continue
+			}
+			if sub, ok := f.byPair[pair.String()]; ok {
+				hits = append(hits, sub)
+			}
+		}
 	}
-	return timescale.MarketSubstance{VolumeUSD: "0"}, nil
+	switch len(hits) {
+	case 0:
+		return timescale.MarketSubstance{VolumeUSD: "0"}, nil
+	case 1:
+		return hits[0], nil
+	default:
+		return timescale.MarketSubstance{}, errors.New("fakeSubstanceReader: request spans several canned pairs")
+	}
 }
 
 func (f *fakeSubstanceReader) PairMarketSubstanceAt(
-	ctx context.Context, p canonical.Pair, _ time.Time, window time.Duration, _ timescale.HistoryGranularity,
+	ctx context.Context, bases, quotes []canonical.Asset, _ time.Time, window time.Duration, _ timescale.HistoryGranularity,
 ) (timescale.MarketSubstance, error) {
-	return f.PairMarketSubstance(ctx, p, window)
+	return f.PairMarketSubstance(ctx, bases, quotes, window)
 }
 
 func TestSubstanceGate_WithholdsThinPair(t *testing.T) {

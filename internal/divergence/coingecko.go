@@ -252,8 +252,9 @@ func (c *CoinGeckoReference) Name() string { return "coingecko" }
 // to observedAt (the bucket-end comparison time Compare passes
 // through; zero falls back to wall time defensively) — mirroring the
 // Chainlink and on-chain oracle references so a stale reference reads
-// as "unavailable", never as agreement or divergence. See staleness
-// below for the missing-timestamp case (rejected, not waved through).
+// as "unavailable", never as agreement or divergence. A quote whose
+// last_updated_at is missing is rejected the same way (fail closed —
+// see [CoinGeckoReference.staleness]).
 //
 // Internally this delegates to the per-tick batched fetcher: the
 // first call within batchTTL issues ONE HTTP request covering every
