@@ -6,9 +6,8 @@ import (
 	"testing"
 )
 
-// Defensive-guard coverage. The full INSERT/SELECT round-trip lives
-// in test/integration/ per the established testcontainers-go pattern
-// (see PR #316 / #317).
+// Defensive-guard coverage. The INSERT/SELECT round-trip runs against
+// real TimescaleDB in test/integration/soroswap_pairs_storage_test.go.
 
 func TestUpsertSoroswapPair_rejectsEmptyPair(t *testing.T) {
 	s := &Store{}
