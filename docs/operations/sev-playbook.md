@@ -71,14 +71,13 @@ notifications.
 > through real `discord_configs` in
 > [`configs/alertmanager/alertmanager.r1.yml`](../../configs/alertmanager/alertmanager.r1.yml),
 > not empty stubs (see [runbooks/wire-paging.md](runbooks/wire-paging.md)
-> and `v1-launch-plan.md` W6.1). What is still genuinely unbuilt is the
-> **PagerDuty** leg §4 and §7 below assume: that config file has no
-> `pagerduty_configs` for any severity, so there is no 5-min
-> acknowledgement timer, no secondary/backup escalation, and no
-> maintainer fallback — a page today is a Discord message someone has
-> to be watching, not a PagerDuty alert with escalation. Treat §4's
-> "PagerDuty dispatches" step and §7's "oncall rotations live in
-> PagerDuty" as aspirational until that integration exists.
+> and `v1-launch-plan.md` W6.1). What is still genuinely unbuilt is a
+> **PagerDuty** leg: that config file has no `pagerduty_configs` for any
+> severity, so there is no 5-min acknowledgement timer, no
+> secondary/backup escalation, and no maintainer fallback — a page today
+> is a Discord message someone has to be watching, not a PagerDuty alert
+> with escalation. §4 and §7 below describe the Discord-only flow this
+> actually produces.
 
 | Channel | What it catches | Fires |
 | ------- | --------------- | ----- |
@@ -102,14 +101,15 @@ re-probe.
      │
      ▼
 ┌───────────────┐   no    ┌─────────────────────────┐
-│ PagerDuty    │───────▶ │ 30 s retry / second      │
-│ dispatches    │         │ detector check          │
-│ to primary   │         └────────┬────────────────┘
-│ oncall       │                   ▼
-└───────┬──────┘            real incident
+│ Discord      │───────▶ │ 30 s retry / second      │
+│ #stellarindex │         │ detector check          │
+│ -pages       │         └────────┬────────────────┘
+│ (someone     │                   ▼
+│ watching)    │            real incident
+└───────┬──────┘                  │
          │                        │
          ▼                        ▼
- acknowledge ≤ 5 min   ──── open #incident-<id> Discord channel
+ acknowledge (no timer) ──── open #incident-<id> Discord channel
          │                        │
          ▼                        ▼
  declare severity    ──── post initial status update
@@ -135,9 +135,11 @@ not from resolution or the postmortem.
 
 ### 4.1 Acknowledgement (SEV-1/2)
 
-Primary oncall has **5 min** to acknowledge the page (PagerDuty's
-escalation policy). If unacknowledged → secondary oncall → backup
-engineer → the maintainer.
+There is no PagerDuty leg (see §3): a page is a Discord message in
+**#stellarindex-pages**, with no acknowledgement timer and no automatic
+secondary/backup escalation. Whoever is on the nightly coverage rotation
+(§7) is expected to be watching that channel; if they are not, there is
+no system fallback until someone else notices.
 
 Acknowledgement does NOT mean the incident is resolved. It means:
 "I'm awake, I've seen the alert, I'm on it."
@@ -471,8 +473,9 @@ awareness, which leaves time to notify:
 
 ## 7. Escalation chain
 
-Oncall rotations live in PagerDuty. Nightly coverage is
-the maintainer-primary / @alex-backup (as of Week 1; rotation starts Week 2).
+There is no PagerDuty rotation (see §3) — oncall coverage is tracked
+manually. Nightly coverage is the maintainer-primary / @alex-backup (as
+of Week 1; rotation starts Week 2).
 
 If all oncall unreachable for > 30 min during a SEV-1:
 1. Declare the incident in the public Discord anyway (community
