@@ -94,7 +94,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/decimalsguard"
 	"github.com/Stellar-Index/StellarIndex/internal/divergence"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
-	"github.com/Stellar-Index/StellarIndex/internal/platform"
 	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 	"github.com/Stellar-Index/StellarIndex/internal/pricealerts"
 	"github.com/Stellar-Index/StellarIndex/internal/pricelesscoverage"
@@ -329,6 +328,19 @@ func run(cfgPath string, dryRun bool) error {
 	// marker exists to prevent (orchestrator.Config.FreezeWriter calls
 	// it "loud-but-not-actionable"). rdb is always non-nil here (fatal
 	// at startup above), so the writer is now built unconditionally.
+	// ─── Price withholding ([pricing_guard]) ────────────────────
+	// The same pair decision /v1/price serves under, built once and
+	// consulted by every customer-facing price this binary pushes: the
+	// price-alert, anomaly.freeze and divergence.firing webhooks. A
+	// directory-scam-flagged issuer or a thin market must not reach a
+	// signed delivery the API itself would refuse to publish.
+	withholding := priceWithholding{
+		substance: buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
+		scam: pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{
+			Logger: logger.With("component", "price-withholding"),
+		}),
+	}
+
 	checker, err := buildAnomalyChecker(cfg.Anomaly)
 	if err != nil {
 		return fmt.Errorf("anomaly checker: %w", err)
@@ -354,33 +366,7 @@ func run(cfgPath string, dryRun bool) error {
 		webhookStore := postgresstore.NewWebhookStore(postgresstore.New(store.DB()))
 		fanout := customerwebhook.NewFanout(webhookStore, logger.With("component", "webhook-fanout"))
 		if fanout != nil {
-			sinkOpts = append(sinkOpts, timescale.WithFreezeHook(
-				func(ctx context.Context, asset, quote canonical.Asset, frozenValue string, decision anomaly.Decision) {
-					payload := customerwebhook.MarshalPayload(logger, anomalyFreezeWebhookPayload{
-						Event:       string(platform.WebhookEventAnomalyFreeze),
-						Asset:       asset.String(),
-						Quote:       quote.String(),
-						FrozenValue: frozenValue,
-						Reason:      string(decision.Reason),
-						At:          time.Now().UTC().Format(time.RFC3339Nano),
-					})
-					if payload == nil {
-						return
-					}
-					// C3-023: a lost fan-out is permanent (no delivery
-					// row exists to retry), so it is logged at ERROR
-					// with the pair that identifies the event — not
-					// discarded. The freeze itself is already durable
-					// in freeze_events, so we never fail the hook.
-					res, ferr := fanout.Publish(ctx, platform.WebhookEventAnomalyFreeze, payload)
-					if ferr != nil {
-						logger.Error("customer-webhook fan-out lost an anomaly.freeze event",
-							"err", ferr, "asset", asset.String(), "quote", quote.String(),
-							"subscribers", res.Subscribers, "enqueued", res.Enqueued,
-							"failed", res.Failed)
-					}
-				},
-			))
+			sinkOpts = append(sinkOpts, timescale.WithFreezeHook(anomalyFreezeHook(logger, fanout, withholding)))
 			logger.Info("freeze events: customer-webhook fan-out wired")
 		}
 		sink := timescale.NewFreezeEventSink(store, sinkOpts...)
@@ -482,32 +468,7 @@ func run(cfgPath string, dryRun bool) error {
 			logger.With("component", "webhook-fanout"))
 		var divWarningHook divergence.WarningHook
 		if divFanout != nil {
-			divWarningHook = func(ctx context.Context, pair canonical.Pair, cached divergence.CachedResult) {
-				payload := customerwebhook.MarshalPayload(logger, divergenceFiringWebhookPayload{
-					Event:         string(platform.WebhookEventDivergenceFiring),
-					Pair:          pair.String(),
-					OurPrice:      formatDivergencePrice(cached.OurPrice),
-					Median:        formatDivergencePrice(cached.Median),
-					DivergencePct: cached.DivergencePct,
-					SuccessCount:  cached.SuccessCount,
-					Sources:       divergenceSourceNames(cached.Sources),
-					At:            cached.ComputedAt.Format(time.RFC3339Nano),
-				})
-				if payload == nil {
-					return
-				}
-				// C3-023: same contract as the freeze hook above — the
-				// divergence run is durable, the customer's copy of it
-				// is not, so a lost fan-out is an ERROR line plus a
-				// counter increment rather than silence.
-				res, ferr := divFanout.Publish(ctx, platform.WebhookEventDivergenceFiring, payload)
-				if ferr != nil {
-					logger.Error("customer-webhook fan-out lost a divergence.firing event",
-						"err", ferr, "pair", pair.String(),
-						"subscribers", res.Subscribers, "enqueued", res.Enqueued,
-						"failed", res.Failed)
-				}
-			}
+			divWarningHook = divergenceFiringHook(logger, divFanout, withholding)
 		}
 
 		divSvc, err := divergence.NewService(divergence.ServiceOptions{
@@ -1100,18 +1061,10 @@ func run(cfgPath string, dryRun bool) error {
 			priceAlertVWAPReader{
 				store:  store,
 				logger: logger.With("component", "price-alert-guard"),
-				// Same [pricing_guard] substance policy the API binary
-				// serves under — an alert must not fire off a pair the
-				// API itself would refuse to price.
-				substance: buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
-				// …and the same scam-issuer gate, for the same reason.
-				// Constructed exactly as the API binary constructs it
-				// (no config switch: nil when the directory reader is
-				// absent), so the two binaries cannot reach opposite
-				// verdicts on the same issuer.
-				scam: pricingguard.NewScamGate(store, pricingguard.ScamGateOptions{
-					Logger: logger.With("component", "price-alert-guard"),
-				}),
+				// The binary's shared withholding gates: an alert must not
+				// fire off a pair the API itself would refuse to price.
+				substance: withholding.substance,
+				scam:      withholding.scam,
 			},
 			pricealerts.Options{
 				Interval: time.Duration(cfg.PriceAlerts.IntervalSeconds) * time.Second,
@@ -2764,14 +2717,14 @@ func (r priceAlertVWAPReader) LatestVWAP(ctx context.Context, base, quote canoni
 }
 
 // buildAggregatorSubstanceGate maps [pricing_guard] onto the shared
-// pricingguard substance policy for this binary's price-alert
-// evaluator. Mirrors cmd/stellarindex-api's buildSubstanceGate (the
+// pricingguard substance policy for this binary's customer webhooks
+// (price alerts, anomaly.freeze, divergence.firing). Mirrors cmd/stellarindex-api's buildSubstanceGate (the
 // conversion itself is shared via SubstancePolicyFromValues so the two
 // can't drift). Returns nil — a valid allow-everything gate — when the
 // operator disabled it.
 func buildAggregatorSubstanceGate(cfg config.PricingGuardConfig, store *timescale.Store, logger *slog.Logger) *pricingguard.SubstanceGate {
 	if cfg.DisableSubstanceGate {
-		logger.Warn("pricing_guard: substance gate DISABLED by config — price alerts evaluate every pair regardless of trailing market substance")
+		logger.Warn("pricing_guard: substance gate DISABLED by config — customer webhooks publish every pair regardless of trailing market substance")
 		return nil
 	}
 	pol := pricingguard.SubstancePolicyFromValues(
