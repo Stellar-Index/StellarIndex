@@ -282,8 +282,9 @@ PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
 
 # ── 9. nothing tells an operator to pick a per-attempt job name ──────
 echo "  [operator-facing text]"
-if hits=$(grep -rnIiE 'unique (job )?name per attempt|with a unique job name|run-heavy-job\.sh [^ ]*-try[0-9<]' \
-    docs cmd internal deploy configs); then
+# git grep: tracked files only, so git-ignored local scratch never trips it.
+if hits=$(git grep -nIiE 'unique (job )?name per attempt|with a unique job name|run-heavy-job\.sh [^ ]*-try[0-9<]' \
+    -- docs cmd internal deploy configs); then
   bad "per-attempt job names defeat the per-name lock; use ONE name per job: $hits"
 else
   ok "no runbook or help text prescribes a unique job name per attempt"
