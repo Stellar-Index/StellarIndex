@@ -992,8 +992,10 @@ Subcommands:
                           historical trades; scripts/ops/
                           ch-rebuild-projected.sh runs it per window.
                           Fails on a range with no trades (the span of what
-                          was deleted is unknowable) and on the first view
-                          that fails. Idempotent.
+                          was deleted is unknowable), on the first view
+                          that fails, and when prices_1m then disagrees
+                          with trades in any of 8 sampled one-hour
+                          windows of the span. Idempotent.
   ch-supply -config PATH -from N -to N [-ch-addr H:P] [-top N] [-final] [-seed-flows]
                           Derive every token's total supply from the lake by
                           summing CAP-67 classic + SEP-41 mint/burn/clawback

@@ -23,6 +23,25 @@ type fakeTradesCAGGStore struct {
 	refreshed []string
 	forced    map[string]bool
 	windows   map[string][2]time.Time
+	// driftAt, when set, is a minute where prices_1m disagrees with trades.
+	driftAt  time.Time
+	compared [][2]time.Time
+}
+
+// testCAGGNow is well after every span these tests refresh.
+var testCAGGNow = time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+
+func (f *fakeTradesCAGGStore) TradesPrices1mDrift(_ context.Context, from, to time.Time) ([]timescale.TradesPrices1mDrift, error) {
+	f.compared = append(f.compared, [2]time.Time{from, to})
+	if f.driftAt.IsZero() || f.driftAt.Before(from) || !f.driftAt.Before(to) {
+		return nil, nil
+	}
+	return []timescale.TradesPrices1mDrift{{
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		TradeCount: "2", CAGGCount: "1",
+		TradeVolume: "31", CAGGVolume: "30",
+		TradeUSD: "2", CAGGUSD: "1",
+	}}, nil
 }
 
 func (f *fakeTradesCAGGStore) LedgerRangeToTimeRange(context.Context, uint32, uint32) (time.Time, time.Time, error) {
@@ -87,7 +106,7 @@ func TestRefreshTradesCAGGsOverLedgers_EveryViewInOrderCoveringTheEdgeBuckets(t 
 		to:   time.Date(2025, 5, 14, 12, 0, 0, 0, time.UTC),
 	}
 	var out bytes.Buffer
-	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_999_999, &out); err != nil {
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_999_999, testCAGGNow, &out); err != nil {
 		t.Fatal(err)
 	}
 	var want []string
@@ -116,7 +135,7 @@ func TestRefreshTradesCAGGsOverLedgers_EveryViewInOrderCoveringTheEdgeBuckets(t 
 func TestRefreshTradesCAGGsOverLedgers_StopsAtTheFirstFailure(t *testing.T) {
 	f := &fakeTradesCAGGStore{from: time.Unix(1_700_000_000, 0), to: time.Unix(1_700_100_000, 0), failView: "prices_1m"}
 	var out bytes.Buffer
-	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, &out)
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, testCAGGNow, &out)
 	if err == nil || !strings.Contains(err.Error(), "prices_1m") {
 		t.Fatalf("err = %v, want the prices_1m failure", err)
 	}
@@ -127,7 +146,7 @@ func TestRefreshTradesCAGGsOverLedgers_StopsAtTheFirstFailure(t *testing.T) {
 
 func TestRefreshTradesCAGGsOverLedgers_EmptyRangeIsAnError(t *testing.T) {
 	f := &fakeTradesCAGGStore{spanErr: timescale.ErrNotFound}
-	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, &bytes.Buffer{})
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, testCAGGNow, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "no trades in ledgers [1,2]") {
 		t.Fatalf("err = %v, want a refusal", err)
 	}
@@ -146,7 +165,7 @@ func TestRefreshTradesCAGGsOverLedgers_ForcesPrices1mOverEveryTwapWindow(t *test
 		from: time.Date(2025, 3, 10, 12, 0, 0, 0, time.UTC),
 		to:   time.Date(2025, 3, 10, 12, 30, 0, 0, time.UTC),
 	}
-	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_000_100, &bytes.Buffer{}); err != nil {
+	if err := refreshTradesCAGGsOverLedgers(context.Background(), f, 61_000_000, 61_000_100, testCAGGNow, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(timescale.CAGGsOnPrices1m) == 0 {
@@ -182,7 +201,7 @@ func TestRefreshTradesCAGGsOverLedgers_ForcesPrices1mOverEveryTwapWindow(t *test
 func TestRefreshTradesCAGGsOverLedgers_RefusesTwapsWhilePrices1mRetentionIsArmed(t *testing.T) {
 	f := &fakeTradesCAGGStore{from: time.Unix(1_700_000_000, 0), to: time.Unix(1_700_100_000, 0), armed: true}
 	var out bytes.Buffer
-	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, &out)
+	err := refreshTradesCAGGsOverLedgers(context.Background(), f, 1, 2, testCAGGNow, &out)
 	if err == nil || !strings.Contains(err.Error(), "retention policy is armed") {
 		t.Fatalf("err = %v, want a refusal naming the armed retention policy", err)
 	}

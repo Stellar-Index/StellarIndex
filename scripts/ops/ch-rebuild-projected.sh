@@ -54,7 +54,8 @@
 #      over `trades` (prices_*, twap_*, the volume rollups) has a refresh
 #      policy that looks back minutes to months, never this far, so once a
 #      window's trades are rewritten this script refreshes them over it with
-#      `trades-cagg-refresh`. $STALE gets `lo hi` before a DELETE that
+#      `trades-cagg-refresh`, which also fails if prices_1m then disagrees
+#      with `trades` over sampled windows. $STALE gets `lo hi` before a DELETE that
 #      touches trades and loses it only after that refresh succeeds; the
 #      next run — whatever its SRC/FROM/TO — refreshes every $STALE line
 #      (after rebuilding its dirty windows) before anything else.
