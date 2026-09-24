@@ -55,7 +55,8 @@ type PoolReservesRow struct {
 	Token0     PoolReserveToken `json:"token0"`
 	Token1     PoolReserveToken `json:"token1"`
 	// Mid prices are decimals-adjusted display ratios (token1 per
-	// token0 and inverse); null when either side is empty.
+	// token0 and inverse); null when either side is empty or either
+	// token's decimals declaration could not be read.
 	MidPrice0In1 *string          `json:"mid_price_0_in_1"`
 	MidPrice1In0 *string          `json:"mid_price_1_in_0"`
 	Depth        []PoolDepthLevel `json:"depth"` // empty when either reserve is zero
@@ -69,7 +70,8 @@ type PoolReserveToken struct {
 	// self-declared by the token contract — NOT a verified identity.
 	Symbol string `json:"symbol,omitempty"`
 	// Decimals is the token's on-chain declaration; 7 (the SAC
-	// default) when no readable declaration is captured.
+	// default) when no readable declaration is captured, in which case
+	// the row's mid prices are null.
 	Decimals uint32 `json:"decimals"`
 	Reserve  string `json:"reserve"` // base units, i128 decimal string
 }
@@ -249,36 +251,40 @@ func (s *Server) poolReservesDisplays(ctx context.Context, states map[string]cli
 }
 
 // buildPoolReservesRow assembles one wire row from a decoded pair
-// state + the best-effort token display map. displaysOK=false means the
-// display lookup itself FAILED (not "token declares no metadata") —
-// decimals are then unknown, so the decimals-dependent mid prices are
-// omitted (null) rather than computed from the default-7 stamp: a
-// transient lookup error must degrade to missing prices, never to
-// 10^(d-7)-mis-scaled ones. Reserves and depth are base-unit exact and
+// state + the best-effort token display map. The decimals-dependent mid
+// prices are emitted only when BOTH tokens' decimals were actually read:
+// after a failed lookup (displaysOK=false), or for a token with no
+// readable declaration, they are null rather than computed from the
+// default-7 stamp, which would mis-scale them by 10^(d-7) with no
+// signal. Reserves and depth are base-unit exact and
 // decimals-independent — always served.
 func buildPoolReservesRow(st clickhouse.SoroswapPairState, displays map[string]clickhouse.TokenDisplayMeta, displaysOK bool) PoolReservesRow {
-	tok := func(contract string, reserve *big.Int) PoolReserveToken {
+	tok := func(contract string, reserve *big.Int) (PoolReserveToken, bool) {
 		t := PoolReserveToken{Contract: contract, Decimals: 7, Reserve: reserve.String()}
-		if meta, ok := displays[contract]; ok && meta.HasMeta {
-			t.Decimals = meta.Decimals
-			t.Symbol = meta.Symbol
+		meta, ok := displays[contract]
+		if !ok || !meta.HasMeta {
+			return t, false
 		}
-		return t
+		t.Decimals = meta.Decimals
+		t.Symbol = meta.Symbol
+		return t, true
 	}
+	token0, known0 := tok(st.Token0, st.Reserve0)
+	token1, known1 := tok(st.Token1, st.Reserve1)
 	row := PoolReservesRow{
 		Pool:       st.Pair,
 		Source:     sourceSoroswap,
 		Model:      "constant_product",
 		FeeBps:     soroswapFeeBps,
 		AsOfLedger: st.Ledger,
-		Token0:     tok(st.Token0, st.Reserve0),
-		Token1:     tok(st.Token1, st.Reserve1),
+		Token0:     token0,
+		Token1:     token1,
 	}
 	if st.Reserve0.Sign() <= 0 || st.Reserve1.Sign() <= 0 {
 		row.Depth = []PoolDepthLevel{}
 		return row
 	}
-	if displaysOK {
+	if displaysOK && known0 && known1 {
 		m01 := midPriceString(st.Reserve1, st.Reserve0, row.Token1.Decimals, row.Token0.Decimals)
 		m10 := midPriceString(st.Reserve0, st.Reserve1, row.Token0.Decimals, row.Token1.Decimals)
 		row.MidPrice0In1 = &m01
