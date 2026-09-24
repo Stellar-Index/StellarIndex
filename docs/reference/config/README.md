@@ -116,6 +116,8 @@ the `env:` column.
 | `external.exchangeratesapi.base` | `string` | `USD` | — | Base currency (USD, EUR, GBP, …). Defaults to USD. Free tier locked to EUR; paid tier accepts any allow-listed fiat. |
 | `external.coingecko.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default — no network egress until operator opts in. |
 | `external.coingecko.poll_interval` | `int64` | _(required)_ | — | Override the connector's built-in default poll cadence (e.g. "120s"). Empty/zero uses the connector default. |
+| `external.coingecko.api_key` | `string` | _(required)_ | `COINGECKO_API_KEY` | CoinGecko Pro API key, sent as x-cg-pro-api-key against the pro-api host; wins over demo_api_key. Prefer env var. |
+| `external.coingecko.demo_api_key` | `string` | _(required)_ | `COINGECKO_DEMO_API_KEY` | CoinGecko Demo API key, sent as x-cg-demo-api-key. With api_key also empty, requests go out anonymously and are heavily 429-throttled. Prefer env var. |
 | `external.coinmarketcap.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default. |
 | `external.coinmarketcap.api_key` | `string` | _(required)_ | `COINMARKETCAP_API_KEY` | CMC Pro API key, passed as X-CMC_PRO_API_KEY header. Prefer env var. |
 | `external.cryptocompare.enabled` | `bool` | `false` | — | Whether this connector runs. Off by default. |
@@ -129,6 +131,8 @@ the `env:` column.
 | `external.chainlink.feed_map.<key>.address` | `string` | _(required)_ | — | 0x-prefixed AggregatorV3 contract address on Ethereum mainnet. |
 | `external.chainlink.feed_map.<key>.decimals` | `uint8` | `8` | — | Power-of-10 divisor for the raw int256 answer. Omit to adopt the feed's on-chain decimals() (8 on every Chainlink USD feed). When set it is verified against decimals() on the first poll and daily; on disagreement the feed is refused (ERROR log + stellarindex_chainlink_feed_decimals_mismatch_total) until they agree. |
 | `external.chainlink.feed_map.<key>.invert` | `bool` | `false` | — | If true, the canonical pair is the reciprocal of the feed's natural quote — e.g. operator wants USD/EUR but the feed publishes EUR/USD. price → 1/price after scaling. |
+| `external.massive.api_key` | `string` | _(required)_ | `MASSIVE_API_KEY` | massive.com API key. Empty still starts the forex worker, but every fetch 401s and /v1/currencies serves warming-up. Prefer env var. |
+| `external.dune.api_key` | `string` | _(required)_ | `DUNE_API_KEY` | Dune API key, sent as X-Dune-API-Key. Empty makes curated-rwa-sync refuse the run and stamp its refused gauge. Prefer env var. |
 
 ### `[aggregate]`
 

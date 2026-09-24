@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/config"
 )
 
 // listingCoinsFixture is a trimmed copy of a real
@@ -347,9 +349,7 @@ func TestApplyListingPrices_LeavesUnpricedEntriesUnpriced(t *testing.T) {
 // that reports a failed fetch — and the failed fetches are exactly the
 // ones that get logged.
 func TestListingClient_SendsTheKeyInAHeaderNotTheQuery(t *testing.T) {
-	// Not parallel: it sets process environment.
-	t.Setenv("COINGECKO_API_KEY", "pro-secret")
-	t.Setenv("COINGECKO_DEMO_API_KEY", "")
+	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
 
 	var gotHeader, gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -359,7 +359,7 @@ func TestListingClient_SendsTheKeyInAHeaderNotTheQuery(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newListingClient(srv.URL)
+	c := newListingClient(srv.URL, proKey)
 	if c.authMode != "pro" {
 		t.Errorf("authMode = %q, want pro", c.authMode)
 	}
@@ -411,9 +411,7 @@ func TestNewListingClient_HostFollowsTheKeyMode(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			t.Setenv("COINGECKO_API_KEY", tc.pro)
-			t.Setenv("COINGECKO_DEMO_API_KEY", tc.demo)
-			c := newListingClient(tc.override)
+			c := newListingClient(tc.override, config.CoinGeckoVenueConfig{APIKey: tc.pro, DemoAPIKey: tc.demo})
 			if c.baseURL != tc.wantBase {
 				t.Errorf("baseURL = %q, want %q", c.baseURL, tc.wantBase)
 			}
@@ -438,7 +436,7 @@ func TestListingClient_HTTPErrorIsFatal(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newListingClient(srv.URL)
+	c := newListingClient(srv.URL, config.CoinGeckoVenueConfig{})
 	_, _, err := c.fetchStellarListings(context.Background())
 	if err == nil {
 		t.Fatal("non-200 fetch returned nil error")
@@ -480,7 +478,7 @@ func TestFetchListingPrices_ChunksTheIDList(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := newListingClient(srv.URL)
+	c := newListingClient(srv.URL, config.CoinGeckoVenueConfig{})
 	if _, _, err := c.fetchListingPrices(context.Background(), ids); err != nil {
 		t.Fatalf("fetchListingPrices: %v", err)
 	}
@@ -572,9 +570,7 @@ func runListingSyncCapturingStderr(t *testing.T, args []string) (error, string) 
 // including an https:// -> http:// downgrade. Keeping the key out of
 // the query string is only half of keeping it out of a stranger's logs.
 func TestListingClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
-	// Not parallel: it sets process environment.
-	t.Setenv("COINGECKO_API_KEY", "pro-secret")
-	t.Setenv("COINGECKO_DEMO_API_KEY", "")
+	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
 
 	var elsewhereHits atomic.Int32
 	var elsewhereSawKey atomic.Bool
@@ -592,7 +588,7 @@ func TestListingClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
 	}))
 	defer origin.Close()
 
-	_, _, err := newListingClient(origin.URL).fetchStellarListings(context.Background())
+	_, _, err := newListingClient(origin.URL, proKey).fetchStellarListings(context.Background())
 	if err == nil {
 		t.Fatal("a cross-host redirect was followed — the run must refuse it, not carry the key over")
 	}
@@ -609,9 +605,7 @@ func TestListingClient_RefusesARedirectThatWouldCarryTheKey(t *testing.T) {
 // does not leave this origin", not "no redirects": a hop that keeps the
 // scheme and host is still followed, carrying the key as before.
 func TestListingClient_FollowsASameOriginRedirect(t *testing.T) {
-	// Not parallel: it sets process environment.
-	t.Setenv("COINGECKO_API_KEY", "pro-secret")
-	t.Setenv("COINGECKO_DEMO_API_KEY", "")
+	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
 
 	var gotKey string
 	mux := http.NewServeMux()
@@ -625,7 +619,7 @@ func TestListingClient_FollowsASameOriginRedirect(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	entries, _, err := newListingClient(srv.URL).fetchStellarListings(context.Background())
+	entries, _, err := newListingClient(srv.URL, proKey).fetchStellarListings(context.Background())
 	if err != nil {
 		t.Fatalf("same-origin redirect: %v", err)
 	}
@@ -638,19 +632,15 @@ func TestListingClient_FollowsASameOriginRedirect(t *testing.T) {
 }
 
 func TestListingClient_RedirectPolicy(t *testing.T) {
-	// Not parallel: it sets process environment.
-	t.Setenv("COINGECKO_API_KEY", "pro-secret")
-	t.Setenv("COINGECKO_DEMO_API_KEY", "")
-	assertKeyedRedirectPolicy(t, newListingClient("").http.CheckRedirect)
+	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
+	assertKeyedRedirectPolicy(t, newListingClient("", proKey).http.CheckRedirect)
 }
 
 // TestListingClient_StopsASelfRedirectLoop — a same-origin 302 to itself
 // must end at the hop cap, not re-send the key until the 60 s client
 // timeout.
 func TestListingClient_StopsASelfRedirectLoop(t *testing.T) {
-	// Not parallel: it sets process environment.
-	t.Setenv("COINGECKO_API_KEY", "pro-secret")
-	t.Setenv("COINGECKO_DEMO_API_KEY", "")
+	proKey := config.CoinGeckoVenueConfig{APIKey: "pro-secret"}
 
 	var hits atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -661,7 +651,7 @@ func TestListingClient_StopsASelfRedirectLoop(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, _, err := newListingClient(srv.URL).fetchStellarListings(ctx)
+	_, _, err := newListingClient(srv.URL, proKey).fetchStellarListings(ctx)
 	if err == nil || !strings.Contains(err.Error(), "stopped after 10 redirects") {
 		t.Fatalf("err = %v, want the loop stopped at the hop cap", err)
 	}

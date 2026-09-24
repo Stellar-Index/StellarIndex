@@ -414,7 +414,7 @@ func TestCuratedRWASync_RefusesWithoutKeyOrConfig(t *testing.T) {
 	// operator sets the key.
 	t.Setenv("DUNE_API_KEY", "")
 	prom := filepath.Join(t.TempDir(), "curated.prom")
-	if err := curatedRWASync([]string{"-config", "/nonexistent.toml", "-textfile", prom}); err != nil {
+	if err := curatedRWASync([]string{"-config", writeIngestConfig(t), "-textfile", prom}); err != nil {
 		t.Errorf("no key: err = %v, want a clean refusal", err)
 	}
 	if raw, err := os.ReadFile(prom); err != nil || !strings.Contains(string(raw), `stellarindex_curated_rwa_sync_refused{curator="dune:stellar"} 1`) {
@@ -426,6 +426,33 @@ func TestCuratedRWASync_RefusesWithoutKeyOrConfig(t *testing.T) {
 	}
 	if err := curatedRWASync([]string{"-config", "x", "-base-url", "http://insecure"}); err == nil || !strings.Contains(err.Error(), "https") {
 		t.Errorf("http base url: err = %v", err)
+	}
+}
+
+// TestCuratedRWASync_ReadsTheKeyFromConfig — the key resolves through
+// [external.dune] api_key like every other credential, so a key set in the
+// config (env empty) runs the sync instead of refusing it. The unreachable
+// base URL makes the run fail at the fetch, which only a keyed run reaches.
+func TestCuratedRWASync_ReadsTheKeyFromConfig(t *testing.T) {
+	t.Setenv("DUNE_API_KEY", "")
+	path := filepath.Join(t.TempDir(), "stellarindex.toml")
+	body := `
+[storage]
+postgres_dsn = "postgres://good:good@localhost/stellarindex?sslmode=disable"
+
+[external.dune]
+api_key = "fixture-dune-key"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prom := filepath.Join(t.TempDir(), "curated.prom")
+	err := curatedRWASync([]string{"-config", path, "-textfile", prom, "-base-url", "https://127.0.0.1:1", "-timeout", "5s"})
+	if err == nil || !strings.Contains(err.Error(), "127.0.0.1:1") {
+		t.Fatalf("keyed run: err = %v, want the fetch against the base URL to fail", err)
+	}
+	if _, statErr := os.Stat(prom); !os.IsNotExist(statErr) {
+		t.Errorf("keyed run stamped a textfile (%v); a refusal would, a fetch failure must not", statErr)
 	}
 }
 

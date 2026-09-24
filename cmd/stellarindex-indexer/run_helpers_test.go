@@ -308,7 +308,7 @@ func TestStartExternalConnectors_EveryEnabledNameIsRegistered(t *testing.T) {
 		name string
 		cfg  config.ExternalConfig
 	}{
-		{"coingecko", config.ExternalConfig{CoinGecko: config.ExternalVenueConfig{Enabled: true}}},
+		{"coingecko", config.ExternalConfig{CoinGecko: config.CoinGeckoVenueConfig{Enabled: true}}},
 		{"ecb", config.ExternalConfig{ECB: config.ExternalVenueConfig{Enabled: true}}},
 	}
 	for _, tc := range cases {

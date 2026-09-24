@@ -12,7 +12,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -215,7 +214,7 @@ func listingSync(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	client := newListingClient(*baseURL)
+	client := newListingClient(*baseURL, cfg.External.CoinGecko)
 	fmt.Printf("Listing source %s at %s (auth_mode=%s).\n",
 		listingSource, client.baseURL, client.authMode)
 
@@ -266,17 +265,15 @@ type listingClient struct {
 
 // newListingClient resolves the API key and, from it, the host.
 //
-// The key comes from the environment, not from config: `COINGECKO_API_KEY`
-// (Pro) and `COINGECKO_DEMO_API_KEY` (Demo) are the two variables the
-// indexer already reads for exactly this credential, and both are already
-// provisioned in /etc/default/stellarindex on the deployed host. Adding a
-// third spelling in a config file would mean an operator could set the key
-// and still have this command run unauthenticated, with nothing to say why.
+// The keys are the indexer's own [external.coingecko] pair (env
+// COINGECKO_API_KEY / COINGECKO_DEMO_API_KEY), so one credential serves
+// both and this command cannot run unauthenticated while the indexer is
+// keyed.
 //
 // An override passed as -base-url wins over the key-derived host, so an
 // operator can point the run at a mirror or a proxy without also having to
 // change which key it sends.
-func newListingClient(baseURL string) *listingClient {
+func newListingClient(baseURL string, keys config.CoinGeckoVenueConfig) *listingClient {
 	c := &listingClient{
 		authMode: "none",
 		baseURL:  listingDemoBaseURL,
@@ -285,9 +282,9 @@ func newListingClient(baseURL string) *listingClient {
 			CheckRedirect: keyedSameOriginRedirect("listing-sync"),
 		},
 	}
-	if k := strings.TrimSpace(os.Getenv("COINGECKO_API_KEY")); k != "" {
+	if k := strings.TrimSpace(keys.APIKey); k != "" {
 		c.key, c.keyHeader, c.authMode, c.baseURL = k, "x-cg-pro-api-key", "pro", listingProBaseURL
-	} else if k := strings.TrimSpace(os.Getenv("COINGECKO_DEMO_API_KEY")); k != "" {
+	} else if k := strings.TrimSpace(keys.DemoAPIKey); k != "" {
 		c.key, c.keyHeader, c.authMode, c.baseURL = k, "x-cg-demo-api-key", "demo", listingDemoBaseURL
 	}
 	if baseURL != "" {
