@@ -71,7 +71,6 @@ src/
 │   ├── charts/          Lightweight Charts wrappers
 │   ├── nav/             Navbar, search, footer
 │   ├── AssetLabel.tsx
-│   ├── CurrencyCombobox.tsx
 │   ├── SourceSparkline.tsx
 │   └── QueryProvider.tsx
 ├── api/
@@ -84,7 +83,6 @@ src/
     ├── architecture.ts
     ├── blog.ts
     ├── changelog.ts
-    ├── discovery.ts     Discovery-doc loader
     ├── fiat-slugs.ts    Fiat-asset slug resolution
     ├── format.ts        Number / date formatters
     ├── markdown.tsx     Minimal Markdown block renderer
