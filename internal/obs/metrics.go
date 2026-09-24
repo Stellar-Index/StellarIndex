@@ -308,7 +308,18 @@ func registerAppMetricsTail() {
 		NonstandardDecimalsCacheRefreshFailuresTotal,
 		NonstandardDecimalsPartialAliasFamilyTotal,
 		NonstandardDecimalsLockstepMismatchTotal,
+	)
+	registerStorageAndExplorerMetrics()
+	registerAuthReaperMetrics()
+	registerFailedAuthMetrics()
 
+	seedBoundedLabelSeries()
+}
+
+// registerStorageAndExplorerMetrics registers the hashdb, ledgerstream,
+// DEX/SDEX and explorer refresh metrics; split out for the funlen ceiling.
+func registerStorageAndExplorerMetrics() {
+	Registry.MustRegister(
 		HashdbAppendTotal,
 		HashdbAppendDurationSeconds,
 		HashdbVerifyRunsTotal,
@@ -335,10 +346,6 @@ func registerAppMetricsTail() {
 		DecoderPanicsTotal,
 		SourceAmountDegradedTotal,
 	)
-	registerAuthReaperMetrics()
-	registerFailedAuthMetrics()
-
-	seedBoundedLabelSeries()
 }
 
 // registerFailedAuthMetrics registers and zero-seeds [FailedAuthTotal];
