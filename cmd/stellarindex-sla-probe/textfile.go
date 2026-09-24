@@ -60,8 +60,9 @@ func writeTextfile(w io.Writer, rep *report) error {
 	return writeVerdict(w, rep)
 }
 
-// promLabels renders st's endpoint identity as Prometheus label text
-// (without braces), adding a `pair` label only when st.Pair is set —
+// promLabels renders st's endpoint identity as a braced Prometheus label
+// set (braces included so lint-textfile-exposition reads `name%s` as a
+// runtime label set), adding a `pair` label only when st.Pair is set —
 // so a single-pair run's series stay unchanged and a multi-pair run's
 // don't collide under one endpoint name. extra, when non-empty, is
 // appended verbatim (e.g. `quantile="0.95"`).
@@ -73,7 +74,7 @@ func promLabels(st stats, extra string) string {
 	if extra != "" {
 		labels += "," + extra
 	}
-	return labels
+	return "{" + labels + "}"
 }
 
 func writeLatency(w io.Writer, endpoints []string, byEndpoint map[string]stats) error {
@@ -99,7 +100,7 @@ func writeLatency(w io.Writer, endpoints []string, byEndpoint map[string]stats) 
 		}
 		for _, q := range quantiles {
 			if _, err := fmt.Fprintf(w,
-				"stellarindex_sla_probe_latency_ms{%s} %.3f\n",
+				"stellarindex_sla_probe_latency_ms%s %.3f\n",
 				promLabels(st, fmt.Sprintf("quantile=%q", q.label)), q.value); err != nil {
 				return err
 			}
@@ -117,7 +118,7 @@ func writeAvailability(w io.Writer, endpoints []string, byEndpoint map[string]st
 	for _, ep := range endpoints {
 		st := byEndpoint[ep]
 		if _, err := fmt.Fprintf(w,
-			"stellarindex_sla_probe_availability_pct{%s} %.3f\n",
+			"stellarindex_sla_probe_availability_pct%s %.3f\n",
 			promLabels(st, ""), st.AvailabilityPct); err != nil {
 			return err
 		}
@@ -150,7 +151,7 @@ func writeFreshness(w io.Writer, endpoints []string, byEndpoint map[string]stats
 			continue
 		}
 		if _, err := fmt.Fprintf(w,
-			"stellarindex_sla_probe_freshness_sec{%s} %.3f\n",
+			"stellarindex_sla_probe_freshness_sec%s %.3f\n",
 			promLabels(st, ""), *st.ObservedAtFreshSec); err != nil {
 			return err
 		}
@@ -167,7 +168,7 @@ func writeSamples(w io.Writer, endpoints []string, byEndpoint map[string]stats) 
 	for _, ep := range endpoints {
 		st := byEndpoint[ep]
 		if _, err := fmt.Fprintf(w,
-			"stellarindex_sla_probe_samples{%s} %d\n",
+			"stellarindex_sla_probe_samples%s %d\n",
 			promLabels(st, ""), st.Samples); err != nil {
 			return err
 		}
