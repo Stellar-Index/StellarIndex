@@ -63,6 +63,11 @@ func writeLatency(w io.Writer, endpoints []string, byEndpoint map[string]stats) 
 	}
 	for _, ep := range endpoints {
 		st := byEndpoint[ep]
+		// No successful response, no latency: an absent series, never a
+		// 0 that p95_breach and the weekly proof would read as fast.
+		if st.LatencyMS == nil {
+			continue
+		}
 		quantiles := []struct {
 			label string
 			value float64
@@ -114,7 +119,7 @@ func writeFreshness(w io.Writer, endpoints []string, byEndpoint map[string]stats
 		return nil
 	}
 	if _, err := io.WriteString(w,
-		"# HELP stellarindex_sla_probe_freshness_sec Per-endpoint median observed_at freshness in seconds.\n"+
+		"# HELP stellarindex_sla_probe_freshness_sec Per-endpoint observed_at freshness of the stalest response in the run, in seconds.\n"+
 			"# TYPE stellarindex_sla_probe_freshness_sec gauge\n"); err != nil {
 		return err
 	}

@@ -113,7 +113,7 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
               summary: "price-tip price freshness 45s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
-                The SLA probe's median observed_at freshness for
+                The SLA probe's stalest observed_at freshness for
                 price-tip has been over its bound for
                 ≥ 30 minutes. The bound is the 30 s pricing SLA for every
                 endpoint except /price, which serves the ADR-0015 closed
@@ -164,7 +164,7 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
               summary: "oracle-latest price freshness 120s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
-                The SLA probe's median observed_at freshness for
+                The SLA probe's stalest observed_at freshness for
                 oracle-latest has been over its bound for
                 ≥ 30 minutes. The bound is the 30 s pricing SLA for every
                 endpoint except /price, which serves the ADR-0015 closed
@@ -201,7 +201,7 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
               summary: "price price freshness 200s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
-                The SLA probe's median observed_at freshness for
+                The SLA probe's stalest observed_at freshness for
                 price has been over its bound for
                 ≥ 30 minutes. The bound is the 30 s pricing SLA for every
                 endpoint except /price, which serves the ADR-0015 closed
@@ -243,7 +243,7 @@ tests:
               runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
               summary: "price price freshness 170s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
               description: |
-                The SLA probe's median observed_at freshness for
+                The SLA probe's stalest observed_at freshness for
                 price has been over its bound for
                 ≥ 30 minutes. The bound is the 30 s pricing SLA for every
                 endpoint except /price, which serves the ADR-0015 closed

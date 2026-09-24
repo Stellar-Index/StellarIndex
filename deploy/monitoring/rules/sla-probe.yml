@@ -124,7 +124,7 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/sla-probe-freshness-breach.md
           summary: "{{ $labels.endpoint }} price freshness {{ $value }}s over its bound (30s SLA; /price 150s closed-bucket) sustained 30m"
           description: |
-            The SLA probe's median observed_at freshness for
+            The SLA probe's stalest observed_at freshness for
             {{ $labels.endpoint }} has been over its bound for
             ≥ 30 minutes. The bound is the 30 s pricing SLA for every
             endpoint except /price, which serves the ADR-0015 closed

@@ -54,7 +54,7 @@ Per ADR-0009 (the service SLA targets):
 | --- | --- | --- | --- |
 | p95 | ≤ 200 ms | largest per-run `stellarindex_sla_probe_latency_ms{quantile="0.95"}` in the window, per endpoint | `06-mixed-realistic.js` `http_req_duration` p95 |
 | p99 | ≤ 500 ms | same at `quantile="0.99"` | same, p99 |
-| Availability | ≥ 99.9 % | `stellarindex_sla_probe_availability_pct`, weighted by each run's sample count | — |
+| Availability | ≥ 99.9 % | `stellarindex_sla_probe_availability_pct`, each run weighted by the time its result stood | — |
 | Error rate (5xx + non-2xx) | < 0.1 % over 10 min | — | k6 `http_req_failed` rate |
 | Sustained load | 300 rps for 10 min uninterrupted | **not exercised** — the probe runs at concurrency 1 | scenario soak window |
 | Freshness | ≤ 30 s (`/price/tip`) | `stellarindex_sla_probe_freshness_sec`, reported and not gated | — |
@@ -82,8 +82,10 @@ target. `NOT PROVEN` means this bound cannot settle it, **not** that the
 target was missed.
 
 Availability gets the opposite treatment because it is a ratio rather
-than a percentile: it is a window ratio weighted by each run's own sample
-count. Gating it on the worst single 30-second run would publish `NOT
+than a percentile: it is a window ratio with each run weighted by the
+wall-clock time its result stood, not by its request count — an outage or
+a hang collapses the count, and a run with no samples would otherwise
+weigh nothing. Gating it on the worst single 30-second run would publish `NOT
 PROVEN` for a window the SLO was comfortably met in.
 
 Freshness carries no verdict at all. The deployed bound in
@@ -268,8 +270,11 @@ reads a window of history rather than a single run:
 | `SLA_PROOF_PROBE_TARGET` carries `user:pass@` | The report is committed to a public repo and records the target verbatim. |
 
 A window with **holes** in it is not a refusal. It renders (exit 1) with
-`Verdict: NOT PROVEN` and says which kind of hole it had — a gap in the
-series means scraping stopped, while a frozen `last_pass_timestamp` means
+`Verdict: NOT PROVEN` and says which kind of hole it had — a gap in
+`stellarindex_sla_probe_run_duration_seconds`, which every run writes,
+means scraping stopped (the latency series is absent by design for a run
+with no successful response, so it cannot measure coverage), while a
+frozen `last_pass_timestamp` means
 the probe stopped and node_exporter's textfile collector kept re-serving
 its last output, which leaves a perfectly continuous series and is
 invisible unless asked for directly.

@@ -74,6 +74,11 @@ const (
 	// backpressure — the 2026-06-02/03 chunk-perf regression read
 	// 166–186 s and would correctly fail this).
 	defaultClosedBucketFreshTarget = 150 * time.Second
+
+	// maxRequestTimeout caps one request. It must sit well inside the run
+	// duration so a request that never answers times out, and is counted
+	// as a failure, within the run it started in.
+	maxRequestTimeout = 10 * time.Second
 )
 
 // endpoint captures one API surface to probe. Path is the URL
@@ -90,6 +95,13 @@ type endpoint struct {
 	// contract (ADR-0015) makes the run-level 30 s target structurally
 	// unmeetable — see defaultClosedBucketFreshTarget.
 	FreshTarget time.Duration
+	// WantObservedAt: a 2xx without a parseable data.observed_at is a
+	// failed sample. Without it a response-shape change would silently
+	// drop the freshness series and the alert reading it.
+	WantObservedAt bool
+	// WantData: a 2xx whose `data` is null or empty is a failed sample —
+	// /oracle/latest answers `{"data":[]}` when no observation exists.
+	WantData bool
 }
 
 // staticEndpoints are probed regardless of -pair flags — they
@@ -138,25 +150,29 @@ func pairEndpoints(asset, quote string, closedBucketFresh time.Duration) []endpo
 		return out
 	}
 	return []endpoint{
-		{Name: "price", Path: "/price", Query: q(nil), Critical: true, FreshTarget: closedBucketFresh},
-		{Name: "price-tip", Path: "/price/tip", Query: q(nil), Critical: true},
-		{Name: "oracle-latest", Path: "/oracle/latest", Query: map[string]string{"asset": asset}},
+		{Name: "price", Path: "/price", Query: q(nil), Critical: true, FreshTarget: closedBucketFresh, WantObservedAt: true},
+		{Name: "price-tip", Path: "/price/tip", Query: q(nil), Critical: true, WantObservedAt: true},
+		{Name: "oracle-latest", Path: "/oracle/latest", Query: map[string]string{"asset": asset}, WantData: true},
 	}
 }
 
 // stats holds per-endpoint sampling output.
 type stats struct {
-	Endpoint        string       `json:"endpoint"`
-	Path            string       `json:"path"`
-	Samples         int          `json:"samples"`
-	Successes       int          `json:"successes"`
-	Errors          int          `json:"errors"`
-	AvailabilityPct float64      `json:"availability_pct"`
-	LatencyMS       latencyStats `json:"latency_ms"`
+	Endpoint        string  `json:"endpoint"`
+	Path            string  `json:"path"`
+	Samples         int     `json:"samples"`
+	Successes       int     `json:"successes"`
+	Errors          int     `json:"errors"`
+	AvailabilityPct float64 `json:"availability_pct"`
+	// LatencyMS is computed over successful responses only, and is nil
+	// when there were none: a failed request has no response latency.
+	LatencyMS *latencyStats `json:"latency_ms,omitempty"`
 	// ObservedAtFreshSec — for endpoints that return an observed_at
-	// timestamp (price, price-tip), the median freshness in seconds,
-	// each sample measured at the instant that sample's response was
-	// received (probeSample.receivedAt), not at end-of-run.
+	// timestamp (price, price-tip), the STALEST response's freshness in
+	// seconds, each sample measured at the instant that sample's response
+	// was received (probeSample.receivedAt), not at end-of-run. The
+	// promise is per response, so a median would pass a run in which 49 %
+	// of reads broke it.
 	// Zero when no observed_at field on this endpoint.
 	ObservedAtFreshSec *float64 `json:"observed_at_fresh_sec,omitempty"`
 	// FreshnessTargetSec — the per-endpoint freshness target override
@@ -204,6 +220,43 @@ func validateConcurrency(c int) error {
 	return nil
 }
 
+// probeFlags is every numeric flag, checked together by
+// validateProbeFlags before any request is made.
+type probeFlags struct {
+	concurrency                          int
+	duration, p95, p99, fresh, closedFsh time.Duration
+	availability                         float64
+}
+
+// validateProbeFlags rejects numeric flags that would still produce a
+// complete, plausible report: a non-positive -duration expires before the
+// first request (a total-outage report from a probe that sent nothing), a
+// non-positive target fails or passes every run by arithmetic, and an
+// availability target outside (0, 100] is unreachable or vacuous.
+func validateProbeFlags(f probeFlags) error {
+	if err := validateConcurrency(f.concurrency); err != nil {
+		return err
+	}
+	for _, d := range []struct {
+		name string
+		v    time.Duration
+	}{
+		{"-duration", f.duration},
+		{"-p95-target", f.p95},
+		{"-p99-target", f.p99},
+		{"-freshness-target", f.fresh},
+		{"-closed-bucket-freshness-target", f.closedFsh},
+	} {
+		if d.v <= 0 {
+			return fmt.Errorf("%s must be > 0, got %v", d.name, d.v)
+		}
+	}
+	if !(f.availability > 0 && f.availability <= 100) {
+		return fmt.Errorf("-availability-target must be in (0, 100], got %v", f.availability)
+	}
+	return nil
+}
+
 func main() {
 	// API key default falls through to STELLARINDEX_PROBE_API_KEY so
 	// the systemd unit can pass it via Environment= without leaking
@@ -239,7 +292,10 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := validateConcurrency(*concurrency); err != nil {
+	if err := validateProbeFlags(probeFlags{
+		concurrency: *concurrency, duration: *duration, availability: *availTarget,
+		p95: *p95Target, p99: *p99Target, fresh: *freshTarget, closedFsh: *closedFresh,
+	}); err != nil {
 		fmt.Fprintf(os.Stderr, "stellarindex-sla-probe: %v\n", err)
 		os.Exit(2)
 	}
@@ -319,7 +375,7 @@ func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Durati
 	ctx, cancel := context.WithTimeout(context.Background(), duration)
 	defer cancel()
 
-	samples := collectSamples(ctx, baseURL, apiKey, endpoints, concurrency)
+	samples := collectSamples(ctx, baseURL, apiKey, endpoints, concurrency, min(duration, maxRequestTimeout))
 
 	rep := report{
 		BaseURL:     baseURL,
@@ -338,7 +394,13 @@ func runProbe(baseURL, apiKey string, endpoints []endpoint, duration time.Durati
 // collectSamples spawns `concurrency` workers that round-robin
 // across `endpoints` until ctx expires. Returns a per-endpoint-name
 // sample slice.
-func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []endpoint, concurrency int) map[string][]probeSample {
+//
+// ctx's deadline stops workers STARTING requests; it never cancels one
+// in flight. Each request instead runs to completion or to its own
+// reqTimeout and is counted either way. Cancelling it at the deadline
+// and discarding it made a request the API accepted and never answered
+// invisible: the run straddling a hang read 100 %.
+func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []endpoint, concurrency int, reqTimeout time.Duration) map[string][]probeSample {
 	var mu sync.Mutex
 	samples := make(map[string][]probeSample)
 
@@ -350,7 +412,8 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = concurrency * 2
 	transport.MaxIdleConnsPerHost = concurrency * 2
-	httpClient := &http.Client{Timeout: 30 * time.Second, Transport: transport}
+	httpClient := &http.Client{Timeout: reqTimeout, Transport: transport}
+	reqCtx := context.WithoutCancel(ctx)
 
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
@@ -366,26 +429,12 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 				}
 				ep := endpoints[i]
 				i = (i + 1) % len(endpoints)
-				lat, ok, observedAt := hit(ctx, httpClient, baseURL, apiKey, ep)
-				// Stamp the receipt instant here, before the ctx check
-				// and before the mutex: this is the clock reading
-				// freshness is measured against, and it must be the
-				// sample's own instant rather than anything the
-				// end-of-run aggregation can see.
+				lat, ok, observedAt := hit(reqCtx, httpClient, baseURL, apiKey, ep)
+				// Stamp the receipt instant here, before the mutex: this
+				// is the clock reading freshness is measured against, and
+				// it must be the sample's own instant rather than anything
+				// the end-of-run aggregation can see.
 				receivedAt := time.Now()
-				// If the run-duration ctx expired while this request
-				// was in flight, the probe itself aborted it — the
-				// server did not fail it. Discard rather than count a
-				// self-inflicted cancel as an availability miss: at
-				// end-of-run every worker has exactly one in-flight
-				// request, so without this the probe always reports
-				// `concurrency` phantom failures, over-attributed to
-				// the slowest endpoint (widest window to be in flight
-				// when the deadline lands). That false ~0.3% loss is
-				// what tripped stellarindex_sla_probe_unit_failed (#54).
-				if ctx.Err() != nil {
-					return
-				}
 				mu.Lock()
 				samples[ep.Name] = append(samples[ep.Name], probeSample{
 					latency:    lat,
@@ -407,13 +456,14 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 	if len(ss) == 0 {
 		return stats{Endpoint: ep.Name, Path: ep.Path}
 	}
-	latencies := make([]float64, len(ss))
-	var freshSamples []float64
-	successes := 0
-	for i, s := range ss {
-		latencies[i] = float64(s.latency.Milliseconds())
+	// Failures stay out of the latency percentiles, as they do from the
+	// server's success histogram (internal/obs/http_middleware.go): a
+	// refused connection "takes" ~0 ms, so pooling it would report a hard
+	// outage as a fast API. Failures are counted by availability instead.
+	var latencies, freshSamples []float64
+	for _, s := range ss {
 		if s.ok {
-			successes++
+			latencies = append(latencies, float64(s.latency.Milliseconds()))
 		}
 		// Anchored to the sample's own receipt instant, not to now():
 		// aggregation runs after the whole run, so time.Since() here
@@ -423,6 +473,7 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 			freshSamples = append(freshSamples, s.receivedAt.Sub(s.observedAt).Seconds())
 		}
 	}
+	successes := len(latencies)
 	st := stats{
 		Endpoint:           ep.Name,
 		Path:               ep.Path,
@@ -431,17 +482,19 @@ func aggregateEndpointStats(ep endpoint, ss []probeSample) stats {
 		Successes:          successes,
 		Errors:             len(ss) - successes,
 		AvailabilityPct:    100.0 * float64(successes) / float64(len(ss)),
-		LatencyMS: latencyStats{
+	}
+	if successes > 0 {
+		st.LatencyMS = &latencyStats{
 			P50:  percentile(latencies, 0.50),
 			P95:  percentile(latencies, 0.95),
 			P99:  percentile(latencies, 0.99),
 			Max:  maxFloat(latencies),
 			Mean: meanFloat(latencies),
-		},
+		}
 	}
 	if len(freshSamples) > 0 {
-		med := percentile(freshSamples, 0.50)
-		st.ObservedAtFreshSec = &med
+		stalest := maxFloat(freshSamples)
+		st.ObservedAtFreshSec = &stalest
 	}
 	return st
 }
@@ -465,10 +518,10 @@ func endpointFailures(st stats, sla slaTargets) []string {
 		return []string{fmt.Sprintf("%s: no samples", st.Endpoint)}
 	}
 	var out []string
-	if st.LatencyMS.P95 > sla.P95MS {
+	if st.LatencyMS != nil && st.LatencyMS.P95 > sla.P95MS {
 		out = append(out, fmt.Sprintf("%s: p95=%.1fms > target %.1fms", st.Endpoint, st.LatencyMS.P95, sla.P95MS))
 	}
-	if st.LatencyMS.P99 > sla.P99MS {
+	if st.LatencyMS != nil && st.LatencyMS.P99 > sla.P99MS {
 		out = append(out, fmt.Sprintf("%s: p99=%.1fms > target %.1fms", st.Endpoint, st.LatencyMS.P99, sla.P99MS))
 	}
 	if st.AvailabilityPct < sla.AvailabilityPct {
@@ -529,16 +582,48 @@ func hit(ctx context.Context, c *http.Client, baseURL, apiKey string, ep endpoin
 	if !ok {
 		return lat, false, time.Time{}
 	}
-	// Try to parse observed_at — only the price endpoint has it.
+	observedAt, ok := checkBody(ep, body)
+	return lat, ok, observedAt
+}
+
+// checkBody parses data.observed_at from a 2xx body (zero when absent)
+// and reports whether the body meets ep's contract. Endpoints with no
+// contract accept any body, including a non-JSON one.
+func checkBody(ep endpoint, body []byte) (time.Time, bool) {
 	var env struct {
-		Data struct {
-			ObservedAt time.Time `json:"observed_at"`
-		} `json:"data"`
+		Data json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal(body, &env); err == nil {
-		return lat, true, env.Data.ObservedAt
+	_ = json.Unmarshal(body, &env)
+	var obj struct {
+		ObservedAt time.Time `json:"observed_at"`
 	}
-	return lat, true, time.Time{}
+	_ = json.Unmarshal(env.Data, &obj)
+	if ep.WantObservedAt && obj.ObservedAt.IsZero() {
+		return time.Time{}, false
+	}
+	if ep.WantData && !hasData(env.Data) {
+		return obj.ObservedAt, false
+	}
+	return obj.ObservedAt, true
+}
+
+// hasData reports whether raw is a non-null scalar or a non-empty
+// array or object.
+func hasData(raw json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return false
+	}
+	switch d := v.(type) {
+	case nil:
+		return false
+	case []any:
+		return len(d) > 0
+	case map[string]any:
+		return len(d) > 0
+	default:
+		return true
+	}
 }
 
 // percentile returns the p-th percentile (0..1) of xs using
@@ -605,10 +690,14 @@ func printText(w io.Writer, rep *report) {
 		if st.ObservedAtFreshSec != nil {
 			fresh = fmt.Sprintf("%.1f", *st.ObservedAtFreshSec)
 		}
-		fmt.Fprintf(w, "%-15s %-25s %7.1f %7.1f %7.1f %6.2f%% %9s\n",
-			st.Endpoint, st.Path,
-			st.LatencyMS.P50, st.LatencyMS.P95, st.LatencyMS.P99,
-			st.AvailabilityPct, fresh)
+		p50, p95, p99 := "—", "—", "—"
+		if st.LatencyMS != nil {
+			p50 = fmt.Sprintf("%.1f", st.LatencyMS.P50)
+			p95 = fmt.Sprintf("%.1f", st.LatencyMS.P95)
+			p99 = fmt.Sprintf("%.1f", st.LatencyMS.P99)
+		}
+		fmt.Fprintf(w, "%-15s %-25s %7s %7s %7s %6.2f%% %9s\n",
+			st.Endpoint, st.Path, p50, p95, p99, st.AvailabilityPct, fresh)
 	}
 	fmt.Fprintf(w, "\nverdict: %s\n", rep.Verdict)
 	if len(rep.FailedReasons) > 0 {

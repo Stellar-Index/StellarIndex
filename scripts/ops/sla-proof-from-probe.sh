@@ -320,6 +320,10 @@ def build_extract(prom_url, window_text, host):
     queried_at = time.time()
 
     lat = selector("stellarindex_sla_probe_latency_ms", host, 'quantile="0.95"')
+    # The coverage clock. Latency is published only for runs with a
+    # successful response, so a probe-recorded outage leaves a hole in it;
+    # run_duration_seconds is written by every run, pass or fail.
+    beat = selector("stellarindex_sla_probe_run_duration_seconds", host)
 
     # Pass 1 — where does the data actually START and END? Prometheus'
     # retention here is the 15-day default (retention.time is 0s, which
@@ -331,7 +335,7 @@ def build_extract(prom_url, window_text, host):
     # cover.
     step = max(300, int(window_secs / 2000) + 1)
     data = prom.call("query_range", {
-        "query": lat,
+        "query": beat,
         "start": "%.3f" % (queried_at - window_secs),
         "end": "%.3f" % queried_at,
         "step": "%ds" % step,
@@ -341,15 +345,15 @@ def build_extract(prom_url, window_text, host):
         refuse("no %s samples exist in the last %s at %s. The probe series "
                "this report is made of are absent, so there is nothing to "
                "prove and nothing is written."
-               % (lat, window_text, prom_url))
+               % (beat, window_text, prom_url))
 
     stamps = sorted({float(ts) for s in series for ts, _ in s["values"]})
     first_ts, last_ts = stamps[0], stamps[-1]
 
-    # Series gaps: the textfile collector holds the last probe output
-    # until the next run rewrites it, so a hole in THIS series means
-    # scraping stopped, not that the probe did. Probe outages are
-    # measured separately, below.
+    # Series gaps: every run writes this series and the textfile collector
+    # holds the last probe output until the next run rewrites it, so a
+    # hole in it means scraping stopped, not that the probe did or that
+    # the API was down. Probe outages are measured separately, below.
     gaps = []
     for a, b in zip(stamps, stamps[1:]):
         if b - a > 2 * step:
@@ -366,7 +370,7 @@ def build_extract(prom_url, window_text, host):
     # Measured from the last hour of the series itself rather than
     # assumed, so a re-tuned scrape interval does not silently re-weight
     # the arithmetic.
-    got = q("count_over_time(%s[1h])" % lat)
+    got = q("count_over_time(%s[1h])" % beat)
     try:
         per_hour = float((got[0].get("value") or [None, None])[1])
     except (IndexError, TypeError, ValueError):
@@ -380,7 +384,6 @@ def build_extract(prom_url, window_text, host):
     fresh = selector("stellarindex_sla_probe_freshness_sec", host)
     lastpass = selector("stellarindex_sla_probe_last_pass_timestamp", host)
     failed = selector("stellarindex_sla_probe_unit_failed", host)
-    rundur = selector("stellarindex_sla_probe_run_duration_seconds", host)
     verinfo = selector("stellarindex_binary_version_info", host,
                        'binary="stellarindex-api"')
 
@@ -404,19 +407,19 @@ def build_extract(prom_url, window_text, host):
         "avail_min": "min_over_time(%s[%s])" % (avail, rng),
         # Availability is a RATIO over the window, not a percentile, so
         # unlike the latency rows it is estimated rather than bounded —
-        # see the method note in the rendered report. Numerator and
-        # denominator share one subquery step so the weighting cancels.
-        "avail_weighted_num": "avg_over_time((%s * %s)[%s:%ds])"
-                              % (avail, samples, rng, sub_step),
-        "avail_weighted_den": "avg_over_time((%s)[%s:%ds])"
-                              % (samples, rng, sub_step),
+        # see the method note in the rendered report. Each run weighs the
+        # wall-clock time its result stood, NOT its request count: an
+        # outage or a hang collapses the count, so count-weighting gives
+        # exactly the bad runs the least say (a zero-sample run, none).
+        "avail_time_weighted": "avg_over_time((%s)[%s:%ds])"
+                               % (avail, rng, sub_step),
         "avail_under_frac": "avg_over_time((%s < bool %g)[%s:%ds])"
                             % (avail, AVAILABILITY_TARGET_PCT, rng, sub_step),
         "samples_avg": "avg_over_time(%s[%s])" % (samples, rng),
         "samples_min": "min_over_time(%s[%s])" % (samples, rng),
         "samples_max": "max_over_time(%s[%s])" % (samples, rng),
-        "scrape_count": "count_over_time(%s[%s])" % (lat, rng),
-        "scrape_count_1h": "count_over_time(%s[1h])" % lat,
+        "scrape_count": "count_over_time(%s[%s])" % (beat, rng),
+        "scrape_count_1h": "count_over_time(%s[1h])" % beat,
         "fresh_max": "max_over_time(%s[%s])" % (fresh, rng),
         "fresh_typ": "quantile_over_time(0.5, %s[%s])" % (fresh, rng),
         "passing_runs": "changes(%s[%s])" % (lastpass, rng),
@@ -424,13 +427,13 @@ def build_extract(prom_url, window_text, host):
         "no_pass_max_sec": "max_over_time((time() - %s)[%s:%ds])"
                            % (lastpass, rng, sub_step),
         "unit_failed_frac": "avg_over_time(%s[%s])" % (failed, rng),
-        "run_duration_max": "max_over_time(%s[%s])" % (rundur, rng),
-        "run_duration_min": "min_over_time(%s[%s])" % (rundur, rng),
+        "run_duration_max": "max_over_time(%s[%s])" % (beat, rng),
+        "run_duration_min": "min_over_time(%s[%s])" % (beat, rng),
         "api_versions": "count by (version) (count_over_time(%s[%s]))" % (verinfo, rng),
     }
 
     return {
-        "extract_version": 1,
+        "extract_version": 2,
         "generator": "scripts/ops/sla-proof-from-probe.sh",
         "prom_url": prom_url,
         "host_filter": host,
@@ -618,15 +621,13 @@ def bound_verdict(value, target, lower_is_better=True):
 # ratio over the window; gating it on the worst single 30-second probe
 # run would publish NOT PROVEN for a window the SLO was comfortably met
 # in, which overstates the bar in the opposite direction to averaging a
-# p95 and is just as wrong. The window ratio is estimated by weighting
-# each run's rate by its own sample count, numerator and denominator
-# sharing one subquery step so the scrape weighting cancels.
-avail_num = by_endpoint("avail_weighted_num")
-avail_den = by_endpoint("avail_weighted_den")
-avail_window = {}
-for ep in set(avail_num) & set(avail_den):
-    if avail_den[ep] > 0:
-        avail_window[ep] = avail_num[ep] / avail_den[ep]
+# p95 and is just as wrong. The window ratio weights each run by the
+# wall-clock time its result stood, so a run that recorded no samples
+# counts at the 0 % it published. A version-1 extract carries only the
+# sample-count-weighted pair, which gave such runs no weight at all; it
+# is not re-certified under this method, so its availability cells read
+# n/a and NOT PROVEN.
+avail_window = by_endpoint("avail_time_weighted")
 
 # Every endpoint any headline family names, INCLUDING the sample count:
 # an endpoint the probe issued requests to but reported no latency or
@@ -852,8 +853,9 @@ w("**estimate**, and they are different kinds of number on purpose. A")
 w("percentile cannot be pooled across runs, so the largest per-run value is")
 w("published instead and is a true ceiling on the pooled one. Availability")
 w("is a ratio and the SLO is a ratio over the window, so gating it on the")
-w("worst single 30-second run would fail a window the SLO was met in — it is")
-w("weighted by each run's own sample count instead. `worst run` is kept")
+w("worst single 30-second run would fail a window the SLO was met in — each")
+w("run is weighted by the time its result stood instead, not by its request")
+w("count, which an outage or a hang collapses. `worst run` is kept")
 w("beside it because a window ratio hides a short total outage, and the")
 w("`window below target` column further down says how much of the week that")
 w("was.")
