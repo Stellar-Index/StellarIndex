@@ -52,6 +52,47 @@ func TestDecodeReserveConfig(t *testing.T) {
 	}
 }
 
+// A V1 pool's ResConfig entry has no supply_cap / enabled: the reserve
+// is always enabled and uncapped.
+func TestDecodeReserveConfig_V1Pool(t *testing.T) {
+	rc, err := DecodeReserveConfig(reserveConfigV1ScVal(t))
+	if err != nil {
+		t.Fatalf("DecodeReserveConfig(V1): %v", err)
+	}
+	if rc.Util != 8_000_000 || rc.Reactivity != 50_000 || rc.Index != 3 {
+		t.Errorf("config = %+v", rc)
+	}
+	if !rc.Enabled || rc.SupplyCap != nil {
+		t.Errorf("V1 enabled/supply_cap = %v/%v, want true/nil", rc.Enabled, rc.SupplyCap)
+	}
+	if _, err := DecodeReserveConfig(reserveConfigV1ScVal(t, "util")); err == nil {
+		t.Error("missing util: want error")
+	}
+}
+
+func TestParseReserveConfigMetadata_V1Pool(t *testing.T) {
+	cfg, err := ParseReserveConfigMetadata([]byte(`{"index":1,"decimals":7,"c_factor":9000000,` +
+		`"l_factor":9500000,"util":8000000,"max_util":9500000,"r_base":50000,` +
+		`"r_one":500000,"r_two":5000000,"r_three":15000000,"reactivity":200}`))
+	if err != nil {
+		t.Fatalf("ParseReserveConfigMetadata: %v", err)
+	}
+	if cfg.Util != 8_000_000 || cfg.Reactivity != 200 {
+		t.Errorf("config = %+v", cfg)
+	}
+	if !cfg.Enabled || cfg.SupplyCap != nil {
+		t.Errorf("V1 enabled/supply_cap = %v/%v, want true/nil", cfg.Enabled, cfg.SupplyCap)
+	}
+
+	cfg, err = ParseReserveConfigMetadata([]byte(`{"util":1,"supply_cap":"5","enabled":false}`))
+	if err != nil {
+		t.Fatalf("ParseReserveConfigMetadata(V2): %v", err)
+	}
+	if cfg.Enabled || cfg.SupplyCap == nil || cfg.SupplyCap.Int64() != 5 {
+		t.Errorf("V2 enabled/supply_cap = %v/%v, want false/5", cfg.Enabled, cfg.SupplyCap)
+	}
+}
+
 func TestDecodePoolConfig(t *testing.T) {
 	const oracle = "CCYHURAC5VTN2ZU663UUS5F24S4GURDPO4FHZ75JLN5DMLRTLCG44H44"
 	sv := mapScVal([]xdr.ScMapEntry{

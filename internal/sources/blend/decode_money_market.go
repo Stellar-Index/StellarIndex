@@ -601,20 +601,21 @@ func decodeQueueSetReserve(e *events.Event, closedAt time.Time) (AdminEvent, err
 	if err != nil {
 		return AdminEvent{}, fmt.Errorf("%w: asset: %w", ErrMalformedPayload, err)
 	}
-	cfg, err := decodeReserveConfig(tuple[1])
+	cfg, missing, err := decodeReserveConfig(tuple[1])
 	if err != nil {
 		return AdminEvent{}, fmt.Errorf("%w: metadata: %w", ErrMalformedPayload, err)
 	}
 	return AdminEvent{
-		ContractID:    e.ContractID,
-		Kind:          EventQueueSetReserve,
-		Admin:         admin,
-		Asset:         asset,
-		ReserveConfig: cfg,
-		Ledger:        e.Ledger,
-		TxHash:        e.TxHash,
-		OpIndex:       uint32(e.OperationIndex),
-		Timestamp:     closedAt,
+		ContractID:           e.ContractID,
+		Kind:                 EventQueueSetReserve,
+		Admin:                admin,
+		Asset:                asset,
+		ReserveConfig:        cfg,
+		ReserveConfigMissing: missing,
+		Ledger:               e.Ledger,
+		TxHash:               e.TxHash,
+		OpIndex:              uint32(e.OperationIndex),
+		Timestamp:            closedAt,
 	}, nil
 }
 
@@ -904,63 +905,76 @@ func toDomainAssetAmounts(in []AssetAmount) []domain.BlendAssetAmount {
 //   - i128 → decimal string (preserved full precision per ADR-0003)
 //   - u32  → uint64 (jsonb-safe)
 //   - bool → bool
+//
+// V2Only marks the fields the V2 pool added; a V1 pool's ReserveConfig
+// has only the other eleven.
 var reserveConfigKeys = []struct {
-	Name string
-	Type string // "u32" | "i128" | "bool"
+	Name   string
+	Type   string // "u32" | "i128" | "bool"
+	V2Only bool
 }{
-	{"index", "u32"},
-	{"decimals", "u32"},
-	{"c_factor", "u32"},
-	{"l_factor", "u32"},
-	{"util", "u32"},
-	{"max_util", "u32"},
-	{"r_base", "u32"},
-	{"r_one", "u32"},
-	{"r_two", "u32"},
-	{"r_three", "u32"},
-	{"reactivity", "u32"},
-	{"supply_cap", "i128"},
-	{"enabled", "bool"},
+	{"index", "u32", false},
+	{"decimals", "u32", false},
+	{"c_factor", "u32", false},
+	{"l_factor", "u32", false},
+	{"util", "u32", false},
+	{"max_util", "u32", false},
+	{"r_base", "u32", false},
+	{"r_one", "u32", false},
+	{"r_two", "u32", false},
+	{"r_three", "u32", false},
+	{"reactivity", "u32", false},
+	{reserveConfigSupplyCap, "i128", true},
+	{reserveConfigEnabled, "bool", true},
 }
 
-// decodeReserveConfig decodes an ScvMap-shaped ReserveConfig into
-// a key-value map. Missing fields surface as ErrMalformedPayload —
-// any contract upgrade that drops a field fails loud rather than
-// silently writing partial data.
-//
-// `enabled` is a bool. The soroban-sdk emits booleans as ScvBool;
-// we decode it via scval.AsBool below.
-func decodeReserveConfig(sv scval.ScVal) (map[string]any, error) {
+// decodeReserveConfig decodes an ScvMap-shaped ReserveConfig into a
+// key-value map. A missing field both pool generations carry is an
+// error, so an upgrade that drops one fails loud rather than writing
+// partial data. A missing V2-only field is left out of the map and
+// named in missing, so a V1 pool's event still lands.
+func decodeReserveConfig(sv scval.ScVal) (out map[string]any, missing []string, err error) {
 	entries, err := scval.AsMap(sv)
 	if err != nil {
-		return nil, fmt.Errorf("ReserveConfig shape: %w", err)
+		return nil, nil, fmt.Errorf("ReserveConfig shape: %w", err)
 	}
-	out := make(map[string]any, len(reserveConfigKeys))
+	out = make(map[string]any, len(reserveConfigKeys))
 	for _, k := range reserveConfigKeys {
 		val, ok := scval.MapField(entries, k.Name)
 		if !ok {
-			return nil, fmt.Errorf("ReserveConfig missing %q", k.Name)
+			if k.V2Only {
+				missing = append(missing, k.Name)
+				continue
+			}
+			return nil, nil, fmt.Errorf("ReserveConfig missing %q", k.Name)
 		}
-		switch k.Type {
-		case "u32":
-			n, err := scval.AsU32(val)
-			if err != nil {
-				return nil, fmt.Errorf("ReserveConfig.%s: %w", k.Name, err)
-			}
-			out[k.Name] = uint64(n)
-		case "i128":
-			amt, err := scval.AsAmountFromI128(val)
-			if err != nil {
-				return nil, fmt.Errorf("ReserveConfig.%s: %w", k.Name, err)
-			}
-			out[k.Name] = amt.String() // i128 as decimal string
-		case "bool":
-			b, err := scval.AsBool(val)
-			if err != nil {
-				return nil, fmt.Errorf("ReserveConfig.%s: %w", k.Name, err)
-			}
-			out[k.Name] = b
+		v, err := decodeReserveConfigField(val, k.Type)
+		if err != nil {
+			return nil, nil, fmt.Errorf("ReserveConfig.%s: %w", k.Name, err)
 		}
+		out[k.Name] = v
 	}
-	return out, nil
+	return out, missing, nil
+}
+
+// decodeReserveConfigField decodes one ReserveConfig value per the
+// reserveConfigKeys type rules.
+func decodeReserveConfigField(val scval.ScVal, typ string) (any, error) {
+	switch typ {
+	case "u32":
+		n, err := scval.AsU32(val)
+		if err != nil {
+			return nil, err
+		}
+		return uint64(n), nil
+	case "i128":
+		amt, err := scval.AsAmountFromI128(val)
+		if err != nil {
+			return nil, err
+		}
+		return amt.String(), nil // i128 as decimal string
+	case "bool":
+		return scval.AsBool(val)
+	}
+	return nil, fmt.Errorf("unknown field type %q", typ)
 }

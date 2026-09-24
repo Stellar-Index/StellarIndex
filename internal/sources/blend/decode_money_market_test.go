@@ -1,8 +1,10 @@
 package blend
 
 import (
+	"encoding/json"
 	"errors"
 	"math/big"
+	"reflect"
 	"testing"
 	"time"
 
@@ -461,6 +463,115 @@ func TestDecodeQueueSetReserve(t *testing.T) {
 	}
 	if got := out.ReserveConfig["supply_cap"]; got != "1000000000000" {
 		t.Errorf("ReserveConfig.supply_cap=%v want \"1000000000000\"", got)
+	}
+}
+
+// reserveConfigV1ScVal is reserveConfigScVal as a V1 pool emits it:
+// no supply_cap and no enabled (both added by the V2 pool).
+func reserveConfigV1ScVal(t *testing.T, drop ...string) xdr.ScVal {
+	t.Helper()
+	skip := map[string]bool{"supply_cap": true, "enabled": true}
+	for _, d := range drop {
+		skip[d] = true
+	}
+	var entries []xdr.ScMapEntry
+	for _, e := range **reserveConfigScVal(t).Map {
+		if !skip[string(*e.Key.Sym)] {
+			entries = append(entries, e)
+		}
+	}
+	return mapScVal(entries)
+}
+
+func queueSetReserveEvent(t *testing.T, cfg xdr.ScVal) (*events.Event, time.Time) {
+	t.Helper()
+	ev := &events.Event{
+		ContractID: contractStrkeyFromSeed(t, 0x55),
+		Topic: []string{
+			TopicSymbolQueueSetReserve,
+			encodeScVal(t, addressScVal(t, accountStrkeyFromSeed(t, 0x56))),
+		},
+		Value:          encodeScVal(t, vecScVal(addressScVal(t, contractStrkeyFromSeed(t, 0x57)), cfg)),
+		LedgerClosedAt: "2026-05-20T12:02:00Z",
+	}
+	closedAt, _ := time.Parse(time.RFC3339, ev.LedgerClosedAt)
+	return ev, closedAt
+}
+
+// A V1 pool's queue_set_reserve carries the 11-field ReserveConfig; the
+// event must land with those fields rather than being dropped whole.
+func TestDecodeQueueSetReserve_V1PoolConfigLands(t *testing.T) {
+	ev, closedAt := queueSetReserveEvent(t, reserveConfigV1ScVal(t))
+	out, err := decodeQueueSetReserve(ev, closedAt)
+	if err != nil {
+		t.Fatalf("decodeQueueSetReserve(V1 ReserveConfig): %v", err)
+	}
+	if out.Asset != contractStrkeyFromSeed(t, 0x57) {
+		t.Errorf("asset = %q", out.Asset)
+	}
+	want := map[string]any{
+		"index": uint64(3), "decimals": uint64(7), "c_factor": uint64(8_500_000),
+		"l_factor": uint64(9_000_000), "util": uint64(8_000_000), "max_util": uint64(9_500_000),
+		"r_base": uint64(100_000), "r_one": uint64(500_000), "r_two": uint64(1_000_000),
+		"r_three": uint64(2_000_000), "reactivity": uint64(50_000),
+	}
+	if !reflect.DeepEqual(out.ReserveConfig, want) {
+		t.Errorf("ReserveConfig = %#v\nwant %#v", out.ReserveConfig, want)
+	}
+}
+
+func TestDecodeQueueSetReserve_V1PoolRecordsMissingV2Fields(t *testing.T) {
+	ev, closedAt := queueSetReserveEvent(t, reserveConfigV1ScVal(t))
+	out, err := decodeQueueSetReserve(ev, closedAt)
+	if err != nil {
+		t.Fatalf("decodeQueueSetReserve: %v", err)
+	}
+	if want := []string{"supply_cap", "enabled"}; !reflect.DeepEqual(out.ReserveConfigMissing, want) {
+		t.Errorf("ReserveConfigMissing = %v, want %v", out.ReserveConfigMissing, want)
+	}
+
+	ev, closedAt = queueSetReserveEvent(t, reserveConfigScVal(t))
+	out, err = decodeQueueSetReserve(ev, closedAt)
+	if err != nil {
+		t.Fatalf("decodeQueueSetReserve(V2): %v", err)
+	}
+	if out.ReserveConfigMissing != nil {
+		t.Errorf("V2 ReserveConfigMissing = %v, want nil", out.ReserveConfigMissing)
+	}
+}
+
+// A field common to both generations stays required: its absence is an
+// unaudited contract shape, not a V1 pool.
+func TestDecodeQueueSetReserve_MissingSharedFieldFails(t *testing.T) {
+	for _, name := range []string{"util", "decimals", "reactivity"} {
+		ev, closedAt := queueSetReserveEvent(t, reserveConfigV1ScVal(t, name))
+		if _, err := decodeQueueSetReserve(ev, closedAt); !errors.Is(err, ErrMalformedPayload) {
+			t.Errorf("missing %q: err = %v, want ErrMalformedPayload", name, err)
+		}
+	}
+}
+
+// The persisted V1 metadata must read back through the APY config
+// reader with V1 semantics: always enabled, no supply cap.
+func TestDecodeQueueSetReserve_V1MetadataRoundTrips(t *testing.T) {
+	ev, closedAt := queueSetReserveEvent(t, reserveConfigV1ScVal(t))
+	out, err := decodeQueueSetReserve(ev, closedAt)
+	if err != nil {
+		t.Fatalf("decodeQueueSetReserve: %v", err)
+	}
+	b, err := json.Marshal(out.ReserveConfig)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	cfg, err := ParseReserveConfigMetadata(b)
+	if err != nil {
+		t.Fatalf("ParseReserveConfigMetadata: %v", err)
+	}
+	if cfg.Util != 8_000_000 || cfg.RThree != 2_000_000 || cfg.Decimals != 7 {
+		t.Errorf("rate params = %+v", cfg)
+	}
+	if !cfg.Enabled || cfg.SupplyCap != nil {
+		t.Errorf("V1 enabled/supply_cap = %v/%v, want true/nil", cfg.Enabled, cfg.SupplyCap)
 	}
 }
 
