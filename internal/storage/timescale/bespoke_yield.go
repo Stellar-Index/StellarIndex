@@ -44,10 +44,11 @@ import (
 
 // Window-stable series names (the grain lives in the point timestamps).
 const (
-	yieldSeriesNameVaultDeposits  = "Vault deposits"
-	yieldSeriesNameVaultWithdraws = "Vault withdrawals"
-	yieldSeriesNameStrategyVolume = "Strategy flow volume"
-	yieldSeriesNameStrategyEvents = "Strategy events"
+	yieldSeriesNameVaultDeposits       = "Vault deposits"
+	yieldSeriesNameVaultWithdraws      = "Vault withdrawals"
+	yieldSeriesNameStrategyDepositVol  = "Strategy deposit volume"
+	yieldSeriesNameStrategyWithdrawVol = "Strategy withdraw volume"
+	yieldSeriesNameStrategyEvents      = "Strategy events"
 )
 
 // yieldBreakdownTopN caps the flows-by-vault donut at the top vaults,
@@ -98,17 +99,20 @@ func defindexVaultCountSeriesQuery(windowDays int) string {
 		GROUP BY 1, 2 ORDER BY 1, 2 ASC`
 }
 
-// defindexStrategyVolumeSeriesQuery builds the gross strategy-layer flow
-// volume series (summed scalar amounts, token base units across
-// strategies — see the Notes caveat) at the window's grain. $1 = interval.
+// defindexStrategyVolumeSeriesQuery builds the strategy-layer flow volume
+// series split by direction (summed scalar amounts, token base units
+// across strategies — see the Notes caveat), matching the direction split
+// already applied by the KPI and per-strategy table queries. 'harvest' is
+// excluded — it is strategy yield, not capital deposited/withdrawn, and
+// mixing it in would inflate the capital-volume figure. $1 = interval.
 func defindexStrategyVolumeSeriesQuery(windowDays int) string {
 	trunc, format := bridgeSeriesGrain(windowDays)
 	return `
-		SELECT to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), COALESCE(sum(amount),0)::text
+		SELECT direction, to_char(date_trunc('` + trunc + `', ledger_close_time), '` + format + `'), COALESCE(sum(amount),0)::text
 		FROM defindex_flows
-		WHERE ledger_close_time > now() - $1::interval AND layer = 'strategy'` +
+		WHERE ledger_close_time > now() - $1::interval AND layer = 'strategy' AND direction IN ('deposit', 'withdraw')` +
 		completeDaysOnly(windowDays, "ledger_close_time") + `
-		GROUP BY 1 ORDER BY 1 ASC`
+		GROUP BY 1, 2 ORDER BY 1, 2 ASC`
 }
 
 // defindexStrategyEventsSeriesQuery builds the strategy-layer event-count
@@ -186,7 +190,7 @@ func (s *Store) bespokeYield(ctx context.Context, source string, windowDays int)
 	blk := &BespokeBlock{
 		Category: "yield",
 		Notes: []string{
-			"Flow volume is gross summed defindex_flows.amount by direction over the window from the STRATEGY layer — the vault layer records who/when but carries the amount as a per-strategy vector (amounts_vec), so its scalar amount is NULL; the strategy-layer scalars are the actual capital deployed.",
+			"Flow volume is deposit/withdraw defindex_flows.amount, summed by direction over the window from the STRATEGY layer — the vault layer records who/when but carries the amount as a per-strategy vector (amounts_vec), so its scalar amount is NULL; the strategy-layer scalars are the actual capital deployed. 'harvest' rows (strategy yield, not capital flow) are excluded from this series.",
 			"Net flow (deposit − withdraw) is a window AUM proxy, not all-time TVL (the served tier is retention-scoped). Contract is a Soroban strategy contract id; amounts are summed token base units (per-asset decimals) across strategies.",
 			"Per-vault deposited/withdrawn amounts are the vault's OWN asset in base units (single-entry amounts_vec) and are shown only for vaults whose every window flow is single-asset; multi-asset or vector-less vaults show '—'. Amounts are NEVER summed across vaults — different vaults hold different assets, so cross-vault figures here are counts.",
 			"All-time totals cover every retained defindex_flows row (no retention) — history begins at the source's first ingested event, not vault genesis.",
@@ -247,13 +251,17 @@ func (s *Store) yieldSeriesBlocks(ctx context.Context, blk *BespokeBlock, since 
 	}
 	blk.Series = append(blk.Series, directional...)
 
-	volume, err := s.scanDailySeries(ctx, defindexStrategyVolumeSeriesQuery(windowDays), since)
+	volume, err := s.collectKeyedSeries(ctx, defindexStrategyVolumeSeriesQuery(windowDays), "token-units",
+		func(key string) string {
+			if key == "deposit" {
+				return yieldSeriesNameStrategyDepositVol
+			}
+			return yieldSeriesNameStrategyWithdrawVol
+		}, since)
 	if err != nil {
-		return err
+		return fmt.Errorf("timescale: bespokeYield strategy volume series: %w", err)
 	}
-	if len(volume) > 0 {
-		blk.Series = append(blk.Series, BespokeSeries{Name: yieldSeriesNameStrategyVolume, Unit: "token-units", Points: volume})
-	}
+	blk.Series = append(blk.Series, volume...)
 
 	events, err := s.scanDailySeries(ctx, defindexStrategyEventsSeriesQuery(windowDays), since)
 	if err != nil {
