@@ -99,6 +99,11 @@ surface.
 | 07 | Galexie / MinIO node failure | 2 | docker stop / systemctl stop | erasure-coded reads keep serving |
 | 08 | API pod mid-stream kill | 2 | systemctl restart stellarindex-api | SSE clients reconnect with cursor ≤ 5 s |
 | 09 | Aggregator tick stall | 2 | `kill -STOP $(pgrep stellarindex-aggregator)` | cached values serve until TTL; `aggregator-silent` fires within 5m |
+| 10 | ClickHouse server stop | 2 | systemctl stop clickhouse-server | lake-backed explorer routes 5xx or serve a flagged stale snapshot; recover on restart |
+
+The dev compose stack has no ClickHouse, so row 10 cannot run in Wave 1.
+Until it does, the lake-down contract is pinned in Go by
+`internal/api/v1/explorer/lake_down_test.go`, which runs in `make test`.
 
 ## Production-safety guard
 

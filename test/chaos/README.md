@@ -21,6 +21,18 @@ flips — those need infrastructure beyond `make dev`.
 | `scenarios/03-redis-network-partition.sh` | go-redis cold-conn timeout vs connection-refused | ≤ 1 transient sample failure during 30s partition; clean recovery |
 | `scenarios/04-redis-misconf.sh` | Redis MISCONF (stop-writes-on-bgsave-error) → F-0039 cascade | cache-write GET routes 503 + Retry-After:30 (NOT 500); `/v1/price` stays 200 stale; signup fail-CLOSED post-30s-dwell; all routes recover within 30s of heal |
 
+## ClickHouse lake outage (not a scenario here)
+
+The dev stack (`deploy/docker-compose/dev.yaml`) runs no ClickHouse, so
+no Wave 1 scenario can stop one. The lake-down failure mode is pinned at
+the handler seam instead, by
+`TestExplorerReads_LakeDownFailsLoudly` in
+`internal/api/v1/explorer/lake_down_test.go`: with every `ExplorerReader`
+read failing as a refused connection, each lake-backed explorer route
+must answer a 5xx problem, never a 200. `TestExplorerReads_LakeDownCoversEveryRoute`
+fails when a new route handler is added without being classified. Both
+run in `make test`. Killing a real `clickhouse-server` is Wave 2.
+
 ## Wave 2 scenarios (deferred)
 
 These need staging baremetal with the production HA topology
@@ -31,6 +43,8 @@ These need staging baremetal with the production HA topology
   go-redis `FailoverClient`.
 - HAProxy node kill → keepalived VRRP VIP flips to peer.
 - Galexie / MinIO node failure → erasure-coding continues serving.
+- ClickHouse server stop → lake-backed explorer routes 5xx (or serve
+  a flagged stale snapshot); recover once the server is back.
 - API pod mid-stream kill → SSE client reconnects with cursor.
 - Aggregator tick stall → cached values keep serving until TTL +
   the `aggregator-silent` alert fires.
