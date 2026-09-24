@@ -413,7 +413,7 @@ func signerSummary(accountID string, acct AccountSigners) txnbuild.SignerSummary
 // previously issued by [Verify] and returns the [auth.Subject] it
 // represents. Returns [auth.ErrTokenExpired] when the exp claim has
 // passed; [auth.ErrUnauthorized] for any other validation failure
-// (bad signature, malformed body, wrong issuer, or an nbf that is
+// (bad signature, malformed body, wrong issuer or network, or an nbf that is
 // still in the future).
 func (v *Validator) VerifyJWT(_ context.Context, jwt string) (auth.Subject, error) {
 	claims, err := v.parseJWT(jwt)
