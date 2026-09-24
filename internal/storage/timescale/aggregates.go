@@ -2025,7 +2025,7 @@ func (s *Store) Volume24hUSDForAsset(ctx context.Context, assetKey string) (stri
           FROM prices_1m
          WHERE (base_asset = ANY($1) OR quote_asset = ANY($1))
            AND bucket >= now() - INTERVAL '24 hours'
-           AND bucket  < now()
+           AND bucket <= now() - INTERVAL '1 minute'
     `
 	var out string
 	if err := s.db.QueryRowContext(ctx, q, assetAliasArray(assetKey)).Scan(&out); err != nil {
