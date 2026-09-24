@@ -260,7 +260,7 @@ func (s *Server) runObservationsStreamProducer(
 		}
 	}
 
-	ticker := time.NewTicker(time.Duration(intervalSeconds) * time.Second)
+	ticker := time.NewTicker(s.streamCadence(intervalSeconds))
 	defer ticker.Stop()
 
 	for {

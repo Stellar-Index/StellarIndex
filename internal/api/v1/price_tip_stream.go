@@ -387,7 +387,7 @@ func (s *Server) runTipStreamProducer(
 		}
 	}
 
-	ticker := time.NewTicker(time.Duration(windowSeconds) * time.Second)
+	ticker := time.NewTicker(s.streamCadence(windowSeconds))
 	defer ticker.Stop()
 
 	for {
@@ -482,7 +482,8 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 // the client going away, which is not news about the verdict store and
 // is not logged.
 func (s *Server) tipStreamFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
-	lookupCtx, cancel := context.WithTimeout(ctx, tipStreamDivergenceBudget)
+	budget := s.tipDivergenceBudget()
+	lookupCtx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	flags := s.tipFlags(lookupCtx, snap, asset, quote, sources)
 	if lookupCtx.Err() == nil || ctx.Err() != nil {
@@ -495,10 +496,29 @@ func (s *Server) tipStreamFlags(ctx context.Context, snap PriceSnapshot, asset, 
 	flags.DivergenceWarning, flags.DivergenceChecked = false, false
 	if suppressed, ok := s.tipDivergenceStalls.admit(time.Now()); ok {
 		s.logger.Warn("divergence lookup exceeded its tip-stream budget — emitting with the verdict unchecked",
-			"asset", asset.String(), "budget", tipStreamDivergenceBudget,
+			"asset", asset.String(), "budget", budget,
 			"suppressed_since_last", suppressed)
 	}
 	return flags
+}
+
+// tipDivergenceBudget is [tipStreamDivergenceBudget] unless a test
+// shortened it.
+func (s *Server) tipDivergenceBudget() time.Duration {
+	if s.tipDivergenceBudgetFor > 0 {
+		return s.tipDivergenceBudgetFor
+	}
+	return tipStreamDivergenceBudget
+}
+
+// streamCadence is the tick period of a stream whose cadence parameter
+// is n seconds.
+func (s *Server) streamCadence(n int) time.Duration {
+	second := time.Second
+	if s.streamSecondFor > 0 {
+		second = s.streamSecondFor
+	}
+	return time.Duration(n) * second
 }
 
 // tipDivergenceStallLog rate-limits the stalled-lookup warning to one

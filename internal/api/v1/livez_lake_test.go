@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -120,7 +121,9 @@ func TestLivezLake_SingleFlightSharesOnePingPerRound(t *testing.T) {
 // test (that one alone could be satisfied by caching forever).
 func TestLivezLake_RoundRefreshesAfterTTL(t *testing.T) {
 	check := &countingLakeCheck{err: errors.New("dial tcp 10.9.9.9:9000: connect: connection refused")}
-	ts := newTestServer(t, check)
+	srv := v1.New(v1.Options{ReadyChecks: []v1.ReadyChecker{check}})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
 
 	resp, err := http.Get(ts.URL + "/v1/livez/lake")
 	if err != nil {
@@ -132,8 +135,8 @@ func TestLivezLake_RoundRefreshesAfterTTL(t *testing.T) {
 	}
 
 	check.setErr(nil)
-	// livezLakeTTL is 1s; wait it out plus slack.
-	time.Sleep(1200 * time.Millisecond)
+	// Age the round just past the TTL rather than sleeping it out.
+	srv.AgeLivezLakeCacheForTest(v1.LivezLakeTTL + time.Millisecond)
 
 	resp2, err := http.Get(ts.URL + "/v1/livez/lake")
 	if err != nil {

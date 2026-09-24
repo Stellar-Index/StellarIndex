@@ -62,10 +62,18 @@ func (g *gatedDivergenceLooker) DivergenceFiringFor(ctx context.Context, _, _ ca
 	}
 }
 
+// stallBudget is the divergence sub-budget the stall tests run against.
+// A never-released lookup costs exactly this, so it is what each stalled
+// emission waits; the regression they guard against is the lookup riding
+// the UNSCALED 8s tick budget instead, which every bound below still
+// separates by the same margin as at the production 1s.
+const stallBudget = 100 * time.Millisecond
+
 // tipStreamServerWithLooker wires a hub-less server (so both the
 // pre-flight frame and every later frame come from this process's own
-// code paths) over one priced pair.
-func tipStreamServerWithLooker(t *testing.T, div v1.DivergenceLooker) string {
+// code paths) over one priced pair. A zero budget keeps the production
+// [v1.TipStreamDivergenceBudget].
+func tipStreamServerWithLooker(t *testing.T, div v1.DivergenceLooker, budget time.Duration) string {
 	t.Helper()
 	prices := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -73,14 +81,15 @@ func tipStreamServerWithLooker(t *testing.T, div v1.DivergenceLooker) string {
 		},
 	}
 	srv := v1.New(v1.Options{Prices: prices, Divergence: div})
+	srv.SetStreamTimingForTest(testStreamSecond, budget)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts.URL
 }
 
-// tipStreamURL is the stream under test. window_seconds=60 keeps the
-// producer from ticking during the test, so what is measured is the
-// pre-flight path — the one that sits between the client's request and
+// tipStreamURL is the stream under test. window_seconds=60 (6s at
+// [testStreamSecond]) keeps the producer from ticking during the test, so
+// what is measured is the pre-flight path — the one that sits between the client's request and
 // the response headers.
 const tipStreamURL = "/v1/price/tip/stream?asset=crypto:BTC&quote=fiat:USD&window_seconds=60"
 
@@ -95,7 +104,7 @@ const tipStreamURL = "/v1/price/tip/stream?asset=crypto:BTC&quote=fiat:USD&windo
 // optional flag setting time-to-first-byte for the whole connection.
 func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayHeaders(t *testing.T) {
 	div := newGatedDivergenceLooker(false, true) // never released
-	url := tipStreamServerWithLooker(t, div)
+	url := tipStreamServerWithLooker(t, div, stallBudget)
 
 	// Generous ceiling so a genuinely wedged handler fails the assertion
 	// below rather than the transport.
@@ -117,9 +126,9 @@ func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayHeaders(t *testing.T)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
-	// The bound is the auxiliary sub-budget (1s), not the tick budget
-	// (8s). 4s leaves the sub-budget three times its own width of slack
-	// on a loaded machine while staying far below the tick budget a
+	// The bound is the auxiliary sub-budget, not the tick budget (8s). 4s
+	// leaves the production 1s sub-budget three times its own width of
+	// slack on a loaded machine while staying far below the tick budget a
 	// regression would fall back to.
 	if headers > 4*time.Second {
 		t.Errorf("response headers took %v with a stalled divergence lookup, want < 4s — "+
@@ -172,21 +181,25 @@ func (l *timedLooker) DivergenceFiringFor(ctx context.Context, _, _ canonical.As
 // verdict survives to the wire; outside it the event still goes out, on
 // time, with the verdict unchecked.
 //
-// Both halves matter. Without the 900ms case, "always report unchecked"
-// passes. Without the 1200ms case, "never bound anything" passes.
+// Both halves matter. Without the inside case, "always report
+// unchecked" passes. Without the outside case, "never bound anything"
+// passes. The budget is shortened to 300ms; the delays keep the same
+// absolute margins as against the production 1s (100ms inside, 200ms
+// outside), so scheduling slack is exactly as tight as before.
 func TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge(t *testing.T) {
+	const budget = 300 * time.Millisecond
 	for _, tc := range []struct {
 		name        string
 		delay       time.Duration
 		wantChecked bool
 		wantWarning bool
 	}{
-		{"inside the budget keeps the verdict", 900 * time.Millisecond, true, true},
-		{"outside the budget drops the verdict", 1200 * time.Millisecond, false, false},
+		{"inside the budget keeps the verdict", budget - 100*time.Millisecond, true, true},
+		{"outside the budget drops the verdict", budget + 200*time.Millisecond, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l := &timedLooker{delay: tc.delay, firing: true, checked: true}
-			url := tipStreamServerWithLooker(t, l)
+			url := tipStreamServerWithLooker(t, l, budget)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
@@ -217,7 +230,7 @@ func TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge(t *testing.T) {
 			} {
 				if !strings.Contains(data, want) {
 					t.Errorf("a %v lookup against a %v budget: event missing %q: %s",
-						tc.delay, 1*time.Second, want, data)
+						tc.delay, budget, want, data)
 				}
 			}
 			if headers > 4*time.Second {
@@ -234,7 +247,7 @@ func TestPriceTipStream_DivergenceBudgetDiscriminatesAtItsEdge(t *testing.T) {
 // time the frame reached the wire, by however long the lookup took.
 func TestPriceTipStream_AsOfIsStampedAfterTheDivergenceLookup(t *testing.T) {
 	div := newGatedDivergenceLooker(false, true)
-	url := tipStreamServerWithLooker(t, div)
+	url := tipStreamServerWithLooker(t, div, 0)
 
 	// Hold the lookup parked for a slice of real time well inside the
 	// sub-budget, then record the instant it is allowed to return. An
@@ -286,7 +299,7 @@ func TestPriceTipStream_AsOfIsStampedAfterTheDivergenceLookup(t *testing.T) {
 // belongs to beyond recognition.
 func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayLaterEmissions(t *testing.T) {
 	div := newGatedDivergenceLooker(false, true) // never released
-	url := tipStreamServerWithLooker(t, div)
+	url := tipStreamServerWithLooker(t, div, stallBudget)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
 	defer cancel()
@@ -311,11 +324,11 @@ func TestPriceTipStream_StalledDivergenceLookupDoesNotDelayLaterEmissions(t *tes
 	}
 	gap := time.Since(preflight)
 
-	// One-second window plus at most one sub-budget of stall. 4.5s is
-	// comfortably above that and comfortably below the ~9s a lookup on
-	// the tick budget produces.
+	// One window plus at most one sub-budget of stall (200ms here). 4.5s
+	// is comfortably above that and comfortably below the 8s+ a lookup
+	// on the tick budget produces.
 	if gap > 4500*time.Millisecond {
-		t.Errorf("gap to the next emission was %v on a 1s window with a stalled divergence lookup, want < 4.5s — "+
+		t.Errorf("gap to the next emission was %v on a 1-unit window with a stalled divergence lookup, want < 4.5s — "+
 			"the auxiliary read is stretching the tick period", gap)
 	}
 }
@@ -333,6 +346,7 @@ func hubTipStreamServer(t *testing.T, div v1.DivergenceLooker, sources []string)
 		sources: map[string][]string{"crypto:BTC/fiat:USD": sources},
 	}
 	srv := v1.New(v1.Options{Prices: prices, Divergence: div, Hub: streaming.NewHub(0)})
+	srv.SetStreamTimingForTest(testStreamSecond, stallBudget)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts.URL
@@ -380,7 +394,7 @@ func TestPriceTipStream_HubSharedProducerStallDoesNotDelayEmissions(t *testing.T
 		t.Fatal("the SHARED producer emitted nothing within 15s under a stalled lookup")
 	}
 	if gap > 4500*time.Millisecond {
-		t.Errorf("the shared producer's gap was %v on a 1s window, want < 4.5s — runSharedTipProducer's lookup is riding the tick budget", gap)
+		t.Errorf("the shared producer's gap was %v on a 1-unit window, want < 4.5s — runSharedTipProducer's lookup is riding the tick budget", gap)
 	}
 	for _, want := range []string{`"divergence_checked":false`, `"divergence_warning":false`} {
 		if !strings.Contains(second, want) {
@@ -483,15 +497,16 @@ func TestPriceTipStream_SustainedStallDoesNotFloodTheLog(t *testing.T) {
 		Prices: prices, Divergence: div,
 		Hub: streaming.NewHub(0), Logger: slog.New(logs),
 	})
+	srv.SetStreamTimingForTest(testStreamSecond, stallBudget)
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
 	// The per-frame wait is generous on purpose: an unbudgeted lookup
-	// stretches the 1s window to ~9s, and this test must reach its log
+	// stretches the window to 8s+, and this test must reach its log
 	// assertions on that shape rather than bailing on a missing frame —
 	// what is being pinned is the LOG, not the cadence (which its own
-	// tests cover). On a patched build the frames arrive in ~1s each and
-	// the generosity costs nothing.
+	// tests cover). On a patched build the frames arrive in ~200ms each
+	// and the generosity costs nothing.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+

@@ -482,22 +482,28 @@ type Server struct {
 	// tip-stream event's divergence lookup exceeds its own sub-budget.
 	// Process-wide, because the store that stalls is shared by every
 	// stream. See tipStreamFlags in price_tip_stream.go.
-	tipDivergenceStalls  tipDivergenceStallLog
-	confidence           ConfidenceLooker
-	triangulated         TriangulatedPriceLooker
-	cdnEnabled           bool
-	statusBackend        StatusBackend
-	backupMetrics        backupMetricsSource
-	backups              backupsCache
-	archiveReportPath    string
-	regionName           string
-	regionDeployment     string
-	statusServices       []string
-	dashboardAuth        DashboardAuthMounter
-	dashboardKeys        DashboardAuthMounter
-	dashboardWebhooks    DashboardAuthMounter
-	dashboardPriceAlerts DashboardAuthMounter
-	sessionAuth          middleware.Middleware
+	tipDivergenceStalls tipDivergenceStallLog
+	// streamSecondFor overrides the length of one second of a stream's
+	// window_seconds / interval_seconds cadence when > 0 (tests).
+	streamSecondFor time.Duration
+	// tipDivergenceBudgetFor overrides [tipStreamDivergenceBudget] when
+	// > 0 (tests).
+	tipDivergenceBudgetFor time.Duration
+	confidence             ConfidenceLooker
+	triangulated           TriangulatedPriceLooker
+	cdnEnabled             bool
+	statusBackend          StatusBackend
+	backupMetrics          backupMetricsSource
+	backups                backupsCache
+	archiveReportPath      string
+	regionName             string
+	regionDeployment       string
+	statusServices         []string
+	dashboardAuth          DashboardAuthMounter
+	dashboardKeys          DashboardAuthMounter
+	dashboardWebhooks      DashboardAuthMounter
+	dashboardPriceAlerts   DashboardAuthMounter
+	sessionAuth            middleware.Middleware
 	// verifiedCurrencies is the loaded *currency.Catalogue — the
 	// cross-chain currency seed (USDC, USDT, BTC, ETH, …) plus per-
 	// network identities. Powers the `unverified_warning` body +
