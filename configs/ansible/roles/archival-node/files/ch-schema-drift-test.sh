@@ -194,6 +194,19 @@ sed "/${bt}op_index${bt} UInt32,/d" "$tmp/live-ok.sql" > "$tmp/live-col.sql"
 run       "drift: column dropped live"            1 "$tmp/intent.sql" "$tmp/live-col.sql"
 expect_msg "drift: names the columns" "DRIFT account_movements.columns" "$tmp/intent.sql" "$tmp/live-col.sql"
 
+# Same column SET, two columns swapped: the header promises "column NAMES,
+# in order", so a set comparison would silently pass this.
+awk -v bt="$bt" '
+  held != "" { if ($0 == "    " bt "op_index" bt " UInt32,") { print; print held; held = ""; next }
+               print held; held = "" }
+  $0 == "    " bt "tx_hash" bt " String," { held = $0; next }
+  { print }
+  END { if (held != "") print held }
+' "$tmp/live-ok.sql" > "$tmp/live-colorder.sql"
+run       "drift: two columns reordered live, same set" 1 "$tmp/intent.sql" "$tmp/live-colorder.sql"
+expect_msg "drift: names the reordered column list" \
+  "live: address,ledger,op_index,tx_hash,amount,ingested_at" "$tmp/intent.sql" "$tmp/live-colorder.sql"
+
 # ─── secondary index (T339, 2026-09 reverification) ──────────────────
 # idx_am_tx is declared IDENTICALLY in intent.sql and live-ok.sql above —
 # the clean case (rc=0) already proves a matching index does not itself
@@ -378,6 +391,9 @@ expect_msg "uncodified live table is reported"     "UNCODIFIED holders_snapshot"
 # Type text re-rendered by ClickHouse is INFO, never drift.
 sed "s/${bt}amount${bt} Int128,/${bt}amount${bt} Int128 CODEC(Delta, ZSTD(3)),/" "$tmp/live-ok.sql" > "$tmp/live-codec.sql"
 run "type/CODEC re-rendering is not drift" 0 "$tmp/intent.sql" "$tmp/live-codec.sql"
+expect_msg "type/CODEC re-rendering is still reported as INFO" \
+  "INFO account_movements.amount type text differs — repo: 'Int128' | live: 'Int128 CODEC(Delta, ZSTD(3))'" \
+  "$tmp/intent.sql" "$tmp/live-codec.sql"
 
 # ─── cannot-compare must NOT read as clean ──────────────────────────
 run "unreadable live schema exits 2, not 0" 2 "$tmp/intent.sql" "$tmp/does-not-exist.sql"
