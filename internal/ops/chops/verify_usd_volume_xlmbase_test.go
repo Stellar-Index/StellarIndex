@@ -5,6 +5,7 @@ package chops
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -112,5 +113,57 @@ func TestCheckXLMBaseBound_CEXScale(t *testing.T) {
 	g.SumUSDVolume = "16000.00" // 10x over
 	if got := checkXLMBaseBound([]timescale.TradeValuationGroup{g}, spec, rate, 1, 20); got != 1 {
 		t.Errorf("violations = %d, want 1 — a 10x-over CEX group must still fail", got)
+	}
+}
+
+// TestCheckXLMBaseBound_SubCentDust — #372's residual: after the restamp
+// every remaining violation had stored=0.00 and expected≈0.00, ratios that
+// are sub-cent quantisation rather than valuation error. Those are exempt;
+// a breach with a cent on EITHER side must still count at any group size.
+func TestCheckXLMBaseBound_SubCentDust(t *testing.T) {
+	spec, err := timescale.NewUSDVolumeQuoteSpec(nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rate := new(big.Rat).SetFloat64(0.16)
+	group := func(baseStroops, sumUSD string) timescale.TradeValuationGroup {
+		return timescale.TradeValuationGroup{
+			Source:        "sdex",
+			BaseAsset:     "native",
+			QuoteAsset:    "SCAM-GCQTGZQQ5G4PTM2GL7CDIFKUBIPEC52BROAQIAPW53XBRJVN6ZJVTG6V",
+			PricedRows:    3,
+			SumUSDVolume:  sumUSD,
+			SumBaseAmount: baseStroops,
+		}
+	}
+
+	cases := []struct {
+		name        string
+		baseStroops string
+		sumUSD      string
+		want        int
+	}{
+		// 100 stroops × $0.16 → expected $0.0000016; stored 2× that.
+		{"both sides round to $0.00 exempt", "100", "0.0000032", 0},
+		// 300,000 stroops → expected $0.0048; stored $0.0032 (ratio 0.667).
+		{"just under half a cent both sides exempt", "300000", "0.0032", 0},
+		// Same dust expected, stored $5: an overvaluation, not quantisation.
+		{"dust expected but stored has cents caught", "100", "5.00", 1},
+		// 500,000 stroops → expected $0.008 (renders $0.01); stored half.
+		{"expected rounds to a cent caught", "500000", "0.004", 1},
+		// $160 expected stored at $0.0002: a 977,000x-class undervaluation.
+		{"real group valued near zero caught", "10000000000", "0.0002", 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			g := group(tc.baseStroops, tc.sumUSD)
+			if got := checkXLMBaseBound([]timescale.TradeValuationGroup{g}, spec, rate, 1, 20); got != tc.want {
+				t.Errorf("violations = %d, want %d", got, tc.want)
+			}
+		})
+	}
+
+	if footer := usdVolumeFooterText(0); !strings.Contains(footer, "both round to $0.00 is printed, not counted") {
+		t.Errorf("footer does not state the sub-cent exemption:\n%s", footer)
 	}
 }
