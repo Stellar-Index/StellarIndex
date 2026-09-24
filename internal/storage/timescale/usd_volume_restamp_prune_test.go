@@ -68,10 +68,11 @@ func TestApplyXLMBaseUSDVolumeRestamp_BatchIsPrunableToItsChunk(t *testing.T) {
 	if _, err := store.ApplyXLMBaseUSDVolumeRestamp(ctx, plan, 7, 0); err != nil {
 		t.Fatalf("ApplyXLMBaseUSDVolumeRestamp: %v", err)
 	}
-	if len(conn.dml) != 1 {
-		t.Fatalf("ran %d UPDATE(s), want 1: %q", len(conn.dml), conn.stmts)
+	updates := captureUpdates(conn.dml)
+	if len(updates) != 1 {
+		t.Fatalf("ran %d UPDATE(s), want 1: %q", len(updates), conn.stmts)
 	}
-	got := conn.dml[0]
+	got := updates[0]
 
 	if !strings.Contains(got.stmt, "t.ts      >= $2") || !strings.Contains(got.stmt, "t.ts      <= $3") {
 		t.Fatalf("the batch UPDATE does not bound t.ts, so the planner cannot prune it to one chunk "+
@@ -139,14 +140,17 @@ func TestApplyXLMBaseUSDVolumeRestamp_BatchStaysUnderTheParameterCeiling(t *test
 	if _, err := store.ApplyXLMBaseUSDVolumeRestamp(ctx, plan, 7, rows); err != nil {
 		t.Fatalf("ApplyXLMBaseUSDVolumeRestamp: %v", err)
 	}
-	if len(conn.dml) < 2 {
-		t.Fatalf("a %d-row batch ran in %d statement(s); it must be split to stay under the protocol ceiling", rows, len(conn.dml))
+	updates := captureUpdates(conn.dml)
+	if len(updates) < 2 {
+		t.Fatalf("a %d-row batch ran in %d UPDATE(s); it must be split to stay under the protocol ceiling", rows, len(updates))
 	}
-	var seen int
 	for i, d := range conn.dml {
 		if len(d.args) > 65535 {
 			t.Errorf("statement %d bound %d parameters, over the protocol's 65,535 — pgx refuses this Exec", i, len(d.args))
 		}
+	}
+	var seen int
+	for _, d := range updates {
 		seen += (len(d.args) - 3) / 6
 	}
 	if seen != rows {
@@ -166,6 +170,17 @@ type captureDML struct {
 	stmt      string
 	args      []driver.NamedValue
 	planCache string
+}
+
+// captureUpdates drops the before-image INSERTs, leaving the UPDATEs.
+func captureUpdates(dml []captureDML) []captureDML {
+	var out []captureDML
+	for _, d := range dml {
+		if strings.HasPrefix(d.stmt, "UPDATE") {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 type captureConn struct {

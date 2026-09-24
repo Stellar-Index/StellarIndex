@@ -68,6 +68,10 @@ import (
 //   - idempotent: a row that already holds the correct value is not
 //     touched (value or derive_generation), so a re-run reports 0 — which
 //     is also what makes an interrupted run resumable by re-running it;
+//   - reversible: every rewritten row's prior usd_volume and
+//     derive_generation land in `usd_volume_restamp_log` in the UPDATE's
+//     own transaction, keyed by the run's generation (migration 0175's
+//     header carries the undo statement);
 //   - node_exporter heartbeat like ch-backfill (-heartbeat), so a wedged
 //     run under run-heavy-job.sh trips the ops_job stall alerts;
 //   - the tier decision and the value both come from the SAME functions

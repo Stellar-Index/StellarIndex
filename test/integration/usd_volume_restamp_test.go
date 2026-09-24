@@ -155,6 +155,8 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 		t.Fatalf("fixture: decompression cap already lifted (%q) before the restamp ran", capBaseline)
 	}
 
+	poisoned := readRow(t, ledgers[0])
+
 	// ── apply ──
 	n, err := store.RestampExactTierUSDVolume(ctx, params(false))
 	if err != nil {
@@ -196,6 +198,29 @@ func TestUSDVolumeRestamp_ExactTierRepair(t *testing.T) {
 		t.Errorf("cap after COMMIT = %q, want %q", got, capBaseline)
 	}
 	store.DB().SetMaxOpenConns(0)
+
+	// 7. the before-image: the row's prior value and generation, and what
+	// the run wrote, logged in the same transaction — and undoing the run
+	// from it restores the row exactly.
+	logged := readRestampLog(t, ctx, store.DB(), "sdex", ledgers[0])
+	restamped := readRow(t, ledgers[0])
+	if len(logged) != 1 || !sameNumeric(logged[0].prior, poisoned.usd) || logged[0].priorGen != poisoned.gen ||
+		!sameNumeric(&logged[0].written, restamped.usd) || logged[0].gen != gen {
+		t.Fatalf("before-image of the restamped row = %+v, want prior %v@%d and written %v@%d",
+			logged, poisoned.usd, poisoned.gen, restamped.usd, gen)
+	}
+	if got := restampLogCount(t, ctx, store.DB(), gen); got != n {
+		t.Errorf("run logged %d before-image(s) but rewrote %d row(s)", got, n)
+	}
+	if undone := undoRestampRun(t, ctx, store.DB(), gen); undone != 1 {
+		t.Fatalf("undo restored %d row(s), want 1", undone)
+	}
+	if r := readRow(t, ledgers[0]); !sameNumeric(r.usd, poisoned.usd) || r.gen != poisoned.gen {
+		t.Fatalf("row after undo = %+v, want the before-image %+v", r, poisoned)
+	}
+	if n, err := store.RestampExactTierUSDVolume(ctx, params(false)); err != nil || n != 1 {
+		t.Fatalf("re-apply after undo = %d, %v; want 1", n, err)
+	}
 
 	// 1. SQL identity == Go formula == what the insert path writes.
 	want, ok := timescale.ExactTierUSDVolume(group.Tier, group.Decimals, "1250000000", "10000000000")

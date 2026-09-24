@@ -287,6 +287,17 @@ func TestXLMBaseRestamp_RederivesThroughTheLiveAnchor(t *testing.T) {
 	if fixed.gen != gen {
 		t.Errorf("restamped row derive_generation = %d, want the run's %d", fixed.gen, gen)
 	}
+	// The plan path logs the same before-image as the exact tier.
+	prior := before[ledger["quote-side wrong"]]
+	logged := readRestampLog(t, ctx, store.DB(), "sdex", ledger["quote-side wrong"])
+	if len(logged) != 1 || !sameNumeric(logged[0].prior, prior.usd) || logged[0].priorGen != prior.gen ||
+		logged[0].written != wantAnchored || logged[0].gen != gen {
+		t.Errorf("before-image of the restamped row = %+v, want prior %v@%d and written %s@%d",
+			logged, prior.usd, prior.gen, wantAnchored, gen)
+	}
+	if got := restampLogCount(t, ctx, store.DB(), gen); got != n {
+		t.Errorf("run logged %d before-image(s) but rewrote %d row(s)", got, n)
+	}
 	// Everything the plan did not name is byte-identical.
 	delete(before, ledger["quote-side wrong"])
 	delete(after, ledger["quote-side wrong"])
