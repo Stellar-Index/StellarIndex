@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -156,6 +157,61 @@ func TestDirectorySync_FailsClosedByDefault(t *testing.T) {
 	}
 	if strings.Contains(stderrWrite, "DRY RUN") {
 		t.Errorf("-write must NOT report DRY RUN; got:\n%s", stderrWrite)
+	}
+}
+
+// TestDirectorySync_WiresAJobHeartbeat — RLT-317: directory-sync had no
+// signal of its own, only the generic stellarindex_systemd_unit_failed
+// catch-all (a 15m+, exit-code-only ticket). Wiring the same
+// opsutil.JobHeartbeat every other stellarindex-ops job uses gives it
+// stellarindex_ops_job_run_failed for free off the existing alert rules
+// (deploy/monitoring/rules/ingestion.yml) — with no bespoke metric or
+// rule to invent. This drives directorySync all the way to a failed
+// Postgres ping (a closed local port refuses instantly) and asserts the
+// heartbeat textfile records that failure: before the fix, no such
+// textfile is ever written because directorySync does not accept a
+// -heartbeat flag at all and flag.Parse fails outright.
+func TestDirectorySync_WiresAJobHeartbeat(t *testing.T) {
+	tarball := buildDirectoryTarballN(t, 1)
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(tarball)
+	}))
+	defer srv.Close()
+	// fetchDirectoryTarball builds its own *http.Client but leaves
+	// Transport nil, which falls back to http.DefaultTransport — swap in
+	// the test server's (trusting its self-signed cert) for the
+	// duration of this test.
+	origTransport := http.DefaultTransport
+	http.DefaultTransport = srv.Client().Transport
+	defer func() { http.DefaultTransport = origTransport }()
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "stellarindex.toml")
+	// Port 1 on loopback refuses instantly (nothing listens, no privilege
+	// needed to attempt connect), so the run fails fast at the ping
+	// without needing a real Postgres.
+	cfgBody := "[region]\nid = \"r2\"\nname = \"Ashburn\"\n\n[stellar]\nnetwork = \"pubnet\"\n\n[storage]\npostgres_dsn = \"postgres://u:p@127.0.0.1:1/db?sslmode=disable\"\n"
+	if err := os.WriteFile(cfgPath, []byte(cfgBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hbPath := filepath.Join(dir, "directory-sync.prom")
+
+	err := directorySync([]string{"-config", cfgPath, "-url", srv.URL, "-write", "-heartbeat", hbPath})
+	if err == nil {
+		t.Fatal("expected the run to fail at the Postgres ping (port 1 refuses)")
+	}
+	t.Logf("directorySync error (expected, from the closed port): %v", err)
+
+	body, rerr := os.ReadFile(hbPath)
+	if rerr != nil {
+		t.Fatalf("heartbeat textfile was never written: %v", rerr)
+	}
+	text := string(body)
+	if !strings.Contains(text, `stellarindex_ops_job_running{ops_job="directory-sync"} 0`) {
+		t.Errorf("heartbeat must record running=0 after the run ended; got:\n%s", text)
+	}
+	if !strings.Contains(text, `stellarindex_ops_job_last_exit_ok{ops_job="directory-sync"} 0`) {
+		t.Errorf("heartbeat must record last_exit_ok=0 for a failed run; got:\n%s", text)
 	}
 }
 

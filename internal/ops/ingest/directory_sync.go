@@ -95,6 +95,7 @@ func directorySync(args []string) error {
 	url := fs.String("url", directoryDefaultURL, "Tarball URL of the public-directory repo (https only)")
 	timeout := fs.Duration("timeout", 5*time.Minute, "Wall-clock timeout for the whole run")
 	acceptChurn := fs.Bool("accept-churn", false, "Accept a snapshot beyond the churn ceiling (prunes or newly scam-flags more rows than one day plausibly does) — only for a known upstream mass change")
+	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the run-outcome/progress gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_directory_sync.prom when that directory exists (r1), otherwise no heartbeat at all")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -127,6 +128,24 @@ func directorySync(args []string) error {
 		return nil
 	}
 
+	// RLT-317: the only signal a stalled/failed sync had was the generic
+	// stellarindex_systemd_unit_failed catch-all, which covers nothing
+	// but a nonzero process exit and takes 15m+ to ticket. Wiring the
+	// same JobHeartbeat every other stellarindex-ops job uses gives
+	// directory-sync a dedicated, near-immediate
+	// stellarindex_ops_job_run_failed (deploy/monitoring/rules/ingestion.yml)
+	// plus an entries-synced gauge (progress_total), for free, off the
+	// existing alert rules — no bespoke metric or rule needed. Started
+	// before store.Open so a Postgres connect/ping failure is captured
+	// too, not just a failed write.
+	hb := opsutil.NewJobHeartbeat("directory-sync", *heartbeat, nil)
+	if hb.Enabled() {
+		fmt.Printf("directory-sync: heartbeat -> %s\n", hb.Path())
+	}
+	hb.Start()
+	exitOK := false
+	defer func() { hb.Stop(exitOK) }()
+
 	store, err := timescale.Open(ctx, cfg.Storage.PostgresDSN)
 	if err != nil {
 		return err
@@ -141,12 +160,15 @@ func directorySync(args []string) error {
 	if errors.Is(err, timescale.ErrDirectoryChurnExceeded) {
 		// Nonzero exit fails the systemd unit, which
 		// stellarindex_systemd_unit_failed tickets; the numbers land in
-		// journald beside this hint.
+		// journald beside this hint. hb.Stop(exitOK) below also flips
+		// stellarindex_ops_job_last_exit_ok, which tickets far sooner.
 		return fmt.Errorf("%w — nothing written; if upstream really changed this much, re-run with -accept-churn", err)
 	}
 	if err != nil {
 		return err
 	}
+	hb.Progress(uint64(res.Upserted+res.Existing), 0) //nolint:gosec // non-negative row counts
+	exitOK = true
 	fmt.Printf("Synced: %d upserted, %d pruned, %d newly scam-flagged, %d held before (source=%s).\n",
 		res.Upserted, res.Pruned, res.NewlyFlagged, res.Existing, directorySource)
 	return nil
