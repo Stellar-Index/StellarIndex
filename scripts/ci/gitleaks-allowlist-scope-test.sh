@@ -50,13 +50,28 @@ bad() { echo "FAIL: $*" >&2; fail=$((fail + 1)); }
 rand() { python3 -c "import secrets,sys; print(''.join(secrets.choice(sys.argv[1]) for _ in range(int(sys.argv[2]))))" "$1" "$2"; }
 ALNUM=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789
 B32=ABCDEFGHIJKLMNOPQRSTUVWXYZ234567
-B64=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/
 
-# Values are generated per run so this file never carries a scannable literal.
-canary="$(rand "$ALNUM" 40)"
-seed="S$(rand "$B32" 55)"
-strkey="G$(rand "$B32" 55)"
-xdr="AAAA$(rand "$B64" 60)"
+# reportable <prefix> <alphabet> <len>: a random value that gitleaks' default
+# rules, with none of our allowlists, report whole. A draw can contain a
+# generic-api-key stopword ("md5"), and the too-wide checks below would then
+# fail on the value, not the config. The XDR probe uses base64's alphanumeric
+# subset because generic-api-key's capture stops at + and /.
+reportable() {
+  local v dir="$TMP/control"
+  mkdir -p "$dir"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    v="$1$(rand "$2" "$3")"
+    printf 'secretKey := "%s"\n' "$v" >"$dir/probe.go"
+    (cd "$dir" && gitleaks detect --no-git --source . --no-banner \
+      --report-format json --report-path "$TMP/control.json" >/dev/null 2>&1)
+    if reported "$TMP/control.json" probe.go "$v"; then
+      echo "$v"
+      return 0
+    fi
+  done
+  echo "reportable: no reportable $1 value in 10 draws" >&2
+  return 1
+}
 
 # plant <tree> <relpath> <line>: copy the tracked file (if any) into the
 # scan tree and append <line> to it.
@@ -90,6 +105,12 @@ hits = [f for f in json.load(open(report)) if f["File"] == path and value in f["
 sys.exit(0 if hits else 1)
 EOF
 }
+
+# Values are generated per run so this file never carries a scannable literal.
+canary="$(reportable "" "$ALNUM" 40)" || exit 1
+seed="$(reportable S "$B32" 55)" || exit 1
+strkey="G$(rand "$B32" 55)"
+xdr="$(reportable AAAA "$ALNUM" 60)" || exit 1
 
 # ── 1. every tracked file a path-only exemption matches still reports a key
 # An allowlist exempts on its paths alone unless condition = "AND" pairs them
