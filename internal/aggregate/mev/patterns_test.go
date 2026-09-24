@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stellar/go-stellar-sdk/strkey"
+
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
 
@@ -282,18 +284,39 @@ func TestDetectOracleSandwiches_UnrelatedPair(t *testing.T) {
 
 // ── wash trading ────────────────────────────────────────────────────
 
+// strkeyOf is a CRC-valid strkey of 32 copies of b, so wash fixtures pass
+// the detector's account check while staying readable.
+func strkeyOf(t *testing.T, v strkey.VersionByte, b byte) string {
+	t.Helper()
+	raw := make([]byte, 32)
+	for i := range raw {
+		raw[i] = b
+	}
+	s, err := strkey.Encode(v, raw)
+	if err != nil {
+		t.Fatalf("strkey.Encode: %v", err)
+	}
+	return s
+}
+
+func washAccount(t *testing.T, b byte) string {
+	t.Helper()
+	return strkeyOf(t, strkey.VersionByteAccountID, b)
+}
+
 // maker == taker → self-trade candidate with the default (tx, actor)
 // dedup identity.
 func TestDetectWashTrades_SelfTrade(t *testing.T) {
+	self := washAccount(t, 1)
 	trades := []canonical.Trade{
-		mkTrade(t, tOpt{tx: txA, maker: "GSELF", taker: "GSELF", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txA, maker: self, taker: self, base: "native", quote: usdc}),
 	}
 	got := DetectWashTrades(trades, []string{"12.34"})
 	if len(got) != 1 {
 		t.Fatalf("got %d candidates, want 1: %+v", len(got), got)
 	}
 	c := got[0]
-	if c.Kind != KindWashTrade || c.DedupKey() != "wash_trade:"+txA+":GSELF" {
+	if c.Kind != KindWashTrade || c.DedupKey() != "wash_trade:"+txA+":"+self {
 		t.Errorf("candidate = %+v (dedup %q)", c, c.DedupKey())
 	}
 	d, ok := c.Detail.(washDetail)
@@ -305,11 +328,13 @@ func TestDetectWashTrades_SelfTrade(t *testing.T) {
 // ≥2 fills each direction between two accounts on one pair in one UTC
 // day → round-trip candidate keyed on (day, pair, account pair).
 func TestDetectWashTrades_RoundTrip(t *testing.T) {
+	x, y := washAccount(t, 2), washAccount(t, 3)
+	lo, hi := min(x, y), max(x, y)
 	trades := []canonical.Trade{
-		mkTrade(t, tOpt{tx: txA, ledger: 200, maker: "GYYY", taker: "GXXX", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txB, ledger: 201, maker: "GXXX", taker: "GYYY", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txC, ledger: 202, maker: "GYYY", taker: "GXXX", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txD, ledger: 203, maker: "GXXX", taker: "GYYY", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txA, ledger: 200, maker: y, taker: x, base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txB, ledger: 201, maker: x, taker: y, base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txC, ledger: 202, maker: y, taker: x, base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txD, ledger: 203, maker: x, taker: y, base: "native", quote: usdc}),
 	}
 	got := DetectWashTrades(trades, nil)
 	if len(got) != 1 {
@@ -323,7 +348,7 @@ func TestDetectWashTrades_RoundTrip(t *testing.T) {
 	if len(c.Accounts) != 2 {
 		t.Errorf("accounts = %v", c.Accounts)
 	}
-	wantDedup := "wash_trade:rt:2026-07-04:USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN|native:GXXX|GYYY"
+	wantDedup := "wash_trade:rt:2026-07-04:USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN|native:" + lo + "|" + hi
 	if c.DedupKey() != wantDedup {
 		t.Errorf("dedup = %q, want %q", c.DedupKey(), wantDedup)
 	}
@@ -332,9 +357,10 @@ func TestDetectWashTrades_RoundTrip(t *testing.T) {
 // One fill each direction is ordinary trading, not the repeated
 // back-and-forth signature.
 func TestDetectWashTrades_RoundTripBelowThreshold(t *testing.T) {
+	x, y := washAccount(t, 2), washAccount(t, 3)
 	trades := []canonical.Trade{
-		mkTrade(t, tOpt{tx: txA, maker: "GYYY", taker: "GXXX", base: "native", quote: usdc}),
-		mkTrade(t, tOpt{tx: txB, maker: "GXXX", taker: "GYYY", base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txA, maker: y, taker: x, base: "native", quote: usdc}),
+		mkTrade(t, tOpt{tx: txB, maker: x, taker: y, base: "native", quote: usdc}),
 	}
 	if got := DetectWashTrades(trades, nil); len(got) != 0 {
 		t.Fatalf("got %d candidates, want 0: %+v", len(got), got)
@@ -350,6 +376,30 @@ func TestDetectWashTrades_NoMakerIgnored(t *testing.T) {
 	}
 	if got := DetectWashTrades(trades, nil); len(got) != 0 {
 		t.Fatalf("got %d candidates, want 0", len(got))
+	}
+}
+
+// The maker column also carries pool identities (SDEX liquidity-pool fills
+// record the pool's hex id there). A pool is not an account, so it never
+// forms a wash signature — even where the same pool identity also lands in
+// taker (a Soroban swap whose recipient is a pool contract).
+func TestDetectWashTrades_PoolMakerIgnored(t *testing.T) {
+	classicPool := strings.Repeat("ab", 32)
+	sorobanPool := strkeyOf(t, strkey.VersionByteContract, 4)
+	otherPool := strkeyOf(t, strkey.VersionByteContract, 5)
+	pool := func(tx string, ledger, op uint32, maker, taker string) canonical.Trade {
+		return mkTrade(t, tOpt{source: "soroswap", tx: tx, ledger: ledger, op: op, maker: maker, taker: taker, base: "native", quote: usdc})
+	}
+	trades := []canonical.Trade{
+		mkTrade(t, tOpt{tx: txA, maker: classicPool, taker: classicPool, base: "native", quote: usdc}),
+		pool(txB, 200, 0, sorobanPool, sorobanPool),
+		pool(txC, 201, 0, sorobanPool, otherPool),
+		pool(txD, 202, 0, otherPool, sorobanPool),
+		pool(txO, 203, 0, sorobanPool, otherPool),
+		pool(txO, 203, 1, otherPool, sorobanPool),
+	}
+	if got := DetectWashTrades(trades, nil); len(got) != 0 {
+		t.Fatalf("got %d candidates, want 0: %+v", len(got), got)
 	}
 }
 
