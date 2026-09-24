@@ -772,6 +772,10 @@ stellar_core_version: ""
 # in 10-observability.yml compares dpkg-installed against the apt candidate.
 # archivist is the archive mirror/verify CLI (verify-archive tiers), NOT in the
 # live ingest path, so a bump is low-risk and needs no service restart.
+# VERSIONS.md pins rs-stellar-archivist to a specific commit (a6a25033) for
+# integration-verification purposes only — that pin is NOT enforced here.
+# Leaving this empty installs apt's latest candidate on a fresh host, which
+# can be newer than that commit; pin explicitly in inventory to reproduce it.
 stellar_archivist_version: ""
 
 # Protocol-transition era boundaries (internal/config/config.go StellarConfig).
