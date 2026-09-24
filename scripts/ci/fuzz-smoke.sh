@@ -31,7 +31,9 @@
 # Discovery covers the whole tree (fail-closed on zero), but a PR smokes
 # only the targets of the packages it changed: FUZZ_BASE (CI passes the
 # PR's base sha) selects them. Unset, every target runs. The per-target
-# time is min(30s, FUZZ_BUDGET / selected), never under 3s, so a wave
+# time is min(30s, FUZZ_BUDGET / selected), never under 8s — go's -fuzztime
+# deadline covers worker start-up (~2s on a loaded runner), and a 3s floor
+# produced a phantom "context deadline exceeded" crasher — so a wave
 # that adds 160 targets still fits the job instead of being cancelled at
 # the timeout with nothing reported (the tree went 5 -> 166 targets in
 # one PR; 166 x 30s is 83 min). The accounting line prints the budget
@@ -117,7 +119,7 @@ fi
 if [ -z "${FUZZTIME:-}" ]; then
 	PER=$((FUZZ_BUDGET / SEL))
 	[ "$PER" -gt 30 ] && PER=30
-	[ "$PER" -lt 3 ] && PER=3
+	[ "$PER" -lt 8 ] && PER=8
 	FUZZTIME="${PER}s"
 fi
 echo "fuzz-smoke: discovered ${FOUND} target(s), selected ${SEL}, budget ${FUZZTIME} each"

@@ -660,9 +660,9 @@ jobs:
   fuzz-smoke:
     name: fuzz smoke (30s per target)
     runs-on: ubuntu-latest
-    # 166 targets at the 3s floor plus ~3s of startup each is ~17 min when a
+    # 166 targets at the 8s floor plus ~3s of startup each is ~30 min when a
     # PR touches every fuzzed package; a normal PR smokes a handful at 30s.
-    timeout-minutes: 25
+    timeout-minutes: 40
     needs: [preflight]
     # §B: pure Go work, gated on the `go` class with STEP-level `if:`
     # (see the REQUIRED-CHECK NOTE on `preflight`).
