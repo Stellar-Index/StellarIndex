@@ -129,6 +129,14 @@ if [ -z "${FUZZTIME:-}" ]; then
 fi
 echo "fuzz-smoke: discovered ${FOUND} target(s), selected ${SEL}, budget ${FUZZTIME} each"
 
+corpus_size() {
+	if [ -d "$1" ]; then find "$1" -type f | wc -l; else echo 0; fi
+}
+
+fuzz_once() {
+	go test -run 'xxxNoSuchTest' -fuzz "^${2}\$" -fuzztime "${FUZZTIME}" "$1"
+}
+
 RUN=0
 PASSED=0
 FAILED_TARGETS=""
@@ -141,7 +149,15 @@ while IFS="$(printf '\t')" read -r pkg target; do
 	# the seed corpus already runs in the unit-test job. The -fuzz regex
 	# is anchored so a target whose name prefixes another's cannot pull
 	# in its sibling (go test refuses more than one match).
-	if go test -run 'xxxNoSuchTest' -fuzz "^${target}\$" -fuzztime "${FUZZTIME}" "${pkg}"; then
+	corpus="${pkg}/testdata/fuzz/${target}"
+	before=$(corpus_size "$corpus")
+	if fuzz_once "$pkg" "$target"; then
+		PASSED=$((PASSED + 1))
+	elif [ "$(corpus_size "$corpus")" -eq "$before" ] && fuzz_once "$pkg" "$target"; then
+		# A crasher always writes its input. A failure that wrote none is go's
+		# fuzz coordinator hitting -fuzztime while stopping workers ("context
+		# deadline exceeded"); one clean re-run clears it, a second failure does not.
+		echo "::warning::fuzz target ${target} in ${pkg} failed without writing an input and passed on re-run"
 		PASSED=$((PASSED + 1))
 	else
 		echo "::error::fuzz target ${target} in ${pkg} FAILED. The reproducing input was written"
