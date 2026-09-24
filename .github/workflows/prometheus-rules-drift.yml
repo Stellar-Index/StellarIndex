@@ -26,15 +26,26 @@ on:
 
 permissions:
   contents: read
+  deployments: read  # read the environment's protection rules (gate preflight)
+  actions: read      # GitHub gates the environments API on Actions read
 
 jobs:
   live-check:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # Holds the r1 root key: main-only environment, no reviewer (scheduled).
+    environment:
+      name: r1-observe
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Assert the environment gate is configured
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash scripts/ci/assert-deploy-gate.sh --observe r1-observe
 
       - name: Set up SSH
         # Mirrors deploy.yml's "Set up SSH" / ansible-drift.yml's "SSH key

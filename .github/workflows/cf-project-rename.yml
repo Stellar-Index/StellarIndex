@@ -33,6 +33,7 @@ on:
 permissions:
   contents: read
   deployments: read   # read the environment's protection rules (approval-gate preflight)
+  actions: read       # GitHub gates the environments API on Actions read
 
 concurrency:
   group: cf-project-rename
@@ -77,13 +78,9 @@ jobs:
           GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
           ENV_NAME: explorer-production
           REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          if ! gh api "repos/${REPO}/environments/${ENV_NAME}" > env-protection.json; then
-            echo "::error::Could not read the '${ENV_NAME}' environment protection config. Refusing to run on an unverified approval gate. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."
-            exit 1
-          fi
-          bash scripts/ci/check-deploy-protection.sh env-protection.json "$ENV_NAME"
+        # No APPROVAL_RELAXED here: this workflow never honoured the
+        # relaxation, so assert-deploy-gate.sh always demands reviewers.
+        run: bash scripts/ci/assert-deploy-gate.sh "$ENV_NAME"
 
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         if: inputs.stage == 'create-and-deploy'

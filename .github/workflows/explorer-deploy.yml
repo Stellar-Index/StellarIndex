@@ -64,6 +64,7 @@ on:
 permissions:
   contents: read
   deployments: write
+  actions: read  # GitHub gates the environments API on Actions read
 
 # One deploy at a time. Mid-deploy cancellation is fine — the
 # new run takes over before traffic shifts.
@@ -109,7 +110,9 @@ jobs:
         #   deploy unattended while the explorer hard-failed. The
         #   relaxation also requires a still-future
         #   DEPLOY_APPROVAL_RELAXED_UNTIL (K079): open-ended relaxation
-        #   never re-alarms.
+        #   never re-alarms. It waives reviewers only: the main-only
+        #   branch policy (which also stops a non-main ref being
+        #   published as `--branch main`) always holds.
         if: github.event.inputs.environment == 'production'
         env:
           GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
@@ -117,20 +120,7 @@ jobs:
           REPO: ${{ github.repository }}
           APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
           APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
-        run: |
-          set -euo pipefail
-          relax_rc=0
-          bash scripts/ci/check-deploy-relax.sh "$ENV_NAME" || relax_rc=$?
-          if [ "$relax_rc" -eq 0 ]; then
-            exit 0
-          elif [ "$relax_rc" -eq 1 ]; then
-            exit 1
-          fi
-          if ! gh api "repos/${REPO}/environments/${ENV_NAME}" > env-protection.json; then
-            echo "::error::Could not read the '${ENV_NAME}' environment protection config. Refusing to deploy on an unverified approval gate. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."
-            exit 1
-          fi
-          bash scripts/ci/check-deploy-protection.sh env-protection.json "$ENV_NAME"
+        run: bash scripts/ci/assert-deploy-gate.sh "$ENV_NAME"
 
       - name: Resolve network config
         # Map the network choice → NEXT_PUBLIC_NETWORK, the grey api.* origin,

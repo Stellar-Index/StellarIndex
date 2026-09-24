@@ -38,6 +38,7 @@ on:
 permissions:
   contents: read
   deployments: write
+  actions: read  # GitHub gates the environments API on Actions read
 
 concurrency:
   group: status-deploy-${{ github.event.inputs.environment }}
@@ -53,6 +54,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Assert the production approval gate is configured
+        # Same gate as explorer-deploy.yml: this job holds
+        # CLOUDFLARE_API_TOKEN and publishes production Pages. Scoped to
+        # production; preview is non-public.
+        if: github.event.inputs.environment == 'production'
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          ENV_NAME: status-${{ github.event.inputs.environment }}
+          REPO: ${{ github.repository }}
+          APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
+          APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
+        run: bash scripts/ci/assert-deploy-gate.sh "$ENV_NAME"
+
+      - name: Validate api_base_url
+        # Baked into the build; same bare-https-origin rule as
+        # explorer-deploy.yml's override.
+        env:
+          API_BASE_URL: ${{ github.event.inputs.api_base_url }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$API_BASE_URL" =~ ^https://[A-Za-z0-9.-]+$ ]]; then
+            echo "::error::api_base_url '$API_BASE_URL' is not a bare https origin"
+            exit 1
+          fi
 
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86  # v6

@@ -136,6 +136,8 @@ on:
 
 permissions:
   contents: read
+  deployments: read        # read the environment's protection rules (gate preflight)
+  actions: read            # GitHub gates the environments API on Actions read
 
 jobs:
   drift-check:
@@ -143,6 +145,12 @@ jobs:
     # An apply run is two full playbook passes (the apply, then the
     # dry-run that renders its verdict); one pass has measured ~12 min.
     timeout-minutes: 45
+    # apply=true mutates r1 as root, so it takes deploy.yml's gate: the
+    # r1 environment's reviewers and main-only branch policy. The
+    # scheduled dry-run holds the same key but cannot wait on a
+    # reviewer, so it runs in r1-observe (main-only, no reviewers).
+    environment:
+      name: ${{ inputs.apply && 'r1' || 'r1-observe' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
@@ -160,6 +168,24 @@ jobs:
           # this is why.
           fetch-depth: 0
           fetch-tags: true
+
+      - name: Assert the environment gate is configured
+        # Runs before any credential is materialized. The reviewer
+        # relaxation (DEPLOY_APPROVAL_RELAXED) applies to apply=true
+        # exactly as it does to deploy.yml; see assert-deploy-gate.sh.
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          APPLY: ${{ inputs.apply }}
+          APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
+          APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
+        run: |
+          set -euo pipefail
+          if [ "${APPLY:-false}" = "true" ]; then
+            bash scripts/ci/assert-deploy-gate.sh r1
+          else
+            bash scripts/ci/assert-deploy-gate.sh --observe r1-observe
+          fi
 
       - name: Install ansible
         # DEP-01 (audit-2026-07-23): EXACT pins. This job holds the root

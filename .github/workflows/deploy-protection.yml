@@ -1,7 +1,9 @@
 name: deploy-protection
 
-# Does the production deploy environment actually require a human
-# approval? (deploy-approval-gate, audit-2026-07-23.)
+# Does each production environment actually require a human approval,
+# and admit only `main`? (deploy-approval-gate, audit-2026-07-23.)
+# The matrix below covers every environment a credential-holding job
+# declares, not only r1.
 #
 # deploy.yml declares `environment: r1`, which looks like a gate but
 # enforces nothing on its own: an environment with no
@@ -41,43 +43,53 @@ on:
 permissions:
   contents: read
   deployments: read
+  actions: read  # GitHub gates the environments API on Actions read
 
 jobs:
   environment-approval:
-    name: r1 requires a human approval
+    name: ${{ matrix.environment }} gate is configured
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      # Every environment a production-credential job declares
+      # (scripts/ci/lint-deploy-credentials.py enforces the declaration).
+      # deploy = required reviewers + main-only branch policy;
+      # observe = main-only only, for scheduled read-only jobs that
+      # cannot wait on a reviewer.
+      matrix:
+        include:
+          - {environment: r1, mode: deploy}
+          - {environment: testnet, mode: deploy}
+          - {environment: futurenet, mode: deploy}
+          - {environment: explorer-production, mode: deploy}
+          - {environment: docs-production, mode: deploy}
+          - {environment: status-production, mode: deploy}
+          - {environment: r1-observe, mode: observe}
+          - {environment: cf-ssr-shadow, mode: observe}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Assert required reviewers on the r1 environment
+      - name: Assert the environment gate
         # ⚠ PRE-PRODUCTION RELAXATION (2026-07-26): mirrors deploy.yml,
         # fail-closed. Only when the repo variable DEPLOY_APPROVAL_RELAXED
         # is exactly "true" AND DEPLOY_APPROVAL_RELAXED_UNTIL is a
         # still-future ISO-8601 date (K079: an open-ended relaxation
-        # never re-alarms) is the gate intentionally absent (R1 has no
-        # production traffic) and this drift check does NOT alarm. Re-arm
-        # by deleting the variable; the assertion then enforces the r1
-        # Required-reviewers rule again.
+        # never re-alarms) is the REVIEWER half intentionally absent and
+        # not alarmed on. The main-only branch policy is never relaxed.
         env:
           GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          REGION: r1
+          ENV_NAME: ${{ matrix.environment }}
+          MODE: ${{ matrix.mode }}
           APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
           APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
         run: |
           set -euo pipefail
-          relax_rc=0
-          bash scripts/ci/check-deploy-relax.sh "$REGION" || relax_rc=$?
-          if [ "$relax_rc" -eq 0 ]; then
-            exit 0
-          elif [ "$relax_rc" -eq 1 ]; then
-            exit 1
+          if [ "$MODE" = observe ]; then
+            bash scripts/ci/assert-deploy-gate.sh --observe "$ENV_NAME"
+          else
+            bash scripts/ci/assert-deploy-gate.sh "$ENV_NAME"
           fi
-          if ! gh api "repos/${REPO}/environments/${REGION}" > env-protection.json; then
-            echo "::error::Could not read the '${REGION}' environment protection config. If the default GITHUB_TOKEN lacks access, set the DEPLOY_PROTECTION_TOKEN secret to a read-only PAT and re-run."
-            exit 1
-          fi
-          bash scripts/ci/check-deploy-protection.sh env-protection.json "$REGION"
