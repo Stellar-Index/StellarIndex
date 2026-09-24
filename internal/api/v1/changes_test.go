@@ -61,7 +61,7 @@ func TestHandleChangeSummary_ResolvesXLMSACForm(t *testing.T) {
 				EntityType:   "coin",
 				EntityID:     canonical.XLMSacContractID,
 				RefreshedAt:  time.Date(2026, 7, 3, 22, 38, 0, 0, time.UTC),
-				CurrentValue: 0.1234,
+				CurrentValue: "0.1234",
 			},
 		},
 	}
@@ -180,7 +180,7 @@ func TestHandleChangeSummary_PairIDPercentEncoded(t *testing.T) {
 			EntityType:   "pair",
 			EntityID:     "crypto:XLM/fiat:USD",
 			RefreshedAt:  time.Now().UTC(),
-			CurrentValue: 0.1675,
+			CurrentValue: "0.1675",
 		},
 	}
 	srv := v1.New(v1.Options{ChangeSummary: reader})
@@ -221,9 +221,9 @@ func TestHandleChangeSummary_NotFound404(t *testing.T) {
 func TestHandleChangeSummary_HappyPath_Coin(t *testing.T) {
 	athAt := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
 	atlAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	h1, h24, d7, d30 := 0.165, 0.158, 0.150, 0.142
+	h1, h24, d7, d30 := "0.165", "0.158", "0.150", "0.142"
 	hd1, hd24, dd7, dd30 := 1.5, 5.2, 10.1, 16.7
-	ath, atl := 1.03, 0.10
+	ath, atl := "1.03", "0.10"
 	streakDays := 3
 
 	reader := &stubChangeSummaryReader{
@@ -231,7 +231,7 @@ func TestHandleChangeSummary_HappyPath_Coin(t *testing.T) {
 			EntityType:      "coin",
 			EntityID:        "XLM",
 			RefreshedAt:     time.Date(2026, 5, 9, 10, 0, 0, 0, time.UTC),
-			CurrentValue:    0.1675,
+			CurrentValue:    "0.1675",
 			H1Value:         &h1,
 			H1DeltaPct:      &hd1,
 			H24Value:        &h24,
@@ -301,7 +301,7 @@ func TestHandleChangeSummary_NullableFieldsOmitted(t *testing.T) {
 			// market cannot be vetted and is withheld.
 			EntityID:     "native",
 			RefreshedAt:  time.Now().UTC(),
-			CurrentValue: 1.0,
+			CurrentValue: "1.0",
 			// H1/H24/D7/D30/ATH/ATL all nil — fresh asset
 		},
 	}
@@ -351,21 +351,18 @@ func TestHandleChangeSummary_ReaderError500(t *testing.T) {
 // TestChangeSummary_MoneyFieldsAreJSONStrings is the M7 (INV-2) guard: the
 // /v1/changes *_value fields are MONEY and must serialize as JSON STRINGS
 // (like every other money field the API serves), while the *_delta_pct
-// PERCENTAGE fields stay JSON numbers. Proven red: on the pre-fix DTO (float64
-// value fields) the raw body carried unquoted numbers, so the quoted-string
-// assertions below fail. The stub feeds float64 row values (the display-grade
-// storage shape) through the handler — the fix's moneyStr formatting is what
-// produces the strings.
+// PERCENTAGE fields stay JSON numbers. The stub feeds the rollup's exact
+// decimal row values (GH #602) through the handler unchanged.
 func TestChangeSummary_MoneyFieldsAreJSONStrings(t *testing.T) {
-	h1, h24 := 0.20380247911865504, 0.19673099518995452
+	h1, h24 := "0.20380247911865504", "0.19673099518995452"
 	hd24 := 3.784588530467602
-	ath := 0.29758550057923283
+	ath := "0.29758550057923283"
 	reader := &stubChangeSummaryReader{
 		row: timescale.ChangeSummaryRow{
 			EntityType:   "coin",
 			EntityID:     "XLM",
 			RefreshedAt:  time.Date(2026, 7, 3, 22, 38, 0, 0, time.UTC),
-			CurrentValue: 0.2041764538697883,
+			CurrentValue: "0.2041764538697883",
 			H1Value:      &h1,
 			H24Value:     &h24,
 			H24DeltaPct:  &hd24,

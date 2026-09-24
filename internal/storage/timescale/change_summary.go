@@ -17,20 +17,20 @@ type ChangeSummaryRow struct {
 	EntityType   string
 	EntityID     string
 	RefreshedAt  time.Time
-	CurrentValue float64
+	CurrentValue string
 
-	H1Value     *float64
+	H1Value     *string
 	H1DeltaPct  *float64
-	H24Value    *float64
+	H24Value    *string
 	H24DeltaPct *float64
-	D7Value     *float64
+	D7Value     *string
 	D7DeltaPct  *float64
-	D30Value    *float64
+	D30Value    *string
 	D30DeltaPct *float64
 
-	ATHValue *float64
+	ATHValue *string
 	ATHAt    *time.Time
-	ATLValue *float64
+	ATLValue *string
 	ATLAt    *time.Time
 
 	StreakDirection string
@@ -48,6 +48,9 @@ func (s *Store) UpsertChangeSummary(ctx context.Context, row ChangeSummaryRow) e
 	}
 	if row.EntityID == "" {
 		return errors.New("timescale: UpsertChangeSummary: empty entity_id")
+	}
+	if row.CurrentValue == "" {
+		return errors.New("timescale: UpsertChangeSummary: empty current_value")
 	}
 	const q = `
 		INSERT INTO change_summary_5m (
@@ -91,12 +94,12 @@ func (s *Store) UpsertChangeSummary(ctx context.Context, row ChangeSummaryRow) e
 	`
 	_, err := s.db.ExecContext(ctx, q,
 		row.EntityType, row.EntityID, row.RefreshedAt.UTC(), row.CurrentValue,
-		floatOrNil(row.H1Value), floatOrNil(row.H1DeltaPct),
-		floatOrNil(row.H24Value), floatOrNil(row.H24DeltaPct),
-		floatOrNil(row.D7Value), floatOrNil(row.D7DeltaPct),
-		floatOrNil(row.D30Value), floatOrNil(row.D30DeltaPct),
-		floatOrNil(row.ATHValue), timeOrNil(row.ATHAt),
-		floatOrNil(row.ATLValue), timeOrNil(row.ATLAt),
+		strPtrOrNil(row.H1Value), floatOrNil(row.H1DeltaPct),
+		strPtrOrNil(row.H24Value), floatOrNil(row.H24DeltaPct),
+		strPtrOrNil(row.D7Value), floatOrNil(row.D7DeltaPct),
+		strPtrOrNil(row.D30Value), floatOrNil(row.D30DeltaPct),
+		strPtrOrNil(row.ATHValue), timeOrNil(row.ATHAt),
+		strPtrOrNil(row.ATLValue), timeOrNil(row.ATLAt),
 		strOrNil(row.StreakDirection), intOrNil(row.StreakDays),
 		strOrNil(row.Acceleration),
 	)
@@ -112,21 +115,22 @@ func (s *Store) UpsertChangeSummary(ctx context.Context, row ChangeSummaryRow) e
 // yet. API handlers translate that into the price-not-found path.
 func (s *Store) GetChangeSummary(ctx context.Context, entityType, entityID string) (ChangeSummaryRow, error) {
 	const q = `
-		SELECT entity_type, entity_id, refreshed_at, current_value,
-		       h1_value, h1_delta_pct, h24_value, h24_delta_pct,
-		       d7_value, d7_delta_pct, d30_value, d30_delta_pct,
-		       ath_value, ath_at, atl_value, atl_at,
+		SELECT entity_type, entity_id, refreshed_at, current_value::text,
+		       h1_value::text, h1_delta_pct, h24_value::text, h24_delta_pct,
+		       d7_value::text, d7_delta_pct, d30_value::text, d30_delta_pct,
+		       ath_value::text, ath_at, atl_value::text, atl_at,
 		       streak_direction, streak_days, acceleration
 		  FROM change_summary_5m
 		 WHERE entity_type = $1 AND entity_id = $2
 	`
 	var row ChangeSummaryRow
 	var (
-		h1V, h1D, h24V, h24D, d7V, d7D, d30V, d30D sql.NullFloat64
-		athV, atlV                                 sql.NullFloat64
-		athAt, atlAt                               sql.NullTime
-		streakDir, accel                           sql.NullString
-		streakDays                                 sql.NullInt64
+		h1V, h24V, d7V, d30V sql.NullString
+		h1D, h24D, d7D, d30D sql.NullFloat64
+		athV, atlV           sql.NullString
+		athAt, atlAt         sql.NullTime
+		streakDir, accel     sql.NullString
+		streakDays           sql.NullInt64
 	)
 	err := s.db.QueryRowContext(ctx, q, entityType, entityID).Scan(
 		&row.EntityType, &row.EntityID, &row.RefreshedAt, &row.CurrentValue,
@@ -137,16 +141,16 @@ func (s *Store) GetChangeSummary(ctx context.Context, entityType, entityID strin
 	if err != nil {
 		return ChangeSummaryRow{}, err
 	}
-	row.H1Value = nullFloat(h1V)
+	row.H1Value = nullStr(h1V)
 	row.H1DeltaPct = nullFloat(h1D)
-	row.H24Value = nullFloat(h24V)
+	row.H24Value = nullStr(h24V)
 	row.H24DeltaPct = nullFloat(h24D)
-	row.D7Value = nullFloat(d7V)
+	row.D7Value = nullStr(d7V)
 	row.D7DeltaPct = nullFloat(d7D)
-	row.D30Value = nullFloat(d30V)
+	row.D30Value = nullStr(d30V)
 	row.D30DeltaPct = nullFloat(d30D)
-	row.ATHValue = nullFloat(athV)
-	row.ATLValue = nullFloat(atlV)
+	row.ATHValue = nullStr(athV)
+	row.ATLValue = nullStr(atlV)
 	if athAt.Valid {
 		t := athAt.Time
 		row.ATHAt = &t
@@ -201,6 +205,20 @@ func nullFloat(n sql.NullFloat64) *float64 {
 		return nil
 	}
 	return &n.Float64
+}
+
+func nullStr(n sql.NullString) *string {
+	if !n.Valid {
+		return nil
+	}
+	return &n.String
+}
+
+func strPtrOrNil(s *string) any {
+	if s == nil {
+		return nil
+	}
+	return *s
 }
 
 // timedVWAPs1mForChangeSummaryQuery reads both stored orientations of

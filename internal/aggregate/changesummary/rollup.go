@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"math/big"
 	"sort"
 	"strconv"
 	"time"
@@ -46,20 +47,20 @@ type Row struct {
 	EntityType   string
 	EntityID     string
 	RefreshedAt  time.Time
-	CurrentValue float64
+	CurrentValue string
 
-	H1Value     *float64
+	H1Value     *string
 	H1DeltaPct  *float64
-	H24Value    *float64
+	H24Value    *string
 	H24DeltaPct *float64
-	D7Value     *float64
+	D7Value     *string
 	D7DeltaPct  *float64
-	D30Value    *float64
+	D30Value    *string
 	D30DeltaPct *float64
 
-	ATHValue *float64
+	ATHValue *string
 	ATHAt    *time.Time
-	ATLValue *float64
+	ATLValue *string
 	ATLAt    *time.Time
 
 	StreakDirection string
@@ -245,13 +246,12 @@ func closedPoints(series []TimedValue, now time.Time) []TimedValue {
 // len(series) >= 1.
 func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 	current := series[len(series)-1]
-	currentVal, _ := strconv.ParseFloat(current.Value, 64)
 
 	row := Row{
 		EntityType:   ent.Type,
 		EntityID:     ent.ID,
 		RefreshedAt:  now,
-		CurrentValue: currentVal,
+		CurrentValue: current.Value,
 	}
 
 	// A horizon delta is a statement about the period [now-h, now]: it
@@ -259,8 +259,9 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 	// more than one horizon older than now-h. Otherwise the pointers stay
 	// nil (serialized as NULL) — a dormant pair must not read as flat.
 	for _, hz := range []struct {
-		d        time.Duration
-		val, pct **float64
+		d   time.Duration
+		val **string
+		pct **float64
 	}{
 		{time.Hour, &row.H1Value, &row.H1DeltaPct},
 		{24 * time.Hour, &row.H24Value, &row.H24DeltaPct},
@@ -272,37 +273,44 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 			continue
 		}
 		if v, ok := valueAt(series, target, target.Add(-hz.d)); ok {
-			*hz.val = ptr(v)
-			*hz.pct = ptr(deltaPct(v, currentVal))
+			*hz.val = ptrStr(v)
+			*hz.pct = ptr(deltaPct(v, current.Value))
 		}
 	}
 
-	// ATH / ATL across the full series. Note this is "30d ATH" not
-	// all-time — the worker only fetches 30d of history. A future
-	// pass that wants true all-time can switch the query to a
-	// 1-day-bucketed CAGG covering the full hypertable.
-	athValue, athAt := currentVal, current.At
-	atlValue, atlAt := currentVal, current.At
-	for _, p := range series {
-		v, err := strconv.ParseFloat(p.Value, 64)
-		// Skip unparseable or zero points explicitly. A zero (or NaN
-		// from a malformed value) mid-series must not become the ATL:
-		// the previous `|| atlValue == 0` reset corrupted ATL whenever
-		// a single bad/zero point appeared ([100,5,0,90] yielded ATL=90
-		// instead of 5).
-		if err != nil || v == 0 {
-			continue
-		}
-		if v > athValue {
-			athValue, athAt = v, p.At
-		}
-		if v < atlValue {
-			atlValue, atlAt = v, p.At
+	// ATH / ATL across the full series, compared with big.Rat so a price
+	// with more significant digits than float64 carries (see GH #602)
+	// never gets truncated on the way into the ratcheted ath_value /
+	// atl_value columns. Note this is "30d ATH" not all-time — the
+	// worker only fetches 30d of history. A future pass that wants true
+	// all-time can switch the query to a 1-day-bucketed CAGG covering
+	// the full hypertable.
+	athValue, athAt := current.Value, current.At
+	atlValue, atlAt := current.Value, current.At
+	athRat, seedOK := new(big.Rat).SetString(current.Value)
+	if seedOK {
+		atlRat := new(big.Rat).Set(athRat)
+		for _, p := range series {
+			v, ok := new(big.Rat).SetString(p.Value)
+			// Skip unparseable or zero points explicitly. A zero (or
+			// unparseable value) mid-series must not become the ATL:
+			// the previous `|| atlValue == 0` reset corrupted ATL
+			// whenever a single bad/zero point appeared ([100,5,0,90]
+			// yielded ATL=90 instead of 5).
+			if !ok || v.Sign() == 0 {
+				continue
+			}
+			if v.Cmp(athRat) > 0 {
+				athRat, athValue, athAt = v, p.Value, p.At
+			}
+			if v.Cmp(atlRat) < 0 {
+				atlRat, atlValue, atlAt = v, p.Value, p.At
+			}
 		}
 	}
-	row.ATHValue = ptr(athValue)
+	row.ATHValue = ptrStr(athValue)
 	row.ATHAt = ptrTime(athAt)
-	row.ATLValue = ptr(atlValue)
+	row.ATLValue = ptrStr(atlValue)
 	row.ATLAt = ptrTime(atlAt)
 
 	row.StreakDirection, row.StreakDays = computeStreak(series)
@@ -316,27 +324,27 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 // back, or when that observation is older than notBefore (a baseline
 // that stale describes a different period). series is assumed sorted
 // oldest-first.
-func valueAt(series []TimedValue, target, notBefore time.Time) (float64, bool) {
+func valueAt(series []TimedValue, target, notBefore time.Time) (string, bool) {
 	// Binary-search the largest index whose At <= target.
 	idx := sort.Search(len(series), func(i int) bool {
 		return series[i].At.After(target)
 	}) - 1
 	if idx < 0 || series[idx].At.Before(notBefore) {
-		return 0, false
+		return "", false
 	}
-	v, err := strconv.ParseFloat(series[idx].Value, 64)
-	if err != nil {
-		return 0, false
-	}
-	return v, true
+	return series[idx].Value, true
 }
 
-// deltaPct = (current - past) / past * 100. Returns 0 on past=0
-// (avoids divide-by-zero; a delta against a zero baseline is
-// undefined and we'd rather leak a fresh entity's NULL than
-// stamp Inf%).
-func deltaPct(past, current float64) float64 {
-	if past == 0 {
+// deltaPct = (current - past) / past * 100. Returns 0 on past=0 or an
+// unparseable leg (avoids divide-by-zero; a delta against a zero
+// baseline is undefined and we'd rather leak a fresh entity's NULL
+// than stamp Inf%). *DeltaPct is a percentage, not money — display-grade
+// float64 rounding here is accepted by design (GH #602's fix keeps the
+// underlying *Value fields exact; only this ratio stays float).
+func deltaPct(pastStr, currentStr string) float64 {
+	past, errP := strconv.ParseFloat(pastStr, 64)
+	current, errC := strconv.ParseFloat(currentStr, 64)
+	if errP != nil || errC != nil || past == 0 {
 		return 0
 	}
 	return (current - past) / past * 100.0
@@ -481,5 +489,6 @@ func avgDelta(slice []TimedValue) float64 {
 }
 
 func ptr(f float64) *float64         { return &f }
+func ptrStr(s string) *string        { return &s }
 func ptrInt(i int) *int              { return &i }
 func ptrTime(t time.Time) *time.Time { return &t }
