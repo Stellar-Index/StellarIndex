@@ -472,3 +472,78 @@ func TestLendingPoolsCommentDoesNotCiteUnrelatedIssueNumbers(t *testing.T) {
 		}
 	}
 }
+
+// assetKeyedPriceReader prices only the base assets it names, in USD; every
+// other read is an honest miss.
+type assetKeyedPriceReader struct {
+	usd map[string]string
+}
+
+func (r *assetKeyedPriceReader) LatestPrice(_ context.Context, base, _ canonical.Asset) (v1.PriceSnapshot, []string, bool, error) {
+	if p, ok := r.usd[base.String()]; ok {
+		return v1.PriceSnapshot{Price: p}, []string{"sdex"}, false, nil
+	}
+	return v1.PriceSnapshot{}, nil, false, v1.ErrPriceNotFound
+}
+
+func (r *assetKeyedPriceReader) RecentClosedSnapshots(_ context.Context, _, _ canonical.Asset, _ int) ([]v1.PriceSnapshot, error) {
+	return []v1.PriceSnapshot{}, nil
+}
+
+// TestLendingPoolReserves_PartialTVLIsLowerBound pins the money invariant on
+// the pool's tvl_usd: a sum that leaves out an unpriced reserve is served
+// with lower_bound=true, and a sum over every reserve is not.
+//
+// RED without the fix: lower_bound absent on the partial sum.
+func TestLendingPoolReserves_PartialTVLIsLowerBound(t *testing.T) {
+	pool := mkCStrkey(t, 9)
+	priced, unpriced := mkCStrkey(t, 40), mkCStrkey(t, 41)
+	reserve := func(asset string, supplied int64) clickhouse.BlendReserveState {
+		return clickhouse.BlendReserveState{
+			Pool: pool, Asset: asset, Decimals: 7,
+			Metrics: blend.ReserveMetrics{
+				SuppliedUnderlying: big.NewInt(supplied),
+				BorrowedUnderlying: big.NewInt(0),
+			},
+		}
+	}
+	cases := []struct {
+		name      string
+		usd       map[string]string
+		wantTVL   string
+		wantLower bool
+	}{
+		// 1 token at $2 priced; the other reserve's 500 tokens excluded.
+		{"one reserve unpriced", map[string]string{priced: "2"}, "2.00", true},
+		{"every reserve priced", map[string]string{priced: "2", unpriced: "3"}, "1502.00", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := v1.New(v1.Options{
+				Explorer: &stubExplorerReader{reserves: []clickhouse.BlendReserveState{
+					reserve(priced, 10_000_000), reserve(unpriced, 5_000_000_000),
+				}},
+				Lending: &stubLendingReader{assets: []string{priced, unpriced}},
+				Prices:  &assetKeyedPriceReader{usd: tc.usd},
+			})
+			resp := mustGet(t, httpTestServer(t, srv).URL+"/v1/lending/pools/"+pool+"/reserves")
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			var env struct {
+				Data map[string]json.RawMessage `json:"data"`
+			}
+			mustDecode(t, resp, &env)
+			var tvl *string
+			if err := json.Unmarshal(env.Data["tvl_usd"], &tvl); err != nil || tvl == nil || *tvl != tc.wantTVL {
+				t.Fatalf("tvl_usd = %s, want %q", env.Data["tvl_usd"], tc.wantTVL)
+			}
+			raw, present := env.Data["lower_bound"]
+			var lower bool
+			if !present || json.Unmarshal(raw, &lower) != nil || lower != tc.wantLower {
+				t.Errorf("lower_bound = %s (present=%v), want %v — a tvl_usd that excludes an unpriced reserve must be marked a lower bound",
+					raw, present, tc.wantLower)
+			}
+		})
+	}
+}

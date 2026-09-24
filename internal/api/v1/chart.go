@@ -1300,9 +1300,14 @@ func (s *Server) chartSeriesPoints(
 	if len(points) > 0 {
 		return points, res, nil
 	}
-	if derived, ok, degraded := s.fiatSeriesThroughXLM(ctx, pair, win, read); ok {
-		return derived, chartWalkResult{proxied: true, degraded: degraded}, nil
+	derived, crossRes, err := s.fiatSeriesThroughXLM(ctx, pair, win, read)
+	if err != nil {
+		return nil, chartWalkResult{}, err
 	}
+	if len(derived) > 0 {
+		return derived, crossRes, nil
+	}
+	res.degraded = res.degraded || crossRes.degraded
 	return nil, res, nil
 }
 
@@ -1616,28 +1621,39 @@ func (s *Server) chartVWAPReader(gran string, from time.Time) func(context.Conte
 // what the derived series reports. An XLM base (any spelling) and a fiat
 // base are not crossed: the former is the anchor itself and was already
 // read literally, the latter is fx_quotes' surface.
+//
+// A leg's alias-class read error is returned, as it is for the requested
+// pair: swallowing it would serve a failed read as an empty series.
 func (s *Server) fiatSeriesThroughXLM(
 	ctx context.Context, pair canonical.Pair, win chartWindow,
 	read func(context.Context, canonical.Pair) ([]HistoryPoint, error),
-) ([]HistoryPoint, bool, bool) {
+) ([]HistoryPoint, chartWalkResult, error) {
 	legs, ok := fiatCrossLegsThroughXLM(pair)
 	if !ok {
-		return nil, false, false
+		return nil, chartWalkResult{}, nil
 	}
 	assetPts, assetRes, err := s.chartObservedPoints(ctx, legs[0], win, read)
-	if err != nil || len(assetPts) == 0 {
-		return nil, false, false
+	if err != nil {
+		return nil, chartWalkResult{}, err
+	}
+	// A leg that stopped short makes the PRODUCT short (or empty): the
+	// cross emits only buckets present on both, so carry each leg's
+	// degradation out even when the cross comes back empty.
+	res := chartWalkResult{degraded: assetRes.degraded}
+	if len(assetPts) == 0 {
+		return nil, res, nil
 	}
 	xlmPts, xlmRes, err := s.chartObservedPoints(ctx, legs[1], win, read)
-	if err != nil || len(xlmPts) == 0 {
-		return nil, false, false
+	if err != nil {
+		return nil, chartWalkResult{}, err
+	}
+	res.degraded = res.degraded || xlmRes.degraded
+	if len(xlmPts) == 0 {
+		return nil, res, nil
 	}
 	crossed := crossSeriesThroughPivot(assetPts, xlmPts)
-	// A leg that stopped short makes the PRODUCT short: the cross emits
-	// only buckets present on both, so a truncated leg silently trims
-	// the derived series. Carry the degradation out rather than letting
-	// it vanish between the two reads.
-	return crossed, len(crossed) > 0, assetRes.degraded || xlmRes.degraded
+	res.proxied = len(crossed) > 0
+	return crossed, res, nil
 }
 
 // fiatCrossLegsThroughXLM is the gate and the leg enumeration of
