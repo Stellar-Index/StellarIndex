@@ -8,6 +8,11 @@
 #
 # Public ingress on 80/443; SSH narrowed to allow-list CIDRs; VRRP
 # between LB peers; stats endpoint stays loopback-only (no rule).
+#
+# SL10: haproxy_internal_cidrs / haproxy_allowed_ssh_cidrs entries
+# containing ':' were rendered into ipv4_addr-only sets, so an IPv6
+# CIDR silently dropped out of the ruleset instead of being enforced.
+# Mirror ipv6_addr sets fix that (same pattern as SL12 in the loki role).
 
 - name: ensure nftables installed
   apt:
@@ -48,6 +53,26 @@
           }
         }
 
+        set internal_v6 {
+          type ipv6_addr
+          flags interval
+          elements = {
+      {% for cidr in haproxy_internal_cidrs if ':' in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+          }
+        }
+
+        set ssh_allowed_v6 {
+          type ipv6_addr
+          flags interval
+          elements = {
+      {% for cidr in haproxy_allowed_ssh_cidrs if ':' in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+          }
+        }
+
         chain input {
           type filter hook input priority filter; policy drop;
 
@@ -60,12 +85,14 @@
           ip6 nexthdr ipv6-icmp limit rate 10/second accept
 
           tcp dport 22 ip saddr @ssh_allowed_v4 ct state new limit rate 30/minute accept comment "ssh"
+          tcp dport 22 ip6 saddr @ssh_allowed_v6 ct state new limit rate 30/minute accept comment "ssh-v6"
 
           # Public ingress.
           tcp dport { 80, 443 } accept comment "haproxy-public"
 
           # VRRP between peer LB hosts.
           ip protocol vrrp ip saddr @internal_v4 accept comment "vrrp-internal"
+          ip6 nexthdr vrrp ip6 saddr @internal_v6 accept comment "vrrp-internal-v6"
 
           # Stats endpoint is bound to 127.0.0.1; covered by iif lo.
 
