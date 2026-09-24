@@ -475,9 +475,9 @@ func TestCoinGeckoPrice_AcceptsEveryXLMAliasForm(t *testing.T) {
 	usd := mustParseAsset(t, "fiat:USD")
 	for _, form := range canonical.AssetAliases(canonical.NativeAsset()) {
 		pair := canonical.Pair{Base: form, Quote: usd}
-		got, err := ref.LookupPrice(context.Background(), pair, time.Unix(updated, 0))
+		got, err := priceOf(ref.LookupQuote(context.Background(), pair, time.Unix(updated, 0)))
 		if err != nil || got != 0.12 {
-			t.Errorf("LookupPrice(%s/fiat:USD) = %v, %v; want 0.12", form, got, err)
+			t.Errorf("LookupQuote(%s/fiat:USD) = %v, %v; want 0.12", form, got, err)
 		}
 	}
 }
