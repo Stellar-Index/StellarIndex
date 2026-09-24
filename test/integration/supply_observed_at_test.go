@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -52,6 +53,17 @@ func TestSupplyObservedAt_StampsLedgerCloseTimeNotWallClock(t *testing.T) {
 		t.Fatalf("open sink: %v", err)
 	}
 	t.Cleanup(func() { _ = sink.Close(ctx) })
+	// Left behind, this row owns the global max ledger_seq with a 2024 close time,
+	// which empties clickhouse_storage_test's NetworkThroughput tip window.
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer ccancel()
+		conn := dialClickHouse(t, cctx, "stellar")
+		if err := conn.Exec(cctx, fmt.Sprintf(`ALTER TABLE stellar.ledgers DELETE
+			WHERE ledger_seq = %d SETTINGS mutations_sync = 2`, ledger)); err != nil {
+			t.Errorf("purge supply fixture ledger: %v", err)
+		}
+	})
 	if err := sink.Add(ctx, ext); err != nil {
 		t.Fatalf("sink add: %v", err)
 	}
