@@ -38,13 +38,15 @@ type timedSubstanceReader struct {
 	atCalls   []atCall
 }
 
-func (r *timedSubstanceReader) PairMarketSubstance(context.Context, canonical.Pair, time.Duration) (timescale.MarketSubstance, error) {
+func (r *timedSubstanceReader) PairMarketSubstance(
+	context.Context, []canonical.Asset, []canonical.Asset, time.Duration,
+) (timescale.MarketSubstance, error) {
 	r.liveCalls++
 	return r.live, nil
 }
 
 func (r *timedSubstanceReader) PairMarketSubstanceAt(
-	_ context.Context, _ canonical.Pair, asOf time.Time, window time.Duration, g timescale.HistoryGranularity,
+	_ context.Context, _, _ []canonical.Asset, asOf time.Time, window time.Duration, g timescale.HistoryGranularity,
 ) (timescale.MarketSubstance, error) {
 	r.atCalls = append(r.atCalls, atCall{asOf: asOf, window: window, grain: g})
 	if r.atErr != nil {

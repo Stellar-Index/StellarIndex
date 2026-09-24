@@ -48,9 +48,11 @@ import (
 
 // MarketSubstanceReader is the storage seam the substance gate needs.
 // *timescale.Store satisfies it; an interface keeps the gate
-// unit-testable without a database.
+// unit-testable without a database. It takes each leg's full set of
+// spellings so the union is measured in one read: distinct buckets do
+// not add across spellings that trade in the same minute.
 type MarketSubstanceReader interface {
-	PairMarketSubstance(ctx context.Context, p canonical.Pair, window time.Duration) (timescale.MarketSubstance, error)
+	PairMarketSubstance(ctx context.Context, bases, quotes []canonical.Asset, window time.Duration) (timescale.MarketSubstance, error)
 }
 
 // MarketSubstanceAtReader is the storage seam for the POINT-IN-TIME
@@ -58,7 +60,7 @@ type MarketSubstanceReader interface {
 // over the window ending at `asOf` rather than at now, at the named
 // grain.
 type MarketSubstanceAtReader interface {
-	PairMarketSubstanceAt(ctx context.Context, p canonical.Pair, asOf time.Time, window time.Duration, g timescale.HistoryGranularity) (timescale.MarketSubstance, error)
+	PairMarketSubstanceAt(ctx context.Context, bases, quotes []canonical.Asset, asOf time.Time, window time.Duration, g timescale.HistoryGranularity) (timescale.MarketSubstance, error)
 }
 
 // SubstanceStore is the store [NewSubstanceGate] requires: both
@@ -297,8 +299,9 @@ func SubstanceOK(volumeUSD *big.Rat, buckets, spanSeconds int64, policy Substanc
 // The measurement is the ALIAS UNION of the pair: XLM's three canonical
 // spellings (native / crypto:XLM / the SAC) hold disjoint venue
 // populations (CS: the aggregator writes CEX volume under crypto:XLM
-// while SDEX writes under native), and the pair's real market breadth
-// is their sum. Without the union, /v1/price?asset=native&quote=fiat:USD
+// while SDEX writes under native), and the pair's real market is their
+// union — volumes add, a minute active under two spellings is one
+// bucket. Without the union, /v1/price?asset=native&quote=fiat:USD
 // would measure only the literal native/fiat:USD pair — which has zero
 // rows by construction — and withhold XLM itself.
 //
@@ -375,47 +378,35 @@ func (g *SubstanceGate) Verdict(ctx context.Context, base, quote canonical.Asset
 // means an infrastructure error prevented a verdict.
 func (g *SubstanceGate) measure(ctx context.Context, base, quote canonical.Asset) (allowed, measured bool) {
 	return g.measureUnion(ctx, base, quote, g.policy,
-		func(ctx context.Context, pair canonical.Pair) (timescale.MarketSubstance, error) {
-			return g.store.PairMarketSubstance(ctx, pair, g.policy.Window)
+		func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
+			return g.store.PairMarketSubstance(ctx, bases, quotes, g.policy.Window)
 		})
 }
 
-// measureUnion is the alias-union fold shared by the live and the
-// point-in-time measurement: `read` supplies one spelling's substance,
-// and the union is held to `policy`. One fold, so the two questions
-// cannot come to disagree about what "the pair's market" is.
+// measureUnion is the alias-union measurement shared by the live and the
+// point-in-time gate: `read` measures every spelling of base against
+// every spelling of quote as ONE market, held to `policy`. One read, not
+// a per-spelling fold: XLM's SDEX and CEX legs trade in the same
+// minutes, and summing each spelling's distinct-bucket count would count
+// a shared minute once per spelling.
 func (g *SubstanceGate) measureUnion(
 	ctx context.Context, base, quote canonical.Asset, policy SubstancePolicy,
-	read func(context.Context, canonical.Pair) (timescale.MarketSubstance, error),
+	read func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error),
 ) (allowed, measured bool) {
-	totalVol := new(big.Rat)
-	var buckets, span int64
-	for _, a := range canonical.AssetAliases(base) {
-		for _, q := range canonical.AssetAliases(quote) {
-			pair, err := canonical.NewPair(a, q)
-			if err != nil {
-				// Degenerate alias combination (e.g. native/crypto:XLM
-				// collapsing to an identity pair) — skip.
-				continue
-			}
-			sub, err := read(ctx, pair)
-			if err != nil {
-				if g.logger != nil && ctx.Err() == nil {
-					g.logger.Warn("substance gate: measurement failed — no verdict for the pair",
-						"pair", pair.String(), "err", err)
-				}
-				return true, false
-			}
-			if v, ok := new(big.Rat).SetString(sub.VolumeUSD); ok {
-				totalVol.Add(totalVol, v)
-			}
-			buckets += sub.Buckets
-			if sub.SpanSeconds > span {
-				span = sub.SpanSeconds
-			}
+	sub, err := read(ctx, canonical.AssetAliases(base), canonical.AssetAliases(quote))
+	if err != nil {
+		if g.logger != nil && ctx.Err() == nil {
+			g.logger.Warn("substance gate: measurement failed — no verdict for the pair",
+				"base", base.String(), "quote", quote.String(), "err", err)
 		}
+		return true, false
 	}
-	return SubstanceOK(totalVol, buckets, span, policy), true
+	vol, ok := new(big.Rat).SetString(sub.VolumeUSD)
+	if !ok {
+		// An unparsable volume verifies nothing, so it fails the volume leg.
+		vol = new(big.Rat)
+	}
+	return SubstanceOK(vol, sub.Buckets, sub.SpanSeconds, policy), true
 }
 
 // hourGrainPolicy is the floor a market is held to when its legs are
@@ -519,8 +510,8 @@ func (g *SubstanceGate) AllowedAt(ctx context.Context, base, quote canonical.Ass
 	}
 
 	allowed, measured := g.measureUnion(ctx, base, quote, policy,
-		func(ctx context.Context, pair canonical.Pair) (timescale.MarketSubstance, error) {
-			return g.store.PairMarketSubstanceAt(ctx, pair, asOf, policy.Window, grain)
+		func(ctx context.Context, bases, quotes []canonical.Asset) (timescale.MarketSubstance, error) {
+			return g.store.PairMarketSubstanceAt(ctx, bases, quotes, asOf, policy.Window, grain)
 		})
 	if !measured {
 		obs.PriceServeSubstanceUnmeasuredTotal.WithLabelValues(surface).Inc()

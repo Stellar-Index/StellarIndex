@@ -42,9 +42,10 @@ groups:
             minutes, asset class {{ $labels.class }}. The affected
             pair's /v1/price now serves the previous bucket's
             last-known-good VWAP with flags.frozen=true.
-            The freeze marker auto-clears 5 minutes after the last
-            ActionFreeze decision (per cachekeys.FreezeTTL); a
-            sustained freeze keeps the counter incrementing.
+            The freeze lasts for its hold (ADR-0019 lifecycle); the
+            marker's TTL is the remaining hold plus a 5-minute grace
+            (freeze.DefaultMarkerGrace = cachekeys.FreezeTTL), so it
+            outlives a missed tick or restart, not the hold itself.
             Inspect the freeze:<asset>:<quote> Redis keys to
             identify the affected pair(s); manual override via
             policy YAML if confirmed false-positive.
@@ -71,9 +72,10 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/anomaly-freeze-engaged.md
           summary: "Anomaly freeze ESCALATED to operator-only on class {{ $labels.class }} (P1)"
           description: |
-            Freeze decisions for asset class {{ $labels.class }}
-            have been emitted continuously over the last hour. Three
-            common patterns:
+            A freeze on asset class {{ $labels.class }} exhausted its
+            extension ladder in the last hour and escalated: it is
+            operator-only and will not auto-release. Three common
+            patterns behind a freeze that never recovers:
 
             1. Real market event — typically resolves in minutes.
             2. Threshold mis-tune — Phase 1 fires on legitimate

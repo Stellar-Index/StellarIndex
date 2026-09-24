@@ -6,6 +6,7 @@ package timescale
 import (
 	"context"
 	"database/sql/driver"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -28,7 +29,8 @@ func substanceAtQuery(t *testing.T, asOf time.Time, window time.Duration, g Hist
 		cols: []string{"volume_usd", "buckets", "span_seconds"},
 		rows: [][]driver.Value{{"0", int64(0), int64(0)}},
 	})
-	if _, err := store.PairMarketSubstanceAt(context.Background(), testXLMUSDCPair(t), asOf, window, g); err != nil {
+	bases, quotes := testXLMUSDCLegs(t)
+	if _, err := store.PairMarketSubstanceAt(context.Background(), bases, quotes, asOf, window, g); err != nil {
 		t.Fatalf("PairMarketSubstanceAt: %v", err)
 	}
 	return conn.only(t)
@@ -78,16 +80,19 @@ func TestPairMarketSubstanceAt_WindowEndsAtTheInstant(t *testing.T) {
 
 // Same shape guarantees as the live reader: both stored directions,
 // distinct buckets, the now() closed-bucket guard at the grain's own
-// width, sargable bounds, and the pair bound rather than interpolated.
+// width, sargable bounds, and the spelling sets bound rather than
+// interpolated.
 func TestPairMarketSubstanceAt_KeepsTheLiveReadersShape(t *testing.T) {
 	pair := testXLMUSDCPair(t)
+	bases, quotes := testXLMUSDCLegs(t)
 	stmt := substanceAtQuery(t, time.Date(2024, 6, 1, 15, 0, 0, 0, time.UTC), 24*time.Hour, Granularity1h)
 	norm := regexp.MustCompile(`\s+`).ReplaceAllString(stmt.sql, " ")
 
 	for _, want := range []string{
-		"base_asset = $1 AND quote_asset = $2 AND bucket <= now() - INTERVAL '1 hour'",
+		"base_asset = ANY($1) AND quote_asset = ANY($2) AND bucket <= now() - INTERVAL '1 hour'",
 		"UNION ALL",
-		"base_asset = $2 AND quote_asset = $1 AND bucket <= now() - INTERVAL '1 hour'",
+		"base_asset = ANY($2) AND quote_asset = ANY($1) AND bucket <= now() - INTERVAL '1 hour'",
+		"AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))",
 		"GROUP BY bucket",
 	} {
 		if !strings.Contains(norm, want) {
@@ -100,8 +105,9 @@ func TestPairMarketSubstanceAt_KeepsTheLiveReadersShape(t *testing.T) {
 	if strings.Contains(stmt.sql, "bucket + INTERVAL") {
 		t.Error("non-sargable `bucket + INTERVAL` form: function on the indexed column")
 	}
-	if len(stmt.args) != 2 || stmt.arg(t, 1) != pair.Base.String() || stmt.arg(t, 2) != pair.Quote.String() {
-		t.Errorf("args = %v, want exactly (base, quote) bound as $1/$2", stmt.args)
+	if len(stmt.args) != 2 || !reflect.DeepEqual(stmt.arg(t, 1), assetKeys(bases)) ||
+		!reflect.DeepEqual(stmt.arg(t, 2), assetKeys(quotes)) {
+		t.Errorf("args = %v, want exactly (bases, quotes) bound as $1/$2", stmt.args)
 	}
 	if strings.Contains(stmt.sql, pair.Quote.String()) {
 		t.Error("the quote asset id was interpolated into the SQL text instead of bound")
@@ -117,16 +123,16 @@ func TestPairMarketSubstanceAt_KeepsTheLiveReadersShape(t *testing.T) {
 // argument must fail BEFORE a query is issued.
 func TestPairMarketSubstanceAt_RejectsBadArgumentsBeforeQuerying(t *testing.T) {
 	store, conn := newScriptedStore(t)
-	pair := testXLMUSDCPair(t)
+	bases, quotes := testXLMUSDCLegs(t)
 	at := time.Date(2024, 6, 1, 15, 0, 0, 0, time.UTC)
 
 	for _, g := range []HistoryGranularity{Granularity15m, Granularity4h, Granularity1d, HistoryGranularity("trades; --")} {
-		if _, err := store.PairMarketSubstanceAt(context.Background(), pair, at, time.Hour, g); err == nil {
+		if _, err := store.PairMarketSubstanceAt(context.Background(), bases, quotes, at, time.Hour, g); err == nil {
 			t.Errorf("grain %q: want an error, got nil", g)
 		}
 	}
 	for _, w := range []time.Duration{0, -time.Hour} {
-		if _, err := store.PairMarketSubstanceAt(context.Background(), pair, at, w, Granularity1h); err == nil {
+		if _, err := store.PairMarketSubstanceAt(context.Background(), bases, quotes, at, w, Granularity1h); err == nil {
 			t.Errorf("window %v: want an error, got nil", w)
 		}
 	}

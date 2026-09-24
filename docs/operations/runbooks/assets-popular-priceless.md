@@ -105,7 +105,8 @@ psql "$STELLARINDEX_POSTGRES_DSN" -c \
 ```
 
 Note the gate itself is direction-safe — `Store.PairMarketSubstance`
-already unions both directions and de-dupes with `GROUP BY bucket`. It is
+already unions both directions and every alias spelling of each leg, and
+de-dupes with `GROUP BY bucket`. It is
 the *ad-hoc diagnosis query* that misleads, not the production measurement.
 
 ## Decision tree — `stellarindex_assets_popular_priceless`

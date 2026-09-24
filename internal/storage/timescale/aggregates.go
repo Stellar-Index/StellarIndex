@@ -2449,24 +2449,50 @@ type MarketSubstance struct {
 	SpanSeconds int64
 }
 
-// PairMarketSubstance measures [MarketSubstance] for the pair over the
-// trailing `window` (closed buckets only, ADR-0015). Same plan-time
-// chunk-pruning discipline as the other prices_1m readers in this file:
-// the lower bound is interpolated as a LITERAL timestamptz computed in
-// Go (no injection surface), and the closed-bucket predicate is the
-// sargable `bucket <= now() - 1min` form.
+// substanceLegs renders the two spelling sets a substance read binds as
+// $1/$2. An empty set would measure nothing and read as "no market".
+func substanceLegs(method string, bases, quotes []canonical.Asset) (baseKeys, quoteKeys []string, err error) {
+	if len(bases) == 0 || len(quotes) == 0 {
+		return nil, nil, fmt.Errorf("timescale: %s: empty spelling set (bases %d, quotes %d)", method, len(bases), len(quotes))
+	}
+	keys := func(set []canonical.Asset) []string {
+		out := make([]string, len(set))
+		for i, a := range set {
+			out[i] = a.String()
+		}
+		return out
+	}
+	return keys(bases), keys(quotes), nil
+}
+
+// PairMarketSubstance measures [MarketSubstance] over the trailing
+// `window` (closed buckets only, ADR-0015) for the ONE market formed by
+// every spelling in `bases` against every spelling in `quotes` — the
+// alias union the substance gate holds to its floor. A minute active
+// under two spellings is one bucket, which is why the union is taken
+// here, over bucket timestamps, and never by adding per-spelling counts.
+// Same plan-time chunk-pruning discipline as the other prices_1m readers
+// in this file: the lower bound is interpolated as a LITERAL timestamptz
+// computed in Go (no injection surface), and the closed-bucket predicate
+// is the sargable `bucket <= now() - 1min` form.
 //
-// An empty pair returns {VolumeUSD: "0", Buckets: 0, SpanSeconds: 0}
+// An empty market returns {VolumeUSD: "0", Buckets: 0, SpanSeconds: 0}
 // with a nil error — absence of market is a measurement, not an error.
-func (s *Store) PairMarketSubstance(ctx context.Context, p canonical.Pair, window time.Duration) (MarketSubstance, error) {
+func (s *Store) PairMarketSubstance(ctx context.Context, bases, quotes []canonical.Asset, window time.Duration) (MarketSubstance, error) {
 	if window <= 0 {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstance: non-positive window %v", window)
+	}
+	baseKeys, quoteKeys, err := substanceLegs("PairMarketSubstance", bases, quotes)
+	if err != nil {
+		return MarketSubstance{}, err
 	}
 	cutoff := time.Now().UTC().Add(-window)
 	lower := fmt.Sprintf("AND bucket >= TIMESTAMPTZ '%s'\n", cutoff.Format("2006-01-02 15:04:05-07"))
 	// #nosec G201 — the only interpolated value is `lower`, built from our
-	// own time.Time in a fixed layout; pair strings bind as $1/$2. Same
-	// discipline as latestClosedVWAP1m / RecentClosedVWAP1mCombined.
+	// own time.Time in a fixed layout; the spelling sets bind as $1/$2.
+	// Same discipline as latestClosedVWAP1m / RecentClosedVWAP1mCombined.
+	// The second arm's NOT keeps a row both arms select (only possible
+	// when the two sets share a spelling) from counting twice.
 	q := fmt.Sprintf(`
         SELECT COALESCE(sum(bucket_usd), 0)::text,
                count(*),
@@ -2475,20 +2501,21 @@ func (s *Store) PairMarketSubstance(ctx context.Context, p canonical.Pair, windo
             SELECT bucket, sum(volume_usd) AS bucket_usd
               FROM (
                 SELECT bucket, volume_usd FROM prices_1m
-                 WHERE base_asset = $1 AND quote_asset = $2
+                 WHERE base_asset = ANY($1) AND quote_asset = ANY($2)
                    AND bucket <= now() - INTERVAL '1 minute'
                    %[1]s
                 UNION ALL
                 SELECT bucket, volume_usd FROM prices_1m
-                 WHERE base_asset = $2 AND quote_asset = $1
+                 WHERE base_asset = ANY($2) AND quote_asset = ANY($1)
                    AND bucket <= now() - INTERVAL '1 minute'
                    %[1]s
+                   AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))
               ) d
              GROUP BY bucket
           ) b
     `, lower) //nolint:gosec // G201: see note above
 	var sub MarketSubstance
-	if err := s.db.QueryRowContext(ctx, q, p.Base.String(), p.Quote.String()).Scan(
+	if err := s.db.QueryRowContext(ctx, q, baseKeys, quoteKeys).Scan(
 		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds,
 	); err != nil {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstance: %w", err)
@@ -2530,7 +2557,7 @@ func (s *Store) PairMarketSubstance(ctx context.Context, p canonical.Pair, windo
 // An empty window returns {VolumeUSD: "0", Buckets: 0, SpanSeconds: 0}
 // with a nil error — absence of market is a measurement, not an error.
 func (s *Store) PairMarketSubstanceAt(
-	ctx context.Context, p canonical.Pair, asOf time.Time, window time.Duration, g HistoryGranularity,
+	ctx context.Context, bases, quotes []canonical.Asset, asOf time.Time, window time.Duration, g HistoryGranularity,
 ) (MarketSubstance, error) {
 	if window <= 0 {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstanceAt: non-positive window %v", window)
@@ -2539,13 +2566,18 @@ func (s *Store) PairMarketSubstanceAt(
 		return MarketSubstance{}, fmt.Errorf(
 			"timescale: PairMarketSubstanceAt: unsupported grain %q (want %s or %s)", g, Granularity1m, Granularity1h)
 	}
+	baseKeys, quoteKeys, err := substanceLegs("PairMarketSubstanceAt", bases, quotes)
+	if err != nil {
+		return MarketSubstance{}, err
+	}
 	const layout = "2006-01-02 15:04:05-07"
 	upper := asOf.UTC().Add(-g.BucketDuration())
 	lower := asOf.UTC().Add(-window)
 	// #nosec G201 — the interpolated values are the table suffix and the
 	// closed-bucket interval (both derived from the two-member grain
 	// allowlist checked above, never user input) and two of our own
-	// time.Time bounds in a fixed layout; pair strings bind as $1/$2.
+	// time.Time bounds in a fixed layout; the spelling sets bind as $1/$2.
+	// The union and the second arm's NOT are [Store.PairMarketSubstance]'s.
 	q := fmt.Sprintf(`
         SELECT COALESCE(sum(bucket_usd), 0)::text,
                count(*),
@@ -2554,22 +2586,23 @@ func (s *Store) PairMarketSubstanceAt(
             SELECT bucket, sum(volume_usd) AS bucket_usd
               FROM (
                 SELECT bucket, volume_usd FROM prices_%[1]s
-                 WHERE base_asset = $1 AND quote_asset = $2
+                 WHERE base_asset = ANY($1) AND quote_asset = ANY($2)
                    AND bucket <= now() - INTERVAL '%[2]s'
                    AND bucket <= TIMESTAMPTZ '%[3]s'
                    AND bucket >= TIMESTAMPTZ '%[4]s'
                 UNION ALL
                 SELECT bucket, volume_usd FROM prices_%[1]s
-                 WHERE base_asset = $2 AND quote_asset = $1
+                 WHERE base_asset = ANY($2) AND quote_asset = ANY($1)
                    AND bucket <= now() - INTERVAL '%[2]s'
                    AND bucket <= TIMESTAMPTZ '%[3]s'
                    AND bucket >= TIMESTAMPTZ '%[4]s'
+                   AND NOT (base_asset = ANY($1) AND quote_asset = ANY($2))
               ) d
              GROUP BY bucket
           ) b
     `, string(g), g.closedBucketInterval(), upper.Format(layout), lower.Format(layout)) //nolint:gosec // G201: see note above
 	var sub MarketSubstance
-	if err := s.db.QueryRowContext(ctx, q, p.Base.String(), p.Quote.String()).Scan(
+	if err := s.db.QueryRowContext(ctx, q, baseKeys, quoteKeys).Scan(
 		&sub.VolumeUSD, &sub.Buckets, &sub.SpanSeconds,
 	); err != nil {
 		return MarketSubstance{}, fmt.Errorf("timescale: PairMarketSubstanceAt: %w", err)
