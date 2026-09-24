@@ -294,7 +294,7 @@ func TestMethodologyPage_OutlierClaimMatchesTheEndpoint(t *testing.T) {
 	}
 	// …and must name the unfiltered surfaces rather than implying the
 	// filter is global.
-	for _, unfiltered := range []string{"/v1/vwap", "/v1/twap"} {
+	for _, unfiltered := range []string{"/v1/vwap"} {
 		if !strings.Contains(note, unfiltered) {
 			continue // the served note stopped naming it; nothing to mirror
 		}
@@ -307,7 +307,7 @@ func TestMethodologyPage_OutlierClaimMatchesTheEndpoint(t *testing.T) {
 	// months and a correction to the Go copy.
 	if strings.Contains(page, "Outliers are filtered before the average") {
 		t.Errorf("%s still claims outliers are filtered before the average; "+
-			"/v1/methodology says /v1/vwap and /v1/twap default to UNFILTERED",
+			"/v1/methodology says /v1/vwap defaults to UNFILTERED",
 			methodologyPagePath)
 	}
 }

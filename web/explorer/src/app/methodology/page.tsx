@@ -112,24 +112,26 @@ export default function MethodologyPage() {
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             /v1/vwap
           </code>{' '}
+          defaults{' '}
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
+            outlier_sigma
+          </code>{' '}
+          to 0.{' '}
+          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
+            /v1/ohlc
+          </code>{' '}
           and{' '}
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             /v1/twap
           </code>{' '}
-          default{' '}
+          filter by default: OHLC because its High and Low have no statistical
+          robustness at all — one dust trade pins them — and TWAP because a time
+          weight is unrelated to trade size. Pass{' '}
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             outlier_sigma
           </code>{' '}
-          to 0. Only{' '}
-          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
-            /v1/ohlc
-          </code>{' '}
-          filters by default, because its High and Low have no statistical
-          robustness at all — one dust trade pins them. Pass{' '}
-          <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
-            outlier_sigma
-          </code>{' '}
-          explicitly on the other two if you need filtering.
+          explicitly on /v1/vwap if you need filtering, or 0 on the other two to
+          disable it.
         </p>
         <p>
           Do not read volume-weighting as an outlier defence. On a sparse window
@@ -243,9 +245,9 @@ export default function MethodologyPage() {
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             /v1/incidents.atom
           </code>
-          . Freezes are automatic only — on-call cannot start one by hand.
-          Once a freeze has climbed the full extension ladder without
-          clearing on its own, an operator can end it early with{' '}
+          . Freezes are automatic only — on-call cannot start one by hand. Once
+          a freeze has climbed the full extension ladder without clearing on its
+          own, an operator can end it early with{' '}
           <code className="bg-surface-subtle rounded-sm px-1 py-0.5 text-xs">
             stellarindex-ops freeze-unfreeze
           </code>

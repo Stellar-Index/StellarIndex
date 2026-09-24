@@ -15,8 +15,18 @@ import (
 var twapScale = new(big.Int).Exp(big.NewInt(10), big.NewInt(40), nil)
 
 // TWAP returns the time-weighted average price over the given
-// trades, with each trade's price active until the next trade's
-// timestamp (or windowEnd for the final trade).
+// trades, with each INSTANT's price active until the next instant
+// (or windowEnd for the final one). An instant is a run of trades
+// sharing one Timestamp, and its price is that run's volume-weighted
+// Σquote/Σbase.
+//
+// Grouping by instant is what makes the result independent of the
+// order of same-timestamp trades. On-chain sources stamp every fill
+// with its ledger close time, so a ledger's fills share one timestamp;
+// weighting per trade would hand the whole interval to whichever fill
+// sorts last within the ledger (a tx_hash tie-break) and zero weight to
+// the rest — a dust print could carry the interval alone. Within an
+// instant a fill counts by its size, like VWAP.
 //
 // Requirements:
 //
@@ -25,7 +35,7 @@ var twapScale = new(big.Int).Exp(big.NewInt(10), big.NewInt(40), nil)
 //     caller bugs. If trades are unsorted, results are meaningless.
 //   - windowEnd must be ≥ the last trade's timestamp. A windowEnd
 //     earlier than the last trade's timestamp means the final
-//     trade's slot is negative; we clamp to zero for that slot
+//     instant's slot is negative; we clamp to zero for that slot
 //     rather than return an error, but ordering upstream is still
 //     a bug.
 //
@@ -33,14 +43,22 @@ var twapScale = new(big.Int).Exp(big.NewInt(10), big.NewInt(40), nil)
 // duration is zero (every trade at the exact same timestamp as
 // windowEnd and each other).
 //
-// Formula: TWAP = Σ(price_i × Δt_i) / Σ(Δt_i), where Δt_i is the
-// duration the i-th price was "current."
+// Formula: TWAP = Σ(price_k × Δt_k) / Σ(Δt_k) over instants k, where
+// Δt_k is the duration instant k's price was "current."
 //
-// Trades with zero base volume are skipped — they have no defined
-// price.
+// Trades with zero base or quote volume are skipped — they have no
+// defined price. An instant holding only such trades still ends the
+// previous instant's slot and contributes no weight of its own.
 func TWAP(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, error) {
+	price, _, err := TWAPWithCount(trades, windowEnd)
+	return price, err
+}
+
+// TWAPWithCount is [TWAP] that also returns how many trades carried
+// weight: priced trades in an instant with a positive slot.
+func TWAPWithCount(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, int, error) {
 	if len(trades) == 0 {
-		return nil, ErrNoTrades
+		return nil, 0, ErrNoTrades
 	}
 
 	// weightedSum accumulates Σ(price_i × Δt_i) in FIXED POINT (scaled by
@@ -93,28 +111,25 @@ func TWAP(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, error) {
 	totalNanos := new(big.Int)
 	scratch := new(big.Int)
 
-	for i := range trades {
-		base := trades[i].BaseAmount.BigInt()
-		if base.Sign() <= 0 {
-			continue
+	weighted := 0
+	for i := 0; i < len(trades); {
+		j := i + 1
+		for j < len(trades) && trades[j].Timestamp.Equal(trades[i].Timestamp) {
+			j++
 		}
-		quote := trades[i].QuoteAmount.BigInt()
-		if quote.Sign() <= 0 {
-			continue
+		end := windowEnd
+		if j < len(trades) {
+			end = trades[j].Timestamp
 		}
-
-		var dur time.Duration
-		if i == len(trades)-1 {
-			dur = windowEnd.Sub(trades[i].Timestamp)
-		} else {
-			dur = trades[i+1].Timestamp.Sub(trades[i].Timestamp)
-		}
-		if dur <= 0 {
+		dur := end.Sub(trades[i].Timestamp)
+		base, quote, priced := instantVolumes(trades[i:j])
+		i = j
+		if dur <= 0 || priced == 0 {
 			continue
 		}
 
-		// Accumulate ⌊quote × SCALE × Δt / base⌋ as a fixed-point
-		// big.Int rather than adding an exact big.Rat per trade.
+		// Accumulate ⌊Σquote × SCALE × Δt / Σbase⌋ as a fixed-point
+		// big.Int rather than adding an exact big.Rat per instant.
 		//
 		// Weight = Δt in nanoseconds (integer). Scaling by the same
 		// factor on top + bottom, it cancels in the final division —
@@ -124,6 +139,7 @@ func TWAP(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, error) {
 		scratch.Quo(scratch, base)
 		weightedSum.Add(weightedSum, scratch)
 		totalNanos.Add(totalNanos, big.NewInt(int64(dur)))
+		weighted += priced
 	}
 
 	// Sign() <= 0, not == 0. Every Δt added above is strictly positive
@@ -132,9 +148,26 @@ func TWAP(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, error) {
 	// assume it, because the failure mode is a signed money value on a
 	// 200 response.
 	if totalNanos.Sign() <= 0 {
-		return nil, ErrNoTrades
+		return nil, 0, ErrNoTrades
 	}
 	// Undo the fixed-point scale in the same division that applies the
-	// weights: TWAP = (Σ⌊price_i·SCALE·Δt_i⌋) / (SCALE · Σ Δt_i).
-	return new(big.Rat).SetFrac(weightedSum, scratch.Mul(totalNanos, twapScale)), nil
+	// weights: TWAP = (Σ⌊price_k·SCALE·Δt_k⌋) / (SCALE · Σ Δt_k).
+	return new(big.Rat).SetFrac(weightedSum, scratch.Mul(totalNanos, twapScale)), weighted, nil
+}
+
+// instantVolumes sums the base and quote legs of the priced trades in
+// one instant (both legs positive) and counts them.
+func instantVolumes(group []canonical.Trade) (base, quote *big.Int, priced int) {
+	base, quote = new(big.Int), new(big.Int)
+	for k := range group {
+		b := group[k].BaseAmount.BigInt()
+		q := group[k].QuoteAmount.BigInt()
+		if b.Sign() <= 0 || q.Sign() <= 0 {
+			continue
+		}
+		base.Add(base, b)
+		quote.Add(quote, q)
+		priced++
+	}
+	return base, quote, priced
 }

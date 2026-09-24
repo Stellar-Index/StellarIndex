@@ -229,7 +229,7 @@ func (s *Server) handleMethodology(w http.ResponseWriter, r *http.Request) {
 				// alone in its hour carries that hour entirely. Measured
 				// on one production window: /v1/twap 5,449,858 vs
 				// /v1/vwap 2,452,242 vs /v1/ohlc (sigma 4) 1–2.
-				Note: "OHLC's High/Low have no statistical robustness; a single dust trade can pin them. The default sigma applies to /v1/ohlc only — /v1/vwap and /v1/twap default to 0, i.e. UNFILTERED. Neither volume-weighting nor time-weighting is an outlier defence: on a sparse window a single print can carry the whole result, and on VWAP an attacker supplying the quote asset dominates the sum. Pass outlier_sigma explicitly on /v1/vwap if you need filtering.",
+				Note: "OHLC's High/Low have no statistical robustness; a single dust trade can pin them. The same default sigma applies to /v1/twap, whose time weight is unrelated to trade size. /v1/vwap defaults to 0, i.e. UNFILTERED. Neither volume-weighting nor time-weighting is an outlier defence: on a sparse window a single print can carry the whole result, and on VWAP an attacker supplying the quote asset dominates the sum. Pass outlier_sigma explicitly on /v1/vwap if you need filtering; pass outlier_sigma=0 on /v1/ohlc or /v1/twap to disable it.",
 			},
 			StablecoinFiatProxy:       pegs,
 			ClosedBucketWindowSeconds: int(closedBucketWindow.Seconds()),
