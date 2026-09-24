@@ -671,21 +671,11 @@ func b64Symbol(t *testing.T, s string) string {
 func TestDecode_Settlement_MalformedAmountCountsDegrade(t *testing.T) {
 	before := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
 
-	body := b64(t, vecSV(
-		contractAddrSV(t, contractStrkey(t, 0x01)),        // settler
+	ev := settlementEvent(t,
 		vecSV(contractAddrSV(t, contractStrkey(t, 0x02))), // debt_assets (ok)
 		vecSV(), // amounts — empty Vec, the malformed shape
-	))
-	ev := events.Event{
-		LedgerClosedAt: "2026-07-06T00:00:00Z",
-		Topic: []string{
-			topicSymLiquidation,
-			b64(t, contractAddrSV(t, contractStrkey(t, 0x03))),
-			b64(t, stringSV("pos")),
-			b64(t, stringSV("stmt")),
-		},
-		Value: body,
-	}
+		4,
+	)
 
 	out, err := decodeOne(&ev)
 	if err != nil {
@@ -714,4 +704,79 @@ func split128(n *big.Int) (hi int64, lo uint64) {
 	loBig := new(big.Int).And(u, mask64)
 	hiBig := new(big.Int).Rsh(u, 64)
 	return int64(hiBig.Uint64()), loBig.Uint64()
+}
+
+// settlementEvent builds a Liquidation event whose body is
+// Vec[settler, assets, amounts, <trailing filler elements>].
+func settlementEvent(t *testing.T, assets, amounts xdr.ScVal, trailing int) events.Event {
+	t.Helper()
+	elems := []xdr.ScVal{contractAddrSV(t, contractStrkey(t, 0x01)), assets, amounts}
+	for range trailing {
+		elems = append(elems, vecSV())
+	}
+	return events.Event{
+		LedgerClosedAt: "2026-07-06T00:00:00Z",
+		Topic: []string{
+			topicSymLiquidation,
+			b64(t, contractAddrSV(t, contractStrkey(t, 0x03))),
+			b64(t, stringSV("pos")),
+			b64(t, stringSV("stmt")),
+		},
+		Value: b64(t, vecSV(elems...)),
+	}
+}
+
+// TestDecode_Settlement_BodyMustBeAuditedSevenVec pins the audited
+// Liquidation body arity (wasm-audits/sorocredit.md: Vec[7]). Any other
+// length is an unaudited shape whose positional promotion is untrusted,
+// so it must fail as ErrMalformedPayload rather than promote data[0..2].
+func TestDecode_Settlement_BodyMustBeAuditedSevenVec(t *testing.T) {
+	t.Parallel()
+	debtAsset := contractStrkey(t, 0x02)
+	assets := vecSV(contractAddrSV(t, debtAsset))
+	amounts := vecSV(i128SV(big.NewInt(213400000)))
+	for _, trailing := range []int{0, 3, 5} {
+		ev := settlementEvent(t, assets, amounts, trailing)
+		out, err := decodeOne(&ev)
+		if !errors.Is(err, ErrMalformedPayload) {
+			t.Errorf("body len %d: err = %v, want ErrMalformedPayload (promoted Asset=%q Amount=%q)",
+				3+trailing, err, out.Asset, out.Amount)
+		}
+	}
+	ev := settlementEvent(t, assets, amounts, 4)
+	out, err := decodeOne(&ev)
+	if err != nil {
+		t.Fatalf("audited 7-Vec body: decodeOne: %v", err)
+	}
+	if out.Asset != debtAsset || out.Amount != "213400000" {
+		t.Errorf("audited 7-Vec body: Asset=%q Amount=%q, want %q / 213400000", out.Asset, out.Amount, debtAsset)
+	}
+}
+
+// TestDecode_Settlement_NonParallelLegsNotPromoted: debt_assets and
+// amounts pair by index, so when their lengths differ amounts[0] is not
+// provably assets[0]'s amount. Neither may be promoted; the degrade is
+// noted in attributes and counted.
+func TestDecode_Settlement_NonParallelLegsNotPromoted(t *testing.T) {
+	before := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
+	assets := vecSV(contractAddrSV(t, contractStrkey(t, 0x02)), contractAddrSV(t, contractStrkey(t, 0x04)))
+	amounts := vecSV(i128SV(big.NewInt(213400000)))
+	ev := settlementEvent(t, assets, amounts, 4)
+
+	out, err := decodeOne(&ev)
+	if err != nil {
+		t.Fatalf("decodeOne: %v", err)
+	}
+	if out.Asset != "" || out.Amount != "" {
+		t.Errorf("non-parallel legs promoted Asset=%q Amount=%q, want both empty", out.Asset, out.Amount)
+	}
+	for _, k := range []string{"debt_asset_error", "settled_amount_error"} {
+		if _, ok := out.Attributes[k]; !ok {
+			t.Errorf("Attributes missing %q: %v", k, out.Attributes)
+		}
+	}
+	after := testutil.ToFloat64(obs.SourceAmountDegradedTotal.WithLabelValues(SourceName, "settled_amount"))
+	if after != before+1 {
+		t.Errorf("SourceAmountDegradedTotal settled_amount = %v, want %v", after, before+1)
+	}
 }
