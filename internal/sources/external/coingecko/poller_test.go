@@ -2,6 +2,7 @@ package coingecko
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,9 @@ func newTestServer(t *testing.T, body string, status int) *httptest.Server {
 			http.NotFound(w, r)
 			return
 		}
+		if got := r.URL.Query().Get("include_last_updated_at"); got != "true" {
+			t.Errorf("include_last_updated_at = %q, want true (rows must carry the upstream publication time)", got)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_, _ = fmt.Fprint(w, body)
@@ -39,8 +43,8 @@ func newTestServer(t *testing.T, body string, status int) *httptest.Server {
 
 func TestPollOnce_HappyPath(t *testing.T) {
 	srv := newTestServer(t, `{
-      "stellar":  {"usd": 0.17582, "eur": 0.16230},
-      "bitcoin":  {"usd": 50000.0, "eur": 46250.0}
+      "stellar":  {"usd": 0.17582, "eur": 0.16230, "last_updated_at": 1710000000},
+      "bitcoin":  {"usd": 50000.0, "eur": 46250.0, "last_updated_at": 1710000000}
     }`, http.StatusOK)
 	defer srv.Close()
 
@@ -104,7 +108,7 @@ func TestPollOnce_UnknownTickerSkipped(t *testing.T) {
 	usd, _ := canonical.NewFiatAsset("USD")
 	dotUSD, _ := canonical.NewPair(dot, usd)
 
-	srv := newTestServer(t, `{"stellar":{"usd":0.17}}`, http.StatusOK)
+	srv := newTestServer(t, `{"stellar":{"usd":0.17,"last_updated_at":1710000000}}`, http.StatusOK)
 	defer srv.Close()
 	p := NewPoller()
 	p.Endpoint = srv.URL
@@ -171,8 +175,8 @@ func TestPollOnce_TickerToIDOverride(t *testing.T) {
 	// have resolved more. Catalogue-driven wiring (R-018 Phase 1.2)
 	// relies on this to scope the poll set to the verified seed.
 	srv := newTestServer(t, `{
-      "stellar":  {"usd": 0.17},
-      "bitcoin":  {"usd": 50000.0}
+      "stellar":  {"usd": 0.17, "last_updated_at": 1710000000},
+      "bitcoin":  {"usd": 50000.0, "last_updated_at": 1710000000}
     }`, http.StatusOK)
 	defer srv.Close()
 
@@ -226,5 +230,76 @@ func TestFloatToScaledInt_Precision(t *testing.T) {
 	// Negative rejected.
 	if _, err := scale.FloatToScaledInt(-1, 8); err == nil {
 		t.Error("expected error for negative")
+	}
+}
+
+// TestPollOnce_StampsUpstreamLastUpdated pins that each row carries its
+// id's upstream last_updated_at, not our poll time. A CoinGecko cache
+// frozen for hours must reach the aggregator tier with its real age so
+// the tier's freshness filter (10 min default) rejects it.
+func TestPollOnce_StampsUpstreamLastUpdated(t *testing.T) {
+	frozen := time.Now().Add(-3 * time.Hour).Truncate(time.Second).UTC()
+	fresh := time.Now().Add(-20 * time.Second).Truncate(time.Second).UTC()
+	srv := newTestServer(t, fmt.Sprintf(`{
+      "stellar": {"usd": 0.17, "eur": 0.16, "last_updated_at": %d},
+      "bitcoin": {"usd": 50000.0, "last_updated_at": %d}
+    }`, frozen.Unix(), fresh.Unix()), http.StatusOK)
+	defer srv.Close()
+
+	p := NewPoller()
+	p.Endpoint = srv.URL
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(updates) != 3 {
+		t.Fatalf("expected 3 updates, got %d", len(updates))
+	}
+	for _, u := range updates {
+		want := fresh
+		if u.Asset.Code == "XLM" {
+			want = frozen
+		}
+		if !u.Timestamp.Equal(want) {
+			t.Errorf("%s/%s Timestamp = %s, want upstream last_updated_at %s",
+				u.Asset.Code, u.Quote.Code, u.Timestamp, want)
+		}
+	}
+}
+
+// TestPollOnce_MissingLastUpdatedFailsClosed pins the fail-closed rule:
+// an id without an upstream time is dropped, and a response in which
+// no id is datable is a poll error rather than an empty success.
+func TestPollOnce_MissingLastUpdatedFailsClosed(t *testing.T) {
+	srv := newTestServer(t, `{
+      "stellar": {"usd": 0.17, "eur": 0.16, "last_updated_at": 1710000000},
+      "bitcoin": {"usd": 50000.0}
+    }`, http.StatusOK)
+	defer srv.Close()
+	p := NewPoller()
+	p.Endpoint = srv.URL
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 XLM updates (undated bitcoin dropped), got %d", len(updates))
+	}
+	for _, u := range updates {
+		if u.Asset.Code != "XLM" {
+			t.Errorf("undated id emitted a row: %s/%s", u.Asset.Code, u.Quote.Code)
+		}
+	}
+
+	allUndated := newTestServer(t, `{"stellar": {"usd": 0.17}, "bitcoin": {"usd": 50000.0}}`, http.StatusOK)
+	defer allUndated.Close()
+	p2 := NewPoller()
+	p2.Endpoint = allUndated.URL
+	_, updates, err = p2.PollOnce(context.Background(), buildPairs(t))
+	if !errors.Is(err, ErrMalformedResponse) {
+		t.Fatalf("err = %v, want ErrMalformedResponse", err)
+	}
+	if len(updates) != 0 {
+		t.Errorf("expected no updates, got %d", len(updates))
 	}
 }

@@ -11,13 +11,18 @@
 //
 // Wire shape (verified 2026-04-24):
 //
-//	GET https://api.coingecko.com/api/v3/simple/price?ids=stellar,bitcoin,ethereum&vs_currencies=usd,eur
+//	GET https://api.coingecko.com/api/v3/simple/price?ids=stellar,bitcoin&vs_currencies=usd,eur&include_last_updated_at=true
 //
 //	{
-//	  "stellar":  {"usd": 0.17582, "eur": 0.16230},
-//	  "bitcoin":  {"usd": 50000.0, "eur": 46250.0},
-//	  "ethereum": {"usd": 3500.0,  "eur": 3237.5}
+//	  "stellar":  {"usd": 0.17582, "eur": 0.16230, "last_updated_at": 1710000000},
+//	  "bitcoin":  {"usd": 50000.0, "eur": 46250.0, "last_updated_at": 1710000000}
 //	}
+//
+// Each row is stamped with the id's upstream last_updated_at, never
+// our poll time: the aggregator price tier, price_as_of and the
+// oracle-stale alert all read OracleUpdate.Timestamp as "when this
+// price was true", so a poll-time stamp presents a frozen upstream
+// cache as fresh.
 //
 // Symbol mapping: CoinGecko uses **slug IDs** ("stellar", "bitcoin")
 // not tickers ("XLM", "BTC"). We maintain a small allow-listed
@@ -180,8 +185,28 @@ func (p *Poller) PollInterval() time.Duration {
 }
 
 // simplePriceResponse is the nested map CoinGecko returns.
-// Outer key = asset slug, inner key = fiat code (lowercase).
+// Outer key = asset slug, inner key = fiat code (lowercase) or
+// lastUpdatedKey.
 type simplePriceResponse map[string]map[string]float64
+
+// lastUpdatedKey is the per-id field include_last_updated_at=true adds.
+const lastUpdatedKey = "last_updated_at"
+
+// liftLastUpdated removes lastUpdatedKey from every id's object (so it
+// is never read as a vs_currency quote) and returns each id's upstream
+// publication time. An id with a missing or non-positive value is
+// absent from the result, and PollOnce drops it.
+func liftLastUpdated(prices simplePriceResponse) map[string]time.Time {
+	out := make(map[string]time.Time, len(prices))
+	for id, entry := range prices {
+		raw, ok := entry[lastUpdatedKey]
+		delete(entry, lastUpdatedKey)
+		if ok && raw > 0 {
+			out[id] = time.Unix(int64(raw), 0).UTC()
+		}
+	}
+	return out
+}
 
 // PollOnce implements external.Poller. One batched GET covers every
 // (id, vs_currency) combo in a single JSON map. We derive id +
@@ -248,6 +273,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	q := url.Values{}
 	q.Set("ids", strings.Join(ids, ","))
 	q.Set("vs_currencies", strings.Join(currencies, ","))
+	q.Set("include_last_updated_at", "true")
 
 	endpoint := p.Endpoint
 	if endpoint == "" {
@@ -309,12 +335,20 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		return nil, nil, fmt.Errorf("%w: %w", ErrMalformedResponse, err)
 	}
 
-	ts := time.Now().UTC()
+	updatedAt := liftLastUpdated(prices)
 	updates := make([]canonical.OracleUpdate, 0, len(idSet)*len(currencySet))
+	undated := 0
 
 	for id, cs := range prices {
 		ticker, ok := tickerForID[id]
 		if !ok {
+			continue
+		}
+		// Fail closed on a missing upstream time, as the divergence
+		// reference's staleness gate does: an undatable row is not written.
+		ts, dated := updatedAt[id]
+		if !dated {
+			undated++
 			continue
 		}
 		cryptoAsset, ok := cryptoAssets[ticker]
@@ -352,6 +386,10 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			}
 			updates = append(updates, u)
 		}
+	}
+	if len(updates) == 0 && undated > 0 {
+		return nil, nil, fmt.Errorf("%w: %d id(s) returned no %s (freshness unverifiable)",
+			ErrMalformedResponse, undated, lastUpdatedKey)
 	}
 	return nil, updates, nil
 }

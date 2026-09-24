@@ -1,20 +1,26 @@
-// Package cryptocompare polls CryptoCompare's /data/pricemulti for
+// Package cryptocompare polls CryptoCompare's /data/pricemultifull for
 // cross-check reference prices. `ClassAggregator` — divergence
 // signal only, excluded from VWAP.
 //
-// Wire shape (verified 2026-04-24):
+// Wire shape (fields we read; the full object carries ~40 more):
 //
-//	GET https://min-api.cryptocompare.com/data/pricemulti?fsyms=XLM,BTC&tsyms=USD,EUR
+//	GET https://min-api.cryptocompare.com/data/pricemultifull?fsyms=XLM,BTC&tsyms=USD,EUR
 //	Header: Authorization: Apikey <KEY>
 //
 //	{
-//	  "XLM": {"USD": 0.17582, "EUR": 0.16230},
-//	  "BTC": {"USD": 50000.0, "EUR": 46250.0}
+//	  "RAW": {
+//	    "XLM": {"USD": {"PRICE": 0.17582, "LASTUPDATE": 1710000000}, "EUR": {...}},
+//	    "BTC": {"USD": {"PRICE": 50000.0, "LASTUPDATE": 1710000000}, "EUR": {...}}
+//	  },
+//	  "DISPLAY": {...}
 //	}
 //
-// Simplest aggregator shape of the three — flat asset→currency→price
-// map, no envelope status field, no multiple-coin-per-ticker trap.
-// Free tier works (~100k calls/month); paid ~$80/mo removes the
+// /data/pricemultifull rather than /data/pricemulti because only the
+// former carries LASTUPDATE: each row is stamped with the upstream
+// publication time, never our poll time, since the aggregator price
+// tier, price_as_of and the oracle-stale alert all read
+// OracleUpdate.Timestamp as "when this price was true". A quote with
+// no LASTUPDATE is dropped. Free tier works (~100k calls/month); paid ~$80/mo removes the
 // redistribution restriction.
 package cryptocompare
 
@@ -37,7 +43,7 @@ import (
 const (
 	SourceName                = "cryptocompare"
 	DefaultEndpoint           = "https://min-api.cryptocompare.com"
-	PriceMultiPath            = "/data/pricemulti"
+	PriceMultiFullPath        = "/data/pricemultifull"
 	DefaultPollInterval       = 60 * time.Second
 	DefaultDecimals     uint8 = 8
 )
@@ -81,11 +87,19 @@ func (p *Poller) PollInterval() time.Duration {
 	return p.Interval
 }
 
-// priceMultiResponse is the flat asset→currency→price shape.
+// priceMultiFullResponse is the RAW asset→currency→quote shape.
 // On error CryptoCompare returns a DIFFERENT top-level shape
 // ({"Response":"Error","Message":"..."}) — we probe for that before
 // attempting the price-map decode.
-type priceMultiResponse map[string]map[string]float64
+type priceMultiFullResponse struct {
+	Raw map[string]map[string]rawQuote `json:"RAW"`
+}
+
+// rawQuote is one RAW entry; LastUpdate is unix seconds.
+type rawQuote struct {
+	Price      float64 `json:"PRICE"`
+	LastUpdate int64   `json:"LASTUPDATE"`
+}
 
 type errorResponse struct {
 	Response   string `json:"Response"`
@@ -140,7 +154,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+PriceMultiPath+"?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint+PriceMultiFullPath+"?"+q.Encode(), nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build request: %w", err)
 	}
@@ -170,21 +184,21 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		return nil, nil, fmt.Errorf("%w: %s", ErrAPIRejected, maybeErr.Message)
 	}
 
-	var prices priceMultiResponse
+	var prices priceMultiFullResponse
 	if err := json.Unmarshal(body, &prices); err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", ErrMalformedResponse, err)
 	}
 
-	ts := time.Now().UTC()
-	updates := make([]canonical.OracleUpdate, 0, len(prices))
+	updates := make([]canonical.OracleUpdate, 0, len(prices.Raw))
+	undated := 0
 
-	for ticker, cs := range prices {
+	for ticker, cs := range prices.Raw {
 		ticker = strings.ToUpper(ticker)
 		cryptoAsset, ok := cryptoAssets[ticker]
 		if !ok {
 			continue
 		}
-		for currency, priceFloat := range cs {
+		for currency, quote := range cs {
 			cUp := strings.ToUpper(currency)
 			quoteAsset, ok := fiatAssets[cUp]
 			if !ok {
@@ -194,13 +208,18 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 				// Cross-product entry not in configured pair list.
 				continue
 			}
-			if priceFloat <= 0 {
+			if quote.Price <= 0 {
 				continue
 			}
-			scaled, err := scale.FloatToScaledInt(priceFloat, int(DefaultDecimals))
+			if quote.LastUpdate <= 0 {
+				undated++
+				continue
+			}
+			scaled, err := scale.FloatToScaledInt(quote.Price, int(DefaultDecimals))
 			if err != nil || scaled.Sign() <= 0 {
 				continue
 			}
+			ts := time.Unix(quote.LastUpdate, 0).UTC()
 			u := canonical.OracleUpdate{
 				Source:     SourceName,
 				ContractID: "",
@@ -216,6 +235,10 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			}
 			updates = append(updates, u)
 		}
+	}
+	if len(updates) == 0 && undated > 0 {
+		return nil, nil, fmt.Errorf("%w: %d quote(s) returned no LASTUPDATE (freshness unverifiable)",
+			ErrMalformedResponse, undated)
 	}
 	return nil, updates, nil
 }
