@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -187,6 +188,15 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 
 	realStderr := os.NewFile(uintptr(savedFD), "stderr-original")
 
+	// A fatal panic/runtime throw freezes the world and writes its
+	// traceback directly to the OS fd 2 via a raw syscall, bypassing
+	// the pipe's reader goroutine entirely (which may never be
+	// scheduled again before exit). SetCrashOutput duplicates
+	// realStderr's fd so the runtime's crash writer lands on the real
+	// stderr independent of the filter/forwarder below. Fail-soft:
+	// if this errors, crash text still lands in the pipe as before.
+	_ = debug.SetCrashOutput(realStderr, debug.CrashOptions{})
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -208,6 +218,11 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 			// remaining handle) is also closed; do that next.
 			_ = dupOnto(savedFD, int(os.Stderr.Fd()))
 			_ = pw.Close()
+			// fd 2 is the real stderr again as of the dup2 above, so
+			// the runtime's own "standard error" crash output already
+			// covers it; drop the extra duplicate to avoid a
+			// double-printed traceback after flush.
+			_ = debug.SetCrashOutput(nil, debug.CrashOptions{})
 			// Wait for the consumer goroutine to drain whatever
 			// was buffered in the pipe before we returned to the
 			// caller. After this point, every byte the goroutine

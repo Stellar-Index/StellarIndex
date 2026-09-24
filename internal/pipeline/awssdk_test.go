@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
@@ -218,5 +219,45 @@ func TestSilenceSDKChecksumWarnings_FlushDrainsPipe(t *testing.T) {
 
 	if got != want {
 		t.Fatalf("flush did not drain pipe\n got: %q\nwant: %q", got, want)
+	}
+}
+
+// TestCrashTracebackReachesRealStderr is the regression test for
+// CA2-A22-harden-0: a fatal, unrecovered panic freezes the world and
+// writes its traceback straight to the OS fd 2 (now the filter's
+// pipe) via a raw syscall, so the forwarder goroutine never gets to
+// run and the traceback is lost. debug.SetCrashOutput routes the
+// runtime's crash writer at realStderr directly, independent of the
+// pipe/goroutine, so the traceback must survive even though the
+// forwarder never drains it.
+//
+// Re-execs this test binary as a child process (the standard
+// TestHelperProcess pattern) because an unrecovered panic in any
+// goroutine terminates the whole process — it can't be induced
+// in-process without killing the test runner itself.
+func TestCrashTracebackReachesRealStderr(t *testing.T) {
+	const marker = "boom-crash-traceback-regression"
+
+	if os.Getenv("STELLARINDEX_CRASH_HELPER") == "1" {
+		flush := SilenceSDKChecksumWarnings()
+		defer flush()
+		go func() {
+			panic(marker)
+		}()
+		select {} // block forever; the panicking goroutine kills the process
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestCrashTracebackReachesRealStderr")
+	cmd.Env = append(os.Environ(), "STELLARINDEX_CRASH_HELPER=1")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		t.Fatalf("expected helper process to crash, but it exited cleanly")
+	}
+
+	out := stderr.String()
+	if !strings.Contains(out, "panic: "+marker) {
+		t.Fatalf("crash traceback did not reach real stderr; got %q", out)
 	}
 }
