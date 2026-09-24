@@ -36,15 +36,15 @@ result="$(
     set -euo pipefail
     LANEDIR="$(mktemp -d)"
     trap 'rm -rf "$LANEDIR"' EXIT
-    # shellcheck disable=SC2329 # invoked indirectly, from the eval'd block below
+    # shellcheck disable=SC2317,SC2329 # invoked indirectly, from the eval'd block below
     lane_a() { :; }
-    # shellcheck disable=SC2329 # invoked indirectly, from the eval'd block below
+    # shellcheck disable=SC2317,SC2329 # invoked indirectly, from the eval'd block below
     lane_d() { :; }
     # Fails on its first step, succeeds on its last — the shape that hid a
     # real failure under the buggy `lane_b ... || lane_rc_b=$?` form.
-    # shellcheck disable=SC2329 # invoked indirectly, from the eval'd block below
+    # shellcheck disable=SC2317,SC2329 # invoked indirectly, from the eval'd block below
     lane_b() { echo fail-step; false; echo later-step; true; }
-    # shellcheck disable=SC2329 # invoked indirectly, from the eval'd block below
+    # shellcheck disable=SC2317,SC2329 # invoked indirectly, from the eval'd block below
     lane_c() { :; }
     # shellcheck disable=SC2034 # read by the eval'd block below
     lane_mode=1
