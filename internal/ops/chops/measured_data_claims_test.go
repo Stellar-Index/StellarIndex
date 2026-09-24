@@ -140,11 +140,14 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 				// the fix is about, in the file it claims to have
 				// de-drifted.
 				"the 90-day retention on raw trades drops chunks before the policy's natural cadence picks them up",
+				// Backfill refreshes twap_* after prices_1m now, so the
+				// order is load-bearing (GH-687).
+				"ORDER IS DEFENSIVE, not load-bearing today",
 			},
 			required: []string{
 				"migration 0002 gave prices_1m and prices_15m a 30-day retention and migration 0031 removed it on 2026-05-14",
 				"Every SERVED rung has to be here",
-				"ORDER IS DEFENSIVE, not load-bearing today, and prices_1m leads",
+				"prices_1m leads because it is the one view another aggregate is defined over",
 				// The retired retention claim reached a second site
 				// 100 lines below the one this pass corrected. Pin the
 				// correction so the two cannot diverge again.
@@ -166,9 +169,12 @@ func TestContributorGuidanceStatesTheMeasuredDataFloors(t *testing.T) {
 			forbidden: []string{
 				"a window nothing reads at that resolution",
 				"the 90-day raw-trades retention will drop the just-",
+				// Seven was the prices_* subset; twap_*, dex_volume_by_pair_1d
+				// and oracle_prices_* went unrefreshed under it (GH-687).
+				"All seven price CAGGs are refreshed (migration 0002)",
 			},
 			required: []string{
-				"All seven price CAGGs are refreshed (migration 0002)",
+				"Every aggregate rooted on a table the chunk wrote is refreshed",
 				"the CAGG policies only roll forward",
 			},
 		},

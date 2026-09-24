@@ -328,7 +328,7 @@ func restampCAGGFollowUp(from, to time.Time) string {
 	b.WriteString("window the twaps read. If prices_1m's retention policy is armed, disarm it first as\n")
 	b.WriteString("migrations/0156_prices_1m_retention.up.sql states: a twap refresh over dropped\n")
 	b.WriteString("minute rows deletes TWAP history.\n\n")
-	plan := tradesCAGGRefreshPlan(xlmBaseRestampCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
+	plan := timescale.PlanCAGGRefresh(xlmBaseRestampCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
 		return timescale.PadRefreshWindow(lo, hi, c.MinWindow)
 	})
 	for _, st := range plan {

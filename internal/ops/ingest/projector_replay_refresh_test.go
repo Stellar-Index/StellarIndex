@@ -84,6 +84,16 @@ func (f *fakeReplayStore) LedgerRangeToTimeRange(_ context.Context, from, to uin
 	return t0, t0.Add(6 * time.Hour), nil
 }
 
+func (f *fakeReplayStore) LedgerRangeToOracleTimeRange(context.Context, uint32, uint32) (time.Time, time.Time, error) {
+	return time.Time{}, time.Time{}, timescale.ErrNotFound
+}
+
+func (f *fakeReplayStore) Prices1mRetentionArmed(context.Context) (bool, error) { return false, nil }
+
+func (f *fakeReplayStore) RefreshContinuousAggregateForced(ctx context.Context, name string, from, to time.Time) error {
+	return f.RefreshContinuousAggregate(ctx, name, from, to)
+}
+
 func (f *fakeReplayStore) RefreshContinuousAggregate(_ context.Context, name string, _, _ time.Time) error {
 	f.refreshed = append(f.refreshed, name)
 	return nil
@@ -104,8 +114,8 @@ func TestRematerializeReplayedRange_RefreshesEveryViewOverTheReplayedRange(t *te
 		t.Errorf("refreshed ledgers [%d,%d], want the replayed range [%d,%d]",
 			f.rangeFrom, f.rangeTo, replayed.from, replayed.to)
 	}
-	if got, want := len(f.refreshed), len(timescale.CAGGsLiveForever); got != want {
-		t.Errorf("refreshed %d views %v, want all %d long-lived CAGGs", got, f.refreshed, want)
+	if got, want := len(f.refreshed), len(timescale.TradesCAGGs); got != want {
+		t.Errorf("refreshed %d views %v, want all %d trades CAGGs", got, f.refreshed, want)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -382,18 +383,70 @@ func TestParseBackfillFlags_Parallel(t *testing.T) {
 type fakeCAGGRefresher struct {
 	tsFrom, tsTo time.Time
 	rangeErr     error
-	failViews    map[string]error // view name -> error to return
+	// oracleFrom/oracleTo is the chunk's oracle_updates span; zero means
+	// the chunk wrote no oracle rows.
+	oracleFrom, oracleTo time.Time
+	armed                bool
+	failViews            map[string]error // view name -> error to return
 
-	refreshedViews []string // every view name RefreshContinuousAggregate was called for
+	refreshedViews []string                // every view refreshed, forced or not, in call order
+	forced         map[string]bool         // views refreshed with force => true
+	windows        map[string][2]time.Time // view -> the window it was refreshed over
 }
 
 func (f *fakeCAGGRefresher) LedgerRangeToTimeRange(_ context.Context, _, _ uint32) (time.Time, time.Time, error) {
 	return f.tsFrom, f.tsTo, f.rangeErr
 }
 
-func (f *fakeCAGGRefresher) RefreshContinuousAggregate(_ context.Context, name string, _, _ time.Time) error {
+func (f *fakeCAGGRefresher) LedgerRangeToOracleTimeRange(_ context.Context, _, _ uint32) (time.Time, time.Time, error) {
+	if f.oracleFrom.IsZero() {
+		return time.Time{}, time.Time{}, timescale.ErrNotFound
+	}
+	return f.oracleFrom, f.oracleTo, nil
+}
+
+func (f *fakeCAGGRefresher) Prices1mRetentionArmed(context.Context) (bool, error) {
+	return f.armed, nil
+}
+
+func (f *fakeCAGGRefresher) RefreshContinuousAggregate(_ context.Context, name string, from, to time.Time) error {
 	f.refreshedViews = append(f.refreshedViews, name)
+	if f.windows == nil {
+		f.windows = map[string][2]time.Time{}
+	}
+	f.windows[name] = [2]time.Time{from, to}
 	return f.failViews[name]
+}
+
+func (f *fakeCAGGRefresher) RefreshContinuousAggregateForced(ctx context.Context, name string, from, to time.Time) error {
+	if f.forced == nil {
+		f.forced = map[string]bool{}
+	}
+	f.forced[name] = true
+	return f.RefreshContinuousAggregate(ctx, name, from, to)
+}
+
+// independentTradesView is a trades aggregate no other view is built on,
+// so failing it must not stop any other refresh.
+func independentTradesView(t *testing.T) string {
+	t.Helper()
+	for _, c := range timescale.TradesCAGGs {
+		if c.Name != "prices_1m" && !slices.Contains(timescale.CAGGsOnPrices1m, c.Name) {
+			return c.Name
+		}
+	}
+	t.Fatal("timescale.TradesCAGGs has no view independent of prices_1m")
+	return ""
+}
+
+func viewNames(specs ...[]timescale.CAGGSpec) []string {
+	var out []string
+	for _, s := range specs {
+		for _, c := range s {
+			out = append(out, c.Name)
+		}
+	}
+	return out
 }
 
 func discardLogger() *slog.Logger {
@@ -407,15 +460,10 @@ func discardLogger() *slog.Logger {
 // unmaterialised chunk. Every OTHER view must still be attempted —
 // one wedged view must not block refreshing the rest.
 func TestRefreshCAGGsForChunk_ViewFailurePropagates(t *testing.T) {
-	// Fail whichever view leads the set — the identity of that view is
-	// not what this test is about, and naming one here is how the
-	// comment came to say "prices_1h" long after prices_1m took the
-	// lead. Read it from the list and confirm every configured view
-	// was still attempted.
-	if len(timescale.CAGGsLiveForever) == 0 {
-		t.Fatal("timescale.CAGGsLiveForever is empty — test needs at least one CAGG spec")
-	}
-	failing := timescale.CAGGsLiveForever[0].Name
+	// Fail a view nothing else is built on — its identity is not what
+	// this test is about (a failed prices_1m has its own test, since its
+	// dependants are skipped) — and confirm every view was still attempted.
+	failing := independentTradesView(t)
 	fake := &fakeCAGGRefresher{
 		tsFrom:    time.Now().Add(-time.Hour),
 		tsTo:      time.Now(),
@@ -428,9 +476,9 @@ func TestRefreshCAGGsForChunk_ViewFailurePropagates(t *testing.T) {
 	if !strings.Contains(err.Error(), failing) {
 		t.Errorf("error should name the failing view %q, got: %v", failing, err)
 	}
-	if len(fake.refreshedViews) != len(timescale.CAGGsLiveForever) {
+	if len(fake.refreshedViews) != len(timescale.TradesCAGGs) {
 		t.Errorf("expected every configured CAGG view attempted despite one failure, got %d/%d: %v",
-			len(fake.refreshedViews), len(timescale.CAGGsLiveForever), fake.refreshedViews)
+			len(fake.refreshedViews), len(timescale.TradesCAGGs), fake.refreshedViews)
 	}
 }
 
@@ -443,8 +491,106 @@ func TestRefreshCAGGsForChunk_AllSucceedIsNil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected nil error when every view refreshed cleanly, got %v", err)
 	}
-	if len(fake.refreshedViews) != len(timescale.CAGGsLiveForever) {
-		t.Errorf("expected every configured CAGG view attempted, got %d/%d", len(fake.refreshedViews), len(timescale.CAGGsLiveForever))
+	if len(fake.refreshedViews) != len(timescale.TradesCAGGs) {
+		t.Errorf("expected every configured CAGG view attempted, got %d/%d", len(fake.refreshedViews), len(timescale.TradesCAGGs))
+	}
+}
+
+// TestRefreshCAGGsForChunk_RefreshesEveryAggregateTheChunkFeeds is the
+// GH-687 regression. A chunk that wrote trades and oracle rows must
+// refresh every aggregate rooted on either table — not only the seven
+// prices_* rungs — because none of their policies reach a historical
+// range: twap_1h 4 h, twap_1d and dex_volume_by_pair_1d 7 d,
+// oracle_prices_1d 7 d, against readers serving a year or a lifetime.
+// twap_* must follow a FORCED prices_1m whose window covers theirs, and
+// each root's views must be refreshed over that root's own time span.
+func TestRefreshCAGGsForChunk_RefreshesEveryAggregateTheChunkFeeds(t *testing.T) {
+	tradesFrom := time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC)
+	oracleFrom := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	fake := &fakeCAGGRefresher{
+		tsFrom: tradesFrom, tsTo: tradesFrom.Add(7 * 24 * time.Hour),
+		oracleFrom: oracleFrom, oracleTo: oracleFrom.Add(7 * 24 * time.Hour),
+	}
+	if err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200}); err != nil {
+		t.Fatalf("refreshCAGGsForChunk: %v", err)
+	}
+	want := viewNames(timescale.TradesCAGGs, timescale.OracleCAGGs)
+	got := slices.Clone(fake.refreshedViews)
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Fatalf("refreshed %v, want every trades and oracle aggregate exactly once: %v", fake.refreshedViews, want)
+	}
+	minute := slices.Index(fake.refreshedViews, "prices_1m")
+	for _, v := range timescale.CAGGsOnPrices1m {
+		if i := slices.Index(fake.refreshedViews, v); i < minute {
+			t.Errorf("%s refreshed at %d, before prices_1m (%d) which it is built on", v, i, minute)
+		}
+		if !fake.forced["prices_1m"] || !fake.forced[v] {
+			t.Errorf("prices_1m and %s must both be forced; forced = %v", v, fake.forced)
+		}
+		if w, m := fake.windows[v], fake.windows["prices_1m"]; w[0].Before(m[0]) || w[1].After(m[1]) {
+			t.Errorf("%s window %v is not inside prices_1m's forced window %v", v, w, m)
+		}
+	}
+	for _, c := range timescale.OracleCAGGs {
+		if w := fake.windows[c.Name]; w[0].After(fake.oracleFrom) || w[1].Before(fake.oracleTo) || !w[1].Before(tradesFrom) {
+			t.Errorf("%s refreshed over %v, want the oracle rows' span [%s, %s], not the trades'",
+				c.Name, w, fake.oracleFrom, fake.oracleTo)
+		}
+	}
+}
+
+// TestRefreshCAGGsForChunk_OracleOnlyChunkRefreshesOracleViews: a chunk
+// of an oracle-only backfill writes no trades, and that must not skip
+// the oracle aggregates.
+func TestRefreshCAGGsForChunk_OracleOnlyChunkRefreshesOracleViews(t *testing.T) {
+	oracleFrom := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	fake := &fakeCAGGRefresher{rangeErr: timescale.ErrNotFound, oracleFrom: oracleFrom, oracleTo: oracleFrom.Add(time.Hour)}
+	if err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200}); err != nil {
+		t.Fatalf("refreshCAGGsForChunk: %v", err)
+	}
+	if want := viewNames(timescale.OracleCAGGs); !slices.Equal(fake.refreshedViews, want) {
+		t.Errorf("refreshed %v, want exactly the oracle aggregates %v", fake.refreshedViews, want)
+	}
+}
+
+// TestRefreshCAGGsForChunk_RefusesTwapsWhilePrices1mRetentionIsArmed:
+// with migration 0156's retention armed, a twap refresh could read minute
+// rows the policy drops, so it is refused and the chunk fails — while
+// every other view is still refreshed.
+func TestRefreshCAGGsForChunk_RefusesTwapsWhilePrices1mRetentionIsArmed(t *testing.T) {
+	fake := &fakeCAGGRefresher{tsFrom: time.Now().Add(-time.Hour), tsTo: time.Now(), armed: true}
+	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
+	if err == nil {
+		t.Fatal("an armed prices_1m retention must fail the chunk's twap refresh, got nil")
+	}
+	for _, v := range timescale.CAGGsOnPrices1m {
+		if !strings.Contains(err.Error(), v) || slices.Contains(fake.refreshedViews, v) {
+			t.Errorf("%s must be refused and named, got err %v, refreshed %v", v, err, fake.refreshedViews)
+		}
+	}
+	if want := len(timescale.TradesCAGGs) - len(timescale.CAGGsOnPrices1m); len(fake.refreshedViews) != want {
+		t.Errorf("refreshed %d views %v, want the other %d", len(fake.refreshedViews), fake.refreshedViews, want)
+	}
+}
+
+// TestRefreshCAGGsForChunk_FailedPrices1mSkipsItsDependants: twap_*
+// recomputed over a minute range whose forced refresh failed would be
+// built from stale or dropped minute rows, so they are not attempted.
+func TestRefreshCAGGsForChunk_FailedPrices1mSkipsItsDependants(t *testing.T) {
+	fake := &fakeCAGGRefresher{
+		tsFrom: time.Now().Add(-time.Hour), tsTo: time.Now(),
+		failViews: map[string]error{"prices_1m": fmt.Errorf("statement timeout")},
+	}
+	err := refreshCAGGsForChunk(context.Background(), discardLogger(), fake, chunkRange{from: 100, to: 200})
+	if err == nil {
+		t.Fatal("a failed prices_1m refresh must fail the chunk, got nil")
+	}
+	for _, v := range timescale.CAGGsOnPrices1m {
+		if slices.Contains(fake.refreshedViews, v) || !strings.Contains(err.Error(), v) {
+			t.Errorf("%s must be skipped and named after prices_1m failed; err %v, refreshed %v", v, err, fake.refreshedViews)
+		}
 	}
 }
 
@@ -479,6 +625,18 @@ type serialisationProbeRefresher struct {
 
 func (p *serialisationProbeRefresher) LedgerRangeToTimeRange(_ context.Context, _, _ uint32) (time.Time, time.Time, error) {
 	return p.tsFrom, p.tsTo, nil
+}
+
+func (p *serialisationProbeRefresher) LedgerRangeToOracleTimeRange(_ context.Context, _, _ uint32) (time.Time, time.Time, error) {
+	return p.tsFrom, p.tsTo, nil
+}
+
+func (p *serialisationProbeRefresher) Prices1mRetentionArmed(context.Context) (bool, error) {
+	return false, nil
+}
+
+func (p *serialisationProbeRefresher) RefreshContinuousAggregateForced(ctx context.Context, name string, from, to time.Time) error {
+	return p.RefreshContinuousAggregate(ctx, name, from, to)
 }
 
 func (p *serialisationProbeRefresher) RefreshContinuousAggregate(_ context.Context, _ string, _, _ time.Time) error {
@@ -539,9 +697,10 @@ func TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers(t *testing.T) {
 	maxSeen, calls := probe.maxSeen, probe.calls
 	probe.mu.Unlock()
 
-	if want := workers * len(timescale.CAGGsLiveForever); calls != want {
+	views := len(timescale.TradesCAGGs) + len(timescale.OracleCAGGs)
+	if want := workers * views; calls != want {
 		t.Errorf("got %d refresh calls, want %d (%d workers x %d views)",
-			calls, want, workers, len(timescale.CAGGsLiveForever))
+			calls, want, workers, views)
 	}
 	if maxSeen != 1 {
 		t.Errorf("%d refreshes were in flight at once — every -parallel worker is in this process, "+
@@ -557,10 +716,7 @@ func TestRefreshCAGGsForChunk_SerialisesAcrossParallelWorkers(t *testing.T) {
 // other view is still attempted, and the typed error is reachable on
 // the chain so the log line can carry the window and the bound.
 func TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed(t *testing.T) {
-	if len(timescale.CAGGsLiveForever) == 0 {
-		t.Fatal("timescale.CAGGsLiveForever is empty — test needs at least one CAGG spec")
-	}
-	timedOut := timescale.CAGGsLiveForever[0].Name
+	timedOut := independentTradesView(t)
 	tsFrom, tsTo := time.Now().Add(-time.Hour), time.Now()
 	fake := &fakeCAGGRefresher{
 		tsFrom: tsFrom,
@@ -577,9 +733,9 @@ func TestRefreshCAGGsForChunk_TimeoutIsFatalAndNamed(t *testing.T) {
 	if !strings.Contains(err.Error(), timedOut) {
 		t.Errorf("error should name the timed-out view %q, got: %v", timedOut, err)
 	}
-	if len(fake.refreshedViews) != len(timescale.CAGGsLiveForever) {
+	if len(fake.refreshedViews) != len(timescale.TradesCAGGs) {
 		t.Errorf("every other view must still be attempted after a timeout, got %d/%d: %v",
-			len(fake.refreshedViews), len(timescale.CAGGsLiveForever), fake.refreshedViews)
+			len(fake.refreshedViews), len(timescale.TradesCAGGs), fake.refreshedViews)
 	}
 }
 

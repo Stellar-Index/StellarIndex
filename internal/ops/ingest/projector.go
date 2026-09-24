@@ -339,7 +339,7 @@ func rematerializeReplayedRange(logger *slog.Logger, store replayFinisher, sourc
 	case !opts.refreshCAGGs:
 		logger.Warn("skipping post-replay CAGG refresh (-refresh-caggs=false)",
 			"from", replayed.from, "to", replayed.to,
-			"impact", "trades re-projected into this range stay unmaterialised in prices_1m/15m/1h/4h/1d/1w/1mo: the CAGG refresh policies only roll forward over their own start_offset window, so nothing picks a historical bucket up on its own cadence. The rows are durable, but /v1/ohlc, /v1/chart, /v1/vwap and /v1/history/since-inception read the aggregates and will serve short over this range until a manual refresh_continuous_aggregate covers it",
+			"impact", "trades re-projected into this range stay unmaterialised in every trades aggregate (timescale.TradesCAGGs: prices_*, twap_*, volume rollups), and re-projected oracle rows in every oracle_prices_* rung: the CAGG refresh policies only roll forward over their own start_offset window, so nothing picks a historical bucket up on its own cadence. The rows are durable, but /v1/ohlc, /v1/chart, /v1/vwap and /v1/history/since-inception read the aggregates and will serve short over this range until a manual refresh_continuous_aggregate covers it",
 		)
 		return nil
 	case !opts.wait:

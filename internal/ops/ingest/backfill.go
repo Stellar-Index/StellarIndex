@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -623,13 +624,9 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		// rows are in `trades` but absent from every OHLC/VWAP read —
 		// until the next policy run or a manual refresh covers them.
 		//
-		// All seven price CAGGs are refreshed (migration 0002), because
-		// all seven are served over a caller-chosen window and a rung
-		// left out keeps a permanent hole at that resolution in every
-		// backfilled range. prices_1m and prices_15m were excluded
-		// until 2026-09-04 on a retention that migration 0031 removed
-		// in May 2026; the surfaces that read them, the refresh order
-		// and the measured cost are in [timescale.CAGGsLiveForever].
+		// Every aggregate rooted on a table the chunk wrote is refreshed
+		// ([timescale.TradesCAGGs], [timescale.OracleCAGGs]): a view left
+		// out keeps a permanent hole in every backfilled range.
 		//
 		// DAT-09 / REL-08: a refresh failure here is FATAL to the
 		// chunk — the function returns before the checkpoint below, so
@@ -640,7 +637,7 @@ func runBackfillChunk(ctx context.Context, logger *slog.Logger, opts backfillOpt
 		}
 	default:
 		logger.Warn("skipping CAGG refresh (-refresh-caggs=false)",
-			"impact", "the range's prices_1m/15m/1h/4h/1d/1w/1mo buckets stay unmaterialised until a manual refresh_continuous_aggregate covers them — the CAGG policies only roll forward, so a historical range is never picked up on their own cadence. The trades rows are durable (migration 0031 removed the retention policy), but every OHLC/VWAP read over the range is short until then, at every resolution",
+			"impact", "the range's buckets in every trades aggregate (prices_*, twap_*, dex_volume_by_pair_1d, source_volume_1h, pools_per_source_1h) and every oracle_prices_* rung stay unmaterialised until a manual refresh_continuous_aggregate covers them — the CAGG policies only roll forward, so a historical range is never picked up on their own cadence. The trades and oracle rows are durable, but every OHLC/VWAP/TWAP, volume and oracle-history read over the range is short until then",
 		)
 	}
 
@@ -754,15 +751,17 @@ func checkpointBackfillChunk(logger *slog.Logger, store *timescale.Store, cursor
 // *timescale.Store satisfies this structurally.
 type caggRefresher interface {
 	LedgerRangeToTimeRange(ctx context.Context, from, to uint32) (time.Time, time.Time, error)
-	RefreshContinuousAggregate(ctx context.Context, name string, from, to time.Time) error
+	LedgerRangeToOracleTimeRange(ctx context.Context, from, to uint32) (time.Time, time.Time, error)
+	Prices1mRetentionArmed(ctx context.Context) (bool, error)
+	timescale.CAGGStepRefresher
 }
 
 // caggRefreshMu serialises the refresh loop across every `-parallel`
 // worker in this process.
 //
 // `-parallel N` is N goroutines in ONE process (see the WaitGroup fan-
-// out in runBackfill), each walking the same [timescale.CAGGsLiveForever]
-// list at the end of its own chunk. TimescaleDB already serialises two
+// out in runBackfill), each walking the same refresh plan
+// ([chunkCAGGRefreshPlan]) at the end of its own chunk. TimescaleDB already serialises two
 // refreshes of the SAME continuous aggregate — but it does it by
 // rejecting the loser with 55P03 immediately, not by making it wait.
 // [timescale.Store.RefreshContinuousAggregate] absorbs that with a
@@ -789,88 +788,116 @@ type caggRefresher interface {
 // a FAILED one — DAT-09 / REL-08 makes a refresh error fatal, the
 // cursor does not checkpoint, and the operator re-walks the chunk
 // under `-resume`. Paying refresh throughput to remove that is the
-// right trade at V=7 views; a per-view lock is the shape to reach for
+// right trade at V=19 views; a per-view lock is the shape to reach for
 // if the refresh tail ever dominates a run. It also leaves the retry
 // budget for genuine contention from another process (the policy
 // refresher, or an operator's manual re-materialisation).
 var caggRefreshMu sync.Mutex
 
-// refreshCAGGsForChunk derives the ts range covered by the just-
-// inserted trades and force-refreshes every long-lived CAGG over
-// that range. Idempotent — re-refreshing an already-materialised
-// range is a no-op.
+// refreshCAGGsForChunk refreshes every aggregate rooted on a table the
+// chunk wrote — [timescale.TradesCAGGs] over the chunk's trades time
+// span, [timescale.OracleCAGGs] over its oracle_updates span — in
+// [timescale.PlanCAGGRefresh] order, so twap_* re-materialise only after
+// prices_1m has been forced under them. Idempotent.
 //
-// Every CAGG is still attempted even after one fails — a single
-// wedged view must not leave the REST un-materialised — but
-// (DAT-09 / REL-08) any view failure now makes the function return a
-// non-nil error, so the caller (runBackfillChunk) treats the whole
-// chunk as unmaterialised and does NOT advance the durable cursor
-// past it. The historical "log and continue, always return nil"
-// shape let a chunk get certified complete (cursor advanced) while
-// its CAGGs were silently un-refreshed — the same class of loss this
-// refresh exists to prevent, one layer up.
+// Every independent view is still attempted after one fails — a single
+// wedged view must not leave the rest un-materialised — but (DAT-09 /
+// REL-08) any failure makes the function return a non-nil error, so the
+// caller does NOT advance the durable cursor past the chunk. A view built
+// on prices_1m is skipped when prices_1m's own refresh failed:
+// recomputing it from stale minute rows would overwrite good history.
 func refreshCAGGsForChunk(ctx context.Context, logger *slog.Logger, store caggRefresher, chunk chunkRange) error {
-	tsFrom, tsTo, err := store.LedgerRangeToTimeRange(ctx, chunk.from, chunk.to)
-	if err != nil {
-		// No trades inserted in the chunk — nothing to refresh.
-		// The dispatcher dropped every event (e.g. all sources
-		// were disabled, or the range had no on-chain activity
-		// matching any decoder).
-		if errors.Is(err, timescale.ErrNotFound) {
-			logger.Info("no trades in chunk — skipping CAGG refresh",
-				"from", chunk.from, "to", chunk.to)
-			return nil
-		}
-		return fmt.Errorf("derive ts range: %w", err)
+	plan, err := chunkCAGGRefreshPlan(ctx, logger, store, chunk)
+	if err != nil || len(plan) == 0 {
+		return err
 	}
-	logger.Info("refreshing CAGGs for chunk",
-		"from", chunk.from, "to", chunk.to,
-		"ts_from", tsFrom.UTC().Format(time.RFC3339),
-		"ts_to", tsTo.UTC().Format(time.RFC3339),
-	)
-	// One worker at a time through the whole list — see caggRefreshMu.
+	// One worker at a time through the whole plan — see caggRefreshMu.
 	// Held across the loop rather than per view: releasing between
 	// rungs would just hand the next worker a view this one is about
 	// to ask for, which is the collision the lock exists to remove.
 	caggRefreshMu.Lock()
 	defer caggRefreshMu.Unlock()
 
+	armed, err := store.Prices1mRetentionArmed(ctx)
+	if err != nil {
+		return fmt.Errorf("read prices_1m retention state: %w", err)
+	}
 	var failed []string
-	for _, spec := range timescale.CAGGsLiveForever {
-		// Pad the chunk's ts range to the per-CAGG minimum so the
-		// refresh procedure doesn't reject with "refresh window
-		// too small". For tiny chunks (10k ledgers ≈ 4h) the
-		// padded area is mostly empty — Timescale iterates the
-		// padded buckets quickly with nothing to materialize.
-		padFrom, padTo := timescale.PadRefreshWindow(tsFrom, tsTo, spec.MinWindow)
-		if err := store.RefreshContinuousAggregate(ctx, spec.Name, padFrom, padTo); err != nil {
-			// W8-19: the per-CALL bound fired. Loud and specific — the
-			// view, the window and the bound — because this is the
-			// case that used to hold every `-parallel` worker behind
-			// caggRefreshMu until SIGINT. It is still fatal to the chunk
-			// (DAT-09 / REL-08): the cursor does not advance, `-resume`
-			// re-walks it, and the run continues on the next chunk.
-			var tErr *timescale.CAGGRefreshTimeoutError
-			if errors.As(err, &tErr) {
-				logger.Error("CAGG refresh timed out — bound fired; chunk fails, run continues",
-					"view", tErr.View,
-					"ts_from", tErr.From.UTC().Format(time.RFC3339),
-					"ts_to", tErr.To.UTC().Format(time.RFC3339),
-					"timeout", tErr.Timeout.String(),
-					"err", err)
-			} else {
-				logger.Error("CAGG refresh failed",
-					"view", spec.Name, "err", err)
-			}
-			failed = append(failed, spec.Name)
+	for _, st := range plan {
+		if slices.Contains(timescale.CAGGsOnPrices1m, st.View) && slices.Contains(failed, "prices_1m") {
+			logger.Error("CAGG refresh skipped — prices_1m, which it is built on, failed", "view", st.View)
+			failed = append(failed, st.View)
 			continue
+		}
+		if err := timescale.RunCAGGRefreshStep(ctx, store, st, armed); err != nil {
+			logCAGGRefreshFailure(logger, st.View, err)
+			failed = append(failed, st.View)
 		}
 	}
 	if len(failed) > 0 {
-		return fmt.Errorf("CAGG refresh failed for %d/%d view(s): %s — trade rows are still in the hypertable (not lost); re-run to retry",
-			len(failed), len(timescale.CAGGsLiveForever), strings.Join(failed, ", "))
+		return fmt.Errorf("CAGG refresh failed for %d/%d view(s): %s — trade and oracle rows are still in their hypertables (not lost); re-run to retry",
+			len(failed), len(plan), strings.Join(failed, ", "))
 	}
 	return nil
+}
+
+// caggRoot is a hypertable backfill writes, how to find the time span a
+// ledger range wrote to it, and the aggregates rooted on it.
+type caggRoot struct {
+	table string
+	span  func(ctx context.Context, from, to uint32) (time.Time, time.Time, error)
+	views []timescale.CAGGSpec
+}
+
+// chunkCAGGRefreshPlan builds the chunk's refresh plan, one root at a
+// time. A root the chunk wrote no rows to contributes nothing.
+func chunkCAGGRefreshPlan(ctx context.Context, logger *slog.Logger, store caggRefresher, chunk chunkRange) ([]timescale.CAGGRefreshStep, error) {
+	roots := []caggRoot{
+		{table: "trades", span: store.LedgerRangeToTimeRange, views: timescale.TradesCAGGs},
+		{table: "oracle_updates", span: store.LedgerRangeToOracleTimeRange, views: timescale.OracleCAGGs},
+	}
+	var plan []timescale.CAGGRefreshStep
+	for _, r := range roots {
+		tsFrom, tsTo, err := r.span(ctx, chunk.from, chunk.to)
+		if errors.Is(err, timescale.ErrNotFound) {
+			logger.Info("no rows in chunk — skipping the CAGGs rooted on it",
+				"table", r.table, "from", chunk.from, "to", chunk.to)
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("derive %s ts range: %w", r.table, err)
+		}
+		logger.Info("refreshing CAGGs for chunk",
+			"table", r.table, "views", len(r.views),
+			"from", chunk.from, "to", chunk.to,
+			"ts_from", tsFrom.UTC().Format(time.RFC3339),
+			"ts_to", tsTo.UTC().Format(time.RFC3339),
+		)
+		// Pad to each view's minimum so the procedure does not reject
+		// with "refresh window too small"; padded buckets are cheap.
+		plan = append(plan, timescale.PlanCAGGRefresh(r.views, func(c timescale.CAGGSpec) (time.Time, time.Time) {
+			return timescale.PadRefreshWindow(tsFrom, tsTo, c.MinWindow)
+		})...)
+	}
+	return plan, nil
+}
+
+// logCAGGRefreshFailure logs one failed view. W8-19: a per-CALL bound
+// firing names the view, the window and the bound, because that case
+// used to hold every `-parallel` worker behind caggRefreshMu until
+// SIGINT. It is still fatal to the chunk (DAT-09 / REL-08).
+func logCAGGRefreshFailure(logger *slog.Logger, view string, err error) {
+	var tErr *timescale.CAGGRefreshTimeoutError
+	if errors.As(err, &tErr) {
+		logger.Error("CAGG refresh timed out — bound fired; chunk fails, run continues",
+			"view", tErr.View,
+			"ts_from", tErr.From.UTC().Format(time.RFC3339),
+			"ts_to", tErr.To.UTC().Format(time.RFC3339),
+			"timeout", tErr.Timeout.String(),
+			"err", err)
+		return
+	}
+	logger.Error("CAGG refresh failed", "view", view, "err", err)
 }
 
 // validateBackfillRangeFlags checks the flags that need no config load:
