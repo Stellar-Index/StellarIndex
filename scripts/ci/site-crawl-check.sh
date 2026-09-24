@@ -23,6 +23,9 @@ fail() {
 
 fetch() { curl -sfL --max-time 30 "$1"; }
 status_of() { curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$1"; }
+# A site page as a visitor's click lands on it: the explorer links
+# /assets/<slug> and the host 308s it to the trailing-slash form.
+page_status_of() { curl -sL -o /dev/null -w "%{http_code}" --max-time 30 "$1"; }
 
 echo "== 1. sitemap sample resolves (one URL per path family)"
 SITEMAP=$(fetch "$SITE/sitemap.xml" || true)
@@ -59,7 +62,8 @@ if [ -n "$PAIR_URL" ]; then
 fi
 
 echo "== 4. assets census (page 1 fills beyond the catalogue)"
-COUNT=$(fetch "$API/v1/assets?asset_class=all&limit=100" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]))' || echo 0)
+ASSETS_JSON=$(fetch "$API/v1/assets?asset_class=all&limit=100" || true)
+COUNT=$(python3 -c 'import json,sys; print(len(json.load(sys.stdin)["data"]))' <<<"$ASSETS_JSON" || echo 0)
 [ "$COUNT" -ge 50 ] || fail "unified /v1/assets page 1 returned $COUNT rows (fill regression — the 11-asset bug)"
 
 echo "== 5. issuer list↔detail closure (sample 20)"
@@ -72,9 +76,28 @@ KEYS=$(fetch "$API/v1/issuers?limit=20" | python3 -c 'import json,sys; [print(r[
 for g in $KEYS; do
   CODE=$(status_of "$API/v1/issuers/$g")
   [ "$CODE" = "200" ] || fail "listed issuer $g → detail HTTP $CODE"
+  CODE=$(page_status_of "$SITE/issuers/$g")
+  [ "$CODE" = "200" ] || fail "listed issuer $g → site page HTTP $CODE"
 done
 
-echo "== 6. long-tail shell fallback (structurally unreached by the sitemap sample)"
+echo "== 6. asset list↔detail closure (first 20 of section 4's page)"
+# Probe what the /assets table links: `slug ?? asset_id` (coinSlug in
+# web/explorer/src/api/hooks.ts), both as the API detail the page reads
+# and as the site page itself.
+ASSET_KEYS=$(python3 -c '
+import json, sys
+for r in json.load(sys.stdin)["data"][:20]:
+    print(r.get("slug") or r["asset_id"])
+' <<<"$ASSETS_JSON" || true)
+[ -n "$ASSET_KEYS" ] || fail "asset listing unfetchable or unparseable (0 rows) — cannot run the list↔detail closure check"
+for a in $ASSET_KEYS; do
+  CODE=$(status_of "$API/v1/assets/$a")
+  [ "$CODE" = "200" ] || fail "listed asset $a → detail HTTP $CODE"
+  CODE=$(page_status_of "$SITE/assets/$a")
+  [ "$CODE" = "200" ] || fail "listed asset $a → site page HTTP $CODE"
+done
+
+echo "== 7. long-tail shell fallback (structurally unreached by the sitemap sample)"
 # T328: sitemap.ts deliberately excludes per-entity long tails ("unbounded
 # long tails served as noindex shells") so section 1's sitemap sample can
 # never land on a CF Pages Function's fallback branch. Probe one synthetic
@@ -110,7 +133,7 @@ for path in \
   fi
 done
 
-echo "== 7. og image Function"
+echo "== 8. og image Function"
 # T300: the 8th CF Pages Function (functions/og/[[path]].js) renders a PNG,
 # not HTML, so it needs its own shape check rather than section 2's markup
 # greps.
@@ -123,7 +146,7 @@ case "$OG_CTYPE" in
   *) fail "$OG_PATH content-type '$OG_CTYPE' is not an image" ;;
 esac
 
-echo "== 8. deployed build freshness (BUILD_SHA vs main, wall-clock age)"
+echo "== 9. deployed build freshness (BUILD_SHA vs main, wall-clock age)"
 # Q225: nothing compared the deployed build against main or measured its
 # age. The explorer's own footer (BuildBadge, components/nav/Footer.tsx)
 # stamps `title="Built <ISO time> from commit <sha>"` — read it back and
