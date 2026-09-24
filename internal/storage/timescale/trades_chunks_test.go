@@ -499,18 +499,18 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 	// Happy path: two batches, a guard read ahead of each, both carrying the
 	// chunk's own identifiers.
 	store, conn := newScriptedStore(t,
-		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 2},
-		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 1},
+		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 2}, scriptedResult{rowsAffected: 2},
+		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 1}, scriptedResult{rowsAffected: 1},
 	)
 	n, err := store.ApplyXLMBaseUSDVolumeRestampInChunk(context.Background(), c, plan, 1_756_800_000, 2)
 	if err != nil || n != 3 {
 		t.Fatalf("n=%d err=%v, want 3 rows and no error", n, err)
 	}
 	got := conn.statements()
-	if len(got) != 8 {
-		t.Fatalf("issued %d statements, want 8 (guard, 2 x SET LOCAL, UPDATE) x 2:\n%s", len(got), strings.Join(got, "\n"))
+	if len(got) != 10 {
+		t.Fatalf("issued %d statements, want 10 (guard, 2 x SET LOCAL, before-image, UPDATE) x 2:\n%s", len(got), strings.Join(got, "\n"))
 	}
-	for _, i := range []int{0, 4} {
+	for _, i := range []int{0, 5} {
 		g := conn.stmts[i]
 		if !strings.Contains(g.sql, "timescaledb_information.chunks") || !strings.Contains(g.sql, "is_compressed") {
 			t.Errorf("statement %d = %q, want the is_compressed read", i, g.sql)
@@ -524,8 +524,11 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 		if !strings.Contains(got[i+2], "SET LOCAL plan_cache_mode = force_custom_plan") {
 			t.Errorf("statement %d = %q, want the forced custom plan — a generic plan cannot prune on the batch's ts bound", i+2, got[i+2])
 		}
-		if !strings.Contains(got[i+3], "UPDATE trades") {
-			t.Errorf("statement %d = %q, want the batch's UPDATE after its guard", i+3, got[i+3])
+		if !strings.Contains(got[i+3], "INSERT INTO usd_volume_restamp_log") {
+			t.Errorf("statement %d = %q, want the batch's before-image", i+3, got[i+3])
+		}
+		if !strings.Contains(got[i+4], "UPDATE trades") {
+			t.Errorf("statement %d = %q, want the batch's UPDATE after its guard", i+4, got[i+4])
 		}
 	}
 	if conn.commits != 2 {
@@ -534,7 +537,7 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 
 	// The chunk is taken back between batch 1 and batch 2.
 	store, conn = newScriptedStore(t,
-		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 2},
+		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 2}, scriptedResult{rowsAffected: 2},
 		isCompressed(true),
 	)
 	n, err = store.ApplyXLMBaseUSDVolumeRestampInChunk(context.Background(), c, plan, 1_756_800_000, 2)
@@ -550,8 +553,8 @@ func TestApplyXLMBaseUSDVolumeRestampInChunk_GuardsEveryBatch(t *testing.T) {
 		t.Errorf("n = %d, want the 2 rows batch 1 committed", n)
 	}
 	got = conn.statements()
-	if len(got) != 5 || strings.Count(strings.Join(got, "\n"), "UPDATE trades") != 1 {
-		t.Fatalf("after the guard tripped:\n%s\nwant exactly 5 statements and ONE update", strings.Join(got, "\n"))
+	if len(got) != 6 || strings.Count(strings.Join(got, "\n"), "UPDATE trades") != 1 {
+		t.Fatalf("after the guard tripped:\n%s\nwant exactly 6 statements and ONE update", strings.Join(got, "\n"))
 	}
 	if conn.commits != 1 {
 		t.Errorf("commits = %d, want batch 1's only", conn.commits)
@@ -656,16 +659,17 @@ func TestRestampExactTierUSDVolumeInChunk_GuardsTheUpdate(t *testing.T) {
 		From: day, To: day.Add(time.Hour), Generation: 1_756_800_000,
 	}
 
-	// Still decompressed: guard, both SET LOCALs, then the UPDATE.
+	// Still decompressed: guard, both SET LOCALs, the before-image, then
+	// the UPDATE.
 	store, conn := newScriptedStore(t,
-		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 9})
+		isCompressed(false), scriptedResult{}, scriptedResult{}, scriptedResult{rowsAffected: 9}, scriptedResult{rowsAffected: 9})
 	n, err := store.RestampExactTierUSDVolumeInChunk(context.Background(), c, p)
 	if err != nil || n != 9 {
 		t.Fatalf("n=%d err=%v, want 9 rows and no error", n, err)
 	}
 	got := conn.statements()
-	if len(got) != 4 {
-		t.Fatalf("issued %d statements, want 4 (guard, 2 x SET LOCAL, UPDATE):\n%s", len(got), strings.Join(got, "\n"))
+	if len(got) != 5 {
+		t.Fatalf("issued %d statements, want 5 (guard, 2 x SET LOCAL, before-image, UPDATE):\n%s", len(got), strings.Join(got, "\n"))
 	}
 	if !strings.Contains(got[0], "timescaledb_information.chunks") || !strings.Contains(got[0], "is_compressed") {
 		t.Errorf("statement 0 = %q, want the is_compressed read", got[0])
@@ -679,8 +683,11 @@ func TestRestampExactTierUSDVolumeInChunk_GuardsTheUpdate(t *testing.T) {
 	if !strings.Contains(got[2], "SET LOCAL plan_cache_mode = force_custom_plan") {
 		t.Errorf("statement 2 = %q, want the forced custom plan — a generic plan cannot prune on the window's ts bounds", got[2])
 	}
-	if !strings.Contains(got[3], "UPDATE trades") || !strings.Contains(got[3], "derive_generation <= $3") {
-		t.Errorf("statement 3 = %q, want the guarded UPDATE (INV-3)", got[3])
+	if !strings.Contains(got[3], "INSERT INTO usd_volume_restamp_log") {
+		t.Errorf("statement 3 = %q, want the before-image", got[3])
+	}
+	if !strings.Contains(got[4], "UPDATE trades") || !strings.Contains(got[4], "derive_generation <= $3") {
+		t.Errorf("statement 4 = %q, want the guarded UPDATE (INV-3)", got[4])
 	}
 	if conn.commits != 1 {
 		t.Errorf("commits = %d, want 1", conn.commits)

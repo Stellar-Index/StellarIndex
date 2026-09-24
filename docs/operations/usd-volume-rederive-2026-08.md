@@ -251,6 +251,14 @@ What it does (per `internal/ops/chops/usd_volume_restamp.go`):
   — the 2026-07-30 lesson, no manual GUC step. LOCAL, so Postgres unwinds
   the lifted cap at COMMIT and it can never ride the pooled connection
   into a later statement (#312);
+- copies every rewritten row's prior `usd_volume` and `derive_generation`
+  into `usd_volume_restamp_log` (migration 0175) in the same REPEATABLE
+  READ transaction, and refuses to commit a window whose before-image and
+  UPDATE row counts differ. Every tier does this, `-tier xlm-base` and its
+  mirrors included. To undo a run, apply the statement in 0175's header
+  with the run's generation (the tool prints it; a resumed run reuses it):
+  it restores each row's earliest before-image of that run, and only rows
+  still at that generation;
 - dry-run by default; `-write` applies; ch-backfill-style heartbeat
   (`ops_job="usd-volume-restamp"`, the standing stall alerts apply).
 
