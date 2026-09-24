@@ -31,20 +31,44 @@
 -- collapses them. This is deliberate: a Summing/counted design would
 -- double-count on replay (the migration-0059 comet class).
 --
--- OPERATOR CONTRACT (same as ops_by_source): presence + non-empty = the
--- reader TRUSTS it, including per-contract emptiness ("no events") and
--- short history ("only these ledgers"). Therefore: apply this DDL (the MV
--- covers everything ingested from that moment), then IMMEDIATELY run the
--- windowed historical backfill to genesis:
+-- OPERATOR CONTRACT: table-level presence + non-empty gates the fast path
+-- on/off (the reader's requireRows probe refuses an entirely-empty table —
+-- MV dropped/TRUNCATEd reads as "index unavailable"). PER-CONTRACT
+-- emptiness is deliberately NOT trusted as authoritative "no events":
+-- ExplorerReader.ContractEventsRecent (internal/storage/clickhouse/
+-- explorer_reader.go, audit W1-chrollup-3) treats an empty per-contract
+-- walk as "unknown, fall back" and re-reads contract_events directly,
+-- exactly as it did before this index existed — because the table-global
+-- probe cannot see PARTIAL backfill coverage. Apply this DDL (the MV
+-- covers everything ingested from that moment), then run the windowed
+-- historical backfill to genesis:
 --
 --   /usr/local/sbin/run-heavy-job.sh contract-ledgers-backfill \
 --     /usr/local/bin/stellarindex-ops ch-contract-ledgers-backfill \
 --     -ch-addr 127.0.0.1:9300 -from 2 -window 5000000
 --
--- Do NOT leave the table applied-but-unbackfilled on a lake with history:
--- quiet contracts would serve truncated event lists stamped as complete.
--- The reader's probe (requireRows) refuses an entirely-empty table, but it
--- cannot see partial coverage.
+-- Leaving the table applied-but-unbackfilled on a lake with history costs
+-- PERFORMANCE, not correctness: every quiet/cold contract keeps paying the
+-- pre-index scan until the backfill catches it, but the fallback means it
+-- never serves a truncated event list stamped as complete.
+--
+-- ── Step 3: verify ──────────────────────────────────────────────────────
+-- Spot-check N contracts: the index's active-ledger set for a contract
+-- must equal the distinct ledger set from a direct scan of
+-- contract_events for that same contract (bounded per-contract reads):
+--
+--   SELECT countIf(a != b) FROM (
+--     SELECT
+--       (SELECT countDistinct(ledger_seq) FROM stellar.contract_events
+--         WHERE contract_id = c.contract_id) AS a,
+--       (SELECT countDistinct(ledger_seq) FROM stellar.contract_active_ledgers
+--         WHERE contract_id = c.contract_id) AS b,
+--       c.contract_id
+--     FROM (SELECT DISTINCT contract_id FROM stellar.contract_events
+--           WHERE ledger_seq > (SELECT max(ledger_seq) - 10000 FROM stellar.ledgers)
+--           LIMIT 20) c)
+--
+-- Expect 0.
 
 CREATE TABLE IF NOT EXISTS stellar.contract_active_ledgers
 (
