@@ -21,8 +21,9 @@ import (
 // intentionally checks the handler bodies, not the transitive call graph
 // (the realistic regression is wiring `s.explorer`/`s.tokenSupply` straight
 // into a handler); if a lake dependency is ever threaded through a helper,
-// add the helper here. When a new lake-backed field is added to Server (see
-// cmd/stellarindex-api/main.go's `er`/`sr` fan-out), add it to `forbidden`.
+// add the helper here. The forbidden fields are [sloLakeBackedFields];
+// TestSLOLakeFieldsCoverLakeWiring fails when main.go wires a lake reader
+// into a Server field that set does not name.
 func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 	// The exact route→handler set the Prometheus SLO burn-rate rules cover.
 	sloHandlers := map[string]bool{
@@ -34,20 +35,7 @@ func TestSLORoutesNeverTouchTheLake(t *testing.T) {
 		"handleOraclePrices":     false, // /v1/oracle/prices
 		"handleOracleXLastPrice": false, // /v1/oracle/x_last_price
 	}
-	// Server fields backed by ClickHouse (the `er`/`sr` fan-out in
-	// cmd/stellarindex-api/main.go) plus the explorer sub-handler. Extend
-	// with any future cross-region-proxy or S3-fallback client field.
-	forbidden := map[string]bool{
-		"explorer":            true,
-		"explorerHandler":     true,
-		"supply":              true,
-		"tokenSupply":         true,
-		"tokenDecimals":       true,
-		"lakeWatermarkReader": true,
-		"protocolActivity":    true,
-		"dexTVL":              true,
-		"sdexOrderBook":       true,
-	}
+	forbidden := sloLakeBackedFields
 
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", nil, 0)

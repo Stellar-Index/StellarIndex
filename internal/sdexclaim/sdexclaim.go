@@ -39,6 +39,16 @@ func parts(a xdr.ClaimAtom) (sold, bought xdr.Int64, soldAsset, boughtAsset xdr.
 	return 0, 0, xdr.Asset{}, xdr.Asset{}, false
 }
 
+// BoughtSide returns one ClaimAtom's (AssetBought, AmountBought) — what
+// the taker PAID into that offer or pool — and whether its discriminant is
+// a known variant. Callers that need a leg rather than the trade predicate
+// use this instead of switching on the variant themselves, so a new
+// ClaimAtom variant is taught to [parts] once.
+func BoughtSide(a xdr.ClaimAtom) (asset xdr.Asset, amount xdr.Int64, known bool) {
+	_, bought, _, boughtAsset, known := parts(a)
+	return boughtAsset, bought, known
+}
+
 // IsRealTrade reports whether one ClaimAtom will become a `trades` row —
 // i.e. whether internal/sources/sdex.decodeClaimAtom would return a
 // Trade rather than an error for it.
