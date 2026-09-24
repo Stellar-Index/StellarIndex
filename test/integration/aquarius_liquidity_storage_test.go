@@ -211,7 +211,11 @@ func TestLatestAquariusReserves(t *testing.T) {
 		tokenA = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
 		tokenB = "CD25MNVTZDL4Y3XBCPCJXGXATV5WUHHOWMYFF4YBEGU5FCPGMYTVG5JY"
 	)
-	base := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
+	// Relative to now, not a fixed calendar date: LatestAquariusReserves
+	// filters on `ledger_close_time > now() - windowDays`, so a hardcoded
+	// date eventually ages out of the 90-day window and the test starts
+	// failing on its own regardless of what changed in the code.
+	base := time.Now().UTC().Add(-2 * time.Hour)
 	huge, _ := new(big.Int).SetString("98765432109876543210987654321", 10)
 
 	// Older snapshot — must be shadowed by the newer one below.
