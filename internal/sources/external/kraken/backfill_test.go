@@ -112,6 +112,96 @@ func TestKrakenBackfill_HappyPath(t *testing.T) {
 	}
 }
 
+// TestKrakenBackfill_DetectsDepthHorizonStraddle: Kraken ignores a
+// `since` older than its ~720-candle horizon and serves its most
+// recent window instead, with err=nil at the HTTP layer. A range that
+// straddles the horizon must surface as ErrDepthExceeded — carrying the
+// trades that ARE inside the served window — not as a silent, truncated
+// success.
+func TestKrakenBackfill_DetectsDepthHorizonStraddle(t *testing.T) {
+	const requestedFromSec = int64(1_700_000_000)
+	const hourSec = int64(3_600)
+	// The venue's actual horizon starts well after the requested
+	// `from` — more than one interval later.
+	const horizonStartSec = requestedFromSec + 50*hourSec
+
+	candles := synthesiseKrakenCandles(5, horizonStartSec, hourSec)
+	lastTs := horizonStartSec + 4*hourSec
+	srv := newTestKrakenREST(t, "XLMUSD", candles, lastTs)
+	defer srv.Close()
+
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	xlmUSD, _ := canonical.NewPair(xlm, usd)
+	m["XLMUSD"] = xlmUSD
+
+	s := NewStreamer(m)
+	s.Endpoint = srv.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	from := time.Unix(requestedFromSec, 0).UTC()
+	// `to` is well inside the served window, so every returned candle
+	// is within [from, to) and would previously have been accepted
+	// with err=nil despite covering none of the requested history.
+	to := time.Unix(horizonStartSec+10*hourSec, 0).UTC()
+
+	trades, err := s.Backfill(ctx, xlmUSD, from, to, 1*time.Hour)
+	if !errors.Is(err, ErrDepthExceeded) {
+		t.Fatalf("err = %v, want ErrDepthExceeded", err)
+	}
+	if len(trades) != 5 {
+		t.Fatalf("expected the 5 trades inside the served window to be salvaged, got %d", len(trades))
+	}
+}
+
+// TestKrakenBackfill_DetectsDepthHorizonEntirelyExceeded: a range
+// entirely older than Kraken's serving horizon must not report 0
+// trades with err=nil — that reads as "nothing traded in this window"
+// rather than "this window was never asked for".
+func TestKrakenBackfill_DetectsDepthHorizonEntirelyExceeded(t *testing.T) {
+	const requestedFromSec = int64(1_700_000_000)
+	const hourSec = int64(3_600)
+	const horizonStartSec = requestedFromSec + 50*hourSec
+
+	candles := synthesiseKrakenCandles(5, horizonStartSec, hourSec)
+	lastTs := horizonStartSec + 4*hourSec
+	srv := newTestKrakenREST(t, "XLMUSD", candles, lastTs)
+	defer srv.Close()
+
+	m, err := DefaultPairs()
+	if err != nil {
+		t.Fatalf("DefaultPairs: %v", err)
+	}
+	xlm, _ := canonical.NewCryptoAsset("XLM")
+	usd, _ := canonical.NewFiatAsset("USD")
+	xlmUSD, _ := canonical.NewPair(xlm, usd)
+	m["XLMUSD"] = xlmUSD
+
+	s := NewStreamer(m)
+	s.Endpoint = srv.URL
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	from := time.Unix(requestedFromSec, 0).UTC()
+	// `to` is also before the venue's actual served window.
+	to := time.Unix(requestedFromSec+10*hourSec, 0).UTC()
+
+	trades, err := s.Backfill(ctx, xlmUSD, from, to, 1*time.Hour)
+	if !errors.Is(err, ErrDepthExceeded) {
+		t.Fatalf("err = %v, want ErrDepthExceeded", err)
+	}
+	if len(trades) != 0 {
+		t.Fatalf("expected 0 trades (none of the served window overlaps [from,to)), got %d", len(trades))
+	}
+}
+
 func TestKrakenBackfill_RejectsInvalidRange(t *testing.T) {
 	s := NewStreamer(map[string]canonical.Pair{})
 	xlm, _ := canonical.NewCryptoAsset("XLM")
