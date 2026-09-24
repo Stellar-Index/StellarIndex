@@ -456,3 +456,49 @@ func TestChunkProgressLastVerifiedHash_IsNotTheBoundaryProof(t *testing.T) {
 			"Stitch.LastHash is not being read, so the proof is vacuous")
 	}
 }
+
+// TestChunkProgressLastVerifiedHash_NamesTheLastWalkedLedger is the
+// RLT-283 regression. Under TolerateTrailingMissing a chunk's walk can
+// end short of To and still be marked Done, so LastVerifiedHash holds
+// the hash of Stitch.LastSeq, not of To. The field doc must say so: an
+// operator reading the state file by hand is the field's only consumer.
+func TestChunkProgressLastVerifiedHash_NamesTheLastWalkedLedger(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 9, 24, 0, 0, 0, 0, time.UTC)
+	chunks := threeChunkPlan()
+
+	short := walkedChunk(0, chunks[0], hashByte(0x01), hashByte(0xab))
+	short.LastSeq = chunks[0].To - 7
+	short.Verified = int(short.LastSeq-short.FirstSeq) + 1
+
+	st := startTierProgress(VerifyArchiveState{}, "chain", 2, 3000, 3, chunks, now)
+	st = markChunkDoneStitch(st, "chain", 0, short, now)
+	c := st.Tiers["chain"].InProgress.Chunks[0]
+	if !c.Done || c.Stitch == nil {
+		t.Fatalf("precondition: chunk[0] Done=%v Stitch=%v, want Done with a Stitch record", c.Done, c.Stitch)
+	}
+	if c.LastVerifiedHash != hashToHex(hashByte(0xab)) || c.Stitch.LastSeq != chunks[0].To-7 {
+		t.Fatalf("chunk[0] recorded hash %s at ledger %d, want %s at %d (the last ledger walked)",
+			c.LastVerifiedHash, c.Stitch.LastSeq, hashToHex(hashByte(0xab)), chunks[0].To-7)
+	}
+
+	src := readRepoFile(t, "internal/ops/archive/verify_archive_state.go")
+	start := strings.Index(src, "type ChunkProgress struct")
+	if start < 0 {
+		t.Fatal("cannot locate ChunkProgress in verify_archive_state.go")
+	}
+	end := strings.Index(src[start:], "LastVerifiedHash string")
+	if end < 0 {
+		t.Fatal("cannot locate ChunkProgress.LastVerifiedHash in verify_archive_state.go")
+	}
+	doc := src[start : start+end]
+	if strings.Contains(doc, "(chunk.to) ledger") {
+		t.Error("ChunkProgress.LastVerifiedHash doc says it is the hash of the chunk's To ledger; " +
+			"markChunkDone stores the last ledger the walk verified, which is below To after a " +
+			"tolerated trailing-missing walk (RLT-283)")
+	}
+	if !strings.Contains(doc, "Stitch.LastSeq") {
+		t.Error("ChunkProgress.LastVerifiedHash doc does not name Stitch.LastSeq as the ledger the " +
+			"hash belongs to (RLT-283)")
+	}
+}
