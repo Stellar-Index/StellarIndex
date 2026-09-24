@@ -14,6 +14,7 @@ severity: P3
 | Alerts | `stellarindex_anomaly_freeze_engaged` (P3 / ticket) · `stellarindex_anomaly_freeze_sustained` (P1 / page once sustained ≥ 1h) |
 | Severity | P3 on first 5m window; escalates to P1 at 1h sustained |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/anomaly.yml` + `configs/prometheus/rules.r1/anomaly.yml` |
+| Runbook routing | Both alerts' `runbook_url` lands on this page. Per-alert detail for the escalated case: [anomaly-freeze-sustained](anomaly-freeze-sustained.md). |
 | Typical MTTR | 5–30 min for a confirmed decision (confirm or override); cold-baseline false-fires resolve with a config tune |
 | Impact | The affected pair's `/v1/price` serves the last-known-good (LKG) VWAP with `flags.frozen: true`. `/v1/price/tip` and `/v1/observations` keep serving live data (ADR-0018 per-surface policy). Lending-style consumers of the closed-bucket surface are protected; nothing is deleted. |
 | Per-pair triage | The counter is class-labelled only (cardinality bound). Find the pair via the Redis markers: `redis-cli --scan --pattern 'freeze:*'`, or the aggregator journal (grep below). |
