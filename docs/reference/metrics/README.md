@@ -3826,6 +3826,26 @@ the ONLY place a persistently dying refresher is visible before its
 data is hours old. Look here first when an explorer surface's
 `as_of` stops advancing.
 
+### `stellarindex_explorer_refresh_gate_saturated_total`
+
+Counter. Labels: `class` (the refresh class passed to
+`RefreshGate.TryAcquireClass`: `account_state` | `asset_holders` |
+`contracts_dir` | `network_throughput` | `ops_directory` |
+`protocol_bespoke` | `contract_detail` / `contract_detail_<key prefix>`;
+`unclassed` for a bare `TryAcquire`), `bound` (`class` = the per-class
+half-of-global cap refused, `global` = the pool-wide limit refused).
+
+Detached explorer refreshes the shared `clickhouse.RefreshGate` SKIPPED
+because it was saturated. The gate bounds lake scans that
+unauthenticated, attacker-chosen keys can trigger. A skipped refresh
+never reaches `stellarindex_explorer_swr_refresh_total` (that counts only
+refreshes that got a slot), and a cold request waiting on it gets a
+retryable 503. So this counter is the only signal that separates a
+key-churn burst from real capacity pressure. It counts skipped refreshes,
+not the requests waiting on them. A sustained rate on one `class` with
+`bound="class"` is one class being churned. `bound="global"` across many
+classes means the gate limit is too small for real traffic.
+
 ### `stellarindex_explorer_swr_refresh_duration_seconds`
 
 Histogram. Labels: `cache`, `outcome` (matches the counter). Buckets 50 ms → 300 s.

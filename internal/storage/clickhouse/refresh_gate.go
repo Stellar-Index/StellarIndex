@@ -3,6 +3,8 @@ package clickhouse
 import (
 	"errors"
 	"sync"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // ErrRefreshSaturated is returned by a cache-fill method (AccountStateCached)
@@ -86,6 +88,7 @@ func (g *RefreshGate) TryAcquire() bool {
 	case g.sem <- struct{}{}:
 		return true
 	default:
+		obs.ExplorerRefreshGateSaturatedTotal.WithLabelValues("unclassed", "global").Inc()
 		return false
 	}
 }
@@ -121,7 +124,8 @@ func (g *RefreshGate) classSem(class string) chan struct{} {
 // TryAcquireClass claims a slot for a named refresh class without
 // blocking: the class must be under its own cap (half the global
 // limit) AND the global bound must have room. False means skip the
-// refresh — same contract as TryAcquire.
+// refresh — same contract as TryAcquire. Every refusal is counted on
+// obs.ExplorerRefreshGateSaturatedTotal, since the caller only sees a 503.
 func (g *RefreshGate) TryAcquireClass(class string) bool {
 	if g == nil {
 		return true
@@ -130,6 +134,7 @@ func (g *RefreshGate) TryAcquireClass(class string) bool {
 	select {
 	case sem <- struct{}{}:
 	default:
+		obs.ExplorerRefreshGateSaturatedTotal.WithLabelValues(class, "class").Inc()
 		return false
 	}
 	select {
@@ -137,6 +142,7 @@ func (g *RefreshGate) TryAcquireClass(class string) bool {
 		return true
 	default:
 		<-sem // give the class token back — all-or-nothing
+		obs.ExplorerRefreshGateSaturatedTotal.WithLabelValues(class, "global").Inc()
 		return false
 	}
 }
