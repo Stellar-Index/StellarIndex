@@ -240,6 +240,16 @@ var DefaultGapDetectorTargets = []GapDetectorTarget{
 	// complete=t / coverage 1.0 — i.e. pure sparsity, not loss. Bumped
 	// to 200K (~14 days) to sit above the observed natural envelope.
 	// CCTP/Rozo are new (2026-05-20 deploy) so the genesis is recent.
+	//
+	// Ledger-gap coverage is a DIFFERENT axis from per-op event loss:
+	// migration 0112 (2026-07-17) found the pre-fix PK collapsed a
+	// second same-op same-event_type row (e.g. two attester_enabled in
+	// one tx) via ON CONFLICT — a same-ledger row drop, not a ledger
+	// range gap, so this detector cannot and does not catch it. Rows
+	// ingested between the 2026-05-22 launch and the 0112 fix may be
+	// missing a dropped sibling event until that window is re-ingested
+	// (0112's stated history-fix); "complete" here means no missing
+	// ledgers, not zero per-op collapse in that window.
 	{Source: "cctp", Table: "cctp_events", LedgerColumn: "ledger", Genesis: 62_146_641, MinGapSizeOverride: 200000},
 	{Source: "rozo", Table: "rozo_events", LedgerColumn: "ledger", Genesis: 60_829_397, MinGapSizeOverride: 100000},
 	// comet_liquidity: pool-events are sparse; 2026-05-29 find-data-

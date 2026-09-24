@@ -21,6 +21,10 @@ import (
 //   - trades (ts, GROUP BY source) — sdex / soroswap / aquarius /
 //     phoenix / comet trade rows (also yields CEX/FX sources; callers
 //     look up only the names they care about).
+//   - aquarius_liquidity / aquarius_reserves / aquarius_reserves_sync /
+//     aquarius_rewards_events / aquarius_admin / aquarius_protocol_fee /
+//     aquarius_kill_switches (ledger_close_time) — summed as
+//     'aquarius' on top of its trades leg.
 //   - blend_positions / blend_emissions / blend_admin
 //     (ledger_close_time) + blend_auctions (ts) — summed as 'blend'.
 //   - blend_backstop_events (ledger_close_time) — 'blend_backstop'
@@ -100,6 +104,27 @@ const countRecentEventsQuery = `
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'sorocredit', count(*) FROM credit_events
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'aquarius', count(*) FROM aquarius_liquidity
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'aquarius', count(*) FROM aquarius_reserves
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'aquarius', count(*) FROM aquarius_reserves_sync
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'aquarius', count(*) FROM aquarius_rewards_events
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'aquarius', count(*) FROM aquarius_admin
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'aquarius', count(*) FROM aquarius_protocol_fee
+	 WHERE ledger_close_time >= now() - interval '24 hours'
+	UNION ALL
+	SELECT 'aquarius', count(*) FROM aquarius_kill_switches
 	 WHERE ledger_close_time >= now() - interval '24 hours'
 	UNION ALL
 	SELECT 'cctp', count(*) FROM cctp_events
