@@ -113,12 +113,16 @@
     path: "{{ item.mountpoint }}"
     state: directory
     mode: "{{ item.dir_mode | default('0755') }}"
+    # Mirror 03-zfs.yml's "Ensure dataset mount points exist with correct
+    # perms": default(omit) leaves root:root for datasets whose writer is
+    # root; only restore-drill (postgres-owned, BDR-04) needs it set.
+    owner: "{{ item.dir_owner | default(omit) }}"
+    group: "{{ item.dir_group | default(omit) }}"
   # Root-owned with the dataset's mode; the service tasks below chown their
-  # own data dirs to the service user (04-users for stellarindex/galexie/minio;
-  # the pgbackrest task for the postgres-owned backup dirs). postgres +
-  # clickhouse dirs are EXCLUDED — their package installers create and own
-  # /var/lib/postgresql and /var/lib/clickhouse; pre-creating them root-owned
-  # would break the cluster/server init.
+  # own data dirs to the service user (04-users for stellarindex/galexie/minio).
+  # postgres + clickhouse dirs are EXCLUDED — their package installers create
+  # and own /var/lib/postgresql and /var/lib/clickhouse; pre-creating them
+  # root-owned would break the cluster/server init.
   loop: "{{ zfs_datasets | rejectattr('name', 'in', ['postgres', 'clickhouse']) | list }}"
   loop_control:
     label: "{{ item.mountpoint }}"
