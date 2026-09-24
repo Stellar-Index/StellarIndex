@@ -67,6 +67,16 @@ superseded_by: null
 > so the citation is not replaced with a guess. Treat the "#1219"
 > mention below as historical record only, not a live reference.
 
+> **Amendment (2026-09-24, RSWP-116).** The two "#1217" citations
+> below (Context intro's PR list, References → Implementation surface)
+> are a legacy PR number from the repository's pre-migration numbering.
+> The `/v1/price` proxy fallback they describe is durably recorded as
+> commit `6505934b5` ("fix(api): /v1/price stablecoin-proxy fallback
+> for X/fiat:USD (#1217)"). In the current Stellar-Index/StellarIndex
+> tracker, #1217 resolves to an unrelated open issue about the
+> ADR-0019 parity-guard exponent, not this fallback. Follow the commit,
+> not the number.
+
 ## Context
 
 Most CEX and DEX trades quote against a USD stablecoin
