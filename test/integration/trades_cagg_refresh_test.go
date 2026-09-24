@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/ops/chops"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange is the
@@ -77,7 +78,7 @@ func TestTradesCAGGRefresh_RematerialisesARewrittenLedgerRange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("trades-cagg-refresh: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "trades-cagg-refresh: refreshed [61000000,61001000]") {
+	if !strings.Contains(out, "trades-cagg-refresh: refreshed [61000000,61001000]") || !strings.Contains(out, "drift-windows=8\n") {
 		t.Errorf("no success line on stdout: %q", out)
 	}
 
@@ -179,6 +180,84 @@ func TestTradesCAGGRefresh_RebuildsDroppedMinuteRowsBeforeTheTwaps(t *testing.T)
 	})
 	if out, err := run(); err == nil || !strings.Contains(err.Error(), "retention policy is armed") {
 		t.Errorf("armed prices_1m retention: err = %v (stdout %q), want the twaps refused", err, out)
+	}
+}
+
+// TestTradesPrices1mDrift_FindsWhatTheAggregateStillHolds is the executing
+// proof for the check trades-cagg-refresh ends on (#782): on real
+// TimescaleDB, prices_1m and `trades` agree exactly once refreshed, and a
+// row rewritten, added or deleted behind the aggregate's back is reported
+// with both sides, exact, for its pair only.
+func TestTradesPrices1mDrift_FindsWhatTheAggregateStillHolds(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	exec := func(q string) {
+		t.Helper()
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	h := time.Date(2025, 3, 10, 12, 0, 0, 0, time.UTC)
+	from, to := h, h.Add(time.Hour)
+	seedCAGGTrade(t, ctx, db, 61_000_000, 0, h.Add(90*time.Second), 10)
+	seedCAGGTrade(t, ctx, db, 61_000_001, 0, h.Add(59*time.Minute+30*time.Second), 20)
+	// Another pair, and a row just past the window: neither may be reported.
+	exec(`INSERT INTO trades (source, ledger, tx_hash, op_index, ts, base_asset, quote_asset, base_amount, quote_amount, usd_volume)
+	      VALUES ('soroswap', 61000002, repeat('b', 64), 0, '2025-03-10 12:30:00+00', 'crypto:BTC', 'fiat:USD', 1, 60000, 60000)`)
+	seedCAGGTrade(t, ctx, db, 61_000_003, 0, to, 40)
+	exec(`CALL refresh_continuous_aggregate('prices_1m', '2025-03-10 00:00+00', '2025-03-11 00:00+00')`)
+
+	drift, err := store.TradesPrices1mDrift(ctx, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drift) != 0 {
+		t.Fatalf("control: drift over a freshly refreshed window = %+v, want none — this test proves nothing", drift)
+	}
+
+	// The rebuild's shape: one row rewritten with a new amount, one added.
+	exec(`UPDATE trades SET base_amount = 11, quote_amount = 1.1 WHERE ledger = 61000000`)
+	seedCAGGTrade(t, ctx, db, 61_000_000, 1, h.Add(2*time.Minute), 7)
+	drift, err = store.TradesPrices1mDrift(ctx, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := timescale.TradesPrices1mDrift{
+		BaseAsset: "native", QuoteAsset: "fiat:USD",
+		TradeCount: "3", CAGGCount: "2",
+		TradeVolume: "38", CAGGVolume: "30",
+		TradeUSD: "3", CAGGUSD: "2",
+	}
+	if len(drift) != 1 || drift[0] != want {
+		t.Fatalf("drift = %+v, want exactly %+v", drift, want)
+	}
+
+	// Rows deleted behind the aggregate: the pair is gone from trades only.
+	exec(`DELETE FROM trades WHERE base_asset = 'crypto:BTC'`)
+	drift, err = store.TradesPrices1mDrift(ctx, from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(drift) != 2 || drift[0].BaseAsset != "crypto:BTC" || drift[0].TradeCount != "0" || drift[0].CAGGCount != "1" ||
+		drift[0].TradeVolume != "0" || drift[0].CAGGVolume != "1" {
+		t.Fatalf("drift after a delete = %+v, want crypto:BTC with trades n=0 vol=0 against prices_1m n=1 vol=1, then native", drift)
+	}
+
+	if _, err := store.TradesPrices1mDrift(ctx, from.Add(30*time.Second), to); err == nil {
+		t.Errorf("a window that does not start on a minute was accepted; its rows and buckets would not line up")
 	}
 }
 
