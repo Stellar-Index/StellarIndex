@@ -22,7 +22,7 @@ func TestRWAApplyCuratorReference_PremiumStatusMatchesCuratorProvenance(t *testi
 	a := &RWAAsset{
 		AssetID:           "CURATED-ADDR",
 		CirculatingSupply: &supply,
-		Decimals:          7,
+		Decimals:          intPtr(7),
 	}
 	entry := timescale.CuratedRWAEntry{
 		Address:  "CURATED-ADDR",

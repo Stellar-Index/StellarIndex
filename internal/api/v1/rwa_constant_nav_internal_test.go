@@ -17,7 +17,7 @@ func TestRWAApplyReference_ProspectusConstantNAV(t *testing.T) {
 	now := time.Date(2026, 9, 17, 12, 0, 0, 0, time.UTC)
 	supply := "566742721191613" // 56,674,272.1191613 tokens at 7 decimals
 	mk := func(code, issuer string) *RWAAsset {
-		return &RWAAsset{AssetID: code + "-" + issuer, Code: code, Issuer: issuer, CirculatingSupply: &supply, Decimals: 7}
+		return &RWAAsset{AssetID: code + "-" + issuer, Code: code, Issuer: issuer, CirculatingSupply: &supply, Decimals: intPtr(7)}
 	}
 	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
 
@@ -65,7 +65,7 @@ func TestRWAApplyReference_ProspectusConstantNAV_StaleAfterReviewBy(t *testing.T
 	supply := "566742721191613"
 	snap := rwaReferences{available: true, byFeed: map[string]rwaReference{}, nonUSD: map[string]string{}}
 	serve := func(now time.Time) *RWAAsset {
-		a := &RWAAsset{AssetID: "gBENJI-" + issuer, Code: "gBENJI", Issuer: issuer, CirculatingSupply: &supply, Decimals: 7}
+		a := &RWAAsset{AssetID: "gBENJI-" + issuer, Code: "gBENJI", Issuer: issuer, CirculatingSupply: &supply, Decimals: intPtr(7)}
 		rwaApplyReference(a, snap, nil, map[string]timescale.ListingEntry{}, now)
 		if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV || a.Reference.PriceUSD != "1.00" {
 			t.Fatalf("at %s: reference = %+v, want the prospectus CNAV at 1.00", now.Format(time.RFC3339), a.Reference)
@@ -130,7 +130,7 @@ func TestRWAApplyReference_UnusableListingPriceFallsToConstantNAV(t *testing.T) 
 			entry := tc.entry
 			entry.Source, entry.ListingID = "listing", "x"
 
-			a := &RWAAsset{AssetID: "gBENJI-" + issuer, Code: "gBENJI", Issuer: issuer, CirculatingSupply: &supply, Decimals: 7}
+			a := &RWAAsset{AssetID: "gBENJI-" + issuer, Code: "gBENJI", Issuer: issuer, CirculatingSupply: &supply, Decimals: intPtr(7)}
 			rwaApplyReference(a, snap, nil, map[string]timescale.ListingEntry{a.AssetID: entry}, now)
 			if a.Reference == nil || a.Reference.Provenance != RWAReferenceProspectusCNAV || a.Reference.PriceUSD != "1.00" {
 				t.Fatalf("reference = %+v (valuation status %q), want the prospectus CNAV at 1.00", a.Reference, a.ReferenceValuation.Status)
@@ -143,7 +143,7 @@ func TestRWAApplyReference_UnusableListingPriceFallsToConstantNAV(t *testing.T) 
 			}
 
 			const other = "GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
-			u := &RWAAsset{AssetID: "gBENJI-" + other, Code: "gBENJI", Issuer: other, CirculatingSupply: &supply, Decimals: 7}
+			u := &RWAAsset{AssetID: "gBENJI-" + other, Code: "gBENJI", Issuer: other, CirculatingSupply: &supply, Decimals: intPtr(7)}
 			rwaApplyReference(u, snap, nil, map[string]timescale.ListingEntry{u.AssetID: entry}, now)
 			if u.Reference != nil || u.ReferenceValuation.Status != tc.unboundAs || u.Premium.Status != tc.unboundAs {
 				t.Errorf("unbound pair: reference = %+v, valuation %q, premium %q; want no reference and %q", u.Reference, u.ReferenceValuation.Status, u.Premium.Status, tc.unboundAs)
