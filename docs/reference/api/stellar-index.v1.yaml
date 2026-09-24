@@ -12791,7 +12791,15 @@ components:
         result_code: { type: integer, description: Raw XDR TransactionResultCode (0 = success; negatives are failure reasons). }
         result: { type: string, description: "Human-readable slug for result_code (e.g. tx_success, tx_failed, tx_insufficient_fee). Always present." }
         memo_type: { type: string, description: "Normalised: none|text|id|hash|return." }
-        memo: { type: string }
+        memo: { type: string, description: "Best-effort display value. For memo_type=text, bytes that are not valid UTF-8 are replaced with U+FFFD; use memo_base64 for the exact bytes." }
+        memo_base64:
+          type: string
+          format: byte
+          description: |
+            Standard base64 of the raw MEMO_TEXT bytes, byte-for-byte as they
+            appear on chain. MEMO_TEXT is opaque bytes, not guaranteed UTF-8
+            (exchange deposit tokens are often binary), so this is the value to
+            reconcile against. Present only when memo_type=text.
         fee_bump:
           type: object
           description: |
