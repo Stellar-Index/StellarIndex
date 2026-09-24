@@ -77,6 +77,25 @@ superseded_by: null
 > raises `stellarindex_verify_archive_tier_b_unit_failed`
 > (severity: ticket).
 >
+> **Amendment (2026-09-24, CA2-A20) — the coverage boundary is only
+> the trailing edge, not both.** F144 above is written entirely in
+> terms of the fill job lagging the live tip; `outsideCoverage` (then)
+> read `seq < Floor || seq > HighWater`, tolerating an absence below
+> the mirror's floor the same as one above its high-water. A mirror
+> fills upward from genesis, so it can never legitimately lag its own
+> floor — a `seq < Floor` absence means the mirror lost or never
+> restored that range (a partial restore, say from ledger 10M), which
+> is exactly the hole contract 3 forbids. Under the old rule that
+> whole leading span classified `unmirrored`, `checkpointsMissed`
+> stayed 0 for it, `-fail-on-missed` passed, and
+> `applyCheckpointTierState`/`checkpointWatermark` (clamped only to
+> `HighWater`, never `Floor`) baked the un-anchored span into the
+> persisted checkpoint high-water — so a later incremental run, resuming
+> near the tip, never re-walked it even after the mirror was refilled.
+> `outsideCoverage` now reads `seq > HighWater` only; a below-floor
+> absence classifies `missed` like any other hole inside the mirror's
+> claimed span.
+>
 > **Still not covered.** The checkpoint counters
 > (`stellarindex_verify_archive_checkpoints_total{outcome=matched|
 > missed|unmirrored}`) reach Prometheus only through the opt-in
