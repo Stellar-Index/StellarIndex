@@ -61,6 +61,7 @@ The two questions this page used to carry are answered by the lake itself:
 | pool rewards-gauge (12 kinds, incl. router-side `config_rewards`) | `aquarius_rewards_events` (migration 0099) |
 | router/pool `set_protocol_fee` / `claim_protocol_fee` | `aquarius_protocol_fee` (migration 0129) |
 | router/pool kill-switch (`kill_*` / `unkill_*`, emergency mode) | `aquarius_kill_switches` (migration 0130) |
+| router `swap` / `deposit` / `withdraw` | not decoded — known gap (see the connector README's "Known gap"); the pools' own `trade` / `deposit_liquidity` / `withdraw_liquidity` carry the fills |
 | router/pool governance + upgrade (8 kinds) | `aquarius_admin` (migration 0100) |
 
 ## ✅ Rewards-gauge + governance topics — decoded (ROADMAP #89, closed 2026-07-10)
@@ -222,8 +223,9 @@ WASM. The per-hash inventory — the never-upgraded cohort on
 `ae0da5a8…` (volatile) / `f1077e0b…` (stableswap) / `8875f0c7…`
 (rewards-enhanced), the upgraded cohort's five-WASM chain, and the decoder
 verdict for each — is [wasm-audits/aquarius.md](../operations/wasm-audits/aquarius.md).
-No concentrated-liquidity pool has been observed (`ErrConcentratedWIP` is
-reserved and has not fired).
+No concentrated-liquidity pool has been observed. Nothing in the decoder
+would refuse one: a router-announced pool is registered without a WASM
+check, so a new family is caught only by re-running that audit.
 The two router-WASM deployments share code hash `06F4207B…`.
 
 ### ⚠️ Flagged — excluded from the gate (NOT silently dropped)

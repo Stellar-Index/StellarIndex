@@ -79,6 +79,7 @@ type LiveSink struct {
 	done     chan struct{}
 
 	mu       sync.Mutex
+	stopped  bool   // set under mu before stopping closes; PushLedger drops after it.
 	written  uint64 // ledgers DURABLY flushed to CH (post-Flush, not enqueue).
 	buffered uint64 // ledgers accepted into the in-memory buffer (pre-flush).
 	dropped  uint64 // ledgers dropped: full channel (PushLedger) or full buffer (Add).
@@ -131,7 +132,7 @@ func newLiveSink(sink *Sink, logger *slog.Logger, opts LiveSinkOptions) *LiveSin
 		stopTimeout = opts.WriteTimeout
 	}
 	base, baseCancel := context.WithCancel(context.Background()) //nolint:gosec // G118 false positive: baseCancel is stored and called from Stop
-	return &LiveSink{
+	l := &LiveSink{
 		sink:        sink,
 		logger:      logger,
 		timeout:     opts.WriteTimeout,
@@ -143,6 +144,10 @@ func newLiveSink(sink *Sink, logger *slog.Logger, opts LiveSinkOptions) *LiveSin
 		stopping:    make(chan struct{}),
 		done:        make(chan struct{}),
 	}
+	// Credit `written` wherever a flush succeeds, not only in doFlush: once
+	// the buffer passes flushEvery (a recovering CH outage), Add flushes inline.
+	sink.onFlushed = func(n int) { l.add64(&l.written, uint64(n)) }
+	return l
 }
 
 // Start launches the drain worker. Call once.
@@ -153,11 +158,30 @@ func (l *LiveSink) Start() { go l.run() }
 // never stalls the caller (the live ingest loop). A drop is logged with its
 // ledger: the lake watermark stalls at that hole until the catch-up timer
 // heals it, and the log is what names the ledger to re-derive.
+//
+// The send runs under mu, which Stop takes to set `stopped` before closing
+// `stopping`: a push either lands before the worker's final drain or is
+// counted as a drop — never left in a channel nobody reads.
 func (l *LiveSink) PushLedger(ext LedgerExtract) {
-	select {
-	case l.ch <- ext:
+	l.mu.Lock()
+	stopped, sent := l.stopped, false
+	if !stopped {
+		select {
+		case l.ch <- ext:
+			sent = true
+		default:
+		}
+	}
+	if !sent {
+		l.dropped++
+	}
+	l.mu.Unlock()
+	switch {
+	case sent:
+	case stopped:
+		l.logger.Warn("clickhouse live-sink: push after Stop — ledger DROPPED from the live lake write",
+			"ledger", ext.Ledger.LedgerSeq)
 	default:
-		l.bump(&l.dropped)
 		l.logger.Warn("clickhouse live-sink: buffer full — ledger DROPPED from the live lake write",
 			"ledger", ext.Ledger.LedgerSeq, "buffer", cap(l.ch))
 	}
@@ -206,12 +230,13 @@ func (l *LiveSink) add(ext LedgerExtract) {
 				"ledger", ext.Ledger.LedgerSeq, "cap_ledgers", l.sink.BufferedLedgers())
 			return
 		}
+		// Any other error is Add's inline flush failing: ext is buffered
+		// and goes out with the next successful flush.
 		l.bump(&l.errored)
-		l.logger.Warn("clickhouse live-sink: add failed", "ledger", ext.Ledger.LedgerSeq, "err", err)
-		return
+		l.logger.Warn("clickhouse live-sink: inline flush failed", "ledger", ext.Ledger.LedgerSeq, "err", err)
 	}
 	// G12-02: count buffer-enqueue as `buffered`, NOT `written`. `written` is
-	// reserved for ledgers DURABLY flushed to CH (doFlush), so the metric
+	// credited only by a successful Flush (Sink.onFlushed), so the metric
 	// can't claim durability the lake doesn't have during a CH stall.
 	l.bump(&l.buffered)
 }
@@ -219,15 +244,10 @@ func (l *LiveSink) add(ext LedgerExtract) {
 func (l *LiveSink) doFlush() {
 	ctx, cancel := context.WithTimeout(l.base, l.timeout)
 	defer cancel()
-	// Snapshot how many ledgers are about to be flushed so a success can
-	// credit `written` accurately (Flush clears the buffer on success).
-	pending := uint64(l.sink.BufferedLedgers())
 	if err := l.sink.Flush(ctx); err != nil {
 		l.bump(&l.errored)
-		l.logger.Warn("clickhouse live-sink: flush failed", "err", err, "buffered_ledgers", pending)
-		return
+		l.logger.Warn("clickhouse live-sink: flush failed", "err", err, "buffered_ledgers", l.sink.BufferedLedgers())
 	}
-	l.add64(&l.written, pending)
 }
 
 // Stop signals shutdown, drains the buffer + final flush, closes the CH conn,
@@ -238,6 +258,9 @@ func (l *LiveSink) Stop() {
 		timer := time.AfterFunc(l.stopTimeout, l.baseCancel)
 		defer timer.Stop()
 		defer l.baseCancel()
+		l.mu.Lock()
+		l.stopped = true
+		l.mu.Unlock()
 		close(l.stopping)
 		<-l.done
 		ctx, cancel := context.WithTimeout(l.base, l.timeout)

@@ -77,9 +77,6 @@ func (d *Decoder) GatedContractSet() []string { return d.reg.GatedSet() }
 func (d *Decoder) Matches(ev events.Event) bool {
 	switch classify(&ev) {
 	case EventTrade, EventUpdateReserves, EventReservesSync, EventDepositLiquidity, EventWithdrawLiquidity,
-		EventSetProtocolFee, EventClaimProtocolFee,
-		EventKillDeposit, EventUnkillDeposit, EventKillSwap, EventUnkillSwap,
-		EventKillClaim, EventUnkillClaim, EventKillGaugesClaim, EventUnkillGaugesClaim,
 		EventPoolState, EventClaimReward, EventSetRewardsConfig, EventPositionUpdate,
 		EventGaugeDeposit, EventClaimFees, EventRewardsGaugeClaim, EventGaugeClaim,
 		EventRewardsGaugeScheduleReward, EventSetRewardsState, EventRewardsGaugeAdd:
@@ -93,7 +90,14 @@ func (d *Decoder) Matches(ev events.Event) bool {
 		return d.reg.Has(ev.ContractID)
 	case EventApplyUpgrade, EventCommitUpgrade, EventSetPrivilegedAddrs,
 		EventApplyTransferOwnership, EventCommitTransferOwnership,
-		EventEnableEmergencyMode, EventDisableEmergencyMode:
+		EventEnableEmergencyMode, EventDisableEmergencyMode,
+		EventSetProtocolFee, EventClaimProtocolFee,
+		EventKillDeposit, EventUnkillDeposit, EventKillSwap, EventUnkillSwap,
+		EventKillClaim, EventUnkillClaim, EventKillGaugesClaim, EventUnkillGaugesClaim:
+		// The protocol-fee and kill-switch kinds share this gate: the
+		// router's lake census lists its own `set_protocol_fee`, and the
+		// pool-only gate they had silently refused every router emission.
+		//
 		// Pool-EMITTABLE governance/upgrade surface (ROADMAP #89):
 		// gated on the SAME protocol trust boundary as the pool-flow
 		// kinds (reg.Has) PLUS the router trust root (reg.IsFactory).

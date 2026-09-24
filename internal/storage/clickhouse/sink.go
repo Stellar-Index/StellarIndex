@@ -253,6 +253,9 @@ type Sink struct {
 	conn             driver.Conn
 	flushEvery       int
 	maxBufferLedgers int // hard cap on buffered ledgers; 0 = unbounded (backfill).
+	// onFlushed, when set, is told how many ledgers every successful Flush
+	// made durable — whichever path (Add's inline flush, Flush, Close) ran it.
+	onFlushed func(ledgers int)
 
 	ledgers      []LedgerRow
 	txs          []TransactionRow
@@ -369,7 +372,8 @@ func checkSchema(ctx context.Context, conn driver.Conn) error {
 }
 
 // Add buffers one ledger's extract, auto-flushing when the ledger threshold
-// is reached.
+// is reached. Any error other than [ErrBufferFull] comes from that inline
+// flush: e is buffered and stays buffered for the next Flush.
 //
 // G12-01 bounded-drop: if a finite cap is set (SetMaxBufferLedgers) and the
 // buffer is already AT the cap, the incoming extract is DROPPED and
@@ -414,7 +418,8 @@ func (s *Sink) Add(ctx context.Context, e LedgerExtract) error {
 // or dropped ledger. (Buffer-full drops in LiveSink.PushLedger drop the whole
 // LedgerExtract atomically, so they leave no ledgers row either.)
 func (s *Sink) Flush(ctx context.Context) error {
-	if len(s.ledgers) == 0 {
+	n := len(s.ledgers)
+	if n == 0 {
 		return nil
 	}
 	if err := s.flushTxs(ctx); err != nil {
@@ -443,6 +448,9 @@ func (s *Sink) Flush(ctx context.Context) error {
 		return err
 	}
 	s.reset()
+	if s.onFlushed != nil {
+		s.onFlushed(n)
+	}
 	return nil
 }
 

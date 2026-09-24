@@ -1,6 +1,6 @@
 ---
 title: Runbook — fx-feed-stale
-last_verified: 2026-09-23
+last_verified: 2026-09-24
 status: draft
 severity: P2
 ---
@@ -62,7 +62,7 @@ the feed, fireable long before the 7-day cliff.
    ```sh
    ssh root@136.243.90.96 \
      'journalctl -u stellarindex-api --since "8 hours ago" --no-pager \
-       | grep -E "forex: (fx_quotes persisted|rates fetch failed|names fetch failed|fx_quotes persist failed)"'
+       | grep -E "forex: (fx_quotes persisted|rates fetch failed|names fetch failed|fx_quotes persist failed|primary failed|fallback failed)"'
    ```
 
    Healthy steady state is one `fx_quotes persisted` line per hour
@@ -102,22 +102,43 @@ string.
       `forex: fx_quotes persisted` and the gauge re-stamps — the alert
       clears at the next evaluation.
 
-### massive stays dry — there is no FX fallback
+### massive stays dry — the in-worker ECB standby is the only fallback
 
-No other feed can serve the forex-snap. It reads `fx_quotes` (written
-only by `massive`) and then `trades` filtered by `FXSources()`, but no
-`FXSources()` member writes `trades`. `exchangeratesapi` writes
-`oracle_updates` only, so re-enabling it does not price fiat pairs.
-`ecb` is an authority-sanity cross-check outside `FXSources()` and is
-never read here.
+When a `massive` fetch fails, the forex worker itself retries against
+the ECB daily reference rates (`forex.ECBProvider` in
+`internal/sources/external/forex/fallback.go`, registered with
+`WithFallbacks` in `cmd/stellarindex-api/main.go`). It is always on:
+there is nothing to enable or redeploy. Its rows go to `fx_quotes` with
+`source = 'ecb'`, and the forex-snap's `fx_quotes` read does not filter
+on source, so ECB-served rates price fiat pairs. Two limits:
 
-- [ ] Treat restoring `massive` as the only fix. The 7-day
-      `fx_quotes` lookback is the time you have before fiat-quoted pairs
-      stop pricing.
-- [ ] If the outage will outlast that window, escalate. Keeping fiat
-      pairs priced then needs a code change to the read path in
-      `internal/storage/timescale/trades.go` (`FXQuoteAtOrBefore`), not
-      a config flip.
+- ~30 currencies, not massive's 111. Fiat pairs outside ECB's list keep
+  their last-good `massive` row until the 7-day lookback expires.
+- One publication per TARGET working day (~16:00 CET), so ECB rates do
+  not move intraday and stop advancing over weekends and holidays.
+
+Nothing else serves the snap. `exchangeratesapi` writes
+`oracle_updates` only, so enabling it does not price fiat pairs. The
+registry's `ecb` connector is an authority-sanity cross-check outside
+`FXSources()`; it also writes `oracle_updates` only and is not the
+worker's standby, despite the shared name.
+
+The stale alert takes the freshest series across sources, so while the
+standby serves, `stellarindex_external_fx_last_quote_unix{source="ecb"}`
+keeps advancing and the alert stays clear although `massive` is down. A
+firing alert therefore means the standby is not serving either.
+
+- [ ] Check the standby: `forex: primary failed — serving from fallback`
+      with `fallback=ecb` means it is serving; `forex: fallback failed`
+      or `forex: rates fetch failed on every source` means it is down
+      too. The 7-day `fx_quotes` lookback is then the time you have
+      before fiat-quoted pairs stop pricing.
+- [ ] Restoring `massive` is still the fix: ECB covers fewer currencies
+      and moves once per working day.
+- [ ] If both feeds will stay dry past the 7-day window, escalate.
+      Keeping fiat pairs priced then needs a code change to the read
+      path in `internal/storage/timescale/trades.go`
+      (`FXQuoteAtOrBefore`), not a config flip.
 
 ### Worker not running at all (`absent` alert)
 
@@ -165,6 +186,9 @@ per ticker (`SELECT ticker, MAX(bucket) FROM fx_quotes GROUP BY ticker`).
 
 ## Changelog
 
+- 2026-09-24 — the dry-`massive` section now names the in-worker ECB
+  standby (`forex.ECBProvider`), which writes `fx_quotes` and does serve
+  the forex-snap, and how to tell whether it is serving.
 - 2026-09-23 — removed the "re-enable `exchangeratesapi`" mitigation.
   Its poller writes `oracle_updates`, never `trades`, so it could not
   serve the forex-snap; the section now states there is no fallback.
