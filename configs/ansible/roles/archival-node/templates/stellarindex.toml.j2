@@ -230,10 +230,15 @@ min_route_confidence = 0.0  # weakest-link floor [0,1]; 0 keeps pre-router behav
 #
 # Ordering effect worth knowing before the first apply: the chain pass
 # runs AFTER the per-pair refresh and writes the TARGET's own VWAP cache
-# key, so for these four pairs the composite REPLACES the direct print
-# for the tick (with cachekeys.VWAPProvenance set to `triangulated`, so
-# /v1/price reports flags.triangulated=true). That is the intent for
-# pairs this thin, and the direct price is still recomputed from trades
+# key, so for these four pairs the composite REPLACES the direct print in
+# that key for the tick (cachekeys.VWAPProvenance set to `triangulated`).
+# The key is what `/v1/price?window=` serves, and what default `/v1/price`
+# falls back to only when the pair has no closed 1m trade bucket; those
+# responses carry flags.triangulated=true plus the composite's
+# flags.diverged / flags.rerouted. Default `/v1/price` itself reads the
+# closed 1m trade bucket, so while the pair trades it serves the direct
+# price, unflagged. The composite in the key is the intent for pairs this
+# thin, and the direct price is still recomputed from trades
 # every tick — it feeds the anomaly/freeze chain and now also the
 # confidence score's composite-agreement factor. Set
 # `triangulation_enabled = false` to kill the whole pass without
