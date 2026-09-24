@@ -125,15 +125,11 @@ func makeWebhook(t *testing.T, url string, enabled bool) (uuid.UUID, []byte) {
 func runOneTick(t *testing.T, store *fakeStore, opts customerwebhook.Options) {
 	t.Helper()
 	// Tests target httptest.NewServer URLs on 127.0.0.1, which the
-	// production SSRF-guard would reject. F-1245 (codex
-	// audit-2026-05-12): supply a permissive http.Client when
-	// callers haven't already, so the test suite can still verify
-	// retry / status / signature behaviour against the local
-	// server.
+	// production SSRF guard rejects, so build the worker without it.
 	if opts.HTTPClient == nil {
 		opts.HTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
-	w := customerwebhook.New(store, opts)
+	w := customerwebhook.NewUnguardedForTest(store, opts)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	_ = w.Run(ctx)

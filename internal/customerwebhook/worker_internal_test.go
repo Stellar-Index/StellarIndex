@@ -353,7 +353,7 @@ func TestTick_PanicInOneDeliveryDoesNotStopTheBatch(t *testing.T) {
 			{ID: goodDeliveryID, WebhookID: goodID, EventType: "incident.sev1", Payload: []byte(`{}`)},
 		},
 	}
-	w := New(store, Options{HTTPClient: &http.Client{Timeout: 5 * time.Second}})
+	w := newWorker(store, Options{HTTPClient: &http.Client{Timeout: 5 * time.Second}}, unguardedClient)
 
 	w.tick(context.Background())
 

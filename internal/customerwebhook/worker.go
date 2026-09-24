@@ -193,9 +193,9 @@ type Options struct {
 	// SLA under the operator's feet.
 	MaxAttempts int
 
-	// HTTPClient sends the actual POST. Default has a 10s
-	// per-request timeout. Inject one in tests to capture the
-	// request bodies.
+	// HTTPClient supplies the delivery client's Timeout (default
+	// 10s). New always sends through the SSRF-guarded dialer and
+	// refuses redirects, and panics if a Transport is set.
 	HTTPClient *http.Client
 
 	// Logger receives the worker's structured logs. Default
@@ -223,6 +223,12 @@ type Worker struct {
 // [AccountStatusReader]; opts gets production defaults applied to every
 // zero field.
 func New(store DeliveryStore, opts Options) *Worker {
+	return newWorker(store, opts, guardedClient)
+}
+
+// newWorker is New with the delivery-client builder injectable, so a test
+// can target an httptest server on loopback without an exported bypass.
+func newWorker(store DeliveryStore, opts Options, clientFor func(*http.Client) *http.Client) *Worker {
 	if store == nil {
 		panic("customerwebhook: New: store must not be nil")
 	}
@@ -243,23 +249,7 @@ func New(store DeliveryStore, opts Options) *Worker {
 	if opts.MaxAttempts <= 0 {
 		opts.MaxAttempts = 15
 	}
-	if opts.HTTPClient == nil {
-		// F-1245 (codex audit-2026-05-12): SSRF defence at delivery
-		// time. The dial hook re-resolves the host on every send so
-		// DNS rebinding between registration and delivery is
-		// caught here. Redirects are disabled via CheckRedirect to
-		// stop a 302 from a public host pointing at an internal
-		// destination from being followed automatically.
-		opts.HTTPClient = &http.Client{
-			Timeout: defaultHTTPTimeout,
-			Transport: &http.Transport{
-				DialContext: ssrfGuardedDialContext,
-			},
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-		}
-	}
+	opts.HTTPClient = clientFor(opts.HTTPClient)
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
@@ -293,6 +283,27 @@ func New(store DeliveryStore, opts Options) *Worker {
 		doneCh:   make(chan struct{}),
 		signFn:   signHMACSHA256,
 	}
+}
+
+// guardedClient builds the client every production Worker sends with. The
+// dial hook re-resolves the host on every send, so DNS rebinding between
+// registration and delivery is caught here; redirects are refused so a 302
+// from a public host cannot steer the POST to an internal one. Only the
+// caller's Timeout (and Jar) survive: a caller Transport carries its own
+// dialer and proxy, so it is refused rather than silently discarded.
+func guardedClient(c *http.Client) *http.Client {
+	if c == nil {
+		c = &http.Client{Timeout: defaultHTTPTimeout}
+	}
+	if c.Transport != nil {
+		panic("customerwebhook: New: Options.HTTPClient.Transport must be nil (a caller transport bypasses the SSRF dial guard)")
+	}
+	guarded := *c
+	guarded.Transport = &http.Transport{DialContext: ssrfGuardedDialContext}
+	guarded.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &guarded
 }
 
 // Run drives the poll loop until ctx is cancelled. Returns the
