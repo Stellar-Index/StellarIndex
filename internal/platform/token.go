@@ -91,19 +91,16 @@ type TokenStore interface {
 	// already consumed; ErrTokenExpired if past expires_at.
 	ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte) (MagicLinkToken, error)
 
-	// ConsumableLoginCandidates returns the active (unconsumed,
-	// unexpired) login-purpose tokens for an email whose Attempts
-	// count is still below maxAttempts. Backs the email-code sign-in
-	// path: the caller recomputes each token's 6-digit code from its
-	// hash and matches the user-supplied code. Returns an empty slice
-	// (not an error) when none qualify. Ordered most-recent first.
-	ConsumableLoginCandidates(ctx context.Context, email string, maxAttempts int) ([]MagicLinkToken, error)
-
-	// IncrementLoginCodeAttempts bumps the Attempts counter on every
-	// active (unconsumed, unexpired) login-purpose token for an email.
-	// Called after a wrong code so a token self-retires from
-	// ConsumableLoginCandidates once it crosses the cap.
-	IncrementLoginCodeAttempts(ctx context.Context, email string) error
+	// ReserveLoginCodeCandidates charges one code attempt to every
+	// active (unconsumed, unexpired) login-purpose token for an email
+	// whose Attempts is below maxAttempts, and returns exactly the
+	// charged rows (post-increment Attempts, most-recent first). Backs
+	// the email-code sign-in path: the caller may compare the submitted
+	// code only against the returned rows. Charge and cap check are one
+	// atomic step, so concurrent callers can never be handed a token
+	// more than maxAttempts times in total. Returns an empty slice (not
+	// an error) when none qualify.
+	ReserveLoginCodeCandidates(ctx context.Context, email string, maxAttempts int) ([]MagicLinkToken, error)
 
 	// RegisterFailedLoginCode records ONE failed code attempt against
 	// the email itself — the durable dimension a token re-mint cannot

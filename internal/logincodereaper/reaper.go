@@ -9,9 +9,9 @@
 //
 //	POST /v1/auth/verify-code {"email":"<random>@example.com","code":"000000"}
 //	  → no lockout row              → not locked, proceed
-//	  → no consumable candidates    → empty slice, nil error
-//	  → no match                    → registerFailedLoginCode
-//	  → INSERT INTO login_code_lockouts (email = <random>@example.com)
+//	  → chargeLoginCodeAttempt      → INSERT INTO login_code_lockouts
+//	                                  (email = <random>@example.com)
+//	  → no reserved candidates      → empty slice, no match
 //
 // That row is permanent. `ClearLoginCodeLockout` only fires on a
 // SUCCESSFUL sign-in for that exact address, which can never happen for

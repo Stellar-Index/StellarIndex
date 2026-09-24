@@ -2,6 +2,7 @@ package dashboardauth
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -337,5 +338,142 @@ func TestLockout_HealthyPathLeavesTheErrorCounterAlone(t *testing.T) {
 		if got := lockoutErrors(t, op); got != want {
 			t.Errorf("errors_total{op=%q} moved on the healthy path: %v → %v", op, want, got)
 		}
+	}
+}
+
+// burstGate parks every request of a concurrent burst at its first
+// login-code store write until each one has either parked or returned.
+// That is the interleaving network jitter hands an attacker for free:
+// every request has done all of its reads before any has written. A
+// handler whose caps are check-then-act compares every guess in the
+// burst; one that charges the attempt atomically cannot.
+type burstGate struct {
+	mu       sync.Mutex
+	n        int
+	arrived  int
+	open     chan struct{}
+	opened   bool
+	timedOut bool
+}
+
+func newBurstGate(n int) *burstGate {
+	return &burstGate{n: n, open: make(chan struct{})}
+}
+
+func (g *burstGate) releaseLocked() {
+	if !g.opened {
+		g.opened = true
+		close(g.open)
+	}
+}
+
+// park is installed as fakeTokenStore.beforeWrite.
+func (g *burstGate) park() {
+	g.mu.Lock()
+	if g.opened {
+		g.mu.Unlock()
+		return
+	}
+	g.arrived++
+	if g.arrived >= g.n {
+		g.releaseLocked()
+	}
+	g.mu.Unlock()
+	select {
+	case <-g.open:
+	case <-time.After(10 * time.Second):
+		g.mu.Lock()
+		g.timedOut = true
+		g.releaseLocked()
+		g.mu.Unlock()
+	}
+}
+
+// finished records a request that returned without ever parking, which
+// still counts towards settling the burst.
+func (g *burstGate) finished() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.opened {
+		return
+	}
+	g.arrived++
+	if g.arrived >= g.n {
+		g.releaseLocked()
+	}
+}
+
+// burstWrongCodes fires n concurrent wrong-code guesses through the gate
+// and returns how many of them the handler compared against a candidate.
+func (lr *lockoutRig) burstWrongCodes(t *testing.T, email, correct string, n int) int {
+	t.Helper()
+	gate := newBurstGate(n)
+	lr.tokens.mu.Lock()
+	lr.tokens.beforeWrite = gate.park
+	before := lr.tokens.candidateHandOuts
+	lr.tokens.mu.Unlock()
+
+	var wg sync.WaitGroup
+	statuses := make([]int, n)
+	for i := 0; i < n; i++ {
+		guess := fmt.Sprintf("%06d", i)
+		if guess == correct {
+			guess = wrongCode(correct)
+		}
+		wg.Add(1)
+		go func(i int, guess string) {
+			defer wg.Done()
+			defer gate.finished()
+			statuses[i] = lr.postVerifyCode(t, email, guess).Code
+		}(i, guess)
+	}
+	wg.Wait()
+
+	lr.tokens.mu.Lock()
+	lr.tokens.beforeWrite = nil
+	compared := lr.tokens.candidateHandOuts - before
+	lr.tokens.mu.Unlock()
+
+	if gate.timedOut {
+		t.Fatal("burst never settled: a request neither wrote nor returned within 10s")
+	}
+	for i, code := range statuses {
+		if code != http.StatusBadRequest {
+			t.Fatalf("guess %d: status = %d, want 400", i, code)
+		}
+	}
+	return compared
+}
+
+// TestLockout_ConcurrentBurstBoundedByTokenCap — 50 parallel wrong
+// guesses against one fresh token get at most maxCodeAttempts
+// comparisons, not 50.
+func TestLockout_ConcurrentBurstBoundedByTokenCap(t *testing.T) {
+	const email = "burst-token@example.com"
+	lr := newLockoutRig(t)
+	code := lr.loginAndCode(t, email)
+
+	compared := lr.burstWrongCodes(t, email, code, 50)
+	if compared > maxCodeAttempts {
+		t.Fatalf("%d of 50 concurrent guesses were compared, want at most %d (per-token cap)",
+			compared, maxCodeAttempts)
+	}
+}
+
+// TestLockout_ConcurrentBurstBoundedByDurableCap — the per-email budget
+// holds under concurrency too. Two failures short of the cap, with a
+// fresh token whose own budget (5) exceeds what is left, a burst may be
+// compared at most twice.
+func TestLockout_ConcurrentBurstBoundedByDurableCap(t *testing.T) {
+	const email = "burst-durable@example.com"
+	const seeded = maxDurableCodeFailures - 2
+	lr := newLockoutRig(t)
+	lr.grind(t, email, seeded)
+	code := lr.loginAndCode(t, email)
+
+	compared := lr.burstWrongCodes(t, email, code, 50)
+	if compared > maxDurableCodeFailures-seeded {
+		t.Fatalf("%d of 50 concurrent guesses were compared, want at most %d (durable per-email cap)",
+			compared, maxDurableCodeFailures-seeded)
 	}
 }
