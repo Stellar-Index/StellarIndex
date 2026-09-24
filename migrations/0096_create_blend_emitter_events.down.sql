@@ -1,4 +1,4 @@
--- 0095 down — drop the blend_emitter_events hypertable.
+-- 0096 down — drop the blend_emitter_events hypertable.
 --
 -- DROP TABLE removes the hypertable, its chunks, indexes and
 -- compression settings in one statement. CASCADE is not needed —
