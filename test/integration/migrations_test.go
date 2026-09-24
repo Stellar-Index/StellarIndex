@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -564,4 +565,83 @@ func assertPrices1mHasRow(t *testing.T, db *sql.DB, ctx context.Context) {
 	if count < 1 {
 		t.Errorf("expected prices_1m to contain at least 1 row after refresh, got %d", count)
 	}
+}
+
+// TestCAGGRefreshPolicyAssertionSQL executes config-assertions.sh's
+// caggs_have_refresh_policy query, read byte-for-byte from the script,
+// against a fully migrated TimescaleDB: every CAGG the migrations create
+// must be matched to its refresh job (0 uncovered), and dropping one
+// policy must be counted (1 uncovered). The timescale-jobs probe keys on
+// the job, so this query is the only thing that sees the dropped policy.
+func TestCAGGRefreshPolicyAssertionSQL(t *testing.T) {
+	query := caggRefreshPolicyAssertionSQL(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	defer db.Close()
+
+	var caggs, viewKeyed int
+	var version string
+	if err := db.QueryRowContext(ctx, `
+		SELECT (SELECT count(*) FROM timescaledb_information.continuous_aggregates),
+		       (SELECT count(*) FROM timescaledb_information.jobs j
+		          JOIN timescaledb_information.continuous_aggregates ca
+		            ON j.hypertable_schema = ca.view_schema
+		           AND j.hypertable_name = ca.view_name
+		         WHERE j.proc_name = 'policy_refresh_continuous_aggregate'),
+		       (SELECT extversion FROM pg_extension WHERE extname = 'timescaledb')`,
+	).Scan(&caggs, &viewKeyed, &version); err != nil {
+		t.Fatalf("census: %v", err)
+	}
+	if caggs < 9 {
+		t.Fatalf("migrated database has %d continuous aggregates, want at least the 9 price/TWAP views", caggs)
+	}
+	t.Logf("timescaledb %s: %d continuous aggregates, %d refresh jobs keyed on the view's schema and name", version, caggs, viewKeyed)
+
+	uncovered := func() int {
+		t.Helper()
+		var n int
+		if err := db.QueryRowContext(ctx, query).Scan(&n); err != nil {
+			t.Fatalf("run caggs_have_refresh_policy SQL: %v", err)
+		}
+		return n
+	}
+	if got := uncovered(); got != 0 {
+		t.Fatalf("caggs_have_refresh_policy counts %d uncovered aggregates on a fully migrated database, want 0", got)
+	}
+	if _, err := db.ExecContext(ctx, `SELECT remove_continuous_aggregate_policy('prices_1d')`); err != nil {
+		t.Fatalf("remove prices_1d refresh policy: %v", err)
+	}
+	if got := uncovered(); got != 1 {
+		t.Errorf("after dropping prices_1d's refresh policy the check counts %d uncovered aggregates, want 1", got)
+	}
+}
+
+// caggRefreshPolicyAssertionSQL returns the SQL config-assertions.sh
+// runs for caggs_have_refresh_policy, so the test executes the shipped
+// bytes rather than a copy.
+func caggRefreshPolicyAssertionSQL(t *testing.T) string {
+	t.Helper()
+	_, thisFile, _, _ := runtime.Caller(0)
+	path := filepath.Join(filepath.Dir(thisFile), "..", "..", "scripts", "ops", "config-assertions.sh")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	const open = `CAGGS_WITHOUT_REFRESH_POLICY_SQL="`
+	_, rest, ok := strings.Cut(string(src), open)
+	if !ok {
+		t.Fatalf("%s defines no CAGGS_WITHOUT_REFRESH_POLICY_SQL", path)
+	}
+	query, _, ok := strings.Cut(rest, `"`)
+	if !ok || !strings.Contains(query, "continuous_aggregates") {
+		t.Fatalf("CAGGS_WITHOUT_REFRESH_POLICY_SQL in %s is unterminated or not the aggregate census: %q", path, query)
+	}
+	return query
 }

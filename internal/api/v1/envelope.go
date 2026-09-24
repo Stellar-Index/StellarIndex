@@ -83,9 +83,10 @@ type Flags struct {
 	// DivergenceChecked is true only when a live cross-reference check ran
 	// (≥ `min_sources_for_warning` responding references — the SAME quorum
 	// the worker gates its verdict on; below it the cross-check reaches no
-	// verdict at all). When false, `divergence_warning` is NOT
-	// meaningful — the check is blind (references dark, or no record yet), so
-	// a `false` warning must not be read as "prices agree" (CS-087).
+	// verdict at all). When false the check is blind (references dark, or no
+	// record yet), so a `false` warning must not be read as "prices agree"
+	// (CS-087); a `true` warning is the last evaluated verdict carried
+	// forward through the outage, not a fresh one.
 	//
 	// Set on the surfaces that consult the verdict: /v1/price, its
 	// ?window= variant, /v1/price/tip, /v1/price/tip/stream and /v1/vwap —

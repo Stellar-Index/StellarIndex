@@ -85,3 +85,34 @@ groups:
             or paste it into the placeholder, then start
             curated-rwa-sync.service; the gauge clears on the next
             stamped run.
+
+      # The sync can be perfectly healthy while the CURATOR has stopped
+      # re-executing its public queries: every run re-reads the same
+      # result, last_run_unix advances and the arm stays recognised, but
+      # the figure is frozen. The API labels it `stale` past 48h and drops
+      # it past 7 days; this is the operator's signal between the two.
+      # Healthy worst case is ~48h (a daily curator read by a daily sync,
+      # then held a day until the next read), so 72h is a full missed
+      # curator day beyond that. executed_at_unix is 0 when a run read
+      # nothing — the refused / stale rules own that case.
+      - alert: stellarindex_curated_rwa_published_stale
+        expr: |
+          (time() - stellarindex_curated_rwa_sync_executed_at_unix) > (72 * 3600)
+          and
+          stellarindex_curated_rwa_sync_executed_at_unix > 0
+        for: 1h
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+          summary: "the curator's published RWA total has not been re-executed in ≥ 72h — /v1/rwa/assets serves it stale and drops it at 7 days"
+          description: |
+            The curated-rwa-sync run is reading the curator's public total
+            query, but the query's own execution time (`executed_at_unix`)
+            has not moved in over 72 hours. /v1/rwa/assets already serves
+            `curated.published` with `stale: true`, and drops the block
+            once the execution is 7 days old. Nothing on this side
+            refreshes it: confirm on dune.com that the curator's query
+            schedule is paused or broken (runbook triage step 5).

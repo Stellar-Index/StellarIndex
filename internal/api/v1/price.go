@@ -2438,12 +2438,19 @@ func (s *Server) attachConfidence(r *http.Request, snap *PriceSnapshot, asset, q
 // Redis outage at one round-trip and at most one WARN per request rather
 // than one per alias — at most, because an error that IS the context's
 // (cancelled, or a deadline the caller set deliberately) is not news
-// about the store and is left to whoever set that deadline. The (warning=true, checked=false) pair stays
-// unreachable because a fired warning necessarily met that quorum.
+// about the store and is left to whoever set that deadline.
+//
+// A below-quorum record can still carry warning=true: the worker carries
+// the last evaluated verdict forward rather than asserting "no
+// divergence". That is a standing warning, not a fresh verdict, so it
+// does not end the walk — a checked verdict under a later spelling wins —
+// but when no spelling reaches a verdict it is returned as (true, false)
+// rather than dropped.
 func (s *Server) lookupDivergenceFlag(ctx context.Context, asset canonical.Asset) (firing, checked bool) {
 	if s.divergence == nil {
 		return false, false
 	}
+	standing := false
 	for _, a := range assetAliases(asset) {
 		gotFiring, gotChecked, err := s.divergence.DivergenceFiringFor(ctx, a)
 		if err != nil {
@@ -2470,11 +2477,12 @@ func (s *Server) lookupDivergenceFlag(ctx context.Context, asset canonical.Asset
 			}
 			break
 		}
-		if gotFiring || gotChecked {
-			return gotFiring, gotChecked
+		if gotChecked {
+			return gotFiring, true
 		}
+		standing = standing || gotFiring
 	}
-	return false, false
+	return standing, false
 }
 
 // attachCompositeFlags surfaces the aggregator's router-quality

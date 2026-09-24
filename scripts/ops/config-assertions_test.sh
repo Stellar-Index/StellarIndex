@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # config-assertions_test.sh — fixture tests for the Postgres
-# max_worker_processes headroom pair (T615) and the ClickHouse
-# destructive-DDL size guard's effective value (T616).
+# max_worker_processes headroom pair (T615), the continuous-aggregate
+# refresh-policy check and the ClickHouse destructive-DDL size guard's
+# effective value (T616).
 #
 # Pins the property T615 was about: max_worker_processes is
 # postmaster-level (postgresql.conf.j2's own comment), so an ansible
@@ -33,6 +34,9 @@ for a in "$@"; do
   case "$a" in
     *"SHOW max_worker_processes"*) echo "${FAKE_PG_MAX_WORKER_PROCESSES:-}"; exit 0 ;;
     *"SHOW idle_in_transaction_session_timeout"*) echo "${FAKE_PG_IDLE_IN_TXN_TIMEOUT:-}"; exit 0 ;;
+    *"timescaledb_information.continuous_aggregates"*)
+      [ "${FAKE_PG_DOWN:-0}" = 1 ] && exit 2
+      echo "${FAKE_PG_CAGGS_WITHOUT_POLICY:-0}"; exit 0 ;;
   esac
 done
 exit 1
@@ -75,6 +79,8 @@ run() {
     PG_PASSWORD_FILE="$TMP/pgpass" \
     FAKE_PG_MAX_WORKER_PROCESSES="$live" \
     FAKE_PG_IDLE_IN_TXN_TIMEOUT="$idle_live" \
+    FAKE_PG_CAGGS_WITHOUT_POLICY="${CAGGS_MISSING:-0}" \
+    FAKE_PG_DOWN="${PG_DOWN:-0}" \
     CH_CONFIG_DIR="${CH_DIR:-$TMP/ch-config}" \
     FAKE_CH_DROP_GUARD="${CH_GUARD:-}" \
     FAKE_CH_DOWN="${CH_DOWN:-0}" \
@@ -135,6 +141,18 @@ expect_metric 'idle timeout codified, reload pending -> live catches the gap' pg
 # The unfixed shape: the GUC is absent from the file entirely.
 run 32 32 ABSENT 0
 expect_metric 'idle timeout absent from file -> codified catches it' pg_idle_in_transaction_timeout_codified 0
+
+# ── Every continuous aggregate has a refresh policy ──────────────────
+# The fake answers the assertion's count of aggregates with no refresh
+# job. Every CAGG covered -> ok; one policy dropped -> the check fails
+# (the timescale-jobs probe emits nothing for that view, so this is the
+# only signal); Postgres unreachable -> fails closed.
+run 32 32
+expect_metric 'every cagg has a refresh policy -> ok' caggs_have_refresh_policy 1
+CAGGS_MISSING=1 run 32 32
+expect_metric 'one cagg policy dropped -> caught' caggs_have_refresh_policy 0
+PG_DOWN=1 run 32 32
+expect_metric 'postgres unreachable -> fails closed' caggs_have_refresh_policy 0
 
 # ── ClickHouse drop guard (T616) ────────────────────────────────────
 # The ansible verify task asserts the EFFECTIVE limits once, at apply

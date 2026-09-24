@@ -46,6 +46,8 @@ func TestCuratedRWAPublished_ReplacePerSeriesAndRead(t *testing.T) {
 
 	const curator = "dune:stellar"
 	executed := time.Date(2026, 9, 17, 4, 58, 0, 0, time.UTC)
+	// The split is a separate query execution on its own clock.
+	splitExecuted := executed.Add(-30 * time.Hour)
 	month := func(y int, m time.Month, d int) time.Time { return time.Date(y, m, d, 0, 0, 0, 0, time.UTC) }
 	total := func(mo time.Time, v string) timescale.CuratedRWAPublishedRow {
 		return timescale.CuratedRWAPublishedRow{
@@ -56,7 +58,7 @@ func TestCuratedRWAPublished_ReplacePerSeriesAndRead(t *testing.T) {
 	split := func(mo time.Time, sub, v string) timescale.CuratedRWAPublishedRow {
 		return timescale.CuratedRWAPublishedRow{
 			Series: timescale.CuratedRWASeriesMonthlyBySubclass, MonthEnd: mo, Subclass: sub, ValueUSD: v,
-			SourceQuery: 6961847, ExecutedAt: executed,
+			SourceQuery: 6961847, ExecutedAt: splitExecuted,
 		}
 	}
 
@@ -90,6 +92,10 @@ func TestCuratedRWAPublished_ReplacePerSeriesAndRead(t *testing.T) {
 	if got.SourceQuery != 6961845 || got.SplitSourceQuery != 6961847 || !got.ExecutedAt.Equal(executed) {
 		t.Errorf("provenance = query %d / %d at %v, want 6961845 / 6961847 at %v",
 			got.SourceQuery, got.SplitSourceQuery, got.ExecutedAt, executed)
+	}
+	if !got.SplitExecutedAt.Equal(splitExecuted) {
+		t.Errorf("split executed_at = %v, want the split query's own %v (not the total's %v)",
+			got.SplitExecutedAt, splitExecuted, executed)
 	}
 	if got.ObservedAt.IsZero() || time.Since(got.ObservedAt) > time.Minute {
 		t.Errorf("observed_at = %v, want this run's clock", got.ObservedAt)
@@ -125,8 +131,9 @@ func TestCuratedRWAPublished_ReplacePerSeriesAndRead(t *testing.T) {
 	}
 	// September has no split rows — the split series was not replaced —
 	// so the latest month's split is empty, never July's or August's.
-	if len(got.BySubclass) != 0 {
-		t.Errorf("split for a month the split series does not carry = %+v, want none", got.BySubclass)
+	if len(got.BySubclass) != 0 || !got.SplitExecutedAt.IsZero() {
+		t.Errorf("split for a month the split series does not carry = %+v at %v, want none and no execution time",
+			got.BySubclass, got.SplitExecutedAt)
 	}
 	var splitRows int
 	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM curated_rwa_published_series

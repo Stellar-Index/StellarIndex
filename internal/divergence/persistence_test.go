@@ -199,3 +199,56 @@ func TestRefreshPair_OnWarningHookFiresOnlyAfterPersistence(t *testing.T) {
 		t.Fatalf("hook fired=%d after the divergence persisted, want 1", fired)
 	}
 }
+
+// TestRefreshPair_BelowQuorumTickFreezesWarning pins that a refresh which
+// cannot reach the reference quorum is a no-op on warning state. A firing
+// pair drops to one responding reference for a single refresh: the cached
+// WarningFired must stay true (not be rewritten to an all-clear), the
+// persistence streak must survive so the warning is still up the moment
+// references return, and no second webhook may be emitted for the same
+// ongoing episode.
+func TestRefreshPair_BelowQuorumTickFreezesWarning(t *testing.T) {
+	flaky := &stubReference{name: "chainlink", price: 1.00}
+	refs := []divergence.Reference{
+		&stubReference{name: "coingecko", price: 1.00},
+		flaky,
+	}
+	var fired int
+	svc, rdb, _ := newTestService(t, refs, divergence.ServiceOptions{
+		Threshold:            5.0,
+		MinSourcesForWarning: 2,
+		OnWarningFired: func(_ context.Context, _ canonical.Pair, _ divergence.CachedResult) {
+			fired++
+		},
+	})
+	ctx := context.Background()
+	pair := xlmUSD(t)
+	t0 := time.Now()
+	step := divergence.DefaultWarningPersistence + time.Minute
+
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0)
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step))
+	if got := readDivergence(t, rdb, pair); !got.WarningFired || fired != 1 {
+		t.Fatalf("setup: WarningFired=%v hooks=%d, want a firing pair with one hook", got.WarningFired, fired)
+	}
+
+	flaky.err = divergence.ErrPriceUnavailable
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step+time.Minute))
+	below := readDivergence(t, rdb, pair)
+	if below.SuccessCount != 1 {
+		t.Fatalf("below-quorum tick SuccessCount = %d, want 1", below.SuccessCount)
+	}
+	if !below.WarningFired {
+		t.Errorf("below-quorum tick rewrote WarningFired to false; want the last verdict (true) carried forward")
+	}
+
+	flaky.err = nil
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(step+2*time.Minute))
+	if got := readDivergence(t, rdb, pair); !got.WarningFired {
+		t.Errorf("first refresh after references returned: WarningFired=false; the persistence streak was reset by the below-quorum tick")
+	}
+	_ = svc.RefreshPair(ctx, pair, 1.10, t0.Add(2*step+2*time.Minute))
+	if fired != 1 {
+		t.Errorf("hook fired %d times for one uninterrupted divergence, want 1", fired)
+	}
+}

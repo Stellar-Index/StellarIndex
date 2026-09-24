@@ -1358,6 +1358,11 @@
       # name (prices_1m), not the _materialized_hypertable_NN — do not
       # "fix" this into a join on continuous_aggregates, which yields
       # NULL and silently drops every series.
+      #
+      # Keyed on the POLICY, so a CAGG whose refresh policy was dropped
+      # is absent here, not zero: that is caggs_have_refresh_policy's job
+      # (scripts/ops/config-assertions.sh), reported through
+      # stellarindex_config_assertion_failed.
       q "SELECT j.hypertable_name,
                 COALESCE(EXTRACT(epoch FROM js.last_successful_finish)::bigint, 0),
                 EXTRACT(epoch FROM j.schedule_interval)::bigint

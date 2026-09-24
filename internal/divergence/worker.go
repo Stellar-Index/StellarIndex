@@ -73,6 +73,10 @@ type CachedResult struct {
 	// that transient self-clears as the average rolls past the move. A
 	// genuine divergence persists past the window and still fires. See
 	// [Service.warningPersists].
+	//
+	// A below-quorum refresh reaches no verdict, so it carries the last
+	// evaluated value forward instead of asserting false; SuccessCount
+	// below the quorum is what marks the entry unchecked.
 	WarningFired bool `json:"warning_fired"`
 
 	// Sources / Failures mirror Result, kept for operator
@@ -251,8 +255,9 @@ type Service struct {
 
 	// onWarning + warningState power the edge-triggered fan-out
 	// hook (F-1249 codex audit-2026-05-12). `warningState` maps
-	// pair.String() → most-recent WarningFired bool; the hook fires
-	// only on `false → true` transitions.
+	// pair.String() → the WarningFired of the most recent EVALUATED
+	// refresh; the hook fires only on `false → true` transitions, and a
+	// below-quorum refresh carries this value forward untouched.
 	//
 	// firingSince (W3-guards-2) maps pair.String() → the comparison
 	// time of the first refresh in the current uninterrupted
@@ -371,7 +376,6 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	// per CS-087 — with no responses, AgreementCount == 0 means
 	// "unchecked", not "unanimous disagreement".
 	checked := res.SuccessCount >= s.minSources
-	rawFiring := checked && (res.DivergencePct > s.threshold || agreeing == 0)
 
 	// W3-guards-2: our value is a shortest-window VWAP; the references
 	// are instantaneous spot quotes. On a fast price move the VWAP lags
@@ -385,7 +389,14 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 	if gateAt.IsZero() {
 		gateAt = time.Now().UTC()
 	}
-	warningFired := s.warningPersists(pair.String(), rawFiring, gateAt)
+	// A below-quorum refresh is unevaluable: it must not assert "no
+	// divergence", restart the persistence streak or reset the webhook
+	// latch, so it carries the last evaluated verdict forward.
+	warningFired := s.lastWarning(pair.String())
+	if checked {
+		rawFiring := res.DivergencePct > s.threshold || agreeing == 0
+		warningFired = s.warningPersists(pair.String(), rawFiring, gateAt)
+	}
 
 	cached := CachedResult{
 		PairID:         pair.String(),
@@ -453,29 +464,40 @@ func (s *Service) RefreshPair(ctx context.Context, pair canonical.Pair, ourPrice
 		s.flushObservations(ctx, pair, ourPrice, res, stampedAt)
 	}
 
-	// F-1249 (codex audit-2026-05-12): edge-triggered warning hook.
-	// Only fires on `false → true` so the customer-webhook
-	// delivery queue doesn't get one POST per refresh-while-firing.
-	// Returns to "false" reset the latch so the next time the
-	// pair re-crosses the threshold the customer gets a fresh
-	// callback.
-	if s.onWarning != nil {
-		s.warningMu.Lock()
-		prev := s.warningState[pair.String()]
-		s.warningState[pair.String()] = cached.WarningFired
-		s.warningMu.Unlock()
-		if cached.WarningFired && !prev {
-			s.onWarning(ctx, pair, cached)
-		}
+	if checked {
+		s.recordWarning(ctx, pair, cached)
 	}
 	// CS-088: references were configured but none responded — the cache now
-	// holds a SuccessCount=0 / WarningFired=false result that looks identical
-	// on the wire to "checked, no divergence". Signal the outage so the
-	// refresh loop can emit a distinct outcome and page on a dark checker.
+	// holds a SuccessCount=0 result carrying the last verdict forward, which
+	// nothing on the wire distinguishes from a fresh one except the quorum.
+	// Signal the outage so the refresh loop can emit a distinct outcome and
+	// page on a dark checker.
 	if res.SuccessCount == 0 {
 		return ErrNoReferenceResponded
 	}
 	return nil
+}
+
+// lastWarning returns the WarningFired of the pair's most recent
+// evaluated refresh (false when there has been none).
+func (s *Service) lastWarning(pairKey string) bool {
+	s.warningMu.Lock()
+	defer s.warningMu.Unlock()
+	return s.warningState[pairKey]
+}
+
+// recordWarning latches an evaluated refresh's verdict and runs the
+// F-1249 edge-triggered hook: it fires only on `false → true`, so the
+// customer-webhook queue gets one POST per episode rather than one per
+// refresh-while-firing, and a return to false re-arms it.
+func (s *Service) recordWarning(ctx context.Context, pair canonical.Pair, cached CachedResult) {
+	s.warningMu.Lock()
+	prev := s.warningState[pair.String()]
+	s.warningState[pair.String()] = cached.WarningFired
+	s.warningMu.Unlock()
+	if s.onWarning != nil && cached.WarningFired && !prev {
+		s.onWarning(ctx, pair, cached)
+	}
 }
 
 // warningPersists is the W3-guards-2 debounce that separates a genuine

@@ -791,7 +791,9 @@ func TestPrice_DivergenceFires(t *testing.T) {
 			"native/fiat:USD": {Price: "0.07", PriceType: "vwap"},
 		},
 	}
-	div := &stubDivergenceLooker{firing: true}
+	// An evaluated (checked) firing verdict ends the alias walk; an
+	// unchecked one does not (TestPrice_DivergenceFreshVerdictBeatsStandingWarning).
+	div := &stubDivergenceLooker{firing: true, checked: true}
 	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
 	ts := startHTTPTest(t, srv.Handler())
 
@@ -952,6 +954,61 @@ func TestPrice_DivergenceCheckedFalseWhenNoAliasWasChecked(t *testing.T) {
 	}
 	if len(div.askedSpellings()) != len(canonical.AssetAliases(canonical.NativeAsset())) {
 		t.Errorf("spellings tried = %v, want every alias before reporting unchecked", div.askedSpellings())
+	}
+}
+
+// TestPrice_DivergenceFreshVerdictBeatsStandingWarning — a below-quorum
+// record carries the pair's last evaluated warning forward
+// (firing=true, checked=false). That is not a verdict, so the alias walk
+// must not stop on it: a checked verdict under a later spelling is the
+// answer. Stopping on the first non-empty record served a stale warning
+// as the price's only cross-check result beside a fresh clean one.
+func TestPrice_DivergenceFreshVerdictBeatsStandingWarning(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
+		},
+	}
+	div := &stubAliasDivergenceLooker{
+		verdicts: map[string]struct{ firing, checked bool }{
+			"native":     {firing: true, checked: false},
+			"crypto:XLM": {firing: false, checked: true},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_checked":true`) || !strings.Contains(body, `"divergence_warning":false`) {
+		t.Errorf("want the fresh clean verdict (warning=false, checked=true), got: %s", body)
+	}
+}
+
+// TestPrice_DivergenceStandingWarningKeptWhenNoVerdict — with no spelling
+// reaching a quorum, a carried-forward warning is still served, flagged
+// unchecked, rather than being dropped to (false, false).
+func TestPrice_DivergenceStandingWarningKeptWhenNoVerdict(t *testing.T) {
+	reader := &stubPriceReader{
+		snapshots: map[string]v1.PriceSnapshot{
+			"native/fiat:USD": {Price: "0.18726015145022901497", PriceType: "vwap"},
+		},
+	}
+	div := &stubAliasDivergenceLooker{
+		verdicts: map[string]struct{ firing, checked bool }{
+			"crypto:XLM": {firing: true, checked: false},
+		},
+	}
+	srv := v1.New(v1.Options{Prices: reader, Divergence: div})
+	ts := startHTTPTest(t, srv.Handler())
+
+	resp := mustGet(t, ts.URL+"/v1/price?asset=native&quote=fiat:USD")
+	body, _ := readAll(resp)
+	if !strings.Contains(body, `"divergence_checked":false`) || !strings.Contains(body, `"divergence_warning":true`) {
+		t.Errorf("want the standing warning (warning=true, checked=false), got: %s", body)
+	}
+	if len(div.askedSpellings()) != len(canonical.AssetAliases(canonical.NativeAsset())) {
+		t.Errorf("spellings tried = %v, want every alias before settling on a standing warning", div.askedSpellings())
 	}
 }
 

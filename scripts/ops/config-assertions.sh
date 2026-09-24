@@ -238,6 +238,37 @@ pg_max_worker_processes_live() {
 }
 assert_cmd pg_max_worker_processes_live pg_max_worker_processes_live
 
+# ── Every continuous aggregate has a refresh policy ──────────────────
+# The timescale-jobs probe enumerates refresh POLICIES (jobs where
+# proc_name = 'policy_refresh_continuous_aggregate'), so a CAGG whose
+# policy was dropped emits no stellarindex_cagg_last_refresh_unix series
+# and stellarindex_timescale_cagg_stale cannot fire for it. This
+# enumerates the AGGREGATES instead. No want-list: every CAGG the
+# migrations create carries a policy on every network. A refresh job's
+# jobs.hypertable_* is the view on TimescaleDB 2.26 and was the
+# materialization hypertable on older 2.x, so either matches. The SQL is
+# executed against migrated TimescaleDB by
+# TestCAGGRefreshPolicyAssertionSQL (test/integration/migrations_test.go),
+# which reads it from this variable; keep it free of double quotes.
+CAGGS_WITHOUT_REFRESH_POLICY_SQL="
+SELECT count(*) FROM timescaledb_information.continuous_aggregates ca
+ WHERE NOT EXISTS (
+   SELECT 1 FROM timescaledb_information.jobs j
+    WHERE j.proc_name = 'policy_refresh_continuous_aggregate'
+      AND ((j.hypertable_schema = ca.view_schema
+            AND j.hypertable_name = ca.view_name)
+        OR (j.hypertable_schema = ca.materialization_hypertable_schema
+            AND j.hypertable_name = ca.materialization_hypertable_name)));
+"
+# shellcheck disable=SC2317,SC2329  # invoked indirectly via assert_cmd's "${@:2}"
+caggs_have_refresh_policy() {
+  [[ -r "$PG_PASSWORD_FILE" ]] || return 1
+  PGPASSWORD="$(cat "$PG_PASSWORD_FILE")" \
+    psql -h 127.0.0.1 -U stellarindex -d stellarindex -tAc \
+    "$CAGGS_WITHOUT_REFRESH_POLICY_SQL" 2>/dev/null | grep -qx 0
+}
+assert_cmd caggs_have_refresh_policy caggs_have_refresh_policy
+
 # ── Postgres idle-in-transaction reaper ───────────────────────────────
 # Same codified-vs-applied pairing as max_worker_processes above, for
 # the GUC that is the only thing that ever terminates a session an app

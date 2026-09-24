@@ -413,6 +413,12 @@ groups:
       # still gone. `for: 15m` absorbs a probe restart or a short
       # scrape gap.
       #
+      # This is the edge: it resolves once the last sample leaves the 1d
+      # window, and a CAGG created without a policy never reports at all.
+      # The standing check is caggs_have_refresh_policy in
+      # scripts/ops/config-assertions.sh, which enumerates the aggregates
+      # and surfaces through stellarindex_config_assertion_failed.
+      #
       # Deliberately decommissioning a CAGG (dropping both its policy
       # and the view) trips this for a day — silence it rather than
       # "fixing" the probe query into a join on

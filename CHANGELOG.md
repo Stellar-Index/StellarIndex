@@ -293,6 +293,34 @@ against.
   10⁹ prices. Handlers price a request through
   `middleware.ChargeUsage`; every other route still costs one unit.
 
+- **ops — continuous-aggregate refresh policies (#561):** new config
+  assertion `caggs_have_refresh_policy` enumerates every continuous
+  aggregate and fails when one has no refresh job. The timescale-jobs
+  probe enumerates the jobs, so a CAGG whose policy was dropped vanished
+  from `stellarindex_timescale_cagg_stale` and was flagged only for the
+  day `stellarindex_timescale_cagg_refresh_missing` remembers it (and
+  never, for a CAGG created without one); it now raises
+  `stellarindex_config_assertion_failed` for as long as it lasts.
+- **rwa — curated published totals (#638):** the curator's split is a
+  separate query execution from its total, and `/v1/rwa/assets` now
+  serves its own `curated.published.by_subclass_executed_at` instead of
+  implying the total's `executed_at` covers both; a split whose query
+  has not run in 7 days is withheld beside a fresher total. New ticket
+  alert `stellarindex_curated_rwa_published_stale` selects
+  `stellarindex_curated_rwa_sync_executed_at_unix`, which no rule read:
+  it fires when the curator's query has not re-executed in 72 h while
+  the sync itself stays healthy.
+- **divergence — below-quorum refresh:** a refresh that cannot
+  reach `min_sources_for_warning` references no longer rewrites the
+  pair's cached `warning_fired` to false, restarts its persistence
+  streak or re-arms the `divergence.firing` webhook latch. It carries the
+  last evaluated verdict forward (the API reports it with
+  `divergence_checked=false`), so a transient reference error no longer
+  produces a false all-clear followed by a duplicate webhook. The API's
+  alias walk treats that carried-forward warning as standing, not as a
+  verdict: a checked verdict under another spelling of the asset wins,
+  and only when none exists is `divergence_warning=true,
+  divergence_checked=false` served.
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

@@ -195,7 +195,11 @@ type RWACuratedPublished struct {
 	// own freshness, distinct from when this index read it.
 	ExecutedAt WireTime                   `json:"executed_at"`
 	BySubclass []RWACuratedPublishedSplit `json:"by_subclass"`
-	Series     []RWACuratedPublishedPoint `json:"series"`
+	// BySubclassExecutedAt is when the curator's SPLIT query last ran —
+	// a separate execution from ExecutedAt's total. Present iff
+	// BySubclass is non-empty.
+	BySubclassExecutedAt *WireTime                  `json:"by_subclass_executed_at,omitempty"`
+	Series               []RWACuratedPublishedPoint `json:"series"`
 	// Stale marks a published total whose ExecutedAt is older than
 	// [rwaCuratedPublishedStaleAfter]: the curator's own query has not
 	// moved in a while, even though this index's read of it is fresh.
@@ -459,6 +463,8 @@ func rwaCuratedTally(rows []RWAAsset, out *RWACuratedSummary) (*big.Rat, bool) {
 // served at all — the curator's own clock, not this index's sync
 // health, has gone stale for too long. Between that and
 // [rwaCuratedPublishedStaleAfter] it is served labelled `stale: true`.
+// The split is its own query execution and is held to the same cutoff
+// on its own clock (see [rwaCuratedPublishedSplit]).
 func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *string, now time.Time) *RWACuratedPublished {
 	if p == nil {
 		return nil
@@ -474,7 +480,6 @@ func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *str
 		TotalUSD:   total.FloatString(2),
 		AsOf:       p.MonthEnd.UTC().Format("2006-01-02"),
 		ExecutedAt: WireTime(p.ExecutedAt),
-		BySubclass: make([]RWACuratedPublishedSplit, 0, len(p.BySubclass)),
 		Series:     make([]RWACuratedPublishedPoint, 0, len(p.Series)),
 		Stale:      now.Sub(p.ExecutedAt) > rwaCuratedPublishedStaleAfter,
 		Source:     "dune query " + strconv.FormatInt(p.SourceQuery, 10),
@@ -482,11 +487,7 @@ func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *str
 	if p.SplitSourceQuery != 0 && p.SplitSourceQuery != p.SourceQuery {
 		out.Source += " / " + strconv.FormatInt(p.SplitSourceQuery, 10)
 	}
-	for _, sp := range p.BySubclass {
-		if v := ratFromOptionalString(&sp.ValueUSD); v != nil {
-			out.BySubclass = append(out.BySubclass, RWACuratedPublishedSplit{Subclass: sp.Subclass, ValueUSD: v.FloatString(2)})
-		}
-	}
+	out.BySubclass, out.BySubclassExecutedAt = rwaCuratedPublishedSplit(p, now)
 	for _, pt := range p.Series {
 		if v := ratFromOptionalString(&pt.ValueUSD); v != nil {
 			out.Series = append(out.Series, RWACuratedPublishedPoint{MonthEnd: pt.MonthEnd.UTC().Format("2006-01-02"), ValueUSD: v.FloatString(2)})
@@ -497,6 +498,27 @@ func rwaCuratedPublishedBlock(p *timescale.CuratedRWAPublished, verifiedRef *str
 		out.GapVsVerifiedUSD = &gap
 	}
 	return out
+}
+
+// rwaCuratedPublishedSplit renders the split with its own execution
+// time. A split whose query has not run inside [rwaCuratedPublishedMaxAge]
+// is withheld (empty, no timestamp) rather than served beside a fresher
+// total as if the two were one execution.
+func rwaCuratedPublishedSplit(p *timescale.CuratedRWAPublished, now time.Time) ([]RWACuratedPublishedSplit, *WireTime) {
+	out := make([]RWACuratedPublishedSplit, 0, len(p.BySubclass))
+	if p.SplitExecutedAt.IsZero() || now.Sub(p.SplitExecutedAt) > rwaCuratedPublishedMaxAge {
+		return out, nil
+	}
+	for _, sp := range p.BySubclass {
+		if v := ratFromOptionalString(&sp.ValueUSD); v != nil {
+			out = append(out, RWACuratedPublishedSplit{Subclass: sp.Subclass, ValueUSD: v.FloatString(2)})
+		}
+	}
+	if len(out) == 0 {
+		return out, nil
+	}
+	at := WireTime(p.SplitExecutedAt)
+	return out, &at
 }
 
 // ─── handler hook ───────────────────────────────────────────────────
