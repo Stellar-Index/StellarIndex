@@ -353,3 +353,84 @@ func TestScanDetail_DuplicateScanKeysCountOnce(t *testing.T) {
 		t.Errorf("count = %d, want 5 — a duplicated SCAN key double-counted the day", rows[0].Count)
 	}
 }
+
+// TestScanDetailFunc_StreamsOneRowAtATime — GH-1282's open remainder:
+// a production sweep must not buffer a whole day's rows before
+// processing them. ScanDetailFunc delivers rows to fn as they are
+// decoded, so a callback that aborts after the first row sees the
+// walk stop there instead of continuing to drain every remaining
+// hash into memory first.
+func TestScanDetailFunc_StreamsOneRowAtATime(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+
+	for i := 0; i < 5; i++ {
+		subject := "key:kid_" + string(rune('a'+i))
+		if err := c.IncrementDetail(ctx, subject, "/v1/price", usage.ClassOK); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sentinel := errors.New("stop after first row")
+	seen := 0
+	err := c.ScanDetailFunc(ctx, []string{"2026-07-03"}, func(usage.DetailRow) error {
+		seen++
+		return sentinel
+	})
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("err = %v, want sentinel", err)
+	}
+	if seen != 1 {
+		t.Fatalf("fn invoked %d times, want exactly 1 — a full day was materialized before the callback's error could stop the walk", seen)
+	}
+}
+
+// TestScanDetailFunc_MatchesScanDetail — the streaming and batch
+// forms must decode the identical set of rows; ScanDetail is now a
+// thin wrapper over ScanDetailFunc and must not drop or reorder-merge
+// anything relative to the field-by-field cross-check.
+func TestScanDetailFunc_MatchesScanDetail(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 7, 3, 10, 0, 0, 0, time.UTC)
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+
+	for i := 0; i < 4; i++ {
+		subject := "key:kid_" + string(rune('a'+i))
+		if err := c.IncrementDetail(ctx, subject, "/v1/price", usage.ClassOK); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	want, err := c.ScanDetail(ctx, []string{"2026-07-03"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var got []usage.DetailRow
+	if err := c.ScanDetailFunc(ctx, []string{"2026-07-03"}, func(row usage.DetailRow) error {
+		got = append(got, row)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(got) != len(want) || len(want) != 4 {
+		t.Fatalf("ScanDetailFunc rows = %d, ScanDetail rows = %d, want 4 each", len(got), len(want))
+	}
+	sortDetailRows(got)
+	sortDetailRows(want)
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("row %d: got %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+func sortDetailRows(rows []usage.DetailRow) {
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Subject < rows[j].Subject
+	})
+}
