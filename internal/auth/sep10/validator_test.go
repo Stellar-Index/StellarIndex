@@ -25,8 +25,22 @@ var testJWTSecret = []byte("test-jwt-secret-must-be-32-bytes-or-more!!")
 // newTestValidator constructs a Validator with a freshly-generated
 // server keypair, testnet passphrase, and a deterministic clock.
 // Returns the validator + the server keypair (so tests can introspect
-// the server account address) + a clock-mover.
+// the server account address) + a clock-mover. Every client account
+// is absent from its signer lookup, i.e. not yet on chain.
 func newTestValidator(t *testing.T) (*sep10.Validator, *keypair.Full, *fakeClock) {
+	t.Helper()
+	return newTestValidatorWithAccounts(t, fakeAccounts{})
+}
+
+// fakeAccounts is an in-memory [sep10.AccountLoader]; an account missing
+// from the map does not exist on chain.
+type fakeAccounts map[string]sep10.AccountSigners
+
+func (f fakeAccounts) LoadAccountSigners(_ context.Context, accountID string) (sep10.AccountSigners, error) {
+	return f[accountID], nil
+}
+
+func newTestValidatorWithAccounts(t *testing.T, accounts sep10.AccountLoader) (*sep10.Validator, *keypair.Full, *fakeClock) {
 	t.Helper()
 	server, err := keypair.Random()
 	if err != nil {
@@ -42,6 +56,7 @@ func newTestValidator(t *testing.T) (*sep10.Validator, *keypair.Full, *fakeClock
 		JWTTTL:            1 * time.Hour,
 		JWTSecret:         testJWTSecret,
 		Now:               clk.Now,
+		AccountLoader:     accounts,
 	})
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
@@ -91,6 +106,7 @@ func TestNewValidator_RequiredFields(t *testing.T) {
 		WebAuthDomain:     testWebDomain,
 		HomeDomain:        testHomeDomain,
 		JWTSecret:         testJWTSecret,
+		AccountLoader:     fakeAccounts{},
 	}
 
 	mutate := func(f func(*sep10.Options), wantSubstr string) {
@@ -112,6 +128,7 @@ func TestNewValidator_RequiredFields(t *testing.T) {
 	mutate(func(o *sep10.Options) { o.HomeDomain = "" }, "HomeDomain")
 	mutate(func(o *sep10.Options) { o.JWTSecret = []byte("short") }, "32 bytes")
 	mutate(func(o *sep10.Options) { o.ServerSeed = "not-a-strkey" }, "parse ServerSeed")
+	mutate(func(o *sep10.Options) { o.AccountLoader = nil }, "AccountLoader")
 }
 
 // TestChallenge_HappyPath — Challenge produces a valid SEP-10 XDR
@@ -248,6 +265,7 @@ func TestVerify_RejectsExpiredChallenge(t *testing.T) {
 		ChallengeTTL:      2 * time.Second, // SDK enforces ≥1s; 2s gives CI headroom past sleep granularity
 		JWTTTL:            1 * time.Hour,
 		JWTSecret:         testJWTSecret,
+		AccountLoader:     fakeAccounts{},
 	})
 	if err != nil {
 		t.Fatalf("NewValidator: %v", err)
@@ -416,6 +434,7 @@ func TestVerifyJWT_RejectsWrongIssuer(t *testing.T) {
 		WebAuthDomain:     "other.example.test",
 		HomeDomain:        "other.example.test",
 		JWTSecret:         testJWTSecret,
+		AccountLoader:     fakeAccounts{},
 	})
 	if err != nil {
 		t.Fatal(err)

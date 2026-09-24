@@ -59,6 +59,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -311,8 +312,15 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// `rdb` exists, because the F-1224 replay guard is Redis-backed and a
 	// configured SEP-10 deployment MUST be replay-protected. The policy
 	// (fail closed, degrade to Noop when auth_mode permits) lives in
-	// resolveSEP10Validator so it is testable end-to-end.
-	sep10Validator, err := resolveSEP10Validator(cfg.API.SEP10, cfg.API.AuthMode, cfg.Stellar.Passphrase(), rdb, logger)
+	// resolveSEP10Validator so it is testable end-to-end. The signer
+	// lookup reads the lake's current account state; the explorer reader
+	// that serves it is dialled further down and bound there.
+	sep10Accounts := &lakeAccountSigners{}
+	var sep10AccountLoader sep10.AccountLoader
+	if cfg.Storage.ClickHouseAddr != "" {
+		sep10AccountLoader = sep10Accounts
+	}
+	sep10Validator, err := resolveSEP10Validator(cfg.API.SEP10, cfg.API.AuthMode, cfg.Stellar.Passphrase(), rdb, sep10AccountLoader, logger)
 	if err != nil {
 		return err
 	}
@@ -1114,6 +1122,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 				logger.Warn("accounts wealth refresh failed; /v1/accounts stays on warming state", "err", err)
 			})
 			explorerReader = er
+			sep10Accounts.bind(er)
 			protocolActivityReader = er
 			lakeWatermarkReader = er
 			tokenDecimalsReader = er
@@ -2546,14 +2555,18 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 //     never returns a guard-free validator (it errors ErrReplayGuardUnavailable);
 //     under auth_mode=sep10 that error aborts startup, otherwise it degrades to
 //     the Noop. We never serve SEP-10 without the replay guard.
+//   - SEP-10 configured + no account lake (accounts nil): the same fail-closed
+//     policy via ErrAccountLoaderUnavailable. We never authenticate an
+//     on-chain account without checking its signers and medium threshold.
 func resolveSEP10Validator(
 	cfg config.SEP10Config,
 	authMode string,
 	passphrase string,
 	rdb redis.UniversalClient,
+	accounts sep10.AccountLoader,
 	logger *slog.Logger,
 ) (auth.SEP10Validator, error) {
-	v, err := buildSEP10Validator(cfg, passphrase, rdb)
+	v, err := buildSEP10Validator(cfg, passphrase, rdb, accounts)
 	if err != nil {
 		// auth_mode=sep10 makes this a hard failure — we MUST have a
 		// validator to bootstrap auth at all. Otherwise log + carry on
@@ -2566,7 +2579,7 @@ func resolveSEP10Validator(
 			"err", err)
 		return auth.NoopSEP10Validator{}, nil
 	}
-	logger.Info("sep10 validator wired (replay-guarded)",
+	logger.Info("sep10 validator wired (replay-guarded, signer-threshold checked)",
 		"web_auth_domain", cfg.WebAuthDomain,
 		"home_domain", cfg.HomeDomain,
 		"challenge_ttl", cfg.ChallengeTTL,
@@ -2574,7 +2587,7 @@ func resolveSEP10Validator(
 	return v, nil
 }
 
-func buildSEP10Validator(cfg config.SEP10Config, passphrase string, rdb redis.UniversalClient) (auth.SEP10Validator, error) {
+func buildSEP10Validator(cfg config.SEP10Config, passphrase string, rdb redis.UniversalClient, accounts sep10.AccountLoader) (auth.SEP10Validator, error) {
 	if cfg.SeedEnv == "" || cfg.JWTSecretEnv == "" {
 		return nil, errors.New("sep10: seed_env / jwt_secret_env not configured")
 	}
@@ -2619,11 +2632,38 @@ func buildSEP10Validator(cfg config.SEP10Config, passphrase string, rdb redis.Un
 		JWTTTL:            cfg.JWTTTL,
 		JWTSecret:         []byte(jwtSecret),
 		ReplayGuard:       replayGuard,
+		AccountLoader:     accounts,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("sep10: NewValidator: %w", err)
 	}
 	return v, nil
+}
+
+// lakeAccountSigners serves SEP-10's signer lookup from the lake's
+// current account state. It is bound once the explorer reader has
+// dialled; until then (or if the dial failed) every lookup errors, so
+// verification fails closed.
+type lakeAccountSigners struct {
+	er atomic.Pointer[clickhouse.ExplorerReader]
+}
+
+func (l *lakeAccountSigners) bind(er *clickhouse.ExplorerReader) { l.er.Store(er) }
+
+func (l *lakeAccountSigners) LoadAccountSigners(ctx context.Context, accountID string) (sep10.AccountSigners, error) {
+	er := l.er.Load()
+	if er == nil {
+		return sep10.AccountSigners{}, errors.New("sep10: account lake reader not connected")
+	}
+	st, err := er.AccountSigners(ctx, accountID)
+	if err != nil {
+		return sep10.AccountSigners{}, err
+	}
+	out := sep10.AccountSigners{Exists: st.Exists, MasterWeight: st.MasterWeight, MedThreshold: st.ThreshMed}
+	for _, s := range st.Signers {
+		out.Signers = append(out.Signers, sep10.Signer{Key: s.Key, Weight: s.Weight})
+	}
+	return out, nil
 }
 
 // buildDivergenceReferences turns DivergenceConfig into the

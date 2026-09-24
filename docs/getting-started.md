@@ -164,7 +164,9 @@ curl -fsSL -X POST https://your-sep10-deployment.example/v1/account/keys \
 Operators enabling it set `STELLARINDEX_SEP10_SEED` (server signing
 S-strkey) and `STELLARINDEX_SEP10_JWT_SECRET` (≥32 bytes) — names
 configurable via `[api.sep10] seed_env` / `jwt_secret_env` — on a
-deployment that already has Redis, which the replay guard requires.
+deployment that already has Redis, which the replay guard requires, and
+a ClickHouse lake (`storage.clickhouse_addr`), from which the account's
+signers and medium threshold are read.
 
 Rotation is `POST /v1/account/keys`; revocation is
 `DELETE /v1/account/keys/{keyID}` — self-service, scoped to the

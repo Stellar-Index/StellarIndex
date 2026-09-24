@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -69,6 +70,35 @@ func challengeTxHash(tx *txnbuild.Transaction, networkPassphrase string) (string
 	return h, nil
 }
 
+// AccountSigners is a Stellar account's current on-chain signing
+// configuration: what SEP-10's threshold check verifies signatures against.
+type AccountSigners struct {
+	// Exists is false when the account has no live ledger entry (never
+	// funded, or merged away).
+	Exists       bool
+	MasterWeight uint8
+	MedThreshold uint8
+	// Signers are the account's additional signers; the master key is not
+	// among them (its weight is MasterWeight).
+	Signers []Signer
+}
+
+// Signer is one additional signer of an account: a signer-key strkey and
+// its weight.
+type Signer struct {
+	Key    string
+	Weight uint32
+}
+
+// AccountLoader reads an account's current signing configuration.
+type AccountLoader interface {
+	LoadAccountSigners(ctx context.Context, accountID string) (AccountSigners, error)
+}
+
+// ErrAccountLoaderUnavailable is returned when no [AccountLoader] can be
+// supplied: without one the medium-threshold check cannot run.
+var ErrAccountLoaderUnavailable = errors.New("sep10: AccountLoader required but not configured")
+
 // Options configures a [Validator].
 type Options struct {
 	// ServerSeed is the secret-seed for the server's SEP-10 signing
@@ -118,6 +148,11 @@ type Options struct {
 	// behaviour). See [ReplayGuard] for production wiring.
 	// F-1224 (audit-2026-05-12).
 	ReplayGuard ReplayGuard
+
+	// AccountLoader supplies the client account's signers and medium
+	// threshold. Required: an account that exists on chain is
+	// authenticated against them, never against its master key alone.
+	AccountLoader AccountLoader
 }
 
 // Validator implements [auth.SEP10Validator] using the
@@ -136,6 +171,7 @@ type Validator struct {
 	jwtSecret    []byte
 	now          func() time.Time
 	replayGuard  ReplayGuard
+	accounts     AccountLoader
 }
 
 // NewValidator constructs a [Validator] from [Options]. Returns an
@@ -156,6 +192,9 @@ func NewValidator(opts Options) (*Validator, error) {
 	}
 	if len(opts.JWTSecret) < 32 {
 		return nil, errors.New("sep10: JWTSecret must be at least 32 bytes")
+	}
+	if opts.AccountLoader == nil {
+		return nil, ErrAccountLoaderUnavailable
 	}
 
 	parsed, err := keypair.Parse(opts.ServerSeed)
@@ -191,6 +230,7 @@ func NewValidator(opts Options) (*Validator, error) {
 		jwtSecret:    append([]byte(nil), opts.JWTSecret...),
 		now:          now,
 		replayGuard:  opts.ReplayGuard,
+		accounts:     opts.AccountLoader,
 	}, nil
 }
 
@@ -253,8 +293,10 @@ func (v *Validator) Challenge(ctx context.Context, clientAccount string) (auth.C
 // Errors:
 //   - [auth.ErrTokenMalformed] — transaction XDR doesn't parse or
 //     the server's signature is missing.
-//   - [auth.ErrUnauthorized] — client signature missing/wrong, or
-//     account isn't a known signer of the challenge.
+//   - [auth.ErrUnauthorized] — client signature missing/wrong, a
+//     signature from a key that cannot sign for the account, or signer
+//     weight below the account's medium threshold.
+//   - any other error — the account's signers could not be loaded.
 //   - [auth.ErrTokenExpired] — challenge's time-bound window has
 //     elapsed.
 func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, error) {
@@ -273,23 +315,8 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 		return auth.Token{}, classifyReadChallengeError(err)
 	}
 
-	// VerifyChallengeTxSigners validates that the client's signature
-	// is present and the server's signature is intact. We don't need
-	// the threshold variant — for SEP-10 v1 we accept any single
-	// signature from the client account.
-	signersFound, err := txnbuild.VerifyChallengeTxSigners(
-		signedXDR,
-		v.serverKP.Address(),
-		v.network,
-		v.webDomain,
-		v.homeDomains,
-		clientAccountID,
-	)
-	if err != nil {
-		return auth.Token{}, classifyVerifyError(err)
-	}
-	if len(signersFound) == 0 {
-		return auth.Token{}, fmt.Errorf("%w: no signers verified", auth.ErrUnauthorized)
+	if err := v.verifyClientSignatures(ctx, signedXDR, clientAccountID); err != nil {
+		return auth.Token{}, err
 	}
 
 	// Replay defence: spend the reservation [Validator.Challenge] made
@@ -297,7 +324,7 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 	// canonical hash, not on the caller's spelling of the XDR (CON-05;
 	// see [challengeTxHash]). A second submission, however re-encoded,
 	// or one whose reservation was evicted, returns ErrUnauthorized
-	// before we issue a JWT. Claiming AFTER VerifyChallengeTxSigners
+	// before we issue a JWT. Claiming AFTER verifyClientSignatures
 	// means bogus / unsigned XDR can never burn a real reservation.
 	//
 	// Falls open (continues to issue JWT) when no ReplayGuard is
@@ -332,6 +359,54 @@ func (v *Validator) Verify(ctx context.Context, signedXDR string) (auth.Token, e
 			CreatedAt:  now,
 		},
 	}, nil
+}
+
+// verifyClientSignatures checks the challenge's client signatures as SEP-10
+// requires: an account that exists on chain must be signed by its own
+// signers with combined weight meeting its medium threshold; one that does
+// not exist yet can only be proven by its master key. A failed account
+// lookup fails closed.
+func (v *Validator) verifyClientSignatures(ctx context.Context, signedXDR, clientAccountID string) error {
+	acct, err := v.accounts.LoadAccountSigners(ctx, clientAccountID)
+	if err != nil {
+		return fmt.Errorf("sep10: load signers of %s: %w", clientAccountID, err)
+	}
+	var signersFound []string
+	if acct.Exists {
+		signersFound, err = txnbuild.VerifyChallengeTxThreshold(
+			signedXDR, v.serverKP.Address(), v.network, v.webDomain, v.homeDomains,
+			txnbuild.Threshold(acct.MedThreshold), signerSummary(clientAccountID, acct),
+		)
+	} else {
+		signersFound, err = txnbuild.VerifyChallengeTxSigners(
+			signedXDR, v.serverKP.Address(), v.network, v.webDomain, v.homeDomains,
+			clientAccountID,
+		)
+	}
+	if err != nil {
+		return classifyVerifyError(err)
+	}
+	if len(signersFound) == 0 {
+		return fmt.Errorf("%w: no signers verified", auth.ErrUnauthorized)
+	}
+	return nil
+}
+
+// signerSummary maps each key able to sign for the account to its weight.
+// Zero-weight keys are left out, as stellar-core ignores them: a master key
+// rotated to weight 0 must be an unrecognised signature, not a weight-0
+// match that passes a medium threshold of 0.
+func signerSummary(accountID string, acct AccountSigners) txnbuild.SignerSummary {
+	summary := txnbuild.SignerSummary{}
+	if acct.MasterWeight > 0 {
+		summary[accountID] = int32(acct.MasterWeight)
+	}
+	for _, s := range acct.Signers {
+		if s.Weight > 0 {
+			summary[s.Key] = int32(min(s.Weight, math.MaxUint8))
+		}
+	}
+	return summary
 }
 
 // VerifyJWT implements [auth.SEP10Validator]. Validates a JWT

@@ -31,7 +31,8 @@ import (
 // is built by `cmd/stellarindex-api/main.go`'s `buildSEP10Validator`.
 // [NoopSEP10Validator] in this package is the graceful-degradation
 // fallback used when the deployment hasn't configured the required
-// env vars (signing seed + JWT secret); every method returns
+// env vars (signing seed + JWT secret), Redis for the replay guard, or
+// the ClickHouse lake the signer-threshold check reads; every method returns
 // [ErrNotImplemented] so `/v1/auth/sep10/*` responds 503 while the
 // rest of the API still serves. With `auth_mode=sep10` the
 // missing-config path is a hard startup failure instead.
