@@ -5,6 +5,11 @@
 # `policy accept`, which composed unpredictably with the repo's
 # default-drop base chain. On HA-dedicated log_aggregator hosts
 # the role now owns the whole-host firewall.
+#
+# SL12: loki_internal_cidrs / loki_allowed_ssh_cidrs entries containing
+# ':' were rendered into ipv4_addr-only sets, so an IPv6 CIDR silently
+# dropped out of the ruleset instead of being enforced. Mirror ipv6_addr
+# sets fix that.
 
 - name: ensure nftables installed
   apt:
@@ -45,6 +50,26 @@
           }
         }
 
+        set internal_v6 {
+          type ipv6_addr
+          flags interval
+          elements = {
+      {% for cidr in loki_internal_cidrs if ':' in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+          }
+        }
+
+        set ssh_allowed_v6 {
+          type ipv6_addr
+          flags interval
+          elements = {
+      {% for cidr in loki_allowed_ssh_cidrs if ':' in cidr %}
+            {{ cidr }}{% if not loop.last %},{% endif %}
+      {% endfor %}
+          }
+        }
+
         chain input {
           type filter hook input priority filter; policy drop;
 
@@ -57,9 +82,11 @@
           ip6 nexthdr ipv6-icmp limit rate 10/second accept
 
           tcp dport 22 ip saddr @ssh_allowed_v4 ct state new limit rate 30/minute accept comment "ssh"
+          tcp dport 22 ip6 saddr @ssh_allowed_v6 ct state new limit rate 30/minute accept comment "ssh-v6"
 
           # Loki ingest from log-shipper agents on internal CIDR.
           tcp dport {{ loki_http_port }} ip saddr @internal_v4 accept comment "loki-ingest-internal"
+          tcp dport {{ loki_http_port }} ip6 saddr @internal_v6 accept comment "loki-ingest-internal-v6"
 
           limit rate 1/second log prefix "nft-drop: " flags all
         }
