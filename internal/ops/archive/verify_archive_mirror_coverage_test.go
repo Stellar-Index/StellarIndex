@@ -86,10 +86,12 @@ func writeMirrorCheckpoint(t *testing.T, root string, seq uint32) {
 	}
 }
 
-func TestClassifyCheckpointAnchor_AbsenceBeyondTheMirrorIsNotAMiss(t *testing.T) {
+func TestClassifyCheckpointAnchor_CoverageEdgesAreAsymmetric(t *testing.T) {
 	t.Parallel()
 	// The mirror holds 127 and 191; 255 is the trailing checkpoint the
-	// walk reaches before the fill job does.
+	// walk reaches before the fill job does. 63 is below the mirror's
+	// own floor, which a mirror that fills upward from genesis can
+	// never legitimately do — that absence is a hole, not a fill lag.
 	root := mirrorFixture(t, 127, 191)
 	cov := readArchiveMirrorCoverage(root)
 	if !cov.Known || cov.Floor != 127 || cov.HighWater != 191 {
@@ -104,7 +106,7 @@ func TestClassifyCheckpointAnchor_AbsenceBeyondTheMirrorIsNotAMiss(t *testing.T)
 	}{
 		{"in-coverage and equal", 191, anchorHashFor(191), checkpointAnchorMatched},
 		{"above the high-water", 255, anchorHashFor(255), checkpointAnchorUnmirrored},
-		{"below the floor", 63, anchorHashFor(63), checkpointAnchorUnmirrored},
+		{"below the floor", 63, anchorHashFor(63), checkpointAnchorMissed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -113,9 +115,10 @@ func TestClassifyCheckpointAnchor_AbsenceBeyondTheMirrorIsNotAMiss(t *testing.T)
 				t.Fatalf("classifyCheckpointAnchor(%d): %v", tc.seq, err)
 			}
 			if got != tc.want {
-				t.Errorf("checkpoint %d classified %q, want %q — a checkpoint outside the "+
-					"mirror's span [%d, %d] is a fill lag, not a hole in the cross-anchor "+
-					"archive (F144)", tc.seq, got, tc.want, cov.Floor, cov.HighWater)
+				t.Errorf("checkpoint %d classified %q, want %q — a below-floor absence is a "+
+					"genuine hole (a mirror fills upward from genesis and can never "+
+					"legitimately lag its own floor), not the F144 trailing-edge fill lag",
+					tc.seq, got, tc.want)
 			}
 		})
 	}

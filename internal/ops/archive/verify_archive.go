@@ -1189,12 +1189,21 @@ type archiveMirrorCoverage struct {
 	Known     bool
 }
 
-// outsideCoverage reports whether checkpoint seq lies beyond the span
-// the mirror holds, i.e. whether its absence is a coverage boundary
-// rather than a hole. Unknown coverage answers false: no tolerance is
-// extended to a mirror we could not measure.
+// outsideCoverage reports whether checkpoint seq lies ahead of the
+// mirror's fill job, i.e. whether its absence is the trailing-edge
+// coverage boundary F144 tolerates rather than a hole. Unknown
+// coverage answers false: no tolerance is extended to a mirror we
+// could not measure.
+//
+// Deliberately asymmetric: only the high-water edge is tolerated. A
+// mirror fills upward from genesis, so it can never legitimately lag
+// below its own Floor — a seq below Floor means the mirror lost or
+// never restored that range, which is a genuine hole (ADR-0017
+// contract 3), not a fill lag. Treating it as coverage let a
+// partially-restored mirror's leading gap sail through
+// -fail-on-missed and get baked into the checkpoint high-water.
 func (c archiveMirrorCoverage) outsideCoverage(seq uint32) bool {
-	return c.Known && (seq < c.Floor || seq > c.HighWater)
+	return c.Known && seq > c.HighWater
 }
 
 // String renders the span for the run's log line.
