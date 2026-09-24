@@ -12,8 +12,9 @@
 -- 0105 row in migrations/README.md promised exactly this cleanup ("a
 -- future cleanup migration drops this table once the ClickHouse path is
 -- proven"); this is that migration. The now-caller-less Go store
--- (internal/storage/timescale/classic_movements.go) is removed in the
--- same change.
+-- (internal/storage/timescale/classic_movements.go, removed by this
+-- migration's companion commit d488c53b9 and no longer in the tree)
+-- was removed in the same change.
 --
 -- DESTRUCTIVE + operator-reviewed: applies POST-Phase-0 only. DROP TABLE
 -- removes the hypertable, its chunks, indexes and compression policy in

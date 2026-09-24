@@ -1,4 +1,4 @@
--- 0124 down — drop the projector-replay dirty-window record.
+-- 0125 down — drop the projector-replay dirty-window record.
 --
 -- Reversal note: dropping the table discards any PENDING re-reconcile
 -- obligations. If a projector-replay rewound below a source's watermark
