@@ -379,17 +379,23 @@ skew was live before normalization/suppression.
 - A token could legitimately declare non-7 decimals and still be low-value /
   low-volume. Check step 2's volume before deciding urgency — but the served
   price is wrong until the row lands, so confirmation is correct regardless.
-- **The API refuses to start without the offender list; after that it fails
-  OPEN.** The initial `NonstandardDecimalsCache` refresh in
-  `cmd/stellarindex-api/main.go` is fatal: a cold cache has no last-good
-  snapshot, so serving from it would publish every confirmed offender RAW
-  (wrong by 10^(7-decimals)). A boot that dies with `nonstandard-decimals
-  cache initial refresh` is a Postgres reachability problem (or a schema
-  that predates migration 0093), not a guard bug. Once the process is up, a
-  periodic refresh error (Postgres blip — tracked by
-  `stellarindex_nonstandard_decimals_cache_refresh_failures_total`) retains
-  the last-good snapshot rather than clearing it: availability wins over the
-  guard for infra errors, and the snapshot kept is a real one.
+- **The API-side normalization fails OPEN, never closed.** A nil
+  `NonstandardDecimalsCache` (not wired in `cmd/stellarindex-api/main.go`), a
+  cold cache (never refreshed yet), or a refresh error (Postgres blip —
+  tracked by `stellarindex_nonstandard_decimals_cache_refresh_failures_total`,
+  which retains the last-good snapshot rather than clearing it) all mean
+  every asset resolves to the 7dp default and prices serve RAW rather than
+  corrected. This is deliberate — availability wins over the guard for
+  infra errors. The startup window is closed: `cmd/stellarindex-api`
+  runs the first cache load synchronously, before anything that reads the
+  cache (handlers, stream publisher, Change24h reader) is wired and before
+  the HTTP server listens. If that first load fails the API
+  still starts, but the critical `nonstandard_decimals` readiness check
+  stays red (and `stellarindex_dependency_down` pages after 2 m) until a
+  periodic refresh succeeds; on r1 Caddy health-checks `/v1/healthz`, not
+  readyz, so offenders serve raw in that window. A deployment that
+  predates migration 0093 / hasn't wired `NonstandardDecimals` serves raw
+  indefinitely.
 
 ## Related
 
@@ -458,6 +464,9 @@ skew was live before normalization/suppression.
 
 ## Changelog
 
+- 2026-09-24 — the API's first cache load is synchronous and gated by the
+  critical `nonstandard_decimals` readiness check; the restart window in
+  which offenders served raw is closed on a successful boot.
 - 2026-09-18 — **decimals lockstep (C1-050).** The aggregator resolved token
   decimals from `nonstandard_decimals_assets` while `GET /v1/assets/{id}`
   resolved them from the lake, and computed `market_cap_usd` / `fdv_usd`

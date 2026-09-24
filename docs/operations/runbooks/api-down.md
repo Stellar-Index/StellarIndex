@@ -89,6 +89,7 @@ checks:
 | `postgres` (`storeChecker`) | yes | 503 |
 | `schema` (`v1.NewSchemaVersionChecker`, REC-06 2026-08-14) | yes | 503 — the applied schema (dirty rollbacks resolved to their pre-attempt version — GH-1159) is below what the binary was built against, or the dirty migration is the one non-atomic exception (`nonAtomicMigrationVersions`, currently just 0030) whose state can't be inferred |
 | `schema-dirty` (`v1.NewSchemaDirtyChecker`, GH-1159) | no | 200 + `status="degraded"` — schema_migrations is dirty but the rollback was atomic and the applied schema still satisfies the binary; needs an operator `force` but the API keeps serving on it |
+| `nonstandard_decimals` (`nonstandardDecimalsChecker`) | yes | 503 — the nonstandard-decimals cache has never loaded, so confirmed non-7-decimal assets would serve raw prices; see [`dex-nonstandard-decimals.md`](dex-nonstandard-decimals.md) |
 | `redis` (`redisChecker`) | no | 200 + `status="degraded"` |
 | `clickhouse` (`clickhouseChecker`, only when `storage.clickhouse_addr` is set) | no | 200 + degraded; the lake routes 503 separately via their own lake-readiness probe |
 
