@@ -500,6 +500,39 @@ func TestHandleRevoke_OtherAccount404(t *testing.T) {
 	}
 }
 
+func TestHandleRevoke_MemberCannotRevokeAnotherUsersKey(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	sc.User.Role = platform.RoleMember
+	otherUser := uuid.New()
+	store.byID["k-owner"] = platform.APIKey{ID: "k-owner", AccountID: sc.Account.ID, CreatedByUserID: otherUser, Name: "owner's key"}
+	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-owner", nil, sc)
+	req.SetPathValue("id", "k-owner")
+	w := httptest.NewRecorder()
+	h.HandleRevoke(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 (member revoked a key it didn't create)", w.Code)
+	}
+	if !store.byID["k-owner"].RevokedAt.IsZero() {
+		t.Errorf("member revoked another user's key")
+	}
+}
+
+func TestHandleRevoke_MemberCanRevokeOwnKey(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	sc.User.Role = platform.RoleMember
+	store.byID["k-mine"] = platform.APIKey{ID: "k-mine", AccountID: sc.Account.ID, CreatedByUserID: sc.User.ID, Name: "mine"}
+	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-mine", nil, sc)
+	req.SetPathValue("id", "k-mine")
+	w := httptest.NewRecorder()
+	h.HandleRevoke(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Errorf("status = %d, want 204 (member revoking its own key)", w.Code)
+	}
+	if store.byID["k-mine"].RevokedAt.IsZero() {
+		t.Errorf("RevokedAt not set")
+	}
+}
+
 func TestHandleRevoke_AbsentKey404(t *testing.T) {
 	h, _, sc := newTestRig(t)
 	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-missing", nil, sc)
