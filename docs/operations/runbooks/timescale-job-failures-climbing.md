@@ -92,6 +92,36 @@ the retention edge loses its left-hand samples silently.
     ORDER BY finish_time DESC LIMIT 20;
    ```
 
+   **If the failing job has no row here** (and no `reason_info` series),
+   the failures are real but their text is not in the view — an empty
+   `job_errors` is not "no error". `total_failures` is a lifetime
+   counter; `job_errors` keeps only what TimescaleDB's history-retention
+   job has not yet dropped, and a run whose worker died before its error
+   handler (crash, OOM kill, restart mid-run) may leave no row at all.
+   This is r1's observed state: compression jobs at 30–81 % lifetime
+   failures with `job_errors` empty. Take the error from the Postgres
+   server log instead — `logging_collector` is on, so it is the file,
+   not the journal:
+
+   ```sh
+   # How far back job_errors reaches (`drop_after` in config):
+   runuser -u postgres -- psql -d stellarindex -c \
+     "SELECT job_id, proc_name, config FROM timescaledb_information.jobs
+       WHERE proc_name LIKE 'policy_job_%retention';"
+   # The job's worker is named after its application_name:
+   runuser -u postgres -- psql -d stellarindex -At -c \
+     "SELECT application_name FROM timescaledb_information.jobs WHERE job_id = <job_id>;"
+   # Its exits (`exited with exit code 1`, `terminated by signal`) carry a PID.
+   # Older runs are in the rotated .log.1 / .log.N.gz files (zgrep reads both).
+   grep -F '<application_name>' /var/log/postgresql/postgresql-15-main.log | tail -20
+   # ... and the ERROR that worker raised is on that PID's lines:
+   grep '\[<pid>\]' /var/log/postgresql/postgresql-15-main.log | grep -E 'ERROR|FATAL|PANIC'
+   ```
+
+   Classify the log's message with the same table. A run that never
+   started has no worker and so no exit line; look for the scheduler's
+   `out of background workers` warning instead — that is §Starvation.
+
    | `err_message` | Meaning | Go to |
    | --- | --- | --- |
    | `failed to start job` | **Starvation** — no background worker slot was free | §Starvation |
