@@ -448,7 +448,7 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 	// before the divergence lookup (Go orders calls in a composite
 	// literal left to right), so a slow lookup published an as_of that
 	// was already up to a whole sub-budget stale when it went on the wire.
-	flags := s.tipStreamFlags(ctx, asset, quote, sources)
+	flags := s.tipStreamFlags(ctx, snap, asset, quote, sources)
 	payload := tipStreamPayload{
 		Data:    snap,
 		AsOf:    WireTime(time.Now().UTC()),
@@ -481,10 +481,10 @@ func (s *Server) tipStreamEvent(ctx context.Context, gen *streaming.Generator, a
 // room is a stalled store, whereas both expiring together is the tick or
 // the client going away, which is not news about the verdict store and
 // is not logged.
-func (s *Server) tipStreamFlags(ctx context.Context, asset, quote canonical.Asset, sources []string) Flags {
+func (s *Server) tipStreamFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
 	lookupCtx, cancel := context.WithTimeout(ctx, tipStreamDivergenceBudget)
 	defer cancel()
-	flags := s.tipFlags(lookupCtx, asset, quote, sources)
+	flags := s.tipFlags(lookupCtx, snap, asset, quote, sources)
 	if lookupCtx.Err() == nil || ctx.Err() != nil {
 		return flags
 	}
