@@ -16,8 +16,9 @@ import (
 
 // ─── The backfill refresh set must cover every SERVED rung ───────────
 //
-// [CAGGsLiveForever] is the list the backfill tool iterates after each
-// chunk. A granularity the API serves but the list omits is not a
+// [CAGGsLiveForever] is the prices_* subset of [TradesCAGGs], the list
+// the backfill tool refreshes after each chunk. A granularity the API
+// serves but the list omits is not a
 // missing optimisation — it is a permanent hole at that resolution in
 // every backfilled range: the trades land in the hypertable, the
 // continuous-aggregate policies only roll forward, and nothing else

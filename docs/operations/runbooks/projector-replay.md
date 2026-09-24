@@ -156,20 +156,17 @@ durable and the refresh did NOT complete:
 Either way, finish it one of two ways once the projector has caught up.
 Re-running with the same `-from` works and is idempotent, but it
 **rewinds again** — the projector re-walks the whole range a second
-time before the refresh. For a large range, refresh by hand instead:
+time before the refresh. For a large range, refresh the `trades`
+rollups instead with `stellarindex-ops trades-cagg-refresh -config PATH
+-from <ledger> -to <ledger>`, which runs the same safe order as the
+command itself.
 
-```sql
--- once per view: prices_1m, prices_15m, prices_1h, prices_4h,
--- prices_1d, prices_1w, prices_1mo. The window must span at least two
--- buckets of the view, so widen it for the coarse ones.
-CALL refresh_continuous_aggregate('prices_1m', '<range start ts>', '<range end ts>');
-```
-
-**Not covered: `twap_1h` and `twap_1d`.** They are materialised from
-`prices_1m`, are deliberately outside the refresh set this command
-shares with `backfill` (`timescale.CAGGsLiveForever`), and stay stale
-over the replayed range until re-materialized per
-[twap-history-missing](twap-history-missing.md).
+The refresh set is the one `backfill` uses: every `trades` rollup
+(`timescale.TradesCAGGs`, including `twap_1h` / `twap_1d` after a forced
+`prices_1m`) and, if the range wrote oracle rows, every `oracle_prices_*`
+rung (`timescale.OracleCAGGs`). While `prices_1m`'s retention policy
+(migration 0156) is armed the twap refresh is refused and the command
+fails naming them; disarm it as that migration states and re-run.
 
 ## Verification
 

@@ -34,68 +34,6 @@ type tradesCAGGStore interface {
 	Prices1mRetentionArmed(ctx context.Context) (bool, error)
 }
 
-// caggRefreshStep is one refresh_continuous_aggregate call.
-type caggRefreshStep struct {
-	View     string
-	From, To time.Time
-	Force    bool
-}
-
-// tradesCAGGRefreshPlan orders a refresh of views, each over
-// window(view). prices_1m is the input of [timescale.CAGGsOnPrices1m]:
-// it is forced over the hull of their windows, and they are forced after
-// it, so none of them recomputes a bucket from minute rows a retention
-// drop removed (migration 0156). views must list prices_1m before them.
-func tradesCAGGRefreshPlan(views []timescale.CAGGSpec, window func(timescale.CAGGSpec) (time.Time, time.Time)) []caggRefreshStep {
-	onMinute := make(map[string]bool, len(timescale.CAGGsOnPrices1m))
-	for _, v := range timescale.CAGGsOnPrices1m {
-		onMinute[v] = true
-	}
-	plan := make([]caggRefreshStep, 0, len(views))
-	minute := -1
-	for _, c := range views {
-		f, t := window(c)
-		st := caggRefreshStep{View: c.Name, From: f, To: t, Force: onMinute[c.Name]}
-		switch {
-		case c.Name == prices1mView:
-			st.Force, minute = true, len(plan)
-		case st.Force && minute < 0:
-			panic("tradesCAGGRefreshPlan: " + c.Name + " is listed before prices_1m, which it is built on")
-		}
-		plan = append(plan, st)
-	}
-	for _, st := range plan {
-		if !onMinute[st.View] {
-			continue
-		}
-		if st.From.Before(plan[minute].From) {
-			plan[minute].From = st.From
-		}
-		if st.To.After(plan[minute].To) {
-			plan[minute].To = st.To
-		}
-	}
-	return plan
-}
-
-// prices1mView is the minute rung the [timescale.CAGGsOnPrices1m] views read.
-const prices1mView = "prices_1m"
-
-// refreshTradesCAGGStep runs one planned refresh. A view built on
-// prices_1m is refused while that view's retention policy is armed: it
-// could drop the minute rows this run just rebuilt before the view reads
-// them, and migration 0156 requires the policy disarmed for this refresh.
-func refreshTradesCAGGStep(ctx context.Context, s tradesCAGGStore, st caggRefreshStep, prices1mRetentionArmed bool) error {
-	if !st.Force {
-		return s.RefreshContinuousAggregate(ctx, st.View, st.From, st.To)
-	}
-	if st.View != prices1mView && prices1mRetentionArmed {
-		return fmt.Errorf("refused: prices_1m's retention policy is armed, and %s is materialised from prices_1m; "+
-			"disarm it as migrations/0156_prices_1m_retention.up.sql states, confirm, and re-run", st.View)
-	}
-	return s.RefreshContinuousAggregateForced(ctx, st.View, st.From, st.To)
-}
-
 func tradesCAGGRefresh(args []string) error {
 	fs := flag.NewFlagSet(tradesCAGGRefreshVerb, flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "path to stellarindex.toml (required)")
@@ -141,11 +79,11 @@ func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from,
 	if err != nil {
 		return err
 	}
-	plan := tradesCAGGRefreshPlan(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
+	plan := timescale.PlanCAGGRefresh(timescale.TradesCAGGs, func(c timescale.CAGGSpec) (time.Time, time.Time) {
 		return tradesCAGGRefreshWindow(tsFrom, tsTo, c.MinWindow)
 	})
 	for _, st := range plan {
-		if err := refreshTradesCAGGStep(ctx, s, st, armed); err != nil {
+		if err := timescale.RunCAGGRefreshStep(ctx, s, st, armed); err != nil {
 			return fmt.Errorf("refresh %s over ledgers [%d,%d]: %w", st.View, from, to, err)
 		}
 	}

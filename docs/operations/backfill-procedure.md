@@ -29,16 +29,20 @@ have produced.
   flag-overridden) source set.
 - Writes one trade row per decoded event into the trades
   hypertable.
-- **Force-refreshes all seven price CAGGs (`prices_1m` /
-  `prices_15m` / `prices_1h` / `prices_4h` / `prices_1d` /
-  `prices_1w` / `prices_1mo`) over each chunk's timestamp range as
-  soon as the chunk's trade-insert loop completes** — this is
+- **Refreshes every continuous aggregate built on what the chunk
+  wrote, as soon as the chunk's insert loop completes** — the twelve
+  `trades` rollups (`timescale.TradesCAGGs`: `prices_1m` …
+  `prices_1mo`, `twap_1h`, `twap_1d`, `dex_volume_by_pair_1d`,
+  `source_volume_1h`, `pools_per_source_1h`) over the chunk's trades
+  timestamp range, and the seven `oracle_prices_*` rungs
+  (`timescale.OracleCAGGs`) over its `oracle_updates` range. This is
   mandatory for historical inserts, see "Why" below. Disable with
   `-refresh-caggs=false` only when debugging a specific CAGG-refresh
-  failure. The order is fixed, with `prices_1m` first, because
-  `prices_1m` is the one view another aggregate is defined over — see
-  the `twap_1h` / `twap_1d` entry under **Doesn't** for what that does
-  and does not get you.
+  failure. `twap_1h` / `twap_1d` are built on `prices_1m`, so
+  `prices_1m` is refreshed first, forced over every window they read,
+  and they are forced after it. While `prices_1m`'s retention policy
+  (migration 0156) is armed the twap refresh is refused and the chunk
+  fails, naming them: disarm it as that migration states and `-resume`.
 - Maintains its own cursor row (`source="backfill"`) so a crash
   doesn't pollute the indexer's resume position.
 
@@ -107,13 +111,6 @@ instead of holding every `-parallel` worker until SIGINT.
 
 **Doesn't:**
 - Tail live ledgers — exits at `-to`.
-- **Refresh `twap_1h` or `twap_1d`.** Those two are hierarchical over
-  `prices_1m` and are outside the tool's allow-list, so a range whose
-  `prices_1m` buckets the tool just materialised still has **no TWAP
-  bars** over that span until an operator refreshes them by hand.
-  Refreshing `prices_1m` first only means that hand step reads current
-  input; it does not perform it. See "Repairing a range backfilled
-  after 2026-08-22" for the calls.
 - Pollute the indexer's `ingestion_cursors` cursor.
 - Run unaudited Soroban sources. Each on-chain Soroban decoder
   is gated by `BackfillSafe` in
@@ -315,7 +312,7 @@ call is rejected with `SQLSTATE 22023: refresh window too small` —
 which is why the last three widen. `PadRefreshWindow`
 (`internal/storage/timescale/diagnostics.go`) is the same arithmetic
 the tool applies per chunk; the per-grain minimums are the
-`MinWindow` values beside each entry of `CAGGsLiveForever`.
+`MinWindow` values beside each entry of `TradesCAGGs` and `OracleCAGGs`.
 
 Do **not** expect the refresh policies to cover a historical range.
 They only roll forward: `prices_1m`'s `start_offset` is 5 minutes and
@@ -518,6 +515,15 @@ wall-clock on a single R1 box at `-parallel 4`.
    failure this step exists to prevent is not a check.
 
 ### Repairing a range backfilled after 2026-08-22
+
+A binary older than the one that refreshes `timescale.TradesCAGGs` and
+`timescale.OracleCAGGs` per chunk also left `twap_1h`, `twap_1d`,
+`dex_volume_by_pair_1d`, `source_volume_1h`, `pools_per_source_1h` and
+every `oracle_prices_*` rung stale over the range it backfilled. For the
+`trades` rollups, `stellarindex-ops trades-cagg-refresh -config PATH
+-from <ledger> -to <ledger>` refreshes all twelve in the safe order; for
+the oracle rungs, run migration 0040's `refresh_continuous_aggregate`
+calls over the range.
 
 Every range backfilled by a pre-2026-09-04 binary is missing its
 `prices_1m` and `prices_15m` buckets, and therefore its `twap_1h` /

@@ -104,6 +104,22 @@ func (s *Store) LedgerRangeToTimeRange(ctx context.Context, fromLedger, toLedger
 	return minTs.Time, maxTs.Time, nil
 }
 
+// LedgerRangeToOracleTimeRange is [Store.LedgerRangeToTimeRange] over
+// `oracle_updates`, the root of [OracleCAGGs]. ts is the publication
+// time those views bucket on. Off-chain rows carry ledger 0, so they
+// never fall in a backfill range.
+func (s *Store) LedgerRangeToOracleTimeRange(ctx context.Context, fromLedger, toLedger uint32) (time.Time, time.Time, error) {
+	const q = `SELECT MIN(ts), MAX(ts) FROM oracle_updates WHERE ledger BETWEEN $1 AND $2`
+	var minTs, maxTs sql.NullTime
+	if err := s.db.QueryRowContext(ctx, q, fromLedger, toLedger).Scan(&minTs, &maxTs); err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	if !minTs.Valid || !maxTs.Valid {
+		return time.Time{}, time.Time{}, ErrNotFound
+	}
+	return minTs.Time, maxTs.Time, nil
+}
+
 // TradesCAGGs is the ORDERED set of every continuous aggregate rooted
 // on `trades`, with each one's minimum refresh window. It is the ONE
 // list the refresh allow-list, the backfill's price set
@@ -148,6 +164,22 @@ var TradesCAGGs = []CAGGSpec{
 	{Name: "twap_1d", MinWindow: 3 * 24 * time.Hour},
 }
 
+// OracleCAGGs is every continuous aggregate rooted on `oracle_updates`
+// (migration 0034), each MinWindow matching its prices_* rung. All seven
+// read `oracle_updates` directly, so order is free. They were created
+// WITH NO DATA and their policies reach back 5 minutes to 3 months, so a
+// backfilled range reaches them only through an explicit refresh.
+// TestTradesCAGGsMatchCatalog holds the list to the schema.
+var OracleCAGGs = []CAGGSpec{
+	{Name: "oracle_prices_1m", MinWindow: 2 * time.Minute},
+	{Name: "oracle_prices_15m", MinWindow: 30 * time.Minute},
+	{Name: "oracle_prices_1h", MinWindow: 3 * time.Hour},
+	{Name: "oracle_prices_4h", MinWindow: 12 * time.Hour},
+	{Name: "oracle_prices_1d", MinWindow: 3 * 24 * time.Hour},
+	{Name: "oracle_prices_1w", MinWindow: 3 * 7 * 24 * time.Hour},
+	{Name: "oracle_prices_1mo", MinWindow: 93 * 24 * time.Hour},
+}
+
 // CAGGsOnPrices1m are the [TradesCAGGs] views materialised FROM
 // prices_1m rather than from `trades`. Migration 0156's retention drops
 // prices_1m chunks without an invalidation, so refreshing one of these
@@ -156,14 +188,18 @@ var TradesCAGGs = []CAGGSpec{
 var CAGGsOnPrices1m = []string{"twap_1h", "twap_1d"}
 
 // allowedCAGGViews is the strict allow-list of view names accepted by
-// RefreshContinuousAggregate, derived from [TradesCAGGs]. Required
+// RefreshContinuousAggregate, derived from [TradesCAGGs] and
+// [OracleCAGGs]. Required
 // because we string-format the view name into the SQL — the
 // procedure's first arg is REGCLASS and pgx doesn't placeholder it.
 // Allow-list keeps SQL injection off the table even though callers
 // are internal.
 var allowedCAGGViews = func() map[string]bool {
-	m := make(map[string]bool, len(TradesCAGGs))
+	m := make(map[string]bool, len(TradesCAGGs)+len(OracleCAGGs))
 	for _, c := range TradesCAGGs {
+		m[c.Name] = true
+	}
+	for _, c := range OracleCAGGs {
 		m[c.Name] = true
 	}
 	return m
@@ -172,8 +208,9 @@ var allowedCAGGViews = func() map[string]bool {
 // IsRefreshableCAGG reports whether RefreshContinuousAggregate accepts viewName.
 func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName] }
 
-// CAGGsLiveForever is the ORDERED set of price aggregates the
-// backfill tool refreshes after each chunk. It holds all seven, and
+// CAGGsLiveForever is the ORDERED set of served price rungs, one per
+// [HistoryGranularity]. The backfill tool refreshes all of [TradesCAGGs]
+// after each chunk, of which this is the prices_* subset. It holds all seven, and
 // the name is literal for six of them: migration 0002 gave prices_1m
 // and prices_15m a 30-day retention and migration 0031 removed it on
 // 2026-05-14, alongside the 90-day one on raw `trades`.
@@ -213,24 +250,12 @@ func IsRefreshableCAGG(viewName string) bool { return allowedCAGGViews[viewName]
 //     TradesInRangeAfter, no CAGG involved.)
 //
 // twap_1h and twap_1d are materialised FROM prices_1m (migrations
-// 0081 / 0126 / 0147), so an unmaterialised minute range empties the
-// TWAP surface one level down as well. Those two views are NOT in
-// this set and are not refreshed by backfill — RefreshContinuousAggregate
-// accepts them (they are in [TradesCAGGs]), but re-materialising them
-// is the operator step the twap-history-missing runbook owns. That
-// exclusion is stated rather than silent, which is the whole point of
-// this comment.
+// 0081 / 0126 / 0147), so they are not rungs of this set, but backfill
+// refreshes them after prices_1m through [PlanCAGGRefresh], which forces
+// prices_1m over every window they read first.
 //
-// ORDER IS DEFENSIVE, not load-bearing today, and prices_1m leads.
-// Nothing in this set reads prices_1m: the other six read `trades`
-// directly, and twap_1h / twap_1d — the two aggregates that ARE built
-// on prices_1m — are not in the list (see above). So any order would
-// currently produce the same rows. prices_1m leads anyway because it
-// is the one view another aggregate is defined over, so an operator
-// re-materialising TWAP after a chunk, or a future rung that reads it,
-// finds it current rather than one chunk behind. Same order, same
-// reason, as chops.xlmBaseRestampCAGGs and the re-derive runbook's
-// list (docs/operations/usd-volume-rederive-2026-08.md).
+// prices_1m leads because it is the one view another aggregate is
+// defined over; same order as [TradesCAGGs].
 //
 // COST of the two fine rungs, from the MinWindow constants in [TradesCAGGs]
 // rather than an estimate. All seven read `trades`, so each rung is
