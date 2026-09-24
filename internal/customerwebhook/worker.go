@@ -109,6 +109,9 @@ const (
 	// purpose — see the storeLeaseDuration invariant below.
 	defaultBatchLimit = 25
 
+	// defaultMaxAttempts is Options.MaxAttempts' default; see its doc.
+	defaultMaxAttempts = 15
+
 	// defaultHTTPTimeout bounds a single delivery POST. It also bounds
 	// each attempt's webhook lookup + HTTP work (see tick). The write that
 	// records the outcome is bounded separately by markWriteTimeout, so
@@ -182,15 +185,11 @@ type Options struct {
 	BatchLimit int
 
 	// MaxAttempts before a delivery is marked permanently failed.
-	// Default 15. With scheduleRetry's 30s→doubling→1h-capped backoff,
-	// the 15-attempt schedule spans only ~8h of wall-clock — NOT the 72h
-	// that migration 0027's docblock ("Stripe-style: signed deliveries,
-	// exponential retry over 72h") and the CustomerWebhook struct doc
-	// aspire to. That 72h figure is ASPIRATIONAL: reaching it would need
-	// a larger MaxAttempts (and/or a higher backoff cap) and is a
-	// customer-facing delivery-SLA decision — deliberately NOT changed
-	// here, because silently bumping the attempt budget would move the
-	// SLA under the operator's feet.
+	// Default 15: with backoffCeiling's 30s→doubling→1h-capped schedule
+	// the last retry lands ~4–8 h after the first failure (jitter). That
+	// window is the customer-facing delivery SLA the runbooks quote
+	// (pinned by TestRetryWindowMatchesOperatorDocs); widening it is an
+	// SLA decision, not a tuning knob.
 	MaxAttempts int
 
 	// HTTPClient supplies the delivery client's Timeout (default
@@ -247,7 +246,7 @@ func newWorker(store DeliveryStore, opts Options, clientFor func(*http.Client) *
 		opts.BatchLimit = defaultBatchLimit
 	}
 	if opts.MaxAttempts <= 0 {
-		opts.MaxAttempts = 15
+		opts.MaxAttempts = defaultMaxAttempts
 	}
 	opts.HTTPClient = clientFor(opts.HTTPClient)
 	if opts.Logger == nil {
@@ -725,12 +724,16 @@ func (w *Worker) scheduleRetry(nextAttempt int) time.Time {
 	return w.opts.Clock().Add(w.backoffDelay(nextAttempt))
 }
 
-// backoffDelay is the jittered exponential-backoff delay for a 1-based
-// attempt number. The shift exponent is clamped BEFORE the shift so the
-// delay can never wrap int64 regardless of MaxAttempts (the previous
-// `base << (n-1)` overflowed to a non-positive value for n ≳ 30). The
-// deterministic delay is then jittered into [delay/2, delay].
+// backoffDelay is backoffCeiling jittered into [ceiling/2, ceiling].
 func (w *Worker) backoffDelay(nextAttempt int) time.Duration {
+	return jitterDelay(backoffCeiling(nextAttempt))
+}
+
+// backoffCeiling is the un-jittered exponential-backoff delay for a
+// 1-based attempt number. The shift exponent is clamped BEFORE the shift
+// so the delay can never wrap int64 regardless of MaxAttempts (the
+// previous `base << (n-1)` overflowed to a non-positive value for n ≳ 30).
+func backoffCeiling(nextAttempt int) time.Duration {
 	const (
 		base    = 30 * time.Second
 		maxWait = time.Hour
@@ -753,7 +756,7 @@ func (w *Worker) backoffDelay(nextAttempt int) time.Duration {
 			delay = maxWait
 		}
 	}
-	return jitterDelay(delay)
+	return delay
 }
 
 // jitterDelay applies full-jitter to a backoff delay, returning a random

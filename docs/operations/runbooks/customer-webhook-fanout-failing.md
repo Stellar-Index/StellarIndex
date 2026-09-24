@@ -27,7 +27,10 @@ This is deliberately a different alert from
 [customer-webhook-delivery-failing](customer-webhook-delivery-failing.md).
 That one watches delivery **attempts**, which only exist once a
 `webhook_deliveries` row has been written, and every failure there is
-retried on a 15-attempt / ~72 h budget. A fan-out failure happens
+retried on a 15-attempt budget whose last retry lands ~4–8 h after the
+first failure (jittered backoff, 30 s doubling to a 1 h cap); after that
+the delivery is terminally `exhausted` and only a re-emit reaches the
+customer. A fan-out failure happens
 *before* that row exists:
 
 | `reason` | What happened | Blast radius |

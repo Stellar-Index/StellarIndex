@@ -562,8 +562,9 @@ CREATE TABLE webhook_deliveries (
 );
 ```
 
-Stripe-style: signed deliveries, exponential retry over 72h
-(15 attempts), customer-visible delivery log in dashboard.
+Stripe-style: signed deliveries, exponential retry (15 attempts, 30s
+doubling to a 1h cap, so the last retry lands ~4–8 h after the first
+failure), customer-visible delivery log in dashboard.
 
 ---
 

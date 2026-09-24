@@ -38,17 +38,21 @@ deployment  = "production"        # production | testnet | futurenet | staging
 # running both stellar-core and stellar-rpc locally
 # (run_stellar_core / run_stellar_rpc = true in the ansible role).
 # r1 today does NOT run those daemons (removed 2026-04-23 — see
-# docs/operations/r1-deployment-state.md), so r1 operators should
-# point rpc_endpoints at a public stellar-rpc such as
-# https://mainnet.sorobanrpc.com and leave core_http_endpoint as a
-# best-effort no-op (the daemons that consume it tolerate a
-# refused connection on r1).
+# docs/operations/r1-deployment-state.md): the archival-node ansible
+# role renders rpc_endpoints from stellar_rpc_endpoints, the network's
+# public stellar-rpc (https://mainnet.sorobanrpc.com on pubnet), and
+# leaves core_http_endpoint as a best-effort no-op (the daemons that
+# consume it tolerate a refused connection on r1).
 # ──────────────────────────────────────────────────────────────────
 [stellar]
 network             = "pubnet"                                    # pubnet | testnet | futurenet
 core_http_endpoint  = "http://127.0.0.1:11626"                    # stellar-core admin (Phase-3 only — refused on r1)
 rpc_endpoints       = ["http://127.0.0.1:8000"]                   # tried in order on failure; on r1 use ["https://mainnet.sorobanrpc.com"] or another public endpoint
 history_archive_url = "https://history.stellar.org/prd/core-live/core_live_001"
+# Era boundaries. Defaults are the pubnet ledgers; set both to 1
+# (genesis) on testnet / futurenet.
+# soroban_genesis_ledger = 50457424   # protocol-20 activation; SEP-41 supply observer floor
+# movements_floor_ledger = 58762517   # P23 / CAP-67: Postgres movements tail at/above, ClickHouse archive below
 
 # ──────────────────────────────────────────────────────────────────
 # Storage — Postgres/Timescale, Redis, MinIO / S3.
@@ -168,7 +172,9 @@ cursor_store_scheme   = "postgres"
 # persist_per_source — Phase 4+ cutover knob (ADR-0031/0032): when
 # false, the dispatcher's events-goroutine skips Soroban-derived
 # events for a projected source so the projector is its sole writer.
+# enabled is the projector's master switch (default false).
 # [ingestion.projector]
+# enabled            = false
 # persist_per_source = true
 
 # ──────────────────────────────────────────────────────────────────
@@ -255,15 +261,19 @@ cursor_store_scheme   = "postgres"
   # markets; per-venue pair overrides are a future config surface.
   [external.binance]
   enabled = false   # WS aggTrade — XLMUSDT / BTCUSDT / ETHUSDT / XLMBTC
+  # poll_interval = ""   # accepted but unused: this connector streams over WebSocket
 
   [external.kraken]
   enabled = false   # WS v2 trade — XLM in 6 fiats + BTC/USD + ETH/USD
+  # poll_interval = ""   # accepted but unused: this connector streams over WebSocket
 
   [external.bitstamp]
   enabled = false   # WS live_trades — XLM/{USD,EUR,GBP,BTC} + BTC/{USD,EUR} + ETH/USD
+  # poll_interval = ""   # accepted but unused: this connector streams over WebSocket
 
   [external.coinbase]
   enabled = false   # WS matches (Exchange API) — XLM-USD, BTC-USD, ETH-USD
+  # poll_interval = ""   # accepted but unused: this connector streams over WebSocket
 
   # ClassExchange — interbank FX feeds. Both require paid API keys
   # (see env-var override path in internal/config/load.go).
@@ -300,6 +310,7 @@ cursor_store_scheme   = "postgres"
   enabled = false   # /simple/price — needs COINGECKO_DEMO_API_KEY env (post-2024)
   # poll_interval = "300s"   # default; demo-tier-safe
   # demo_api_key  = ""       # sent as x-cg-demo-api-key; prefer env COINGECKO_DEMO_API_KEY
+  # api_key       = ""       # Pro key (pro-api host), wins over demo_api_key; prefer env COINGECKO_API_KEY
 
   [external.coinmarketcap]
   enabled = false
@@ -312,6 +323,7 @@ cursor_store_scheme   = "postgres"
   # ClassAuthoritySanity — daily anchor (alert-on-drift, not VWAP).
   [external.ecb]
   enabled = false   # daily TARGET-business-day fix — free, no auth
+  # poll_interval = ""   # accepted but unused by the ECB connector
 
   # ClassOracle — Chainlink Data Feeds via EVM JSON-RPC. Ingest-side
   # poller, parallel to the synchronous [divergence.chainlink]
@@ -324,6 +336,17 @@ cursor_store_scheme   = "postgres"
   # address  = "0x..."
   # decimals = 8
   # invert   = false
+
+  # massive.com forex rates behind /v1/currencies, fetched hourly by
+  # stellarindex-api. An empty key still starts the worker, but every
+  # fetch 401s and /v1/currencies serves warming-up.
+  [external.massive]
+  # api_key = ""    # prefer env: MASSIVE_API_KEY
+
+  # Dune API, read only by the curated-rwa-sync ops command, which
+  # refuses to run without a key.
+  [external.dune]
+  # api_key = ""    # prefer env: DUNE_API_KEY
 
 # ──────────────────────────────────────────────────────────────────
 # Aggregate — VWAP/TWAP windows + filters (aggregator binary only).
@@ -436,7 +459,7 @@ external_base_url        = "https://api.stellarindex.io/v1"
 # if you're standing this API up as an internal/private service —
 # switch to apikey / apikey_optional / sep10 in that case (audit-
 # 2026-07-23 CFG-01; see docs/operations/pre-launch-hardening.md).
-auth_mode                = "none"            # none | apikey | sep10
+auth_mode                = "none"            # none | apikey | apikey_optional | sep10
 anon_rate_limit_per_min  = 60
 key_rate_limit_per_min   = 1000
 cdn_enabled              = true
@@ -627,6 +650,7 @@ enabled  = true
 # as reference-unavailable so a frozen upstream can't drive divergence.
 # 0 = the 30-minute default.
 # max_age_minutes = 0
+# base_url = ""   # empty = https://api.coingecko.com/api/v3
 # id_map maps canonical asset_id → CoinGecko slug. Empty falls back
 # to the built-in default covering XLM + major stables.
 # Example:
@@ -718,8 +742,9 @@ enabled = true
 # XLM; CoinGecko when a Pro key is set). This automates the manual "is
 # our supply right?" check and catches a stale SDF-reserve exclusion
 # account list (docs/methodology/xlm-circulating-supply.md). Off by
-# default (it makes outbound HTTP calls); flip enabled = true on r1 via
-# ansible to arm it. The 1% threshold sits well above the ~0.03% XLM
+# default (it makes outbound HTTP calls). The archival-node ansible role
+# renders enabled from the stellarindex_divergence_supply_enabled
+# inventory variable (default false) — set it true to arm it. The 1% threshold sits well above the ~0.03% XLM
 # Fee-Pool noise floor, so it fires only on a REAL drift; when a
 # reference is dark the worker degrades to a no_reference outcome (not a
 # false alert).
@@ -743,7 +768,7 @@ enabled  = true
 [divergence.supply.coingecko]
 enabled = false
 # api_key = ""   # prefer env COINGECKO_API_KEY
-# base_url defaults to https://api.coingecko.com/api/v3 when empty.
+# base_url = ""   # empty = https://api.coingecko.com/api/v3, or the pro-api host when api_key is set
 # id_map maps canonical asset_id → CoinGecko coin id; empty falls back
 # to the built-in default (native / crypto:XLM → stellar).
 # [divergence.supply.coingecko.id_map]
@@ -777,14 +802,10 @@ enabled = false
 # ──────────────────────────────────────────────────────────────────
 [supply]
 # sdf_reserve_accounts = ["GA…", "GB…"]
-# [supply.reserve_balances_stroops]
-# "GA…" = "12345678901234"
 # watched_classic_assets    = []
 # watched_sep41_contracts   = []
 # aggregator_refresh_enabled = false
 # aggregator_refresh_cadence = "5m"
-# [supply.sac_wrappers]
-# "C…SAC-CONTRACT" = "USDC:GA…"
 #
 # fully_wrapped_sacs (BACKLOG #59, 2026-07-08 decision). Cross-check
 # pairs default to a subset-bound compare (supply.WrapClassPartial):
@@ -795,7 +816,7 @@ enabled = false
 # outside the SAC — that flips it to the strict ADR-0011 total-vs-total
 # equality compare (supply.WrapClassFull). Empty by default; none
 # known as of 2026-07-08. Every entry MUST also be a key of
-# [supply.sac_wrappers] above (config-load rejects otherwise).
+# [supply.sac_wrappers] below (config-load rejects otherwise).
 # fully_wrapped_sacs = []
 #
 # strict_freshness_required (F-1236, codex audit-2026-05-13).
@@ -815,6 +836,13 @@ enabled = false
 # `OutcomeKindMissingFreshness` instead of published.
 # strict_freshness_required = false
 #
+# Tables go last: an uncommented key below a [table] header belongs to
+# that table, not to [supply].
+# [supply.reserve_balances_stroops]
+# "GA…" = "12345678901234"
+# [supply.sac_wrappers]
+# "C…SAC-CONTRACT" = "USDC:GA…"
+#
 # max_supply_overrides — per-asset max_supply override, beating the
 # SEP-1 declaration and the per-algorithm default. Key mirrors
 # per_asset_locked_sets; value is a decimal string in base units.
@@ -826,6 +854,13 @@ enabled = false
 # asset on the global 1000-ledger threshold.
 # [supply.stale_component_ledgers_by_asset]
 # "XLM" = 1000
+#
+# per_asset_locked_sets — per-asset override of the default locked set
+# (issuer-only for classic, admin-only for SEP-41) excluded from
+# circulating_supply. Key: "XLM" | "CODE:G…" | a SEP-41 C-strkey.
+# [supply.per_asset_locked_sets."CODE:G…"]
+# accounts  = ["G…"]   # treasury / reserve multisigs
+# contracts = ["C…"]   # vesting / treasury contracts
 
 # ──────────────────────────────────────────────────────────────────
 # Trades — trade-insert policy. Per launch-readiness L2.2 phase 1,
@@ -928,7 +963,7 @@ verify_window_ledgers     = 20000
 [obs]
 metrics_listen  = "127.0.0.1:9464"
 log_level       = "info"          # debug | info | warn | error
-log_format      = "json"          # json | text
+log_format      = "json"          # json | text | console (text = console)
 trace_exporter  = "none"          # only "none" is wired in this build;
                                   # "otlp" is reserved for the future
                                   # tracing rollout and Validate() rejects

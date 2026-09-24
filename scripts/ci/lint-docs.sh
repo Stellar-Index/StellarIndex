@@ -1237,6 +1237,31 @@ for hf in web/explorer/public/_headers web/status/public/_headers; do
   fi
 done
 
+# ─── 16b. The explorer runbook must describe the _headers that ship ────────
+#
+# docs/operations/explorer-deployment.md once documented a /* CSP with
+# `frame-ancestors 'none'` and a single connect-src origin long after the
+# file dropped the first (it made every embed unframeable) and grew to
+# three origins, and _headers pointed at a runbook that did not exist.
+
+EXPLORER_HEADERS="web/explorer/public/_headers"
+EXPLORER_RUNBOOK="docs/operations/explorer-deployment.md"
+if [ -f "$EXPLORER_HEADERS" ] && [ -f "$EXPLORER_RUNBOOK" ]; then
+  root_csp=$(awk '/^\/\*$/ {in_root=1; next} /^[^ #]/ {in_root=0} in_root && /Content-Security-Policy:/ {print; exit}' "$EXPLORER_HEADERS")
+  [ -n "$root_csp" ] || err "$EXPLORER_HEADERS has no Content-Security-Policy in its /* rule — the runbook check below would pass vacuously."
+  for origin in $(printf '%s\n' "$root_csp" | sed -n 's/.*connect-src \([^;]*\);.*/\1/p' | tr ' ' '\n' | grep '^https://'); do
+    grep -qF "$origin" "$EXPLORER_RUNBOOK" \
+      || err "$EXPLORER_RUNBOOK does not name connect-src origin $origin that $EXPLORER_HEADERS's /* CSP ships."
+  done
+  if [[ "$root_csp" != *frame-ancestors* ]] \
+    && grep -qF "frame-ancestors 'none'" "$EXPLORER_RUNBOOK"; then
+    err "$EXPLORER_RUNBOOK documents frame-ancestors 'none', but $EXPLORER_HEADERS's /* CSP deliberately carries no frame-ancestors (it made every /embed/* iframe unframeable)."
+  fi
+  while IFS= read -r doc; do
+    [ -f "$doc" ] || err "$EXPLORER_HEADERS cites $doc, which does not exist."
+  done < <(grep -oE 'docs/[A-Za-z0-9_./-]+\.md' "$EXPLORER_HEADERS" | sort -u)
+fi
+
 # ─── 17. k6 AlertManager-silence matchers must exist and be non-paging ─────
 #
 # test/load/scenarios/lib/alertmanager.js hardcodes the default silence

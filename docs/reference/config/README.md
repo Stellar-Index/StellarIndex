@@ -302,7 +302,7 @@ the `env:` column.
 | `divergence.redstone.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
 | `divergence.band.enabled` | `bool` | `true` | — | Whether this on-chain oracle reference is wired into the divergence service. |
 | `divergence.band.max_age_minutes` | `int` | `0` | — | Staleness ceiling in minutes for the oracle's latest observation; older observations are rejected as reference-unavailable. 0 = per-oracle default (Reflector 30m, Redstone/Band 26h). |
-| `divergence.supply.enabled` | `bool` | `false` | — | Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls; opt in on r1 via ansible). |
+| `divergence.supply.enabled` | `bool` | `false` | — | Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls). The archival-node ansible role renders it from the stellarindex_divergence_supply_enabled inventory variable, itself default false. |
 | `divergence.supply.refresh_interval_seconds` | `int` | `900` | — | Per-cycle interval for the supply cross-check worker. Supply moves slowly, so a slow cadence is fine. Default 900 (15 min). |
 | `divergence.supply.threshold_pct` | `float64` | `1.0` | — | Relative-divergence percentage above which a supply cross-check reads 'divergent' and the alert fires. Default 1.0 (well above the ~0.03% XLM noise floor). |
 | `divergence.supply.per_reference_timeout_seconds` | `int` | `10` | — | Bound for each supply-reference HTTP call. Default 10. |
@@ -343,6 +343,6 @@ the `env:` column.
 | --- | ---- | ------- | ------------ | ----------- |
 | `obs.metrics_listen` | `string` | `127.0.0.1:9464` | — | Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer, the aggregator, and the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field. |
 | `obs.log_level` | `string` | `info` | — | Minimum log level — debug / info / warn / error. |
-| `obs.log_format` | `string` | `json` | — | Log format — json / console. |
+| `obs.log_format` | `string` | `json` | — | Log format — json / text / console ('text' and 'console' are synonyms). |
 | `obs.trace_exporter` | `string` | `none` | — | OpenTelemetry trace exporter. Currently only 'none' is wired in this build; the 'otlp' value is reserved for the future tracing rollout and is rejected by Validate() until the exporter is implemented (so an operator setting it doesn't think tracing is on when it isn't). |
 | `obs.trace_sample` | `float64` | `0.1` | — | Trace sampling ratio — 0.0 (none) to 1.0 (all). Read by the future tracing rollout; ignored in this build. |
