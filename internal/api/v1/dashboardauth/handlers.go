@@ -626,10 +626,13 @@ type verifyCodeResponse struct {
 // credentialed fetch: the Set-Cookie rides the response and the SPA
 // navigates itself. Same find-or-create-on-first-login semantics.
 //
-// The code is matched only against the email's in-flight login tokens
-// and each wrong guess burns an attempt (see [maxCodeAttempts]); all
-// failure modes return one generic error so a caller can't tell "no
-// token" from "wrong code" from "too many attempts".
+// The code is matched only against the email's in-flight login tokens,
+// and every attempt is charged — per token and per email — BEFORE it is
+// compared, atomically in the store, so a burst of concurrent guesses
+// gets no more comparisons than sequential ones (see [maxCodeAttempts],
+// [maxDurableCodeFailures]). All failure modes return one generic error
+// so a caller can't tell "no token" from "wrong code" from "too many
+// attempts".
 //
 // Non-matching includes CORRECT-BUT-STALE. A code whose token has
 // expired, been consumed, or already burned [maxCodeAttempts] is not a
@@ -670,9 +673,17 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cands, err := h.cfg.Tokens.ConsumableLoginCandidates(r.Context(), email, maxCodeAttempts)
+	// The status check above is only a cheap early refusal: under a
+	// concurrent burst every request can pass it. The charge is what
+	// bounds the burst, so it must precede the comparison.
+	if !h.chargeLoginCodeAttempt(r, email) {
+		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
+		return
+	}
+
+	cands, err := h.cfg.Tokens.ReserveLoginCodeCandidates(r.Context(), email, maxCodeAttempts)
 	if err != nil {
-		h.cfg.Logger.Error("consumable login candidates", "err", err, "email", maskEmail(email))
+		h.cfg.Logger.Error("reserve login code candidates", "err", err, "email", maskEmail(email))
 		writeProblem(w, http.StatusInternalServerError, "internal error", "/v1/auth/verify-code")
 		return
 	}
@@ -686,16 +697,7 @@ func (h *Handlers) HandleVerifyCode(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if matchedHash == nil {
-		// Wrong (or no) code. Burn an attempt against the email's
-		// in-flight tokens so the small code space can't be ground
-		// down, then return the generic error.
-		if incErr := h.cfg.Tokens.IncrementLoginCodeAttempts(r.Context(), email); incErr != nil {
-			h.cfg.Logger.Warn("increment login code attempts", "err", incErr, "email", maskEmail(email))
-		}
-		// C3-032: and burn one against the EMAIL, which a re-mint does
-		// not reset. This is the counter that actually bounds a patient
-		// grinder; the per-token one above only bounds a burst.
-		h.registerFailedLoginCode(r, email)
+		// Wrong (or no) code. Both counters were already charged above.
 		writeProblem(w, http.StatusBadRequest, "invalid or expired code — request a new one", "/v1/auth/verify-code")
 		return
 	}
@@ -757,26 +759,33 @@ func (h *Handlers) loginCodeLocked(r *http.Request, email string) bool {
 	return true
 }
 
-// registerFailedLoginCode records one wrong-code attempt against the
-// email. Best-effort like [platform.TokenStore.IncrementLoginCodeAttempts]
-// — the response is the same generic error either way — but the
-// transition INTO a lockout is logged at WARN, because a grinder
-// crossing the cap is the signal an operator wants.
-func (h *Handlers) registerFailedLoginCode(r *http.Request, email string) {
+// chargeLoginCodeAttempt records this attempt against the email's
+// durable failure budget BEFORE any code is compared, and reports
+// whether the attempt is within budget. It is charged as a failure up
+// front; a successful sign-in clears it ([Handlers.startSessionForEmail]).
+// The store's upsert serialises on the email's row, so concurrent
+// attempts receive distinct post-increment counts and at most
+// [maxDurableCodeFailures] of them per window are admitted — including
+// the one that reaches the cap, which is why the bound is <=.
+//
+// Fails OPEN on a store error for the reason [Handlers.loginCodeLocked]
+// gives; the per-token [maxCodeAttempts] reservation still applies.
+func (h *Handlers) chargeLoginCodeAttempt(r *http.Request, email string) bool {
 	state, err := h.cfg.Tokens.RegisterFailedLoginCode(
 		r.Context(), email, maxDurableCodeFailures, durableCodeFailureWindow, durableCodeLockout)
 	if err != nil {
-		// The guess was free: nothing durable recorded it. Same silence
+		// The attempt is free: nothing durable recorded it. Same silence
 		// as the status-check path, same counter.
 		obs.LoginCodeLockoutErrorsTotal.WithLabelValues(obs.LoginCodeLockoutOpRegister).Inc()
 		h.cfg.Logger.Warn("register failed login code", "err", err, "email", maskEmail(email))
-		return
+		return true
 	}
 	if state.Locked(h.cfg.Now()) {
 		h.cfg.Logger.Warn("email locked out of code sign-in after repeated failures",
 			"email", maskEmail(email), "failed_count", state.FailedCount,
 			"locked_until", state.LockedUntil, "ip", clientIP(r).String())
 	}
+	return state.FailedCount <= maxDurableCodeFailures
 }
 
 // startSessionForEmail finds-or-creates the user for a just-verified

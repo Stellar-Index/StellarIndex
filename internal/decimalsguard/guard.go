@@ -47,6 +47,7 @@ package decimalsguard
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -156,15 +157,11 @@ type DecimalsAssetWriter interface {
 // 7, since the table's CHECK forbids storing 7).
 //
 // Satisfied by *timescale.Store. The Writer option is type-asserted for it
-// in New (`reconciler, _ := opts.Writer.(DecimalsAssetReconciler)`), so no
-// wiring change is needed for the bare store. GH-1059: the compile-time
-// assertion below only proves *timescale.Store itself satisfies the seam —
-// it says nothing about what New actually RECEIVES at runtime. A decorator
-// wrapping the writer (metrics, retry) that does not forward this interface
-// disarms Reconcile silently: the type assertion fails, reconciler is nil,
-// Reconcile no-ops, and nothing logs or errors. Verify the concrete value
-// passed as Options.Writer implements DecimalsAssetReconciler wherever it is
-// wrapped, not just that the unwrapped store does.
+// in New, so no wiring change is needed for the bare store. The compile-time
+// assertion below only proves *timescale.Store itself satisfies the seam; a
+// decorator wrapping the writer (metrics, retry) that does not forward this
+// interface disarms Reconcile, and New logs that at ERROR naming the
+// writer's concrete type (see resolveReconciler).
 type DecimalsAssetReconciler interface {
 	DecimalsAssetWriter
 	LoadNonstandardDecimalsAssets(ctx context.Context) ([]timescale.NonstandardDecimalsAsset, error)
@@ -239,6 +236,23 @@ type Options struct {
 	BackfillThrottle time.Duration
 }
 
+// resolveReconciler returns w as a DecimalsAssetReconciler when it is one.
+// A non-nil Writer that is not one leaves Reconcile disarmed, so the
+// projection can drift from the lake unchecked; that is logged at ERROR
+// rather than left silent, because the likeliest cause is a wrapper that
+// forgot to forward the interface.
+func resolveReconciler(w DecimalsAssetWriter, logger *slog.Logger) DecimalsAssetReconciler {
+	if w == nil {
+		return nil
+	}
+	r, ok := w.(DecimalsAssetReconciler)
+	if !ok {
+		logger.Error("decimals-guard: Writer does not implement DecimalsAssetReconciler; lockstep reconcile is DISABLED",
+			"writer_type", fmt.Sprintf("%T", w))
+	}
+	return r
+}
+
 // New builds a Guard.
 func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 	window := opts.Window
@@ -257,15 +271,11 @@ func New(reader TradeReader, resolver DecimalsResolver, opts Options) *Guard {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	// The reconcile seam rides on the Writer option: the production store
-	// satisfies both, and a test fake that only implements the Writer keeps
-	// the pre-lockstep behaviour (no reconcile) without any wiring change.
-	reconciler, _ := opts.Writer.(DecimalsAssetReconciler)
 	return &Guard{
 		reader:           reader,
 		resolver:         resolver,
 		writer:           opts.Writer,
-		reconciler:       reconciler,
+		reconciler:       resolveReconciler(opts.Writer, logger),
 		window:           window,
 		backfillWindow:   backfillWindow,
 		backfillThrottle: backfillThrottle,

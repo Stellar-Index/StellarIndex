@@ -48,6 +48,9 @@ Environment=FOLLOW_INTERVAL=1s
 # above the whole chain (which would leave account_movements empty).
 # Driven by stellar_movements_floor_ledger (defaults/main.yml).
 Environment=FLOOR_LEDGER={{ stellar_movements_floor_ledger }}
+# The network the SAC cross-check derives against: a transfer's asset label
+# is trusted only when the emitter is that asset's SAC on this network.
+Environment=NETWORK={{ stellar_network }}
 Environment=EXTRA_FLAGS=
 
 ExecStart=/usr/local/bin/stellarindex-ops ch-cap67-movements \
@@ -56,6 +59,7 @@ ExecStart=/usr/local/bin/stellarindex-ops ch-cap67-movements \
   -ch-addr ${CH_ADDR} \
   -window ${WINDOW} \
   -floor-ledger ${FLOOR_LEDGER} \
+  -network ${NETWORK} \
   -write \
   $EXTRA_FLAGS
 

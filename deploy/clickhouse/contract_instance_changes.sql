@@ -64,9 +64,14 @@
 -- deploy/clickhouse/contract_instance_changes_tx_key.sql (side table,
 -- genesis backfill, rename cut-over).
 --
--- OPERATOR CONTRACT (same as contract_active_ledgers): presence +
--- non-empty = readers TRUST it, including per-contract emptiness
--- ("instance never captured"). Apply this DDL, then IMMEDIATELY run the
+-- OPERATOR CONTRACT (same as contract_active_ledgers): table-level
+-- presence + non-empty gates the fast path on/off. PER-CONTRACT
+-- emptiness ("instance never captured") is deliberately NOT trusted as
+-- authoritative: contractWasmHash (internal/storage/clickhouse/
+-- wasm_lake_reader.go, audit REC-04) and ContractCodeHistory both treat
+-- an index miss as unproven — the table-global probe cannot see PARTIAL
+-- backfill coverage — and fall through to the legacy ledger_entries_current
+-- read rather than returning "no wasm". Apply this DDL, then run the
 -- windowed historical backfill to genesis — serialized with other heavy
 -- jobs:
 --
@@ -74,9 +79,36 @@
 --     /usr/local/bin/stellarindex-ops ch-instance-backfill \
 --     -ch-addr 127.0.0.1:9300 -from 2 -window 2000000
 --
--- Do NOT leave the table applied-but-unbackfilled on a lake with
--- history: cold contracts would resolve "no wasm" / truncated upgrade
--- timelines stamped as complete.
+-- Leaving the table applied-but-unbackfilled on a lake with history costs
+-- PERFORMANCE, not correctness: cold contracts keep paying the legacy scan
+-- until the backfill catches them, but the fallback means they never
+-- resolve "no wasm" / a truncated upgrade timeline stamped as complete.
+--
+-- ── Step 3: verify ──────────────────────────────────────────────────────
+-- Spot-check N contracts already present in the index: its captured
+-- instance-write identity set must equal a direct scan over
+-- ledger_entry_changes with the same predicate the MV uses (bounded
+-- per-contract reads):
+--
+--   SELECT countIf(a != b) FROM (
+--     SELECT
+--       (SELECT countDistinct(ledger_seq, tx_hash, change_index)
+--         FROM stellar.ledger_entry_changes
+--         WHERE entry_type = 'contract_data'
+--           AND length(key_xdr) = 64
+--           AND substring(tryBase64Decode(key_xdr), 1, 8) = unhex('0000000600000001')
+--           AND substring(tryBase64Decode(key_xdr), 41, 4) = unhex('00000014')
+--           AND lower(hex(substring(tryBase64Decode(key_xdr), 9, 32))) = c.contract_hash
+--           AND entry_xdr != ''
+--           AND substring(tryBase64Decode(entry_xdr), 57, 4) = unhex('00000013')) AS a,
+--       (SELECT countDistinct(ledger_seq, tx_hash, change_index)
+--         FROM stellar.contract_instance_changes
+--         WHERE contract_hash = c.contract_hash) AS b,
+--       c.contract_hash
+--     FROM (SELECT DISTINCT contract_hash FROM stellar.contract_instance_changes
+--           LIMIT 20) c)
+--
+-- Expect 0.
 
 CREATE TABLE IF NOT EXISTS stellar.contract_instance_changes
 (

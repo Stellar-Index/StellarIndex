@@ -139,27 +139,47 @@ func (r *TokenStore) ConsumeMagicLinkToken(ctx context.Context, tokenHash []byte
 	return out, nil
 }
 
-// ConsumableLoginCandidates returns active login tokens for an email
-// whose attempt count is still under maxAttempts. The verify-code
-// handler recomputes each row's 6-digit code from its hash and matches
-// the user-supplied code, so we return the full rows (TokenHash is the
+// ReserveLoginCodeCandidates charges one attempt to every active login
+// token for the email that is still under maxAttempts and returns the
+// charged rows. The verify-code handler recomputes each row's 6-digit
+// code from its hash, so the full rows come back (TokenHash is the
 // load-bearing field).
-func (r *TokenStore) ConsumableLoginCandidates(ctx context.Context, email string, maxAttempts int) ([]platform.MagicLinkToken, error) {
+//
+// Charge and cap check are one statement so the cap holds under
+// concurrency: FOR UPDATE makes a racing call wait for the row and
+// re-check `attempts < $3` against the committed value (READ COMMITTED
+// re-evaluation), and a call whose re-check fails is not handed that
+// token. Locks are taken in token_hash order so two calls charging the
+// same address's several tokens cannot deadlock.
+func (r *TokenStore) ReserveLoginCodeCandidates(ctx context.Context, email string, maxAttempts int) ([]platform.MagicLinkToken, error) {
 	now := r.now()
 	const q = `
+		WITH target AS (
+		    SELECT token_hash
+		      FROM magic_link_tokens
+		     WHERE email = $1
+		       AND purpose = 'login'
+		       AND consumed_at IS NULL
+		       AND expires_at > $2
+		       AND attempts < $3
+		     ORDER BY token_hash
+		       FOR UPDATE
+		), charged AS (
+		    UPDATE magic_link_tokens m
+		       SET attempts = m.attempts + 1
+		      FROM target
+		     WHERE m.token_hash = target.token_hash
+		    RETURNING m.token_hash, m.email, m.purpose, m.expires_at, m.consumed_at,
+		              m.requested_ip, m.created_at, m.attempts
+		)
 		SELECT token_hash, email, purpose, expires_at, consumed_at,
 		       requested_ip, created_at, attempts
-		FROM magic_link_tokens
-		WHERE email = $1
-		  AND purpose = 'login'
-		  AND consumed_at IS NULL
-		  AND expires_at > $2
-		  AND attempts < $3
-		ORDER BY created_at DESC
+		  FROM charged
+		 ORDER BY created_at DESC
 	`
 	rows, err := r.s.db.QueryContext(ctx, q, email, now, maxAttempts)
 	if err != nil {
-		return nil, fmt.Errorf("consumable login candidates: %w", err)
+		return nil, fmt.Errorf("reserve login code candidates: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
@@ -174,7 +194,7 @@ func (r *TokenStore) ConsumableLoginCandidates(ctx context.Context, email string
 			&t.TokenHash, &t.Email, &t.Purpose, &t.ExpiresAt,
 			&consumedAt, &ipText, &t.CreatedAt, &t.Attempts,
 		); err != nil {
-			return nil, fmt.Errorf("consumable login candidates scan: %w", err)
+			return nil, fmt.Errorf("reserve login code candidates scan: %w", err)
 		}
 		if consumedAt.Valid {
 			t.ConsumedAt = consumedAt.Time
@@ -182,26 +202,6 @@ func (r *TokenStore) ConsumableLoginCandidates(ctx context.Context, email string
 		out = append(out, t)
 	}
 	return out, rows.Err()
-}
-
-// IncrementLoginCodeAttempts bumps attempts on every active login
-// token for the email. A wrong code thus moves all in-flight tokens
-// closer to the cap, after which ConsumableLoginCandidates stops
-// returning them.
-func (r *TokenStore) IncrementLoginCodeAttempts(ctx context.Context, email string) error {
-	now := r.now()
-	const q = `
-		UPDATE magic_link_tokens
-		SET attempts = attempts + 1
-		WHERE email = $1
-		  AND purpose = 'login'
-		  AND consumed_at IS NULL
-		  AND expires_at > $2
-	`
-	if _, err := r.s.db.ExecContext(ctx, q, email, now); err != nil {
-		return fmt.Errorf("increment login code attempts: %w", err)
-	}
-	return nil
 }
 
 // RegisterFailedLoginCode records one failed 6-digit-code attempt
@@ -415,7 +415,7 @@ func (r *TokenStore) CountLoginCodeLockouts(ctx context.Context) (int64, error) 
 // nobody clicks is never consumed).
 //
 // Every row past `expires_at` is TERMINAL: ConsumeMagicLinkToken and
-// ConsumableLoginCandidates both require `expires_at > now`, so an
+// ReserveLoginCodeCandidates both require `expires_at > now`, so an
 // expired row can never again be redeemed regardless of its
 // consumed_at. The reaper's retention keeps expired rows a while for
 // forensics and to preserve the expired-vs-absent distinction

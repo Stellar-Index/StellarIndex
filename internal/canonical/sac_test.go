@@ -32,6 +32,36 @@ func TestSacContractID_Golden(t *testing.T) {
 	}
 }
 
+func TestSEP11SACAsset(t *testing.T) {
+	InstallNetworkPassphrase("")
+	const (
+		usdcName = "USDC:GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+		usdcSAC  = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+		xlmSAC   = "CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA"
+	)
+	for _, tc := range []struct {
+		name, contract, want string
+	}{
+		{"native", xlmSAC, "native"},
+		{usdcName, usdcSAC, "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"},
+		{usdcName, xlmSAC, ""},
+		{"native", usdcSAC, ""},
+		{"USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN", usdcSAC, ""},
+		{"not an asset", usdcSAC, ""},
+	} {
+		got, ok := SEP11SACAsset(tc.name, tc.contract)
+		if tc.want == "" {
+			if ok {
+				t.Errorf("(%q, %s) trusted as %s; want untrusted", tc.name, tc.contract, got)
+			}
+			continue
+		}
+		if !ok || got.String() != tc.want {
+			t.Errorf("(%q, %s) = (%s, %v), want %s", tc.name, tc.contract, got, ok, tc.want)
+		}
+	}
+}
+
 func TestSacContractID_SorobanHasNone(t *testing.T) {
 	sor, err := NewSorobanAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
 	if err != nil {

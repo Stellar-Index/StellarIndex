@@ -301,7 +301,23 @@ type fakeTokenStore struct {
 	// lockoutErr, when set, makes the lockout reads/writes fail; used to
 	// pin the deliberate fail-open posture.
 	lockoutErr error
-	now        func() time.Time
+	// beforeWrite, when set, runs (outside mu) at the start of every
+	// login-code write, so a test can park a burst of concurrent
+	// requests at the point where they stop only reading.
+	beforeWrite func()
+	// candidateHandOuts counts login-candidate lookups that returned at
+	// least one token: each is one request whose code the handler compares.
+	candidateHandOuts int
+	now               func() time.Time
+}
+
+func (f *fakeTokenStore) enterWrite() {
+	f.mu.Lock()
+	hook := f.beforeWrite
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 func newFakeTokenStore(now func() time.Time) *fakeTokenStore {
@@ -335,6 +351,7 @@ func (f *fakeTokenStore) CreateMagicLinkToken(_ context.Context, t platform.Magi
 }
 
 func (f *fakeTokenStore) ConsumeMagicLinkToken(_ context.Context, hash []byte) (platform.MagicLinkToken, error) {
+	f.enterWrite()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k := tokenKey(hash)
@@ -365,10 +382,43 @@ func (f *fakeTokenStore) ConsumableLoginCandidates(_ context.Context, email stri
 		out = append(out, t)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if len(out) > 0 {
+		f.candidateHandOuts++
+	}
 	return out, nil
 }
 
+// ReserveLoginCodeCandidates mirrors the Postgres statement: check and
+// charge happen under one lock, so no caller sees a pre-charge count.
+func (f *fakeTokenStore) ReserveLoginCodeCandidates(_ context.Context, email string, maxAttempts int) ([]platform.MagicLinkToken, error) {
+	f.enterWrite()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	var out []platform.MagicLinkToken
+	for k, t := range f.tokens {
+		if t.Email != email || t.Purpose != platform.TokenPurposeLogin {
+			continue
+		}
+		if !t.ConsumedAt.IsZero() || !t.ExpiresAt.After(now) || t.Attempts >= maxAttempts {
+			continue
+		}
+		t.Attempts++
+		f.tokens[k] = t
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	if len(out) > 0 {
+		f.candidateHandOuts++
+	}
+	return out, nil
+}
+
+// IncrementLoginCodeAttempts and ConsumableLoginCandidates are the
+// read-then-write pair the handler used before attempts were reserved;
+// kept so the burst tests can be run against that shape.
 func (f *fakeTokenStore) IncrementLoginCodeAttempts(_ context.Context, email string) error {
+	f.enterWrite()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	now := f.now()
@@ -388,6 +438,7 @@ func (f *fakeTokenStore) IncrementLoginCodeAttempts(_ context.Context, email str
 func (f *fakeTokenStore) RegisterFailedLoginCode(
 	_ context.Context, email string, maxFailures int, window, lockFor time.Duration,
 ) (platform.LoginCodeLockout, error) {
+	f.enterWrite()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.lockoutErr != nil {
@@ -421,6 +472,7 @@ func (f *fakeTokenStore) LoginCodeLockoutStatus(_ context.Context, email string)
 }
 
 func (f *fakeTokenStore) ClearLoginCodeLockout(_ context.Context, email string) error {
+	f.enterWrite()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.lockoutErr != nil {

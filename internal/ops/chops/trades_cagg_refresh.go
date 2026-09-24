@@ -32,6 +32,7 @@ type tradesCAGGStore interface {
 	RefreshContinuousAggregate(ctx context.Context, viewName string, from, to time.Time) error
 	RefreshContinuousAggregateForced(ctx context.Context, viewName string, from, to time.Time) error
 	Prices1mRetentionArmed(ctx context.Context) (bool, error)
+	tradesDriftStore
 }
 
 func tradesCAGGRefresh(args []string) error {
@@ -56,7 +57,7 @@ func tradesCAGGRefresh(args []string) error {
 		return err
 	}
 	defer func() { _ = store.Close() }()
-	return refreshTradesCAGGsOverLedgers(ctx, store, uint32(*from), uint32(*to), os.Stdout)
+	return refreshTradesCAGGsOverLedgers(ctx, store, uint32(*from), uint32(*to), time.Now(), os.Stdout)
 }
 
 // refreshTradesCAGGsOverLedgers refreshes every [timescale.TradesCAGGs]
@@ -67,7 +68,11 @@ func tradesCAGGRefresh(args []string) error {
 // No trades in the range is an error, not a no-op: the caller has just
 // rewritten it, so an empty range means the time span of whatever was
 // deleted cannot be recovered here, and the aggregates may still hold it.
-func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from, to uint32, out io.Writer) error {
+//
+// A refresh that returned is not yet proof the aggregates are right, so
+// it succeeds only once prices_1m agrees with `trades` over sampled
+// windows of the span ([checkTradesPrices1mDrift]).
+func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from, to uint32, now time.Time, out io.Writer) error {
 	tsFrom, tsTo, err := s.LedgerRangeToTimeRange(ctx, from, to)
 	if errors.Is(err, timescale.ErrNotFound) {
 		return fmt.Errorf("no trades in ledgers [%d,%d], so the time span to refresh is unknown; if this range was rewritten, refresh the trades continuous aggregates over it by hand", from, to)
@@ -87,8 +92,14 @@ func refreshTradesCAGGsOverLedgers(ctx context.Context, s tradesCAGGStore, from,
 			return fmt.Errorf("refresh %s over ledgers [%d,%d]: %w", st.View, from, to, err)
 		}
 	}
-	_, err = fmt.Fprintf(out, "%s [%d,%d] ts=[%s,%s] views=%d\n", tradesCAGGRefreshedPrefix,
-		from, to, tsFrom.UTC().Format(time.RFC3339), tsTo.UTC().Format(time.RFC3339), len(timescale.TradesCAGGs))
+	checked, err := checkTradesPrices1mDrift(ctx, s, tsFrom, tsTo, now, out)
+	if err != nil {
+		return fmt.Errorf("ledgers [%d,%d]: %w", from, to, err)
+	}
+	// drift-windows=0 is a span wholly inside prices_1m's live refresh
+	// window, which its own policy owns.
+	_, err = fmt.Fprintf(out, "%s [%d,%d] ts=[%s,%s] views=%d drift-windows=%d\n", tradesCAGGRefreshedPrefix,
+		from, to, tsFrom.UTC().Format(time.RFC3339), tsTo.UTC().Format(time.RFC3339), len(timescale.TradesCAGGs), checked)
 	return err
 }
 
