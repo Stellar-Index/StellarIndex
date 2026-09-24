@@ -345,6 +345,10 @@ type OHLCQuery struct {
 	Quote string
 	From  time.Time // optional
 	To    time.Time // optional
+	// OutlierSigma drops trades more than N standard deviations from
+	// the window mean before the bar is computed. nil = server default
+	// (4σ); a pointer to 0 disables filtering.
+	OutlierSigma *float64
 }
 
 // OHLC fetches a single open/high/low/close bar over the
@@ -384,7 +388,56 @@ func (c *Client) OHLC(ctx context.Context, q OHLCQuery) (*Envelope[OHLCBar], err
 	if !q.To.IsZero() {
 		v.Set("to", q.To.UTC().Format(time.RFC3339))
 	}
+	if q.OutlierSigma != nil {
+		v.Set("outlier_sigma", strconv.FormatFloat(*q.OutlierSigma, 'f', -1, 64))
+	}
 	var env Envelope[OHLCBar]
+	if err := c.doJSON(ctx, http.MethodGet, "/v1/ohlc", v, nil, &env); err != nil {
+		return nil, err
+	}
+	return &env, nil
+}
+
+// OHLCSeriesQuery is the input for [Client.OHLCSeries]. Base, Quote
+// and Interval are required; From, To and Limit are optional.
+type OHLCSeriesQuery struct {
+	Base  string
+	Quote string
+	// Interval is the bar width: one of 1m 5m 15m 30m 1h 2h 4h 12h 1d
+	// 3d 1w 2w 1mo.
+	Interval string
+	From     time.Time // optional
+	To       time.Time // optional
+	Limit    int       // 0 → server default (100); max 1000
+}
+
+// OHLCSeries fetches a multi-bar candlestick series — /v1/ohlc with
+// `interval` set, whose body is an [OHLCSeriesResponse] rather than
+// the single [OHLCBar] that [Client.OHLC] decodes.
+func (c *Client) OHLCSeries(ctx context.Context, q OHLCSeriesQuery) (*Envelope[OHLCSeriesResponse], error) {
+	if q.Base == "" {
+		return nil, &APIError{Status: 400, Title: "base required"}
+	}
+	if q.Quote == "" {
+		return nil, &APIError{Status: 400, Title: "quote required"}
+	}
+	if q.Interval == "" {
+		return nil, &APIError{Status: 400, Title: "interval required"}
+	}
+	v := url.Values{}
+	v.Set("base", q.Base)
+	v.Set("quote", q.Quote)
+	v.Set("interval", q.Interval)
+	if !q.From.IsZero() {
+		v.Set("from", q.From.UTC().Format(time.RFC3339))
+	}
+	if !q.To.IsZero() {
+		v.Set("to", q.To.UTC().Format(time.RFC3339))
+	}
+	if q.Limit > 0 {
+		v.Set("limit", strconv.Itoa(q.Limit))
+	}
+	var env Envelope[OHLCSeriesResponse]
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/ohlc", v, nil, &env); err != nil {
 		return nil, err
 	}

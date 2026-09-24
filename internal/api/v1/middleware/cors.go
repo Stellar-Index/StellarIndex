@@ -42,14 +42,48 @@ type CORSOptions struct {
 
 	// AllowedHeaders is the list of non-safe-listed headers clients
 	// may include on cross-origin requests. Defaults to
-	// {Content-Type, Authorization, X-Request-Id}.
+	// [DefaultCORSAllowedHeaders].
 	AllowedHeaders []string
+
+	// ExposedHeaders is the list of response headers a cross-origin
+	// script may read beyond the Fetch safelist. Defaults to
+	// [DefaultCORSExposedHeaders].
+	ExposedHeaders []string
 
 	// MaxAge is the cache duration for the preflight response, in
 	// seconds. Defaults to 600 (10 min) — long enough to amortise
 	// preflight overhead without going so far that rotating the
 	// policy becomes slow. Browsers silently cap at 2h.
 	MaxAge int
+}
+
+// DefaultCORSAllowedHeaders are the request headers the API accepts
+// from a client: every header the OpenAPI spec or the auth middleware
+// tells a caller to send. cors_test.go diffs it against the spec.
+var DefaultCORSAllowedHeaders = []string{
+	"Content-Type",
+	"Authorization",
+	HeaderAPIKey,
+	HeaderRequestID,
+	IdempotencyKeyHeader,
+	"X-Reason",
+	"Last-Event-ID",
+}
+
+// DefaultCORSExposedHeaders are the non-safelisted response headers a
+// client is told to act on (429 back-off, quota, request correlation).
+// Without Access-Control-Expose-Headers a browser hides them from
+// cross-origin scripts however correct the server's value is.
+var DefaultCORSExposedHeaders = []string{
+	"Retry-After",
+	"X-RateLimit-Limit",
+	"X-RateLimit-Remaining",
+	"X-RateLimit-Reset",
+	HeaderRequestID,
+	"X-StellarIndex-Monthly-Quota",
+	"X-StellarIndex-Monthly-Used",
+	"X-StellarIndex-Signup-Verify-Required",
+	"Idempotency-Replayed",
 }
 
 // CORS returns middleware that applies W3C CORS headers based on
@@ -64,8 +98,9 @@ type CORSOptions struct {
 //   - On OPTIONS requests with an Origin header: emits the
 //     preflight response (Allow-Origin/Methods/Headers/Max-Age) and
 //     returns 204 without calling next.
-//   - On all other requests: emits Access-Control-Allow-Origin iff
-//     the request's Origin is in the allow-list, then calls next.
+//   - On all other requests: emits Access-Control-Allow-Origin and
+//     Access-Control-Expose-Headers iff the request's Origin is in
+//     the allow-list, then calls next.
 //   - When AllowedOrigins contains "*": the wildcard is echoed
 //     back instead of reflecting the specific origin. Matches the
 //     spec + keeps the middleware simple.
@@ -79,8 +114,8 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 	}
 	methods := strings.Join(defaultIfEmpty(opts.AllowedMethods,
 		[]string{"GET", "HEAD", "OPTIONS", "POST"}), ", ")
-	headers := strings.Join(defaultIfEmpty(opts.AllowedHeaders,
-		[]string{"Content-Type", "Authorization", "X-Request-Id"}), ", ")
+	headers := strings.Join(defaultIfEmpty(opts.AllowedHeaders, DefaultCORSAllowedHeaders), ", ")
+	exposed := strings.Join(defaultIfEmpty(opts.ExposedHeaders, DefaultCORSExposedHeaders), ", ")
 	maxAge := opts.MaxAge
 	if maxAge <= 0 {
 		maxAge = 600
@@ -119,6 +154,7 @@ func CORS(opts CORSOptions) Middleware { //nolint:gocognit // origin allow-list 
 				if allowCredentials {
 					w.Header().Set("Access-Control-Allow-Credentials", "true")
 				}
+				w.Header().Set("Access-Control-Expose-Headers", exposed)
 			}
 
 			// Per-request CORS observability (F-1244). One increment

@@ -19,6 +19,10 @@ import (
 // 1:1 to [config.APIConfig].AuthMode.
 type AuthMode string
 
+// HeaderAPIKey is the alternative to `Authorization: Bearer` for
+// presenting an API key.
+const HeaderAPIKey = "X-API-Key"
+
 const (
 	// AuthModeNone — no enforcement. The middleware attaches an
 	// anonymous Subject to every request (keyed by RemoteIP+UA so
@@ -531,7 +535,7 @@ func bearerOrXKey(r *http.Request) string {
 	if k := bearerOnly(r); k != "" {
 		return k
 	}
-	return strings.TrimSpace(r.Header.Get("X-API-Key"))
+	return strings.TrimSpace(r.Header.Get(HeaderAPIKey))
 }
 
 // bearerOnly extracts the token from `Authorization: Bearer <token>`.

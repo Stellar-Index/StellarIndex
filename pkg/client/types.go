@@ -256,13 +256,13 @@ type AssetDetail struct {
 	// "stellar_asset" on this struct, the discriminator [AssetLookup]
 	// switches on for the /v1/assets/{asset_id} dual response (ADR-0042
 	// LC-040). Type says which STELLAR ASSET CLASS this is within that
-	// shape (native / classic / soroban / fiat / crypto). Don't conflate
-	// them: Kind never varies on this struct; Type does.
+	// shape (native / classic / soroban / fiat / global / external).
+	// Don't conflate them: Kind never varies on this struct; Type does.
 	Kind string `json:"kind"`
 
 	// Identity
 	AssetID    string  `json:"asset_id"`
-	Type       string  `json:"type"` // "native" / "classic" / "soroban" / "fiat" / "crypto"
+	Type       string  `json:"type"` // "native" / "classic" / "soroban" / "fiat" / "global" / "external"
 	Code       string  `json:"code,omitempty"`
 	Issuer     string  `json:"issuer,omitempty"`
 	ContractID string  `json:"contract_id,omitempty"`
@@ -328,11 +328,13 @@ type AssetDetail struct {
 	// proxy). F-1271 (audit-2026-05-12).
 	PriceUSD *string `json:"price_usd,omitempty"`
 
-	// PriceBasis identifies a PriceUSD that is NOT a market
-	// observation. The only value today is "declared_peg": the price
-	// was filled from an operator-declared 1:1 fiat peg × the current
-	// fiat→USD FX rate because no market-derived price survived the
-	// server's substance gate. Empty means market-derived (the
+	// PriceBasis identifies a PriceUSD that is NOT a direct market
+	// observation. "declared_peg": the price was filled from an
+	// operator-declared 1:1 fiat peg × the current fiat→USD FX rate
+	// because no market-derived price survived the server's substance
+	// gate. "transitive": the price was derived through one
+	// intermediate hop (asset → hop → USD proxy), not observed on a
+	// USD-proxy market directly. Empty means market-derived (the
 	// pre-existing contract, unchanged). Peg-priced rows carry no
 	// change pills or market-history-derived valuation fields.
 	PriceBasis string `json:"price_basis,omitempty"`
@@ -646,6 +648,34 @@ type OHLCBar struct {
 	Truncated           bool `json:"truncated"`
 }
 
+// OHLCSeriesResponse is the data shape returned by [Client.OHLCSeries]:
+// up to `limit` closed bars of width Interval over [From, To).
+type OHLCSeriesResponse struct {
+	Base      string          `json:"base"`
+	Quote     string          `json:"quote"`
+	Interval  string          `json:"interval"`
+	From      time.Time       `json:"from"`
+	To        time.Time       `json:"to"`
+	Intervals []OHLCSeriesBar `json:"intervals"`
+}
+
+// OHLCSeriesBar is one bar of an [OHLCSeriesResponse]. Prices and
+// volumes are decimal strings; VBaseDecimals / VQuoteDecimals are the
+// volume scales (nil when a contributing source is unrecognised).
+type OHLCSeriesBar struct {
+	T              time.Time `json:"t"`
+	O              string    `json:"o"`
+	H              string    `json:"h"`
+	L              string    `json:"l"`
+	C              string    `json:"c"`
+	VBase          string    `json:"v_base"`
+	VQuote         string    `json:"v_quote"`
+	VBaseDecimals  *int      `json:"v_base_decimals"`
+	VQuoteDecimals *int      `json:"v_quote_decimals"`
+	N              int64     `json:"n"`
+	Truncated      bool      `json:"truncated,omitempty"`
+}
+
 // Source is the data shape returned by [Client.Sources] — one
 // row from the operator's source registry (the catalogue of
 // venues + oracles + aggregators the deployment can ingest from).
@@ -697,12 +727,16 @@ type Source struct {
 type VolumeBucket struct {
 	Hour      time.Time `json:"hour"`
 	VolumeUSD string    `json:"volume_usd"`
-	// TradeCount is present on SOURCE sparklines (/v1/sources?include=
-	// sparkline) and absent on market sparklines, hence omitempty. The
-	// server marks it required on the source shape; without it the
-	// documented "trade-count line above the $-volume bars" renders
-	// zeros for every hour (cold audit 2026-08-04).
-	TradeCount int64 `json:"trade_count,omitempty"`
+	// TradeCount is the number of trades in the hour; it powers the
+	// trade-count line above the $-volume bars.
+	TradeCount int64 `json:"trade_count"`
+}
+
+// MarketVolumeBucket is one hourly USD-volume datapoint on a market
+// sparkline. Unlike a source's [VolumeBucket] it carries no trade count.
+type MarketVolumeBucket struct {
+	Hour      time.Time `json:"hour"`
+	VolumeUSD string    `json:"volume_usd"`
 }
 
 // Methodology is the data shape returned by [Client.Methodology].
@@ -792,7 +826,7 @@ type Market struct {
 	LastPrice *string `json:"last_price,omitempty"`
 	// VolumeHistory24h — per-hour USD-volume sparkline buckets.
 	// Populated only when the request sets `?include=sparkline`.
-	VolumeHistory24h []VolumeBucket `json:"volume_history_24h,omitempty"`
+	VolumeHistory24h []MarketVolumeBucket `json:"volume_history_24h,omitempty"`
 	// FirstTradeAt is the pair's first recorded daily bucket
 	// ("since inception = first recorded trade"). Present only when
 	// the request passed include=inception.
@@ -869,7 +903,7 @@ type UsageRow struct {
 type KeyCreated struct {
 	KeyID     string `json:"key_id"`
 	Plaintext string `json:"plaintext"`
-	Label     string `json:"label,omitempty"`
+	Label     string `json:"label"`
 	// KeyPrefix is the first 12 chars of the plaintext
 	// (`sip_<8hex>`) — safe to display; identifies the key later.
 	KeyPrefix string `json:"key_prefix,omitempty"`
@@ -1026,8 +1060,8 @@ type StatusLatency struct {
 	// status rollup does. Hardcoding them client-side is what produced
 	// site-audit S31 — two red SLO bars under a green
 	// "All systems operational" banner (cold audit 2026-08-04).
-	P95TargetMs int `json:"p95_target_ms"`
-	P99TargetMs int `json:"p99_target_ms"`
+	P95TargetMs float64 `json:"p95_target_ms"`
+	P99TargetMs float64 `json:"p99_target_ms"`
 }
 
 // StatusFreshness summarises the ingest layer.
@@ -1063,7 +1097,7 @@ type ActiveIncident struct {
 // [Client.Readyz].
 type Health struct {
 	Status string `json:"status"`
-	Uptime string `json:"uptime,omitempty"`
+	Uptime string `json:"uptime"`
 	// Checks is populated on /readyz with per-dependency ping
 	// results; absent on /healthz.
 	Checks []HealthCheck `json:"checks,omitempty"`
@@ -1854,8 +1888,36 @@ type RWADefinition struct {
 	// and routers `defi` and `exchange`, which on a contract address
 	// describe infrastructure that issues nothing.
 	ContractRecognitionTags []string `json:"contract_recognition_tags"`
-	ScamFlagTags            []string `json:"scam_flag_tags"`
-	DocumentationURL        string   `json:"documentation_url"`
+	// ContractAnchorClasses is the class vocabulary a contract-issued
+	// token's curated binding may declare.
+	ContractAnchorClasses []string `json:"contract_anchor_classes,omitempty"`
+	// ContractRecognitionSources is the closed vocabulary of routes by
+	// which a contract address counts as independently recognised.
+	ContractRecognitionSources []string `json:"contract_recognition_sources"`
+	ScamFlagTags               []string `json:"scam_flag_tags"`
+	// BoundInstruments is the curated (code, issuer) → oracle-feed
+	// binding set; a pair absent from it gets no reference.
+	BoundInstruments []RWABoundInstrument `json:"bound_instruments"`
+	// BoundContractInstruments is the curated contract-address →
+	// instrument binding set. An address here is NOT thereby a member.
+	BoundContractInstruments []RWABoundContractInstrument `json:"bound_contract_instruments"`
+	DocumentationURL         string                       `json:"documentation_url"`
+}
+
+// RWABoundInstrument binds one exact classic (code, issuer) pair to
+// the oracle feed its reference is read from.
+type RWABoundInstrument struct {
+	Code   string `json:"code"`
+	Issuer string `json:"issuer"`
+	Feed   string `json:"feed"`
+}
+
+// RWABoundContractInstrument binds one exact contract address to the
+// real-world instrument it holds and that instrument's class.
+type RWABoundContractInstrument struct {
+	ContractID string `json:"contract_id"`
+	Instrument string `json:"instrument"`
+	Class      string `json:"class"`
 }
 
 // RWASummary aggregates the served set. MarketCapUSD is nil when no
@@ -1901,7 +1963,10 @@ type RWAReferenceSummary struct {
 	// Sources names the distinct oracles behind the total. Each
 	// contributing row carries its full provenance in RWAAsset.Reference.
 	Sources []string `json:"sources,omitempty"`
-	Basis   string   `json:"basis"`
+	// Provenances names the distinct RWAReference.Provenance values in
+	// the total — the total can mix kinds of claim.
+	Provenances []string `json:"provenances,omitempty"`
+	Basis       string   `json:"basis"`
 }
 
 // RWABothBases totals the members carrying a market cap AND a reference
@@ -1959,6 +2024,11 @@ type RWAReference struct {
 	AsOf  time.Time `json:"as_of"`
 	// Stale marks a reference older than 72h — labelled, not withheld.
 	Stale bool `json:"stale,omitempty"`
+	// Provenance names what kind of figure PriceUSD is:
+	// "oracle_instrument_nav", "listing_platform_price",
+	// "prospectus_constant_nav" or "curator_uploaded_price". Only the
+	// first is a statement about the backing instrument.
+	Provenance string `json:"provenance"`
 }
 
 // RWAPremium is the token's market price measured against the oracle's
@@ -1993,8 +2063,12 @@ type RWAAsset struct {
 	IssuerDirectoryName string   `json:"issuer_directory_name,omitempty"`
 	IssuerDirectoryTags []string `json:"issuer_directory_tags,omitempty"`
 	Basis               string   `json:"basis"`
-	AnchorClass         string   `json:"anchor_class,omitempty"`
-	AnchorAsset         string   `json:"anchor_asset,omitempty"`
+	// Recognition names the route by which the row's issuer (or
+	// contract) counts as independently recognised; the routes are not
+	// the same strength of evidence.
+	Recognition string `json:"recognition,omitempty"`
+	AnchorClass string `json:"anchor_class,omitempty"`
+	AnchorAsset string `json:"anchor_asset,omitempty"`
 	// Valuation is the observed-market-price money, or the reason there
 	// is none; ReferenceValuation is the same float at the reference
 	// price. The two are separate bases and are never summed.
@@ -2003,6 +2077,13 @@ type RWAAsset struct {
 	Reference          *RWAReference         `json:"reference,omitempty"`
 	Premium            RWAPremium            `json:"premium"`
 	CirculatingSupply  *string               `json:"circulating_supply,omitempty"`
+	// SupplyBasis names the reading that produced CirculatingSupply
+	// (the ADR-0011 vocabulary).
+	SupplyBasis string `json:"supply_basis,omitempty"`
+	// CirculatingSupplyLowerBound is true when CirculatingSupply is a
+	// provable floor, not a complete reading — every reference valuation
+	// on the row is then a lower bound too.
+	CirculatingSupplyLowerBound bool `json:"circulating_supply_lower_bound,omitempty"`
 	// Decimals is the on-chain smallest-unit scale — 7 for classic, and
 	// whatever a SEP-41 contract declares for a contract-issued row — so
 	// both valuations can be re-derived: CirculatingSupply /
@@ -2025,6 +2106,9 @@ type RWAGroupTotal struct {
 	AssetsUnvalued          int     `json:"assets_unvalued"`
 	ReferenceValueUSD       *string `json:"reference_value_usd,omitempty"`
 	AssetsReferenceUnvalued int     `json:"assets_reference_unvalued"`
+	// Note explains a group that did not name itself (e.g. rows admitted
+	// on an oracle binding with no declared class). Absent otherwise.
+	Note string `json:"note,omitempty"`
 }
 
 // RWAIssuerTotal is one row of the per-issuer breakdown, keyed on the

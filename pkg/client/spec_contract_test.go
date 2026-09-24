@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -66,6 +67,7 @@ var coveredOperations = []coveredOperation{
 	{"Observations", "GET", "/observations", TradeRow{}, ""},
 	{"Chart", "GET", "/chart", ChartSeries{}, ""},
 	{sdkMethod: "OHLC", method: "GET", path: "/ohlc", payload: OHLCBar{}, envelopeRef: "#/components/schemas/OHLCEnvelope"},
+	{sdkMethod: "OHLCSeries", method: "GET", path: "/ohlc", payload: OHLCSeriesResponse{}, envelopeRef: "#/components/schemas/OHLCSeriesEnvelope"},
 	{"VWAP", "GET", "/vwap", VWAPResult{}, ""},
 	{"TWAP", "GET", "/twap", TWAPResult{}, ""},
 	{"Assets", "GET", "/assets", AssetDetail{}, ""},
@@ -386,6 +388,23 @@ func mergeSchema(doc map[string]any, schema map[string]any) map[string]any {
 // (false) from a real property set.
 func dataSchemaProps(t *testing.T, doc map[string]any, method, path, envelopeRef string) (map[string]bool, bool) {
 	t.Helper()
+	data := dataSchema(t, doc, method, path, envelopeRef)
+	dp, _ := data["properties"].(map[string]any)
+	if dp == nil {
+		return nil, false // 204 / non-JSON / primitive / additionalProperties payload
+	}
+	out := map[string]bool{}
+	for k := range dp {
+		out[k] = true
+	}
+	return out, true
+}
+
+// dataSchema resolves an operation's 200/201-response `data` schema,
+// merged, the element schema when data is an array. nil = 204 /
+// non-JSON.
+func dataSchema(t *testing.T, doc map[string]any, method, path, envelopeRef string) map[string]any {
+	t.Helper()
 	dig := func(m map[string]any, keys ...string) map[string]any {
 		cur := m
 		for _, k := range keys {
@@ -404,7 +423,7 @@ func dataSchemaProps(t *testing.T, doc map[string]any, method, path, envelopeRef
 		op := dig(doc, "paths", path, strings.ToLower(method))
 		if op == nil {
 			t.Errorf("%s %s: operation missing while resolving schema", method, path)
-			return nil, false
+			return nil
 		}
 		for _, status := range []string{"200", "201"} {
 			schema = dig(op, "responses", status, "content", "application/json", "schema")
@@ -414,7 +433,7 @@ func dataSchemaProps(t *testing.T, doc map[string]any, method, path, envelopeRef
 		}
 	}
 	if schema == nil {
-		return nil, false // 204 / non-JSON
+		return nil // 204 / non-JSON
 	}
 	env := mergeSchema(doc, schema)
 	props, _ := env["properties"].(map[string]any)
@@ -426,25 +445,11 @@ func dataSchemaProps(t *testing.T, doc map[string]any, method, path, envelopeRef
 	} else {
 		data = mergeSchema(doc, dataRaw)
 	}
-	if data == nil {
-		return nil, false
-	}
-	if data["type"] == "array" {
+	if data != nil && data["type"] == "array" {
 		items, _ := data["items"].(map[string]any)
 		data = mergeSchema(doc, items)
-		if data == nil {
-			return nil, false
-		}
 	}
-	dp, _ := data["properties"].(map[string]any)
-	if dp == nil {
-		return nil, false // primitive / additionalProperties payload
-	}
-	out := map[string]bool{}
-	for k := range dp {
-		out[k] = true
-	}
-	return out, true
+	return data
 }
 
 // jsonTags returns the JSON field names of a struct type (embedded
@@ -475,8 +480,10 @@ func jsonTags(typ reflect.Type) map[string]bool {
 }
 
 // TestSDKSchemasMatchSpec — for each covered operation with a struct
-// payload, the spec's data properties and the Go struct's JSON tags
-// must match exactly (modulo the explicit exceptions map).
+// payload, the spec's data schema and the Go type must match at every
+// depth (modulo the explicit exceptions map): the same field names in
+// both directions, a Go kind that decodes the spec's type, and no
+// `omitempty` on a spec-required field. See [schemaWalker].
 func TestSDKSchemasMatchSpec(t *testing.T) {
 	doc := loadSpec(t)
 	seen := map[string]bool{}
@@ -485,41 +492,188 @@ func TestSDKSchemasMatchSpec(t *testing.T) {
 			continue
 		}
 		key := c.method + " " + c.path
-		if seen[key] {
+		// envelopeRef is part of the identity: two SDK methods over the
+		// two branches of one oneOf response are two checks, not a dupe.
+		if seen[key+"|"+c.envelopeRef] {
 			continue
 		}
-		seen[key] = true
+		seen[key+"|"+c.envelopeRef] = true
 
-		specProps, ok := dataSchemaProps(t, doc, c.method, c.path, c.envelopeRef)
-		if !ok {
+		data := dataSchema(t, doc, c.method, c.path, c.envelopeRef)
+		if _, ok := data["properties"].(map[string]any); !ok {
 			t.Errorf("%s: could not resolve an object schema for the 200 response — if the payload is deliberately unstructured, set payload nil in coveredOperations", key)
 			continue
 		}
-		goProps := jsonTags(reflect.TypeOf(c.payload))
-		exc := schemaExceptions[key]
+		w := &schemaWalker{doc: doc, exc: schemaExceptions[key], seen: map[string]bool{}}
+		w.walk(data, reflect.TypeOf(c.payload), "")
+		for _, d := range w.drift {
+			t.Errorf("%s (%s, %T): %s", key, c.sdkMethod, c.payload, d)
+		}
+	}
+}
 
-		var missingInGo, missingInSpec []string
-		for p := range specProps {
-			if !goProps[p] && exc[p] == "" {
-				missingInGo = append(missingInGo, p)
+// schemaWalker diffs a spec schema against the Go type the SDK decodes
+// it into, recursing through nested objects, array items and
+// additionalProperties maps. A top-level-only name comparison let
+// nested served fields go missing and would pass a money
+// string→float64 regression.
+type schemaWalker struct {
+	doc   map[string]any
+	exc   map[string]string // JSON path → reason, from schemaExceptions
+	seen  map[string]bool
+	drift []string
+}
+
+var (
+	timeType        = reflect.TypeOf(time.Time{})
+	unmarshalerType = reflect.TypeOf((*json.Unmarshaler)(nil)).Elem()
+)
+
+func joinJSONPath(parent, name string) string {
+	if parent == "" {
+		return name
+	}
+	return parent + "." + name
+}
+
+// specSchemaType returns a schema's non-null `type` ("" when absent);
+// OpenAPI 3.1 spells a nullable field `type: [string, "null"]`.
+func specSchemaType(s map[string]any) string {
+	switch v := s["type"].(type) {
+	case string:
+		return v
+	case []any:
+		for _, e := range v {
+			if str, ok := e.(string); ok && str != "null" {
+				return str
 			}
 		}
-		for p := range goProps {
-			if !specProps[p] && exc[p] == "" {
-				missingInSpec = append(missingInSpec, p)
+	}
+	return ""
+}
+
+// goDecodes reports whether encoding/json can decode a value of the
+// given spec type into a Go value of typ without loss.
+func goDecodes(specType string, typ reflect.Type) bool {
+	if typ == timeType {
+		return specType == "string"
+	}
+	switch k := typ.Kind(); specType {
+	case "string":
+		return k == reflect.String
+	case "integer":
+		return k >= reflect.Int && k <= reflect.Uint64
+	case "number":
+		return k == reflect.Float32 || k == reflect.Float64 || typ == reflect.TypeOf(json.Number(""))
+	case "boolean":
+		return k == reflect.Bool
+	case "array":
+		return k == reflect.Slice || k == reflect.Array
+	case "object":
+		return k == reflect.Struct || k == reflect.Map
+	}
+	return true
+}
+
+func (w *schemaWalker) walk(raw map[string]any, typ reflect.Type, path string) {
+	for typ.Kind() == reflect.Pointer {
+		typ = typ.Elem()
+	}
+	if raw == nil || typ.Kind() == reflect.Interface || w.exc[path] != "" {
+		return
+	}
+	key := fmt.Sprintf("%v|%p", typ, raw)
+	if w.seen[key] {
+		return
+	}
+	w.seen[key] = true
+	s := mergeSchema(w.doc, raw)
+	if _, union := s["oneOf"]; union {
+		return // branch is chosen per call site via envelopeRef, not here
+	}
+	if typ != timeType && reflect.PointerTo(typ).Implements(unmarshalerType) {
+		return // custom decoder (json.RawMessage, unions) owns the wire shape
+	}
+	if st := specSchemaType(s); !goDecodes(st, typ) {
+		w.drift = append(w.drift, fmt.Sprintf("%s: spec type %q, SDK Go type %v cannot decode it", path, st, typ))
+		return
+	}
+	switch typ.Kind() {
+	case reflect.Slice, reflect.Array:
+		items, _ := s["items"].(map[string]any)
+		w.walk(items, typ.Elem(), path+"[]")
+	case reflect.Map:
+		ap, _ := s["additionalProperties"].(map[string]any)
+		w.walk(ap, typ.Elem(), path+"{}")
+	case reflect.Struct:
+		w.walkStruct(s, typ, path)
+	}
+}
+
+// goJSONFields maps a struct's JSON names to their fields (embedded
+// structs flattened, `json:"-"` skipped) — the field-level twin of
+// [jsonTags].
+func goJSONFields(typ reflect.Type) map[string]reflect.StructField {
+	out := map[string]reflect.StructField{}
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		if f.Anonymous && f.Type.Kind() == reflect.Struct {
+			for k, v := range goJSONFields(f.Type) {
+				out[k] = v
+			}
+			continue
+		}
+		name := strings.Split(f.Tag.Get("json"), ",")[0]
+		if name == "-" || !f.IsExported() {
+			continue
+		}
+		if name == "" {
+			name = f.Name
+		}
+		out[name] = f
+	}
+	return out
+}
+
+func (w *schemaWalker) walkStruct(s map[string]any, typ reflect.Type, path string) {
+	props, _ := s["properties"].(map[string]any)
+	if props == nil {
+		return // free-form object; nothing to diff field-by-field
+	}
+	required := map[string]bool{}
+	if req, ok := s["required"].([]any); ok {
+		for _, r := range req {
+			if name, ok := r.(string); ok {
+				required[name] = true
 			}
 		}
-		sort.Strings(missingInGo)
-		sort.Strings(missingInSpec)
-		if len(missingInGo) > 0 {
-			t.Errorf("%s (%s): spec documents data fields the SDK type %T does not carry — the SDK silently drops them: %v",
-				key, c.sdkMethod, c.payload, missingInGo)
+	}
+	fields := goJSONFields(typ)
+	names := make([]string, 0, len(props))
+	for name := range props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		p := joinJSONPath(path, name)
+		if w.exc[p] != "" {
+			continue
 		}
-		if len(missingInSpec) > 0 {
-			t.Errorf("%s (%s): SDK type %T declares fields the spec does not document: %v",
-				key, c.sdkMethod, c.payload, missingInSpec)
+		f, ok := fields[name]
+		if !ok {
+			w.drift = append(w.drift, fmt.Sprintf("%s: spec documents it, SDK type %v does not carry it — the SDK silently drops it", p, typ))
+			continue
 		}
-		_ = fmt.Sprintf("%v", exc)
+		if required[name] && strings.Contains(f.Tag.Get("json"), ",omitempty") {
+			w.drift = append(w.drift, fmt.Sprintf("%s: spec marks it required, SDK tag has omitempty — a re-marshal drops a served zero value", p))
+		}
+		sub, _ := props[name].(map[string]any)
+		w.walk(sub, f.Type, p)
+	}
+	for name := range fields {
+		if _, ok := props[name]; !ok && w.exc[joinJSONPath(path, name)] == "" {
+			w.drift = append(w.drift, fmt.Sprintf("%s: SDK type %v declares it, the spec does not document it", joinJSONPath(path, name), typ))
+		}
 	}
 }
 
