@@ -85,8 +85,18 @@ const (
 	// DefaultDecimals — 6dp matches ExchangeRatesApi and the
 	// `massive` FX feed (AmountDecimals:6 in the registry). ECB
 	// publishes 4dp natively; the extra headroom stays
-	// precision-safe under float→integer round-trips.
+	// precision-safe under float→integer round-trips. This is the
+	// scale of the RATE we parse off the wire, not the price we
+	// emit — see InvertedDecimals.
 	DefaultDecimals uint8 = 6
+
+	// InvertedDecimals is the scale of the EMITTED price, after
+	// inverting the wire rate. Inverting at the same scale as the
+	// input quantises weak-currency prices by up to ~1.2% (GH-945):
+	// a rate of 25335 (VND) leaves only 1-2 significant digits once
+	// re-expressed at 6dp. Widening the output to 12dp keeps the
+	// round-trip accurate regardless of the rate's magnitude.
+	InvertedDecimals uint8 = 12
 )
 
 var (
@@ -219,7 +229,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 		if err != nil || rateScaled.Sign() <= 0 {
 			continue
 		}
-		inverted := scale.InvertScaled(rateScaled, int(DefaultDecimals))
+		inverted := scale.InvertScaledToDecimals(rateScaled, int(DefaultDecimals), int(InvertedDecimals))
 		if inverted.Sign() <= 0 {
 			continue
 		}
@@ -234,7 +244,7 @@ func (p *Poller) PollOnce(ctx context.Context, pairs []canonical.Pair) ([]canoni
 			Asset:      asset,
 			Quote:      eurAsset,
 			Price:      canonical.NewAmount(inverted),
-			Decimals:   DefaultDecimals,
+			Decimals:   InvertedDecimals,
 			Observer:   "",
 		}
 		updates = append(updates, u)

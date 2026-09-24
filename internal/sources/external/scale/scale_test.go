@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -58,25 +59,47 @@ func TestDecimalStringToScaledInt(t *testing.T) {
 	}
 }
 
-// An exponent spelling must decode like its plain spelling (truncation
-// past targetDecimals, as the strict parser does), not round up.
-func TestSciDecimalStringToScaledInt_MatchesPlainSpelling(t *testing.T) {
-	for _, tc := range []struct{ sci, plain string }{
-		{"1.2345678956e-1", "0.12345678956"},
-		{"9.87654329e-4", "0.000987654329"},
-		{"5.55555555e-7", "0.000000555555555"},
+// An exponent spelling must round the same way FloatToScaledInt does
+// for the same float — round-to-nearest at exactly targetDecimals,
+// not decimals+2-then-truncate. GH-998: the old
+// "format(decimals+2)+truncate" idiom dropped the two extra
+// fractional digits toward zero, giving every value a one-signed
+// downward bias — the same class of bug InvertScaled was fixed for.
+func TestSciDecimalStringToScaledInt_MatchesFloatRounding(t *testing.T) {
+	for _, sci := range []string{
+		"1.2345678956e-1",
+		"9.87654329e-4",
+		"5.55555555e-7",
 	} {
-		got, err := SciDecimalStringToScaledInt(tc.sci, 8)
+		got, err := SciDecimalStringToScaledInt(sci, 8)
 		if err != nil {
-			t.Fatalf("Sci(%q): %v", tc.sci, err)
+			t.Fatalf("Sci(%q): %v", sci, err)
 		}
-		want, err := DecimalStringToScaledInt(tc.plain, 8)
+		f, err := strconv.ParseFloat(sci, 64)
 		if err != nil {
-			t.Fatalf("strict(%q): %v", tc.plain, err)
+			t.Fatalf("ParseFloat(%q): %v", sci, err)
+		}
+		want, err := FloatToScaledInt(f, 8)
+		if err != nil {
+			t.Fatalf("FloatToScaledInt(%v,8): %v", f, err)
 		}
 		if got.Cmp(want) != 0 {
-			t.Errorf("Sci(%q,8) = %s, plain %q = %s", tc.sci, got, tc.plain, want)
+			t.Errorf("Sci(%q,8) = %s, FloatToScaledInt(%v,8) = %s", sci, got, f, want)
 		}
+	}
+}
+
+// TestSciDecimalStringToScaledInt_RoundsNotTruncates pins the exact
+// GH-998 regression: 5.55555555e-7 truncated at decimals+2-then-8
+// (the old idiom) gives 55, one-signed below the true value; correct
+// rounding at exactly 8 decimals gives 56.
+func TestSciDecimalStringToScaledInt_RoundsNotTruncates(t *testing.T) {
+	got, err := SciDecimalStringToScaledInt("5.55555555e-7", 8)
+	if err != nil {
+		t.Fatalf("Sci: %v", err)
+	}
+	if got.Int64() != 56 {
+		t.Errorf("SciDecimalStringToScaledInt(5.55555555e-7, 8) = %d, want 56 (pre-fix truncation gave 55)", got.Int64())
 	}
 }
 
