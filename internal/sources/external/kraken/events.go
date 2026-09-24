@@ -36,9 +36,9 @@
 // The snapshot (last ~50 trades) carries real historical timestamps
 // — we emit it like any other trade data. A re-delivered snapshot
 // dedupes against earlier live rows on the synthesised tx_hash
-// (symbol + trade_id). Backfilled rows do NOT share that identity
-// (candles key on close time, raw fills on their own seed), so
-// backfill-external refuses a window that already holds rows.
+// (symbol + trade_id). Raw-fill backfill (BackfillTrades) derives the
+// same tx_hash; candles key on close time and never match a live row,
+// so backfill-external refuses a window that already holds rows.
 package kraken
 
 import (

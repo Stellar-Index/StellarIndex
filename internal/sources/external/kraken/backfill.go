@@ -326,12 +326,6 @@ func candleTxHash(symbol string, closeTs int64) (string, error) {
 	return scale.StrictSyntheticTxHash(backfillSeed(symbol, closeTs))
 }
 
-// backfillTxHash is the truncating form of candleTxHash, kept only for
-// the raw-fill path, whose over-long seed it cuts to 32 bytes.
-func backfillTxHash(symbol string, closeTs int64) string {
-	return scale.SyntheticTxHash(backfillSeed(symbol, closeTs))
-}
-
 func backfillSeed(symbol string, closeTs int64) string {
 	normalised := strings.ReplaceAll(strings.ToUpper(symbol), "/", "")
 	return fmt.Sprintf("%s-BF-%020d", normalised, closeTs)

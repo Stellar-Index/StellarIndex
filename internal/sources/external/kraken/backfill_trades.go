@@ -4,6 +4,7 @@
 package kraken
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -42,7 +43,11 @@ const tradesRateLimit = 1100 * time.Millisecond
 // The venue timestamp is fractional seconds; the cursor is
 // nanoseconds. Fills are converted with the same fixed 10^8 external
 // scale as the streaming path (see externalAmountDecimals — the
-// AGENTS.md scaling trap).
+// AGENTS.md scaling trap), and keyed on the streamer's (symbol,
+// trade_id) identity so a backfilled fill and its live row share one PK.
+//
+// On any error the fills from pages already fetched are returned with it,
+// in time order, so the caller decides what a partial walk is worth.
 func (s *Streamer) BackfillTrades(ctx context.Context, pair canonical.Pair, from, to time.Time) ([]canonical.Trade, error) {
 	if !from.Before(to) {
 		return nil, fmt.Errorf("kraken.BackfillTrades: from %v must be before to %v", from, to)
@@ -55,10 +60,14 @@ func (s *Streamer) BackfillTrades(ctx context.Context, pair canonical.Pair, from
 	if !ok {
 		return nil, fmt.Errorf("kraken.BackfillTrades: pair %s not in configured PairMap", pair.String())
 	}
+	// Refuse up front: the per-fill skip would turn an unrepresentable
+	// symbol into a silently empty run.
+	if _, err := formatTxHash(symbol, 0); err != nil {
+		return nil, fmt.Errorf("kraken.BackfillTrades: %w", err)
+	}
 
 	endpoint := s.restBase() + tradesPath
 	cursor := strconv.FormatInt(from.UnixNano(), 10)
-	endNano := to.UnixNano()
 	var out []canonical.Trade
 
 	ticker := time.NewTicker(tradesRateLimit)
@@ -72,12 +81,12 @@ func (s *Streamer) BackfillTrades(ctx context.Context, pair canonical.Pair, from
 
 		fills, last, err := fetchKrakenTrades(ctx, endpoint, q)
 		if err != nil {
-			return nil, fmt.Errorf("kraken.BackfillTrades: %w", err)
+			return out, fmt.Errorf("kraken.BackfillTrades: %w", err)
 		}
 		if len(fills) == 0 {
 			break
 		}
-		page, done := fillsToTrades(fills, symbol, pair, endNano)
+		page, done := fillsToTrades(fills, symbol, pair, to)
 		out = append(out, page...)
 		if done || last == "" || last == cursor {
 			break
@@ -97,7 +106,7 @@ func (s *Streamer) BackfillTrades(ctx context.Context, pair canonical.Pair, from
 type krakenFill struct {
 	price  string
 	volume string
-	ts     float64
+	ts     time.Time
 	id     int64
 }
 
@@ -137,25 +146,33 @@ func fetchKrakenTrades(ctx context.Context, endpoint string, q url.Values) ([]kr
 			_ = json.Unmarshal(raw, &last)
 			continue
 		}
+		// UseNumber keeps the time and trade_id digits exact; a float64
+		// time is off by up to a few hundred ns, enough to cross a stored µs.
 		var rows [][]any
-		if err := json.Unmarshal(raw, &rows); err != nil {
+		dec := json.NewDecoder(bytes.NewReader(raw))
+		dec.UseNumber()
+		if err := dec.Decode(&rows); err != nil {
 			return nil, "", fmt.Errorf("kraken trades: pair rows: %w", err)
 		}
 		for _, r := range rows {
-			if f, ok := decodeKrakenFill(r); ok {
-				fills = append(fills, f)
+			if len(r) < 3 {
+				continue
 			}
+			f, err := decodeKrakenFill(r)
+			if err != nil {
+				return nil, "", fmt.Errorf("kraken trades: %w", err)
+			}
+			fills = append(fills, f)
 		}
 	}
 	return fills, last, nil
 }
 
 // decodeKrakenFill converts one positional row
-// [price, volume, time, side, kind, misc, id] into a krakenFill.
-func decodeKrakenFill(r []any) (krakenFill, bool) {
-	if len(r) < 3 {
-		return krakenFill{}, false
-	}
+// [price, volume, time, side, kind, misc, id], decoded with UseNumber,
+// into a krakenFill. A fill without a trade_id is refused: it has no
+// identity that can match its live row.
+func decodeKrakenFill(r []any) (krakenFill, error) {
 	f := krakenFill{}
 	if s, ok := r[0].(string); ok {
 		f.price = s
@@ -163,23 +180,34 @@ func decodeKrakenFill(r []any) (krakenFill, bool) {
 	if s, ok := r[1].(string); ok {
 		f.volume = s
 	}
-	if t, ok := r[2].(float64); ok {
-		f.ts = t
+	ts, ok := r[2].(json.Number)
+	if !ok {
+		return krakenFill{}, fmt.Errorf("fill time %v is not a number", r[2])
 	}
-	if len(r) >= 7 {
-		if id, ok := r[6].(float64); ok {
-			f.id = int64(id)
-		}
+	ns, err := scale.DecimalStringToScaledInt(ts.String(), 9)
+	if err != nil || !ns.IsInt64() || ns.Sign() < 0 {
+		return krakenFill{}, fmt.Errorf("fill time %q is not a unix-seconds decimal", ts)
 	}
-	return f, true
+	f.ts = time.Unix(0, ns.Int64()).UTC() // i128:ok unix nanoseconds, IsInt64 checked above
+	if len(r) < 7 {
+		return krakenFill{}, fmt.Errorf("fill at %s has no trade_id", ts)
+	}
+	id, ok := r[6].(json.Number)
+	if !ok {
+		return krakenFill{}, fmt.Errorf("fill at %s: trade_id %v is not a number", ts, r[6])
+	}
+	if f.id, err = id.Int64(); err != nil || f.id < 0 {
+		return krakenFill{}, fmt.Errorf("fill at %s: trade_id %q is not a non-negative integer", ts, id)
+	}
+	return f, nil
 }
 
-// fillsToTrades converts one page of fills, stopping at endNano.
+// fillsToTrades converts one page of fills, stopping at to.
 // done=true when the page crossed the requested end.
-func fillsToTrades(fills []krakenFill, symbol string, pair canonical.Pair, endNano int64) ([]canonical.Trade, bool) {
+func fillsToTrades(fills []krakenFill, symbol string, pair canonical.Pair, to time.Time) ([]canonical.Trade, bool) {
 	var out []canonical.Trade
 	for _, f := range fills {
-		if int64(f.ts*float64(time.Second)) >= endNano {
+		if !f.ts.Before(to) {
 			return out, true
 		}
 		trade, err := krakenFillToTrade(f, symbol, pair)
@@ -191,14 +219,15 @@ func fillsToTrades(fills []krakenFill, symbol string, pair canonical.Pair, endNa
 	return out, false
 }
 
-// krakenFillToTrade converts one raw fill to a canonical.Trade using
-// the same synthetic-identity convention as the candle path (ledger 0
-// = off-chain; deterministic tx hash from symbol+timestamp+id so
-// re-runs are idempotent under the trades PK).
+// krakenFillToTrade converts one raw fill to a canonical.Trade under
+// the live streamer's identity (ledger 0 = off-chain; tx_hash from
+// formatTxHash(symbol, trade_id)), so a backfilled fill and its streamed
+// row collapse onto one trades PK instead of double-counting.
 func krakenFillToTrade(f krakenFill, symbol string, pair canonical.Pair) (canonical.Trade, error) {
-	sec := int64(f.ts)
-	nsec := int64((f.ts - float64(sec)) * float64(time.Second))
-	ts := time.Unix(sec, nsec).UTC()
+	txHash, err := formatTxHash(symbol, f.id)
+	if err != nil {
+		return canonical.Trade{}, err
+	}
 	base, err := scale.DecimalStringToScaledInt(f.volume, externalAmountDecimals)
 	if err != nil {
 		return canonical.Trade{}, fmt.Errorf("volume %q: %w", f.volume, err)
@@ -219,9 +248,9 @@ func krakenFillToTrade(f krakenFill, symbol string, pair canonical.Pair) (canoni
 	return canonical.Trade{
 		Source:      SourceName,
 		Ledger:      0,
-		TxHash:      backfillTxHash(symbol+"-fill-"+strconv.FormatInt(f.id, 10), ts.UnixNano()),
+		TxHash:      txHash,
 		OpIndex:     0,
-		Timestamp:   ts,
+		Timestamp:   f.ts,
 		Pair:        pair,
 		BaseAmount:  canonical.NewAmount(base),
 		QuoteAmount: canonical.NewAmount(quote),
