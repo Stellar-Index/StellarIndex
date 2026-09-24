@@ -231,15 +231,18 @@ func TestLookupCached_PresentEntry(t *testing.T) {
 	if !found {
 		t.Fatal("LookupCached returned found=false on a freshly-cached entry")
 	}
-	if cached.PairID != pair.String() {
-		t.Errorf("PairID = %q, want %q", cached.PairID, pair.String())
+	if cached.Detail.PairID != pair.String() {
+		t.Errorf("PairID = %q, want %q", cached.Detail.PairID, pair.String())
 	}
-	if cached.SuccessCount != 2 {
-		t.Errorf("SuccessCount = %d, want 2", cached.SuccessCount)
+	if cached.Detail.SuccessCount != 2 {
+		t.Errorf("SuccessCount = %d, want 2", cached.Detail.SuccessCount)
+	}
+	if !cached.Checked {
+		t.Error("Checked = false with two references at a quorum of two")
 	}
 	// 1.05 vs 1.00 = ~4.76% deviation. Threshold 1.0% → warning fires.
-	if !cached.WarningFired {
-		t.Errorf("WarningFired = false, expected true (4.76%% > 1%% threshold)")
+	if !cached.Firing {
+		t.Errorf("Firing = false, expected true (4.76%% > 1%% threshold)")
 	}
 }
 
@@ -340,16 +343,16 @@ func TestLookupCached_PerPairOR_OrderIndependent(t *testing.T) {
 			if !found {
 				t.Fatal("found=false after refreshing two pairs for the base")
 			}
-			if !cached.WarningFired {
+			if !cached.Firing {
 				t.Errorf("WarningFired=false; want true — a quote diverges so the "+
 					"base verdict must fire regardless of refresh / iteration order "+
-					"(got pair_id=%q)", cached.PairID)
+					"(got pair_id=%q)", cached.Detail.PairID)
 			}
 			// The representative detail row should be the FIRING pair,
 			// not the clean one — independent of Redis set order.
-			if cached.PairID != tc.firingPair.String() {
+			if cached.Detail.PairID != tc.firingPair.String() {
 				t.Errorf("representative PairID = %q, want the firing pair %q",
-					cached.PairID, tc.firingPair.String())
+					cached.Detail.PairID, tc.firingPair.String())
 			}
 		})
 	}
@@ -380,7 +383,7 @@ func TestLookupCached_PerPairOR_AllClean(t *testing.T) {
 	if !found {
 		t.Fatal("found=false after refreshing two clean pairs")
 	}
-	if cached.WarningFired {
+	if cached.Firing {
 		t.Errorf("WarningFired=true with every quote in-tolerance; want false")
 	}
 }

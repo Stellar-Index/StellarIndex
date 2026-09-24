@@ -556,22 +556,29 @@ func absFloat(f float64) float64 {
 	return f
 }
 
+// AssetVerdict is [Service.LookupCached]'s by-asset answer. Firing and
+// Checked are asset-level facts aggregated across every quote of the
+// base; Detail is one pair's row for display, and its per-pair counts
+// must not be read as an asset-level verdict.
+type AssetVerdict struct {
+	// Firing is the OR of the per-pair WarningFired flags.
+	Firing bool
+	// Checked is true when ANY quote's comparison met the source
+	// quorum, i.e. the asset was cross-checked at least once.
+	Checked bool
+	// Detail is the representative pair: the firing pair with the
+	// largest divergence when any fires, else the largest divergence.
+	Detail CachedResult
+}
+
 // LookupCached returns the divergence verdict for a BASE asset,
 // aggregated across every quote that asset trades against (F-1344).
-// The returned CachedResult.WarningFired is the OR of the per-pair
-// WarningFired flags — "firing if ANY quote diverges" — so the
-// API's by-asset DivergenceFiringFor(asset) keeps working unchanged
-// against the new per-pair key layout, and its verdict is
-// independent of the order the orchestrator refreshes pairs in.
+// Both verdicts are ORs over the per-pair entries, so neither depends
+// on the order pairs are refreshed in nor on which pair is picked as
+// [AssetVerdict.Detail]: a below-quorum quote with a large delta cannot
+// make a cross-checked asset read as unchecked.
 //
-// The remaining fields (OurPrice / Median / DivergencePct / Sources
-// / …) are copied from the FIRING pair with the largest divergence
-// when any pair fires, else from the most-recently-computed pair, so
-// operator dashboards that read the bundle still see a representative
-// detail row. The PairID field identifies which pair the detail came
-// from.
-//
-// Returns ([CachedResult{}], false, nil) when the base has no live
+// Returns ([AssetVerdict{}], false, nil) when the base has no live
 // per-pair entries (the worker hasn't run for it yet, or every
 // pair's TTL has elapsed). API hot-path consumers call this when
 // serving /v1/price to decide whether to set flags.divergence_warning.
@@ -580,20 +587,21 @@ func absFloat(f float64) float64 {
 // should NOT silently set flags.divergence_warning=false on a
 // transient cache outage; better to keep the previous response's
 // flag value (or fail-open).
-func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (CachedResult, bool, error) {
+func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (AssetVerdict, bool, error) {
 	idxKey := cachekeys.DivergenceBaseIndex(asset)
 	quotes, err := s.cache.SMembers(ctx, idxKey.String()).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
-		return CachedResult{}, false, fmt.Errorf("divergence: index smembers %s: %w", idxKey, err)
+		return AssetVerdict{}, false, fmt.Errorf("divergence: index smembers %s: %w", idxKey, err)
 	}
 	if len(quotes) == 0 {
-		return CachedResult{}, false, nil
+		return AssetVerdict{}, false, nil
 	}
 
 	var (
 		agg       CachedResult
 		found     bool
 		warning   bool
+		checked   bool
 		bestFire  bool    // whether `agg` currently holds a firing pair
 		bestDelta float64 // |DivergencePct| of the representative pair held in `agg`
 	)
@@ -615,14 +623,18 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Cach
 			continue
 		}
 		if gerr != nil {
-			return CachedResult{}, false, fmt.Errorf("divergence: cache get %s: %w", key, gerr)
+			return AssetVerdict{}, false, fmt.Errorf("divergence: cache get %s: %w", key, gerr)
 		}
 		var cached CachedResult
 		if uerr := json.Unmarshal(raw, &cached); uerr != nil {
-			return CachedResult{}, false, fmt.Errorf("divergence: unmarshal cached result: %w", uerr)
+			return AssetVerdict{}, false, fmt.Errorf("divergence: unmarshal cached result: %w", uerr)
 		}
 		if cached.WarningFired {
 			warning = true
+		}
+		// The same quorum RefreshPair gates WarningFired on.
+		if cached.SuccessCount >= s.minSources {
+			checked = true
 		}
 
 		// Pick the representative detail row: prefer firing pairs over
@@ -641,8 +653,7 @@ func (s *Service) LookupCached(ctx context.Context, asset canonical.Asset) (Cach
 		found = true
 	}
 	if !found {
-		return CachedResult{}, false, nil
+		return AssetVerdict{}, false, nil
 	}
-	agg.WarningFired = warning
-	return agg, true, nil
+	return AssetVerdict{Firing: warning, Checked: checked, Detail: agg}, true, nil
 }

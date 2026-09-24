@@ -579,7 +579,7 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 		if err != nil {
 			return fmt.Errorf("divergence service: %w", err)
 		}
-		divergenceLooker = newDivergenceAdapter(divSvc, cfg.Divergence.MinSourcesForWarning)
+		divergenceLooker = newDivergenceAdapter(divSvc)
 		names := make([]string, len(refs))
 		for i, r := range refs {
 			names[i] = r.Name()
@@ -2783,53 +2783,25 @@ func buildOracleDivergenceReferences(cfg config.DivergenceConfig, oracles diverg
 // shim is the wire between them.
 type divergenceAdapter struct {
 	svc *divergence.Service
-	// minSources mirrors the worker's ServiceOptions.MinSourcesForWarning
-	// so the `checked` predicate below is the SAME quorum the worker used
-	// when it decided whether WarningFired was computable at all. Clamped
-	// by newDivergenceAdapter exactly as divergence.NewService clamps it.
-	minSources int
 }
 
-// newDivergenceAdapter builds the adapter with the effective source
-// quorum. cfgMinSources is the raw `divergence.min_sources_for_warning`
-// value; <=0 takes the same default divergence.NewService applies, so an
-// unset config can't silently drop the adapter's quorum to "any single
-// reference".
-func newDivergenceAdapter(svc *divergence.Service, cfgMinSources int) divergenceAdapter {
-	if cfgMinSources <= 0 {
-		cfgMinSources = defaultDivergenceMinSources
-	}
-	return divergenceAdapter{svc: svc, minSources: cfgMinSources}
+func newDivergenceAdapter(svc *divergence.Service) divergenceAdapter {
+	return divergenceAdapter{svc: svc}
 }
 
-// defaultDivergenceMinSources mirrors the fallback inside
-// divergence.NewService for an unset/invalid min_sources_for_warning.
-const defaultDivergenceMinSources = 2
-
+// DivergenceFiringFor reads both flags from the asset-level verdict. The
+// quorum behind `checked` is the service's own, so it cannot drift from
+// the one WarningFired was gated on, and (firing=true, checked=false)
+// cannot occur: a firing pair met the quorum.
 func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (firing, checked bool, err error) {
-	cached, found, err := a.svc.LookupCached(ctx, asset)
+	verdict, found, err := a.svc.LookupCached(ctx, asset)
 	if err != nil {
 		return false, false, err
 	}
 	if !found {
 		return false, false, nil
 	}
-	// COR-14 (audit-2026-07-23): `checked` must use the SAME quorum the
-	// worker gates WarningFired on (SuccessCount >= minSources), not
-	// SuccessCount > 0. The worker treats a below-quorum run as UNCHECKED
-	// — CachedResult.WarningFired is hard-false there regardless of how
-	// far the single reference diverged (worker.go: `checked :=
-	// res.SuccessCount >= s.minSources`). Reporting divergence_checked=true
-	// alongside that forced-false warning told consumers "we cross-checked
-	// this price and it agrees" when no cross-check verdict was ever
-	// reached — the exact misreading CS-087 added the flag to prevent.
-	//
-	// This can only move the flag true→false (the safe direction: "we
-	// don't know" instead of a false all-clear). It can never produce the
-	// incoherent (warning=true, checked=false) pair: LookupCached prefers
-	// a firing pair as the representative row, and a firing pair
-	// necessarily met the quorum.
-	return cached.WarningFired, cached.SuccessCount >= a.minSources, nil
+	return verdict.Firing, verdict.Checked, nil
 }
 
 // storeChecker adapts *timescale.Store to the v1.ReadyChecker
@@ -3493,25 +3465,22 @@ func (r redisTriangulatedLooker) LookupTriangulatedVWAP(
 	if r.rdb == nil {
 		return "", false, false, nil
 	}
+	// One MGET: the aggregator writes value and marker in one MULTI/EXEC,
+	// and two GETs could straddle a write and pair a value with another
+	// write's provenance.
 	valKey := cachekeys.VWAP(base, quote, window)
-	val, err := r.rdb.Get(ctx, valKey.String()).Result()
-	if errors.Is(err, redis.Nil) {
+	provKey := cachekeys.VWAPProvenance(base, quote, window)
+	got, err := r.rdb.MGet(ctx, valKey.String(), provKey.String()).Result()
+	if err != nil {
+		return "", false, false, fmt.Errorf("vwap cache mget %s: %w", valKey, err)
+	}
+	val, ok := got[0].(string)
+	if !ok {
 		return "", false, false, nil
 	}
-	if err != nil {
-		return "", false, false, fmt.Errorf("vwap cache get %s: %w", valKey, err)
-	}
-	provKey := cachekeys.VWAPProvenance(base, quote, window)
-	prov, err := r.rdb.Get(ctx, provKey.String()).Result()
-	if errors.Is(err, redis.Nil) {
-		// Value exists but no provenance marker → direct VWAP
-		// (per the marker contract). Return found=true but
-		// isTriangulated=false so the handler preserves the 404.
-		return val, false, true, nil
-	}
-	if err != nil {
-		return "", false, false, fmt.Errorf("provenance cache get %s: %w", provKey, err)
-	}
+	// A missing marker means a direct VWAP (per the marker contract):
+	// found=true, isTriangulated=false, so the handler preserves the 404.
+	prov, _ := got[1].(string)
 	return val, prov == cachekeys.VWAPProvenanceTriangulated, true, nil
 }
 

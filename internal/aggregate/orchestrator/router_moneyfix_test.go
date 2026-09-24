@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -131,6 +132,22 @@ func (c metaFailCache) Set(ctx context.Context, key string, value any, ttl time.
 		return cmd
 	}
 	return c.Cache.Set(ctx, key, value, ttl)
+}
+
+// TxPipelined fails the whole transaction when it writes the failing key,
+// as Redis discards a MULTI whose queued command was refused.
+func (c metaFailCache) TxPipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error) {
+	return c.Cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		if err := fn(p); err != nil {
+			return err
+		}
+		for _, cmd := range p.Cmds() {
+			if args := cmd.Args(); len(args) > 1 && strings.Contains(fmt.Sprint(args[1]), c.failSubstr) {
+				return redis.ErrClosed
+			}
+		}
+		return nil
+	})
 }
 
 // TestPublishComposite_DivergedNeverOverwritesDirectWithoutMeta is R-2: a
