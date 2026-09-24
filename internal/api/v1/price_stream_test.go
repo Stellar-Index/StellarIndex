@@ -128,17 +128,23 @@ func TestPriceStream_HubPublishReachesSubscriber(t *testing.T) {
 // TestPriceStream_TopicIsolation — a publish on a DIFFERENT pair's
 // topic doesn't reach this subscriber. Sanity check that the handler
 // computes the topic key correctly per (asset, quote).
+//
+// The foreign publish is followed by one on the subscriber's own topic,
+// so the first frame decides it: a leaked foreign event would arrive
+// ahead of the own-topic one. The handler subscribes before it writes
+// headers, so both publishes land after the subscription exists.
 func TestPriceStream_TopicIsolation(t *testing.T) {
 	hub := streaming.NewHub(0)
 	srv := v1.New(v1.Options{Hub: hub})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	usdc, _ := canonical.ParseAsset("native")
+	xlm, _ := canonical.ParseAsset("native")
 	usd, _ := canonical.ParseAsset("fiat:USD")
-	otherTopic := v1.PriceStreamTopic(usdc, usd, 300) + "-different-pair-suffix"
+	ownTopic := v1.PriceStreamTopic(xlm, usd, 300)
+	otherTopic := ownTopic + "-different-pair-suffix"
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
 		ts.URL+"/v1/price/stream?asset=native&quote=fiat:USD", nil)
@@ -148,13 +154,16 @@ func TestPriceStream_TopicIsolation(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	time.Sleep(50 * time.Millisecond)
-	hub.Publish(otherTopic, "price_update", []byte(`{"x":1}`))
+	hub.Publish(otherTopic, "price_update", []byte(`{"x":"foreign"}`))
+	hub.Publish(ownTopic, "price_update", []byte(`{"x":"own"}`))
 
 	br := bufio.NewReader(resp.Body)
-	frame := readPriceStreamFrame(t, br, 600*time.Millisecond)
-	if frame != "" {
+	frame := readPriceStreamFrame(t, br, 5*time.Second)
+	if strings.Contains(frame, "foreign") {
 		t.Errorf("subscriber received foreign-topic event: %q", frame)
+	}
+	if !strings.Contains(frame, `"own"`) {
+		t.Errorf("first frame = %q, want the own-topic event", frame)
 	}
 }
 

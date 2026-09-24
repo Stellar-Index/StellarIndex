@@ -47,11 +47,19 @@ func readTipStreamEvent(t *testing.T, br *bufio.Reader, timeout time.Duration) s
 	return data
 }
 
+// testStreamSecond stands in for one second of a stream's
+// window_seconds / interval_seconds cadence, so a window_seconds=1 tick
+// lands in 100ms instead of a wall-clock second. Every tick-timing bound
+// in these tests is either against this or against a budget that is NOT
+// scaled (the 8s tick budget), so the edges they probe are unchanged.
+const testStreamSecond = 100 * time.Millisecond
+
 // startTipStreamServer wires a v1.Server with the given Prices +
 // History readers behind an httptest.Server and returns its URL.
 func startTipStreamServer(t *testing.T, prices v1.PriceReader, history v1.HistoryReader) string {
 	t.Helper()
 	srv := v1.New(v1.Options{Prices: prices, History: history})
+	srv.SetStreamTimingForTest(testStreamSecond, 0)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts.URL
@@ -192,7 +200,7 @@ func TestPriceTipStream_WindowVWAPBranch(t *testing.T) {
 
 // TestPriceTipStream_TickEmitsRepeatedly — at window_seconds=1 a
 // short-lived stream sees multiple consecutive events. Validates
-// the producer's ticker fires more than once.
+// the producer's ticker fires (at [testStreamSecond] per window second).
 func TestPriceTipStream_TickEmitsRepeatedly(t *testing.T) {
 	prices := &stubPriceReader{
 		snapshots: map[string]v1.PriceSnapshot{
@@ -487,6 +495,7 @@ func TestPriceTipStream_DivergenceCheckedFollowsAssetAliases(t *testing.T) {
 			}
 			div := &stubAliasDivergenceLooker{verdicts: tc.verdicts}
 			srv := v1.New(v1.Options{Prices: prices, Divergence: div})
+			srv.SetStreamTimingForTest(testStreamSecond, 0)
 			ts := httptest.NewServer(srv.Handler())
 			t.Cleanup(ts.Close)
 			assertTipStreamDivergenceFlags(t, ts.URL, div, tc)
@@ -510,6 +519,7 @@ func TestPriceTipStream_HubSharedProducerFollowsAssetAliases(t *testing.T) {
 			}
 			div := &stubAliasDivergenceLooker{verdicts: tc.verdicts}
 			srv := v1.New(v1.Options{Prices: prices, Hub: streaming.NewHub(0), Divergence: div})
+			srv.SetStreamTimingForTest(testStreamSecond, 0)
 			ts := httptest.NewServer(srv.Handler())
 			t.Cleanup(ts.Close)
 			assertTipStreamDivergenceFlags(t, ts.URL, div, tc)

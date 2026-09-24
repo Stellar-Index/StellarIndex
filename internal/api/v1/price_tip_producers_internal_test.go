@@ -280,7 +280,7 @@ func TestTipProducerRegistry_NegativeCeilingDisablesTheBound(t *testing.T) {
 // as it stayed connected: exactly the "no new emits" symptom the finding
 // names.
 func TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected(t *testing.T) {
-	reg := &tipProducerRegistry{}
+	reg := &tipProducerRegistry{restartBackoffFor: testRestartBackoff}
 	var starts atomic.Int32
 	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 5}
 
@@ -313,7 +313,7 @@ func TestTipProducerRegistry_RespawnsAfterPanicWhileSubscriberStillConnected(t *
 // recovers its own panic (recoverStreamProducer) and RETURNS normally, so
 // the registry sees an uncancelled exit rather than a panic.
 func TestTipProducerRegistry_RespawnsAfterStartReturnsWhileSubscriberStillConnected(t *testing.T) {
-	reg := &tipProducerRegistry{}
+	reg := &tipProducerRegistry{restartBackoffFor: testRestartBackoff}
 	var starts atomic.Int32
 	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 7}
 
@@ -333,10 +333,14 @@ func TestTipProducerRegistry_RespawnsAfterStartReturnsWhileSubscriberStillConnec
 	}
 }
 
+// testRestartBackoff stands in for tipProducerRestartBackoff so the
+// respawn tests wait tens of milliseconds, not a wall-clock second.
+const testRestartBackoff = 20 * time.Millisecond
+
 // TestTipProducerRegistry_DoesNotRespawnAfterDeliberateStop pins the other
 // side: a producer stopped by the linger must stay stopped.
 func TestTipProducerRegistry_DoesNotRespawnAfterDeliberateStop(t *testing.T) {
-	reg := &tipProducerRegistry{lingerFor: 10 * time.Millisecond}
+	reg := &tipProducerRegistry{lingerFor: 10 * time.Millisecond, restartBackoffFor: testRestartBackoff}
 	var starts atomic.Int32
 	key := tipProducerKey{asset: "native", quote: "fiat:USD", window: 8}
 
@@ -354,8 +358,24 @@ func TestTipProducerRegistry_DoesNotRespawnAfterDeliberateStop(t *testing.T) {
 	if !waitFor(time.Second, func() bool { return reg.running() == 0 }) {
 		t.Fatal("producer never stopped after the linger")
 	}
-	time.Sleep(1500 * time.Millisecond) // > tipProducerRestartBackoff
+	time.Sleep(10 * testRestartBackoff) // well past the backoff a respawn would wait
 	if got := starts.Load(); got != 1 {
 		t.Fatalf("starts = %d after a deliberate stop, want 1 (no respawn)", got)
+	}
+}
+
+// TestStreamTimingDefaultsAreProduction pins the test-only timing
+// overrides to their production values when unset, since the tests that
+// use them bracket the shortened values rather than these.
+func TestStreamTimingDefaultsAreProduction(t *testing.T) {
+	s := New(Options{})
+	if got := s.streamCadence(5); got != 5*time.Second {
+		t.Errorf("streamCadence(5) = %v, want 5s", got)
+	}
+	if got := s.tipDivergenceBudget(); got != time.Second {
+		t.Errorf("tipDivergenceBudget() = %v, want 1s", got)
+	}
+	if s.tipProducers.restartBackoffFor != 0 {
+		t.Errorf("restartBackoffFor = %v, want 0 (tipProducerRestartBackoff)", s.tipProducers.restartBackoffFor)
 	}
 }

@@ -20,6 +20,7 @@ import (
 func startObservationsStreamServer(t *testing.T, history v1.HistoryReader) string {
 	t.Helper()
 	srv := v1.New(v1.Options{History: history})
+	srv.SetStreamTimingForTest(testStreamSecond, 0)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	return ts.URL

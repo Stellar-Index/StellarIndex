@@ -227,6 +227,8 @@ type tipProducerRegistry struct {
 	active map[tipProducerKey]*tipProducer
 	// lingerFor overrides tipProducerLinger when > 0 (tests).
 	lingerFor time.Duration
+	// restartBackoffFor overrides tipProducerRestartBackoff when > 0 (tests).
+	restartBackoffFor time.Duration
 	// gauge overrides obs.APITipProducers when non-nil (tests: the
 	// package-level gauge also moves with other tests' linger timers).
 	gauge prometheus.Gauge
@@ -574,7 +576,11 @@ func (r *tipProducerRegistry) respawnIfLive(ctx context.Context, key tipProducer
 	if ctx.Err() != nil {
 		return
 	}
-	time.AfterFunc(tipProducerRestartBackoff, func() {
+	backoff := r.restartBackoffFor
+	if backoff <= 0 {
+		backoff = tipProducerRestartBackoff
+	}
+	time.AfterFunc(backoff, func() {
 		r.mu.Lock()
 		cur, still := r.active[key]
 		r.mu.Unlock()
@@ -729,7 +735,7 @@ func (s *Server) runSharedTipProducer(ctx context.Context, key tipProducerKey, a
 		}
 	}
 	emit() // immediate first publish — the ring serves it to every joiner
-	ticker := time.NewTicker(time.Duration(window) * time.Second)
+	ticker := time.NewTicker(s.streamCadence(window))
 	defer ticker.Stop()
 	for {
 		select {
