@@ -119,16 +119,47 @@ func (c *contractDetailCache) put(key string, v any) {
 		c.entries = make(map[string]contractDetailEntry)
 	}
 	if len(c.entries) >= contractDetailCacheMax {
-		var oldestKey string
-		var oldestAt time.Time
-		for k, e := range c.entries {
-			if oldestKey == "" || e.cachedAt.Before(oldestAt) {
-				oldestKey, oldestAt = k, e.cachedAt
-			}
-		}
-		delete(c.entries, oldestKey)
+		c.evictOneLocked()
 	}
 	c.entries[key] = contractDetailEntry{v: v, cachedAt: time.Now()}
+}
+
+// evictOneLocked drops one entry to make room for a new key. It prefers
+// the oldest entry that has ALREADY EXPIRED under its own key-class TTL,
+// falling back to the map's global-oldest cachedAt only when nothing has
+// expired yet (CA2-A03-harden-3).
+//
+// Pure global-oldest eviction starves the "ch:" (code-history) class: its
+// 24h TTL means an entry's cachedAt is only ever touched once a day, so
+// next to "ev:"/"ix:" (5 min) and "act:"/"pos:" (1-5 min) entries — which
+// keep resetting cachedAt as ordinary traffic revisits them — a heavily
+// viewed contract's code-history entry is ALWAYS the chronologically
+// oldest in the map and gets evicted first, however hot it is. Attacker-
+// mintable "pos:"/"act:" keys (any checksum-valid strkey is a new cold
+// key) make this churn trivial to trigger. Preferring an expired entry
+// means the class actually generating eviction pressure (the short-TTL
+// classes, which exhaust their TTL long before ch: ever could) absorbs
+// it instead. Caller holds c.mu.
+func (c *contractDetailCache) evictOneLocked() {
+	now := time.Now()
+	var oldestExpiredKey, oldestKey string
+	var oldestExpiredAt, oldestAt time.Time
+	for k, e := range c.entries {
+		if oldestKey == "" || e.cachedAt.Before(oldestAt) {
+			oldestKey, oldestAt = k, e.cachedAt
+		}
+		if now.Sub(e.cachedAt) <= detailTTLForKey(k) {
+			continue
+		}
+		if oldestExpiredKey == "" || e.cachedAt.Before(oldestExpiredAt) {
+			oldestExpiredKey, oldestExpiredAt = k, e.cachedAt
+		}
+	}
+	if oldestExpiredKey != "" {
+		delete(c.entries, oldestExpiredKey)
+		return
+	}
+	delete(c.entries, oldestKey)
 }
 
 // detachedClassForKey maps a cache key to its refresh-gate CLASS, using

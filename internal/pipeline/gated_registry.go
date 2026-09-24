@@ -112,9 +112,20 @@ var gatedSources = map[string]GatedMeta{
 		// lake's topic_0_sym column is empty for these rows, which is
 		// why the prefilter also matches topics_xdr (see
 		// internal/storage/clickhouse/event_reader.go topic0Predicate).
+		//
+		// CuratedSet carries ONLY the stake contracts (CA2-A22-correct-2):
+		// the factory's create events announce a POOL, never the stake
+		// contract the pool itself deploys (see NewDecoder's doc), so
+		// without an explicit trust root here nothing ever wrote them to
+		// protocol_contracts — the decoder's own in-code seed
+		// (MainnetGatedSet) covered ingest/decode but never reached the
+		// served roster. Pools are deliberately excluded: they already
+		// have a real trust root (the factory + live-upsert hook), and
+		// listing them here too would just be redundant.
 		Factories:   []string{phoenix.MainnetFactory},
 		CreationSym: phoenix.EventActionCreate,
 		Genesis:     51_572_016,
+		CuratedSet:  phoenix.MainnetStakeContracts,
 		NewDecoder:  func(opts ...contractid.Option) dispatcher.Decoder { return phoenix.NewDecoder(opts...) },
 	},
 	blend.SourceName: {

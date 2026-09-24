@@ -91,7 +91,25 @@ func (s *stubExplorerReader) LedgerBySeq(_ context.Context, seq uint32) (clickho
 			return l, true, nil
 		}
 	}
-	return clickhouse.LedgerHeader{}, false, nil
+	// The stub only ever lists the tip entry explicitly, but
+	// windowFloorLedger's close_time binary search needs an answer for
+	// every intermediate sequence too. Synthesize one from the newest
+	// known entry at the theoretical 5s cadence (17,280/day) — the exact
+	// rate these tests' expected since_ledger values were computed against.
+	if len(s.ledgers) == 0 {
+		return clickhouse.LedgerHeader{}, false, nil
+	}
+	tip := s.ledgers[0]
+	for _, l := range s.ledgers {
+		if l.Seq > tip.Seq {
+			tip = l
+		}
+	}
+	if seq == 0 || seq > tip.Seq {
+		return clickhouse.LedgerHeader{}, false, nil
+	}
+	delta := time.Duration(tip.Seq-seq) * (5 * time.Second)
+	return clickhouse.LedgerHeader{Seq: seq, CloseTime: tip.CloseTime.Add(-delta)}, true, nil
 }
 
 func (s *stubExplorerReader) LedgerTransactions(_ context.Context, _ uint32, _ int) ([]clickhouse.TxSummary, error) {

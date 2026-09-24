@@ -255,6 +255,49 @@ func TestBuildProtocolDetail_ContractCountErrorDegradesStatus(t *testing.T) {
 	}
 }
 
+// erroringRosterReader is a contracts reader whose roster ENUMERATION always
+// fails and has no count-without-enumeration path wired (no
+// CountSourceContracts, so it does not satisfy protocolContractCounter) —
+// the common shape for a source with no counter (every source except
+// sorocredit). Isolates a bare roster-read failure from the count-reader
+// failure erroringCountReader exercises above.
+type erroringRosterReader struct{ err error }
+
+func (r erroringRosterReader) ListProtocolContracts(context.Context, string) ([]timescale.ProtocolContract, error) {
+	return nil, r.err
+}
+
+func (erroringRosterReader) ListSourceContractsFromProjection(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+func (erroringRosterReader) ProtocolContractIndex(context.Context) (map[string]string, error) {
+	return nil, nil
+}
+
+// TestBuildProtocolDetail_RosterReadErrorDegradesStatus is the
+// CA2-A06-harden-3 regression guard: a roster read failure degrades to the
+// same shape as a genuinely empty roster (protocolRoster swallowed it to
+// []ProtocolContractView{}), so buildProtocolDetail must not stamp the page
+// "ok" on it — a failed read is not a true empty, and an "ok" status
+// displaces a previously healthy cached entry (protoDetailRefreshLocked).
+func TestBuildProtocolDetail_RosterReadErrorDegradesStatus(t *testing.T) {
+	meta, ok := protocolByName("cctp")
+	if !ok {
+		t.Fatal("cctp missing from registry")
+	}
+	srv := New(Options{
+		ProtocolActivity:  prewarmActivityStub{},
+		ProtocolBespoke:   &bespokeStub{},
+		ProtocolContracts: erroringRosterReader{err: errors.New("roster read failed")},
+	})
+	v := srv.buildProtocolDetail(context.Background(), meta, protocolActivityWindowDays)
+	if v.Analytics == nil || v.Analytics.Status != protocolAnalyticsUnavailable {
+		t.Fatalf("status = %+v, want %q: a failed roster read must not read as a healthy build",
+			v.Analytics, protocolAnalyticsUnavailable)
+	}
+}
+
 // TestBuildProtocolDetail_Events24hErrorDegradesStatus: a failed
 // events_24h read must flip analytics.status to "unavailable" even when
 // the lake analytics and bespoke block both build healthy — before the
@@ -338,5 +381,61 @@ func TestEnrichProtocolAnalytics_SharedPlanSingleTipRead(t *testing.T) {
 	}
 	if stub.rawSeries != 0 || stub.rawBreak != 0 {
 		t.Errorf("raw series/breakdown = %d/%d, want 0/0 when the fast path serves", stub.rawSeries, stub.rawBreak)
+	}
+}
+
+// closeTimeActivityStub models a synthetic, deliberately NON-theoretical
+// ledger close cadence (6s, i.e. 14,400/day — distinct from the old code's
+// hardcoded 17,280/day) so protocolWindowFloor's close_time boundary
+// produces a DIFFERENT, independently-computable answer than the old
+// ledger-count arithmetic (CA2-A06-correct-1).
+type closeTimeActivityStub struct {
+	prewarmActivityStub
+	tip uint32
+}
+
+var (
+	protocolWindowGenesis = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	protocolWindowCadence = 6 * time.Second
+)
+
+func protocolWindowCloseTime(seq uint32) time.Time {
+	return protocolWindowGenesis.Add(protocolWindowCadence * time.Duration(seq))
+}
+
+func (s closeTimeActivityStub) LakeTipLedger(context.Context) (uint32, error) {
+	return s.tip, nil
+}
+
+func (s closeTimeActivityStub) LedgerBySeq(_ context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error) {
+	if seq == 0 || seq > s.tip {
+		return clickhouse.LedgerHeader{}, false, nil
+	}
+	return clickhouse.LedgerHeader{Seq: seq, CloseTime: protocolWindowCloseTime(seq)}, true, nil
+}
+
+// TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount is the
+// CA2-A06-correct-1 regression guard: the raw analytics readers' window
+// cutoff must be derived from the tip's close_time minus
+// protocolActivityWindowDays days, not a ledger-count multiple of the
+// theoretical 17,280/day cadence — which on a real chain overshoots the
+// requested number of days.
+func TestProtocolWindowFloor_UsesCloseTimeNotLedgerCount(t *testing.T) {
+	const tip = uint32(10_000_000)
+	srv := New(Options{ProtocolActivity: closeTimeActivityStub{tip: tip}})
+
+	since, sinceDay := srv.protocolWindowFloor(context.Background(), tip)
+
+	// Independently derived from the model, not from protocolWindowFloor's
+	// own arithmetic: 90 days at the stub's 6s cadence is exactly
+	// 90*86400/6 = 1,296,000 ledgers, an exact boundary (no rounding).
+	wantSince := tip - 1_296_000
+	if since != wantSince {
+		t.Fatalf("sinceLedger = %d, want %d (must derive from close_time, not the theoretical ledgers/day constant)",
+			since, wantSince)
+	}
+	wantDay := protocolWindowCloseTime(tip).AddDate(0, 0, -protocolActivityWindowDays)
+	if !sinceDay.Equal(wantDay) {
+		t.Fatalf("sinceDay = %v, want %v (fast-path cutoff must share the same close_time boundary)", sinceDay, wantDay)
 	}
 }

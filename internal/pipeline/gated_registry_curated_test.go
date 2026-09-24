@@ -16,6 +16,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/contractid"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/defindex"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/phoenix"
 )
 
 // fakeProtocolContractStore is an in-memory protocol_contracts double.
@@ -409,6 +410,45 @@ func TestGatedRegistryOptions_defindexRosterReconciled(t *testing.T) {
 	for _, r := range h.records {
 		if r.source == defindex.SourceName && r.level >= slog.LevelWarn {
 			t.Errorf("defindex warm logged %q at %s; its gate is its curated set, never empty", r.msg, r.level)
+		}
+	}
+}
+
+// TestGatedRegistryOptions_phoenixStakeContractsReconciled is the
+// CA2-A22-correct-2 regression guard: phoenix's stake contracts are never
+// announced by the factory (only the pools are — see the decoder's
+// NewDecoder doc), so unless GatedMeta.CuratedSet declares them nothing
+// ever writes them to protocol_contracts and GET /v1/protocols/phoenix
+// omits every one of them. Against the unfixed entry (CuratedSet unset)
+// this reconcile writes zero phoenix rows at all.
+func TestGatedRegistryOptions_phoenixStakeContractsReconciled(t *testing.T) {
+	meta, ok := gatedSources[phoenix.SourceName]
+	if !ok {
+		t.Fatal("phoenix is not a gated source")
+	}
+	store := &fakeProtocolContractStore{rows: map[string][]string{}}
+	if _, err := gatedRegistryOptions(context.Background(), store, slog.New(slog.NewTextHandler(io.Discard, nil)), context.Background(), true); err != nil {
+		t.Fatalf("gatedRegistryOptions: %v", err)
+	}
+
+	got := map[string]upsertCall{}
+	for _, u := range store.upserts {
+		if u.source == phoenix.SourceName {
+			got[u.contractID] = u
+		}
+	}
+	if len(phoenix.MainnetStakeContracts) == 0 {
+		t.Fatal("phoenix.MainnetStakeContracts is empty — test fixture stale")
+	}
+	for _, id := range phoenix.MainnetStakeContracts {
+		u, ok := got[id]
+		if !ok {
+			t.Errorf("curated phoenix stake contract %s not written to protocol_contracts", id)
+			continue
+		}
+		if u.factoryID != CuratedFactoryID || u.firstLedger != meta.Genesis {
+			t.Errorf("%s written as (factory %q, first_ledger %d), want (%q, %d)",
+				id, u.factoryID, u.firstLedger, CuratedFactoryID, meta.Genesis)
 		}
 	}
 }

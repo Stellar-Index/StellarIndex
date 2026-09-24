@@ -11,11 +11,6 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
-// ledgersPerDay is the approximate Stellar ledger cadence (≈5s close time →
-// 17,280/day). Used to translate a `?days=` window into a sinceLedger floor
-// so the contract aggregates stay primary-key-range-scoped.
-const ledgersPerDay = 17_280
-
 // ContractDirectoryEntry is one row of GET /v1/contracts.
 type ContractDirectoryEntry struct {
 	ContractID string `json:"contract_id"`
@@ -320,14 +315,24 @@ func (h *Handler) ContractCodeHistory(w http.ResponseWriter, r *http.Request) {
 	h.writeJSONAt(w, out, degraded, asOf)
 }
 
-// windowFloorLedger returns the ledger sequence `days` days before the tip,
-// or 0 when the tip is genuinely unknown (no ledgers captured yet) / the
-// window reaches past genesis. A FAILED tip read is returned as an error
-// rather than folded into the 0 floor: 0 means "scan from genesis", and
-// silently substituting it for "the tip read failed" turned a transient
-// ClickHouse error into an unbounded genesis-wide GROUP BY on every caller
-// (RLT-099 / #581b). Callers must refuse the window on error rather than
-// serve one computed from ledger 0.
+// windowFloorLedger returns the ledger sequence closest to `days` days
+// before the tip's close_time, or 0 when the tip is genuinely unknown (no
+// ledgers captured yet) / the window reaches past genesis. A FAILED tip
+// read is returned as an error rather than folded into the 0 floor: 0 means
+// "scan from genesis", and silently substituting it for "the tip read
+// failed" turned a transient ClickHouse error into an unbounded
+// genesis-wide GROUP BY on every caller (RLT-099 / #581b). Callers must
+// refuse the window on error rather than serve one computed from ledger 0.
+//
+// The boundary is the tip's close_time, not a ledger-count multiple of the
+// theoretical 5.0s/17,280-per-day cadence (CA2-A03-correct-0): pubnet's
+// observed cadence is ~14,950-15,300 ledgers/day, so a ledger-count window
+// overshoots the requested number of days by ~13-15% — the exact class of
+// bug already fixed for
+// NetworkThroughput (see explorer_reader.go's ledgersPerDayPruningEstimate
+// doc). ledgerSeqAtCloseTime binary-searches for the true boundary ledger
+// using LedgerBySeq, so it is correct regardless of the chain's actual
+// cadence.
 func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, error) {
 	tip, err := h.Reader.RecentLedgers(ctx, 1, 0)
 	if err != nil {
@@ -336,11 +341,32 @@ func (h *Handler) windowFloorLedger(ctx context.Context, days int) (uint32, erro
 	if len(tip) == 0 {
 		return 0, nil
 	}
-	span := uint32(days * ledgersPerDay) //nolint:gosec // days is clamped to [1,365]
-	if span >= tip[0].Seq {
-		return 0, nil
+	boundary := tip[0].CloseTime.AddDate(0, 0, -days)
+	return h.ledgerSeqAtCloseTime(ctx, tip[0].Seq, boundary)
+}
+
+// ledgerSeqAtCloseTime binary-searches [0, tipSeq] for the smallest ledger
+// sequence whose close_time is at or after boundary. Ledger sequences are
+// contiguous genesis→tip and close_time is monotonic in sequence, so this
+// converges in O(log2(tipSeq)) LedgerBySeq point lookups regardless of the
+// chain's actual close cadence. A boundary at or before genesis converges to
+// the lowest sequence LedgerBySeq resolves — equivalent to the "scan from
+// genesis" 0 floor, since no ledger has sequence 0.
+func (h *Handler) ledgerSeqAtCloseTime(ctx context.Context, tipSeq uint32, boundary time.Time) (uint32, error) {
+	lo, hi := uint32(0), tipSeq
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		hdr, found, err := h.Reader.LedgerBySeq(ctx, mid)
+		if err != nil {
+			return 0, err
+		}
+		if !found || hdr.CloseTime.Before(boundary) {
+			lo = mid + 1
+			continue
+		}
+		hi = mid
 	}
-	return tip[0].Seq - span, nil
+	return lo, nil
 }
 
 // contractAttribution loads the contract_id → protocol map (best-effort —
