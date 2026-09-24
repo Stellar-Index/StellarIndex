@@ -4049,9 +4049,12 @@ var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
 // labels:
 //
 //   - contract_id: the watched SEP-41 C-strkey being advanced.
-//   - outcome ∈ {ok, noop, error}. `ok` folded new settled rows;
-//     `noop` ran cleanly with nothing new to settle (steady state for
-//     a dormant token); `error` is a failed advance (Postgres issue).
+//   - outcome ∈ {ok, noop, no_cursor, error}. `ok` folded new settled
+//     rows; `noop` ran cleanly with nothing new to settle (steady state
+//     for a dormant token); `no_cursor` folded nothing because the
+//     projector's sep41_supply cursor row is absent, so the fold is
+//     pinned and reads take the full-history scan; `error` is a failed
+//     advance (Postgres issue).
 //
 // Sustained `error` for a contract means its checkpoint is frozen and
 // the reader is silently back on the slow full-sum fallback for that
@@ -4060,7 +4063,7 @@ var AggregatorSupplyRefreshDurationSeconds = prometheus.NewHistogramVec(
 var SEP41SupplyRollupAdvancesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_sep41_supply_rollup_advances_total",
-		Help: "SEP-41 supply rollup incremental-advance passes per (contract_id, outcome). Outcome ∈ {ok, noop, error}.",
+		Help: "SEP-41 supply rollup incremental-advance passes per (contract_id, outcome). Outcome ∈ {ok, noop, no_cursor, error}.",
 	},
 	[]string{"contract_id", "outcome"},
 )
