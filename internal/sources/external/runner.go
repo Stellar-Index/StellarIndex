@@ -295,14 +295,8 @@ func Run(
 	// declared PollInterval. Each tick calls PollOnce; returned
 	// trades + updates are wrapped and fanned to the shared sink.
 	for _, p := range pollers {
-		if p.Poller == nil {
-			return nil, teardown(cancelStreamers, &wg, errors.New("external.Run: nil Poller in spec"))
-		}
-		interval := p.Poller.PollInterval()
-		if interval <= 0 {
-			return nil, teardown(cancelStreamers, &wg, fmt.Errorf(
-				"external.Run: %q declares non-positive PollInterval %v",
-				p.Poller.Name(), interval))
+		if err := preflightPoller(p); err != nil {
+			return nil, teardown(cancelStreamers, &wg, err)
 		}
 		wg.Add(1)
 		go func(spec PollerSpec) {
@@ -334,6 +328,33 @@ func Run(
 		cancelStreamers()
 	}
 	return wait, nil
+}
+
+// preflightPoller rejects a spec the runner cannot tick and, before the
+// poller's first update can reach the sink, declares its oracle
+// staleness resolution.
+func preflightPoller(p PollerSpec) error {
+	if p.Poller == nil {
+		return errors.New("external.Run: nil Poller in spec")
+	}
+	interval := p.Poller.PollInterval()
+	if interval <= 0 {
+		return fmt.Errorf("external.Run: %q declares non-positive PollInterval %v",
+			p.Poller.Name(), interval)
+	}
+	declareOracleResolution(p.Poller.Name(), interval)
+	return nil
+}
+
+// declareOracleResolution gives every polled source a finite
+// stellarindex_oracle_stale budget: the registry's upstream cadence,
+// floored at the poll interval because no row's timestamp can advance
+// faster than we fetch it. A poller the registry has no cadence for
+// falls back to its poll interval rather than the undeclared +Inf,
+// which the alert's bare comparison can never exceed.
+func declareOracleResolution(source string, pollInterval time.Duration) {
+	resolution := max(Lookup(source).OracleResolution, pollInterval)
+	obs.DeclareOracleResolution(source, resolution.Seconds())
 }
 
 // warnUnreferencedDustQuotes logs once per configured streamed pair

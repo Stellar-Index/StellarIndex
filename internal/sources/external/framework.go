@@ -196,6 +196,13 @@ type Metadata struct {
 	// AmountScaleDecimals(). Read this instead of assuming 1e8 (CS-040):
 	// the USD-volume gate mis-scales FX ~100× otherwise.
 	AmountDecimals int
+
+	// OracleResolution is the cadence at which the timestamps on this
+	// source's canonical.OracleUpdate rows advance upstream — the base of
+	// its stellarindex_oracle_stale budget. Nonzero exactly for the
+	// sources that write oracle_updates; config.OracleSourceNames mirrors
+	// that set (pinned by pipeline's lockstep test).
+	OracleResolution time.Duration
 }
 
 // AmountScaleDecimals returns the source's amount scale, defaulting to 8

@@ -3,10 +3,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/netip"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -526,20 +528,29 @@ func (o OracleConfig) validate() error {
 // OracleSourceNames is the set of source names that publish
 // oracle_updates rows and therefore carry the
 // stellarindex_oracle_last_update_unix / _staleness_budget_seconds
-// gauges. It is the subset of KnownSources a staleness override may
+// gauges: the on-chain oracles pipeline.BuildDispatcher enables (a
+// subset of KnownSources) and the pollers external.Run starts (an
+// [external.<name>] section). It is the set a staleness override may
 // name.
 //
 // Mirrored here rather than imported for the same cycle-avoidance
-// reason KnownSources is (see its comment). When an oracle source is
-// added to pipeline.BuildDispatcher, add it here too — an override
-// naming a source nothing emits would sit in the config looking
-// effective while matching no series.
+// reason KnownSources is (see its comment). The authority is
+// external.Registry's nonzero OracleResolution rows, and pipeline's
+// TestOracleSourceNames_MatchRegistry fails when the two drift — an
+// override naming a source nothing emits would sit in the config
+// looking effective while matching no series.
 var OracleSourceNames = map[string]struct{}{
-	"reflector-dex": {},
-	"reflector-cex": {},
-	"reflector-fx":  {},
-	"redstone":      {},
-	"band":          {},
+	"reflector-dex":    {},
+	"reflector-cex":    {},
+	"reflector-fx":     {},
+	"redstone":         {},
+	"band":             {},
+	"chainlink":        {},
+	"coingecko":        {},
+	"coinmarketcap":    {},
+	"cryptocompare":    {},
+	"ecb":              {},
+	"exchangeratesapi": {},
 }
 
 // validateStalenessOverrides rejects the ways a per-asset staleness
@@ -557,8 +568,9 @@ func (o OracleConfig) validateStalenessOverrides() error {
 		where := fmt.Sprintf("oracle.staleness_overrides[%d]", i)
 
 		if _, ok := OracleSourceNames[ov.Source]; !ok {
-			return fmt.Errorf("%w: %s.source %q is not an oracle source (want one of reflector-dex, reflector-cex, reflector-fx, redstone, band)",
-				ErrInvalidConfig, where, ov.Source)
+			return fmt.Errorf("%w: %s.source %q is not an oracle source (want one of %s)",
+				ErrInvalidConfig, where, ov.Source,
+				strings.Join(slices.Sorted(maps.Keys(OracleSourceNames)), ", "))
 		}
 
 		// The `asset` label is canonical.Asset.String(), so the

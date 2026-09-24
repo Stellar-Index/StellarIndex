@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -139,17 +140,41 @@ func TestValidate_RejectsBadOracleStalenessOverride(t *testing.T) {
 
 // TestOracleSourceNames_AreKnownSources keeps the oracle subset honest:
 // every name a staleness override may use must also be a source the
-// indexer can actually run. A name that drifted out of KnownSources
-// would accept an override for a source nothing emits.
+// indexer can actually run — an on-chain source in KnownSources or a
+// poller with its own [external.<name>] section. A name that is
+// neither would accept an override for a source nothing emits.
 func TestOracleSourceNames_AreKnownSources(t *testing.T) {
 	if len(config.OracleSourceNames) == 0 {
 		t.Fatal("OracleSourceNames is empty — this check must not pass vacuously")
 	}
+	external := map[string]bool{}
+	et := reflect.TypeFor[config.ExternalConfig]()
+	for i := range et.NumField() {
+		external[strings.Split(et.Field(i).Tag.Get("toml"), ",")[0]] = true
+	}
 	for name := range config.OracleSourceNames {
-		if _, ok := config.KnownSources[name]; !ok {
-			t.Errorf("OracleSourceNames has %q, which is not in KnownSources — an "+
-				"override naming it could never match a series", name)
+		if _, ok := config.KnownSources[name]; !ok && !external[name] {
+			t.Errorf("OracleSourceNames has %q, which is neither in KnownSources nor "+
+				"an [external.%s] section — an override naming it could never match "+
+				"a series", name, name)
 		}
+	}
+}
+
+// TestValidateStalenessOverrides_AcceptsPolledOracleSource pins that an
+// override can reach an externally-polled source: before chainlink was
+// in OracleSourceNames the validator refused it, so no operator could
+// tune a Chainlink feed's budget at all.
+func TestValidateStalenessOverrides_AcceptsPolledOracleSource(t *testing.T) {
+	c := config.Default()
+	c.Oracle.StalenessOverrides = []config.OracleStalenessOverrideConfig{{
+		Source:        "chainlink",
+		Asset:         "fiat:JPY",
+		BudgetSeconds: 345600,
+		Reason:        "FX feed: 24 h heartbeat plus the weekend close",
+	}}
+	if err := c.Validate(); err != nil {
+		t.Fatalf("Validate rejected a chainlink staleness override: %v", err)
 	}
 }
 

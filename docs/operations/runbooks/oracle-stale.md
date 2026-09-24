@@ -20,7 +20,7 @@ severity: P2
 ## Symptoms
 
 - `(time() - stellarindex_oracle_last_update_unix) > stellarindex_oracle_staleness_budget_seconds` sustained 2 min. Both gauges are labelled `{source, asset}` and are emitted by the same call, so the comparison is per pair with no join.
-- Alert label `source` names the specific variant — one of `reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`, `band`. (Chainlink-HTTP is a divergence reference in `internal/divergence/`, not an oracle source — it doesn't emit `stellarindex_oracle_*` metrics and won't appear here.)
+- Alert label `source` names the source that writes the pair's `oracle_updates` rows — an on-chain oracle (`reflector-dex`, `reflector-cex`, `reflector-fx`, `redstone`, `band`) or an external poller (`chainlink`, `coingecko`, `coinmarketcap`, `cryptocompare`, `ecb`, `exchangeratesapi`). The pollers have no on-chain events: for them read `stellarindex_external_poller_polls_total{source=…}` and `stellarindex_external_poller_last_success_unix` instead of the event-rate signal below. (The synchronous Chainlink cross-check in `internal/divergence/` is separate and emits no `stellarindex_oracle_*` metrics.)
 - `stellarindex_source_events_total{source=reflector-...}` rate drops to zero at the same time (or has been zero throughout).
 
 ## Quick diagnosis (≤ 5 min)
@@ -71,7 +71,10 @@ Key signals:
 The threshold is the pair's `stellarindex_oracle_staleness_budget_seconds`,
 which unless overridden is `10 × stellarindex_oracle_resolution_seconds` —
 and that resolution comes from a **hard-coded constant per source**
-(`DefaultResolutionSeconds` in each `internal/sources/<oracle>/events.go`).
+(`DefaultResolutionSeconds` in each `internal/sources/<oracle>/events.go`
+for the on-chain oracles; for a poller, its `OracleResolution` in
+`internal/sources/external/registry.go`, raised to the configured poll
+interval when that is slower).
 Nothing reconciles it against how often the oracle really publishes. When
 the budget is tighter than reality, this alert fires during entirely
 normal operation and never clears.

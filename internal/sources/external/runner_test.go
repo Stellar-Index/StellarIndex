@@ -9,6 +9,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/consumer"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // mockStreamer drives a hand-controlled channel for test purposes.
@@ -288,5 +289,39 @@ func TestRun_CtxCancelClosesForwarders(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run's wait() did not complete after ctx cancel")
+	}
+}
+
+// TestRun_DeclaresFiniteOracleBudgetForEveryPoller pins the two edges of
+// the runner's staleness declaration: a slow poll interval raises a
+// fast registry cadence (a row can never be fresher than our fetch),
+// and a poller the registry has no cadence for still gets a finite
+// budget — never the +Inf that stellarindex_oracle_stale cannot exceed.
+func TestRun_DeclaresFiniteOracleBudgetForEveryPoller(t *testing.T) {
+	cases := []struct {
+		name     string
+		interval time.Duration
+		want     float64
+	}{
+		{name: "coingecko", interval: time.Hour, want: obs.OracleStaleBudgetMultiplier * 3600},
+		{name: "ecb", interval: 6 * time.Hour, want: obs.OracleStaleBudgetMultiplier * 86400},
+		{name: "test-unregistered-poller", interval: 2 * time.Minute, want: obs.OracleStaleBudgetMultiplier * 120},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			p := &mockPoller{name: tc.name, interval: tc.interval}
+			wait, err := Run(ctx, nil, []PollerSpec{{Poller: p}}, make(chan consumer.Event, 1), nil)
+			if err != nil {
+				cancel()
+				t.Fatalf("Run: %v", err)
+			}
+			cancel()
+			wait()
+
+			if got := obs.OracleStalenessBudget(tc.name, "crypto:XLM"); got != tc.want {
+				t.Errorf("budget(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
