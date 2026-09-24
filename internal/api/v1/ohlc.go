@@ -12,6 +12,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 )
 
 // ohlcDefaultOutlierSigma is the default σ threshold for the outlier
@@ -74,9 +75,13 @@ type OHLCBar struct {
 	BaseVolume  string   `json:"base_volume"`
 	QuoteVolume string   `json:"quote_volume"`
 	// BaseVolumeDecimals / QuoteVolumeDecimals are the smallest-unit
-	// scale of the two sums above — see this type's doc comment.
-	BaseVolumeDecimals  int  `json:"base_volume_decimals"`
-	QuoteVolumeDecimals int  `json:"quote_volume_decimals"`
+	// scale of the two sums above — see this type's doc comment. `null`
+	// when a contributing trade's source has no [external.Registry]
+	// entry: the sums are not convertible to asset units and must not
+	// be divided by a guessed scale (GH-1285). Mirrors
+	// OHLCSeriesBar.v_base_decimals / v_quote_decimals.
+	BaseVolumeDecimals  *int `json:"base_volume_decimals"`
+	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
 	TradeCount          int  `json:"trade_count"`
 	Truncated           bool `json:"truncated"`
 }
@@ -273,8 +278,8 @@ func (s *Server) handleOHLC(w http.ResponseWriter, r *http.Request) {
 		Close:               ratToDecimal(bar.Close, ohlcPriceDigits),
 		BaseVolume:          bar.BaseVolume.String(),
 		QuoteVolume:         bar.QuoteVolume.String(),
-		BaseVolumeDecimals:  volumeDecimals,
-		QuoteVolumeDecimals: volumeDecimals,
+		BaseVolumeDecimals:  wireScaleDecimals(volumeDecimals),
+		QuoteVolumeDecimals: wireScaleDecimals(volumeDecimals),
 		TradeCount:          bar.TradeCount,
 		Truncated:           preFilter == maxTradesForOHLC,
 	}, Flags{Triangulated: triangulated})
@@ -371,9 +376,20 @@ func (s *Server) computeOHLCSingleBar(
 // [barScaleDecimals] is the series arm's bar-level twin, over a CAGG row's
 // `sources` column; both resolve a venue through [amountScaleDecimalsFor]
 // so the point and series paths cannot disagree about a source's scale.
+// Returns [ohlcBarScaleUnknown] if any contributing trade's source has
+// no [external.Registry] entry: [external.Lookup] answers such a source
+// with the registry's CEX-flavoured 8-decimal default (AmountScaleDecimals'
+// zero-value fallback), and stating that default as fact for a source we
+// do not actually recognise would re-introduce the F096 tenfold error for
+// the opposite population — an unregistered on-chain DEX at 7 decimals
+// would be reported at 8. An unrecognised source is scale-unknown, not
+// scale-8 (GH-1285).
 func commonAmountScaleDecimals(trades []canonical.Trade) int {
 	scale := 0
 	for i := range trades {
+		if !external.Registered(trades[i].Source) {
+			return ohlcBarScaleUnknown
+		}
 		if d := amountScaleDecimalsFor(trades[i].Source); d > scale {
 			scale = d
 		}

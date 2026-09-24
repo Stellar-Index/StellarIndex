@@ -786,10 +786,10 @@ function isUsdQuote(quote: string): boolean {
 // Number()-then-divide, so a volume above 2^53 doesn't round silently.
 function formatScaledAmount(
   raw: string,
-  decimals: number | undefined,
+  decimals: number | null | undefined,
   quote: string,
 ): string {
-  if (decimals === undefined || !Number.isFinite(decimals) || decimals < 0) {
+  if (decimals == null || !Number.isFinite(decimals) || decimals < 0) {
     return '—';
   }
   const n = scaleBaseUnits(raw, decimals);

@@ -188,3 +188,28 @@ func TestOHLC_VolumeScale_OnChainWindowIsSevenDecimals(t *testing.T) {
 		t.Errorf("quote volume in asset units = %s, want 1050.0000000", u)
 	}
 }
+
+// TestOHLC_VolumeScale_UnregisteredSourceIsUnknown is GH-1285: a source
+// absent from external.Registry must not be answered with the registry's
+// CEX-flavoured 8-decimal fallback. An unregistered on-chain DEX at 1e7
+// would otherwise be stated as 8, overstating its volume tenfold the
+// opposite way F096 already fixed.
+func TestOHLC_VolumeScale_UnregisteredSourceIsUnknown(t *testing.T) {
+	base := time.Unix(1_772_000_000, 0).UTC()
+	reader := &stubHistoryReader{
+		trades: []canonical.Trade{
+			mkScaledOHLCTrade("brand_new_dex", scaledUnits(1000, 7), scaledUnits(350, 7), 1, base),
+			mkScaledOHLCTrade("brand_new_dex", scaledUnits(1000, 7), scaledUnits(350, 7), 2, base.Add(time.Second)),
+		},
+	}
+	got := getOHLCBar(t, reader, "")
+
+	if got.BaseVolumeDecimals != nil {
+		t.Errorf("base_volume_decimals = %s, want absent (null) — \"brand_new_dex\" has "+
+			"no external.Registry entry, so its scale is unknown, not the registry's "+
+			"8-decimal fallback", showDecimals(got.BaseVolumeDecimals))
+	}
+	if got.QuoteVolumeDecimals != nil {
+		t.Errorf("quote_volume_decimals = %s, want absent (null)", showDecimals(got.QuoteVolumeDecimals))
+	}
+}

@@ -18555,16 +18555,18 @@ components:
             per-source scale as `base_volume`. Divide by
             10^`quote_volume_decimals` to get asset units.
         base_volume_decimals:
-          type: integer
+          type: [integer, "null"]
           description: |
             Decimal exponent of `base_volume`: asset units =
             base_volume / 10^base_volume_decimals. The window is lifted to
             one common scale before the sum is taken and this is that
             scale — resolved over the trades as fetched, so it stays
             correct when the outlier filter removes the only venue that
-            set it.
+            set it. `null` when a contributing trade's source has no
+            registry entry: `base_volume` is then not convertible to
+            asset units and must not be divided by a guessed scale.
         quote_volume_decimals:
-          type: integer
+          type: [integer, "null"]
           description: |
             Decimal exponent of `quote_volume` — see
             `base_volume_decimals`. Equal to it today (a source stamps

@@ -229,6 +229,15 @@ func TestCombinedBarUnknownScaleIsNeverLifted(t *testing.T) {
 			"scales internally takes the finest, the lift that cannot inflate its "+
 			"own weight against its peers", got, cexScale)
 	}
+	// GH-1285: a source absent from external.Registry must not be
+	// answered with the registry's CEX-flavoured 8-decimal fallback
+	// either — same defect as the point-path commonAmountScaleDecimals,
+	// same shared amountScaleDecimalsFor resolver.
+	if got := barScaleDecimals([]string{"brand_new_dex"}); got != ohlcBarScaleUnknown {
+		t.Errorf("barScaleDecimals([brand_new_dex]) = %d, want %d — \"brand_new_dex\" has "+
+			"no registry entry, so its scale is unknown, not the registry's 8dp default",
+			got, ohlcBarScaleUnknown)
+	}
 
 	// The unknown-scale bar sits in the SAME bucket as an 8dp one, which
 	// is the only place it can now meet it: the lift target is the

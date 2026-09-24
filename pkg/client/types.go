@@ -638,8 +638,10 @@ type OHLCBar struct {
 	// exponent of the two sums above. Equal to each other today (a
 	// source stamps both legs of a trade at one scale); carried
 	// separately because a scale belongs to an amount, not a pair.
-	BaseVolumeDecimals  int  `json:"base_volume_decimals"`
-	QuoteVolumeDecimals int  `json:"quote_volume_decimals"`
+	// nil when a contributing trade's source is unrecognised: the
+	// sums are then not convertible to asset units.
+	BaseVolumeDecimals  *int `json:"base_volume_decimals"`
+	QuoteVolumeDecimals *int `json:"quote_volume_decimals"`
 	TradeCount          int  `json:"trade_count"`
 	Truncated           bool `json:"truncated"`
 }

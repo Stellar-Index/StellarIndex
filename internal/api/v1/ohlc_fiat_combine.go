@@ -535,9 +535,19 @@ const ohlcBarScaleUnknown = -1
 // bar the SMALLEST lift, so it can never inflate its own weight against
 // its peers. That is the same direction launch-plan row 1.15 requires of
 // a thin venue beside book data.
+// Also unknown when any contributing source has no [external.Registry]
+// entry: [external.Lookup] answers such a source with the registry's
+// CEX-flavoured 8-decimal default, and stating that as fact for a
+// source this deployment does not recognise would re-introduce the
+// F096 tenfold error for the opposite population — an unregistered
+// on-chain DEX would be reported at 8 (GH-1285). Mirrors
+// [commonAmountScaleDecimals], the point-path twin.
 func barScaleDecimals(sources []string) int {
 	scale := ohlcBarScaleUnknown
 	for _, src := range sources {
+		if !external.Registered(src) {
+			return ohlcBarScaleUnknown
+		}
 		if d := amountScaleDecimalsFor(src); d > scale {
 			scale = d
 		}
