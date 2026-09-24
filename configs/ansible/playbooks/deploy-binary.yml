@@ -33,7 +33,9 @@
 #           touches the schema/DB checkers HAProxy's readyz-based
 #           routing decision depends on — a binary readyz would refuse
 #           could pass this gate, HAProxy would then drain every backend)
-#         indexer / aggregator / other → systemctl is-active expects "active"
+#         indexer / aggregator → curl http://127.0.0.1:<daemon_ready_ports>/readyz
+#           expects 200 (the schema-head check); a daemon with no
+#           daemon_ready_ports entry fails its probe
 #      after `health_grace_seconds` to give the service a moment to
 #      open its listening sockets.
 #   7. On any failure in steps 5-6, rollback: move .prev back to live
@@ -54,6 +56,15 @@
     # readyz would refuse used to pass the deploy gate and then get
     # drained by every backend the moment traffic hit it.
     api_health_path: /v1/readyz
+    # Every other daemon is probed on its metrics listener's /readyz (the
+    # schema-head check), not `systemctl is-active`, which reads "active"
+    # for a process that is up and failing every write (GH-1167). Ports are
+    # the obs.metrics_listen default and the aggregator's shift off it
+    # (archival-node defaults: local_prometheus_{indexer,aggregator}_port).
+    # A daemon missing here fails its deploy rather than going unprobed.
+    daemon_ready_ports:
+      stellarindex-indexer: 9464
+      stellarindex-aggregator: 9465
     # CLI tools — no systemd service to restart, no health probe.
     # The deploy steps short-circuit to a `<binary> -version`
     # smoke test for these. Adding a new daemon binary? Don't

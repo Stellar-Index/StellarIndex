@@ -53,6 +53,7 @@ import (
 
 	sdkxdr "github.com/stellar/go-stellar-sdk/xdr"
 
+	v1 "github.com/Stellar-Index/StellarIndex/internal/api/v1"
 	"github.com/Stellar-Index/StellarIndex/internal/archivecompleteness"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical/discovery"
@@ -615,7 +616,7 @@ func run(cfgPath string, dryRun bool) error {
 	defer setSourceEnabled(cfg.Ingestion.EnabledSources, false)
 
 	// ─── Metrics HTTP endpoint ──────────────────────────────────
-	metricsSrv := startMetricsServer(cfg.Obs, logger)
+	metricsSrv := startMetricsServer(cfg.Obs, store, logger)
 
 	// ─── Sink goroutine ────────────────────────────────────────
 	// Sink mode depends on the projector config (ADR-0032). See
@@ -2648,20 +2649,29 @@ func classifyHashDBVerifySweep(res archivecompleteness.HashDBVerifyResult, strea
 	return sweepOutcomeOK
 }
 
-func startMetricsServer(obsCfg config.ObsConfig, logger *slog.Logger) *http.Server {
-	if obsCfg.MetricsListen == "" {
-		logger.Warn("obs.metrics_listen is empty — /metrics endpoint disabled; Prometheus alerts on source metrics will not fire")
-		return nil
-	}
+// newMetricsMux serves /metrics, the constant liveness /healthz, and
+// /readyz: the schema-head check the deploy gate probes, so a binary
+// swapped ahead of its migrations fails the deploy instead of passing
+// `systemctl is-active` while every write errors (GH-1167).
+func newMetricsMux(schema v1.SchemaVersionReader) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", obs.Handler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
+	mux.Handle("GET /readyz", v1.ReadyzHandler(v1.NewSchemaVersionChecker(schema)))
+	return mux
+}
+
+func startMetricsServer(obsCfg config.ObsConfig, schema v1.SchemaVersionReader, logger *slog.Logger) *http.Server {
+	if obsCfg.MetricsListen == "" {
+		logger.Warn("obs.metrics_listen is empty — /metrics endpoint disabled; Prometheus alerts on source metrics will not fire")
+		return nil
+	}
 	srv := &http.Server{
 		Addr:              obsCfg.MetricsListen,
-		Handler:           mux,
+		Handler:           newMetricsMux(schema),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
