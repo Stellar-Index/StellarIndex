@@ -7,7 +7,8 @@
 //
 //	stellarindex-migrate up              Apply every pending migration.
 //	stellarindex-migrate down [N]        Roll back last N migrations (default 1).
-//	                                      Asks for confirmation on a TTY; -yes skips it.
+//	                                      Requires -i-know; asks for confirmation on a
+//	                                      TTY, and -yes skips that prompt.
 //	stellarindex-migrate status          Show current + target version.
 //	stellarindex-migrate version         Build version.
 //	stellarindex-migrate help            Print usage.
@@ -51,6 +52,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 	dsn := fs.String("dsn", "", "Postgres DSN (overrides STELLARINDEX_POSTGRES_DSN env)")
 	dir := fs.String("migrations", "migrations", "Path to the migrations directory")
 	yes := fs.Bool("yes", false, "skip the interactive confirmation for 'down' (required when stdin is not a TTY)")
+	iKnow := fs.Bool("i-know", false, "acknowledge that 'down' runs down.sql against the target database and may be irreversible (required for every 'down')")
 	fs.Usage = func() { printUsage(fs) }
 
 	args := parseArgv(fs, os.Args[1:])
@@ -80,7 +82,7 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 		if resolvedDSN == "" {
 			die("no DSN: set STELLARINDEX_POSTGRES_DSN or pass -dsn")
 		}
-		if err := cmdDown(*dir, resolvedDSN, n, *yes); err != nil {
+		if err := cmdDown(*dir, resolvedDSN, n, *yes, *iKnow); err != nil {
 			die("down: %v", err)
 		}
 	case "status":
@@ -161,7 +163,10 @@ func cmdUp(dir, dsn string) error {
 	return nil
 }
 
-func cmdDown(dir, dsn string, n int, yes bool) error {
+func cmdDown(dir, dsn string, n int, yes, iKnow bool) error {
+	if !iKnow {
+		return errDownNeedsIKnow
+	}
 	if err := confirmDown(n, dsn, yes, os.Stdin, stderr); err != nil {
 		return err
 	}
@@ -216,6 +221,15 @@ func isInteractive() bool {
 	nullStat, err := null.Stat()
 	return err != nil || !os.SameFile(stat, nullStat)
 }
+
+// errDownNeedsIKnow is the rail -yes cannot pass. -yes is what every
+// non-interactive caller sets, and the DSN host cannot tell production
+// apart (r1 reaches Postgres at 127.0.0.1), so every rollback must be
+// acknowledged explicitly, wherever it points.
+var errDownNeedsIKnow = errors.New("refusing to roll back without -i-know: down runs each " +
+	"migration's down.sql against the target database, which may drop columns, " +
+	"constraints or data that no later 'up' restores. Prefer rolling forward; " +
+	"pass -i-know to acknowledge")
 
 // confirmDown gates `down` behind an explicit operator "yes". `down` is
 // the one verb no deploy pipeline runs (only `up` does — see
@@ -408,9 +422,10 @@ Usage:
 
 Subcommands:
   up              Apply every pending migration.
-  down [N]        Roll back last N migrations (default 1). Prompts for
-                  confirmation on a TTY; pass -yes to skip it (required
-                  when stdin is not a TTY).
+  down [N]        Roll back last N migrations (default 1). Always
+                  requires -i-know. Prompts for confirmation on a TTY;
+                  pass -yes to skip it (required when stdin is not a
+                  TTY).
   status          Show current applied version.
   force <V>       Clear dirty flag + set version to V (DANGEROUS —
                   manually verify the DB's actual schema matches V
@@ -431,7 +446,7 @@ Examples:
   export STELLARINDEX_POSTGRES_DSN="postgres://stellarindex@localhost/stellarindex?sslmode=disable"
   stellarindex-migrate up
   stellarindex-migrate status
-  stellarindex-migrate down 1
+  stellarindex-migrate -i-know down 1
 `)
 }
 

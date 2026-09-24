@@ -482,7 +482,7 @@ db-migrate-up: ## Apply pending migrations
 
 .PHONY: db-migrate-down
 db-migrate-down: ## Revert most recent migration
-	@$(GO) run ./cmd/stellarindex-migrate down 1
+	@$(GO) run ./cmd/stellarindex-migrate -i-know down 1
 
 .PHONY: db-migrate-status
 db-migrate-status: ## Show migration state

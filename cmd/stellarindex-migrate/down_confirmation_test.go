@@ -29,7 +29,7 @@ func TestMigrate_DownRefusesWithoutConfirmationOnNonTTYStdin(t *testing.T) {
 	// and the tool goes on to actually try to connect.
 	const dsn = "postgres://u:p@127.0.0.1:1/db?sslmode=disable"
 
-	cmd := exec.Command(bin, "-dsn", dsn, "down", "1")
+	cmd := exec.Command(bin, "-dsn", dsn, "-i-know", "down", "1")
 	// exec.Command leaves Stdin nil, which os/exec wires to /dev/null —
 	// guaranteed non-interactive, exactly the shape this gate must
 	// refuse rather than guess on.
@@ -57,15 +57,63 @@ func TestMigrate_DownYesSkipsConfirmationAndReachesTheMigrator(t *testing.T) {
 
 	const dsn = "postgres://u:p@127.0.0.1:1/db?sslmode=disable"
 
-	cmd := exec.Command(bin, "-dsn", dsn, "-yes", "down", "1")
+	cmd := exec.Command(bin, "-dsn", dsn, "-yes", "-i-know", "down", "1")
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected a non-zero exit (connection refused), got success:\n%s", out)
 	}
 
 	got := string(out)
-	if strings.Contains(got, "not a TTY") {
-		t.Fatalf("-yes should have skipped the confirmation gate entirely, got:\n%s", got)
+	if strings.Contains(got, "not a TTY") || strings.Contains(got, "-i-know") {
+		t.Fatalf("-yes -i-know should have passed both gates, got:\n%s", got)
+	}
+	if !strings.Contains(got, "open migrator") {
+		t.Fatalf("expected the tool to go on and open the migrator, got:\n%s", got)
+	}
+}
+
+// -yes only skips the prompt; it is what every non-interactive caller
+// passes, so it cannot also be the acknowledgement that the rollback may
+// discard data. r1 production reaches Postgres at 127.0.0.1
+// (14-stellarindex-services.yml), so this is the production-shape DSN
+// and the refusal must not depend on the host looking remote.
+func TestMigrate_DownRefusesWithoutIKnowOnProductionShapeDSN(t *testing.T) {
+	bin := buildMigrateBinary(t)
+
+	for _, dsn := range []string{
+		"postgres://stellarindex:p@127.0.0.1:1/stellarindex?sslmode=disable",
+		"postgres://stellarindex:p@localhost:1/stellarindex?sslmode=disable",
+		"postgres://stellarindex:p@/stellarindex?host=db.invalid&port=1",
+		"postgres://stellarindex:p@db.invalid:1/stellarindex?sslmode=disable",
+	} {
+		cmd := exec.Command(bin, "-dsn", dsn, "-yes", "down", "1")
+		out, err := cmd.CombinedOutput()
+		if err == nil {
+			t.Fatalf("down -yes without -i-know exited 0:\n%s", out)
+		}
+		got := string(out)
+		if !strings.Contains(got, "refusing") || !strings.Contains(got, "-i-know") {
+			t.Fatalf("expected a refusal naming -i-know, got:\n%s", got)
+		}
+		if strings.Contains(got, "127.0.0.1") || strings.Contains(got, "db.invalid") ||
+			strings.Contains(got, "localhost") || strings.Contains(got, "open migrator") {
+			t.Fatalf("down without -i-know went on to dial the database:\n%s", got)
+		}
+	}
+}
+
+// -i-know is an acknowledgement, not a prompt skip: on a non-TTY stdin
+// the confirmation gate still refuses when -yes is absent.
+func TestMigrate_DownIKnowAloneDoesNotSkipConfirmation(t *testing.T) {
+	bin := buildMigrateBinary(t)
+
+	const dsn = "postgres://u:p@db.invalid:1/db?sslmode=disable"
+	out, err := exec.Command(bin, "-dsn", dsn, "-i-know", "down", "1").CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected the non-TTY confirmation refusal, got success:\n%s", out)
+	}
+	if got := string(out); !strings.Contains(got, "not a TTY") {
+		t.Fatalf("-i-know must not skip the confirmation prompt, got:\n%s", got)
 	}
 }
 
