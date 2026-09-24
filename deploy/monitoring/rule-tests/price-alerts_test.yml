@@ -13,6 +13,13 @@
 # at all) never fires it — no separate enabled gauge needed, since the
 # rule's own `partial_error > 0` term is absent along with everything
 # else.
+#
+# RLT-226: that "no series at all" state has no alert of its own —
+# neither rule above can distinguish "disabled" from "healthy and
+# quiet" since both read rate() over an absent counter as no data.
+# Case 4 proves the companion stellarindex_price_alert_eval_never_
+# initialized rule catches sustained absence; case 5 proves it stays
+# silent once the evaluator has produced even one `ok` sweep.
 
 rule_files:
   - ../rules/price-alerts.yml
@@ -79,4 +86,42 @@ tests:
     alert_rule_test:
       - eval_time: 40m
         alertname: stellarindex_price_alert_eval_no_successful_sweeps
+        exp_alerts: []
+
+  # ── Case 4: evaluator disabled (or never armed) — no `ok` series for
+  # 36h+ — fires the never_initialized companion.
+  - interval: 1m
+    name: a never-started evaluator fires never_initialized after 36h absent
+    input_series: []
+    alert_rule_test:
+      - eval_time: 2160m
+        alertname: stellarindex_price_alert_eval_never_initialized
+        exp_alerts:
+          - exp_labels:
+              outcome: ok
+              severity: ticket
+              team: stellarindex
+              component: price-alerts
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+              summary: "Price-alert evaluator has never recorded a successful sweep"
+              description: |
+                stellarindex_price_alert_eval_total{outcome="ok"} has been
+                absent for 36h+. Either [price_alerts] enabled=false (the
+                default — this host hasn't opted into the evaluator), or
+                it's enabled but has never completed a clean sweep since
+                startup. Check the aggregator's `price-alert evaluator:
+                wired` startup log line and Postgres reachability, then the
+                runbook.
+
+  # ── Case 5: at least one `ok` sweep exists — never_initialized never
+  # fires, even long after that single sweep.
+  - interval: 1m
+    name: a single ok sweep keeps never_initialized silent indefinitely
+    input_series:
+      - series: 'stellarindex_price_alert_eval_total{outcome="ok"}'
+        values: '0+1x1 1+0x2159'
+    alert_rule_test:
+      - eval_time: 2160m
+        alertname: stellarindex_price_alert_eval_never_initialized
         exp_alerts: []

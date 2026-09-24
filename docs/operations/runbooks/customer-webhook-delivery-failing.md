@@ -132,10 +132,10 @@ The counter advances at three sites in
 # Which deliveries are wedged? A high attempt-lease churn with a
 # STATIC attempt_count is the signature.
 ssh r1 'sudo -u postgres psql stellarindex -c "
-  SELECT id, webhook_id, event_type, attempt_count, next_attempt_at, updated_at
+  SELECT id, webhook_id, event_type, attempt_count, next_attempt_at, created_at
   FROM webhook_deliveries
   WHERE next_attempt_at IS NOT NULL AND next_attempt_at < now() + interval '"'"'10 min'"'"'
-  ORDER BY updated_at DESC LIMIT 20"'
+  ORDER BY next_attempt_at DESC LIMIT 20"'
 
 # The worker's own account of it.
 ssh r1 'journalctl -u stellarindex-api --since -2h | grep -i "customer-webhook.*Mark"'

@@ -84,3 +84,33 @@ groups:
             failed` and whether the failure (e.g. a permission error on
             webhook_deliveries) is common to every alert, then the
             runbook.
+
+      # Companion to the two rules above (RLT-226): both read `rate()`
+      # over stellarindex_price_alert_eval_total, and a counter with no
+      # increments is ABSENT, not zero, so neither can ever fire while
+      # the evaluator has never produced a single series — disabled by
+      # config, or crashed before its first sweep. Same shape as
+      # stellarindex_aggregator_supply_refresh_never_initialized
+      # (configs/prometheus/rules.r1/supply-refresh.yml): ticket, not
+      # page, because [price_alerts] enabled=false is the default and
+      # this is expected to fire on every host that hasn't opted in —
+      # the runbook's own checklist already covers that case.
+      - alert: stellarindex_price_alert_eval_never_initialized
+        expr: |
+          absent_over_time(stellarindex_price_alert_eval_total{outcome="ok"}[36h]) == 1
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: price-alerts
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+          summary: "Price-alert evaluator has never recorded a successful sweep"
+          description: |
+            stellarindex_price_alert_eval_total{outcome="ok"} has been
+            absent for 36h+. Either [price_alerts] enabled=false (the
+            default — this host hasn't opted into the evaluator), or
+            it's enabled but has never completed a clean sweep since
+            startup. Check the aggregator's `price-alert evaluator:
+            wired` startup log line and Postgres reachability, then the
+            runbook.
