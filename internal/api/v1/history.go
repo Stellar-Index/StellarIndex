@@ -1150,6 +1150,20 @@ func mergeTradeStreams(streams []tradeStream, want canonical.Pair, limit int) ([
 	if limit < 1 {
 		limit = 1
 	}
+	merged, full := kWayMergeTradeRows(streams, want)
+
+	if limit >= len(merged) {
+		return merged, streamPageCursor(merged, len(merged), streams, full)
+	}
+	cut := tradePageCut(merged, limit)
+	return merged[:cut], streamPageCursor(merged, cut, streams, cut < len(merged) || full)
+}
+
+// kWayMergeTradeRows merges every stream's already-ordered rows into one
+// slice in `want`'s orientation, keeping stream order on a tie ([mergeTradeStreams]).
+// The bool reports whether any stream filled its own read and so may hold
+// more rows behind it than what got merged.
+func kWayMergeTradeRows(streams []tradeStream, want canonical.Pair) ([]canonical.Trade, bool) {
 	total, full := 0, false
 	for _, st := range streams {
 		total += len(st.rows)
@@ -1179,10 +1193,12 @@ func mergeTradeStreams(streams []tradeStream, want canonical.Pair, limit int) ([
 		merged = append(merged, orientTradeTo(streams[best].rows[idx[best]], want))
 		idx[best]++
 	}
+	return merged, full
+}
 
-	if limit >= len(merged) {
-		return merged, streamPageCursor(merged, len(merged), streams, full)
-	}
+// tradePageCut finds where in `merged` to cut at `limit` without splitting
+// a tie group ([sameTradeOrderKey]).
+func tradePageCut(merged []canonical.Trade, limit int) int {
 	cut := limit
 	for cut > 0 && sameTradeOrderKey(merged[cut-1], merged[cut]) {
 		cut--
@@ -1199,7 +1215,7 @@ func mergeTradeStreams(streams []tradeStream, want canonical.Pair, limit int) ([
 			cut++
 		}
 	}
-	return merged[:cut], streamPageCursor(merged, cut, streams, cut < len(merged) || full)
+	return cut
 }
 
 // streamPageCursor is where the next page resumes after `merged[:cut]`,
