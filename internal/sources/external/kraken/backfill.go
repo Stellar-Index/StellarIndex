@@ -3,6 +3,7 @@ package kraken
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -45,15 +46,25 @@ const krakenMaxResponse = 720
 // 30 s. Nothing in production reassigns it.
 var krakenRESTTimeout = 30 * time.Second
 
+// ErrDepthExceeded marks a Backfill call whose requested `from` is older
+// than Kraken will actually serve. Kraken's /OHLC ignores `since` once it
+// is older than the venue's ~720-candle horizon and returns its most
+// recent window instead, with err=nil — so this is detected from the
+// gap between the requested start and the earliest candle actually
+// returned, not from an HTTP-level failure. Any trades fetched before
+// detection are still returned alongside this error (see partialFetchResume
+// in internal/ops/ingest/backfill_external.go).
+var ErrDepthExceeded = errors.New("kraken: requested range starts before the venue's OHLC serving horizon")
+
 // Backfill implements external.Backfiller. Returns historical
 // trades synthesised from Kraken OHLC candles — one canonical.Trade
 // per bucket, with Kraken's own VWAP field providing the effective
 // price (multiplied by base volume to compute quote volume).
 //
 // IMPORTANT depth caveat: Kraken caps at 720 intervals. At 1h that's
-// ~30 days back; at 1d it's ~2 years. Callers asking for more get
-// a truncated response — log + continue; it's the venue's limit,
-// not a bug in our code. Documented in
+// ~30 days back; at 1d it's ~2 years. A `from` older than that horizon
+// returns ErrDepthExceeded (see below) rather than silently truncating;
+// it's the venue's limit, not a bug in our code. Documented in
 // docs/discovery/oracles/band.md and external.Registry
 // (BackfillAvailable=true with 30-day caveat).
 func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to time.Time, granularity time.Duration) ([]canonical.Trade, error) { //nolint:gocognit // dispatch-heavy; splitting would reduce linearity
@@ -81,7 +92,12 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 	endpoint := s.restBase() + ohlcPath
 	sinceSec := from.Unix()
 	endSec := to.Unix()
+	requestedSinceSec := sinceSec
+	// Each candle's time is the OPEN time. We stamp the synthesised
+	// Trade with the close time — open + interval.
+	intervalSec := int64(granularity / time.Second)
 	var out []canonical.Trade
+	firstPage := true
 
 	for sinceSec < endSec {
 		q := url.Values{}
@@ -99,9 +115,21 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 			break
 		}
 
-		// Each candle's time is the OPEN time. We stamp the
-		// synthesised Trade with the close time — open + interval.
-		intervalSec := int64(granularity / time.Second)
+		// Kraken silently ignores `since` once it is older than the
+		// venue's serving horizon and returns its most recent window
+		// instead — with err=nil. Only the FIRST page's cursor is the
+		// caller's actual requested start; detect the gap there.
+		var depthErr error
+		if firstPage {
+			if earliestTs, ok := candles[0].openTimeSec(); ok && earliestTs > requestedSinceSec+intervalSec {
+				depthErr = fmt.Errorf("kraken.Backfill: %w: requested from %s but the venue's earliest available candle is %s",
+					ErrDepthExceeded,
+					time.Unix(requestedSinceSec, 0).UTC().Format(time.RFC3339),
+					time.Unix(earliestTs, 0).UTC().Format(time.RFC3339))
+			}
+			firstPage = false
+		}
+
 		for _, c := range candles {
 			openTs, ok := c.openTimeSec()
 			if !ok {
@@ -116,6 +144,9 @@ func (s *Streamer) Backfill(ctx context.Context, pair canonical.Pair, from, to t
 				continue
 			}
 			out = append(out, trade)
+		}
+		if depthErr != nil {
+			return out, depthErr
 		}
 
 		// Advance via the `last` cursor Kraken returns, one interval

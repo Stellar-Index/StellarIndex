@@ -182,21 +182,24 @@ func openBackfillStore(ctx context.Context, cfgPath string) (*timescale.Store, e
 	return store, nil
 }
 
-// partialFetchResume reports whether a venue walk that ended in a
-// context expiry still handed back usable fills, and the instant a
-// follow-up run should resume from.
+// partialFetchResume reports whether a venue walk that ended early —
+// on context expiry, or on hitting a venue's historical-depth horizon
+// (externalkraken.ErrDepthExceeded) — still handed back usable fills,
+// and the instant a follow-up run should resume from.
 //
 // The venue walkers page forward in time and return what they have
-// alongside ctx.Err(), so an expired budget is a stopping point, not a
-// corruption: the fills already fetched are as good as any others. The
-// high-water timestamp is the resume cursor — inserts are idempotent
-// (ON CONFLICT), so re-running from it costs at most one duplicate page.
-// Any other error is a real fault and must not be salvaged.
+// alongside the error, so an expired budget or an exceeded depth horizon
+// is a stopping point, not a corruption: the fills already fetched are
+// as good as any others. The high-water timestamp is the resume cursor —
+// inserts are idempotent (ON CONFLICT), so re-running from it costs at
+// most one duplicate page. Any other error is a real fault and must not
+// be salvaged.
 func partialFetchResume(trades []canonical.Trade, err error) (time.Time, bool) {
 	if err == nil || len(trades) == 0 {
 		return time.Time{}, false
 	}
-	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+	if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) &&
+		!errors.Is(err, externalkraken.ErrDepthExceeded) {
 		return time.Time{}, false
 	}
 	high := trades[0].Timestamp

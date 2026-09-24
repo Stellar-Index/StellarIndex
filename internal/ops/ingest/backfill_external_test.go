@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	externalkraken "github.com/Stellar-Index/StellarIndex/internal/sources/external/kraken"
 )
 
 // fakeTradeInserter is a DB-free tradeInserter: it fails on the
@@ -120,6 +121,12 @@ func TestPartialFetchResume_SalvagesExpiredWalk(t *testing.T) {
 		{"deadline", context.DeadlineExceeded},
 		{"cancel", context.Canceled},
 		{"wrapped", fmt.Errorf("kraken.BackfillTrades: %w", context.DeadlineExceeded)},
+		// A venue's OHLC horizon truncation (kraken: /OHLC ignores
+		// `since` once it is older than ~720 candles back and returns
+		// its most recent window instead, err=nil upstream) must also
+		// salvage the trades already fetched rather than let the
+		// caller silently report success on an incomplete range.
+		{"depth exceeded", fmt.Errorf("kraken.Backfill: %w", externalkraken.ErrDepthExceeded)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			at, ok := partialFetchResume(trades, tc.err)
