@@ -94,8 +94,11 @@ func TestPoolReserves_Listing(t *testing.T) {
 	if row.Token1.Symbol != "" || row.Token1.Decimals != 7 {
 		t.Fatalf("token1 must fall back to defaults, got %+v", row.Token1)
 	}
-	if row.MidPrice0In1 == nil || row.MidPrice1In0 == nil {
-		t.Fatal("mid prices must be present for a funded pool")
+	// token1's decimals were never read, so the 7 above is the documented
+	// default, not a declaration — no mid price may be computed from it.
+	if row.MidPrice0In1 != nil || row.MidPrice1In0 != nil {
+		t.Fatalf("mid prices = %v/%v, want null when token1's decimals are unknown",
+			row.MidPrice0In1, row.MidPrice1In0)
 	}
 	if len(row.Depth) != 3 {
 		t.Fatalf("want 3 depth tiers, got %d", len(row.Depth))
@@ -155,6 +158,52 @@ func TestPoolReserves_DisplaysFailureOmitsMidPrices(t *testing.T) {
 }
 
 var errTokenDisplaysDown = errors.New("token displays lookup down")
+
+// Mid prices scale by each token's READ decimals: a 7dp token against an
+// 18dp one must price at the declared scales, not at an assumed 7.
+func TestPoolReserves_MidPricesUseDeclaredDecimals(t *testing.T) {
+	pairA := mkCStrkey(t, 1)
+	tok0, tok1 := mkCStrkey(t, 10), mkCStrkey(t, 11)
+	reader := &stubExplorerReader{
+		pairStates: map[string]clickhouse.SoroswapPairState{
+			pairA: {
+				Pair: pairA, Token0: tok0, Token1: tok1,
+				Reserve0: big.NewInt(10_000_000),           // 1.0 at 7dp
+				Reserve1: mustBig(t, "300000000000000000"), // 0.3 at 18dp
+				Ledger:   62_941_880,
+			},
+		},
+		tokenDisplays: map[string]clickhouse.TokenDisplayMeta{
+			tok0: {Symbol: "XLM", Decimals: 7, HasMeta: true},
+			tok1: {Symbol: "E18", Decimals: 18, HasMeta: true},
+		},
+	}
+	base := poolReservesTestServer(t, reader, []timescale.SoroswapPair{
+		{PairStrkey: pairA, Token0Strkey: tok0, Token1Strkey: tok1},
+	})
+
+	resp := mustGet(t, base+"/v1/pools/reserves")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var body struct {
+		Data []v1.PoolReservesRow `json:"data"`
+	}
+	mustDecode(t, resp, &body)
+	if len(body.Data) != 1 {
+		t.Fatalf("want 1 row, got %d", len(body.Data))
+	}
+	row := body.Data[0]
+	if row.Token1.Decimals != 18 {
+		t.Fatalf("token1.decimals = %d, want 18", row.Token1.Decimals)
+	}
+	if row.MidPrice0In1 == nil || *row.MidPrice0In1 != "0.3" {
+		t.Fatalf("mid_price_0_in_1 = %v, want 0.3", row.MidPrice0In1)
+	}
+	if row.MidPrice1In0 == nil || *row.MidPrice1In0 != "3.333333333333333333" {
+		t.Fatalf("mid_price_1_in_0 = %v, want 3.333333333333333333", row.MidPrice1In0)
+	}
+}
 
 func TestPoolReserves_PoolFilter(t *testing.T) {
 	pairA := mkCStrkey(t, 1)

@@ -191,6 +191,22 @@ func TestDisplayMetaFromInstanceEntry(t *testing.T) {
 			t.Fatal("expected ok=false for out-of-bounds decimals")
 		}
 	})
+	// Hand-written tokens spell the field `decimals`; the display reader
+	// must see the same scale TokenDecimals does, or the reserves
+	// endpoint falls back to a guessed 7.
+	t.Run("decimals spelling is read", func(t *testing.T) {
+		b64 := mkInstanceEntryKeys(t, map[string]uint32{"decimals": 18})
+		meta, ok := displayMetaFromInstanceEntry(b64)
+		if !ok || !meta.HasMeta || meta.Decimals != 18 {
+			t.Fatalf("got ok=%v meta=%+v, want HasMeta decimals=18", ok, meta)
+		}
+	})
+	t.Run("conflicting declarations refused", func(t *testing.T) {
+		b64 := mkInstanceEntryKeys(t, map[string]uint32{"decimal": 7, "decimals": 18})
+		if meta, ok := displayMetaFromInstanceEntry(b64); ok {
+			t.Fatalf("a token declaring two scales was given one: %+v", meta)
+		}
+	})
 }
 
 // mkTokenMetaEntry builds an instance entry with a complete METADATA

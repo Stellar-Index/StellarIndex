@@ -330,10 +330,11 @@ func applySoroswapField(st *SoroswapPairState, key uint32, val xdr.ScVal) (match
 	return false, nil
 }
 
-// displayMetaFromInstanceEntry decodes a token instance entry's
-// METADATA map into TokenDisplayMeta. ok=false when no usable
-// METADATA is present. Decimals above maxSaneTokenDecimals are
-// rejected wholesale (same bound + rationale as TokenDecimals).
+// displayMetaFromInstanceEntry decodes a token instance entry into
+// TokenDisplayMeta. The scale comes from decimalsFromInstance — the same
+// reader TokenDecimals uses — so every declaration form it accepts is
+// accepted here and every refusal (out of bounds, conflicting
+// declarations) is a refusal here. ok=false when no scale is readable.
 func displayMetaFromInstanceEntry(b64 string) (TokenDisplayMeta, bool) {
 	var entry xdr.LedgerEntry
 	if xdr.SafeUnmarshalBase64(b64, &entry) != nil {
@@ -344,46 +345,56 @@ func displayMetaFromInstanceEntry(b64 string) (TokenDisplayMeta, bool) {
 		return TokenDisplayMeta{}, false
 	}
 	inst, ok := cd.Val.GetInstance()
-	if !ok || inst.Storage == nil {
+	if !ok {
 		return TokenDisplayMeta{}, false
 	}
-	for _, kv := range *inst.Storage {
-		sym, ok := kv.Key.GetSym()
-		if !ok || string(sym) != "METADATA" || kv.Val.Type != xdr.ScValTypeScvMap || kv.Val.Map == nil {
-			continue
-		}
-		return parseTokenMetadataMap(**kv.Val.Map)
+	d, ok := decimalsFromInstance(inst)
+	if !ok {
+		return TokenDisplayMeta{}, false
 	}
-	return TokenDisplayMeta{}, false
+	meta := TokenDisplayMeta{Decimals: d, HasMeta: true}
+	meta.Symbol, meta.Name = displayStringsFromInstance(inst)
+	return meta, true
 }
 
-// parseTokenMetadataMap reads decimal/symbol/name out of a token-sdk
-// METADATA map. ok=false when the decimal declaration is absent or
-// out of sane bounds (the whole entry is then treated as unusable).
-func parseTokenMetadataMap(m xdr.ScMap) (TokenDisplayMeta, bool) {
-	var meta TokenDisplayMeta
+// displayStringsFromInstance reads symbol/name from the first metadata
+// map (in [tokenMetadataMapKeys] order) that declares either.
+func displayStringsFromInstance(inst xdr.ScContractInstance) (symbol, name string) {
+	if inst.Storage == nil {
+		return "", ""
+	}
+	for _, want := range tokenMetadataMapKeys {
+		for _, kv := range *inst.Storage {
+			key, ok := instanceStorageKeyName(kv.Key)
+			if !ok || key != want || kv.Val.Type != xdr.ScValTypeScvMap || kv.Val.Map == nil {
+				continue
+			}
+			if symbol, name = displayStringsFromMap(**kv.Val.Map); symbol != "" || name != "" {
+				return symbol, name
+			}
+		}
+	}
+	return "", ""
+}
+
+// displayStringsFromMap reads the `symbol` and `name` string fields of
+// one metadata map.
+func displayStringsFromMap(m xdr.ScMap) (symbol, name string) {
 	for _, e := range m {
 		ksym, ok := e.Key.GetSym()
 		if !ok {
 			continue
 		}
+		s, ok := e.Val.GetStr()
+		if !ok {
+			continue
+		}
 		switch string(ksym) {
-		case "decimal":
-			u, ok := e.Val.GetU32()
-			if !ok || uint32(u) > maxSaneTokenDecimals {
-				return TokenDisplayMeta{}, false
-			}
-			meta.Decimals = uint32(u)
-			meta.HasMeta = true
 		case "symbol":
-			if s, ok := e.Val.GetStr(); ok {
-				meta.Symbol = string(s)
-			}
+			symbol = string(s)
 		case "name":
-			if s, ok := e.Val.GetStr(); ok {
-				meta.Name = string(s)
-			}
+			name = string(s)
 		}
 	}
-	return meta, meta.HasMeta
+	return symbol, name
 }
