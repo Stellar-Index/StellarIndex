@@ -2186,6 +2186,22 @@ jobs:
         # bound to all interfaces. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-exporter-listen-address-test.sh
+      - name: node-exporter-collectors package install test (T630)
+        # The apt/nvme systemd drop-ins repoint ExecStart at
+        # /usr/share/prometheus-node-exporter-collectors/{apt_info,
+        # nvme_metrics}.py, but nothing apt-installed that package —
+        # a clean/DR rebuild left both timers pointed at scripts that
+        # don't exist. Structural grep, no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-node-exporter-collectors-install-test.sh
+      - name: Caddy signing-key pipefail test (Q246)
+        # curl ... | gpg --dearmor ... guarded by `creates:` on the
+        # keyring path: without `set -o pipefail` a failing/truncated
+        # curl doesn't fail the task, so gpg can still write a corrupt
+        # keyring that `creates:` then leaves in place forever.
+        # Structural grep, no hosts, no network.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-caddy-key-pipefail-test.sh
       - name: ansible README <-> archival-node role parity (Q252)
         # The README's first-run bootstrap prescribed a --tags subset that
         # skipped users/redis/clickhouse/minio/binaries/hardening/caddy and
