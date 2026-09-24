@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+
+	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
 
 // checksumWarnSubstring is the marker every aws-sdk-go-v2 line we want
@@ -201,6 +203,11 @@ func installStderrFilterTo(consume func(r io.Reader, realStderr *os.File)) (func
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// Registered last so it unwinds FIRST: an unrecovered panic in ANY
+		// goroutine kills the whole process, and consume's caller-supplied
+		// body (the SDK's own log lines, in production) is not something
+		// we control the shape of.
+		defer worker.Recover(nil, "pipeline-stderr-filter")
 		consume(pr, realStderr)
 	}()
 
