@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -138,30 +139,54 @@ func backfillChainlink(args []string) error {
 		walkErr <- poller.Backfill(ctx, pairs, opts, updates)
 	}()
 
-	inserted, skipped := 0, 0
+	return drainChainlinkUpdates(ctx, updates, walkErr, store, dryRun, *progressEvery, t0)
+}
+
+// oracleUpdateInserter is the storage seam drainChainlinkUpdates writes
+// through, so its exit-code policy is testable without Postgres.
+type oracleUpdateInserter interface {
+	InsertOracleUpdate(ctx context.Context, u canonical.OracleUpdate) error
+}
+
+// drainChainlinkUpdates writes every decoded round and returns the walk's
+// error joined with the run's row accounting. A failed insert is logged and
+// counted rather than aborting the walk, but it still fails the run: the
+// command is idempotent by tx hash, so an exit 0 over dropped rounds is
+// never re-run and the rounds stay missing.
+func drainChainlinkUpdates(
+	ctx context.Context,
+	updates <-chan canonical.OracleUpdate,
+	walkErr <-chan error,
+	store oracleUpdateInserter,
+	dryRun bool,
+	progressEvery int,
+	t0 time.Time,
+) error {
+	outcome := opsutil.RunOutcome{Verb: "backfill-chainlink", Noun: "oracle update"}
 	for u := range updates {
+		outcome.Attempted++
 		if dryRun {
-			inserted++
-			if *progressEvery > 0 && inserted%*progressEvery == 0 {
-				fmt.Fprintf(os.Stderr, "  ... %d decoded\n", inserted)
+			outcome.Written++
+			if progressEvery > 0 && outcome.Written%progressEvery == 0 {
+				fmt.Fprintf(os.Stderr, "  ... %d decoded\n", outcome.Written)
 			}
 			continue
 		}
 		if err := store.InsertOracleUpdate(ctx, u); err != nil {
-			skipped++
+			outcome.Failed++
 			fmt.Fprintf(os.Stderr, "insert oracle_update (%s round=%s tx=%s): %v\n",
 				u.Source, u.Price.String(), u.TxHash, err)
 			continue
 		}
-		inserted++
-		if *progressEvery > 0 && inserted%*progressEvery == 0 {
-			fmt.Fprintf(os.Stderr, "  ... %d inserted, %d skipped\n", inserted, skipped)
+		outcome.Written++
+		if progressEvery > 0 && outcome.Written%progressEvery == 0 {
+			fmt.Fprintf(os.Stderr, "  ... %d inserted, %d skipped\n", outcome.Written, outcome.Failed)
 		}
 	}
 	walkResult := <-walkErr
 
 	fmt.Fprintf(os.Stderr,
 		"backfill-chainlink: done — %d inserted, %d skipped in %v\n",
-		inserted, skipped, time.Since(t0).Round(time.Second))
-	return walkResult
+		outcome.Written, outcome.Failed, time.Since(t0).Round(time.Second))
+	return errors.Join(walkResult, outcome.Err())
 }

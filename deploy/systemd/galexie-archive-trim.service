@@ -6,8 +6,9 @@
 # this timer runs stellarindex-ops trim-galexie-archive monthly to
 # age newly-cold ledgers out of local MinIO into the AWS public
 # bucket. Each run trims the freshest month that's passed the 90 d
-# hot window; --verify-upstream HEADs the AWS bucket before each
-# DELETE so no local object disappears without a proven cold copy.
+# hot window; the binary's default upstream verification HEADs the
+# AWS bucket before each DELETE so no local object disappears
+# without a proven cold copy.
 #
 # Sequencing: this timer is intended to be enabled by the operator
 # AFTER the §4 bulk-trim per [[feedback_cold_tier_premature_enable]].
@@ -47,13 +48,14 @@ ExecStartPre=/usr/local/sbin/compute-trim-cutoff.sh
 EnvironmentFile=-/run/galexie-archive-trim.env
 EnvironmentFile=-/etc/default/stellarindex-ops
 
-# --verify-upstream is the default per the trim binary but spelled
-# out here so the unit file documents the safety guarantee. --commit
-# is required for actual deletion (the binary's own --dry-run /
-# --commit guard); without it the run is a no-op.
+# Upstream verification is the binary's default and has no opt-in
+# flag (an unknown flag exits 1 before anything is enumerated); its
+# only switch is the -no-verify-upstream opt-out, which never belongs
+# here. --commit is required for actual deletion (the binary's own
+# --dry-run / --commit guard); without it the run is a no-op.
+# TestTrimUnits_ExecStartParses runs this argv through the parser.
 ExecStart=/usr/local/bin/stellarindex-ops trim-galexie-archive \
   -older-than-ledger ${TRIM_CUTOFF} \
-  -verify-upstream \
   -commit
 
 # The trim can take hours on first runs (HEAD + DELETE across

@@ -1483,13 +1483,14 @@ Subcommands:
                               -config /etc/stellarindex.toml -tier xlm-base \
                               -chunks -from 2026-01-01 -to 2026-07-21 \
                               -fill-null -write
-  state-snapshot -config PATH [-archive URL] [-checkpoint N] [-write] [-scope contracts|all|storage] [-ch ADDR] [-dry-run]
+  state-snapshot -config PATH [-archive URL] [-checkpoint N] [-limit N] [-write] [-scope contracts|all|storage] [-ch ADDR] [-dry-run]
                           Read a history-archive checkpoint's ledger-entry
                           state and tally it per entry type. -write fills
                           ClickHouse ledger_entry_changes from the snapshot
-                          (DATA-TRUTH-PLAN G1-G3); -scope selects the entry
-                          types; -dry-run sizes the write set without
-                          writing.
+                          (DATA-TRUTH-PLAN G1-G3) and needs -limit 0: a read
+                          the -limit (default 2000000) truncated is refused.
+                          -scope selects the entry types; -dry-run sizes the
+                          write set without writing.
   issuer-enrich -config PATH [-ch ADDR] [-batch N] [-dry-run]
                           Populate issuers.home_domain from on-chain account
                           state in the ClickHouse lake (unblocks sep1-refresh
@@ -1573,15 +1574,20 @@ Subcommands:
                           Safety stack:
                             * --dry-run is the DEFAULT when neither
                               flag is set; --commit MUST be explicit.
-                            * --verify-upstream is the DEFAULT; every
-                              candidate is HEAD'd against cold before
-                              deletion. --no-verify-upstream skips
-                              this and is NOT RECOMMENDED.
+                            * Upstream verification is the DEFAULT (no
+                              flag enables it); every candidate is
+                              HEAD'd against cold before deletion.
+                              --no-verify-upstream skips this and is
+                              NOT RECOMMENDED.
                             * --max-files caps deletions per run
-                              (default 100000) — a typo cannot delete
-                              the full archive in one shot.
+                              (default 100000, at most 1000000).
                             * --older-than-ledger is REQUIRED — no
-                              implicit "trim everything below tip - N".
+                              implicit "trim everything below tip - N" —
+                              and must sit at least 30 days (518400
+                              ledgers) below the hot archive's newest
+                              ledger.
+                            * A deletion counts only once the hot
+                              datastore no longer resolves the path.
                             * Cold tier MUST be configured. Refuses
                               to run otherwise.
                           Rollback: stellarindex-ops

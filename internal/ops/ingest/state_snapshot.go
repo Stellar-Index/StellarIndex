@@ -82,8 +82,9 @@ func parseSnapScope(s string) (snapScope, error) {
 // circulating supply). The CheckpointChangeReader streams the bucket list and
 // emits the CURRENT entry for every live key in one pass (no genesis replay).
 //
-// Read-only: it never writes. -limit caps entries processed so the bucket
-// download stays bounded for a quick proof; -limit 0 reads the whole snapshot.
+// Read-only unless -write, which inserts the collected set into ClickHouse
+// ledger_entry_changes. -limit caps entries processed so a read-only proof
+// stays bounded; -write refuses a -limit-truncated read (see writeSnapshot).
 func stateSnapshot(args []string) error {
 	fs := flag.NewFlagSet("state-snapshot", flag.ContinueOnError)
 	cfgPath := fs.String("config", "/etc/stellarindex.toml", "config path (optional for a public-archive read)")
@@ -137,17 +138,36 @@ func stateSnapshot(args []string) error {
 	}
 
 	if *write {
-		fmt.Fprintf(os.Stderr, "state-snapshot: writing %d entries (scope=%s) → %s ledger_entry_changes ...\n",
-			len(t.rows), *scope, *chAddr)
-		n, werr := clickhouse.InsertEntryChanges(ctx, *chAddr, t.rows, time.Duration(*throttleMS)*time.Millisecond)
-		if werr != nil {
-			return fmt.Errorf("write entries (wrote %d of %d): %w", n, len(t.rows), werr)
-		}
-		fmt.Printf("\n✅ wrote %d entries into ledger_entry_changes (scope=%s).\n", n, *scope)
-		fmt.Printf("   The entry readers + ledger_entries_current MV pick these up.\n")
-	} else if *dryRun {
+		return writeSnapshot(ctx, clickhouse.InsertEntryChanges, t, *limit, *scope, *chAddr,
+			time.Duration(*throttleMS)*time.Millisecond)
+	}
+	if *dryRun {
 		fmt.Printf("\n─── DRY RUN ─── %d entries would be written (scope=%s); nothing written.\n", len(t.rows), *scope)
 	}
+	return nil
+}
+
+// entryChangeInserter is clickhouse.InsertEntryChanges' shape, split out so
+// writeSnapshot's refusal is testable without ClickHouse.
+type entryChangeInserter func(ctx context.Context, addr string, rows []clickhouse.LedgerEntryChangeRow, throttle time.Duration) (int, error)
+
+// writeSnapshot inserts the collected write set. A partial read is refused:
+// -limit stops the bucket-list walk at an arbitrary prefix, and writing it
+// would publish a fraction of the checkpoint (2M of ~48M entries at the
+// default) as the whole, with nothing downstream able to tell.
+func writeSnapshot(ctx context.Context, insert entryChangeInserter, t *snapTally, limit uint64, scope, chAddr string, throttle time.Duration) error {
+	if t.partial {
+		return fmt.Errorf("refusing -write: -limit %d stopped the checkpoint read after %d entries, so the %d collected rows are a bucket-list-order prefix, not the snapshot — re-run with -limit 0 (-dry-run sizes a bounded read without writing)",
+			limit, t.total, len(t.rows))
+	}
+	fmt.Fprintf(os.Stderr, "state-snapshot: writing %d entries (scope=%s) → %s ledger_entry_changes ...\n",
+		len(t.rows), scope, chAddr)
+	n, werr := insert(ctx, chAddr, t.rows, throttle)
+	if werr != nil {
+		return fmt.Errorf("write entries (wrote %d of %d): %w", n, len(t.rows), werr)
+	}
+	fmt.Printf("\n✅ wrote %d entries into ledger_entry_changes (scope=%s).\n", n, scope)
+	fmt.Printf("   The entry readers + ledger_entries_current MV pick these up.\n")
 	return nil
 }
 

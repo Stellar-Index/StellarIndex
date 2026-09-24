@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/url"
 	"os"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -42,20 +43,33 @@ import (
 //      because the dry-run output IS the review step. Mismatched
 //      flags (e.g. --dry-run --commit) report which dominates and
 //      stop before any S3 call.
-//   2. --verify-upstream is the DEFAULT. Every candidate is
-//      HEAD'd against the cold tier before being marked for
-//      deletion. If cold.Exists returns false, the candidate is
-//      SKIPPED. Pass --no-verify-upstream only for an isolated
-//      restore-from-backup workflow where you've already proven
-//      the upstream copy by other means.
-//   3. --max-files caps deletions per run. Default 100000 — a
-//      typo can never delete the full archive in one shot.
-//   4. --older-than-ledger is REQUIRED. No implicit "trim
-//      everything below tip - N". Operator names a specific
-//      sequence; the planner shows the exact span.
+//   2. Upstream verification is the DEFAULT (there is no flag to
+//      turn it on). Every candidate is HEAD'd against the cold tier
+//      before being marked for deletion. If cold.Exists returns
+//      false, the candidate is SKIPPED. Pass --no-verify-upstream
+//      only for an isolated restore-from-backup workflow where
+//      you've already proven the upstream copy by other means.
+//   3. --max-files caps deletions per run. Default 100000, refused
+//      above trimMaxFilesCeiling.
+//   4. --older-than-ledger is REQUIRED and must sit at least
+//      trimMinHotWindowLedgers below the hot archive's newest
+//      ledger. No implicit "trim everything below tip - N".
 //   5. Cold-tier MUST be configured (cfg.Storage.S3ColdBucketArchive
 //      non-empty). Refuses to run otherwise — without a cold tier
 //      every "trim" is unrecoverable data loss.
+//   6. A deletion counts only once the hot datastore no longer
+//      resolves the path; see deleteTrimCandidates.
+
+const (
+	// trimMaxFilesCeiling bounds --max-files: ~1.6% of the 63.6M-object
+	// archive, ten of the runbook's 100k chunked passes.
+	trimMaxFilesCeiling = 1_000_000
+	// trimMinHotWindowLedgers (30 days at 17,280 ledgers/day) is how far
+	// below the hot archive's newest ledger the cutoff must sit. ADR-0027's
+	// hot window is 90 days; 30 leaves the scheduled cutoff 60 days of
+	// slack while refusing a cutoff typed at or near the live seam.
+	trimMinHotWindowLedgers = 30 * 17_280
+)
 
 type trimOpts struct {
 	cfgPath                string
@@ -82,9 +96,6 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 	// of --commit is the safety primitive.
 	if !opts.commit {
 		opts.dryRun = true
-	}
-	if opts.maxFiles <= 0 {
-		return fmt.Errorf("--max-files must be > 0; got %d", opts.maxFiles)
 	}
 
 	// LoadWithEnv (not bare Load) so the STELLARINDEX_* env overrides —
@@ -131,6 +142,14 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		return fmt.Errorf("hot datastore: %w", err)
 	}
 	defer func() { _ = hot.Close() }()
+
+	hotTip, err := datastore.FindLatestLedgerSequence(rootCtx, hot)
+	if err != nil {
+		return fmt.Errorf("find the hot archive's newest ledger (the cutoff is bounded against it): %w", err)
+	}
+	if err := checkTrimCutoff(opts.olderThan, hotTip); err != nil {
+		return err
+	}
 
 	var cold datastore.DataStore
 	if opts.verifyUpstream {
@@ -181,6 +200,7 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		"hot_bucket", hotBucket,
 		"hot_key_prefix", hotKeyPrefix,
 		"older_than_ledger", opts.olderThan,
+		"hot_tip_ledger", hotTip,
 		"verify_upstream", opts.verifyUpstream,
 		"max_files", opts.maxFiles,
 		"dry_run", opts.dryRun,
@@ -255,40 +275,80 @@ func trimGalexieArchive(args []string) error { //nolint:gocognit,gocyclo,funlen 
 		return nil
 	}
 
-	// --commit: do the deletions. Per-object DeleteObject (vs
-	// DeleteObjects bulk) so a partial failure leaves a clear
-	// position cursor — operator can re-run --dry-run to see
-	// what's left.
 	start := time.Now()
-	var deleted int
-	for _, p := range candidates {
-		if err := rootCtx.Err(); err != nil {
-			return fmt.Errorf("trim aborted at %d/%d: %w", deleted, len(candidates), err)
-		}
-		fullKey := p
-		if hotKeyPrefix != "" {
-			fullKey = strings.TrimPrefix(hotKeyPrefix+"/", "/") + p
-		}
-		_, derr := s3Client.DeleteObject(rootCtx, &s3.DeleteObjectInput{
-			Bucket: aws.String(hotBucket),
-			Key:    aws.String(fullKey),
-		})
-		if derr != nil {
-			logger.Warn("DeleteObject failed", "path", p, "err", derr)
-			errs++
-			continue
-		}
-		deleted++
-	}
+	deleted, delErrs, err := deleteTrimCandidates(rootCtx, logger, s3Client, hot, hotBucket, hotKeyPrefix, candidates)
+	errs += delErrs
 	logger.Info("trim complete",
 		"deleted", deleted,
 		"errors", errs,
 		"elapsed", time.Since(start).String(),
 	)
+	if err != nil {
+		return err
+	}
 	if errs > 0 {
 		return fmt.Errorf("trim finished with %d errors (deleted %d/%d)", errs, deleted, len(candidates))
 	}
 	return nil
+}
+
+// checkTrimCutoff refuses a cutoff within trimMinHotWindowLedgers of the hot
+// archive's newest ledger, so a wrong variable or a stray digit cannot trim
+// the hot tier up to the live seam.
+func checkTrimCutoff(olderThan, hotTip uint32) error {
+	var highest uint32
+	if hotTip > trimMinHotWindowLedgers {
+		highest = hotTip - trimMinHotWindowLedgers
+	}
+	if olderThan > highest {
+		return fmt.Errorf("--older-than-ledger %d is within %d ledgers (30 days) of the hot archive's newest ledger %d; the highest cutoff accepted is %d",
+			olderThan, trimMinHotWindowLedgers, hotTip, highest)
+	}
+	return nil
+}
+
+// s3ObjectDeleter is the slice of *s3.Client the deletion loop calls.
+type s3ObjectDeleter interface {
+	DeleteObject(ctx context.Context, params *s3.DeleteObjectInput, optFns ...func(*s3.Options)) (*s3.DeleteObjectOutput, error)
+}
+
+// deleteTrimCandidates deletes each candidate from the hot bucket, one
+// DeleteObject per object so a partial failure leaves a clear position
+// (re-run --dry-run to see what's left).
+//
+// S3 and MinIO answer success for an absent key, so a DeleteObject return
+// proves nothing. The key is built with path.Join exactly as the SDK's S3
+// datastore builds it for ListFilePaths/Exists, and a deletion counts only
+// once hot.Exists — the same key space the candidate was listed from — stops
+// resolving the path. A path that still resolves means the delete key names
+// a different object; that is systematic, so the run aborts on the first.
+func deleteTrimCandidates(ctx context.Context, logger *slog.Logger, del s3ObjectDeleter, hot trimColdChecker, bucket, keyPrefix string, candidates []string) (deleted, errs int, err error) {
+	for _, p := range candidates {
+		if err := ctx.Err(); err != nil {
+			return deleted, errs, fmt.Errorf("trim aborted at %d/%d: %w", deleted, len(candidates), err)
+		}
+		key := path.Join(keyPrefix, p)
+		if _, derr := del.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(bucket),
+			Key:    aws.String(key),
+		}); derr != nil {
+			logger.Warn("DeleteObject failed", "path", p, "key", key, "err", derr)
+			errs++
+			continue
+		}
+		still, xerr := hot.Exists(ctx, p)
+		if xerr != nil {
+			logger.Warn("post-delete existence check failed; not counted as deleted", "path", p, "err", xerr)
+			errs++
+			continue
+		}
+		if still {
+			return deleted, errs + 1, fmt.Errorf("DeleteObject(%s/%s) returned success but the hot datastore still resolves %q — the delete key does not name the listed object; aborting after %d verified deletion(s)",
+				bucket, key, p, deleted)
+		}
+		deleted++
+	}
+	return deleted, errs, nil
 }
 
 // ─── partition-scoped enumeration ────────────────────────────────
@@ -645,12 +705,15 @@ func parseTrimFlags(args []string) (trimOpts, error) {
 	fs.BoolVar(&opts.commit, "commit", false, "Actually delete. Requires explicit opt-in (default behaviour is dry-run).")
 	fs.BoolVar(&noVerify, "no-verify-upstream", false, "Skip the HEAD-against-cold check. NOT RECOMMENDED — disables the primary safety primitive. Requires --i-have-verified-cold-out-of-band too.")
 	fs.BoolVar(&opts.iHaveVerifiedOutOfBand, "i-have-verified-cold-out-of-band", false, "Required alongside --no-verify-upstream: an explicit second acknowledgement that you have confirmed the cold tier holds these files by some other means. --no-verify-upstream alone is refused.")
-	fs.IntVar(&opts.maxFiles, "max-files", 100000, "Hard cap on candidates per run. Default 100000 — a typo can never delete the full archive in one invocation.")
+	fs.IntVar(&opts.maxFiles, "max-files", 100000, fmt.Sprintf("Hard cap on candidates per run, at most %d.", trimMaxFilesCeiling))
 	if err := fs.Parse(args); err != nil {
 		return trimOpts{}, err
 	}
 	if olderThan < 0 || olderThan > int64(^uint32(0)) {
 		return trimOpts{}, fmt.Errorf("--older-than-ledger out of uint32 range: %d", olderThan)
+	}
+	if opts.maxFiles <= 0 || opts.maxFiles > trimMaxFilesCeiling {
+		return trimOpts{}, fmt.Errorf("--max-files must be in 1..%d; got %d", trimMaxFilesCeiling, opts.maxFiles)
 	}
 	opts.olderThan = uint32(olderThan)
 	opts.verifyUpstream = !noVerify

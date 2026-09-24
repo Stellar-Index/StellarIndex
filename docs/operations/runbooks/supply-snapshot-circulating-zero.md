@@ -60,10 +60,8 @@ the TOML.
 ```sh
 ssh root@136.243.90.96
 
-# 1. What's the latest snapshot? (flags BEFORE the positional —
-#    Go's flag package stops parsing at the first positional arg,
-#    so `supply audit native -config ...` fails with "-config is
-#    required")
+# 1. What's the latest snapshot? (the asset may sit before or
+#    after the flags)
 stellarindex-ops supply audit -config /etc/stellarindex.toml native
 
 # 2. Which reserve-balance source did the writer actually use?

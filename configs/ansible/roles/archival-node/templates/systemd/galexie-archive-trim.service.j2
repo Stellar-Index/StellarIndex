@@ -9,8 +9,10 @@
 # this timer runs stellarindex-ops trim-galexie-archive monthly to
 # age newly-cold ledgers out of local MinIO into the AWS public
 # bucket. Each run trims the freshest month past the 90 d hot
-# window; --verify-upstream HEADs the AWS bucket before each DELETE
-# so no local object disappears without a proven cold copy.
+# window; the binary's default upstream verification HEADs the AWS
+# bucket before each DELETE so no local object disappears without a
+# proven cold copy. It has no opt-in flag: pass only flags
+# trim-galexie-archive defines (TestTrimUnits_ExecStartParses).
 #
 # Sequencing: this unit is installed but NOT enabled by the ansible
 # role per [[feedback_cold_tier_premature_enable]] — bare enablement
@@ -38,7 +40,6 @@ SuccessExitStatus=75
 ExecStart=/usr/local/sbin/run-heavy-job.sh galexie-archive-trim \
   /usr/local/bin/stellarindex-ops trim-galexie-archive \
   -older-than-ledger ${TRIM_CUTOFF} \
-  -verify-upstream \
   -commit
 
 TimeoutStartSec=21600
