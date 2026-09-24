@@ -143,10 +143,15 @@ fi
 # ~5 sec (one per closed ledger). If the most recent is > 10 min
 # old AND galexie has been running > GALEXIE_WARMUP_SEC, fail.
 #
-# Requires `mc alias set local` to have been run (done at role-
-# apply time, credentials in /etc/default/node-healthcheck or
-# implicit via the `mc` config under HOME). If mc isn't reachable
-# we don't FAIL here — MinIO-down is caught by check 1.
+# The unit runs DynamicUser+ProtectHome=true, so it can never see a
+# persisted `mc alias set` under /root/.mc — that path is namespace-hidden
+# regardless of uid. Auth comes instead from MC_HOST_local, an env var
+# (set in /etc/default/node-healthcheck, root:root 0600, no_log) that mc
+# reads with no config file at all. If mc still fails (unset/wrong
+# credentials, MinIO down and not just slow) we must flag it ourselves:
+# an empty last_iso used to mean either "mc broken" or "bucket genuinely
+# empty" and we can't tell those apart from the listing alone, so we
+# track mc's own exit code.
 GALEXIE_MAX_LAG_SEC="${GALEXIE_MAX_LAG_SEC:-600}"
 GALEXIE_WARMUP_SEC="${GALEXIE_WARMUP_SEC:-1800}"
 g_enter_iso=$(systemctl show -p ActiveEnterTimestamp --value galexie 2>/dev/null)
@@ -158,10 +163,12 @@ if [ "$g_age" -gt "$GALEXIE_WARMUP_SEC" ]; then
   # pipefail set, `sort -r | head -1` makes `sort` die on EPIPE once the
   # listing exceeds the pipe buffer (which a live bucket always does),
   # logging "write failed: 'standard output': Broken pipe" on every
-  # healthcheck. Harmless here only because this script omits `set -e`.
+  # healthcheck. Harmless here only because this script omits `set -e`,
+  # and pipefail still lets us read mc's own exit code below.
   mc ls --json --recursive local/galexie-live/ 2>/dev/null \
     | jq -r 'select(.key | test("\\.xdr\\.zst$")) | .lastModified' 2>/dev/null \
-    | sort -r > /tmp/galexie-live-mtimes.txt || true
+    | sort -r > /tmp/galexie-live-mtimes.txt
+  mc_rc=$?
   last_iso=$(head -1 /tmp/galexie-live-mtimes.txt)
   if [ -n "$last_iso" ]; then
     last_epoch=$(date -d "$last_iso" +%s 2>/dev/null || echo 0)
@@ -169,10 +176,11 @@ if [ "$g_age" -gt "$GALEXIE_WARMUP_SEC" ]; then
     if [ "$lag" -gt "$GALEXIE_MAX_LAG_SEC" ]; then
       add_fail "galexie last upload was ${lag}s ago (threshold ${GALEXIE_MAX_LAG_SEC}s) — captive-core likely stuck"
     fi
+  elif [ "$mc_rc" -ne 0 ]; then
+    add_fail "mc ls local/galexie-live/ failed (rc=$mc_rc) — cannot verify galexie upload freshness"
   fi
-  # If last_iso is empty: either bucket is empty (never uploaded)
-  # or mc is broken. Leave to check 1 (minio service) + manual
-  # inspection; don't flag here.
+  # last_iso empty AND mc_rc == 0: bucket genuinely has no matching
+  # objects yet. Leave to check 1 (minio service) + manual inspection.
 fi
 
 # --- Check 5: ZFS pool state -----------------------------------

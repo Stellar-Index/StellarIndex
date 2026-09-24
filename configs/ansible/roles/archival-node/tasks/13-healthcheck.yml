@@ -29,6 +29,14 @@
 - name: Template /etc/default/node-healthcheck with ping URL
   # healthcheck_ping_url should live in the vault-encrypted secrets
   # file (r1.secrets.yml). Absent = skip silently.
+  #
+  # MC_HOST_local gives the galexie-freshness check (Check 4.5) a way
+  # to authenticate `mc` without a persisted alias: the unit runs
+  # DynamicUser+ProtectHome=true, so /root/.mc is never visible to it.
+  # systemd reads this file as root and passes it to the unprivileged
+  # child's environment (same pattern as HEALTHCHECK_PING_URL above);
+  # env is only readable via /proc/<pid>/environ by the owning uid and
+  # root, unlike argv which is world-readable via ps.
   ansible.builtin.copy:
     dest: /etc/default/node-healthcheck
     owner: root
@@ -39,6 +47,7 @@
       HEALTHCHECK_PING_URL={{ healthcheck_ping_url | default('') }}
       MAX_LEDGER_AGE_SEC={{ healthcheck_max_ledger_age_sec | default(90) }}
       POOL_NAME={{ zfs_data_pool_name }}
+      MC_HOST_local=http://{{ minio_root_user }}:{{ minio_root_password }}@127.0.0.1:9000
   no_log: true
 
 - name: Install node-healthcheck systemd service
