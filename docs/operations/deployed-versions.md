@@ -43,8 +43,13 @@ not imply the fleet moved to it).
 
 ## Snapshot (2026-08-20, from the sidecars above)
 
-Point-in-time; the sidecars are the live truth. Binaries deploy independently,
-so a mixed fleet is normal.
+Point-in-time; the sidecars are the live truth. The release-managed set
+(`aggregator`/`api`/`indexer`/`migrate`/`ops`/`sla-probe`) is monitored for
+skew — `stellarindex_binary_version_skew`
+(`deploy/monitoring/rules/binary-version-skew.yml`) pages after 45m if they
+disagree. A brief mismatch mid-rollout is expected as binaries swap one at a
+time; a mismatch that persists is the F-1314 / 2026-08-28 drift class the
+[runbook](runbooks/binary-version-skew.md) covers, not a state to leave alone.
 
 | Binary                   | Deployed version | Deployed (host mtime) |
 |--------------------------|------------------|-----------------------|
@@ -56,9 +61,11 @@ so a mixed fleet is normal.
 | stellarindex-migrate     | v0.28.1          | 2026-08-08            |
 
 Notes:
-- **Mixed versions are expected**, not drift: `migrate` only re-deploys when a
-  new migration ships (its schema head is what matters, not its own tag), and
-  `aggregate`/`sla-probe` roll on their own cadence.
+- `migrate`, `aggregator` and `sla-probe` each redeploy on their own cadence
+  (`migrate` only when a new migration ships), so a snapshot taken mid-cycle
+  can catch them a release apart from `api`/`indexer`/`ops` — that gap should
+  close on the next deploy of the lagging binary. If it does not, it is
+  drift, and `stellarindex_binary_version_skew` will be paging on it.
 - Legacy `ratesengine-*` sidecars may also be present on the host — those predate
   the binary rename and are NOT the current fleet; ignore them.
 
