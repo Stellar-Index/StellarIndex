@@ -718,8 +718,7 @@ func (d *ssrfDialer) DialContext(ctx context.Context, network, address string) (
 		return nil, fmt.Errorf("%w: %s port %s (SEP-1 is served on %s only)",
 			ErrSSRFBlocked, host, port, standardTLSPort)
 	}
-	// Connect to the first ALLOWED IP explicitly.
-	return d.inner.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))
+	return nettools.DialFirstReachable(ctx, d.inner, network, ips, port)
 }
 
 // isBlocked reports whether ip is in a range we refuse to dial.

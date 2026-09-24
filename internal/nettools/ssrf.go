@@ -16,6 +16,8 @@
 package nettools
 
 import (
+	"context"
+	"errors"
 	"net"
 	"strings"
 )
@@ -117,6 +119,29 @@ func IsBlockedIP(ip net.IP) bool {
 		}
 	}
 	return false
+}
+
+// DialFirstReachable dials each of ips on port in order and returns the first
+// connection that succeeds, or every attempt's error joined. Callers must have
+// passed every ip through IsBlockedIP first; dialing the literal (never the
+// hostname) keeps the kernel from re-resolving to an unchecked address, and
+// falling through keeps one dead A/AAAA record from failing the whole dial.
+func DialFirstReachable(ctx context.Context, dialer *net.Dialer, network string, ips []net.IP, port string) (net.Conn, error) {
+	if len(ips) == 0 {
+		return nil, errors.New("nettools: no addresses to dial")
+	}
+	errs := make([]error, 0, len(ips))
+	for _, ip := range ips {
+		conn, err := dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		errs = append(errs, err)
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, errors.Join(errs...)
 }
 
 // IsReservedTLD reports whether host is (or is under) a documentation/reserved

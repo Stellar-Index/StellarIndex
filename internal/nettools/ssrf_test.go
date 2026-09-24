@@ -4,8 +4,12 @@
 package nettools
 
 import (
+	"context"
+	"errors"
 	"net"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestIsBlockedIP(t *testing.T) {
@@ -111,5 +115,71 @@ func TestIsReservedTLD(t *testing.T) {
 		if IsReservedTLD(h) {
 			t.Errorf("IsReservedTLD(%q) = true, want false", h)
 		}
+	}
+}
+
+// loopbackListener returns an IPv4-only listener and its port; [::1] on the
+// same port is therefore refused.
+func loopbackListener(t *testing.T) (net.Listener, string) {
+	t.Helper()
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	go func() {
+		if c, err := ln.Accept(); err == nil {
+			_ = c.Close()
+		}
+	}()
+	_, port, _ := net.SplitHostPort(ln.Addr().String())
+	return ln, port
+}
+
+func TestDialFirstReachable_FailsOverToNextAddress(t *testing.T) {
+	ln, port := loopbackListener(t)
+	d := &net.Dialer{Timeout: 2 * time.Second}
+	ips := []net.IP{net.ParseIP("::1"), net.ParseIP("127.0.0.1")}
+	conn, err := DialFirstReachable(context.Background(), d, "tcp", ips, port)
+	if err != nil {
+		t.Fatalf("DialFirstReachable = %v, want fail-over to 127.0.0.1", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if got := conn.RemoteAddr().String(); got != ln.Addr().String() {
+		t.Errorf("connected to %s, want %s", got, ln.Addr())
+	}
+}
+
+func TestDialFirstReachable_JoinsEveryAttemptError(t *testing.T) {
+	_, port := loopbackListener(t)
+	d := &net.Dialer{Timeout: 2 * time.Second}
+	ips := []net.IP{net.ParseIP("::1"), net.ParseIP("::1")}
+	conn, err := DialFirstReachable(context.Background(), d, "tcp", ips, port)
+	if conn != nil {
+		_ = conn.Close()
+		t.Fatal("got a connection to a refused address")
+	}
+	if err == nil || strings.Count(err.Error(), "[::1]:"+port) != 2 {
+		t.Errorf("err = %v, want both attempts reported", err)
+	}
+}
+
+func TestDialFirstReachable_StopsOnCancelledContext(t *testing.T) {
+	_, port := loopbackListener(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ips := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("127.0.0.1")}
+	_, err := DialFirstReachable(ctx, &net.Dialer{}, "tcp", ips, port)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if n := strings.Count(err.Error(), "127.0.0.1:"+port); n != 1 {
+		t.Errorf("attempted %d addresses after cancellation, want 1", n)
+	}
+}
+
+func TestDialFirstReachable_EmptyIsAnError(t *testing.T) {
+	if _, err := DialFirstReachable(context.Background(), &net.Dialer{}, "tcp", nil, "443"); err == nil {
+		t.Error("DialFirstReachable(nil ips) = nil error, want error")
 	}
 }
