@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -277,6 +278,14 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 		{name: "mixed sdex + Soroban DEXes", sources: []string{"aquarius", "comet", "phoenix", "sdex", "soroswap"}, want: true},
 		{name: "empty", sources: nil, want: false},
 		{name: "unknown decoder", sources: []string{"some-future-source"}, want: false},
+		// sorocredit and blend_emitter are BackfillSafe Soroban lending
+		// sources (external/registry.go) whose raw events land in
+		// soroban_events (dispatcher.go case list) — they were missing
+		// from the hand-kept list and silently gated against the SDEX
+		// trades scan instead (CA2-A19-correct-3).
+		{name: "sorocredit alone", sources: []string{"sorocredit"}, want: true},
+		{name: "blend_emitter alone", sources: []string{"blend_emitter"}, want: true},
+		{name: "mixed blend + blend_emitter", sources: []string{"blend", "blend_emitter"}, want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -285,6 +294,22 @@ func TestPlanHasSorobanDecoder(t *testing.T) {
 				t.Errorf("planHasSorobanDecoder(%v) = %v, want %v", tc.sources, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSorobanDecoderNamesCoversDispatcherSourceSet pins
+// sorobanDecoderNames to pipeline.SorobanSourceNames (in turn derived
+// from BuildDispatcher's switch) so a source added to the dispatcher
+// without updating the shared list fails CI here instead of silently
+// mis-gating resume-stalled (CA2-A19-correct-3).
+func TestSorobanDecoderNamesCoversDispatcherSourceSet(t *testing.T) {
+	for _, name := range pipeline.SorobanSourceNames {
+		if _, ok := sorobanDecoderNames[name]; !ok {
+			t.Errorf("pipeline.SorobanSourceNames contains %q but sorobanDecoderNames does not — resume-stalled will mis-gate its cursors against SDEX trades", name)
+		}
+	}
+	if _, ok := sorobanDecoderNames["sdex"]; ok {
+		t.Error(`sorobanDecoderNames must not contain "sdex" — it is the classic (non-Soroban) source the gate distinguishes against`)
 	}
 }
 

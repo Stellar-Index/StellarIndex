@@ -15,6 +15,7 @@ import (
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
 	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
+	"github.com/Stellar-Index/StellarIndex/internal/pipeline"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -91,26 +92,22 @@ type stalledCursorPlan struct {
 // SDEX-only plans are gated separately against the per-source
 // trades[source='sdex'] gap scan (see classicGapGate), scoped to
 // the served-tier retention window per ADR-0034.
-var sorobanDecoderNames = map[string]struct{}{
-	"aquarius":        {},
-	"band":            {},
-	"blend":           {},
-	"blend_backstop":  {},
-	"cctp":            {},
-	"comet":           {},
-	"defindex":        {},
-	"phoenix":         {},
-	"redstone":        {},
-	"reflector-cex":   {},
-	"reflector-dex":   {},
-	"reflector-fx":    {},
-	"rozo":            {},
-	"soroban-events":  {},
-	"soroswap":        {},
-	"soroswap-router": {},
-	"sushiswap_v3":    {},
-	"upshift":         {},
-}
+//
+// Derived from pipeline.SorobanSourceNames — the same set
+// BuildDispatcher's switch accepts into the soroban_events catch-all
+// — plus the SorobanEventsPseudoSource backfill uses for a raw
+// soroban_events-only cursor. Do NOT hand-maintain this list again: a
+// source added to BuildDispatcher's switch without a matching entry
+// in pipeline.SorobanSourceNames silently mis-gates its stalled
+// cursors here (CA2-A19-correct-3).
+var sorobanDecoderNames = func() map[string]struct{} {
+	m := make(map[string]struct{}, len(pipeline.SorobanSourceNames)+1)
+	for _, name := range pipeline.SorobanSourceNames {
+		m[name] = struct{}{}
+	}
+	m[SorobanEventsPseudoSource] = struct{}{}
+	return m
+}()
 
 // planHasSorobanDecoder reports whether any decoder in the plan's
 // sources is Soroban-era — i.e. the plan's remaining range can be
