@@ -335,7 +335,7 @@ func (b *buffer) size() int { return len(b.m) }
 
 // ─── provide_liquidity / withdraw_liquidity / bond / unbond absorb ──
 //
-// Same shape as the swap absorb path: groupKey by (ledger, tx, op);
+// Same shape as the swap absorb path: groupKey by (ledger, tx, op, contract);
 // stage the field events into the per-action map; return a completed
 // record when the action's required field count is met; sweep stale
 // peer entries from EVERY buffer using the current event's ClosedAt

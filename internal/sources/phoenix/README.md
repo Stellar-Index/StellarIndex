@@ -48,8 +48,11 @@ contract's `unbond` event carries the same data through a more
 authoritative channel.
 
 To reconstruct each action we **must group its N events** by
-`(ledger, tx_hash, op_index)` and assemble them into a single
-record. This is the third event-correlation shape our consumer fleet
+`(ledger, tx_hash, op_index, contract_id)` and assemble them into a
+single record. `contract_id` is load-bearing: a router multihop emits
+several pools' swaps within one op, and without it one pool's
+incomplete leg would absorb another pool's field events (see
+`groupKey` in `decode.go`). This is the third event-correlation shape our consumer fleet
 handles:
 
 | Shape | Example | Events per trade |

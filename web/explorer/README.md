@@ -1,10 +1,12 @@
 # Stellar Index — showcase site
 
 Public explorer for the Stellar Index API. Lives at
-`stellarindex.io` (Cloudflare Pages). The customer account
-(login, API keys, usage, settings, staff admin) is built in at
-`/account/*` — the standalone dashboard app was consolidated
-here on 2026-06-17.
+`stellarindex.io` (Cloudflare Pages). The customer account is
+built in: sign-in at `/signin` and `/signup`, and API keys, usage,
+settings, price alerts and staff admin under `/dashboard/*`
+(`src/app/dashboard/`) — the standalone dashboard app was
+consolidated here on 2026-06-17. (`/accounts/*` is the Stellar
+account explorer, not the customer account.)
 
 The original [implementation plan](../../docs/architecture/explorer-implementation-plan.md)
 called this Phase 0 scaffolding through Phase 7 panels; reality
@@ -23,9 +25,9 @@ phasing.
 - [TradingView Lightweight Charts](https://tradingview.github.io/lightweight-charts/)
 - [TanStack Query v5](https://tanstack.com/query)
 - [openapi-typescript](https://github.com/openapi-ts/openapi-typescript) — types generated from `../../openapi/stellar-index.v1.yaml`
-- [satori](https://github.com/vercel/satori) + [@resvg/resvg-js](https://github.com/yisibl/resvg-js) — Open Graph card generation (build-time + Cloudflare Worker for long-tail)
+- [workers-og](https://github.com/kvnang/workers-og) — Open Graph cards, rendered at the edge by the Cloudflare Pages Function in `functions/og/`
 - [lucide-react](https://lucide.dev) — icons
-- MDX via `@next/mdx` (Phase 12 — research blog)
+- Blog posts and embedded docs are plain Markdown rendered by the in-repo `src/lib/markdown.tsx` — there is no MDX pipeline
 
 **Static export only** (`output: 'export'` in `next.config.mjs`).
 Deployed to Cloudflare Pages at v1; rsync → r1 nginx behind Cloudflare
@@ -46,7 +48,7 @@ pnpm dev
 pnpm dev                # next dev (HMR)
 pnpm build              # next build (production)
 pnpm typecheck          # tsc --noEmit
-pnpm lint               # next lint
+pnpm lint               # eslint .
 pnpm format             # prettier --write
 pnpm generate:api       # regenerate src/api/types.ts from OpenAPI
 ```
@@ -85,7 +87,7 @@ src/
     ├── discovery.ts     Discovery-doc loader
     ├── fiat-slugs.ts    Fiat-asset slug resolution
     ├── format.ts        Number / date formatters
-    ├── markdown.tsx     MDX rendering helpers
+    ├── markdown.tsx     Minimal Markdown block renderer
     ├── operations.ts
     └── seo.ts           Open Graph + meta-tag helpers
 ```
