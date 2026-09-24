@@ -269,6 +269,29 @@ func TestVWAPCompositeMeta(t *testing.T) {
 	}
 }
 
+// TestVWAPObservedAt pins the observed-at sibling's wire shape and
+// that its value round-trips: the aggregator and the API are separate
+// binaries, so both the suffix and the encoding are a wire contract.
+func TestVWAPObservedAt(t *testing.T) {
+	xlm := canonical.NativeAsset()
+	gbp := canonical.Asset{Type: canonical.AssetFiat, Code: "GBP"}
+
+	got := cachekeys.VWAPObservedAt(xlm, gbp, 5*time.Minute)
+	vwap := cachekeys.VWAP(xlm, gbp, 5*time.Minute)
+	if got.String() != vwap.String()+":observed_at" {
+		t.Errorf("VWAPObservedAt %q is not VWAP %q + :observed_at", got.String(), vwap.String())
+	}
+
+	at := time.Date(2026, 7, 25, 12, 3, 0, 0, time.FixedZone("x", 3600))
+	back, err := cachekeys.ParseVWAPObservedAt(cachekeys.FormatVWAPObservedAt(at))
+	if err != nil || !back.Equal(at) || back.Location() != time.UTC {
+		t.Errorf("round trip of %v = (%v, %v), want the same instant in UTC", at, back, err)
+	}
+	if _, err := cachekeys.ParseVWAPObservedAt("0.124200000000"); err == nil {
+		t.Error("a VWAP value parsed as an observed_at stamp")
+	}
+}
+
 // TestConfidence pins the wire shape + ConfidenceTTL parity with
 // VWAPTTL. The score is meaningless once the underlying VWAP
 // expires, so the two TTLs must move together.

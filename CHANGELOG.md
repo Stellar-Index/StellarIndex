@@ -15,6 +15,19 @@ against.
 
 ## [Unreleased]
 
+- **`/v1/price` stamped a frozen held value as observed at read time
+  (RLT-357):** every surface serving the aggregator's VWAP cache (the
+  fallback chain, `?window=`, the frozen held value, the tip, and the
+  asset headline's triangulated tier) set `observed_at` to the request
+  time, while a freeze keeps the held value alive for its whole hold —
+  up to ~35 minutes — without rewriting it. Both cache writers now store
+  a `vwap:<base>:<quote>:<window>:observed_at` stamp (the closed bucket
+  the value's window ends at, the same instant the SSE stream carries)
+  in the value's MULTI/EXEC, the freeze keep-alive extends it with the
+  value, and the API serves it. A cached value with no readable stamp is
+  not served. Deploy the aggregator before, or with, the API: until it
+  has written stamps, the API's cache-backed prices miss.
+
 - **ops — per-source genesis ledgers locked in step (#898):** the
   reconciliation catalogue and the gap detector's
   `DefaultGapDetectorTargets` each restate every source's genesis ledger,

@@ -16,9 +16,9 @@ import (
 
 type windowVWAPStub struct{ windows map[time.Duration]string }
 
-func (s windowVWAPStub) LookupTriangulatedVWAP(_ context.Context, _, _ canonical.Asset, w time.Duration) (string, bool, bool, error) {
+func (s windowVWAPStub) LookupTriangulatedVWAP(_ context.Context, _, _ canonical.Asset, w time.Duration) (CachedVWAP, bool, error) {
 	v, ok := s.windows[w]
-	return v, false, ok, nil
+	return CachedVWAP{Value: v, ObservedAt: time.Now().UTC()}, ok, nil
 }
 
 // TestHandlePriceWindowed pins board #43's window selection: a
@@ -66,11 +66,11 @@ type compositeWindowStub struct {
 	askedWindow  time.Duration
 }
 
-func (s *compositeWindowStub) LookupTriangulatedVWAP(_ context.Context, _, _ canonical.Asset, w time.Duration) (string, bool, bool, error) {
+func (s *compositeWindowStub) LookupTriangulatedVWAP(_ context.Context, _, _ canonical.Asset, w time.Duration) (CachedVWAP, bool, error) {
 	if w != s.window {
-		return "", false, false, nil
+		return CachedVWAP{}, false, nil
 	}
-	return "0.91", s.triangulated, true, nil
+	return CachedVWAP{Value: "0.91", Triangulated: s.triangulated, ObservedAt: time.Now().UTC()}, true, nil
 }
 
 func (s *compositeWindowStub) LookupCompositeMeta(_ context.Context, base, quote canonical.Asset, w time.Duration) ([]byte, bool, error) {

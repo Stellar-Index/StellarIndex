@@ -97,17 +97,12 @@ type FXStore interface {
 type Cache interface {
 	Set(ctx context.Context, key string, value any, expiration time.Duration) *redis.StatusCmd
 	Get(ctx context.Context, key string) *redis.StringCmd
-	// Expire is used by the freeze path (F-1345) to extend the
-	// last-known-good VWAP key's TTL so it outlives the freeze marker
-	// instead of expiring out from under a sustained freeze. Returns
-	// a BoolCmd whose value is false when the key doesn't exist (no
-	// prior bucket to keep alive) — a normal, non-error outcome.
-	Expire(ctx context.Context, key string, expiration time.Duration) *redis.BoolCmd
-	// TxPipelined writes a served value together with its provenance
-	// (and a composite's meta) in one MULTI/EXEC, so no reader observes
-	// one without the other: a direct value clears a prior composite's
-	// "triangulated" marker in the same transaction that writes it
-	// (W1-flow-price-serve-2).
+	// TxPipelined writes a served value together with its provenance,
+	// observed-at stamp (and a composite's meta) in one MULTI/EXEC, so
+	// no reader observes one without the other: a direct value clears a
+	// prior composite's "triangulated" marker in the same transaction
+	// that writes it (W1-flow-price-serve-2). The freeze path extends
+	// the held value's and its stamp's TTLs through it too (F-1345).
 	TxPipelined(ctx context.Context, fn func(redis.Pipeliner) error) ([]redis.Cmder, error)
 }
 
@@ -1587,8 +1582,9 @@ func (o *Orchestrator) publishDirect(
 	return nil
 }
 
-// serveDirect writes a direct VWAP to the pair's served key and clears
-// any "triangulated" provenance a prior composite left there, in one
+// serveDirect writes a direct VWAP to the pair's served key, stamped
+// with the closed bucket its window ends at, and clears any
+// "triangulated" provenance a prior composite left there, in one
 // MULTI/EXEC: the API serves the Redis fallback only under that marker,
 // so a direct (possibly thin, single-source) value must never be
 // readable beneath it (W1-flow-price-serve-2). Then it streams the
@@ -1602,9 +1598,12 @@ func (o *Orchestrator) serveDirect(
 ) error {
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
 	provKey := cachekeys.VWAPProvenance(pair.Base, pair.Quote, window)
+	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window)
+	ttl := cachekeys.VWAPTTL(window)
 	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Del(ctx, provKey.String())
-		p.Set(ctx, key.String(), pub.value, cachekeys.VWAPTTL(window))
+		p.Set(ctx, atKey.String(), cachekeys.FormatVWAPObservedAt(bucketEnd), ttl)
+		p.Set(ctx, key.String(), pub.value, ttl)
 		return nil
 	}); err != nil {
 		// Operators alert on `rate(...vwap_cache_write_errors_total[5m])
@@ -1836,8 +1835,10 @@ func frozenTickKey(pair canonical.Pair, window time.Duration) string {
 }
 
 // keepFrozenVWAPAlive extends the TTL of the last-known-good VWAP
-// key for (pair, window) so it survives for at least as long as the
-// freeze marker (F-1345, G13-03).
+// key for (pair, window), and of its observed-at stamp, so both
+// survive for at least as long as the freeze marker (F-1345, G13-03).
+// The value is not rewritten, so the stamp keeps saying when it was
+// observed; the API serves it as observed_at (RLT-357).
 //
 // Why: a freeze skips the VWAP cache write, so the LKG value keeps
 // the TTL it was written with — equal to the window. A freeze that
@@ -1865,7 +1866,12 @@ func (o *Orchestrator) keepFrozenVWAPAlive(ctx context.Context, pair canonical.P
 		ttl = cachekeys.FreezeTTL
 	}
 	key := cachekeys.VWAP(pair.Base, pair.Quote, window)
-	if err := o.cache.Expire(ctx, key.String(), ttl).Err(); err != nil {
+	atKey := cachekeys.VWAPObservedAt(pair.Base, pair.Quote, window)
+	if _, err := o.cache.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Expire(ctx, key.String(), ttl)
+		p.Expire(ctx, atKey.String(), ttl)
+		return nil
+	}); err != nil {
 		o.logger.Debug("freeze: LKG VWAP TTL refresh failed",
 			"pair", pair.String(), "window", window, "key", key, "err", err)
 	}
