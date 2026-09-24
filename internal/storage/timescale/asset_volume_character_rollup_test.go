@@ -1,6 +1,7 @@
 package timescale
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -104,5 +105,35 @@ func TestAdjustedVolumeExpr_Wired(t *testing.T) {
 	}
 	if !strings.Contains(adjustedVolume24hExpr, "1::numeric - avc.top_account_pair_vol_share::numeric") {
 		t.Error("adjustedVolume24hExpr must scale raw volume by (1 - top_account_pair_vol_share)")
+	}
+}
+
+// TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood: a roll that
+// returned no rows is an upstream fault, not every asset lapsing at once,
+// so the pass runs the expiry prune rather than emptying the rollup.
+func TestRefreshAssetVolumeCharacter_zeroRowPassKeepsLastGood(t *testing.T) {
+	t.Parallel()
+
+	store, script := newScriptedStore(t,
+		scriptedResult{}, // SET max_parallel_workers_per_gather
+		scriptedResult{}, // SET statement_timeout
+		scriptedResult{cols: []string{
+			"asset_id", "total", "total_numeric", "makers", "takers",
+			"top_pair", "self_cross", "issuer_side", "market_styled",
+		}}, // the roll: zero rows
+		scriptedResult{}, // prune
+	)
+	if err := store.RefreshAssetVolumeCharacter(context.Background()); err != nil {
+		t.Fatalf("RefreshAssetVolumeCharacter: %v", err)
+	}
+	got := script.statements()
+	if len(got) != 4 {
+		t.Fatalf("expected 4 statements (no upsert batch for zero rows), got %d: %v", len(got), got)
+	}
+	if got[3] != refreshAssetVolumeCharacterPruneExpired {
+		t.Errorf("zero-row pass prune = %q, want %q", got[3], refreshAssetVolumeCharacterPruneExpired)
+	}
+	if !script.committed() {
+		t.Error("zero-row pass must commit its expiry prune")
 	}
 }
