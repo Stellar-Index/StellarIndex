@@ -238,3 +238,47 @@ groups:
             an error. Data is still flowing on the success rate, but
             something's degrading — investigate before it tips into
             full staleness.
+
+      # A CEX venue refused the trade subscription for one symbol (a
+      # de-listed or renamed pair). Kraken answers per symbol, so the
+      # socket stays healthy and the other pairs keep flowing — no
+      # disconnect, no stall, nothing else fires. The streamer sets the
+      # gauge back to 0 when the venue next acknowledges the symbol.
+      - alert: stellarindex_cex_stream_subscription_rejected
+        expr: |
+          max by (source, symbol) (stellarindex_cex_stream_subscription_rejected) == 1
+        for: 5m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-silent-pair.md
+          summary: "{{ $labels.source }} rejected the trade subscription for {{ $labels.symbol }}"
+          description: |
+            The venue answered our subscribe request for
+            {{ $labels.symbol }} with success:false, so that pair
+            delivers no trades while the connection looks healthy. The
+            venue's own error text is on the indexer's ERROR log line
+            "kraken rejected the trade subscription".
+
+      # Trade entries inside well-formed frames are being skipped — the
+      # shape a venue symbol rename or field re-encoding produces. The
+      # frame still parses, so the decode-error alert never sees it.
+      # 30 min of a non-zero 15 min rate so one odd fill cannot fire it.
+      - alert: stellarindex_cex_stream_entry_skips
+        expr: |
+          sum by (source, reason) (rate(stellarindex_cex_stream_entry_skips_total[15m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: external-poller
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/cex-stream-silent-pair.md
+          summary: "{{ $labels.source }} is skipping trade entries ({{ $labels.reason }})"
+          description: |
+            {{ $labels.source }} has dropped trade entries with reason
+            {{ $labels.reason }} continuously for 30 min. The indexer
+            logs "kraken trade entry skipped" once per reason per minute
+            with the offending symbol or field value.

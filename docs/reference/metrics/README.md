@@ -745,6 +745,32 @@ forwarded no trade since process start. Streamer analogue of
 `stellarindex_external_poller_last_success_unix`; use
 `time() - <gauge>` to alert on a stream that's connected but silent.
 
+### `stellarindex_cex_stream_entry_skips_total`
+
+Counter, labels `source`, `reason` ∈ {unknown_symbol, bad_qty, bad_price, bad_timestamp, bad_trade_id, other}.
+
+Trade entries a CEX WebSocket parser could not convert inside an
+otherwise well-formed multi-trade frame (kraken). The frame parses, so
+`stellarindex_source_decode_errors_total` does not move and the other
+entries in the frame still flow; this counter is the only signal that
+the venue renamed a symbol (`unknown_symbol`) or changed a field's
+encoding. Dust fills below the 10^8 precision floor are not counted.
+The kraken streamer also logs one WARN per reason per minute naming
+the offending entry. Alerted by `stellarindex_cex_stream_entry_skips`.
+
+### `stellarindex_cex_stream_subscription_rejected`
+
+Gauge, labels `source`, `symbol`.
+
+1 while the venue has refused the trade subscription for `symbol`, 0
+once it acknowledges it (set per symbol from kraken's subscribe acks).
+A refused symbol leaves the socket healthy and the pair silent, so
+neither the disconnect counter nor the last-trade gauge sees it. A
+rejection naming a symbol outside the configured pair map is recorded
+as `symbol="unknown"`. The venue's own error text is on the
+indexer's ERROR log line. Alerted by
+`stellarindex_cex_stream_subscription_rejected`.
+
 ### `stellarindex_external_poller_last_success_unix`
 
 Gauge, label `source`.

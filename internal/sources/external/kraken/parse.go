@@ -3,6 +3,7 @@ package kraken
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"strings"
@@ -24,12 +25,66 @@ type channelEnvelope struct {
 	Channel string          `json:"channel"`
 	Type    string          `json:"type"`
 	Data    json.RawMessage `json:"data"`
-	// Method / Success present on subscribe acks. Error present on
-	// subscribe rejections. We look at them only to classify the
-	// frame; real error handling is in the streamer loop.
+	// Method / Success present on subscribe acks. Error and the
+	// top-level Symbol are present on a per-symbol rejection; an
+	// accepted ack names its symbol under Result.
 	Method  string          `json:"method,omitempty"`
 	Success *bool           `json:"success,omitempty"`
 	Error   json.RawMessage `json:"error,omitempty"`
+	Symbol  string          `json:"symbol,omitempty"`
+	Result  *ackResult      `json:"result,omitempty"`
+}
+
+type ackResult struct {
+	Channel string `json:"channel"`
+	Symbol  string `json:"symbol"`
+}
+
+const methodSubscribe = "subscribe"
+
+// Reasons a trade entry inside a well-formed frame is skipped. Each
+// is a member of obs.CEXStreamEntrySkipReasons (lockstep-tested).
+const (
+	skipUnknownSymbol = "unknown_symbol"
+	skipBadQty        = "bad_qty"
+	skipBadPrice      = "bad_price"
+	skipBadTimestamp  = "bad_timestamp"
+	skipBadTradeID    = "bad_trade_id"
+	skipOther         = "other"
+)
+
+var skipReasons = []string{
+	skipUnknownSymbol, skipBadQty, skipBadPrice, skipBadTimestamp, skipBadTradeID, skipOther,
+}
+
+// entryError tags a buildTrade failure with its skip reason.
+type entryError struct {
+	reason string
+	err    error
+}
+
+func (e *entryError) Error() string { return e.err.Error() }
+func (e *entryError) Unwrap() error { return e.err }
+
+// entrySkip is one trade entry parseTradeFrame could not convert.
+type entrySkip struct {
+	Reason string
+	Err    error
+}
+
+// subscribeAck is Kraken's per-symbol answer to our subscribe request.
+type subscribeAck struct {
+	Symbol   string
+	Accepted bool
+	Message  string // the venue's error text on rejection
+}
+
+// frameResult is everything one wire frame decodes to. Skips and Ack
+// carry the only signal a renamed or de-listed pair produces.
+type frameResult struct {
+	Trades []canonical.Trade
+	Skips  []entrySkip
+	Ack    *subscribeAck
 }
 
 // tradePayload is one entry in a v2 trade frame's `data` array.
@@ -51,76 +106,99 @@ type tradePayload struct {
 
 // parseFrame dispatches on the channel field; trade frames yield
 // zero or more canonical.Trade values (snapshot carries many,
-// update carries one or a few). Heartbeat / status / subscribe-ack
-// frames return (nil, nil) — stream stays open, no logging
-// required at the parse layer.
+// update carries one or a few) plus the entries that were skipped.
+// A subscribe acknowledgement yields Ack. Heartbeat / status frames
+// yield an empty result.
 //
 // Malformed frames return ErrMalformedFrame wrapped; the streamer
 // counts and continues.
-func parseFrame(raw []byte, pairMap map[string]canonical.Pair) ([]canonical.Trade, error) {
+func parseFrame(raw []byte, pairMap map[string]canonical.Pair) (frameResult, error) {
 	var env channelEnvelope
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber() // preserve the decimal representation of qty/price
 	if err := dec.Decode(&env); err != nil {
-		return nil, fmt.Errorf("%w: envelope: %w", ErrMalformedFrame, err)
+		return frameResult{}, fmt.Errorf("%w: envelope: %w", ErrMalformedFrame, err)
 	}
 
 	switch env.Channel {
 	case ChannelTrade:
 		return parseTradeFrame(env, pairMap)
 	case ChannelHeartbeat, ChannelStatus:
-		return nil, nil
+		return frameResult{}, nil
 	}
 
-	// subscribe-ack / error frames carry Method but no Channel.
-	// Non-trade envelopes with no Channel are not our concern —
-	// silently ignore so the streamer loop doesn't flag ack
-	// frames as decode failures.
-	return nil, nil
+	if env.Method == methodSubscribe && env.Success != nil {
+		return frameResult{Ack: parseSubscribeAck(env)}, nil
+	}
+	return frameResult{}, nil
+}
+
+// parseSubscribeAck reads the venue's verdict on one subscribed
+// symbol. A rejection names the symbol at the top level; an accepted
+// ack names it under result.
+func parseSubscribeAck(env channelEnvelope) *subscribeAck {
+	ack := &subscribeAck{Symbol: env.Symbol, Accepted: *env.Success}
+	if env.Result != nil && env.Result.Symbol != "" {
+		ack.Symbol = env.Result.Symbol
+	}
+	if !ack.Accepted {
+		var msg string
+		if err := json.Unmarshal(env.Error, &msg); err != nil {
+			msg = string(env.Error)
+		}
+		ack.Message = msg
+	}
+	return ack
 }
 
 // parseTradeFrame decodes the `data` array of a trade channel
 // frame. Each entry is one trade; all share the same channel+type
-// metadata.
-func parseTradeFrame(env channelEnvelope, pairMap map[string]canonical.Pair) ([]canonical.Trade, error) {
+// metadata. A bad entry is skipped and reported, not fatal to the
+// frame.
+func parseTradeFrame(env channelEnvelope, pairMap map[string]canonical.Pair) (frameResult, error) {
 	if len(env.Data) == 0 {
-		return nil, nil
+		return frameResult{}, nil
 	}
 	var items []tradePayload
 	dec := json.NewDecoder(bytes.NewReader(env.Data))
 	dec.UseNumber()
 	if err := dec.Decode(&items); err != nil {
-		return nil, fmt.Errorf("%w: trade data: %w", ErrMalformedFrame, err)
+		return frameResult{}, fmt.Errorf("%w: trade data: %w", ErrMalformedFrame, err)
 	}
-	out := make([]canonical.Trade, 0, len(items))
-	for i, t := range items {
+	res := frameResult{Trades: make([]canonical.Trade, 0, len(items))}
+	for _, t := range items {
 		trade, err := buildTrade(t, pairMap)
+		if errors.Is(err, ErrDustTrade) {
+			continue // a real trade below the 10^8 precision floor
+		}
 		if err != nil {
-			// Per-entry skip rather than aborting the whole frame;
-			// the streamer counts the skip through its metrics
-			// hook (future wiring).
-			_ = i
+			reason := skipOther
+			var ee *entryError
+			if errors.As(err, &ee) {
+				reason = ee.reason
+			}
+			res.Skips = append(res.Skips, entrySkip{Reason: reason, Err: err})
 			continue
 		}
-		out = append(out, trade)
+		res.Trades = append(res.Trades, trade)
 	}
-	return out, nil
+	return res, nil
 }
 
 // buildTrade turns one decoded tradePayload into a canonical.Trade.
 func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Trade, error) {
 	pair, ok := pairMap[strings.ToUpper(t.Symbol)]
 	if !ok {
-		return canonical.Trade{}, fmt.Errorf("%w: %q", ErrUnknownSymbol, t.Symbol)
+		return canonical.Trade{}, &entryError{skipUnknownSymbol, fmt.Errorf("%w: %q", ErrUnknownSymbol, t.Symbol)}
 	}
 
 	base, err := scale.DecimalStringToScaledInt(t.Qty.String(), externalAmountDecimals)
 	if err != nil {
-		return canonical.Trade{}, fmt.Errorf("%w: qty %q: %w", ErrMalformedFrame, t.Qty.String(), err)
+		return canonical.Trade{}, &entryError{skipBadQty, fmt.Errorf("%w: qty %q: %w", ErrMalformedFrame, t.Qty.String(), err)}
 	}
 	price, err := scale.DecimalStringToScaledInt(t.Price.String(), externalAmountDecimals)
 	if err != nil {
-		return canonical.Trade{}, fmt.Errorf("%w: price %q: %w", ErrMalformedFrame, t.Price.String(), err)
+		return canonical.Trade{}, &entryError{skipBadPrice, fmt.Errorf("%w: price %q: %w", ErrMalformedFrame, t.Price.String(), err)}
 	}
 	// quote = base × price / 10^8
 	quoteRaw := new(big.Int).Mul(base, price)
@@ -138,12 +216,12 @@ func buildTrade(t tradePayload, pairMap map[string]canonical.Pair) (canonical.Tr
 
 	ts, err := time.Parse(time.RFC3339Nano, t.Timestamp)
 	if err != nil {
-		return canonical.Trade{}, fmt.Errorf("%w: timestamp %q: %w", ErrMalformedFrame, t.Timestamp, err)
+		return canonical.Trade{}, &entryError{skipBadTimestamp, fmt.Errorf("%w: timestamp %q: %w", ErrMalformedFrame, t.Timestamp, err)}
 	}
 
 	txHash, err := formatTxHash(t.Symbol, t.TradeID)
 	if err != nil {
-		return canonical.Trade{}, err
+		return canonical.Trade{}, &entryError{skipBadTradeID, err}
 	}
 
 	return canonical.Trade{
