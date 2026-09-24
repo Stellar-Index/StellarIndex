@@ -311,20 +311,37 @@ func (s *Store) BlendPoolAssets(ctx context.Context, pool string) ([]string, err
 	return out, rows.Err()
 }
 
-// BlendReserveConfigs returns the latest ReserveConfig per reserve
-// asset for a pool, read from its queue_set_reserve admin events (whose
-// 'metadata' carries the full rate-model config). This is the
-// event-derived source of the APY inputs (util / r_* / reactivity /
-// decimals) — the on-chain ResConfig storage entry is often uncaptured
-// (set at reserve init, never re-written), but the event isn't.
+// BlendReserveConfigs returns the latest APPLIED ReserveConfig per
+// reserve asset for a pool, read from its admin-event lifecycle
+// (whose 'metadata' carries the full rate-model config on
+// queue_set_reserve). Blend timelocks a queued config behind a
+// separate set_reserve that applies it, or a cancel_set_reserve that
+// withdraws it — a queue_set_reserve alone is neither. This walks
+// each asset's event stream in order and keeps a queued config only
+// when the event immediately following it (same asset) is
+// set_reserve; a next-event of cancel_set_reserve, a superseding
+// queue_set_reserve, or nothing yet (still timelocked) drops it. Of
+// the resulting applied configs, the most recent per asset wins.
 func (s *Store) BlendReserveConfigs(ctx context.Context, pool string) (map[string]blend.ReserveConfig, error) {
 	const q = `
-        SELECT DISTINCT ON (asset) asset, attributes->'metadata'
-          FROM blend_admin
-         WHERE contract_id = $1
-           AND event_kind = 'queue_set_reserve'
-           AND asset IS NOT NULL AND asset <> ''
-           AND attributes ? 'metadata'
+        WITH events AS (
+            SELECT asset, event_kind, ledger_close_time, attributes->'metadata' AS metadata
+              FROM blend_admin
+             WHERE contract_id = $1
+               AND asset IS NOT NULL AND asset <> ''
+               AND event_kind IN ('queue_set_reserve', 'set_reserve', 'cancel_set_reserve')
+        ),
+        chained AS (
+            SELECT asset, event_kind, ledger_close_time, metadata,
+                   LEAD(event_kind) OVER w AS next_kind
+              FROM events
+            WINDOW w AS (PARTITION BY asset ORDER BY ledger_close_time)
+        )
+        SELECT DISTINCT ON (asset) asset, metadata
+          FROM chained
+         WHERE event_kind = 'queue_set_reserve'
+           AND metadata IS NOT NULL
+           AND next_kind = 'set_reserve'
          ORDER BY asset, ledger_close_time DESC`
 	rows, err := s.db.QueryContext(ctx, q, pool)
 	if err != nil {
