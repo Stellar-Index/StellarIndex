@@ -16145,10 +16145,15 @@ components:
     RWACuratedCensus:
       type: object
       description: The storage layer's account of the curator cache, taken in the same read as the rows.
-      required: [entries, priced, stale]
+      required: [entries, contracts, classic, priced, priced_classic, stale]
       properties:
-        entries: { type: integer, description: Rows inside the recognition bound. }
-        priced: { type: integer, description: Recognised rows whose price is inside its own bound. }
+        entries: { type: integer, description: "Rows inside the recognition bound, of either address form. Always contracts + classic." }
+        contracts: { type: integer, description: Recognised rows whose address is a contract C-strkey — the only form the curated arm serves. }
+        classic:
+          type: integer
+          description: Recognised rows whose address is a classic `CODE-GISSUER` pair. The curated arm serves no row of this form, so this counts the part of the curator's list left out of `curated_assets`.
+        priced: { type: integer, description: Recognised CONTRACT rows whose price is inside its own bound. }
+        priced_classic: { type: integer, description: Recognised CLASSIC rows whose price is inside its own bound. }
         stale:
           type: integer
           description: Rows present in the cache but past the recognition bound — the only evidence, from this side, that the sync has stopped.

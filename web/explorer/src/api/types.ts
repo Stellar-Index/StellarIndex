@@ -8443,10 +8443,16 @@ export interface components {
         };
         /** @description The storage layer's account of the curator cache, taken in the same read as the rows. */
         RWACuratedCensus: {
-            /** @description Rows inside the recognition bound. */
+            /** @description Rows inside the recognition bound, of either address form. Always contracts + classic. */
             entries: number;
-            /** @description Recognised rows whose price is inside its own bound. */
+            /** @description Recognised rows whose address is a contract C-strkey — the only form the curated arm serves. */
+            contracts: number;
+            /** @description Recognised rows whose address is a classic `CODE-GISSUER` pair. The curated arm serves no row of this form, so this counts the part of the curator's list left out of `curated_assets`. */
+            classic: number;
+            /** @description Recognised CONTRACT rows whose price is inside its own bound. */
             priced: number;
+            /** @description Recognised CLASSIC rows whose price is inside its own bound. */
+            priced_classic: number;
             /** @description Rows present in the cache but past the recognition bound — the only evidence, from this side, that the sync has stopped. */
             stale: number;
             /** Format: date-time */

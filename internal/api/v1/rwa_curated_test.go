@@ -30,6 +30,7 @@ const (
 
 type stubCuratedReader struct {
 	rows      map[string]timescale.CuratedRWAEntry
+	census    *timescale.CuratedRWACensus
 	err       error
 	published *timescale.CuratedRWAPublished
 	pubErr    error
@@ -41,7 +42,12 @@ func (s *stubCuratedReader) CuratedRWADirectoryByAddress(_ context.Context, _ st
 	if s.err != nil {
 		return nil, timescale.CuratedRWACensus{}, s.err
 	}
-	return s.rows, timescale.CuratedRWACensus{Entries: len(s.rows), Priced: len(s.rows)}, nil
+	if s.census != nil {
+		return s.rows, *s.census, nil
+	}
+	return s.rows, timescale.CuratedRWACensus{
+		Entries: len(s.rows), Contracts: len(s.rows), Priced: len(s.rows),
+	}, nil
 }
 
 func (s *stubCuratedReader) LatestCuratedPublished(_ context.Context, _ string) (*timescale.CuratedRWAPublished, error) {
@@ -198,6 +204,52 @@ func TestRWACurated_ServesTheCuratorsRowsApart(t *testing.T) {
 	}
 	if derefStr(with.Curated.VerifiedValueUSD) != derefStr(with.Summary.ReferenceValuation.ValueUSD) {
 		t.Errorf("verified_value_usd repeats the wrong figure")
+	}
+}
+
+// A classic `CODE-GISSUER` row has no contract path to be served through,
+// so the arm leaves it out; the census must say how many it left out
+// rather than let them vanish from the response.
+func TestRWACurated_ClassicRowsAreCountedNotSilentlyDropped(t *testing.T) {
+	classic := "CETES-GCRYUGD5NVARGXT56XEZI5CIFCQETYHAPQQTHO2O3IQZTHDH4LATMYWC"
+	curated := &stubCuratedReader{
+		rows: map[string]timescale.CuratedRWAEntry{
+			curatedOnlyVuMe: curatedEntry(curatedOnlyVuMe, "Realiz", "Corporate Credit", "1.1174"),
+			classic:         curatedEntry(classic, "Etherfuse", "Non-US Government Debt", "0.057"),
+		},
+		census: &timescale.CuratedRWACensus{
+			Entries: 2, Contracts: 1, Classic: 1, Priced: 1, PricedClassic: 1,
+		},
+	}
+	got := getRWA(t, rwaCuratedServer(t, curated))
+	if got.Curated == nil || got.Curated.Status != "served" {
+		t.Fatalf("curated block = %+v, want status served", got.Curated)
+	}
+	if got.Curated.Assets != 1 || len(got.CuratedAssets) != 1 || got.CuratedAssets[0].ContractID != curatedOnlyVuMe {
+		t.Fatalf("served %d rows, want the contract row alone", len(got.CuratedAssets))
+	}
+	c := got.Curated.Census
+	if c.Entries != 2 || c.Contracts != 1 || c.Classic != 1 || c.Priced != 1 || c.PricedClassic != 1 {
+		t.Errorf("census = %+v, want entries 2 = contracts 1 + classic 1, priced 1, priced_classic 1", c)
+	}
+	if c.Contracts+c.Classic != c.Entries {
+		t.Errorf("census does not close: %d + %d != %d", c.Contracts, c.Classic, c.Entries)
+	}
+}
+
+func TestCuratedRWACensus_Check(t *testing.T) {
+	for name, tc := range map[string]struct {
+		c    timescale.CuratedRWACensus
+		want bool
+	}{
+		"balanced":              {timescale.CuratedRWACensus{Entries: 3, Contracts: 2, Classic: 1, Priced: 2, PricedClassic: 1}, true},
+		"forms miss a row":      {timescale.CuratedRWACensus{Entries: 3, Contracts: 2}, false},
+		"priced over contracts": {timescale.CuratedRWACensus{Entries: 1, Contracts: 1, Priced: 2}, false},
+		"priced over classic":   {timescale.CuratedRWACensus{Entries: 1, Classic: 1, PricedClassic: 2}, false},
+	} {
+		if got := tc.c.Check() == ""; got != tc.want {
+			t.Errorf("%s: Check() = %q, want balanced=%v", name, tc.c.Check(), tc.want)
+		}
 	}
 }
 

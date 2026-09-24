@@ -69,15 +69,49 @@ type CuratedRWAEntry struct {
 // CuratedRWACensus is the storage layer's account of one curator's cache,
 // taken in the same statement as the read so the counts and the rows
 // come from ONE snapshot.
+//
+// The arithmetic closes as [ListingDirectoryCensus]'s does, and
+// [CuratedRWACensus.Check] proves it:
+//
+//	Entries = Contracts + Classic   (migration 0161's CHECK makes the two
+//	                                 forms exhaustive)
+//	Priced <= Contracts, PricedClassic <= Classic
 type CuratedRWACensus struct {
-	// Entries counts rows inside the recognition bound.
+	// Entries counts rows inside the recognition bound, of either
+	// address form.
 	Entries int
-	// Priced counts recognised rows whose price is inside its bound.
+	// Contracts counts recognised rows whose address is a C-strkey —
+	// the only form the curated arm serves.
+	Contracts int
+	// Classic counts recognised rows whose address is a `CODE-GISSUER`
+	// pair. The arm does not serve them, so this is the count that says
+	// how much of the curator's list was left out.
+	Classic int
+	// Priced counts recognised CONTRACT rows whose price is inside its
+	// bound.
 	Priced int
+	// PricedClassic is the same count over the CLASSIC rows, kept apart
+	// so Priced keeps comparing against what the arm can serve.
+	PricedClassic int
 	// Stale counts rows PRESENT in the cache but past the recognition
 	// bound — the fail-closed shrink. This is the number to watch: it is
 	// the only evidence, from this side, that the sync has stopped.
 	Stale int
+}
+
+// Check returns the reason the census does not balance, or "" when it
+// does.
+func (c CuratedRWACensus) Check() string {
+	if got := c.Contracts + c.Classic; got != c.Entries {
+		return fmt.Sprintf("address forms sum to %d, not Entries %d", got, c.Entries)
+	}
+	if c.Priced > c.Contracts {
+		return fmt.Sprintf("Priced %d exceeds Contracts %d", c.Priced, c.Contracts)
+	}
+	if c.PricedClassic > c.Classic {
+		return fmt.Sprintf("PricedClassic %d exceeds Classic %d", c.PricedClassic, c.Classic)
+	}
+	return ""
 }
 
 // curatedRWARecognitionMaxAge is how long a cached row may be reused as
@@ -236,11 +270,21 @@ const curatedRWAByAddressSQL = `
 		 ORDER BY address`
 
 // curatedRWACensusSQL counts every bucket in one pass, for one curator.
+// The address-form predicates are the listing directory's: migration
+// 0161's CHECK is the same pair of regexes as 0160's.
 const curatedRWACensusSQL = `
 		SELECT
 		  count(*) FILTER (WHERE ` + curatedRWARecognisedSQL + `)          AS entries,
 		  count(*) FILTER (WHERE ` + curatedRWARecognisedSQL + `
+		                     AND ` + listingIsContractSQL + `)             AS contracts,
+		  count(*) FILTER (WHERE ` + curatedRWARecognisedSQL + `
+		                     AND ` + listingIsClassicSQL + `)              AS classic,
+		  count(*) FILTER (WHERE ` + curatedRWARecognisedSQL + `
+		                     AND ` + listingIsContractSQL + `
 		                     AND ` + curatedRWAPriceFreshSQL + `)          AS priced,
+		  count(*) FILTER (WHERE ` + curatedRWARecognisedSQL + `
+		                     AND ` + listingIsClassicSQL + `
+		                     AND ` + curatedRWAPriceFreshSQL + `)          AS priced_classic,
 		  count(*) FILTER (WHERE NOT (` + curatedRWARecognisedSQL + `))    AS stale
 		  FROM rwa_curated_directory
 		 WHERE curator = $1`
@@ -260,7 +304,8 @@ func (s *Store) CuratedRWADirectoryByAddress(
 	}
 	var census CuratedRWACensus
 	if err := s.db.QueryRowContext(ctx, curatedRWACensusSQL, curator).Scan(
-		&census.Entries, &census.Priced, &census.Stale); err != nil {
+		&census.Entries, &census.Contracts, &census.Classic,
+		&census.Priced, &census.PricedClassic, &census.Stale); err != nil {
 		return nil, CuratedRWACensus{}, fmt.Errorf("curated rwa directory: census: %w", err)
 	}
 

@@ -1658,11 +1658,18 @@ type RWACurator struct {
 // RWACuratedCensus counts the curator's cached list as this index holds
 // it: entries recognised, entries carrying a price, entries whose price
 // is past the freshness bound, and when the curator last stamped it.
+//
+// Entries = Contracts + Classic. Only contract rows are served, so
+// Classic counts the part of the curator's list left out; Priced counts
+// contract rows and PricedClassic classic rows.
 type RWACuratedCensus struct {
-	Entries    int        `json:"entries"`
-	Priced     int        `json:"priced"`
-	Stale      int        `json:"stale"`
-	ObservedAt *time.Time `json:"observed_at,omitempty"`
+	Entries       int        `json:"entries"`
+	Contracts     int        `json:"contracts"`
+	Classic       int        `json:"classic"`
+	Priced        int        `json:"priced"`
+	PricedClassic int        `json:"priced_classic"`
+	Stale         int        `json:"stale"`
+	ObservedAt    *time.Time `json:"observed_at,omitempty"`
 }
 
 // RWACuratedPublishedSplit is one line of the curator's own subclass
