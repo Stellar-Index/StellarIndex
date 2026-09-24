@@ -181,6 +181,32 @@ describe('a click-to-dismiss overlay always has a key path out', () => {
   });
 });
 
+describe('every dialog is a useDialog dialog', () => {
+  // A hand-rolled Escape listener gets the key path out but none of the
+  // focus trap, focus move-in or focus restore that useDialog carries.
+  const dialogs = sourceFiles().filter(([, body]) =>
+    /role="dialog"/.test(blankComments(body)),
+  );
+
+  it('finds the dialogs to check', () => {
+    expect(dialogs.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('routes every role="dialog" through useDialog', () => {
+    const offenders = dialogs
+      .filter(([, body]) => !body.includes('useDialog'))
+      .map(([path]) => path);
+    expect(offenders).toEqual([]);
+  });
+
+  it('leaves Escape handling to useDialog', () => {
+    const offenders = sourceFiles()
+      .filter(([, body]) => /['"]Escape['"]/.test(blankComments(body)))
+      .map(([path]) => path);
+    expect(offenders).toEqual([]);
+  });
+});
+
 describe('nothing rewrites the tab order by hand', () => {
   it('uses no positive tabIndex', () => {
     // A positive tabindex takes an element out of DOM order and ahead of
