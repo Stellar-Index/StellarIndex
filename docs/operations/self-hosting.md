@@ -319,16 +319,31 @@ Since ADR-0041 the lake is substrate rather than an add-on, so this
 step is the default path: skipping it means turning two switches off
 (below), not leaving them alone.
 
-Install `clickhouse-server` (native package or Docker), then apply
-the schema:
+Install `clickhouse-server` (native package or Docker). Before starting
+it, move its native protocol port off 9000: ClickHouse listens there by
+default, and MinIO (§4.4) already holds it. Drop this into
+`/etc/clickhouse-server/config.d/si-override.xml` (Docker: mount it into
+the same directory) — it is what the ansible role writes, with
+`clickhouse_tcp_port` defaulting to 9300:
+
+```xml
+<clickhouse>
+    <tcp_port>9300</tcp_port>
+    <listen_host>127.0.0.1</listen_host>
+</clickhouse>
+```
+
+Restart `clickhouse-server`, then apply the schema. `clickhouse-client`
+also defaults to 9000, so pass the port on every invocation:
 
 ```sh
-clickhouse-client < deploy/clickhouse/tier1_schema.sql   # CREATE ... IF NOT EXISTS — safe to re-run
+clickhouse-client --port 9300 < deploy/clickhouse/tier1_schema.sql   # CREATE ... IF NOT EXISTS — safe to re-run
 ```
 
 The indexer's dual-sink dials ClickHouse's **native protocol** port
 (`storage.clickhouse_addr`, default `127.0.0.1:9300` — not the 8123
-HTTP port). See [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)
+HTTP port). If you pick a different `<tcp_port>`, set
+`storage.clickhouse_addr` to match. See [ADR-0034](../adr/0034-tiered-clickhouse-architecture.md)
 and [`docs/architecture/clickhouse-migration-plan.md`](../architecture/clickhouse-migration-plan.md)
 for the full tiering rationale and what's populated vs. not yet
 (`ledger_entry_changes` is schema'd but not yet written — see that

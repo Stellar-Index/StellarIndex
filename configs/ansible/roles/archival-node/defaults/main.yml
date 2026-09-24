@@ -126,7 +126,9 @@ ch_live_catchup_enabled: true
 # ch-live-catchup exits 1 naming the variable, which pages through
 # stellarindex_systemd_unit_failed instead of degrading quietly.
 clickhouse_apply_schema: false
-clickhouse_tcp_port:     9300   # 9000 is MinIO's
+# 9000 is MinIO's. Must equal storage.clickhouse_addr's default port and
+# self-hosting.md §4.5's <tcp_port> (internal/config selfhosting_ch_port_test).
+clickhouse_tcp_port:     9300
 # The directory clickhouse-server's Debian package creates and reads its
 # drop-ins from. Its presence is how tasks/main.yml decides whether the
 # three CH-CONFIG task files (20-serving-profile / 21-drop-guard /
