@@ -39,9 +39,11 @@ func TestEventCensusShortfalls_DroppedEventPartition(t *testing.T) {
 		}
 	})
 
+	// Stay below the 2027-06-15 close_time TestNetworkThroughput_DedupsReingestedLedger
+	// reserves as the global tip; this file runs before it when both share a shard.
 	seed := func(seq, events uint32) {
 		ext := chstore.LedgerExtract{Ledger: chstore.LedgerRow{
-			LedgerSeq: seq, CloseTime: time.Date(2027, 8, 1, 0, 0, 0, 0, time.UTC),
+			LedgerSeq: seq, CloseTime: time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
 			LedgerHash: fmt.Sprintf("h%d", seq), PrevHash: fmt.Sprintf("h%d", seq-1),
 			ProtocolVersion: 22, BucketListHash: "cc00",
 			SorobanEventCount: events,
