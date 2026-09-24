@@ -12,7 +12,7 @@ severity: P3
 | | |
 | --- | --- |
 | **Severity** | ticket (P3) |
-| **Fires when** | any systemd unit sits in `failed` for 15m+, except units with their own alert |
+| **Fires when** | any systemd unit sits in `failed` for 15m+, or fails every run while its timer restarts it within 10m (`max_over_time[10m]` + `for: 25m`), except units with their own alert |
 | **Producer** | node_exporter's systemd collector (`node_systemd_unit_state`) |
 | **Exclusions** | `scripts/ci/unit-failed-dedicated.baseline` — units whose own alert carries better triage |
 
@@ -71,8 +71,10 @@ Then, per unit class:
 ## When NOT to act
 
 - A unit failed once and its own timer already restarted it
-  successfully: `for: 15m` should have ridden that out, so check whether
-  it is genuinely still failed before digging.
+  successfully: the rule rides out a single failure shorter than 15m, so
+  check whether it is genuinely still failing before digging. A unit its
+  timer re-runs every few minutes is rarely `failed` at the moment you
+  look — read `journalctl -u <unit>` for the last few runs' exit status.
 
 ## Adding an exclusion
 

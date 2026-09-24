@@ -309,8 +309,15 @@ groups:
       #
       # Ticket, not page: a failed oneshot is rarely customer-impacting
       # within minutes, and the units whose failure IS urgent already
-      # have dedicated alerts at their own severities. `for: 15m` rides
-      # out a unit that is failed-then-restarted by its own timer.
+      # have dedicated alerts at their own severities.
+      #
+      # A oneshot whose timer re-runs it more often than the ride-out
+      # (ch-live-catchup, every 10m) is never CONTINUOUSLY failed: each
+      # run is an `activating` dip, and a plain `== 1` resolves on the dip
+      # and restarts its pending clock, so a unit failing EVERY run never
+      # tickets. max_over_time[10m] bridges dips up to 10m, and `for:`
+      # grows by the same 10m so the ride-out is unchanged: a single
+      # failure must still persist 15m+ before it tickets.
       - alert: stellarindex_worker_panicked
         # RAW value, not increase(). A recovered panic means that worker is
         # STOPPED until the process restarts, so the alert must describe the
@@ -339,8 +346,8 @@ groups:
             panic as a bug.
       - alert: stellarindex_systemd_unit_failed
         expr: |
-          node_systemd_unit_state{state="failed",name!~"verify-archive-tier-a\\.service|verify-archive-tier-b\\.service|ch-supply\\.service|pgbackrest-backup\\.service|ch-schema-snapshot\\.service|verify-served-values\\.service"} == 1
-        for: 15m
+          max_over_time(node_systemd_unit_state{state="failed",name!~"verify-archive-tier-a\\.service|verify-archive-tier-b\\.service|ch-supply\\.service|pgbackrest-backup\\.service|ch-schema-snapshot\\.service|verify-served-values\\.service"}[10m]) == 1
+        for: 25m
         labels:
           severity: ticket
           team: stellarindex
@@ -349,11 +356,13 @@ groups:
           runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/systemd-unit-failed.md
           summary: "systemd unit {{ $labels.name }} is in failed state"
           description: |
-            {{ $labels.name }} has been in `failed` for 15m+. Most of this
-            host's oneshot timers write data something else reads and then
-            trusts — a failed sync leaves a CONSUMER reading a frozen
-            table rather than erroring, so the symptom usually appears
-            somewhere else entirely.
+            {{ $labels.name }} has been failing for 15m+, either
+            sitting in `failed` or failing every run while its own
+            timer keeps restarting it. Most of this host's oneshot
+            timers write data something else reads and then trusts — a
+            failed sync leaves a CONSUMER reading a frozen table rather
+            than erroring, so the symptom usually appears somewhere
+            else entirely.
 
             `systemctl status {{ $labels.name }}` then
             `journalctl -u {{ $labels.name }} --since -24h` for the cause.
