@@ -31,6 +31,35 @@ rule_files:
 evaluation_interval: 1m
 
 tests:
+  # ── Q015 ─────────────────────────────────────────────────────────
+  # The node_exporter target drops out of service discovery entirely
+  # (host deregistered, scrape config change): `up{job="node_exporter"}`
+  # never exists, so only the absent_over_time arm can report it. Same
+  # shape as clickhouse_test.yml's "no scrape job at all" case.
+  - interval: 1m
+    name: node_exporter target absent from discovery still tickets
+    input_series:
+      - series: 'up{job="clickhouse", instance="r1:9363"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: stellarindex_host_down
+        exp_alerts:
+          - exp_labels:
+              # absent_over_time keeps only the matcher's own job label —
+              # there is no series to take an instance from.
+              job: node_exporter
+              severity: ticket
+              team: stellarindex
+              component: infra
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/host-down.md
+              summary: "Host  unreachable"
+              description: |
+                node_exporter on  hasn't scraped in 2+ min.
+                Either the host is down or the scrape path is broken. Service-
+                level alerts (timescale/redis/api) on this host will also fire.
+
   # ── C6-118, false-positive direction ─────────────────────────────
   # A small host: 650 GB pool, 600 GB of it FREE (92 % empty). Nothing
   # is wrong. Post-fix neither alert fires.
