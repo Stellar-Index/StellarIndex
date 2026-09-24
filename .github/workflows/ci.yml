@@ -1742,6 +1742,10 @@ jobs:
           echo "${SHA}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
           gitleaks detect --redact --verbose --no-banner
+          # Pins the allowlists' scope against this same binary: no source
+          # file exempted wholesale, and every .gitleaksignore fingerprint
+          # reachable from HEAD (needs the fetch-depth: 0 checkout above).
+          ./scripts/ci/gitleaks-allowlist-scope-test.sh
 
   # ────────────────────────────────────────────────────────────────
   # Build — the binaries must compile on every PR.

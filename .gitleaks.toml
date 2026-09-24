@@ -1,8 +1,16 @@
 # Gitleaks config — allowlists only, no custom rules. The default
-# ruleset still applies (extends = "gitleaks"). We lean on path-
-# based allowlists instead of fingerprint-in-.gitleaksignore
-# because squash merges change commit hashes, which breaks
-# fingerprint-based ignores every time a PR lands on main.
+# ruleset still applies (extends = "gitleaks").
+#
+# An exemption names the LITERAL SHAPE that is not a secret (a `regexes`
+# entry), not the file it happens to live in. A `paths` entry blanks every
+# rule for every line of a file forever, so a real credential pasted into an
+# allowlisted test would never be reported. `paths` is used alone only for
+# local-dev bulk that is never committed, and for generated / spec artefacts
+# whose example values are key-shaped by design — a regex cannot tell those
+# examples from a real key of the same shape.
+# scripts/ci/gitleaks-allowlist-scope-test.sh plants a credential in every
+# tracked file a `paths` entry matches and fails unless it is reported or
+# the file is one of those artefacts.
 #
 # Each allowlist below documents the reason the flagged string is
 # a false positive.
@@ -30,53 +38,55 @@ paths = [
   # verify.sh cannot pass on ANY operator machine that actually holds the
   # inventory, which is every machine that can run a deploy. The
   # protection that matters here is the COMMITTED-HISTORY scan below,
-  # which still sees these paths if anyone ever force-adds one.
+  # which still sees these paths if anyone ever force-adds one. No dot
+  # after the host name, so the TRACKED r*.example.yml templates (which
+  # .gitignore re-includes) stay scanned.
   '''^configs/ansible/inventory/[^/]+\.secrets\.yml$''',
-  '''^configs/ansible/inventory/r[^/]*\.yml$''',
+  '''^configs/ansible/inventory/r[^/.]*\.yml$''',
   '''(^|/)node_modules/''',
   '''^web/[^/]+/(\.next|out)/''',
   '''^docs/archive/''',
-  # Lake-derived base64-XDR golden fixtures (public on-chain event
-  # bodies, #89b / #89c) — ALSO rule-scoped below; duplicated here
-  # because newer gitleaks (8.30 local) does not honor extended-rule
-  # allowlists the way CI's pinned 8.21.2 does.
-  '''internal/sources/sushiswap_v3/fixtures_test\.go''',
-  '''internal/sources/cctp/governance_test\.go''',
-  '''internal/sources/cctp/full_census_test\.go''',
-  # Listing-sync address-form test table (also rule-scoped at the end of
-  # this file, for the same 8.30-vs-8.21 reason).
-  '''internal/ops/ingest/listing_sync_test\.go''',
-  # Lake-derived base64-XDR golden fixtures (public on-chain event
-  # bodies) for the blend_backstop decoder-bug-fix audit (2026-07-09).
-  # ALSO rule-scoped below; duplicated for the same reason as the cctp
-  # entries above.
-  '''internal/sources/blend_backstop/decode_test\.go''',
-  '''internal/sources/blend_emitter/source_test\.go''',
-  # Lake-derived base64-XDR golden fixtures (public on-chain event
-  # bodies) for the Phoenix rewards-topics decoder (ROADMAP #89,
-  # 2026-07-10). ALSO rule-scoped below; duplicated for the same
-  # reason as the cctp/blend_backstop/blend_emitter entries above.
-  '''internal/sources/phoenix/rewards_test\.go''',
-  # Lake-derived base64-XDR golden fixtures + public C-strkey token /
-  # contract IDs for the aquarius pool-governance + defindex-harvest
-  # decode-VALUE golden tests (DAT-15, 2026-08-17). ALSO rule-scoped
-  # below; duplicated for the same reason as the entries above.
-  '''internal/sources/aquarius/golden_realbytes_test\.go''',
-  '''internal/sources/defindex/golden_realbytes_test\.go''',
-  # Lake-derived base64-XDR ambiguous-swap fixture + public C-strkey
-  # pair/token IDs for the soroswap gen-0-phantom root-cause golden test
-  # (2026-08-18). ALSO rule-scoped below.
-  '''internal/sources/soroswap/ambiguous_swap_real_fixture_test\.go''',
-  # Lake-derived base64-XDR golden fixture (public on-chain
-  # set_protocol_fee Vec body) + public C-strkey pool contract IDs for
-  # the aquarius fee-Vec-decode golden test (2026-08-18). ALSO
-  # rule-scoped below; duplicated for the same reason as the entries
-  # above.
-  '''internal/sources/aquarius/fee_vec_golden_test\.go''',
 ]
 
 [[rules]]
 id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Public Stellar strkeys: a G account id, C contract id or L liquidity-pool id (version byte + 32-byte payload + CRC16 = 56 base32 chars), optionally inside a CODE:ISSUER / CODE-ISSUER asset id. These are public ledger identifiers by construction and fill the decoder, supply, pricing and explorer fixtures; the entropy heuristic reads them as generic keys whenever the variable name ends in key/token/id. The secret-seed form (S...) is deliberately NOT matched, so a leaked seed still trips."
+regexes = [
+  '''^(?:[A-Za-z0-9]{1,12}[:-])?[GCL][A-Z2-7]{55}$''',
+]
+
+[[rules.allowlists]]
+description = "Base64 XDR golden fixtures in Go tests: topics_xdr / data_xdr / LedgerKey bodies captured from the certified raw lake (public on-chain data). Every XDR union these fixtures carry opens with a 4-byte big-endian discriminant below 2^8, so the base64 always starts with AAAA; a random credential starts that way with probability 2^-24. Scoped to *_test.go so the exemption cannot reach production code."
+condition = "AND"
+paths = [
+  '''_test\.go$''',
+]
+regexes = [
+  '''^AAAA[A-Za-z0-9+/]{12,}={0,2}$''',
+]
+
+[[rules.allowlists]]
+description = "Listing-sync address-form table: a contract id deliberately one character short, to prove the parser rejects it. Not a valid strkey, so the strkey entry above does not cover it."
+condition = "AND"
+paths = [
+  '''internal/ops/ingest/listing_sync_test\.go''',
+]
+regexes = [
+  '''^C[A-Z2-7]{54}$''',
+]
+
+[[rules.allowlists]]
+description = "Test-only Redis lock-key fixture (`abcdef0123456789`) used by the signup-email-locker concurrency test. Fabricated 16-hex-char idempotency key; trips the entropy heuristic but is not a credential."
+condition = "AND"
+paths = [
+  '''internal/auth/signup_email_locker_test\.go''',
+]
+regexes = [
+  '''^abcdef0123456789$''',
+]
+
 [[rules.allowlists]]
 description = "Redacted third-party NODE_SEED quoted in a security-finding writeup for the legacy Dash k8s cluster. Not our credential; documentation of a known violation."
 paths = [
@@ -84,51 +94,7 @@ paths = [
 ]
 
 [[rules.allowlists]]
-description = "Test-only Stellar G-strkey (public account ID, not a secret) used to stamp a known observer identity in reflector decoder tests. No private key paired."
-paths = [
-  '''test/integration/ledgerstream_to_storage_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar C-strkey (public contract ID, not a secret) used as the SAC-wrapped fixture for the supply cross-check tests. Contract IDs are deterministic public ledger entries — not credentials."
-paths = [
-  '''internal/supply/crosscheck_test\.go''',
-  '''internal/supply/classic_test\.go''',
-  '''internal/supply/sep41_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar G-strkey fixture (Circle USDC issuer's public account ID) used by the pipeline-dispatcher supply-observer registration test. Bare G-address triggers gitleaks' generic-api-key entropy heuristic; prefixing with 'USDC:' (as in the supply-package fixtures) is the only structural difference. Public account IDs aren't credentials."
-paths = [
-  '''internal/pipeline/dispatcher_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar G-strkey + C-strkey fixtures (Circle USDC issuer + USDC SAC contract id, both public ledger entries) used by trades.usd_volume tests for L2.2 phase 1. Same pattern as the dispatcher_test.go allowlist — bare addresses trip the entropy heuristic, but they're not credentials."
-paths = [
-  '''internal/storage/timescale/trades_usd_volume_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar C-strkey fixtures (public Soroban contract IDs) standing in for a token/token pair in the usd-volume restamp mirror-tier tests. They exist to prove the substance gate REFUSES to price a pair with no XLM or USD-pegged leg, so the addresses are deliberately arbitrary and pair with no private key. Same entropy-heuristic false positive as the trades_usd_volume_test.go allowlist above."
-paths = [
-  '''internal/storage/timescale/usd_volume_restamp_mirrors_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar G-strkey fixture (Circle USDC issuer) embedded in a JSON wire-payload string the pkg/client AssetDetail decoder test feeds to encoding/json. Bare G-address trips the entropy heuristic; not a credential."
-paths = [
-  '''pkg/client/asset_detail_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar G-strkey fixture (Circle USDC issuer) embedded in pkg/client godoc Example* functions. Same shape as asset_detail_test.go — bare G-address trips entropy heuristic; public account ID isn't a credential."
-paths = [
-  '''pkg/client/example_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Generated Redocly HTML — embeds OpenAPI example values (canonical asset_ids: G-strkeys, C-strkeys, transaction hashes) that look like high-entropy secrets to gitleaks. The file is a build artefact regenerated from openapi/stellar-index.v1.yaml; the spec itself is scanned and any real secret would be caught there."
+description = "Generated Redocly HTML — embeds OpenAPI example values (canonical asset_ids: G-strkeys, C-strkeys, transaction hashes) that look like high-entropy secrets to gitleaks. The file is a build artefact regenerated from openapi/stellar-index.v1.yaml."
 paths = [
   '''docs/reference/api/index\.html''',
 ]
@@ -138,18 +104,6 @@ description = "OpenAPI spec example values for /v1/signup + /v1/dashboard/keys: 
 paths = [
   '''openapi/stellar-index\.v1\.yaml''',
   '''web/explorer/src/api/types\.ts''',
-]
-
-[[rules.allowlists]]
-description = "Explorer issuer-detail page — embeds Circle USDC issuer's public Stellar G-strkey as the static-params fallback so the page pre-renders with at least one route in the CI stub. Bare G-address is a public account ID, not a credential. Same pattern as the supply tests already allowlisted above."
-paths = [
-  '''web/explorer/src/app/issuers/\[g_strkey\]/page\.tsx''',
-]
-
-[[rules.allowlists]]
-description = "Explorer aggregators page — hardcoded contract IDs for Soroswap/Phoenix/Aquarius/Comet/DefIndex routers, factories, and autocompound vaults. These are deterministic public on-chain entries — Soroban contract IDs are derived from the hash of the deployer + WASM, NOT credentials. Used to label rows in the aggregators listing without a per-network registry roundtrip."
-paths = [
-  '''web/explorer/src/app/aggregators/page\.tsx''',
 ]
 
 [[rules.allowlists]]
@@ -174,85 +128,9 @@ paths = [
 ]
 
 [[rules.allowlists]]
-description = "Test-only Stellar G-strkey fixture (Circle USDC issuer's public account ID) used by the /v1/issuers handler tests. Bare G-address triggers gitleaks' generic-api-key entropy heuristic; same shape as the supply / dispatcher / pkg-client allowlists already declared above. Public account IDs aren't credentials."
-paths = [
-  '''internal/api/v1/issuers_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Historical working-doc (removed from the tree, retained in git history) — quotes a Stellar G-strkey (Circle USDC issuer) inline in a user-journey writeup as one of the example issuers a user would explore. Same entropy-heuristic false positive as the test-file allowlists; public account ID, not a credential."
+description = "Historical working-doc (removed from the tree, retained in git history) — a user-journey writeup whose prose (`Challenge -> verify -> JWT -> authenticated request -> ...`) trips the entropy heuristic. Not a credential, and the file no longer exists, so no live file is blinded."
 paths = [
   '''docs/audit-2026-05-02/03-journeys\.md''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar asset-key fixture (`USDC-G...`, Circle USDC's canonical CODE-ISSUER asset_id) used by the SAC-wrapper classic-supply handler test. The bare G-strkey portion trips gitleaks' generic-api-key entropy heuristic; same shape as the supply / dispatcher / issuers allowlists above. Public asset identifiers aren't credentials."
-paths = [
-  '''internal/api/v1/asset_supply_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar C-strkey fixtures (synthetic pool + token contract IDs) used by the comet liquidity-storage integration test. Contract IDs are deterministic public ledger entries (hash of deployer + WASM), not credentials — same pattern as the supply/aggregators allowlists above."
-paths = [
-  '''test/integration/comet_liquidity_storage_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Circle CCTP mainnet contract IDs (TokenMessengerMinter / MessageTransmitter / CctpForwarder C-strkeys), verified against developers.circle.com and github.com/circlefin/stellar-cctp. These are public Soroban contract addresses (deterministic ledger entries), not credentials — the entropy heuristic trips on the 56-char base32 strkey."
-paths = [
-  '''internal/sources/cctp/events\.go''',
-]
-
-[[rules.allowlists]]
-description = "Blend Emitter mainnet contract ID (the single canonical Emitter C-strkey spanning Blend V1→V2), verified directly against the certified ClickHouse raw lake (2026-07-09). Public Soroban contract address (deterministic ledger entry), not a credential — the entropy heuristic trips on the 56-char base32 strkey. Same rationale as the cctp/events.go allowlist above."
-paths = [
-  '''internal/sources/blend_emitter/events\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only base64-encoded XDR fixtures (ScVal Address/Symbol/Vec bodies for real Aquarius update_reserves / deposit_liquidity / withdraw_liquidity events, captured from the lake) + Stellar C-strkey token/pool contract-id fixtures, used by the aquarius liquidity/reserves decoder golden tests AND the timescale storage integration test. These are XDR-encoded public ledger data / deterministic public contract IDs (i128 amounts), not credentials — the base64 blobs + strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the other decoder-fixture allowlists above."
-paths = [
-  '''internal/sources/aquarius/liquidity_decode_test\.go''',
-  '''test/integration/aquarius_liquidity_storage_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only base64-encoded XDR fixtures (topics_xdr/data_xdr for real Aquarius pool-governance apply_upgrade/commit_upgrade/set_privileged_addrs/trade + defindex strategy.harvest events, captured DIRECTLY from the ClickHouse raw lake) + the public Stellar C-strkey token/contract/account IDs those events decode to (e.g. the XLM native SAC CAS3J7GY…), used by the decode-VALUE golden tests (DAT-15, 2026-08-17). XDR-encoded public ledger data + deterministic public strkeys (contract IDs are the hash of deployer + WASM), not credentials — the base64 blobs + 56-char base32 strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/cctp/phoenix decoder-fixture allowlists above."
-paths = [
-  '''internal/sources/aquarius/golden_realbytes_test\.go''',
-  '''internal/sources/defindex/golden_realbytes_test\.go''',
-  '''internal/sources/soroswap/ambiguous_swap_real_fixture_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only base64-encoded XDR fixture (data_xdr/topics_xdr for a real Aquarius set_protocol_fee Vec[u32] body, captured from the ClickHouse raw lake at ledger 57,697,910) + the public Stellar C-strkey pool contract IDs (CBL7MWLE…, CATP23X4…) that emitted it, used by the fee-Vec-decode golden test (2026-08-18). XDR-encoded public ledger data + deterministic public contract IDs, not credentials — the base64 blobs + 56-char base32 strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/cctp/phoenix decoder-fixture allowlists above."
-paths = [
-  '''internal/sources/aquarius/fee_vec_golden_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar G-strkey + C-strkey fixtures (verified issuers + same-ticker impersonator issuers, e.g. USDC/AQUA/EURC/SHX issuer account IDs and SAC contract IDs) used by the served-data-correctness tests for the ticker-collision / verified-badge / dual-form-price cases. Bare public account/contract IDs trip the entropy heuristic; not credentials — same shape as the supply/dispatcher/issuers allowlists above."
-paths = [
-  '''internal/api/v1/served_data_correctness_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Phoenix swap fixtures — base64-encoded XDR (ScvMap/Symbol swap-event bodies for the new Map-body pool CBENABXP…, captured from ledger 63307899) + C-strkey pool/token contract IDs — used by the phoenix volatile + map-body swap decoder golden tests. XDR-encoded public ledger data + deterministic public contract IDs (i128 amounts), not credentials — the base64 blobs + strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/cctp decoder-fixture allowlists above."
-paths = [
-  '''internal/sources/phoenix/mapswap_test\.go''',
-  '''internal/sources/phoenix/source_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar L-strkey fixture (a liquidity-pool id, e.g. LBBQ…) used by the native CAP-38 liquidity-pool state-reader test. L-strkeys are deterministic public ledger-entry identifiers (SHA-256 of the pool params), not credentials — the 56-char base32 trips gitleaks' generic-api-key entropy heuristic. Same rationale as the C-strkey / G-strkey fixture allowlists above."
-paths = [
-  '''internal/storage/clickhouse/liquidity_pool_state_reader_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Redis lock-key fixture (`abcdef0123456789`) used by the signup-email-locker concurrency test. Fabricated 16-hex-char idempotency key; trips the entropy heuristic but is not a credential."
-paths = [
-  '''internal/auth/signup_email_locker_test\.go''',
 ]
 
 [[rules.allowlists]]
@@ -261,81 +139,14 @@ paths = [
   '''docs/audit-2026-05-12-codex/evidence/cross-file-interactions\.md''',
 ]
 
-[[rules.allowlists]]
-description = "Test-only Stellar C-strkey / G-strkey fixtures (synthetic pool / token / collateral contract IDs + account IDs) used by the orphaned-analytics bespoke-surfacing storage integration tests (sorocredit credit tables, comet/phoenix liquidity-flow depth, phoenix stake, soroswap skim). Deterministic public ledger entries (contract IDs are the hash of deployer + WASM) / public account IDs, not credentials — bare strkeys trip gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/comet/phoenix decoder-fixture + supply allowlists above."
-paths = [
-  '''test/integration/sorocredit_bespoke_storage_test\.go''',
-  '''test/integration/dex_liquidity_depth_storage_test\.go''',
-  '''test/integration/blend_emissions_bespoke_storage_test\.go''',
-]
-[[rules.allowlists]]
-description = "Test-only Stellar G-strkey fixtures (public account IDs) used by the #374 last-known-auth-flags reader test: a removed issuer and a legacy account whose intra_ledger_seq is all-zero. Same entropy heuristic as the other G-strkey allowlists above — a bare 56-char base32 address looks like a generic API key and is not one. Account IDs are public ledger entries, and these two are specifically dead on-chain."
-paths = [
-  '''internal/storage/clickhouse/account_flags_bulk_test\.go''',
-]
-
-
-
 # ── curl-auth-header (default rule) ─────────────────────────────────
 # The default ruleset flags any `curl -H "Authorization: Bearer …"`
-# string. The explorer API-docs page embeds exactly that as a usage
-# EXAMPLE; the bearer value is an obvious placeholder, not a real key.
+# string. The explorer API-docs page and the dashboard onboarding card
+# embed exactly that as a usage EXAMPLE with an obvious placeholder.
 [[rules]]
 id = "curl-auth-header"
 [[rules.allowlists]]
-description = "Explorer API-docs page (/docs) — a `curl -H \"Authorization: Bearer sip_your_key_here\"` usage example showing how to pass an API key. `sip_your_key_here` is a literal placeholder (the whole point of the snippet is to show the header shape); not a credential. Path-scoped so a real secret added to this file under any other rule is still caught."
-paths = [
-  '''web/explorer/src/app/docs/page\.tsx''',
-  # Same placeholder pattern on the dashboard onboarding card
-  # (LC-061 "working first request" snippet, `sip_your_key`).
-  '''web/explorer/src/app/dashboard/page\.tsx''',
-]
-
-[[rules.allowlists]]
-description = "Test-only token-SAC C-strkey fixtures (e.g. the XLM native SAC CAS3J7GY…, USDC SAC CCW67TSZ…) used by the protocol pool-pair label resolver tests. Deterministic public Stellar contract identifiers, not credentials — the 56-char base32 trips gitleaks' generic-api-key entropy heuristic. Same rationale as the aquarius/phoenix/liquidity-pool decoder-fixture allowlists above (#91)."
-paths = [
-  '''internal/api/v1/protocol_pairs_internal_test\.go''',
-  '''internal/api/v1/protocols_pairs_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Base64 XDR event-body golden fixtures pulled from real mainnet lake events (public on-chain data — governance topics ownership_transfer / admin_changed / token_pair_linked etc., ledgers 62146641-62225106) for the cctp governance decoder tests (#89b, 2026-07-09). High-entropy base64 trips the generic-api-key heuristic; same class as the phoenix/aquarius decoder-fixture allowlists."
-paths = [
-  '''internal/sources/cctp/governance_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Base64 XDR event-body golden fixtures pulled from real mainnet lake events (public on-chain data — the remaining 16 lower-signal admin/governance topics: admin_change_started, attester_enabled, attester_manager_updated, denylisted/un_denylisted, denylister_changed, fee_recipient_set, max_message_body_size_updated, min_fee_controller_set, pauser_changed, rescuer_changed, set_burn_limit_per_message, set_token_controller, signature_threshold_updated, swap_minter_config_set, token_decimal_config_added; ledgers 62146641-62630067) for the cctp full-census decoder tests (#89c, 2026-07-09). High-entropy base64 trips the generic-api-key heuristic; same class as the governance_test.go / phoenix / aquarius decoder-fixture allowlists."
-paths = [
-  '''internal/sources/cctp/full_census_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Base64 XDR topic/event-body golden fixtures pulled from the real mainnet ClickHouse lake (public on-chain data — Blend Backstop V1/V2 gulp_emissions, rw_zone, rw_zone_add, withdraw; ledgers 51499926-57072018) for the blend_backstop decoder-bug-fix audit (2026-07-09). High-entropy base64 trips the generic-api-key heuristic; same class as the cctp governance_test.go / full_census_test.go / phoenix / aquarius decoder-fixture allowlists."
-paths = [
-  '''internal/sources/blend_backstop/decode_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Base64 XDR topic/body golden fixtures pulled DIRECTLY from the certified ClickHouse raw lake (public on-chain data — the Blend Emitter contract's distribute/drop/q_swap/swap events, ledgers 51524666-57467292, 2026-07-09) for the blend_emitter decoder tests, plus the Emitter's own C-strkey mainnet address and the backstop/recipient/token C-strkeys those events decode to. High-entropy base64 + bare strkeys trip the generic-api-key heuristic; same class as the cctp/aquarius/phoenix decoder-fixture allowlists above. Deterministic public ledger data, not credentials."
-paths = [
-  '''internal/sources/blend_emitter/source_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Base64 XDR topic/body golden fixtures pulled DIRECTLY from the certified ClickHouse raw lake (public on-chain data — Phoenix stake-contract withdraw_rewards/distribute_rewards events, ledgers 53587626/53588319/53589647, 2026-07-10) for the ROADMAP #89 rewards-topics decoder tests, plus the reward-token/asset SAC C-strkey (CBZ7M5B3…) those events decode to. High-entropy base64 + a bare strkey trip the generic-api-key heuristic; same class as the mapswap_test.go / source_test.go phoenix decoder-fixture allowlist above. Deterministic public ledger data, not credentials."
-paths = [
-  '''internal/sources/phoenix/rewards_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar C-strkeys (the pool contract and the two token contracts it trades) plus a transaction hash and base64 XDR golden bodies, all pulled directly from the raw lake. Every one is a public on-chain identifier that anyone can read off the ledger, and the whole point of the fixtures is that they are the real bytes the decoder must handle. The entropy rule reads a 56-character base32 contract id as a generic key."
-paths = [
-  '''internal/sources/sushiswap_v3/fixtures_test\.go''',
-]
-
-[[rules.allowlists]]
-description = "Test-only Stellar C-strkey and G-strkey fixtures in the listing-sync address-form table (a contract id, a classic CODE-GISSUER pair, an issuer account, a one-character-short contract id). Every one is a public ledger identifier or a deliberately malformed copy of one; the table exists to prove the parser classifies each form. The entropy rule reads the 56-character base32 ids as generic keys; nothing here pairs with a private key."
-paths = [
-  '''internal/ops/ingest/listing_sync_test\.go''',
+description = "`curl -H \"Authorization: Bearer sip_your_key_here\"` usage examples (explorer /docs page, dashboard onboarding card) showing how to pass an API key. The bearer value is a literal placeholder, not a credential; matched by value so a real key in the same files is still caught."
+regexes = [
+  '''^sip_your_key(?:_here)?$''',
 ]
