@@ -332,11 +332,37 @@ func (r *ExplorerReader) ContractCodeHistory(ctx context.Context, contractID str
 	// key_xdr predicate over the whole changes log (8s+ cold, the last
 	// persistent 503 class in the 2026-08-09 route sweep) into a
 	// primary-key walk. Fallback keeps the legacy scan for deployments
-	// without the index.
+	// without the index, and for contracts the index has not reached.
 	if r.instanceChangesIndexAvailable(ctx) {
-		return r.contractCodeHistoryIndexed(ctx, cidHash)
+		out, authoritative, err := r.contractCodeHistoryFromIndex(ctx, cidHash)
+		if err != nil || authoritative {
+			return out, err
+		}
 	}
+	return r.contractCodeHistoryLegacy(ctx, cidHash)
+}
 
+// contractCodeHistoryFromIndex reads the indexed timeline. An empty result is
+// authoritative only when the index holds a row for this contract (a SAC):
+// the availability probe is table-global and cannot see partial backfill, so
+// a miss falls through to the legacy scan exactly as contractWasmHash does.
+func (r *ExplorerReader) contractCodeHistoryFromIndex(ctx context.Context, cid xdr.Hash) ([]ContractCodeVersion, bool, error) {
+	out, err := r.contractCodeHistoryIndexed(ctx, cid)
+	if err != nil || len(out) > 0 {
+		return out, true, err
+	}
+	_, ok, err := r.contractWasmHashIndexed(ctx, cid)
+	if errors.Is(err, ErrContractIsSAC) {
+		return nil, true, nil
+	}
+	if err != nil {
+		return nil, true, err
+	}
+	return nil, ok, nil
+}
+
+// contractCodeHistoryLegacy is ContractCodeHistory's scan over the changes log.
+func (r *ExplorerReader) contractCodeHistoryLegacy(ctx context.Context, cidHash xdr.Hash) ([]ContractCodeVersion, error) {
 	keys, err := instanceKeyXDR(cidHash)
 	if err != nil {
 		return nil, err

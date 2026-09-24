@@ -294,3 +294,67 @@ func TestContractWasmHash_IndexedResolvesPreCaptureContract(t *testing.T) {
 		t.Fatalf("SAC row: err = %v, want ErrContractIsSAC", err)
 	}
 }
+
+// indexMissStub serves a usable instance index holding no timeline rows for
+// this contract; indexRow is its newest-row answer (nil = no row at all) and
+// legacy is what the changes-log scan returns.
+func indexMissStub(indexRow []any, legacy [][]any) *stubConn {
+	conn := &stubConn{}
+	conn.respond = func(q string) (driver.Rows, error) {
+		switch {
+		case strings.Contains(q, "FROM stellar.ledger_entry_changes"):
+			return &stubRows{data: legacy}, nil
+		case strings.Contains(q, "SELECT is_sac, wasm_hash"):
+			if indexRow == nil {
+				return &stubRows{}, nil
+			}
+			return &stubRows{data: [][]any{indexRow}}, nil
+		case strings.Contains(q, "contract_instance_changes LIMIT 1"):
+			return &stubRows{data: [][]any{{uint32(1)}}}, nil
+		default: // the indexed timeline read
+			return &stubRows{}, nil
+		}
+	}
+	return conn
+}
+
+// TestContractCodeHistory_IndexMissFallsBackToLegacy: the availability probe
+// is table-global, so a still-backfilling index holds no rows for a contract
+// it has not reached. That miss is not proof of "no history"; the reader
+// must fall through to the changes-log scan, as contractWasmHash does.
+func TestContractCodeHistory_IndexMissFallsBackToLegacy(t *testing.T) {
+	rawA := wasmHashN(0xAA)
+	base := time.Unix(1700000000, 0).UTC()
+	conn := indexMissStub(nil, [][]any{{uint32(100), base, instanceEntryB64(t, rawA)}})
+	r := &ExplorerReader{conn: conn}
+
+	got, err := r.ContractCodeHistory(context.Background(), testContractID)
+	if err != nil {
+		t.Fatalf("ContractCodeHistory: %v", err)
+	}
+	want := ContractCodeVersion{Ledger: 100, CloseTime: base, WasmHash: hex.EncodeToString(rawA[:])}
+	if len(got) != 1 || got[0] != want {
+		t.Fatalf("versions = %+v, want [%+v] from the legacy scan", got, want)
+	}
+}
+
+// TestContractCodeHistory_IndexedSACIsAuthoritative: a SAC row proves the
+// index reached this contract and its executable can never be WASM, so the
+// empty timeline stands without the scan-shaped legacy read.
+func TestContractCodeHistory_IndexedSACIsAuthoritative(t *testing.T) {
+	conn := indexMissStub([]any{uint8(1), ""}, nil)
+	r := &ExplorerReader{conn: conn}
+
+	got, err := r.ContractCodeHistory(context.Background(), testContractID)
+	if err != nil {
+		t.Fatalf("ContractCodeHistory: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("versions = %+v, want none for a SAC", got)
+	}
+	for _, q := range conn.queries {
+		if strings.Contains(q, "FROM stellar.ledger_entry_changes") {
+			t.Fatalf("SAC verdict from the index must not trigger the legacy scan: %s", q)
+		}
+	}
+}

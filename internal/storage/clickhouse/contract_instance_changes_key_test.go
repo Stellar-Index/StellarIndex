@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -140,6 +141,10 @@ func instanceIndexStub(keyShapeErr error) *stubConn {
 			return &stubRows{data: [][]any{{uint32(1)}}}, nil
 		case strings.Contains(q, "is_sac, wasm_hash"):
 			return &stubRows{data: [][]any{{uint8(0), strings.Repeat("ab", 32)}}}, nil
+		case strings.Contains(q, "SELECT ledger_seq, close_time, wasm_hash FROM ("):
+			// A non-empty timeline is authoritative, so the history read
+			// stays the last query issued.
+			return &stubRows{data: [][]any{{uint32(1), time.Unix(0, 0).UTC(), strings.Repeat("ab", 32)}}}, nil
 		default:
 			return &stubRows{}, nil
 		}
