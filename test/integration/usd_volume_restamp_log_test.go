@@ -153,26 +153,48 @@ func TestUSDVolumeRestampLog_Migration0173DownRefusesWhileHoldingBeforeImages(t 
 	}
 
 	_, thisFile, _, _ := runtime.Caller(0)
-	m, err := migrate.New("file://"+filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations"), dsn)
+	migrationsDir := "file://" + filepath.Join(filepath.Dir(thisFile), "..", "..", "migrations")
+
+	// The RAISE EXCEPTION aborts the down's transaction mid-statement and
+	// golang-migrate's postgres driver never issues a ROLLBACK on that
+	// connection, so a later command on the same *Migrate instance (Force,
+	// or another Migrate) fails to take its advisory lock ("database
+	// locked") rather than surfacing the refusal. assertDownRefused in
+	// migrations_test.go hits the same hazard: close the instance that ran
+	// the failing down immediately, then use a fresh one per step.
+	m, err := migrate.New(migrationsDir, dsn)
 	if err != nil {
 		t.Fatalf("migrate.New: %v", err)
 	}
-	defer func() { _, _ = m.Close() }()
-
 	err = m.Migrate(172)
+	_, _ = m.Close()
 	if err == nil || !strings.Contains(err.Error(), "still holds before-images") {
 		t.Fatalf("0173 down with a logged before-image: err = %v, want the RAISE refusal", err)
 	}
 	assertTableExists(t, db, ctx, "usd_volume_restamp_log")
+
 	// The failed down rolled back inside its own transaction; clear
 	// golang-migrate's dirty flag at the version the schema is really at.
-	if err := m.Force(173); err != nil {
+	f, err := migrate.New(migrationsDir, dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	err = f.Force(173)
+	_, _ = f.Close()
+	if err != nil {
 		t.Fatalf("force 173: %v", err)
 	}
+
 	if _, err := db.ExecContext(ctx, `DELETE FROM usd_volume_restamp_log`); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.Migrate(172); err != nil {
+
+	d, err := migrate.New(migrationsDir, dsn)
+	if err != nil {
+		t.Fatalf("migrate.New: %v", err)
+	}
+	defer func() { _, _ = d.Close() }()
+	if err := d.Migrate(172); err != nil {
 		t.Fatalf("0173 down on an empty log: %v", err)
 	}
 	assertTableAbsent(t, db, ctx, "usd_volume_restamp_log")
