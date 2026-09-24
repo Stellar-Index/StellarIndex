@@ -1453,12 +1453,17 @@
         echo "# TYPE stellarindex_timescale_job_failures_total counter"
       } >> "$TMP"
 
-      q "SELECT j.proc_name, COALESCE(j.hypertable_name,'-'), js.job_id, js.total_failures
+      # schedule_interval rides along so the alert can judge a job by
+      # the runs it was scheduled for, not by one absolute count that a
+      # slow enough job can never reach.
+      q "SELECT j.proc_name, COALESCE(j.hypertable_name,'-'), js.job_id, js.total_failures,
+                EXTRACT(epoch FROM j.schedule_interval)::bigint
          FROM timescaledb_information.job_stats js
          JOIN timescaledb_information.jobs j USING (job_id)"
       rows=0
       bad=0
-      while IFS='|' read -r proc ht jid fails; do
+      intervals=""
+      while IFS='|' read -r proc ht jid fails iv; do
         [ -n "${jid:-}" ] || continue
         # job_id is a LABEL here, but it is still read from the reply, so
         # a command tag would land in it and shift every later field —
@@ -1468,8 +1473,21 @@
           rows=$((rows + 1))
         else
           bad=$((bad + 1))
+          continue
+        fi
+        # An unparseable interval costs only the gauge: the failure count
+        # is still true, and query_ok 0 makes the blind interval arm loud.
+        if is_num "${iv:-}"; then
+          intervals+="stellarindex_timescale_job_schedule_interval_seconds{job_id=\"$jid\",proc=\"$proc\",hypertable=\"$ht\"} $iv"$'\n'
+        else
+          bad=$((bad + 1))
         fi
       done <<< "$Q_OUT" >> "$TMP"
+      {
+        echo "# HELP stellarindex_timescale_job_schedule_interval_seconds Configured schedule_interval per TimescaleDB background job."
+        echo "# TYPE stellarindex_timescale_job_schedule_interval_seconds gauge"
+        printf '%s' "$intervals"
+      } >> "$TMP"
       [ "$bad" -eq 0 ] || Q_OK=0
       health job_stats "$Q_OK" "$rows"
 
