@@ -47,10 +47,27 @@ memory-pressured hosts the bias would have been ~60 s and
 `stellarindex_sla_probe_freshness_breach` would have paged permanently
 on a healthy tip.
 
+The per-run freshness figure is the **stalest** response in the run, not
+the median: the 30 s promise is per response, and a median passes a run
+in which 49 % of reads broke it.
+
+A 2xx only counts as a success when its body can carry the measurement.
+`/price` and `/price/tip` must return a parseable `data.observed_at`,
+and `/oracle/latest` must return a non-empty `data`. Otherwise the
+sample is a failure: a response-shape change that stops `observed_at`
+parsing, or an oracle outage answered with `{"data":[]}`, fails the run
+(`unit_failed`, then `stellarindex_sla_probe_stale`) instead of silently
+dropping the freshness series or reading 100 % available.
+
 The SLA probe drives synthetic load against the deployed API,
-measures per-endpoint p50/p95/p99 latency, parses `observed_at`
-on the price endpoints to compute freshness, and tallies 2xx vs
-non-2xx for availability. Each run emits a JSON report and exits
+measures per-endpoint p50/p95/p99 latency over its successful
+responses, parses `observed_at` on the price endpoints to compute
+freshness, and tallies 2xx vs non-2xx for availability. A failed
+request counts against availability and never enters the latency
+percentiles. The run deadline stops new requests but never cancels one
+in flight: each request runs to completion or to its own timeout
+(10 s, or the run duration if shorter) and is counted either way, so a
+hung API reads as failures, not as a run with no samples. Each run emits a JSON report and exits
 with code 0 (pass) or 1 (any SLA violated).
 
 The systemd timer runs the probe every 15 minutes — tight enough
@@ -150,10 +167,10 @@ emitted into `http_request_duration_seconds` would, at this traffic
 level, become 99%+ of the samples and the dashboard would then be
 describing the prober rather than the customers.
 
-### A zeroed probe file usually means a restart, not a broken probe
+### A latency-less probe file usually means a restart, not a broken probe
 
-If `sla_probe.prom` shows `0.000` for every latency, check
-`stellarindex_sla_probe_availability_pct` **first**:
+If `sla_probe.prom` carries no `stellarindex_sla_probe_latency_ms` line
+for an endpoint, check `stellarindex_sla_probe_availability_pct` **first**:
 
 ```sh
 grep -E "availability_pct|unit_failed" \
@@ -162,7 +179,8 @@ stat -c %y /var/lib/node_exporter/textfile_collector/sla_probe.prom
 ```
 
 Availability `0.000` with `unit_failed 1` means every request failed —
-so there were no successful samples to compute a latency from. The
+so there were no successful samples to compute a latency from, and the
+probe emits none rather than a `0.000` that would read as a fast API. The
 overwhelmingly common cause is that the run landed during a deploy
 while the API was restarting. Compare the file's mtime against the
 deploy window before investigating the probe itself. The values stay

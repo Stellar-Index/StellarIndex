@@ -161,6 +161,12 @@ each(clean, "avail_min", lambda v, m: 100.0)
 each(clean, "avail_under_frac", lambda v, m: 0.0)
 each(clean, "avail_weighted_num", lambda v, m: 81400.0)
 each(clean, "avail_weighted_den", lambda v, m: 814.0)
+# The real capture predates the time-weighted row (extract version 1);
+# add it for every endpoint the availability family names.
+clean["series"]["avail_time_weighted"] = [
+    {"metric": copy.deepcopy(r["metric"]), "value": [r["value"][0], "100.0"]}
+    for r in clean["series"]["avail_min"]
+]
 clean["series_gaps"] = []
 # One build, so the multi-build caveat must switch to its singular form.
 clean["series"]["api_versions"] = [
@@ -244,19 +250,34 @@ set_cell(cell, "p99_max", "healthz", "NaN")
 write("cell_p99_nan", cell)
 
 cell = copy.deepcopy(clean)
-drop_endpoint(cell, "avail_weighted_den", "price")
+drop_endpoint(cell, "avail_time_weighted", "price")
 write("cell_avail_missing", cell)
 
 cell = copy.deepcopy(clean)
-set_cell(cell, "avail_weighted_num", "price", "+Inf")
+set_cell(cell, "avail_time_weighted", "price", "+Inf")
 write("cell_avail_inf", cell)
+
+# `zero_sample_run` (#740) — one run in four recorded no samples for
+# /price and published availability 0; the other three read 100 %. Time
+# weighting gives 75 %. The legacy sample-count pair still says 100 %,
+# because a zero-sample run carries zero weight in it; a renderer that
+# reads that pair certifies the outage window.
+zsr = copy.deepcopy(clean)
+set_cell(zsr, "avail_time_weighted", "price", "75.0")
+write("zero_sample_run", zsr)
+
+# `legacy_weighting` — a version-1 extract: only the sample-count pair.
+# It cannot be re-certified under the time-weighted method.
+legacy = copy.deepcopy(clean)
+del legacy["series"]["avail_time_weighted"]
+write("legacy_weighting", legacy)
 
 # An endpoint the probe issued requests to (it has a samples/run row)
 # but that no latency or availability family names at all. Before the
 # fix it vanished from the table entirely rather than standing in it
 # with three empty cells.
 cell = copy.deepcopy(clean)
-for key in ("p95_max", "p99_max", "avail_min",
+for key in ("p95_max", "p99_max", "avail_min", "avail_time_weighted",
             "avail_weighted_num", "avail_weighted_den"):
     drop_endpoint(cell, key, "markets")
 write("cell_endpoint_unmeasured", cell)
@@ -444,6 +465,20 @@ UNMEASURED="$TMP/out-cell_endpoint_unmeasured/$(ls "$TMP/out-cell_endpoint_unmea
 assert_contains 'an endpoint with samples but no bound stays in the table' \
   "$UNMEASURED" "| \`markets\` | 814 | n/a | NOT PROVEN | n/a | NOT PROVEN | n/a | NOT PROVEN | n/a |"
 
+render "$TMP/zero_sample_run.json" "$TMP/out-zero_sample_run"
+expect 'a zero-sample outage run weighs its wall-clock time → rc 1, NOT PROVEN' 1 \
+  'NOT PROVEN — wrote'
+ZSR="$TMP/out-zero_sample_run/$(ls "$TMP/out-zero_sample_run")"
+assert_contains 'the outage run lowers the window availability it was part of' \
+  "$ZSR" '| 120.0 ms | PROVEN | 75.000 % | NOT PROVEN |'
+
+render "$TMP/legacy_weighting.json" "$TMP/out-legacy_weighting"
+expect 'a sample-count-weighted extract is not re-certified → rc 1' 1 \
+  'NOT PROVEN — wrote'
+LEGACY="$TMP/out-legacy_weighting/$(ls "$TMP/out-legacy_weighting")"
+assert_contains 'a version-1 availability cell reads n/a and NOT PROVEN' \
+  "$LEGACY" '| 120.0 ms | PROVEN | n/a | NOT PROVEN |'
+
 # ── A window with holes is not a clean window ───────────────────────────
 # `gapped` carries byte-identical numbers to `clean`. Only the hole
 # differs, and it must be the difference between PROVEN and not.
@@ -528,7 +563,9 @@ fi
 # The promql construction, the window clamping and the gap detection all
 # live in the fetch path and are reached by nothing above. The stub
 # answers query_range with a series that STOPS for two hours in the
-# middle, so the gap detector has something real to find.
+# middle, so the gap detector has something real to find. A second stub
+# ("lathole") stops only the latency series, as a probe-recorded outage
+# does: coverage must come from the series every run writes.
 STUB_PORT_FILE="$TMP/stub.port"
 # Landed in a file and run from there rather than backgrounded behind a
 # heredoc: bash echoes the entire job text when it reports killing the
@@ -542,21 +579,26 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlparse
 
-tmp, port_file = sys.argv[1], sys.argv[2]
+tmp, port_file, mode = sys.argv[1], sys.argv[2], sys.argv[3]
 NOW = 1789400000.0
 WINDOW = 7 * 86400
 STEP = 300
 ENDPOINTS = ["assets", "healthz", "price"]
 
-# One two-hour hole, three days in.
+# One hole, three days in: two hours of scraping stopped ("gap"), or 900 s
+# of runs with no successful response, which publish no latency ("lathole").
 GAP_START = NOW - WINDOW + 3 * 86400
-GAP_END = GAP_START + 2 * 3600
+GAP_END = GAP_START + (2 * 3600 if mode == "gap" else 900)
 
 
-def range_values():
+def has_hole(expr):
+    return mode == "gap" or "latency_ms" in expr
+
+
+def range_values(expr):
     out, t = [], NOW - WINDOW
     while t <= NOW:
-        if not (GAP_START <= t < GAP_END):
+        if not (has_hole(expr) and GAP_START <= t < GAP_END):
             out.append([t, "17"])
         t += STEP
     return out
@@ -576,11 +618,9 @@ def answer(expr):
     # Enough shape for the renderer; the point of this case is the fetch
     # path, not the arithmetic, which the extract cases already cover.
     if expr.startswith("count_over_time") and "[1h]" in expr:
-        return [{"metric": {}, "value": [NOW, "240"]}]
+        return [{"metric": {}, "value": [NOW, "180" if has_hole(expr) and mode != "gap" else "240"]}]
     if "count_over_time" in expr:
-        return [{"metric": {}, "value": [NOW, "40000"]}]
-    if "availability_pct" in expr and "samples" in expr:
-        return vec(81400.0)
+        return [{"metric": {}, "value": [NOW, "38000" if has_hole(expr) and mode != "gap" else "40000"]}]
     if "availability_pct" in expr and "bool" in expr:
         return vec(0.0)
     if "availability_pct" in expr:
@@ -618,7 +658,7 @@ class H(BaseHTTPRequestHandler):
             data = {"resultType": "matrix", "result": [
                 {"metric": {"endpoint": "assets", "host": "r1",
                             "quantile": "0.95"},
-                 "values": range_values()}]}
+                 "values": range_values(expr)}]}
         else:
             data = {"resultType": "vector", "result": answer(expr)}
         body = json.dumps({"status": "success", "data": data}).encode()
@@ -634,15 +674,19 @@ with open(port_file, "w") as fh:
     fh.write(str(srv.server_address[1]))
 srv.serve_forever()
 PY
-python3 "$TMP/stub.py" "$TMP" "$STUB_PORT_FILE" >/dev/null 2>&1 &
+HOLE_PORT_FILE="$TMP/stub-lathole.port"
+python3 "$TMP/stub.py" "$TMP" "$STUB_PORT_FILE" gap >/dev/null 2>&1 &
 STUB_PID=$!
-trap 'kill "$STUB_PID" 2>/dev/null; wait "$STUB_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
+python3 "$TMP/stub.py" "$TMP" "$HOLE_PORT_FILE" lathole >/dev/null 2>&1 &
+HOLE_PID=$!
+trap 'kill "$STUB_PID" "$HOLE_PID" 2>/dev/null; wait "$STUB_PID" "$HOLE_PID" 2>/dev/null; rm -rf "$TMP"' EXIT
 
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
-  [ -s "$STUB_PORT_FILE" ] && break
+  [ -s "$STUB_PORT_FILE" ] && [ -s "$HOLE_PORT_FILE" ] && break
   sleep 0.2
 done
 STUB_PORT="$(cat "$STUB_PORT_FILE" 2>/dev/null || true)"
+HOLE_PORT="$(cat "$HOLE_PORT_FILE" 2>/dev/null || true)"
 
 if [ -z "$STUB_PORT" ]; then
   echo "FAIL: the stub Prometheus never bound a port — the fetch path is" \
@@ -663,12 +707,47 @@ else
     'max_over_time'
   assert_contains 'the extract records the host filter field' \
     "$TMP/fetched.json" 'host_filter'
+  if python3 - "$TMP/fetched.json" <<'PY'
+import json
+import sys
+q = json.load(open(sys.argv[1]))["queries"]
+bad = [k for k, v in q.items()
+       if "availability_pct" in v and "sla_probe_samples" in v]
+sys.exit(1 if bad or "avail_time_weighted" not in q else 0)
+PY
+  then
+    echo "ok: no availability query weights a run by its sample count"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: an availability query weights runs by sample count, so a" \
+         "zero-sample outage run carries no weight (#740)" >&2
+    fail=$((fail + 1))
+  fi
 
   # Re-rendering the extract must reproduce the same verdict with no
   # network at all — the property the report tells its reader it has.
   render "$TMP/fetched.json" "$TMP/out-refetch"
   expect 'the saved extract re-renders offline to the same verdict' 1 \
     'window not clean'
+fi
+
+if [ -z "$HOLE_PORT" ]; then
+  echo "FAIL: the latency-hole stub never bound a port" >&2
+  fail=$((fail + 1))
+else
+  # A run with no successful response publishes no latency series. That
+  # is an outage the probe recorded (availability carries it), not a
+  # scraping hole, and must not cost the window its clean verdict.
+  base_env
+  fetch "http://127.0.0.1:${HOLE_PORT}" "$TMP/out-lathole" --window 7d
+  expect 'a latency-only hole is not a scraping gap' 0
+  LATHOLE="$TMP/out-lathole/$(ls "$TMP/out-lathole")"
+  assert_contains 'coverage reads the series every run writes' "$LATHOLE" \
+    '| Holes in the series (scraping stopped) | none |'
+  assert_contains 'the scrape interval comes from the every-run series' \
+    "$LATHOLE" '| Scrape interval (from the last hour) | 15 s |'
+  assert_absent 'a latency-only hole does not refuse the PASS' "$LATHOLE" \
+    '**This window is not clean.**'
 fi
 
 echo

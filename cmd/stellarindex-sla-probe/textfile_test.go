@@ -18,13 +18,13 @@ func TestWriteTextfile_PassRun(t *testing.T) {
 			{
 				Endpoint: "price", Path: "/price",
 				Samples: 100, Successes: 100, AvailabilityPct: 100.0,
-				LatencyMS:          latencyStats{P50: 12.0, P95: 45.0, P99: 78.0},
+				LatencyMS:          &latencyStats{P50: 12.0, P95: 45.0, P99: 78.0},
 				ObservedAtFreshSec: &fresh,
 			},
 			{
 				Endpoint: "healthz", Path: "/healthz",
 				Samples: 50, Successes: 50, AvailabilityPct: 100.0,
-				LatencyMS: latencyStats{P50: 3.0, P95: 8.0, P99: 12.0},
+				LatencyMS: &latencyStats{P50: 3.0, P95: 8.0, P99: 12.0},
 			},
 		},
 		Verdict: "pass",
@@ -59,7 +59,7 @@ func TestWriteTextfile_FailRun(t *testing.T) {
 	rep := &report{
 		PerEndpoint: []stats{{
 			Endpoint: "price", Samples: 100, Successes: 50, AvailabilityPct: 50.0,
-			LatencyMS: latencyStats{P50: 250, P95: 400, P99: 600},
+			LatencyMS: &latencyStats{P50: 250, P95: 400, P99: 600},
 		}},
 		Verdict:       "fail",
 		FailedReasons: []string{"price: availability=50.00% < target 99.90%"},
@@ -84,7 +84,7 @@ func TestWriteTextfile_OmitsFreshnessBlockWhenAbsent(t *testing.T) {
 	rep := &report{
 		PerEndpoint: []stats{{
 			Endpoint: "healthz", Samples: 10, Successes: 10, AvailabilityPct: 100,
-			LatencyMS: latencyStats{P50: 5, P95: 9, P99: 11},
+			LatencyMS: &latencyStats{P50: 5, P95: 9, P99: 11},
 		}},
 		Verdict: "pass",
 	}
@@ -103,8 +103,8 @@ func TestWriteTextfile_OmitsFreshnessBlockWhenAbsent(t *testing.T) {
 func TestWriteTextfile_DeterministicOrdering(t *testing.T) {
 	rep := &report{
 		PerEndpoint: []stats{
-			{Endpoint: "zzz-pair", Samples: 10, AvailabilityPct: 100, LatencyMS: latencyStats{P50: 1, P95: 1, P99: 1}},
-			{Endpoint: "aaa-pair", Samples: 10, AvailabilityPct: 100, LatencyMS: latencyStats{P50: 1, P95: 1, P99: 1}},
+			{Endpoint: "zzz-pair", Samples: 10, AvailabilityPct: 100, LatencyMS: &latencyStats{P50: 1, P95: 1, P99: 1}},
+			{Endpoint: "aaa-pair", Samples: 10, AvailabilityPct: 100, LatencyMS: &latencyStats{P50: 1, P95: 1, P99: 1}},
 		},
 		Verdict: "fail", // skip last_pass_timestamp to avoid time variation
 	}
@@ -131,7 +131,7 @@ func TestWriteTextfileAtomic_RoundTrip(t *testing.T) {
 	rep := &report{
 		PerEndpoint: []stats{{
 			Endpoint: "price", Samples: 1, AvailabilityPct: 100,
-			LatencyMS: latencyStats{P50: 1, P95: 1, P99: 1},
+			LatencyMS: &latencyStats{P50: 1, P95: 1, P99: 1},
 		}},
 		Verdict: "pass",
 	}

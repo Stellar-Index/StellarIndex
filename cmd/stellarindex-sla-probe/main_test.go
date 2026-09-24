@@ -3,9 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"flag"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -137,15 +142,17 @@ func TestRunProbe_FailsOn5xx(t *testing.T) {
 }
 
 // TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures proves
-// the #54 fix: a request still in flight when the run-duration
-// deadline expires is the probe aborting ITSELF, not a server
-// failure. The fake server here always returns 200 after a delay
-// that guarantees every worker is mid-request when the short run
-// window closes — so any availability < 100% would be a phantom
-// failure from counting deadline-cancelled in-flight samples. This
-// is exactly what tripped stellarindex_sla_probe_unit_failed on r1
-// (the slowest endpoint, /v1/issuers, took the blame because it
-// held the widest in-flight window).
+// the #54 fix: the run-duration deadline must not turn a request
+// still in flight into a failure. The fake server here always
+// returns 200 after a delay that guarantees every worker is
+// mid-request when the short run window closes — so any
+// availability < 100% would be a phantom failure the probe inflicted
+// on itself. This is exactly what tripped
+// stellarindex_sla_probe_unit_failed on r1 (the slowest endpoint,
+// /v1/issuers, took the blame because it held the widest in-flight
+// window). The deadline stops new requests; in-flight ones complete
+// and count, which TestRunProbe_RequestHangingAtDeadlineIsAFailure
+// pins from the other side.
 func TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Long enough that at end-of-run every worker is reliably
@@ -168,11 +175,11 @@ func TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures(t *testing.T) {
 	st := rep.PerEndpoint[0]
 	if st.AvailabilityPct != 100 {
 		t.Errorf("availability=%g want 100 — the server never errored; "+
-			"deadline-cancelled in-flight samples must be discarded, not counted as failures (#54)",
+			"requests in flight at the run deadline must complete, not be counted as failures (#54)",
 			st.AvailabilityPct)
 	}
 	if st.Samples == 0 {
-		t.Error("no samples recorded — discard logic must drop only the deadline-cancelled tail, not everything")
+		t.Error("no samples recorded — the run deadline must stop new requests, not lose the ones already made")
 	}
 }
 
@@ -329,7 +336,7 @@ func TestReport_JSONRoundTrip(t *testing.T) {
 		PerEndpoint: []stats{
 			{
 				Endpoint: "price", Path: "/price", Samples: 100, Successes: 100, AvailabilityPct: 100,
-				LatencyMS: latencyStats{P50: 12, P95: 45, P99: 78, Max: 102, Mean: 18},
+				LatencyMS: &latencyStats{P50: 12, P95: 45, P99: 78, Max: 102, Mean: 18},
 			},
 		},
 		Verdict: "pass",
@@ -398,20 +405,20 @@ func TestRunProbe_FreshnessMeasuredAtSampleTime(t *testing.T) {
 	// end-of-run bias the fix removes (runFor/2 = 1.0 s).
 	const ceiling = 0.25
 	if *st.ObservedAtFreshSec > ceiling {
-		t.Errorf("median freshness = %.3fs, want <= %.3fs — freshness is being charged "+
+		t.Errorf("stalest freshness = %.3fs, want <= %.3fs — freshness is being charged "+
 			"the distance to the end of the %v run instead of each sample's own instant",
 			*st.ObservedAtFreshSec, ceiling, runFor)
 	}
 	if *st.ObservedAtFreshSec < 0 {
-		t.Errorf("median freshness = %.3fs, want >= 0", *st.ObservedAtFreshSec)
+		t.Errorf("stalest freshness = %.3fs, want >= 0", *st.ObservedAtFreshSec)
 	}
 }
 
 // TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant pins the
 // exact corrected value with no wall-clock dependency: 121 samples over
 // a 120 s run, every one of them read exactly 2 s after its own
-// observed_at. The median freshness IS 2 s. Charging each sample to the
-// end of the run instead yields a median of ~62 s.
+// observed_at. The stalest freshness IS 2 s. Charging each sample to the
+// end of the run instead yields ~122 s for the oldest sample.
 func TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant(t *testing.T) {
 	runStart := time.Now().Add(-2 * time.Minute)
 	const observedAge = 2 * time.Second
@@ -429,9 +436,232 @@ func TestAggregateEndpointStats_FreshnessUsesSampleReceiptInstant(t *testing.T) 
 
 	st := aggregateEndpointStats(endpoint{Name: "price-tip", Path: "/price/tip"}, ss)
 	if st.ObservedAtFreshSec == nil {
-		t.Fatal("ObservedAtFreshSec is nil, want a median")
+		t.Fatal("ObservedAtFreshSec is nil, want the stalest sample")
 	}
 	if got, want := *st.ObservedAtFreshSec, observedAge.Seconds(); abs(got-want) > 1e-9 {
-		t.Errorf("median freshness = %.9fs, want %.9fs", got, want)
+		t.Errorf("stalest freshness = %.9fs, want %.9fs", got, want)
+	}
+}
+
+// TestAggregateEndpointStats_LatencyExcludesFailedSamples pins GH-740 (1):
+// a failed request has no response latency, and a connection-refused one
+// "takes" ~0 ms, so pooling failures into the percentiles drags them
+// toward zero exactly when the API is down.
+func TestAggregateEndpointStats_LatencyExcludesFailedSamples(t *testing.T) {
+	var ss []probeSample
+	for i := 0; i < 5; i++ {
+		ss = append(ss,
+			probeSample{latency: 100 * time.Millisecond, ok: true},
+			probeSample{latency: 0, ok: false})
+	}
+	st := aggregateEndpointStats(endpoint{Name: "price", Path: "/price"}, ss)
+	if st.LatencyMS.P50 != 100 || st.LatencyMS.P95 != 100 || st.LatencyMS.P99 != 100 {
+		t.Errorf("latency p50/p95/p99 = %g/%g/%g ms, want 100/100/100 — the five "+
+			"failed samples must not enter the percentiles",
+			st.LatencyMS.P50, st.LatencyMS.P95, st.LatencyMS.P99)
+	}
+	if st.Samples != 10 || st.Errors != 5 || st.AvailabilityPct != 50 {
+		t.Errorf("samples=%d errors=%d availability=%g, want 10/5/50",
+			st.Samples, st.Errors, st.AvailabilityPct)
+	}
+}
+
+// TestRunProbe_HardOutageEmitsNoLatency is GH-740 (1) end to end: a run
+// against a refused port must not publish a 0 ms p95 that p95_breach and
+// the weekly proof's worst-run p95 read as a very fast API.
+func TestRunProbe_HardOutageEmitsNoLatency(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	deadURL := srv.URL
+	srv.Close()
+
+	rep := runProbe(deadURL, "", []endpoint{{Name: "price", Path: "/price"}},
+		100*time.Millisecond, 1, slaTargets{P95MS: 200, P99MS: 500, FreshnessSec: 30, AvailabilityPct: 99.9})
+	if rep.Verdict == "pass" {
+		t.Fatal("verdict=pass against a refused port")
+	}
+	if st := rep.PerEndpoint[0]; st.Samples == 0 || st.Successes != 0 {
+		t.Fatalf("samples=%d successes=%d, want >0 failed samples", st.Samples, st.Successes)
+	}
+	var buf strings.Builder
+	if err := writeTextfile(&buf, &rep); err != nil {
+		t.Fatalf("writeTextfile: %v", err)
+	}
+	if strings.Contains(buf.String(), `stellarindex_sla_probe_latency_ms{endpoint="price"`) {
+		t.Errorf("an endpoint with no successful response published a latency:\n%s", buf.String())
+	}
+	if !strings.Contains(buf.String(), `stellarindex_sla_probe_availability_pct{endpoint="price"} 0.000`) {
+		t.Errorf("availability for the refused endpoint must still read 0:\n%s", buf.String())
+	}
+}
+
+// TestRunProbe_RequestHangingAtDeadlineIsAFailure pins GH-740 (2): the
+// API answers three requests, then accepts the fourth and never replies.
+// The run deadline must stop new requests, not cancel and discard the
+// hanging one; otherwise every run straddling a hang reads 100 % and
+// every later run records zero samples.
+func TestRunProbe_RequestHangingAtDeadlineIsAFailure(t *testing.T) {
+	var served atomic.Int32
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if served.Add(1) <= 3 {
+			_, _ = w.Write([]byte(`{}`))
+			return
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	rep := runProbe(srv.URL, "", []endpoint{{Name: "price", Path: "/price"}},
+		300*time.Millisecond, 1, slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9})
+	st := rep.PerEndpoint[0]
+	// Errors may be 2: a second hung request can start if the first one's
+	// client timer fires a tick before the run deadline's.
+	if st.Successes != 3 || st.Errors < 1 || st.Errors > 2 || st.AvailabilityPct >= 100 {
+		t.Fatalf("samples=%d successes=%d errors=%d, want 3 successes and the hang as 1-2 errors — the hanging request "+
+			"must be recorded as a failure when its own timeout expires", st.Samples, st.Successes, st.Errors)
+	}
+	if rep.Verdict == "pass" {
+		t.Error("verdict=pass while the API hung")
+	}
+}
+
+// TestAggregateEndpointStats_FreshnessIsStalestResponse pins GH-743 (1):
+// the 30 s freshness promise is per response, so a run where 49 % of
+// reads are 120 s stale is a breach. A per-run median reads it as 1 s.
+func TestAggregateEndpointStats_FreshnessIsStalestResponse(t *testing.T) {
+	now := time.Now()
+	var ss []probeSample
+	for i := 0; i < 100; i++ {
+		age := time.Second
+		if i%2 == 0 && i < 98 {
+			age = 120 * time.Second
+		}
+		ss = append(ss, probeSample{
+			latency: 5 * time.Millisecond, ok: true,
+			observedAt: now.Add(-age), receivedAt: now,
+		})
+	}
+	st := aggregateEndpointStats(endpoint{Name: "price-tip", Path: "/price/tip"}, ss)
+	if st.ObservedAtFreshSec == nil {
+		t.Fatal("ObservedAtFreshSec is nil")
+	}
+	if got := *st.ObservedAtFreshSec; abs(got-120) > 1e-9 {
+		t.Errorf("freshness = %.3fs, want 120s — 49 of 100 responses were 120 s stale", got)
+	}
+	if f := endpointFailures(st, slaTargets{P95MS: 200, P99MS: 500, FreshnessSec: 30, AvailabilityPct: 99.9}); len(f) == 0 {
+		t.Error("no SLA failure for a run with 49 % of reads 4x over the 30 s promise")
+	}
+}
+
+// TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract pins
+// GH-743 (2): a 2xx whose body cannot carry the measurement is not a
+// success. A price surface without a parseable observed_at would
+// otherwise drop the freshness series (and its alert) with no signal,
+// and /oracle/latest answering `{"data":[]}` during an oracle outage
+// would read 100 % available.
+func TestRunProbe_PairEndpointsRejectBodiesThatBreakTheirContract(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/oracle/latest") {
+			_, _ = w.Write([]byte(`{"data":[]}`))
+			return
+		}
+		// A refactor nested observed_at one level down.
+		_, _ = w.Write([]byte(`{"data":{"price":"1.0","meta":{"observed_at":"` +
+			time.Now().UTC().Format(time.RFC3339) + `"}}}`))
+	}))
+	defer srv.Close()
+
+	eps := pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)
+	rep := runProbe(srv.URL, "", eps, 150*time.Millisecond, 1, slaTargets{
+		P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.9,
+	})
+	if rep.Verdict == "pass" {
+		t.Fatalf("verdict=pass with every pair endpoint breaking its body contract")
+	}
+	for _, st := range rep.PerEndpoint {
+		if st.Samples == 0 {
+			t.Fatalf("%s: no samples", st.Endpoint)
+		}
+		if st.AvailabilityPct != 0 {
+			t.Errorf("%s: availability=%g, want 0 — a 2xx that cannot carry the measurement is not a success",
+				st.Endpoint, st.AvailabilityPct)
+		}
+	}
+}
+
+// TestHelperProcessMain runs main() with SLA_PROBE_HELPER_ARGS when
+// re-executed by TestMain_RejectsOutOfRangeNumericFlags; skipped otherwise.
+func TestHelperProcessMain(t *testing.T) {
+	if os.Getenv("SLA_PROBE_HELPER") != "1" {
+		t.Skip("helper process for TestMain_RejectsOutOfRangeNumericFlags")
+	}
+	os.Args = append([]string{"stellarindex-sla-probe"}, strings.Fields(os.Getenv("SLA_PROBE_HELPER_ARGS"))...)
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	main()
+	os.Exit(0)
+}
+
+// TestMain_RejectsOutOfRangeNumericFlags pins GH-878: every numeric flag
+// is range-checked before a request is made. Unchecked, each value below
+// produced a complete, plausible report instead of a usage error — an
+// expired -duration read as a total outage, a 0 availability target
+// passed anything, a negative latency target failed everything.
+func TestMain_RejectsOutOfRangeNumericFlags(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	deadURL := srv.URL
+	srv.Close()
+
+	cases := []struct{ name, args, flagName string }{
+		{"zero duration", "-duration 0s", "-duration"},
+		{"negative duration", "-duration -1s", "-duration"},
+		{"zero p95", "-p95-target 0s", "-p95-target"},
+		{"negative p99", "-p99-target -5ms", "-p99-target"},
+		{"zero freshness", "-freshness-target 0s", "-freshness-target"},
+		{"negative closed-bucket freshness", "-closed-bucket-freshness-target -1s", "-closed-bucket-freshness-target"},
+		{"zero availability", "-availability-target 0", "-availability-target"},
+		{"availability over 100", "-availability-target 100.5", "-availability-target"},
+		{"NaN availability", "-availability-target NaN", "-availability-target"},
+		{"zero concurrency", "-concurrency 0", "-concurrency"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// -duration 50ms keeps an unvalidated run short; a later
+			// -duration in tc.args overrides it.
+			cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcessMain$")
+			cmd.Env = append(os.Environ(), "SLA_PROBE_HELPER=1",
+				"SLA_PROBE_HELPER_ARGS=-base-url "+deadURL+" -duration 50ms "+tc.args)
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || exitErr.ExitCode() != 2 {
+				t.Fatalf("%s: exit = %v, want usage exit 2; stderr:\n%s", tc.args, err, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tc.flagName) {
+				t.Errorf("%s: stderr does not name %s:\n%s", tc.args, tc.flagName, stderr.String())
+			}
+		})
+	}
+}
+
+// TestHit_OracleWithReadingsIsASuccess keeps the contract check from
+// rejecting the healthy shape it guards.
+func TestHit_OracleWithReadingsIsASuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"source":"reflector","price":"0.1"}]}`))
+	}))
+	defer srv.Close()
+	eps := pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)
+	oracle := eps[len(eps)-1]
+	if oracle.Name != "oracle-latest" {
+		t.Fatalf("last pair endpoint = %q, want oracle-latest", oracle.Name)
+	}
+	if _, ok, _ := hit(context.Background(), &http.Client{Timeout: time.Second}, srv.URL, "", oracle); !ok {
+		t.Error("an oracle response with one reading was rejected")
 	}
 }
