@@ -148,7 +148,23 @@ func verifyUSDVolume(args []string) error {
 // by 0.08, on measurement, NOT by construction. A day whose XLM range
 // is ~7% wider than 2026-05-29's can false-fire it, and tightening the
 // tolerance below ~1.25 without a notional floor makes that routine.
+//
+// A breach where stored AND expected both round to $0.00 is exempt (see
+// [xlmBaseBoundIsDust]); any group with a cent on either side is judged.
 const xlmBaseBoundTolerance = 0.30
+
+// xlmBaseBoundDustCeiling is half a cent: below it a value renders as
+// $0.00, and a ratio between two such values is sub-cent quantisation.
+var xlmBaseBoundDustCeiling = big.NewRat(1, 200)
+
+// xlmBaseBoundIsDust reports whether both sides of a bound comparison
+// round to $0.00. It deliberately requires BOTH: a $160 group stored at
+// $0.0002, or a $0.001 group stored at $5, is a valuation error at any
+// size and must still count.
+func xlmBaseBoundIsDust(stored, expected *big.Rat) bool {
+	return new(big.Rat).Abs(stored).Cmp(xlmBaseBoundDustCeiling) < 0 &&
+		new(big.Rat).Abs(expected).Cmp(xlmBaseBoundDustCeiling) < 0
+}
 
 // xlmBaseLegScale returns the denominator that lifts a group's raw XLM
 // base-amount sum to whole XLM. The scale is a CONNECTOR property, not
@@ -172,7 +188,8 @@ func xlmBaseLegScale(source string) *big.Rat {
 
 // checkXLMBaseBound judges the estimated-tier groups whose BASE leg is
 // XLM (any canonical spelling): stored Σusd_volume must land within
-// [1−tol, 1+tol] × (Σbase/1e7 × dayVWAP). Returns the violation count.
+// [1−tol, 1+tol] × (Σbase/1e7 × dayVWAP). Returns the violation count;
+// sub-cent breaches ([xlmBaseBoundIsDust]) are printed, not counted.
 // Skips silently when the day has no XLM/USD bucket (rate unknowable —
 // printed by the caller).
 func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat, minRows int64, maxList int) int {
@@ -183,7 +200,7 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 	tolLo := new(big.Rat).SetFloat64(1 - xlmBaseBoundTolerance)
 	tolHi := new(big.Rat).SetFloat64(1 + xlmBaseBoundTolerance)
 
-	var violations, listed int
+	var violations, listed, dust int
 	for _, g := range groups {
 		if !xlmForms[g.BaseAsset] || g.PricedRows < minRows {
 			continue
@@ -207,6 +224,10 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 		if stored.Cmp(lo) >= 0 && stored.Cmp(hi) <= 0 {
 			continue
 		}
+		if xlmBaseBoundIsDust(stored, expected) {
+			dust++
+			continue
+		}
 		violations++
 		if listed < maxList {
 			listed++
@@ -218,6 +239,9 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 			listed++
 			fmt.Printf("  … more XLM-base bound violations suppressed (raise -max-list)\n")
 		}
+	}
+	if dust > 0 {
+		fmt.Printf("  XLM-BASE BOUND: %d sub-cent breach(es) not counted — stored and expected both round to $0.00\n", dust)
 	}
 	return violations
 }
@@ -445,7 +469,8 @@ func usdVolumeFooterText(violations int) string {
 CHECKED  quote_pegged + base_pegged: usd_volume == pegged_leg / 10^decimals,
          an exact identity with no tolerance.
 CHECKED  XLM-base estimated groups: Σusd_volume within ±%s%% of
-         Σbase/1e7 × the day's CEX XLM/USD VWAP.
+         Σbase/1e7 × the day's CEX XLM/USD VWAP. A breach where stored
+         and expected both round to $0.00 is printed, not counted.
          Read the bound honestly (#372 F1):
            - it FIRES at %sx overstatement / %sx understatement.
              10x-1,000,000x was the SIZE of the 2026-08-04 tier-3b
