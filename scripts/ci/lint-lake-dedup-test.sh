@@ -118,6 +118,14 @@ GO
 catches "the naive sponsors join is caught on the operations side" "$naive" stellar.operations
 catches "the naive sponsors join is caught on the transactions side" "$naive" stellar.transactions
 
+# A naive join inside an agent worktree is a stale copy of the tree, not
+# a site: the walk prunes .claude so live worktrees neither fail the gate
+# nor multiply its file count.
+agentwt="$(mk agentwt)"
+mkdir -p "$agentwt/.claude/worktrees/agent-x/$GODIR"
+cp "$naive/$GODIR/sponsors.go" "$agentwt/.claude/worktrees/agent-x/$GODIR/sponsors.go"
+check "a violation inside .claude/worktrees is not scanned" 0 "$agentwt"
+
 # ── THE SHIPPED REPLACEMENT ──────────────────────────────────────────
 # Group on the operation identity and resolve the joined transaction's
 # flag with argMax over the version column. This is the form on main.

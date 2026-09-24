@@ -115,14 +115,15 @@ die() { echo "lint-lake-dedup: FAIL — $*" >&2; exit 1; }
 # files rather than the whole tree.
 #
 # `find` rather than `git ls-files`: this runs against fixture trees
-# that are not checkouts. The prunes mirror lint-imports.sh's SKIP_DIRS.
+# that are not checkouts. The prunes mirror lint-imports.sh's SKIP_DIRS,
+# plus .claude: agent worktrees under it put whole repo copies in the walk.
 subjects=()
 while IFS= read -r f; do
   [ -n "$f" ] || continue
   subjects+=("$f")
 done < <(
   find . \( -name .git -o -name vendor -o -name node_modules \
-            -o -name .discovery-repos \) -prune -o \
+            -o -name .discovery-repos -o -name .claude \) -prune -o \
        -type f \( -name '*.go' -o -name '*.sql' \) -print \
     | sed 's#^\./##' \
     | sort \
