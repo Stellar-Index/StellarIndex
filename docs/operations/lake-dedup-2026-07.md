@@ -61,7 +61,8 @@ tail -f /var/log/lake-dedup-transactions.log
 - **Graceful stop:** `touch /tmp/lake-dedup.stop` — finishes the
   in-flight partition and exits. Delete the file before resuming.
   Re-running is safe and skips already-clean partitions automatically
-  (single-ingest-month partitions are never touched).
+  (the driver measures `count() - uniqExact(<ORDER BY key>)` per
+  partition and only touches partitions where that is nonzero).
 - **`ledger_entry_changes` is deliberately excluded** — ~1.4% dup on a
   6.17 TiB table is a 6 TiB rewrite for ~90 GiB. Revisit only under
   real pressure.
