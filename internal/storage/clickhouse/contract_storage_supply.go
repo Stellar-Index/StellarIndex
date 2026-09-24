@@ -6,7 +6,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/big"
+	"strings"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stellar/go-stellar-sdk/strkey"
 	"github.com/stellar/go-stellar-sdk/xdr"
 )
@@ -286,24 +288,14 @@ func (r *ExplorerReader) ContractStorageSupply(ctx context.Context, contractID s
 	defer func() { _ = rows.Close() }()
 
 	out := ContractStorageSupply{ContractID: contractID, Total: new(big.Int)}
-	seen := 0
-	for rows.Next() {
-		var keyB64, entryB64 string
-		var ledger uint32
-		if err := rows.Scan(&keyB64, &entryB64, &ledger); err != nil {
-			return ContractStorageSupply{}, fmt.Errorf("clickhouse: scan contract storage supply row: %w", err)
-		}
-		seen++
-		if seen > maxContractStorageBalanceEntries {
-			return ContractStorageSupply{}, fmt.Errorf("%w: %s (>%d)",
-				ErrStorageSupplyTooManyEntries, contractID, maxContractStorageBalanceEntries)
-		}
-		if err := out.apply(keyB64, entryB64, ledger); err != nil {
+	deferred, err := out.scanInstanceFirst(rows)
+	if err != nil {
+		return ContractStorageSupply{}, err
+	}
+	for _, row := range deferred {
+		if err := out.apply(row.keyB64, row.entryB64, row.ledger); err != nil {
 			return ContractStorageSupply{}, err
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return ContractStorageSupply{}, fmt.Errorf("clickhouse: contract storage supply %s: %w", contractID, err)
 	}
 	if out.isSAC {
 		return ContractStorageSupply{}, fmt.Errorf("%w: %s", ErrStorageSupplyIsStellarAsset, contractID)
@@ -319,6 +311,55 @@ func (r *ExplorerReader) ContractStorageSupply(ctx context.Context, contractID s
 			ErrStorageSupplyNoInstance, contractID)
 	}
 	return out, nil
+}
+
+// storageRow is one query row held back, undecoded, until the SAC check has run.
+type storageRow struct {
+	keyB64, entryB64 string
+	ledger           uint32
+}
+
+// scanInstanceFirst drains the query, decoding only the instance entry and
+// holding every other row back undecoded. The SAC refusal is a property of the
+// instance alone, so it must not wait behind — or be pre-empted by a decode
+// error in — up to maxContractStorageBalanceEntries balance decodes whose sum it
+// is about to discard.
+func (s *ContractStorageSupply) scanInstanceFirst(rows driver.Rows) ([]storageRow, error) {
+	var deferred []storageRow
+	seen := 0
+	for rows.Next() {
+		var row storageRow
+		if err := rows.Scan(&row.keyB64, &row.entryB64, &row.ledger); err != nil {
+			return nil, fmt.Errorf("clickhouse: scan contract storage supply row: %w", err)
+		}
+		seen++
+		if seen > maxContractStorageBalanceEntries {
+			return nil, fmt.Errorf("%w: %s (>%d)",
+				ErrStorageSupplyTooManyEntries, s.ContractID, maxContractStorageBalanceEntries)
+		}
+		if !isInstanceKeyB64(row.keyB64) {
+			deferred = append(deferred, row)
+			continue
+		}
+		if err := s.apply(row.keyB64, row.entryB64, row.ledger); err != nil {
+			return nil, err
+		}
+		if s.isSAC {
+			return nil, fmt.Errorf("%w: %s", ErrStorageSupplyIsStellarAsset, s.ContractID)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("clickhouse: contract storage supply %s: %w", s.ContractID, err)
+	}
+	return deferred, nil
+}
+
+// isInstanceKeyB64 reports whether a stored key carries the contract-instance
+// marker the query's server-side filter admits it by. A row it misses is still
+// decoded later, and apply identifies the instance by decode, not by marker.
+func isInstanceKeyB64(keyB64 string) bool {
+	start := markerOffset - 1 // markerOffset is 1-indexed for SQL substring()
+	return strings.HasPrefix(keyB64[min(start, len(keyB64)):], instanceKeyMarker)
 }
 
 // apply folds one decoded row into the running result.
