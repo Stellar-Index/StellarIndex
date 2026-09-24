@@ -135,7 +135,7 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, snapshot, s.tipFlags(r.Context(), asset, quote, sources), sources...)
+	writeJSON(w, snapshot, s.tipFlags(r.Context(), snapshot, asset, quote, sources), sources...)
 }
 
 // tipFlags builds the envelope flags for one tip emission. The request
@@ -151,8 +151,8 @@ func (s *Server) handlePriceTip(w http.ResponseWriter, r *http.Request) {
 // alias-walking lookup, keyed on the requested (base, quote) pair like
 // every other surface that carries them (GH-1045: quote-specific, never
 // ORed across the base's other quotes).
-func (s *Server) tipFlags(ctx context.Context, asset, quote canonical.Asset, sources []string) Flags {
-	flags := Flags{SingleSource: len(sources) == 1}
+func (s *Server) tipFlags(ctx context.Context, snap PriceSnapshot, asset, quote canonical.Asset, sources []string) Flags {
+	flags := Flags{SingleSource: marketSingleSource(snap, sources)}
 	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(ctx, asset, quote)
 	return flags
 }
