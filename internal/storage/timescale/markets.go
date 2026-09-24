@@ -178,8 +178,11 @@ func (s *Store) AssetMarkets(ctx context.Context, asset, cursor string, limit in
 // Pair filter (Base + Quote both non-empty) is the canonical
 // per-pair source-contribution query — used by the pair detail
 // page to render "which venues moved this pair in the last 24h".
+// It matches either stored orientation, and rows come back in the
+// canonical orientation (canonical.Orient) whichever order was asked.
 // Single-side filters (Base only / Quote only) are accepted but
-// uncommon.
+// uncommon; they match that side of the canonical orientation. Every
+// asset filter matches all alias forms (canonical.AssetAliasStrings).
 //
 // Asset filter is the OR-shape — base = X OR quote = X. Used by
 // asset-detail surfaces ("every pool touching this asset")
@@ -351,6 +354,37 @@ const perSourcePoolsCTE = `
          WHERE p.bucket >= $1
     `
 
+// poolsFilterSQL renders the /v1/pools filter predicates over the raw
+// pools_per_source_1h rows. $4 sources and $5 base / $6 quote / $7 asset
+// alias arrays are always bound (see poolsFilterArgs); an empty array
+// disables its predicate, keeping the positional layout stable.
+//
+// The rows hold BOTH stored orientations and every alias spelling of an
+// asset, and `canon` folds orientations only afterwards, so each
+// predicate must be invariant under that fold or it drops the other
+// direction's volume before the fold can sum it:
+//   - base+quote matches the pair in either stored orientation;
+//   - base or quote alone matches that side of the CANONICAL
+//     orientation, the only orientation a folded row has;
+//   - asset (the OR-shape) matches either leg.
+func poolsFilterSQL(canonBase, canonQuote string) string {
+	return `
+           AND (cardinality($4::text[]) = 0 OR p.source = ANY($4))
+           AND (cardinality($5::text[]) = 0 OR cardinality($6::text[]) = 0
+                OR (p.base_asset = ANY($5) AND p.quote_asset = ANY($6))
+                OR (p.base_asset = ANY($6) AND p.quote_asset = ANY($5)))
+           AND (cardinality($5::text[]) = 0 OR cardinality($6::text[]) > 0
+                OR ` + canonBase + ` = ANY($5))
+           AND (cardinality($6::text[]) = 0 OR cardinality($5::text[]) > 0
+                OR ` + canonQuote + ` = ANY($6))
+           AND (cardinality($7::text[]) = 0 OR p.base_asset = ANY($7) OR p.quote_asset = ANY($7))`
+}
+
+// poolsFilterArgs binds $4..$7 for poolsFilterSQL.
+func poolsFilterArgs(filter PoolsFilter) []any {
+	return []any{filter.Sources, assetAliasBind(filter.Base), assetAliasBind(filter.Quote), assetAliasBind(filter.Asset)}
+}
+
 func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit int, order MarketsOrder) (string, []any) { //nolint:funlen // CTE + select + 2 ordering branches form one query template; splitting would scatter the SQL across helpers
 	// Pre-#25 this query scanned the trades hypertable three times:
 	// once for the vol_24h CTE (24h SUM grouped by source+pair),
@@ -379,22 +413,8 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// pre-#25 query returned NULL; the handler scan collapses
 	// NULL and "0" identically, so functionally equivalent).
 	cte := perSourcePoolsCTE
-	// $4 sources, $5 base, $6 quote, $7 asset are always bound;
-	// empty values short-circuit each predicate so the planner
-	// skips it. Keeps the positional-arg layout stable across
-	// filter combinations (extending the slice would require
-	// renumbering downstream).
-	//
-	// $7 asset is the OR-shape (base = X OR quote = X), distinct
-	// from $5/$6's AND-shape — used by asset-detail surfaces that
-	// want every pool touching an asset on either side without
-	// firing two parallel `?base=` + `?quote=` requests and
-	// merging client-side.
-	cte += `
-           AND (cardinality($4::text[]) = 0 OR p.source = ANY($4))
-           AND ($5 = '' OR p.base_asset = $5)
-           AND ($6 = '' OR p.quote_asset = $6)
-           AND ($7 = '' OR p.base_asset = $7 OR p.quote_asset = $7)
+	canonBase, canonQuote, flipped := canonOrientSQL()
+	cte += poolsFilterSQL(canonBase, canonQuote) + `
          GROUP BY p.source, p.base_asset, p.quote_asset
         )
     `
@@ -404,7 +424,6 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// price re-expressed canonically (inverted for the flipped one). The
 	// XLM-fallback is already resolved into vol_24h_usd in `pools`, so
 	// summing it across directions is correct. See canonical.Orient.
-	canonBase, canonQuote, flipped := canonOrientSQL()
 	cte += `,
         canon AS (
           SELECT source,
@@ -440,7 +459,7 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 		           (source || '|' || base_asset || '|' || quote_asset) ASC
 		  LIMIT $3
 		`
-		args := []any{since, cursor, limit + 1, filter.Sources, filter.Base, filter.Quote, filter.Asset}
+		args := append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...)
 		return cte + tail, args
 	}
 	// FROM canon, NOT FROM pools. This tail used to read the
@@ -467,8 +486,25 @@ func buildPoolsQuery(since time.Time, filter PoolsFilter, cursor string, limit i
 	// missing pre-fix, causing `pq: got 6 parameters but the
 	// statement requires 7` on every order_by=pair request — caught
 	// 2026-05-14 live on r1.
-	args := []any{since, cursor, limit + 1, filter.Sources, filter.Base, filter.Quote, filter.Asset}
+	args := append([]any{since, cursor, limit + 1}, poolsFilterArgs(filter)...)
 	return cte + tail, args
+}
+
+// assetAliasBind expands an asset filter to the text[] of its alias forms
+// (native / crypto:XLM / SAC for XLM), so an `= ANY($n)` leg matches every
+// spelling a venue keyed its rows under. Empty asset binds an empty,
+// NON-nil array: nil would bind SQL NULL, cardinality(NULL) is NULL rather
+// than 0, and the "no filter" short-circuit would then exclude every row.
+// An unparseable asset binds as a one-element set.
+func assetAliasBind(asset string) []string {
+	if asset == "" {
+		return []string{}
+	}
+	a, err := canonical.ParseAsset(asset)
+	if err != nil {
+		return []string{asset}
+	}
+	return canonical.AssetAliasStrings(a)
 }
 
 // sourceMarketsCommon is the per-venue /v1/markets listing. It reads
@@ -965,24 +1001,7 @@ func buildDistinctPairsQuery(since time.Time, source, asset, cursor string, limi
                count_24h, NULLIF(vol_24h_num, 0)::text AS vol_24h_usd, last_price
           FROM canon
     `
-	// Expand the asset filter to its full alias set (F-1340) bound as the
-	// $5 text[]: XLM lives under `native`, `crypto:XLM` and its SAC
-	// C-address depending on which venue keyed the row, so the prior scalar
-	// match omitted the alias-keyed markets. Empty asset → empty (NON-nil)
-	// array → the query's cardinality($5)=0 short-circuit disables the
-	// filter. A nil slice would bind SQL NULL, and cardinality(NULL) is
-	// NULL (not 0), which would exclude every row from the unfiltered
-	// DistinctPairs / SourceMarkets scans — hence the explicit `{}`. A
-	// non-XLM / unparseable asset resolves to a one-element set — identical
-	// selectivity to the prior scalar `= $5`.
-	assets := []string{}
-	if asset != "" {
-		if a, err := canonical.ParseAsset(asset); err == nil {
-			assets = canonical.AssetAliasStrings(a)
-		} else {
-			assets = []string{asset}
-		}
-	}
+	assets := assetAliasBind(asset)
 	switch order {
 	case MarketsOrderVolume24hDesc:
 		// Cursor: "<vol_or_blank>:<base>|<quote>". Two-tuple keyset
