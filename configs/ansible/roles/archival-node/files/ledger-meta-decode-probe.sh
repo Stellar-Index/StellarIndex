@@ -33,7 +33,12 @@
 
 set -uo pipefail
 
-TEXTFILE_DIR=/var/lib/node_exporter/textfile_collector
+# The override is the same seam galexie-catchup-probe.sh and
+# timescale-jobs-probe.sh carry, and exists for the same reason: it lets
+# scripts/ci/ledger-meta-decode-probe-test.sh execute these exact bytes
+# rather than a hand-copied twin. The service unit sets no environment, so
+# a real run always takes the default.
+TEXTFILE_DIR="${TEXTFILE_DIR:-/var/lib/node_exporter/textfile_collector}"
 OUT="$TEXTFILE_DIR/ledger_meta_decode.prom"
 TMP="$OUT.tmp.$$"
 WINDOW="${DECODE_PROBE_WINDOW:-15min}"
@@ -51,20 +56,31 @@ UNITS=(galexie galexie-backfill stellarindex-indexer)
 PATTERN='decoding LedgerCloseMeta|decoding GeneralizedTransactionSet|decoding TransactionPhase|ParallelTxExecutionStage|unsupported ledger version|unknown union arm|xdr:.*unknown|decoding cached ledger meta'
 
 total=0
-declare -A per_unit
+COUNTS=()
 for u in "${UNITS[@]}"; do
-    n=$(journalctl -u "$u" --since "-${WINDOW}" --no-pager 2>/dev/null \
-        | grep -cE "$PATTERN" 2>/dev/null || true)
-    n=${n:-0}
-    per_unit["$u"]=$n
+    out=$(journalctl -u "$u" --since "-${WINDOW}" --no-pager 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        # journalctl itself failed (journald unreachable, permission denied,
+        # missing binary, ...) -- a real read failure, not "zero matches".
+        # Fail open per the header: emit nothing this cycle and leave the
+        # previous textfile (and its _updated_seconds) in place, so the
+        # staleness guard pages instead of a fabricated 0 masking a real
+        # decode failure.
+        printf 'ledger-meta-decode-probe: journalctl failed for unit %s (rc=%d): %s\n' \
+            "$u" "$rc" "$out" >&2
+        exit 0
+    fi
+    n=$(grep -cE "$PATTERN" <<<"$out")
+    COUNTS+=("$n")
     total=$(( total + n ))
 done
 
 {
     echo '# HELP stellarindex_ledger_meta_decode_failures Ledger-meta XDR decode failures observed in the probe window, per unit. NON-ZERO means a component cannot decode ledger meta the network is now producing — almost always "we are behind a protocol upgrade". Bump that component (see the runbook); the failure itself is fail-closed, so no corrupt data is written, but ingestion for that component is stopped.'
     echo '# TYPE stellarindex_ledger_meta_decode_failures gauge'
-    for u in "${UNITS[@]}"; do
-        echo "stellarindex_ledger_meta_decode_failures{unit=\"$u\"} ${per_unit[$u]}"
+    for i in "${!UNITS[@]}"; do
+        echo "stellarindex_ledger_meta_decode_failures{unit=\"${UNITS[$i]}\"} ${COUNTS[$i]}"
     done
     echo '# HELP stellarindex_ledger_meta_decode_failures_total Sum across units in the probe window.'
     echo '# TYPE stellarindex_ledger_meta_decode_failures_total gauge'
