@@ -20,8 +20,8 @@ func TestComputeSummary_DeltasAndATH(t *testing.T) {
 	}
 	row := computeSummary(Entity{Type: "coin", ID: "stellar"}, series, now)
 
-	if row.CurrentValue != 130.0 {
-		t.Errorf("CurrentValue = %v, want 130", row.CurrentValue)
+	if row.CurrentValue != "130.00" {
+		t.Errorf("CurrentValue = %v, want 130.00", row.CurrentValue)
 	}
 	// (130 - 125) / 125 * 100 = 4.0
 	if row.H1DeltaPct == nil || *row.H1DeltaPct < 3.99 || *row.H1DeltaPct > 4.01 {
@@ -41,11 +41,11 @@ func TestComputeSummary_DeltasAndATH(t *testing.T) {
 	}
 
 	// ATH = 130, ATL = 100 (across the 30d window).
-	if row.ATHValue == nil || *row.ATHValue != 130 {
-		t.Errorf("ATH = %v, want 130", row.ATHValue)
+	if row.ATHValue == nil || *row.ATHValue != "130.00" {
+		t.Errorf("ATH = %v, want 130.00", row.ATHValue)
 	}
-	if row.ATLValue == nil || *row.ATLValue != 100 {
-		t.Errorf("ATL = %v, want 100", row.ATLValue)
+	if row.ATLValue == nil || *row.ATLValue != "100.00" {
+		t.Errorf("ATL = %v, want 100.00", row.ATLValue)
 	}
 }
 
@@ -85,14 +85,14 @@ func TestValueAt_BinarySearch(t *testing.T) {
 	}
 	for _, tc := range []struct {
 		target time.Time
-		want   float64
+		want   string
 		ok     bool
 	}{
-		{t0.Add(-1 * time.Hour), 0, false}, // before any data
-		{t0.Add(0 * time.Hour), 1, true},
-		{t0.Add(90 * time.Minute), 2, true},
-		{t0.Add(2 * time.Hour), 3, true},
-		{t0.Add(10 * time.Hour), 4, true}, // after last
+		{t0.Add(-1 * time.Hour), "", false}, // before any data
+		{t0.Add(0 * time.Hour), "1", true},
+		{t0.Add(90 * time.Minute), "2", true},
+		{t0.Add(2 * time.Hour), "3", true},
+		{t0.Add(10 * time.Hour), "4", true}, // after last
 	} {
 		got, ok := valueAt(series, tc.target, time.Time{})
 		if ok != tc.ok || (ok && got != tc.want) {
@@ -109,7 +109,7 @@ func TestValueAt_RejectsBaselineOlderThanNotBefore(t *testing.T) {
 	if _, ok := valueAt(series, t0.Add(3*time.Hour), t0.Add(time.Hour)); ok {
 		t.Error("valueAt accepted a baseline 3h before target with a 2h tolerance")
 	}
-	if got, ok := valueAt(series, t0.Add(3*time.Hour), t0); !ok || got != 1 {
+	if got, ok := valueAt(series, t0.Add(3*time.Hour), t0); !ok || got != "1" {
 		t.Errorf("valueAt at the tolerance edge = (%v, %v), want (1, true)", got, ok)
 	}
 }
@@ -140,7 +140,7 @@ func TestComputeSummary_DormantPairLeavesHorizonsNull(t *testing.T) {
 	if row.D30Value != nil {
 		t.Errorf("D30Value = %v, want nil (no observation 30d ago)", row.D30Value)
 	}
-	if row.CurrentValue != 121 {
+	if row.CurrentValue != "121" {
 		t.Errorf("CurrentValue = %v, want 121", row.CurrentValue)
 	}
 }
@@ -192,11 +192,32 @@ func TestComputeSummary_ATLSkipsZero(t *testing.T) {
 		{At: now, Value: "90"},
 	}
 	row := computeSummary(Entity{Type: "coin", ID: "x"}, series, now)
-	if row.ATLValue == nil || *row.ATLValue != 5 {
+	if row.ATLValue == nil || *row.ATLValue != "5" {
 		t.Errorf("ATL = %v, want 5 (zero point must be skipped, not adopted)", row.ATLValue)
 	}
-	if row.ATHValue == nil || *row.ATHValue != 100 {
+	if row.ATHValue == nil || *row.ATHValue != "100" {
 		t.Errorf("ATH = %v, want 100", row.ATHValue)
+	}
+}
+
+// TestComputeSummary_PreservesFullPrecision — GH #602: a price with more
+// significant digits than float64 can carry must round-trip byte-for-byte
+// into CurrentValue/ATHValue/ATLValue. A ParseFloat round-trip (the old
+// behaviour) destroys everything past the 17th digit.
+func TestComputeSummary_PreservesFullPrecision(t *testing.T) {
+	now := time.Date(2026, 5, 4, 12, 0, 0, 0, time.UTC)
+	const precise = "0.104735294117647058823529412"
+	series := []TimedValue{
+		{At: now.Add(-time.Hour), Value: "0.05"},
+		{At: now, Value: precise},
+	}
+	row := computeSummary(Entity{Type: "coin", ID: "precise"}, series, now)
+
+	if row.CurrentValue != precise {
+		t.Errorf("CurrentValue = %q, want %q (exact digits lost)", row.CurrentValue, precise)
+	}
+	if row.ATHValue == nil || *row.ATHValue != precise {
+		t.Errorf("ATHValue = %v, want %q (exact digits lost)", row.ATHValue, precise)
 	}
 }
 

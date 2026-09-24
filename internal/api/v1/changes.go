@@ -6,7 +6,6 @@ import (
 	"errors"
 	"math/big"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,11 +33,10 @@ type ChangeSummaryReader interface {
 // data-inventory §6.1.
 // M7 (INV-2): the *_value fields are MONEY (a price / market-cap snapshot)
 // and cross the wire as JSON STRINGS, matching every other money field the
-// API serves (e.g. /v1/price's `price`). The *_delta_pct fields are
-// percentages, not money, and stay JSON numbers; streak_days stays an int.
-// The values are display-grade (the changesummary rollup accepts float64
-// rounding by design — see internal/aggregate/changesummary/rollup.go), so
-// the string carries the shortest decimal that round-trips the stored value.
+// API serves (e.g. /v1/price's `price`), and carry the exact decimal string
+// the changesummary rollup stored — no float64 round-trip (GH #602). The
+// *_delta_pct fields are percentages, not money, and stay JSON numbers,
+// display-grade by design; streak_days stays an int.
 type ChangeSummaryResponse struct {
 	EntityType   string `json:"entity_type"`
 	EntityID     string `json:"entity_id"`
@@ -63,10 +61,6 @@ type ChangeSummaryResponse struct {
 	StreakDays      *int   `json:"streak_days,omitempty"`
 	Acceleration    string `json:"acceleration,omitempty"`
 }
-
-// moneyStr formats a display-grade money value as the shortest decimal string
-// that round-trips the float64 (so 1.1 → "1.1", not "1.1000000000000001").
-func moneyStr(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }
 
 // allowedChangeSummaryEntityTypes pins the set of entity_type values
 // the API accepts: the families a change-summary worker actually
@@ -397,32 +391,90 @@ func (s *Server) changeSummaryValueScale(entityType, entityID string) *big.Rat {
 	return aggregate.DecimalsAdjustment(baseDec, quoteDec)
 }
 
-// scaledMoneyStr is [moneyStr] with the decimals factor applied. A nil
-// scale is byte-identical to moneyStr.
+// scaledMoneyStr applies the decimals factor to a stored decimal string. A
+// nil scale returns v unchanged.
 //
-// The multiply runs on the value's DECIMAL rendering, not on the float:
-// 1.15 × 100 in binary floating point is 114.99999999999999, and the
-// shortest round-trip string of that is exactly the kind of number this
-// endpoint must not print. Through the decimal it is 115.
-func scaledMoneyStr(v float64, scale *big.Rat) string {
+// v is already the exact decimal the rollup stored (GH #602) — no float64
+// round-trip here or in the multiply. big.Rat carries the multiply exactly,
+// and ratDecimalString renders it back to decimal exactly: the scale is
+// always a power of ten (see [aggregate.DecimalsAdjustment]), so the
+// product's denominator only ever picks up factors of 2 and 5.
+func scaledMoneyStr(v string, scale *big.Rat) string {
 	if scale == nil {
-		return moneyStr(v)
+		return v
 	}
-	r, ok := new(big.Rat).SetString(moneyStr(v))
+	r, ok := new(big.Rat).SetString(v)
 	if !ok {
-		// NaN / ±Inf have no decimal to scale; print them as before.
-		return moneyStr(v)
+		// Not a plain decimal (shouldn't happen for a NUMERIC-column
+		// value); print it unscaled rather than fail closed.
+		return v
 	}
-	f, _ := r.Mul(r, scale).Float64() // i128:ok v is already float64 upstream (#602); the Rat only applies the decimals scale exactly
-	return moneyStr(f)
+	r.Mul(r, scale)
+	out, ok := ratDecimalString(r)
+	if !ok {
+		return v
+	}
+	return out
 }
 
 // scaledMoneyStrPtr is the nullable-money form of [scaledMoneyStr]: nil
 // stays nil (omitempty → absent).
-func scaledMoneyStrPtr(v *float64, scale *big.Rat) *string {
+func scaledMoneyStrPtr(v *string, scale *big.Rat) *string {
 	if v == nil {
 		return nil
 	}
 	out := scaledMoneyStr(*v, scale)
 	return &out
+}
+
+// ratDecimalString renders r as an exact base-10 decimal string. ok=false
+// if r's reduced denominator has a prime factor other than 2 or 5 (i.e.
+// r is not a terminating decimal) — not expected at this call site, but
+// the caller falls back to the unscaled string rather than panicking.
+func ratDecimalString(r *big.Rat) (string, bool) {
+	den := new(big.Int).Set(r.Denom())
+	two, five, one := big.NewInt(2), big.NewInt(5), big.NewInt(1)
+	twos, fives := 0, 0
+	for new(big.Int).Mod(den, two).Sign() == 0 {
+		den.Div(den, two)
+		twos++
+	}
+	for new(big.Int).Mod(den, five).Sign() == 0 {
+		den.Div(den, five)
+		fives++
+	}
+	if den.Cmp(one) != 0 {
+		return "", false
+	}
+	places := twos
+	if fives > places {
+		places = fives
+	}
+	scaleUp := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(places)), nil)
+	numScaled := new(big.Int).Mul(r.Num(), scaleUp)
+	numScaled.Div(numScaled, r.Denom()) // exact: r.Denom() divides num*scaleUp
+
+	neg := numScaled.Sign() < 0
+	if neg {
+		numScaled.Neg(numScaled)
+	}
+	digits := numScaled.String()
+	for len(digits) <= places {
+		digits = "0" + digits
+	}
+
+	out := digits
+	if places > 0 {
+		intPart := digits[:len(digits)-places]
+		fracPart := strings.TrimRight(digits[len(digits)-places:], "0")
+		if fracPart == "" {
+			out = intPart
+		} else {
+			out = intPart + "." + fracPart
+		}
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out, true
 }

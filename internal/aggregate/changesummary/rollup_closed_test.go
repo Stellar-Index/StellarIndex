@@ -51,13 +51,13 @@ func TestRefreshOne_ExcludesTheOpenBucket(t *testing.T) {
 		t.Fatalf("upserted %d rows, want 1", len(sink.rows))
 	}
 	row := sink.rows[0]
-	if row.CurrentValue != 0.11 {
+	if row.CurrentValue != "0.11" {
 		t.Errorf("current_value = %v, want 0.11 (the newest CLOSED bucket)", row.CurrentValue)
 	}
 	if row.ATHValue == nil {
 		t.Fatal("ath_value = nil, want 0.11")
 	}
-	if *row.ATHValue != 0.11 {
+	if *row.ATHValue != "0.11" {
 		t.Errorf("ath_value = %v, want 0.11 — the open-minute 1000 must not become the ATH", *row.ATHValue)
 	}
 }

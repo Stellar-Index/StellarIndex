@@ -14,6 +14,8 @@ import (
 
 func f64(v float64) *float64 { return &v }
 
+func moneyStrPtr(v string) *string { return &v }
+
 // rawChangeSummaryRow is what the rollup worker stores: prices_1m's RAW
 // ratio copied through, for a market whose raw ratio sits around 1.15.
 func rawChangeSummaryRow(entityType, entityID string) timescale.ChangeSummaryRow {
@@ -23,18 +25,18 @@ func rawChangeSummaryRow(entityType, entityID string) timescale.ChangeSummaryRow
 		EntityType:      entityType,
 		EntityID:        entityID,
 		RefreshedAt:     time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC),
-		CurrentValue:    1.15,
-		H1Value:         f64(1.14),
+		CurrentValue:    "1.15",
+		H1Value:         moneyStrPtr("1.14"),
 		H1DeltaPct:      f64(0.8771929824561403),
-		H24Value:        f64(41.32),
+		H24Value:        moneyStrPtr("41.32"),
 		H24DeltaPct:     f64(-97.21684414327202),
-		D7Value:         f64(0.07),
+		D7Value:         moneyStrPtr("0.07"),
 		D7DeltaPct:      f64(1542.857142857143),
 		D30Value:        nil,
 		D30DeltaPct:     nil,
-		ATHValue:        f64(4.35),
+		ATHValue:        moneyStrPtr("4.35"),
 		ATHAt:           &ath,
-		ATLValue:        f64(0.07),
+		ATLValue:        moneyStrPtr("0.07"),
 		ATLAt:           &atl,
 		StreakDirection: "up",
 		Acceleration:    "accelerating",
