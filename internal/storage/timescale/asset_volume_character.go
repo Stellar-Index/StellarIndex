@@ -75,6 +75,23 @@ type AssetVolumeCharacter struct {
 	Character              string
 }
 
+// trades.maker holds two kinds of identity: the resting-offer account (a
+// G-strkey) on an order-book fill, and the hex pool id on a classic
+// liquidity-pool fill. A pool is not an account, so both the per-asset query
+// and the all-asset rollup read maker through these shared fragments:
+//   - volumeCharacterMakerSQL keeps maker only when it is an account and
+//     flags the pool fill, so a pool never counts as a distinct maker, a
+//     self-cross or an issuer-side leg.
+//   - a pool fill is keyed on its lone taker, the rule the priceless-coverage
+//     tripwire applies to AMM fills (popularPricelessCandidatesSQL): one
+//     account round-tripping through pools is one concentrated actor.
+const (
+	volumeCharacterMakerSQL = `CASE WHEN maker ~ '^G[A-Z2-7]{55}$' THEN maker END AS maker,
+    (maker IS NOT NULL AND maker !~ '^G[A-Z2-7]{55}$') AS pool_fill`
+	volumeCharacterPairFilterSQL = `taker IS NOT NULL AND (maker IS NOT NULL OR pool_fill)`
+	volumeCharacterPairKeySQL    = `LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)`
+)
+
 // assetVolumeCharacterSQL rolls the trailing-window signals in one query.
 //   - $1 = alias array of the asset's canonical forms (native/SAC/…),
 //     matched on either side (alias-complete, like the sibling stats reads).
@@ -86,11 +103,13 @@ type AssetVolumeCharacter struct {
 // two directions of a round-trip into one pair so third-party ping-pong
 // (A→B and B→A) reads as the single concentrated pair it economically is,
 // not two 50% halves. usd_volume rows only: an unpriced trade contributes
-// no volume and can't move a share.
+// no volume and can't move a share. maker is read through
+// volumeCharacterMakerSQL, so a classic-pool fill is keyed on its taker.
 const assetVolumeCharacterSQL = `
 WITH w AS (
   SELECT
-    maker, taker,
+    ` + volumeCharacterMakerSQL + `,
+    taker,
     CASE WHEN base_asset = ANY($1) THEN quote_asset ELSE base_asset END AS counterpart,
     usd_volume::double precision AS v
   FROM trades
@@ -101,8 +120,8 @@ WITH w AS (
 pairs AS (
   SELECT SUM(v) AS pv
   FROM w
-  WHERE maker IS NOT NULL AND taker IS NOT NULL
-  GROUP BY LEAST(maker, taker), GREATEST(maker, taker)
+  WHERE ` + volumeCharacterPairFilterSQL + `
+  GROUP BY ` + volumeCharacterPairKeySQL + `
 )
 SELECT
   COALESCE((SELECT SUM(v) FROM w), 0)                                              AS total_vol,

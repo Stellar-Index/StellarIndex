@@ -24,7 +24,7 @@ func TestAssetVolumeCharacterRollupSQL_Shape(t *testing.T) {
 		// Trailing window bound + interval param.
 		"t.ts >= now() - $1::interval",
 		// UNORDERED account pair so a round-trip folds to one pair.
-		"GROUP BY asset_id, LEAST(maker, taker), GREATEST(maker, taker)",
+		"GROUP BY asset_id, LEAST(COALESCE(maker, taker), taker), GREATEST(COALESCE(maker, taker), taker)",
 		// Self-cross share.
 		"a.maker IS NOT NULL AND a.maker = a.taker",
 		// Issuer-side predicate, derived per canonical asset, no-op when ''.

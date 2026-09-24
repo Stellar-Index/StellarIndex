@@ -44,7 +44,9 @@ import (
 //     double the per-asset query sums, so the Go-derived shares match to
 //     full precision.
 //   - the (maker,taker) pair is UNORDERED (LEAST/GREATEST) so a round-trip
-//     folds to the one concentrated pair it economically is.
+//     folds to the one concentrated pair it economically is; maker is read
+//     through the same volumeCharacterMakerSQL fragments, so a pool is never
+//     an account and a classic-pool fill is keyed on its lone taker.
 //   - issuer is derived per canonical asset_id: the G-strkey suffix of a
 //     classic 'CODE-GISSUER' id, the empty string for native/soroban/
 //     fiat/crypto — the same value canonical.ParseAsset(assetID).Issuer
@@ -82,7 +84,8 @@ legs AS (
 ),
 legs_i AS (
   SELECT
-    asset_id, maker, taker, counterpart, v, v_num,
+    asset_id, ` + volumeCharacterMakerSQL + `,
+    taker, counterpart, v, v_num,
     CASE WHEN asset_id ~ '^[A-Za-z0-9]{1,12}-G[A-Z2-7]{55}$'
          THEN split_part(asset_id, '-', 2)
          ELSE '' END AS issuer
@@ -91,8 +94,8 @@ legs_i AS (
 pairs AS (
   SELECT asset_id, SUM(v) AS pv
     FROM legs_i
-   WHERE maker IS NOT NULL AND taker IS NOT NULL
-   GROUP BY asset_id, LEAST(maker, taker), GREATEST(maker, taker)
+   WHERE ` + volumeCharacterPairFilterSQL + `
+   GROUP BY asset_id, ` + volumeCharacterPairKeySQL + `
 ),
 top_pair AS (
   SELECT asset_id, MAX(pv) AS top_pair_vol

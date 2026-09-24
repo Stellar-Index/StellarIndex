@@ -38,6 +38,14 @@ refreshed on the existing aggregate cadence:
 - `is_market_styled` — quote ∈ {native, USDC, fiat} (a real price surface) vs
   a wrap pair (assetAllow/asset, or two SACs of the same asset)
 
+`maker` is only an account when it is a G-strkey. A classic liquidity-pool
+fill stores the hex pool id there, so on a pool fill the pool is not counted
+in `distinct_makers`, cannot be a self-cross or issuer-side leg, and the fill
+is keyed on its lone taker for `top_account_pair_vol_share` (one account
+round-tripping through pools reads as one concentrated actor). A fill with no
+recorded maker (the Soroban AMMs today) stays out of the pair roll and only
+dilutes the shares.
+
 Derived `volume_character` enum on the asset/pair payload:
 `market` (default) · `operational` (issuer-side wrap corridor) ·
 `concentrated` (>90% one account pair on a market-styled pair).
