@@ -607,6 +607,8 @@ func (w *schemaWalker) walk(raw map[string]any, typ reflect.Type, path string) {
 		w.walk(ap, typ.Elem(), path+"{}")
 	case reflect.Struct:
 		w.walkStruct(s, typ, path)
+	default:
+		// scalar leaf: goDecodes above already checked it
 	}
 }
 
