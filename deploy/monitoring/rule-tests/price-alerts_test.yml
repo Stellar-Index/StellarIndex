@@ -1,0 +1,82 @@
+---
+# promtool unit tests for ../rules/price-alerts.yml.
+#
+#   promtool test rules deploy/monitoring/rule-tests/price-alerts_test.yml
+#
+# GH #749: a sweep where every enabled alert errors returns "ok" from
+# the list step, so it emits `partial_error`, never `list_error` — the
+# pre-existing stellarindex_price_alert_eval_failing rule only reads
+# list_error and cannot see this shape. Case 1 proves the new
+# stellarindex_price_alert_eval_no_successful_sweeps rule catches it.
+# Case 2 proves a healthy sweep mix (occasional partial_error, ok still
+# flowing) stays silent. Case 3 proves a disabled evaluator (no series
+# at all) never fires it — no separate enabled gauge needed, since the
+# rule's own `partial_error > 0` term is absent along with everything
+# else.
+
+rule_files:
+  - ../rules/price-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # ── Case 1: every sweep hits an eval error, none go clean ─────────
+  # ok never increments; partial_error increments every tick for 40m,
+  # crossing the 30m `for:`.
+  - interval: 1m
+    name: a sweep with zero clean outcomes and sustained partial_error fires
+    input_series:
+      - series: 'stellarindex_price_alert_eval_total{outcome="ok"}'
+        values: '0+0x40'
+      - series: 'stellarindex_price_alert_eval_total{outcome="list_error"}'
+        values: '0+0x40'
+      - series: 'stellarindex_price_alert_eval_total{outcome="partial_error"}'
+        values: '0+1x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_price_alert_eval_no_successful_sweeps
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: stellarindex_price_alert_eval_no_successful_sweeps
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: price-alerts
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+              summary: "Price-alert evaluator has no clean sweeps — every tick hits an eval error (P3)"
+              description: |
+                Zero `ok` sweeps and 1+ `partial_error` sweeps/sec, sustained
+                30+ min: the alert list read is succeeding but every sweep
+                since has hit at least one per-alert error and none have
+                gone clean. Unlike a single bad pair, this shape does not
+                self-heal — check aggregator logs for `price-alert evaluate
+                failed` and whether the failure (e.g. a permission error on
+                webhook_deliveries) is common to every alert, then the
+                runbook.
+
+  # ── Case 2: healthy mix — ok keeps flowing alongside occasional
+  # partial_error — never fires, at any eval_time.
+  - interval: 1m
+    name: a healthy sweep mix with occasional partial_error never fires
+    input_series:
+      - series: 'stellarindex_price_alert_eval_total{outcome="ok"}'
+        values: '0+1x40'
+      - series: 'stellarindex_price_alert_eval_total{outcome="list_error"}'
+        values: '0+0x40'
+      - series: 'stellarindex_price_alert_eval_total{outcome="partial_error"}'
+        values: '0 0 0 0 0 1 1 1 1 1 0+0x30'
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_price_alert_eval_no_successful_sweeps
+        exp_alerts: []
+
+  # ── Case 3: evaluator disabled — no series at all — never fires.
+  - interval: 1m
+    name: a disabled evaluator with no series never fires
+    input_series: []
+    alert_rule_test:
+      - eval_time: 40m
+        alertname: stellarindex_price_alert_eval_no_successful_sweeps
+        exp_alerts: []

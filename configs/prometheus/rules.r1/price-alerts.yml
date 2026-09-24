@@ -48,3 +48,39 @@ groups:
             reachability from the aggregator host and the aggregator's
             `price-alert evaluator: wired` startup log line, then the
             runbook.
+
+      # GH #749: a sweep in which EVERY enabled alert errors (bad row,
+      # price-read, or enqueue failure — e.g. the app role losing
+      # INSERT on webhook_deliveries) still returns "ok" from the list
+      # step, so it emits `partial_error`, never `list_error`. The rule
+      # above only reads list_error and stays silent forever in that
+      # shape ("narrower, self-heals per-alert" does not hold when it
+      # is every alert, every tick). This rule reads the same counter
+      # for the complementary signal: sustained sweeps that produce
+      # partial_error but never a single clean ok. The `> 0` term on
+      # partial_error itself is the cold-start/disabled guard — a
+      # disabled evaluator emits no partial_error samples, so this
+      # never fires when [price_alerts] enabled=false, without needing
+      # a separate enabled gauge.
+      - alert: stellarindex_price_alert_eval_no_successful_sweeps
+        expr: |
+          sum(rate(stellarindex_price_alert_eval_total{outcome="ok"}[5m])) == 0
+          and
+          sum(rate(stellarindex_price_alert_eval_total{outcome="partial_error"}[5m])) > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: price-alerts
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/price-alert-eval-failing.md
+          summary: "Price-alert evaluator has no clean sweeps — every tick hits an eval error (P3)"
+          description: |
+            Zero `ok` sweeps and 1+ `partial_error` sweeps/sec, sustained
+            30+ min: the alert list read is succeeding but every sweep
+            since has hit at least one per-alert error and none have
+            gone clean. Unlike a single bad pair, this shape does not
+            self-heal — check aggregator logs for `price-alert evaluate
+            failed` and whether the failure (e.g. a permission error on
+            webhook_deliveries) is common to every alert, then the
+            runbook.
