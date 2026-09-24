@@ -547,19 +547,17 @@ func (c SEP41TransferCursor) IsSet() bool { return c.Ledger > 0 }
 // can't import — see SEP41MovementsFloorLedger's doc comment on the
 // import-direction rule) and is evaluated against `address`: "sent" =
 // from_addr=address (and to_addr != address), "received" = the
-// reverse, "self" = from_addr=address AND to_addr=address. No
-// per-contract asset filter here — resolving a token contract_id to
-// the CANONICAL asset id CH's account_movements.asset column holds is
-// a per-row lookup the caller (movements.go) already does for
-// display, so it applies any ?asset= filter itself, POST-fetch, on
-// the resolved name; this keeps the two merge-side queries' asset
-// semantics honestly asymmetric (documented) rather than silently
-// wrong.
+// reverse, "self" = from_addr=address AND to_addr=address.
+//
+// contractID, when non-empty, restricts every arm to that token contract
+// BEFORE the LIMIT, so an ?asset= page is filled from matching rows
+// rather than from the address's newest `limit` transfers of any token
+// (the caller maps the canonical asset id to its contract).
 //
 
 // sep41TransfersByAddressQuery assembles the UNION arm set for one
 // direction filter (see ListSEP41TransfersByAddress's shape comment).
-func sep41TransfersByAddressQuery(direction, cursorClause, orderBy string) (string, error) {
+func sep41TransfersByAddressQuery(direction, filterClause, orderBy string) (string, error) {
 	const armCols = `
             ledger_close_time, ledger, tx_hash, op_index, event_index,
             contract_id, event_kind,
@@ -568,15 +566,15 @@ func sep41TransfersByAddressQuery(direction, cursorClause, orderBy string) (stri
 	fromArm := `(SELECT` + armCols + `
         FROM sep41_transfers
         WHERE event_kind = 'transfer' AND ledger >= $1
-          AND from_addr = $2 AND (to_addr IS DISTINCT FROM $2)` + cursorClause + orderBy + `)`
+          AND from_addr = $2 AND (to_addr IS DISTINCT FROM $2)` + filterClause + orderBy + `)`
 	toArm := `(SELECT` + armCols + `
         FROM sep41_transfers
         WHERE event_kind = 'transfer' AND ledger >= $1
-          AND to_addr = $2 AND (from_addr IS DISTINCT FROM $2)` + cursorClause + orderBy + `)`
+          AND to_addr = $2 AND (from_addr IS DISTINCT FROM $2)` + filterClause + orderBy + `)`
 	selfArm := `(SELECT` + armCols + `
         FROM sep41_transfers
         WHERE event_kind = 'transfer' AND ledger >= $1
-          AND from_addr = $2 AND to_addr = $2` + cursorClause + orderBy + `)`
+          AND from_addr = $2 AND to_addr = $2` + filterClause + orderBy + `)`
 
 	var arms []string
 	switch direction {
@@ -598,8 +596,26 @@ func sep41TransfersByAddressQuery(direction, cursorClause, orderBy string) (stri
         FROM (` + strings.Join(arms, " UNION ALL ") + `) u` + orderBy, nil
 }
 
+// sep41ByAddressArgs builds the positional args every arm shares ($1
+// floor, $2 address, then the optional contract and cursor binds, then
+// the LIMIT) and the per-arm filter clause that references them.
+func sep41ByAddressArgs(floorLedger uint32, address, contractID string, cur SEP41TransferCursor, limit int) (args []any, filterClause, limitPh string) {
+	args = []any{int64(floorLedger), address}
+	if contractID != "" {
+		args = append(args, contractID)
+		filterClause = fmt.Sprintf(" AND contract_id = $%d", len(args))
+	}
+	if cur.IsSet() {
+		n := len(args)
+		args = append(args, int64(cur.Ledger), cur.TxHash, int16(cur.OpIndex), int16(cur.EventIndex))
+		filterClause += fmt.Sprintf(" AND (ledger, tx_hash, op_index, event_index) < ($%d, $%d, $%d, $%d)", n+1, n+2, n+3, n+4)
+	}
+	args = append(args, limit)
+	return args, filterClause, fmt.Sprintf("$%d", len(args))
+}
+
 //nolint:gocognit // linear: arm-select + cursor build + null-projecting row-scan loop, same shape as ListSEP41Transfers.
-func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur SEP41TransferCursor, direction string, floorLedger uint32) ([]SEP41TransferRow, error) {
+func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur SEP41TransferCursor, direction, contractID string, floorLedger uint32) ([]SEP41TransferRow, error) {
 	if address == "" {
 		return nil, errors.New("timescale: ListSEP41TransfersByAddress: empty address")
 	}
@@ -632,17 +648,10 @@ func (s *Store) ListSEP41TransfersByAddress(ctx context.Context, address string,
 	if fl := MovementsFloor(); floorLedger < fl {
 		floorLedger = fl
 	}
-	cursorClause := ""
-	args := []any{int64(floorLedger), address}
-	if cur.IsSet() {
-		args = append(args, int64(cur.Ledger), cur.TxHash, int16(cur.OpIndex), int16(cur.EventIndex))
-		cursorClause = " AND (ledger, tx_hash, op_index, event_index) < ($3, $4, $5, $6)"
-	}
-	args = append(args, limit)
-	limitPh := fmt.Sprintf("$%d", len(args))
+	args, filterClause, limitPh := sep41ByAddressArgs(floorLedger, address, contractID, cur, limit)
 	orderBy := " ORDER BY ledger DESC, tx_hash DESC, op_index DESC, event_index DESC LIMIT " + limitPh
 
-	q, qerr := sep41TransfersByAddressQuery(direction, cursorClause, orderBy)
+	q, qerr := sep41TransfersByAddressQuery(direction, filterClause, orderBy)
 	if qerr != nil {
 		return nil, qerr
 	}

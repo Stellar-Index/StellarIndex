@@ -811,8 +811,10 @@ func accountMovementsQuery(filter AccountMovementFilter, hasCursor bool) string 
 	// flight, since InsertAccountMovements is retry-by-reinsert — would
 	// otherwise eat a LIMIT slot, repeat a row, and shift the keyset cursor.
 	// Far cheaper than FINAL: dedup applies only to the rows this address's
-	// contiguous range scan already returns.
-	sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC LIMIT 1 BY ledger, tx_hash, op_index, leg_index LIMIT ?")
+	// contiguous range scan already returns. ingested_at DESC makes the kept
+	// row the newest version: a re-derive rewrites a key in place (e.g. only
+	// counterparty changes), and without it an un-merged older part can win.
+	sb.WriteString(" ORDER BY ledger DESC, tx_hash DESC, op_index DESC, leg_index DESC, ingested_at DESC LIMIT 1 BY ledger, tx_hash, op_index, leg_index LIMIT ?")
 	sb.WriteString(explorerScanSettings)
 	return sb.String()
 }

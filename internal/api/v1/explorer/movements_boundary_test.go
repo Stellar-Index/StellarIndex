@@ -76,10 +76,10 @@ type stubSEP41Tail struct {
 	rows []timescale.SEP41TransferRow
 }
 
-func (s *stubSEP41Tail) ListSEP41TransfersByAddress(_ context.Context, _ string, _ int, _ timescale.SEP41TransferCursor, _ string, floor uint32) ([]timescale.SEP41TransferRow, error) {
+func (s *stubSEP41Tail) ListSEP41TransfersByAddress(_ context.Context, _ string, _ int, _ timescale.SEP41TransferCursor, _, contractID string, floor uint32) ([]timescale.SEP41TransferRow, error) {
 	var out []timescale.SEP41TransferRow
 	for _, r := range s.rows {
-		if r.Ledger >= floor {
+		if r.Ledger >= floor && (contractID == "" || r.ContractID == contractID) {
 			out = append(out, r)
 		}
 	}

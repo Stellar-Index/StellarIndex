@@ -11647,22 +11647,20 @@ paths:
         runs it, so this endpoint may serve the Postgres tail alone. See
         `coverage_note` on the response.
 
-        `?asset=` FILTER ASYMMETRY (documented): on ClickHouse archive rows
-        it matches the canonical asset id exactly (`CODE-ISSUER` /
-        `native` / `pool:<hex>`); on the Postgres tail it matches against
-        the RESOLVED display value (the classic-asset name for a SAC
-        wrapper, else the raw token contract_id) — resolved and filtered
-        client-request-side, not in SQL, so a page may return fewer than
-        `limit` Postgres-tail rows even when more matching rows exist
-        further back. An accepted limitation of this experimental
-        endpoint's Postgres half.
+        `?asset=` matching: ClickHouse archive rows match the canonical
+        asset id exactly (`CODE-ISSUER` / `native` / `pool:<hex>`).
+        Postgres-tail rows are SEP-41 token transfers: a `native` or
+        `CODE-ISSUER` filter selects that asset's Stellar Asset Contract,
+        and any other value matches a raw token contract_id (a SAC's own
+        contract id matches nothing — its rows carry the classic asset
+        id). Both arms apply the filter before the page limit.
       parameters:
         - { name: g_strkey, in: path, required: true, description: G-strkey account id., schema: { type: string } }
         - { name: limit, in: query, description: "Maximum rows to return (1-200, default 25). Out-of-range values return 400.", schema: { type: integer, minimum: 1, maximum: 200, default: 25 } }
         - { name: cursor, in: query, description: Opaque keyset cursor from a prior response's next_cursor., schema: { type: string } }
         - { name: kind, in: query, description: "Filter by movement_kind exact match (e.g. payment, transfer, liquidity_pool_deposit). Omitted = any kind.", schema: { type: string } }
         - { name: direction, in: query, description: Filter by direction., schema: { type: string, enum: [sent, received, self] } }
-        - { name: asset, in: query, description: "Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail.", schema: { type: string } }
+        - { name: asset, in: query, description: "Filter by asset — see this operation's description for how the ClickHouse archive and the Postgres tail match it.", schema: { type: string } }
       responses:
         "200":
           description: The account's unified movement feed.

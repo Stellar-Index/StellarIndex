@@ -66,11 +66,16 @@ type stubSEP41MovementsReader struct {
 	err  error
 }
 
-func (s *stubSEP41MovementsReader) ListSEP41TransfersByAddress(_ context.Context, _ string, limit int, _ timescale.SEP41TransferCursor, _ string, _ uint32) ([]timescale.SEP41TransferRow, error) {
+func (s *stubSEP41MovementsReader) ListSEP41TransfersByAddress(_ context.Context, _ string, limit int, _ timescale.SEP41TransferCursor, _, contractID string, _ uint32) ([]timescale.SEP41TransferRow, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
-	rows := s.rows
+	var rows []timescale.SEP41TransferRow
+	for _, r := range s.rows {
+		if contractID == "" || r.ContractID == contractID {
+			rows = append(rows, r)
+		}
+	}
 	if limit > 0 && len(rows) > limit {
 		rows = rows[:limit]
 	}

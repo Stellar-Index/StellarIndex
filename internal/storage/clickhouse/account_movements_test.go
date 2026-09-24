@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 )
@@ -295,6 +296,24 @@ func TestSortAccountMovementRowsForInsert(t *testing.T) {
 		got := key{rows[i].Address, rows[i].Ledger, rows[i].TxHash, rows[i].OpIndex}
 		if got != w {
 			t.Errorf("rows[%d] = %+v, want %+v (ledger, then address, tx_hash, op_index)", i, got, w)
+		}
+	}
+}
+
+// TestAccountMovementsQueryDedupKeepsNewestVersion pins that the read-time
+// LIMIT 1 BY keeps the newest ingested_at per key for every query shape:
+// without the version in the ORDER BY, which un-merged duplicate survives
+// is unspecified, and a re-derived row can lose to the stale one.
+func TestAccountMovementsQueryDedupKeepsNewestVersion(t *testing.T) {
+	const want = "leg_index DESC, ingested_at DESC LIMIT 1 BY ledger, tx_hash, op_index, leg_index"
+	for _, hasCursor := range []bool{false, true} {
+		for _, f := range []AccountMovementFilter{
+			{},
+			{Kind: "payment", Direction: AccountMovementSent, Asset: "native", HasMaxLedger: true, MaxLedger: 1},
+		} {
+			if q := accountMovementsQuery(f, hasCursor); !strings.Contains(q, want) {
+				t.Errorf("accountMovementsQuery(%+v, cursor=%v) does not order the dedup by version (want %q):\n%s", f, hasCursor, want, q)
+			}
 		}
 	}
 }

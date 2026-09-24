@@ -20,7 +20,7 @@ import (
 // ClickHouse pre-P23 archive alone, with an honest coverage_note — see
 // AccountMovements below).
 type SEP41MovementsReader interface {
-	ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur timescale.SEP41TransferCursor, direction string, floorLedger uint32) ([]timescale.SEP41TransferRow, error)
+	ListSEP41TransfersByAddress(ctx context.Context, address string, limit int, cur timescale.SEP41TransferCursor, direction, contractID string, floorLedger uint32) ([]timescale.SEP41TransferRow, error)
 }
 
 // AccountMovementEntry is one row in the wire response for GET
@@ -366,7 +366,8 @@ func (h *Handler) fetchSEP41MovementsTail(ctx context.Context, address string, l
 		return nil, ""
 	}
 	pgCur := timescale.SEP41TransferCursor{Ledger: cur.Ledger, TxHash: cur.TxHash, OpIndex: cur.OpIndex, EventIndex: cur.LegIndex}
-	rows, err := h.SEP41Movements.ListSEP41TransfersByAddress(ctx, address, limit, pgCur, string(filter.Direction), floorLedger)
+	scopeContract, _ := sep41AssetScope(filter.Asset)
+	rows, err := h.SEP41Movements.ListSEP41TransfersByAddress(ctx, address, limit, pgCur, string(filter.Direction), scopeContract, floorLedger)
 	if err != nil {
 		h.Logger.Error("explorer AccountMovements (Postgres recent tail) failed", "err", err, "account", address)
 		return nil, "the recent (post-P23) tail is temporarily unavailable; showing the pre-P23 ClickHouse archive only"
@@ -415,17 +416,17 @@ func movementsCoverageNote(wm uint32, tailNote string) string {
 // per DISTINCT contract_id in this page — bounded by page size, not a
 // per-row cost), falling back to the raw contract_id for a genuine
 // Soroban-native token (no SAC wrapper). assetFilter, when non-empty,
-// is applied HERE post-resolution (not in the SQL query — see
-// timescale.ListSEP41TransfersByAddress's doc comment for why the two
-// sides' asset-filter semantics are asymmetric): a page may therefore
-// return fewer than `limit` PG-side rows even when more matching rows
-// exist further back — an accepted, documented limitation of this
-// experimental endpoint's Postgres tail.
+// has already scoped the SQL to its one contract (sep41AssetScope);
+// re-checking the resolved name here drops a raw C… filter that names a
+// SAC, whose rows render as the classic asset and so match nothing.
 func (h *Handler) mapSEP41RowsToMovements(ctx context.Context, address string, rows []timescale.SEP41TransferRow, assetFilter string) []clickhouse.AccountMovementRow {
 	if len(rows) == 0 {
 		return nil
 	}
 	assetNames := make(map[string]string, len(rows))
+	if sac, label := sep41AssetScope(assetFilter); label != "" {
+		assetNames[sac] = label
+	}
 	out := make([]clickhouse.AccountMovementRow, 0, len(rows))
 	for _, tr := range rows {
 		asset, ok := assetNames[tr.ContractID]
@@ -503,6 +504,28 @@ func (h *Handler) resolveSEP41MovementAsset(ctx context.Context, contractID stri
 		return name // already canonical — asset.String()
 	}
 	return contractID
+}
+
+// sep41AssetScope maps a normalized ?asset= value to the one
+// sep41_transfers contract_id whose rows can render as it, so the
+// Postgres arm filters before its LIMIT. A native/classic asset's only
+// SEP-41 contract is its SAC, whose address is derived from the asset
+// itself (the trust anchor sacAssetViaEvents also uses), so label is the
+// asset those rows render as; any other value can only equal a raw
+// contract_id and label is "". An empty filter returns "", "".
+func sep41AssetScope(assetFilter string) (contractID, label string) {
+	if assetFilter == "" {
+		return "", ""
+	}
+	parsed, err := canonical.ParseAsset(assetFilter)
+	if err != nil || (parsed.Type != canonical.AssetNative && parsed.Type != canonical.AssetClassic) {
+		return assetFilter, ""
+	}
+	sac, err := parsed.SacContractID()
+	if err != nil {
+		return assetFilter, ""
+	}
+	return sac, parsed.String()
 }
 
 // canonicalizeSACName folds a SAC instance-METADATA asset name

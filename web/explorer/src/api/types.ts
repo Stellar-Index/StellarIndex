@@ -4886,15 +4886,13 @@ export interface paths {
          *     runs it, so this endpoint may serve the Postgres tail alone. See
          *     `coverage_note` on the response.
          *
-         *     `?asset=` FILTER ASYMMETRY (documented): on ClickHouse archive rows
-         *     it matches the canonical asset id exactly (`CODE-ISSUER` /
-         *     `native` / `pool:<hex>`); on the Postgres tail it matches against
-         *     the RESOLVED display value (the classic-asset name for a SAC
-         *     wrapper, else the raw token contract_id) — resolved and filtered
-         *     client-request-side, not in SQL, so a page may return fewer than
-         *     `limit` Postgres-tail rows even when more matching rows exist
-         *     further back. An accepted limitation of this experimental
-         *     endpoint's Postgres half.
+         *     `?asset=` matching: ClickHouse archive rows match the canonical
+         *     asset id exactly (`CODE-ISSUER` / `native` / `pool:<hex>`).
+         *     Postgres-tail rows are SEP-41 token transfers: a `native` or
+         *     `CODE-ISSUER` filter selects that asset's Stellar Asset Contract,
+         *     and any other value matches a raw token contract_id (a SAC's own
+         *     contract id matches nothing — its rows carry the classic asset
+         *     id). Both arms apply the filter before the page limit.
          */
         get: operations["getAccountMovements"];
         put?: never;
@@ -22766,7 +22764,7 @@ export interface operations {
                 kind?: string;
                 /** @description Filter by direction. */
                 direction?: "sent" | "received" | "self";
-                /** @description Filter by asset — see this operation's description for the matching asymmetry between the ClickHouse archive and the Postgres tail. */
+                /** @description Filter by asset — see this operation's description for how the ClickHouse archive and the Postgres tail match it. */
                 asset?: string;
             };
             header?: never;
