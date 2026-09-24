@@ -66,6 +66,12 @@ import (
 // SourceName is the registry key for this source.
 const SourceName = "cctp"
 
+// GenesisLedger is the ledger of the MessageTransmitter's first
+// on-chain event (lake-derived exact genesis, 2026-07-30) — the lower
+// bound for any re-derive or gap scan. protocols_registry.go's
+// ProtocolMeta.GenesisLedger for "cctp" must equal this.
+const GenesisLedger uint32 = 62_146_641
+
 // Mainnet contract addresses — verified 2026-05-20 against
 // https://developers.circle.com/cctp/references/stellar-contracts
 // + the upstream source repo github.com/circlefin/stellar-cctp.

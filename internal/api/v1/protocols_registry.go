@@ -5,6 +5,8 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
 	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
 	blend_emitter "github.com/Stellar-Index/StellarIndex/internal/sources/blend_emitter"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/cctp"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/rozo"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/soroswap"
 	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
@@ -189,23 +191,17 @@ var protocolRegistry = withVerificationPages([]ProtocolMeta{
 		},
 	},
 	{
-		Name:        "cctp",
-		Category:    "bridge",
-		Description: "Circle CCTP v2 — canonical burn-and-mint USDC bridging between Stellar and other chains.",
-		// Lake-derived exact genesis (2026-07-30): the MessageTransmitter's
-		// first on-chain event. The old 62_403_000 was the ingestion-config
-		// floor, ~121k ledgers late — the head has since been re-projected
-		// from here (density-genesis precision rule).
-		GenesisLedger: 62_146_641,
+		Name:          "cctp",
+		Category:      "bridge",
+		Description:   "Circle CCTP v2 — canonical burn-and-mint USDC bridging between Stellar and other chains.",
+		GenesisLedger: cctp.GenesisLedger,
 		EventKinds:    []string{"cctp.event"},
 	},
 	{
-		Name:        "rozo",
-		Category:    "bridge",
-		Description: "Rozo — intent-bridge payment settlement on Stellar (v1 Payment contract).",
-		// Lake-derived exact genesis (2026-07-30): first event across all
-		// four Rozo contracts; rozo_events is projected to exactly here.
-		GenesisLedger: 60_829_397,
+		Name:          "rozo",
+		Category:      "bridge",
+		Description:   "Rozo — intent-bridge payment settlement on Stellar (v1 Payment contract).",
+		GenesisLedger: rozo.GenesisLedger,
 		EventKinds:    []string{"rozo.event"},
 	},
 	{
