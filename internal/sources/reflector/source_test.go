@@ -53,19 +53,25 @@ func TestVariantSourceName(t *testing.T) {
 }
 
 func TestQuoteForVariant(t *testing.T) {
-	// All three Reflector oracles denominate in USD-equivalent → every
-	// variant quotes fiat:USD. DEX (CALI2BYU…) denominates in USDC
-	// (its base() SEP-40 method returns the USDC SAC); we stamp it
-	// fiat:USD for consistency with CEX/FX and the /v1/oracle path.
-	// Before the fix DEX returned canonical.NativeAsset() (XLM) — a
-	// wrong denominator that made XLM's ~0.20 USD price read as a
-	// nonsensical XLM-in-XLM self-price.
+	// CEX and FX publish an explicit USD base. DEX (CALI2BYU…) is
+	// denominated in whatever its SEP-40 base() returns — the pubnet USDC
+	// SAC — so it must be stamped with that SAC, never fiat:USD (ingest-time
+	// stablecoin normalisation hides a depeg) and never native (XLM).
 	usd, _ := canonical.NewFiatAsset("USD")
+	usdcSAC, err := canonical.NewSorobanAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
+	if err != nil {
+		t.Fatalf("NewSorobanAsset: %v", err)
+	}
 	native := canonical.NativeAsset()
-	for _, v := range []Variant{VariantDEX, VariantCEX, VariantFX} {
+	want := map[Variant]canonical.Asset{
+		VariantDEX: usdcSAC,
+		VariantCEX: usd,
+		VariantFX:  usd,
+	}
+	for v, w := range want {
 		q := quoteForVariant(v)
-		if !q.Equal(usd) {
-			t.Errorf("%s quote = %+v, want fiat:USD", v.SourceName(), q)
+		if !q.Equal(w) {
+			t.Errorf("%s quote = %s, want %s", v.SourceName(), q, w)
 		}
 		if q.Equal(native) {
 			t.Errorf("%s quote must NOT be native (XLM)", v.SourceName())

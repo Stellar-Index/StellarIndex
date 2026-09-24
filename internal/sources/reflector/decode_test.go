@@ -412,15 +412,13 @@ func TestTopicSymbolsMatchEncodedContractTopics(t *testing.T) {
 	}
 }
 
-// TestRealDecoder_DEXRowQuotedInUSD_SelfPriceSanity is the FIX-1
-// regression: a reflector-dex UpdateEvent carrying the native-XLM SAC
-// priced at 0.2002 (14 decimals). The DEX oracle (CALI2BYU…)
-// denominates in USDC — confirmed via its base() SEP-40 method — so
-// this is XLM-in-USD ≈ 0.20, NOT XLM-in-XLM (which would be exactly
-// 1.0). The decoder must stamp the quote as fiat:USD, never native:
-// before the fix it stamped native, making 0.2002 read as a
-// nonsensical XLM self-price.
-func TestRealDecoder_DEXRowQuotedInUSD_SelfPriceSanity(t *testing.T) {
+// TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity: a reflector-dex
+// UpdateEvent carrying the native-XLM SAC priced at 0.2002 (14 decimals).
+// The DEX oracle (CALI2BYU…) denominates in the USDC SAC — its SEP-40
+// base() — so this is XLM-in-USDC ≈ 0.20, NOT XLM-in-XLM (exactly 1.0).
+// The quote must be the USDC SAC: native misreads 0.2002 as a self-price,
+// and fiat:USD normalises a stablecoin at ingest, hiding a USDC depeg.
+func TestRealDecoder_DEXRowQuotedInUSDCSAC_SelfPriceSanity(t *testing.T) {
 	xlmSAC := contractAddressFromStrkey(t,
 		"CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA")
 	addrSv := xdr.ScVal{Type: xdr.ScValTypeScvAddress, Address: &xlmSAC}
@@ -447,9 +445,15 @@ func TestRealDecoder_DEXRowQuotedInUSD_SelfPriceSanity(t *testing.T) {
 		t.Fatalf("expected 1 update, got %d", len(updates))
 	}
 
-	// The quote must be fiat:USD, NOT native (XLM) — the fix.
-	if got := updates[0].Quote.String(); got != "fiat:USD" {
-		t.Errorf("reflector-dex quote = %q, want fiat:USD (was native before the USDC-base fix)", got)
+	usdcSAC, err := canonical.NewSorobanAsset("CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75")
+	if err != nil {
+		t.Fatalf("NewSorobanAsset: %v", err)
+	}
+	if !updates[0].Quote.Equal(usdcSAC) {
+		t.Errorf("reflector-dex quote = %s, want the USDC SAC %s (the oracle's base())", updates[0].Quote, usdcSAC)
+	}
+	if updates[0].Quote.Type == canonical.AssetFiat {
+		t.Error("reflector-dex quote must not be fiat — stamping USDC as USD at ingest hides a depeg")
 	}
 	if updates[0].Quote.Equal(canonical.NativeAsset()) {
 		t.Error("reflector-dex quote must not be native — the DEX oracle base is the USDC SAC, not XLM")

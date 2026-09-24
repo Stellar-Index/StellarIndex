@@ -186,37 +186,25 @@ func decodeUpdate(e *events.Event, variant Variant, decimals uint8, observer str
 	return out, nil
 }
 
-// quoteForVariant returns the implicit quote-currency for a given
-// Reflector contract. All three Reflector mainnet oracles denominate
-// in USD-equivalent, so every variant stamps fiat:USD:
+// quoteForVariant returns the implicit quote asset of a Reflector
+// contract, which is the contract's SEP-40 base():
 //
 //   - CEX (CAFJ…) and FX (CBKG…) publish an explicit USD base per the
 //     Reflector docs (ADR-0010 fiat sentinel).
 //   - DEX (CALI2BYU2JE6WVRUFYTS6MSBNEHGJ35P4AVCZYF3B6QOE3QKOB2PLE6M)
-//     denominates in USDC, NOT XLM. Confirmed 2026-07-07 by calling
-//     the contract's SEP-40 base() method via simulateTransaction:
-//     it returns Asset::Stellar(CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75)
-//     — the pubnet USDC SAC (decimals()=14, resolution()=300 also
-//     confirmed). Corroborating live evidence: the native-XLM SAC
-//     (CAS3J7GYLGXMF6TDJBBYYSE3HQ6BBSMLNUQ34T6TZMYMW2EVH34XOWMA) is
-//     served at ~0.2002 (XLM in USD), not the 1.0 a true XLM-in-XLM
-//     self-price would be; the USD stablecoins cluster at ~1.0; and
-//     USDC itself is absent from the 41-asset feed (a base never
-//     prices itself).
+//     returns Asset::Stellar(<pubnet USDC SAC>) from base() (confirmed
+//     2026-07-07 via simulateTransaction; USDC is absent from its feed and
+//     the XLM SAC reads ~0.20, not the 1.0 of an XLM self-price).
 //
-// Before this fix quoteForVariant(VariantDEX) returned
-// canonical.NativeAsset(), mislabelling every DEX row's denominator
-// as XLM (right magnitude, wrong quote). We stamp fiat:USD rather
-// than crypto:USDC so all three variants share one quote
-// representation and the /v1/oracle divergence path — which compares
-// against our USD VWAP and does NOT translate USDC→USD when expanding
-// oracle keys (internal/divergence/oracle.go) — matches the
-// stored rows. The aggregator's stablecoin map already treats USDC
-// as USD, so this loses no information. Existing rows need a
-// projector-replay to pick up the corrected quote.
+// The DEX quote is stamped as that SAC, not fiat:USD: stablecoins are
+// never normalised at ingest (a depeg would vanish) — USDC→USD is a
+// compute-time mapping, and the alias registry joins the SAC to its
+// classic form on read.
 func quoteForVariant(v Variant) canonical.Asset {
 	switch v {
-	case VariantDEX, VariantCEX, VariantFX:
+	case VariantDEX:
+		return dexBaseUSDC
+	case VariantCEX, VariantFX:
 		return usdFiat
 	default:
 		// Unknown variant should never occur; default to the USD
@@ -225,11 +213,26 @@ func quoteForVariant(v Variant) canonical.Asset {
 	}
 }
 
-// usdFiat is the implicit USD quote for CEX/FX Reflector variants.
-// Parsed once at package init: a regression that drops USD from the
-// fiat allow-list fires a loud init panic instead of silently
-// writing zero-asset oracle updates on every Reflector event.
-var usdFiat = mustUSDFiat()
+// dexBaseContractID is the pubnet USDC SAC the Reflector DEX oracle's
+// base() returns.
+const dexBaseContractID = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+
+// usdFiat is the implicit USD quote for CEX/FX Reflector variants;
+// dexBaseUSDC the DEX variant's. Parsed once at package init so a
+// regression fires a loud init panic instead of silently writing
+// zero-asset oracle updates on every Reflector event.
+var (
+	usdFiat     = mustUSDFiat()
+	dexBaseUSDC = mustSorobanAsset(dexBaseContractID)
+)
+
+func mustSorobanAsset(contractID string) canonical.Asset {
+	a, err := canonical.NewSorobanAsset(contractID)
+	if err != nil {
+		panic("reflector: NewSorobanAsset(" + contractID + ") must succeed: " + err.Error())
+	}
+	return a
+}
 
 func mustUSDFiat() canonical.Asset {
 	a, err := canonical.NewFiatAsset("USD")

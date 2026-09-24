@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"math/big"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -251,6 +252,43 @@ func TestOracleReference_BaseKeysCoverEveryAliasFamily(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestOracleReference_QuoteKeysNeverMapUSDCToUSD: reflector-dex rows are
+// quoted in the USDC SAC. A fiat:USD pair must not bind any USDC form (that
+// would compare a USDC price as USD and hide a depeg), while a classic-USDC
+// pair must reach the SAC-quoted rows through the alias registry.
+func TestOracleReference_QuoteKeysNeverMapUSDCToUSD(t *testing.T) {
+	const usdcClassic = "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+	const usdcSACContract = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
+	reg, err := canonical.NewAliasRegistry(map[string]string{usdcSACContract: usdcClassic})
+	if err != nil {
+		t.Fatalf("NewAliasRegistry: %v", err)
+	}
+	canonical.InstallAliasRegistry(reg)
+	t.Cleanup(func() { canonical.InstallAliasRegistry(nil) })
+
+	now := time.Now().UTC()
+	reader := &fakeOracleReader{row: oracleRow(t, divergence.OracleSourceReflectorDEX, "20000000000000", 14, now)}
+	ref := newOracleRef(t, divergence.OracleSourceReflectorDEX, reader, time.Hour)
+	lookup := func(quote string) []string {
+		q, err := canonical.ParseAsset(quote)
+		if err != nil {
+			t.Fatalf("parse %q: %v", quote, err)
+		}
+		if _, err := priceOf(ref.LookupQuote(context.Background(), canonical.Pair{Base: canonical.NativeAsset(), Quote: q}, now)); err != nil {
+			t.Fatalf("LookupQuote native/%s: %v", quote, err)
+		}
+		return reader.gotQuoteKeys
+	}
+
+	if got := lookup("fiat:USD"); len(got) != 1 || got[0] != "fiat:USD" {
+		t.Errorf("quote keys for fiat:USD = %v, want exactly [fiat:USD]", got)
+	}
+	got := lookup(usdcClassic)
+	if !slices.Contains(got, usdcSACContract) {
+		t.Errorf("quote keys for %s = %v, missing the USDC SAC reflector-dex quotes in", usdcClassic, got)
 	}
 }
 
