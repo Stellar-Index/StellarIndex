@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -403,11 +404,11 @@ func parseAdminCreateKeyRequest(w http.ResponseWriter, r *http.Request) (adminCr
 			"tier must be \"apikey\" (default) or \"operator\"")
 		return req, false
 	}
-	if req.RateLimitPerMin < 0 || req.RateLimitPerMin > 100000 {
+	if req.RateLimitPerMin < 0 || req.RateLimitPerMin > auth.MaxKeyRateLimitPerMin {
 		writeProblem(w, r,
 			"https://api.stellarindex.io/errors/invalid-rate-limit",
 			"Invalid rate_limit_per_min", http.StatusBadRequest,
-			"rate_limit_per_min must be in [0, 100000]; 0 inherits the deployment default")
+			fmt.Sprintf("rate_limit_per_min must be in [0, %d]; 0 inherits the deployment default", auth.MaxKeyRateLimitPerMin))
 		return req, false
 	}
 	scopes, problem := validateScopes(req.Scopes)

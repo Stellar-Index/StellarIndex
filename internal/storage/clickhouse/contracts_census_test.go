@@ -2,6 +2,7 @@ package clickhouse
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"sync"
@@ -163,6 +164,9 @@ func TestRecentContracts_FreshHeadYesterdayServesCensus(t *testing.T) {
 type execRecorder struct {
 	mu      sync.Mutex
 	queries []string
+	// sizes answers the shrink check: staging rows, staging events, live
+	// rows, live events.
+	sizes [4]uint64
 }
 
 func (e *execRecorder) Exec(_ context.Context, query string, _ ...any) error {
@@ -170,6 +174,36 @@ func (e *execRecorder) Exec(_ context.Context, query string, _ ...any) error {
 	e.queries = append(e.queries, query)
 	e.mu.Unlock()
 	return nil
+}
+
+func (e *execRecorder) QueryRow(_ context.Context, query string, _ ...any) driver.Row {
+	e.mu.Lock()
+	e.queries = append(e.queries, query)
+	e.mu.Unlock()
+	return sizesRow(e.sizes)
+}
+
+// sizesRow is a driver.Row scanning its values into *uint64 destinations.
+type sizesRow [4]uint64
+
+func (r sizesRow) Err() error { return nil }
+func (r sizesRow) Scan(dest ...any) error {
+	for i, d := range dest {
+		*(d.(*uint64)) = r[i]
+	}
+	return nil
+}
+func (r sizesRow) ScanStruct(any) error { return nil }
+
+func (e *execRecorder) replaced() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, q := range e.queries {
+		if strings.Contains(q, "REPLACE PARTITION") {
+			return true
+		}
+	}
+	return false
 }
 
 var stagingTableRe = regexp.MustCompile(`contracts_census_daily_staging[0-9a-f_]*`)
@@ -211,7 +245,7 @@ func TestRunCensusDay_PrivateStagingPerRun(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := runCensusDayConn(context.Background(), recs[i], day, func(string, ...any) {}); err != nil {
+			if err := runCensusDayConn(context.Background(), recs[i], day, false, func(string, ...any) {}); err != nil {
 				t.Errorf("run %d: %v", i, err)
 			}
 		}()
@@ -265,5 +299,41 @@ func TestRunCensusDay_PrivateStagingPerRun(t *testing.T) {
 		if !sawCreate || !sawReplace || !sawDrop {
 			t.Fatalf("run %d critical section incomplete for %q: create=%v replace=%v drop=%v", i, staging, sawCreate, sawReplace, sawDrop)
 		}
+	}
+}
+
+// A recompute that comes back smaller than the live partition — here a
+// zero-row staging insert over a live day of 5 contracts — must not swap
+// in: REPLACE PARTITION would wipe the day wholesale.
+func TestRunCensusDay_ShrinkRefusesReplace(t *testing.T) {
+	day := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
+	rec := &execRecorder{sizes: [4]uint64{0, 0, 5, 120}}
+	err := runCensusDayConn(context.Background(), rec, day, false, func(string, ...any) {})
+	if !errors.Is(err, ErrCensusShrink) {
+		t.Fatalf("zero-row recompute over a 5-row live day returned %v, want ErrCensusShrink", err)
+	}
+	if rec.replaced() {
+		t.Fatal("REPLACE PARTITION ran for a recompute smaller than the live partition")
+	}
+	if len(rec.stagingTables()) != 1 {
+		t.Fatalf("staging tables touched: %v", rec.stagingTables())
+	}
+
+	// Fewer events at the same contract count is a shrink too.
+	rec = &execRecorder{sizes: [4]uint64{5, 119, 5, 120}}
+	if err := runCensusDayConn(context.Background(), rec, day, false, func(string, ...any) {}); !errors.Is(err, ErrCensusShrink) || rec.replaced() {
+		t.Fatalf("event-count shrink: err=%v replaced=%v, want ErrCensusShrink and no REPLACE", err, rec.replaced())
+	}
+
+	// -shrink-ok is the operator's explicit override.
+	rec = &execRecorder{sizes: [4]uint64{0, 0, 5, 120}}
+	if err := runCensusDayConn(context.Background(), rec, day, true, func(string, ...any) {}); err != nil || !rec.replaced() {
+		t.Fatalf("shrinkOK: err=%v replaced=%v, want the REPLACE to run", err, rec.replaced())
+	}
+
+	// A grown (or equal) recompute swaps in as before.
+	rec = &execRecorder{sizes: [4]uint64{6, 130, 5, 120}}
+	if err := runCensusDayConn(context.Background(), rec, day, false, func(string, ...any) {}); err != nil || !rec.replaced() {
+		t.Fatalf("grown recompute: err=%v replaced=%v", err, rec.replaced())
 	}
 }
