@@ -50,6 +50,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"html/template"
 	"log/slog"
 	"math"
 	"math/big"
@@ -4850,6 +4851,18 @@ type signupVerifyEmailerAdapter struct {
 	from   string
 }
 
+// signupVerifyHTMLTemplate escapes verifyURL contextually: it embeds the
+// client-supplied Host header, so it is not trusted markup.
+var signupVerifyHTMLTemplate = template.Must(template.New("signup_verify.html").Parse(
+	"<p>Welcome to the Stellar Index API.</p>" +
+		"<p>Click the link below to confirm your email address. " +
+		"The link is single-use and expires in 24 hours.</p>" +
+		`<p><a href="{{.}}">{{.}}</a></p>` +
+		"<p>You can use the API key returned in the signup response " +
+		"immediately. Confirmation flips an <code>email_verified=true</code> " +
+		"flag on the key so the dashboard can surface it as a verified account.</p>" +
+		"<p>If you didn't sign up, you can safely ignore this email.</p>"))
+
 func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context, toEmail, verifyURL string) error {
 	if a == nil || a.sender == nil {
 		return errors.New("signupVerifyEmailer: not configured")
@@ -4864,14 +4877,11 @@ func (a *signupVerifyEmailerAdapter) SendSignupVerification(ctx context.Context,
 		"flag on the key so the dashboard can surface it as a\n" +
 		"verified account.\n\n" +
 		"If you didn't sign up, you can safely ignore this email.\n"
-	htmlBody := "<p>Welcome to the Stellar Index API.</p>" +
-		"<p>Click the link below to confirm your email address. " +
-		"The link is single-use and expires in 24 hours.</p>" +
-		`<p><a href="` + verifyURL + `">` + verifyURL + `</a></p>` +
-		"<p>You can use the API key returned in the signup response " +
-		"immediately. Confirmation flips an <code>email_verified=true</code> " +
-		"flag on the key so the dashboard can surface it as a verified account.</p>" +
-		"<p>If you didn't sign up, you can safely ignore this email.</p>"
+	var hb strings.Builder
+	if err := signupVerifyHTMLTemplate.Execute(&hb, verifyURL); err != nil {
+		return fmt.Errorf("signupVerifyEmailer: render html body: %w", err)
+	}
+	htmlBody := hb.String()
 	msg := notify.Message{
 		From:    a.from,
 		To:      []string{toEmail},
