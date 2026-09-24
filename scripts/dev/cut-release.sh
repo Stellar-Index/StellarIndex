@@ -106,7 +106,7 @@ fi
 # environments carry gh credentials but no SSH key, and vice versa).
 local_sha=$(git rev-parse main 2>/dev/null || echo unknown)
 if command -v gh >/dev/null 2>&1; then
-  remote_sha=$(gh api repos/{owner}/{repo}/commits/main --jq '.sha' 2>/dev/null || true)
+  remote_sha=$(gh api "repos/{owner}/{repo}/commits/main" --jq '.sha' 2>/dev/null || true)
   if [[ -z "$remote_sha" ]]; then
     echo "WARN: could not read origin/main via gh; falling back to git fetch" >&2
     git fetch --quiet origin main 2>/dev/null || true
@@ -208,6 +208,21 @@ fi
 rm -f "$prepush_log"
 echo "  OK"
 
+# Step 6b — reconfirm the verified commit is still what "main" points at.
+#
+# prepush archives the committed HEAD into a disposable checkout and
+# verifies that snapshot — it does not hold any lock on the live worktree.
+# This repo routinely runs several agents/sessions against one worktree
+# with direct-to-main commits, so `main` can move during the ~20-minute
+# wait above. Without this check, step 7 would tag whatever `main`
+# resolves to *now*, which may never have been prepushed.
+post_sha="$(git rev-parse main 2>/dev/null || echo unknown)"
+if [[ "$post_sha" != "$local_sha" ]]; then
+  echo "ERR: main moved during 'make prepush' (verified ${local_sha}, now ${post_sha})." >&2
+  echo "     Re-run this script against the new commit; nothing was tagged or pushed." >&2
+  exit 1
+fi
+
 # Step 7 — go / no-go
 echo ""
 echo "Ready to cut release $TAG"
@@ -238,7 +253,7 @@ else
   fi
 fi
 
-git tag "$TAG"
+git tag "$TAG" "$local_sha"
 # Resolve origin's URL so the push works whether origin is SSH-keyed,
 # HTTPS-via-gh-credentials, or some mix. `git push origin $TAG`
 # would also work in most setups, but using the explicit URL skips
