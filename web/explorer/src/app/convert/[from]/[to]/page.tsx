@@ -10,11 +10,8 @@ import { formatPairPrice } from '@/lib/format';
 import { ConvertPair } from './ConvertPair';
 import { ConvertChart } from './ConvertChart';
 import { ConvertLiveRate, ConvertSnippets } from './ConvertLive';
-import { API_BASE_URL } from '@/api/client';
-import { isCIStub } from '@/lib/buildFetch';
+import { buildFetchData, isCIStub } from '@/lib/buildFetch';
 import { CURRENT_NETWORK } from '@/lib/networks';
-
-const BUILD_FETCH_TIMEOUT_MS = 8_000;
 
 // Fallback majors so a brand-new build with no upstream still
 // produces a meaningful matrix. Same set as /currencies/[ticker]'s
@@ -68,20 +65,22 @@ async function fetchTickers(): Promise<string[]> {
   if (isCIStub) return FALLBACK_TICKERS;
   // Migrated from /v1/currencies → /v1/assets/verified (rc.48 +
   // F-1201 audit-2026-05-12). Filter to class=fiat client-side.
-  try {
-    const res = await fetch(`${API_BASE_URL}/v1/assets/verified`, {
-      signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const env = (await res.json()) as { data: VerifiedCurrencyEntry[] };
-    const tickers = (env.data ?? [])
-      .filter((row) => row.class === 'fiat')
-      .map((row) => row.ticker)
-      .filter(Boolean);
-    return tickers.length > 0 ? tickers : FALLBACK_TICKERS;
-  } catch {
-    return FALLBACK_TICKERS;
-  }
+  //
+  // Routed through buildFetchData (not a raw fetch) so a transient
+  // 429/5xx during static export is retried and, if it persists,
+  // FAILS THE BUILD instead of silently shrinking this list — the
+  // same fail-hard contract sitemap.ts's fetchCurrencyTickers uses
+  // for the identical /v1/assets/verified listing. FALLBACK_TICKERS
+  // below covers only a genuinely empty/never-populated listing (a
+  // brand-new build with no upstream), not a transport failure.
+  const rows = await buildFetchData<VerifiedCurrencyEntry[]>(
+    '/v1/assets/verified',
+  );
+  const tickers = (rows ?? [])
+    .filter((row) => row.class === 'fiat')
+    .map((row) => row.ticker)
+    .filter(Boolean);
+  return tickers.length > 0 ? tickers : FALLBACK_TICKERS;
 }
 
 // Hub-and-spoke: top-20 majors × all-110 currencies, both directions.
@@ -121,50 +120,45 @@ async function fetchDetail(
   to: string,
 ): Promise<CurrencyDetail | null> {
   if (isCIStub) return null;
-  try {
-    const [identityRes, priceRes] = await Promise.all([
-      fetch(`${API_BASE_URL}/v1/assets/${from.toUpperCase()}`, {
-        signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS),
-      }),
-      fetch(
-        `${API_BASE_URL}/v1/price/batch?asset_ids=${encodeURIComponent(`fiat:${to.toUpperCase()}`)}&quote=${encodeURIComponent(`fiat:${from.toUpperCase()}`)}`,
-        { signal: AbortSignal.timeout(BUILD_FETCH_TIMEOUT_MS) },
-      ),
-    ]);
-    if (!identityRes.ok || !priceRes.ok) return null;
-    const identityEnv = (await identityRes.json()) as {
-      data: { ticker: string; name: string; price_usd?: string | null };
-    };
-    const priceEnv = (await priceRes.json()) as {
-      data: Array<{ asset_id: string; price: string | null }>;
-    };
-    const v = identityEnv.data;
-    if (!v) return null;
-    const fromUSD = v.price_usd ? Number(v.price_usd) : 0;
-    if (!(fromUSD > 0)) return null;
-    const toRateRow = (priceEnv.data ?? []).find(
-      (r) => r.asset_id === `fiat:${to.toUpperCase()}`,
-    );
-    // price/batch(asset_ids=fiat:{to}, quote=fiat:{from}) returns the
-    // value of 1 {to} in {from} units (e.g. 1 EUR = 1.15 USD). The
-    // converter displays "1 {from} = ? {to}", which is the INVERSE.
-    // Pre-fix (audit 2026-06-19) this was shown un-inverted, so
-    // /convert/USD/EUR read "1 USD = 1.15 EUR" — actually the EUR→USD
-    // rate mislabeled. Invert here.
-    const toInFromUnits = toRateRow?.price ? Number(toRateRow.price) : 0;
-    const fromToRate = toInFromUnits > 0 ? 1 / toInFromUnits : 0;
-    return {
-      ticker: v.ticker,
-      name: v.name,
-      // rate_usd: 1 USD = N {from}  →  inverse of fromUSD (which
-      // is 1 {from} = N USD)
-      rate_usd: 1 / fromUSD,
-      inverse_usd: fromUSD,
-      cross_rates: fromToRate > 0 ? { [to.toUpperCase()]: fromToRate } : {},
-    };
-  } catch {
-    return null;
-  }
+  const [identity, priceRows] = await Promise.all([
+    // Entity identity — fail-hard, same as fetchAssetDetail in
+    // assets/[slug]/page.tsx: a persistent transport failure throws
+    // and fails the build rather than baking a rate-less page.
+    buildFetchData<{ ticker: string; name: string; price_usd?: string | null }>(
+      `/v1/assets/${from.toUpperCase()}`,
+    ),
+    // The rate itself — softFail, like fetchPriceDirect's /v1/price
+    // call: useConvertRate (ConvertLive.tsx) re-fetches this pair
+    // client-side every 60s, so a cold/slow price/batch at build
+    // time should degrade this one pair rather than abort the export.
+    buildFetchData<Array<{ asset_id: string; price: string | null }>>(
+      `/v1/price/batch?asset_ids=${encodeURIComponent(`fiat:${to.toUpperCase()}`)}&quote=${encodeURIComponent(`fiat:${from.toUpperCase()}`)}`,
+      { softFail: true, timeoutMs: 6_000, attempts: 2 },
+    ),
+  ]);
+  if (!identity) return null;
+  const fromUSD = identity.price_usd ? Number(identity.price_usd) : 0;
+  if (!(fromUSD > 0)) return null;
+  const toRateRow = (priceRows ?? []).find(
+    (r) => r.asset_id === `fiat:${to.toUpperCase()}`,
+  );
+  // price/batch(asset_ids=fiat:{to}, quote=fiat:{from}) returns the
+  // value of 1 {to} in {from} units (e.g. 1 EUR = 1.15 USD). The
+  // converter displays "1 {from} = ? {to}", which is the INVERSE.
+  // Pre-fix (audit 2026-06-19) this was shown un-inverted, so
+  // /convert/USD/EUR read "1 USD = 1.15 EUR" — actually the EUR→USD
+  // rate mislabeled. Invert here.
+  const toInFromUnits = toRateRow?.price ? Number(toRateRow.price) : 0;
+  const fromToRate = toInFromUnits > 0 ? 1 / toInFromUnits : 0;
+  return {
+    ticker: identity.ticker,
+    name: identity.name,
+    // rate_usd: 1 USD = N {from}  →  inverse of fromUSD (which
+    // is 1 {from} = N USD)
+    rate_usd: 1 / fromUSD,
+    inverse_usd: fromUSD,
+    cross_rates: fromToRate > 0 ? { [to.toUpperCase()]: fromToRate } : {},
+  };
 }
 
 export async function generateMetadata({
