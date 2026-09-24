@@ -2210,6 +2210,13 @@ jobs:
         # grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/promtail-listen-address-test.sh
+      - name: haproxy http-request timeout test (SL01)
+        # defaults block set connect/client/server timeouts but no
+        # timeout http-request, leaving a slow-header client holding a
+        # server slot for the full 60s client timeout. Structural grep,
+        # no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/haproxy-http-request-timeout-test.sh
       - name: ansible README <-> archival-node role parity (Q252)
         # The README's first-run bootstrap prescribed a --tags subset that
         # skipped users/redis/clickhouse/minio/binaries/hardening/caddy and
