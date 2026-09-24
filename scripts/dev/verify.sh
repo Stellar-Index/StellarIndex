@@ -731,8 +731,15 @@ else
     lane_d > "$LANEDIR/d.log" 2>&1 & pid_d=$!
     wait "$pid_a" || lane_rc_a=$?
     wait "$pid_d" || lane_rc_d=$?
-    lane_b > "$LANEDIR/b.log" 2>&1 || lane_rc_b=$?
-    lane_c > "$LANEDIR/c.log" 2>&1 || lane_rc_c=$?
+    # b and c run one at a time (memory-constrained), but each still runs as
+    # its own backgrounded job so `wait` reports its real exit code — calling
+    # a function directly on the left of `||` disables errexit for its whole
+    # body, which let a failing `make test`/`make lint` inside the function
+    # go unnoticed as long as the function's last command still succeeded.
+    lane_b > "$LANEDIR/b.log" 2>&1 & pid_b=$!
+    wait "$pid_b" || lane_rc_b=$?
+    lane_c > "$LANEDIR/c.log" 2>&1 & pid_c=$!
+    wait "$pid_c" || lane_rc_c=$?
 fi
 
 # Every lane's log, in full, lane order — a lane runs concurrently with the
