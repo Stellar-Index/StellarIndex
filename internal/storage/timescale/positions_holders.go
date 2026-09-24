@@ -99,19 +99,17 @@ func (s *Store) scanHolders(ctx context.Context, protocol, kind, q string) ([]De
 func (s *Store) blendPositionHolders(ctx context.Context) ([]DeFiPositionHolder, error) {
 	const supply = `
 		SELECT pool, asset, user_address,
-		       COALESCE(SUM(CASE WHEN event_kind IN ('supply','supply_collateral') THEN token_amount
-		                         WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount END),0)::text,
+		       COALESCE(SUM(` + blendSupplyNetExpr + `),0)::text,
 		       MAX(ledger_close_time), MAX(ledger)
 		  FROM blend_positions
-		 WHERE event_kind IN ('supply','withdraw','supply_collateral','withdraw_collateral')
+		 WHERE event_kind IN (` + lendingSupplySideKinds + `)
 		 GROUP BY pool, asset, user_address`
 	const borrow = `
 		SELECT pool, asset, user_address,
-		       COALESCE(SUM(CASE WHEN event_kind = 'borrow' THEN token_amount
-		                         WHEN event_kind = 'repay' THEN -token_amount END),0)::text,
+		       COALESCE(SUM(` + blendBorrowNetExpr + `),0)::text,
 		       MAX(ledger_close_time), MAX(ledger)
 		  FROM blend_positions
-		 WHERE event_kind IN ('borrow','repay')
+		 WHERE event_kind IN (` + lendingBorrowSideKinds + `)
 		 GROUP BY pool, asset, user_address`
 	a, err := s.scanHolders(ctx, "blend", holderKindLendingSupply, supply)
 	if err != nil {

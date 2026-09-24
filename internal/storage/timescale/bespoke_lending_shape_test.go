@@ -4,6 +4,12 @@
 package timescale
 
 import (
+	"context"
+	"database/sql/driver"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -193,5 +199,151 @@ func TestTruncLendingID(t *testing.T) {
 	}
 	if got := truncLendingID("short"); got != "short" {
 		t.Errorf("truncLendingID(short) = %q, want pass-through", got)
+	}
+}
+
+// blendNetArm matches one signed arm of a blend_positions net CASE:
+// `WHEN event_kind = 'k' THEN [-]token_amount` or the IN (...) form.
+var blendNetArm = regexp.MustCompile(`WHEN event_kind (?:= '(\w+)'|IN \(([^)]*)\))\s+THEN (-?)token_amount`)
+
+// blendNetSigns reads every signed token_amount arm out of q as
+// kind -> +1/-1, failing on a kind signed both ways.
+func blendNetSigns(t *testing.T, name, q string) map[string]int {
+	t.Helper()
+	signs := map[string]int{}
+	for _, m := range blendNetArm.FindAllStringSubmatch(q, -1) {
+		kinds := []string{m[1]}
+		if m[1] == "" {
+			kinds = strings.Split(strings.NewReplacer("'", "", " ", "").Replace(m[2]), ",")
+		}
+		sign := 1
+		if m[3] == "-" {
+			sign = -1
+		}
+		for _, k := range kinds {
+			if prev, ok := signs[k]; ok && prev != sign {
+				t.Errorf("%s signs %s both ways:\n%s", name, k, q)
+			}
+			signs[k] = sign
+		}
+	}
+	return signs
+}
+
+var (
+	blendSupplyLegSigns = map[string]int{"supply": 1, "supply_collateral": 1, "withdraw": -1, "withdraw_collateral": -1}
+	blendBorrowLegSigns = map[string]int{"borrow": 1, "flash_loan": 1, "repay": -1}
+	blendBothLegSigns   = map[string]int{
+		"supply": 1, "supply_collateral": 1, "withdraw": -1, "withdraw_collateral": -1,
+		"borrow": 1, "flash_loan": 1, "repay": -1,
+	}
+)
+
+// assertBlendFold pins a fold's sign table and that every event_kind
+// filter selecting the debt leg also selects flash_loan — a CASE arm
+// the WHERE/FILTER never feeds is no arm at all.
+func assertBlendFold(t *testing.T, name, q string, want map[string]int) {
+	t.Helper()
+	if got := blendNetSigns(t, name, q); !reflect.DeepEqual(got, want) {
+		t.Errorf("%s net signs = %v, want %v:\n%s", name, got, want, q)
+	}
+	for _, m := range regexp.MustCompile(`event_kind IN \(([^)]*)\)`).FindAllStringSubmatch(q, -1) {
+		if strings.Contains(m[1], "'repay'") && !strings.Contains(m[1], "'flash_loan'") {
+			t.Errorf("%s filters the borrow leg without flash_loan (IN (%s)):\n%s", name, m[1], q)
+		}
+	}
+}
+
+// TestBlendFoldsCountFlashLoanAsDebt — a Blend flash_loan mints d-tokens
+// that only a later repay burns (migration 0045 body: tokens_out,
+// d_tokens_minted). A fold that drops the flash_loan but subtracts its
+// repay serves flash_loan 1000 + repay 1000 as an open -1000 debt, and a
+// kept flash loan as no debt at all. Every blend net fold must sign it
+// as borrow does.
+func TestBlendFoldsCountFlashLoanAsDebt(t *testing.T) {
+	ctx := context.Background()
+	empty := scriptedResult{cols: []string{"x"}}
+
+	store, conn := newScriptedStore(t, empty)
+	if _, err := store.BlendPositionsByUser(ctx, "GUSER"); err != nil {
+		t.Fatalf("BlendPositionsByUser: %v", err)
+	}
+	assertBlendFold(t, "BlendPositionsByUser", conn.only(t).sql, blendBothLegSigns)
+
+	store, conn = newScriptedStore(t, empty, empty)
+	if _, err := store.blendPositionHolders(ctx); err != nil {
+		t.Fatalf("blendPositionHolders: %v", err)
+	}
+	if len(conn.stmts) != 2 {
+		t.Fatalf("blendPositionHolders issued %d statements, want 2", len(conn.stmts))
+	}
+	assertBlendFold(t, "blendPositionHolders supply", conn.stmts[0].sql, blendSupplyLegSigns)
+	assertBlendFold(t, "blendPositionHolders borrow", conn.stmts[1].sql, blendBorrowLegSigns)
+
+	kpis := scriptedResult{cols: []string{"users", "flash"}, rows: [][]driver.Value{{"1", "1"}}}
+	store, conn = newScriptedStore(t, kpis, empty, empty, empty)
+	if err := store.lendingPositionBlocks(ctx, &BespokeBlock{}, "30 days", 30); err != nil {
+		t.Fatalf("lendingPositionBlocks: %v", err)
+	}
+	assertBlendFold(t, "Net position by asset", conn.stmts[1].sql, blendBothLegSigns)
+
+	store, conn = newScriptedStore(t, empty)
+	if _, err := store.ListBlendPools(ctx); err != nil {
+		t.Fatalf("ListBlendPools: %v", err)
+	}
+	assertBlendFold(t, "ListBlendPools", conn.only(t).sql, blendBothLegSigns)
+}
+
+// TestBlendNetExprsCoverMigrationKinds keeps the two net expressions in
+// lockstep with the blend_positions event_kind CHECK: every kind the
+// table accepts moves exactly one leg.
+func TestBlendNetExprsCoverMigrationKinds(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "migrations", "0045_create_blend_money_market.up.sql"))
+	if err != nil {
+		t.Fatalf("read migration 0045: %v", err)
+	}
+	m := regexp.MustCompile(`(?s)event_kind\s+text\s+NOT NULL CHECK \(event_kind IN \((.*?)\)\)`).FindSubmatch(raw)
+	if m == nil {
+		t.Fatal("blend_positions event_kind CHECK not found in migration 0045")
+	}
+	want := map[string]bool{}
+	for _, k := range strings.Split(strings.NewReplacer("'", "", " ", "", "\n", "").Replace(string(m[1])), ",") {
+		want[k] = true
+	}
+	supply := blendNetSigns(t, "blendSupplyNetExpr", blendSupplyNetExpr)
+	borrow := blendNetSigns(t, "blendBorrowNetExpr", blendBorrowNetExpr)
+	got := map[string]bool{}
+	for _, leg := range []map[string]int{supply, borrow} {
+		for k := range leg {
+			if got[k] {
+				t.Errorf("event kind %s moves both legs", k)
+			}
+			got[k] = true
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("net expressions cover %v, migration 0045 accepts %v", got, want)
+	}
+}
+
+// TestBlendNetFoldsUseSharedExprs fails when a blend_positions net is
+// hand-rolled again instead of summing blendSupplyNetExpr /
+// blendBorrowNetExpr — each copy is a place the flash_loan leg can drift.
+func TestBlendNetFoldsUseSharedExprs(t *testing.T) {
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || f == "bespoke_lending.go" {
+			continue
+		}
+		src, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(src), "blend_positions") && blendNetArm.Match(src) {
+			t.Errorf("%s hand-rolls a blend_positions net CASE; sum blendSupplyNetExpr / blendBorrowNetExpr instead", f)
+		}
 	}
 }

@@ -37,8 +37,8 @@ func TestPositionsFold_AllSixProtocols(t *testing.T) {
 	t0 := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
 
 	// ─── blend money-market: supply 1000, withdraw 400 -> net 600;
-	// borrow 300, repay 100 -> net 200. flash_loan 999 must NOT move
-	// either net.
+	// borrow 300, flash_loan 999, repay 100 -> net 1199 (a flash loan
+	// mints debt tokens exactly as borrow does).
 	const (
 		blendPool  = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
 		blendAsset = "CC4WPS7HRSPRZAXBVUDYLRXLZRHPLA6VTZARKZJTNVNECAS5IDRXRUB6"
@@ -80,12 +80,13 @@ func TestPositionsFold_AllSixProtocols(t *testing.T) {
 	if bf.SupplyNet != "600" {
 		t.Errorf("blend SupplyNet = %q, want 600 (1000 supply - 400 withdraw)", bf.SupplyNet)
 	}
-	if bf.BorrowNet != "200" {
-		t.Errorf("blend BorrowNet = %q, want 200 (300 borrow - 100 repay; flash_loan excluded)", bf.BorrowNet)
+	if bf.BorrowNet != "1199" {
+		t.Errorf("blend BorrowNet = %q, want 1199 (300 borrow + 999 flash_loan - 100 repay)", bf.BorrowNet)
 	}
 	if !bf.HasSupplyLeg || !bf.HasBorrowLeg {
 		t.Errorf("blend fold legs = supply:%v borrow:%v, want both true", bf.HasSupplyLeg, bf.HasBorrowLeg)
 	}
+	assertBlendFlashLoanFolds(ctx, t, store, blendPool, t0)
 
 	// ─── blend backstop: deposit(amount=1000,shares=900), then
 	// withdraw(amount=tokens_out,shares_burned=300) -> shares net 600.
@@ -263,5 +264,57 @@ func TestPositionsFold_AllSixProtocols(t *testing.T) {
 	}
 	if len(aquariusFolds) != 1 || aquariusFolds[0].NetDelta != "1300" {
 		t.Errorf("AquariusGaugeByUser = %+v, want NetDelta=1300 (2000 - 700)", aquariusFolds)
+	}
+}
+
+// assertBlendFlashLoanFolds pins the flash-loan debt leg through real
+// SQL: a flash_loan settled by a repay in the same tx folds to a closed
+// (zero) borrow, and a kept flash_loan is an open borrow — never a
+// negative debt and never a missing leg.
+func assertBlendFlashLoanFolds(ctx context.Context, t *testing.T, store *timescale.Store, pool string, t0 time.Time) {
+	t.Helper()
+	const (
+		flashUser    = "GBFLASHUSERAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		settledAsset = "CSETTLEDASSETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		keptAsset    = "CKEPTASSETAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+		receiver     = "CAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXY32S"
+	)
+	rows := []struct {
+		kind, asset string
+		amount      int64
+		eventIndex  uint32
+		txSeed      string
+	}{
+		{blend.EventFlashLoan, settledAsset, 1000, 0, "f"},
+		{blend.EventRepay, settledAsset, 1000, 1, "f"},
+		{blend.EventFlashLoan, keptAsset, 500, 0, "k"},
+	}
+	for i, r := range rows {
+		ev := domain.BlendPositionEvent{
+			Pool: pool, Kind: r.kind, Asset: r.asset, User: flashUser,
+			TokenAmount: big.NewInt(r.amount), BOrDAmount: big.NewInt(r.amount),
+			Ledger: 70_100_000, TxHash: pad64(r.txSeed, 0), OpIndex: 0, EventIndex: r.eventIndex,
+			Timestamp: t0.Add(time.Duration(i) * time.Second),
+		}
+		if r.kind == blend.EventFlashLoan {
+			ev.Counterparty = receiver
+		}
+		if err := store.InsertBlendPositionEvent(ctx, ev); err != nil {
+			t.Fatalf("InsertBlendPositionEvent (%s %s): %v", r.kind, r.asset, err)
+		}
+	}
+	folds, err := store.BlendPositionsByUser(ctx, flashUser)
+	if err != nil {
+		t.Fatalf("BlendPositionsByUser (flash): %v", err)
+	}
+	want := map[string]string{settledAsset: "0", keptAsset: "500"}
+	if len(folds) != len(want) {
+		t.Fatalf("flash folds = %+v, want one per asset %v", folds, want)
+	}
+	for _, f := range folds {
+		if !f.HasBorrowLeg || f.HasSupplyLeg || f.BorrowNet != want[f.Asset] {
+			t.Errorf("flash fold %s = borrow:%v supply:%v net %q, want borrow leg only, net %q",
+				f.Asset, f.HasBorrowLeg, f.HasSupplyLeg, f.BorrowNet, want[f.Asset])
+		}
 	}
 }

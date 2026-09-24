@@ -782,14 +782,8 @@ func (s *Store) lendingPositionBlocks(ctx context.Context, blk *BespokeBlock, si
 	tbl, err := s.scanTable(ctx,
 		BespokeTable{Title: "Net position by asset", Columns: []string{"Asset", "Net supplied", "Net borrowed", "Events"}},
 		`SELECT asset,
-		   COALESCE(sum(CASE
-		     WHEN event_kind IN ('supply','supply_collateral')    THEN token_amount
-		     WHEN event_kind IN ('withdraw','withdraw_collateral') THEN -token_amount
-		     ELSE 0 END),0)::text,
-		   COALESCE(sum(CASE
-		     WHEN event_kind = 'borrow' THEN token_amount
-		     WHEN event_kind = 'repay'  THEN -token_amount
-		     ELSE 0 END),0)::text,
+		   COALESCE(sum(`+blendSupplyNetExpr+`),0)::text,
+		   COALESCE(sum(`+blendBorrowNetExpr+`),0)::text,
 		   count(*)::text
 		 FROM blend_positions
 		 WHERE ledger_close_time > now() - $1::interval
