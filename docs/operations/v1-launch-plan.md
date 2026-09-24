@@ -38,6 +38,11 @@ severity: P1
 > job was to disbelieve this document. Where anything below disagrees with
 > this section, this section is right.
 >
+> **Commit ids in older entries may not resolve.** This repository's history
+> was rewritten once (content preserved, every commit id changed), and entries
+> written before that still cite the old ids. An id `git cat-file -e` rejects
+> is pre-rewrite: find its successor by date and subject with `git log`.
+>
 > The audit's headline was that **three facts dominating the launch answer
 > appeared nowhere in this plan**: `main` was red, the public status page was
 > reading `degraded`, and `/v1/coverage` publicly serves 20 of 21 rather than
@@ -61,10 +66,10 @@ severity: P1
 
 | # | item | owner | state on 2026-09-03 |
 |---|---|---|---|
-| 0.1 | **`main` must be green** | agent | **DONE** (`fb73da9e5`). It had been red since `8b66519ae`: #331 F1 moved the listing's price derivation into a worker-maintained rollup and two integration tests still refreshed only the old continuous aggregate, so every asset came back unpriced. An all-unpriced board COLLAPSES rank tier 0 into tier 1, which is why the visible symptom was a wrong sort order rather than a missing price. `make verify` cannot see this class — it does not run integration tests. |
+| 0.1 | **`main` must be green** | agent | **DONE** (`6ce95d191`). It had been red since `e68f8eaa0`: #331 F1 moved the listing's price derivation into a worker-maintained rollup and two integration tests still refreshed only the old continuous aggregate, so every asset came back unpriced. An all-unpriced board COLLAPSES rank tier 0 into tier 1, which is why the visible symptom was a wrong sort order rather than a missing price. `make verify` cannot see this class — it does not run integration tests. |
 | 0.2 | **`/terms` + `/privacy`** | **owner — legal read only** | **BLOCKED ON THE OWNER.** Both URLs 404 today. PR #237 has the code and the tests; it needs wording signed off, nothing else. |
-| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`7c051edeb`, `d22e5409d`); `/v1/pairs` is being re-measured cleanly for cold-variant cost, which is a different and much smaller question. |
-| 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from the maintainer** | **RECORDS LIVE** (`91d0e469d`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need the maintainer: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
+| 0.3 | ~~Stop the status page saying `degraded`~~ | — | **NOT A BLOCKER — the measurement was contaminated, and the contamination was ours.** The audit sampled `/v1/status` and a 1-hour Prometheus window while TEN subagents were running cold ClickHouse and Postgres scans against r1. Two 6-hour windows from r1's own Prometheus settle it: ending **2026-09-02T20:00Z, before that load, p99 = 48.6 ms and p95 = 20.5 ms**; ending 2026-09-03T07:00Z, during it, p99 = 566.2 ms and p95 = 82.1 ms. Targets are 500 ms and 200 ms, so the steady state sits inside both by an order of magnitude. With the agents drained, live `/v1/status` reads `overall: ok`, p50 1 / p95 21 / p99 34 ms, zero active incidents. The per-route figures the audit quoted (`/v1/pairs` 4,975 ms, `/v1/accounts/{g}/operations` 4,966 ms, `/v1/pools` 4,700 ms) are load artefacts. **Neither of the audit's two options — 2-4 days of optimisation, or renegotiating the published target — is needed.** Two of those three routes were independently fixed anyway (`dea56efec` for `/v1/accounts/{g}/operations`, `12590a65a` for `/v1/pools`); `/v1/pairs` is being re-measured cleanly for cold-variant cost, which is a different and much smaller question. |
+| 0.4 | **Email/DNS perimeter (#334)** | agent + **2 clicks from the maintainer** | **RECORDS LIVE** (`7b914f351`). MX, SPF (`-all`), DMARC (`p=quarantine`), a second DKIM selector and CAA are published and verified against the authoritative nameservers, with a drift check (`scripts/ops/dns-perimeter-check.sh`) and a weekly workflow. Two steps need the maintainer: click Cloudflare's destination-verification link so `security@` can forward, and publish the DS record at the registrar. Both are on #334. |
 
 ### Tier 1 — do before announcing; cheap; does not strictly block
 
@@ -514,8 +519,9 @@ condition is being suppressed.
   fixed. Reconcile it once and close it, or carry its live rows here.
   *Correction 2026-09-17:* that file is a gitignored, local-only working doc
   (`.gitignore` "LOCAL-ONLY: audit/remediation findings"; its own header says
-  "do not commit"). Its own tally — derived against `23a75582` on 2026-07-26
-  and not re-derived since — is 61 OPEN-REAL findings (50 distinct after
+  "do not commit"). Its own tally — derived on 2026-07-26 against `23a75582`, a
+  pre-rewrite commit id (see the note at the top of this plan), and not
+  re-derived since — is 61 OPEN-REAL findings (50 distinct after
   duplicates) plus 15 OPEN-ACCEPTED-RISK candidates. A docs commit cannot
   reconcile it — the pass has to run in the local checkout, and only its
   CARRIED rows can land here, as plan rows or GitHub issues.
