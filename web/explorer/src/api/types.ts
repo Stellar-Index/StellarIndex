@@ -5323,8 +5323,10 @@ export interface components {
             /** @description XLM stroops as a string (exceeds 2^53). */
             total_coins?: string;
             fee_pool?: string;
-            base_fee?: number;
-            base_reserve?: number;
+            /** @description Base fee per operation in stroops, as a decimal string. */
+            base_fee?: string;
+            /** @description Base reserve in stroops, as a decimal string. */
+            base_reserve?: string;
         };
         /** @description Transaction summary (in ledger + tx listings). */
         TxSummary: {
@@ -5334,9 +5336,10 @@ export interface components {
             close_time?: string;
             index?: number;
             source_account?: string;
-            fee_charged?: number;
-            /** @description The fee bid that bounds fee_charged: on a fee bump, the fee payer's bid (the inner transaction's is fee_bump.inner_max_fee). */
-            max_fee?: number;
+            /** @description Fee charged in stroops, as a decimal string. */
+            fee_charged?: string;
+            /** @description The fee bid that bounds fee_charged, as a decimal string: on a fee bump, the fee payer's bid (the inner transaction's is fee_bump.inner_max_fee). */
+            max_fee?: string;
             operation_count?: number;
             /** @description Whether the transaction applied. Failed transactions ARE indexed and served (an on-chain, fee-charged record). */
             successful?: boolean;
@@ -5369,8 +5372,8 @@ export interface components {
                 fee_account: string;
                 /** @description The inner transaction's hash. Omitted when the result carried no inner result pair. */
                 inner_hash?: string;
-                /** @description The inner transaction's own fee bid. */
-                inner_max_fee: number;
+                /** @description The inner transaction's own fee bid, in stroops, as a decimal string. */
+                inner_max_fee: string;
                 /** @description Raw XDR TransactionResultCode of the inner transaction. Present with inner_hash. */
                 inner_result_code?: number;
                 /** @description Human-readable slug for inner_result_code (e.g. tx_failed, tx_insufficient_balance) — why the inner transaction failed. Present with inner_hash. */
@@ -6842,6 +6845,62 @@ export interface components {
             coverage_from?: string;
             sources?: string[];
             flags: components["schemas"]["Flags"];
+        };
+        /**
+         * @description Per-category protocol analytics (`GET /v1/protocols/{name}`
+         *     `data.bespoke`). Every value the server renders is a STRING it
+         *     formatted itself; numeric values are decimal strings (ADR-0003).
+         */
+        ProtocolBespoke: {
+            /** @description Metric family, e.g. `dex`, `lending`, `yield`, `oracle`, `bridge`. */
+            category: string;
+            kpis?: components["schemas"]["BespokeKPI"][];
+            series?: components["schemas"]["BespokeSeries"][];
+            /** @description Named composition datasets for donut/pie rendering, value-sorted descending. */
+            breakdowns?: components["schemas"]["BespokeBreakdown"][];
+            tables?: components["schemas"]["BespokeTable"][];
+            /** @description Caveat / provenance lines rendered under the block. */
+            notes?: string[];
+        };
+        /** @description One headline metric card. `value` is pre-formatted; `unit` is advisory. */
+        BespokeKPI: {
+            label: string;
+            value: string;
+            unit?: string;
+            hint?: string;
+        };
+        /** @description A named time-series for a chart. */
+        BespokeSeries: {
+            name: string;
+            unit?: string;
+            points: components["schemas"]["BespokeSeriesPoint"][];
+        };
+        BespokeSeriesPoint: {
+            date: string;
+            /** @description Decimal string (ADR-0003). */
+            value: string;
+        };
+        /** @description A named composition dataset, window-scoped. */
+        BespokeBreakdown: {
+            title: string;
+            unit?: string;
+            rows: components["schemas"]["BespokeBreakdownRow"][];
+        };
+        BespokeBreakdownRow: {
+            label: string;
+            /** @description Decimal string (ADR-0003). */
+            value: string;
+            /**
+             * Format: int64
+             * @description Contributing transfers/events.
+             */
+            count: number;
+        };
+        /** @description A named top-N table; the server formats every cell. */
+        BespokeTable: {
+            title: string;
+            columns: string[];
+            rows: string[][];
         };
         ProtocolRow: {
             /** @example blend */
@@ -9124,6 +9183,20 @@ export interface components {
         ReadyEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["ReadyResponse"];
         };
+        LakeHealth: {
+            /**
+             * @description `ok` (HTTP 200) when the ClickHouse checker pinged;
+             *     `lake-unready` (503) when the ping failed; `lake-absent`
+             *     (503) when no lake is wired.
+             * @enum {string}
+             */
+            status: "ok" | "lake-unready" | "lake-absent";
+            /** @description Fixed operator hint; present only on a 503. Never the driver error. */
+            detail?: string;
+        };
+        LakeHealthEnvelope: components["schemas"]["EnvelopeMeta"] & {
+            data: components["schemas"]["LakeHealth"];
+        };
         VersionResponse: components["schemas"]["EnvelopeMeta"] & {
             data: {
                 /** @description Human-readable git-describe (or `dev`). */
@@ -10834,14 +10907,10 @@ export interface components {
             }[];
         };
         Account: {
-            /** @description Magic-link session caller's user info (id, email, display_name, role, is_staff, …) — present on cookie-session /v1/account/me responses only (account.go AccountUser). */
-            user?: {
-                [key: string]: unknown;
-            };
-            /** @description Session caller's parent account (id, name, slug, tier, status, rate_limit_per_min, monthly_request_quota) — present on cookie-session responses only (account.go AccountInfo). `rate_limit_per_min` / `monthly_request_quota` are what auth enforces on a key minted without explicit limits, account overrides included; limits are per key, and neither is the tier's plan ceiling. */
-            account?: {
-                [key: string]: unknown;
-            };
+            /** @description Magic-link session caller's user info — present on cookie-session /v1/account/me responses only. */
+            user?: components["schemas"]["AccountUser"];
+            /** @description Session caller's parent account — present on cookie-session responses only. */
+            account?: components["schemas"]["AccountInfo"];
             key_id?: string;
             label?: string;
             /**
@@ -10864,6 +10933,53 @@ export interface components {
             rate_limit_per_min?: number;
             /** Format: date-time */
             created_at?: string;
+        };
+        /** @description The magic-link session caller (a dashboard user). */
+        AccountUser: {
+            /** Format: uuid */
+            id: string;
+            email: string;
+            display_name?: string;
+            /**
+             * @description The user's role on the parent account.
+             * @enum {string}
+             */
+            role?: "owner" | "admin" | "billing" | "member" | "viewer";
+            /** @description Operator staff flag — gates the staff dashboard. */
+            is_staff: boolean;
+            /** Format: date-time */
+            email_verified_at?: string;
+            /** Format: date-time */
+            last_login_at?: string;
+        };
+        /** @description The session caller's parent account. */
+        AccountInfo: {
+            /** Format: uuid */
+            id: string;
+            name?: string;
+            slug?: string;
+            /**
+             * @description The stored account tier: `free` or `partner`, or a legacy
+             *     pre-free-platform value (`starter`, `pro`, `business`,
+             *     `enterprise`) still present on older rows.
+             */
+            tier?: string;
+            /** @enum {string} */
+            status?: "active" | "suspended" | "closed";
+            /**
+             * @description Per-minute limit auth enforces on a key minted at the
+             *     dashboard defaults, account override included — not the
+             *     tier ceiling. Limits are per key; an explicitly budgeted
+             *     key can differ.
+             */
+            rate_limit_per_min?: number;
+            /**
+             * Format: int64
+             * @description Monthly quota auth enforces on a key minted at the
+             *     dashboard defaults, account override included (0 =
+             *     unmetered).
+             */
+            monthly_request_quota?: number;
         };
         AccountEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["Account"];
@@ -10894,9 +11010,12 @@ export interface components {
              *     4xx-except-429 responses. 429s and platform-caused 5xx
              *     never consume quota (an outage on our side must not use
              *     up the quota you paid for); both are still reported
-             *     under `throttled` / `errors`. Same meaning on both
-             *     response shapes: summed over the current UTC month it is
-             *     the `month_to_date` a monthly-quota 429 reports.
+             *     under `throttled` / `errors`. The exception is a request
+             *     whose read ran out its server-side time budget (a
+             *     `…-timeout` 503 after the query ran): it is billed like
+             *     a served request. Same meaning on both response shapes:
+             *     summed over the current UTC month it is the
+             *     `month_to_date` a monthly-quota 429 reports.
              */
             billable?: number;
             /** @description 4xx (excluding 429) + 5xx responses. */
@@ -10907,28 +11026,29 @@ export interface components {
         UsageEnvelope: components["schemas"]["EnvelopeMeta"] & {
             data: components["schemas"]["UsageRow"][];
         };
+        KeyCreated: {
+            key_id: string;
+            /** @description Shown once. Store it now. */
+            plaintext: string;
+            /**
+             * @description First 12 characters of the plaintext (e.g.
+             *     `sip_4f9c1d8b`). Safe to display in logs and
+             *     dashboards; customers use it to identify
+             *     which key matches a row in their secret
+             *     manager. Same value also returned by GET
+             *     `/v1/account/keys`.
+             */
+            key_prefix?: string;
+            label: string;
+            /**
+             * @description Capability scopes the key was minted with.
+             *     Absent/empty = full access (the pre-scopes
+             *     posture).
+             */
+            scopes?: string[];
+        };
         KeyCreatedEnvelope: components["schemas"]["EnvelopeMeta"] & {
-            data: {
-                key_id: string;
-                /** @description Shown once. Store it now. */
-                plaintext: string;
-                /**
-                 * @description First 12 characters of the plaintext (e.g.
-                 *     `sip_4f9c1d8b`). Safe to display in logs and
-                 *     dashboards; customers use it to identify
-                 *     which key matches a row in their secret
-                 *     manager. Same value also returned by GET
-                 *     `/v1/account/keys`.
-                 */
-                key_prefix?: string;
-                label: string;
-                /**
-                 * @description Capability scopes the key was minted with.
-                 *     Absent/empty = full access (the pre-scopes
-                 *     posture).
-                 */
-                scopes?: string[];
-            };
+            data: components["schemas"]["KeyCreated"];
         };
         /**
          * @description Operator projection of a platform account — the tier + override
@@ -11514,10 +11634,16 @@ export interface operations {
                      *       "data": {
                      *         "status": "ok"
                      *       },
-                     *       "as_of": "2026-08-21T22:40:00Z"
+                     *       "as_of": "2026-08-21T22:40:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
                      *     }
                      */
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LakeHealthEnvelope"];
                 };
             };
             /**
@@ -11543,10 +11669,16 @@ export interface operations {
                      *         "status": "lake-unready",
                      *         "detail": "clickhouse ping failed — see the API server log for the underlying error"
                      *       },
-                     *       "as_of": "2026-08-21T22:40:00Z"
+                     *       "as_of": "2026-08-21T22:40:00Z",
+                     *       "flags": {
+                     *         "stale": false,
+                     *         "reduced_redundancy": false,
+                     *         "triangulated": false,
+                     *         "divergence_warning": false
+                     *       }
                      *     }
                      */
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["LakeHealthEnvelope"];
                 };
             };
         };
@@ -16668,32 +16800,13 @@ export interface operations {
                     "application/json": components["schemas"]["EnvelopeMeta"] & {
                         data?: components["schemas"]["ProtocolRow"] & {
                             /**
-                             * @description Per-category analytics block (dex / amm /
-                             *     lending / yield / oracle / bridge — see
-                             *     internal/api/v1/protocols.go ProtocolBespoke).
-                             *     Top-level keys vary by protocol category;
-                             *     documented as a free-form object because the
-                             *     per-category sub-shapes evolve with each
-                             *     protocol integration (spec'd loosely on
-                             *     purpose, board #33 — x-stability:
+                             * @description Per-category analytics block. Absent when no bespoke reader is
+                             *     wired or the category has none yet. The fixed top-level shape is
+                             *     typed; the labels, series names and table titles inside it vary by
+                             *     protocol category and evolve with each integration (x-stability:
                              *     experimental per ADR-0042 applies).
-                             *
-                             *     Shared sub-shapes: `kpis` (label/value/
-                             *     unit/hint cards), `series` (named
-                             *     {date, value} time-series; values are
-                             *     numeric STRINGS — ADR-0003), `tables`
-                             *     (title/columns/rows), `notes` (caveat
-                             *     lines), and — since 1.15.0 —
-                             *     `breakdowns`: named composition datasets
-                             *     for donut/pie rendering
-                             *     ({title, unit, rows: [{label, value,
-                             *     count}]}, value-sorted descending;
-                             *     e.g. CCTP's "Inflows by source chain" /
-                             *     "Outflows by destination chain").
                              */
-                            bespoke?: {
-                                [key: string]: unknown;
-                            };
+                            bespoke?: components["schemas"]["ProtocolBespoke"];
                             /**
                              * @description The protocol's registered instances. Empty
                              *     for a source with no contract registry
@@ -21058,8 +21171,8 @@ export interface operations {
                      *             "soroban_event_count": 1105,
                      *             "total_coins": "1054439020873472865",
                      *             "fee_pool": "100768724524038",
-                     *             "base_fee": 100,
-                     *             "base_reserve": 5000000
+                     *             "base_fee": "100",
+                     *             "base_reserve": "5000000"
                      *           },
                      *           {
                      *             "sequence": 63316165,
@@ -21072,8 +21185,8 @@ export interface operations {
                      *             "soroban_event_count": 708,
                      *             "total_coins": "1054439020873472865",
                      *             "fee_pool": "100768720236504",
-                     *             "base_fee": 100,
-                     *             "base_reserve": 5000000
+                     *             "base_fee": "100",
+                     *             "base_reserve": "5000000"
                      *           }
                      *         ],
                      *         "next_before": 63316165
@@ -21130,8 +21243,8 @@ export interface operations {
                      *         "soroban_event_count": 1105,
                      *         "total_coins": "1054439020873472865",
                      *         "fee_pool": "100768724524038",
-                     *         "base_fee": 100,
-                     *         "base_reserve": 5000000
+                     *         "base_fee": "100",
+                     *         "base_reserve": "5000000"
                      *       },
                      *       "as_of": "2026-07-03T22:39:59.693177604Z",
                      *       "flags": {
@@ -21191,8 +21304,8 @@ export interface operations {
                      *             "close_time": "2026-07-03T22:37:01Z",
                      *             "index": 0,
                      *             "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *             "fee_charged": 600,
-                     *             "max_fee": 120000,
+                     *             "fee_charged": "600",
+                     *             "max_fee": "120000",
                      *             "operation_count": 6,
                      *             "successful": false,
                      *             "result_code": -1,
@@ -21253,8 +21366,8 @@ export interface operations {
                      *         "close_time": "2026-07-03T22:37:01Z",
                      *         "index": 0,
                      *         "source_account": "GBFTDB5ZFZLXSQGDFA3LHAPDFFWENVWWKXYB3VHRF345WV3AD32ZEVHP",
-                     *         "fee_charged": 600,
-                     *         "max_fee": 120000,
+                     *         "fee_charged": "600",
+                     *         "max_fee": "120000",
                      *         "operation_count": 6,
                      *         "successful": false,
                      *         "result_code": -1,
@@ -22546,8 +22659,8 @@ export interface operations {
                      *             "close_time": "2026-07-03T21:02:29Z",
                      *             "index": 7,
                      *             "source_account": "GDSQAEHJLE2ZZMQZ47YWLP3O2HVPYQ4QCFWTHUKMKF6RIX2ZJJDDMK4N",
-                     *             "fee_charged": 200,
-                     *             "max_fee": 13935,
+                     *             "fee_charged": "200",
+                     *             "max_fee": "13935",
                      *             "operation_count": 1,
                      *             "successful": true,
                      *             "result_code": 1,
