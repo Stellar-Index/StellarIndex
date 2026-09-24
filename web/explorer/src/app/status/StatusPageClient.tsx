@@ -191,7 +191,15 @@ const STATUS_FEED_UNREACHABLE_AFTER = 2;
 //
 // `probe` shapes how we hit the endpoint to render a real green/
 // amber/red badge:
-//   { kind: 'get', path: '…' }   — fetch the path verbatim
+//   { kind: 'get', path: '…', expect }
+//                                 — fetch the path verbatim; `expect`
+//                                   is a required predicate over the
+//                                   envelope's `data` so a 200 with a
+//                                   body that isn't actually healthy
+//                                   (an empty collection standing in
+//                                   for an outage, #784) can't pass
+//                                   silently — use `expectEnvelope`
+//                                   when any well-formed body is fine.
 //   { kind: 'requires-auth' }    — show "auth req'd", no probe
 //   { kind: 'streaming' }        — show "stream", no probe (SSE
 //                                  open is heavy + blocks the
@@ -201,9 +209,24 @@ const STATUS_FEED_UNREACHABLE_AFTER = 2;
 // `?asset=native`, `?limit=1`) so each fetch returns a small
 // payload and 200 means "the codepath is alive end-to-end".
 type EndpointProbe =
-  | { kind: 'get'; path: string }
+  | { kind: 'get'; path: string; expect: (data: unknown) => boolean }
   | { kind: 'requires-auth' }
   | { kind: 'streaming' };
+
+// expectEnvelope accepts any well-formed v1 envelope. Use it where the
+// response is a single object (or where an empty collection is a
+// legitimate state, e.g. a fresh testnet) so emptiness can't be told
+// apart from an outage without a domain-specific check.
+const expectEnvelope = () => true;
+
+// expectNonEmptyArray fails the probe when the endpoint answers 200
+// with an empty collection. For the handful of endpoints where "no
+// rows" masks a real outage — Reflector wedged: /v1/oracle/latest
+// keeps answering 200 {"data":[]}; a withheld row: /v1/price/batch
+// omits it rather than erroring — a bare res.ok reports green through
+// a total outage (#784, #743, same root as the on-host SLA probe).
+const expectNonEmptyArray = (data: unknown) =>
+  Array.isArray(data) && data.length > 0;
 
 // tier controls poll cadence:
 //   - 'hot'  → 30 s. Health checks, network stats, anything cheap
@@ -228,30 +251,37 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/healthz',
     group: 'Health',
     description: 'Liveness probe',
-    probe: { kind: 'get', path: '/v1/healthz' },
+    probe: { kind: 'get', path: '/v1/healthz', expect: expectEnvelope },
     tier: 'hot',
   },
   {
     path: '/v1/readyz',
     group: 'Health',
     description: 'Readiness probe',
-    probe: { kind: 'get', path: '/v1/readyz' },
+    probe: { kind: 'get', path: '/v1/readyz', expect: expectEnvelope },
     tier: 'hot',
   },
   {
     path: '/v1/price',
     group: 'Pricing',
     description: 'Current VWAP price for one asset',
-    probe: { kind: 'get', path: '/v1/price?asset=native&quote=fiat:USD' },
+    probe: {
+      kind: 'get',
+      path: '/v1/price?asset=native&quote=fiat:USD',
+      expect: expectEnvelope,
+    },
     tier: 'hot',
   },
   {
     path: '/v1/price/batch',
     group: 'Pricing',
     description: 'Batch lookup, up to 1000 assets',
+    // A withheld row is OMITTED, not errored (#784/#743) — an empty
+    // `data` array for a single requested asset is the outage.
     probe: {
       kind: 'get',
       path: '/v1/price/batch?asset_ids=native&quote=fiat:USD',
+      expect: expectNonEmptyArray,
     },
     tier: 'hot',
   },
@@ -259,7 +289,11 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     path: '/v1/price/tip',
     group: 'Pricing',
     description: 'Rolling-window tip price',
-    probe: { kind: 'get', path: '/v1/price/tip?asset=native&quote=fiat:USD' },
+    probe: {
+      kind: 'get',
+      path: '/v1/price/tip?asset=native&quote=fiat:USD',
+      expect: expectEnvelope,
+    },
     tier: 'hot',
   },
   {
@@ -280,6 +314,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     probe: {
       kind: 'get',
       path: '/v1/vwap?base=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      expect: expectEnvelope,
     },
   },
   {
@@ -289,6 +324,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     probe: {
       kind: 'get',
       path: '/v1/twap?base=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      expect: expectEnvelope,
     },
   },
   {
@@ -298,6 +334,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     probe: {
       kind: 'get',
       path: '/v1/ohlc?base=native&quote=USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN',
+      expect: expectEnvelope,
     },
   },
   {
@@ -307,6 +344,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     probe: {
       kind: 'get',
       path: '/v1/chart?asset=native&quote=fiat:USD&timeframe=24h&granularity=1h',
+      expect: expectEnvelope,
     },
   },
   {
@@ -316,6 +354,7 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     probe: {
       kind: 'get',
       path: '/v1/history?base=native&quote=fiat:USD&limit=1',
+      expect: expectEnvelope,
     },
   },
   {
@@ -325,13 +364,14 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     probe: {
       kind: 'get',
       path: '/v1/observations?asset=native&quote=fiat:USD',
+      expect: expectEnvelope,
     },
   },
   {
     path: '/v1/network/stats',
     group: 'Catalogue',
     description: 'Consolidated network aggregate (volume, markets, assets)',
-    probe: { kind: 'get', path: '/v1/network/stats' },
+    probe: { kind: 'get', path: '/v1/network/stats', expect: expectEnvelope },
     tier: 'hot',
   },
   {
@@ -339,31 +379,31 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     group: 'Catalogue',
     description:
       'Asset directory (every classic asset, with coin-overlay fields)',
-    probe: { kind: 'get', path: '/v1/assets?limit=1' },
+    probe: { kind: 'get', path: '/v1/assets?limit=1', expect: expectNonEmptyArray },
   },
   {
     path: '/v1/assets/{id}',
     group: 'Catalogue',
     description: 'Asset detail + supply + market cap',
-    probe: { kind: 'get', path: '/v1/assets/native' },
+    probe: { kind: 'get', path: '/v1/assets/native', expect: expectEnvelope },
   },
   {
     path: '/v1/markets',
     group: 'Catalogue',
     description: 'Trading pairs',
-    probe: { kind: 'get', path: '/v1/markets?limit=1' },
+    probe: { kind: 'get', path: '/v1/markets?limit=1', expect: expectNonEmptyArray },
   },
   {
     path: '/v1/issuers',
     group: 'Catalogue',
     description: 'Issuer directory',
-    probe: { kind: 'get', path: '/v1/issuers?limit=1' },
+    probe: { kind: 'get', path: '/v1/issuers?limit=1', expect: expectNonEmptyArray },
   },
   {
     path: '/v1/sources',
     group: 'Catalogue',
     description: 'Per-venue source metadata',
-    probe: { kind: 'get', path: '/v1/sources' },
+    probe: { kind: 'get', path: '/v1/sources', expect: expectNonEmptyArray },
     tier: 'hot',
   },
   {
@@ -374,13 +414,23 @@ const PUBLIC_ENDPOINTS: PublicEndpoint[] = [
     // probe asset because Reflector consistently publishes XLM →
     // USD oracle observations. (USDC/USDT lastprice 404s — those
     // are stablecoins quoted in themselves.)
-    probe: { kind: 'get', path: '/v1/oracle/latest?asset=crypto:XLM' },
+    probe: {
+      kind: 'get',
+      path: '/v1/oracle/latest?asset=crypto:XLM',
+      // #784/#743: Reflector wedged keeps answering 200 {"data":[]};
+      // an empty reading set for one asset is the outage, not a probe pass.
+      expect: expectNonEmptyArray,
+    },
   },
   {
     path: '/v1/oracle/lastprice',
     group: 'Oracle',
     description: 'SEP-40 lastprice',
-    probe: { kind: 'get', path: '/v1/oracle/lastprice?asset=crypto:XLM' },
+    probe: {
+      kind: 'get',
+      path: '/v1/oracle/lastprice?asset=crypto:XLM',
+      expect: expectEnvelope,
+    },
   },
   {
     path: '/v1/auth/login',
@@ -1407,7 +1457,7 @@ export type EndpointProbeResult =
 // `data.status` can itself be "degraded" on a 200 (readyz, F-1275).
 async function readEnvelope(
   res: Response,
-): Promise<{ ok: boolean; dataStatus?: string }> {
+): Promise<{ ok: boolean; data?: unknown; dataStatus?: string }> {
   try {
     const body: unknown = await res.json();
     if (typeof body !== 'object' || body === null || !('data' in body)) {
@@ -1421,7 +1471,7 @@ async function readEnvelope(
       typeof (data as { status?: unknown }).status === 'string'
         ? (data as { status: string }).status
         : undefined;
-    return { ok: true, dataStatus };
+    return { ok: true, data, dataStatus };
   } catch {
     return { ok: false };
   }
@@ -1437,6 +1487,7 @@ export function probeEndpoint(
     return () => Promise.resolve({ kind: 'static', label });
   }
   const url = `${API_BASE_URL}${ep.probe.path}`;
+  const expect = ep.probe.expect;
   return async () => {
     // Two-shot probe. The status page polls every 30 s (hot tier)
     // or 2 min (warm tier); between polls Cloudflare lets the
@@ -1489,6 +1540,14 @@ export function probeEndpoint(
       // as a warning regardless of latency.
       if (envelope.dataStatus === 'degraded') {
         return { kind: 'degraded', latencyMs };
+      }
+      // A 200 whose envelope is well-formed but whose payload fails
+      // the endpoint's own expectation (an empty collection standing
+      // in for a real outage — Reflector wedged, a withheld price
+      // row — #784) is the outage, not a pass: report it exactly
+      // like a non-2xx so the badge goes red, not amber.
+      if (!expect(envelope.data)) {
+        return { kind: 'down', latencyMs, status: res.status };
       }
       return latencyMs < PROBE_SLOW_MS
         ? { kind: 'fast', latencyMs }

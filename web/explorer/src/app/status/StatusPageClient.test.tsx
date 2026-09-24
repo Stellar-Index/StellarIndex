@@ -620,14 +620,28 @@ describe('probeEndpoint body-shape check', () => {
     path: '/v1/healthz',
     group: 'Health',
     description: 'Liveness probe',
-    probe: { kind: 'get', path: '/v1/healthz' },
+    probe: { kind: 'get', path: '/v1/healthz', expect: () => true },
   };
 
   const readyzEndpoint: PublicEndpoint = {
     path: '/v1/readyz',
     group: 'Health',
     description: 'Readiness probe',
-    probe: { kind: 'get', path: '/v1/readyz' },
+    probe: { kind: 'get', path: '/v1/readyz', expect: () => true },
+  };
+
+  // #784/#743: an endpoint that can answer 200 with an empty
+  // collection during a total outage — Reflector wedged,
+  // /v1/oracle/latest keeps answering 200 {"data":[]}.
+  const oracleLatestEndpoint: PublicEndpoint = {
+    path: '/v1/oracle/latest',
+    group: 'Oracle',
+    description: 'Latest oracle readings',
+    probe: {
+      kind: 'get',
+      path: '/v1/oracle/latest?asset=crypto:XLM',
+      expect: (data) => Array.isArray(data) && data.length > 0,
+    },
   };
 
   it('reports error, not fast, for a 200 whose body is not a v1 envelope', async () => {
@@ -692,5 +706,44 @@ describe('probeEndpoint body-shape check', () => {
     const result = await probeEndpoint(readyzEndpoint)();
 
     expect(result.kind).toBe('degraded');
+  });
+
+  // #784: a total oracle outage renders `200 {"data":[]}`, not a
+  // non-2xx — a bare res.ok reports the row green through the outage.
+  it('reports down, not fast, for a 200 oracle body with an empty reading set', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ data: [], as_of: '2026-01-01' }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }),
+      ),
+    );
+
+    const result = await probeEndpoint(oracleLatestEndpoint)();
+
+    expect(result.kind).toBe('down');
+  });
+
+  it('reports fast for a 200 oracle body with a real reading', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              data: [{ source: 'reflector', asset: 'crypto:XLM', price: '0.2' }],
+              as_of: '2026-01-01',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+
+    const result = await probeEndpoint(oracleLatestEndpoint)();
+
+    expect(result.kind).toBe('fast');
   });
 });
