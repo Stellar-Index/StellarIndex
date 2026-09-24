@@ -72,16 +72,19 @@ func TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction(t 
 		t.Errorf("rows affected = %d, want %d (the count must survive the COMMIT)", n, gucConnDMLRows)
 	}
 
-	// 1. the cap WAS lifted for the restamp's own UPDATE.
-	if len(conn.dml) != 1 {
-		t.Fatalf("restamp ran %d DML statements, want 1: %q", len(conn.dml), conn.stmts)
+	// 1. the cap WAS lifted for the restamp's own DML: the before-image
+	// INSERT and the trades UPDATE.
+	if len(conn.dml) != 2 {
+		t.Fatalf("restamp ran %d DML statements, want 2 (before-image, update): %q", len(conn.dml), conn.stmts)
 	}
-	if !strings.HasPrefix(conn.dml[0].stmt, "UPDATE trades") {
-		t.Fatalf("restamp DML = %q, want the trades UPDATE", conn.dml[0].stmt)
+	if !strings.HasPrefix(conn.dml[1].stmt, "UPDATE trades") {
+		t.Fatalf("restamp DML = %q, want the trades UPDATE", conn.dml[1].stmt)
 	}
-	if conn.dml[0].cap != "0" {
-		t.Errorf("restamp UPDATE ran with %s = %q, want %q — the compressed-chunk DML would abort at the default cap",
-			decompressionCapGUC, conn.dml[0].cap, "0")
+	for _, d := range conn.dml {
+		if d.cap != "0" {
+			t.Errorf("restamp DML %.40q ran with %s = %q, want %q — the compressed-chunk DML would abort at the default cap",
+				d.stmt, decompressionCapGUC, d.cap, "0")
+		}
 	}
 
 	// 2. …and it did NOT ride the connection back into the pool: the next
@@ -89,10 +92,10 @@ func TestRestampExactTierUSDVolume_DecompressionCapNeverEscapesTheTransaction(t 
 	if _, err := store.db.ExecContext(ctx, "UPDATE trades SET usd_volume = usd_volume"); err != nil {
 		t.Fatalf("later DML: %v", err)
 	}
-	if len(conn.dml) != 2 {
-		t.Fatalf("saw %d DML statements, want 2: %q", len(conn.dml), conn.stmts)
+	if len(conn.dml) != 3 {
+		t.Fatalf("saw %d DML statements, want 3: %q", len(conn.dml), conn.stmts)
 	}
-	if got := conn.dml[1].cap; got != decompressionCapDefault {
+	if got := conn.dml[2].cap; got != decompressionCapDefault {
 		t.Errorf("later DML on the pooled connection ran with %s = %q, want the default %q — the restamp leaked the lifted cap into the pool (#312)",
 			decompressionCapGUC, got, decompressionCapDefault)
 	}
@@ -125,6 +128,11 @@ type gucConn struct {
 	inTx    bool
 	stmts   []string
 	dml     []gucDML
+	// isolation is the level the last transaction was opened at.
+	isolation driver.IsolationLevel
+	commits   int
+	// rowsFor, when set, overrides gucConnDMLRows per statement.
+	rowsFor func(stmt string) int64
 }
 
 func newGUCConn() *gucConn { return &gucConn{session: map[string]string{}} }
@@ -154,11 +162,12 @@ func (c *gucConn) Begin() (driver.Tx, error) {
 	return c.BeginTx(context.Background(), driver.TxOptions{})
 }
 
-func (c *gucConn) BeginTx(context.Context, driver.TxOptions) (driver.Tx, error) {
+func (c *gucConn) BeginTx(_ context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	if c.inTx {
 		return nil, errors.New("gucConn: nested transaction")
 	}
 	c.inTx = true
+	c.isolation = opts.Isolation
 	c.local = map[string]string{}
 	return &gucTx{c: c}, nil
 }
@@ -195,6 +204,9 @@ func (c *gucConn) ExecContext(_ context.Context, q string, _ []driver.NamedValue
 		delete(c.local, name)
 	default:
 		c.dml = append(c.dml, gucDML{stmt: q, cap: c.effective(decompressionCapGUC)})
+		if c.rowsFor != nil {
+			return driver.RowsAffected(c.rowsFor(q)), nil
+		}
 		return driver.RowsAffected(gucConnDMLRows), nil
 	}
 	return driver.RowsAffected(0), nil
@@ -213,7 +225,7 @@ type gucTx struct{ c *gucConn }
 
 // Commit and Rollback both discard the transaction-local overlay — the
 // Postgres semantics that make SET LOCAL safe on a pooled connection.
-func (t *gucTx) Commit() error   { t.c.endTx(); return nil }
+func (t *gucTx) Commit() error   { t.c.commits++; t.c.endTx(); return nil }
 func (t *gucTx) Rollback() error { t.c.endTx(); return nil }
 
 func (c *gucConn) endTx() {

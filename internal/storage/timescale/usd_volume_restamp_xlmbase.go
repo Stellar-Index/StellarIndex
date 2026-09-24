@@ -656,11 +656,12 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	}
 	// Every fragment is code-built here; all values (the generation, the
 	// two `ts` bounds and each row's primary key + value) travel as
-	// positional placeholders — gosec G202 is a false positive.
-	//nolint:gosec // no caller-supplied text reaches the statement
-	q := `UPDATE trades t
-	         SET usd_volume = v.usd_volume, derive_generation = $1
-	        FROM (VALUES ` + values.String() + `) AS v(source, ledger, tx_hash, op_index, ts, usd_volume)
+	// positional placeholders.
+	return s.restampTradesUSDVolume(ctx, usdVolumeRestampWrite{
+		label: "xlm-base restamp",
+		scope: fmt.Sprintf("(%d rows from %s)", len(rows), rows[0].TS.Format(time.RFC3339)),
+		rel:   `(VALUES ` + values.String() + `) AS v(source, ledger, tx_hash, op_index, ts, usd_volume)`,
+		where: `
 	       WHERE t.ts      >= $2
 	         AND t.ts      <= $3
 	         AND t.source   = v.source
@@ -668,33 +669,11 @@ func (s *Store) applyXLMBaseRestampBatch(ctx context.Context, rows []XLMBaseRest
 	         AND t.tx_hash  = v.tx_hash
 	         AND t.op_index = v.op_index
 	         AND t.ts       = v.ts
-	         AND t.derive_generation <= $1`
-
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, fmt.Errorf("timescale: xlm-base restamp begin: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"); err != nil {
-		return 0, fmt.Errorf("timescale: xlm-base restamp: raise decompression cap: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, "SET LOCAL plan_cache_mode = force_custom_plan"); err != nil {
-		return 0, fmt.Errorf("timescale: xlm-base restamp: force a custom plan: %w", err)
-	}
-	res, err := tx.ExecContext(ctx, q, args...)
-	if err != nil {
-		return 0, fmt.Errorf("timescale: xlm-base restamp update (%d rows from %s): %w",
-			len(rows), rows[0].TS.Format(time.RFC3339), err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("timescale: xlm-base restamp rows affected: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("timescale: xlm-base restamp commit (%d rows from %s): %w",
-			len(rows), rows[0].TS.Format(time.RFC3339), err)
-	}
-	return n, nil
+	         AND t.derive_generation <= $1`,
+		value: "v.usd_volume",
+		gen:   "$1",
+		args:  args,
+	})
 }
 
 // MaxTradeLedgerInRange returns the highest on-chain ledger sequence

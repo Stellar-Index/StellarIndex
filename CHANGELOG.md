@@ -28,6 +28,16 @@ against.
   not served. Deploy the aggregator before, or with, the API: until it
   has written stamps, the API's cache-backed prices miss.
 
+- **ops — `usd-volume-restamp` keeps a before-image of what it
+  overwrites:** the restamp rewrote `trades.usd_volume` in place and left
+  only its run generation behind, so undoing a bad run meant re-deriving
+  the span. Migration 0173 adds `usd_volume_restamp_log`; every tier's
+  write now copies each target row's prior `usd_volume` and
+  `derive_generation` into it in the UPDATE's own REPEATABLE READ
+  transaction and refuses to commit when the two row counts differ. The
+  undo statement is in 0173's header; its down refuses while the log
+  holds rows.
+
 - **ops — per-source genesis ledgers locked in step (#898):** the
   reconciliation catalogue and the gap detector's
   `DefaultGapDetectorTargets` each restate every source's genesis ledger,

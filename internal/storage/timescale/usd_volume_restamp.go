@@ -2,6 +2,7 @@ package timescale
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"math/big"
 	"strings"
@@ -35,6 +36,10 @@ import (
 //   - a row that ALREADY satisfies the identity is not touched at all —
 //     not its value, not its derive_generation — so re-running a window
 //     is idempotent (`usd_volume IS DISTINCT FROM <identity>`);
+//   - every rewrite first copies the row's prior usd_volume and
+//     derive_generation into `usd_volume_restamp_log` (migration 0173) in
+//     the same transaction ([Store.restampTradesUSDVolume]), so a bad run
+//     can be undone from the database instead of re-derived;
 //   - NULL rows are left alone by default. Filling an unpriced exact-tier
 //     row is the same arithmetic, but it is a COVERAGE change the
 //     operator opts into (FillNull), not something a value-repair tool
@@ -202,73 +207,107 @@ func (s *Store) CountUSDVolumeRestampCandidates(ctx context.Context, p USDVolume
 
 // RestampExactTierUSDVolume applies the identity to every candidate row in
 // the window and returns the number of rows rewritten. Rows that already
-// satisfy the identity are not touched (value or derive_generation).
-//
-// Runs in ONE explicit transaction that first lifts the decompression cap
-// (`timescaledb.max_tuples_decompressed_per_dml_transaction = 0`): the
-// historical span lives in COMPRESSED chunks, and the default 100k-tuple
-// cap aborts a single day's DML (measured 2026-07-30: one day needed
-// 265k). The window is caller-sliced (see [USDVolumeRestampParams.From]),
-// so the transaction stays one bounded UPDATE.
-//
-// The same transaction also pins a CUSTOM plan, so the window's `ts`
-// bounds stay visible to the planner and the statement is pruned to the
-// chunks the window covers rather than fanning out over every chunk of
-// the hypertable (see the SET below).
-//
-// `SET LOCAL`, and POSTGRES scopes it — not the driver. A plain session
-// `SET` on a borrowed [database/sql.Conn] OUTLIVES the call: `Conn.Close`
-// returns the connection to the pool, and pgx v5's stdlib adapter resets
-// nothing on reuse (its default `ResetSession` only pings and discards a
-// conn left mid-transaction — pgx v5 stdlib/sql.go). The lifted cap would
-// then ride that pooled connection for the process lifetime and silently
-// uncap every later DML that landed on it. `SET LOCAL` is unwound by the
-// COMMIT/ROLLBACK itself, so it cannot escape even on the error path —
-// the same tx-scoped GUC discipline as [Store.FindPerSourceLedgerGaps]
-// and [Store.SEP41SupplyEventKindResum].
+// satisfy the identity are not touched (value or derive_generation). The
+// window is caller-sliced (see [USDVolumeRestampParams.From]), so the
+// transaction stays one bounded UPDATE; its before-image and transaction
+// discipline are [Store.restampTradesUSDVolume]'s.
 func (s *Store) RestampExactTierUSDVolume(ctx context.Context, p USDVolumeRestampParams) (int64, error) {
 	groupRel, where, identity, args, err := exactTierRestampScope(p)
 	if err != nil {
 		return 0, err
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
+	return s.restampTradesUSDVolume(ctx, usdVolumeRestampWrite{
+		label: "usd-volume restamp",
+		scope: fmt.Sprintf("[%s, %s)", p.From.Format(time.RFC3339), p.To.Format(time.RFC3339)),
+		rel:   groupRel, where: where, value: identity, gen: "$3", args: args,
+	})
+}
+
+// usdVolumeRestampWrite is one in-place rewrite of `trades.usd_volume`:
+// `rel` is joined to `trades t`, `where` selects the rows, `value` is the
+// new usd_volume expression and `gen` the placeholder carrying the run's
+// derive_generation. Every fragment is code-built by the caller and every
+// value travels in args.
+type usdVolumeRestampWrite struct {
+	label, scope           string
+	rel, where, value, gen string
+	args                   []any
+}
+
+// statements renders the before-image INSERT and the UPDATE from the SAME
+// rel/where, so the log can only ever name the rows the UPDATE rewrites.
+func (w usdVolumeRestampWrite) statements() (logStmt, updateStmt string) {
+	logStmt = `INSERT INTO usd_volume_restamp_log
+	       (source, ledger, tx_hash, op_index, ts, prior_usd_volume, prior_derive_generation, usd_volume, derive_generation)
+	SELECT t.source, t.ledger, t.tx_hash, t.op_index, t.ts, t.usd_volume, t.derive_generation, ` + w.value + `, ` + w.gen + `
+	  FROM trades t, ` + w.rel + w.where
+	updateStmt = "UPDATE trades t SET usd_volume = " + w.value + ", derive_generation = " + w.gen + " FROM " + w.rel + w.where
+	return logStmt, updateStmt
+}
+
+// restampTradesUSDVolume is the one path that rewrites `trades.usd_volume`
+// in place. In ONE transaction it copies every target row's before-image
+// into `usd_volume_restamp_log`, rewrites the rows, and refuses to commit
+// unless the two row counts agree.
+//
+// REPEATABLE READ, because the before-image and the rewrite are two
+// statements: at READ COMMITTED a writer committing between them would
+// leave the log holding a value the UPDATE never overwrote. One snapshot
+// makes both see the same rows, and a row changed under it fails the
+// UPDATE with a serialization error that rolls the log back too.
+//
+// The transaction lifts the decompression cap
+// (`timescaledb.max_tuples_decompressed_per_dml_transaction = 0`): the
+// historical span lives in COMPRESSED chunks, and the default 100k-tuple
+// cap aborts a single day's DML (measured 2026-07-30: one day needed
+// 265k). It also pins a CUSTOM plan: the `ts` bounds are what let the
+// planner prune the statement to the chunks it covers, a GENERIC plan
+// cannot know them, and equal-shaped batches reuse one prepared statement
+// ([Store.applyXLMBaseRestampBatch] carries the 2026-09-06 measurement).
+//
+// `SET LOCAL`, and POSTGRES scopes it — not the driver. A session `SET`
+// OUTLIVES the call: pgx v5's stdlib adapter resets nothing on reuse (its
+// default `ResetSession` only pings and discards a conn left
+// mid-transaction — pgx v5 stdlib/sql.go), so the lifted cap would ride
+// the pooled connection and uncap every later DML on it. `SET LOCAL` is
+// unwound by COMMIT/ROLLBACK itself — the same tx-scoped GUC discipline as
+// [Store.FindPerSourceLedgerGaps] and [Store.SEP41SupplyEventKindResum].
+func (s *Store) restampTradesUSDVolume(ctx context.Context, w usdVolumeRestampWrite) (int64, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
 	if err != nil {
-		return 0, fmt.Errorf("timescale: usd-volume restamp begin: %w", err)
+		return 0, fmt.Errorf("timescale: %s begin: %w", w.label, err)
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, "SET LOCAL timescaledb.max_tuples_decompressed_per_dml_transaction = 0"); err != nil {
-		return 0, fmt.Errorf("timescale: usd-volume restamp: raise decompression cap: %w", err)
+		return 0, fmt.Errorf("timescale: %s: raise decompression cap: %w", w.label, err)
 	}
-	// The `ts` bounds ($1, $2) are what let the planner prune this UPDATE
-	// to the chunks the window actually covers. A GENERIC plan cannot know
-	// them, and every slice of a day produces identical statement text, so
-	// the prepared statement is promoted after a handful of executions and
-	// the plan silently widens to every chunk of the hypertable as a result
-	// relation — the 2026-09-06 measurement behind
-	// [Store.applyXLMBaseRestampBatch]'s own force_custom_plan (260 result
-	// relations, ~270 GB of WAL, 55 compressed chunks decompressed that
-	// held no matching row). LOCAL keeps it off the pooled connection the
-	// same way the decompression cap is kept off it.
 	if _, err := tx.ExecContext(ctx, "SET LOCAL plan_cache_mode = force_custom_plan"); err != nil {
-		return 0, fmt.Errorf("timescale: usd-volume restamp: force a custom plan: %w", err)
+		return 0, fmt.Errorf("timescale: %s: force a custom plan: %w", w.label, err)
 	}
-	// Every fragment is code-built by exactTierRestampScope; all values
-	// (window, generation, group triples, leg, denominator) travel as
-	// positional placeholders — gosec G202 is a false positive here.
-	//nolint:gosec // no caller-supplied text reaches the statement
-	q := "UPDATE trades t SET usd_volume = " + identity + ", derive_generation = $3 FROM " + groupRel + where
-	res, err := tx.ExecContext(ctx, q, args...)
+	logStmt, updateStmt := w.statements()
+	logged, err := execRowsAffected(ctx, tx, logStmt, w.args)
 	if err != nil {
-		return 0, fmt.Errorf("timescale: usd-volume restamp [%s, %s): %w",
-			p.From.Format(time.RFC3339), p.To.Format(time.RFC3339), err)
+		return 0, fmt.Errorf("timescale: %s before-image %s: %w", w.label, w.scope, err)
 	}
-	n, err := res.RowsAffected()
+	n, err := execRowsAffected(ctx, tx, updateStmt, w.args)
 	if err != nil {
-		return 0, fmt.Errorf("timescale: usd-volume restamp rows affected: %w", err)
+		return 0, fmt.Errorf("timescale: %s %s: %w", w.label, w.scope, err)
+	}
+	if n != logged {
+		return 0, fmt.Errorf("timescale: %s %s: before-image holds %d row(s) but the update rewrote %d; rolled back",
+			w.label, w.scope, logged, n)
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("timescale: usd-volume restamp commit [%s, %s): %w",
-			p.From.Format(time.RFC3339), p.To.Format(time.RFC3339), err)
+		return 0, fmt.Errorf("timescale: %s commit %s: %w", w.label, w.scope, err)
 	}
 	return n, nil
+}
+
+// execRowsAffected runs one DML statement in tx and returns its row count.
+func execRowsAffected(ctx context.Context, tx *sql.Tx, q string, args []any) (int64, error) {
+	res, err := tx.ExecContext(ctx, q, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
