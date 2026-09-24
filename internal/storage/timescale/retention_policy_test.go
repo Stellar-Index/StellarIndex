@@ -535,3 +535,36 @@ func TestRelationFromRetentionArgs_CatchesEveryTradesSpelling(t *testing.T) {
 		})
 	}
 }
+
+// migrations/README.md rule 4 is the instruction a new CAGG author
+// reads. It must defer to the declared set above rather than restate a
+// retention posture of its own: the rule once mandated a retention
+// policy on every new CAGG, which is the 0031 data-loss drift.
+func TestRetentionPolicies_ReadmeRule4DefersToTheDeclaredSet(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(findRepoRoot(t), "migrations", "README.md"))
+	if err != nil {
+		t.Fatalf("read migrations/README.md: %v", err)
+	}
+	raw := string(b)
+	start := strings.Index(raw, "4. **Every migration that creates a continuous aggregate**")
+	if start == -1 {
+		t.Fatal("migrations/README.md rule 4 not found — update this test's anchor, do not delete it")
+	}
+	end := strings.Index(raw[start:], "5. **Amounts")
+	if end == -1 {
+		t.Fatal("migrations/README.md rule 5 (Amounts) not found — update this test's anchor")
+	}
+	rule := strings.Join(strings.Fields(raw[start:start+end]), " ")
+	for _, want := range []string{
+		"does NOT add a retention policy",
+		"TestRetentionPolicies_AreExactlyTheDeclaredSet",
+	} {
+		if !strings.Contains(rule, want) {
+			t.Errorf("migrations/README.md rule 4 does not say %q. It must forbid a retention "+
+				"policy by default and point at the declared set, not restate a posture:\n%s", want, rule)
+		}
+	}
+	if strings.Contains(rule, "refresh policy + retention policy") {
+		t.Error("migrations/README.md rule 4 still mandates a retention policy on every new CAGG")
+	}
+}

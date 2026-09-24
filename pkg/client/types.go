@@ -397,8 +397,8 @@ type AssetDetail struct {
 	// Change24hPct is the trailing-24h price change as a signed
 	// percentage with two fractional digits (e.g. "+1.27", "-0.05",
 	// "0.00"). Null when no current USD price exists for the asset,
-	// or when the 24h-ago comparison bucket is unavailable (asset
-	// first traded < 24h ago, or pruned by retention). Clients
+	// or when there is no comparison bucket ~24h ago (e.g. the asset
+	// first traded < 24h ago). Clients
 	// should render "—" on null rather than fabricating "0%".
 	Change24hPct *string `json:"change_24h_pct,omitempty"`
 
