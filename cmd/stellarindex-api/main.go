@@ -2793,6 +2793,16 @@ func newDivergenceAdapter(svc *divergence.Service) divergenceAdapter {
 // quorum behind `checked` is the service's own, so it cannot drift from
 // the one WarningFired was gated on, and (firing=true, checked=false)
 // cannot occur: a firing pair met the quorum.
+//
+// COR-14 (audit-2026-07-23): a below-quorum refresh is UNCHECKED — the
+// worker carries its last evaluated WarningFired forward rather than
+// asserting false (worker.go: `checked := res.SuccessCount >=
+// s.minSources`), so a pair whose last verdict was firing can read
+// (firing=true, checked=false): the standing warning is kept, and
+// checked=false says it is not fresh. Reporting checked=true alongside
+// a forced-false warning would tell consumers "we cross-checked this
+// price" when no cross-check verdict was reached — the exact
+// misreading CS-087 added the flag to prevent.
 func (a divergenceAdapter) DivergenceFiringFor(ctx context.Context, asset canonical.Asset) (firing, checked bool, err error) {
 	verdict, found, err := a.svc.LookupCached(ctx, asset)
 	if err != nil {

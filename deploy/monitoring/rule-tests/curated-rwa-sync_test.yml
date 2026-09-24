@@ -136,3 +136,59 @@ tests:
                 or paste it into the placeholder, then start
                 curated-rwa-sync.service; the gauge clears on the next
                 stamped run.
+
+  # ── curator froze: the sync stays healthy, executed_at stops moving ──
+  # PROVEN-RED: delete stellarindex_curated_rwa_published_stale from the
+  # rule file and re-run — this case reports 0 firing alerts at 75h.
+  - interval: 1m
+    name: a curator whose query stopped re-executing tickets past 72h
+    input_series:
+      - series: 'stellarindex_curated_rwa_sync_last_run_unix{curator="dune:stellar"}'
+        values: '0+60x5000'
+      - series: 'stellarindex_curated_rwa_sync_executed_at_unix{curator="dune:stellar"}'
+        values: '3600x5000'
+    alert_rule_test:
+      - eval_time: 72h
+        alertname: stellarindex_curated_rwa_published_stale
+        exp_alerts: []
+      - eval_time: 75h
+        alertname: stellarindex_curated_rwa_published_stale
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              curator: dune:stellar
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/curated-rwa-sync-stale.md
+              summary: "the curator's published RWA total has not been re-executed in ≥ 72h — /v1/rwa/assets serves it stale and drops it at 7 days"
+              description: |
+                The curated-rwa-sync run is reading the curator's public total
+                query, but the query's own execution time (`executed_at_unix`)
+                has not moved in over 72 hours. /v1/rwa/assets already serves
+                `curated.published` with `stale: true`, and drops the block
+                once the execution is 7 days old. Nothing on this side
+                refreshes it: confirm on dune.com that the curator's query
+                schedule is paused or broken (runbook triage step 5).
+
+  # ── healthy: the curator re-executes daily, never fires ──
+  - interval: 1m
+    name: a curator re-executing daily never fires
+    input_series:
+      - series: 'stellarindex_curated_rwa_sync_executed_at_unix{curator="dune:stellar"}'
+        values: '3600x1380 90000x1439 176400x1439 262800x1439'
+    alert_rule_test:
+      - eval_time: 94h
+        alertname: stellarindex_curated_rwa_published_stale
+        exp_alerts: []
+
+  # ── a run that read nothing stamps 0: owned by refused / stale, not here ──
+  - interval: 1m
+    name: an executed_at of 0 (nothing read) does not fire the curator rule
+    input_series:
+      - series: 'stellarindex_curated_rwa_sync_executed_at_unix{curator="dune:stellar"}'
+        values: '0x5500'
+    alert_rule_test:
+      - eval_time: 90h
+        alertname: stellarindex_curated_rwa_published_stale
+        exp_alerts: []

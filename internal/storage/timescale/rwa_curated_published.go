@@ -87,11 +87,12 @@ type CuratedRWAPublished struct {
 	MonthEnd time.Time
 	TotalUSD string
 	// SourceQuery and ExecutedAt are the total series' provenance;
-	// SplitSourceQuery is the split's (0 when the split has no rows for
-	// MonthEnd).
+	// SplitSourceQuery and SplitExecutedAt are the split's, a separate
+	// query execution (zero when the split has no rows for MonthEnd).
 	SourceQuery      int64
 	SplitSourceQuery int64
 	ExecutedAt       time.Time
+	SplitExecutedAt  time.Time
 	// ObservedAt is when this index read the total series.
 	ObservedAt time.Time
 	// BySubclass is the split for MonthEnd, largest first. Empty when the
@@ -239,7 +240,7 @@ const curatedRWAPublishedTotalSQL = `
 // ORDER BY against output names first — which sorted "904795860.00"
 // above "3100000000.00" as text until the integration test caught it.
 const curatedRWAPublishedSplitSQL = `
-		SELECT subclass, value_usd::text, source_query
+		SELECT subclass, value_usd::text, source_query, executed_at
 		  FROM curated_rwa_published_series
 		 WHERE curator = $1
 		   AND series = '` + CuratedRWASeriesMonthlyBySubclass + `'
@@ -289,11 +290,18 @@ func (s *Store) LatestCuratedPublished(ctx context.Context, curator string) (*Cu
 	}
 	defer func() { _ = split.Close() }()
 	for split.Next() {
-		var sp CuratedRWAPublishedSplit
-		if err := split.Scan(&sp.Subclass, &sp.ValueUSD, &out.SplitSourceQuery); err != nil {
+		var (
+			sp         CuratedRWAPublishedSplit
+			executedAt time.Time
+		)
+		if err := split.Scan(&sp.Subclass, &sp.ValueUSD, &out.SplitSourceQuery, &executedAt); err != nil {
 			return nil, fmt.Errorf("curated rwa published: scan split: %w", err)
 		}
 		out.BySubclass = append(out.BySubclass, sp)
+		// The split is as fresh as its oldest row.
+		if out.SplitExecutedAt.IsZero() || executedAt.Before(out.SplitExecutedAt) {
+			out.SplitExecutedAt = executedAt.UTC()
+		}
 	}
 	if err := split.Err(); err != nil {
 		return nil, fmt.Errorf("curated rwa published: split rows: %w", err)

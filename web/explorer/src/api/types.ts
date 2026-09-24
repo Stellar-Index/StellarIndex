@@ -6752,7 +6752,7 @@ export interface components {
             /** @default false */
             divergence_warning: boolean;
             /**
-             * @description True only when a live cross-reference divergence check ran (at least one responding reference). When false, `divergence_warning` is NOT meaningful — the check is blind (references dark, or no record yet), so a `false` warning must not be read as "prices agree" (CS-087). Set on the surfaces that consult the verdict — `/v1/price`, its `?window=` variant, `/v1/price/tip`, `/v1/price/tip/stream` and `/v1/vwap` — looked up by BASE across every canonical spelling of the asset. On every other envelope that carries `flags` the field is `false` and means "not consulted on this surface", never "checked and clean": `/v1/price/at`, `/v1/price/batch`, `/v1/twap`, the SEP-40 passthroughs, `/v1/observations` and `/v1/observations/stream` never ask, so `divergence_warning` is not meaningful there. `/v1/price/at` is the point-in-time read and answers about a past bucket, which the verdict — a claim about the CURRENT cross-reference state — does not speak to. The observations pair is the deliberate case: raw per-source trades carry no aggregated value for a base-level verdict to vouch for. On `/v1/price/tip/stream` the lookup carries its own short budget (1s) inside the tick: a verdict store too slow to answer within it leaves the field `false` on that event rather than delaying the emission, so a `false` there can also mean "the check did not answer in time". The stream degrades the flag, never the cadence.
+             * @description True only when a live cross-reference divergence check ran (at least `min_sources_for_warning` responding references, the quorum the warning is gated on). When false the check is blind (references dark, or no record yet), so a `false` warning must not be read as "prices agree" (CS-087); a `true` warning is the last evaluated verdict carried forward through the outage, not a fresh one. Set on the surfaces that consult the verdict — `/v1/price`, its `?window=` variant, `/v1/price/tip`, `/v1/price/tip/stream` and `/v1/vwap` — looked up by BASE across every canonical spelling of the asset. On every other envelope that carries `flags` the field is `false` and means "not consulted on this surface", never "checked and clean": `/v1/price/at`, `/v1/price/batch`, `/v1/twap`, the SEP-40 passthroughs, `/v1/observations` and `/v1/observations/stream` never ask, so `divergence_warning` is not meaningful there. `/v1/price/at` is the point-in-time read and answers about a past bucket, which the verdict — a claim about the CURRENT cross-reference state — does not speak to. The observations pair is the deliberate case: raw per-source trades carry no aggregated value for a base-level verdict to vouch for. On `/v1/price/tip/stream` the lookup carries its own short budget (1s) inside the tick: a verdict store too slow to answer within it leaves the field `false` on that event rather than delaying the emission, so a `false` there can also mean "the check did not answer in time". The stream degrades the flag, never the cadence.
              * @default false
              */
             divergence_checked: boolean;
@@ -8476,8 +8476,20 @@ export interface components {
              *     run since. Absent (false) otherwise.
              */
             stale?: boolean;
-            /** @description The latest month's total split by the curator's own subclass labels, largest first. Empty when the curator publishes no split for that month. */
+            /**
+             * @description The latest month's total split by the curator's own subclass
+             *     labels, largest first. Empty when the curator publishes no
+             *     split for that month, or when the split query has not run in
+             *     7 days (`by_subclass_executed_at` is then absent too).
+             */
             by_subclass: components["schemas"]["RWACuratedPublishedSplit"][];
+            /**
+             * Format: date-time
+             * @description When the curator's split query last ran (RFC 3339). The split
+             *     is a separate query execution from `executed_at`'s total, so
+             *     the two can differ. Present iff `by_subclass` is non-empty.
+             */
+            by_subclass_executed_at?: string;
             /** @description The whole monthly total series, oldest month first; its last point is `as_of` / `total_usd`. */
             series: components["schemas"]["RWACuratedPublishedPoint"][];
             /** @description The curator's public queries the figures were read from, e.g. `dune query 6961845 / 6961847`. */

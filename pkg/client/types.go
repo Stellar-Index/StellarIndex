@@ -57,9 +57,10 @@ type Flags struct {
 	DivergenceWarning bool `json:"divergence_warning"`
 
 	// DivergenceChecked reports whether the cross-reference divergence
-	// check reached a verdict at all. When false, DivergenceWarning is
-	// NOT meaningful — the check was blind, so a false warning must not
-	// be read as "prices agree" (CS-087). Without this field a consumer
+	// check reached a verdict at all. When false the check was blind, so
+	// a false warning must not be read as "prices agree" (CS-087); a true
+	// warning is the last evaluated verdict carried forward, not a fresh
+	// one. Without this field a consumer
 	// gating on !DivergenceWarning passes 100% of the time while being
 	// structurally unable to detect the blindness (cold audit
 	// 2026-08-04).
@@ -1683,16 +1684,19 @@ type RWACuratedPublishedPoint struct {
 // the verified set publishes no reference total. The curator's
 // arithmetic over inputs this index cannot read; nothing in it is
 // verified here. Stale is true when ExecutedAt is more than 48h old;
-// past 7 days the server omits the block entirely.
+// past 7 days the server omits the block entirely. The split is a
+// separate query execution: BySubclassExecutedAt is its own run time,
+// and a split older than 7 days is withheld (empty, nil timestamp).
 type RWACuratedPublished struct {
-	TotalUSD         string                     `json:"total_usd"`
-	AsOf             string                     `json:"as_of"`
-	ExecutedAt       time.Time                  `json:"executed_at"`
-	BySubclass       []RWACuratedPublishedSplit `json:"by_subclass"`
-	Series           []RWACuratedPublishedPoint `json:"series"`
-	Stale            bool                       `json:"stale,omitempty"`
-	Source           string                     `json:"source"`
-	GapVsVerifiedUSD *string                    `json:"gap_vs_verified_usd,omitempty"`
+	TotalUSD             string                     `json:"total_usd"`
+	AsOf                 string                     `json:"as_of"`
+	ExecutedAt           time.Time                  `json:"executed_at"`
+	BySubclass           []RWACuratedPublishedSplit `json:"by_subclass"`
+	BySubclassExecutedAt *time.Time                 `json:"by_subclass_executed_at,omitempty"`
+	Series               []RWACuratedPublishedPoint `json:"series"`
+	Stale                bool                       `json:"stale,omitempty"`
+	Source               string                     `json:"source"`
+	GapVsVerifiedUSD     *string                    `json:"gap_vs_verified_usd,omitempty"`
 }
 
 // RWACuratedSummary is the curated arm's headline. Status is "served"

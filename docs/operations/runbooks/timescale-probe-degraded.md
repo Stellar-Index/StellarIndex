@@ -109,7 +109,9 @@ runuser -u postgres -- psql -d stellarindex -c \
    the SQL is valid, the data it selects no longer exists. Check that
    the policies really are there before assuming the probe is wrong —
    a hypertable that genuinely lost its compression policy is
-   `compression_policies_applied` in `scripts/ops/config-assertions.sh`.
+   `compression_policies_applied` in `scripts/ops/config-assertions.sh`,
+   and a continuous aggregate that lost its refresh policy is
+   `caggs_have_refresh_policy` there.
 5. **The timer stopped or the unit is masked.** `last_run_unix` ages
    while everything else looks healthy.
 6. **A full disk.** `mv` fails, the previous file stays in place, and

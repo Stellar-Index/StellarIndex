@@ -74,6 +74,7 @@ func publishedFixtureAt(executedAt time.Time) *timescale.CuratedRWAPublished {
 		SourceQuery:      6961845,
 		SplitSourceQuery: 6961847,
 		ExecutedAt:       executedAt,
+		SplitExecutedAt:  executedAt,
 		ObservedAt:       time.Now().UTC(),
 		BySubclass: []timescale.CuratedRWAPublishedSplit{
 			{Subclass: "US Treasuries", ValueUSD: "3100000000"},
@@ -307,6 +308,37 @@ func TestRWACurated_PublishedTotalAgesOutStaleThenGone(t *testing.T) {
 	}))
 	if gone.Curated == nil || gone.Curated.Published != nil || gone.Curated.Status != "unavailable" {
 		t.Errorf("8-day-old published total: %+v, want no published block and status unavailable", gone.Curated)
+	}
+}
+
+// TestRWACurated_PublishedSplitCarriesItsOwnExecution: the total and the
+// split are two separate query executions. The split is served with its
+// own executed_at, and a split whose query has not run inside the 7-day
+// cutoff is withheld rather than served beside a fresh total as if the
+// two were one execution.
+func TestRWACurated_PublishedSplitCarriesItsOwnExecution(t *testing.T) {
+	now := time.Now().UTC()
+	older := publishedFixtureAt(now.Add(-6 * time.Hour))
+	older.SplitExecutedAt = now.Add(-40 * time.Hour)
+	v := getRWA(t, rwaCuratedServer(t, &stubCuratedReader{published: older}))
+	p := v.Curated.Published
+	if p == nil || len(p.BySubclass) != 2 {
+		t.Fatalf("published = %+v, want the block with a two-line split", p)
+	}
+	if p.BySubclassExecutedAt == nil || !time.Time(*p.BySubclassExecutedAt).Equal(older.SplitExecutedAt) {
+		t.Errorf("by_subclass_executed_at = %v, want the split's own execution %v (not the total's %v)",
+			p.BySubclassExecutedAt, older.SplitExecutedAt, older.ExecutedAt)
+	}
+
+	frozen := publishedFixtureAt(now.Add(-6 * time.Hour))
+	frozen.SplitExecutedAt = now.Add(-8 * 24 * time.Hour)
+	v = getRWA(t, rwaCuratedServer(t, &stubCuratedReader{published: frozen}))
+	p = v.Curated.Published
+	if p == nil {
+		t.Fatal("a fresh total must still be served when only its split is frozen")
+	}
+	if len(p.BySubclass) != 0 || p.BySubclassExecutedAt != nil {
+		t.Errorf("8-day-old split served: %+v at %v, want it withheld", p.BySubclass, p.BySubclassExecutedAt)
 	}
 }
 

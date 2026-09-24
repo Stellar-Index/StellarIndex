@@ -1,6 +1,6 @@
 ---
 title: Runbook — curated-rwa-sync stale
-last_verified: 2026-09-17
+last_verified: 2026-09-23
 status: ratified
 severity: P3
 ---
@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_curated_rwa_sync_stale` (P3, `severity: ticket`) — the timer stopped stamping; `stellarindex_curated_rwa_sync_refused` (P3, `severity: ticket`) — it ran and refused because no API key is set. Both routed by `configs/alertmanager/alertmanager.r1.yml` |
+| Alerts | `stellarindex_curated_rwa_sync_stale` (P3, `severity: ticket`) — the timer stopped stamping; `stellarindex_curated_rwa_sync_refused` (P3, `severity: ticket`) — it ran and refused because no API key is set; `stellarindex_curated_rwa_published_stale` (P3, `severity: ticket`) — it runs, but the curator's own query has not re-executed in 72 hours. All three routed by `configs/alertmanager/alertmanager.r1.yml` |
 | Severity | P3 — a comparison panel degrades; the verified RWA surface beside it is untouched |
 | Scope | r1 / pubnet — the curated arm is only meaningful where the curator's list exists (Dune's Stellar datasets are pubnet). The unit is installed on every network but a test net with no key stays `unwired` by design and this alert does not fire there, because the metric is stamped on a dry run too. |
 | Detected by | `deploy/monitoring/rules/curated-rwa-sync.yml` + `configs/prometheus/rules.r1/curated-rwa-sync.yml` (byte-identical; group `stellarindex.curated_rwa_sync`) |
@@ -126,12 +126,16 @@ curl -s https://api.stellarindex.io/v1/rwa/assets | jq '.curated | {status, asse
    is a code change with a test, not an ops fix.
 
    **`executed_at_unix` frozen while `last_run_unix` advances** — the
-   run is healthy and the CURATOR has stopped refreshing its queries.
+   run is healthy and the CURATOR has stopped refreshing its queries;
+   `stellarindex_curated_rwa_published_stale` fires once it is 72 hours
+   old.
    The API's `curated.published.executed_at` shows the same stamp. Past
    48 hours the API serves the block with `stale: true`; past 7 days it
    drops `curated.published` entirely (`curated.status` reads
-   `unavailable` when no per-asset row is readable either). Nothing on
-   this side fixes it.
+   `unavailable` when no per-asset row is readable either). The split is
+   a separate query: `curated.published.by_subclass_executed_at` is its
+   own execution time, and a split older than 7 days is withheld while a
+   fresher total is still served. Nothing on this side fixes it.
 
 6. **Textfile is written but `last_run_unix` frozen** — the unit ran and
    wrote, but node_exporter is not scraping the directory (permission
@@ -181,3 +185,4 @@ if that net is not expected to carry a key.
 - 2026-09-17 — `_refused` added; a keyless run stamps instead of failing, and the `_stale` absent arm is gated on 30 h of observed scrapes (it fired 10 min after the v0.88.1 deploy).
 - 2026-09-17 — key mechanism made one thing: the role renders `/etc/default/curated-rwa-sync` from `vault_dune_api_key` (`root:root 0600`, matching what r1 carries and what this runbook and the alert prescribe); the tier named here is `medium` (#518).
 - 2026-09-17 — the sync reads the curator's PUBLISHED totals (public query results) instead of its private per-asset tables, which no outside key can read; `execution_cost_credits` replaced by `datapoints_read`, `executed_at_unix` added, `priced` dropped; triage steps 3–5 rewritten for a read that never executes.
+- 2026-09-23 — `_published_stale` added: `executed_at_unix` had no rule, so a curator whose query stopped re-executing was invisible to alerting (#638). The split's own execution time is now served as `by_subclass_executed_at`.

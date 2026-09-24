@@ -15,7 +15,7 @@ severity: P3
 | Severity | P3 (ticket) |
 | Detected by | `deploy/monitoring/rules/divergence.yml` (+ R1 overlay) |
 | Typical MTTR | 5–60 min (usually upstream-reference recovery / key restore) |
-| Impact | Every configured reference is dark for the affected pairs, so `RefreshPair` writes a `SuccessCount=0` cache entry. `flags.divergence_warning` freezes at its last value — a **live depeg during the outage would go unflagged** (false-negative). Aggregate price endpoints keep serving; only the divergence flag is blind. |
+| Impact | Every configured reference is dark for the affected pairs, so `RefreshPair` writes a `SuccessCount=0` cache entry. `flags.divergence_warning` freezes at its last evaluated value and `flags.divergence_checked` reads `false`; the persistence streak and the webhook latch are left untouched, so a warning that was firing is neither cleared nor re-sent when references return. A **live depeg during the outage would go unflagged** (false-negative). Aggregate price endpoints keep serving; only the divergence flag is blind. |
 
 ## Why this exists (vs the error-dominant alert)
 
