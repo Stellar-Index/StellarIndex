@@ -6,6 +6,12 @@
 # atomic swap (deploy/clickhouse/asset_holders_rollup.sql). Every run is
 # a full recompute — there is no watermark and no backfill. The companion
 # timer re-runs it 30 minutes after each run ends.
+#
+# T391: -heartbeat wires this into the same ops_job textfile-collector
+# gauges every other stellarindex-ops oneshot publishes (last-finish,
+# last-exit-ok), which the generic ops_job alert tree already covers —
+# a crash was already caught by the systemd catch-all, but a cycle that
+# quietly falls behind without erroring was not.
 
 [Unit]
 Description=Stellar Index — asset-holders rollup recompute
@@ -24,6 +30,7 @@ Environment=EXTRA_FLAGS=
 
 ExecStart=/usr/local/bin/stellarindex-ops ch-holders-rollup \
   -ch-addr ${CH_ADDR} \
+  -heartbeat /var/lib/node_exporter/textfile_collector/ops_job_ch-holders-rollup.prom \
   -write \
   $EXTRA_FLAGS
 
@@ -44,7 +51,7 @@ ProtectControlGroups=true
 # PrivateTmp is per-unit-instance and would NOT be visible to a
 # manually-invoked process outside systemd, so the lock has to live on
 # the shared, already stellarindex-owned data dir, not under /tmp.
-ReadWritePaths=/var/lib/stellarindex
+ReadWritePaths=/var/lib/stellarindex /var/lib/node_exporter/textfile_collector
 
 # The cycle runs its statements serially and seven of them cap
 # themselves at max_execution_time=600, so ClickHouse allows a cycle up

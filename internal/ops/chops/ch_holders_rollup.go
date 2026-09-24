@@ -42,6 +42,7 @@ func chHoldersRollup(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	lockPath := fs.String("lock-file", holdersRollupLockPath,
 		"path to the exclusive advisory lock serializing this run against the 30-minute timer or a second concurrent invocation")
+	heartbeat := fs.String("heartbeat", "", "node_exporter textfile path for the liveness/last-success gauges. Empty = "+opsutil.DefaultTextfileDir+"/ops_job_ch-holders-rollup.prom when that directory exists (r1), otherwise no heartbeat at all")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -60,12 +61,28 @@ func chHoldersRollup(args []string) error {
 	ctx, cancel := opsutil.SignalContext()
 	defer cancel()
 
+	// T391: the timer runs this unattended every 30 minutes with no other
+	// success/failure signal — a cycle that silently falls behind (no
+	// crash, just no progress) previously had no metric at all. The same
+	// heartbeat primitive ch-backfill and usd-volume-restamp already use
+	// publishes stellarindex_ops_job_last_finish_unix /
+	// _last_exit_ok, which the existing generic ops_job alert tree covers
+	// without a new alert.
+	hb := opsutil.NewJobHeartbeat("ch-holders-rollup", *heartbeat, nil)
+	if hb.Enabled() {
+		fmt.Fprintf(os.Stderr, "ch-holders-rollup: heartbeat -> %s\n", hb.Path())
+	}
+	hb.Start()
+	ok := false
+	defer func() { hb.Stop(ok) }()
+
 	start := time.Now()
 	if err := clickhouse.RunHoldersRollup(ctx, *chAddr, func(format string, a ...any) {
 		fmt.Fprintf(os.Stderr, "ch-holders-rollup: "+format+"\n", a...)
 	}); err != nil {
 		return err
 	}
+	ok = true
 	fmt.Fprintf(os.Stderr, "ch-holders-rollup: cycle complete in %s\n", time.Since(start).Round(time.Second))
 	return nil
 }
