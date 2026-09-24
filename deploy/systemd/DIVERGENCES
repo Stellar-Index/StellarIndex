@@ -35,10 +35,6 @@ stellarindex-aggregator.service:Description
 stellarindex-api.service:Description
 stellarindex-indexer.service:Description
 
-# Template lengthened the restart cooldown to 10s; reference still shows
-# the old 5s.
-stellarindex-api.service:RestartSec
-
 # Template runs uncapped by design (its own comment: "MAX_RUNTIME=0 =
 # uncapped: ... WatchdogSec is the only bound"); reference still shows
 # the earlier 16h cap.
