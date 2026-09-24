@@ -577,8 +577,8 @@ groups:
             Runbook: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/login-code-lockout-table-growing.md
 
       # ── Auth-reaper liveness (#368 M5) ─────────────────────────────────
-      # The three auth-table reapers (login_code_lockouts, magic_link_tokens,
-      # speculative-account orphans) each report WHAT they did; none
+      # The auth-table reapers (login_code_lockouts, magic_link_tokens,
+      # speculative-account orphans, ended sessions, finished webhook_deliveries) each report WHAT they did; none
       # reported THAT they ran. A dead reaper freezes every rows gauge at a
       # healthy-looking value, so login_code_lockout_table_growing
       # (rows > 10000) can never see the bound being lost. The threshold is
@@ -605,7 +605,7 @@ groups:
             a sweep {{ $value | humanizeDuration }} ago — more than three
             times its configured interval. Its bounded table
             (login_code_lockouts / magic_link_tokens / speculative
-            accounts) is no longer being trimmed; the rows gauge it
+            accounts / ended sessions / webhook_deliveries) is no longer being trimmed; the rows gauge it
             normally refreshes is FROZEN, not healthy. Check the API
             binary's log for the reaper's "sweep failed" / panic lines and
             whether the goroutine is stuck on a Postgres call.

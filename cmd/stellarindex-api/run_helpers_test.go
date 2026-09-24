@@ -22,6 +22,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardpricealerts"
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/dashboardwebhooks"
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/platform/postgresstore"
 )
 
 // Coverage for the run() wiring helpers (#340 item 3). Every one of
@@ -312,6 +313,32 @@ func TestBuildDashboardBundle_ConfiguredWithoutPostgresFailsClosed(t *testing.T)
 	if err == nil {
 		t.Fatal("buildDashboardBundle accepted base_url with a nil *sql.DB — the handlers it " +
 			"would return nil-panic on the first request; this must fail at startup")
+	}
+}
+
+// TestBuildDashboardBundle_ExposesUserStoreForSessionRetention — the
+// retention reaper (retentionReaperTargets, cmd/stellarindex-api/
+// retention_reapers.go) binds to bundle.users and is skipped when it is
+// nil, so a configured dashboard that dropped it would keep every
+// session's IP / user-agent / geo PII forever with nothing failing.
+func TestBuildDashboardBundle_ExposesUserStoreForSessionRetention(t *testing.T) {
+	t.Parallel()
+
+	// sql.Open is lazy: no connection is attempted at construction.
+	db, err := sql.Open("pgx", "postgres://unused.invalid/none")
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+
+	cfg := config.Default().API.Dashboard
+	cfg.BaseURL = "https://dashboard.example.test"
+	bundle, err := buildDashboardBundle(cfg, db, nil, discardLogger())
+	if err != nil {
+		t.Fatalf("buildDashboardBundle: %v", err)
+	}
+	if _, ok := bundle.users.(*postgresstore.UserStore); !ok {
+		t.Fatalf("bundle.users = %T, want *postgresstore.UserStore — the session retention reaper would never start", bundle.users)
 	}
 }
 
