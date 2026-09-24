@@ -656,17 +656,36 @@ func run(cfgPath string, dryRun bool) error {
 		// ClickHouse lake, never the wall-clock write-time. Required for the
 		// aggregator supply-refresh path — without an authoritative close-time
 		// source a re-derive would corrupt point-in-time supply queries, so we
-		// fail closed at startup rather than silently fall back to time.Now().
+		// fail closed rather than silently fall back to time.Now().
 		if cfg.Storage.ClickHouseAddr == "" {
 			return errors.New("supply aggregator refresh requires storage.clickhouse_addr (source of the ledger close time stamped as snapshot ObservedAt) — set it or disable [supply] aggregator_refresh_enabled")
 		}
-		supplyCloseTimes, err := clickhouse.NewExplorerReader(rootCtx, cfg.Storage.ClickHouseAddr)
-		if err != nil {
-			return fmt.Errorf("supply refresher close-time reader: %w", err)
+		var closeTimes ledgerCloseTimeReader
+		if dryRun {
+			// T184: -dry-run validates connectivity synchronously so a bad
+			// config fails -dry-run instead of only surfacing at a real
+			// start. The process exits right after this branch either way,
+			// so a single dial attempt (no retry) is correct here.
+			supplyCloseTimes, err := clickhouse.NewExplorerReader(rootCtx, cfg.Storage.ClickHouseAddr)
+			if err != nil {
+				return fmt.Errorf("supply refresher close-time reader: %w", err)
+			}
+			defer func() { _ = supplyCloseTimes.Close() }()
+			closeTimes = supplyCloseTimes
+		} else {
+			// GH-902/K024-equivalent: the dial used to happen inline here
+			// and a single ClickHouse blip aborted the whole aggregator's
+			// boot, even though the outage this guards against is the
+			// same cold-boot race dialDecimalsResolver retries for —
+			// clickhouse-server loading metadata for minutes after a
+			// reboot. Retry in the background instead; the supply-refresh
+			// tick that needs the reader waits for it, nothing else does.
+			lazy := newLazyCloseTimeReader(rootCtx, cfg.Storage.ClickHouseAddr, logger.With("component", "supply-refresh"), clickhouse.NewExplorerReader)
+			defer lazy.Close()
+			closeTimes = lazy
 		}
-		defer func() { _ = supplyCloseTimes.Close() }()
 
-		supplyRefresherBindings, err = buildSupplyRefreshers(cfg, store, supplyCloseTimes, logger.With("component", "supply-refresh"))
+		supplyRefresherBindings, err = buildSupplyRefreshers(cfg, store, closeTimes, logger.With("component", "supply-refresh"))
 		if err != nil {
 			return fmt.Errorf("supply refresher init: %w", err)
 		}
@@ -2849,5 +2868,66 @@ func dialLakeReaderWithRetry[T any](
 				backoff = decimalsResolverRetryMax
 			}
 		}
+	}
+}
+
+// lazyCloseTimeReader implements [ledgerCloseTimeReader] by dialing the
+// ClickHouse lake in its own goroutine with [dialLakeReaderWithRetry]
+// (GH-902): a transient outage at boot delays the supply refresher's
+// snapshot-ObservedAt stamping instead of aborting the aggregator, mirroring
+// how [dialDecimalsResolver] arms the decimals guard. A refresh tick that
+// runs before the dial succeeds blocks on [ready] rather than reading a nil
+// reader or a stale one-shot failure.
+type lazyCloseTimeReader struct {
+	ready  chan struct{}
+	reader *clickhouse.ExplorerReader
+}
+
+// dial is the [clickhouse.NewExplorerReader] signature, overridden by tests
+// so they don't need a live ClickHouse to exercise the retry loop.
+func newLazyCloseTimeReader(ctx context.Context, addr string, logger *slog.Logger,
+	dial func(context.Context, string) (*clickhouse.ExplorerReader, error),
+) *lazyCloseTimeReader {
+	r := &lazyCloseTimeReader{ready: make(chan struct{})}
+	go func() {
+		defer worker.Recover(logger, "supply-refresh-close-time-dial")
+		reader, ok := dialLakeReaderWithRetry(ctx, logger, addr, dial,
+			"supply-refresh: ClickHouse close-time reader unavailable — snapshot ObservedAt stamping deferred, retrying",
+			"supply-refresh: ClickHouse close-time reader reached — snapshot ObservedAt stamping armed")
+		if ok {
+			r.reader = reader
+		}
+		close(r.ready)
+	}()
+	return r
+}
+
+// LatestLedgerAtOrBefore blocks the calling refresh tick until the dial
+// resolves (success or shutdown), never permanently degrading the guard.
+func (r *lazyCloseTimeReader) LatestLedgerAtOrBefore(ctx context.Context, maxSeq uint32) (uint32, time.Time, bool, error) {
+	select {
+	case <-r.ready:
+	case <-ctx.Done():
+		return 0, time.Time{}, false, ctx.Err()
+	}
+	if r.reader == nil {
+		return 0, time.Time{}, false, errors.New("supply-refresh: ClickHouse close-time reader unavailable (shutdown reached before the lake did)")
+	}
+	return r.reader.LatestLedgerAtOrBefore(ctx, maxSeq)
+}
+
+// Close releases the reader if the dial had already settled. It does NOT
+// block waiting for an in-flight dial: run()'s other deferred calls include
+// the rootCtx cancel that stops the retry loop, and defer order is LIFO, so
+// blocking here on a dial that only rootCtx's (not-yet-run) cancel can end
+// would deadlock a non-signal error return. A dial still in flight is
+// reclaimed with the exiting process.
+func (r *lazyCloseTimeReader) Close() {
+	select {
+	case <-r.ready:
+		if r.reader != nil {
+			_ = r.reader.Close()
+		}
+	default:
 	}
 }

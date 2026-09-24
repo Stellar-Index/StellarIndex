@@ -60,16 +60,21 @@ func TestDecimalsGuardResolverIsDialledWithRetry(t *testing.T) {
 	// knownDirectDials is the number of OTHER components that still dial
 	// a lake reader inline, each accounted for:
 	//
-	//  1. the supply refresher's close-time source — fails CLOSED
-	//     (`return err`), so a cold lake refuses startup rather than
-	//     degrading silently; nothing to fix.
+	//  1. the supply refresher's close-time source, -dry-run branch ONLY
+	//     (T184) — a single synchronous dial so a bad config fails
+	//     -dry-run instead of only surfacing at a real start. The real
+	//     boot path does not use this call; it goes through
+	//     newLazyCloseTimeReader below (GH-902).
 	//
 	// A SECOND direct dial means some other component went back inline.
 	const knownDirectDials = 1
-	// wantViaGenericRetry is dialDecimalsResolver's own delegation +
-	// the MEV tx-order resolver + the priceless-coverage SAC resolver
-	// (K024).
-	const wantViaGenericRetry = 3
+	// wantViaGenericRetry is dialDecimalsResolver's own delegation + the
+	// MEV tx-order resolver + the priceless-coverage SAC resolver (K024)
+	// + the supply refresher's close-time reader on a real (non-dry-run)
+	// boot, via newLazyCloseTimeReader (GH-902): that dial used to be a
+	// single synchronous `return err` on failure, aborting the whole
+	// aggregator over a transient ClickHouse blip.
+	const wantViaGenericRetry = 4
 
 	direct, directTxIndex, viaRetry, viaGenericRetry := 0, 0, 0, 0
 	ast.Inspect(f, func(n ast.Node) bool {
