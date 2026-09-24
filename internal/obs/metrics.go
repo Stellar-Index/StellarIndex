@@ -335,8 +335,17 @@ func registerAppMetricsTail() {
 		SourceAmountDegradedTotal,
 	)
 	registerAuthReaperMetrics()
+	registerFailedAuthMetrics()
 
 	seedBoundedLabelSeries()
+}
+
+// registerFailedAuthMetrics registers and zero-seeds [FailedAuthTotal];
+// split out of registerAppMetricsTail for funlen.
+func registerFailedAuthMetrics() {
+	Registry.MustRegister(FailedAuthTotal)
+	FailedAuthTotal.WithLabelValues(FailedAuthRejected)
+	FailedAuthTotal.WithLabelValues(FailedAuthThrottled)
 }
 
 // registerAuthReaperMetrics registers the platform-table reapers' metrics
@@ -4287,6 +4296,25 @@ var PasskeyLoginRefusalsTotal = prometheus.NewCounterVec(
 const (
 	PasskeyRefusalCloneWarning   = "clone_warning"
 	PasskeyRefusalCeremonyReplay = "ceremony_replay"
+)
+
+// FailedAuthTotal counts caller credential rejections seen by the API's
+// Auth middleware, by outcome. The failed-auth throttle caps each client
+// IP and each API-key prefix, so guessing spread thinly across both
+// never fills a bucket; this fleet-wide total is what
+// stellarindex_failed_auth_rate_high watches.
+var FailedAuthTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_failed_auth_total",
+		Help: "Credential rejections at the API Auth middleware, by outcome (rejected = answered 401/403; throttled = answered 429 by the failed-auth throttle).",
+	},
+	[]string{"outcome"},
+)
+
+// FailedAuthTotal outcome label values.
+const (
+	FailedAuthRejected  = "rejected"
+	FailedAuthThrottled = "throttled"
 )
 
 // AdminKeyBudgetClampsTotal — counter of API credentials whose per-minute

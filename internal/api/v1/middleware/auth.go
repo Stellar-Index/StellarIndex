@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/auth"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
@@ -62,12 +63,14 @@ type AuthOptions struct {
 	SEP10 auth.SEP10Validator
 
 	// FailedAuthLimiter, when non-nil, throttles INVALID-credential
-	// attempts PER CLIENT IP (C3-5). Auth deliberately runs before the
+	// attempts per client IP and per presented API-key prefix (C3-5).
+	// Auth deliberately runs before the
 	// main rate-limit middleware so per-tier limits key off the
 	// authenticated subject — but that means a rejected credential
 	// (401/403/expired/malformed) never reaches the limiter, leaving
 	// credential-stuffing / key-guessing unthrottled. This bucket closes
-	// that gap: every credential FAILURE consumes a per-IP token, and
+	// that gap: every credential FAILURE consumes a token on each
+	// dimension (see takeFailedAuth), and
 	// over the budget the middleware returns 429 instead of the auth
 	// error. Successful auth and anonymous passes never touch it, so the
 	// Auth-before-RateLimit ordering for VALID requests is preserved.
@@ -113,14 +116,19 @@ func Auth(opts AuthOptions) Middleware {
 			}
 			subject, err := authenticate(r, mode, opts)
 			if err != nil {
-				// C3-5: throttle per-IP on a CREDENTIAL FAILURE so a bad
-				// key/token can't be retried without bound. Server-misconfig
-				// 503s (ErrNotImplemented) don't count against the caller.
-				if opts.FailedAuthLimiter != nil && isCredentialRejection(err) {
-					if throttled, retryAfter := takeFailedAuth(r, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
+				// C3-5: throttle per-IP and per-key-prefix on a CREDENTIAL
+				// FAILURE so a bad key/token can't be retried without bound.
+				// Server-misconfig 503s (ErrNotImplemented) don't count.
+				rejected := isCredentialRejection(err)
+				if opts.FailedAuthLimiter != nil && rejected {
+					if throttled, retryAfter := takeFailedAuth(r, mode, opts.FailedAuthLimiter); throttled { //nolint:contextcheck // takeFailedAuth intentionally detaches via throttleContext(r) — see its doc (REL-06 F059/Q153)
+						obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthThrottled).Inc()
 						writeAuthThrottleProblem(w, retryAfter)
 						return
 					}
+				}
+				if rejected {
+					obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthRejected).Inc()
 				}
 				writeAuthError(w, err)
 				return
@@ -236,7 +244,7 @@ func isPublicRoute(r *http.Request) bool {
 
 // isCredentialRejection reports whether err is a caller-supplied
 // bad-credential outcome (as opposed to a server-side misconfiguration).
-// Only these count against the per-IP failed-auth budget — a 503
+// Only these count against the failed-auth budgets — a 503
 // "validator not wired" is the operator's fault, not an attacker's, and
 // throttling on it would let a boot-time misconfig masquerade as abuse.
 func isCredentialRejection(err error) bool {
@@ -251,12 +259,56 @@ func isCredentialRejection(err error) bool {
 	}
 }
 
-// takeFailedAuth consumes one token from the per-IP failed-auth bucket
-// and reports whether the caller is now over budget (and the
-// Retry-After seconds to advertise). Keyed on the resolved client IP
-// (forge-resistant XFF, F-1338; aggregated to a /64 network prefix for
-// IPv6 per SEC-15 — see [remoteIPPrefixFor]) under a "failauth:" prefix
-// so it shares no key space with the main per-IP request limiter.
+// takeFailedAuth consumes one failed-auth token on each dimension that
+// applies to r and reports whether the caller is now over budget (and
+// the Retry-After seconds to advertise). The dimensions are:
+//
+//   - the resolved client IP ("failauth:"; forge-resistant XFF, F-1338;
+//     a /64 network prefix for IPv6 per SEC-15 — see [remoteIPPrefixFor]),
+//     which bounds one source's guessing across every key;
+//   - the presented API key's display prefix ("failauth-key:"; see
+//     [failedAuthKeyPrefix]), which bounds guessing aimed at ONE key
+//     from many IPs — rotating addresses resets only the IP dimension.
+//
+// Only credential FAILURES reach here, so a caller filling a victim's
+// key-prefix bucket can 429 other bad guesses at that prefix but never
+// the victim's valid key. Both key spaces are disjoint from the main
+// per-IP request limiter's.
+func takeFailedAuth(r *http.Request, mode AuthMode, limiter *ratelimit.Bucket) (throttled bool, retryAfter int) {
+	ip := remoteIPPrefixFor(r)
+	if ip == "" {
+		// No resolvable IP → collapse into one shared bucket rather than
+		// skip the throttle (fail-closed for the throttle itself).
+		ip = "unknown"
+	}
+	// Detach from the request's cancellation — see [throttleContext]:
+	// ratelimit.Bucket cannot tell a client abort from a Redis outage,
+	// so a caller that RSTs mid-take must not arm the fail-closed dwell
+	// clock for these shared buckets (REL-06 F059 / Q153).
+	takeCtx, takeCancel := throttleContext(r)
+	defer takeCancel()
+	if throttled, ra := takeFailedAuthBucket(takeCtx, limiter, "failauth:"+ip); throttled {
+		return true, ra
+	}
+	if prefix := failedAuthKeyPrefix(r, mode); prefix != "" {
+		return takeFailedAuthBucket(takeCtx, limiter, "failauth-key:"+prefix)
+	}
+	return false, 0
+}
+
+// failedAuthKeyPrefix returns the display prefix ([auth.KeyPrefix]) of
+// the API key r presents, or "" when there is none to key on. Only the
+// API-key modes qualify: a SEP-10 JWT's leading bytes are its constant
+// base64 header, so keying on them would pool every JWT failure
+// server-wide into one bucket.
+func failedAuthKeyPrefix(r *http.Request, mode AuthMode) string {
+	if mode != AuthModeAPIKey && mode != AuthModeAPIKeyOptional {
+		return ""
+	}
+	return auth.KeyPrefix(bearerOrXKey(r))
+}
+
+// takeFailedAuthBucket takes one token from limiter under key.
 //
 // Fails OPEN on a transient limiter/backend error — a brief Redis blip
 // must not convert every failed login into a 429; the auth error itself
@@ -267,20 +319,8 @@ func isCredentialRejection(err error) bool {
 // sustained Redis outage silently disables brute-force protection for
 // as long as it lasts, which is exactly when an attacker is most likely
 // to be probing.
-func takeFailedAuth(r *http.Request, limiter *ratelimit.Bucket) (throttled bool, retryAfter int) {
-	ip := remoteIPPrefixFor(r)
-	if ip == "" {
-		// No resolvable IP → collapse into one shared bucket rather than
-		// skip the throttle (fail-closed for the throttle itself).
-		ip = "unknown"
-	}
-	// Detach from the request's cancellation — see [throttleContext]:
-	// ratelimit.Bucket cannot tell a client abort from a Redis outage,
-	// so a caller that RSTs mid-take must not arm the fail-closed dwell
-	// clock for this shared bucket (REL-06 F059 / Q153).
-	takeCtx, takeCancel := throttleContext(r)
-	defer takeCancel()
-	res, err := limiter.Take(takeCtx, "failauth:"+ip)
+func takeFailedAuthBucket(ctx context.Context, limiter *ratelimit.Bucket, key string) (throttled bool, retryAfter int) {
+	res, err := limiter.Take(ctx, key)
 	if err != nil {
 		if errors.Is(err, ratelimit.ErrThrottleUnavailable) {
 			// Sustained outage: fail CLOSED, mirroring
@@ -301,7 +341,7 @@ func takeFailedAuth(r *http.Request, limiter *ratelimit.Bucket) (throttled bool,
 	return true, ra
 }
 
-// writeAuthThrottleProblem is the 429 returned when an IP exceeds its
+// writeAuthThrottleProblem is the 429 returned when a caller exceeds a
 // failed-auth budget (C3-5). Distinct problem type from the ordinary
 // rate-limit 429 so operators reading access logs can tell
 // credential-stuffing defence apart from ordinary request throttling.

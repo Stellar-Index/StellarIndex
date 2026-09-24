@@ -6,10 +6,15 @@ package middleware_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
@@ -172,6 +177,137 @@ func TestAuth_FailedAuthThrottle_NilLimiterIsNoop(t *testing.T) {
 		h.ServeHTTP(w, r)
 		if w.Code != http.StatusUnauthorized {
 			t.Fatalf("attempt %d with nil limiter: status = %d, want 401 (no throttle)", i, w.Code)
+		}
+	}
+}
+
+// TestAuth_FailedAuthThrottle_PerKeyPrefix is the RSEC-R4 regression: a
+// distributed guesser aiming at ONE key from many IPs must still be
+// throttled. With an IP-only bucket every guess below lands in a fresh
+// per-IP bucket and returns 401 forever; the key-prefix dimension turns
+// the (budget+1)th guess at the same prefix into a 429.
+func TestAuth_FailedAuthThrottle_PerKeyPrefix(t *testing.T) {
+	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
+		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
+	}
+	const budget = 3
+	const targetPrefix = "sip_4f9c1d8b"
+	validKey := targetPrefix + strings.Repeat("0", 56)
+	guess := func(i int) string { return targetPrefix + strings.Repeat("f", 55) + strconv.Itoa(i%10) }
+
+	for _, mode := range []middleware.AuthMode{middleware.AuthModeAPIKey, middleware.AuthModeAPIKeyOptional} {
+		t.Run(string(mode), func(t *testing.T) {
+			h := middleware.Auth(middleware.AuthOptions{
+				Mode:              mode,
+				APIKey:            stubAPIKeyValidator{knownKey: validKey},
+				FailedAuthLimiter: ratelimit.New(nil, budget, time.Minute),
+			})(okHandler())
+			req := func(ip int, key string) *httptest.ResponseRecorder {
+				r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+				r.RemoteAddr = "198.51.100." + strconv.Itoa(ip) + ":4000"
+				r.Header.Set("X-API-Key", key)
+				w := httptest.NewRecorder()
+				h.ServeHTTP(w, r)
+				return w
+			}
+
+			for i := 1; i <= budget; i++ {
+				if w := req(i, guess(i)); w.Code != http.StatusUnauthorized {
+					t.Fatalf("guess %d from a fresh IP: status = %d, want 401", i, w.Code)
+				}
+			}
+			w := req(budget+1, guess(budget+1))
+			if w.Code != http.StatusTooManyRequests {
+				t.Fatalf("guess %d at the same key prefix from a fresh IP: status = %d, want 429 (per-key-prefix throttle)", budget+1, w.Code)
+			}
+			if w.Header().Get("Retry-After") == "" {
+				t.Error("per-key-prefix 429 must carry Retry-After")
+			}
+
+			// A guess at a DIFFERENT prefix from a fresh IP is unaffected.
+			if w := req(50, "sip_00000000"+strings.Repeat("f", 56)); w.Code != http.StatusUnauthorized {
+				t.Fatalf("other prefix: status = %d, want 401 (per-prefix isolation)", w.Code)
+			}
+			// The key's holder is never locked out by guesses at their
+			// prefix: a successful lookup never consults the budget.
+			if w := req(60, validKey); w.Code != http.StatusOK {
+				t.Fatalf("valid key under an exhausted prefix bucket: status = %d, want 200", w.Code)
+			}
+		})
+	}
+}
+
+// TestAuth_FailedAuthTotal_CountsEveryRejection pins the fleet-wide
+// tripwire counter behind stellarindex_failed_auth_rate_high: every
+// credential rejection increments it by outcome, while a valid key and a
+// server-side misconfiguration (503) do not.
+func TestAuth_FailedAuthTotal_CountsEveryRejection(t *testing.T) {
+	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
+		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
+	}
+	rejected := obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthRejected)
+	throttled := obs.FailedAuthTotal.WithLabelValues(obs.FailedAuthThrottled)
+	rej0, thr0 := testutil.ToFloat64(rejected), testutil.ToFloat64(throttled)
+
+	h := middleware.Auth(middleware.AuthOptions{
+		Mode:              middleware.AuthModeAPIKey,
+		APIKey:            stubAPIKeyValidator{knownKey: "good-key"},
+		FailedAuthLimiter: ratelimit.New(nil, 1, time.Minute),
+	})(okHandler())
+	misconfigured := middleware.Auth(middleware.AuthOptions{Mode: middleware.AuthModeAPIKey})(okHandler())
+	serve := func(handler http.Handler, key string) int {
+		r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+		r.RemoteAddr = "203.0.113.77:4000"
+		r.Header.Set("X-API-Key", key)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w.Code
+	}
+
+	for _, step := range []struct {
+		handler http.Handler
+		key     string
+		want    int
+	}{
+		{h, "wrong-key", http.StatusUnauthorized},
+		{h, "wrong-key", http.StatusTooManyRequests},
+		{h, "good-key", http.StatusOK},
+		{misconfigured, "wrong-key", http.StatusServiceUnavailable},
+	} {
+		if got := serve(step.handler, step.key); got != step.want {
+			t.Fatalf("key %q: status = %d, want %d", step.key, got, step.want)
+		}
+	}
+	if got := testutil.ToFloat64(rejected) - rej0; got != 1 {
+		t.Errorf("rejected delta = %v, want 1", got)
+	}
+	if got := testutil.ToFloat64(throttled) - thr0; got != 1 {
+		t.Errorf("throttled delta = %v, want 1", got)
+	}
+}
+
+// TestAuth_FailedAuthThrottle_SEP10NotPooledByPrefix pins that the
+// key-prefix dimension is API-key only. Every JWT starts with the same
+// base64 header, so keying SEP-10 failures on their leading bytes would
+// pool every bad token server-wide into one bucket.
+func TestAuth_FailedAuthThrottle_SEP10NotPooledByPrefix(t *testing.T) {
+	if err := middleware.SetTrustedProxyCIDRs([]string{}); err != nil {
+		t.Fatalf("SetTrustedProxyCIDRs: %v", err)
+	}
+	const budget = 2
+	h := middleware.Auth(middleware.AuthOptions{
+		Mode:              middleware.AuthModeSEP10,
+		SEP10:             stubSEP10Validator{knownJWT: "good"},
+		FailedAuthLimiter: ratelimit.New(nil, budget, time.Minute),
+	})(okHandler())
+	for i := 1; i <= 3*budget; i++ {
+		r := httptest.NewRequest(http.MethodGet, "/v1/price", nil)
+		r.RemoteAddr = "198.51.100." + strconv.Itoa(i) + ":4000"
+		r.Header.Set("Authorization", "Bearer eyJhbGciOiJFZERTQSJ9.e30.sig"+strconv.Itoa(i))
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("bad JWT %d from a fresh IP: status = %d, want 401 (no cross-IP JWT pooling)", i, w.Code)
 		}
 	}
 }
