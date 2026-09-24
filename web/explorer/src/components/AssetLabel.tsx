@@ -36,6 +36,44 @@ function firstSep(s: string): number {
   return Math.min(d, c);
 }
 
+// renderCodeIssuer is the shared (code, issuer) render used for both the
+// classic-asset branch and SAC-resolved contracts (CA2-A36): a code alone
+// is not an asset identity (AGENTS.md — key on (code, issuer), never code
+// alone), so any path that has an issuer available must show it. `badge`
+// appends the small uppercase marker (e.g. "SAC") the SAC branch uses.
+function renderCodeIssuer(
+  code: string,
+  issuer: string,
+  issuerMap:
+    Record<string, { org_name?: string; org_verified?: boolean }> | undefined,
+  badge?: string,
+) {
+  const known = issuerMap?.[issuer];
+  // CS-100: only present "by {org_name}" when SEP-1 verified — see the
+  // classic-branch comment below for why org_name alone is spoofable.
+  const subtitle =
+    known?.org_verified && known.org_name ? (
+      <div className="text-ink-muted text-[10px]" title={issuer}>
+        by {known.org_name}
+      </div>
+    ) : (
+      <div className="text-ink-muted font-mono text-[10px]" title={issuer}>
+        {issuer.length > 12 ? truncateMiddle(issuer, 6, 4) : issuer}
+      </div>
+    );
+  return (
+    <div>
+      <div className="font-medium">{code}</div>
+      {subtitle}
+      {badge && (
+        <div className="text-ink-muted text-[10px] tracking-wide uppercase">
+          {badge}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AssetLabel({
   canonical,
 }: {
@@ -128,15 +166,21 @@ export function AssetLabel({
       // resolution fell through with indexOf('-') === -1 and rendered the
       // near-full issuer key in the Base column, blowing out the cell.
       const sepIx = firstSep(resolved);
-      const code = sepIx === -1 ? resolved : resolved.slice(0, sepIx);
-      return (
-        <div>
-          <div className="font-medium">{code}</div>
-          <div className="text-ink-muted text-[10px] tracking-wide uppercase">
-            SAC
+      if (sepIx === -1) {
+        // No issuer in the resolved string — nothing to disambiguate on,
+        // fall back to the bare code (unchanged from before CA2-A36).
+        return (
+          <div>
+            <div className="font-medium">{resolved}</div>
+            <div className="text-ink-muted text-[10px] tracking-wide uppercase">
+              SAC
+            </div>
           </div>
-        </div>
-      );
+        );
+      }
+      const code = resolved.slice(0, sepIx);
+      const issuer = resolved.slice(sepIx + 1);
+      return renderCodeIssuer(code, issuer, issuerMap, 'SAC');
     }
     // Unresolved SAC — truncate the C-strkey and tooltip the full value.
     return (
@@ -169,35 +213,9 @@ export function AssetLabel({
   }
   const code = canonical.slice(0, dashIx);
   const issuer = canonical.slice(dashIx + 1);
-  // When we know the issuer's organisation, render the org name
-  // as the subtitle (e.g. "USDC / Circle") instead of the raw
-  // truncated G-strkey. The issuer's full G-strkey stays in the
-  // tooltip so power users can still copy it.
-  const known = issuerMap?.[issuer];
-  // CS-100: only present "by {org_name}" as authoritative attribution when
-  // the org is SEP-1 VERIFIED (the organisation's stellar.toml lists this
-  // issuer back — bidirectional). org_name alone is self-declared metadata
-  // a scam issuer can spoof by pointing home_domain at a reputable org's
-  // domain; rendering it unqualified here would launder that spoof across
-  // the markets/dexes/exchanges/pools tables. When unverified we fall
-  // through to the raw truncated-issuer rendering (no org attribution),
-  // matching how the gated issuers pages withhold the verified signal.
-  if (known?.org_verified && known.org_name) {
-    return (
-      <div>
-        <div className="font-medium">{code}</div>
-        <div className="text-ink-muted text-[10px]" title={issuer}>
-          by {known.org_name}
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div>
-      <div className="font-medium">{code}</div>
-      <div className="text-ink-muted font-mono text-[10px]" title={issuer}>
-        {issuer.length > 12 ? truncateMiddle(issuer, 6, 4) : issuer}
-      </div>
-    </div>
-  );
+  // When we know the issuer's organisation, render the org name as the
+  // subtitle (e.g. "USDC / Circle") instead of the raw truncated G-strkey,
+  // gated on SEP-1 verification (CS-100 — org_name alone is spoofable).
+  // Shared with the SAC-resolved branch above via renderCodeIssuer.
+  return renderCodeIssuer(code, issuer, issuerMap);
 }
