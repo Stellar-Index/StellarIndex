@@ -177,6 +177,8 @@ defer_check() {
 # The self-test runs first (the gate is only as trustworthy as its fixtures).
 echo "=== verify↔CI parity self-test ===" && ./scripts/ci/check-verify-parity-test.sh
 echo "=== verify.sh ↔ CI import-checks parity ===" && ./scripts/ci/check-verify-parity.sh
+echo "=== CI meta-gate coverage ===" && ./scripts/ci/ci-meta-gate-coverage-test.sh
+echo "=== deploy checkout ref ===" && ./scripts/ci/deploy-checkout-ref-test.sh
 # The verifier image installs the Postman converter from a Dockerfile ARG whose
 # default must equal the pin in scripts/dev/docs-postman.sh; the script refuses
 # any other version and falls back to npx, so drift makes the image copy dead.

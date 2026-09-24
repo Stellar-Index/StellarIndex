@@ -831,6 +831,27 @@ jobs:
         # plan.sh is not in the CID-03 restore list — that list is
         # deliberately scoped to the money/i128/anti-bypass trio.)
         run: ./scripts/ci/lint-replay-plan-test.sh
+      - name: CI meta-gate coverage (Tier D gating + ci-health workflow list)
+        # GH-778: pins the two fixes below directly against the shipped
+        # workflow files, so a later edit that re-narrows either back
+        # fails here instead of going unnoticed.
+        run: ./scripts/ci/ci-meta-gate-coverage-test.sh
+      - name: deploy checkout ref (config-apply provenance)
+        # GH-885: the deploy job's checkout must track inputs.version,
+        # not the dispatching ref, or the config-apply gate verifies a
+        # different commit's bytes than the ones actually applied.
+        run: ./scripts/ci/deploy-checkout-ref-test.sh
+      - name: verify.sh <-> CI import-checks parity (+ self-test)
+        # GH-778/CID-25: this gate is the chokepoint that keeps
+        # `make verify` honest against what CI actually runs, but until
+        # now no workflow invoked it — it only ran via `scripts/dev/
+        # verify.sh`, so a contributor who never ran verify.sh locally
+        # never saw a parity break either. Same placement rationale as
+        # the self-tests above: validates the PR's own copy of both
+        # files, pre-restore.
+        run: |
+          ./scripts/ci/check-verify-parity-test.sh
+          ./scripts/ci/check-verify-parity.sh
       - name: restore-drill contract + abort-path tests
         # restore-drill.sh needs root + pgbackrest + Postgres to run for
         # real; these pin (a) its ch-backfill flag contract statically and
@@ -2259,8 +2280,18 @@ jobs:
         # weekly ADR-0016 §7.4 control had never produced a single journal
         # line. --syntax-check and ansible-lint both pass such a task; only
         # RENDERING it and checking the flag values catches it. No hosts.
-        if: needs.preflight.outputs.ansible == 'true'
-        run: ./scripts/ci/verify-archive-tier-d-test.sh
+        #
+        # GH-778: this gate asserts on internal/ops/archive/verify_archive.go
+        # (the flags it renders must still exist and -to must still be an
+        # fs.Uint), so a Go-only diff that renames one of those flags has to
+        # run it too — gating on `ansible` alone let such a diff skip the
+        # only test that reads it. `go=='true'` doesn't run the ansible
+        # install step above, so install the Jinja/YAML the script needs
+        # itself; the script already fails closed in CI without them.
+        if: needs.preflight.outputs.ansible == 'true' || needs.preflight.outputs.go == 'true'
+        run: |
+          python3 -m pip install --quiet 'Jinja2==3.1.6' 'PyYAML==6.0.2'
+          ./scripts/ci/verify-archive-tier-d-test.sh
       - name: deploy migrations-sync test (structural + local ansible run)
         # 2026-08-29 incident (r1 deploy of v0.49.0, run 33244745680): the
         # directory-src `copy` that #268 put in for the migrations dir is one
