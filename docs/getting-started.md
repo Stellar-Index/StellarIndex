@@ -185,7 +185,10 @@ key's budget is **stamped on the key at mint time** and overrides the
 deployment's default, so the two numbers move independently.
 
 **The live limit is always the one in `X-RateLimit-Limit`** — read it
-rather than hard-coding either number:
+rather than hard-coding either number. Publicly cacheable responses
+omit it, since a CDN would replay it to other callers; private
+responses and rate-limited ones (a `429`, or a `400` past the limiter)
+carry it:
 
 ```
 X-RateLimit-Limit:     6000

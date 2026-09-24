@@ -183,10 +183,11 @@ export default function DocsPage() {
           .
         </p>
         <p>
-          Every response carries{' '}
+          Responses carry{' '}
           <code className="font-mono text-sm">X-RateLimit-Limit</code> and{' '}
-          <code className="font-mono text-sm">X-RateLimit-Remaining</code>. When
-          the quota is exhausted the API returns{' '}
+          <code className="font-mono text-sm">X-RateLimit-Remaining</code>,
+          except publicly cacheable ones, which a CDN could replay to other
+          callers. When the quota is exhausted the API returns{' '}
           <code className="font-mono text-sm">429</code> with a{' '}
           <code className="font-mono text-sm">Retry-After</code> header (seconds
           until you can retry). Back off and retry — do not hammer.
