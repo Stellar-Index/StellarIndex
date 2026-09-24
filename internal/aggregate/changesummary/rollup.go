@@ -254,25 +254,27 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 		CurrentValue: currentVal,
 	}
 
-	// Multi-window deltas. valueAt returns the most-recent observation
-	// at-or-before the target time; nil pointers if no data spans
-	// that far back (the row's *Value / *DeltaPct fields stay zero
-	// → upstream serializes as NULL).
-	if v, ok := valueAt(series, now.Add(-1*time.Hour)); ok {
-		row.H1Value = ptr(v)
-		row.H1DeltaPct = ptr(deltaPct(v, currentVal))
-	}
-	if v, ok := valueAt(series, now.Add(-24*time.Hour)); ok {
-		row.H24Value = ptr(v)
-		row.H24DeltaPct = ptr(deltaPct(v, currentVal))
-	}
-	if v, ok := valueAt(series, now.Add(-7*24*time.Hour)); ok {
-		row.D7Value = ptr(v)
-		row.D7DeltaPct = ptr(deltaPct(v, currentVal))
-	}
-	if v, ok := valueAt(series, now.Add(-30*24*time.Hour)); ok {
-		row.D30Value = ptr(v)
-		row.D30DeltaPct = ptr(deltaPct(v, currentVal))
+	// A horizon delta is a statement about the period [now-h, now]: it
+	// needs the current observation inside that period and a baseline no
+	// more than one horizon older than now-h. Otherwise the pointers stay
+	// nil (serialized as NULL) — a dormant pair must not read as flat.
+	for _, hz := range []struct {
+		d        time.Duration
+		val, pct **float64
+	}{
+		{time.Hour, &row.H1Value, &row.H1DeltaPct},
+		{24 * time.Hour, &row.H24Value, &row.H24DeltaPct},
+		{7 * 24 * time.Hour, &row.D7Value, &row.D7DeltaPct},
+		{30 * 24 * time.Hour, &row.D30Value, &row.D30DeltaPct},
+	} {
+		target := now.Add(-hz.d)
+		if !current.At.After(target) {
+			continue
+		}
+		if v, ok := valueAt(series, target, target.Add(-hz.d)); ok {
+			*hz.val = ptr(v)
+			*hz.pct = ptr(deltaPct(v, currentVal))
+		}
 	}
 
 	// ATH / ATL across the full series. Note this is "30d ATH" not
@@ -311,13 +313,15 @@ func computeSummary(ent Entity, series []TimedValue, now time.Time) Row {
 
 // valueAt returns the most-recent observation whose timestamp is
 // at-or-before target. ok=false when no observation reaches that far
-// back. series is assumed sorted oldest-first.
-func valueAt(series []TimedValue, target time.Time) (float64, bool) {
+// back, or when that observation is older than notBefore (a baseline
+// that stale describes a different period). series is assumed sorted
+// oldest-first.
+func valueAt(series []TimedValue, target, notBefore time.Time) (float64, bool) {
 	// Binary-search the largest index whose At <= target.
 	idx := sort.Search(len(series), func(i int) bool {
 		return series[i].At.After(target)
 	}) - 1
-	if idx < 0 {
+	if idx < 0 || series[idx].At.Before(notBefore) {
 		return 0, false
 	}
 	v, err := strconv.ParseFloat(series[idx].Value, 64)
