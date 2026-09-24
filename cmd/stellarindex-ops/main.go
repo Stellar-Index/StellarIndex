@@ -1385,9 +1385,10 @@ Subcommands:
                           the session advisory lock
                           hashtext('usd-volume-restamp:trades') for its
                           life (run-heavy-job.sh's lock is per job NAME
-                          and cannot stop a second attempt; a held lock is
-                          a refusal), PAUSES the trades compression policy
-                          (refusing to start without one, and refusing an
+                          and cannot stop an attempt under another name; a
+                          held lock is a refusal), PAUSES the trades
+                          compression policy (refusing to start without
+                          one, and refusing an
                           already-unscheduled one unless
                           -resume-paused-policy), waits out a policy run
                           in flight, lists the chunks again after the
@@ -1465,7 +1466,10 @@ Subcommands:
                           a re-run reports 0. -fill-null also stamps NULL
                           exact-tier rows (a coverage change; opt-in).
                           Heartbeat like ch-backfill (-heartbeat); run under
-                          run-heavy-job.sh with a UNIQUE job name.
+                          run-heavy-job.sh under ONE job name for every
+                          attempt (usd-volume-restamp): the wrapper's lock
+                          is per name, so a fresh name per attempt lets two
+                          runs overlap.
                           Acceptance: verify-usd-volume over the span at
                           0 violations. Example:
                             stellarindex-ops usd-volume-restamp \

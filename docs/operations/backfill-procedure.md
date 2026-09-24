@@ -215,8 +215,9 @@ range straddles.
 > `ops_batch` identity. A raw run has none of that: on 2026-07-05 an
 > unwindowed re-derive ballooned, swapped galexie's captive core into
 > an `invalid local state` wedge and froze the lake for 11 hours. Use
-> a UNIQUE job name per attempt — a name whose lock is still held is
-> **skipped**, silently and with exit 0.
+> the SAME job name on every attempt: the lock is per name, and a run
+> that finds it held is **refused** with exit 75 because the previous
+> run is still alive (`fuser -v` on the lock file names it).
 
 Stream the output to a log so a stuck run is diagnosable:
 

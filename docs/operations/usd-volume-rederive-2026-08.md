@@ -125,8 +125,9 @@ doesn't rediscover them):
 Operational discipline (ALL are prior-incident lessons):
 
 ```sh
-# per window, on r1 — UNIQUE job name per attempt (stale-lock trap):
-/usr/local/sbin/run-heavy-job.sh rederive-2026-08-w<N>-try<K> \
+# per window, on r1 — ONE job name for every window and attempt (the
+# lock is per name; exit 75 = the previous window is still running):
+/usr/local/sbin/run-heavy-job.sh ch-rebuild-sdex \
   /usr/local/bin/stellarindex-ops ch-rebuild \
     -config /etc/stellarindex.toml -ch-addr 127.0.0.1:9300 \
     -from <W_LO> -to <W_HI> -sdex -write
@@ -262,10 +263,10 @@ stellarindex-ops verify-usd-volume -config /etc/stellarindex.toml \
 # 1. dry run — per-day candidate counts, Σ|Δ| before, no writes:
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
   -from 2026-05-12 -to 2026-07-22
-# 2. apply, under the heavy wrapper, UNIQUE job name per attempt
-#    (stale-lock trap), env file sourced (28P01 trap), one window at a time:
+# 2. apply, under the heavy wrapper, the SAME job name on every attempt
+#    (the lock is per name), env file sourced (28P01 trap), one window at a time:
 set -a; . /etc/default/stellarindex; set +a
-/usr/local/sbin/run-heavy-job.sh usd-restamp-w1-try1 \
+/usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
     -config /etc/stellarindex.toml -from 2026-05-12 -to 2026-05-31 -write
 # 3. acceptance — the tool prints this line for the window it ran:
@@ -314,9 +315,9 @@ and the pre-07-23 exact-tier population is ~10M rows across 2026-03..07
 # counts per chunk. Nothing is decompressed, nothing is paused.
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
   -tier exact -chunks -from 2026-03-01 -to 2026-03-31
-# apply, on r1, under the heavy wrapper with a UNIQUE job name:
+# apply, on r1, under the heavy wrapper, the SAME job name every attempt:
 set -a; . /etc/default/stellarindex; set +a
-/usr/local/sbin/run-heavy-job.sh usd-exact-chunks-mar-try1 \
+/usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
     -config /etc/stellarindex.toml -tier exact -chunks \
     -from 2026-03-01 -to 2026-03-31 -write
@@ -405,14 +406,14 @@ Mechanics:
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
   -tier xlm-base -from 2026-05-19 -to 2026-05-19 -report -fill-null
 # 2. value repair, oldest → newest, one heavy job per ~2-3 weeks,
-#    UNIQUE job name per attempt, env file sourced:
+#    the SAME job name on every attempt, env file sourced:
 set -a; . /etc/default/stellarindex; set +a
-/usr/local/sbin/run-heavy-job.sh usd-xlmbase-w1-try1 \
+/usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
     -config /etc/stellarindex.toml -tier xlm-base \
     -from 2026-03-12 -to 2026-03-31 -write
 # 3. coverage fill as a DELIBERATE second pass, same windows:
-/usr/local/sbin/run-heavy-job.sh usd-xlmbase-null-w1-try1 \
+/usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
     -config /etc/stellarindex.toml -tier xlm-base \
     -from 2026-03-12 -to 2026-03-31 -fill-null -write
@@ -607,9 +608,8 @@ context), and the integration test pins that the real job is paused
 while the run is in flight and scheduled again after it.
 
 **Two attempts at once.** `run-heavy-job.sh`'s lock is per job NAME,
-and the sequence below mandates a unique name per attempt — so the
-wrapper does nothing to stop a second `-chunks -write` from starting
-while the first is alive. Without a guard the second would read the
+so the wrapper does nothing to stop a second `-chunks -write` launched
+under a different name from starting while the first is alive. Without a guard the second would read the
 policy as already unscheduled, walk beside the first, and re-enable the
 policy at ITS exit while the first was still inside a chunk: the first
 run's open chunk goes to the policy's next fire, its next batch crawls at
@@ -823,7 +823,7 @@ set -a; . /etc/default/stellarindex; set +a
 #    row counts; decompresses nothing, pauses nothing, takes no lock:
 stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
   -tier xlm-base -chunks -from 2026-01-01 -to 2026-07-21 -fill-null
-# 2. the run, under the heavy wrapper, UNIQUE job name per attempt.
+# 2. the run, under the heavy wrapper, the SAME job name every attempt.
 #    Value repair AND coverage fill in one pass (-fill-null): each chunk
 #    is decompressed once; a second -fill-null pass would decompress all
 #    90 again. ONE attempt at a time: the tool refuses a second while
@@ -836,7 +836,7 @@ stellarindex-ops usd-volume-restamp -config /etc/stellarindex.toml \
 #    used; the value is refused below 90 s, and a bare integer is
 #    SECONDS (write "2h", never "2").
 HEAVY_JOB_STOP_TIMEOUT=2h \
-/usr/local/sbin/run-heavy-job.sh usd-xlmbase-chunks-try1 \
+/usr/local/sbin/run-heavy-job.sh usd-volume-restamp \
   /usr/local/bin/stellarindex-ops usd-volume-restamp \
     -config /etc/stellarindex.toml -tier xlm-base -chunks \
     -from 2026-01-01 -to 2026-07-21 -fill-null -write

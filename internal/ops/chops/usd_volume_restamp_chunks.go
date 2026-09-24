@@ -70,9 +70,9 @@ import (
 //
 // # The guards
 //
-//   - ONE RUN AT A TIME. run-heavy-job.sh's lock is per job NAME and the
-//     runbook mandates a unique name per attempt, so the wrapper does not
-//     stop a second `-chunks -write` from starting beside a live one. A
+//   - ONE RUN AT A TIME. run-heavy-job.sh's lock is per job NAME, so the
+//     wrapper does not stop a second `-chunks -write` launched under
+//     another name from starting beside a live one. A
 //     -write run therefore holds the session advisory lock
 //     hashtext('usd-volume-restamp:trades') on a dedicated connection for
 //     its whole life ([timescale.Store.TryUSDVolumeRestampLock]); a held
