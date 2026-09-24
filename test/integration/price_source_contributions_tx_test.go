@@ -44,8 +44,8 @@ func TestInsertPriceSourceContributions_BatchIsAtomic(t *testing.T) {
 	// Second row violates CHECK (trade_count >= 0), after the first
 	// row has already been sent.
 	failing := []timescale.PriceSourceContribution{
-		{AssetID: "native", QuoteID: "fiat:USD", Bucket: bucket, Source: "sdex", Weight: 0.6, TradeCount: 3},
-		{AssetID: "native", QuoteID: "fiat:USD", Bucket: bucket, Source: "binance", Weight: 0.4, TradeCount: -1},
+		{AssetID: "native", QuoteID: "fiat:USD", Window: time.Hour, Bucket: bucket, Source: "sdex", Weight: 0.6, TradeCount: 3},
+		{AssetID: "native", QuoteID: "fiat:USD", Window: time.Hour, Bucket: bucket, Source: "binance", Weight: 0.4, TradeCount: -1},
 	}
 	if err := store.InsertPriceSourceContributions(ctx, failing); err == nil {
 		t.Fatal("InsertPriceSourceContributions accepted a trade_count of -1")
@@ -56,8 +56,8 @@ func TestInsertPriceSourceContributions_BatchIsAtomic(t *testing.T) {
 
 	vol := 1234.5
 	ok := []timescale.PriceSourceContribution{
-		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Bucket: bucket, Source: "sdex", Weight: 0.25, VolumeUSD: &vol, TradeCount: 2},
-		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Bucket: bucket, Source: "kraken", Weight: 0.75, TradeCount: 9},
+		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Window: time.Hour, Bucket: bucket, Source: "sdex", Weight: 0.25, VolumeUSD: &vol, TradeCount: 2},
+		{AssetID: "crypto:BTC", QuoteID: "fiat:USD", Window: time.Hour, Bucket: bucket, Source: "kraken", Weight: 0.75, TradeCount: 9},
 	}
 	if err := store.InsertPriceSourceContributions(ctx, ok); err != nil {
 		t.Fatalf("InsertPriceSourceContributions: %v", err)
