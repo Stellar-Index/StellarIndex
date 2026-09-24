@@ -721,3 +721,30 @@ groups:
             problems. If advance_error: the book serves increasingly
             stale depth with an honest as_of_ledger. Check ClickHouse
             health and the ledger_entry_changes partition layout first.
+
+      # The explorer reader's lake schema probes. A probe answered
+      # "absent" by a process that never saw the object latches until
+      # restart, so an API started before the lake DDL serves that
+      # surface from its slow fallback (or 503s it) indefinitely, with
+      # nothing else to show for it. Per instance, not aggregated: the
+      # latch is per process, and one stuck replica beside a healthy one
+      # is exactly the case. The gauge moves only on an ANSWER (a lake
+      # outage leaves it alone), and for: 30m rides out an empty table
+      # being repopulated under traffic.
+      - alert: stellarindex_ch_schema_probe_absent
+        expr: stellarindex_ch_schema_probe_present == 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: stellarindex
+          component: api
+        annotations:
+          runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-probe-absent.md
+          summary: "Explorer lake object {{ $labels.probe }} absent or empty on {{ $labels.instance }} for 30+ min"
+          description: |
+            The API's last answer from ClickHouse for the `{{ $labels.probe }}`
+            probe was "absent" or "empty", and it has held for 30 minutes.
+            The explorer is serving that surface from its fallback path
+            (slower scans) or 503ing it. If the object now exists and
+            holds rows, the verdict latched before the DDL landed and the
+            API must be restarted to pick it up.

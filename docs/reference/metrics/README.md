@@ -3804,6 +3804,37 @@ refresh timeout (90 s holders / 60 s op-stats / 3 min wealth / 5 min
 ttl-verdicts): p95 approaching the timeout predicts the stale-age
 growing user-visible before errors appear.
 
+### `stellarindex_ch_schema_probe_present`
+
+Gauge. Label `probe` (`tx_hash_index` | `contract_active_ledgers` |
+`contract_instance_changes` | `contract_instance_changes_tx_key` |
+`contracts_census_daily` | `accounts_stats` | `account_creators_rollup` |
+`account_sponsors_rollup` | `account_creator_edges` |
+`account_sponsor_edges` | `asset_holders_rollup` | `ops_by_source` |
+`account_activity` | `ledger_entries_current_version`).
+
+The lake's last answer to each of the API's explorer schema probes
+(`clickhouse.ExplorerReader.probeSchema`): `1` = the table/column exists
+(and, for a row-requiring probe, holds rows), `0` = it is absent or
+empty and the explorer serves that surface from its slow fallback (or
+503s it). A probe that is answered "absent" before the process ever saw
+the object keeps that verdict until the API restarts, so an API started
+before the lake DDL stays at `0` indefinitely. Only answers move the
+gauge; the series appears when a probe is first answered. Alert:
+`stellarindex_ch_schema_probe_absent` (ticket). See
+runbooks/ch-schema-probe-absent.md.
+
+### `stellarindex_ch_schema_probe_unanswered_total`
+
+Counter. Label `probe` (as above).
+
+Schema probes that got no answer about the object — a transport error,
+a context deadline, or a ClickHouse exception that is not a schema
+verdict (timeouts, memory limits, overload). These leave
+`stellarindex_ch_schema_probe_present` unchanged, so a rising rate here
+alongside a steady gauge means "the lake is not answering", not "the
+object is gone".
+
 ### `stellarindex_protocol_detail_refresh_total`
 
 Counter. Labels: `outcome` (`ok` | `stale` | `degraded` | `timeout`).

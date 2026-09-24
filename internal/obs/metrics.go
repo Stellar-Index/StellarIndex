@@ -326,8 +326,8 @@ func registerAppMetricsTail() {
 		SDEXOrderBookCrossedPairs,
 		SDEXOrderBookPendingOffers,
 		SDEXOrderBookUndecodableOffersTotal,
-		ExplorerSWRRefreshTotal,
-		ExplorerSWRRefreshDurationSeconds,
+		ExplorerSWRRefreshTotal, ExplorerSWRRefreshDurationSeconds,
+		CHSchemaProbePresent, CHSchemaProbeUnansweredTotal,
 		ProtocolDetailRefreshTotal,
 		ProtocolDetailRefreshDurationSeconds,
 		WorkerPanicsTotal,
@@ -4977,6 +4977,32 @@ var ExplorerSWRRefreshDurationSeconds = prometheus.NewHistogramVec(
 		Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300},
 	},
 	[]string{"cache", "outcome"},
+)
+
+// CHSchemaProbePresent — the lake's last ANSWER to each explorer schema
+// probe (clickhouse.ExplorerReader): 1 = the object is usable, 0 = absent
+// or empty, i.e. the explorer serves that surface from its slow fallback.
+// A schema-absent answer on a process that never saw the object latches
+// until restart, so an API started before the lake DDL stays degraded with
+// no other signal. Unset until the probe first gets an answer.
+var CHSchemaProbePresent = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "stellarindex_ch_schema_probe_present",
+		Help: "Last ClickHouse answer to each explorer schema probe (1 = object usable, 0 = absent or empty; the explorer serves that surface from its fallback while 0).",
+	},
+	[]string{"probe"},
+)
+
+// CHSchemaProbeUnansweredTotal — explorer schema probes that got no answer
+// about the object (transport error, deadline, non-schema exception). They
+// leave [CHSchemaProbePresent] untouched, so this separates "the lake said
+// no" from "the lake did not answer".
+var CHSchemaProbeUnansweredTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_ch_schema_probe_unanswered_total",
+		Help: "Explorer ClickHouse schema probes that received no schema answer (transport error, deadline, or non-schema exception), by probe.",
+	},
+	[]string{"probe"},
 )
 
 // ProtocolDetailRefreshTotal — per-outcome counter for detached
