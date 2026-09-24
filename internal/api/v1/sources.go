@@ -205,7 +205,7 @@ func (s *Server) handleSources(w http.ResponseWriter, r *http.Request) { //nolin
 	history7dBySource := map[string][]VolumeBucket{}
 	if includeStats && s.sourcesStats != nil {
 		// 8s ceiling on the stats fan-out — same pattern as
-		// /v1/markets and /v1/pools (#1082). Soft-fail
+		// /v1/markets and /v1/pools. Soft-fail
 		// already serves the registry without stats on error,
 		// so a deadline just degrades gracefully rather than
 		// hanging the whole sources listing on a cold cache.

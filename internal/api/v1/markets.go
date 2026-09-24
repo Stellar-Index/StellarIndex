@@ -560,7 +560,7 @@ func (s *Server) handleMarkets(w http.ResponseWriter, r *http.Request) { //nolin
 	// Hard 8s ceiling — DistinctPairsExt + SourceMarkets scan the
 	// trades hypertable's 24h window and can take 10s+ on a
 	// cold-cache path even with the cache wrapper. Companion to
-	// the same fix shipped on /v1/pools (#1082); without it the
+	// the same fix shipped on /v1/pools; without it the
 	// user sees a hung request that eventually times out at the
 	// ingress (observed 6.9s for /v1/markets?limit=5 on prod
 	// 2026-05-08 because limit=5 missed the prewarm-25-only set).

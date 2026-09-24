@@ -221,7 +221,7 @@ func mergeNewestPerSource(merged []canonical.Trade, bySource map[string]int, tra
 }
 
 // observationsScanTimeout bounds a single LatestTradePerSource scan,
-// matching the request handler's 8s ceiling (observations.go #1082).
+// matching the request handler's 8s ceiling in observations.go.
 const observationsScanTimeout = 8 * time.Second
 
 // runObservationsStreamProducer is the per-connection compute + push
