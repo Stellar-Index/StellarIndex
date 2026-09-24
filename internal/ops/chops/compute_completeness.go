@@ -388,30 +388,7 @@ func computeCompleteness(args []string) error { //nolint:funlen,gocognit,gocyclo
 	if err != nil {
 		return fmt.Errorf("prior completeness verdicts (failing closed — an incremental run cannot gate its claim without them): %w", err)
 	}
-	priorProj := make(map[string]priorProjection, len(priorSnaps))
-	priorSub := make(map[string]priorProjection, len(priorSnaps))
-	priorRec := make(map[string]priorProjection, len(priorSnaps))
-	// priorWatermark is each source's last published lake watermark, used as the
-	// per-source projection floor in -pass mode (projectionFloor): a whole-pass
-	// run resumes every source from where it left off, so substrate + recognition
-	// stay proven once at full range while only the projection reconcile is
-	// scoped. A source absent here (0 — never seeded) floors at genesis. This is
-	// the same value the per-source wrapper read as its -from.
-	priorWatermark := make(map[string]uint32, len(priorSnaps))
-	for _, s := range priorSnaps {
-		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Tip}
-		priorWatermark[s.Source] = s.Watermark
-		// C4-057: the SUBSTRATE axis needs the same prior-verdict input the
-		// projection axis has had since INV-5, for exactly the same reason —
-		// an incremental run scans only a suffix and must not publish a
-		// genesis-to-tip claim off it. See substrateClaim.
-		priorSub[s.Source] = priorProjection{known: true, ok: s.SubstrateOK, tip: s.Tip}
-		// #668: the RECOGNITION axis needs the same prior-verdict input the
-		// substrate axis got in C4-057 — -skip-recognition runs no scan at
-		// all, so without this it can only ever read recognition_ok=true.
-		// See sourceRecognitionOK.
-		priorRec[s.Source] = priorProjection{known: true, ok: s.RecognitionOK, tip: s.Tip}
-	}
+	priorProj, priorSub, priorRec, priorWatermark := buildPriorVerdicts(priorSnaps)
 
 	// Durable per-target projection floors (migration 0116). Loaded once and
 	// FAILING CLOSED on error, exactly as the prior verdicts above do: these
@@ -1365,6 +1342,50 @@ type priorProjection struct {
 	known bool
 	ok    bool
 	tip   uint32
+}
+
+// buildPriorVerdicts turns the last published snapshots into the per-axis
+// carry-forward inputs for this run's claims, plus each source's last
+// published watermark (the -pass mode projection floor — see
+// projectionFloor).
+//
+// CA2-A16-correct-2: the three axes are NOT bounded by the same ledger.
+// Substrate and recognition each reconcile to the true network tip (see
+// substrateClaim, sourceRecognitionOK), so s.Tip is their correct prior
+// bound. Projection's reconcile is bounded by srW.Ledger — published as
+// s.Watermark, not s.Tip — because ComputeWatermark pins the lake watermark
+// below tip whenever a recognition or substrate problem exists in range. A
+// prior projection verdict sourced from s.Tip lets projectionClaim's rule 3
+// carry the claim over (s.Watermark, s.Tip], a band the prior run never
+// reconciled, whenever a recognition gap (e.g. an unrecognized topic) pinned
+// the watermark below tip. That publishes a false complete=true for a band
+// nobody ever reconciled.
+func buildPriorVerdicts(snaps []timescale.CompletenessSnapshot) (priorProj, priorSub, priorRec map[string]priorProjection, priorWatermark map[string]uint32) {
+	priorProj = make(map[string]priorProjection, len(snaps))
+	priorSub = make(map[string]priorProjection, len(snaps))
+	priorRec = make(map[string]priorProjection, len(snaps))
+	// priorWatermark is each source's last published lake watermark, used as the
+	// per-source projection floor in -pass mode (projectionFloor): a whole-pass
+	// run resumes every source from where it left off, so substrate + recognition
+	// stay proven once at full range while only the projection reconcile is
+	// scoped. A source absent here (0 — never seeded) floors at genesis. This is
+	// the same value the per-source wrapper read as its -from.
+	priorWatermark = make(map[string]uint32, len(snaps))
+	for _, s := range snaps {
+		priorProj[s.Source] = priorProjection{known: true, ok: s.ProjectionOK, tip: s.Watermark}
+		priorWatermark[s.Source] = s.Watermark
+		// C4-057: the SUBSTRATE axis needs the same prior-verdict input the
+		// projection axis has had since INV-5, for exactly the same reason —
+		// an incremental run scans only a suffix and must not publish a
+		// genesis-to-tip claim off it. See substrateClaim.
+		priorSub[s.Source] = priorProjection{known: true, ok: s.SubstrateOK, tip: s.Tip}
+		// #668: the RECOGNITION axis needs the same prior-verdict input the
+		// substrate axis got in C4-057 — -skip-recognition runs no scan at
+		// all, so without this it can only ever read recognition_ok=true.
+		// See sourceRecognitionOK.
+		priorRec[s.Source] = priorProjection{known: true, ok: s.RecognitionOK, tip: s.Tip}
+	}
+	return priorProj, priorSub, priorRec, priorWatermark
 }
 
 // projectionClaim gates what a run is ALLOWED to publish on the served

@@ -519,6 +519,47 @@ func TestProjectionClaim_DetailAlwaysStatesTheVerifiedRange(t *testing.T) {
 	}
 }
 
+// TestBuildPriorVerdicts_ProjectionCarryBoundsToWatermarkNotTip pins
+// CA2-A16-correct-2: a prior clean projection verdict must only be carried
+// forward as far as the range it actually reconciled — [ProjectionVerifiedFrom,
+// Watermark] — never up to the snapshot's Tip (the network head at scan
+// time, which sits ABOVE Watermark whenever a recognition gap pinned the
+// lake watermark below tip).
+//
+// Scenario mirrors the finding: a soroswap topic went unrecognized at ledger
+// P, so ComputeWatermark pinned the published Watermark to P-1 even though
+// the projection reconcile over [servedFrom, P-1] was independently clean
+// (ProjectionOK=true) and Tip advanced to T. An operator-run with -from=T
+// must NOT be allowed to carry that verdict over [P, T-1] — that band was
+// never reconciled by any run.
+func TestBuildPriorVerdicts_ProjectionCarryBoundsToWatermarkNotTip(t *testing.T) {
+	const (
+		servedFrom = uint32(61_500_000)
+		watermark  = uint32(62_000_000) // P-1: recognition gap pinned the lake here
+		tip        = uint32(62_500_000) // T: network head, above the recognition gap
+	)
+	snaps := []timescale.CompletenessSnapshot{
+		{Source: "soroswap", ProjectionOK: true, SubstrateOK: true, RecognitionOK: true, Tip: tip, Watermark: watermark},
+	}
+	priorProj, _, _, _ := buildPriorVerdicts(snaps)
+
+	prior := priorProj["soroswap"]
+	if prior.tip != watermark {
+		t.Fatalf("priorProj[soroswap].tip = %d, want %d (Watermark, the range the prior run actually reconciled) — using Tip=%d lets a later run carry a never-reconciled band", prior.tip, watermark, tip)
+	}
+
+	// Exercise the actual gate a subsequent -from=tip run hits: the prior
+	// clean verdict must be rejected as stale, naming the unreconciled band.
+	runFrom := tip
+	ok, detail := projectionClaim(servedFrom, runFrom, tip, true, "", prior)
+	if ok {
+		t.Fatalf("projectionClaim carried a prior verdict over [%d,%d], a band the prior run at watermark=%d never reconciled — false complete=true (RFC-4 class)", watermark+1, runFrom-1, watermark)
+	}
+	if !strings.Contains(detail, fmt.Sprintf("%d", watermark)) {
+		t.Errorf("rejection detail must name the prior verdict's true reach (watermark=%d), got: %s", watermark, detail)
+	}
+}
+
 // TestClipCounts_BoundsTheExpectedSideToTheTargetScope — the expected census is
 // re-derived once over the UNION of a source's target scopes, so each target
 // must compare only the ledgers inside its own scope. Without the clip, a
