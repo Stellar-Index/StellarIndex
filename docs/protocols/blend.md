@@ -109,8 +109,10 @@ bytes verified at ledgers 51,524,668 / 51,611,821 / 54,890,906:
 Migration 0097 widened `blend_emissions.event_kind` /
 `blend_admin.event_kind`. Full evidence trail + golden tests:
 `internal/sources/blend/README.md` + `v1_pool_factory_test.go`.
-Historical replay from the V1 factory's genesis (51,499,915) is a
-`projector-replay -source blend -from 51499915` follow-up, not done
+Historical replay from the source genesis (`blend.FactoryGenesisLedger`,
+51,499,546 — 369 ledgers before the V1 factory's first deploy at
+51,499,915, so no V1 pool's events are skipped) is a
+`projector-replay -source blend -from 51499546` follow-up, not done
 this pass.
 
 ## Backstop singletons (2 — decoded by the `blend_backstop` source)

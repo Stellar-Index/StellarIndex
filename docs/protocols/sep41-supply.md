@@ -18,7 +18,7 @@ status: current
 >   contract.
 > - **Last verified:** 2026-07-06 (source: `internal/sources/sep41_supply`
 >   + `internal/sources/sep41_transfers`; topic shapes lake-verified on r1
->   2026-06-15; genesis-baseline provenance per commit `418accb7`).
+>   2026-06-15; genesis-baseline provenance per commit `5d325256c`).
 > - **Gate status:** ✅ Gated (watched-set): match fast-path is
 >   `(contract_id ∈ watched_set)` AND `(topic[0] ∈ {…})`.
 
@@ -97,7 +97,7 @@ GQX, …) was largely **issued before Soroban existed** — so over the
 Soroban-era-only window the observer can read `Σburn > Σmint`, i.e. a
 *negative* derived total. That is not corruption; it is a partial window.
 
-The fix (commit `418accb7`, Option B — baseline seed) takes from the
+The fix (commit `5d325256c`, Option B — baseline seed) takes from the
 ClickHouse `supply_flows` lake **only the pre-Soroban slice Postgres has
 no data for** (ledger < 50457424, a disjoint partition) and seeds it as a
 static per-kind opening balance

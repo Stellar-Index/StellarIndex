@@ -75,8 +75,8 @@ tiers are different markets.
 
 | Fee | Pips | Tick spacing | Pools |
 |---|---|---|---|
-| 0.05% | 500 | 10 | 23 |
-| 0.30% | 3000 | 60 | 17 |
+| 0.05% | 500 | 10 | 22 |
+| 0.30% | 3000 | 60 | 16 |
 | 1.00% | 10000 | 200 | 20 |
 
 ### Contract versions

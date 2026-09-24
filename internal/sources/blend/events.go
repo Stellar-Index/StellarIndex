@@ -145,12 +145,12 @@ var MainnetPoolFactories = []string{
 	MainnetPoolFactory,
 }
 
-// FactoryGenesisLedger is the first ledger at which ANY Blend pool factory
-// could have emitted a `deploy` — the V1 factory's first deploy
-// (2025-04-14, ledger 51_499_915, rounded down). The pool-registry genesis
-// seed (ADR-0035) walks every factory's deploy events from here, and the
-// ADR-0033 reconcile uses it as the blend source genesis. No pool can
-// predate its factory, so this is the lower bound for the fan-out.
+// FactoryGenesisLedger is a lower bound on any Blend pool factory `deploy`:
+// the ledger Blend's mainnet rollout first instantiated a contract (the
+// backstop Comet pool), 369 ledgers before the V1 factory's first deploy at
+// 51_499_915. The pool-registry genesis seed (ADR-0035) walks every
+// factory's deploy events from here, the ADR-0033 reconcile uses it as the
+// blend source genesis, and documented replays start here (doc_parity_test).
 const FactoryGenesisLedger uint32 = 51_499_546
 
 // Pre-encoded base64 SCVal::Symbol blobs, computed at init via
