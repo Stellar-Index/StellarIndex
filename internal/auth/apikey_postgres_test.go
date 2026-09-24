@@ -276,8 +276,13 @@ func TestPostgresValidator_Invalidate(t *testing.T) {
 	if err := v.InvalidateCachedKey(context.Background(), hexHashOf(plaintext)); err != nil {
 		t.Fatalf("invalidate: %v", err)
 	}
-	if _, err := rdb.Get(context.Background(), cachekeys.APIKey(hexHashOf(plaintext)).String()).Result(); !errors.Is(err, redis.Nil) {
-		t.Errorf("cache entry not removed after invalidate: %v", err)
+	for _, k := range []string{
+		cachekeys.APIKeyCache(hexHashOf(plaintext)).String(),
+		cachekeys.APIKey(hexHashOf(plaintext)).String(),
+	} {
+		if _, err := rdb.Get(context.Background(), k).Result(); !errors.Is(err, redis.Nil) {
+			t.Errorf("%s not removed after invalidate: %v", k, err)
+		}
 	}
 }
 
@@ -747,5 +752,53 @@ func TestPostgresValidator_SubjectCarriesExpiry(t *testing.T) {
 		if !sub.ExpiresAt.Equal(expiresAt) {
 			t.Errorf("%s: Subject.ExpiresAt = %v, want %v", pass, sub.ExpiresAt, expiresAt)
 		}
+	}
+}
+
+// TestPostgresValidator_CacheRowIsNotARedisBackendCredential pins GH-1319.
+// The read-through cache used to share `apikey:<hash>` with the Redis
+// validator's canonical records, whose refresh-on-use slides ANY
+// TTL-bearing record to the 90-day idle window. After a postgres→redis
+// rollback every leftover 1-hour cache row therefore authenticated and
+// renewed itself as a 90-day credential nothing reconciles against
+// Postgres. The cache row must be invisible to the Redis validator and
+// keep its own TTL.
+func TestPostgresValidator_CacheRowIsNotARedisBackendCredential(t *testing.T) {
+	keys, accounts, rdb := newStubs()
+	pg, _ := auth.NewPostgresAPIKeyValidator(auth.PostgresValidatorOptions{
+		Keys: keys, Accounts: accounts, Cache: rdb, CacheTTL: time.Hour,
+	})
+	plaintext := "sip_backend_flip"
+	acct := seedActiveAccount(accounts, "flip")
+	seedKey(keys, plaintext, acct.ID, platform.APIKeyTierAPIKey, 1000)
+	ctx := context.Background()
+
+	if _, err := pg.Lookup(ctx, plaintext); err != nil {
+		t.Fatalf("postgres-backend lookup (warms the cache): %v", err)
+	}
+	if n, err := rdb.Exists(ctx, cachekeys.APIKey(hexHashOf(plaintext)).String()).Result(); err != nil || n != 0 {
+		t.Errorf("cache write landed in the canonical apikey: namespace (exists=%d, err=%v)", n, err)
+	}
+
+	redisBackend := auth.NewRedisAPIKeyValidator(rdb)
+	if _, err := redisBackend.Lookup(ctx, plaintext); !errors.Is(err, auth.ErrUnauthorized) {
+		t.Fatalf("redis-backend lookup of a key only the postgres cache holds: err = %v, want ErrUnauthorized", err)
+	}
+	for _, k := range []string{
+		cachekeys.APIKey(hexHashOf(plaintext)).String(),
+		cachekeys.APIKeyCache(hexHashOf(plaintext)).String(),
+	} {
+		if ttl, err := rdb.TTL(ctx, k).Result(); err != nil || ttl > time.Hour {
+			t.Errorf("%s TTL = %v (err %v), want <= the 1h cache TTL", k, ttl, err)
+		}
+	}
+
+	// The cache still serves the postgres backend: the second lookup is a hit.
+	before := keys.byHashCallCount
+	if _, err := pg.Lookup(ctx, plaintext); err != nil {
+		t.Fatalf("postgres-backend cache-hit lookup: %v", err)
+	}
+	if keys.byHashCallCount != before {
+		t.Errorf("second lookup reached Postgres (%d→%d calls); the cache row was not read back", before, keys.byHashCallCount)
 	}
 }

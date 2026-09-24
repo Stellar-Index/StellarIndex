@@ -351,9 +351,9 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		return Subject{}, err
 	}
 
-	// Reuse the Postgres validator's CIDR decode so a malformed
-	// allowlist entry fails closed (401) identically on both stores.
-	ipAllowlist, err := decodeIPAllowlist(rec.IPAllowlist)
+	// A malformed allowlist entry fails closed (401), identically on
+	// both validators — see [subjectFromRecord].
+	sub, err := subjectFromRecord(rec)
 	if err != nil {
 		return Subject{}, fmt.Errorf("auth: apikey ip_allowlist decode: %w", err)
 	}
@@ -368,56 +368,68 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 	// self-service records and a failed refresh only means the key rides
 	// its remaining TTL — never a rejected auth.
 	v.refreshIdleTTL(ctx, hash)
+	return sub, nil
+}
 
+// subjectFromRecord is the single APIKeyRecord→Subject mapping. Both
+// validators' record reads go through it and [recordFromSubject] is its
+// exact inverse, so a field cannot be carried by one path and dropped by
+// another (a missed MonthlyQuota and permission posture both shipped
+// that way). Rejection gates (revoked / expired / account) stay with the
+// caller; this only maps. An unparseable allowlist entry is an error so
+// the caller fails closed.
+func subjectFromRecord(rec APIKeyRecord) (Subject, error) {
+	ipAllowlist, err := decodeIPAllowlist(rec.IPAllowlist)
+	if err != nil {
+		return Subject{}, err
+	}
 	tier := rec.Tier
 	if tier == "" {
-		// Records seeded without an explicit tier default to the
-		// apikey tier — the most-common case. An operator key
-		// must set tier=operator explicitly.
+		// Records seeded without an explicit tier default to the apikey
+		// tier; an operator key must set tier=operator explicitly.
 		tier = TierAPIKey
 	}
 	return Subject{
-		Identifier:      rec.Identifier,
-		Tier:            tier,
-		Scopes:          rec.Scopes,
-		KeyID:           rec.KeyID,
-		RateLimitPerMin: rec.RateLimitPerMin,
-		CreatedAt:       rec.CreatedAt,
-		Label:           rec.Label,
-		KeyPrefix:       rec.KeyPrefix,
-		// F-1218 wave 45 (codex audit-2026-05-12): populate the
-		// EmailVerifiedAt timestamp so the optional
-		// `middleware.RequireEmailVerified` can gate /v1/* access
-		// on whether the customer ever clicked the post-signup
-		// verification link. Zero = never verified; the gate
-		// fires when `RequireEmailVerified` is wired AND the
-		// subject's identifier indicates a /v1/signup origin
-		// (legacy operator-minted + dashboard-minted keys are
-		// scoped out so the gate doesn't break them).
-		EmailVerifiedAt: rec.EmailVerifiedAt,
-		ExpiresAt:       rec.ExpiresAt,
-		// Permission posture (F-1226 second half, found 2026-06-12): the
-		// record has carried these fields since wave 45, but Lookup never
-		// mapped them onto the Subject — so EVERY redis-minted key hit the
-		// permission middleware's closed posture (AllowAllPermissions=false
-		// + no entries) and 403'd on all endpoints ("this key has no
-		// permission entries"). Mirror the Postgres validator's mapping.
+		Identifier:          rec.Identifier,
+		Tier:                tier,
+		Scopes:              rec.Scopes,
+		KeyID:               rec.KeyID,
+		RateLimitPerMin:     rec.RateLimitPerMin,
+		CreatedAt:           rec.CreatedAt,
+		Label:               rec.Label,
+		KeyPrefix:           rec.KeyPrefix,
+		IPAllowlist:         ipAllowlist,
+		RefererAllowlist:    rec.RefererAllowlist,
 		AllowAllPermissions: rec.PermissionsAll,
 		AllowPermissions:    rec.AllowPermissions,
 		DenyPermissions:     rec.DenyPermissions,
-		IPAllowlist:         ipAllowlist,
-		RefererAllowlist:    rec.RefererAllowlist,
-		// Same bug class as the permission block above, left behind by
-		// that same fix (cold audit 2026-08-04). MonthlyQuota is a
-		// persisted field this file's own APIKeyRecord doc describes as
-		// "the per-key monthly request cap the runtime quota middleware
-		// enforces", and the Postgres validator maps it — but Lookup did
-		// not, so middleware.MonthlyQuota saw 0 and short-circuited for
-		// EVERY key on the default (redis) backend, which is what r1
-		// runs. A metered key seeded with monthly_quota was never
-		// metered: no 429, no log, no alert.
-		MonthlyQuota: rec.MonthlyQuota,
+		MonthlyQuota:        rec.MonthlyQuota,
+		EmailVerifiedAt:     rec.EmailVerifiedAt,
+		ExpiresAt:           rec.ExpiresAt,
 	}, nil
+}
+
+// recordFromSubject is the inverse of [subjectFromRecord]: the record the
+// Postgres validator persists into its read-through cache.
+func recordFromSubject(sub Subject) APIKeyRecord {
+	return APIKeyRecord{
+		KeyID:            sub.KeyID,
+		Identifier:       sub.Identifier,
+		Label:            sub.Label,
+		KeyPrefix:        sub.KeyPrefix,
+		Tier:             sub.Tier,
+		Scopes:           sub.Scopes,
+		RateLimitPerMin:  sub.RateLimitPerMin,
+		CreatedAt:        sub.CreatedAt,
+		ExpiresAt:        sub.ExpiresAt,
+		IPAllowlist:      encodeIPAllowlist(sub.IPAllowlist),
+		RefererAllowlist: sub.RefererAllowlist,
+		PermissionsAll:   sub.AllowAllPermissions,
+		AllowPermissions: sub.AllowPermissions,
+		DenyPermissions:  sub.DenyPermissions,
+		MonthlyQuota:     sub.MonthlyQuota,
+		EmailVerifiedAt:  sub.EmailVerifiedAt,
+	}
 }
 
 // refreshIdleTTL slides a TTL-bearing record's idle window forward to

@@ -21,16 +21,17 @@ import (
 // This is the cutover validator: keys minted by the dashboard
 // (`internal/api/v1/dashboardkeys`) authenticate without a
 // separate mirror-write step. Existing Redis-only keys (minted
-// by `/v1/signup` before the cutover) still work — the cache is
-// consulted first and falls back to Postgres only on miss, so
-// the validator transparently serves both populations until
-// every legacy record has been rotated through dashboard mint.
+// by `/v1/signup` before the cutover) still work — their canonical
+// `apikey:<hash>` records are consulted before Postgres, so the
+// validator transparently serves both populations until every
+// legacy record has been rotated through dashboard mint.
 //
 // On a Postgres-served lookup the result is written back into
-// the Redis cache so subsequent requests for the same key
-// short-circuit at the cache. The dashboard's Revoke handler is
-// responsible for DEL'ing the cache entry; we don't TTL-out
-// records aggressively because revocations are a cold path.
+// the read-through cache (`apikey-cache:<hash>`, cacheTTL) so
+// subsequent requests for the same key short-circuit at Redis. The
+// cache has its own namespace so the redis-backend validator never
+// reads a cache row as a credential. The dashboard's Revoke handler
+// evicts both keys via [PostgresAPIKeyValidator.InvalidateCachedKey].
 //
 // On Redis I/O failures we degrade-not-fail: a transient cache
 // outage still authenticates calls via Postgres directly. The
@@ -198,12 +199,15 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 		DenyPermissions:     convertPermissionEntries(pgKey.Permissions.Deny),
 		MonthlyQuota:        monthlyQuota,
 		ExpiresAt:           pgKey.ExpiresAt,
+		// EmailVerifiedAt stays zero: neither api_keys nor accounts has a
+		// verification column, and RequireEmailVerified only gates the
+		// `signup-` identifiers this path never stamps.
 	}
 
 	// 3. Cache write-back. Best-effort; a write failure doesn't
 	// affect this request (the caller already has the Subject).
 	if v.cache != nil {
-		v.cacheStore(ctx, hexHash, sub, pgKey)
+		v.cacheStore(ctx, hexHash, sub)
 	}
 	return sub, nil
 }
@@ -212,23 +216,17 @@ func (v *PostgresAPIKeyValidator) Lookup(ctx context.Context, key string) (Subje
 // means "miss or transient cache failure — fall through to
 // Postgres". When hit=true the second return is the sentinel the
 // caller should propagate (or nil for a successful auth).
+//
+// The canonical `apikey:` record (legacy /v1/signup keys, /v1/register
+// mirrors) is read before the `apikey-cache:` row: it is the one that
+// can carry revoked_at, so a derived cache row never shadows it.
 func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash string) (Subject, bool, error) {
-	raw, err := v.cache.Get(ctx, cachekeys.APIKey(hexHash).String()).Bytes()
-	if errors.Is(err, redis.Nil) {
+	rec, ok := v.readRecord(ctx, cachekeys.APIKey(hexHash).String())
+	if !ok {
+		rec, ok = v.readRecord(ctx, cachekeys.APIKeyCache(hexHash).String())
+	}
+	if !ok {
 		return Subject{}, false, nil
-	}
-	if err != nil {
-		// Cache I/O error — degrade-not-fail. Fall through to
-		// Postgres so a transient Redis blip doesn't take auth
-		// down. The error is intentionally swallowed; an operator
-		// log on the parent .Get path catches the cache state.
-		return Subject{}, false, nil //nolint:nilerr // deliberate degrade-not-fail
-	}
-	var rec APIKeyRecord
-	if err := json.Unmarshal(raw, &rec); err != nil {
-		// Corrupt cache entry — same degrade-not-fail rationale
-		// as above. Postgres lookup will rebuild the cache row.
-		return Subject{}, false, nil //nolint:nilerr // deliberate degrade-not-fail
 	}
 	if !rec.RevokedAt.IsZero() {
 		return Subject{}, true, ErrUnauthorized
@@ -236,49 +234,28 @@ func (v *PostgresAPIKeyValidator) cacheLookup(ctx context.Context, hexHash strin
 	if !rec.ExpiresAt.IsZero() && !v.now().Before(rec.ExpiresAt) {
 		return Subject{}, true, ErrTokenExpired
 	}
-	tier := rec.Tier
-	if tier == "" {
-		tier = TierAPIKey
-	}
-	// F-1226 (codex audit-2026-05-12): hydrate policy fields from
-	// the cache row so cache-hit Subjects carry the same gates as
-	// cache-miss Subjects. Pre-fix these fields were missing, so
-	// KeyPolicy enforcement silently turned into a no-op for any
-	// request that hit the cache TTL window.
-	ipAllow, err := decodeIPAllowlist(rec.IPAllowlist)
+	sub, err := subjectFromRecord(rec)
 	if err != nil {
 		// Corrupt cache entry — same degrade-not-fail rationale as
 		// Unmarshal failures upstream.
 		return Subject{}, false, nil //nolint:nilerr // deliberate degrade-not-fail
 	}
-	return Subject{
-		Identifier:      rec.Identifier,
-		Tier:            tier,
-		Scopes:          rec.Scopes,
-		KeyID:           rec.KeyID,
-		RateLimitPerMin: rec.RateLimitPerMin,
-		CreatedAt:       rec.CreatedAt,
-		Label:           rec.Label,
-		KeyPrefix:       rec.KeyPrefix,
-		// API-03 (audit-2026-07-23): carry the verification timestamp
-		// through. This validator's cache reads the SAME Redis records the
-		// legacy `/v1/signup` store writes (both key on
-		// cachekeys.APIKey(hash)), so a `signup-`-identifier key — the only
-		// population `middleware.RequireEmailVerified` gates — can and does
-		// authenticate down this path. Dropping the field made every such
-		// customer look permanently unverified: a caller who HAD clicked
-		// the link was 403'd for as long as the deployment ran with the
-		// gate on. [RedisAPIKeyValidator.Lookup] has always mapped it;
-		// this is the same mapping, not a new policy.
-		EmailVerifiedAt:     rec.EmailVerifiedAt,
-		IPAllowlist:         ipAllow,
-		RefererAllowlist:    rec.RefererAllowlist,
-		AllowAllPermissions: rec.PermissionsAll,
-		AllowPermissions:    rec.AllowPermissions,
-		DenyPermissions:     rec.DenyPermissions,
-		MonthlyQuota:        rec.MonthlyQuota,
-		ExpiresAt:           rec.ExpiresAt,
-	}, true, nil
+	return sub, true, nil
+}
+
+// readRecord GETs and decodes one record. Absent, unreadable and corrupt
+// all report false — degrade-not-fail: a Redis blip or a bad row falls
+// through to Postgres, which rebuilds the cache row.
+func (v *PostgresAPIKeyValidator) readRecord(ctx context.Context, key string) (APIKeyRecord, bool) {
+	raw, err := v.cache.Get(ctx, key).Bytes()
+	if err != nil {
+		return APIKeyRecord{}, false
+	}
+	var rec APIKeyRecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return APIKeyRecord{}, false
+	}
+	return rec, true
 }
 
 // decodeIPAllowlist parses the on-the-wire CIDR-text slice back
@@ -313,37 +290,14 @@ func encodeIPAllowlist(prefixes []netip.Prefix) []string {
 	return out
 }
 
-// cacheStore writes the Postgres-derived Subject into Redis with
-// the configured TTL. Mirrors the legacy APIKeyRecord JSON shape
-// so the cache and the legacy /v1/signup writers share one
-// schema.
-func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string, sub Subject, pgKey platform.APIKey) {
-	rec := APIKeyRecord{
-		KeyID:           sub.KeyID,
-		Identifier:      sub.Identifier,
-		Label:           sub.Label,
-		KeyPrefix:       sub.KeyPrefix,
-		Tier:            sub.Tier,
-		Scopes:          sub.Scopes,
-		RateLimitPerMin: sub.RateLimitPerMin,
-		CreatedAt:       sub.CreatedAt,
-		ExpiresAt:       pgKey.ExpiresAt,
-		// F-1226 (codex audit-2026-05-12): persist policy fields so
-		// cache-hit reads can reconstruct an enforcement-complete
-		// Subject. Without these the dashboard's IP/Referer/
-		// permission gates would be silently bypassed on cache hits.
-		IPAllowlist:      encodeIPAllowlist(sub.IPAllowlist),
-		RefererAllowlist: sub.RefererAllowlist,
-		PermissionsAll:   sub.AllowAllPermissions,
-		AllowPermissions: sub.AllowPermissions,
-		DenyPermissions:  sub.DenyPermissions,
-		MonthlyQuota:     sub.MonthlyQuota,
-	}
-	body, err := json.Marshal(rec)
+// cacheStore writes the Postgres-derived Subject into Redis with the
+// configured TTL, as the exact record [subjectFromRecord] reads back.
+func (v *PostgresAPIKeyValidator) cacheStore(ctx context.Context, hexHash string, sub Subject) {
+	body, err := json.Marshal(recordFromSubject(sub))
 	if err != nil {
 		return
 	}
-	_ = v.cache.Set(ctx, cachekeys.APIKey(hexHash).String(), body, v.cacheTTL).Err()
+	_ = v.cache.Set(ctx, cachekeys.APIKeyCache(hexHash).String(), body, v.cacheTTL).Err()
 }
 
 // convertPermissionEntries maps platform.KeyPermissionEntry into
@@ -409,10 +363,10 @@ func hexNibble(c byte) (byte, error) {
 	return 0, fmt.Errorf("auth: invalid hex byte %q", c)
 }
 
-// InvalidateCachedKey removes a key's cached record from Redis.
-// Called by the dashboard's Revoke handler so a revoked key
-// stops authenticating immediately rather than waiting for the
-// cache TTL to roll it off.
+// InvalidateCachedKey removes a key's Redis records — the read-through
+// cache row and any canonical `apikey:` record (see [evictCachedKey]).
+// Called by the dashboard's Revoke handler so a revoked key stops
+// authenticating without waiting for the cache TTL to roll it off.
 //
 // hexHash is the SHA-256 of the plaintext, hex-encoded. Callers
 // who only have a key_id need to look up the hash from
@@ -422,7 +376,7 @@ func (v *PostgresAPIKeyValidator) InvalidateCachedKey(ctx context.Context, hexHa
 	if v.cache == nil {
 		return nil
 	}
-	return v.cache.Del(ctx, cachekeys.APIKey(hexHash).String()).Err()
+	return evictCachedKey(ctx, v.cache, hexHash)
 }
 
 // Compile-time check.

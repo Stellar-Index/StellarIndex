@@ -10,6 +10,7 @@ import {
   createPriceAlert,
   deletePriceAlert,
   listPriceAlerts,
+  type PriceAlertList,
   updatePriceAlert,
   type CreatePriceAlertRequest,
   type DashboardPriceAlert,
@@ -60,11 +61,12 @@ export default function PriceAlertsPage() {
 
 function PriceAlertsBody() {
   const queryClient = useQueryClient();
-  const alertsQuery = useQuery<DashboardPriceAlert[], Error>({
+  const alertsQuery = useQuery<PriceAlertList, Error>({
     queryKey: ['dashboard', 'price-alerts'],
     queryFn: ({ signal }) => listPriceAlerts(signal),
   });
-  const alerts = alertsQuery.data ?? null;
+  const alerts = alertsQuery.data?.alerts ?? null;
+  const maxAlerts = alertsQuery.data?.maxAlerts ?? null;
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -211,7 +213,10 @@ function PriceAlertsBody() {
             {enabledCount === 1 ? 'alert' : 'alerts'}
             {alerts.length > enabledCount &&
               `, ${fmtInt(alerts.length - enabledCount)} paused`}
-            . Paused alerts stay configured but never fire.
+            {maxAlerts !== null &&
+              ` — ${fmtInt(alerts.length)} of ${fmtInt(maxAlerts)} alerts used`}
+            . Paused alerts never fire but still count toward your alert limit;
+            delete one to free its slot.
           </p>
         )}
       </Section>

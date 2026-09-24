@@ -10,6 +10,7 @@ import {
   type APIKey,
   type UsageRow,
 } from '@/api/account';
+import { isKeyLive } from '@/lib/api-key-status';
 import type { MeResponse } from '@/api/hooks';
 import {
   Badge,
@@ -83,7 +84,7 @@ function UsageBody({ me }: { me: MeResponse }) {
       : 'Failed to load request history'
     : null;
 
-  const active = keys?.filter((k) => !k.revoked_at) ?? [];
+  const active = keys?.filter((k) => isKeyLive(k)) ?? [];
 
   return (
     <Container>
@@ -219,7 +220,7 @@ function HeadroomStrip({
   }
 
   const tier = me.account?.tier ?? me.tier;
-  const active = keys.filter((k) => !k.revoked_at);
+  const active = keys.filter((k) => isKeyLive(k));
   const ceiling = tierCeiling(tier);
   const totalProvisioned = active.reduce(
     (sum, k) => sum + (k.rate_limit_per_min || 0),

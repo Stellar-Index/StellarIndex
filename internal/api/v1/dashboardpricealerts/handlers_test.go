@@ -483,3 +483,27 @@ func TestHandleDelete(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// TestHandleList_ServesTheEnforcedAlertCeiling pins GH-1073: the alert cap
+// counts every alert, paused ones included, and was visible only as a
+// 409. The list now carries the cap create enforces.
+func TestHandleList_ServesTheEnforcedAlertCeiling(t *testing.T) {
+	h, store, sc := newTestRig(t, map[platform.Tier]int{platform.TierFree: 1})
+	paused := platform.PriceAlert{AccountID: sc.Account.ID, BaseAsset: "native", QuoteAsset: "fiat:USD", Condition: platform.AlertAbove, Threshold: "0.2", Enabled: false}
+	if _, err := store.CreatePriceAlert(context.Background(), paused, 0); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	h.HandleList(w, sessionReq(t, http.MethodGet, "/v1/dashboard/price-alerts", nil, sc))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := string(raw["max_alerts"]); got != "1" {
+		t.Errorf("max_alerts = %q, want 1 (the AlertQuotas override create enforces)", got)
+	}
+}

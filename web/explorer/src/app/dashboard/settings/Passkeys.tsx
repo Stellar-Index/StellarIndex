@@ -139,7 +139,15 @@ export function Passkeys() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => onRemove(p.id)}
+                  onClick={() => {
+                    if (
+                      confirm(
+                        `Remove passkey "${p.name}"? You will no longer be able to sign in with it. This cannot be undone.`,
+                      )
+                    ) {
+                      onRemove(p.id);
+                    }
+                  }}
                   disabled={removingId === p.id}
                   aria-label={`Remove passkey ${p.name}`}
                 >

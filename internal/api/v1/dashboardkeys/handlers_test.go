@@ -934,3 +934,40 @@ func TestParseCreateRequest_LengthLimitsCountCodePoints(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleList_ServesTheEnforcedKeyCeiling pins GH-1073: the dashboard
+// could only learn the key cap from the 409, and that 409 called expired
+// keys "active". The list now carries the cap create enforces (the
+// KeyQuotas override, not the default ladder), and the 409 names what
+// the cap counts: every unrevoked key, expired ones included.
+func TestHandleList_ServesTheEnforcedKeyCeiling(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	h.cfg.KeyQuotas = map[platform.Tier]int{sc.Account.Tier: 2}
+	expired := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	for _, id := range []string{"k-exp-1", "k-exp-2"} {
+		store.byID[id] = platform.APIKey{ID: id, AccountID: sc.Account.ID, Name: id, ExpiresAt: expired}
+	}
+
+	w := httptest.NewRecorder()
+	h.HandleList(w, sessionRequest(t, http.MethodGet, "/v1/dashboard/keys", nil, sc))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := string(raw["max_active_keys"]); got != "2" {
+		t.Errorf("max_active_keys = %q, want 2 (the KeyQuotas override create enforces)", got)
+	}
+
+	w = httptest.NewRecorder()
+	h.HandleCreate(w, sessionRequest(t, http.MethodPost, "/v1/dashboard/keys",
+		createRequest{Name: "over-cap"}, sc))
+	if w.Code != http.StatusConflict {
+		t.Fatalf("create with two expired, unrevoked keys at cap 2: status = %d, want 409", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "2 unrevoked keys") || !strings.Contains(body, "expired keys hold their slot") {
+		t.Errorf("409 body = %s, want it to count unrevoked keys and say expired ones hold a slot", body)
+	}
+}

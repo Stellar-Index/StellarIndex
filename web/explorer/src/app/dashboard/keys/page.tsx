@@ -7,10 +7,11 @@ import { useCallback, useState } from 'react';
 import {
   ApiError,
   createKey,
-  listKeys,
+  listKeysWithLimit,
   revokeKey,
   type APIKey,
   type CreateKeyResponse,
+  type KeyList,
 } from '@/api/account';
 import type { MeResponse } from '@/api/hooks';
 import {
@@ -45,6 +46,8 @@ import {
   tierCeiling,
 } from '@/lib/account-format';
 
+import { keyStatus } from '@/lib/api-key-status';
+
 import { AccountGate } from '../AccountGate';
 
 /**
@@ -59,11 +62,12 @@ export default function KeysPage() {
 
 function KeysBody({ me }: { me: MeResponse }) {
   const queryClient = useQueryClient();
-  const keysQuery = useQuery<APIKey[], Error>({
-    queryKey: ['dashboard', 'keys'],
-    queryFn: ({ signal }) => listKeys(signal),
+  const keysQuery = useQuery<KeyList, Error>({
+    queryKey: ['dashboard', 'keys', 'with-limit'],
+    queryFn: ({ signal }) => listKeysWithLimit(signal),
   });
-  const keys = keysQuery.data ?? null;
+  const keys = keysQuery.data?.keys ?? null;
+  const maxActiveKeys = keysQuery.data?.maxActiveKeys ?? null;
 
   const [actionError, setActionError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -89,7 +93,7 @@ function KeysBody({ me }: { me: MeResponse }) {
   async function handleRevoke(key: APIKey) {
     if (
       !confirm(
-        `Revoke "${key.name}"? Apps using it will stop authenticating immediately. This cannot be undone.`,
+        `Revoke "${key.name}"? Apps using it will stop authenticating — normally at once, but if the API's auth cache cannot be cleared, a cached copy keeps working until that cache expires. This cannot be undone.`,
       )
     ) {
       return;
@@ -106,7 +110,9 @@ function KeysBody({ me }: { me: MeResponse }) {
   }
 
   const tier = me.account?.tier ?? me.tier;
-  const active = keys?.filter((k) => !k.revoked_at) ?? [];
+  const live = keys?.filter((k) => keyStatus(k) === 'active') ?? [];
+  const expired = keys?.filter((k) => keyStatus(k) === 'expired') ?? [];
+  const revokedCount = (keys?.length ?? 0) - live.length - expired.length;
 
   return (
     <Container>
@@ -189,12 +195,13 @@ function KeysBody({ me }: { me: MeResponse }) {
 
         {keys && keys.length > 0 && (
           <p className="text-ink-faint text-xs">
-            {fmtInt(active.length)} active{' '}
-            {active.length === 1 ? 'key' : 'keys'}
-            {keys.length > active.length &&
-              `, ${fmtInt(keys.length - active.length)} revoked`}
-            . Revoked keys are kept for your audit trail and stop working
-            immediately.
+            {fmtInt(live.length)} active {live.length === 1 ? 'key' : 'keys'}
+            {expired.length > 0 && `, ${fmtInt(expired.length)} expired`}
+            {revokedCount > 0 && `, ${fmtInt(revokedCount)} revoked`}
+            {maxActiveKeys !== null &&
+              ` — ${fmtInt(live.length + expired.length)} of ${fmtInt(maxActiveKeys)} key slots used`}
+            . Expired keys no longer authenticate but hold a slot until you
+            revoke them; revoked keys are kept for your audit trail.
           </p>
         )}
       </Section>
@@ -420,7 +427,8 @@ function KeysTable({
         </THead>
         <TBody>
           {keys.map((k) => {
-            const revoked = Boolean(k.revoked_at);
+            const status = keyStatus(k);
+            const revoked = status === 'revoked';
             return (
               <TR key={k.id} className={revoked ? 'opacity-60' : undefined}>
                 <Td>
@@ -451,7 +459,7 @@ function KeysTable({
                     <Badge tone="down" dot>
                       Revoked
                     </Badge>
-                  ) : k.expires_at && new Date(k.expires_at) < new Date() ? (
+                  ) : status === 'expired' ? (
                     <Badge tone="warn" dot>
                       Expired
                     </Badge>

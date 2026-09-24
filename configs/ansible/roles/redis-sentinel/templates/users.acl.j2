@@ -51,10 +51,18 @@ user stellarindex on >{{ redis_password }} \
   -@admin -@dangerous \
   ~vwap:* ~confidence:* ~freeze:* ~div:* \
   ~rl:* ~signup-ip:* ~signup:email:* ~signup:lock:* ~signup:verify:* ~touch:apikey:* \
-  ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~health:* ~oracle:* \
+  ~toml:* ~meta:* ~price:* ~apikey:* ~apikey-index:* ~apikey-cache:* \
+  ~health:* ~oracle:* \
   ~sub:* ~sep10:seen:* ~usage:* ~passkey:ceremony:* \
   ~assets:list:* ~markets:list:* \
   &closed-bucket-* &stream-*
+# `apikey-cache:*` is the auth_backend=postgres validator's read-through
+# cache of api_keys rows (TTL-bounded), kept outside `apikey:` so the
+# redis-backend validator can never serve a cache row as a credential.
+# Omit it under lockdown and the postgres backend still authenticates,
+# but every cache read and write is NOPERM, so each request reaches
+# Postgres.
+#
 # F057 / K051 (reverification 2026-09-18): `apikey-index:*` is the
 # API-key lookup index (one HASH, `apikey-index:v1`, plus its SETNX
 # build lock) that replaces the per-request `SCAN apikey:*` behind

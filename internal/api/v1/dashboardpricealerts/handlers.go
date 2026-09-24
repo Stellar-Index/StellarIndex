@@ -141,6 +141,9 @@ func nilIfZero(t time.Time) *time.Time {
 
 type listResponse struct {
 	Alerts []priceAlertDTO `json:"alerts"`
+	// MaxAlerts is the ceiling create enforces over every alert, paused
+	// ones included, so the dashboard can show "N of M" before the 409.
+	MaxAlerts int `json:"max_alerts"`
 }
 
 // HandleList returns every alert for the session's account, newest first.
@@ -156,7 +159,10 @@ func (h *Handlers) HandleList(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
-	out := listResponse{Alerts: make([]priceAlertDTO, 0, len(alerts))}
+	out := listResponse{
+		Alerts:    make([]priceAlertDTO, 0, len(alerts)),
+		MaxAlerts: h.maxAlertsFor(sc.Account.Tier),
+	}
 	for _, a := range alerts {
 		out.Alerts = append(out.Alerts, toDTO(a))
 	}
@@ -498,7 +504,7 @@ func (h *Handlers) checkQuota(r *http.Request, accountID uuid.UUID, maxAlerts in
 		return http.StatusInternalServerError, "internal error"
 	}
 	if len(alerts) >= maxAlerts {
-		return http.StatusConflict, fmt.Sprintf("account already has %d price alerts (max %d)", len(alerts), maxAlerts)
+		return http.StatusConflict, fmt.Sprintf("account already has %d price alerts (max %d) — paused alerts count toward the limit; delete one first", len(alerts), maxAlerts)
 	}
 	return 0, ""
 }

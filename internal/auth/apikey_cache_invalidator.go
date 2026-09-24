@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 
 	"github.com/redis/go-redis/v9"
 
@@ -30,9 +31,9 @@ import (
 // needs eviction.
 //
 // WIRING HAZARD — it is NOT safe to wire wherever a Redis client is in
-// scope. `apikey:<hash>` is a read-through cache ONLY under
-// `auth_backend=postgres`. Under the default `auth_backend=redis` the
-// very same key IS the canonical credential ([RedisAPIKeyValidator]
+// scope. It also DELs `apikey:<hash>`, which the postgres validator
+// serves ahead of its cache (see [evictCachedKey]). Under the default
+// `auth_backend=redis` that key IS the canonical credential ([RedisAPIKeyValidator]
 // reads nothing else, and a POST /v1/register credential exists there
 // as the mirror written by [RedisAPIKeyStore.CreateWithSecret]), so a
 // DEL is not an eviction but the irrecoverable destruction of a
@@ -49,10 +50,11 @@ type RedisKeyCacheInvalidator struct {
 }
 
 // BackendPostgres is the `[api].auth_backend` value under which the
-// runtime validator is [PostgresAPIKeyValidator] and `apikey:<hash>`
-// is a rebuildable read-through cache. Every other value (the default
-// "redis", or unset) runs [RedisAPIKeyValidator], for which that key
-// is the canonical record.
+// runtime validator is [PostgresAPIKeyValidator], backed by Postgres
+// and a rebuildable `apikey-cache:<hash>` read-through cache. Every
+// other value (the default "redis", or unset) runs
+// [RedisAPIKeyValidator], for which `apikey:<hash>` is the canonical
+// record.
 const BackendPostgres = "postgres"
 
 // NewKeyCacheInvalidatorForBackend returns the invalidator a mutation
@@ -87,13 +89,24 @@ func NewRedisKeyCacheInvalidator(cache redis.Cmdable) *RedisKeyCacheInvalidator 
 	return &RedisKeyCacheInvalidator{cache: cache}
 }
 
-// InvalidateCachedKey deletes the read-through cache entry keyed by
-// the SHA-256 hex hash of the plaintext (the same `apikey:<hash>`
-// shape the validator reads). No-op when the cache (or the receiver)
-// is nil. Idempotent — deleting an absent key is not an error.
+// InvalidateCachedKey deletes the records keyed by the SHA-256 hex hash
+// of the plaintext — see [evictCachedKey]. No-op when the cache (or the
+// receiver) is nil. Idempotent — deleting an absent key is not an error.
 func (i *RedisKeyCacheInvalidator) InvalidateCachedKey(ctx context.Context, hexHash string) error {
 	if i == nil || i.cache == nil {
 		return nil
 	}
-	return i.cache.Del(ctx, cachekeys.APIKey(hexHash).String()).Err()
+	return evictCachedKey(ctx, i.cache, hexHash)
+}
+
+// evictCachedKey DELs both records the postgres-backend validator can
+// serve a key from: the `apikey-cache:` row and the canonical `apikey:`
+// record it reads first. Two DELs, not one multi-key DEL, so a Redis ACL
+// that does not yet admit `apikey-cache:*` cannot also fail the
+// canonical eviction.
+func evictCachedKey(ctx context.Context, rdb redis.Cmdable, hexHash string) error {
+	return errors.Join(
+		rdb.Del(ctx, cachekeys.APIKey(hexHash).String()).Err(),
+		rdb.Del(ctx, cachekeys.APIKeyCache(hexHash).String()).Err(),
+	)
 }
