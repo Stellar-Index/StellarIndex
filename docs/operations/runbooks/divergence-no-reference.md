@@ -78,6 +78,12 @@ curl -fs 'https://pro-api.coingecko.com/api/v3/simple/price?ids=stellar&vs_curre
 - **A brand-new pair with no reference coverage** — a pair we track that no
   configured reference lists will always return `no_reference`. If this is a
   known-uncovered pair, exclude it or accept the noise; it is not an outage.
+- **Only slow references cover the pair** — a quote observed more than
+  `divergence.MaxComparableAge` before the comparison (1h; the FX budget for
+  fiat/fiat pairs) is recorded in the cached result's `failures` as
+  `too_stale_to_compare` and does not vote. A pair covered only by
+  daily-heartbeat feeds (Redstone, Band) reads `no_reference` between their
+  pushes. Not an outage; add a fresher reference for the pair.
 
 ## Related
 
@@ -88,3 +94,4 @@ curl -fs 'https://pro-api.coingecko.com/api/v3/simple/price?ids=stellar&vs_curre
 ## Changelog
 
 - 2026-07-01 — initial draft alongside the CS-088 `no_reference` outcome.
+- 2026-09-23 — references older than the comparability ceiling no longer vote.

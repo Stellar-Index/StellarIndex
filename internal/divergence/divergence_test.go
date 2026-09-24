@@ -24,20 +24,36 @@ type stubReference struct {
 	price float64
 	err   error
 	delay time.Duration
+	asOf  time.Time // zero: observed at the comparison time
 }
 
 func (s *stubReference) Name() string { return s.name }
 
-func (s *stubReference) LookupPrice(ctx context.Context, _ canonical.Pair, _ time.Time) (float64, error) {
+func (s *stubReference) LookupQuote(ctx context.Context, _ canonical.Pair, observedAt time.Time) (divergence.Quote, error) {
 	if s.delay > 0 {
 		select {
 		case <-time.After(s.delay):
 		case <-ctx.Done():
-			return 0, ctx.Err()
+			return divergence.Quote{}, ctx.Err()
 		}
 	}
-	return s.price, s.err
+	asOf := s.asOf
+	if asOf.IsZero() {
+		asOf = freshAt(observedAt)
+	}
+	return divergence.Quote{Price: s.price, AsOf: asOf}, s.err
 }
+
+// freshAt is the as-of of a quote observed at the comparison instant.
+func freshAt(observedAt time.Time) time.Time {
+	if observedAt.IsZero() {
+		return time.Now().UTC()
+	}
+	return observedAt
+}
+
+// priceOf drops a quote's as-of for assertions on the price alone.
+func priceOf(q divergence.Quote, err error) (float64, error) { return q.Price, err }
 
 // xlmUSD is a convenient test pair.
 func xlmUSD(t *testing.T) canonical.Pair {
@@ -258,9 +274,9 @@ func TestCoinGecko_HappyPath(t *testing.T) {
 		IDMap:   map[string]string{"native": "stellar"},
 	})
 
-	price, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now())
+	price, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now()))
 	if err != nil {
-		t.Fatalf("LookupPrice: %v", err)
+		t.Fatalf("LookupQuote: %v", err)
 	}
 	if price < 0.07140 || price > 0.07144 {
 		t.Errorf("price = %g, want ~0.07142", price)
@@ -289,7 +305,7 @@ func TestCoinGecko_AssetNotInIDMap(t *testing.T) {
 		t.Fatalf("ParseAsset(fiat:USD): %v", err)
 	}
 	pair := canonical.Pair{Base: base, Quote: usd}
-	if _, err := ref.LookupPrice(context.Background(), pair, time.Now()); !errors.Is(err, divergence.ErrAssetUnsupported) {
+	if _, err := priceOf(ref.LookupQuote(context.Background(), pair, time.Now())); !errors.Is(err, divergence.ErrAssetUnsupported) {
 		t.Errorf("err = %v, want ErrAssetUnsupported", err)
 	}
 }
@@ -316,9 +332,9 @@ func TestCoinGecko_DefaultIDMapCoversCommonPairs(t *testing.T) {
 		BaseURL: ts.URL,
 		IDMap:   map[string]string{}, // empty — the regression scenario
 	})
-	got, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now())
+	got, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now()))
 	if err != nil {
-		t.Fatalf("LookupPrice: %v", err)
+		t.Fatalf("LookupQuote: %v", err)
 	}
 	if got != 0.16475 {
 		t.Errorf("price = %v, want 0.16475", got)
@@ -337,7 +353,7 @@ func TestCoinGecko_RateLimited(t *testing.T) {
 		BaseURL: ts.URL,
 		IDMap:   map[string]string{"native": "stellar"},
 	})
-	_, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now()))
 	if !errors.Is(err, divergence.ErrPriceUnavailable) {
 		t.Errorf("err = %v, want ErrPriceUnavailable", err)
 	}
@@ -357,7 +373,7 @@ func TestCoinGecko_MalformedJSON(t *testing.T) {
 		BaseURL: ts.URL,
 		IDMap:   map[string]string{"native": "stellar"},
 	})
-	_, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now()))
 	if err == nil {
 		t.Fatal("expected error from malformed JSON")
 	}
@@ -378,7 +394,7 @@ func TestCoinGecko_QuoteNotInMap(t *testing.T) {
 		t.Fatalf("parse GBP: %v", err)
 	}
 	pair := canonical.Pair{Base: canonical.NativeAsset(), Quote: gbp}
-	_, err = ref.LookupPrice(context.Background(), pair, time.Now())
+	_, err = priceOf(ref.LookupQuote(context.Background(), pair, time.Now()))
 	if !errors.Is(err, divergence.ErrAssetUnsupported) {
 		t.Errorf("err = %v, want ErrAssetUnsupported", err)
 	}
@@ -395,7 +411,7 @@ func TestCoinGecko_NameStable(t *testing.T) {
 }
 
 // TestCoinGecko_BatchedAcrossPairs — F-0030 follow-up. Multiple
-// per-pair LookupPrice calls within the batch TTL window MUST
+// per-pair LookupQuote calls within the batch TTL window MUST
 // coalesce into a single HTTP request covering every configured
 // (id, quote) pair. Before this fix, the orchestrator's per-tick
 // loop issued one HTTP call per pair (9 pairs × 2 ticks/min × 1440
@@ -456,18 +472,18 @@ func TestCoinGecko_BatchedAcrossPairs(t *testing.T) {
 		{Base: eth, Quote: eur},
 	}
 	for _, p := range pairs {
-		price, err := ref.LookupPrice(context.Background(), p, time.Now())
+		price, err := priceOf(ref.LookupQuote(context.Background(), p, time.Now()))
 		if err != nil {
-			t.Fatalf("LookupPrice(%s): %v", p, err)
+			t.Fatalf("LookupQuote(%s): %v", p, err)
 		}
 		if price <= 0 {
-			t.Errorf("LookupPrice(%s) = %g, want > 0", p, price)
+			t.Errorf("LookupQuote(%s) = %g, want > 0", p, price)
 		}
 	}
 
 	got := atomic.LoadInt64(&hits)
 	if got != 1 {
-		t.Errorf("HTTP requests = %d, want 1 (6 LookupPrice calls must batch into 1 HTTP call)", got)
+		t.Errorf("HTTP requests = %d, want 1 (6 LookupQuote calls must batch into 1 HTTP call)", got)
 	}
 }
 
@@ -513,7 +529,7 @@ func TestCoinGecko_LookupPricesBatched(t *testing.T) {
 }
 
 // TestCoinGecko_BatchTTLExpires — once the batch TTL elapses, the
-// next LookupPrice MUST re-fetch (otherwise we'd serve stale prices
+// next LookupQuote MUST re-fetch (otherwise we'd serve stale prices
 // indefinitely on a long-running process).
 func TestCoinGecko_BatchTTLExpires(t *testing.T) {
 	var hits int64
@@ -536,18 +552,18 @@ func TestCoinGecko_BatchTTLExpires(t *testing.T) {
 
 	// Tick 1.
 	clock.set(time.Unix(1_000, 0))
-	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now()); err != nil {
-		t.Fatalf("LookupPrice tick 1: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now())); err != nil {
+		t.Fatalf("LookupQuote tick 1: %v", err)
 	}
 	// Within TTL — must reuse cache.
 	clock.set(time.Unix(1_010, 0))
-	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now()); err != nil {
-		t.Fatalf("LookupPrice tick 1 (cached): %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now())); err != nil {
+		t.Fatalf("LookupQuote tick 1 (cached): %v", err)
 	}
 	// Past TTL — must refetch.
 	clock.set(time.Unix(1_100, 0))
-	if _, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now()); err != nil {
-		t.Fatalf("LookupPrice tick 2: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now())); err != nil {
+		t.Fatalf("LookupQuote tick 2: %v", err)
 	}
 
 	if got := atomic.LoadInt64(&hits); got != 2 {
@@ -586,7 +602,7 @@ func mustParseAsset(t *testing.T, s string) canonical.Asset {
 	return a
 }
 
-// panickingReference panics on every LookupPrice. Used to verify
+// panickingReference panics on every LookupQuote. Used to verify
 // the comparator's panic-recovery contract — a misbehaving
 // reference MUST NOT take the whole Compare run down with it,
 // even though the docstring promises "panic recovered ...
@@ -604,7 +620,7 @@ func (p *panickingReference) Name() string {
 	return p.name
 }
 
-func (p *panickingReference) LookupPrice(_ context.Context, _ canonical.Pair, _ time.Time) (float64, error) {
+func (p *panickingReference) LookupQuote(_ context.Context, _ canonical.Pair, _ time.Time) (divergence.Quote, error) {
 	panic(p.panicValue)
 }
 
@@ -713,9 +729,9 @@ func TestCoinGecko_StalenessGate(t *testing.T) {
 			IDMap:    map[string]string{"native": "stellar"},
 			QuoteMap: map[string]string{"fiat:USD": "usd"},
 		})
-		price, err := ref.LookupPrice(context.Background(), xlmUSD(t), observedAt)
+		price, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), observedAt))
 		if err != nil {
-			t.Fatalf("LookupPrice(fresh): %v", err)
+			t.Fatalf("LookupQuote(fresh): %v", err)
 		}
 		if price < 0.159 || price > 0.161 {
 			t.Errorf("price = %g, want ~0.16", price)
@@ -732,9 +748,9 @@ func TestCoinGecko_StalenessGate(t *testing.T) {
 			IDMap:    map[string]string{"native": "stellar"},
 			QuoteMap: map[string]string{"fiat:USD": "usd"},
 		})
-		_, err := ref.LookupPrice(context.Background(), xlmUSD(t), observedAt)
+		_, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), observedAt))
 		if !errors.Is(err, divergence.ErrPriceUnavailable) {
-			t.Fatalf("LookupPrice(stale) err = %v, want ErrPriceUnavailable (frozen feed must not drive divergence)", err)
+			t.Fatalf("LookupQuote(stale) err = %v, want ErrPriceUnavailable (frozen feed must not drive divergence)", err)
 		}
 	})
 
@@ -775,9 +791,9 @@ type blockingReference struct {
 
 func (b *blockingReference) Name() string { return b.name }
 
-func (b *blockingReference) LookupPrice(_ context.Context, _ canonical.Pair, _ time.Time) (float64, error) {
+func (b *blockingReference) LookupQuote(_ context.Context, _ canonical.Pair, observedAt time.Time) (divergence.Quote, error) {
 	<-b.release // deliberately NOT selecting on ctx.Done()
-	return 1.00, nil
+	return divergence.Quote{Price: 1.00, AsOf: freshAt(observedAt)}, nil
 }
 
 // TestCompare_OverallDeadlineReturnsPartial is the REL-01 regression.
@@ -846,9 +862,9 @@ func TestCoinGecko_MissingUpstreamTimestampIsRejected(t *testing.T) {
 		QuoteMap: map[string]string{"fiat:USD": "usd"},
 	})
 
-	_, err := ref.LookupPrice(context.Background(), xlmUSD(t), time.Now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), xlmUSD(t), time.Now()))
 	if !errors.Is(err, divergence.ErrPriceUnavailable) {
-		t.Fatalf("LookupPrice err = %v, want ErrPriceUnavailable — an unverifiable-freshness price must not drive divergence", err)
+		t.Fatalf("LookupQuote err = %v, want ErrPriceUnavailable — an unverifiable-freshness price must not drive divergence", err)
 	}
 
 	// And it must be excluded from Compare, not merely flagged.

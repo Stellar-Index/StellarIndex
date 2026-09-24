@@ -89,7 +89,7 @@ func (m MultiBaseline) HasAnyValid() bool {
 	return m.Day1 != nil || m.Day7 != nil || m.Day30 != nil
 }
 
-// MaxZScore returns the largest z-score for `x` across every
+// MaxZScore returns the largest z-score for bucket return `r` across every
 // window that has a valid baseline, plus the window's lookback
 // duration so callers can attribute "which window detected this".
 //
@@ -118,10 +118,11 @@ func (m MultiBaseline) HasAnyValid() bool {
 // freeze (NaN > 5 is false in IEEE 754) and let an obviously-bad
 // price through. We pick "smallest window" so attribution points
 // to the most precise scale the caller has wired.
-func (m MultiBaseline) MaxZScore(x float64) (z float64, window time.Duration, valid bool) {
+func (m MultiBaseline) MaxZScore(r BucketReturn) (z float64, window time.Duration, valid bool) {
 	if !m.HasAnyValid() {
 		return 0, 0, false
 	}
+	x := r.Fraction()
 	if math.IsNaN(x) || math.IsInf(x, 0) {
 		// Treat pathological inputs as max-anomalous so downstream
 		// threshold checks fire. Window attribution: pick the

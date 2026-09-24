@@ -146,7 +146,7 @@ type ChainlinkFeed struct {
 
 	// Invert is true when the canonical pair is the reciprocal of
 	// the feed's natural quote (e.g. operator wants USD/EUR but
-	// the feed publishes EUR/USD). When set, LookupPrice returns
+	// the feed publishes EUR/USD). When set, LookupQuote returns
 	// 1 / raw_price instead of raw_price.
 	Invert bool
 
@@ -276,7 +276,7 @@ const ChainlinkSourceName = "chainlink"
 
 func (*ChainlinkReference) Name() string { return ChainlinkSourceName }
 
-// LookupPrice implements [Reference].
+// LookupQuote implements [Reference]; AsOf is the round's updatedAt.
 //
 // Resolves the feed's scale first — the on-chain `decimals()` view,
 // verified against the configured value (chainlink_decimals.go); a
@@ -293,15 +293,15 @@ func (*ChainlinkReference) Name() string { return ChainlinkSourceName }
 // feed mapping; transport / decode / staleness errors surface as
 // wrapped errors so the divergence worker treats them as "reference
 // unavailable this run" (feeding the CS-088 no_reference outcome).
-func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pair, observedAt time.Time) (float64, error) {
+func (r *ChainlinkReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	spec, ok := r.feedMap[pair.String()]
 	if !ok {
-		return 0, fmt.Errorf("%w: chainlink: no feed configured for %s", ErrAssetUnsupported, pair.String())
+		return Quote{}, fmt.Errorf("%w: chainlink: no feed configured for %s", ErrAssetUnsupported, pair.String())
 	}
 
 	decimals, err := r.resolveDecimals(ctx, pair, spec)
 	if err != nil {
-		return 0, err
+		return Quote{}, err
 	}
 
 	// `latestRoundData()` selector. AggregatorV3Interface.
@@ -313,17 +313,17 @@ func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pai
 	result, err := r.ethCall(ctx, spec.Address, latestRoundDataSelector)
 	if err != nil {
 		if errors.Is(err, errChainlinkEmptyResult) {
-			return 0, fmt.Errorf("chainlink: empty rpc result for %s", pair.String())
+			return Quote{}, fmt.Errorf("chainlink: empty rpc result for %s", pair.String())
 		}
-		return 0, err
+		return Quote{}, err
 	}
 
 	answer, updatedAt, err := decodeChainlinkRoundData(result)
 	if err != nil {
-		return 0, fmt.Errorf("chainlink: decode round data for %s: %w", pair.String(), err)
+		return Quote{}, fmt.Errorf("chainlink: decode round data for %s: %w", pair.String(), err)
 	}
 	if answer.Sign() <= 0 {
-		return 0, fmt.Errorf("chainlink: non-positive answer for %s: %s", pair.String(), answer.String())
+		return Quote{}, fmt.Errorf("chainlink: non-positive answer for %s: %s", pair.String(), answer.String())
 	}
 
 	// CS-089 staleness gate. observedAt is the comparison timestamp
@@ -334,21 +334,21 @@ func (r *ChainlinkReference) LookupPrice(ctx context.Context, pair canonical.Pai
 		asOf = time.Now().UTC()
 	}
 	if age := asOf.Sub(updatedAt); age > spec.MaxAge {
-		return 0, fmt.Errorf("%w: chainlink: %s round is stale (updated %s ago, max %s)",
+		return Quote{}, fmt.Errorf("%w: chainlink: %s round is stale (updated %s ago, max %s)",
 			ErrPriceUnavailable, pair.String(), age.Truncate(time.Second), spec.MaxAge)
 	}
 
 	priceFloat, err := scaleChainlinkAnswer(answer, decimals)
 	if err != nil {
-		return 0, fmt.Errorf("chainlink: scale answer for %s: %w", pair.String(), err)
+		return Quote{}, fmt.Errorf("chainlink: scale answer for %s: %w", pair.String(), err)
 	}
 	if spec.Invert {
 		if priceFloat == 0 {
-			return 0, fmt.Errorf("chainlink: cannot invert zero answer for %s", pair.String())
+			return Quote{}, fmt.Errorf("chainlink: cannot invert zero answer for %s", pair.String())
 		}
 		priceFloat = 1.0 / priceFloat
 	}
-	return priceFloat, nil
+	return Quote{Price: priceFloat, AsOf: updatedAt}, nil
 }
 
 // errChainlinkEmptyResult — the RPC answered `0x` / empty. Wrong

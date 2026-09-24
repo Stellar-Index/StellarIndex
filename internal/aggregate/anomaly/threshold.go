@@ -106,15 +106,17 @@ type Observation struct {
 	// Pair.Base.String() to look up the asset's class.
 	Pair canonical.Pair
 
-	// PrevVWAP is the previous closed bucket's VWAP. Nil means
-	// "no prior bucket" — first observation for this pair, or
-	// after a long gap. Treated as ActionAllow (we have nothing
-	// to compare against).
+	// PrevVWAP is the previous closed bucket's VWAP — a 1-minute
+	// bucket, the basis the thresholds are set on, never an
+	// overlapping rolling window's previous value (that damps the
+	// move by bucket/window). Nil means "no prior bucket" — first
+	// observation for this pair, or after a long gap. Treated as
+	// ActionAllow (we have nothing to compare against).
 	PrevVWAP *big.Rat
 
-	// CurrVWAP is the new bucket's VWAP about to be published.
-	// Nil is invalid — the caller must compute SOMETHING before
-	// asking whether to publish it.
+	// CurrVWAP is the new closed bucket's VWAP. Nil is invalid —
+	// the caller must compute SOMETHING before asking whether to
+	// publish it.
 	CurrVWAP *big.Rat
 
 	// SourceCount is how many distinct sources contributed to

@@ -63,9 +63,9 @@ func TestChainlink_TransportError_RedactsKeyedEndpoint(t *testing.T) {
 		RPCURL:     srv.URL + chainlinkSecretPath,
 	})
 
-	_, err := ref.LookupPrice(context.Background(), mustPair(t, "crypto:BTC", "fiat:USD"), time.Now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), mustPair(t, "crypto:BTC", "fiat:USD"), time.Now()))
 	if err == nil {
-		t.Fatal("LookupPrice against a hung-up RPC: want error, got nil")
+		t.Fatal("LookupQuote against a hung-up RPC: want error, got nil")
 	}
 	msg := err.Error()
 	if strings.Contains(msg, chainlinkSecretPath) {
@@ -89,9 +89,9 @@ func TestChainlink_BadRequestURL_RedactsKeyedEndpoint(t *testing.T) {
 	const badURL = "https://eth-mainnet.example.test" + chainlinkSecretPath + "\n"
 	ref := NewChainlinkReference(ChainlinkOptions{RPCURL: badURL})
 
-	_, err := ref.LookupPrice(context.Background(), mustPair(t, "crypto:BTC", "fiat:USD"), time.Now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), mustPair(t, "crypto:BTC", "fiat:USD"), time.Now()))
 	if err == nil {
-		t.Fatal("LookupPrice with an unparseable rpc_url: want error, got nil")
+		t.Fatal("LookupQuote with an unparseable rpc_url: want error, got nil")
 	}
 	msg := err.Error()
 	if strings.Contains(msg, chainlinkSecretPath) {

@@ -106,17 +106,17 @@ func TestChainlink_Decimals_AbsentAdoptsOnChain(t *testing.T) {
 	ref, _, _ := newDecimalsTestRef(t, f, "fiat:EUR/fiat:USD", "0x00000000000000000000000000000000000000e1", 0)
 	pair := mustPair(t, "fiat:EUR", "fiat:USD")
 
-	got, err := ref.LookupPrice(context.Background(), pair, ref.now())
+	got, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now()))
 	if err != nil {
-		t.Fatalf("LookupPrice: %v", err)
+		t.Fatalf("LookupQuote: %v", err)
 	}
 	if want := 1.08; abs(got-want) > 1e-9 {
 		t.Fatalf("price = %.12g, want %.12g — absent config must scale by the on-chain 18, not a default 8", got, want)
 	}
 	// Second read within the refresh window: served from the verified
 	// state, no second decimals() round-trip.
-	if _, err := ref.LookupPrice(context.Background(), pair, ref.now()); err != nil {
-		t.Fatalf("second LookupPrice: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now())); err != nil {
+		t.Fatalf("second LookupQuote: %v", err)
 	}
 	if n := f.decimalsCalls.Load(); n != 1 {
 		t.Errorf("decimals() called %d times across two lookups, want 1 (verified value is cached)", n)
@@ -132,9 +132,9 @@ func TestChainlink_Decimals_EqualFlows(t *testing.T) {
 	f := newChainlinkFakeRPC(t, roundDataHex(big.NewInt(127_000_000), time.Date(2026, 9, 18, 11, 0, 0, 0, time.UTC)), 8, http.StatusOK)
 	ref, _, _ := newDecimalsTestRef(t, f, pair.String(), "0x00000000000000000000000000000000000000e2", 8)
 
-	got, err := ref.LookupPrice(context.Background(), pair, ref.now())
+	got, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now()))
 	if err != nil {
-		t.Fatalf("LookupPrice: %v", err)
+		t.Fatalf("LookupQuote: %v", err)
 	}
 	if want := 1.27; abs(got-want) > 1e-9 {
 		t.Errorf("price = %.12g, want %.12g", got, want)
@@ -158,7 +158,7 @@ func TestChainlink_Decimals_MismatchRefusedAndCounted(t *testing.T) {
 	ref, clock, logBuf := newDecimalsTestRef(t, f, pair.String(), "0x00000000000000000000000000000000000000e3", 8)
 
 	for i := 1; i <= 2; i++ {
-		_, err := ref.LookupPrice(context.Background(), pair, ref.now())
+		_, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now()))
 		if !errors.Is(err, ErrPriceUnavailable) {
 			t.Fatalf("lookup %d: err = %v, want ErrPriceUnavailable (Compare must classify the refusal as price_unavailable)", i, err)
 		}
@@ -184,7 +184,7 @@ func TestChainlink_Decimals_MismatchRefusedAndCounted(t *testing.T) {
 
 	// Past the retry interval the chain is re-read; still 18 → still refused.
 	clock.Advance(chainlinkDecimalsRetryInterval + time.Second)
-	if _, err := ref.LookupPrice(context.Background(), pair, ref.now()); !errors.Is(err, ErrChainlinkDecimalsMismatch) {
+	if _, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now())); !errors.Is(err, ErrChainlinkDecimalsMismatch) {
 		t.Fatalf("after retry interval: err = %v, want ErrChainlinkDecimalsMismatch", err)
 	}
 	if n := f.decimalsCalls.Load(); n != 2 {
@@ -194,7 +194,7 @@ func TestChainlink_Decimals_MismatchRefusedAndCounted(t *testing.T) {
 	// Chain and config agree again → readings resume at the agreed scale.
 	f.decimalsValue.Store(8)
 	clock.Advance(chainlinkDecimalsRetryInterval + time.Second)
-	got, err := ref.LookupPrice(context.Background(), pair, ref.now())
+	got, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now()))
 	if err != nil {
 		t.Fatalf("after agreement: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress(t *tes
 
 	// First call establishes the shared per-address state as a
 	// mismatch (and caches it for chainlinkDecimalsRetryInterval).
-	if _, err := ref.LookupPrice(context.Background(), mismatchPair, ref.now()); !errors.Is(err, ErrChainlinkDecimalsMismatch) {
+	if _, err := priceOf(ref.LookupQuote(context.Background(), mismatchPair, ref.now())); !errors.Is(err, ErrChainlinkDecimalsMismatch) {
 		t.Fatalf("mismatchPair: err = %v, want ErrChainlinkDecimalsMismatch", err)
 	}
 
@@ -248,9 +248,9 @@ func TestChainlink_Decimals_MismatchDoesNotBleedAcrossPairsSharingAddress(t *tes
 	// retry window (cache hit path in resolveDecimals): must adopt
 	// the on-chain 8 and succeed, not inherit the other pair's
 	// mismatch verdict.
-	got, err := ref.LookupPrice(context.Background(), okPair, ref.now())
+	got, err := priceOf(ref.LookupQuote(context.Background(), okPair, ref.now()))
 	if err != nil {
-		t.Fatalf("okPair: LookupPrice = %v, want success — its own config (none asserted) agrees with on-chain 8, "+
+		t.Fatalf("okPair: LookupQuote = %v, want success — its own config (none asserted) agrees with on-chain 8, "+
 			"a sibling pair's mismatch on the same feed address must not bleed into this verdict", err)
 	}
 	if want := 15.0; abs(got-want) > 1e-9 {
@@ -271,9 +271,9 @@ func TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry(t *testing.T) {
 	f := newChainlinkFakeRPC(t, roundDataHex(big.NewInt(670_000), time.Date(2026, 9, 18, 11, 0, 0, 0, time.UTC)), 8, http.StatusInternalServerError)
 	ref, clock, logBuf := newDecimalsTestRef(t, f, pair.String(), "0x00000000000000000000000000000000000000e4", 8)
 
-	got, err := ref.LookupPrice(context.Background(), pair, ref.now())
+	got, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now()))
 	if err != nil {
-		t.Fatalf("LookupPrice with failing decimals(): %v — configured value must be kept", err)
+		t.Fatalf("LookupQuote with failing decimals(): %v — configured value must be kept", err)
 	}
 	if want := 0.0067; abs(got-want) > 1e-12 {
 		t.Errorf("price = %.12g, want %.12g at the configured 8", got, want)
@@ -286,8 +286,8 @@ func TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry(t *testing.T) {
 	}
 
 	// Within the retry window: no re-read, counter unmoved.
-	if _, err := ref.LookupPrice(context.Background(), pair, ref.now()); err != nil {
-		t.Fatalf("second LookupPrice: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now())); err != nil {
+		t.Fatalf("second LookupQuote: %v", err)
 	}
 	if n := f.decimalsCalls.Load(); n != 1 {
 		t.Errorf("decimals() called %d times inside the retry window, want 1", n)
@@ -298,8 +298,8 @@ func TestChainlink_Decimals_RPCErrorKeepsConfiguredWithRetry(t *testing.T) {
 	// Past it: retried, and once the chain answers it is verified equal.
 	clock.Advance(chainlinkDecimalsRetryInterval + time.Second)
 	f.decimalsStatus.Store(http.StatusOK)
-	if _, err := ref.LookupPrice(context.Background(), pair, ref.now()); err != nil {
-		t.Fatalf("LookupPrice after retry: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now())); err != nil {
+		t.Fatalf("LookupQuote after retry: %v", err)
 	}
 	if n := f.decimalsCalls.Load(); n != 2 {
 		t.Errorf("decimals() called %d times after the retry interval, want 2", n)
@@ -318,7 +318,7 @@ func TestChainlink_Decimals_RPCErrorWithoutConfigRefuses(t *testing.T) {
 	f := newChainlinkFakeRPC(t, roundDataHex(big.NewInt(250_000_000_000), time.Date(2026, 9, 18, 11, 0, 0, 0, time.UTC)), 8, http.StatusInternalServerError)
 	ref, _, _ := newDecimalsTestRef(t, f, pair.String(), "0x00000000000000000000000000000000000000e5", 0)
 
-	_, err := ref.LookupPrice(context.Background(), pair, ref.now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now()))
 	if !errors.Is(err, ErrPriceUnavailable) {
 		t.Fatalf("err = %v, want ErrPriceUnavailable", err)
 	}
@@ -340,8 +340,8 @@ func TestChainlink_Decimals_RefreshedDaily(t *testing.T) {
 	ref, clock, _ := newDecimalsTestRef(t, f, pair.String(), "0x00000000000000000000000000000000000000e6", 8)
 
 	for i := 0; i < 3; i++ {
-		if _, err := ref.LookupPrice(context.Background(), pair, ref.now()); err != nil {
-			t.Fatalf("LookupPrice %d: %v", i, err)
+		if _, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now())); err != nil {
+			t.Fatalf("LookupQuote %d: %v", i, err)
 		}
 	}
 	if n := f.decimalsCalls.Load(); n != 1 {
@@ -351,8 +351,8 @@ func TestChainlink_Decimals_RefreshedDaily(t *testing.T) {
 	// drives: 25h is inside the feed's 76h MaxAge, so the round still
 	// reads fresh after the jump.
 	clock.Advance(chainlinkDecimalsRefreshInterval + time.Second)
-	if _, err := ref.LookupPrice(context.Background(), pair, ref.now()); err != nil {
-		t.Fatalf("LookupPrice after refresh interval: %v", err)
+	if _, err := priceOf(ref.LookupQuote(context.Background(), pair, ref.now())); err != nil {
+		t.Fatalf("LookupQuote after refresh interval: %v", err)
 	}
 	if n := f.decimalsCalls.Load(); n != 2 {
 		t.Errorf("decimals() called %d times after the refresh interval, want 2", n)

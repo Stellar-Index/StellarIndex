@@ -79,7 +79,7 @@ func mustPair(t *testing.T, base, quote string) canonical.Pair {
 	return p
 }
 
-func TestChainlink_LookupPrice_HappyPath_BTC_USD(t *testing.T) {
+func TestChainlink_LookupQuote_HappyPath_BTC_USD(t *testing.T) {
 	// Chainlink feed answer: 65,432.10 USD * 10^8 = 6,543,210,000,000.
 	// Hex of 6543210000000 = 0x5F3115DBE80, padded to 32 bytes =
 	// 0x0000000000000000000000000000000000000000000000000000005F3115DBE80
@@ -99,9 +99,9 @@ func TestChainlink_LookupPrice_HappyPath_BTC_USD(t *testing.T) {
 	})
 
 	pair := mustPair(t, "native", "fiat:USD")
-	got, err := ref.LookupPrice(context.Background(), pair, time.Now())
+	got, err := priceOf(ref.LookupQuote(context.Background(), pair, time.Now()))
 	if err != nil {
-		t.Fatalf("LookupPrice: %v", err)
+		t.Fatalf("LookupQuote: %v", err)
 	}
 	want := 65432.10
 	if abs(got-want) > 0.001 {
@@ -109,7 +109,7 @@ func TestChainlink_LookupPrice_HappyPath_BTC_USD(t *testing.T) {
 	}
 }
 
-func TestChainlink_LookupPrice_Inverted(t *testing.T) {
+func TestChainlink_LookupQuote_Inverted(t *testing.T) {
 	// Feed publishes EUR/USD = 1.08. Operator wants USD/EUR.
 	// Raw answer: 108,000,000 (1.08 × 10^8). Inverted = 0.9259...
 	answer := big.NewInt(108_000_000)
@@ -128,9 +128,9 @@ func TestChainlink_LookupPrice_Inverted(t *testing.T) {
 	})
 
 	pair := mustPair(t, "fiat:USD", "fiat:EUR")
-	got, err := ref.LookupPrice(context.Background(), pair, time.Now())
+	got, err := priceOf(ref.LookupQuote(context.Background(), pair, time.Now()))
 	if err != nil {
-		t.Fatalf("LookupPrice: %v", err)
+		t.Fatalf("LookupQuote: %v", err)
 	}
 	want := 1.0 / 1.08
 	if abs(got-want) > 0.001 {
@@ -138,14 +138,14 @@ func TestChainlink_LookupPrice_Inverted(t *testing.T) {
 	}
 }
 
-func TestChainlink_LookupPrice_UnsupportedAsset(t *testing.T) {
+func TestChainlink_LookupQuote_UnsupportedAsset(t *testing.T) {
 	srv := fakeChainlinkRPC(t, "0x"+strings.Repeat("0", 64))
 	ref := NewChainlinkReference(ChainlinkOptions{
 		RPCURL:  srv.URL,
 		FeedMap: map[string]ChainlinkFeed{}, // empty
 	})
 	pair := mustPair(t, "native", "fiat:USD")
-	_, err := ref.LookupPrice(context.Background(), pair, time.Now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), pair, time.Now()))
 	if err == nil {
 		t.Fatal("expected ErrAssetUnsupported")
 	}
@@ -154,7 +154,7 @@ func TestChainlink_LookupPrice_UnsupportedAsset(t *testing.T) {
 	}
 }
 
-func TestChainlink_LookupPrice_RPCError(t *testing.T) {
+func TestChainlink_LookupQuote_RPCError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"code":-32603,"message":"internal"}}`))
@@ -167,7 +167,7 @@ func TestChainlink_LookupPrice_RPCError(t *testing.T) {
 		},
 	})
 	pair := mustPair(t, "native", "fiat:USD")
-	_, err := ref.LookupPrice(context.Background(), pair, time.Now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), pair, time.Now()))
 	if err == nil {
 		t.Fatal("expected error on 500")
 	}
@@ -270,12 +270,12 @@ func TestChainlink_DefaultFeedMapCoversCommonPairs(t *testing.T) {
 	for _, p := range pairs {
 		t.Run(p.base+"_"+p.quote, func(t *testing.T) {
 			pair := mustPair(t, p.base, p.quote)
-			price, err := ref.LookupPrice(context.Background(), pair, time.Now())
+			price, err := priceOf(ref.LookupQuote(context.Background(), pair, time.Now()))
 			if err != nil {
-				t.Fatalf("LookupPrice(%s): %v — default feed map missing entry?", pair.String(), err)
+				t.Fatalf("LookupQuote(%s): %v — default feed map missing entry?", pair.String(), err)
 			}
 			if price <= 0 {
-				t.Errorf("LookupPrice(%s) = %g, want positive", pair.String(), price)
+				t.Errorf("LookupQuote(%s) = %g, want positive", pair.String(), price)
 			}
 		})
 	}
@@ -366,7 +366,7 @@ func TestChainlink_StaleRoundRejected(t *testing.T) {
 				},
 			})
 			pair := mustPair(t, "native", "fiat:USD")
-			_, err := ref.LookupPrice(context.Background(), pair, observedAt)
+			_, err := priceOf(ref.LookupQuote(context.Background(), pair, observedAt))
 			if tc.wantStale {
 				if !errors.Is(err, ErrPriceUnavailable) {
 					t.Fatalf("want ErrPriceUnavailable for stale round, got %v", err)
@@ -390,7 +390,7 @@ func TestChainlink_LegacyAnswerShapeFailsLoudly(t *testing.T) {
 			"native/fiat:USD": {Address: "0xF4030086522a5bEEa4988F8cA5B36dbC97BeE88c", Decimals: 8},
 		},
 	})
-	_, err := ref.LookupPrice(context.Background(), mustPair(t, "native", "fiat:USD"), time.Now())
+	_, err := priceOf(ref.LookupQuote(context.Background(), mustPair(t, "native", "fiat:USD"), time.Now()))
 	if err == nil || !strings.Contains(err.Error(), "too short") {
 		t.Fatalf("want too-short decode error for legacy 32-byte result, got %v", err)
 	}
@@ -423,7 +423,7 @@ func TestChainlink_OmittedMaxAgeKeepsFXBudget(t *testing.T) {
 					tc.key: {Address: "0x5c0Ab2d9b5a7ed9f470386e82BB36A3613cDd4b5", Decimals: 8},
 				},
 			})
-			_, err := ref.LookupPrice(context.Background(), mustPair(t, tc.base, tc.quote), observedAt)
+			_, err := ref.LookupQuote(context.Background(), mustPair(t, tc.base, tc.quote), observedAt)
 			if tc.wantStale {
 				if !errors.Is(err, ErrPriceUnavailable) {
 					t.Fatalf("want ErrPriceUnavailable for a round beyond budget, got %v", err)

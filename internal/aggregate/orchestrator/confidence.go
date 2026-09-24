@@ -75,9 +75,10 @@ type confidenceComputation struct {
 }
 
 // computeConfidence runs the multi-factor confidence math for the
-// freshly-computed (pair, window) bucket. Returns (_, false) when
-// the inputs aren't ready yet — first tick, no baseline, baseline
-// in full bootstrap.
+// freshly-computed (pair, window) bucket, scoring the largest z among rets —
+// the returns of the closed minutes this decision scores (see
+// marginalBuckets). Returns (_, false) when the inputs aren't ready yet — no
+// comparable prior bucket, no baseline, baseline in full bootstrap.
 //
 // The split between compute and cache exists so the Phase 2 freeze
 // check (ADR-0019) can read the score before deciding whether to
@@ -89,10 +90,10 @@ func (o *Orchestrator) computeConfidence(
 	pair canonical.Pair,
 	window time.Duration,
 	vwap *big.Rat,
-	prevVWAP *big.Rat,
+	rets []baseline.BucketReturn,
 	trades []canonicalTrade,
 ) (confidenceComputation, bool) {
-	if o.cfg.Baselines == nil || prevVWAP == nil {
+	if o.cfg.Baselines == nil || len(rets) == 0 {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("skipped").Inc()
 		return confidenceComputation{}, false
 	}
@@ -106,15 +107,7 @@ func (o *Orchestrator) computeConfidence(
 		return confidenceComputation{}, false
 	}
 
-	currF, _ := vwap.Float64()     // i128:ok prices for the confidence-score move ratio, not served
-	prevF, _ := prevVWAP.Float64() // i128:ok prices for the confidence-score move ratio, not served
-	if prevF == 0 {
-		obs.AggregatorConfidenceComputeTotal.WithLabelValues("skipped").Inc()
-		return confidenceComputation{}, false
-	}
-	returnPct := (currF - prevF) / prevF
-
-	observedZ, _, valid := multi.MaxZScore(returnPct)
+	observedZ, valid := maxBucketZ(multi, rets)
 	if !valid {
 		obs.AggregatorConfidenceComputeTotal.WithLabelValues("baseline_missing").Inc()
 		return confidenceComputation{}, false
@@ -457,4 +450,20 @@ func baselineAgeDays(multi baseline.MultiBaseline) float64 {
 	// bucket returns in the window (one per 1m bucket pair), so the
 	// buckets behind them number N+1.
 	return float64(multi.Day30.N+1) / 1440.0
+}
+
+// maxBucketZ is the largest [baseline.MultiBaseline.MaxZScore] over rets, so
+// the worst minute of a multi-minute decision is the one that is judged.
+func maxBucketZ(multi baseline.MultiBaseline, rets []baseline.BucketReturn) (float64, bool) {
+	var best float64
+	for i, r := range rets {
+		z, _, valid := multi.MaxZScore(r)
+		if !valid {
+			return 0, false
+		}
+		if i == 0 || z > best {
+			best = z
+		}
+	}
+	return best, len(rets) > 0
 }

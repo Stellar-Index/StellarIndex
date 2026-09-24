@@ -76,7 +76,7 @@ func TestMultiBaseline_PartialBootstrap(t *testing.T) {
 	if mb.Day7 != nil || mb.Day30 != nil {
 		t.Error("Day7/Day30 should be nil in bootstrap")
 	}
-	z, window, valid := mb.MaxZScore(0.10)
+	z, window, valid := mb.MaxZScore(bucketReturn(0.10))
 	if !valid {
 		t.Fatal("MaxZScore returned valid=false despite Day1 being valid")
 	}
@@ -96,7 +96,7 @@ func TestMultiBaseline_FullBootstrap(t *testing.T) {
 	if mb.HasAnyValid() {
 		t.Error("HasAnyValid = true on empty input")
 	}
-	_, _, valid := mb.MaxZScore(0.05)
+	_, _, valid := mb.MaxZScore(bucketReturn(0.05))
 	if valid {
 		t.Error("MaxZScore valid = true on empty input")
 	}
@@ -150,11 +150,11 @@ func TestMultiBaseline_FrogBoilingDefense(t *testing.T) {
 	// A fresh return matching the recent drift rate looks small to
 	// the 1d/7d (medians have caught up) but large to the 30d
 	// baseline (which was learned before the drift).
-	freshReturn := driftPerDay / bucketsPerDay // one more bucket of drift
+	fresh := bucketReturn(driftPerDay / bucketsPerDay) // one more bucket of drift
 
-	z1 := mb.Day1.ZScore(freshReturn)
-	z7 := mb.Day7.ZScore(freshReturn)
-	z30 := mb.Day30.ZScore(freshReturn)
+	z1 := mb.Day1.ZScore(fresh.Fraction())
+	z7 := mb.Day7.ZScore(fresh.Fraction())
+	z30 := mb.Day30.ZScore(fresh.Fraction())
 
 	t.Logf("z scores — 1d=%.2f, 7d=%.2f, 30d=%.2f", z1, z7, z30)
 
@@ -167,7 +167,7 @@ func TestMultiBaseline_FrogBoilingDefense(t *testing.T) {
 	}
 
 	// And MaxZScore picks the 30d window.
-	maxZ, w, valid := mb.MaxZScore(freshReturn)
+	maxZ, w, valid := mb.MaxZScore(fresh)
 	if !valid {
 		t.Fatal("MaxZScore valid=false")
 	}
@@ -194,7 +194,7 @@ func TestMultiBaseline_SuddenSpikeFiresFromShortWindow(t *testing.T) {
 	// it — but the longest window's MAD is presumably the smallest
 	// (more samples to refine the median). MaxZScore selects whichever
 	// window gives the highest z.
-	maxZ, _, valid := mb.MaxZScore(0.05)
+	maxZ, _, valid := mb.MaxZScore(bucketReturn(0.05))
 	if !valid {
 		t.Fatal("MaxZScore valid=false")
 	}
@@ -265,7 +265,7 @@ func TestMaxZScore_NaNObservationFiresFreeze(t *testing.T) {
 	d30Returns := append([]float64{}, d1Returns...)
 	mb := baseline.NewMultiBaseline(d1Returns, d7Returns, d30Returns)
 
-	z, window, valid := mb.MaxZScore(math.NaN())
+	z, window, valid := mb.MaxZScore(bucketReturn(math.NaN()))
 	if !valid {
 		t.Fatal("MaxZScore returned valid=false on NaN input — caller would skip threshold check entirely")
 	}
@@ -289,7 +289,7 @@ func TestMaxZScore_PosInfObservationFiresFreeze(t *testing.T) {
 	d1Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
 	mb := baseline.NewMultiBaseline(d1Returns, d1Returns, d1Returns)
 
-	z, _, valid := mb.MaxZScore(math.Inf(1))
+	z, _, valid := mb.MaxZScore(bucketReturn(math.Inf(1)))
 	if !valid {
 		t.Fatal("MaxZScore returned valid=false on +Inf input")
 	}
@@ -310,7 +310,7 @@ func TestMaxZScore_NegInfObservationFiresFreeze(t *testing.T) {
 	d1Returns := []float64{0.001, -0.001, 0.002, -0.002, 0.001}
 	mb := baseline.NewMultiBaseline(d1Returns, d1Returns, d1Returns)
 
-	z, _, valid := mb.MaxZScore(math.Inf(-1))
+	z, _, valid := mb.MaxZScore(bucketReturn(math.Inf(-1)))
 	if !valid {
 		t.Fatal("MaxZScore returned valid=false on -Inf input")
 	}
@@ -330,7 +330,7 @@ func TestMaxZScore_PathologicalAttributesToFirstAvailableWindow(t *testing.T) {
 	// each via the ErrNotEnoughSamples branch.
 	mb := baseline.NewMultiBaseline(nil, nil, d30Returns)
 
-	z, window, valid := mb.MaxZScore(math.NaN())
+	z, window, valid := mb.MaxZScore(bucketReturn(math.NaN()))
 	if !valid {
 		t.Fatal("valid=false")
 	}
@@ -340,4 +340,10 @@ func TestMaxZScore_PathologicalAttributesToFirstAvailableWindow(t *testing.T) {
 	if window != baseline.Window30d {
 		t.Errorf("window = %v, want %v (only available window)", window, baseline.Window30d)
 	}
+}
+
+// bucketReturn builds the BucketReturn whose Fraction is x.
+func bucketReturn(x float64) baseline.BucketReturn {
+	r, _ := baseline.NewBucketReturn(1, 1+x)
+	return r
 }

@@ -69,9 +69,12 @@ const (
 // Unlike CoinGecko / Chainlink this closes the loop against data we
 // already captured from the chain: the comparison answers "does the
 // value the on-chain consumer (e.g. Blend) sees agree with our
-// VWAP?" — an independent-methodology check even though the bytes
-// flowed through our indexer, because the oracle's upstream price
-// discovery is not ours.
+// VWAP?". That is an independent check only where the oracle's
+// upstream price discovery is not ours: reflector-cex/-fx, redstone
+// and band price off-chain markets, but reflector-dex prices the same
+// Stellar DEX book our on-chain VWAP aggregates, so it moves with an
+// SDEX manipulation instead of contradicting it. [NewService] drops it
+// (see [CorrelatedWithOurVWAP]).
 //
 // Scale discipline (ADR-0003): oracle_updates stores the RAW integer
 // price + a per-row decimals column (Reflector 14, Redstone 8, Band
@@ -101,6 +104,13 @@ type OracleReferenceOptions struct {
 	// [ErrPriceUnavailable]. <= 0 falls back to the per-family
 	// default for known sources, else DefaultOracleMaxAgeReflector.
 	MaxAge time.Duration
+}
+
+// CorrelatedWithOurVWAP reports whether a reference's price discovery is
+// the on-chain book our own VWAP aggregates, so it cannot corroborate or
+// contradict it.
+func CorrelatedWithOurVWAP(name string) bool {
+	return name == OracleSourceReflectorDEX
 }
 
 // NewOracleReference constructs an on-chain oracle reference.
@@ -139,7 +149,8 @@ func defaultOracleMaxAge(source string) time.Duration {
 // Name implements [Reference].
 func (r *OracleReference) Name() string { return r.source }
 
-// LookupPrice implements [Reference].
+// LookupQuote implements [Reference]; AsOf is the observation's ledger
+// close time.
 //
 // Pair mapping: both sides of the pair are expanded through the alias
 // registry ([canonical.AssetAliasStrings]) — XLM's three forms (`native`,
@@ -160,15 +171,15 @@ func (r *OracleReference) Name() string { return r.source }
 // No inversion or cross-quote triangulation is attempted — a pair
 // the oracle doesn't publish directly returns [ErrAssetUnsupported]
 // (information for the operator, not a degradation).
-func (r *OracleReference) LookupPrice(ctx context.Context, pair canonical.Pair, observedAt time.Time) (float64, error) {
+func (r *OracleReference) LookupQuote(ctx context.Context, pair canonical.Pair, observedAt time.Time) (Quote, error) {
 	u, err := r.reader.LatestOracleObservation(ctx,
 		r.source, canonical.AssetAliasStrings(pair.Base), canonical.AssetAliasStrings(pair.Quote))
 	if err != nil {
-		return 0, fmt.Errorf("oracle %s: read latest observation for %s: %w",
+		return Quote{}, fmt.Errorf("oracle %s: read latest observation for %s: %w",
 			r.source, pair.String(), err)
 	}
 	if u == nil {
-		return 0, fmt.Errorf("%w: oracle %s has no observation for %s",
+		return Quote{}, fmt.Errorf("%w: oracle %s has no observation for %s",
 			ErrAssetUnsupported, r.source, pair.String())
 	}
 	// Defensive: the keys above are exact canonical strings, so a
@@ -177,7 +188,7 @@ func (r *OracleReference) LookupPrice(ctx context.Context, pair canonical.Pair, 
 	// a reader ever hand one back regardless, it is reference-only,
 	// orientation-unknown data and must never become a comparison.
 	if !u.Asset.IsMapped() || !u.Quote.IsMapped() {
-		return 0, fmt.Errorf("%w: oracle %s observation for %s is an unmapped raw row (%s/%s)",
+		return Quote{}, fmt.Errorf("%w: oracle %s observation for %s is an unmapped raw row (%s/%s)",
 			ErrAssetUnsupported, r.source, pair.String(), u.Asset.String(), u.Quote.String())
 	}
 
@@ -189,15 +200,19 @@ func (r *OracleReference) LookupPrice(ctx context.Context, pair canonical.Pair, 
 		asOf = time.Now().UTC()
 	}
 	if age := asOf.Sub(u.Timestamp); age > r.maxAge {
-		return 0, fmt.Errorf("%w: oracle %s observation for %s is stale (observed %s ago, max %s)",
+		return Quote{}, fmt.Errorf("%w: oracle %s observation for %s is stale (observed %s ago, max %s)",
 			ErrPriceUnavailable, r.source, pair.String(), age.Truncate(time.Second), r.maxAge)
 	}
 
 	if u.Price.Sign() <= 0 {
-		return 0, fmt.Errorf("oracle %s: non-positive price for %s: %s",
+		return Quote{}, fmt.Errorf("oracle %s: non-positive price for %s: %s",
 			r.source, pair.String(), u.Price.String())
 	}
-	return scaleOracleAmount(u.Price.BigInt(), int(u.Decimals))
+	price, err := scaleOracleAmount(u.Price.BigInt(), int(u.Decimals))
+	if err != nil {
+		return Quote{}, err
+	}
+	return Quote{Price: price, AsOf: u.Timestamp}, nil
 }
 
 // scaleOracleAmount divides raw by 10^decimals via big.Rat and

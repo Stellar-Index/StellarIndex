@@ -46,7 +46,7 @@ const (
 	// chainlinkDecimalsRetryInterval bounds how often a feed whose
 	// decimals() call failed, or whose value disagrees with config, is
 	// re-read — one WARN/ERROR per feed per interval rather than one per
-	// LookupPrice.
+	// LookupQuote.
 	chainlinkDecimalsRetryInterval = 5 * time.Minute
 
 	// chainlinkDecimalsSelector = keccak256("decimals()")[:4].

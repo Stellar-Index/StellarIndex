@@ -788,6 +788,11 @@ type Orchestrator struct {
 	// as prevVWAPs.
 	frozenPrevVWAPs map[string]*big.Rat
 
+	// scoredMinutes is the newest closed minute each (pair, window)
+	// decision scored, where the next decision's scoring starts (see
+	// marginalBuckets). Same single-Tick-at-a-time invariant as prevVWAPs.
+	scoredMinutes map[string]minuteVWAP
+
 	// lastWriteAt tracks the wall-clock timestamp of the most recent
 	// successful VWAP cache-write per pair, keyed by `pair.String()` —
 	// base AND quote, so one quote's publishes cannot vouch for
@@ -1438,7 +1443,8 @@ func (o *Orchestrator) decideBucket(
 	// an active freeze (W3-freeze-3), so the Phase 2 lifecycle below stays
 	// the sole release authority once frozen.
 	stateKey := pair.String() + ":" + window.String()
-	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, vwap, trades, stateKey, now); !ok {
+	mb := o.scoreMinutes(trades, pair, stateKey, vwap)
+	if action, ok := o.evaluateAndMaybeFreeze(ctx, pair, window, mb, trades, stateKey, now); !ok {
 		_ = action
 		// Freeze: evaluateAndMaybeFreeze has already refreshed the LKG
 		// VWAP key's TTL (F-1345). Skip the cache write so the prior
@@ -1460,9 +1466,9 @@ func (o *Orchestrator) decideBucket(
 	// — an unscored bucket must not release a live freeze by default.
 	prevForConfidence := o.prevVWAPs[stateKey]
 	if shadow, frozen := o.frozenPrevVWAPs[stateKey]; frozen {
-		// Mid-freeze: score this bucket against the PREVIOUS refused
-		// bucket's fresh VWAP (per-tick return), not the pinned
-		// pre-freeze baseline — see frozenPrevVWAPs.
+		// Mid-freeze: when the window holds no earlier minute, score
+		// against the PREVIOUS refused bucket's fresh VWAP, not the
+		// pinned pre-freeze baseline — see frozenPrevVWAPs.
 		prevForConfidence = shadow
 	}
 	// Composite-reference corroboration (2026-08-29): for an allow-listed
@@ -1480,7 +1486,7 @@ func (o *Orchestrator) decideBucket(
 		// rather than leaving it standing (see clearCompositeReference).
 		o.clearCompositeReference(pair, window)
 	}
-	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, prevForConfidence, trades)
+	conf, confOK := o.computeConfidence(ctx, pair, window, vwap, mb.returns(prevForConfidence), trades)
 	// The freeze's source_count leg (ADR-0019 3-signal AND) reads the
 	// INDEPENDENCE signal, not just the direct trade sources: a pair
 	// reproduced by ≥2 mutually-agreeing, confidence-gated router routes
@@ -1890,7 +1896,7 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	ctx context.Context,
 	pair canonical.Pair,
 	window time.Duration,
-	currVWAP *big.Rat,
+	mb marginalBuckets,
 	trades []canonical.Trade,
 	stateKey string,
 	now time.Time,
@@ -1928,10 +1934,11 @@ func (o *Orchestrator) evaluateAndMaybeFreeze(
 	}
 
 	prev := o.prevVWAPs[stateKey]
+	step := mb.worstStep(prev)
 	decision := o.cfg.Anomaly.Evaluate(anomaly.Observation{
 		Pair:     pair,
-		PrevVWAP: prev,
-		CurrVWAP: currVWAP,
+		PrevVWAP: step.prev,
+		CurrVWAP: step.curr,
 		// Same independence widening as the Phase 2 leg: a pair
 		// corroborated by ≥2 agreeing router routes is not single-source,
 		// so Phase 1's `deviation > FreezePct AND source_count <= 1` guard

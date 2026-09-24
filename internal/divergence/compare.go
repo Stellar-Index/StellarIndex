@@ -54,7 +54,7 @@ type Result struct {
 // CompareOptions tunes [Compare]'s behaviour.
 type CompareOptions struct {
 	// PerReferenceTimeout caps the time spent on each reference's
-	// LookupPrice call. Default 5s. Set lower for hot-path use
+	// LookupQuote call. Default 5s. Set lower for hot-path use
 	// where divergence is best-effort.
 	PerReferenceTimeout time.Duration
 
@@ -171,7 +171,7 @@ func Compare(
 			// in some deployments).
 			name := safeName(r)
 
-			// Panic-recover the LookupPrice call. Per Compare's
+			// Panic-recover the LookupQuote call. Per Compare's
 			// docstring, "panic recovered" failures are recorded in
 			// Failures the same way as a normal error — operators
 			// see "this reference is broken" without losing the
@@ -197,8 +197,11 @@ func Compare(
 
 			perCtx, cancel := context.WithTimeout(ctx, opts.PerReferenceTimeout)
 			defer cancel()
-			price, err := r.LookupPrice(perCtx, pair, observedAt)
-			results <- fetchOutcome{name: name, price: price, err: err}
+			q, err := r.LookupQuote(perCtx, pair, observedAt)
+			if err == nil {
+				err = checkComparable(q, pair, observedAt)
+			}
+			results <- fetchOutcome{name: name, price: q.Price, err: err}
 		}(ref)
 	}
 	prices := collectOutcomes(results, pending, len(refs), opts.OverallTimeout, &res)
@@ -321,6 +324,8 @@ func classifyError(err error) string {
 		return "asset_unsupported"
 	case errors.Is(err, ErrPriceUnavailable):
 		return "price_unavailable"
+	case errors.Is(err, ErrTooStaleToCompare):
+		return "too_stale_to_compare"
 	default:
 		// Drop the "reference panicked:" prefix when the underlying
 		// goroutine wrapped a panic — operator-facing label reads
@@ -336,7 +341,7 @@ func classifyError(err error) string {
 
 // safeName returns r.Name() with a panic-recover guard so a
 // misbehaving reference can't take down the wrapping goroutine
-// before we even reach LookupPrice. Returns "_unknown" when
+// before we even reach LookupQuote. Returns "_unknown" when
 // Name() panics — the operator-facing failure label still
 // surfaces but tied to a synthetic name. Real production
 // references never panic from Name() (the function returns a

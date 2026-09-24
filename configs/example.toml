@@ -520,7 +520,10 @@ enabled  = false
 # and a no-op per pair until the feed tables hold data. max_age_minutes
 # is the staleness ceiling (frozen feed ⇒ reference-unavailable, never
 # agreement/divergence); 0 = per-oracle default (Reflector 30m,
-# Redstone/Band 26h).
+# Redstone/Band 26h). Separately, a quote observed more than 1h before
+# the comparison (the FX budget for fiat/fiat pairs) is live but does
+# not vote. reflector-dex prices the SDEX book our own VWAP is built
+# from, so the divergence service never counts it as a reference.
 [divergence.reflector]
 enabled = true
 # max_age_minutes = 0
