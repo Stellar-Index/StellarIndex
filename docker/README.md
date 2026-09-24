@@ -54,8 +54,9 @@ issue or PR restoring the `containers:` job in
   digests identical across them.
 - **Builder stage** uses `golang:<major.minor>-alpine` and runs the same
   `go build -trimpath -buildvcs=true -ldflags=...` invocation the
-  release workflow does so the locally-built image and the
-  CI-released one are byte-equivalent at the binary level. The
+  release workflow does, so the locally-built image and the
+  CI-released one match at the binary level apart from VCS stamping
+  (see the build-context bullet below). The
   Go major.minor must match `go.mod`'s `go` directive — F-1240
   (codex audit-2026-05-12) caught a previous drift where the
   Dockerfiles used `1.26-alpine` while `go.mod` and CI both used
@@ -63,6 +64,16 @@ issue or PR restoring the `containers:` job in
   the release-channel artifacts. When `go.mod` bumps the `go`
   directive, update every Dockerfile in this directory in the
   same PR.
+- **Build context is an allowlist.** The repo-root `.dockerignore`
+  sends only `go.mod`, `go.sum`, `cmd/`, `internal/`, `pkg/` and
+  `migrations/`, minus secret-shaped files inside them, so the
+  builder's `COPY . .` never receives `.git`, gitignored `.env` /
+  vault / service-account files or `node_modules`. With no `.git` in
+  the context `-buildvcs=true` stamps nothing: an image's
+  `version.Commit` reads `unknown` and its identity is the `VERSION`
+  build arg (`make build-docker` passes the Makefile's `VERSION`).
+  A new build input outside those trees must be re-included there;
+  `test/controlwiring/dockerignore_test.go` fails otherwise.
 - **Runtime stage** uses `gcr.io/distroless/static-debian12:nonroot`
   — no shell, no package manager, runs as uid 65532. CA certs are
   baked in (needed for outbound HTTPS to CEX/FX vendors).

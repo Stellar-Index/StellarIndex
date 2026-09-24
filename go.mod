@@ -58,6 +58,7 @@ require (
 
 require (
 	github.com/moby/moby/api v1.56.0 // Docker inspect/port types — test/harness implements testcontainers' wait.StrategyTarget with them (test-only; already in the graph via testcontainers)
+	github.com/moby/patternmatcher v0.6.1 // Docker's .dockerignore matcher — test/controlwiring pins the image build context with it (test-only; already in the graph via testcontainers)
 	golang.org/x/sys v0.48.0
 )
 
@@ -141,7 +142,6 @@ require (
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.3.0 // indirect
 	github.com/moby/moby/client v0.5.1 // indirect
-	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
 	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
