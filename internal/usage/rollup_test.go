@@ -434,3 +434,147 @@ func sortDetailRows(rows []usage.DetailRow) {
 		return rows[i].Subject < rows[j].Subject
 	})
 }
+
+// foldedOK returns, per day, the OK count of the latest row the sink
+// acknowledged for (subject, endpoint).
+func foldedOK(sink *fakeSink, subject, endpoint string) map[string]int64 {
+	out := map[string]int64{}
+	for _, batch := range sink.batches {
+		for _, row := range batch {
+			if row.Subject == subject && row.Endpoint == endpoint {
+				out[row.Day] = row.OK
+			}
+		}
+	}
+	return out
+}
+
+// TestRollupSweep_CatchesUpDaysAnOutageSkipped pins GH #798: a sink
+// outage from Friday evening to Monday morning must not lose Friday's
+// tail or the weekend from usage_daily. The first successful sweep
+// after recovery re-folds every day no successful sweep covered since
+// it ended, while the Redis counters still hold them.
+func TestRollupSweep_CatchesUpDaysAnOutageSkipped(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 7, 3, 17, 55, 0, 0, time.UTC) // Friday
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+	hit := func(n int) {
+		for i := 0; i < n; i++ {
+			if err := c.IncrementDetail(ctx, "key:k1", "/v1/price", usage.ClassOK); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	sink := &fakeSink{}
+	r := usage.NewRollup(c, sink, time.Minute, nil)
+
+	hit(2)
+	for i := 0; i < 6; i++ { // drain the fresh process's retention walk
+		if _, err := r.Sweep(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	sink.err = errors.New("pg down")
+	clock = time.Date(2026, 7, 3, 20, 0, 0, 0, time.UTC)
+	hit(3)
+	for _, at := range []time.Time{
+		time.Date(2026, 7, 4, 12, 0, 0, 0, time.UTC),
+		time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC),
+	} {
+		clock = at
+		hit(at.Day())
+		if _, err := r.Sweep(ctx); err == nil {
+			t.Fatal("Sweep returned nil with a failing sink")
+		}
+	}
+
+	sink.err = nil
+	clock = time.Date(2026, 7, 6, 9, 0, 0, 0, time.UTC) // Monday
+	hit(1)
+	if _, err := r.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := foldedOK(sink, "key:k1", "/v1/price")
+	want := map[string]int64{"2026-07-03": 5, "2026-07-04": 4, "2026-07-05": 5, "2026-07-06": 1}
+	for day, ok := range want {
+		if got[day] != ok {
+			t.Errorf("usage_daily %s OK = %d, want %d (all folded: %v)", day, got[day], ok, got)
+		}
+	}
+}
+
+// TestRollupSweep_FreshWorkerWalksRetentionWindow — a restarted API has
+// no record of what was folded before it, so it re-folds every retained
+// day, a bounded batch per sweep, without holding back the live days and
+// without scanning past the Redis retention window.
+func TestRollupSweep_FreshWorkerWalksRetentionWindow(t *testing.T) {
+	_, rdb := newRedis(t)
+	today := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
+	clock := today
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+	seed := func(daysAgo, n int) {
+		clock = today.AddDate(0, 0, -daysAgo)
+		for i := 0; i < n; i++ {
+			if err := c.IncrementDetail(ctx, "key:k1", "/v1/price", usage.ClassOK); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	seed(35, 9) // one day older than the retention window
+	seed(34, 2) // the oldest retained day
+	seed(10, 3)
+	seed(0, 1)
+	clock = today
+
+	sink := &fakeSink{}
+	r := usage.NewRollup(c, sink, time.Minute, nil)
+	if _, err := r.Sweep(ctx); err != nil {
+		t.Fatal(err)
+	}
+	first := foldedOK(sink, "key:k1", "/v1/price")
+	if first["2026-08-10"] != 1 || first["2026-07-07"] != 2 {
+		t.Errorf("first sweep folded %v; want today (1) and the oldest retained day 2026-07-07 (2)", first)
+	}
+	if _, ok := first["2026-07-31"]; ok {
+		t.Errorf("first sweep folded 2026-07-31, past its catch-up batch: %v", first)
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := r.Sweep(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all := foldedOK(sink, "key:k1", "/v1/price")
+	if all["2026-07-31"] != 3 {
+		t.Errorf("2026-07-31 OK = %d after the catch-up drained, want 3 (all: %v)", all["2026-07-31"], all)
+	}
+	if _, ok := all["2026-07-06"]; ok {
+		t.Errorf("folded 2026-07-06, outside the 35-day retention window: %v", all)
+	}
+}
+
+// TestRollupSweepDays_FoldsExactlyTheGivenDays — the ops recovery path
+// folds the requested days and nothing around them.
+func TestRollupSweepDays_FoldsExactlyTheGivenDays(t *testing.T) {
+	_, rdb := newRedis(t)
+	clock := time.Date(2026, 7, 13, 9, 0, 0, 0, time.UTC)
+	c := usage.New(rdb, usage.WithClock(func() time.Time { return clock }))
+	ctx := context.Background()
+	_ = c.IncrementDetail(ctx, "key:k1", "/v1/price", usage.ClassOK)
+	clock = clock.AddDate(0, 0, 1)
+	_ = c.IncrementDetail(ctx, "key:k1", "/v1/price", usage.ClassOK)
+	_ = c.IncrementDetail(ctx, "key:k1", "/v1/price", usage.ClassOK)
+
+	sink := &fakeSink{}
+	r := usage.NewRollup(c, sink, time.Minute, nil)
+	n, err := r.SweepDays(ctx, []string{"2026-07-14"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := foldedOK(sink, "key:k1", "/v1/price")
+	if n != 1 || len(got) != 1 || got["2026-07-14"] != 2 {
+		t.Errorf("SweepDays(2026-07-14) upserted %d row(s) %v; want exactly 2026-07-14 OK=2", n, got)
+	}
+}

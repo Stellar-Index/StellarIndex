@@ -42,15 +42,27 @@ type RollupSink interface {
 // deadline: a sweep that outlives its own cadence is already behind.
 const DefaultRollupInterval = 5 * time.Minute
 
+// catchUpDaysPerSweep bounds the backlog days (older than yesterday)
+// one sweep re-folds. Each costs a keyspace SCAN, so an unbounded
+// catch-up could outlive the sweep deadline and starve the live days;
+// seven clears a weekend outage in one sweep and a fresh process's
+// whole retention window in five.
+const catchUpDaysPerSweep = 7
+
+const dayLayout = "2006-01-02"
+
 // Rollup is the ticker-driven worker that folds the Redis
 // per-endpoint detail hashes into the `usage_daily` Timescale
 // hypertable. Runs inside the API binary (the only writer of the
 // Redis counters and the only reader of the rollups).
 //
-// Each sweep covers TODAY + YESTERDAY (UTC): today because it's the
-// live day, yesterday so counters written just before midnight are
-// re-folded after the boundary and the final day total lands even
-// if the last pre-midnight sweep missed them.
+// Each sweep covers TODAY + YESTERDAY (UTC) plus every older day in
+// the Redis retention window that no successful sweep has folded since
+// it ended, oldest first and at most [catchUpDaysPerSweep] of them per
+// sweep. A sink or process outage therefore heals itself: the first
+// sweeps after recovery re-fold the skipped days while their counters
+// still exist. A fresh process has no record of what was folded before
+// it, so it walks the whole retention window once.
 type Rollup struct {
 	counter  *Counter
 	sink     RollupSink
@@ -63,6 +75,10 @@ type Rollup struct {
 	// swept dates, so a quiet tick writes nothing. A restart resends
 	// everything once, which the GREATEST merge absorbs.
 	lastSent map[rollupKey]RollupRow
+	// pendingFrom is the oldest UTC day not yet folded by a successful
+	// sweep that ran after it ended. Zero means unknown (fresh process),
+	// which [Rollup.window] reads as the start of the retention window.
+	pendingFrom time.Time
 }
 
 type rollupKey struct{ day, subject, endpoint string }
@@ -118,23 +134,63 @@ func (r *Rollup) Run(ctx context.Context) error {
 	}
 }
 
-// Sweep reads today's + yesterday's detail counters out of Redis,
-// groups them per (day, subject, endpoint), and upserts the rows the
-// sink has not yet acknowledged at their current value. Returns the
-// number of rows upserted. Bounded to one interval of wall-clock so a
-// stalled Redis or Postgres cannot pin the worker; one sweep at a
-// time. Exposed for tests and for the ops-side manual re-sweep.
+// Sweep folds the live days plus the next catch-up batch (see
+// [Rollup]) and upserts the rows the sink has not yet acknowledged at
+// their current value. Returns the number of rows upserted. Bounded to
+// one interval of wall-clock so a stalled Redis or Postgres cannot pin
+// the worker; one sweep at a time. The catch-up cursor only advances
+// on success, so a failed sweep's days stay owed.
 func (r *Rollup) Sweep(ctx context.Context) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	dates, resume := r.window(r.nowFn())
+	n, err := r.fold(ctx, dates)
+	if err != nil {
+		return 0, err
+	}
+	r.pendingFrom = resume
+	return n, nil
+}
+
+// SweepDays folds exactly the given UTC days (YYYY-MM-DD) with the same
+// grouping and sink as [Rollup.Sweep], without moving the live catch-up
+// cursor. It is the ops-side recovery path (usage-rollup-backfill).
+func (r *Rollup) SweepDays(ctx context.Context, dates []string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.fold(ctx, dates)
+}
+
+// window returns the days the next sweep folds — the catch-up batch
+// from pendingFrom (clamped to the retention window), then yesterday
+// and today — and the pendingFrom a successful sweep leaves behind.
+func (r *Rollup) window(now time.Time) ([]string, time.Time) {
+	now = now.UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	yesterday := today.AddDate(0, 0, -1)
+	from := today.AddDate(0, 0, -(retentionDays - 1))
+	if r.pendingFrom.After(from) {
+		from = r.pendingFrom
+	}
+	dates := make([]string, 0, catchUpDaysPerSweep+2)
+	d := from
+	for ; d.Before(yesterday) && len(dates) < catchUpDaysPerSweep; d = d.AddDate(0, 0, 1) {
+		dates = append(dates, d.Format(dayLayout))
+	}
+	resume := today
+	if d.Before(yesterday) {
+		resume = d
+	}
+	return append(dates, yesterday.Format(dayLayout), today.Format(dayLayout)), resume
+}
+
+// fold scans the given days' detail counters, groups them per (day,
+// subject, endpoint) and upserts the rows the sink has not yet
+// acknowledged, under one interval's deadline.
+func (r *Rollup) fold(ctx context.Context, dates []string) (int, error) {
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, r.interval)
 	defer cancel()
-	now := r.nowFn().UTC()
-	dates := []string{
-		now.AddDate(0, 0, -1).Format("2006-01-02"),
-		now.Format("2006-01-02"),
-	}
 	grouper := newDetailGrouper()
 	err := r.counter.ScanDetailFunc(ctx, dates, func(d DetailRow) error {
 		grouper.add(d)

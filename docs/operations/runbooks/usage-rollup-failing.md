@@ -14,7 +14,7 @@ severity: P3
 | Alerts | `stellarindex_usage_rollup_failing` (informational) |
 | Detected by | Prometheus rules in `deploy/monitoring/rules/api.yml` + `configs/prometheus/rules.r1/api.yml` |
 | Typical MTTR | 5–15 min (it's almost always Redis or Postgres reachability, shared with louder alerts) |
-| Impact | Dashboard per-endpoint usage analytics stop advancing; `/v1/account/usage` degrades to endpoint-less legacy per-day rows. NO customer pricing impact. Counters keep accumulating in Redis (35-day TTL). The live worker only ever sweeps TODAY + YESTERDAY, so a day the outage skips entirely is NOT recovered automatically once the sweep window moves past it — it must be recovered with `usage-rollup-backfill` (see Mitigation) before its Redis counters expire at 35 days. |
+| Impact | Dashboard per-endpoint usage analytics stop advancing; `/v1/account/usage` degrades to endpoint-less legacy per-day rows. NO customer pricing impact. Counters keep accumulating in Redis (35-day TTL). Once the backend is back, the worker re-folds every day no successful sweep covered since it ended, oldest first, 7 days per sweep (a restarted API walks the whole 35-day window once). A day older than 35 days when the outage ends is lost. |
 
 ## Symptoms
 
@@ -48,15 +48,16 @@ journalctl -u stellarindex-api --since -30min | grep -i "usage rollup"
   this deployment. Run the migrator (deploy.yml auto-applies;
   manual: `stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up`).
 - Redis / Postgres down → follow the respective infra runbook;
-  this alert clears itself on the next successful sweep (the
-  worker retries forever, sweeping today + yesterday, and the
-  upsert is GREATEST-merged so replays are safe).
-- If the outage spanned a full UTC day boundary, the live worker's
-  two-day sweep window has already moved past the skipped day and
-  will never re-fold it on its own (COR-10). Recover it with the
-  `usage-rollup-backfill` subcommand of `stellarindex-ops` — same
-  grouping code as the live worker, safe to re-run (GREATEST-merged
-  upsert):
+  this alert clears itself on the next successful sweep. The
+  worker retries forever; its first successful sweeps re-fold the
+  days the outage skipped (7 per 5-minute sweep, oldest first), and
+  the upsert is GREATEST-merged so replays are safe. Check the
+  skipped days landed:
+  `sudo -u postgres psql stellarindex -c "SELECT day, count(*) FROM usage_daily WHERE day >= now() - interval '7 days' GROUP BY day ORDER BY day"`.
+- To fold a range immediately, or when no API process is running
+  its rollup, use the `usage-rollup-backfill` subcommand of
+  `stellarindex-ops` — same grouping code as the live worker, safe
+  to re-run (GREATEST-merged upsert):
 
   ```sh
   # Size the recovery first (dry run, no writes):
@@ -97,6 +98,9 @@ Redis/Postgres blips do not fire it.
 
 ## Changelog
 
+- 2026-09-24 — the worker now re-folds days an outage skipped on
+  its own (#798); `usage-rollup-backfill` is the manual path, not
+  the only one.
 - 2026-09-21 — documented the `usage-rollup-backfill` catch-up step
   (#798); the mitigation previously claimed no such step existed.
 - 2026-07-04 — created with the usage-rollup pipeline (#32/#37b).

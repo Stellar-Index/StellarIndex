@@ -24,13 +24,35 @@ func TestUsageRollupBackfillUsageDocumentsWriteFlag(t *testing.T) {
 	}
 }
 
+// TestUsageRollupBackfillHelpDocumentsWriteFlag — the --help entry is
+// what an operator reads first; its synopsis and example must carry
+// -write for the same reason (GH #798).
+func TestUsageRollupBackfillHelpDocumentsWriteFlag(t *testing.T) {
+	i := strings.Index(usageBody, "  usage-rollup-backfill ")
+	if i < 0 {
+		t.Fatal("usageBody has no usage-rollup-backfill entry")
+	}
+	// The entry runs until the next line indented like a synopsis
+	// ("  <name>"), i.e. the next subcommand.
+	synopsis, entry, _ := strings.Cut(usageBody[i:], "\n")
+	for n, line := range strings.Split(entry, "\n") {
+		if strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "   ") {
+			entry = strings.Join(strings.Split(entry, "\n")[:n], "\n")
+			break
+		}
+	}
+	if !strings.Contains(synopsis, "[-write]") {
+		t.Errorf("usage-rollup-backfill synopsis lacks [-write]: %q", synopsis)
+	}
+	if !strings.Contains(entry, "-to 2026-07-21 -write") {
+		t.Errorf("usage-rollup-backfill --help example does not pass -write:\n%s", entry)
+	}
+}
+
 // TestUsageRollupBackfillRunbookDocumentsCatchup pins T166 (audit
 // 2026-09-18): the runbook this alert points operators at must name
 // the usage-rollup-backfill catch-up tool and must NOT still assert
-// that no catch-up step exists — that assertion is directly
-// contradicted by cmd/stellarindex-ops/usage_rollup_backfill.go's own
-// doc comment (COR-10): a day the live sweep's two-day window skips is
-// permanently lost unless this tool is run.
+// that no catch-up step exists.
 func TestUsageRollupBackfillRunbookDocumentsCatchup(t *testing.T) {
 	root := repoRootForOpsTest(t)
 	runbook, err := os.ReadFile(filepath.Join(root, "docs/operations/runbooks/usage-rollup-failing.md"))
@@ -40,7 +62,7 @@ func TestUsageRollupBackfillRunbookDocumentsCatchup(t *testing.T) {
 	rb := string(runbook)
 	if !strings.Contains(rb, "usage-rollup-backfill") {
 		t.Error("docs/operations/runbooks/usage-rollup-failing.md never mentions usage-rollup-backfill, " +
-			"the only recovery path for a day the live sweep's two-day window skips (COR-10)")
+			"the manual path for folding a skipped range now")
 	}
 	if strings.Contains(rb, `No operator "catch-up" step exists or is needed`) {
 		t.Error(`runbook still claims 'No operator "catch-up" step exists or is needed', ` +

@@ -256,8 +256,10 @@ groups:
             5-minute sweeps (Redis scan or Timescale upsert) for 30+
             minutes. Dashboard per-endpoint usage analytics stop
             advancing; /v1/account/usage degrades to endpoint-less
-            legacy rows. Data is safe in Redis for 35 days — fix the
-            failing backend and the next sweep catches up.
+            legacy rows. Counters are safe in Redis for 35 days — fix
+            the failing backend and the worker re-folds every day it
+            missed, oldest first, 7 days per sweep. Days older than 35
+            days are lost.
 
       # Q261: `for:` was 1h, equal to the rate() window. rate() is
       # increase()/W, so after ONE exhausted delivery the expression is true
