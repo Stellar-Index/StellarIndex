@@ -68,3 +68,50 @@ describe('compareValues (via useTableSort)', () => {
     spy.mockRestore();
   });
 });
+
+// CA2-A35-correct-2: nulls/NaN must sort last regardless of direction. The
+// default direction is 'desc' (useTableSort's own `initialDir` default and
+// every column's toggle fallback), so a regression here surfaces as blank
+// rows rising to the top of a descending sort — e.g. unpriced assets above
+// priced ones on /assets.
+describe('null handling under both directions', () => {
+  it('keeps nulls last on a descending sort', () => {
+    const rows = [
+      { price: null },
+      { price: 5 },
+      { price: 10 },
+      { price: null },
+      { price: 3 },
+    ];
+    const { result } = renderHook(() =>
+      useTableSort(rows, [{ key: 'price', value: (r) => r.price }], 'price', 'desc'),
+    );
+    expect(result.current.sorted.map((r) => r.price)).toEqual([
+      10,
+      5,
+      3,
+      null,
+      null,
+    ]);
+  });
+
+  it('keeps nulls last on an ascending sort', () => {
+    const rows = [
+      { price: null },
+      { price: 5 },
+      { price: 10 },
+      { price: null },
+      { price: 3 },
+    ];
+    const { result } = renderHook(() =>
+      useTableSort(rows, [{ key: 'price', value: (r) => r.price }], 'price', 'asc'),
+    );
+    expect(result.current.sorted.map((r) => r.price)).toEqual([
+      3,
+      5,
+      10,
+      null,
+      null,
+    ]);
+  });
+});

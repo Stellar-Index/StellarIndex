@@ -83,7 +83,17 @@ export function useTableSort<T, K extends string>(
     return rows
       .map((row, i) => ({ row, i }))
       .sort((a, b) => {
-        const cmp = compareValues(col.value(a.row), col.value(b.row));
+        const av = col.value(a.row);
+        const bv = col.value(b.row);
+        const aEmpty = isEmptyValue(av);
+        const bEmpty = isEmptyValue(bv);
+        // Emptiness always sorts last, independent of `dir` — only the
+        // ordering of non-empty values flips with direction.
+        if (aEmpty || bEmpty) {
+          if (aEmpty === bEmpty) return a.i - b.i;
+          return aEmpty ? 1 : -1;
+        }
+        const cmp = compareValues(av, bv);
         return cmp !== 0 ? cmp * dir : a.i - b.i;
       })
       .map((d) => d.row);
@@ -97,15 +107,15 @@ export function useTableSort<T, K extends string>(
   return { sorted, sort, toggle, ariaSort };
 }
 
-// compareValues orders two cell values. Nulls/undefined/NaN always sort
-// LAST (returned as "greater"), independent of direction, so a column of
-// mostly-present numbers doesn't float its blanks to the top on asc.
+// isEmptyValue flags a cell as blank for sorting purposes. Emptiness is
+// pinned to the bottom by the caller before `dir` is applied, so it never
+// flips with direction.
+function isEmptyValue(v: SortValue): boolean {
+  return v == null || (typeof v === 'number' && Number.isNaN(v));
+}
+
+// compareValues orders two known-non-empty cell values.
 function compareValues(a: SortValue, b: SortValue): number {
-  const aEmpty = a == null || (typeof a === 'number' && Number.isNaN(a));
-  const bEmpty = b == null || (typeof b === 'number' && Number.isNaN(b));
-  if (aEmpty && bEmpty) return 0;
-  if (aEmpty) return 1;
-  if (bEmpty) return -1;
   if (typeof a === 'number' && typeof b === 'number') return a - b;
   // Pinned to en-US, same as every formatter in lib/format.ts, so a
   // non-ASCII column sorts identically between the SSG build and
