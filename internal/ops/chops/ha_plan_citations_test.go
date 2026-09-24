@@ -89,3 +89,61 @@ func TestHAPlanFileLineCitationsResolve(t *testing.T) {
 		})
 	}
 }
+
+// ha-plan.md and ADR-0008 once prescribed a Redis-lease, leader-elected
+// aggregator with a standby. None was built: the aggregator is one process
+// whose only exclusivity control is a Postgres instance lock, and a second
+// copy refuses to start. Following the old design would stand up a second
+// writer, so every place these docs describe the aggregator's topology is
+// pinned to the lock that exists.
+func TestAggregatorTopologyDocsMatchInstanceLock(t *testing.T) {
+	main := readRepoFile(t, "cmd/stellarindex-aggregator/main.go")
+	if !strings.Contains(main, "HoldInstanceLock(") || !strings.Contains(main, "timescale.AggregatorInstanceLockName") {
+		t.Fatal("cmd/stellarindex-aggregator no longer takes timescale.AggregatorInstanceLockName; ha-plan.md §3.7 and ADR-0008 name it as the aggregator's exclusivity control — update them with the code")
+	}
+	lockSrc := readRepoFile(t, "internal/storage/timescale/instance_lock.go")
+	if !strings.Contains(lockSrc, `AggregatorInstanceLockName = "instance:stellarindex-aggregator"`) {
+		t.Fatal("AggregatorInstanceLockName changed; ha-plan.md §3.7 cites hashtext('instance:stellarindex-aggregator')")
+	}
+
+	plan := flattenMarkdown(readRepoFile(t, "docs/architecture/ha-plan.md"))
+	adr := flattenMarkdown(readRepoFile(t, "docs/adr/0008-ha-topology.md"))
+	docs := map[string]string{"ha-plan.md": plan, "ADR-0008": adr}
+
+	stale := []struct{ doc, text string }{
+		{"ha-plan.md", "(leader-elected via Redis)"},
+		{"ha-plan.md", "Standby acquires leadership"},
+		{"ha-plan.md", "no lock acquisition"},
+		{"ADR-0008", "still describes the two-instance design as a target"},
+		{"ADR-0008", "remains a design target"},
+	}
+	for _, s := range stale {
+		if strings.Contains(docs[s.doc], s.text) {
+			t.Errorf("%s still says %q; the aggregator is a single instance with no standby (instance lock, not leader election)", s.doc, s.text)
+		}
+	}
+
+	required := []struct{ doc, text string }{
+		{"ha-plan.md", "hashtext('instance:stellarindex-aggregator')"},
+		{"ha-plan.md", "| Aggregator process |"},
+		{"ADR-0008", "not part of Phase 1"},
+	}
+	for _, r := range required {
+		if !strings.Contains(docs[r.doc], r.text) {
+			t.Errorf("%s no longer says %q", r.doc, r.text)
+		}
+	}
+}
+
+// flattenMarkdown collapses whitespace and blockquote markers so a phrase
+// wrapped across lines still matches.
+func flattenMarkdown(s string) string {
+	fields := strings.Fields(s)
+	kept := fields[:0]
+	for _, f := range fields {
+		if f != ">" {
+			kept = append(kept, f)
+		}
+	}
+	return strings.Join(kept, " ")
+}
