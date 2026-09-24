@@ -209,7 +209,8 @@ Order matters. Don't skip.
    so Cloudflare Pages re-deploys with `status: resolved`.
    Verify `stellarindex.io/status` shows no active incidents.
 
-7. **Send customer comms.** Email + Discord templates from T-1 day.
+7. **Send customer comms.** Email + Discord templates from T-1 day
+   ([`deploy/comms/launch-announcement.md`](../../deploy/comms/launch-announcement.md)).
    Public announcement on the project handle if applicable.
 
 8. **Open the L6.7 24-h watch.**
