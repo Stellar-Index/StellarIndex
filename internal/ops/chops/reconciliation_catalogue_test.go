@@ -4,6 +4,10 @@
 package chops
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -503,5 +507,86 @@ func TestBandGenesisAgreesAcrossEveryConstant(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("band is not in the reconciliation catalogue even with its contract configured")
+	}
+}
+
+var (
+	retentionCallRe = regexp.MustCompile(`(add|remove)_retention_policy\s*\(([^)]*)\)`)
+	quotedIdentRe   = regexp.MustCompile(`'([a-zA-Z0-9_.]+)'`)
+)
+
+// standingRetentionRelations replays every add/remove_retention_policy
+// call over the up-migrations in order and returns the relations still
+// holding a policy, mapped to the migration that attached it. Every
+// quoted identifier in a call's arguments counts as its relation, so an
+// unusual spelling over-reports rather than vanishes.
+func standingRetentionRelations(t *testing.T) map[string]string {
+	t.Helper()
+	ups, err := filepath.Glob(filepath.Join(repoRoot(t), "migrations", "[0-9]*_*.up.sql"))
+	if err != nil || len(ups) == 0 {
+		t.Fatalf("glob up-migrations: %d found, err %v", len(ups), err)
+	}
+	sort.Strings(ups)
+	held := map[string]string{}
+	adds := 0
+	for _, path := range ups {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var sql strings.Builder
+		for _, line := range strings.Split(string(b), "\n") {
+			if !strings.HasPrefix(strings.TrimSpace(line), "--") {
+				sql.WriteString(line + "\n")
+			}
+		}
+		for _, call := range retentionCallRe.FindAllStringSubmatch(sql.String(), -1) {
+			for _, id := range quotedIdentRe.FindAllStringSubmatch(call[2], -1) {
+				rel := strings.TrimPrefix(id[1], "public.")
+				if call[1] == "add" {
+					held[rel] = filepath.Base(path)
+					adds++
+				} else {
+					delete(held, rel)
+				}
+			}
+		}
+	}
+	if adds == 0 {
+		t.Fatal("no add_retention_policy call matched in any migration — the pattern has gone vacuous")
+	}
+	return held
+}
+
+// 0116's floor treats a rising MIN(ledger) on a reconcile target as
+// loss. That is only true while no reconcile target can shed its oldest
+// rows on a schedule; a retention policy on one would make the floor
+// fire continuously. Its header asks for the rule to be revisited
+// first — this is what makes that request binding.
+func TestReconcileTargets_CarryNoRetentionPolicy(t *testing.T) {
+	cfg := testConfigWithAllSources()
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+	tables := map[string]bool{}
+	for _, src := range cat {
+		for _, tg := range src.targets {
+			tables[tg.table] = true
+		}
+	}
+	for _, must := range []string{"trades", "oracle_updates", "sep41_transfers"} {
+		if !tables[must] {
+			t.Fatalf("reconcile catalogue has no %s target — the target set this test walks is incomplete", must)
+		}
+	}
+	held := standingRetentionRelations(t)
+	for table := range tables {
+		if mig, ok := held[table]; ok {
+			t.Errorf("reconcile target %s carries a retention policy from %s. The 0116 completeness "+
+				"floor reads a rising MIN(ledger) as data loss; with a policy dropping old chunks it "+
+				"fires on every run. Revisit 0116's floor for this target before adding the policy.", table, mig)
+		}
 	}
 }
