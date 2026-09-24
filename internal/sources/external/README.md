@@ -44,9 +44,9 @@ layer.
 
 | Connector | Type | Tier needed | Notes |
 | --- | --- | --- | --- |
-| [`coingecko`](coingecko/) | Poller (REST `/simple/price`) | Free | One batched call covers every (asset, quote) combo; ~10–30 req/min limit |
+| [`coingecko`](coingecko/) | Poller (REST `/simple/price`) | Free | One batched call covers every (asset, quote) combo; ~10–30 req/min limit. Rows carry the upstream `last_updated_at`; an id without it is dropped |
 | [`coinmarketcap`](coinmarketcap/) | Poller (REST `/v2 quotes`) | Standard ($79/mo) | Lower tiers prohibit redistribution — $79/mo is the minimum for production |
-| [`cryptocompare`](cryptocompare/) | Poller (REST `/data/pricemulti`) | Free works; ~$80/mo lifts redistribution restriction | Simplest aggregator wire shape — flat asset→currency→price map |
+| [`cryptocompare`](cryptocompare/) | Poller (REST `/data/pricemultifull`) | Free works; ~$80/mo lifts redistribution restriction | Reads `RAW.<fsym>.<tsym>.{PRICE,LASTUPDATE}`; rows carry the upstream `LASTUPDATE`, a quote without it is dropped |
 
 ### `ClassAuthoritySanity` — daily anchor only
 

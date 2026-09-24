@@ -74,7 +74,10 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 	exratesSrv := newExRatesMockREST(t)
 	defer exratesSrv.Close()
 
-	coingeckoSrv := newCoinGeckoMockREST(t)
+	// The poller must stamp rows with CoinGecko's last_updated_at, not
+	// our poll time; a minute in the past keeps the two distinguishable.
+	cgUpdatedAt := time.Now().Add(-time.Minute).Truncate(time.Second).UTC()
+	coingeckoSrv := newCoinGeckoMockREST(t, cgUpdatedAt)
 	defer coingeckoSrv.Close()
 
 	ecbSrv := newECBMockREST(t)
@@ -232,8 +235,14 @@ func TestExternalFleet_EndToEnd(t *testing.T) {
 	cgLatest, err := store.LatestOracleUpdateForAsset(assertCtx, externalcoingecko.SourceName, xlmCrypto)
 	if err != nil {
 		t.Errorf("LatestOracleUpdateForAsset coingecko XLM: %v", err)
-	} else if cgLatest.Price.BigInt().Sign() <= 0 {
-		t.Errorf("coingecko XLM price = %s", cgLatest.Price)
+	} else {
+		if cgLatest.Price.BigInt().Sign() <= 0 {
+			t.Errorf("coingecko XLM price = %s", cgLatest.Price)
+		}
+		if !cgLatest.Timestamp.Equal(cgUpdatedAt) {
+			t.Errorf("coingecko XLM ts = %s, want upstream last_updated_at %s",
+				cgLatest.Timestamp, cgUpdatedAt)
+		}
 	}
 
 	t.Logf("external-fleet end-to-end: %d trades + %d updates inserted", insertedTrades, insertedUpdates)
@@ -324,17 +333,19 @@ func newExRatesMockREST(t *testing.T) *httptest.Server {
 	}))
 }
 
-// newCoinGeckoMockREST serves /api/v3/simple/price.
-func newCoinGeckoMockREST(t *testing.T) *httptest.Server {
+// newCoinGeckoMockREST serves /api/v3/simple/price with
+// include_last_updated_at's per-id field set to updatedAt.
+func newCoinGeckoMockREST(t *testing.T, updatedAt time.Time) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasSuffix(r.URL.Path, "/simple/price") {
 			http.NotFound(w, r)
 			return
 		}
+		lastUpdated := float64(updatedAt.Unix())
 		body := map[string]map[string]float64{
-			"stellar": {"usd": 0.17582},
-			"bitcoin": {"usd": 50000.0},
+			"stellar": {"usd": 0.17582, "last_updated_at": lastUpdated},
+			"bitcoin": {"usd": 50000.0, "last_updated_at": lastUpdated},
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(body)

@@ -28,7 +28,9 @@ func buildPairs(t *testing.T) []canonical.Pair {
 func newTestServer(t *testing.T, body string, status int) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != PriceMultiPath {
+		// Literal, not the constant: only /data/pricemultifull carries
+		// LASTUPDATE, so the path itself is part of the contract.
+		if r.URL.Path != "/data/pricemultifull" {
 			http.NotFound(w, r)
 			return
 		}
@@ -50,10 +52,10 @@ func TestNewPoller_RejectsEmptyKey(t *testing.T) {
 }
 
 func TestPollOnce_HappyPath(t *testing.T) {
-	srv := newTestServer(t, `{
-      "XLM": {"USD": 0.17582, "EUR": 0.16230},
-      "BTC": {"USD": 50000.0, "EUR": 46250.0}
-    }`, http.StatusOK)
+	srv := newTestServer(t, `{"RAW": {
+      "XLM": {"USD": {"PRICE": 0.17582, "LASTUPDATE": 1710000000}, "EUR": {"PRICE": 0.16230, "LASTUPDATE": 1710000000}},
+      "BTC": {"USD": {"PRICE": 50000.0, "LASTUPDATE": 1710000000}, "EUR": {"PRICE": 46250.0, "LASTUPDATE": 1710000000}}
+    }}`, http.StatusOK)
 	defer srv.Close()
 
 	p, err := NewPoller("TEST_KEY")
@@ -119,6 +121,69 @@ func TestPollOnce_CryptoOnlyPairsNoOp(t *testing.T) {
 	}
 	if len(updates) != 0 {
 		t.Errorf("expected 0 updates, got %d", len(updates))
+	}
+}
+
+// TestPollOnce_StampsUpstreamLastUpdate pins that each row carries the
+// quote's upstream LASTUPDATE, not our poll time, so a frozen upstream
+// reaches the aggregator tier with its real age.
+func TestPollOnce_StampsUpstreamLastUpdate(t *testing.T) {
+	frozen := time.Now().Add(-3 * time.Hour).Truncate(time.Second).UTC()
+	fresh := time.Now().Add(-20 * time.Second).Truncate(time.Second).UTC()
+	srv := newTestServer(t, fmt.Sprintf(`{"RAW": {
+      "XLM": {"USD": {"PRICE": 0.17, "LASTUPDATE": %[1]d}, "EUR": {"PRICE": 0.16, "LASTUPDATE": %[1]d}},
+      "BTC": {"USD": {"PRICE": 50000.0, "LASTUPDATE": %[2]d}}
+    }}`, frozen.Unix(), fresh.Unix()), http.StatusOK)
+	defer srv.Close()
+	p, _ := NewPoller("TEST")
+	p.Endpoint = srv.URL
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(updates) != 3 {
+		t.Fatalf("expected 3 updates, got %d", len(updates))
+	}
+	for _, u := range updates {
+		want := fresh
+		if u.Asset.Code == "XLM" {
+			want = frozen
+		}
+		if !u.Timestamp.Equal(want) {
+			t.Errorf("%s/%s Timestamp = %s, want upstream LASTUPDATE %s",
+				u.Asset.Code, u.Quote.Code, u.Timestamp, want)
+		}
+	}
+}
+
+// TestPollOnce_MissingLastUpdateFailsClosed pins the fail-closed rule:
+// a quote without LASTUPDATE is dropped, and a response with no datable
+// quote is a poll error rather than an empty success.
+func TestPollOnce_MissingLastUpdateFailsClosed(t *testing.T) {
+	srv := newTestServer(t, `{"RAW": {
+      "XLM": {"USD": {"PRICE": 0.17, "LASTUPDATE": 1710000000}, "EUR": {"PRICE": 0.16}},
+      "BTC": {"USD": {"PRICE": 50000.0}}
+    }}`, http.StatusOK)
+	defer srv.Close()
+	p, _ := NewPoller("TEST")
+	p.Endpoint = srv.URL
+	_, updates, err := p.PollOnce(context.Background(), buildPairs(t))
+	if err != nil {
+		t.Fatalf("PollOnce: %v", err)
+	}
+	if len(updates) != 1 || updates[0].Asset.Code != "XLM" || updates[0].Quote.Code != "USD" {
+		t.Fatalf("expected only the dated XLM/USD row, got %d update(s)", len(updates))
+	}
+
+	allUndated := newTestServer(t, `{"RAW": {"XLM": {"USD": {"PRICE": 0.17}}}}`, http.StatusOK)
+	defer allUndated.Close()
+	p.Endpoint = allUndated.URL
+	_, updates, err = p.PollOnce(context.Background(), buildPairs(t))
+	if !errors.Is(err, ErrMalformedResponse) {
+		t.Fatalf("err = %v, want ErrMalformedResponse", err)
+	}
+	if len(updates) != 0 {
+		t.Errorf("expected no updates, got %d", len(updates))
 	}
 }
 
