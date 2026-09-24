@@ -1599,6 +1599,56 @@ while IFS= read -r -d '' readme; do
 # agent-checkout READMEs), costing ~25s and letting an untracked copy redden the lint.
 done < <(git ls-files -z -- ':(glob)**/README.md')
 
+# ─── Explorer README claims must match package.json and src/app ────────────
+#
+# web/explorer/README.md said the customer account lived at `/account/*`
+# (it is src/app/dashboard/), that blog posts used `@next/mdx` (never a
+# dependency) and that `pnpm lint` ran `next lint` (it runs `eslint .`).
+# Each is a claim a reader acts on, so each is checked against its source:
+# a documented `pnpm <script>  # <cmd>` must be a real script whose value
+# starts with <cmd> when <cmd> names a tool; a backticked `@scope/pkg`, or
+# an external-link package name in the Stack list, must be a declared
+# dependency; a backticked `/<route>/*` must be a directory under src/app.
+
+echo "Checking web/explorer docs against package.json and src/app..."
+if [ -f web/explorer/README.md ] && [ -f web/explorer/package.json ] && command -v python3 >/dev/null 2>&1; then
+  explorer_out=$(python3 - <<'PY' 2>&1 || true
+import json, os, re
+readme_path = "web/explorer/README.md"
+readme = open(readme_path, encoding="utf-8").read()
+pkg = json.load(open("web/explorer/package.json", encoding="utf-8"))
+scripts = pkg.get("scripts") or {}
+deps = set(pkg.get("dependencies") or {}) | set(pkg.get("devDependencies") or {})
+tools = {v.split()[0] for v in scripts.values() if v.split()}
+for name, comment in re.findall(r"^pnpm ([\w:.-]+)[ \t]+#[ \t]*(.+)$", readme, re.M):
+    if name not in scripts:
+        print(f"{readme_path} documents 'pnpm {name}' but package.json has no '{name}' script")
+        continue
+    cmd = comment.split(" (")[0].strip()
+    if cmd.split()[0] in tools and not scripts[name].startswith(cmd):
+        print(f"{readme_path} documents 'pnpm {name}' as '{cmd}' but package.json runs '{scripts[name]}'")
+stack = re.search(r"^## Stack\n(.*?)(?=^## )", readme, re.M | re.S)
+named = set(re.findall(r"`(@[\w.-]+/[\w.-]+)`", readme))
+if stack:
+    named |= set(re.findall(r"\[([^\]\s]+)\]\(https?://", stack.group(1)))
+for dep in sorted(named - deps):
+    print(f"{readme_path} names package '{dep}' but web/explorer/package.json does not depend on it")
+for doc in ("web/explorer/README.md", "web/explorer/AGENTS.md", "docs/architecture/design-system.md"):
+    if not os.path.isfile(doc):
+        continue
+    text = open(doc, encoding="utf-8").read()
+    for route in sorted(set(re.findall(r"`/([\w-]+)/\*`", text))):
+        if not os.path.isdir(os.path.join("web/explorer/src/app", route)):
+            print(f"{doc} names route '/{route}/*' but web/explorer/src/app/{route}/ does not exist")
+PY
+)
+  if [ -n "$explorer_out" ]; then
+    while IFS= read -r line; do
+      [ -n "$line" ] && err "$line — correct the doc to what the explorer actually ships"
+    done <<< "$explorer_out"
+  fi
+fi
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 count=$(cat "$ERROR_FILE")
