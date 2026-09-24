@@ -205,9 +205,13 @@ type DetailRow struct {
 }
 
 // ScanDetail walks every per-endpoint detail hash for the given
-// dates (YYYY-MM-DD) and returns the decoded counters. SCAN-based so
-// it never blocks Redis; the key population is bounded by (#active
-// subjects × len(dates)).
+// dates (YYYY-MM-DD) and returns the decoded counters, materialized
+// into one slice. SCAN-based so it never blocks Redis; the key
+// population is bounded by (#active subjects × len(dates)). Kept for
+// callers that want the whole batch (tests, one-off ops reads); a
+// production sweep over the live subject population should use
+// [Counter.ScanDetailFunc] instead so it never buffers a whole day's
+// rows in memory (GH-1282).
 //
 // Keys are de-duplicated per date. Redis SCAN guarantees only that
 // every key present for the whole iteration is returned AT LEAST once
@@ -226,31 +230,47 @@ func (c *Counter) ScanDetail(ctx context.Context, dates []string) ([]DetailRow, 
 		return nil, nil
 	}
 	var out []DetailRow
-	for _, date := range dates {
-		rows, err := c.scanDetailDate(ctx, date)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, rows...)
+	err := c.ScanDetailFunc(ctx, dates, func(row DetailRow) error {
+		out = append(out, row)
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
 
-// scanDetailDate walks one date's detail hashes. Split out of
-// ScanDetail so the cursor walk, the de-duplication and the per-date
-// loop each stay individually readable (and under the gocognit
-// ceiling).
-func (c *Counter) scanDetailDate(ctx context.Context, date string) ([]DetailRow, error) {
+// ScanDetailFunc walks every per-endpoint detail hash for the given
+// dates and invokes fn once per decoded row, in the same
+// deduplicated order [ScanDetail] would return them. A caller that
+// aggregates as it goes (e.g. [Rollup.Sweep]'s grouping) never holds
+// a whole day's rows in memory at once — only the current SCAN page
+// (<=200 keys) and the hash currently being decoded. fn's error
+// aborts the walk.
+func (c *Counter) ScanDetailFunc(ctx context.Context, dates []string, fn func(DetailRow) error) error {
+	if c == nil {
+		return nil
+	}
+	for _, date := range dates {
+		if err := c.scanDetailDateFunc(ctx, date, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// scanDetailDateFunc walks one date's detail hashes. Split out of
+// ScanDetailFunc so the cursor walk, the de-duplication and the
+// per-date loop each stay individually readable (and under the
+// gocognit ceiling).
+func (c *Counter) scanDetailDateFunc(ctx context.Context, date string, fn func(DetailRow) error) error {
 	match := c.keyPrefix + detailKeyInfix + "*:" + date
 	seen := make(map[string]struct{})
-	var (
-		out    []DetailRow
-		cursor uint64
-	)
+	var cursor uint64
 	for {
 		keys, next, err := c.rdb.Scan(ctx, cursor, match, 200).Result()
 		if err != nil {
-			return nil, fmt.Errorf("usage: scan %s: %w", match, err)
+			return fmt.Errorf("usage: scan %s: %w", match, err)
 		}
 		for _, key := range keys {
 			if _, dup := seen[key]; dup {
@@ -259,13 +279,17 @@ func (c *Counter) scanDetailDate(ctx context.Context, date string) ([]DetailRow,
 			seen[key] = struct{}{}
 			rows, err := c.readDetailHash(ctx, key, date)
 			if err != nil {
-				return nil, err
+				return err
 			}
-			out = append(out, rows...)
+			for _, row := range rows {
+				if err := fn(row); err != nil {
+					return err
+				}
+			}
 		}
 		cursor = next
 		if cursor == 0 {
-			return out, nil
+			return nil
 		}
 	}
 }

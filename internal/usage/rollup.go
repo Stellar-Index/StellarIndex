@@ -135,12 +135,16 @@ func (r *Rollup) Sweep(ctx context.Context) (int, error) {
 		now.AddDate(0, 0, -1).Format("2006-01-02"),
 		now.Format("2006-01-02"),
 	}
-	details, err := r.counter.ScanDetail(ctx, dates)
+	grouper := newDetailGrouper()
+	err := r.counter.ScanDetailFunc(ctx, dates, func(d DetailRow) error {
+		grouper.add(d)
+		return nil
+	})
 	if err != nil {
 		r.observe("scan_error", start)
 		return 0, fmt.Errorf("usage rollup: scan: %w", err)
 	}
-	rows := r.unsent(groupDetails(details))
+	rows := r.unsent(grouper.rows())
 	if len(rows) == 0 {
 		r.observe("ok", start)
 		return 0, nil
@@ -188,35 +192,46 @@ func (r *Rollup) observe(outcome string, start time.Time) {
 		Observe(time.Since(start).Seconds())
 }
 
-// groupDetails folds per-class detail rows into per-(day, subject,
-// endpoint) RollupRows. Unknown classes are ignored (forward-compat:
-// an older binary sweeping hashes written by a newer one must not
-// misfile counts).
-func groupDetails(details []DetailRow) []RollupRow {
-	grouped := make(map[rollupKey]*RollupRow, len(details))
-	order := make([]rollupKey, 0, len(details))
-	for _, d := range details {
-		k := rollupKey{d.Date, d.Subject, d.Endpoint}
-		row, ok := grouped[k]
-		if !ok {
-			row = &RollupRow{Day: d.Date, Subject: d.Subject, Endpoint: d.Endpoint}
-			grouped[k] = row
-			order = append(order, k)
-		}
-		switch d.Class {
-		case ClassOK:
-			row.OK += d.Count
-		case ClassClientError:
-			row.ClientErrors += d.Count
-		case ClassServerError:
-			row.ServerErrors += d.Count
-		case ClassThrottled:
-			row.Throttled += d.Count
-		}
+// detailGrouper folds per-class detail rows into per-(day, subject,
+// endpoint) RollupRows one row at a time, so a caller streaming
+// DetailRows off [Counter.ScanDetailFunc] never has to buffer the
+// whole day's raw rows to group them — only the (far smaller) set of
+// distinct (day, subject, endpoint) aggregates. Unknown classes are
+// ignored (forward-compat: an older binary sweeping hashes written by
+// a newer one must not misfile counts).
+type detailGrouper struct {
+	grouped map[rollupKey]*RollupRow
+	order   []rollupKey
+}
+
+func newDetailGrouper() *detailGrouper {
+	return &detailGrouper{grouped: make(map[rollupKey]*RollupRow)}
+}
+
+func (g *detailGrouper) add(d DetailRow) {
+	k := rollupKey{d.Date, d.Subject, d.Endpoint}
+	row, ok := g.grouped[k]
+	if !ok {
+		row = &RollupRow{Day: d.Date, Subject: d.Subject, Endpoint: d.Endpoint}
+		g.grouped[k] = row
+		g.order = append(g.order, k)
 	}
-	out := make([]RollupRow, 0, len(order))
-	for _, k := range order {
-		out = append(out, *grouped[k])
+	switch d.Class {
+	case ClassOK:
+		row.OK += d.Count
+	case ClassClientError:
+		row.ClientErrors += d.Count
+	case ClassServerError:
+		row.ServerErrors += d.Count
+	case ClassThrottled:
+		row.Throttled += d.Count
+	}
+}
+
+func (g *detailGrouper) rows() []RollupRow {
+	out := make([]RollupRow, 0, len(g.order))
+	for _, k := range g.order {
+		out = append(out, *g.grouped[k])
 	}
 	return out
 }
