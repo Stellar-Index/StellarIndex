@@ -61,14 +61,22 @@ func (s *stubScanner) TrustlineAssetsAfter(_ context.Context, after string, limi
 }
 
 // stubRegistryStore records what the walk handed the writer.
+//
+// errAfterCalls, when set, lets err fire on a LATER call rather than the
+// first — needed to put a page's earlier batches through cleanly and fail
+// an interior one, the only way to distinguish a cursor that tracks writes
+// from one that tracks parsing.
 type stubRegistryStore struct {
-	got   []timescale.ClassicAssetHolding
-	stats timescale.ClassicAssetRegistryStats
-	err   error
+	got           []timescale.ClassicAssetHolding
+	stats         timescale.ClassicAssetRegistryStats
+	err           error
+	errAfterCalls int // 1-based call number err first fires on; 0 = every call
+	calls         int
 }
 
 func (s *stubRegistryStore) RegisterClassicAssetsHeld(_ context.Context, obs []timescale.ClassicAssetHolding) (int64, int64, error) {
-	if s.err != nil {
+	s.calls++
+	if s.err != nil && (s.errAfterCalls == 0 || s.calls >= s.errAfterCalls) {
 		return 0, 0, s.err
 	}
 	s.got = append(s.got, obs...)
@@ -239,9 +247,14 @@ func TestAssetRegistryBackfill_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
-// TestAssetRegistryBackfill_ErrorPrintsResumeAtTheFailedCursor — a failed
-// run is resumable too, and the operator must not have to guess where.
-func TestAssetRegistryBackfill_ErrorPrintsResumeAtTheFailedCursor(t *testing.T) {
+// TestAssetRegistryBackfill_ErrorNeverResumesPastAnUnwrittenAsset — a
+// failed run is resumable too, but strictly-after resume (TrustlineAssetsAfter)
+// means a RESUME line naming an asset skips it forever on re-entry. Since
+// the only asset here was never durably written (the store call failed),
+// the printed cursor must NOT be that asset — it must stay at whatever
+// cursor was already durable (here, none), so a rerun retries it instead
+// of silently dropping it from the registry.
+func TestAssetRegistryBackfill_ErrorNeverResumesPastAnUnwrittenAsset(t *testing.T) {
 	var out bytes.Buffer
 	o := testOpts(&out)
 	store := &stubRegistryStore{err: errors.New("connection reset")}
@@ -251,8 +264,54 @@ func TestAssetRegistryBackfill_ErrorPrintsResumeAtTheFailedCursor(t *testing.T) 
 	if err == nil {
 		t.Fatal("a store error must fail the run")
 	}
-	if !strings.Contains(out.String(), "-resume-from "+testGenuineBenji) {
-		t.Errorf("failed run printed no usable RESUME line:\n%s", out.String())
+	if strings.Contains(out.String(), "-resume-from "+testGenuineBenji) {
+		t.Errorf("RESUME line points past an asset that was never written:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "rerun the same command") {
+		t.Errorf("a run that wrote nothing durable must ask for a full rerun:\n%s", out.String())
+	}
+}
+
+// TestAssetRegistryBackfill_ErrorMidPageResumesAfterLastWrittenBatchOnly —
+// a page bigger than one batch must not print a RESUME cursor past assets
+// that were parsed but never reached the writer. c.cursor is set while the
+// whole page is parsed (before any write); if it tracked parsing instead of
+// completed writes, an interior batch failure would still print a cursor
+// at the LAST asset of the page, permanently skipping every asset between
+// the failed batch and the page end on resume (TrustlineAssetsAfter is
+// strictly-after).
+func TestAssetRegistryBackfill_ErrorMidPageResumesAfterLastWrittenBatchOnly(t *testing.T) {
+	var out bytes.Buffer
+	o := testOpts(&out)
+	o.page = 6
+	o.batch = 2
+	assets := []string{
+		"AAA-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		"BBB-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		"CCC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		"DDD-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		"EEE-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+		"FFF-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+	}
+	// Sorted ascending: AAA, BBB, CCC, DDD, EEE, FFF. Batch 1 = {AAA,BBB},
+	// batch 2 = {CCC,DDD} (fails on this, the 2nd store call), batch 3 =
+	// {EEE,FFF} never reached.
+	store := &stubRegistryStore{err: errors.New("connection reset"), errAfterCalls: 2}
+	scanner := &stubScanner{assets: assets}
+
+	err := runAssetRegistryBackfill(context.Background(), store, scanner, o)
+	if err == nil {
+		t.Fatal("an interior batch failure must fail the run")
+	}
+	if len(store.got) != 2 {
+		t.Fatalf("assets written before the failure = %d, want 2 (AAA, BBB only)", len(store.got))
+	}
+	got := out.String()
+	if !strings.Contains(got, "-resume-from "+assets[1]) {
+		t.Errorf("RESUME line must point at the last WRITTEN asset %q, got:\n%s", assets[1], got)
+	}
+	if strings.Contains(got, "-resume-from "+assets[3]) || strings.Contains(got, "-resume-from "+assets[5]) {
+		t.Errorf("RESUME line points past unwritten assets (CCC/DDD/EEE/FFF were never registered):\n%s", got)
 	}
 }
 

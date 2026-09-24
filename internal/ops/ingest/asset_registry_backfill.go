@@ -305,6 +305,10 @@ func assetRegistryWalk(
 		}
 		c.pages++
 		if err := assetRegistryWritePage(ctx, store, o, hb, seeds, c); err != nil {
+			if errors.Is(err, errAssetRegistryWriteStoppedByContext) {
+				_, _ = fmt.Fprintln(o.out, "asset-registry-backfill: budget reached or signal received mid-write — stopping early.")
+				return false, nil
+			}
 			return false, err
 		}
 		if c.scanned >= nextLog {
@@ -340,6 +344,14 @@ func assetRegistryPageSize(o assetRegistryOpts, scanned int64) int {
 	return o.page
 }
 
+// errAssetRegistryWriteStoppedByContext marks a write-phase error that is
+// really the wall-clock budget or a signal landing mid-batch, not a store
+// fault. [assetRegistryWalk] converts it back into the same non-error early
+// stop the paging loop already uses, so a -timeout expiring during the
+// (usually majority-of-the-run) Postgres write phase does not turn a
+// designed stop into a failed run.
+var errAssetRegistryWriteStoppedByContext = errors.New("asset-registry-backfill: context ended during write")
+
 // assetRegistryWritePage converts one lake page into observations and hands
 // them to the registry writer in -batch slices.
 //
@@ -347,6 +359,14 @@ func assetRegistryPageSize(o assetRegistryOpts, scanned int64) int {
 // issuer), and eighteen assets on this network wear the code BENJI. A
 // string that will not parse, or that parses as something other than a
 // classic credit asset, is counted and dropped rather than guessed at.
+//
+// c.cursor only ever advances to an asset this call KNOWS is safe to skip
+// on resume: one already handed to a batch that RegisterClassicAssetsHeld
+// returned success for, or — once the whole page is done — the page's last
+// asset. It must NOT advance while a page is merely being parsed: a batch
+// midway through the page can still fail, and TrustlineAssetsAfter's
+// resume is strictly-after, so a cursor that ran ahead of the writes would
+// permanently skip every asset between the failed batch and the page end.
 func assetRegistryWritePage(
 	ctx context.Context,
 	store assetRegistryStore,
@@ -356,9 +376,9 @@ func assetRegistryWritePage(
 	c *assetRegistryCounts,
 ) error {
 	obs := make([]timescale.ClassicAssetHolding, 0, len(seeds))
+	obsAsset := make([]string, 0, len(seeds)) // seeds[i].Asset for obs[i], same order
 	for _, s := range seeds {
 		c.scanned++
-		c.cursor = s.Asset
 		if s.LastLedger > c.maxLedger {
 			c.maxLedger = s.LastLedger
 		}
@@ -378,6 +398,7 @@ func assetRegistryWritePage(
 			LastLedger:  s.LastLedger,
 			LastAt:      s.LastAt,
 		})
+		obsAsset = append(obsAsset, s.Asset)
 	}
 	c.registered += int64(len(obs))
 	// Report progress for the page even in dry run and even when the page
@@ -385,16 +406,23 @@ func assetRegistryWritePage(
 	// work, and a page of assets it deliberately skipped is work.
 	hb.Progress(uint64(c.scanned), uint64(c.maxLedger)) //nolint:gosec // scanned is a non-negative running count
 	if o.dryRun {
+		c.cursor = seeds[len(seeds)-1].Asset
 		return nil
 	}
 	for start := 0; start < len(obs); start += o.batch {
 		end := min(start+o.batch, len(obs))
 		assets, issuers, err := store.RegisterClassicAssetsHeld(ctx, obs[start:end])
-		c.assetRowsTouched += assets
-		c.issuerRowsInserted += issuers
 		if err != nil {
+			if ctx.Err() != nil {
+				return errAssetRegistryWriteStoppedByContext
+			}
 			return fmt.Errorf("asset-registry-backfill: register batch at cursor %s: %w", c.cursor, err)
 		}
+		c.assetRowsTouched += assets
+		c.issuerRowsInserted += issuers
+		// Only NOW is it true that every asset up to and including this
+		// one was written. Advance past this batch, never further.
+		c.cursor = obsAsset[end-1]
 		// Per BATCH, not per page. stellarindex_ops_job_no_progress
 		// fires on 30 minutes of flat progress_total, and the only
 		// structurally-flat phase here is the ClickHouse aggregation
@@ -402,6 +430,11 @@ func assetRegistryWritePage(
 		// whole Postgres write phase inside that flat window too.
 		hb.Progress(uint64(c.scanned), uint64(c.maxLedger)) //nolint:gosec // scanned is a non-negative running count
 	}
+	// The whole page wrote cleanly, including any trailing seeds that were
+	// legitimately skipped (unparsed / non-classic) rather than batched —
+	// safe to move past those too, since a skip is deterministic and
+	// re-seeing them on resume would just re-skip them.
+	c.cursor = seeds[len(seeds)-1].Asset
 	return nil
 }
 
