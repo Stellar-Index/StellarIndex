@@ -44,14 +44,16 @@ import (
 
 // newFlagSet declares the tool's whole flag surface; runbook invocations
 // are tested against it.
-func newFlagSet() (fs *flag.FlagSet, dsn, dir *string, yes, iKnow *bool) {
+func newFlagSet() (fs *flag.FlagSet, dsn *dsnFlag, dir *string, yes, iKnow *bool) {
 	fs = flag.NewFlagSet("stellarindex-migrate", flag.ContinueOnError)
 	// The flag package prints its own parse errors — the rejected
 	// argument included, verbatim — to the FlagSet's output before it
 	// returns them. Nothing this tool is given may be echoed, so it is
 	// discarded and [parseArgv] composes the diagnostic instead.
 	fs.SetOutput(io.Discard)
-	dsn = fs.String("dsn", "", "Postgres DSN (overrides STELLARINDEX_POSTGRES_DSN env)")
+	dsn = &dsnFlag{}
+	fs.Var(dsn, "dsn", "Postgres `DSN` (overrides STELLARINDEX_POSTGRES_DSN env). Give it at most once and never "+
+		"empty: an empty or repeated -dsn is refused, not ignored")
 	dir = fs.String("migrations", "migrations", "Path to the migrations directory")
 	yes = fs.Bool("yes", false, "skip the interactive confirmation for 'down' (required when stdin is not a TTY)")
 	iKnow = fs.Bool("i-know", false, "acknowledge that 'down' runs down.sql against the target database and may be irreversible (required for every 'down')")
@@ -64,8 +66,8 @@ func main() { //nolint:gocognit,gocyclo // dispatch-heavy; splitting would reduc
 
 	args := parseArgv(fs, os.Args[1:])
 
-	resolvedDSN := *dsn
-	if resolvedDSN == "" {
+	resolvedDSN := dsn.value
+	if !dsn.set {
 		resolvedDSN, dsnSource = os.Getenv("STELLARINDEX_POSTGRES_DSN"), "$STELLARINDEX_POSTGRES_DSN"
 	}
 
@@ -544,6 +546,10 @@ func parseArgv(fs *flag.FlagSet, argv []string) []string {
 // offset is the 1-based position of argv[0] on the whole command line,
 // so a failure in the flags AFTER the verb still names the right one.
 func reportFlagFailure(fs *flag.FlagSet, argv []string, offset int) {
+	if d, ok := fs.Lookup("dsn").Value.(*dsnFlag); ok && d.rejection != "" {
+		errf("stellarindex-migrate: %s", d.rejection)
+		os.Exit(2)
+	}
 	i, name, defined := unknownFlag(fs, argv)
 	switch {
 	case i < 0:
@@ -580,6 +586,41 @@ func unknownFlag(fs *flag.FlagSet, argv []string) (idx int, name string, defined
 		}
 	}
 	return -1, "", false
+}
+
+// dsnFlag is -dsn. It records whether the flag was given at all, so that
+// only its absence falls back to $STELLARINDEX_POSTGRES_DSN: `-dsn ""` from
+// a quoted unset variable would otherwise resolve the environment's
+// (production) database. Repeats are refused in Set because parseArgv runs
+// fs.Parse twice over the same FlagSet, so a later -dsn cannot silently
+// replace an earlier one.
+type dsnFlag struct {
+	value     string
+	set       bool
+	rejection string // why Set refused; never quotes the value
+}
+
+func (d *dsnFlag) String() string {
+	if d == nil {
+		return ""
+	}
+	return d.value
+}
+
+func (d *dsnFlag) Set(v string) error {
+	switch {
+	case d.set:
+		d.rejection = "-dsn was given more than once — refusing rather than guessing which " +
+			"database was meant; pass it exactly once"
+	case strings.TrimSpace(v) == "":
+		d.rejection = "-dsn was given an empty value — refusing rather than falling back to " +
+			"$STELLARINDEX_POSTGRES_DSN, which may name a different database; check the variable " +
+			"expanded into -dsn, or omit -dsn to use the environment on purpose"
+	default:
+		d.value, d.set = v, true
+		return nil
+	}
+	return errors.New(d.rejection)
 }
 
 // cutFlagName strips the leading dashes and any `=value` from a flag
