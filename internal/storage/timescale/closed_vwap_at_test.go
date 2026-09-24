@@ -5,6 +5,8 @@ package timescale
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +80,43 @@ func TestHistoryGranularityBucketDuration(t *testing.T) {
 // 2026-06-20 latency-burn shape) or dropping a stored direction would
 // silently degrade the endpoint; this turns either into a test
 // failure.
+// nonSargableClosedGuard matches the `bucket + INTERVAL '…' <= now()`
+// spelling of the ADR-0015 closed-bucket guard. Arithmetic on the column
+// defeats the (…, bucket DESC) index — the 446 ms → 26 ms incident.
+var nonSargableClosedGuard = regexp.MustCompile(`(?i)\+\s*INTERVAL\s*'[^']*'\s*<=?\s*now\(\)`)
+
+// TestClosedBucketGuardSpelling scans every non-test source in the package,
+// inline `const q` SQL included, so the guard has one spelling
+// (`bucket <= now() - INTERVAL '…'`) everywhere, not only in the hoisted
+// templates the shape tests below assert on.
+func TestClosedBucketGuardSpelling(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		for i, line := range strings.Split(string(src), "\n") {
+			if nonSargableClosedGuard.MatchString(line) {
+				t.Errorf("%s:%d: non-sargable closed-bucket guard %q; spell it `bucket <= now() - INTERVAL '…'`",
+					name, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("scanned no package sources — the guard would be vacuous")
+	}
+}
+
 func TestClosedVWAPAtOrBeforeQueryShape(t *testing.T) {
 	q := fmt.Sprintf(closedVWAPAtOrBeforeQueryTemplate,
 		"prices_1m", "2024-01-01 00:00:00+00", "2023-12-01 00:00:00+00")
