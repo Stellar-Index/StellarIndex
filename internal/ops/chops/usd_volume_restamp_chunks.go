@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"strconv"
 	"strings"
@@ -955,8 +956,17 @@ func chunkRestampPreflight(ctx context.Context, store interface {
 	if largest > 0 {
 		p.Required = uint64(float64(largest) * chunkFreeSpaceHeadroom)
 	}
-	if floor := heavyMinDataFloorBytes(); floor > p.Required {
-		p.Required = floor
+	// The watchdog kills the run the instant free space drops below its own
+	// floor, with no knowledge of this chunk's headroom math — so the floor
+	// has to survive the chunk's worst-case growth ON TOP of it, not just be
+	// compared against that growth. Saturating add: a chunk large enough to
+	// overflow uint64 already fails every other check first.
+	if floor := heavyMinDataFloorBytes(); floor > 0 {
+		sum := p.Required + floor
+		if sum < p.Required {
+			sum = math.MaxUint64
+		}
+		p.Required = sum
 	}
 	p.Path, p.PathErr = store.TradesDataVolumePath(ctx)
 	if p.PathErr == nil {
@@ -983,7 +993,7 @@ func chunkRestampPreflight(ctx context.Context, store interface {
 		return p
 	}
 	if have <= p.Required {
-		p.Err = fmt.Errorf("free space %s is not more than %s (max of %.1fx the chunk's uncompressed size %s and the disk-watchdog floor) — "+
+		p.Err = fmt.Errorf("free space %s is not more than %s (the disk-watchdog floor plus %.1fx the chunk's uncompressed size %s) — "+
 			"decompressing that chunk could fill the data volume; free space or narrow the window",
 			p.describeHave(have), fmtBytes(int64(p.Required)), chunkFreeSpaceHeadroom, fmtBytes(p.Largest)) //nolint:gosec // Required derives from an int64
 	}
@@ -1037,7 +1047,7 @@ func (p chunkPreflight) render() string {
 	if p.Err != nil {
 		verdict = "REFUSED"
 	}
-	fmt.Fprintf(&b, "            need > %s (max of %.1fx the largest chunk's uncompressed size and the disk-watchdog floor; a guard, not a bound) — %s\n",
+	fmt.Fprintf(&b, "            need > %s (the disk-watchdog floor plus %.1fx the largest chunk's uncompressed size; a guard, not a bound) — %s\n",
 		fmtBytes(int64(p.Required)), chunkFreeSpaceHeadroom, verdict) //nolint:gosec // Required derives from an int64
 	return b.String()
 }

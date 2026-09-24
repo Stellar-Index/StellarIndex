@@ -392,7 +392,7 @@ func TestXLMBaseChunkRestamp_DryRunPrintsThePlanAndTouchesNoChunk(t *testing.T) 
 		"_timescaledb_internal._hyper_1_2_chunk",
 		"compressed 10.5 GB total",
 		"pre-flight: free 4.6 TB on /var/lib/postgresql/data (measured; re-measured before every decompress)",
-		"need > 320.0 GB (max of 2.0x the largest chunk's uncompressed size and the disk-watchdog floor; a guard, not a bound) — OK",
+		"need > 620.0 GB (the disk-watchdog floor plus 2.0x the largest chunk's uncompressed size; a guard, not a bound) — OK",
 		"would restamp 2 row(s)",
 		"DRY RUN: would take session advisory lock hashtext('usd-volume-restamp:trades')",
 		"pause compression policy job 1000 on trades (scheduled=true, compress_after=168h0m0s)",
@@ -617,11 +617,12 @@ func TestXLMBaseChunkRestamp_PreflightRefusesAWriteRunBeforeAnyDecompress(t *tes
 	}{
 		{
 			name: "measured, too little", free: 200 << 30, path: "/var/lib/postgresql/data",
-			wantErr: "free space 200.0 GB on /var/lib/postgresql/data is not more than 320.0 GB",
+			wantErr: "free space 200.0 GB on /var/lib/postgresql/data is not more than 620.0 GB",
 		},
 		{
-			name: "exactly 2x is not more than", free: 320 << 30, path: "/var/lib/postgresql/data",
-			wantErr: "is not more than 320.0 GB",
+			// The watchdog's 300 GiB floor plus this chunk's 320 GiB headroom.
+			name: "exactly floor+headroom is not more than", free: 620 << 30, path: "/var/lib/postgresql/data",
+			wantErr: "is not more than 620.0 GB",
 		},
 		{
 			name: "unmeasurable and no override", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data",
@@ -636,11 +637,13 @@ func TestXLMBaseChunkRestamp_PreflightRefusesAWriteRunBeforeAnyDecompress(t *tes
 			wantErr: "free space 100.0 GB (-min-free-bytes, NOT measured)",
 		},
 		{
-			name: "override just under 2x", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data", minFree: 300 << 30,
-			wantErr: "free space 300.0 GB (-min-free-bytes, NOT measured) is not more than 320.0 GB",
+			// Clears the old max(floor, headroom)=320 GiB requirement but not
+			// the correct floor+headroom=620 GiB one — the watchdog-gap band.
+			name: "override just under floor+headroom", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data", minFree: 600 << 30,
+			wantErr: "free space 600.0 GB (-min-free-bytes, NOT measured) is not more than 620.0 GB",
 		},
 		{
-			name: "override large enough", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data", minFree: 400 << 30,
+			name: "override large enough", freeErr: errors.New("statfs: no such file or directory"), path: "/var/lib/postgresql/data", minFree: 700 << 30,
 			wantOut: "WARNING: trusting -min-free-bytes",
 		},
 	}
@@ -963,7 +966,7 @@ func TestXLMBaseChunkRestamp_RechecksFreeSpaceBeforeEachDecompress(t *testing.T)
 
 	err := runXLMBaseChunkRestamp(context.Background(), store, "/etc/stellarindex.toml", from, to, opts, copts)
 	if err == nil || !strings.Contains(err.Error(), "chunk 2/3") || !strings.Contains(err.Error(), "pre-flight refused before the decompress") ||
-		!strings.Contains(err.Error(), "free space 100.0 GB on /var/lib/postgresql/data is not more than 320.0 GB") {
+		!strings.Contains(err.Error(), "free space 100.0 GB on /var/lib/postgresql/data is not more than 620.0 GB") {
 		t.Fatalf("err = %v, want the per-chunk refusal on chunk 2", err)
 	}
 	log := strings.Join(store.log, "\n")
@@ -1373,7 +1376,7 @@ func (f fakeVolumePathStore) TradesDataVolumePath(context.Context) (string, erro
 // 2x-the-largest-chunk could clear pre-flight and still get killed
 // mid-decompress. RLT-310: Required must be the max of the two, read from
 // the same HEAVY_MIN_DATA_KB the watchdog uses, so they cannot disagree.
-func TestChunkRestampPreflight_WatchdogFloorOverridesHeadroom(t *testing.T) {
+func TestChunkRestampPreflight_WatchdogFloorAddsToHeadroom(t *testing.T) {
 	t.Setenv("HEAVY_MIN_DATA_KB", "1048576") // 1 GiB floor, in KB
 	store := fakeVolumePathStore{path: "/data"}
 	const largest = 10 * 1024 * 1024 // 10 MiB chunk: headroom alone needs only 20 MiB
@@ -1384,13 +1387,48 @@ func TestChunkRestampPreflight_WatchdogFloorOverridesHeadroom(t *testing.T) {
 
 	p := chunkRestampPreflight(context.Background(), store, largest, copts)
 
-	wantRequired := uint64(1048576) * 1024 // the floor, in bytes
+	headroom := uint64(float64(largest) * chunkFreeSpaceHeadroom)
+	floor := uint64(1048576) * 1024
+	wantRequired := floor + headroom // the floor PLUS the chunk's own headroom, not max()
 	if p.Required != wantRequired {
-		t.Errorf("Required = %d bytes, want the watchdog floor %d bytes (headroom alone would have been %d)",
-			p.Required, wantRequired, uint64(largest*chunkFreeSpaceHeadroom))
+		t.Errorf("Required = %d bytes, want floor+headroom %d bytes (floor alone would have been %d)",
+			p.Required, wantRequired, floor)
 	}
 	if p.Err == nil {
-		t.Errorf("pre-flight passed with %d bytes free against a %d byte watchdog floor; want a refusal", free, wantRequired)
+		t.Errorf("pre-flight passed with %d bytes free against a %d byte requirement; want a refusal", free, wantRequired)
+	}
+}
+
+// CA2-A17-harden-0: a run whose free space sits strictly between the old
+// max(floor, headroom) requirement and the correct floor+headroom sum used
+// to clear pre-flight and then be killed by the watchdog mid-chunk, because
+// the watchdog's own floor has no knowledge of the chunk's headroom math and
+// enforces it unconditionally. This free-space figure sits exactly in that
+// gap: it is below floor+headroom (must refuse) but above max(floor,
+// headroom) (the pre-fix code let it through).
+func TestChunkRestampPreflight_RefusesInTheWatchdogGapBand(t *testing.T) {
+	t.Setenv("HEAVY_MIN_DATA_KB", "314572800") // 300 GiB, KB (watchdog default)
+	store := fakeVolumePathStore{path: "/data"}
+	const largest = 17_000_000_000 // 17 GB uncompressed chunk (the 330 GiB example)
+	floor := heavyMinDataFloorBytes()
+	headroom := uint64(float64(largest) * chunkFreeSpaceHeadroom)
+	oldMax := floor
+	if headroom > oldMax {
+		oldMax = headroom
+	}
+	// 10 GiB above the old max() requirement, but still short of floor+headroom.
+	free := oldMax + 10*1024*1024*1024
+
+	copts := chunkRestampOptions{
+		FreeBytes: func(string) (uint64, error) { return free, nil },
+	}
+
+	p := chunkRestampPreflight(context.Background(), store, largest, copts)
+
+	if p.Err == nil {
+		t.Fatalf("pre-flight passed with %s free (only %s above max(floor,headroom)) — "+
+			"the watchdog floor (%s) still has to absorb this chunk's growth (%s) on top of it; "+
+			"want a refusal", fmtBytes(int64(free)), fmtBytes(10*1024*1024*1024), fmtBytes(int64(floor)), fmtBytes(int64(headroom)))
 	}
 }
 
