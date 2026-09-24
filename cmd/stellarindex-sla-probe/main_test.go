@@ -751,3 +751,52 @@ func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
 		t.Errorf("FailedReasons does not name the stale usdc pair's price-tip: %v", rep.FailedReasons)
 	}
 }
+
+// TestMain_UsageDoesNotPrintAPIKey pins CA2-A31-harden-1: a flag-parse
+// error prints Usage and the healthchecks wrapper uploads that output to a
+// third party, so the env-supplied key must never render as a flag default.
+func TestMain_UsageDoesNotPrintAPIKey(t *testing.T) {
+	const probeKey = "fake-probe-key-not-a-real-value" // gitleaks:allow
+	cases := []struct {
+		args     string
+		wantExit int
+	}{
+		{"-duration 120", 2}, // unitless duration: the wrapper's likeliest typo
+		{"-h", 0},
+	}
+	for _, tc := range cases {
+		args := tc.args
+		t.Run(args, func(t *testing.T) {
+			cmd := exec.Command(os.Args[0], "-test.run=^TestHelperProcessMain$")
+			cmd.Env = append(os.Environ(), "SLA_PROBE_HELPER=1",
+				"STELLARINDEX_PROBE_API_KEY="+probeKey,
+				"SLA_PROBE_HELPER_ARGS="+args)
+			out, err := cmd.CombinedOutput()
+			if got := cmd.ProcessState.ExitCode(); got != tc.wantExit {
+				t.Fatalf("%s: exit = %d (%v), want %d; output:\n%s", args, got, err, tc.wantExit, out)
+			}
+			if !strings.Contains(string(out), "-api-key") {
+				t.Fatalf("%s: output is not the usage text:\n%s", args, out)
+			}
+			if strings.Contains(string(out), probeKey) {
+				t.Errorf("%s: usage output leaks STELLARINDEX_PROBE_API_KEY:\n%s", args, out)
+			}
+		})
+	}
+}
+
+// TestResolveAPIKey_FallsBackToEnv keeps the wrapper's env-inheritance
+// contract: with no -api-key on argv the probe still sends the env key.
+func TestResolveAPIKey_FallsBackToEnv(t *testing.T) {
+	t.Setenv("STELLARINDEX_PROBE_API_KEY", "env-value")
+	if got := resolveAPIKey(""); got != "env-value" {
+		t.Errorf(`resolveAPIKey("") = %q, want the env value`, got)
+	}
+	if got := resolveAPIKey("flag-value"); got != "flag-value" {
+		t.Errorf("resolveAPIKey(flag) = %q, want the flag value", got)
+	}
+	t.Setenv("STELLARINDEX_PROBE_API_KEY", "")
+	if got := resolveAPIKey(""); got != "" {
+		t.Errorf("resolveAPIKey with no env or flag = %q, want empty", got)
+	}
+}

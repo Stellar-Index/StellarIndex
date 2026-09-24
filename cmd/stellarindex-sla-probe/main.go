@@ -280,12 +280,17 @@ func validateProbeFlags(f probeFlags) error {
 	return nil
 }
 
-func main() {
-	// API key default falls through to STELLARINDEX_PROBE_API_KEY so
-	// the systemd unit can pass it via Environment= without leaking
-	// it onto the command line (visible in ps).
-	defaultAPIKey := os.Getenv("STELLARINDEX_PROBE_API_KEY")
+// resolveAPIKey falls back to STELLARINDEX_PROBE_API_KEY after parsing so
+// the key stays off argv (ps) and out of Usage, which prints flag defaults
+// verbatim and which the healthchecks wrapper uploads on a parse error.
+func resolveAPIKey(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return os.Getenv("STELLARINDEX_PROBE_API_KEY")
+}
 
+func main() {
 	var (
 		baseURL      = flag.String("base-url", "http://localhost:3000/v1", "API base URL (required)")
 		duration     = flag.Duration("duration", 30*time.Second, "Test duration")
@@ -298,7 +303,7 @@ func main() {
 		closedFresh  = flag.Duration("closed-bucket-freshness-target", defaultClosedBucketFreshTarget, "Freshness bound for /price, whose closed-bucket contract (ADR-0015) makes observed_at structurally 30-150s old")
 		availTarget  = flag.Float64("availability-target", defaultAvailabilityT, "Per-endpoint availability SLA target (percent)")
 		textfileOut  = flag.String("textfile-output", "", "Path to write Prometheus textfile (node_exporter textfile_collector format). Empty = no metrics emit.")
-		apiKey       = flag.String("api-key", defaultAPIKey, "API key for Authorization: Bearer header. Defaults to $STELLARINDEX_PROBE_API_KEY. Without one the probe hits the anonymous-tier rate limit (60 req/min) and reads as a fail.")
+		apiKey       = flag.String("api-key", "", "API key for Authorization: Bearer header. Defaults to $STELLARINDEX_PROBE_API_KEY. Without one the probe hits the anonymous-tier rate limit (60 req/min) and reads as a fail.")
 		showVersion  = flag.Bool("version", false, "Print version and exit")
 	)
 	flag.Var(&pairFlag, "pair", "Asset pair as 'asset,quote' (e.g. 'native,fiat:USD'). Repeatable.")
@@ -339,7 +344,7 @@ func main() {
 		endpoints = append(endpoints, pairEndpoints(parts[0], parts[1], *closedFresh)...)
 	}
 
-	rep := runProbe(*baseURL, *apiKey, endpoints, *duration, *concurrency, slaTargets{
+	rep := runProbe(*baseURL, resolveAPIKey(*apiKey), endpoints, *duration, *concurrency, slaTargets{
 		P95MS:           durationMS(*p95Target),
 		P99MS:           durationMS(*p99Target),
 		FreshnessSec:    freshTarget.Seconds(),
