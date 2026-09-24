@@ -58,11 +58,22 @@ YAML block nobody re-read. So, additionally:
 A missing register section, or an empty one while informational rules
 exist, is a FAILURE — not a pass over an empty set.
 
+THE RUNBOOK COLUMN (RLT-010):
+The page a responder receives carries the rule's `runbook_url`; the
+catalogue's Runbook column is what they read when browsing. The two had
+drifted for eight alerts (the SLO burn rows linked per-tier pages while
+the pages themselves link api-latency.md / api-5xx.md). So, per alert:
+  * the two rule trees agree on `runbook_url`;
+  * the FIRST link in the catalogue's Runbook cell resolves to the same
+    docs/operations/ path as `runbook_url`. Links after it are per-alert
+    supplements and are not constrained.
+
 Pure-Python (PyYAML); mirrors lint-runbook-annotations.py so it runs
 anywhere verify.sh does. Invoked from lint-docs.sh §10.
 """
 import glob
 import os
+import posixpath
 import re
 import sys
 
@@ -75,10 +86,14 @@ except ImportError:
     print("lint-alerts-catalog: FAIL — PyYAML is required (pip install pyyaml)", file=sys.stderr)
     sys.exit(2)
 
-CATALOG = "docs/operations/alerts-catalog.md"
+CATALOG = os.environ.get("ALERTS_CATALOG", "docs/operations/alerts-catalog.md")
 TREES = ("deploy/monitoring/rules/*.yml", "configs/prometheus/rules.r1/*.yml")
 ROW = re.compile(r"^\|\s*`(stellarindex_[A-Za-z0-9_]+)`\s*\|")
 VALID = ("page", "ticket", "informational")
+# Every runbook_url is an absolute link into this tree (lint-runbook-annotations
+# enforces the scheme); the catalogue links relative to docs/operations/.
+RUNBOOK_URL_ROOT = "https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/"
+MD_LINK = re.compile(r"\]\(([^)\s]+)\)")
 
 # The delivery register (#485). Delimited by HTML comments rather than by a
 # heading so the row parser cannot be knocked off by an editorial re-title,
@@ -102,18 +117,55 @@ REGISTER_SPLIT = re.compile(
 MIN_REASON = 40
 
 
-def load_tree(pattern):
-    """alert name -> severity, for one rule tree."""
-    out = {}
+def iter_alert_rules(pattern):
+    """Yield every alerting rule dict in one rule tree."""
     for path in sorted(glob.glob(pattern)):
         with open(path, encoding="utf-8") as fh:
             doc = yaml.safe_load(fh)
         for group in (doc or {}).get("groups", []) or []:
             for rule in group.get("rules", []) or []:
-                name = rule.get("alert")
-                if name:
-                    out[name] = (rule.get("labels") or {}).get("severity", "")
-    return out
+                if rule.get("alert"):
+                    yield rule
+
+
+def load_tree(pattern):
+    """alert name -> severity, for one rule tree."""
+    return {rule["alert"]: (rule.get("labels") or {}).get("severity", "")
+            for rule in iter_alert_rules(pattern)}
+
+
+def load_runbook_urls(pattern):
+    """alert name -> annotations.runbook_url ('' when absent), for one rule tree."""
+    return {rule["alert"]: (rule.get("annotations") or {}).get("runbook_url", "")
+            for rule in iter_alert_rules(pattern)}
+
+
+def check_runbook_links(doc_runbooks, problems):
+    """The catalogue's first Runbook link must be the page the alert itself links."""
+    urls = {pattern: load_runbook_urls(pattern) for pattern in TREES}
+    primary_pattern, primary = next(iter(urls.items()))
+    for pattern, other in list(urls.items())[1:]:
+        for name in sorted(set(primary) & set(other)):
+            if primary[name] != other[name]:
+                problems.append(
+                    f"{name}: runbook_url differs between rule trees "
+                    f"({primary_pattern} = {primary[name]!r}, {pattern} = {other[name]!r}) "
+                    "— the catalogue cannot describe both")
+    for name in sorted(set(primary) & set(doc_runbooks)):
+        url = primary[name]
+        if not url.startswith(RUNBOOK_URL_ROOT):
+            problems.append(
+                f"{name}: runbook_url {url!r} is missing or not under {RUNBOOK_URL_ROOT}, "
+                "so the catalogue's Runbook link cannot be checked against it")
+            continue
+        want = url[len(RUNBOOK_URL_ROOT):]
+        links = MD_LINK.findall(doc_runbooks[name])
+        got = posixpath.normpath(links[0]) if links else None
+        if got != want:
+            problems.append(
+                f"{name}: catalogue Runbook column links {got!r} first, but the alert's "
+                f"runbook_url sends the page to {want!r} — the first link must be the "
+                "page's own runbook; list any per-alert supplement after it")
 
 
 def split_cells(row):
@@ -163,6 +215,7 @@ def main():
         return 2
 
     doc_rows = {}
+    doc_runbooks = {}
     register_rows = {}
     legend_counts = {}
     saw_begin = saw_end = False
@@ -205,6 +258,7 @@ def main():
                 "(Name | Metric | Condition | Severity | Runbook)")
             continue
         doc_rows[m.group(1)] = cells[4]
+        doc_runbooks[m.group(1)] = cells[5]
 
     for name in sorted(set(rules) - set(doc_rows)):
         problems.append(f"{name}: alert rule has no row in {CATALOG}")
@@ -223,6 +277,8 @@ def main():
                 + (" — 'informational' routes to receiver `chat-informational`, a "
                    "deliberately quiet channel that must never carry something needing action"
                    if want == "informational" else ""))
+
+    check_runbook_links(doc_runbooks, problems)
 
     # ── The Severity legend's own arithmetic ─────────────────────────────
     # The legend states a rule COUNT per severity. It said `page | 48` while

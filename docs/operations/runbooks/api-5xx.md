@@ -22,6 +22,7 @@ severity: P1 at >5% / P3 at >1% / P1 at SLO burn-rate fast+medium
 | ----- | ----- |
 | Direct-threshold alerts | `stellarindex_api_error_rate_high` (>1 % for 2 min) → **P3** (`severity: ticket`)<br>`stellarindex_api_error_rate_critical` (>5 % for 2 min) → P1 (`severity: page`) |
 | SLO burn-rate alerts | `stellarindex_slo_availability_burn_{fast,medium,slow}` (per ADR-0009 multi-window pattern) |
+| Runbook routing | All three burn tiers' `runbook_url` lands on this page. Per-tier detail: [slo-availability-burn-fast](slo-availability-burn-fast.md), [slo-availability-burn-medium](slo-availability-burn-medium.md), [slo-availability-burn-slow](slo-availability-burn-slow.md). |
 | Severity | **P1 at critical**, **P3 at high**; **P1** for fast/medium burn, P3 for slow burn |
 | Detected by | `configs/prometheus/rules.r1/api.yml` + `configs/prometheus/rules.r1/slo.yml` (r1 overlays, `job="stellarindex-api"`, loaded from `/etc/prometheus/rules.r1/*.yml`; multi-host templates: `deploy/monitoring/rules/{api,slo}.yml`) — rules on `http_requests_total{status=~"5.."}` rate |
 | Typical MTTR | 5–15 min for a bad-deploy revert; 30–60 min for a latent-bug forward fix |

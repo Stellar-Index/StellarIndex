@@ -286,12 +286,12 @@ for incident-time clarity.
 
 | Name | SLO | Burn rate (× monthly budget) | Severity | Runbook |
 | ---- | --- | ---------------------------- | -------- | ------- |
-| `stellarindex_slo_latency_burn_fast` | 99.9% under 200ms | > 14.4× over 5m AND 1h | page | [slo-latency-burn-fast](runbooks/slo-latency-burn-fast.md) |
-| `stellarindex_slo_latency_burn_medium` | same | > 6× over 30m AND 6h | page | [slo-latency-burn-medium](runbooks/slo-latency-burn-medium.md) |
-| `stellarindex_slo_latency_burn_slow` | same | > 1× over 6h AND 24h | ticket | [slo-latency-burn-slow](runbooks/slo-latency-burn-slow.md) |
-| `stellarindex_slo_availability_burn_fast` | 99.9% non-5xx | > 14.4× over 5m AND 1h | page | [slo-availability-burn-fast](runbooks/slo-availability-burn-fast.md) |
-| `stellarindex_slo_availability_burn_medium` | same | > 6× over 30m AND 6h | page | [slo-availability-burn-medium](runbooks/slo-availability-burn-medium.md) |
-| `stellarindex_slo_availability_burn_slow` | same | > 1× over 6h AND 24h | ticket | [slo-availability-burn-slow](runbooks/slo-availability-burn-slow.md) |
+| `stellarindex_slo_latency_burn_fast` | 99.9% under 200ms | > 14.4× over 5m AND 1h | page | [api-latency](runbooks/api-latency.md) + tier detail [slo-latency-burn-fast](runbooks/slo-latency-burn-fast.md) |
+| `stellarindex_slo_latency_burn_medium` | same | > 6× over 30m AND 6h | page | [api-latency](runbooks/api-latency.md) + tier detail [slo-latency-burn-medium](runbooks/slo-latency-burn-medium.md) |
+| `stellarindex_slo_latency_burn_slow` | same | > 1× over 6h AND 24h | ticket | [api-latency](runbooks/api-latency.md) + tier detail [slo-latency-burn-slow](runbooks/slo-latency-burn-slow.md) |
+| `stellarindex_slo_availability_burn_fast` | 99.9% non-5xx | > 14.4× over 5m AND 1h | page | [api-5xx](runbooks/api-5xx.md) + tier detail [slo-availability-burn-fast](runbooks/slo-availability-burn-fast.md) |
+| `stellarindex_slo_availability_burn_medium` | same | > 6× over 30m AND 6h | page | [api-5xx](runbooks/api-5xx.md) + tier detail [slo-availability-burn-medium](runbooks/slo-availability-burn-medium.md) |
+| `stellarindex_slo_availability_burn_slow` | same | > 1× over 6h AND 24h | ticket | [api-5xx](runbooks/api-5xx.md) + tier detail [slo-availability-burn-slow](runbooks/slo-availability-burn-slow.md) |
 
 ## Stellar / node alerts
 
@@ -512,7 +512,7 @@ Operator runbook walks through review + override.
 | Name | Metric | Condition | Severity | Runbook |
 | ---- | ------ | --------- | -------- | ------- |
 | `stellarindex_anomaly_freeze_engaged` | `stellarindex_anomaly_freeze_engaged_total` per class | rate > 0 over 5m | ticket | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) |
-| `stellarindex_anomaly_freeze_sustained` | `stellarindex_anomaly_freeze_engaged_total` per class | rate > 0 sustained 1h+ | page | [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
+| `stellarindex_anomaly_freeze_sustained` | `stellarindex_anomaly_freeze_engaged_total` per class | rate > 0 sustained 1h+ | page | [anomaly-freeze-engaged](runbooks/anomaly-freeze-engaged.md) + per-alert detail [anomaly-freeze-sustained](runbooks/anomaly-freeze-sustained.md) |
 | `stellarindex_anomaly_freeze_recovery_stalled` | `stellarindex_anomaly_freeze_engaged_total` vs `_recovered_total` + `_recovery_sweeps_total{outcome!="ok"}` | engaged > recovered for 2h+ AND sweep errors in last 15m | ticket | [freeze-recovery-stalled](runbooks/freeze-recovery-stalled.md) |
 | `stellarindex_amm_self_pair_swap_burst` | `stellarindex_amm_self_pair_swap_total` per source | increase > 10 over 15m, sustained 2m — a burst of self-pair (token_in==token_out) swaps, the 2026-08 Blend/Comet exploit primitive; normally zero | ticket | [amm-self-pair-swap-burst](runbooks/amm-self-pair-swap-burst.md) |
 
@@ -594,7 +594,7 @@ auto-unfreeze at all. Rules in
 | `stellarindex_supply_snapshot_circulating_zero` | `stellarindex_supply_snapshot_circulating_xlm{asset_key="XLM"}` | ≤ 0 for ≥ 5 min | page | [supply-snapshot-circulating-zero](runbooks/supply-snapshot-circulating-zero.md) |
 | `stellarindex_aggregator_supply_refresh_stalled` | `time() - max(timestamp(stellarindex_aggregator_supply_refresh_total{outcome="ok"}))` | > 30 min for ≥ 5 min | page | [supply-refresh-stalled](runbooks/supply-refresh-stalled.md) |
 | `stellarindex_aggregator_supply_refresh_error_dominant` | error-outcome rate / total-rate | > 50% for ≥ 30 min | ticket | [supply-refresh-error-dominant](runbooks/supply-refresh-error-dominant.md) |
-| `stellarindex_aggregator_supply_refresh_never_initialized` | `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | ticket | [aggregator-supply-refresh-never-initialized](runbooks/aggregator-supply-refresh-never-initialized.md) |
+| `stellarindex_aggregator_supply_refresh_never_initialized` | `absent_over_time(stellarindex_aggregator_supply_refresh_total{outcome="ok"}[36h])` | == 1 for ≥ 5 min | ticket | [supply-snapshot-never-initialized](runbooks/supply-snapshot-never-initialized.md) + per-alert detail [aggregator-supply-refresh-never-initialized](runbooks/aggregator-supply-refresh-never-initialized.md) |
 | `stellarindex_ch_supply_gapfill_failed` | `node_systemd_unit_state{name="ch-supply.service",state="failed"}` | == 1 for ≥ 10 min | ticket | [ch-supply-gapfill-failed](runbooks/ch-supply-gapfill-failed.md) |
 
 ## Infra / host alerts

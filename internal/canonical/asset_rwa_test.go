@@ -3,6 +3,9 @@ package canonical
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"regexp"
+	"strconv"
 	"testing"
 )
 
@@ -117,5 +120,30 @@ func TestIsKnownRWA(t *testing.T) {
 	}
 	if IsKnownRWA("NOTANRWA") {
 		t.Error("NOTANRWA should not be known")
+	}
+}
+
+// TestCoverageDoc_ADR0028CodeCountMatchesAllowList guards against the doc
+// and the allow-list drifting apart again: docs/methodology/rwa-coverage-
+// reconciliation.md states how many instrument codes ADR-0028 covers, and
+// that number must equal len(knownRWACodes) rather than be hand-maintained
+// prose that nobody re-counts when the map changes.
+func TestCoverageDoc_ADR0028CodeCountMatchesAllowList(t *testing.T) {
+	const docPath = "../../docs/methodology/rwa-coverage-reconciliation.md"
+	b, err := os.ReadFile(docPath)
+	if err != nil {
+		t.Fatalf("reading %s: %v", docPath, err)
+	}
+	re := regexp.MustCompile(`ADR-0028 covers (\d+) instrument codes`)
+	m := re.FindSubmatch(b)
+	if m == nil {
+		t.Fatalf("%s: did not find an 'ADR-0028 covers N instrument codes' statement", docPath)
+	}
+	stated, err := strconv.Atoi(string(m[1]))
+	if err != nil {
+		t.Fatalf("parsing stated count %q: %v", m[1], err)
+	}
+	if want := len(KnownRWACodes()); stated != want {
+		t.Errorf("%s says ADR-0028 covers %d instrument codes, but knownRWACodes has %d entries", docPath, stated, want)
 	}
 }

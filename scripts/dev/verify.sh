@@ -488,6 +488,7 @@ defer_check_lane() { # defer_check_lane <deferred-file> <label> <reason> —
 
 lane_a() { # doc lints
     echo "=== Docs ==="          && ./scripts/ci/lint-docs.sh
+    echo "=== Alerts catalogue self-test ===" && ./scripts/ci/lint-alerts-catalog-test.sh
     echo "=== Doc links ===" && ./scripts/ci/lint-doc-links.sh
     echo "=== Doc links self-test ===" && ./scripts/ci/lint-doc-links-test.sh
 }

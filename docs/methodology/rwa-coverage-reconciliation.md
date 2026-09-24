@@ -166,7 +166,7 @@ new input to an existing one, and it needs its own decision:
 - It inherits the binding problem entirely. A NAV joined on a code
   hands every impersonator the real instrument's value — which is the
   2026-08 attacker-authored-pricing incident in a new coordinate.
-- ADR-0028 covers 15 instrument codes. Of the sixteen issuers here it
+- ADR-0028 covers 14 instrument codes. Of the sixteen issuers here it
   reaches Franklin Templeton (BENJI), Ondo (USDY), Matrixdock (XAUm)
   and Etherfuse (USTRY/CETES/TESOURO). The other ten would need feeds
   that do not exist yet.
