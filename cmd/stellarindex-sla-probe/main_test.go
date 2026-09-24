@@ -665,3 +665,89 @@ func TestHit_OracleWithReadingsIsASuccess(t *testing.T) {
 		t.Error("an oracle response with one reading was rejected")
 	}
 }
+
+// TestRunProbe_MultiPairDoesNotMergeSamples is the regression guard for
+// CA2-A31-harden-2: with two -pair flags, both pairs' endpoints share the
+// bare names "price"/"price-tip"/"oracle-latest". Before the fix, samples
+// were keyed by ep.Name alone, so native's fresh price-tip samples and
+// USDC's 600s-stale ones landed in the same bucket and every PerEndpoint
+// row for a given name was fed that merged slice — the stale pair's
+// freshness became invisible (or was reported as a duplicate row
+// indistinguishable from the fresh pair's).
+//
+// PROVEN-RED: keying samples[ep.Name] (main.go collectSamples/runProbe)
+// instead of samples[sampleKey(ep)] makes this fail: both pairs'
+// ObservedAtFreshSec collapse to the same merged value and the USDC pair
+// is never named in FailedReasons.
+func TestRunProbe_MultiPairDoesNotMergeSamples(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		var observedAt time.Time
+		if r.URL.Query().Get("asset") == "usdc" {
+			// 600s stale — well past any 30s freshness target.
+			observedAt = time.Now().UTC().Add(-600 * time.Second)
+		} else {
+			observedAt = time.Now().UTC()
+		}
+		_, _ = w.Write([]byte(`{"data":{"observed_at":"` + observedAt.Format(time.RFC3339Nano) + `","price":"1.0"}}`))
+	}))
+	defer srv.Close()
+
+	var endpoints []endpoint
+	endpoints = append(endpoints, pairEndpoints("native", "fiat:USD", defaultClosedBucketFreshTarget)...)
+	endpoints = append(endpoints, pairEndpoints("usdc", "fiat:USD", defaultClosedBucketFreshTarget)...)
+
+	// concurrency == len(endpoints): each worker starts on a distinct
+	// endpoint (collectSamples' round-robin), guaranteeing every one of
+	// the 6 endpoints gets sampled at least once within the short run.
+	rep := runProbe(srv.URL, "", endpoints, 500*time.Millisecond, len(endpoints),
+		slaTargets{P95MS: 5000, P99MS: 5000, FreshnessSec: 30, AvailabilityPct: 99.0})
+
+	if len(rep.PerEndpoint) != 6 {
+		t.Fatalf("PerEndpoint len=%d want 6 (2 pairs x 3 endpoints)", len(rep.PerEndpoint))
+	}
+
+	var nativeTip, usdcTip *stats
+	for i := range rep.PerEndpoint {
+		st := rep.PerEndpoint[i]
+		if st.Endpoint != "price-tip" {
+			continue
+		}
+		switch st.Pair {
+		case "native/fiat:USD":
+			nativeTip = &rep.PerEndpoint[i]
+		case "usdc/fiat:USD":
+			usdcTip = &rep.PerEndpoint[i]
+		}
+	}
+	if nativeTip == nil || usdcTip == nil {
+		t.Fatalf("missing per-pair price-tip row: native=%v usdc=%v", nativeTip, usdcTip)
+	}
+	if nativeTip.ObservedAtFreshSec == nil || usdcTip.ObservedAtFreshSec == nil {
+		t.Fatalf("missing freshness samples: native=%v usdc=%v", nativeTip.ObservedAtFreshSec, usdcTip.ObservedAtFreshSec)
+	}
+	// The defect merges both pairs' samples into one bucket, so both
+	// rows would read the same (merged) freshness. Asserting they
+	// differ — and that each is close to its OWN pair's true value —
+	// is what a merge cannot satisfy.
+	const freshCeiling = 5.0
+	if *nativeTip.ObservedAtFreshSec > freshCeiling {
+		t.Errorf("native/fiat:USD price-tip freshness = %.1fs, want <= %.1fs (contaminated by the stale USDC pair)",
+			*nativeTip.ObservedAtFreshSec, freshCeiling)
+	}
+	const staleFloor = 500.0
+	if *usdcTip.ObservedAtFreshSec < staleFloor {
+		t.Errorf("usdc/fiat:USD price-tip freshness = %.1fs, want >= %.1fs (hidden behind the fresh native pair)",
+			*usdcTip.ObservedAtFreshSec, staleFloor)
+	}
+
+	foundUSDCFailure := false
+	for _, r := range rep.FailedReasons {
+		if strings.Contains(r, "price-tip[usdc/fiat:USD]") && strings.Contains(r, "freshness") {
+			foundUSDCFailure = true
+		}
+	}
+	if !foundUSDCFailure {
+		t.Errorf("FailedReasons does not name the stale usdc pair's price-tip: %v", rep.FailedReasons)
+	}
+}
