@@ -98,6 +98,66 @@ func TestADR0026PinsThe1225AmendmentNotice(t *testing.T) {
 	}
 }
 
+// TestADR0026PinsThe1218AmendmentNotice guards RSWP-117: ADR-0026's two
+// "#1218" citations no longer identify the `/v1/price/tip` proxy
+// fallback, because GitHub has since assigned #1218 to an unrelated
+// issue. Unlike the other dangling numbers, this change is traceable
+// (commit a8be130dd), so the amendment must point there and must not
+// claim the change is lost.
+func TestADR0026PinsThe1218AmendmentNotice(t *testing.T) {
+	path := filepath.Join(repoRoot(t), "docs", "adr", "0026-stablecoin-fiat-proxy-late-binding.md")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	doc := string(b)
+
+	const heading = "Amendment (2026-09-24, RSWP-117)"
+	start := strings.Index(doc, heading)
+	if start < 0 {
+		t.Fatalf("%s is missing %q; the dangling #1218 citation is no longer flagged", path, heading)
+	}
+	block := doc[start:]
+	if end := strings.Index(block, "\n\n"); end >= 0 {
+		block = block[:end]
+	}
+	flat := strings.Join(strings.Fields(strings.ReplaceAll(block, "\n>", " ")), " ")
+
+	for _, want := range []string{
+		"GitHub has since assigned #1218 to a real but unrelated issue",
+		"stale-component freshness gate",
+		"commit `a8be130dd`",
+		"`internal/api/v1/price_tip.go`",
+	} {
+		if !strings.Contains(flat, want) {
+			t.Errorf("%s RSWP-117 amendment is missing %q", path, want)
+		}
+	}
+	for _, forbidden := range []string{"does not survive in git history", "not replaced with a guess"} {
+		if strings.Contains(flat, forbidden) {
+			t.Errorf("%s RSWP-117 amendment says %q, but the change is traceable to commit a8be130dd", path, forbidden)
+		}
+	}
+
+	// The pointer is only true while computeTip still runs the proxy fallback.
+	src, err := os.ReadFile(filepath.Join(repoRoot(t), "internal", "api", "v1", "price_tip.go"))
+	if err != nil {
+		t.Fatalf("read price_tip.go: %v", err)
+	}
+	if !strings.Contains(string(src), "s.tryStablecoinFiatProxy(ctx, asset, quote)") {
+		t.Errorf("price_tip.go no longer calls tryStablecoinFiatProxy; the RSWP-117 amendment's pointer is stale")
+	}
+
+	for _, original := range []string{
+		"PRs #1217 / #1218 / #1224 / #1225 / #1226 (etc.) added",
+		"PR #1218 — `/v1/price/tip` proxy fallback",
+	} {
+		if !strings.Contains(doc, original) {
+			t.Errorf("%s: original citation %q was rewritten or removed; ADR body text must only be amended, per docs/adr/README.md", path, original)
+		}
+	}
+}
+
 // TestADR0026PinsThe1226AmendmentNotice guards RSWP-123: ADR-0026's two
 // "#1226" citations (Context intro, References > Implementation) no
 // longer identify the `/v1/ohlc` proxy fallback they describe. GitHub

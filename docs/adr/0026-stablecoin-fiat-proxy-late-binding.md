@@ -77,6 +77,19 @@ superseded_by: null
 > ADR-0019 parity-guard exponent, not this fallback. Follow the commit,
 > not the number.
 
+> **Amendment (2026-09-24, RSWP-117).** The two "#1218" citations
+> below (Context intro's PR list, References → Implementation surface)
+> no longer identify the `/v1/price/tip` proxy fallback they describe.
+> GitHub has since assigned #1218 to a real but unrelated issue (the
+> stale-component freshness gate never being wired end to end in
+> `internal/supply`), so a reader following the citation lands on
+> wrong content instead of a 404. The `/v1/price/tip` fallback is
+> commit `a8be130dd` ("fix(api): /v1/price/tip stablecoin-proxy
+> fallback for X/fiat:USD"), whose subject records "#1218" from the
+> old numbering; the change is in `internal/api/v1/price_tip.go`
+> (`computeTip`'s `tryStablecoinFiatProxy` step). Follow the commit,
+> not the "#1218" number.
+
 ## Context
 
 Most CEX and DEX trades quote against a USD stablecoin
