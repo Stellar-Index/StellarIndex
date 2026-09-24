@@ -9,6 +9,7 @@
 
 import { NextResponse } from 'next/server';
 
+import { escapeXml as esc, toCdata } from '@/lib/atom';
 import { loadReleases, versionSlug, type Release } from '@/lib/changelog';
 import { CURRENT_NETWORK } from '@/lib/networks';
 
@@ -91,7 +92,7 @@ function renderEntry(r: Release): string {
     <link rel="alternate" href="${url}" type="text/html" />
     <published>${published}</published>
     <updated>${published}</updated>
-    <content type="text"><![CDATA[${summary}]]></content>
+    <content type="text">${toCdata(summary)}</content>
   </entry>`;
 }
 
@@ -109,12 +110,4 @@ function atomDate(date?: string): string {
   const d = new Date(`${date}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return new Date().toISOString();
   return d.toISOString();
-}
-
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
 }
