@@ -30,23 +30,23 @@ require (
 require github.com/stellar/go-stellar-sdk v0.7.3 // SCVal/XDR decoding for Soroban event connectors (ADR-0013). Pinned SHA in VERSIONS.md.
 
 require (
-	cloud.google.com/go/bigquery v1.83.0
+	cloud.google.com/go/bigquery v1.84.0
 	github.com/ClickHouse/ch-go v0.74.0
 	github.com/ClickHouse/clickhouse-go/v2 v2.48.0
 	github.com/aws/aws-sdk-go-v2 v1.47.0
-	github.com/aws/aws-sdk-go-v2/config v1.33.4
-	github.com/aws/aws-sdk-go-v2/credentials v1.20.4
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.0
+	github.com/aws/aws-sdk-go-v2/config v1.33.5
+	github.com/aws/aws-sdk-go-v2/credentials v1.20.5
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1
 	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-systemd/v22 v22.7.0
-	github.com/go-webauthn/webauthn v0.18.1
+	github.com/go-webauthn/webauthn v0.18.2
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_model v0.6.3
 	github.com/xeipuuv/gojsonschema v1.2.0 // JSON-Schema validation for scripts/ci/lint-golangci-config (offline .golangci.yml check, #317); already in the graph via go-stellar-sdk
 	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.57.0
 	golang.org/x/tools v0.50.0
-	google.golang.org/api v0.297.0
+	google.golang.org/api v0.298.0
 	gopkg.in/yaml.v3 v3.0.1
 )
 
@@ -93,7 +93,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/signin v1.10.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.50.0 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.51.0 // indirect
 	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
@@ -114,7 +114,7 @@ require (
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
-	github.com/fxamacker/cbor/v2 v2.9.3 // indirect
+	github.com/fxamacker/cbor/v2 v2.9.4 // indirect
 	github.com/go-errors/errors v1.5.1 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
