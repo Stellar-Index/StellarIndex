@@ -1,6 +1,7 @@
 package incidents
 
 import (
+	"io/fs"
 	"strings"
 	"testing"
 )
@@ -33,6 +34,42 @@ func TestLoad_RealCorpus(t *testing.T) {
 		if strings.HasPrefix(inc.Slug, "_") {
 			t.Errorf("[%d] %s: template prefix '_' should be skipped", i, inc.Slug)
 		}
+	}
+}
+
+// TestLoad_NoSilentDrops guards the failure mode Load's own doc comment
+// accepts by design: a post that fails frontmatter validation is logged
+// and skipped rather than panicking the binary. That's correct for one
+// bad post among many, but nothing previously caught the count going
+// quietly wrong — a malformed post vanishes from /v1/incidents and the
+// status page with only a log line, which CI never inspects. This
+// compares Load's output count against every non-template *.md file
+// actually embedded, so a corpus file that stops parsing fails the build
+// instead of the public feed.
+func TestLoad_NoSilentDrops(t *testing.T) {
+	entries, err := fs.ReadDir(contentFS, "data")
+	if err != nil {
+		t.Fatalf("ReadDir(data): %v", err)
+	}
+	want := 0
+	for _, e := range entries {
+		if e.IsDir() || strings.HasPrefix(e.Name(), "_") || !strings.HasSuffix(e.Name(), ".md") {
+			continue
+		}
+		want++
+	}
+	if want == 0 {
+		t.Fatalf("no non-template *.md fixtures found under data/; test would be vacuous")
+	}
+
+	got, err := Load(nil)
+	if err != nil {
+		t.Fatalf("Load: unexpected error: %v", err)
+	}
+	if len(got) != want {
+		t.Fatalf("Load returned %d incident(s) but data/ holds %d non-template post(s); "+
+			"a post is being silently dropped (check Load's warn logs for the malformed file)",
+			len(got), want)
 	}
 }
 

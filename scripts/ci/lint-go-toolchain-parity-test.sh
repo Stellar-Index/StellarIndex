@@ -112,6 +112,25 @@ check "workflow with no setup-go step at all -> FAIL (vacuous)" 1 "$TMP/nosetup"
 # ── the repo's own workflow tree is clean ────────────────────────────
 check "repo's own .github/workflows/ passes" 0 ".github/workflows"
 
+# ── container Dockerfile glob must see suffix-style names too. The
+# repo's docker/ has one prefix-style Dockerfile (docker/verify/Dockerfile)
+# and six suffix-style ones (docker/stellarindex-*.Dockerfile). A glob
+# that only matches the prefix style silently drops the six and still
+# prints "OK" over that single remaining subject.
+asserts=$((asserts + 1))
+want_dockerfiles="$(find docker -type f \( -name 'Dockerfile*' -o -name '*.Dockerfile' \) 2>/dev/null | wc -l | tr -d ' ')"
+got_line="$(bash "$LINT" ".github/workflows" 2>/dev/null | grep 'container Go pin' || true)"
+if [ "$want_dockerfiles" -lt 2 ]; then
+  echo "  FAIL container-Dockerfile fixture count sanity ($want_dockerfiles dockerfiles found, expected >= 2 suffix+prefix mix)"
+  fail=$((fail + 1))
+elif [[ "$got_line" == *"across ${want_dockerfiles} Dockerfile(s)"* ]]; then
+  echo "  ok   container Go pin check sees all ${want_dockerfiles} docker/*.Dockerfile files, not just the prefix-style one"
+  pass=$((pass + 1))
+else
+  echo "  FAIL container Go pin check missed suffix-style Dockerfiles: got '${got_line}', want a count of ${want_dockerfiles}"
+  fail=$((fail + 1))
+fi
+
 echo
 echo "lint-go-toolchain-parity-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
 if [ "$asserts" -lt 9 ]; then
