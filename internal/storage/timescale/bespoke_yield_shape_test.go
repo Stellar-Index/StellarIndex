@@ -48,6 +48,21 @@ func TestDefindexSeriesQueryShapes(t *testing.T) {
 	}
 }
 
+// TestDefindexStrategyVolumeSeriesExcludesHarvest guards Q067/T078: the
+// strategy volume series must filter by direction, like its sibling KPI
+// (window KPIs, L65-66) and per-strategy table (L164-172) queries, and
+// must exclude 'harvest' — strategy yield, not capital deposited or
+// withdrawn — from the capital-volume figure.
+func TestDefindexStrategyVolumeSeriesExcludesHarvest(t *testing.T) {
+	q := defindexStrategyVolumeSeriesQuery(90)
+	if !strings.Contains(q, "SELECT direction,") {
+		t.Error("strategy volume series must select direction so callers can fold it into per-direction lines")
+	}
+	if !strings.Contains(q, "direction IN ('deposit', 'withdraw')") {
+		t.Error("strategy volume series must filter to deposit/withdraw directions, excluding 'harvest' (strategy yield, not a capital flow) from the summed volume")
+	}
+}
+
 // TestDefindexKPIQueriesShape guards the KPI splits: the window query is
 // bounded, keeps the capital-volume figures on the strategy layer (where
 // the scalar amount truthfully lives) and the who/when counts on the vault
