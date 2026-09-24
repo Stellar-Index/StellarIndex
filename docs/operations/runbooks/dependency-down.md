@@ -21,6 +21,7 @@ well covered.**
 | `postgres` | `postgres_exporter` (`pg_up`) | corroboration |
 | `redis` | `redis_exporter` | corroboration |
 | `schema` | none | the primary signal |
+| `nonstandard_decimals` | none | the primary signal |
 
 ## At a glance
 
@@ -113,6 +114,18 @@ without its migration, or after a partial `stellarindex-migrate` run.
 Check the deployed version against `schema_migrations` before restarting
 anything — a restart does not fix a missing migration.
 
+## If `dependency="nonstandard_decimals"`
+
+The API's in-process copy of `nonstandard_decimals_assets` has never
+loaded since the process started: the synchronous startup load failed and
+no 60 s periodic refresh has succeeded since. Until one does, every
+confirmed non-7-decimal asset serves its raw, power-of-ten-skewed price
+(see [`dex-nonstandard-decimals.md`](dex-nonstandard-decimals.md)). Look
+for `nonstandard-decimals cache initial refresh failed` in the API log and
+`stellarindex_nonstandard_decimals_cache_refresh_failures_total` rising.
+A refresh failure after a successful load keeps the last-good snapshot
+and does not turn this check red.
+
 ## False-positive shapes
 
 - **During a deploy.** The API restarts and the check briefly fails. The
@@ -149,3 +162,5 @@ healthy dependency — the metric is written for failing checks too, and
 
 - 2026-09-01 — created alongside `stellarindex_dependency_up` (#371 F2).
   Before this, ClickHouse had no health signal in either rule tree.
+- 2026-09-24 — added the critical `nonstandard_decimals` check: red until
+  the API's nonstandard-decimals cache has loaded once.

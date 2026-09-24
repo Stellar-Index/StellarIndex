@@ -1029,17 +1029,14 @@ func run(cfgPath string, dryRun bool) error { //nolint:gocognit,funlen,gocyclo /
 	// full read is cheap; refresh cadence controls how quickly a fix
 	// (row removed) or a new confirmation propagates.
 	//
-	// The initial refresh is fatal, as in the aggregator: a cold cache
-	// has no last-good snapshot, so every confirmed non-7-decimals leg
-	// would be served unnormalized (wrong by 10^(7-decimals)) until the
-	// first successful tick. Only the periodic refresh fails open.
-	const nonstandardDecimalsRefreshTimeout = 30 * time.Second
+	// The first load runs inline, before any handler, prewarm or stream
+	// publisher can read the cache, and readiness stays 503 until one load
+	// has succeeded: a cold cache serves a confirmed offender's raw price.
+	// (A hard-fail-on-boot variant of this guard was tried and reverted:
+	// it puts systemd into a restart loop on a Postgres blip instead of
+	// paging through the readiness signal below.)
 	nonstandardDecimalsCache := v1.NewNonstandardDecimalsCache(store, logger.With("component", "nonstandard-decimals-cache"))
-	decimalsInitCtx, decimalsInitCancel := context.WithTimeout(rootCtx, nonstandardDecimalsRefreshTimeout)
-	defer decimalsInitCancel()
-	if err := nonstandardDecimalsCache.Refresh(decimalsInitCtx); err != nil {
-		return fmt.Errorf("nonstandard-decimals cache initial refresh (refusing to serve unnormalized prices): %w", err)
-	}
+	checks = append(checks, primeNonstandardDecimalsCache(rootCtx, nonstandardDecimalsCache, logger))
 	bgWG.Add(1)
 	go func() {
 		defer bgWG.Done()
@@ -2718,6 +2715,36 @@ func (c storeChecker) Name() string   { return "postgres" }
 func (c storeChecker) Critical() bool { return true }
 func (c storeChecker) Ping(ctx context.Context) error {
 	return c.s.DB().PingContext(ctx)
+}
+
+// nonstandardDecimalsRefreshTimeout bounds each nonstandard-decimals cache
+// load, the blocking startup one included.
+const nonstandardDecimalsRefreshTimeout = 30 * time.Second
+
+// primeNonstandardDecimalsCache runs the cache's first load synchronously and
+// returns the readiness check that gates serving on it having succeeded.
+func primeNonstandardDecimalsCache(ctx context.Context, c *v1.NonstandardDecimalsCache, logger *slog.Logger) v1.ReadyChecker {
+	initCtx, cancel := context.WithTimeout(ctx, nonstandardDecimalsRefreshTimeout)
+	defer cancel()
+	if err := c.Refresh(initCtx); err != nil {
+		logger.Warn("nonstandard-decimals cache initial refresh failed; not ready until a periodic refresh succeeds", "err", err)
+	}
+	return nonstandardDecimalsChecker{c: c}
+}
+
+// nonstandardDecimalsChecker reports not-ready until the nonstandard-decimals
+// cache has loaded once. Critical: before that load every confirmed
+// non-7-decimal asset resolves to 7dp, so its prices serve off by a power of
+// ten. A later refresh failure keeps the last-good snapshot and stays ready.
+type nonstandardDecimalsChecker struct{ c *v1.NonstandardDecimalsCache }
+
+func (nonstandardDecimalsChecker) Name() string   { return "nonstandard_decimals" }
+func (nonstandardDecimalsChecker) Critical() bool { return true }
+func (k nonstandardDecimalsChecker) Ping(context.Context) error {
+	if _, fetchedAt := k.c.Snapshot(); fetchedAt.IsZero() {
+		return errors.New("nonstandard-decimals cache has not loaded yet")
+	}
+	return nil
 }
 
 // schemaChecker adapts the golang-migrate schema_migrations
