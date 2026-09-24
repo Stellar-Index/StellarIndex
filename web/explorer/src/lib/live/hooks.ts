@@ -256,7 +256,8 @@ export function followThrottleSizeForTest(): number {
  *
  * Pass the query-key PREFIX to invalidate (TanStack matches by prefix),
  * e.g. `['/v1/liquidity-pools']` — it will refresh every query whose
- * key starts with that, regardless of trailing params.
+ * key starts with that, regardless of trailing params. A cursor-paginated
+ * panel passes `enabled` = its pager's `atTip`.
  */
 export function useLedgerFollow(
   queryKey: readonly unknown[],
