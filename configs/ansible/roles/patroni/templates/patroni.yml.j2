@@ -12,8 +12,8 @@ restapi:
   listen: {{ patroni_rest_listen }}
   connect_address: {{ patroni_rest_connect_address }}
   authentication:
-    username: {{ patroni_rest_basic_auth_user }}
-    password: {{ patroni_rest_basic_auth_password }}
+    username: '{{ patroni_rest_basic_auth_user }}'
+    password: '{{ patroni_rest_basic_auth_password }}'
 
 etcd3:
   hosts:
@@ -59,7 +59,7 @@ bootstrap:
 
   users:
     admin:
-      password: {{ patroni_postgres_password }}
+      password: '{{ patroni_postgres_password }}'
       options:
         - createrole
         - createdb
