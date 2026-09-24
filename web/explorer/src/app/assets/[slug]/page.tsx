@@ -22,6 +22,7 @@ import { AssetScamCallout } from './AssetScamCallout';
 import { AssetClientFallback } from './AssetClientFallback';
 import { AssetPathView } from './AssetPathView';
 import { AssetSidebar } from './AssetSidebar';
+import { headlinePriceProvenance } from './priceProvenance';
 import { SourceBreakdown } from '../../markets/[pair]/SourceBreakdown';
 import { AssetTabs, ActiveTabSlot } from './AssetTabs';
 import { AssetAbout } from './AssetAbout';
@@ -1005,20 +1006,7 @@ export default async function AssetDetailPage({ params }: { params: Params }) {
                   ? Number(coin.price_usd)
                   : null
             }
-            priceProvenance={
-              price?.price
-                ? price.flags?.triangulated
-                  ? 'triangulated'
-                  : 'vwap1m'
-                : coin.price_usd
-                  ? coin.price_basis === 'declared_peg'
-                    ? // Server-declared fiat peg × FX rate (substance
-                      // gate withheld the market books) — captioned so
-                      // it never reads as a market observation.
-                      'declared_peg'
-                    : 'listing'
-                  : null
-            }
+            priceProvenance={headlinePriceProvenance(price, coin)}
             priceStale={Boolean(price?.flags?.stale)}
             name={globalView?.name}
             homeDomain={detail?.home_domain}

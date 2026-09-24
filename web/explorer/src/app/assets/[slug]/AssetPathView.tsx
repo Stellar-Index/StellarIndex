@@ -11,7 +11,8 @@ import { useLastPathSegment } from '@/lib/useLastPathSegment';
 import type { Envelope } from '@/app/explorer-shared';
 
 import { AssetScamCallout } from './AssetScamCallout';
-import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
+import { LiveAssetPrice } from './LiveAssetPrice';
+import { type PriceBasis, provenanceFromBasis } from './priceProvenance';
 import { formatCompact } from '@/lib/format';
 
 interface AssetShellDetail {
@@ -25,7 +26,7 @@ interface AssetShellDetail {
   /** Fixed-precision decimal string (ADR-0003), or null when undrivable. */
   price_usd?: string | null;
   /** Absent = direct market. See the OpenAPI enum for the other values. */
-  price_basis?: 'declared_peg' | 'transitive';
+  price_basis?: PriceBasis;
   unverified_ticker_collision?: boolean;
   unverified_warning?: { note?: string } | null;
   /**
@@ -56,29 +57,6 @@ function priceNumber(raw: string | null | undefined): number | null {
   if (raw == null || raw === '') return null;
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? n : null;
-}
-
-/**
- * Map the wire's `price_basis` to the caption vocabulary.
- *
- * Absent basis means a DIRECT market observation, which is 'vwap1m'.
- * An unrecognised basis (a value this build predates) maps to null
- * rather than guessing: a wrong caption states a provenance the price
- * does not have, which is worse than no caption at all.
- */
-function provenanceFromBasis(
-  basis: AssetShellDetail['price_basis'],
-): PriceProvenance {
-  switch (basis) {
-    case undefined:
-      return 'vwap1m';
-    case 'declared_peg':
-      return 'declared_peg';
-    case 'transitive':
-      return 'transitive';
-    default:
-      return null;
-  }
 }
 
 /**
@@ -171,7 +149,7 @@ export function AssetPathView() {
         <LiveAssetPrice
           assetID={d.asset_id}
           initialPrice={priceNumber(d.price_usd)}
-          initialProvenance={provenanceFromBasis(d.price_basis)}
+          initialProvenance={provenanceFromBasis(d.price_basis, 'vwap1m')}
         />
         {d.unverified_warning?.note && (
           <p className="border-warn-300 bg-warn-50 text-warn-800 rounded-md border p-3 text-sm">
