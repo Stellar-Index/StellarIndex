@@ -17,14 +17,18 @@ const (
 	aquariusRwRouter = "CBQDHNBFBZYE4MKPWBSJOPIYLW4SFSXAXUTSXJN76GNKYVYPCKWC6QUK"
 	aquariusRwUserA  = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 	aquariusRwUserB  = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H"
+
+	// Two distinct claim_reward reward-token contracts (AQUA and USDC SACs).
+	aquariusRwAquaSAC = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
+	aquariusRwUsdcSAC = "CCW67TSZV3SSS2HXMBQ5JFGCKJNXKZM7UQUWUZPUTHXSTZLEO7SJMI75"
 )
 
 // TestAquariusRewardsLifetimeByKind exercises the LIFETIME per-kind
 // rewards-gauge reader (AquariusRewardsLifetimeByKind, the v0.12 gap
 // closed by migration 0099): every one of the twelve kinds comes back in
 // migration-0099 census order, kinds with no captured rows still appear
-// with Events=0/Amount=0 (never a missing row), and i128 amounts survive
-// the NUMERIC round trip.
+// with Events=0 (never a missing row). It carries no amount — see
+// TestAquariusRewardsClaimWindow for the per-token amount readback.
 func TestAquariusRewardsLifetimeByKind(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -46,7 +50,7 @@ func TestAquariusRewardsLifetimeByKind(t *testing.T) {
 		t.Fatalf("AquariusRewardsLifetimeByKind (empty) = %d kinds, want 12", len(byKind))
 	}
 	for _, k := range byKind {
-		if k.Events != 0 || k.Amount.Sign() != 0 {
+		if k.Events != 0 {
 			t.Errorf("kind %q on empty table = %+v, want zero", k.Kind, k)
 		}
 	}
@@ -96,10 +100,6 @@ func TestAquariusRewardsLifetimeByKind(t *testing.T) {
 	if byKind[1].Kind != timescale.AquariusRewardsClaimReward || byKind[1].Events != 2 {
 		t.Errorf("byKind[1] = %+v, want {claim_reward 2}", byKind[1])
 	}
-	wantClaimSum := new(big.Int).Add(claimHuge, big.NewInt(2_000))
-	if byKind[1].Amount.BigInt().Cmp(wantClaimSum) != 0 {
-		t.Errorf("byKind[1].Amount = %s, want %s — i128/NUMERIC lost precision", byKind[1].Amount, wantClaimSum)
-	}
 	// config_rewards (router-side) is last in census order.
 	last := byKind[len(byKind)-1]
 	if last.Kind != timescale.AquariusRewardsConfigRewards || last.Events != 1 {
@@ -114,7 +114,9 @@ func TestAquariusRewardsLifetimeByKind(t *testing.T) {
 // TestAquariusRewardsClaimWindow exercises the windowed claim_reward
 // drill-down (AquariusRewardsClaimWindow): empty-safe on no claims, a
 // claim outside the window is excluded (sargable ledger_close_time bound),
-// distinct claimants dedupes a repeat claimant, and i128 amounts survive.
+// distinct claimants dedupes a repeat claimant, volume is summed PER reward
+// token (never across tokens), busiest token first, and i128 amounts
+// survive the NUMERIC round trip.
 func TestAquariusRewardsClaimWindow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -135,27 +137,16 @@ func TestAquariusRewardsClaimWindow(t *testing.T) {
 
 	inWindow := time.Now().UTC().Add(-5 * 24 * time.Hour)
 	outOfWindow := time.Now().UTC().Add(-90 * 24 * time.Hour)
+	claimHuge, _ := new(big.Int).SetString("55555555555555555555", 10) // > 2^63
 
 	claims := []timescale.AquariusRewardsEvent{
-		// Two claims inside the 30d window, same claimant (dedupes to 1 distinct).
-		{
-			ContractID: aquariusRwPool, Ledger: 63_000_000, LedgerCloseTime: inWindow, TxHash: pad64("c", 0), OpIndex: 0, EventIndex: 0,
-			Kind: timescale.AquariusRewardsClaimReward, UserAddress: aquariusRwUserA, Amount: amtPtr(canonical.NewAmount(big.NewInt(1_000))),
-		},
-		{
-			ContractID: aquariusRwPool, Ledger: 63_000_001, LedgerCloseTime: inWindow.Add(time.Hour), TxHash: pad64("c", 1), OpIndex: 0, EventIndex: 0,
-			Kind: timescale.AquariusRewardsClaimReward, UserAddress: aquariusRwUserA, Amount: amtPtr(canonical.NewAmount(big.NewInt(500))),
-		},
-		// A different claimant, also inside the window.
-		{
-			ContractID: aquariusRwPool, Ledger: 63_000_002, LedgerCloseTime: inWindow.Add(2 * time.Hour), TxHash: pad64("c", 2), OpIndex: 0, EventIndex: 0,
-			Kind: timescale.AquariusRewardsClaimReward, UserAddress: aquariusRwUserB, Amount: amtPtr(canonical.NewAmount(big.NewInt(250))),
-		},
+		// Two AQUA claims inside the 30d window, same claimant (dedupes to 1 distinct).
+		aquariusClaim(63_000_000, inWindow, "c", 0, aquariusRwUserA, aquariusRwAquaSAC, big.NewInt(1_000)),
+		aquariusClaim(63_000_001, inWindow.Add(time.Hour), "c", 1, aquariusRwUserA, aquariusRwAquaSAC, claimHuge),
+		// A different claimant paid in a different reward token, also inside the window.
+		aquariusClaim(63_000_002, inWindow.Add(2*time.Hour), "c", 2, aquariusRwUserB, aquariusRwUsdcSAC, big.NewInt(250)),
 		// Outside the 30d window — must be excluded.
-		{
-			ContractID: aquariusRwPool, Ledger: 60_000_000, LedgerCloseTime: outOfWindow, TxHash: pad64("c", 3), OpIndex: 0, EventIndex: 0,
-			Kind: timescale.AquariusRewardsClaimReward, UserAddress: aquariusRwUserA, Amount: amtPtr(canonical.NewAmount(big.NewInt(999_999))),
-		},
+		aquariusClaim(60_000_000, outOfWindow, "c", 3, aquariusRwUserA, aquariusRwAquaSAC, big.NewInt(999_999)),
 	}
 	for _, e := range claims {
 		if err := store.InsertAquariusRewardsEvent(ctx, e); err != nil {
@@ -173,11 +164,93 @@ func TestAquariusRewardsClaimWindow(t *testing.T) {
 	if w.Events != 3 {
 		t.Errorf("Events = %d, want 3 (the out-of-window claim excluded)", w.Events)
 	}
-	if want := big.NewInt(1_000 + 500 + 250); w.Amount.BigInt().Cmp(want) != 0 {
-		t.Errorf("Amount = %s, want %s", w.Amount, want)
-	}
 	if w.DistinctClaimants != 2 {
 		t.Errorf("DistinctClaimants = %d, want 2", w.DistinctClaimants)
+	}
+	if len(w.ByToken) != 2 {
+		t.Fatalf("ByToken = %+v, want one entry per reward token (2)", w.ByToken)
+	}
+	wantAqua := new(big.Int).Add(claimHuge, big.NewInt(1_000))
+	if got := w.ByToken[0]; got.RewardToken != aquariusRwAquaSAC || got.Events != 2 || got.Amount.BigInt().Cmp(wantAqua) != 0 {
+		t.Errorf("ByToken[0] = {%s %d %s}, want {%s 2 %s} — busiest token first, i128 exact", got.RewardToken, got.Events, got.Amount, aquariusRwAquaSAC, wantAqua)
+	}
+	if got := w.ByToken[1]; got.RewardToken != aquariusRwUsdcSAC || got.Events != 1 || got.Amount.BigInt().Cmp(big.NewInt(250)) != 0 {
+		t.Errorf("ByToken[1] = {%s %d %s}, want {%s 1 250}", got.RewardToken, got.Events, got.Amount, aquariusRwUsdcSAC)
+	}
+}
+
+// TestBespokeAquariusRewardVolumeNotSummedAcrossTokens pins that the
+// Aquarius bespoke block never publishes a 30d reward volume that adds base
+// units of different reward tokens: with claims paid in two tokens there is
+// no scalar "Reward volume (30d)" KPI, and the per-token table carries each
+// token's own sum.
+func TestBespokeAquariusRewardVolumeNotSummedAcrossTokens(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrations(t, dsn)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+
+	claimT := time.Now().UTC().Add(-3 * 24 * time.Hour)
+	for _, e := range []timescale.AquariusRewardsEvent{
+		aquariusClaim(63_600_000, claimT, "v", 0, aquariusRwUserA, aquariusRwAquaSAC, big.NewInt(7_000_000)),
+		aquariusClaim(63_600_001, claimT.Add(time.Hour), "v", 1, aquariusRwUserB, aquariusRwAquaSAC, big.NewInt(3_000_000)),
+		aquariusClaim(63_600_002, claimT.Add(2*time.Hour), "v", 2, aquariusRwUserB, aquariusRwUsdcSAC, big.NewInt(5)),
+	} {
+		if err := store.InsertAquariusRewardsEvent(ctx, e); err != nil {
+			t.Fatalf("InsertAquariusRewardsEvent: %v", err)
+		}
+	}
+
+	blk, err := store.BuildProtocolBespoke(ctx, "aquarius", "amm", 90)
+	if err != nil {
+		t.Fatalf("BuildProtocolBespoke: %v", err)
+	}
+	if blk == nil {
+		t.Fatal("BuildProtocolBespoke = nil, want a block carrying the rewards drill-down")
+	}
+	kpis := kpiMap(blk)
+	assertKPI(t, kpis, "Reward claims (30d)", "3")
+	assertKPI(t, kpis, "Distinct claimants (30d)", "2")
+	if v, ok := kpis["Reward volume (30d)"]; ok {
+		t.Errorf("Reward volume (30d) = %q published across two reward tokens; base units of different tokens do not add", v)
+	}
+
+	var volRows [][]string
+	for _, tb := range blk.Tables {
+		if tb.Title == "Reward volume by token (30d)" {
+			volRows = tb.Rows
+		}
+	}
+	want := [][]string{
+		{aquariusRwAquaSAC, "2", "10000000"},
+		{aquariusRwUsdcSAC, "1", "5"},
+	}
+	if len(volRows) != len(want) {
+		t.Fatalf("Reward volume by token (30d) rows = %v, want %v", volRows, want)
+	}
+	for i := range want {
+		for c := range want[i] {
+			if volRows[i][c] != want[i][c] {
+				t.Errorf("Reward volume by token (30d) row %d = %v, want %v", i, volRows[i], want[i])
+				break
+			}
+		}
+	}
+}
+
+// aquariusClaim builds one claim_reward row as the decoder lands it:
+// reward token in attributes.reward_token, claimant in user_address.
+func aquariusClaim(ledger uint32, at time.Time, txSeed string, n int, user, rewardSAC string, amount *big.Int) timescale.AquariusRewardsEvent {
+	return timescale.AquariusRewardsEvent{
+		ContractID: aquariusRwPool, Ledger: ledger, LedgerCloseTime: at, TxHash: pad64(txSeed, n),
+		Kind: timescale.AquariusRewardsClaimReward, UserAddress: user, Amount: amtPtr(canonical.NewAmount(amount)),
+		Attributes: map[string]any{"reward_token": rewardSAC},
 	}
 }
 
@@ -314,10 +387,8 @@ func TestBespokeAquariusRewardsSurfaced(t *testing.T) {
 	}
 
 	claimT := time.Now().UTC().Add(-5 * 24 * time.Hour)
-	if err := store.InsertAquariusRewardsEvent(ctx, timescale.AquariusRewardsEvent{
-		ContractID: aquariusRwPool, Ledger: 63_500_100, LedgerCloseTime: claimT, TxHash: pad64("s", 0), OpIndex: 0, EventIndex: 0,
-		Kind: timescale.AquariusRewardsClaimReward, UserAddress: aquariusRwUserA, Amount: amtPtr(canonical.NewAmount(big.NewInt(42_000))),
-	}); err != nil {
+	if err := store.InsertAquariusRewardsEvent(ctx,
+		aquariusClaim(63_500_100, claimT, "s", 0, aquariusRwUserA, aquariusRwAquaSAC, big.NewInt(42_000))); err != nil {
 		t.Fatalf("InsertAquariusRewardsEvent: %v", err)
 	}
 	if err := store.InsertAquariusAdminEvent(ctx, timescale.AquariusAdminEvent{
@@ -346,9 +417,14 @@ func TestBespokeAquariusRewardsSurfaced(t *testing.T) {
 		t.Errorf("aquarius block lost its existing reserve-depth KPI after adding rewards; KPIs=%+v", blk.KPIs)
 	}
 
-	var hasKindTable, hasGovTable bool
+	var hasKindTable, hasGovTable, hasVolTable bool
 	for _, tb := range blk.Tables {
 		switch tb.Title {
+		case "Reward volume by token (30d)":
+			hasVolTable = true
+			if len(tb.Rows) != 1 || tb.Rows[0][0] != aquariusRwAquaSAC || tb.Rows[0][2] != "42000" {
+				t.Errorf("reward-volume-by-token table = %+v, want a single AQUA row of 42000", tb.Rows)
+			}
 		case "Rewards events by kind (lifetime)":
 			hasKindTable = true
 			if len(tb.Rows) != 1 || tb.Rows[0][0] != "claim_reward" {
@@ -360,6 +436,9 @@ func TestBespokeAquariusRewardsSurfaced(t *testing.T) {
 				t.Errorf("governance table = %+v, want a single enable_emergency_mode row", tb.Rows)
 			}
 		}
+	}
+	if !hasVolTable {
+		t.Errorf("bespoke block missing 'Reward volume by token (30d)' table; Tables=%+v", blk.Tables)
 	}
 	if !hasKindTable {
 		t.Errorf("bespoke block missing 'Rewards events by kind (lifetime)' table; Tables=%+v", blk.Tables)

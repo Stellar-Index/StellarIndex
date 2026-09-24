@@ -97,14 +97,20 @@ spec per board #33 / ADR-0042 `x-stability: experimental`) now carries,
 alongside the pre-existing trade-volume and reserve-depth content:
 
 - **KPIs:** `Rewards-gauge events (lifetime)` (sum of all 12 kinds,
-  all-time), `Reward claims (30d)` / `Reward volume (30d)` / `Distinct
-  claimants (30d)` (the `claim_reward` drill-down, fixed at a trailing 30
-  days regardless of the page's overall analytics window), and
-  `Governance events (lifetime)` (sum of all 8 `aquarius_admin` kinds).
+  all-time), `Reward claims (30d)` / `Distinct claimants (30d)` (the
+  `claim_reward` drill-down, fixed at a trailing 30 days regardless of the
+  page's overall analytics window), `Reward volume (30d)` only when every
+  claim in that window paid the same reward token (its hint names the
+  token), and `Governance events (lifetime)` (sum of all 8
+  `aquarius_admin` kinds).
+- **`Reward volume by token (30d)` table:** one row per `claim_reward`
+  reward token (`attributes.reward_token`) — token / claims / summed amount
+  in that token's base units, busiest first. Base units of different
+  tokens are never added together.
 - **`Rewards events by kind (lifetime)` table:** all 12 rewards-gauge
   kinds with a nonzero lifetime count, in migration-0099 census order
-  (busiest first) — kind / event count / summed amount (reward-token base
-  units).
+  (busiest first) — kind / event count. No amount column: a kind's rows
+  span many reward and pool-share tokens.
 - **`Recent governance events` table:** the most recent 25 rows across all
   8 `aquarius_admin` kinds — when / kind / contract / admin / target /
   ledger, newest first, unwindowed (governance actions are rare enough
