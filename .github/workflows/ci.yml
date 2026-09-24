@@ -2139,6 +2139,14 @@ jobs:
         # bound to all interfaces. Structural grep, no hosts.
         if: needs.preflight.outputs.ansible == 'true'
         run: ./scripts/ci/ansible-exporter-listen-address-test.sh
+      - name: ansible README <-> archival-node role parity (Q252)
+        # The README's first-run bootstrap prescribed a --tags subset that
+        # skipped users/redis/clickhouse/minio/binaries/hardening/caddy and
+        # documented a deleted run_stellar_rpc switch. Pins every README tag
+        # and run_* switch to the role, and the bootstrap to the full tag set.
+        # Text only, no hosts.
+        if: needs.preflight.outputs.ansible == 'true'
+        run: ./scripts/ci/ansible-readme-parity-test.sh
       - name: verify-archive Tier D cron-argument test (#362)
         # r1 2026-09-02: the Tier D fork-detection cron rendered
         # `-to -1` (stellarindex_live_seam_ledger defaults to 0, minus 1),

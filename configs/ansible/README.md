@@ -42,14 +42,17 @@ on the L4 cutover backlog and have not landed yet. F-1266
 the playbook inventory by listing those four as if they were
 in tree.
 
-The role *also* contains tasks for installing **stellar-core** and
-**stellar-rpc** (and the stellar-core Prometheus exporter) — but
-they are gated behind `run_stellar_core` / `run_stellar_rpc`
-defaults that have been **`false` since 2026-04-23**
+The role *also* contains tasks for installing **stellar-core** (and
+the stellar-core Prometheus exporter) — but they are gated behind
+`run_stellar_core`, which has defaulted to **`false` since
+2026-04-23**
 ([r1-deployment-state.md](../../docs/operations/r1-deployment-state.md)).
-Production ingest reads Galexie's MinIO output directly; the two
-daemons are kept for Phase-3 (Tier-1 validator rollout per
-ADR-0004) and flip back to `true` per region inventory when needed.
+Production ingest reads Galexie's MinIO output directly; stellar-core
+is kept for Phase-3 (Tier-1 validator rollout per ADR-0004) and flips
+back to `true` per region inventory when needed. **stellar-rpc is not
+part of the role**: its tasks and templates were deleted on
+2026-05-22 (see the note above `run_minio` in
+`roles/archival-node/defaults/main.yml`).
 
 ## Prerequisites
 
@@ -76,12 +79,13 @@ cd configs/ansible
 cp inventory/r1.example.yml inventory/r1.yml
 $EDITOR inventory/r1.yml        # fill in ansible_host, ansible_user, ssh_private_key_file
 
-# 2. Run the playbook (default tag set — no stellar-core / stellar-rpc)
-ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml \
-  --tags preflight,kernel,zfs,postgres,galexie,firewall,monitoring
-# To bring up a Phase-3 validator host, set run_stellar_core: true
-# (and optionally run_stellar_rpc: true) in inventory and add the
-# stellar-core / stellar-rpc tags to the list above.
+# 2. Run the whole playbook — no --tags. Each task file is gated by its
+#    own run_* switch (roles/archival-node/defaults/main.yml); scope a
+#    host with those in inventory. A tag subset skips prerequisites the
+#    selected tasks depend on (e.g. `users` creates the galexie account
+#    that the galexie tasks chown to).
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml
+# A Phase-3 validator host additionally sets run_stellar_core: true.
 
 # 3. Watch the logs; when it finishes, SSH in and run the catchup runbook:
 #    docs/operations/runbooks/bootstrap-archival-node.md
@@ -119,12 +123,10 @@ Runtime on a clean Hetzner EX63: ~15 minutes for config, then
 9. **Hardening** — SSH keys-only, fail2ban, unattended-upgrades
    for security only, auditd with CIS L2 profile.
 
-**Phase-3 / validator hosts** (`run_stellar_core: true` and / or
-`run_stellar_rpc: true`) additionally install and configure
-**stellar-core** (apt.stellar.org, non-voting archival with a
-Tier-1-style quorum set) and **stellar-rpc** (captive-core serving
-`getEvents`, retention capped). These are off by default on r1
-since 2026-04-23.
+**Phase-3 / validator hosts** (`run_stellar_core: true`)
+additionally install and configure **stellar-core** (apt.stellar.org,
+non-voting archival with a Tier-1-style quorum set). Off by default
+on r1 since 2026-04-23.
 
 Every step is idempotent: re-running the playbook on a healthy host
 should be a no-op after the initial install.
@@ -137,8 +139,12 @@ Every task file has a tag matching its name. Examples:
 # Just update Galexie to a new release
 ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags galexie
 
-# Re-template config but don't restart services
-ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags galexie --skip-tags restart
+# Preview a Galexie re-template, including whether it would restart galexie
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags galexie --check --diff
+
+# Apply it in a maintenance window: the role refuses to restart a running
+# galexie without this ack (see galexie_restart_ack in defaults/main.yml)
+ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --tags galexie -e galexie_restart_ack=true
 
 # Dry-run everything
 ansible-playbook -i inventory/r1.yml playbooks/archival-node.yml --check --diff
