@@ -72,7 +72,7 @@ func TestMigrate_FlagsReachTheToolInEitherPosition(t *testing.T) {
 	// -dsn AFTER the verb must be honoured, never silently replaced by
 	// the environment.
 	for _, tail := range [][]string{
-		{"down", "1", "-dsn", flagDSN, "-yes"},
+		{"down", "1", "-dsn", flagDSN, "-yes", "-i-know"},
 		{"up", "-dsn", flagDSN},
 		{"status", "-dsn", flagDSN},
 		{"force", "153", "-dsn", flagDSN},
@@ -91,7 +91,7 @@ func TestMigrate_FlagsReachTheToolInEitherPosition(t *testing.T) {
 	// The historical placement keeps working, so no runbook or playbook
 	// breaks on the fix.
 	for _, tail := range [][]string{
-		{"-dsn", flagDSN, "-yes", "down", "1"},
+		{"-dsn", flagDSN, "-yes", "-i-know", "down", "1"},
 		{"-dsn", flagDSN, "up"},
 		{"-dsn", flagDSN, "status"},
 	} {
