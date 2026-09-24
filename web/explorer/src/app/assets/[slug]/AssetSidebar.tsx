@@ -5,7 +5,7 @@ import { formatCompact, formatPriceSmall } from '@/lib/format';
 import { isSafeHomeDomain } from '@/lib/safe-domain';
 import { AssetSwap } from './AssetSwap';
 import { ChangeSummaryStrip } from './ChangeSummaryStrip';
-import { LiveAssetPrice } from './LiveAssetPrice';
+import { LiveAssetPrice, type PriceProvenance } from './LiveAssetPrice';
 import { SidebarAssetIcon } from './SidebarAssetIcon';
 
 // Loosely-typed mirror of the page's fetched shapes — only the fields
@@ -79,9 +79,10 @@ export function AssetSidebar({
    *  - 'declared_peg' — server-filled operator-declared 1:1 fiat peg ×
    *                     current FX rate (price_basis=declared_peg); not
    *                     a market observation
+   *  - 'transitive'   — two-hop DEX route (price_basis=transitive), both
+   *                     legs substance-gated
    */
-  priceProvenance?:
-    'vwap1m' | 'triangulated' | 'listing' | 'declared_peg' | null;
+  priceProvenance?: PriceProvenance;
   priceStale?: boolean;
   name?: string | null;
   homeDomain?: string | null;
