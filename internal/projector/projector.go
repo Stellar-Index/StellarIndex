@@ -533,7 +533,7 @@ func processEventSafely(src Source, ev events.Event, sink func(consumer.Event) e
 		return 0, false, nil
 	}
 	if derr != nil {
-		return 0, true, nil
+		return 0, true, nil //nolint:nilerr // reported via decodeFail: the caller counts and skips the row
 	}
 	var faults rowSinkFaults
 	for _, out := range outs {

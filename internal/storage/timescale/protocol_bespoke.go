@@ -425,17 +425,8 @@ func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, wi
 		})
 	}
 
-	if rewardsLifetime > 0 {
-		tbl := BespokeTable{Title: "Rewards events by kind (lifetime)", Columns: []string{"Kind", "Events"}}
-		for _, k := range byKind {
-			if k.Events == 0 {
-				continue
-			}
-			tbl.Rows = append(tbl.Rows, []string{string(k.Kind), strconv.FormatInt(k.Events, 10)})
-		}
-		if len(tbl.Rows) > 0 {
-			blk.Tables = append(blk.Tables, tbl)
-		}
+	if tbl := aquariusRewardsKindTable(byKind); len(tbl.Rows) > 0 {
+		blk.Tables = append(blk.Tables, tbl)
 	}
 
 	if claims != nil {
@@ -458,6 +449,19 @@ func (s *Store) aquariusRewardsBlocks(ctx context.Context, blk *BespokeBlock, wi
 		"Rewards-gauge + governance figures are from the v0.12 full-history backfill (aquarius_rewards_events, migration 0099; aquarius_admin, migration 0100). Reward volume is reported per reward token, in that token's base units (per-asset decimals), and never summed across tokens — Aquarius has no published price for reward tokens at this layer, so these are never USD and never feed VWAP. Fields marked '(lifetime)' are unwindowed all-time totals; the claim_reward drill-down is a fixed trailing-30-day window regardless of the page's overall analytics window; the daily series follows the page's overall window.",
 	)
 	return nil
+}
+
+// aquariusRewardsKindTable lists the lifetime rewards-gauge event count per
+// kind, omitting kinds that never fired.
+func aquariusRewardsKindTable(byKind []AquariusRewardsKindCount) BespokeTable {
+	tbl := BespokeTable{Title: "Rewards events by kind (lifetime)", Columns: []string{"Kind", "Events"}}
+	for _, k := range byKind {
+		if k.Events == 0 {
+			continue
+		}
+		tbl.Rows = append(tbl.Rows, []string{string(k.Kind), strconv.FormatInt(k.Events, 10)})
+	}
+	return tbl
 }
 
 // aquariusClaimKPIs renders the 30d claim_reward KPIs. "Reward volume (30d)"
