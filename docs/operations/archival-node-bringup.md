@@ -323,7 +323,12 @@ trade rows should land within ~5 s of each ledger close.
 
 ## Disaster recovery
 
-Triage tree by symptom:
+Triage tree by symptom. The node holds three independent stores and
+each derives from the one before it: MinIO (`galexie-archive`,
+`galexie-live`) is ground truth, the ClickHouse lake is decoded from
+it, and the projected Postgres tables are projected from the lake. A
+node that lost more than one restores them in that order — MinIO, then
+ClickHouse, then Postgres.
 
 ### Galexie service is down
 
@@ -379,9 +384,41 @@ ssh <host> 'while IFS= read -r l || [ -n "$l" ]; do case "$l" in [A-Za-z_]*=*) e
 # inventory and re-apply, then watch the archive phase replay.
 ```
 
-The trades + oracle_updates hypertables will rebuild from genesis
-from the existing galexie-archive data — no AWS round-trip
-needed. Wall-clock: ≈ archive phase time on first bring-up.
+That replay walks galexie-archive through the dispatcher, so it
+refills only the dispatcher-written (non-projected) domains, such as
+`sdex`, `band` and the supply observers — no AWS round-trip needed.
+Wall-clock: ≈ archive phase time on first bring-up.
+
+The projected domains (Soroban-venue `trades`, reflector/redstone
+`oracle_updates`, `sep41_*`, `blend_*` and the rest of
+`internal/pipeline/sink.go::IsProjectedEvent`) do **not** come from
+that replay. The projector writes them, reading the ClickHouse
+`contract_events` lake by default (`storage.clickhouse_projector_source`).
+Its cursors were in Postgres too, so each source re-seeds at its
+genesis floor and re-projects from the lake. That only works if the
+lake survived. Check it with `stellarindex-ops verify-lake` /
+`verify-contiguity` before you call the served tier whole. If it did
+not survive, do [ClickHouse lake lost or damaged](#clickhouse-lake-lost-or-damaged)
+first. The live projector's catch-up is capped at roughly 720k
+ledgers/hour. For a genesis-deep refill use `projected-rebuild`, per
+[the replay decision rule](../architecture/ingest-pipeline.md#the-replay-decision-rule).
+
+### ClickHouse lake lost or damaged
+
+No other branch on this page restores or re-derives the lake. Pick
+the path by what survived:
+
+1. **A lake backup chain exists.** Restore from the newest link and
+   bring it to the tip with `ch-live-catchup`. That takes hours.
+   Procedure: [ch-lake-backup § Restore](runbooks/ch-lake-backup.md#restore).
+2. **No chain survives.** Recreate the tables from the daily schema
+   snapshot, then re-derive from `galexie-archive` with
+   `ch-full-backfill.sh`. That takes about 1–2 weeks. Procedure:
+   [ch-schema-restore](runbooks/ch-schema-restore.md#restore-path-snapshot--create).
+
+Either way, run `stellarindex-ops verify-lake` / `verify-contiguity`
+before you let the projector read the lake. The projected Postgres
+tables are only as complete as the lake beneath them.
 
 ### MinIO data dir lost
 
