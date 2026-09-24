@@ -164,9 +164,17 @@ func registerAPIServingMetrics() {
 		APICORSDecisionsTotal,
 		APITipProducers,
 		APITipProducersRefusedTotal,
+		APIStreamSubscriberDropsTotal,
+		APISSEStreamsActive,
+		APISSEStreamsRejectedTotal,
+		APIStreamHubTopics,
+		APIStreamHubTopicsReapedTotal,
 	)
 	for _, reason := range []string{"caller_quota", "global_ceiling"} {
 		APITipProducersRefusedTotal.WithLabelValues(reason)
+	}
+	for _, reason := range []string{"global_cap", "per_ip_cap"} {
+		APISSEStreamsRejectedTotal.WithLabelValues(reason)
 	}
 }
 
@@ -3089,6 +3097,49 @@ var APITipProducersRefusedTotal = prometheus.NewCounterVec(
 	},
 	[]string{"reason"},
 )
+
+// APIStreamSubscriberDropsTotal — SSE subscribers the streaming Hub
+// disconnected because their queue was full when an event was
+// published (a slow consumer). The client reconnects with its
+// Last-Event-ID; a sustained rate means events are lost to consumers
+// the host cannot keep up with.
+var APIStreamSubscriberDropsTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "stellarindex_api_stream_subscriber_drops_total",
+	Help: "SSE subscribers disconnected by the streaming Hub because their queue was full (slow consumer).",
+})
+
+// APISSEStreamsActive — SSE connections currently holding a slot
+// against the global stream ceiling, across every stream endpoint.
+var APISSEStreamsActive = prometheus.NewGauge(prometheus.GaugeOpts{
+	Name: "stellarindex_api_sse_streams_active",
+	Help: "SSE connections currently open across every stream endpoint.",
+})
+
+// APISSEStreamsRejectedTotal — SSE connections refused with a 503 by
+// the concurrency caps, by reason: global_cap (the process-wide
+// ceiling) or per_ip_cap (one client address at its own ceiling).
+var APISSEStreamsRejectedTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "stellarindex_api_sse_streams_rejected_total",
+		Help: "SSE connections refused by the concurrency caps, labelled by reason (global_cap, per_ip_cap).",
+	},
+	[]string{"reason"},
+)
+
+// APIStreamHubTopics — topics the streaming Hub currently holds; the
+// quantity its topic ceiling bounds.
+var APIStreamHubTopics = prometheus.NewGauge(prometheus.GaugeOpts{
+	Name: "stellarindex_api_stream_hub_topics",
+	Help: "Topics currently held by the streaming Hub.",
+})
+
+// APIStreamHubTopicsReapedTotal — topics the streaming Hub's reaper
+// evicted. Flat at zero next to a high APIStreamHubTopics means the
+// retention policy is mistuned.
+var APIStreamHubTopicsReapedTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "stellarindex_api_stream_hub_topics_reaped_total",
+	Help: "Topics evicted by the streaming Hub's reaper.",
+})
 
 // CustomerWebhookDeliveryAttemptsTotal — outcome of every
 // customer-webhook delivery attempt, labelled by:

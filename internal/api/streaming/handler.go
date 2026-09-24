@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 )
 
 // streamWriteDeadline bounds a single SSE write. It's rolled forward
@@ -38,7 +40,8 @@ func SetMaxConcurrentStreams(n int64) { atomic.StoreInt64(&maxConcurrentStreams,
 
 // StreamsRejected reports the cumulative number of SSE connections
 // refused by the concurrency caps (global or per-IP) since process
-// start — the counter that makes a connection flood visible.
+// start. Operators read it, split by cap, as
+// stellarindex_api_sse_streams_rejected_total.
 func StreamsRejected() int64 { return atomic.LoadInt64(&rejectedStreams) }
 
 // TryAcquireStreamSlot reserves one connection slot against the
@@ -85,6 +88,7 @@ func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok boo
 	releaseGlobal, ok := acquireGlobalStreamSlot()
 	if !ok {
 		atomic.AddInt64(&rejectedStreams, 1)
+		obs.APISSEStreamsRejectedTotal.WithLabelValues("global_cap").Inc()
 		http.Error(w, "too many concurrent streams", http.StatusServiceUnavailable)
 		return nil, false
 	}
@@ -95,6 +99,7 @@ func admitStream(w http.ResponseWriter, r *http.Request) (release func(), ok boo
 	if !ok {
 		releaseGlobal()
 		atomic.AddInt64(&rejectedStreams, 1)
+		obs.APISSEStreamsRejectedTotal.WithLabelValues("per_ip_cap").Inc()
 		http.Error(w, "too many concurrent streams from your address", http.StatusServiceUnavailable)
 		return nil, false
 	}
@@ -117,9 +122,13 @@ func acquireGlobalStreamSlot() (release func(), ok bool) {
 	} else {
 		atomic.AddInt64(&activeStreams, 1)
 	}
+	obs.APISSEStreamsActive.Inc()
 	var once sync.Once
 	return func() {
-		once.Do(func() { atomic.AddInt64(&activeStreams, -1) })
+		once.Do(func() {
+			atomic.AddInt64(&activeStreams, -1)
+			obs.APISSEStreamsActive.Dec()
+		})
 	}, true
 }
 

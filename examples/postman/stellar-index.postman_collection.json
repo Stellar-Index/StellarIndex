@@ -4651,7 +4651,7 @@
                   "request": {
                     "name": "SSE stream of tip-price updates (ADR-0018).",
                     "description": {
-                      "content": "Server-Sent Events counterpart of `/v1/price/tip`. Same\ncompute logic; pushed on a per-connection tick (default\nevery `window_seconds` seconds, clamp 1–60 s).\n\n- First event fires synchronously on connect (no waiting a\n  full window).\n- `flags.divergence_warning` / `flags.divergence_checked` are\n  looked up per event — by base, across the asset's canonical\n  spellings — exactly as `/v1/price/tip` does, so a\n  `tip_update` carries the verdict a GET at that instant would.\n- Pre-flight 404 when the pair has no observations: SSE\n  can't change status mid-stream, so emptiness is detected\n  before the response body switches to `text/event-stream`.\n- Heartbeats every 15 s as comment lines (`:keepalive`) so\n  intermediate proxies don't idle out the connection.\n- Resume after disconnect by setting `Last-Event-ID` on the\n  reconnect (header preferred, `?last_event_id=` fallback).\n- Same URL-discipline rule as `/v1/price/tip`:\n  `?granularity=` returns 400.\n",
+                      "content": "Server-Sent Events counterpart of `/v1/price/tip`. Same\ncompute logic; pushed on a per-connection tick (default\nevery `window_seconds` seconds, clamp 1–60 s).\n\n- First event fires synchronously on connect (no waiting a\n  full window).\n- `flags.divergence_warning` / `flags.divergence_checked` are\n  looked up per event — by base, across the asset's canonical\n  spellings — exactly as `/v1/price/tip` does, so a\n  `tip_update` carries the verdict a GET at that instant would.\n- Pre-flight 404 when the pair has no observations: SSE\n  can't change status mid-stream, so emptiness is detected\n  before the response body switches to `text/event-stream`.\n  A pair already withheld at connect gets the same\n  `price-withheld` 404 as `/v1/price/tip`.\n- A pair withheld AFTER the stream opened emits a\n  `price_withheld` event on each tick in place of\n  `tip_update`, with data\n  `{\"asset_id\",\"quote\",\"reason\",\"as_of\"}`; `reason` is the\n  vocabulary of the `price-withheld` 404 (`substance`,\n  `scam_issuer`, …). `tip_update` resumes when the pair is\n  served again. Keepalives alone therefore mean no tick has\n  completed, never that the price is being withheld.\n- Heartbeats every 15 s as comment lines (`:keepalive`) so\n  intermediate proxies don't idle out the connection.\n- Resume after disconnect by setting `Last-Event-ID` on the\n  reconnect (header preferred, `?last_event_id=` fallback).\n- Same URL-discipline rule as `/v1/price/tip`:\n  `?granularity=` returns 400.\n",
                       "type": "text/plain"
                     },
                     "url": {
@@ -4715,7 +4715,7 @@
                   },
                   "response": [
                     {
-                      "name": "SSE stream of tip_update events.",
+                      "name": "SSE stream of tip_update (and price_withheld) events.",
                       "originalRequest": {
                         "url": {
                           "path": [

@@ -352,10 +352,11 @@ func (s *Server) forwardTipStream(
 // runTipStreamProducer is the per-connection compute + push loop.
 // Emits the pre-built initial event (skipped when the handler could not
 // marshal one — its Data is then empty), then ticks every
-// `windowSeconds` recomputing the tip price. Failures are silently
-// skipped (heartbeats keep the connection alive) — the assumption
-// is that transient unavailability resolves itself and the next
-// tick will succeed.
+// `windowSeconds` recomputing the tip price. A withheld pair emits a
+// price_withheld marker (see [Server.tipTickEvent]); other failures are
+// skipped (heartbeats keep the connection alive) — the assumption is
+// that transient unavailability resolves itself and the next tick will
+// succeed.
 //
 // The function returns when ctx cancels (client disconnect, request
 // teardown) and closes ch on the way out so [streaming.StreamFromChannel]
@@ -395,21 +396,7 @@ func (s *Server) runTipStreamProducer(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
-			snap, sources, err := s.computeTip(tickCtx, asset, quote, windowSeconds)
-			if err != nil {
-				cancel()
-				if ctx.Err() == nil {
-					s.logger.Warn("computeTip failed (stream tick) — skipping emit",
-						"err", err, "asset", asset.String(), "quote", quote.String())
-				}
-				continue
-			}
-			// The event's divergence lookup runs inside this per-tick
-			// budget but on its own shorter one, so a stalled verdict
-			// store cannot push the emission past its window.
-			ev, ok := s.tipStreamEvent(tickCtx, gen, asset, quote, snap, sources)
-			cancel()
+			ev, ok := s.tipTickEvent(ctx, gen, asset, quote, windowSeconds)
 			if !ok {
 				continue
 			}
@@ -420,6 +407,53 @@ func (s *Server) runTipStreamProducer(
 			}
 		}
 	}
+}
+
+// tipTickEvent computes one tick's emission for both tip producers: a
+// tip_update, or a price_withheld marker while a withholding gate
+// refuses the pair — a pair that crosses the gate after connect must
+// read on the wire as withheld, not as a quiet market. ok is false only
+// when there is nothing to emit (a failed compute, logged here).
+func (s *Server) tipTickEvent(ctx context.Context, gen *streaming.Generator, asset, quote canonical.Asset, window int) (streaming.Event, bool) {
+	tickCtx, cancel := context.WithTimeout(ctx, tipStreamTickTimeout)
+	defer cancel()
+	snap, sources, err := s.computeTip(tickCtx, asset, quote, window)
+	if errors.Is(err, ErrPriceWithheld) {
+		return tipWithheldEvent(gen, asset, quote, priceWithheldReason(err))
+	}
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logger.Warn("computeTip failed (stream tick) — skipping emit",
+				"err", err, "asset", asset.String(), "quote", quote.String())
+		}
+		return streaming.Event{}, false
+	}
+	// The event's divergence lookup runs inside this per-tick budget but
+	// on its own shorter one, so a stalled verdict store cannot push the
+	// emission past its window.
+	return s.tipStreamEvent(tickCtx, gen, asset, quote, snap, sources)
+}
+
+// tipWithheldPayload is the data of a price_withheld stream event. The
+// reason vocabulary is the one the request endpoint's 404 carries.
+type tipWithheldPayload struct {
+	AssetID string              `json:"asset_id"`
+	Quote   string              `json:"quote"`
+	Reason  PriceWithheldReason `json:"reason"`
+	AsOf    WireTime            `json:"as_of"`
+}
+
+func tipWithheldEvent(gen *streaming.Generator, asset, quote canonical.Asset, reason PriceWithheldReason) (streaming.Event, bool) {
+	body, err := json.Marshal(tipWithheldPayload{
+		AssetID: asset.String(),
+		Quote:   quote.String(),
+		Reason:  reason,
+		AsOf:    WireTime(time.Now().UTC()),
+	})
+	if err != nil {
+		return streaming.Event{}, false
+	}
+	return streaming.Event{ID: gen.Next(), Type: "price_withheld", Data: body}, true
 }
 
 // tipStreamEvent builds the SSE event payload for one tip emission.

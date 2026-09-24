@@ -1837,6 +1837,45 @@ longest-idle first, before a mint is refused), either from a distributed
 flood or because the deployment has outgrown the ceiling. Existing
 producers are always joinable; only new ones are refused.
 
+### `stellarindex_api_stream_subscriber_drops_total`
+
+Counter. SSE subscribers the streaming Hub disconnected because their
+queue was full when an event was published — a consumer slower than the
+stream. Each disconnect is counted once, however many topics the
+subscriber held; a client's own cancel is not counted. The client
+reconnects with `Last-Event-ID` and replays from the ring buffer, so a
+low rate is routine; a sustained one means events are being lost to
+consumers the host cannot keep up with.
+
+### `stellarindex_api_sse_streams_active`
+
+Gauge. SSE connections currently open across every stream endpoint —
+the quantity `api.streaming.max_concurrent_streams` bounds. Read it next
+to `stellarindex_api_stream_subscribe_total{outcome="ok"}`: open
+connections with no delivery are clients receiving keepalives only.
+
+### `stellarindex_api_sse_streams_rejected_total`
+
+Counter, label `reason` (`global_cap` / `per_ip_cap`).
+
+SSE connections refused with a 503 by the concurrency caps. `global_cap`
+rising means the process-wide ceiling is full (a connection flood, or a
+deployment that has outgrown it); `per_ip_cap` rising means one client
+address is at its own ceiling.
+
+### `stellarindex_api_stream_hub_topics`
+
+Gauge. Topics the streaming Hub currently holds, updated whenever a
+topic is created (after the reaper's pass). Bounded by the Hub's topic
+ceiling; the topic key is client-supplied on `/v1/price/stream`.
+
+### `stellarindex_api_stream_hub_topics_reaped_total`
+
+Counter. Topics the streaming Hub's reaper evicted (subscriber-less and
+either empty or idle past the TTL, or least-recently-used at the
+ceiling). Flat at zero next to a high `stellarindex_api_stream_hub_topics`
+means the retention policy is mistuned.
+
 ### `stellarindex_api_cors_decisions_total`
 
 Counter, label `outcome` (`no_origin` / `allowed_origin` /
