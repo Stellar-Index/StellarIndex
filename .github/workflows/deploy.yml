@@ -157,6 +157,13 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+          # GH-885: pin the checkout to the tag being deployed. Without a
+          # `ref:` this checks out the dispatching ref (main in practice),
+          # so every SCP'd artefact (configs/prometheus/rules.r1/,
+          # apply-rules.sh) carried main's bytes while the config-apply
+          # gate below diffs the deploying TAG against the previous
+          # release tag — two different provenances judged as one.
+          ref: ${{ inputs.version }}
           # Full history + tags: the config-apply gate diffs the deploying
           # tag against the previous release tag over the config surfaces.
           fetch-depth: 0

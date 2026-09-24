@@ -91,6 +91,11 @@ env:
   ISSUE_TITLE: "CI health: main has been red"
   FAIL_RUNS: '3'
   FAIL_HOURS: '6'
+  # GH-778: every workflow that runs on push to main, not just `ci.yml`.
+  # api-audit.yml and commit-identity.yml also gate main and had no
+  # tripwire of their own (api-audit failed twice in its last 60 runs
+  # with no issue opened).
+  CI_WORKFLOW_FILES: "ci.yml api-audit.yml commit-identity.yml"
 
 jobs:
   check-main-ci:
@@ -113,14 +118,22 @@ jobs:
         run: |
           set -euo pipefail
           set +e
-          report="$(FAIL_RUNS="${FAIL_RUNS}" FAIL_HOURS="${FAIL_HOURS}" ./scripts/ci/check-main-ci-health.sh)"
-          rc=$?
-          set -e
-          echo "$report"
-          {
-            echo "verdict_rc=${rc}"
-            echo "report<<REPORT_EOF"
+          overall_rc=0
+          combined=""
+          for wf in $CI_WORKFLOW_FILES; do
+            report="$(CI_WORKFLOW_FILE="$wf" FAIL_RUNS="${FAIL_RUNS}" FAIL_HOURS="${FAIL_HOURS}" ./scripts/ci/check-main-ci-health.sh)"
+            rc=$?
             echo "$report"
+            combined="${combined}${report}"$'\n'
+            if [ "$rc" -ne 0 ]; then
+              overall_rc="$rc"
+            fi
+          done
+          set -e
+          {
+            echo "verdict_rc=${overall_rc}"
+            echo "report<<REPORT_EOF"
+            echo "$combined"
             echo "REPORT_EOF"
           } >> "$GITHUB_OUTPUT"
 
