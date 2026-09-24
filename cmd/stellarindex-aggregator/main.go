@@ -1322,13 +1322,17 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, closeTime
 		if err != nil {
 			return nil, fmt.Errorf("derive asset_key for %q: %w", raw, err)
 		}
+		opts, err := supplyRefresherOptions(cfg, assetKey)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, supplyRefresherBinding{
 			refresher: supply.NewRefresher(
 				supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
 				bound,
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", raw),
-				supplyRefresherOptions(cfg, assetKey)...,
+				opts...,
 			),
 			assetKey: assetKey,
 		})
@@ -1336,18 +1340,23 @@ func buildClassicRefreshers(cfg config.Config, store *timescale.Store, closeTime
 	return out, nil
 }
 
-// supplyRefresherOptions builds the per-asset RefresherOption list.
-// Includes the global strict-freshness toggle and (if the operator
-// has configured one for this assetKey) the per-asset stale-
-// component threshold override. F-0040 (audit-2026-05-26).
-func supplyRefresherOptions(cfg config.Config, assetKey string) []supply.RefresherOption {
+// supplyRefresherOptions builds the per-asset RefresherOption list:
+// the global strict-freshness toggle plus, if the operator configured
+// one for assetKey under any accepted spelling, the per-asset
+// stale-component threshold override. assetKey must be [supply.AssetKey]
+// form — the key the Refresher's gate reads off each snapshot.
+func supplyRefresherOptions(cfg config.Config, assetKey string) ([]supply.RefresherOption, error) {
 	opts := []supply.RefresherOption{
 		supply.WithStrictFreshnessRequired(cfg.Supply.StrictFreshnessRequired),
 	}
-	if maxLag, ok := cfg.Supply.StaleComponentLedgersByAsset[assetKey]; ok {
+	byAsset, err := supply.CanonicalizeStaleComponentLedgers(cfg.Supply.StaleComponentLedgersByAsset)
+	if err != nil {
+		return nil, fmt.Errorf("stale_component_ledgers_by_asset: %w", err)
+	}
+	if maxLag, ok := byAsset[assetKey]; ok {
 		opts = append(opts, supply.WithStaleComponentLedgersFor(assetKey, maxLag))
 	}
-	return opts
+	return opts, nil
 }
 
 func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes ledgerCloseTimeReader, logger *slog.Logger) ([]supplyRefresherBinding, error) {
@@ -1373,13 +1382,17 @@ func buildSEP41Refreshers(cfg config.Config, store *timescale.Store, closeTimes 
 		if err != nil {
 			return nil, fmt.Errorf("bind sep41 computer to %q: %w", contractID, err)
 		}
+		opts, err := supplyRefresherOptions(cfg, contractID)
+		if err != nil {
+			return nil, err
+		}
 		out = append(out, supplyRefresherBinding{
 			refresher: supply.NewRefresher(
 				supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
 				bound,
 				supplyAggregatorInserter{s: store},
 				logger.With("asset", contractID),
-				supplyRefresherOptions(cfg, contractID)...,
+				opts...,
 			),
 			assetKey: contractID, // supply.AssetKey form for SEP-41 is the bare contract id
 		})
@@ -1412,12 +1425,16 @@ func buildXLMRefresher(cfg config.Config, store *timescale.Store, closeTimes led
 	if err != nil {
 		return nil, "", fmt.Errorf("derive asset_key for native XLM: %w", err)
 	}
+	opts, err := supplyRefresherOptions(cfg, assetKey)
+	if err != nil {
+		return nil, "", err
+	}
 	return supply.NewRefresher(
 		supplyAggregatorLedgers{s: store, closeTimes: closeTimes},
 		computer,
 		supplyAggregatorInserter{s: store},
 		logger.With("asset", assetKey),
-		supplyRefresherOptions(cfg, assetKey)...,
+		opts...,
 	), assetKey, nil
 }
 

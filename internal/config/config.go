@@ -2,9 +2,11 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/supply"
 )
 
 // Config is the root configuration for every Stellar Index binary.
@@ -1625,12 +1627,15 @@ type SupplyConfig struct {
 	// lag between trustline observations is normal). Per-asset
 	// overrides relax the gate without loosening it for
 	// high-activity XLM/USDC. Empty map preserves the global
-	// default for every asset.
+	// default for every asset. Keys are canonicalised through
+	// supply.CanonicalizeStaleComponentLedgers (so CODE-ISSUER and
+	// "native" also resolve), and Validate rejects a key that does
+	// not name a watched asset.
 	//
 	// Concrete deployment example:
 	//
 	//   [supply.stale_component_ledgers_by_asset]
-	//   "PHO:GDSTRSHXNGB2NW242WXEPSGRDEABYPMKZWNVTHEMSPZ3K4FPSU7XKZE6" = 5000
+	//   "PHO:GAX5TXB5RYJNLBUR477PEXM4X75APK2PGMTN6KEFQSESGWFXEAKFSXJO" = 5000
 	//
 	// A zero per-asset value disables the gate for that asset
 	// alone — useful for assets where the trustline-observer
@@ -1714,6 +1719,10 @@ type SupplyLockedSetConfig struct {
 //     silently no-op (buildCrossCheckRefresher only ever looks up
 //     FullyWrappedSACs membership for ids it already pulled from
 //     SACWrappers).
+//  6. Every StaleComponentLedgersByAsset key resolves to exactly one
+//     asset a supply refresher watches — the per-asset gate is an
+//     exact-match lookup, so a typo'd or unwatched key would
+//     otherwise leave the global threshold silently in force.
 func (sc SupplyConfig) Validate() error {
 	for i, acc := range sc.SDFReserveAccounts {
 		if !canonical.IsAccountID(acc) {
@@ -1741,7 +1750,48 @@ func (sc SupplyConfig) Validate() error {
 			return fmt.Errorf("supply: watched_sep41_contracts[%d] is empty", i)
 		}
 	}
-	return sc.validateFullyWrappedSACs()
+	if err := sc.validateFullyWrappedSACs(); err != nil {
+		return err
+	}
+	return sc.validateStaleComponentLedgersByAsset()
+}
+
+// validateStaleComponentLedgersByAsset is check 6 of
+// [SupplyConfig.Validate]. XLM is always watched; the aggregator
+// builds its refresher unconditionally.
+func (sc SupplyConfig) validateStaleComponentLedgersByAsset() error {
+	byAsset, err := supply.CanonicalizeStaleComponentLedgers(sc.StaleComponentLedgersByAsset)
+	if err != nil {
+		return fmt.Errorf("supply: stale_component_ledgers_by_asset: %w", err)
+	}
+	if len(byAsset) == 0 {
+		return nil
+	}
+	watched := map[string]struct{}{}
+	if xlm, err := supply.AssetKey(canonical.NativeAsset()); err == nil {
+		watched[xlm] = struct{}{}
+	}
+	for _, raw := range sc.WatchedClassicAssets {
+		// An unparseable entry is reported by the classic builder at startup.
+		if key, err := supply.ParseAssetKey(raw); err == nil {
+			watched[key] = struct{}{}
+		}
+	}
+	for _, c := range sc.WatchedSEP41Contracts {
+		watched[c] = struct{}{}
+	}
+	keys := make([]string, 0, len(byAsset))
+	for key := range byAsset {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if _, ok := watched[key]; !ok {
+			return fmt.Errorf("supply: stale_component_ledgers_by_asset key %q names no watched asset "+
+				"(want 'XLM', a watched_classic_assets entry, or a watched_sep41_contracts id)", key)
+		}
+	}
+	return nil
 }
 
 // validateFullyWrappedSACs is check 5 of [SupplyConfig.Validate],

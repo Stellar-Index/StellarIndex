@@ -2,6 +2,7 @@ package supply
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -62,6 +63,47 @@ func CanonicalizeWatchedClassic(entries []string) ([]string, error) {
 			return nil, fmt.Errorf("supply: watched classic asset %q: want canonical CODE-ISSUER form: %w", e, err)
 		}
 		out = append(out, a.Code+":"+a.Issuer)
+	}
+	return out, nil
+}
+
+// ParseAssetKey resolves any operator spelling [canonical.ParseAsset]
+// accepts ("native"/"XLM", CODE-ISSUER or CODE:ISSUER, a C-strkey) to
+// the [AssetKey] form snapshots are keyed on.
+func ParseAssetKey(raw string) (string, error) {
+	a, err := canonical.ParseAsset(raw)
+	if err != nil {
+		return "", fmt.Errorf("supply: asset key %q: %w", raw, err)
+	}
+	return AssetKey(a)
+}
+
+// CanonicalizeStaleComponentLedgers re-keys an operator's
+// [supply] stale_component_ledgers_by_asset map onto [AssetKey] form,
+// the exact-match key the Refresher's per-asset gate reads. An
+// unparseable key, or two spellings of one asset, is an error: either
+// would otherwise leave the global threshold silently in force.
+func CanonicalizeStaleComponentLedgers(byAsset map[string]uint32) (map[string]uint32, error) {
+	if len(byAsset) == 0 {
+		return nil, nil
+	}
+	raws := make([]string, 0, len(byAsset))
+	for raw := range byAsset {
+		raws = append(raws, raw)
+	}
+	sort.Strings(raws)
+	out := make(map[string]uint32, len(byAsset))
+	spelledAs := make(map[string]string, len(byAsset))
+	for _, raw := range raws {
+		key, err := ParseAssetKey(raw)
+		if err != nil {
+			return nil, err
+		}
+		if prev, dup := spelledAs[key]; dup {
+			return nil, fmt.Errorf("supply: asset keys %q and %q both name %q", prev, raw, key)
+		}
+		spelledAs[key] = raw
+		out[key] = byAsset[raw]
 	}
 	return out, nil
 }
