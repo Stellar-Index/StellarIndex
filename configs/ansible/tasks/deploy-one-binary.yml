@@ -20,7 +20,8 @@
 #   4. Atomic rename .new → live.
 #   5. Write the new sidecar file.
 #   6. systemctl restart <binary>.
-#   7. Health probe (api: /v1/healthz; others: systemctl is-active)
+#   7. Health probe (api: api_health_path; other daemons: /readyz on
+#      daemon_ready_ports[binary])
 #      after `health_grace_seconds`.
 #   8. On failure in steps 6-7: rollback (mv .prev back, restart,
 #      restore old sidecar). Playbook exits non-zero. This rolls back
@@ -195,15 +196,19 @@
       delay: 3
       until: probe.status is defined and probe.status == 200
 
-    - name: "[{{ binary }}] Health probe — systemd active"
+    # GH-1167: `systemctl is-active` reads "active" for a daemon that is up
+    # and failing every write; /readyz fails when the applied schema is
+    # behind the binary. A daemon with no declared port fails closed.
+    - name: "[{{ binary }}] Health probe — daemon /readyz"
       when: binary != 'stellarindex-api' and binary not in cli_binaries
-      ansible.builtin.command:
-        cmd: "systemctl is-active {{ binary }}.service"
-      changed_when: false
-      register: svc_state
-      retries: 5
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ daemon_ready_ports[binary] }}/readyz"
+        status_code: 200
+        timeout: 5
+      register: daemon_probe
+      retries: 20
       delay: 3
-      until: svc_state.rc == 0 and (svc_state.stdout | trim) == 'active'
+      until: daemon_probe.status is defined and daemon_probe.status == 200
 
     # audit-2026-07-23 CID-14: migrations are applied once for the whole
     # deploy up-front, but each binary swap+probe is independent — record
