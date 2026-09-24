@@ -48,6 +48,9 @@ type ContractDetailView struct {
 	// (directory.go) — display attribution, not verification. Omitted
 	// when the contract isn't listed or no directory reader is wired.
 	Directory *DirectoryInfoV `json:"directory,omitempty"`
+	// DirectoryUnavailable is true when the directory read failed, so an
+	// absent `directory` means "not checked", not "not listed".
+	DirectoryUnavailable bool `json:"directory_unavailable,omitempty"`
 	// Activity is the liveness card (page insight program unit 1):
 	// lifetime bounds + a 30-day daily active-ledger series off the
 	// contract-keyed index. Omitted when the index isn't provisioned.
@@ -151,7 +154,9 @@ func (h *Handler) ContractDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	out := ContractDetailView{ContractID: cid, Events: make([]ContractEventView, len(rows))}
 	out.Protocol = h.contractAttribution(ctx)[cid]
-	out.Directory = h.directoryFor(ctx, cid)
+	var dirOK bool
+	out.Directory, dirOK = h.directoryFor(ctx, cid)
+	out.DirectoryUnavailable = !dirOK
 	out.Activity = h.contractActivityCard(ctx, cid)
 	for i, e := range rows {
 		out.Events[i] = contractEventView(e)

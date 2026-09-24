@@ -21451,6 +21451,8 @@ export interface operations {
                             /** @description Opaque cursor for the next (older) page; absent on the last page. */
                             next_cursor?: string;
                             directory?: components["schemas"]["DirectoryInfo"];
+                            /** @description True when the directory read failed, so an absent `directory` means the contract was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read. */
+                            directory_unavailable?: boolean;
                             /** @description Liveness card — lifetime bounds + a 30-day daily active-ledger series. Absent when the activity index isn't provisioned. */
                             activity?: {
                                 /** Format: date-time */
@@ -22407,6 +22409,8 @@ export interface operations {
                             directory?: components["schemas"]["DirectoryInfo"];
                             /** @description The holding domains this view serves. Claimable balances and Soroban contract (including SAC) balances are not included, so their absence is not a zero balance. Omitted when exists is false. */
                             coverage_note?: string;
+                            /** @description True when the directory read failed, so an absent `directory` means the address was NOT checked (a malicious/unsafe label may exist), not that it is unlisted. Omitted on a successful read. */
+                            directory_unavailable?: boolean;
                         };
                     };
                 };

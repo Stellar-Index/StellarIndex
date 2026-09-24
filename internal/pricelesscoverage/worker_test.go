@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
@@ -19,7 +20,8 @@ import (
 // build-directive cases plus their guards. Each row is chosen so exactly
 // ONE guard decides it, so removing that guard flips the row — the test is
 // non-vacuous against each of: the market-character (wash) exclusion, the
-// withheld verdict, the priced short-circuit, and the popularity floor.
+// priced short-circuit, and the popularity floor. The withheld verdict is
+// the serving gate's, pinned by TestSweep_WithheldIsTheServingGatesVerdict.
 func TestPopularPriceless_Census(t *testing.T) {
 	cases := []struct {
 		name string
@@ -48,18 +50,6 @@ func TestPopularPriceless_Census(t *testing.T) {
 				AssetID: "SCAMAUD-GISSUER", HasPriceUSD: false,
 				Volume7dUSD: 1_400_000, Trades7d: 763, Volume24hUSD: 205_000,
 				TopAccountPairVolShare: 0.99,
-			},
-			want: false,
-		},
-		{
-			// (C) withheld verdict: popular over 7d but its recent 24h
-			// market is below the substance serve floor, so the gate
-			// withholds the price by design — priceless is EXPECTED, silent.
-			name: "withheld_below_substance_floor_silent",
-			in: timescale.AssetCoverageSignals{
-				AssetID: "QUIETNOW-GISSUER", HasPriceUSD: false,
-				Volume7dUSD: 50_000, Trades7d: 400, Volume24hUSD: 200,
-				TopAccountPairVolShare: 0.20,
 			},
 			want: false,
 		},
@@ -105,13 +95,52 @@ func TestPopularPriceless_Census(t *testing.T) {
 	}
 }
 
-// TestSubstanceFloor_MatchesServingDefault pins the withheld-verdict floor
-// to the actual substance-gate default so the tripwire's notion of "the
-// gate withheld this" can't silently drift from what the gate really does.
-func TestSubstanceFloor_MatchesServingDefault(t *testing.T) {
-	if substanceServeFloorUSD != float64(pricingguard.DefaultSubstanceMinVolumeUSD) {
-		t.Errorf("substanceServeFloorUSD = %v, want the serving default %v — the tripwire's withheld floor must track the gate",
-			substanceServeFloorUSD, pricingguard.DefaultSubstanceMinVolumeUSD)
+// substanceStore answers every pair's trailing substance with one reading.
+type substanceStore struct{ m timescale.MarketSubstance }
+
+func (f substanceStore) PairMarketSubstance(context.Context, canonical.Pair, time.Duration) (timescale.MarketSubstance, error) {
+	return f.m, nil
+}
+
+// The tripwire's "withheld" is the serving gate's own asset verdict, not a
+// re-derivation of one of its floors. Each case disagrees with the old
+// 24h-volume-only reading in one direction: a market clearing $1,000 in
+// too few distinct minutes is withheld by the gate (no gap), and one whose
+// candidate-row 24h volume is low while the gate's alias-union measure
+// clears is served-or-missing, so its absence is a real gap.
+func TestSweep_WithheldIsTheServingGatesVerdict(t *testing.T) {
+	const assetID = "GOLD-GATISXX6BZ6NC7IKQBY37CJD4SOZL3CYZJWXEDG6JVIY4WBS6KXJHN6Q"
+	cases := []struct {
+		name      string
+		substance timescale.MarketSubstance
+		vol24h    float64
+		want      float64
+	}{
+		{
+			name:      "gate_withholds_few_buckets_despite_volume",
+			substance: timescale.MarketSubstance{VolumeUSD: "8000", Buckets: 5, SpanSeconds: 86_400},
+			vol24h:    8_000,
+			want:      0,
+		},
+		{
+			name:      "gate_allows_so_absence_is_a_gap",
+			substance: timescale.MarketSubstance{VolumeUSD: "50000", Buckets: 600, SpanSeconds: 86_400},
+			vol24h:    200,
+			want:      1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			gate := pricingguard.NewSubstanceGate(substanceStore{m: tc.substance}, pricingguard.SubstanceGateOptions{})
+			w := New(&fakeReader{sigs: []timescale.AssetCoverageSignals{{
+				AssetID: assetID, Volume7dUSD: 50_000, Trades7d: 400,
+				Volume24hUSD: tc.vol24h, TopAccountPairVolShare: 0.2,
+			}}}, Options{Withheld: SubstanceWithheld(gate, nil)})
+			w.Sweep(context.Background())
+			if got := testutil.ToFloat64(obs.AssetsPopularPriceless); got != tc.want {
+				t.Errorf("gauge = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -128,7 +157,7 @@ func (f *fakeReader) PopularPricelessCandidates(context.Context) ([]timescale.As
 // TestSweep_SetsGaugeToFiringCount proves the worker publishes the COUNT of
 // firing assets — not a mock: the fake reader supplies raw signals and the
 // real classifier decides, so the gauge reflects the census above (one
-// popular-priceless + one wash + one withheld + one priced -> exactly 1).
+// popular-priceless + one wash + one gate-withheld + one priced -> exactly 1).
 func TestSweep_SetsGaugeToFiringCount(t *testing.T) {
 	obs.AssetsPopularPriceless.Set(-1) // sentinel: prove the sweep overwrites it
 	fixed := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
@@ -137,7 +166,10 @@ func TestSweep_SetsGaugeToFiringCount(t *testing.T) {
 		{AssetID: "SCAMAUD-G", Volume7dUSD: 1_400_000, Trades7d: 700, Volume24hUSD: 205_000, TopAccountPairVolShare: 0.99},
 		{AssetID: "QUIETNOW-G", Volume7dUSD: 50_000, Trades7d: 400, Volume24hUSD: 200, TopAccountPairVolShare: 0.2},
 		{AssetID: "USDC-G", HasPriceUSD: true, Volume7dUSD: 90_000, Trades7d: 900, Volume24hUSD: 40_000, TopAccountPairVolShare: 0.1},
-	}}, Options{Clock: func() time.Time { return fixed }})
+	}}, Options{
+		Clock:    func() time.Time { return fixed },
+		Withheld: func(_ context.Context, id string) bool { return id == "QUIETNOW-G" },
+	})
 
 	w.Sweep(context.Background())
 

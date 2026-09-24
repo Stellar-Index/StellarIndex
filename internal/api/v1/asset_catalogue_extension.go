@@ -191,8 +191,9 @@ func (s *Server) applyAssetRowToDetail(ctx context.Context, detail *AssetDetail,
 	// directly-observed price — it only fills a hole that would otherwise
 	// render as "no price" on an actively-traded asset.
 	//
-	// transitivePriceFor gates BOTH legs itself and returns false on every
-	// error path, so this call site deliberately has no policy of its own.
+	// transitivePriceFor gates BOTH legs itself (scam + substance) and
+	// returns false on every error path, so this call site deliberately
+	// has no policy of its own.
 	s.fillTransitivePrice(ctx, detail, asset, assetID)
 	if priceAllowed && row.Change1hPct != nil {
 		detail.Change1hPct = row.Change1hPct
@@ -411,7 +412,8 @@ func assetPointsToWire(pts []timescale.AssetPricePoint) []AssetPricePoint {
 // the no-row arm is the case the feature exists for.
 //
 // No-ops unless PriceUSD is still nil, so it can never override a
-// directly-observed price. transitivePriceFor gates both legs itself.
+// directly-observed price. transitivePriceFor gates both legs itself,
+// on scam and substance.
 func (s *Server) fillTransitivePrice(ctx context.Context, detail *AssetDetail, asset canonical.Asset, assetID string) {
 	if detail == nil || detail.PriceUSD != nil {
 		return

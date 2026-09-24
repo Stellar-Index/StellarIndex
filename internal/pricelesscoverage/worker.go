@@ -32,7 +32,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
+	"github.com/Stellar-Index/StellarIndex/internal/pricingguard"
 	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
@@ -51,9 +53,9 @@ const DefaultInterval = 10 * time.Minute
 const DefaultSweepTimeout = 5 * time.Minute
 
 // Popularity + market-character thresholds. The floor numbers are the
-// task-directed values; the concentration + substance thresholds match the
-// serving stack so the tripwire's notion of "popular" and "withheld" agree
-// with what the API actually does.
+// task-directed values; the concentration threshold matches the serving
+// stack. "Withheld" is not a threshold here: it is the serving gate's own
+// verdict, asked through Options.Withheld.
 const (
 	// FloorVolume7dUSD / FloorTrades7d are the popularity floor, applied to
 	// MARKET-CHARACTER volume/trades (raw minus wash). Above EITHER, an
@@ -68,15 +70,6 @@ const (
 	// volumeCharacterConcentrationThreshold. A wash-concentrated asset
 	// contributes NO market-character volume, so it can never be "popular".
 	washConcentrationThreshold = 0.90
-
-	// substanceServeFloorUSD is the substance gate's trailing-window USD
-	// serve floor (pricingguard.DefaultSubstanceMinVolumeUSD). A recent
-	// (24h) market below it is one the gate WITHHOLDS fail-closed, so the
-	// asset's pricelessness is expected (a recorded withheld verdict) — not
-	// a coverage gap. Kept as a literal to avoid importing the pricingguard
-	// serving package into this analytics worker; pinned equal by
-	// TestSubstanceFloor_MatchesServingDefault.
-	substanceServeFloorUSD = 1_000.0
 )
 
 // CandidateReader is the storage seam the tripwire needs: the per-asset
@@ -99,6 +92,14 @@ type Options struct {
 	// IsPriced asks the sweep's own priced set about one asset id — the
 	// resolved classic id. Nil disables the aliasing.
 	IsPriced func(ctx context.Context, assetID string) (bool, error)
+	// Withheld reports whether the serving substance gate deliberately
+	// withholds the asset's USD price, which makes its pricelessness
+	// expected rather than a gap. Wire it to the gate the listing asks
+	// (pricingguard.AssetSubstanceVerdict): any re-derivation of the
+	// gate's floors disagrees with it in both directions. It must answer
+	// false when the gate could not measure, so an unknown pages. Nil
+	// means no gate is serving, so nothing is withheld.
+	Withheld func(ctx context.Context, assetID string) bool
 
 	// Interval is the sweep cadence. <= 0 falls back to DefaultInterval.
 	Interval time.Duration
@@ -121,6 +122,7 @@ type Worker struct {
 	// plain field.
 	resolveSAC   atomic.Pointer[func(ctx context.Context, contractID string) (string, bool)]
 	isPriced     func(ctx context.Context, assetID string) (bool, error)
+	withheld     func(ctx context.Context, assetID string) bool
 	interval     time.Duration
 	sweepTimeout time.Duration
 	logger       *slog.Logger
@@ -136,6 +138,7 @@ func New(reader CandidateReader, opts Options) *Worker {
 	w := &Worker{
 		reader:       reader,
 		isPriced:     opts.IsPriced,
+		withheld:     opts.Withheld,
 		interval:     opts.Interval,
 		sweepTimeout: opts.SweepTimeout,
 		logger:       opts.Logger,
@@ -218,6 +221,11 @@ func (w *Worker) Sweep(ctx context.Context) {
 				"volume_7d_usd", sig.Volume7dUSD, "trades_7d", sig.Trades7d)
 			continue
 		}
+		if w.withheld != nil && w.withheld(sweepCtx, sig.AssetID) {
+			w.logger.Info("priceless-popular coverage: substance gate withholds the price; not a gap",
+				"asset_id", sig.AssetID, "volume_24h_usd", sig.Volume24hUSD)
+			continue
+		}
 		count++
 		w.logger.Warn("priceless-popular coverage gap: market-popular asset has no price",
 			"asset_id", sig.AssetID,
@@ -232,10 +240,6 @@ func (w *Worker) Sweep(ctx context.Context) {
 	obs.PricelessCoverageCheckLastSuccessUnix.Set(float64(w.now().Unix()))
 }
 
-// popularPriceless is the tripwire's pure verdict for one asset: fire iff
-// the asset is priceless, NOT deliberately withheld, NOT a wash farm, and
-// popular by MARKET-CHARACTER volume. Every threshold lives here (never in
-// the SQL), so the classification is unit-testable without a database.
 // pricedViaClassicAlias resolves a C… candidate to its classic asset and
 // asks whether THAT is priced. Returns the classic id (empty when the
 // candidate is not a resolvable SAC) and the verdict. A resolver or probe
@@ -265,25 +269,19 @@ func looksLikeContractID(id string) bool {
 	return len(id) == 56 && id[0] == 'C'
 }
 
+// popularPriceless is the tripwire's pure pre-filter for one asset: fire
+// iff the asset is priceless, NOT a wash farm, and popular by
+// MARKET-CHARACTER volume. Every threshold lives here (never in the SQL),
+// so the classification is unit-testable without a database. Whether the
+// gate withholds the price is asked afterwards, of the gate itself.
 func popularPriceless(s timescale.AssetCoverageSignals) bool {
 	if s.HasPriceUSD {
 		return false // priced — not a coverage gap
-	}
-	if withheldVerdict(s) {
-		return false // gate withholds a below-floor recent market by design
 	}
 	if washConcentrated(s) {
 		return false // volume-painting wash is not a real market
 	}
 	return s.Volume7dUSD > FloorVolume7dUSD || s.Trades7d > FloorTrades7d
-}
-
-// withheldVerdict reports whether the asset's price is deliberately
-// withheld: its trailing-24h market is below the substance serve floor, so
-// the substance gate refuses to publish a price (fail-closed). A priceless
-// asset with a withheld verdict is EXPECTED, not a coverage gap.
-func withheldVerdict(s timescale.AssetCoverageSignals) bool {
-	return s.Volume24hUSD < substanceServeFloorUSD
 }
 
 // washConcentrated reports whether the asset's volume is dominated by a
@@ -299,4 +297,23 @@ func withheldVerdict(s timescale.AssetCoverageSignals) bool {
 // too, so a market with no recorded accounts is never suppressed by it.
 func washConcentrated(s timescale.AssetCoverageSignals) bool {
 	return s.TopAccountPairVolShare >= washConcentrationThreshold
+}
+
+// SubstanceWithheld builds the [Options.Withheld] verdict from the serving
+// substance gate and the operator's USD pegs: the asset is withheld when
+// the gate MEASURED it and no backing quote cleared, the exact question
+// the /v1/assets listing asks. An unparseable id or an unmeasured verdict
+// is not withheld, so it pages.
+func SubstanceWithheld(gate pricingguard.SubstanceVerdicter, usdPegs []canonical.Asset) func(context.Context, string) bool {
+	if gate == nil {
+		return nil
+	}
+	return func(ctx context.Context, assetID string) bool {
+		asset, err := canonical.ParseAsset(assetID)
+		if err != nil {
+			return false
+		}
+		allowed, measured := pricingguard.AssetSubstanceVerdict(ctx, gate, asset, usdPegs, "priceless_coverage")
+		return measured && !allowed
+	}
 }

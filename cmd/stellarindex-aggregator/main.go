@@ -1129,6 +1129,11 @@ func run(cfgPath string, dryRun bool) error {
 		Interval: pricelesscoverage.DefaultInterval,
 		Logger:   logger.With("component", "priceless-coverage"),
 		IsPriced: store.AssetIsPriced,
+		// "Withheld" is the serving listing's own substance verdict, from
+		// the same [pricing_guard] policy and USD pegs the API applies.
+		Withheld: pricelesscoverage.SubstanceWithheld(
+			buildAggregatorSubstanceGate(cfg.PricingGuard, store, logger),
+			parseUSDPeggedClassicAssets(cfg.Trades.USDPeggedClassicAssets, logger)),
 	}
 	pricelessTripwire := pricelesscoverage.New(store, pricelessOpts)
 	// A Soroban-venue trade is keyed by the token contract; a SAC's price

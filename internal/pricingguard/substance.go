@@ -218,6 +218,59 @@ func SubstanceGated(base, quote canonical.Asset) bool {
 	return onChain(base) || onChain(quote)
 }
 
+// SubstanceVerdicter is the per-pair verdict seam [AssetSubstanceVerdict]
+// folds over; *SubstanceGate satisfies it.
+type SubstanceVerdicter interface {
+	Verdict(ctx context.Context, base, quote canonical.Asset, surface string) (allowed, measured bool)
+}
+
+// fiatUSD is the USD quote every asset-level verdict tries.
+var fiatUSD = func() canonical.Asset {
+	a, err := canonical.NewFiatAsset("USD")
+	if err != nil {
+		panic(err)
+	}
+	return a
+}()
+
+// AssetSubstanceVerdict is the substance gate's answer for a single
+// asset's USD price rather than one pair. The backing quotes are XLM,
+// fiat:USD (the alias union covers the CEX series) and each
+// operator-declared USD peg in usdPegs. Allowed when the asset is out of
+// scope (no on-chain identity), is native (definitionally liquid; its
+// identity pairs degenerate under the alias union), or when ANY backing
+// quote clears the floor. measured is false when no quote cleared and at
+// least one could not be measured. The /v1/assets listing and the
+// priceless-popular tripwire both ask this, so "withheld" means one
+// thing on the surface and on the alert. A nil gate allows.
+func AssetSubstanceVerdict(
+	ctx context.Context, gate SubstanceVerdicter, asset canonical.Asset,
+	usdPegs []canonical.Asset, surface string,
+) (allowed, measured bool) {
+	if gate == nil {
+		return true, true
+	}
+	switch asset.Type {
+	case canonical.AssetNative:
+		return true, true
+	case canonical.AssetClassic, canonical.AssetSoroban:
+	default:
+		return true, true
+	}
+	quotes := append([]canonical.Asset{canonical.NativeAsset(), fiatUSD}, usdPegs...)
+	measured = true
+	for _, quote := range quotes {
+		ok, m := gate.Verdict(ctx, asset, quote, surface)
+		if ok && m {
+			return true, true
+		}
+		if !m {
+			measured = false
+		}
+	}
+	return false, measured
+}
+
 // SubstanceOK is the pure decision: does the measured substance clear
 // the policy floor? Exact-rational volume compare (ADR-0003). An
 // unparseable volume string counts as zero — fail-closed, consistent

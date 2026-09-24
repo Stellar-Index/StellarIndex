@@ -47,6 +47,29 @@ against.
   to genesis, rename cut-over, API restart); `CREATE IF NOT EXISTS` does
   not re-key the existing table.
 
+- **aggregator — the priceless-popular tripwire asks the substance gate
+  whether a price is withheld (GH-906):** it re-derived "withheld" as
+  trailing-24h volume below $1,000 per asset, one of the gate's three
+  floors and without the alias union, so it paged on assets the gate
+  correctly withheld and stayed silent on real gaps. It now asks
+  `pricingguard.AssetSubstanceVerdict`, which the `/v1/assets` listing
+  also uses, with the same policy and USD pegs; an unmeasured verdict
+  still pages.
+
+- **api — transitive price asks the scam gate on both legs (#847):**
+  `transitivePriceFor` gated only substance, so a directory-flagged hop
+  whose wash volume cleared the floor priced `/v1/assets/{id}` with
+  `price_basis: transitive` while `/v1/price` refused the hop itself. It
+  now refuses when the asset or the hop is scam-withheld, via the
+  package's pair-aware `scamWithheld`.
+
+- **api — explorer account and contract views: a failed directory read
+  was wire-identical to "not listed" (GH-579):** `directoryFor` returned
+  nil on a read error, so a `#malicious`/`#unsafe` label could go unseen
+  with nothing saying the lookup did not run. Both views now carry
+  `directory_unavailable: true` when the read fails (additive, omitted
+  on a successful read).
+
 - **api — `/v1/price/stream` spec and comments described a frame nobody
   emits (GH-751):** the example showed `as_of` 42 s after
   `observed_at` and a `flags` object on the 300 s series; the aggregator

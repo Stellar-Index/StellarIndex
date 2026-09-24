@@ -125,6 +125,65 @@ func TestTransitivePriceFor_GateMatrix(t *testing.T) {
 	}
 }
 
+// transitiveScamGate is a pair-aware scam gate flagging the listed ids.
+type transitiveScamGate struct{ flagged map[string]bool }
+
+func (g transitiveScamGate) Withheld(_ context.Context, base canonical.Asset, _ string) bool {
+	return g.flagged[base.String()]
+}
+
+func (g transitiveScamGate) WithheldPair(_ context.Context, base, quote canonical.Asset, _ string) bool {
+	return g.flagged[base.String()] || g.flagged[quote.String()]
+}
+
+// TestTransitivePriceFor_ScamGateOnBothLegs: the helper once gated
+// only substance, so a hop whose issuer the directory flags (and whose
+// wash volume clears the floor) priced /v1/assets/{id} transitively while
+// /v1/price refused the hop itself. Every case clears the substance gate,
+// so the scam gate alone decides.
+func TestTransitivePriceFor_ScamGateOnBothLegs(t *testing.T) {
+	const (
+		assetID = "CAUP7NFABXE5TJRL3FKTPMWRLC7IAXYDCTHQRFSCLR5TMGKHOOQO772J"
+		hopID   = "CBIJBDNZNF4X35BJ4FFZWCDBSCKOP5NB4PLG4SNENRMLAPYG4P5FM6VN"
+	)
+	asset, err := canonical.ParseAsset(assetID)
+	if err != nil {
+		t.Fatalf("parse asset: %v", err)
+	}
+	substance := &stubListingGate{allow: map[string]bool{
+		assetID + "|" + hopID: true,
+		hopID + "|native":     true,
+	}}
+	tests := []struct {
+		name    string
+		flagged map[string]bool
+		wantOK  bool
+	}{
+		{name: "nothing flagged — served", flagged: nil, wantOK: true},
+		{name: "hop flagged — refused", flagged: map[string]bool{hopID: true}},
+		{name: "asset flagged — refused", flagged: map[string]bool{assetID: true}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{
+				transitive: &stubPricer{tp: timescale.TransitivePrice{PriceUSD: "7934.40", Hop: hopID}, ok: true},
+				substance:  substance,
+				scam:       transitiveScamGate{flagged: tc.flagged},
+			}
+			got, ok := s.transitivePriceFor(context.Background(), asset, assetID)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v (price=%q), want %v", ok, got, tc.wantOK)
+			}
+			if !tc.wantOK && got != "" {
+				t.Errorf("price = %q, want none", got)
+			}
+			if tc.wantOK && got != "7934.40" {
+				t.Errorf("price = %q, want 7934.40", got)
+			}
+		})
+	}
+}
+
 // A nil pricer must not even reach the gate — the feature being off
 // should cost nothing, not merely produce no output.
 func TestTransitivePriceFor_NilPricerDoesNotConsultGate(t *testing.T) {
