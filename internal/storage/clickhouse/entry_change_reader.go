@@ -18,7 +18,7 @@ import (
 // Entry is nil for a 'removed' change (the row only carries the key,
 // per internal/storage/clickhouse/extract_entry_changes.go's
 // entryChangeRow) — every other ChangeType ('state'/'created'/
-// 'updated') carries the full decoded LedgerEntry.
+// 'updated'/'restored') carries the full decoded LedgerEntry.
 type EntryChange struct {
 	Ledger      uint32
 	ClosedAt    time.Time
