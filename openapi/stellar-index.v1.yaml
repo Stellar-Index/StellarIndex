@@ -15392,9 +15392,9 @@ components:
           type: array
           description: |
             The distinct PUBLISHERS whose published values make up the
-            total, sorted. Not "oracles": the total can mix two
-            provenances, and calling a listing platform an oracle would
-            misdescribe the weaker half of its own figure. A dollar
+            total, sorted. Not "oracles": the total can mix three
+            provenances, and calling a listing platform or a prospectus
+            an oracle would misdescribe part of its own figure. A dollar
             figure that cannot be traced to a publisher is worse than an
             absent one here; each contributing row carries the full
             provenance — kind, publisher, key, denominator and vintage —
@@ -15417,7 +15417,7 @@ components:
             as one omitting a provenance it does.
           items:
             type: string
-            enum: [oracle_instrument_nav, listing_platform_price]
+            enum: [oracle_instrument_nav, listing_platform_price, prospectus_constant_nav]
           example: [listing_platform_price, oracle_instrument_nav]
         basis:
           type: string

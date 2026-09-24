@@ -7757,9 +7757,9 @@ export interface components {
             lower_bound: boolean;
             /**
              * @description The distinct PUBLISHERS whose published values make up the
-             *     total, sorted. Not "oracles": the total can mix two
-             *     provenances, and calling a listing platform an oracle would
-             *     misdescribe the weaker half of its own figure. A dollar
+             *     total, sorted. Not "oracles": the total can mix three
+             *     provenances, and calling a listing platform or a prospectus
+             *     an oracle would misdescribe part of its own figure. A dollar
              *     figure that cannot be traced to a publisher is worse than an
              *     absent one here; each contributing row carries the full
              *     provenance — kind, publisher, key, denominator and vintage —
@@ -7787,7 +7787,7 @@ export interface components {
              *       "oracle_instrument_nav"
              *     ]
              */
-            provenances?: ("oracle_instrument_nav" | "listing_platform_price")[];
+            provenances?: ("oracle_instrument_nav" | "listing_platform_price" | "prospectus_constant_nav")[];
             /** @description Prose statement of what was measured and, as importantly, what it is not. */
             basis: string;
         };
