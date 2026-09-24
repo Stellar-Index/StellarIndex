@@ -53,7 +53,9 @@ import (
 // scans roughly 5–10 GB at $5/TB on-demand, so ≤$0.05 per check.
 // Reservation pricing is roughly free at our scale. Operators who
 // need to cap spend can pass -dry-run-bytes to print the dry-run
-// estimate before executing.
+// estimate before executing. Every query carries -max-bytes-billed
+// (default 100 GB), so a mistyped range fails unbilled instead of
+// scanning the whole table.
 //
 // Auth. Uses Application Default Credentials. Easiest:
 //
@@ -74,6 +76,8 @@ func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag
 		"cap on number of divergent ledgers reported; the rest are summarised")
 	dryRunBytes := fs.Bool("dry-run-bytes", false,
 		"print the BigQuery dry-run byte estimate, then exit (no real query)")
+	maxBytesBilled := fs.Int64("max-bytes-billed", defaultMaxBytesBilled,
+		"BigQuery MaximumBytesBilled for every query; a query that would scan more fails unbilled")
 	zeroAmounts := fs.Bool("zero-amounts", false,
 		"diagnostic: count Hubble trades with a zero selling/buying amount in the "+
 			"range (one-side-zero vs both-zero), then exit — explains SDEX off-by-one")
@@ -106,6 +110,9 @@ func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag
 	if *project == "" {
 		return errors.New("-bigquery-project required")
 	}
+	if err := validateMaxBytesBilled(*maxBytesBilled); err != nil {
+		return err
+	}
 
 	cfg, err := config.LoadWithEnv(*cfgPath)
 	if err != nil {
@@ -122,9 +129,10 @@ func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag
 		return fmt.Errorf("bigquery client: %w", err)
 	}
 	defer func() { _ = bqClient.Close() }()
+	bq := hubbleBQ{client: bqClient, maxBytes: *maxBytesBilled}
 
 	if *dryRunBytes {
-		bytes, err := hubbleDryRun(ctx, bqClient, uint32(*from), uint32(*to))
+		bytes, err := hubbleDryRun(ctx, bq, uint32(*from), uint32(*to))
 		if err != nil {
 			return fmt.Errorf("dry-run: %w", err)
 		}
@@ -135,7 +143,7 @@ func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag
 	}
 
 	if *zeroAmounts {
-		oneSide, both, anyZero, err := hubbleZeroAmountCounts(ctx, bqClient, uint32(*from), uint32(*to))
+		oneSide, both, anyZero, err := hubbleZeroAmountCounts(ctx, bq, uint32(*from), uint32(*to))
 		if err != nil {
 			return fmt.Errorf("zero-amounts: %w", err)
 		}
@@ -146,14 +154,14 @@ func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag
 	}
 
 	if *detail {
-		if err := hubbleTradeDetail(ctx, bqClient, uint32(*from), uint32(*to)); err != nil {
+		if err := hubbleTradeDetail(ctx, bq, uint32(*from), uint32(*to)); err != nil {
 			return fmt.Errorf("detail: %w", err)
 		}
 		return nil
 	}
 
 	if *dupCheck {
-		total, distinct, err := hubbleDupCheck(ctx, bqClient, uint32(*from), uint32(*to))
+		total, distinct, err := hubbleDupCheck(ctx, bq, uint32(*from), uint32(*to))
 		if err != nil {
 			return fmt.Errorf("dup-check: %w", err)
 		}
@@ -170,7 +178,7 @@ func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag
 	defer func() { _ = store.Close() }()
 
 	if *withAmounts {
-		return runHubbleCheckWithAmounts(ctx, logger, store, bqClient,
+		return runHubbleCheckWithAmounts(ctx, logger, store, bq,
 			uint32(*from), uint32(*to), *maxDiffs, *toleranceBps)
 	}
 
@@ -181,21 +189,77 @@ func hubbleCheck(args []string) error { //nolint:gocognit,gocyclo,funlen // flag
 	}
 
 	logger.Info("querying Hubble", "from", *from, "to", *to, "project", *project)
-	theirs, err := fetchHubbleCounts(ctx, bqClient, uint32(*from), uint32(*to))
+	theirs, err := fetchHubbleCounts(ctx, bq, uint32(*from), uint32(*to))
 	if err != nil {
 		return fmt.Errorf("query Hubble: %w", err)
 	}
 
+	return hubbleCountVerdict(logger, uint32(*from), uint32(*to), ours, theirs, *maxDiffs)
+}
+
+// hubbleCountVerdict turns the two per-ledger count maps into the run's
+// verdict. Two empty maps are an error, not a pass: nothing was compared.
+func hubbleCountVerdict(logger *slog.Logger, from, to uint32, ours, theirs map[uint32]int, maxDiffs int) error {
+	checked, err := requireComparedLedgers(ours, theirs, from, to)
+	if err != nil {
+		return err
+	}
 	diffs := diffLedgerCounts(ours, theirs)
 	if len(diffs) == 0 {
 		logger.Info("hubble-check OK — every ledger's SDEX trade count matches",
-			"from", *from, "to", *to,
-			"ledgers_checked", len(ours)+len(theirs)) // upper bound
+			"from", from, "to", to, "ledgers_checked", checked)
 		return nil
 	}
 
-	reportLedgerDiffs(diffs, *maxDiffs)
+	reportLedgerDiffs(diffs, maxDiffs)
 	return fmt.Errorf("hubble-check FAIL — %d ledger(s) disagree on SDEX trade count", len(diffs))
+}
+
+// requireComparedLedgers returns how many distinct ledgers either side
+// returned, and fails when that is zero: an empty diff over an empty read
+// says nothing about the range (past the tip, never ingested, or no BigQuery
+// access all look like this).
+func requireComparedLedgers[V any](ours, theirs map[uint32]V, from, to uint32) (int, error) {
+	seen := make(map[uint32]struct{}, len(ours)+len(theirs))
+	for k := range ours {
+		seen[k] = struct{}{}
+	}
+	for k := range theirs {
+		seen[k] = struct{}{}
+	}
+	if len(seen) == 0 {
+		return 0, fmt.Errorf("hubble-check: neither our trades table nor Hubble returned an SDEX trade "+
+			"for ledgers %d..%d, so nothing was compared — check the range against the ingested window "+
+			"and the chain tip, and the BigQuery project's access", from, to)
+	}
+	return len(seen), nil
+}
+
+// defaultMaxBytesBilled is the per-query BigQuery scan ceiling (100 GB,
+// under $1 on-demand): several M ledgers of either table fit, a full-table
+// scan does not.
+const defaultMaxBytesBilled int64 = 100_000_000_000
+
+// validateMaxBytesBilled refuses a non-positive cap, which BigQuery
+// reads as "use the project default" — i.e. uncapped.
+func validateMaxBytesBilled(n int64) error {
+	if n < 1 {
+		return fmt.Errorf("-max-bytes-billed must be > 0 (BigQuery treats %d as uncapped)", n)
+	}
+	return nil
+}
+
+// hubbleBQ is the only way this package builds a BigQuery query, so no
+// query can run without the -max-bytes-billed ceiling.
+type hubbleBQ struct {
+	client   *bigquery.Client
+	maxBytes int64
+}
+
+func (b hubbleBQ) query(sql string) *bigquery.Query {
+	q := b.client.Query(sql)
+	q.MaxBytesBilled = b.maxBytes
+	return q
 }
 
 // fetchOurSDEXCounts returns map[ledger]→trade count for our SDEX
@@ -232,8 +296,8 @@ func fetchOurSDEXCounts(ctx context.Context, store *timescale.Store, from, to ui
 // Trade type 1 (orderbook) and trade type 2 (classic liquidity-pool)
 // are both included — our SDEX decoder handles both ClaimAtom kinds
 // and stamps both as source='sdex'.
-func fetchHubbleCounts(ctx context.Context, client *bigquery.Client, from, to uint32) (map[uint32]int, error) {
-	q := client.Query("SELECT history_operation_id >> 32 AS ledger_sequence, COUNT(*) AS n " +
+func fetchHubbleCounts(ctx context.Context, bq hubbleBQ, from, to uint32) (map[uint32]int, error) {
+	q := bq.query("SELECT history_operation_id >> 32 AS ledger_sequence, COUNT(*) AS n " +
 		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
 		"WHERE history_operation_id BETWEEN @from AND @to " +
 		"GROUP BY ledger_sequence")
@@ -269,8 +333,8 @@ func fetchHubbleCounts(ctx context.Context, client *bigquery.Client, from, to ui
 // hubbleDryRun returns the BigQuery dry-run byte estimate for the
 // count-only query. Used by -dry-run-bytes to give operators a cost
 // preview before running for real.
-func hubbleDryRun(ctx context.Context, client *bigquery.Client, from, to uint32) (int64, error) {
-	q := client.Query("SELECT history_operation_id >> 32 AS ledger_sequence, COUNT(*) AS n " +
+func hubbleDryRun(ctx context.Context, bq hubbleBQ, from, to uint32) (int64, error) {
+	q := bq.query("SELECT history_operation_id >> 32 AS ledger_sequence, COUNT(*) AS n " +
 		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
 		"WHERE history_operation_id BETWEEN @from AND @to " +
 		"GROUP BY ledger_sequence")
@@ -363,7 +427,7 @@ func runHubbleCheckWithAmounts(
 	ctx context.Context,
 	logger *slog.Logger,
 	store *timescale.Store,
-	bqClient *bigquery.Client,
+	bq hubbleBQ,
 	from, to uint32,
 	maxDiffs, toleranceBps int,
 ) error {
@@ -374,15 +438,29 @@ func runHubbleCheckWithAmounts(
 	}
 
 	logger.Info("querying Hubble (with amounts)", "from", from, "to", to)
-	theirs, err := fetchHubbleStats(ctx, bqClient, from, to)
+	theirs, err := fetchHubbleStats(ctx, bq, from, to)
 	if err != nil {
 		return fmt.Errorf("query Hubble: %w", err)
 	}
 
+	return hubbleStatVerdict(logger, from, to, ours, theirs, maxDiffs, toleranceBps)
+}
+
+// hubbleStatVerdict is hubbleCountVerdict for the -with-amounts maps.
+func hubbleStatVerdict(
+	logger *slog.Logger,
+	from, to uint32,
+	ours, theirs map[uint32]ledgerStats,
+	maxDiffs, toleranceBps int,
+) error {
+	checked, err := requireComparedLedgers(ours, theirs, from, to)
+	if err != nil {
+		return err
+	}
 	diffs := diffLedgerStats(ours, theirs, toleranceBps)
 	if len(diffs) == 0 {
 		logger.Info("hubble-check OK — every ledger's SDEX count + amounts match",
-			"from", from, "to", to,
+			"from", from, "to", to, "ledgers_checked", checked,
 			"tolerance_bps", toleranceBps)
 		return nil
 	}
@@ -449,8 +527,8 @@ func fetchOurSDEXStats(ctx context.Context, store *timescale.Store, from, to uin
 // off every one-side-zero fill in (shortfall - both) as expected. Those
 // are real SDEX history missing from `trades`, which is exactly what
 // this tool exists to catch.
-func hubbleZeroAmountCounts(ctx context.Context, client *bigquery.Client, from, to uint32) (oneSide, both, anyZero int64, err error) {
-	q := client.Query("SELECT " +
+func hubbleZeroAmountCounts(ctx context.Context, bq hubbleBQ, from, to uint32) (oneSide, both, anyZero int64, err error) {
+	q := bq.query("SELECT " +
 		"COUNTIF((selling_amount = 0) != (buying_amount = 0)) AS one_side, " +
 		"COUNTIF(selling_amount = 0 AND buying_amount = 0) AS both, " +
 		"COUNTIF(selling_amount = 0 OR buying_amount = 0) AS any_zero " +
@@ -477,8 +555,8 @@ func hubbleZeroAmountCounts(ctx context.Context, client *bigquery.Client, from, 
 
 // hubbleTradeDetail dumps each Hubble trade in the range to stdout — used to
 // identify the exact trades behind a per-ledger count discrepancy.
-func hubbleTradeDetail(ctx context.Context, client *bigquery.Client, from, to uint32) error {
-	q := client.Query("SELECT history_operation_id >> 32 AS ledger, history_operation_id AS opid, `order` AS ord, " +
+func hubbleTradeDetail(ctx context.Context, bq hubbleBQ, from, to uint32) error {
+	q := bq.query("SELECT history_operation_id >> 32 AS ledger, history_operation_id AS opid, `order` AS ord, " +
 		"trade_type, selling_asset_id, buying_asset_id, " +
 		"CAST(selling_amount AS STRING) AS sell, CAST(buying_amount AS STRING) AS buy " +
 		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
@@ -519,8 +597,8 @@ func hubbleTradeDetail(ctx context.Context, client *bigquery.Client, from, to ui
 // hubbleDupCheck returns total row count and distinct (history_operation_id,
 // order) count for the range. A gap means Hubble carries duplicate trade rows
 // (overlapping batch loads) — the same artifact seen in history_contract_events.
-func hubbleDupCheck(ctx context.Context, client *bigquery.Client, from, to uint32) (total, distinct int64, err error) {
-	q := client.Query("SELECT COUNT(*) AS total, " +
+func hubbleDupCheck(ctx context.Context, bq hubbleBQ, from, to uint32) (total, distinct int64, err error) {
+	q := bq.query("SELECT COUNT(*) AS total, " +
 		"COUNT(DISTINCT CONCAT(CAST(history_operation_id AS STRING), '-', CAST(`order` AS STRING))) AS distinct_trades " +
 		"FROM `crypto-stellar.crypto_stellar.history_trades` " +
 		"WHERE history_operation_id BETWEEN @from AND @to")
@@ -545,8 +623,8 @@ func hubbleDupCheck(ctx context.Context, client *bigquery.Client, from, to uint3
 // fetchHubbleStats is the -with-amounts counterpart of
 // fetchHubbleCounts. Per-ledger (count, sum(selling_amount),
 // sum(buying_amount)).
-func fetchHubbleStats(ctx context.Context, client *bigquery.Client, from, to uint32) (map[uint32]ledgerStats, error) {
-	q := client.Query("SELECT history_operation_id >> 32 AS ledger, COUNT(*) AS n, " +
+func fetchHubbleStats(ctx context.Context, bq hubbleBQ, from, to uint32) (map[uint32]ledgerStats, error) {
+	q := bq.query("SELECT history_operation_id >> 32 AS ledger, COUNT(*) AS n, " +
 		"COALESCE(CAST(SUM(selling_amount) AS STRING), '0') AS sum_sell, " +
 		"COALESCE(CAST(SUM(buying_amount)  AS STRING), '0') AS sum_buy " +
 		"FROM `crypto-stellar.crypto_stellar.history_trades` " +

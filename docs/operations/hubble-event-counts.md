@@ -208,3 +208,8 @@ stellarindex-ops hubble-soroban-events ... -dry-run-bytes
 
 Typical: 20–40 GB scan per 1M-ledger range → ~$0.20 at $5/TB on-
 demand. Reservation pricing essentially free at our scale.
+
+Every real query also carries `-max-bytes-billed` (default
+100000000000, i.e. 100 GB): a query that would scan more fails
+before it is billed. Raise it deliberately for a wider range; `0`
+is refused because BigQuery reads it as uncapped.

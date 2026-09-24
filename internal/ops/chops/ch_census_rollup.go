@@ -19,6 +19,13 @@ import (
 // atomic REPLACE PARTITION each, so re-runs are idempotent and a
 // 30-min cadence keeps the serving tail at most one cadence stale.
 //
+// A -write run never reads past the contiguous lake tip (the LiveSink
+// drops whole ledgers under buffer pressure, so the lake can hold holes
+// near the tip): the walk stops at the day holding that tip, which stays
+// the newest day present and so is recomputed once ch-live-catchup heals
+// the hole. A recompute smaller than the live partition is refused unless
+// -shrink-ok.
+//
 // -backfill walks every day from the lake's first contract event
 // (or -from-day) up to today. Heavy on the first run — serialize on
 // r1 under run-heavy-job.sh.
@@ -31,6 +38,7 @@ func chCensusRollup(args []string) error {
 	chAddr := fs.String("ch-addr", "127.0.0.1:9300", "ClickHouse native address")
 	backfill := fs.Bool("backfill", false, "walk every day from the lake's first contract event (or -from-day) to today")
 	fromDay := fs.String("from-day", "", "backfill floor as YYYY-MM-DD (default: first contract event's day; also the resume point)")
+	shrinkOK := fs.Bool("shrink-ok", false, "allow replacing a day's partition with a recompute that has fewer contracts or events")
 	gate := opsutil.RegisterWriteGate(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -79,14 +87,40 @@ func chCensusRollup(args []string) error {
 		from = today
 	}
 
-	for day := from; !day.After(today); day = day.Add(24 * time.Hour) {
-		if !write {
-			logf("DRY RUN: would recompute census day %s (pass -write to apply)", day.Format("2006-01-02"))
-			continue
+	if !write {
+		for day := from; !day.After(today); day = day.Add(24 * time.Hour) {
+			logf("DRY RUN: would recompute census day %s (pass -write to apply; it stops at the contiguous lake tip)", day.Format("2006-01-02"))
 		}
-		if err := clickhouse.RunCensusDay(ctx, *chAddr, day, logf); err != nil {
+		return nil
+	}
+	tipDay, ok, err := clickhouse.ContiguousThroughDay(ctx, *chAddr, from)
+	if err != nil {
+		return fmt.Errorf("clickhouse: resolve contiguous lake tip: %w", err)
+	}
+	last := censusWalkEnd(from, today, tipDay, ok, logf)
+	for day := from; !day.After(last); day = day.Add(24 * time.Hour) {
+		if err := clickhouse.RunCensusDay(ctx, *chAddr, day, *shrinkOK, logf); err != nil {
 			return fmt.Errorf("%w — resume with -from-day %s", err, day.Format("2006-01-02"))
 		}
 	}
 	return nil
+}
+
+// censusWalkEnd is the last day the -write walk may recompute: today, or
+// the day holding the contiguous lake tip (tipDay, ok from
+// clickhouse.ContiguousThroughDay) when that is earlier. A day past a hole
+// is not computed, so the resume point (the newest day present) stays at or
+// before the holed day and it is recomputed after the heal, not skipped.
+func censusWalkEnd(from, today, tipDay time.Time, ok bool, logf func(string, ...any)) time.Time {
+	if !ok {
+		logf("lake is not contiguous from the start of %s (a hole at the day boundary, or ingest has not reached it) — "+
+			"recomputing nothing; re-run once ch-live-catchup heals it", from.Format("2006-01-02"))
+		return from.Add(-24 * time.Hour)
+	}
+	if tipDay.Before(today) {
+		logf("contiguous lake tip is on %s — recomputing through it only; later days wait until the hole heals",
+			tipDay.Format("2006-01-02"))
+		return tipDay
+	}
+	return today
 }

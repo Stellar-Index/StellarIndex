@@ -21,8 +21,13 @@ func TestBuildSorobanEventsQuery_NoTopicFilter(t *testing.T) {
 	if strings.Contains(q, "topic_1 =") || strings.Contains(q, "topic_2 =") {
 		t.Errorf("query has topic filter despite empty filter args: %s", q)
 	}
-	if !strings.Contains(q, "GROUP BY closed_at, ledger_sequence") {
-		t.Errorf("query missing GROUP BY: %s", q)
+	// The caller keys its map on ledger alone; any wider GROUP BY key
+	// (closed_at was one) yields several rows per ledger that overwrite.
+	if !strings.Contains(q, "GROUP BY ledger_sequence ORDER BY") {
+		t.Errorf("query must GROUP BY ledger_sequence alone: %s", q)
+	}
+	if strings.Contains(q, "closed_at") {
+		t.Errorf("query selects or groups by closed_at, which the consumer drops: %s", q)
 	}
 
 	// Parameters: @from, @to, @contracts only.
@@ -94,6 +99,7 @@ func TestHubbleSorobanEvents_FlagValidation(t *testing.T) {
 		{"missing-contracts", []string{"-from", "100", "-to", "200", "-bigquery-project", "p"}, "-contracts required"},
 		{"empty-contracts", []string{"-from", "100", "-to", "200", "-bigquery-project", "p", "-contracts", ", , ,"}, "empty list"},
 		{"bad-output-format", []string{"-from", "100", "-to", "200", "-bigquery-project", "p", "-contracts", "X", "-output", "yaml"}, "json|total|csv"},
+		{"uncapped-bytes", []string{"-from", "100", "-to", "200", "-bigquery-project", "p", "-contracts", "X", "-max-bytes-billed", "0"}, "-max-bytes-billed must be > 0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

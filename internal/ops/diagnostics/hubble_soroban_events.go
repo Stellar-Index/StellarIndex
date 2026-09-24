@@ -52,7 +52,7 @@ import (
 // scans more than history_trades because the events table is
 // per-event, not per-trade. Ballpark 20–40 GB per 1M-ledger range
 // with a contract_id filter. -dry-run-bytes prints the byte
-// estimate before executing.
+// estimate before executing; -max-bytes-billed caps the real query.
 
 func hubbleSorobanEvents(args []string) error {
 	fs := flag.NewFlagSet("hubble-soroban-events", flag.ContinueOnError)
@@ -70,6 +70,8 @@ func hubbleSorobanEvents(args []string) error {
 		"output format: json (per-ledger counts) | total (single count) | csv")
 	dryRunBytes := fs.Bool("dry-run-bytes", false,
 		"print BigQuery dry-run byte estimate, then exit")
+	maxBytesBilled := fs.Int64("max-bytes-billed", defaultMaxBytesBilled,
+		"BigQuery MaximumBytesBilled; a query that would scan more fails unbilled")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -82,6 +84,9 @@ func hubbleSorobanEvents(args []string) error {
 	}
 	if *project == "" {
 		return errors.New("-bigquery-project required")
+	}
+	if err := validateMaxBytesBilled(*maxBytesBilled); err != nil {
+		return err
 	}
 	if *contractsCSV == "" {
 		return errors.New("-contracts required (one or more comma-separated C-strkeys)")
@@ -104,9 +109,10 @@ func hubbleSorobanEvents(args []string) error {
 		return fmt.Errorf("bigquery client: %w", err)
 	}
 	defer func() { _ = bqClient.Close() }()
+	bq := hubbleBQ{client: bqClient, maxBytes: *maxBytesBilled}
 
 	if *dryRunBytes {
-		bytes, err := hubbleSorobanEventsDryRun(ctx, bqClient,
+		bytes, err := hubbleSorobanEventsDryRun(ctx, bq,
 			uint32(*from), uint32(*to), contracts, *topic0, *topic1)
 		if err != nil {
 			return fmt.Errorf("dry-run: %w", err)
@@ -117,7 +123,7 @@ func hubbleSorobanEvents(args []string) error {
 		return nil
 	}
 
-	counts, err := fetchHubbleSorobanEventCounts(ctx, bqClient,
+	counts, err := fetchHubbleSorobanEventCounts(ctx, bq,
 		uint32(*from), uint32(*to), contracts, *topic0, *topic1)
 	if err != nil {
 		return fmt.Errorf("query Hubble: %w", err)
@@ -138,13 +144,13 @@ type ledgerCount struct {
 // matching events DON'T appear (sparse representation).
 func fetchHubbleSorobanEventCounts(
 	ctx context.Context,
-	client *bigquery.Client,
+	bq hubbleBQ,
 	from, to uint32,
 	contracts []string,
 	topic0, topic1 string,
 ) (map[uint32]int, error) {
 	query, params := buildSorobanEventsQuery(from, to, contracts, topic0, topic1)
-	q := client.Query(query)
+	q := bq.query(query)
 	q.Parameters = params
 	it, err := q.Read(ctx)
 	if err != nil {
@@ -174,13 +180,13 @@ func fetchHubbleSorobanEventCounts(
 // is much larger than trades table).
 func hubbleSorobanEventsDryRun(
 	ctx context.Context,
-	client *bigquery.Client,
+	bq hubbleBQ,
 	from, to uint32,
 	contracts []string,
 	topic0, topic1 string,
 ) (int64, error) {
 	query, params := buildSorobanEventsQuery(from, to, contracts, topic0, topic1)
-	q := client.Query(query)
+	q := bq.query(query)
 	q.Parameters = params
 	q.DryRun = true
 	job, err := q.Run(ctx)
@@ -207,8 +213,10 @@ func buildSorobanEventsQuery(
 	// COUNT(DISTINCT contract_event_xdr): Hubble's history_contract_events can
 	// carry duplicate rows from overlapping batch loads (observed 2× on some
 	// ranges), so a raw COUNT(*) over-reports. Dedup by the event's raw XDR —
-	// its identity — to match our one-row-per-event ClickHouse lake.
-	q := "SELECT closed_at, ledger_sequence AS ledger, COUNT(DISTINCT contract_event_xdr) AS n " +
+	// its identity — to match our one-row-per-event ClickHouse lake. Group by
+	// the ledger alone: the caller keys on it, and a wider key splits one
+	// ledger's duplicates into separate groups.
+	q := "SELECT ledger_sequence AS ledger, COUNT(DISTINCT contract_event_xdr) AS n " +
 		"FROM `crypto-stellar.crypto_stellar.history_contract_events` " +
 		"WHERE ledger_sequence BETWEEN @from AND @to " +
 		"  AND type_string = 'ContractEventTypeContract' " +
@@ -227,7 +235,7 @@ func buildSorobanEventsQuery(
 		q += " AND topic_2 = @topic1 "
 		params = append(params, bigquery.QueryParameter{Name: "topic1", Value: topic1})
 	}
-	q += " GROUP BY closed_at, ledger_sequence ORDER BY ledger"
+	q += " GROUP BY ledger_sequence ORDER BY ledger"
 	return q, params
 }
 

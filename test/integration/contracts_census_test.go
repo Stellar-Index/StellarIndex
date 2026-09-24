@@ -104,7 +104,7 @@ func TestRunCensusDay_PrunesByCloseTimeAndSwapsPartition(t *testing.T) {
 	}
 
 	// (2) the rollup lands exact counts for the day and only the day.
-	if err := chstore.RunCensusDay(ctx, addr, day, t.Logf); err != nil {
+	if err := chstore.RunCensusDay(ctx, addr, day, false, t.Logf); err != nil {
 		t.Fatalf("RunCensusDay: %v", err)
 	}
 	rows, err := conn.Query(ctx, `SELECT contract_id, events, last_ledger FROM stellar.contracts_census_daily

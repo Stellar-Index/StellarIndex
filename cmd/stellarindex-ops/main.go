@@ -1610,29 +1610,32 @@ Subcommands:
                               missing_in_cold counter).
                           Refuses to run if cold tier is not configured
                           (cfg.Storage.ColdTieringEnabled() == false).
-  mint-key -config PATH -identifier ID -label LABEL [-tier T] [-rate-limit-per-min N] [-expires-in DUR]
+  mint-key -config PATH -identifier ID -label LABEL -reason TEXT [-actor NAME] [-tier T [-confirm-operator]] [-scopes S,..] [-rate-limit-per-min N] [-expires-in DUR]
                           Issue a fresh API key directly via the
                           Redis API-key store. Operator-only path
                           to bootstrap a customer's first key —
                           /v1/account/keys self-service can't be
                           hit until a pre-existing authenticated
                           subject already exists (chicken + egg).
-                          Plaintext goes to stdout; audit metadata
-                          (KeyID, Tier, CreatedAt) goes to stderr,
+                          Writes a key.mint audit_log row (actor,
+                          reason, grant); no row, no key. Plaintext
+                          goes to stdout, the record to stderr,
                           so a >key.txt redirect captures only
                           the secret. Plaintext is shown ONCE —
                           unrecoverable. Pipe stdout to an
                           encrypted transport (Bitwarden, vault,
                           encrypted email) immediately. Tiers:
-                          apikey | sep10 | operator.
+                          apikey | sep10 | operator (operator needs
+                          -confirm-operator). Rate 0..100000.
                           Example:
                             stellarindex-ops mint-key \
                               -config /etc/stellarindex.toml \
                               -identifier customer-acme-corp \
                               -label 'ACME Corp - production' \
                               -tier apikey \
-                              -rate-limit-per-min 1000
-  upgrade-key -config PATH -key-id KID -rate-limit-per-min N
+                              -rate-limit-per-min 1000 \
+                              -reason 'onboarding ticket 1234'
+  upgrade-key -config PATH -key-id KID -rate-limit-per-min N -reason TEXT [-actor NAME]
                           Lift (or lower) an existing API key's
                           per-minute rate-limit budget. Operator-
                           side path for manual / partner rate
@@ -1641,7 +1644,9 @@ Subcommands:
                           The customer's existing plaintext key
                           keeps working — they don't need to
                           rotate to pick up the new budget;
-                          effective on the next request.
+                          effective on the next request. Writes a
+                          key.ratelimit.update audit_log row; no
+                          row, no change. Rate 0..100000.
                           Tier reference (matches the /signup page):
                               1000 = Starter,  10000 = Pro,
                              50000 = Business, custom = Enterprise.
@@ -1649,7 +1654,8 @@ Subcommands:
                             stellarindex-ops upgrade-key \
                               -config /etc/stellarindex.toml \
                               -key-id kid_515c8d94191f4e93 \
-                              -rate-limit-per-min 10000
+                              -rate-limit-per-min 10000 \
+                              -reason 'partner contract 2026-09'
   emit-incident -config PATH -slug SLUG -event {sev1|resolved}
                           Fan out one incident.sev1 or
                           incident.resolved customer webhook for

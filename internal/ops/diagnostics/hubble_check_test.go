@@ -93,8 +93,9 @@ func TestDiffLedgerCounts_SortedByLedger(t *testing.T) {
 
 // TestDiffLedgerCounts_BothEmpty covers the edge case: no data
 // either side. This happens on a -from -to range that's outside
-// the ingested window. NOT an error condition (no divergence to
-// report); the operator gets an "all clear" signal and can move on.
+// the ingested window. There is no divergence to report here; the
+// run-level verdict (hubbleCountVerdict) is what refuses to call an
+// empty comparison a pass.
 func TestDiffLedgerCounts_BothEmpty(t *testing.T) {
 	if got := diffLedgerCounts(map[uint32]int{}, map[uint32]int{}); len(got) != 0 {
 		t.Errorf("empty inputs should yield empty output, got %+v", got)
@@ -119,6 +120,7 @@ func TestHubbleCheck_FlagValidation(t *testing.T) {
 		{"missing-from", []string{"-config", "/dev/null", "-to", "200", "-bigquery-project", "p"}, "-from must be > 0"},
 		{"to-equals-from", []string{"-config", "/dev/null", "-from", "100", "-to", "100", "-bigquery-project", "p"}, "must be > -from"},
 		{"missing-project", []string{"-config", "/dev/null", "-from", "100", "-to", "200"}, "-bigquery-project required"},
+		{"uncapped-bytes", []string{"-config", "/dev/null", "-from", "100", "-to", "200", "-bigquery-project", "p", "-max-bytes-billed", "-1"}, "-max-bytes-billed must be > 0"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

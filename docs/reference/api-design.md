@@ -487,7 +487,10 @@ without `rate_limit_per_min` gets 1,000, and a requested value is
 clamped down to the tier's `platform.Tier.MaxRateLimitPerMin`. So
 100,000 is the most a Partner key can be minted with, not what every
 Partner key gets. Operator-minted keys (`stellarindex-ops mint-key` /
-`upgrade-key`) carry their own per-key value and are not clamped.
+`upgrade-key`) carry their own per-key value and are not clamped to
+the tier, but the key store refuses any per-key value outside
+0–100,000 whichever surface sets it. Both commands require `-reason`
+and write a `key.mint` / `key.ratelimit.update` row to `audit_log`.
 
 `rate_limit_per_min_override` (set on `PATCH /v1/admin/accounts/{id}`,
 accepted range 0–100,000, `0` clears it) is an account-wide **floor**,

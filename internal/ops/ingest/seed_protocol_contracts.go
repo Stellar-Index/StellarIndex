@@ -103,15 +103,33 @@ func seedProtocolContracts(args []string) error {
 	}
 
 	verb := writeModeVerb(write, "upserted", "WOULD upsert")
+	var errs []error
 	for _, src := range sources {
 		n, serr := seedOneGatedSource(ctx, store, write, src, hi)
+		fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s — %s %d child contract(s) into protocol_contracts (%s)\n",
+			src, verb, n, seedScope(src, hi))
 		if serr != nil {
-			return serr
+			errs = append(errs, serr)
 		}
-		fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s — %s %d child contract(s) into protocol_contracts (walked [%d, %d])\n",
-			src, verb, n, 0, hi)
 	}
-	return nil
+	// Every source is attempted; any failure makes the precondition fail.
+	return errors.Join(errs...)
+}
+
+// seedScope names what a source's seed covered: the factory-walk range
+// (from the factory genesis, not 0) and/or the in-code curated set.
+func seedScope(source string, hi uint32) string {
+	meta, ok := pipeline.GatedMetaFor(source)
+	switch {
+	case !ok:
+		return "not a gated source"
+	case len(meta.Factories) == 0:
+		return "curated set"
+	case len(meta.CuratedSet) > 0:
+		return fmt.Sprintf("curated set + walked [%d, %d]", meta.Genesis, hi)
+	default:
+		return fmt.Sprintf("walked [%d, %d]", meta.Genesis, hi)
+	}
 }
 
 // gatedSeedStore is the slice of *timescale.Store the seed needs.
@@ -178,11 +196,14 @@ func walkFactoryCreations(ctx context.Context, store gatedSeedStore, write bool,
 	// the live indexer uses, so the genesis walk and live ingest converge
 	// on identical rows. The factory that deployed each child is supplied by
 	// the decoder (a protocol can have several factories).
-	seeded := 0
+	// Each per-row failure is counted, not just printed: a child that
+	// misses protocol_contracts has its events dropped by the gate forever.
+	seeded, failed := 0, 0
 	hook := func(childID, factoryID string, firstLedger uint32) {
 		if write {
 			if err := store.UpsertProtocolContract(ctx, source, childID, factoryID, firstLedger); err != nil {
 				fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s upsert %s failed: %v\n", source, childID, err)
+				failed++
 				return
 			}
 		}
@@ -197,17 +218,24 @@ func walkFactoryCreations(ctx context.Context, store gatedSeedStore, write bool,
 		func(row sorobanevents.Row) error {
 			ev, rerr := sorobanevents.Reconstruct(row)
 			if rerr != nil {
-				return nil //nolint:nilerr // skip a broken creation row
+				fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s unreadable creation row at ledger %d: %v\n", source, row.Ledger, rerr)
+				failed++
+				return nil
 			}
 			if dec.Matches(ev) {
 				if _, derr := dec.Decode(ev); derr != nil {
 					fmt.Fprintf(os.Stderr, "seed-protocol-contracts: %s decode at ledger %d: %v\n", source, ev.Ledger, derr)
+					failed++
 				}
 			}
 			return nil
 		})
 	if err != nil {
 		return seeded, fmt.Errorf("%s: walk factory creation events: %w", source, err)
+	}
+	if failed > 0 {
+		return seeded, fmt.Errorf("%s: %d creation event(s) or child upsert(s) failed (see above); "+
+			"their children are missing from protocol_contracts — re-run after fixing the cause", source, failed)
 	}
 	return seeded, nil
 }

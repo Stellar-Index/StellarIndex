@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // Census rollup (deploy/clickhouse/contracts_census_daily.sql): plain
@@ -20,7 +23,12 @@ import (
 // ClickHouse — see contracts_census_test.go.
 type censusExecConn interface {
 	Exec(ctx context.Context, query string, args ...any) error
+	QueryRow(ctx context.Context, query string, args ...any) driver.Row
 }
+
+// ErrCensusShrink marks a recompute that produced fewer rows or events than
+// the live partition holds; the partition is left untouched.
+var ErrCensusShrink = errors.New("census day recompute is smaller than the live partition")
 
 // censusDayInsert computes one day's census into the given PRIVATE
 // staging table. A day is not expressible in ledger_seq (the partition and
@@ -84,6 +92,46 @@ func CensusMaxDay(ctx context.Context, addr string) (time.Time, bool, error) {
 	return maxDay, n > 0, rows.Err()
 }
 
+// ContiguousThroughDay returns the UTC day holding the highest ledger the
+// lake has with no hole from the start of fromDay: the last day a census
+// recompute may read (that day only up to its hole, so it stays the resume
+// point). ok is false when fromDay's own first ledger is missing or the
+// lake has not reached fromDay.
+func ContiguousThroughDay(ctx context.Context, addr string, fromDay time.Time) (time.Time, bool, error) {
+	conn, err := openRead(ctx, addr)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	defer func() { _ = conn.Close() }()
+
+	// Start one past the last ledger closed before fromDay, so a hole at the
+	// day boundary is seen; a lake that begins on fromDay starts at its first.
+	var before, first uint64
+	if err := conn.QueryRow(ctx, `SELECT
+		toUInt64(ifNull((SELECT max(ledger_seq) FROM stellar.ledgers WHERE close_time < ?), 0)),
+		toUInt64(ifNull((SELECT min(ledger_seq) FROM stellar.ledgers WHERE close_time >= ?), 0))`,
+		fromDay, fromDay).Scan(&before, &first); err != nil {
+		return time.Time{}, false, fmt.Errorf("clickhouse: census day %s first ledger: %w", fromDay.Format("2006-01-02"), err)
+	}
+	start := uint32(first) // ledger sequences fit uint32
+	if before > 0 {
+		start = uint32(before) + 1
+	}
+	if start == 0 {
+		return time.Time{}, false, nil
+	}
+	tip, err := contiguousWatermarkOn(ctx, conn, start)
+	if err != nil || tip < start {
+		return time.Time{}, false, err
+	}
+	var closeTime time.Time
+	if err := conn.QueryRow(ctx, `SELECT close_time FROM stellar.ledgers WHERE ledger_seq = ? LIMIT 1`, tip).
+		Scan(&closeTime); err != nil {
+		return time.Time{}, false, fmt.Errorf("clickhouse: close time of contiguous tip %d: %w", tip, err)
+	}
+	return closeTime.UTC().Truncate(24 * time.Hour), true, nil
+}
+
 // RunCensusDay recomputes exactly one UTC day of the census and swaps
 // it in atomically. Safe to re-run for any day (idempotent replace) AND
 // safe to run concurrently with another census run on the same day: each
@@ -91,18 +139,42 @@ func CensusMaxDay(ctx context.Context, addr string) (time.Time, bool, error) {
 // and a manual `ch-census-rollup -backfill` (a separate process, both
 // reaching `today`) can never interleave a DROP/INSERT/REPLACE against a
 // shared staging partition. See W1-chrollup-4.
-func RunCensusDay(ctx context.Context, addr string, day time.Time, logf func(format string, args ...any)) error {
+//
+// A recompute smaller than the live partition (fewer contracts or fewer
+// events) is refused with ErrCensusShrink unless shrinkOK: the lake only
+// grows for a past day, so a shrink means it lost data under the read.
+func RunCensusDay(ctx context.Context, addr string, day time.Time, shrinkOK bool, logf func(format string, args ...any)) error {
 	conn, err := openRead(ctx, addr)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	return runCensusDayConn(ctx, conn, day, logf)
+	return runCensusDayConn(ctx, conn, day, shrinkOK, logf)
+}
+
+// censusShrinkCheck compares the staging recompute with the live partition
+// and fails with ErrCensusShrink when either count went down.
+func censusShrinkCheck(ctx context.Context, conn censusExecConn, staging string, day time.Time) error {
+	var newRows, newEvents, liveRows, liveEvents uint64
+	if err := conn.QueryRow(ctx, fmt.Sprintf(`SELECT
+		(SELECT count() FROM stellar.%s),
+		(SELECT toUInt64(sum(events)) FROM stellar.%s),
+		(SELECT count() FROM stellar.contracts_census_daily WHERE day = ?),
+		(SELECT toUInt64(sum(events)) FROM stellar.contracts_census_daily WHERE day = ?)`, staging, staging),
+		day, day).Scan(&newRows, &newEvents, &liveRows, &liveEvents); err != nil {
+		return fmt.Errorf("clickhouse: census day %s size check: %w", day.Format("2006-01-02"), err)
+	}
+	if newRows < liveRows || newEvents < liveEvents {
+		return fmt.Errorf("%w: day %s recomputed %d contract(s) / %d event(s), live has %d / %d — "+
+			"the lake lost data under this day; pass -shrink-ok only if that is intended",
+			ErrCensusShrink, day.Format("2006-01-02"), newRows, newEvents, liveRows, liveEvents)
+	}
+	return nil
 }
 
 // runCensusDayConn is the DDL body of RunCensusDay, split from connection
 // setup so the concurrency-isolation property is unit-testable.
-func runCensusDayConn(ctx context.Context, conn censusExecConn, day time.Time, logf func(format string, args ...any)) error {
+func runCensusDayConn(ctx context.Context, conn censusExecConn, day time.Time, shrinkOK bool, logf func(format string, args ...any)) error {
 	dayUTC := day.UTC().Truncate(24 * time.Hour)
 	next := dayUTC.Add(24 * time.Hour)
 	start := time.Now()
@@ -139,6 +211,11 @@ func runCensusDayConn(ctx context.Context, conn censusExecConn, day time.Time, l
 
 	if err := conn.Exec(ctx, censusDayInsert(staging), dayUTC, next); err != nil {
 		return fmt.Errorf("clickhouse: census day %s compute: %w", partition, err)
+	}
+	if !shrinkOK {
+		if err := censusShrinkCheck(ctx, conn, staging, dayUTC); err != nil {
+			return err
+		}
 	}
 	if err := conn.Exec(ctx, fmt.Sprintf(
 		"ALTER TABLE stellar.contracts_census_daily REPLACE PARTITION '%s' FROM stellar.%s", partition, staging)); err != nil {

@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
+	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
 // APIKeyStore is the WRITER side of the API-key persistence
@@ -160,6 +161,36 @@ func NewRedisAPIKeyStore(rdb redis.Cmdable, opts ...StoreOption) *RedisAPIKeySto
 	return s
 }
 
+// MaxKeyRateLimitPerMin is the highest per-key budget any surface may
+// set: the Partner plan ceiling (platform.TierPartner.MaxRateLimitPerMin).
+const MaxKeyRateLimitPerMin = 100_000
+
+// ValidateKeyBounds is the store-side floor every mint and re-budget path
+// inherits, whichever surface (HTTP, dashboard, ops CLI) called it.
+func ValidateKeyBounds(rateLimitPerMin int, scopes []string) error {
+	if rateLimitPerMin < 0 || rateLimitPerMin > MaxKeyRateLimitPerMin {
+		return fmt.Errorf("rate limit %d must be in [0, %d] (0 = tier default)", rateLimitPerMin, MaxKeyRateLimitPerMin)
+	}
+	for _, sc := range scopes {
+		if !platform.ValidKeyScope(sc) {
+			return fmt.Errorf("unknown key scope %q (known: %v; an empty list is full access)", sc, platform.KnownKeyScopes())
+		}
+	}
+	return nil
+}
+
+// GetByKeyID returns the record for keyID, or ErrKeyNotFound.
+func (s *RedisAPIKeyStore) GetByKeyID(ctx context.Context, keyID string) (APIKeyRecord, error) {
+	_, rec, found, err := s.findRecordByKeyID(ctx, keyID)
+	if err != nil {
+		return APIKeyRecord{}, fmt.Errorf("auth: GetByKeyID: %w", err)
+	}
+	if !found {
+		return APIKeyRecord{}, ErrKeyNotFound
+	}
+	return rec, nil
+}
+
 // Create implements [APIKeyStore].
 //
 // Workflow:
@@ -178,6 +209,9 @@ func NewRedisAPIKeyStore(rdb redis.Cmdable, opts ...StoreOption) *RedisAPIKeySto
 func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
 	if req.Identifier == "" {
 		return APIKeyRecord{}, "", errors.New("auth: Create: Identifier is required")
+	}
+	if err := ValidateKeyBounds(req.RateLimitPerMin, req.Scopes); err != nil {
+		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: %w", err)
 	}
 	monthlyQuota := req.MonthlyQuota
 	if monthlyQuota <= 0 {

@@ -35,8 +35,8 @@ func (s *RedisAPIKeyStore) UpdateRateLimit(ctx context.Context, keyID string, ne
 	if keyID == "" {
 		return APIKeyRecord{}, errors.New("auth: UpdateRateLimit: keyID is required")
 	}
-	if newRateLimitPerMin < 0 {
-		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: rate-limit %d must be >= 0 (zero means tier default)", newRateLimitPerMin)
+	if err := ValidateKeyBounds(newRateLimitPerMin, nil); err != nil {
+		return APIKeyRecord{}, fmt.Errorf("auth: UpdateRateLimit: %w", err)
 	}
 
 	hash, rec, found, err := s.findRecordByKeyID(ctx, keyID)

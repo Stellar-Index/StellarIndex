@@ -57,6 +57,7 @@ func TestMintKey_AcceptsWellFormedIdentifier_PastValidation(t *testing.T) {
 		"-config", "/nonexistent.toml",
 		"-identifier", "customer-acme-corp",
 		"-label", "Acme Corp - production",
+		"-reason", "onboarding", "-actor", "alice",
 	})
 	if err == nil {
 		t.Fatal("expected an error (config file does not exist), got nil")
@@ -76,5 +77,53 @@ func TestMintKey_RejectsOverlongLabel(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "-label must be <=") {
 		t.Errorf("expected an over-length -label to be rejected, got: %v", err)
+	}
+}
+
+// mint-key refuses, before any config / Redis / Postgres access, a mint
+// with no recorded reason, an operator key without acknowledgement, and a
+// budget or scope outside what every other mint surface accepts.
+func TestMintKey_RequiresReasonAckAndBounds(t *testing.T) {
+	base := []string{"-config", "/nonexistent.toml", "-identifier", "customer-acme", "-label", "Acme", "-actor", "alice"}
+	cases := []struct {
+		name       string
+		extra      []string
+		wantSubstr string
+	}{
+		{"no-reason", nil, "-reason is required"},
+		{"blank-reason", []string{"-reason", "   "}, "-reason is required"},
+		{"operator-unacknowledged", []string{"-reason", "r", "-tier", "operator"}, "-confirm-operator"},
+		{"rate-above-ceiling", []string{"-reason", "r", "-rate-limit-per-min", "10000000"}, "must be in [0, 100000]"},
+		{"negative-rate", []string{"-reason", "r", "-rate-limit-per-min", "-5"}, "must be in [0, 100000]"},
+		{"wildcard-scope", []string{"-reason", "r", "-scopes", "*"}, "unknown key scope"},
+		{"unknown-scope", []string{"-reason", "r", "-scopes", "read,superuser"}, "unknown key scope"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := mintKey(append(append([]string{}, base...), tc.extra...))
+			if err == nil || !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("mintKey(%v) = %v, want an error containing %q", tc.extra, err, tc.wantSubstr)
+			}
+		})
+	}
+
+	// Acknowledged operator mint with a reason clears validation and fails
+	// only at config load.
+	err := mintKey(append(append([]string{}, base...), "-reason", "r", "-tier", "operator", "-confirm-operator", "-scopes", "admin"))
+	if err == nil || strings.Contains(err.Error(), "-reason") || strings.Contains(err.Error(), "-confirm-operator") ||
+		strings.Contains(err.Error(), "scope") {
+		t.Fatalf("valid operator mint rejected by validation: %v", err)
+	}
+}
+
+func TestUpgradeKey_RequiresReasonAndCeiling(t *testing.T) {
+	base := []string{"-config", "/nonexistent.toml", "-key-id", "kid_x", "-actor", "alice"}
+	if err := upgradeKey(append(append([]string{}, base...), "-rate-limit-per-min", "5000")); err == nil ||
+		!strings.Contains(err.Error(), "-reason is required") {
+		t.Errorf("upgrade-key without -reason = %v, want -reason is required", err)
+	}
+	if err := upgradeKey(append(append([]string{}, base...), "-reason", "r", "-rate-limit-per-min", "10000000")); err == nil ||
+		!strings.Contains(err.Error(), "must be in [0, 100000]") {
+		t.Errorf("upgrade-key above the ceiling = %v, want a bound error", err)
 	}
 }
