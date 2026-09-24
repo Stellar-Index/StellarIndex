@@ -182,13 +182,10 @@ type gatedDecoder interface {
 func buildReconciliationCatalogue(cfg config.Config) ([]reconSource, *soroswap.Decoder, error) {
 	soroswapDec := soroswap.NewDecoder()
 
-	// genesis values mirror internal/api/v1/protocols_registry.go (the
-	// WASM-audit / lake-derived exact-first-event authority; checked
-	// against it 2026-07-31 — cctp + rozo were corrected here after the
-	// registry's 07-30 lake-derived fix). DefaultGapDetectorTargets
-	// (timescale/per_source_gaps.go) still carries the old cctp/rozo
-	// 62_403_000 floors — a supporting signal only, but drift to fix when
-	// that file's owner touches it next.
+	// genesis: prefer the source package's exported constant; literals
+	// mirror internal/api/v1/protocols_registry.go and must equal the
+	// DefaultGapDetectorTargets floor
+	// (TestCatalogueGenesisLocksStepWithGapDetectorTargets).
 	cat := []reconSource{
 		{name: "soroswap", genesis: 50_746_266, dec: soroswapDec, targets: []reconTarget{
 			{"trades", "source = 'soroswap'", []string{"soroswap.trade"}},

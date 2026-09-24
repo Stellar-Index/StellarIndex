@@ -12,6 +12,12 @@ import (
 	"testing"
 
 	"github.com/Stellar-Index/StellarIndex/internal/config"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/blend"
+	blend_backstop "github.com/Stellar-Index/StellarIndex/internal/sources/blend_backstop"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/sorocredit"
+	sushiswap_v3 "github.com/Stellar-Index/StellarIndex/internal/sources/sushiswap_v3"
+	"github.com/Stellar-Index/StellarIndex/internal/sources/upshift"
+	"github.com/Stellar-Index/StellarIndex/internal/storage/timescale"
 )
 
 // testWatchedSEP41 is a syntactically valid C-strkey watched set; the
@@ -588,5 +594,66 @@ func TestReconcileTargets_CarryNoRetentionPolicy(t *testing.T) {
 				"floor reads a rising MIN(ledger) as data loss; with a policy dropping old chunks it "+
 				"fires on every run. Revisit 0116's floor for this target before adding the policy.", table, mig)
 		}
+	}
+}
+
+// packageGenesis is every source package's exported genesis constant,
+// keyed by catalogue name. The gap table cannot reference these (storage
+// may not import sources), so this test is what ties its literals to them.
+var packageGenesis = map[string]uint32{
+	"blend":          blend.FactoryGenesisLedger,
+	"blend_backstop": blend_backstop.BackstopGenesisLedger,
+	"sorocredit":     sorocredit.GenesisLedger,
+	"sushiswap_v3":   sushiswap_v3.FactoryGenesisLedger,
+	"upshift":        upshift.GenesisLedger,
+}
+
+// TestCatalogueGenesisLocksStepWithGapDetectorTargets pins every
+// catalogued source's genesis to the gap detector's floor for the same
+// source — the earliest Genesis across its DefaultGapDetectorTargets rows
+// (a sub-table may start later, never earlier) — and, where the source
+// package exports a constant, both to that constant. Without it a
+// one-sided correction scores reconciliation and gap density over
+// different ledger ranges and nothing fails.
+func TestCatalogueGenesisLocksStepWithGapDetectorTargets(t *testing.T) {
+	cfg := testConfigWithAllSources()
+	cfg.Supply.WatchedSEP41Contracts = testWatchedSEP41
+	cat, _, err := buildReconciliationCatalogue(cfg)
+	if err != nil {
+		t.Fatalf("buildReconciliationCatalogue: %v", err)
+	}
+
+	floor := map[string]int64{}
+	for _, tgt := range timescale.DefaultGapDetectorTargets {
+		key := strings.ReplaceAll(tgt.SourceNetKey(), "-", "_")
+		if g, ok := floor[key]; !ok || tgt.Genesis < g {
+			floor[key] = tgt.Genesis
+		}
+	}
+
+	checked, constants := 0, 0
+	for _, src := range cat {
+		name := strings.ReplaceAll(src.name, "-", "_")
+		if want, ok := packageGenesis[name]; ok {
+			constants++
+			if src.genesis != want {
+				t.Errorf("%s: reconciliation catalogue genesis = %d, package constant = %d", src.name, src.genesis, want)
+			}
+			if floor[name] != int64(want) {
+				t.Errorf("%s: gap detector floor = %d, package constant = %d — per_source_gaps.go restates it as a literal", src.name, floor[name], want)
+			}
+		}
+		g, ok := floor[name]
+		if !ok {
+			t.Errorf("%s: catalogued but has no DefaultGapDetectorTargets row to lock step with", src.name)
+			continue
+		}
+		checked++
+		if int64(src.genesis) != g {
+			t.Errorf("%s: reconciliation catalogue genesis = %d, gap detector floor = %d — one table was corrected without the other", src.name, src.genesis, g)
+		}
+	}
+	if checked < 20 || constants != len(packageGenesis) {
+		t.Fatalf("checked %d catalogued sources (want >= 20) and %d of %d package constants — the guard no longer covers the catalogue", checked, constants, len(packageGenesis))
 	}
 }

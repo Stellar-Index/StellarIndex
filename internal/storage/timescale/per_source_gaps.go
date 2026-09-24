@@ -56,6 +56,11 @@ type GapDetectorTarget struct {
 	// / expected. Sources without a known genesis (off-chain
 	// CEX/FX) shouldn't be in this registry; their freshness is
 	// surfaced through a different signal entirely.
+	//
+	// Literal by necessity: storage may not import internal/sources
+	// (lint-imports L/storage-below-compute). chops'
+	// TestCatalogueGenesisLocksStepWithGapDetectorTargets pins each
+	// source's floor to the catalogue and to any exported package constant.
 	Genesis int64
 
 	// WhereFilter is an optional additional SQL predicate ANDed into
