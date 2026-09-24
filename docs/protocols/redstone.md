@@ -6,15 +6,16 @@ status: current
 
 # RedStone — contract & event verification
 
-> **For the RedStone team:** this is the Adapter contract and the 30-feed
+> **For the RedStone team:** this is the Adapter contract and the 32-feed
 > registry Stellar Index ingests. Please confirm the Adapter address and
 > tell us if new feeds have been added since our 2026-07-24 capture (a
 > feed we don't have in the registry is skipped, not mis-attributed —
 > see Q3).
 >
 > - **Enumeration method:** single Adapter contract (pinned by ID) + an
->   in-code registry of the 30 mainnet `feed_id` strings (19 captured
->   2026-05-22 + 11 from the 2026-07-24 relayer expansion), each mapped
+>   in-code registry of the 32 mainnet `feed_id` strings (19 captured
+>   2026-05-22, 11 from the 2026-07-24 relayer expansion, then USDT0
+>   and `earnUSDC_FUNDAMENTAL`), each mapped
 >   to a canonical `(base, quote)` pair.
 > - **Last verified:** 2026-07-27 (source: `internal/sources/redstone`;
 >   feed_ids captured on-chain 2026-05-22 + 2026-07-24; WASM audit
@@ -84,9 +85,10 @@ destructuring.
 
 ## Feed registry (ADR-0028)
 
-`feeds.go` holds all 30 mainnet feeds keyed on the **exact** on-chain
+`feeds.go` holds all 32 mainnet feeds keyed on the **exact** on-chain
 `feed_id()` string (19 captured 2026-05-22, 11 more from the
-2026-07-24 relayer expansion — see below). The feed_id is not always
+2026-07-24 relayer expansion — see below — then USDT0 and
+`earnUSDC_FUNDAMENTAL`). The feed_id is not always
 the display name — `EUROC` is `EUROC/EUR`, `BENJI` is
 `BENJI_ETHEREUM_FUNDAMENTAL`, SolvBTC variants carry `_FUNDAMENTAL`
 suffixes. Two correctness consequences:

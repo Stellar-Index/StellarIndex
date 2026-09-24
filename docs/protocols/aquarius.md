@@ -211,11 +211,14 @@ pools have not yet traded directly** (routed-only or new).
 ### WASM cross-check
 
 Every pool announced by the canonical router (and its parallel deployment,
-below) that still has a live contract instance runs one of exactly three
-pool code hashes — the aquarius pool families
-(`AE0DA5A8…` ×318, `F1077E0B…` ×55, `12FCA5A7…` ×31, matching the
-constant-product / stableswap / concentrated split). The two router-WASM
-deployments share code hash `06F4207B…`.
+below) that still has a live contract instance runs genuine aquarius pool
+WASM. The per-hash inventory — the never-upgraded cohort on
+`ae0da5a8…` (volatile) / `f1077e0b…` (stableswap) / `8875f0c7…`
+(rewards-enhanced), the upgraded cohort's five-WASM chain, and the decoder
+verdict for each — is [wasm-audits/aquarius.md](../operations/wasm-audits/aquarius.md).
+No concentrated-liquidity pool has been observed (`ErrConcentratedWIP` is
+reserved and has not fired).
+The two router-WASM deployments share code hash `06F4207B…`.
 
 ### ⚠️ Flagged — excluded from the gate (NOT silently dropped)
 
