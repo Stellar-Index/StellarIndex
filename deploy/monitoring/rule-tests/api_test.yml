@@ -594,3 +594,51 @@ tests:
       - eval_time: 30m
         alertname: stellarindex_failed_auth_rate_high
         exp_alerts: []
+
+  # ── T403: a latched schema-absent probe tickets per instance ─────
+  # r1 started before the lake DDL: tx_hash_index answered absent once
+  # and the gauge holds 0 for the process lifetime. r2 has it.
+  - interval: 1m
+    name: a latched absent schema probe tickets
+    input_series:
+      - series: 'stellarindex_ch_schema_probe_present{job="stellarindex_api",instance="r1:3000",probe="tx_hash_index"}'
+        values: '0+0x60'
+      - series: 'stellarindex_ch_schema_probe_present{job="stellarindex_api",instance="r2:3000",probe="tx_hash_index"}'
+        values: '1+0x60'
+
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: stellarindex_ch_schema_probe_absent
+        exp_alerts: []
+      - eval_time: 40m
+        alertname: stellarindex_ch_schema_probe_absent
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+              job: stellarindex_api
+              instance: r1:3000
+              probe: tx_hash_index
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-schema-probe-absent.md
+              summary: "Explorer lake object tx_hash_index absent or empty on r1:3000 for 30+ min"
+              description: |
+                The API's last answer from ClickHouse for the `tx_hash_index`
+                probe was "absent" or "empty", and it has held for 30 minutes.
+                The explorer is serving that surface from its fallback path
+                (slower scans) or 503ing it. If the object now exists and
+                holds rows, the verdict latched before the DDL landed and the
+                API must be restarted to pick it up.
+
+  # ── an empty table repopulated inside the window stays silent ────
+  - interval: 1m
+    name: a briefly empty schema probe does not ticket
+    input_series:
+      - series: 'stellarindex_ch_schema_probe_present{job="stellarindex_api",instance="r1:3000",probe="accounts_stats"}'
+        values: '0+0x20 1+0x40'
+
+    alert_rule_test:
+      - eval_time: 45m
+        alertname: stellarindex_ch_schema_probe_absent
+        exp_alerts: []
