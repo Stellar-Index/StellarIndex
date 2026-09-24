@@ -408,7 +408,7 @@ func collectSamples(ctx context.Context, baseURL, apiKey string, endpoints []end
 	// MaxIdleConnsPerHost (2) would force connection churn the moment
 	// concurrency > 2, and a churned keep-alive is a closed-connection
 	// race waiting to happen. Size the idle pool to the worker count
-	// so each worker keeps a warm connection between requests (#54).
+	// so each worker keeps a warm connection between requests.
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.MaxIdleConns = concurrency * 2
 	transport.MaxIdleConnsPerHost = concurrency * 2

@@ -142,7 +142,7 @@ func TestRunProbe_FailsOn5xx(t *testing.T) {
 }
 
 // TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures proves
-// the #54 fix: the run-duration deadline must not turn a request
+// that the run-duration deadline does not turn a request
 // still in flight into a failure. The fake server here always
 // returns 200 after a delay that guarantees every worker is
 // mid-request when the short run window closes — so any
@@ -175,7 +175,7 @@ func TestRunProbe_DeadlineCancelledSamplesNotCountedAsFailures(t *testing.T) {
 	st := rep.PerEndpoint[0]
 	if st.AvailabilityPct != 100 {
 		t.Errorf("availability=%g want 100 — the server never errored; "+
-			"requests in flight at the run deadline must complete, not be counted as failures (#54)",
+			"requests in flight at the run deadline must complete, not be counted as failures",
 			st.AvailabilityPct)
 	}
 	if st.Samples == 0 {
