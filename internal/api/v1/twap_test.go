@@ -154,3 +154,96 @@ func TestTWAP_StablecoinFiatProxyFallback(t *testing.T) {
 		t.Errorf("body missing triangulated flag: %s", body)
 	}
 }
+
+// twapFill is mkTWAPTrade with a distinct tx hash, so a ledger can carry
+// several fills.
+func twapFill(base, quote int64, ts time.Time, tx byte) canonical.Trade {
+	tr := mkTWAPTrade(base, quote, ts)
+	tr.TxHash = strings.Repeat(string("0123456789abcdef"[tx%16]), 64)
+	return tr
+}
+
+// twapWire is the /v1/twap body decoded by field name, so the assertions
+// pin the wire contract rather than the Go struct.
+type twapWire struct {
+	Price            string `json:"price"`
+	TradeCount       int    `json:"trade_count"`
+	OutliersFiltered int    `json:"outliers_filtered"`
+}
+
+func getTWAP(t *testing.T, trades []canonical.Trade, from, to time.Time, extra string) twapWire {
+	t.Helper()
+	srv := v1.New(v1.Options{History: &stubHistoryReader{trades: trades}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/twap?base=native&quote=fiat:USD&from="+
+		from.Format(time.RFC3339)+"&to="+to.Format(time.RFC3339)+extra)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data twapWire `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	return env.Data
+}
+
+// TestTWAP_DustFillInLedgerDoesNotCarryInterval: a 2-stroop fill at 7.5
+// shares a ledger with a real fill at 1. The ledger's price is the fills'
+// Σquote/Σbase, so the dust moves it by its size, whichever fill sorts last.
+// trade_count counts only weight-carrying trades — not the unpriced one.
+func TestTWAP_DustFillInLedgerDoesNotCarryInterval(t *testing.T) {
+	t0 := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	trades := []canonical.Trade{
+		twapFill(999_999_998, 999_999_998, t0, 1),
+		twapFill(2, 15, t0, 2), // dust, sorts last in its ledger
+		twapFill(1_000_000, 1_000_000, t0.Add(10*time.Second), 3),
+		twapFill(0, 5, t0.Add(10*time.Second), 4), // unpriced
+	}
+	got := getTWAP(t, trades, t0, t0.Add(20*time.Second), "&outlier_sigma=0")
+	if got.Price != "1.0000000065" {
+		t.Errorf("Price = %q, want 1.0000000065 (dust must not carry its ledger's interval)", got.Price)
+	}
+	if got.TradeCount != 3 {
+		t.Errorf("TradeCount = %d, want 3 weight-carrying trades", got.TradeCount)
+	}
+}
+
+// TestTWAP_OutlierFilterOnByDefault: a lone dust print at 7.5 in its own
+// ledger would hold the price for 90 of 120 seconds. /v1/twap filters it
+// at /v1/ohlc's default sigma, and outlier_sigma=0 turns the filter off.
+func TestTWAP_OutlierFilterOnByDefault(t *testing.T) {
+	t0 := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	trades := []canonical.Trade{
+		twapFill(10_000_000, 10_000_000, t0, 1),
+		twapFill(10_000_000, 10_100_000, t0.Add(10*time.Second), 2),
+		twapFill(10_000_000, 9_900_000, t0.Add(20*time.Second), 3),
+		twapFill(2, 15, t0.Add(30*time.Second), 4),
+	}
+	to := t0.Add(120 * time.Second)
+
+	got := getTWAP(t, trades, t0, to, "")
+	// 1×10s + 1.01×10s + 0.99×100s over 120s.
+	if got.Price != "0.9925000000" {
+		t.Errorf("default Price = %q, want 0.9925000000 (dust print filtered)", got.Price)
+	}
+	if got.OutliersFiltered != 1 || got.TradeCount != 3 {
+		t.Errorf("default outliers_filtered=%d trade_count=%d, want 1 and 3",
+			got.OutliersFiltered, got.TradeCount)
+	}
+
+	raw := getTWAP(t, trades, t0, to, "&outlier_sigma=0")
+	// 1×10 + 1.01×10 + 0.99×10 + 7.5×90 over 120s.
+	if raw.Price != "5.8750000000" || raw.OutliersFiltered != 0 {
+		t.Errorf("outlier_sigma=0 Price=%q outliers_filtered=%d, want 5.8750000000 and 0",
+			raw.Price, raw.OutliersFiltered)
+	}
+}
+
+func TestTWAP_InvalidSigma400(t *testing.T) {
+	srv := v1.New(v1.Options{History: &stubHistoryReader{}})
+	ts := httpTestServer(t, srv)
+	resp := mustGet(t, ts.URL+"/v1/twap?base=native&quote=fiat:USD&outlier_sigma=-1")
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}

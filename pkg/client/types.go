@@ -1250,15 +1250,16 @@ type VWAPResult struct {
 
 // TWAPResult is the data shape returned by [Client.TWAP] —
 // time-weighted average price over the requested [from, to)
-// window. Mirrors `internal/api/v1.TWAPResult`. No outlier_sigma
-// param on TWAP — time-weighting itself is a form of outlier
-// resistance.
+// window. Mirrors `internal/api/v1.TWAPResult`. TradeCount counts the
+// trades that carried weight; OutliersFiltered counts the trades the
+// server's default outlier filter removed.
 type TWAPResult struct {
-	From       time.Time `json:"from"`
-	To         time.Time `json:"to"`
-	Price      string    `json:"price"`
-	TradeCount int       `json:"trade_count"`
-	Truncated  bool      `json:"truncated"`
+	From             time.Time `json:"from"`
+	To               time.Time `json:"to"`
+	Price            string    `json:"price"`
+	TradeCount       int       `json:"trade_count"`
+	OutliersFiltered int       `json:"outliers_filtered"`
+	Truncated        bool      `json:"truncated"`
 }
 
 // Pool is one row from [Client.Pools] — a single (source, base,

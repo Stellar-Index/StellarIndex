@@ -30,8 +30,9 @@ documents why.
 A TWAP or OHLC over a window with zero trades is not "the TWAP
 with old data" — it's **undefined**. Specifically:
 
-- **TWAP** weights each trade's price by the duration until the
-  next trade. A window with no trades has no weighting to compute
+- **TWAP** weights each instant's price (the Σquote/Σbase of the
+  trades sharing one timestamp — on-chain, one ledger) by the
+  duration until the next instant. A window with no trades has no weighting to compute
   against. The only sane TWAP value over `[t, t+w)` when zero
   trades exist is "no value."
 - **OHLC** is open / high / low / close of trades in `[t, t+w)`.
@@ -129,7 +130,10 @@ average. It is read by exactly one consumer: the `twap_1h` /
 `twap_1d` aggregates (migration 0081) are `avg(prices_1m.twap)`, and
 they back `/v1/chart?price_type=twap` — a minute-resolution
 approximation of a time-weighted mean, documented in 0081's own
-header. `/v1/twap` never reads it: that TWAP is always computed on
+header. Only minutes that traded are sampled (no carry-forward), and
+since migration 0166 both levels apply the $0.01 notional floor with
+0115's COALESCE fallback, so dust moves a bar only when no fill in it
+clears the floor (all dust, or no USD valuation). `/v1/twap` never reads it: that TWAP is always computed on
 demand from raw trades by `internal/aggregate/twap.go` (accumulated in
 10^40 fixed-point `big.Int` for linear cost and converted to an exact
 `big.Rat` once at the end; genuinely time-weighted). Do not add new
@@ -171,3 +175,5 @@ must use the exact single-division form (migrations/README.md rule 8).
   `avg(prices_1m.twap)` and back `/v1/chart?price_type=twap`; and
   `aggregate.TWAP` accumulates in 10^40 fixed-point `big.Int`, exacting
   to `big.Rat` only at the end.
+- 2026-09-24 — `/v1/twap` weights per instant, not per trade (#955);
+  the chart TWAP's sampling rule and 0166's notional floor stated (#963).

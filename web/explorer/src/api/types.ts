@@ -1070,8 +1070,14 @@ export interface paths {
          *     `price_type=twap` returns a time-weighted series from the
          *     `twap_1h` / `twap_1d` continuous aggregates. TWAP is
          *     time-weighted at 1-minute resolution (each minute's mean price
-         *     counts once, regardless of how many trades printed in it), so
-         *     it is served only at 1h or 1d granularity — the requested
+         *     counts once, regardless of how many trades printed in it), but
+         *     only minutes that TRADED are sampled — an empty minute is not
+         *     carried forward, so a thin pair's bar is the mean of the few
+         *     minutes that printed, not a weighting of every minute in the
+         *     hour or day. A fill under $0.01 notional (or with no USD
+         *     valuation) does not move a bar that holds any fill at or
+         *     above that floor. It is served only at
+         *     1h or 1d granularity — the requested
          *     `granularity` is snapped onto the nearer of the two and the
          *     response reports the grain actually served. Single-bar TWAP
          *     over an arbitrary window stays on `/v1/twap` (LOCF Δt-weighted
@@ -1276,11 +1282,17 @@ export interface paths {
         };
         /**
          * Time-weighted average price over a window.
-         * @description Each trade's price is active from its timestamp to the
-         *     next trade's (or windowEnd for the last). TWAP is the
-         *     duration-weighted mean. No outlier filter: time-weighting
-         *     is itself outlier-resistant (spurious prints get only
-         *     their slot duration, not a full window's worth).
+         * @description Trades sharing a timestamp (on-chain: every fill in one
+         *     ledger) form one instant, priced at their Σquote / Σbase,
+         *     so a fill counts within its instant by its size. Each
+         *     instant's price is active from its timestamp to the next
+         *     instant's (or `to` for the last), and TWAP is the
+         *     duration-weighted mean. Trades more than `outlier_sigma`
+         *     robust σ from the window's centre are dropped first — on by
+         *     default, as on `/v1/ohlc`, because a time weight is
+         *     unrelated to trade size: on a thin pair one dust print
+         *     alone in its ledger would otherwise hold the price until
+         *     the next ledger's trade.
          */
         get: operations["getTwap"];
         put?: never;
@@ -10422,7 +10434,14 @@ export interface components {
             to: string;
             /** @description TWAP decimal, 10 digits. */
             price: string;
+            /**
+             * @description Trades that carried weight: priced, kept by the outlier
+             *     filter, and in an instant with a non-empty slot before
+             *     the next instant or `to`.
+             */
             trade_count: number;
+            /** @description Trades the `outlier_sigma` filter removed. */
+            outliers_filtered: number;
             truncated: boolean;
         };
         TWAPEnvelope: components["schemas"]["EnvelopeMeta"] & {
@@ -11188,7 +11207,8 @@ export interface components {
          * @description Series type. `vwap` (default) returns the volume-weighted
          *     price series. `twap` returns the time-weighted price series
          *     from the `twap_1h` / `twap_1d` continuous aggregates
-         *     (time-weighted at 1-minute resolution; served at 1h or 1d
+         *     (time-weighted at 1-minute resolution over the minutes that
+         *     traded — an empty minute is not carried forward; served at 1h or 1d
          *     granularity, the requested granularity snapped onto the
          *     nearer of the two). `market_cap` returns a USD-denominated
          *     market-cap series. For fiat:* base assets it is M2
@@ -13249,7 +13269,8 @@ export interface operations {
                  * @description Series type. `vwap` (default) returns the volume-weighted
                  *     price series. `twap` returns the time-weighted price series
                  *     from the `twap_1h` / `twap_1d` continuous aggregates
-                 *     (time-weighted at 1-minute resolution; served at 1h or 1d
+                 *     (time-weighted at 1-minute resolution over the minutes that
+                 *     traded — an empty minute is not carried forward; served at 1h or 1d
                  *     granularity, the requested granularity snapped onto the
                  *     nearer of the two). `market_cap` returns a USD-denominated
                  *     market-cap series. For fiat:* base assets it is M2
@@ -13598,6 +13619,8 @@ export interface operations {
                  *     `to` is excluded.
                  */
                 to?: components["parameters"]["To"];
+                /** @description Drop trades > N σ from the window centre before time-weighting. Default 4σ. Pass 0 to disable. */
+                outlier_sigma?: number;
             };
             header?: never;
             path?: never;
@@ -13605,7 +13628,10 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Time-weighted price + trade count. */
+            /**
+             * @description Time-weighted price, the number of trades that carried
+             *     weight, and the number the outlier filter removed.
+             */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -13618,6 +13644,7 @@ export interface operations {
                      *         "to": "2026-07-03T22:37:30Z",
                      *         "price": "0.2044317708",
                      *         "trade_count": 2483,
+                     *         "outliers_filtered": 0,
                      *         "truncated": false
                      *       },
                      *       "as_of": "2026-07-03T22:37:42.906364691Z",
@@ -13636,6 +13663,15 @@ export interface operations {
             400: components["responses"]["BadRequest"];
             /** @description No trades in window. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["Problem"];
+                };
+            };
+            /** @description All trades in the window were filtered as outliers at `outlier_sigma`; relax the threshold or pass 0. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

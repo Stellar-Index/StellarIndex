@@ -1164,9 +1164,9 @@ func (c *Client) LendingPools(ctx context.Context) (*Envelope[[]LendingPool], er
 // Base + Quote are required; From + To default to a 1-hour window
 // ending at the previous closed-bucket boundary per ADR-0015.
 //
-// OutlierSigma applies to VWAP only (TWAP ignores it — time-weighting
-// is itself a form of outlier resistance). Zero or unset disables
-// the sigma filter.
+// OutlierSigma is forwarded to VWAP only, where zero or unset disables
+// the sigma filter. TWAP does not forward it and is served at the
+// server's default sigma.
 type AggregateQuery struct {
 	Base         string
 	Quote        string
@@ -1216,12 +1216,13 @@ func (c *Client) VWAP(ctx context.Context, q AggregateQuery) (*Envelope[VWAPResu
 // TWAP fetches the time-weighted average price for (base, quote)
 // over the requested [from, to) window. Backs GET /v1/twap.
 //
-// TWAP weights each trade's price by the duration until the next
-// trade (or windowEnd for the final trade) — see
-// `internal/aggregate/twap.go` for the formula. There's no
-// outlier_sigma equivalent; the AggregateQuery.OutlierSigma field
-// is silently ignored on this surface (kept on the shared shape so
-// the same query value can be passed to both VWAP and TWAP).
+// TWAP weights each instant's price (the Σquote/Σbase of the trades
+// sharing a timestamp) by the duration until the next instant, or
+// windowEnd for the last — see `internal/aggregate/twap.go`. The
+// server filters outliers at its default sigma first;
+// AggregateQuery.OutlierSigma is not forwarded on this surface (kept
+// on the shared shape so the same query value can be passed to both
+// VWAP and TWAP).
 func (c *Client) TWAP(ctx context.Context, q AggregateQuery) (*Envelope[TWAPResult], error) {
 	if q.Base == "" {
 		return nil, &APIError{Status: 400, Title: "base required"}

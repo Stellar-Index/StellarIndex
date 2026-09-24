@@ -240,3 +240,56 @@ func TestTWAP_FixedPointMatchesExactRational(t *testing.T) {
 			rel.FloatString(45), got.FloatString(30), want.FloatString(30))
 	}
 }
+
+// TestTWAP_SameInstantFillsWeightedBySize pins the per-instant rule: fills
+// sharing a timestamp (one ledger) set that instant's price by their summed
+// volumes, so a dust print inside a real ledger moves the TWAP by its size,
+// and the answer does not depend on which fill sorts last within the ledger.
+func TestTWAP_SameInstantFillsWeightedBySize(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	bulk := mkTradeAt(999_999_998, 999_999_998, t0) // price 1
+	dust := mkTradeAt(2, 15, t0)                    // price 7.5, 2 stroops
+	next := mkTradeAt(1_000_000, 1_000_000, t0.Add(10*time.Second))
+	end := t0.Add(20 * time.Second)
+
+	// Instant t0: Σquote/Σbase = 1_000_000_013 / 1_000_000_000, for 10s;
+	// then 1 for 10s. TWAP = (1.000000013 + 1) / 2 = 1.0000000065.
+	want := big.NewRat(2_000_000_013, 2_000_000_000)
+	for name, trades := range map[string][]canonical.Trade{
+		"dust sorts last":  {bulk, dust, next},
+		"dust sorts first": {dust, bulk, next},
+	} {
+		got, err := aggregate.TWAP(trades, end)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got.Cmp(want) != 0 {
+			t.Errorf("%s: TWAP = %s, want %s (the dust fill must count by its size)",
+				name, got.FloatString(12), want.FloatString(12))
+		}
+	}
+}
+
+// TestTWAPWithCount_CountsOnlyWeightCarryingTrades: an unpriced trade and a
+// trade whose slot is empty (at windowEnd) carry no weight and are not
+// counted as support for the price.
+func TestTWAPWithCount_CountsOnlyWeightCarryingTrades(t *testing.T) {
+	t0 := time.Unix(1_770_000_000, 0).UTC()
+	end := t0.Add(20 * time.Second)
+	trades := []canonical.Trade{
+		mkTradeAt(1, 100, t0),
+		mkTradeAt(0, 999, t0), // unpriced
+		mkTradeAt(1, 300, t0.Add(10*time.Second)),
+		mkTradeAt(1, 900, end), // zero-length slot
+	}
+	got, n, err := aggregate.TWAPWithCount(trades, end)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cmp(big.NewRat(200, 1)) != 0 {
+		t.Errorf("TWAP = %s, want 200", got.FloatString(6))
+	}
+	if n != 2 {
+		t.Errorf("weighted trades = %d, want 2", n)
+	}
+}
