@@ -545,8 +545,8 @@ type PriceSnapshotConfidence struct {
 // publishes implied VWAPs (e.g. XLM/EUR via XLM/USD × USD/EUR) into
 // `vwap:<base>:<quote>:<window>` Redis keys with a `:provenance`
 // sibling key set to "triangulated"; this Looker reads both and
-// returns whether a triangulated value exists for the requested
-// pair + the value itself.
+// returns the cached value for the requested pair + whether it is
+// marked triangulated.
 //
 // Production wiring: a Redis-backed adapter that reads
 // [cachekeys.VWAP] and [cachekeys.VWAPProvenance]. Nil leaves
@@ -554,20 +554,18 @@ type PriceSnapshotConfidence struct {
 // existing behaviour) — wire when the aggregator's triangulation
 // chains are configured + Redis is reachable.
 type TriangulatedPriceLooker interface {
-	// LookupTriangulatedVWAP returns the triangulated VWAP for the
-	// pair + window if one is cached AND the provenance marker
-	// confirms it came from triangulation (vs. a direct per-pair
-	// refresh that happened to write to the same key).
+	// LookupTriangulatedVWAP returns the cached VWAP for the
+	// pair + window and whether the provenance marker says it came
+	// from triangulation (vs. a direct per-pair or rewritten value
+	// written to the same key).
 	//
 	// Return values:
 	//   value           — decimal string when found.
 	//   isTriangulated  — true when the provenance marker says so.
-	//                     false means the cache had a value but it
-	//                     was a direct VWAP, not triangulated; the
-	//                     handler should NOT use this as a Timescale
-	//                     fallback (Timescale already had the
-	//                     direct value and returned ErrPriceNotFound
-	//                     for some other reason).
+	//                     false means the cache had a direct VWAP;
+	//                     the handler still serves it, with
+	//                     flags.triangulated=false (see
+	//                     tryRedisVWAPFallback).
 	//   found           — true when any value was in the cache.
 	//   err             — propagates Redis errors so the handler
 	//                     can log them; cache misses are NOT errors
