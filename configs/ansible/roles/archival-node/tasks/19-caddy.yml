@@ -18,11 +18,12 @@
 # sources list (found on the first staged apply).
 - name: Install Caddy signing key (dearmored, official path)
   ansible.builtin.shell: |
-    set -e
+    set -eo pipefail
     curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
       | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
   args:
     creates: /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+    executable: /bin/bash
   tags: [caddy]
 
 - name: Add Caddy apt repository (official form)

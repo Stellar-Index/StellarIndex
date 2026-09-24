@@ -1721,6 +1721,16 @@
 # probes to Debian's dir (that would churn 8 working producers). The
 # empty `ExecStart=` is required to clear the packaged value before
 # setting a new one.
+- name: Install prometheus-node-exporter-collectors Debian package
+  # Ships the apt/nvme timers + scripts the drop-ins below repoint;
+  # without this the drop-in ExecStart= commands reference scripts
+  # that were never installed (T630).
+  ansible.builtin.apt:
+    name: prometheus-node-exporter-collectors
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Ensure the drop-in directories exist
   ansible.builtin.file:
     path: "/etc/systemd/system/prometheus-node-exporter-{{ item }}.service.d"
