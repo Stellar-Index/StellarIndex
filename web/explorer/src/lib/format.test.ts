@@ -246,3 +246,27 @@ describe('formatRelativeLong', () => {
     expect(formatRelativeLong(null)).toBe('never');
   });
 });
+
+describe('multiplyDecimalStrings', () => {
+  it('multiplies exactly without rounding to a fixed scale', () => {
+    expect(format.multiplyDecimalStrings('0.000000001', '0.0003')).toBe(
+      '0.0000000000003',
+    );
+    expect(format.multiplyDecimalStrings('2.50', '4')).toBe('10');
+    expect(format.multiplyDecimalStrings('123456789012345678901', '1.5')).toBe(
+      '185185183518518518351.5',
+    );
+  });
+
+  it('carries the sign and never renders a negative zero', () => {
+    expect(format.multiplyDecimalStrings('-0.5', '0.25')).toBe('-0.125');
+    expect(format.multiplyDecimalStrings('-0.5', '-0.25')).toBe('0.125');
+    expect(format.multiplyDecimalStrings('-0.5', '0.00')).toBe('0');
+  });
+
+  it('returns null for a non-decimal input', () => {
+    expect(format.multiplyDecimalStrings('1e-9', '1')).toBeNull();
+    expect(format.multiplyDecimalStrings('NaN', '1')).toBeNull();
+    expect(format.multiplyDecimalStrings('', '1')).toBeNull();
+  });
+});

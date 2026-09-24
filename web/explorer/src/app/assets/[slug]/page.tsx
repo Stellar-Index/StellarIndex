@@ -14,6 +14,7 @@ import {
   formatCompact,
   formatPriceSmall,
   formatSubunitPrice,
+  multiplyDecimalStrings,
 } from '@/lib/format';
 import { serializeJsonLd, datasetJsonLd, ogImageFor } from '@/lib/seo';
 import { CURRENT_NETWORK } from '@/lib/networks';
@@ -606,7 +607,8 @@ export async function fetchPrice(assetId: string): Promise<PriceResp | null> {
   if (!Number.isFinite(a) || !Number.isFinite(b) || a <= 0 || b <= 0) {
     return null;
   }
-  const triangulated = (a * b).toFixed(12);
+  const triangulated = multiplyDecimalStrings(vsXlm.price, xlmUsd.price);
+  if (triangulated == null) return null;
   return {
     price: triangulated,
     quote: 'fiat:USD',
