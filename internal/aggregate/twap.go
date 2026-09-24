@@ -131,13 +131,9 @@ func TWAPWithCount(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, int
 
 	weighted := 0
 	for i := 0; i < len(trades); {
-		if i > 0 && trades[i].Timestamp.Before(trades[i-1].Timestamp) {
-			return nil, 0, fmt.Errorf("%w: trade %d at %s precedes trade %d at %s", ErrUnsortedTrades,
-				i, trades[i].Timestamp.Format(time.RFC3339Nano), i-1, trades[i-1].Timestamp.Format(time.RFC3339Nano))
-		}
-		j := i + 1
-		for j < len(trades) && trades[j].Timestamp.Equal(trades[i].Timestamp) {
-			j++
+		j, err := instantEnd(trades, i)
+		if err != nil {
+			return nil, 0, err
 		}
 		base, quote, priced := instantVolumes(trades[i:j])
 		if priced > 0 {
@@ -169,6 +165,21 @@ func TWAPWithCount(trades []canonical.Trade, windowEnd time.Time) (*big.Rat, int
 	// Undo the fixed-point scale in the same division that applies the
 	// weights: TWAP = (Σ⌊price_k·SCALE·Δt_k⌋) / (SCALE · Σ Δt_k).
 	return new(big.Rat).SetFrac(weightedSum, scratch.Mul(totalNanos, twapScale)), weighted, nil
+}
+
+// instantEnd returns the index one past the instant starting at trades[i]
+// (the run of trades sharing its Timestamp), or [ErrUnsortedTrades] when
+// trades[i] precedes its predecessor.
+func instantEnd(trades []canonical.Trade, i int) (int, error) {
+	if i > 0 && trades[i].Timestamp.Before(trades[i-1].Timestamp) {
+		return 0, fmt.Errorf("%w: trade %d at %s precedes trade %d at %s", ErrUnsortedTrades,
+			i, trades[i].Timestamp.Format(time.RFC3339Nano), i-1, trades[i-1].Timestamp.Format(time.RFC3339Nano))
+	}
+	j := i + 1
+	for j < len(trades) && trades[j].Timestamp.Equal(trades[i].Timestamp) {
+		j++
+	}
+	return j, nil
 }
 
 // instantVolumes sums the base and quote legs of the priced trades in
