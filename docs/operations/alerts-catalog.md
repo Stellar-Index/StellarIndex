@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 193 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 197 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -124,6 +124,8 @@ enforces it); any per-alert detail page follows it.
 | `stellarindex_external_poller_stale_ecb` | `time() - stellarindex_external_poller_last_success_unix{source="ecb"}` | > 43200 s (12h) for > 10 min | ticket | [external-poller-stale](runbooks/external-poller-stale.md) |
 | `stellarindex_cex_stream_subscription_rejected` | `max by (source, symbol) (stellarindex_cex_stream_subscription_rejected)` | == 1 for 5 min (the venue refused the trade subscription for one symbol; the socket stays healthy and that pair delivers nothing) | ticket | [cex-stream-silent-pair](runbooks/cex-stream-silent-pair.md) |
 | `stellarindex_cex_stream_entry_skips` | `sum by (source, reason) (rate(stellarindex_cex_stream_entry_skips_total[15m]))` | > 0 sustained 30 min (trade entries inside well-formed frames are being dropped — a venue symbol rename or field re-encoding) | ticket | [cex-stream-silent-pair](runbooks/cex-stream-silent-pair.md) |
+| `stellarindex_cex_stream_stalled` | `sum by (source) (increase(cex_stream_disconnect_total{reason="stall"}[15m]))` | > 0 for 5 min — half-open socket: the connection looks alive but has stopped answering pings | ticket | [cex-stream-disconnect-storm](runbooks/cex-stream-disconnect-storm.md) |
+| `stellarindex_external_dust_dropped_high` | `sum by (source) (rate(external_dust_dropped_total[15m]))` | > 1/s sustained 30 min — a venue is dropping far more trades as sub-$0.001 dust than the routine background rate | ticket | [cex-stream-disconnect-storm](runbooks/cex-stream-disconnect-storm.md) |
 | `stellarindex_external_poller_error_rate_high` | `rate(stellarindex_external_poller_polls_total{outcome="error"}[15m]) / sum(...) ` | > 0.5 sustained 15 min | informational | [external-poller-error-rate-high](runbooks/external-poller-error-rate-high.md) |
 | `stellarindex_external_fx_feed_stale` | `time() - max(stellarindex_external_fx_last_quote_unix)` | > 21600 s (6h) for > 15 min | ticket | [fx-feed-stale](runbooks/fx-feed-stale.md) |
 | `stellarindex_external_fx_feed_absent` | `absent(stellarindex_external_fx_last_quote_unix)` | series missing for 30 min | ticket | [fx-feed-stale](runbooks/fx-feed-stale.md) |
@@ -547,6 +549,8 @@ auto-unfreeze at all. Rules in
 | `stellarindex_divergence_refresh_error_dominant` | `rate(divergence_refresh_total{outcome="refresh_error"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-refresh-error-dominant](runbooks/divergence-refresh-error-dominant.md) |
 | `stellarindex_divergence_no_reference` | `rate(divergence_refresh_total{outcome="no_reference"}[5m]) > rate(...{outcome="ok"}[5m])` | sustained 30 min | ticket | [divergence-no-reference](runbooks/divergence-no-reference.md) |
 | `stellarindex_divergence_no_ok_outcomes` | `sum(increase(divergence_refresh_total{outcome="ok"}[30m])) == 0` while `divergence_refresher_wired == 1` | sustained 15 min | ticket | [divergence-no-ok-outcomes](runbooks/divergence-no-ok-outcomes.md) |
+| `stellarindex_chainlink_feed_decimals_mismatch` | `sum by (consumer, pair) (increase(chainlink_feed_decimals_mismatch_total[15m]))` | > 0 for 5 min — configured decimals disagree with the feed's on-chain decimals(); the feed is refused until they agree | ticket | [chainlink-feed-decimals](runbooks/chainlink-feed-decimals.md) |
+| `stellarindex_chainlink_feed_decimals_verify_failed` | `sum by (consumer, pair) (rate(chainlink_feed_decimals_verify_failed_total[15m]))` | > 0 sustained 30 min — decimals() RPC calls failing repeatedly, falling back to the last known scale | ticket | [chainlink-feed-decimals](runbooks/chainlink-feed-decimals.md) |
 
 ## Aggregator alerts
 

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	externalchainlink "github.com/Stellar-Index/StellarIndex/internal/sources/external/chainlink"
 )
 
@@ -213,6 +214,17 @@ func NewChainlinkReference(opts ChainlinkOptions) *ChainlinkReference {
 			spec.MaxAge = defaultChainlinkMaxAge(k, builtins)
 		}
 		feedMap[k] = spec
+	}
+	// GH-641: pre-register the zero-valued mismatch/verify-failed series
+	// for every configured feed, same reasoning as
+	// obs.seedBoundedLabelSeries — without it, a feed that has never
+	// mis-scaled or failed a decimals() call has no series at all, so
+	// "zero forever" (healthy) reads identically to "never wired".
+	// FeedMap is fixed at construction, so the label set is bounded here
+	// even though it is operator-config-dependent.
+	for k := range feedMap {
+		obs.ChainlinkFeedDecimalsMismatchTotal.WithLabelValues("divergence", k)
+		obs.ChainlinkFeedDecimalsVerifyFailedTotal.WithLabelValues("divergence", k)
 	}
 	return &ChainlinkReference{
 		httpClient: httpClient,

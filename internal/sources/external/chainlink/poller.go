@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/sources/external"
 	"github.com/Stellar-Index/StellarIndex/internal/worker"
 )
@@ -76,6 +77,17 @@ func (p *Poller) clock() time.Time {
 // the RPC endpoint (must include the API key for keyed providers
 // like Alchemy) and the feed map.
 func NewPoller(rpcURL string, feedMap map[string]FeedSpec) *Poller {
+	// GH-641: pre-register the zero-valued mismatch/verify-failed series
+	// for every configured feed. Same reasoning as the divergence
+	// reference's NewChainlinkReference — FeedMap is fixed at
+	// construction, so the label set is bounded even though it is
+	// operator-config-dependent, and without seeding a feed that has
+	// never mis-scaled or failed a decimals() call is indistinguishable
+	// from one whose counter was never wired.
+	for k := range feedMap {
+		obs.ChainlinkFeedDecimalsMismatchTotal.WithLabelValues("ingest", k)
+		obs.ChainlinkFeedDecimalsVerifyFailedTotal.WithLabelValues("ingest", k)
+	}
 	return &Poller{
 		Client:      NewClient(rpcURL, nil),
 		Interval:    DefaultPollInterval,
