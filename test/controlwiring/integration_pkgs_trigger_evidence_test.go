@@ -122,8 +122,13 @@ func checkChangeClassIntegrationRE(t *testing.T, root string) *regexp.Regexp {
 // globFires reports whether a classifier glob ("dir/**" in the CI filter,
 // "dir/*" in the shell case arm — both match everything beneath dir) fires
 // for the slash-separated repo-relative path. An exact-file glob such as
-// go.mod fires only for that path.
+// go.mod fires only for that path; "**/seg/**" fires for a seg directory at
+// any depth.
 func globFires(glob, path string) bool {
+	if seg, ok := strings.CutPrefix(glob, "**/"); ok && strings.HasSuffix(seg, "/**") {
+		seg = strings.TrimSuffix(seg, "/**")
+		return strings.HasPrefix(path, seg+"/") || strings.Contains(path, "/"+seg+"/")
+	}
 	dir := strings.TrimSuffix(strings.TrimSuffix(glob, "/**"), "/*")
 	if dir == glob {
 		return path == glob

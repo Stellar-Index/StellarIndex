@@ -123,6 +123,26 @@ expect "go.sum triggers the go class" 0
 run go "docs/architecture/lexicon.md"
 expect "a markdown file does NOT trigger the go class" 1
 
+# go:embed inputs and testdata/ fixtures are not *.go files but Go tests
+# read them; a diff confined to one must still run the test job.
+run go "internal/sources/external/binance/pairs.yaml"
+expect "binance pairs.yaml (go:embed input) triggers the go class" 0
+
+run go "internal/sources/external/forex/circulation_data.csv"
+expect "forex circulation_data.csv (go:embed input) triggers the go class" 0
+
+run go "internal/currency/data/seed.yaml"
+expect "currency seed.yaml (go:embed input) triggers the go class" 0
+
+run go "internal/incidents/data/2026-05-06-postgres-lock-table-full.md"
+expect "internal/incidents/data/** (go:embed input) triggers the go class" 0
+
+run go "internal/storage/clickhouse/testdata/contract_register.wasm"
+expect "a nested testdata/** fixture triggers the go class" 0
+
+run go "internal/sources/external/binance/README.md"
+expect "a non-embedded sibling of an embed input does NOT trigger the go class" 1
+
 # ── web / ansible classes ────────────────────────────────────────────
 
 run web "web/explorer/src/app/page.tsx"
@@ -137,8 +157,19 @@ expect "docs/reference/api (not web/ or openapi/) does NOT trigger the web class
 run ansible "configs/ansible/roles/monitoring/tasks/main.yml"
 expect "configs/ansible/** triggers the ansible class" 0
 
+# clickhouse-exporter-test.sh (ansible-check job) reads the scrape config
+# and both rule trees, so those trigger the class too.
 run ansible "configs/prometheus/rules.r1/alerts.yml"
-expect "configs/prometheus (not configs/ansible) does NOT trigger the ansible class" 1
+expect "configs/prometheus/** triggers the ansible class" 0
+
+run ansible "deploy/monitoring/rules/clickhouse.yml"
+expect "deploy/monitoring/** triggers the ansible class" 0
+
+run ansible "configs/alertmanager/alertmanager.yml"
+expect "configs/alertmanager (not ansible/prometheus) does NOT trigger the ansible class" 1
+
+run ansible "deploy/clickhouse/tier1_schema.sql"
+expect "deploy/ outside monitoring/ does NOT trigger the ansible class" 1
 
 # ── stdin path (the real `git diff --name-only | check-change-class.sh`
 # call shape used in ci.yml) ─────────────────────────────────────────
@@ -162,7 +193,7 @@ expect "empty diff (zero files) → usage error, never read as 'nothing changed,
 
 echo
 echo "check-change-class-test: ${pass} passed, ${fail} failed, ${asserts} assertions requested"
-if [ "$asserts" -lt 29 ]; then
+if [ "$asserts" -lt 38 ]; then
   echo "check-change-class-test: FAIL — only ${asserts} assertions ran; cases have been lost" >&2
   exit 1
 fi
