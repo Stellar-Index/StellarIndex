@@ -8,15 +8,33 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Stellar-Index/StellarIndex/internal/storage/clickhouse"
 )
 
+// ixWindowGenesis and ixWindowCadence model a synthetic, deliberately
+// NON-theoretical ledger close cadence (6s, i.e. 14,400/day — distinct from
+// the old code's hardcoded 17,280/day) so windowFloorLedger's close_time
+// boundary produces a DIFFERENT, independently-computable answer than the
+// old ledger-count arithmetic (CA2-A03-correct-0). ixWindowCloseTime is the
+// single source of truth both the fake reader and the test's expectation
+// are built from.
+var (
+	ixWindowGenesis = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	ixWindowCadence = 6 * time.Second
+)
+
+func ixWindowCloseTime(seq uint32) time.Time {
+	return ixWindowGenesis.Add(ixWindowCadence * time.Duration(seq))
+}
+
 // ixWindowReader embeds capReader (a full ExplorerReader) and overrides the
-// two seams ContractInteractions exercises: it hands back a fixed tip so
-// windowFloorLedger is deterministic, and it counts every ContractInteractions
-// compute so the test can prove distinct raw ?days= values on ONE ladder rung
-// collapse to a single shared cache key rather than N cold scans.
+// seams ContractInteractions exercises: it hands back a fixed tip and a
+// close_time for every sequence (so windowFloorLedger's binary search is
+// deterministic), and it counts every ContractInteractions compute so the
+// test can prove distinct raw ?days= values on ONE ladder rung collapse to
+// a single shared cache key rather than N cold scans.
 type ixWindowReader struct {
 	*capReader
 	tipSeq    uint32
@@ -25,7 +43,14 @@ type ixWindowReader struct {
 }
 
 func (r *ixWindowReader) RecentLedgers(_ context.Context, _ int, _ uint32) ([]clickhouse.LedgerHeader, error) {
-	return []clickhouse.LedgerHeader{{Seq: r.tipSeq}}, nil
+	return []clickhouse.LedgerHeader{{Seq: r.tipSeq, CloseTime: ixWindowCloseTime(r.tipSeq)}}, nil
+}
+
+func (r *ixWindowReader) LedgerBySeq(_ context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error) {
+	if seq == 0 || seq > r.tipSeq {
+		return clickhouse.LedgerHeader{}, false, nil
+	}
+	return clickhouse.LedgerHeader{Seq: seq, CloseTime: ixWindowCloseTime(seq)}, true, nil
 }
 
 func (r *ixWindowReader) ContractInteractions(_ context.Context, _ string, _ int, since uint32) ([]clickhouse.ContractEdgeRow, uint32, error) {
@@ -75,9 +100,13 @@ func TestContractInteractions_QuantizesWindow(t *testing.T) {
 	if got.WindowDays != 90 {
 		t.Fatalf("window_days echo = %d, want 90 (45 must quantise up to the 90 rung)", got.WindowDays)
 	}
-	wantSince := tip - uint32(90*ledgersPerDay)
+	// Independently derived from the model, not from windowFloorLedger's own
+	// arithmetic: 90 days at the fake reader's 6s cadence is exactly
+	// 90*86400/6 = 1,296,000 ledgers — the boundary is exact (no rounding),
+	// so the smallest sequence at/after it is precisely tip-1,296,000.
+	wantSince := tip - 1_296_000
 	if got.SinceLedger != wantSince {
-		t.Fatalf("since_ledger = %d, want %d (floor must be computed from the quantised window)", got.SinceLedger, wantSince)
+		t.Fatalf("since_ledger = %d, want %d (floor must be computed from close_time, not a theoretical ledgers/day constant)", got.SinceLedger, wantSince)
 	}
 	if reader.calls != 1 {
 		t.Fatalf("reader calls after first request = %d, want 1", reader.calls)

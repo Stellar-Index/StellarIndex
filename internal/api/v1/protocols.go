@@ -860,7 +860,7 @@ func (s *Server) protocolDetailBuilder(meta ProtocolMeta, windowDays int) func(c
 // the stats union can error while the rest of the build is healthy), so
 // their health feeds the same status instead of degrading silently.
 func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, windowDays int) ProtocolDetailView {
-	contracts := s.protocolRoster(ctx, meta)
+	contracts, rosterOK := s.protocolRoster(ctx, meta)
 	classifyContractKinds(contracts, meta.Factories)
 	s.enrichContractTokens(ctx, meta, contracts)
 	contractCount, contractCountOK := s.detailContractCount(ctx, meta, contracts)
@@ -876,7 +876,7 @@ func (s *Server) buildProtocolDetail(ctx context.Context, meta ProtocolMeta, win
 	bespokeOK, bespokeStale := s.enrichBespoke(ctx, meta, &v, windowDays)
 	status := protocolAnalyticsOK
 	switch {
-	case !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || ctx.Err() != nil:
+	case !rosterOK || !lakeOK || !bespokeOK || !contractCountOK || !eventsOK || ctx.Err() != nil:
 		status = protocolAnalyticsUnavailable
 	case bespokeStale:
 		status = protocolAnalyticsStale
@@ -956,16 +956,22 @@ func classifyContractKinds(contracts []ProtocolContractView, factories []string)
 // analytics to every roster contract id, folding them here also pulls their
 // events into the breakdown / activity / per-contract counts. Deduped against
 // the base roster so a contract already present isn't doubled.
-func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) []ProtocolContractView {
+// ok=false means the read failed and the returned roster is a swallowed-error
+// EMPTY, not a true empty — the caller must fold it into analytics.status
+// rather than let a failed roster read build a "ok" detail page (CA2-A06-harden-3:
+// a roster read error previously vanished into the same empty-roster shape as
+// a genuinely contract-less protocol, so buildProtocolDetail stamped the page
+// "ok" and the SWR cache overwrote a healthy cached entry with contract_count 0).
+func (s *Server) protocolRoster(ctx context.Context, meta ProtocolMeta) ([]ProtocolContractView, bool) {
 	rows, err := s.rosterErr(ctx, meta)
-	if err != nil || rows == nil {
-		// Detail path: degrade to a non-nil empty roster exactly as before —
-		// the analytics.status field carries the honesty here. (The LIST
-		// path uses cachedRosterCount, which surfaces the error so the source
-		// is omitted rather than shown with a fabricated count.)
-		return []ProtocolContractView{}
+	if err != nil {
+		s.logger.Warn("protocol roster read failed", "source", meta.Name, "err", err)
+		return []ProtocolContractView{}, false
 	}
-	return rows
+	if rows == nil {
+		return []ProtocolContractView{}, true
+	}
+	return rows, true
 }
 
 // rosterErr returns meta's full contract roster, SURFACING a read error
@@ -1260,16 +1266,81 @@ func (s *Server) fillProtocolContractActivity(ctx context.Context, name string, 
 // pre-aggregation is usable, the fast reader and its day-grain cutoff.
 // The caller has already verified tip was read successfully.
 func (s *Server) protocolActivityPlanFor(ctx context.Context, tip uint32) protocolActivityPlan {
-	since := uint32(1) // whole chain inside the window
-	if tip > protocolActivityWindowLedgers {
-		since = tip - protocolActivityWindowLedgers
-	}
+	since, sinceDay := s.protocolWindowFloor(ctx, tip)
 	plan := protocolActivityPlan{sinceLedger: since}
 	if fast := s.fastActivity(ctx); fast != nil {
 		plan.fast = fast
-		plan.sinceDay = protocolSinceDay(since, tip)
+		plan.sinceDay = sinceDay
 	}
 	return plan
+}
+
+// protocolLedgerAtCloseTimeReader is the optional capability behind an
+// accurate window boundary (CA2-A06-correct-1): a ProtocolActivityReader
+// that can resolve a ledger sequence's close_time. *clickhouse.ExplorerReader
+// (the production wiring) satisfies it via LedgerBySeq; a reader that
+// doesn't degrades to the theoretical-cadence approximation below.
+type protocolLedgerAtCloseTimeReader interface {
+	LedgerBySeq(ctx context.Context, seq uint32) (clickhouse.LedgerHeader, bool, error)
+}
+
+// protocolWindowFloor derives the raw readers' ledger cutoff AND the fast
+// reader's day-grain cutoff from ONE close_time boundary: tip's close_time
+// minus protocolActivityWindowDays days. Before this fix the two were
+// derived independently from a ledger-count multiple of the theoretical
+// 17,280/day cadence (protocolActivityWindowLedgers = 90*17280): pubnet's
+// observed cadence is ~14,950-15,300/day, so that ledger count actually
+// spans ~101-104 days while the response still publishes
+// activity_window_days: 90 — the same class of bug already fixed for
+// NetworkThroughput (see explorer_reader.go's
+// ledgersPerDayPruningEstimate doc). Falls back to the old approximation
+// when the reader can't resolve close_time (production always can).
+func (s *Server) protocolWindowFloor(ctx context.Context, tip uint32) (sinceLedger uint32, sinceDay time.Time) {
+	fallback := uint32(1) // whole chain inside the window
+	if tip > protocolActivityWindowLedgers {
+		fallback = tip - protocolActivityWindowLedgers
+	}
+	closeTimeReader, ok := s.protocolActivity.(protocolLedgerAtCloseTimeReader)
+	if !ok {
+		return fallback, protocolSinceDay(fallback, tip)
+	}
+	tipHdr, found, err := closeTimeReader.LedgerBySeq(ctx, tip)
+	if err != nil || !found {
+		return fallback, protocolSinceDay(fallback, tip)
+	}
+	boundary := tipHdr.CloseTime.UTC().AddDate(0, 0, -protocolActivityWindowDays)
+	since, err := ledgerSeqAtCloseTime(ctx, closeTimeReader, tip, boundary)
+	if err != nil {
+		return fallback, protocolSinceDay(fallback, tip)
+	}
+	if since == 0 {
+		since = 1
+	}
+	return since, boundary
+}
+
+// ledgerSeqAtCloseTime binary-searches [0, tipSeq] for the smallest ledger
+// sequence whose close_time is at or after boundary. Ledger sequences are
+// contiguous genesis→tip and close_time is monotonic in sequence, so this
+// converges in O(log2(tipSeq)) point lookups regardless of the chain's
+// actual close cadence — the same technique
+// internal/api/v1/explorer/contracts_list.go's windowFloorLedger uses for
+// the sibling /v1/contracts window (CA2-A03-correct-0).
+func ledgerSeqAtCloseTime(ctx context.Context, r protocolLedgerAtCloseTimeReader, tipSeq uint32, boundary time.Time) (uint32, error) {
+	lo, hi := uint32(0), tipSeq
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		hdr, found, err := r.LedgerBySeq(ctx, mid)
+		if err != nil {
+			return 0, err
+		}
+		if !found || hdr.CloseTime.Before(boundary) {
+			lo = mid + 1
+			continue
+		}
+		hi = mid
+	}
+	return lo, nil
 }
 
 // buildProtocolView projects one registry entry + the dynamic joins
