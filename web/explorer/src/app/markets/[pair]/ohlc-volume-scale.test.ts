@@ -41,7 +41,8 @@ describe('markets/[pair] OHLC volume scale', () => {
 
   it('renders no figure at all when the bar states no scale', () => {
     // Guessing a divisor is what the finding is about; an em-dash is the
-    // honest answer for a response that omits the field.
-    expect(src).toMatch(/decimals === undefined[\s\S]{0,160}return '—'/);
+    // honest answer for a response that states no scale — `null` on the
+    // wire (GH-1285: an unregistered trade source), not just `undefined`.
+    expect(src).toMatch(/decimals == null[\s\S]{0,160}return '—'/);
   });
 });

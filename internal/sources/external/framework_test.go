@@ -129,6 +129,20 @@ func TestRegistry_FailClosedOnUnknown(t *testing.T) {
 	}
 }
 
+// TestRegistry_Registered pins the accessor GH-1285 needs: Lookup's
+// zero-value fallback makes "unregistered" and "registered, scale
+// unset" indistinguishable through AmountScaleDecimals() alone, so a
+// caller that must tell them apart (commonAmountScaleDecimals) needs
+// direct registry-membership.
+func TestRegistry_Registered(t *testing.T) {
+	if !Registered("binance") {
+		t.Error("Registered(binance) = false, want true — binance has a Registry entry")
+	}
+	if Registered("definitely-not-a-real-source") {
+		t.Error("Registered(definitely-not-a-real-source) = true, want false")
+	}
+}
+
 // TestRegistry_BackfillSafePolicy locks down the WASM-aware default:
 // every on-chain Soroban source starts at BackfillSafe=false until its
 // decoder has been audited against every WASM version that ran for the

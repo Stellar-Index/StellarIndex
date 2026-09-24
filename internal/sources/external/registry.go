@@ -200,6 +200,18 @@ func Lookup(source string) Metadata {
 	}
 }
 
+// Registered reports whether source has an explicit [Registry] entry.
+// Lookup collapses "unregistered" and "registered with AmountDecimals
+// unset" into the same zero-value-derived answer (both read as
+// AmountScaleDecimals()==8), which is safe for Lookup's own VWAP-
+// inclusion fallback but wrong for a caller that needs to tell "no
+// entry" apart from "entry, CEX-default scale" — see
+// commonAmountScaleDecimals in internal/api/v1/ohlc.go.
+func Registered(source string) bool {
+	_, ok := Registry[source]
+	return ok
+}
+
 // IncludeInVWAP is a convenience wrapper for the most-common
 // aggregator-side question. Returns true only when the source is
 // registered AND its IncludeInVWAP flag is true.

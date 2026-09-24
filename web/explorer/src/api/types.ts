@@ -10464,16 +10464,18 @@ export interface components {
              *     one common scale before the sum is taken and this is that
              *     scale — resolved over the trades as fetched, so it stays
              *     correct when the outlier filter removes the only venue that
-             *     set it.
+             *     set it. `null` when a contributing trade's source has no
+             *     registry entry: `base_volume` is then not convertible to
+             *     asset units and must not be divided by a guessed scale.
              */
-            base_volume_decimals: number;
+            base_volume_decimals: number | null;
             /**
              * @description Decimal exponent of `quote_volume` — see
              *     `base_volume_decimals`. Equal to it today (a source stamps
              *     both legs of a trade at one scale); carried separately because
              *     a scale belongs to an amount, not to a pair.
              */
-            quote_volume_decimals: number;
+            quote_volume_decimals: number | null;
             trade_count: number;
             /** @description True when the window hit the per-request trade cap; the bar reflects only the chronologically LAST N trades (the reader drops the oldest rows under the limit), so open/high/low may not be the true window values. */
             truncated: boolean;
