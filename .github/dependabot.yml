@@ -24,9 +24,15 @@ updates:
     groups:
       go-minor-patch:
         patterns: ["*"]
+        exclude-patterns:
+          # go-stellar-sdk's pin is tracked by exact SHA in VERSIONS.md
+          # and needs the manual compat pass documented there (ADR-0013)
+          # before every bump, not a same-PR grouped merge — see the
+          # v0.6.0 -> v0.7.3 history in that file.
+          - "github.com/stellar/go-stellar-sdk"
         update-types: ["minor", "patch"]
-      # Majors fall through to per-dependency PRs — they need
-      # individual review (API breaks, ADR-pinned deps).
+      # Majors, and the exclusions above, fall through to per-dependency
+      # PRs — they need individual review (API breaks, ADR-pinned deps).
 
   # GitHub Actions versions used in .github/workflows/
   - package-ecosystem: github-actions
@@ -46,9 +52,23 @@ updates:
   # lines are pinned `image:tag@sha256:…` (2026-09-18); with a digest
   # present Dependabot rewrites the digest when the tag moves and still
   # proposes tag bumps, so the pins do not go stale by themselves.
-  # Non-recursive: only files directly under /docker are watched.
+  # Non-recursive: each Dockerfile-bearing directory needs its own entry.
   - package-ecosystem: docker
     directory: /docker
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - docker
+    groups:
+      docker-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+
+  # docker/verify/Dockerfile lives one level down and is invisible to the
+  # /docker entry above.
+  - package-ecosystem: docker
+    directory: /docker/verify
     schedule:
       interval: weekly
     labels:
