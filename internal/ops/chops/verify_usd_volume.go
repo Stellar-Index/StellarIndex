@@ -205,18 +205,8 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 		if !xlmForms[g.BaseAsset] || g.PricedRows < minRows {
 			continue
 		}
-		tier, _, cerr := timescale.ClassifyUSDVolumeTier(g.Source, g.BaseAsset, g.QuoteAsset, spec)
-		if cerr != nil || tier != timescale.TierEstimated {
-			continue
-		}
-		stored, sok := new(big.Rat).SetString(g.SumUSDVolume)
-		base, bok := new(big.Rat).SetString(g.SumBaseAmount)
-		if !sok || !bok || base.Sign() <= 0 {
-			continue
-		}
-		expected := new(big.Rat).Quo(base, xlmBaseLegScale(g.Source))
-		expected.Mul(expected, dayVWAP)
-		if expected.Sign() <= 0 {
+		stored, expected, ok := xlmBaseStoredAndExpected(g, spec, dayVWAP)
+		if !ok {
 			continue
 		}
 		lo := new(big.Rat).Mul(expected, tolLo)
@@ -244,6 +234,27 @@ func checkXLMBaseBound(groups []timescale.TradeValuationGroup, spec *timescale.U
 		fmt.Printf("  XLM-BASE BOUND: %d sub-cent breach(es) not counted — stored and expected both round to $0.00\n", dust)
 	}
 	return violations
+}
+
+// xlmBaseStoredAndExpected returns an estimated-tier group's stored
+// Σusd_volume and its expected Σbase × dayVWAP; ok is false when the group
+// is not estimated-tier or either side is unparseable or non-positive.
+func xlmBaseStoredAndExpected(g timescale.TradeValuationGroup, spec *timescale.USDVolumeQuoteSpec, dayVWAP *big.Rat) (stored, expected *big.Rat, ok bool) {
+	tier, _, cerr := timescale.ClassifyUSDVolumeTier(g.Source, g.BaseAsset, g.QuoteAsset, spec)
+	if cerr != nil || tier != timescale.TierEstimated {
+		return nil, nil, false
+	}
+	stored, sok := new(big.Rat).SetString(g.SumUSDVolume)
+	base, bok := new(big.Rat).SetString(g.SumBaseAmount)
+	if !sok || !bok || base.Sign() <= 0 {
+		return nil, nil, false
+	}
+	expected = new(big.Rat).Quo(base, xlmBaseLegScale(g.Source))
+	expected.Mul(expected, dayVWAP)
+	if expected.Sign() <= 0 {
+		return nil, nil, false
+	}
+	return stored, expected, true
 }
 
 // resolveUSDVolumeDay parses -day, defaulting to YESTERDAY: today's chunk is
