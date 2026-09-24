@@ -12,8 +12,8 @@ severity: P3
 | Field | Value |
 | ----- | ----- |
 | Alert | `stellarindex_prometheus_scrape_failing` |
-| Severity | P3 (`severity: informational`) |
-| Detected by | `configs/prometheus/rules.r1/meta.yml` (group `stellarindex.meta`, `severity: informational`, `for: 2m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/meta.yml`. NOTE the deliberate job-name split (F-1222): the r1 rule's regex uses the HYPHENATED job names of `prometheus.r1.yml` (`stellarindex-api\|stellarindex-indexer\|stellarindex-aggregator\|...`), the multi-host twin the UNDERSCORED ones (`stellarindex_api\|...`). |
+| Severity | P3 (`severity: ticket`) |
+| Detected by | `configs/prometheus/rules.r1/meta.yml` (group `stellarindex.meta`, `severity: ticket`, `for: 2m`) — the file r1 actually loads; multi-host twin in `deploy/monitoring/rules/meta.yml`. NOTE the deliberate job-name split (F-1222): the r1 rule's regex uses the HYPHENATED job names of `prometheus.r1.yml` (`stellarindex-api\|stellarindex-indexer\|stellarindex-aggregator\|...`), the multi-host twin the UNDERSCORED ones (`stellarindex_api\|...`). |
 | Typical MTTR | 5–30 min |
 | Impact | We've lost visibility into some subsystem. Doesn't mean the subsystem is unhealthy — often the exporter is the problem, and the service it monitors is fine. But we can't *tell* which is true until we investigate. |
 
@@ -31,7 +31,7 @@ severity: P3
 `minio` are excluded from this alert's regex on purpose — each has
 its own dedicated P1 `*_exporter_down` meta-alert (F-0085: an
 exporter outage silently blinds every alert that depends on its
-metrics, so those page rather than filing an informational). See
+metrics, so those page rather than filing a ticket). See
 [exporter-down.md](exporter-down.md).
 
 ## Quick diagnosis (≤ 5 min)
@@ -149,3 +149,6 @@ path, parse error, etc.
   exporter-down.md), per-tree re-apply instructions, exporter
   status glob replaced with list-then-status, dual-tree
   Detected-by. Status draft → current.
+- 2026-09-24 — corrected `severity: informational` to `severity: ticket`
+  throughout; both rule trees have always set `ticket` for this alert
+  (#1354).
