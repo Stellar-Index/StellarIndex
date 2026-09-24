@@ -1,11 +1,17 @@
 package clickhouse
 
 import (
+	"context"
+	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 // Every served table is rebuilt from empty and swapped at the end: a
@@ -203,6 +209,80 @@ func TestNoAggregateThenWidenInPackageSQL(t *testing.T) {
 	}
 	if scanned == 0 {
 		t.Fatal("scanned no package sources")
+	}
+}
+
+// cohortFlowsFakeRows scripts one row per Scan call for readCohortFlows;
+// the column shape mirrors both cohortFlowsSQL and cohortFlowsFallbackSQL
+// (they always Scan the same 7 destinations).
+type cohortFlowsFakeRows struct {
+	driver.Rows
+	i int
+}
+
+func (r *cohortFlowsFakeRows) Next() bool {
+	r.i++
+	return r.i == 1
+}
+
+func (r *cohortFlowsFakeRows) Scan(dest ...any) error {
+	*dest[0].(*time.Time) = time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	*dest[1].(*string) = "native"
+	*dest[2].(*big.Int) = *big.NewInt(100)
+	*dest[3].(*big.Int) = *big.NewInt(40)
+	*dest[4].(*uint64) = 5
+	*dest[5].(*uint64) = 2
+	*dest[6].(*string) = "" // no then-price either way in this fixture
+	return nil
+}
+
+func (r *cohortFlowsFakeRows) Err() error   { return nil }
+func (r *cohortFlowsFakeRows) Close() error { return nil }
+
+// cohortFlowsFakeConn fails the FIRST Query (the priced, joined SQL)
+// with the ClickHouse "table does not exist" answer, and succeeds the
+// second (the fallback SQL) — modelling a deployment where
+// asset_month_usd_prices has not been applied.
+type cohortFlowsFakeConn struct {
+	driver.Conn
+	calls []string
+}
+
+func (c *cohortFlowsFakeConn) Query(_ context.Context, query string, _ ...any) (driver.Rows, error) {
+	c.calls = append(c.calls, query)
+	if len(c.calls) == 1 {
+		return nil, &clickhouse.Exception{
+			Code: 60, Name: "UNKNOWN_TABLE",
+			Message: "Table stellar.asset_month_usd_prices doesn't exist",
+		}
+	}
+	return &cohortFlowsFakeRows{}, nil
+}
+
+// A missing asset_month_usd_prices table (GH-1078: the v0.91.0 cohort
+// outage) must degrade the flows read — serve flows with no then-price —
+// not fail the whole /graph/cohort route. Before the fix, readCohortFlows
+// returned the UNKNOWN_TABLE error straight through and AccountCohort
+// propagated it as a 500.
+func TestCohortFlowsDegradeWhenPricesTableAbsent(t *testing.T) {
+	conn := &cohortFlowsFakeConn{}
+	r := &ExplorerReader{conn: conn}
+	out := &AccountCohort{Relation: CohortRelationCreated, Root: "GTEST"}
+
+	if err := r.readCohortFlows(context.Background(), out); err != nil {
+		t.Fatalf("readCohortFlows returned an error on a missing optional table: %v", err)
+	}
+	if !out.FlowPricesUnavailable {
+		t.Error("FlowPricesUnavailable was not set when asset_month_usd_prices is absent")
+	}
+	if len(out.Flows) != 1 {
+		t.Fatalf("expected the fallback read to still serve the flow row, got %d rows", len(out.Flows))
+	}
+	if out.Flows[0].PriceUSDThen != nil {
+		t.Errorf("PriceUSDThen should be nil in the fallback (no price join ran), got %v", *out.Flows[0].PriceUSDThen)
+	}
+	if len(conn.calls) != 2 {
+		t.Fatalf("expected exactly 2 Query calls (priced, then fallback), got %d", len(conn.calls))
 	}
 }
 
