@@ -3267,8 +3267,10 @@ var APICORSDecisionsTotal = prometheus.NewCounterVec(
 // 2026-08-28 redesign outlier_storm no longer gates on this counter
 // (it reads AggregatorVenueVWAP; trim-fraction reads
 // AggregatorWindowTrades) — but class_drop_spike (reason="class")
-// and outlier_trim_rate_legacy (reason="outlier", retires
-// 2026-09-04) still do.
+// still does. The former outlier_trim_rate_legacy (reason="outlier")
+// overlap-copy alert was retired past its 2026-09-04 date once
+// trim_fraction had a week of live evidence; see
+// configs/prometheus/rules.r1/aggregator.yml.
 var AggregatorDroppedTradesTotal = prometheus.NewCounterVec(
 	prometheus.CounterOpts{
 		Name: "stellarindex_aggregator_dropped_trades_total",

@@ -29,7 +29,7 @@ enforces it); any per-alert detail page follows it.
   | Severity | Rules | AlertManager route | Delivery |
   | --- | --- | --- | --- |
   | `page` | 60 | `receiver: chat-page` | Discord **#stellarindex-pages**, `repeat_interval` 12 h. There is **no** PagerDuty leg — `pagerduty_configs` is unset, so nothing wakes anyone up. |
-  | `ticket` | 194 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
+  | `ticket` | 193 | `receiver: chat-default` | Discord **#stellarindex-alerts**, `repeat_interval` 24 h. |
   | `informational` | 11 | `receiver: chat-informational` | Discord **#stellarindex-informational**, a dedicated low-traffic channel kept separate from `alerts` so a routine notice cannot bury a ticket. `send_resolved: false`. If `DISCORD_WEBHOOK_URL_INFORMATIONAL` is unset the renderer strips the block and the receiver degrades to the old `silent` stub — delivered to nobody, which is a no-op rather than a config error. |
 
   **`informational` is not "a low-priority ticket".** There is no
@@ -555,7 +555,6 @@ auto-unfreeze at all. Rules in
 | `stellarindex_aggregator_silent` | `rate(stellarindex_aggregator_vwap_writes_total[5m])` | == 0 for > 5 min | page | [aggregator-silent](runbooks/aggregator-silent.md) |
 | `stellarindex_aggregator_outlier_storm` | `max by (pair) / min by (pair)` of `stellarindex_aggregator_venue_vwap{window="5m"}` − 1, ≥ 2 venues | > 1 % for > 15 min | ticket | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
 | `stellarindex_aggregator_outlier_trim_fraction` | `1 − window_trades{stage="outlier"} / window_trades{stage="class"}` on the 24h window, ≥ 20 trades | > 0.2 for > 30 min | ticket | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
-| `stellarindex_aggregator_outlier_trim_rate_legacy` | `sum by (pair) rate(stellarindex_aggregator_dropped_trades_total{reason="outlier"}[10m])` — the pre-2026-08-28 counter gate, renamed for a one-week overlap; **retire 2026-09-04** | > 10/s for > 2 h | ticket | [aggregator-outlier-storm](runbooks/aggregator-outlier-storm.md) |
 | `stellarindex_aggregator_class_drop_spike` | `rate(stellarindex_aggregator_dropped_trades_total{reason="class"}[10m])` | > 10× baseline (offset 1h) for > 15 min | ticket | [aggregator-class-drop-spike](runbooks/aggregator-class-drop-spike.md) |
 | `stellarindex_aggregator_fx_snap_fallback_dominant` | `rate(stellarindex_aggregator_fx_snap_fallback_total[15m]) / rate(stellarindex_aggregator_triangulations_total{outcome="ok"}[15m])` | > 0.5 for > 30 min | ticket | [aggregator-fx-snap-fallback-dominant](runbooks/aggregator-fx-snap-fallback-dominant.md) |
 | `stellarindex_aggregator_triangulation_chains_dry` | `rate(stellarindex_aggregator_triangulations_total{outcome="missing_leg"}[15m])` > 0 **and** `rate(...{outcome="ok"}[15m])` == 0 | for > 30 min | ticket | [aggregator-triangulation-chains-dry](runbooks/aggregator-triangulation-chains-dry.md) |
