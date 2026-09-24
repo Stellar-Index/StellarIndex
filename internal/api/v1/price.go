@@ -838,7 +838,7 @@ func (s *Server) handlePrice(w http.ResponseWriter, r *http.Request) {
 	// triangulated composite. Best-effort. Skipped on a substituted
 	// snapshot — see [Server.attachCompositeFlags] (RNC27).
 	if !snapshot.Substituted {
-		s.attachCompositeFlags(r, &flags, asset, quote, triangulated)
+		s.attachCompositeFlags(r, &flags, asset, quote, triangulationLookupWindow, triangulated)
 	}
 	flags.Frozen = frozen
 	flags.FrozenChecked = frozenChecked
@@ -2488,11 +2488,12 @@ func (s *Server) lookupDivergenceFlag(ctx context.Context, asset canonical.Asset
 // OPTIONAL [CompositeMetaLooker] capability — when it doesn't, both
 // flags stay unset (the price still serves). Best-effort throughout: a
 // cache miss, a malformed meta blob, or a read error leaves the flags
-// unset and never fails the request. A no-op when triangulated is false
-// — direct (non-triangulated) VWAP hits never carry composite meta. The
-// window matches the one the triangulated value was read under
-// ([triangulationLookupWindow]).
-func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quote canonical.Asset, triangulated bool) {
+// unset and never fails the request. A no-op when triangulated is false:
+// the meta describes the composite, and the aggregator also writes it when
+// the composite was NOT published (frozen target, low-confidence reroute),
+// so on a direct value it would qualify a number the response isn't
+// serving. pair and window must be the ones the served value was read under.
+func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quote canonical.Asset, window time.Duration, triangulated bool) {
 	if !triangulated {
 		return
 	}
@@ -2500,7 +2501,7 @@ func (s *Server) attachCompositeFlags(r *http.Request, flags *Flags, asset, quot
 	if !ok {
 		return
 	}
-	raw, found, err := looker.LookupCompositeMeta(r.Context(), asset, quote, triangulationLookupWindow)
+	raw, found, err := looker.LookupCompositeMeta(r.Context(), asset, quote, window)
 	if err != nil {
 		if !clientAborted(r, err) {
 			s.logger.Warn("composite meta lookup failed",
@@ -3335,19 +3336,7 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 				ObservedAt:    WireTime(time.Now().UTC()),
 				WindowSeconds: int(window / time.Second),
 			}
-			// The marker asked is the one for the pair the value was READ
-			// under, (a, q) — never the spelling the client used. The
-			// marker is keyed on the literal pair the aggregator prices,
-			// so the requested literal's marker is a verdict on a
-			// different venue population: asking it missed a freeze on
-			// the served alias and flagged a healthy alias value frozen
-			// (K037 class sweep; same rule as [Server.frozenPairBase]).
-			// The value needs no substitution here, unlike the default
-			// path: a frozen pair's `vwap:` key IS what the freeze holds.
-			frozenVal, frozenChecked := s.lookupFrozen(r, a, q)
-			flags := Flags{Triangulated: triangulated, Frozen: frozenVal, FrozenChecked: frozenChecked}
-			flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
-			writeJSON(w, snap, flags)
+			writeJSON(w, snap, s.windowedPriceFlags(r, asset, a, q, window, triangulated))
 			return
 		}
 	}
@@ -3355,6 +3344,26 @@ func (s *Server) handlePriceWindowed(w http.ResponseWriter, r *http.Request, ass
 		"https://api.stellarindex.io/errors/price-not-found",
 		"No price for pair at this window", http.StatusNotFound,
 		"the aggregator has not published a "+rawWindow+"s VWAP for "+asset.String()+" / "+quote.String())
+}
+
+// windowedPriceFlags assembles the envelope flags for a ?window= value
+// read under the alias pair (a, q). Every per-pair marker — freeze and
+// composite meta — is asked for (a, q), never the spelling the client
+// used: each is keyed on the literal pair the aggregator prices, so the
+// requested literal's marker is a verdict on a different venue population
+// (K037 class; same rule as [Server.frozenPairBase]). No value
+// substitution is needed here, unlike the default path: a frozen pair's
+// `vwap:` key IS what the freeze holds. The divergence verdict is
+// base-level, so it keys on the requested asset.
+func (s *Server) windowedPriceFlags(r *http.Request, asset, a, q canonical.Asset, window time.Duration, triangulated bool) Flags {
+	frozenVal, frozenChecked := s.lookupFrozen(r, a, q)
+	flags := Flags{Triangulated: triangulated, Frozen: frozenVal, FrozenChecked: frozenChecked}
+	// ActionFreeze contract, as on the default path: a held value is
+	// single-sourced. Unfrozen, this surface has no source list to derive it.
+	flags.SingleSource = frozenVal
+	s.attachCompositeFlags(r, &flags, a, q, window, triangulated)
+	flags.DivergenceWarning, flags.DivergenceChecked = s.lookupDivergenceFlag(r.Context(), asset)
+	return flags
 }
 
 // parsePriceQuoteParam parses the optional ?quote= (default
