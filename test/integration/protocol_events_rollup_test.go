@@ -65,8 +65,10 @@ func TestProtocolEventRollup_RoundTrip(t *testing.T) {
 	if counts["soroswap"] != 1 {
 		t.Errorf("soroswap = %d, want 1", counts["soroswap"])
 	}
-	if _, ok := counts["aquarius"]; ok {
-		t.Errorf("aquarius = %d present, want absent (trade is > 24h old)", counts["aquarius"])
+	// aquarius is summed from its non-trade tables too, so like blend it is
+	// always present; the > 24h-old trade must still not count.
+	if counts["aquarius"] != 0 {
+		t.Errorf("aquarius = %d, want 0 (trade is > 24h old)", counts["aquarius"])
 	}
 
 	// Idempotent: a second refresh yields identical counts.

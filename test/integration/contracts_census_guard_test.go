@@ -5,6 +5,7 @@ package integration_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -31,6 +32,17 @@ func TestContiguousThroughDay_StopsAtHole(t *testing.T) {
 		t.Fatalf("open sink: %v", err)
 	}
 	t.Cleanup(func() { _ = sink.Close(ctx) })
+	// Owning the global max is only safe while this test runs: left behind, these
+	// rows sit above sdex_orderbook_lake_hole_test's range, which must be the tip.
+	t.Cleanup(func() {
+		cctx, ccancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer ccancel()
+		conn := dialClickHouse(t, cctx, "stellar")
+		if err := conn.Exec(cctx, fmt.Sprintf(`ALTER TABLE stellar.ledgers DELETE
+			WHERE ledger_seq BETWEEN %d AND %d SETTINGS mutations_sync = 2`, base, base+4)); err != nil {
+			t.Errorf("purge census fixture ledgers: %v", err)
+		}
+	})
 	seed := func(seq uint32, at time.Time) {
 		t.Helper()
 		if err := sink.Add(ctx, chstore.LedgerExtract{Ledger: chstore.LedgerRow{
