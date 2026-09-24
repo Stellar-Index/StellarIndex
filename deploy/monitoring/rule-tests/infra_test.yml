@@ -261,3 +261,68 @@ tests:
                 individual alert saying so. Runbook: find the bad file from
                 node_exporter's own log, fix or remove it, confirm the
                 gauge clears.
+
+  # ── T407: a oneshot its own timer keeps re-running ───────────────
+  # ch-live-catchup.service is re-armed every 10m by its timer, so when
+  # every run fails the state is failed ~9m, `activating` for the run,
+  # failed again. A plain `== 1` resolves on each activating dip and
+  # restarts its pending clock: the catch-all never fired on a unit that
+  # failed on every single run.
+  - interval: 1m
+    name: a unit that fails on every timer run tickets despite the activating dips
+    input_series:
+      - series: 'node_systemd_unit_state{name="ch-live-catchup.service",state="failed"}'
+        values: '1x8 0 1x8 0 1x8 0 1x8 0 1x8 0 1x8 0 1x8 0 1x8 0'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_systemd_unit_failed
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: infra
+              name: ch-live-catchup.service
+              state: failed
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/systemd-unit-failed.md
+              summary: "systemd unit ch-live-catchup.service is in failed state"
+              description: |
+                ch-live-catchup.service has been failing for 15m+, either
+                sitting in `failed` or failing every run while its own
+                timer keeps restarting it. Most of this host's oneshot
+                timers write data something else reads and then trusts — a
+                failed sync leaves a CONSUMER reading a frozen table rather
+                than erroring, so the symptom usually appears somewhere
+                else entirely.
+
+                `systemctl status ch-live-catchup.service` then
+                `journalctl -u ch-live-catchup.service --since -24h` for the cause.
+
+  # The ride-out the bridging must not break: one failed run that the
+  # next timer tick heals never tickets.
+  - interval: 1m
+    name: one failed run healed by the next timer tick never tickets
+    input_series:
+      - series: 'node_systemd_unit_state{name="ch-live-catchup.service",state="failed"}'
+        values: '1x8 0x60'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: stellarindex_systemd_unit_failed
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: stellarindex_systemd_unit_failed
+        exp_alerts: []
+      - eval_time: 60m
+        alertname: stellarindex_systemd_unit_failed
+        exp_alerts: []
+
+  # A unit that owns a dedicated alert stays out of the catch-all.
+  - interval: 1m
+    name: an excluded unit failing steadily does not raise the catch-all
+    input_series:
+      - series: 'node_systemd_unit_state{name="verify-archive-tier-a.service",state="failed"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 60m
+        alertname: stellarindex_systemd_unit_failed
+        exp_alerts: []
