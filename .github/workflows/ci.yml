@@ -514,12 +514,10 @@ jobs:
           done
           echo "::error::go mod download failed after 3 attempts"; exit 1
       - name: Test with race detector
-        # TestI128TruncationGuard does a repo-wide go/packages walk and
-        # can legitimately exceed 2m on hosted runners with the race
-        # detector enabled. Keep the guard, but give the unit job enough
-        # headroom that it does not flap on unrelated PRs.
+        # Go's default 10m per-binary timeout: api/v1 and canonical take up
+        # to 240 s here under race+coverage. The job's 20m cap backstops a hang.
         if: needs.preflight.outputs.go == 'true'
-        run: go test -race -timeout 4m -coverprofile=coverage.txt -covermode=atomic ./...
+        run: go test -race -coverprofile=coverage.txt -covermode=atomic ./...
       - name: Compile integration-tagged tests (no Docker)
         # F-1334: catches build-tag breakage (an interface change that
         # doesn't update an `//go:build integration` test) without

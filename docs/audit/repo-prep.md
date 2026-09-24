@@ -73,9 +73,9 @@ correctness, VWAP/aggregation math, and completeness verdicts are the
   Note: verify.sh gates govulncheck on `command -v govulncheck` (PATH), which
   is NOT on PATH here — run `"$(go env GOPATH)/bin/govulncheck" ./...`
   explicitly (CI always enforces it).
-- **Unit:** `make test` (`go test -race -timeout 2m ./...`). CI uses
-  `-timeout 4m` because `TestI128TruncationGuard` walks the whole repo — if
-  the 2m target flaps locally, use 4m; don't delete the guard.
+- **Unit:** `make test` (`go test -race -timeout 8m ./...`). CI uses Go's
+  default 10m: `internal/api/v1` and `internal/canonical` take up to 240 s
+  there under race+coverage.
 - **Money/DB gate (the real one):** `make test-integration` — testcontainers-go
   spins its own TimescaleDB/Redis/MinIO. Prereq: Docker only (✓ installed).
   No env vars, no external services, no manual test DB. This is a **blocking
