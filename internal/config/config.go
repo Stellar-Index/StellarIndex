@@ -471,7 +471,8 @@ type DivergenceConfig struct {
 	// Supply cross-check — compares OUR served circulating_supply
 	// against an external authoritative reference (Stellar Network
 	// Dashboard / CoinGecko), separate from the price cross-checks
-	// above. Off by default; the operator opts in on r1 via ansible.
+	// above. Off by default; the archival-node role renders enabled from
+	// the stellarindex_divergence_supply_enabled inventory variable.
 	Supply DivergenceSupplyConfig `toml:"supply" doc:"Supply cross-check: compare our served circulating_supply against the Stellar Network Dashboard (XLM) and/or CoinGecko. Catches a stale SDF-reserve exclusion list. Off by default."`
 }
 
@@ -482,7 +483,7 @@ type DivergenceConfig struct {
 // stays silent until the operator opts in. When enabled, it needs at
 // least one enabled reference below or the worker refuses to start.
 type DivergenceSupplyConfig struct {
-	Enabled bool `toml:"enabled" doc:"Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls; opt in on r1 via ansible)." default:"false"`
+	Enabled bool `toml:"enabled" doc:"Whether the supply cross-check worker runs. Off by default (makes outbound HTTP calls). The archival-node ansible role renders it from the stellarindex_divergence_supply_enabled inventory variable, itself default false." default:"false"`
 	// RefreshIntervalSeconds is the per-cycle interval. Supply moves
 	// glacially, so a slow cadence is fine and keeps external-quota
 	// pressure minimal. Default 900 (15 min).
@@ -1850,7 +1851,7 @@ func (sc SupplyConfig) validateFullyWrappedSACs() error {
 type ObsConfig struct {
 	MetricsListen string  `toml:"metrics_listen" doc:"Bind address for the dedicated /metrics Prometheus endpoint. Read by the indexer, the aggregator, and the long-lived ops binaries (cross-region-monitor, verify-archive --metrics). The API binary serves /metrics on its public listener and ignores this field." default:"127.0.0.1:9464"`
 	LogLevel      string  `toml:"log_level" doc:"Minimum log level — debug / info / warn / error." default:"info"`
-	LogFormat     string  `toml:"log_format" doc:"Log format — json / console." default:"json"`
+	LogFormat     string  `toml:"log_format" doc:"Log format — json / text / console ('text' and 'console' are synonyms)." default:"json"`
 	TraceExporter string  `toml:"trace_exporter" doc:"OpenTelemetry trace exporter. Currently only 'none' is wired in this build; the 'otlp' value is reserved for the future tracing rollout and is rejected by Validate() until the exporter is implemented (so an operator setting it doesn't think tracing is on when it isn't)." default:"none"`
 	TraceSample   float64 `toml:"trace_sample" doc:"Trace sampling ratio — 0.0 (none) to 1.0 (all). Read by the future tracing rollout; ignored in this build." default:"0.1"`
 }

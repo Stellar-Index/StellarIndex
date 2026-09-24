@@ -26,7 +26,8 @@ Three alerts:
   `outcome="network_error"` at > 0.1 attempts/s for 15+ min.
   Translation: one customer's endpoint is sustained-down (5xx
   or TCP/TLS errors) and we keep retrying with exponential
-  backoff (30s → 1h cap, 15-attempt budget over ~8h).
+  backoff (30s → 1h cap, 15-attempt budget; the last retry lands
+  ~4–8 h after the first failure, depending on jitter).
 - **`_exhausted`** — a delivery hit the retry budget and was
   marked terminally failed. The customer hasn't received the
   event AT ALL; if it was a SEV-1 incident notification, they
