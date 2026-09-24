@@ -181,53 +181,49 @@ func NewResolver(opts Options) *Resolver {
 	return &Resolver{
 		allowPrivateIPs: opts.AllowPrivateIPs,
 		client: &http.Client{
-			Timeout:   timeout,
-			Transport: transport,
-			// Redirect policy — three rules:
-			//
-			//   1. Cap at 5 hops so a malicious domain can't burn
-			//      our request budget with a redirect loop.
-			//   2. Reject scheme downgrade (https → http). An
-			//      attacker controlling the domain MUST NOT force
-			//      plaintext transit.
-			//   3. Reject cross-host redirects. SEP-1 is
-			//      hostname-scoped trust; a domain redirecting to
-			//      someone else's stellar.toml would poison our
-			//      cache under the original domain key.
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				if len(via) >= 5 {
-					return errors.New("sep1: stopped after 5 redirects")
-				}
-				if req.URL.Scheme != "https" {
-					return fmt.Errorf("sep1: refusing redirect to %s:// (downgrade)", req.URL.Scheme)
-				}
-				// via[0] is the original request. Compare hostnames
-				// case-insensitively + ignore port (:443 same as
-				// plain host is expected).
-				origHost := canonicalHostname(via[0].URL.Host)
-				newHost := canonicalHostname(req.URL.Host)
-				if origHost != newHost {
-					return fmt.Errorf("sep1: refusing cross-host redirect %q → %q",
-						origHost, newHost)
-				}
-				return nil
-			},
+			Timeout:       timeout,
+			Transport:     transport,
+			CheckRedirect: checkRedirect,
 		},
 	}
 }
 
-// canonicalHostname returns a case-folded hostname with the port
-// stripped. Used by the redirect-safety check — "EXAMPLE.com:443"
-// and "example.com" must compare equal.
-func canonicalHostname(host string) string {
-	if i := strings.IndexByte(host, ':'); i >= 0 {
-		host = host[:i]
+// checkRedirect is the SEP-1 redirect policy:
+//
+//  1. Cap at 5 hops so a malicious domain can't burn our request
+//     budget with a redirect loop.
+//  2. Reject scheme downgrade (https → http).
+//  3. Reject cross-origin redirects: host AND effective port must match
+//     the original request. SEP-1 is origin-scoped trust, and a
+//     same-host hop to another port would bypass the 443-only rule
+//     that [isValidDomainOrHostPort] applies to the on-chain domain.
+func checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= 5 {
+		return errors.New("sep1: stopped after 5 redirects")
 	}
-	return strings.ToLower(host)
+	if req.URL.Scheme != "https" {
+		return fmt.Errorf("sep1: refusing redirect to %s:// (downgrade)", req.URL.Scheme)
+	}
+	orig, next := redirectOrigin(via[0].URL), redirectOrigin(req.URL)
+	if orig != next {
+		return fmt.Errorf("sep1: refusing cross-host redirect %q → %q", orig, next)
+	}
+	return nil
+}
+
+// redirectOrigin returns the case-folded host:port a URL dials, with
+// the scheme's default port filled in so "EXAMPLE.com:443" and
+// "example.com" compare equal.
+func redirectOrigin(u *url.URL) string {
+	port := u.Port()
+	if port == "" && u.Scheme == "https" {
+		port = standardTLSPort
+	}
+	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 // ErrSSRFBlocked is returned when a SEP-1 URL resolves to a
-// private or loopback IP.
+// private or loopback IP, or (in production) targets a port other than 443.
 var ErrSSRFBlocked = errors.New("sep1: target IP is in a private or reserved range")
 
 // ErrTOMLTooLarge is returned when the response body exceeds
@@ -713,6 +709,12 @@ func (d *ssrfDialer) DialContext(ctx context.Context, network, address string) (
 		if d.isBlocked(ip) {
 			return nil, fmt.Errorf("%w: %s → %s", ErrSSRFBlocked, host, ip)
 		}
+	}
+	// Port is enforced here, at the one chokepoint every connection
+	// (initial fetch and each redirect hop) passes through.
+	if !d.allowPrivateIPs && port != standardTLSPort {
+		return nil, fmt.Errorf("%w: %s port %s (SEP-1 is served on %s only)",
+			ErrSSRFBlocked, host, port, standardTLSPort)
 	}
 	// Connect to the first ALLOWED IP explicitly.
 	return d.inner.DialContext(ctx, network, net.JoinHostPort(ips[0].String(), port))

@@ -176,3 +176,75 @@ func TestResolverTransportUsesSSRFGuardedDialer(t *testing.T) {
 		t.Errorf("transport.DialContext(127.0.0.1:9) = %v, want ErrSSRFBlocked", err)
 	}
 }
+
+// TestResolverRedirectPolicy_RejectsPortChange pins that a redirect must
+// keep the original origin's port, not just its hostname: the on-chain
+// home_domain is limited to 443, and a same-host Location on another
+// port (":6379") would otherwise reopen the port the validator closed.
+func TestResolverRedirectPolicy_RejectsPortChange(t *testing.T) {
+	check := NewResolver(Options{}).client.CheckRedirect
+	orig, err := http.NewRequest(http.MethodGet, "https://example.com/.well-known/stellar.toml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		location string
+		allow    bool
+	}{
+		{"https://example.com:6379/.well-known/stellar.toml", false},
+		{"https://example.com:8443/.well-known/stellar.toml", false},
+		{"https://EXAMPLE.com:443/.well-known/stellar.toml", true},
+		{"https://example.com/.well-known/stellar.toml?v=2", true},
+		{"https://evil.example.com/.well-known/stellar.toml", false},
+	}
+	for _, tc := range cases {
+		req, err := http.NewRequest(http.MethodGet, tc.location, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = check(req, []*http.Request{orig})
+		if tc.allow && err != nil {
+			t.Errorf("redirect to %s refused: %v", tc.location, err)
+		}
+		if !tc.allow && err == nil {
+			t.Errorf("redirect to %s allowed, want refusal", tc.location)
+		}
+	}
+}
+
+// TestDialContext_ProductionRefusesNon443Port pins the dialer-level port
+// guard, which covers every hop regardless of how the URL was built. The
+// context is pre-cancelled so no case ever reaches the network: an
+// allowed port fails with a context error, a refused one with
+// ErrSSRFBlocked before the inner dialer is called.
+func TestDialContext_ProductionRefusesNon443Port(t *testing.T) {
+	d := &ssrfDialer{
+		inner: &net.Dialer{},
+		lookupIP: func(_ context.Context, _, _ string) ([]net.IP, error) {
+			return []net.IP{net.ParseIP("93.184.216.34")}, nil // public
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, addr := range []string{"example.com:6379", "example.com:80", "example.com:8443"} {
+		conn, err := d.DialContext(ctx, "tcp", addr)
+		if conn != nil {
+			_ = conn.Close()
+		}
+		if !errors.Is(err, ErrSSRFBlocked) {
+			t.Errorf("DialContext(%s) = %v, want ErrSSRFBlocked", addr, err)
+		}
+	}
+	conn, err := d.DialContext(ctx, "tcp", "example.com:443")
+	if conn != nil {
+		_ = conn.Close()
+	}
+	if errors.Is(err, ErrSSRFBlocked) {
+		t.Errorf("DialContext(example.com:443) = %v, must not be port-blocked", err)
+	}
+
+	d.allowPrivateIPs = true // test mode: httptest binds ephemeral ports
+	if _, err := d.DialContext(ctx, "tcp", "example.com:6379"); errors.Is(err, ErrSSRFBlocked) {
+		t.Errorf("test-mode DialContext(:6379) = %v, must not be port-blocked", err)
+	}
+}
