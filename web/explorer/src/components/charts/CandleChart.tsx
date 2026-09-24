@@ -11,6 +11,7 @@ import {
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type PriceFormat,
   type Time,
 } from 'lightweight-charts';
 
@@ -170,10 +171,7 @@ export function CandleChart({
     // defaults to 2 decimals, which renders XLM as a flat "$0.17" and
     // any sub-cent asset as "$0.00". Scale the axis/crosshair/legend
     // precision to the series' actual magnitude.
-    const precision = pricePrecisionFor(data);
-    seriesRef.current?.applyOptions({
-      priceFormat: { type: 'price', precision, minMove: 10 ** -precision },
-    });
+    seriesRef.current?.applyOptions({ priceFormat: priceFormatFor(data) });
     seriesRef.current?.setData(toSeries(data));
     if (theme) volumeRef.current?.setData(toVolume(data, theme));
     chartRef.current?.timeScale().fitContent();
@@ -242,22 +240,54 @@ export function CandleChart({
   );
 }
 
-// pricePrecisionFor picks the axis decimal count from the series'
-// magnitude: enough significant digits that intraday movement is
-// visible (XLM at ~$0.17 gets 6 decimals, not "0.17"), without
-// rendering BTC-scale values with absurd tails. Exported for tests.
-export function pricePrecisionFor(points: CandlePoint[]): number {
+function maxPrice(points: CandlePoint[]): number {
   let max = 0;
   for (const p of points) {
     if (p.close > max) max = p.close;
     if (p.high > max) max = p.high;
   }
+  return max;
+}
+
+// lightweight-charts' PriceFormatter throws on more than 16 fractional digits.
+export const MAX_FIXED_DECIMALS = 16;
+// Below this, 16 fixed decimals keep fewer than 5 significant digits
+// (and print 0 under 1e-16), so priceFormatFor switches to scientific.
+const MIN_FIXED_PRICE = 1e-12;
+
+// pricePrecisionFor picks the axis decimal count from the series'
+// magnitude: enough significant digits that intraday movement is
+// visible (XLM at ~$0.17 gets 6 decimals, not "0.17"), without
+// rendering BTC-scale values with absurd tails. Exported for tests.
+export function pricePrecisionFor(points: CandlePoint[]): number {
+  const max = maxPrice(points);
   if (max === 0) return 2;
   if (max >= 1000) return 2;
   if (max >= 10) return 4;
   if (max >= 0.01) return 6;
   if (max >= 0.0001) return 8;
-  return 10;
+  if (max >= 1e-6) return 10;
+  if (max >= 1e-8) return 12;
+  if (max >= 1e-10) return 14;
+  return MAX_FIXED_DECIMALS;
+}
+
+// priceFormatFor is the series priceFormat: fixed decimals from
+// pricePrecisionFor, or scientific notation for a sub-1e-12 series so a
+// non-zero price never renders as zero.
+export function priceFormatFor(points: CandlePoint[]): PriceFormat {
+  const max = maxPrice(points);
+  if (max === 0 || max >= MIN_FIXED_PRICE) {
+    const precision = pricePrecisionFor(points);
+    return { type: 'price', precision, minMove: 10 ** -precision };
+  }
+  const decimals = Math.ceil(-Math.log10(max)) + 4;
+  return {
+    type: 'custom',
+    formatter: (price: number) => price.toExponential(4),
+    minMove: 10 ** -decimals,
+    base: 10 ** decimals,
+  };
 }
 
 function toSeries(points: CandlePoint[]): CandlestickData<Time>[] {
