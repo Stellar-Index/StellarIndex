@@ -1188,6 +1188,17 @@ jobs:
         # fail-closed environment-approval assertion deploy.yml runs
         # before it touches production. No network, no token.
         run: ./scripts/ci/check-deploy-protection-test.sh
+      - name: production credentials sit behind an environment gate
+        # Every job reading the r1 root key, the ansible vault, the r1
+        # inventory or the Cloudflare token declares `environment:` and
+        # runs scripts/ci/assert-deploy-gate.sh before the credential.
+        run: |
+          set -euo pipefail
+          # PyYAML is not guaranteed on the runner image; the lint is
+          # fail-closed without it.
+          python3 -m pip install --quiet 'PyYAML==6.0.2'
+          python3 ./scripts/ci/lint-deploy-credentials.py
+          ./scripts/ci/lint-deploy-credentials-test.sh
       - name: check-main-ci-health self-test
         # reconciliation-and-monitoring-liveness (audit-2026-07-23):
         # fixtures for the shared red-streak decision core both

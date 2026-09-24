@@ -294,6 +294,8 @@ echo "=== Healthcheck oneshot start/runtime bound ===" && ./scripts/ci/lint-heal
 echo "=== Healthcheck oneshot start/runtime bound self-test ===" && ./scripts/ci/lint-healthcheck-oneshot-timeout-test.sh
 echo "=== Deploy-baseline self-test ===" && ./scripts/ci/deploy-baseline-test.sh
 echo "=== Deploy-protection self-test ===" && ./scripts/ci/check-deploy-protection-test.sh
+echo "=== Production credentials behind an environment gate ===" && python3 ./scripts/ci/lint-deploy-credentials.py
+echo "=== Production credentials lint self-test ===" && ./scripts/ci/lint-deploy-credentials-test.sh
 echo "=== Main-CI-health decision-core self-test ===" && ./scripts/ci/check-main-ci-health-test.sh
 echo "=== SLA-evidence decision-core + k6-weekly wiring self-test ===" && ./scripts/ci/check-sla-evidence-test.sh
 echo "=== SLA proof renderer self-test ===" && ./scripts/ci/render-sla-proof-test.sh

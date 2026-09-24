@@ -38,6 +38,7 @@ on:
 permissions:
   contents: read
   deployments: write
+  actions: read  # GitHub gates the environments API on Actions read
 
 # One deploy at a time. Mid-deploy cancellation is fine — the
 # new run takes over before traffic shifts.
@@ -55,6 +56,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Assert the production approval gate is configured
+        # Same gate as explorer-deploy.yml: this job holds
+        # CLOUDFLARE_API_TOKEN and publishes production Pages. Scoped to
+        # production; preview is non-public.
+        if: github.event.inputs.environment == 'production'
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          ENV_NAME: docs-${{ github.event.inputs.environment }}
+          REPO: ${{ github.repository }}
+          APPROVAL_RELAXED: ${{ vars.DEPLOY_APPROVAL_RELAXED }}
+          APPROVAL_RELAXED_UNTIL: ${{ vars.DEPLOY_APPROVAL_RELAXED_UNTIL }}
+        run: bash scripts/ci/assert-deploy-gate.sh "$ENV_NAME"
 
       # No build step — `docs/reference/api/` already contains
       # the rendered Scalar index.html + the colocated OpenAPI

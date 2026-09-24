@@ -97,6 +97,11 @@ jobs:
       # summary or a 90-day artifact both age out.
       contents: write
       issues: write
+      deployments: read  # read the environment's protection rules (gate preflight)
+      actions: read      # GitHub gates the environments API on Actions read
+    # Holds the r1 root key: main-only environment, no reviewer (scheduled).
+    environment:
+      name: r1-observe
     env:
       WINDOW: ${{ inputs.window || '7d' }}
       PROM_PORT: '19090'
@@ -119,6 +124,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Assert the environment gate is configured
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_PROTECTION_TOKEN || secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: bash scripts/ci/assert-deploy-gate.sh --observe r1-observe
 
       - name: Assess the SLA evidence feed
         id: gate
