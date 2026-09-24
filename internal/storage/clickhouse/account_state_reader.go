@@ -482,13 +482,15 @@ const accountsUnspendableQuery = `SELECT account_id, entry_xdr FROM stellar.ledg
 		WHERE entry_type = 'account' AND account_id IN (?) AND change_type != 'removed'` + explorerScanSettings
 
 // AccountsUnspendable reports which of the given accounts are locked
-// burn addresses: master weight 0 AND all operation thresholds 0 — no
-// key can ever sign, so the balance is provably unspendable (Pass-B
-// ACC-1: the SDF burn address ranked as the "richest account", $11.3B
-// of dead XLM presented as wealth). Decoded from the current account
-// entry XDR; accounts with signers are NOT flagged (signers can still
-// spend when thresholds are 0 — threshold 0 means any weight passes),
-// so the check requires an empty signer list too.
+// burn addresses: master weight 0 with no other signers — stellar-core
+// only ever admits the master key as a signer when its weight is
+// nonzero, so master weight 0 plus an empty signer list means no
+// signature set can ever reach ANY threshold, including a nonzero one
+// (Pass-B ACC-1: the SDF burn address ranked as the "richest account",
+// $11.3B of dead XLM presented as wealth). Decoded from the current
+// account entry XDR. Threshold values are irrelevant to reachability
+// here: they gate which OPERATIONS a given signing weight authorizes,
+// not whether any weight can ever be produced.
 func (r *ExplorerReader) AccountsUnspendable(ctx context.Context, accountIDs []string) (map[string]bool, error) {
 	if len(accountIDs) == 0 {
 		return nil, nil
@@ -512,13 +514,20 @@ func (r *ExplorerReader) AccountsUnspendable(ctx context.Context, accountIDs []s
 		if !ok {
 			continue
 		}
-		th := acc.Thresholds
-		if th.MasterKeyWeight() == 0 && th.ThresholdLow() == 0 &&
-			th.ThresholdMedium() == 0 && th.ThresholdHigh() == 0 && len(acc.Signers) == 0 {
+		if accountIsUnspendable(acc.Thresholds, len(acc.Signers)) {
 			out[id] = true
 		}
 	}
 	return out, rows.Err()
+}
+
+// accountIsUnspendable is the reachability check behind AccountsUnspendable:
+// master weight 0 with zero other signers means no signature set exists at
+// any weight, so the account is locked regardless of its threshold values
+// (thresholds gate which operations a given weight authorizes, not whether
+// any weight is reachable at all).
+func accountIsUnspendable(th xdr.Thresholds, numSigners int) bool {
+	return th.MasterKeyWeight() == 0 && numSigners == 0
 }
 
 // signerAddress renders a SignerKey strkey without panicking on an unknown
