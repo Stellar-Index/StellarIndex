@@ -99,6 +99,11 @@ if [ "$FOUND" -eq 0 ]; then
 fi
 
 SELECTED="$HITS_FILE"
+# CI checks out refs/pull/N/merge; its first parent is the base tip this merge was built
+# on, while the event's base sha is the tip at PR creation and goes stale as main moves.
+if [ -n "${FUZZ_BASE:-}" ] && git rev-parse -q --verify 'HEAD^2' >/dev/null 2>&1; then
+	FUZZ_BASE="$(git rev-parse 'HEAD^1')"
+fi
 if [ -n "${FUZZ_BASE:-}" ]; then
 	# A shallow CI checkout lacks the base commit; fetching it alone is enough
 	# for a tree-to-tree diff, no history needed.
