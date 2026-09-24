@@ -129,6 +129,9 @@ func (s *Server) handleAdminKeysCreate(w http.ResponseWriter, r *http.Request) {
 		Tier:            auth.Tier(req.Tier),
 		Scopes:          req.Scopes,
 		RateLimitPerMin: req.RateLimitPerMin,
+		// Operator-minted keys stay unmetered (0) by design; the admin
+		// request carries no monthly cap to persist.
+		MonthlyQuota: 0,
 	})
 	if err != nil {
 		if clientAborted(r, err) {
