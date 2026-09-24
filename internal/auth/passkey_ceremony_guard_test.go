@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -120,6 +121,31 @@ func TestRedisPasskeyCeremonyGuard_ReserveClaimIsOneShot(t *testing.T) {
 	}
 	if claimed {
 		t.Fatal("replay claim returned true — a captured ceremony would mint a second session")
+	}
+}
+
+// TestRedisPasskeyCeremonyGuard_ReserveRefusesExistingMarker — every
+// begin mints a fresh random challenge, so a live marker that already
+// exists is never a legitimate re-begin. Reserve must surface it rather
+// than discard the SETNX result and hand out a challenge whose
+// reservation it did not create; the existing marker's TTL is untouched.
+func TestRedisPasskeyCeremonyGuard_ReserveRefusesExistingMarker(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	guard := NewRedisPasskeyCeremonyGuard(rdb)
+	ctx := context.Background()
+	const digest = "feedfacefeedface"
+
+	if err := guard.Reserve(ctx, digest, 6*time.Minute); err != nil {
+		t.Fatalf("first reserve: %v", err)
+	}
+	err := guard.Reserve(ctx, digest, time.Hour)
+	if !errors.Is(err, ErrPasskeyCeremonyAlreadyReserved) {
+		t.Fatalf("second reserve err = %v, want ErrPasskeyCeremonyAlreadyReserved", err)
+	}
+	if ttl := mr.TTL(liveCeremonyKey(digest)); ttl != 6*time.Minute {
+		t.Fatalf("existing marker TTL = %v, want 6m (second reserve must not overwrite)", ttl)
 	}
 }
 

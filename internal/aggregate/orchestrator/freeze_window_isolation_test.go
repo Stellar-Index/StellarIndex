@@ -124,7 +124,7 @@ func (f *windowIsolationFixture) seedLKG(w time.Duration) {
 // deploy: fresh in-memory ladder, same Redis marker.
 func (f *windowIsolationFixture) newOrchestrator() *Orchestrator {
 	f.t.Helper()
-	writer, err := freeze.NewWriter(f.rdb, 0)
+	writer, err := freeze.NewWriter(f.rdb, 0, freeze.WithClock(func() time.Time { return f.now }))
 	if err != nil {
 		f.t.Fatalf("freeze.NewWriter: %v", err)
 	}
@@ -136,7 +136,7 @@ func (f *windowIsolationFixture) newOrchestrator() *Orchestrator {
 		FreezeWriter: writer,
 		Baselines: stubBaselineSource{
 			multi: baseline.MultiBaseline{
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 60_000},
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
 			},
 		},
 	})

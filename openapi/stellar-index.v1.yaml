@@ -7773,7 +7773,7 @@ paths:
     get:
       operationId: getAccountUsage
       tags: [account]
-      summary: Daily per-endpoint request counters for the authenticated key.
+      summary: Daily per-endpoint request counters for the authenticated caller.
       description: |
         Returns per-day, per-endpoint-family usage rows for the
         authenticated caller over the trailing 30 days: one row per
@@ -9683,6 +9683,10 @@ paths:
         this browser; `/auth/passkey/finish-login` requires it. The
         challenge is valid for 5 minutes — enforced server-side, not
         merely by the cookie's `Max-Age` — and is single-use.
+
+        Capped per client IP (IPv6: per /64) at 20 calls per minute,
+        independently of the anonymous rate limit; past the cap the
+        call returns 429 with `Retry-After` and issues no challenge.
       responses:
         "200":
           description: WebAuthn assertion options (challenge, rpId, …).
@@ -9707,6 +9711,7 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: "#/components/schemas/Problem" }
+        "429": { $ref: "#/components/responses/RateLimited" }
         "503": { $ref: "#/components/responses/ServiceUnavailable" }
 
   /auth/passkey/finish-login:
@@ -12753,7 +12758,7 @@ components:
         name: { type: string, description: "Human label, e.g. \"SDF Growth 3\"." }
         domain: { type: string, description: Domain the upstream set associates with the address; absent when none. }
         tags: { type: array, items: { type: string }, description: "Upstream tag registry values (always present, possibly empty)." }
-        source: { type: string, description: Upstream set the label came from ("stellar-expert"). }
+        source: { type: string, description: "Upstream set the label came from (\"stellar-expert\"), or \"operator-override\" when an operator reviewed an upstream scam-class tag as a false positive and removed it; name, domain and the other tags are the upstream's." }
     Ledger:
       type: object
       description: A ledger header from the certified lake.

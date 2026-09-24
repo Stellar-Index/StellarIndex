@@ -5,6 +5,7 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -87,16 +88,25 @@ func liveCeremonyKey(digest string) string {
 // allkeys-lru eviction of it makes the sign-in fail CLOSED rather than
 // re-open the replay window. ttl must outlive the ceremony's own
 // validity so the reservation never expires under a still-valid
-// challenge. A challenge is 32 random bytes, so a pre-existing marker
-// (SETNX returning false) is a re-begin of the same ceremony, not a
-// collision — treated as already-reserved, not an error.
+// challenge. Every begin mints a fresh 32-byte random challenge, so a
+// pre-existing marker (SETNX false) is never a legitimate re-begin: it
+// returns [ErrPasskeyCeremonyAlreadyReserved] and the caller refuses to
+// issue a challenge whose single-use reservation it did not create.
 func (g *RedisPasskeyCeremonyGuard) Reserve(ctx context.Context, digest string, ttl time.Duration) error {
 	key := liveCeremonyKey(digest)
-	if _, err := g.rdb.SetNX(ctx, key, "1", ttl).Result(); err != nil {
+	created, err := g.rdb.SetNX(ctx, key, "1", ttl).Result()
+	if err != nil {
 		return fmt.Errorf("redis setnx %s: %w", key, err)
+	}
+	if !created {
+		return fmt.Errorf("%w: %s", ErrPasskeyCeremonyAlreadyReserved, key)
 	}
 	return nil
 }
+
+// ErrPasskeyCeremonyAlreadyReserved reports a Reserve whose live marker
+// already existed.
+var ErrPasskeyCeremonyAlreadyReserved = errors.New("passkey ceremony already reserved")
 
 // ClaimReserved spends a ceremony reserved by [RedisPasskeyCeremonyGuard.Reserve].
 // It returns (true, nil) for the caller that removes the live marker —

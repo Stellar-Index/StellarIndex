@@ -125,6 +125,24 @@ func NewMutatingFlagSet(name string) (*flag.FlagSet, *WriteGate) {
 	return fs, RegisterWriteGate(fs)
 }
 
+// IsHelpArg reports whether arg is one of the help spellings realMain
+// accepts. Namespace and positional verbs read their first argument before
+// any FlagSet exists, so fs.Parse never sees a help request there.
+func IsHelpArg(arg string) bool {
+	switch arg {
+	case "help", "-h", "-help", "--help":
+		return true
+	}
+	return false
+}
+
+// Usage writes usage to stderr and returns flag.ErrHelp, the sentinel the
+// dispatcher maps to exit 0 — the same contract fs.Parse gives a leaf.
+func Usage(usage string) error {
+	fmt.Fprintln(os.Stderr, usage)
+	return flag.ErrHelp
+}
+
 // Enabled reports whether the operator opted into writing (passed -write).
 func (g *WriteGate) Enabled() bool { return *g.write }
 

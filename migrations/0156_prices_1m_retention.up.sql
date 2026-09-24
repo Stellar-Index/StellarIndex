@@ -178,10 +178,19 @@
 --
 -- ── What loses historical reach ────────────────────────────────────
 --
--- 60 non-test Go files name `prices_1m`. The widest TRAILING window
--- any of them reads is 7 days (`INTERVAL '7 days'`, the volume and
--- catalogue rollups), so every rollup, snapshot, alert and listing
--- path sits comfortably inside 90 days. Only the readers whose window
+-- 60 non-test Go files name `prices_1m`. The widest fixed TRAILING
+-- window the volume and catalogue rollups read is 7 days
+-- (`INTERVAL '7 days'`). The latest-VWAP reads in
+-- internal/storage/timescale/aggregates.go interpolate a 400-day
+-- literal lower bound (`latestVWAPWindow`), but only for plan-time
+-- chunk pruning: LatestClosedVWAP1mForPair walks it only after a
+-- 14-day existence gate (`latestVWAPGateWindow`, pinned inside 90 days
+-- by aggregates_test.go) has found a bucket, so the value it serves is
+-- never older than 14 days. RecentClosedVWAP1mCombined's 40-bucket
+-- pricingguard baseline is the one read that can reach past 90 days,
+-- for a pair with fewer than 40 closed minutes in 90 days; an armed
+-- policy thins that baseline to the buckets inside 90 days. Beyond
+-- those, only the readers whose window
 -- comes from the CALLER can reach past it, and beyond 90 days these
 -- read an empty view — every price aggregate is `materialized_only`,
 -- so there is no real-time fallback:

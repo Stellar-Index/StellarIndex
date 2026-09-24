@@ -98,8 +98,12 @@ func Run(args []string) error {
 // drift, e.g. the KALE 2× double-fold — incident 2026-07-06). Future
 // modes (e.g. `recompute`, `policy-validate`) plug in here.
 func supplyCmd(args []string) error {
+	const usage = "usage: supply <audit|snapshot|seed-observations|seed-sac-balances|seed-claimable-balances|seed-sep41-genesis|verify-rollup> [flags]"
 	if len(args) == 0 {
-		return errors.New("usage: supply <audit|snapshot|seed-observations|seed-sac-balances|seed-claimable-balances|seed-sep41-genesis|verify-rollup> [flags]")
+		return errors.New(usage)
+	}
+	if opsutil.IsHelpArg(args[0]) {
+		return opsutil.Usage(usage)
 	}
 	switch args[0] {
 	case "audit":

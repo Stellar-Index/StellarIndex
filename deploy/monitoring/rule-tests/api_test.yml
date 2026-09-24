@@ -509,3 +509,37 @@ tests:
       - eval_time: 20m
         alertname: stellarindex_api_down
         exp_alerts: []
+
+  # ── one passkey clone warning tickets ────────────────────────────
+  # A single sign-counter regression is a credential-theft signal on one
+  # account. The refusal already happened, so this is a ticket; the seeded
+  # zero before it, and a stream of ceremony replays, stay silent.
+  - interval: 1m
+    name: one passkey clone warning tickets
+    input_series:
+      - series: 'stellarindex_passkey_login_refusals_total{job="stellarindex_api",instance="r1:8080",reason="clone_warning"}'
+        values: '0 0 0 0 0 1+0x55'
+      - series: 'stellarindex_passkey_login_refusals_total{job="stellarindex_api",instance="r1:8080",reason="ceremony_replay"}'
+        values: '0+1x60'
+
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: stellarindex_passkey_clone_warning
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: stellarindex_passkey_clone_warning
+        exp_alerts:
+          - exp_labels:
+              severity: ticket
+              team: stellarindex
+              component: api
+            exp_annotations:
+              runbook_url: https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/passkey-clone-warning.md
+              summary: "Passkey clone warning: 1 sign-in(s) refused on a sign-counter regression"
+              description: |
+                A passkey sign-in presented a valid signature with a sign
+                counter at or below the stored one — WebAuthn's signal that the
+                credential's private key has been copied. The sign-in was
+                refused. The `passkey.clone_warning` rows in audit_log name the
+                account and credential; contact the owner and have them remove
+                that passkey.

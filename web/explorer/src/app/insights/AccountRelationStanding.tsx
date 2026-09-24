@@ -84,7 +84,8 @@ export function AccountRelationStanding({
       </Panel>
     );
   }
-  if (isError || !data) {
+  const standing = data && readBoard(data);
+  if (isError || !standing) {
     return (
       <Panel
         headingLevel={2}
@@ -99,13 +100,7 @@ export function AccountRelationStanding({
     );
   }
 
-  // The two bodies are told apart by the shape the wire actually served
-  // — the board that answered — rather than by the path this panel asked
-  // for, so a body of the other kind cannot be read through the wrong
-  // field names.
-  const board = 'creators' in data ? data.creators : data.sponsors;
-  const population =
-    'creators' in data ? data.totals.creators : data.totals.sponsors;
+  const { board, population, computedAt } = standing;
   // The keyed read returns at most this address's row, but the filter is
   // still checked rather than assumed: a deployment whose API predates
   // `?account=` ignores the parameter and serves the default page, and
@@ -177,7 +172,7 @@ export function AccountRelationStanding({
       )}
 
       <p className="text-ink-faint text-[11px]">
-        Rollup snapshot computed {formatTimestamp(data.computed_at)}.
+        Rollup snapshot computed {formatTimestamp(computedAt)}.
         {creation && (
           <>
             {' '}
@@ -192,6 +187,41 @@ export function AccountRelationStanding({
       </p>
     </Panel>
   );
+}
+
+/**
+ * readBoard — the board a body carries, or undefined when it carries none.
+ *
+ * The two bodies are told apart by the shape the wire actually served —
+ * the board that answered — rather than by the path this panel asked for,
+ * so a body of the other kind cannot be read through the wrong field
+ * names. The generated types call the board and its totals required, but
+ * a skewed or partial deployment can serve a body without them: a missing
+ * board is a board not yet built (never "this address holds no row"), and
+ * missing totals only drop the population.
+ */
+function readBoard(data: CreatorsResp | SponsorsResp):
+  | {
+      board: readonly (CreatorRow | SponsorRow)[];
+      population: number | undefined;
+      computedAt: string;
+    }
+  | undefined {
+  if ('creators' in data && Array.isArray(data.creators)) {
+    return {
+      board: data.creators,
+      population: data.totals?.creators,
+      computedAt: data.computed_at,
+    };
+  }
+  if ('sponsors' in data && Array.isArray(data.sponsors)) {
+    return {
+      board: data.sponsors,
+      population: data.totals?.sponsors,
+      computedAt: data.computed_at,
+    };
+  }
+  return undefined;
 }
 
 function survival(row: CreatorRow): string | undefined {

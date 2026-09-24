@@ -62,17 +62,12 @@ function UsageBody({ me }: { me: MeResponse }) {
     queryKey: ['dashboard', 'keys'],
     queryFn: ({ signal }) => listKeys(signal),
   });
-  // Daily request totals are best-effort — swallow failures to [] so the
-  // page never blocks on the usage backend (matches prior behavior).
+  // A failed read renders as an error, never as the empty state: "no
+  // tracked requests" is a claim of zero traffic. The keys section still
+  // renders, so the page never blocks on the usage backend.
   const usageQuery = useQuery<UsageRow[], Error>({
     queryKey: ['dashboard', 'usage'],
-    queryFn: async ({ signal }) => {
-      try {
-        return await fetchUsage(signal);
-      } catch {
-        return [];
-      }
-    },
+    queryFn: ({ signal }) => fetchUsage(signal),
   });
 
   const keys = keysQuery.data ?? null;
@@ -81,6 +76,11 @@ function UsageBody({ me }: { me: MeResponse }) {
     ? keysQuery.error instanceof ApiError
       ? (keysQuery.error.detail ?? keysQuery.error.message)
       : 'Failed to load usage'
+    : null;
+  const usageError = usageQuery.error
+    ? usageQuery.error instanceof ApiError
+      ? (usageQuery.error.detail ?? usageQuery.error.message)
+      : 'Failed to load request history'
     : null;
 
   const active = keys?.filter((k) => !k.revoked_at) ?? [];
@@ -102,9 +102,17 @@ function UsageBody({ me }: { me: MeResponse }) {
 
         <HeadroomStrip me={me} keys={keys} />
 
-        <DailyRequests usage={usage} />
+        {usageError ? (
+          <Callout tone="bad" title="Couldn't load request history">
+            {usageError}
+          </Callout>
+        ) : (
+          <>
+            <DailyRequests usage={usage} />
 
-        <EndpointBreakdown usage={usage} />
+            <EndpointBreakdown usage={usage} />
+          </>
+        )}
 
         <Card>
           <CardHeader

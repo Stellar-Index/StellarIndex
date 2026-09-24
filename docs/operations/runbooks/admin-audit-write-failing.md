@@ -32,8 +32,12 @@ Before C3-067 (audit-2026-07-23) the only trace was one
 | `surface` | Mutation | What is now unrecorded |
 | --- | --- | --- |
 | `account_override` | `PATCH /v1/admin/accounts/{id}` | Tier / rate-limit / quota override, its reason, and the before-values |
-| `key_mint` | `POST /v1/admin/keys` | A **live credential** and who minted it for whom |
-| `key_revoke` | Admin key revoke | Which credential was revoked and by whom |
+| `key_mint` | `POST /v1/admin/keys`, `POST /v1/account/keys`, `POST /v1/dashboard/keys` | A **live credential** and who minted it for whom |
+| `key_revoke` | Admin, account and dashboard key revoke | Which credential was revoked and by whom |
+| `passkey_register` | `POST /v1/auth/passkey/finish-register` | A new **first-factor credential** on the account, and the session and IP that added it |
+| `passkey_delete` | `DELETE /v1/auth/passkey/credentials/{id}` | Which passkey was removed, and by which session |
+| `passkey_clone_warning` | Refused passkey sign-in (**refusal**) | Which credential tripped the clone check; the [passkey-clone-warning](passkey-clone-warning.md) alert still fires from the metric |
+| `passkey_login_replay` | Refused passkey sign-in (**refusal**) | Which credential a replayed finish-login request presented |
 | `status_notice` | `POST /v1/admin/status-notices` (+ resolve) | A change to the **public** status page |
 | `stripe_plan_upgrade` | Stripe webhook plan change | The link between a paid Stripe event and the plan it granted |
 | `stripe_dead_letter` | Stripe dead-letter conclusion | The record that money landed and nothing was provisioned |

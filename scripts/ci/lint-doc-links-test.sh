@@ -27,7 +27,7 @@ cd "$(dirname "$0")/../.." || exit 1
 GATE="scripts/ci/lint-doc-links.sh"
 FIX="docs/zz-lint-doc-links-fixture.md"
 PASS=0; FAIL=0
-# shellcheck disable=SC2329  # invoked indirectly by the EXIT trap
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT trap
 cleanup() { rm -f "$FIX"; }
 trap cleanup EXIT
 
@@ -80,6 +80,16 @@ check "an odd number of fences is reported, not silently trusted" red
 printf '# fixture\n\nXDR notation: `Vec[Address](assets)` and `Vec[i128](amounts)`.\n' > "$FIX"
 check "a link-shaped token inside backticks is ignored" ok
 
+# The one code-span exception: runbooks cite ADRs as backticked paths, and a
+# renamed ADR left one dangling with nothing to catch it.
+# shellcheck disable=SC2016  # the backticks are literal fixture content
+printf '# fixture\n\nSee `docs/adr/0034-no-such-adr-%s.md`.\n' "$$" > "$FIX"
+check "a backticked ADR path that does not exist is caught" red
+
+# shellcheck disable=SC2016  # the backticks are literal fixture content
+printf '# fixture\n\nSee `docs/adr/0034-tiered-clickhouse-architecture.md`.\n' > "$FIX"
+check "a backticked ADR path that exists resolves" ok
+
 # shellcheck disable=SC2016  # the fence is literal fixture content
 printf '# fixture\n\n```\n[gone](./nope-%s.md)\n```\n' "$$" > "$FIX"
 check "a link inside a balanced fenced block is ignored" ok
@@ -100,17 +110,17 @@ rm -rf docs/zz-ignored-fixture-dir .gitignore.bak
 rm -f "$FIX"
 check "clean tree passes again" ok full
 
-# This run does 3 full-tree scans (clean/untracked/clean-again) plus 8
-# scoped, near-instant ones; a regression back to always-full-scan does 11
+# This run does 3 full-tree scans (clean/untracked/clean-again) plus 10
+# scoped, near-instant ones; a regression back to always-full-scan does 13
 # full-tree scans. 6x a single scan sits well above the 3 this run needs and
-# well below the 11 the defect this test exists to catch would cost.
+# well below the 13 the defect this test exists to catch would cost.
 total_s=$((SECONDS - t0))
 budget_s=$((single_scan_s * 6))
 if [ "$total_s" -le "$budget_s" ]; then
-  printf '  ok   %s\n' "self-test cost stays near 3 full scans, not 10 (${total_s}s <= ${budget_s}s budget, single scan ~${single_scan_s}s)"
+  printf '  ok   %s\n' "self-test cost stays near 3 full scans, not 13 (${total_s}s <= ${budget_s}s budget, single scan ~${single_scan_s}s)"
   PASS=$((PASS+1))
 else
-  printf '  FAIL %s\n' "self-test cost stays near 3 full scans, not 10 (${total_s}s > ${budget_s}s budget, single scan ~${single_scan_s}s — a check likely regressed to an unscoped full-tree call)"
+  printf '  FAIL %s\n' "self-test cost stays near 3 full scans, not 13 (${total_s}s > ${budget_s}s budget, single scan ~${single_scan_s}s — a check likely regressed to an unscoped full-tree call)"
   FAIL=$((FAIL+1))
 fi
 

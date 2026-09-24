@@ -842,6 +842,13 @@ jobs:
         # A gate only the local pre-push hook runs is a gate that rots
         # unobserved — main sat red on `make verify` until wave D.
         run: bash scripts/ops/ch-ops-user-test.sh
+      - name: ClickHouse lake data-backup chain tests
+        # Drives ch-lake-backup.sh with a fake ClickHouse: full then
+        # incrementals on the right base, no success stamp on a failed or
+        # empty backup, old chain removed only after a new full succeeds.
+        # The real-ClickHouse round trip (ch-lake-backup-roundtrip-test.sh)
+        # needs docker and runs by hand.
+        run: bash scripts/ops/ch-lake-backup-test.sh
       - name: config-assertions live-guard tests
         # Drives the real config-assertions.sh with a fake psql/curl: the
         # Postgres worker headroom pair and the ClickHouse drop-guard

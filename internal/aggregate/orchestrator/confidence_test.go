@@ -677,7 +677,7 @@ func TestApproxUSDVolume_NonUSDQuotedIsUnmeasuredNotZero(t *testing.T) {
 		SourceClassCount:         2,
 		LiquidityUSD:             got,
 		CrossOracleDivergencePct: 0.4,
-		BaselineAgeDays:          187,
+		BaselineAgeDays:          maxBaselineAgeDays,
 	}, confidence.DefaultWeights())
 	if score.Confidence <= 0 {
 		t.Fatalf("healthy non-USD-quoted bucket scored %v, want > 0", score.Confidence)

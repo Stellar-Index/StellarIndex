@@ -47,7 +47,7 @@ sudo -u postgres psql stellarindex -c 'SELECT source, events_24h FROM protocol_e
 
 - Missing table → migration 0086 didn't apply on this deployment. Run
   the migrator (deploy.yml auto-applies; manual:
-  `stellarindex-migrate -dir /usr/local/share/stellarindex/migrations up`).
+  `stellarindex-migrate -migrations /usr/local/share/stellarindex/migrations up`).
 - Postgres down / lock contention → follow the storage runbook; this
   alert clears itself on the next successful sweep (the worker retries
   forever, and the upsert-then-prune is idempotent).

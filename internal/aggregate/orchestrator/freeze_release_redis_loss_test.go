@@ -115,7 +115,7 @@ func newProductionWiredFixture(t *testing.T) *productionWiredFixture {
 			Pairs: []canonical.Pair{f.pair}, Windows: []time.Duration{f.short, f.long}, Interval: time.Hour,
 			FreezeWriter: w,
 			Baselines: stubBaselineSource{multi: baseline.MultiBaseline{
-				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: 60_000},
+				Day30: &baseline.Baseline{Median: 0, MAD: 0.001, N: maxDay30Returns},
 			}},
 		})
 		if o.windowedFreeze == nil {

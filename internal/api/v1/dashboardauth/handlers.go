@@ -25,6 +25,7 @@ import (
 	"github.com/Stellar-Index/StellarIndex/internal/notify"
 	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
+	"github.com/Stellar-Index/StellarIndex/internal/ratelimit"
 )
 
 // EmailLocker serialises first-login provisioning per email so
@@ -68,9 +69,12 @@ type EmailLocker interface {
 
 // LoginThrottle, when set, bounds magic-link sends to prevent inbox
 // email-bombing + sender-reputation / email-quota burn. The global
-// anonymous rate-limit only caps per-IP REQUEST volume (60/min); a single
-// IP under that ceiling can still bomb one victim inbox or spray many
-// addresses, and each accepted request fires an outbound email. nil
+// anonymous rate-limit (`[api] anon_rate_limit_per_min`; the deployed
+// figure is stated once, on auth.RedisLoginThrottle) only caps per-IP
+// REQUEST volume and is sized for browsing, orders of magnitude above any
+// sane email rate: a single IP under that ceiling can still bomb one victim
+// inbox or spray many addresses, and each accepted request fires an
+// outbound email. nil
 // disables the check (legacy behaviour). audit-2026-06-14 A12.
 type LoginThrottle interface {
 	// Allow reports whether a magic-link send for (ip, email) is within
@@ -102,12 +106,10 @@ type Config struct {
 	// target email. nil = no throttle (only the global anon
 	// rate-limit applies). audit-2026-06-14 A12.
 	LoginThrottle LoginThrottle
-	// Audit (optional) is the durable audit sink privileged staff
-	// actions on this surface append to — currently the staff
-	// customer look-up (C3-056, audit-2026-07-23), which reads another
-	// customer's PII and must leave the same durable trail the sibling
-	// admin surfaces do. nil degrades that handler to structured-log
-	// -only audit (Redis-less / Postgres-less deployments).
+	// Audit (optional) is the durable audit_log sink for the staff
+	// customer look-up, passkey add/remove, and passkey sign-ins
+	// refused on a clone warning or ceremony replay. nil degrades those
+	// to structured-log-only (Postgres-less deployments).
 	Audit platform.AuditStore
 	// Passkeys (optional) is the WebAuthn credential store backing
 	// passkey sign-in (migration 0140). nil leaves the
@@ -146,6 +148,10 @@ type Config struct {
 	// explorer and the api subdomain share the session cookie on
 	// credentialed cross-origin requests.
 	CookieDomain string
+
+	// passkeyBeginLimiter caps anonymous begin-login ceremonies per
+	// client IP; installed by validate(), never configurable off.
+	passkeyBeginLimiter *ratelimit.LocalFixedWindowCounter
 }
 
 // validate fills in defaults and rejects unworkable configs.
@@ -185,6 +191,9 @@ func (c *Config) validate() error {
 	// after the Now default: the guard expires records on that clock.
 	if c.PasskeyCeremonyGuard == nil {
 		c.PasskeyCeremonyGuard = newInProcessPasskeyCeremonyGuard(c.Now)
+	}
+	if c.passkeyBeginLimiter == nil {
+		c.passkeyBeginLimiter = ratelimit.NewLocalFixedWindowCounter(passkeyBeginLoginWindow, c.Now)
 	}
 	if c.DashboardBaseURL == "" {
 		return errors.New("dashboardauth: DashboardBaseURL is required")
@@ -412,8 +421,10 @@ func (h *Handlers) HandleLogin(w http.ResponseWriter, r *http.Request) {
 
 	// Magic-link abuse throttle (audit-2026-06-14 A12). Over quota → skip the
 	// send but return the SAME generic 200 below, so neither an attacker nor
-	// the victim's inbox learns a throttle fired. Redis blip → fall open
-	// (the global anon rate-limit still bounds per-IP volume).
+	// the victim's inbox learns a throttle fired. Throttle error → fall open.
+	// The global anon rate-limit is NOT what bounds sends then (it is far
+	// above any email cap); auth.RedisLoginThrottle only errors after its
+	// in-process fallback has admitted the send under the same caps.
 	if h.cfg.LoginThrottle != nil {
 		ok, terr := h.cfg.LoginThrottle.Allow(r.Context(), clientIP(r).String(), email)
 		switch {

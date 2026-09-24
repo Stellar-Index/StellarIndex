@@ -292,39 +292,42 @@ type localIndex struct {
 	lastAnchored *big.Rat
 }
 
-// tradeOrderLess is the total order the local index arranges prints in:
-// close time, then the trades hypertable's primary key (ledger, source,
-// tx_hash, op_index). It is the same comparator
-// internal/api/v1.sortTradesChronological uses, for the same reason.
+// TradeOrderLess is the total order trades are arranged in wherever slice
+// position carries weight: close time, ledger, tx_hash, op_index, and the
+// source name last. The local index and
+// internal/api/v1.sortTradesChronological both sort with it.
 //
 // The tie-break is NOT decorative (finding K036). Ledger-close
 // timestamps are shared by every trade in the ledger, so same-timestamp
 // prints are the common case, and the index references a print's
 // neighbours BY POSITION ([localIndex.neighbourhoodRef]) and walks the
-// anchor chain in this order. A merge-order-preserving sort would let
-// the window's input assembly decide those positions — and the
-// aggregator assembles it by appending one batch per expanded source
-// pair, an order that used to come out of Go map iteration
-// ([FiatBackers]) — so the same window could produce different trim
-// decisions, and a different published VWAP, tick to tick.
-func tradeOrderLess(a, b *canonical.Trade) bool {
+// anchor chain in this order. A merge-order-preserving sort would let the
+// window's input assembly decide those positions, and the same window
+// could produce different trim decisions tick to tick.
+//
+// tx_hash comes before source so the order is neutral as well as
+// deterministic: a transaction hash carries no venue identity, so inside
+// one ledger close no venue takes neighbourhood position or first claim
+// on the anchor chain by the alphabetical rank of its registered name.
+// Source only separates rows that share a transaction and operation.
+func TradeOrderLess(a, b *canonical.Trade) bool {
 	if !a.Timestamp.Equal(b.Timestamp) {
 		return a.Timestamp.Before(b.Timestamp)
 	}
 	if a.Ledger != b.Ledger {
 		return a.Ledger < b.Ledger
 	}
-	if a.Source != b.Source {
-		return a.Source < b.Source
-	}
 	if a.TxHash != b.TxHash {
 		return a.TxHash < b.TxHash
 	}
-	return a.OpIndex < b.OpIndex
+	if a.OpIndex != b.OpIndex {
+		return a.OpIndex < b.OpIndex
+	}
+	return a.Source < b.Source
 }
 
 // newLocalIndex sorts the usable prices by trade time (ties broken by
-// [tradeOrderLess], so the arrangement is a function of the trade set
+// [TradeOrderLess], so the arrangement is a function of the trade set
 // and not of the caller's merge order) and partitions them into
 // opts.Bucket-wide buckets.
 func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, opts LocalOutlierOptions) *localIndex {
@@ -334,7 +337,7 @@ func newLocalIndex(trades []canonical.Trade, validIdx []int, prices []*big.Rat, 
 		ix.order[k] = k
 	}
 	sort.SliceStable(ix.order, func(a, b int) bool {
-		return tradeOrderLess(&trades[validIdx[ix.order[a]]], &trades[validIdx[ix.order[b]]])
+		return TradeOrderLess(&trades[validIdx[ix.order[a]]], &trades[validIdx[ix.order[b]]])
 	})
 	ix.bucketOf = make([]int, len(ix.order))
 	var lastKey int64

@@ -18,8 +18,9 @@
 //     comet, reflector (all 3 variants), redstone.
 //   - [OpDecoder] (classic XDR operations) — for op types that
 //     don't surface as Soroban events; iterate the tx envelope's
-//     operations and invoke each OpDecoder whose op-type filter
-//     matches. Used by internal/sources/sdex for
+//     operations and invoke EVERY OpDecoder whose op-type filter
+//     matches (one op can be facts in several domains — a path
+//     payment is both trades and a movement). Used by internal/sources/sdex for
 //     ManageSellOffer / ManageBuyOffer / CreatePassiveSellOffer /
 //     PathPayment* trade extraction.
 //   - [ContractCallDecoder] (event-less Soroban contracts) — for
@@ -28,9 +29,9 @@
 //     decoder reads from the InvokeContract op's args. Used by
 //     internal/sources/band (relay / force_relay).
 //
-// All three seams share the "first-match-wins, non-fatal errors
-// are logged and counted" contract — see each interface's doc
-// comment. Adding a new source is registering against whichever
+// The event and contract-call seams are first-match-wins; the op
+// seam fans out. All share the "non-fatal errors are logged and
+// counted" contract — see each interface's doc comment. Adding a new source is registering against whichever
 // seam fits the venue's wire shape; the dispatcher itself stays
 // unchanged.
 //
@@ -138,7 +139,9 @@ func (d *Dispatcher) stateWriteContracts() map[string]bool {
 // decoder can correlate them without re-walking the envelope.
 //
 // Same non-fatal-error contract as [Decoder]: Decode returning an
-// error is a "skip + count" signal, not "stop dispatching."
+// error is a "skip + count" signal, not "stop dispatching." Unlike
+// [Decoder], op-type sets may overlap: every matching OpDecoder
+// decodes the op, so each must emit only its own domain's facts.
 type OpDecoder interface {
 	Name() string
 	// Matches is a cheap predicate on the op (typically checks
@@ -530,7 +533,7 @@ type Dispatcher struct {
 // New constructs a Dispatcher with the given Soroban-event
 // decoders. Registration order determines first-match precedence
 // — earlier wins. Classic-op decoders register via AddOpDecoder
-// after construction.
+// after construction and are not first-match (see AddOpDecoder).
 func New(decoders ...Decoder) *Dispatcher {
 	return &Dispatcher{
 		decoders:            decoders,
@@ -542,7 +545,8 @@ func New(decoders ...Decoder) *Dispatcher {
 
 // AddOpDecoder registers a classic-operation decoder. Use for
 // SDEX and any future non-Soroban path. Called once at startup;
-// not safe concurrent with ProcessLedger.
+// not safe concurrent with ProcessLedger. Every registered decoder
+// whose Matches claims an op decodes it, in registration order.
 func (d *Dispatcher) AddOpDecoder(od OpDecoder) {
 	d.opDecoders = append(d.opDecoders, od)
 }
@@ -1030,10 +1034,7 @@ func (d *Dispatcher) ProcessLedger(lcm xdr.LedgerCloseMeta, passphrase string) (
 				Op:       op,
 				OpResult: opResults[opIdx],
 			}
-			outs, err := d.dispatchOp(opCtx)
-			if err != nil {
-				continue
-			}
+			outs, _ := d.dispatchOp(opCtx)
 			outputs = append(outputs, outs...)
 		}
 	}
@@ -1493,34 +1494,53 @@ func (d *Dispatcher) RouteEntryChange(ctx LedgerEntryChangeContext) ([]consumer.
 	return d.dispatchEntryChange(ctx)
 }
 
-// dispatchOp runs one operation through the op-decoder chain.
-func (d *Dispatcher) dispatchOp(ctx OpContext) (outs []consumer.Event, err error) {
-	// Decoder-panic guard (#371 F1) — see recordDecoderPanic.
+// dispatchOp offers one operation to EVERY registered op decoder.
+// Op decoders are per-domain observers (sdex trades, classic
+// movements), and their op-type sets overlap on path payments, so
+// first-match routing would silently drop one domain's rows. A
+// decoder's error or panic costs only its own output for this op: it is
+// counted per decoder and returned joined, beside the others' outputs.
+func (d *Dispatcher) dispatchOp(ctx OpContext) ([]consumer.Event, error) {
 	var (
-		current string
-		seen    bool
+		outs []consumer.Event
+		errs []error
+	)
+	for _, od := range d.opDecoders {
+		got, err := d.decodeOp(od, ctx)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		outs = append(outs, got...)
+	}
+	return outs, errors.Join(errs...)
+}
+
+// decodeOp runs one op decoder on one op, behind its own panic guard
+// (#371 F1, see recordDecoderPanic) so a fault is confined to it.
+func (d *Dispatcher) decodeOp(od OpDecoder, ctx OpContext) (outs []consumer.Event, err error) {
+	var (
+		name string
+		seen bool
 	)
 	defer func() {
 		if r := recover(); r != nil {
-			outs, err = nil, d.recordDecoderPanic(current, seen, r,
+			outs, err = nil, d.recordDecoderPanic(name, seen, r,
 				panicSite{Ledger: ctx.Ledger, TxHash: ctx.TxHash, OpIndex: ctx.OpIndex})
 		}
 	}()
-	for _, od := range d.opDecoders {
-		current, seen = od.Name(), false
-		if !od.Matches(ctx.Op) {
-			continue
-		}
-		d.bumpEventsSeen(od.Name())
-		seen = true
-		got, derr := od.Decode(ctx)
-		if derr != nil {
-			d.bumpDecodeError(od.Name())
-			return nil, derr
-		}
-		return got, nil
+	name = od.Name()
+	if !od.Matches(ctx.Op) {
+		return nil, nil
 	}
-	return nil, nil
+	d.bumpEventsSeen(name)
+	seen = true
+	got, derr := od.Decode(ctx)
+	if derr != nil {
+		d.bumpDecodeError(name)
+		return nil, derr
+	}
+	return got, nil
 }
 
 // RouteOp is the test-harness entry point for classic-op

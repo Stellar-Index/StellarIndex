@@ -11,7 +11,7 @@ severity: P3
 
 | Field | Value |
 | ----- | ----- |
-| Alerts | `stellarindex_customer_webhook_delivery_failing` (P3) / `stellarindex_customer_webhook_delivery_exhausted` (informational) / `stellarindex_customer_webhook_mark_errors` (P3) |
+| Alerts | `stellarindex_customer_webhook_delivery_failing` (P3) / `stellarindex_customer_webhook_delivery_exhausted` (P3) / `stellarindex_customer_webhook_mark_errors` (P3) |
 | Detected by | Prometheus rules in `configs/prometheus/rules.r1/api.yml` (the r1 overlay, loaded from `/etc/prometheus/rules.r1/*.yml`) + the multi-host twin `deploy/monitoring/rules/api.yml` (F-1270 audit-2026-05-12) |
 | Typical MTTR | 5–30 min for a single-customer outage; longer when the worker itself is the problem |
 | Impact | One or more customers aren't receiving the webhook callbacks they registered for. SEV-1 incident pings to their Slack / Discord / paging — failing — until their endpoint comes back up or they update the URL. The Stellar Index API itself is unaffected. |

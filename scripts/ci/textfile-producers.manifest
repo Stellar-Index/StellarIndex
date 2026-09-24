@@ -35,6 +35,7 @@ configs/ansible/roles/archival-node/files/memory-mappings.sh              memory
 configs/ansible/roles/archival-node/templates/pgbackrest-backup.sh.j2     pgbackrest_backup.prom             scripts/ci/pgbackrest-backup-test.sh
 configs/healthchecks/smoke.sh                                             api_smoke.prom                     scripts/ci/smoke-textfile-test.sh
 configs/healthchecks/hc-ping.sh                                           hc_ping_${check}.prom              internal/ops/chops/healthcheck_ping_delivery_test.go
+scripts/ops/ch-lake-backup.sh                                             ch_lake_backup.prom                scripts/ops/ch-lake-backup-test.sh
 scripts/ops/ch-schema-snapshot.sh                                         ch_schema_snapshot.prom            scripts/ops/ch-schema-snapshot-test.sh
 scripts/ops/config-assertions.sh                                          config_assertions.prom             -
 scripts/ops/restore-drill.sh                                              restore_drill.prom                 scripts/ops/restore-drill-run-test.sh

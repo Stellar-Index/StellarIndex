@@ -29,6 +29,13 @@ func (s *contributionSink) RecordContributions(ctx context.Context, rec orchestr
 	if len(rec.Contributions) == 0 {
 		return nil
 	}
+	return s.store.InsertPriceSourceContributions(ctx, contributionRows(rec))
+}
+
+// contributionRows maps one record to its storage rows. rec.Window is
+// carried onto every row: it is the only thing telling the 5m, 1h and
+// 24h breakdowns of one pair apart.
+func contributionRows(rec orchestrator.ContributionRecord) []timescale.PriceSourceContribution {
 	// F-1242 (codex audit-2026-05-12): read per-source USD volume
 	// directly from the post-filter breakdown the orchestrator
 	// supplies. SourceUSDVolume sums per-trade USD over the same
@@ -43,6 +50,7 @@ func (s *contributionSink) RecordContributions(ctx context.Context, rec orchestr
 		row := timescale.PriceSourceContribution{
 			AssetID:    rec.Pair.Base.String(),
 			QuoteID:    rec.Pair.Quote.String(),
+			Window:     rec.Window,
 			Bucket:     rec.ComputedAt,
 			Source:     c.Source,
 			Weight:     c.Weight,
@@ -54,5 +62,5 @@ func (s *contributionSink) RecordContributions(ctx context.Context, rec orchestr
 		}
 		rows = append(rows, row)
 	}
-	return s.store.InsertPriceSourceContributions(ctx, rows)
+	return rows
 }

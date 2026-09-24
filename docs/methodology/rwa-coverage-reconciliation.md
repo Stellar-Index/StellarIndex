@@ -183,10 +183,12 @@ Each needs its contract address named, either:
   which is the ADR-0040 curated-set mechanism — review-gated by living
   in code, fail-closed, published in full on the wire.
 
-The in-repo set ships **empty**, deliberately. Populating it requires
-contract addresses from a primary source, and this work had none. An
-address inferred from a dashboard screenshot is a fabricated identity
-for a financial instrument.
+The in-repo set shipped **empty** with this work, deliberately: populating
+it requires contract addresses from a primary source, and this work had
+none. An address inferred from a dashboard screenshot is a fabricated
+identity for a financial instrument. It has since grown to ten bindings
+at that bar, nine Spiko fund share classes and Matrixdock's XAUm; the
+list in `contract.go` is the authority, not this count.
 
 The evidence bar for an entry is recorded beside the type: the address
 from a primary source (a block explorer is corroboration, not a source —

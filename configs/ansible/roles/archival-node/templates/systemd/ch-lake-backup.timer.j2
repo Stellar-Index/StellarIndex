@@ -1,0 +1,21 @@
+# systemd timer: daily ClickHouse lake data backup (ADR-0043 §2.4).
+#
+# Rendered by Ansible. Daily: an incremental ships only the parts written
+# since the previous run. While a multi-day full is still running the
+# elapsed trigger finds the service active and starts nothing.
+#
+# 04:10 UTC + up to 10 min jitter — after the 02:00 pgbackrest backup and
+# the 03:40 ch-schema-snapshot.
+
+[Unit]
+Description=Daily ClickHouse lake data backup (ADR-0043 §2.4)
+Documentation=https://github.com/Stellar-Index/StellarIndex/blob/main/docs/operations/runbooks/ch-lake-backup.md
+
+[Timer]
+OnCalendar=*-*-* 04:10:00 UTC
+RandomizedDelaySec=600
+Persistent=true
+Unit=ch-lake-backup.service
+
+[Install]
+WantedBy=timers.target

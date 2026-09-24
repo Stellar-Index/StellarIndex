@@ -2,13 +2,16 @@ package cachekeys_test
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"gopkg.in/yaml.v3"
 
 	"github.com/Stellar-Index/StellarIndex/internal/cachekeys"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -534,5 +537,157 @@ func TestAPIKeyRecords_NotOnAnEvictingInstance(t *testing.T) {
 	}
 	if cachekeys.APIKeyTTL == 0 && strings.HasPrefix(policy, "allkeys-") {
 		t.Errorf("maxmemory-policy %q evicts apikey: records written with APIKeyTTL=0; an evicted record is an unrecoverable credential (silent permanent 401)", policy)
+	}
+}
+
+// The VWAPMaxAge doc comment tells an operator what notices a dead
+// publisher and when. It once said a ticket "pages" minutes before expiry
+// when the real page lands 5–10 minutes after the 404s start (#1293).
+// These tests derive the timings from both Prometheus rule trees and
+// require the comment to state them, so tuning either side fails here
+// until the prose follows.
+
+var vwapAlertRuleTrees = []string{
+	"../../deploy/monitoring/rules",
+	"../../configs/prometheus/rules.r1",
+}
+
+type promRule struct {
+	Alert  string            `yaml:"alert"`
+	Expr   string            `yaml:"expr"`
+	For    string            `yaml:"for"`
+	Labels map[string]string `yaml:"labels"`
+}
+
+func loadPromRule(t *testing.T, file, alert string) promRule {
+	t.Helper()
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	var doc struct {
+		Groups []struct {
+			Rules []promRule `yaml:"rules"`
+		} `yaml:"groups"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+	for _, g := range doc.Groups {
+		for _, r := range g.Rules {
+			if r.Alert == alert {
+				return r
+			}
+		}
+	}
+	t.Fatalf("alert %s not found in %s", alert, file)
+	return promRule{}
+}
+
+// vwapMaxAgeDoc returns the VWAPMaxAge doc comment, whitespace-collapsed.
+func vwapMaxAgeDoc(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile("keys.go")
+	if err != nil {
+		t.Fatalf("read keys.go: %v", err)
+	}
+	lines := strings.Split(string(raw), "\n")
+	end := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "const VWAPMaxAge ") {
+			end = i
+		}
+	}
+	if end < 0 {
+		t.Fatal("const VWAPMaxAge not found in keys.go")
+	}
+	start := end
+	for start > 0 && strings.HasPrefix(lines[start-1], "//") {
+		start--
+	}
+	var b strings.Builder
+	for _, l := range lines[start:end] {
+		b.WriteString(strings.TrimPrefix(l, "//"))
+		b.WriteByte(' ')
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+var (
+	promRangeRe = regexp.MustCompile(`\[(\d+[smh])\]`)
+	promOrRe    = regexp.MustCompile(`(?i)\s+or\s+`)
+)
+
+// silentPageDelays returns how long after the last VWAP write the
+// aggregator-silent page fires, via its rate leg (process still scraped)
+// and its absent_over_time leg (process gone): range window + `for`.
+func silentPageDelays(t *testing.T, r promRule) (scraped, gone time.Duration) {
+	t.Helper()
+	hold, err := time.ParseDuration(r.For)
+	if err != nil {
+		t.Fatalf("%s: for %q: %v", r.Alert, r.For, err)
+	}
+	for _, leg := range promOrRe.Split(r.Expr, -1) {
+		m := promRangeRe.FindStringSubmatch(leg)
+		if m == nil {
+			t.Fatalf("%s: leg %q has no range window", r.Alert, leg)
+		}
+		w, err := time.ParseDuration(m[1])
+		if err != nil {
+			t.Fatalf("%s: window %q: %v", r.Alert, m[1], err)
+		}
+		if strings.Contains(leg, "absent_over_time(") {
+			gone = w + hold
+		} else {
+			scraped = w + hold
+		}
+	}
+	if scraped == 0 || gone == 0 {
+		t.Fatalf("%s: expected a rate leg and an absent_over_time leg, got expr %q", r.Alert, r.Expr)
+	}
+	return scraped, gone
+}
+
+func TestVWAPMaxAgeDoc_NamesThePageAndItsDelay(t *testing.T) {
+	doc := vwapMaxAgeDoc(t)
+	if !strings.Contains(doc, "`stellarindex_aggregator_silent`") {
+		t.Fatalf("VWAPMaxAge doc must name the page covering a dead publisher, stellarindex_aggregator_silent; doc: %q", doc)
+	}
+	for _, tree := range vwapAlertRuleTrees {
+		r := loadPromRule(t, tree+"/aggregator.yml", "stellarindex_aggregator_silent")
+		if got := r.Labels["severity"]; got != "page" {
+			t.Errorf("%s: stellarindex_aggregator_silent severity = %q, want page", tree, got)
+		}
+		scraped, gone := silentPageDelays(t, r)
+		if scraped <= cachekeys.VWAPMaxAge {
+			t.Errorf("%s: page fires %v after the last write, not after VWAPMaxAge %v; the doc's \"customers see 404s first\" is now false", tree, scraped, cachekeys.VWAPMaxAge)
+		}
+		want := []string{
+			fmt.Sprintf("about %d minutes after the last write while the process is still scraped", int(scraped.Minutes())),
+			fmt.Sprintf("about %d minutes after it when the process is gone", int(gone.Minutes())),
+			fmt.Sprintf("opens %d to %d minutes before anyone is paged",
+				int((scraped - cachekeys.VWAPMaxAge).Minutes()), int((gone - cachekeys.VWAPMaxAge).Minutes())),
+		}
+		for _, w := range want {
+			if !strings.Contains(doc, w) {
+				t.Errorf("%s: VWAPMaxAge doc must state %q (derived from the rule); doc: %q", tree, w, doc)
+			}
+		}
+	}
+}
+
+func TestVWAPMaxAgeDoc_PriceStaleIsATicket(t *testing.T) {
+	doc := vwapMaxAgeDoc(t)
+	if strings.Contains(doc, "pages at") {
+		t.Errorf("VWAPMaxAge doc claims a staleness threshold pages; doc: %q", doc)
+	}
+	if !strings.Contains(doc, "`stellarindex_api_price_stale`, is a ticket") {
+		t.Errorf("VWAPMaxAge doc must state stellarindex_api_price_stale is a ticket; doc: %q", doc)
+	}
+	for _, tree := range vwapAlertRuleTrees {
+		r := loadPromRule(t, tree+"/api.yml", "stellarindex_api_price_stale")
+		if got := r.Labels["severity"]; got != "ticket" {
+			t.Errorf("%s: stellarindex_api_price_stale severity = %q; the VWAPMaxAge doc calls it a ticket", tree, got)
+		}
 	}
 }

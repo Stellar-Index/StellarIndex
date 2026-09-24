@@ -102,6 +102,10 @@ func (f substanceStore) PairMarketSubstance(context.Context, canonical.Pair, tim
 	return f.m, nil
 }
 
+func (f substanceStore) PairMarketSubstanceAt(context.Context, canonical.Pair, time.Time, time.Duration, timescale.HistoryGranularity) (timescale.MarketSubstance, error) {
+	return f.m, nil
+}
+
 // The tripwire's "withheld" is the serving gate's own asset verdict, not a
 // re-derivation of one of its floors. Each case disagrees with the old
 // 24h-volume-only reading in one direction: a market clearing $1,000 in

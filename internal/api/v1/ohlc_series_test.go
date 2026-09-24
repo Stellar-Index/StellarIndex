@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -712,5 +713,74 @@ func TestOHLCSeries_FiatCombineLimitServesNewestCompleteBuckets(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestOHLCSeries_StatesPerBarVolumeScale pins GH-1152 on the direct
+// (non-fiat) series path: v_base/v_quote are smallest-unit sums at the
+// scale of the venues in the bucket, so each bar must state that scale.
+// Without it a chart reading v_quote had nothing to divide by and plotted
+// raw integers. A bar whose reader named no venue carries no scale at all
+// rather than a guessed one.
+func TestOHLCSeries_StatesPerBarVolumeScale(t *testing.T) {
+	t0 := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	onchain := mkSeriesBar(t0, "0.16", "0.17", "0.15", "0.165", "10000000000", "1650000000", 4)
+	onchain.Sources = []string{"sdex"}
+	cex := mkSeriesBar(t0.Add(time.Hour), "0.165", "0.18", "0.16", "0.175", "100000000000", "17500000000", 5)
+	cex.Sources = []string{"binance"}
+	unknown := mkSeriesBar(t0.Add(2*time.Hour), "0.175", "0.18", "0.17", "0.18", "1000", "180", 1)
+	reader := &stubHistoryReader{ohlcBars: []v1.OHLCSeriesBar{onchain, cex, unknown}}
+	ts := httpTestServer(t, v1.New(v1.Options{History: reader}))
+
+	resp := mustGet(t, ts.URL+"/v1/ohlc?base=native&quote=crypto:BTC&interval=1h&limit=24")
+	body, _ := readAll(resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", resp.StatusCode, body)
+	}
+	for _, want := range []string{`"v_base_decimals":7`, `"v_quote_decimals":7`, `"v_base_decimals":8`, `"v_quote_decimals":8`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %s: %s", want, body)
+		}
+	}
+	var env struct {
+		Data v1.OHLCSeriesResponse `json:"data"`
+	}
+	if err := json.Unmarshal([]byte(body), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(env.Data.Intervals) != 3 {
+		t.Fatalf("len(intervals) = %d, want 3", len(env.Data.Intervals))
+	}
+	for i, want := range []int{7, 8} {
+		b := env.Data.Intervals[i]
+		if b.VBaseDecimals == nil || *b.VBaseDecimals != want || b.VQuoteDecimals == nil || *b.VQuoteDecimals != want {
+			t.Fatalf("bar %d decimals = %v/%v, want %d/%d", i, b.VBaseDecimals, b.VQuoteDecimals, want, want)
+		}
+	}
+	// 1000 XLM in both hours: only the stated scale makes them equal.
+	for i, b := range env.Data.Intervals[:2] {
+		scale := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(*b.VBaseDecimals)), nil)
+		if units := new(big.Rat).SetFrac(mustBigInt(b.VBase), scale); units.Cmp(big.NewRat(1000, 1)) != 0 {
+			t.Errorf("bar %d v_base / 10^decimals = %s, want 1000", i, units.FloatString(7))
+		}
+	}
+	if u := env.Data.Intervals[2]; u.VBaseDecimals != nil || u.VQuoteDecimals != nil {
+		t.Errorf("bar with no named venue states decimals %v/%v, want none", u.VBaseDecimals, u.VQuoteDecimals)
+	}
+}
+
+// TestOHLCSeries_FiatCombinedStatesLiftTarget pins GH-1152 on the
+// fiat-combine path: a bucket merging a 7dp on-chain leg with an 8dp CEX
+// leg is summed at 8dp, and the bar must say 8 — the combine's own lift
+// target, which finalize used to drop.
+func TestOHLCSeries_FiatCombinedStatesLiftTarget(t *testing.T) {
+	ts := httpTestServer(t, mixedScaleFiatServer(t))
+	bar := fetchMixedScaleSeriesBar(t, ts.URL)
+	if bar.VBaseDecimals == nil || *bar.VBaseDecimals != 8 || bar.VQuoteDecimals == nil || *bar.VQuoteDecimals != 8 {
+		t.Fatalf("combined bar decimals = %v/%v, want 8/8 (the bucket's common scale)", bar.VBaseDecimals, bar.VQuoteDecimals)
+	}
+	scale := new(big.Rat).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(8), nil))
+	if got := new(big.Rat).Quo(mustRat(t, bar.VQuote), scale); got.Cmp(big.NewRat(220, 1)) != 0 {
+		t.Errorf("v_quote / 10^v_quote_decimals = %s USD, want 220", got.FloatString(10))
 	}
 }

@@ -50,11 +50,7 @@ func TestAccountTradesQuery_NoFloatCasts(t *testing.T) {
 			t.Errorf("query must cast %s server-side:\n%s", col, q)
 		}
 	}
-	for _, bad := range []string{"::float", "::double", "::real"} {
-		if strings.Contains(q, bad) {
-			t.Errorf("query must not cast NUMERIC through %s (ADR-0003):\n%s", bad, q)
-		}
-	}
+	assertNoFloatSQL(t, "account trades query", q)
 }
 
 func TestClampAccountTradesLimit(t *testing.T) {

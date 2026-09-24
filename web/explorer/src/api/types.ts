@@ -3160,7 +3160,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Daily per-endpoint request counters for the authenticated key.
+         * Daily per-endpoint request counters for the authenticated caller.
          * @description Returns per-day, per-endpoint-family usage rows for the
          *     authenticated caller over the trailing 30 days: one row per
          *     (date, endpoint) with `requests` (every non-429 response,
@@ -4001,6 +4001,10 @@ export interface paths {
          *     this browser; `/auth/passkey/finish-login` requires it. The
          *     challenge is valid for 5 minutes — enforced server-side, not
          *     merely by the cookie's `Max-Age` — and is single-use.
+         *
+         *     Capped per client IP (IPv6: per /64) at 20 calls per minute,
+         *     independently of the anonymous rate limit; past the cap the
+         *     call returns 429 with `Retry-After` and issues no challenge.
          */
         post: operations["beginPasskeyLogin"];
         delete?: never;
@@ -5281,7 +5285,7 @@ export interface components {
             domain?: string;
             /** @description Upstream tag registry values (always present, possibly empty). */
             tags: string[];
-            /** @description Upstream set the label came from ("stellar-expert"). */
+            /** @description Upstream set the label came from ("stellar-expert"), or "operator-override" when an operator reviewed an upstream scam-class tag as a false positive and removed it; name, domain and the other tags are the upstream's. */
             source: string;
         };
         /** @description A ledger header from the certified lake. */
@@ -20572,6 +20576,7 @@ export interface operations {
                     "application/problem+json": components["schemas"]["Problem"];
                 };
             };
+            429: components["responses"]["RateLimited"];
             503: components["responses"]["ServiceUnavailable"];
         };
     };

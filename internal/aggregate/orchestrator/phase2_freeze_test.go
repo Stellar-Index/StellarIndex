@@ -159,7 +159,7 @@ func TestPhase2FreezeFires_ConfidenceConditionIsNotVacuous(t *testing.T) {
 		SourceClassCount:         1,
 		LiquidityUSD:             12_000, // just over the $10k publish floor
 		CrossOracleDivergencePct: -1,     // no external reference
-		BaselineAgeDays:          200,
+		BaselineAgeDays:          maxBaselineAgeDays,
 	}
 	score := confidence.Compute(singleSourceButOrdinary, confidence.DefaultWeights())
 
@@ -239,9 +239,9 @@ func TestPhase2FreezeFires_CalibratedToADRZBand(t *testing.T) {
 		ageDays   float64
 		liquidity float64
 	}{
-		{"mature baseline, measured liquidity", 200, 12_000},
+		{"mature baseline, measured liquidity", maxBaselineAgeDays, 12_000},
 		{"sparse baseline (bootstrap-capped)", 3, 12_000},
-		{"unmeasured liquidity (non-USD-quoted pair)", 200, confidence.LiquidityUnmeasured},
+		{"unmeasured liquidity (non-USD-quoted pair)", maxBaselineAgeDays, confidence.LiquidityUnmeasured},
 	} {
 		t.Run(pop.name, func(t *testing.T) {
 			// At the ADR's own threshold value the freeze must NOT yet

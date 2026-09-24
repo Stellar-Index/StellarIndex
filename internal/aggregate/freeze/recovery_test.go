@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/anomaly"
 	"github.com/Stellar-Index/StellarIndex/internal/aggregate/freeze"
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
@@ -19,11 +21,13 @@ type fakeOpenLister struct {
 	mu    sync.Mutex
 	pairs []freeze.OpenFreezePair
 	err   error
+	calls int
 }
 
 func (l *fakeOpenLister) ListOpen(_ context.Context) ([]freeze.OpenFreezePair, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.calls++
 	if l.err != nil {
 		return nil, l.err
 	}
@@ -116,8 +120,8 @@ func TestRecovery_LeavesStillFiringRowsAlone(t *testing.T) {
 	}
 }
 
-// TestRecovery_ListErrorIsNonFatal — a lister failure logs + counts
-// but doesn't crash the worker (next tick retries).
+// TestRecovery_ListErrorIsNonFatal — a lister failure is counted
+// under outcome="error", closes nothing, and the next tick retries.
 func TestRecovery_ListErrorIsNonFatal(t *testing.T) {
 	_, rdb := newRedis(t)
 	lister := &fakeOpenLister{err: errors.New("boom")}
@@ -126,12 +130,31 @@ func TestRecovery_ListErrorIsNonFatal(t *testing.T) {
 	r := freeze.NewRecovery(rdb, lister, closer, freeze.RecoveryOptions{
 		Interval: 5 * time.Millisecond,
 	})
+	sweepsBefore := testutil.ToFloat64(obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues("error"))
+	durBefore := obstest.HistogramSampleCount(t, obs.AnomalyFreezeRecoverySweepDurationSeconds, "outcome", "error")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	_ = r.Run(ctx)
-	// No assertion beyond "didn't panic" — the metric increment is
-	// observed via Prometheus in production. Test exists to guard
-	// against future code that propagates the error.
+	if err := r.Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Run returned %v; want the context's DeadlineExceeded (a list error must not end the loop)", err)
+	}
+
+	lister.mu.Lock()
+	listCalls := lister.calls
+	lister.mu.Unlock()
+	if listCalls < 2 {
+		t.Errorf("ListOpen called %d times; want >= 2 (the tick after a failure must retry)", listCalls)
+	}
+	if got := testutil.ToFloat64(obs.AnomalyFreezeRecoverySweepsTotal.WithLabelValues("error")) - sweepsBefore; int(got) != listCalls {
+		t.Errorf("sweeps_total{outcome=error} advanced by %v; want %d (one per failed list)", got, listCalls)
+	}
+	if got := obstest.HistogramSampleCount(t, obs.AnomalyFreezeRecoverySweepDurationSeconds, "outcome", "error") - durBefore; int(got) != listCalls {
+		t.Errorf("sweep duration{outcome=error} gained %d samples; want %d", got, listCalls)
+	}
+	closer.mu.Lock()
+	defer closer.mu.Unlock()
+	if len(closer.calls) != 0 {
+		t.Errorf("MarkRecovered called %d times after a list failure; want 0", len(closer.calls))
+	}
 }
 
 // TestRecovery_SweepDurationMetricRecorded pins the wave-91

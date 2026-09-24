@@ -24,6 +24,11 @@ Exclusions, both deliberate:
     fence count is reported rather than silently blinding the rest of a file.
   * `_template` / `*TEMPLATE*` files carry placeholder targets on purpose.
 
+ADR PATHS IN CODE SPANS — the one exception to skipping backticks. Runbooks
+cite ADRs as `docs/adr/NNNN-slug.md` in backticks, which renders as no link,
+so a renamed ADR left them dangling silently. ADR filenames are numbered and
+never placeholders, so a backticked repo-root ADR path must resolve too.
+
 Usage:
   lint_doc_links.py                every tracked + untracked markdown file
                                     (the default, unchanged)
@@ -47,6 +52,7 @@ import sys
 FENCE = re.compile(r"^\s*(```|~~~)")
 LINK = re.compile(r"\]\(([^)\s]+)\)")
 HEAD = re.compile(r"^#{1,6}\s+(.*?)\s*$")
+ADR_SPAN = re.compile(r"`(docs/adr/[0-9]{4}-[^`\s]+\.md)`")
 
 
 def _git(*args):
@@ -69,6 +75,17 @@ def _ignored(path):
 
 def _strip_spans(line):
     return re.sub(r"`[^`]*`", "", line)
+
+
+def _adr_span_fails(path, lineno, line):
+    fails = []
+    for m in ADR_SPAN.finditer(line):
+        target = m.group(1)
+        if not os.path.exists(target):
+            fails.append((path, lineno, target, "ADR path in a code span does not exist"))
+        elif _ignored(target):
+            fails.append((path, lineno, target, "ADR path in a code span is GITIGNORED"))
+    return fails
 
 
 def slug(text):
@@ -156,6 +173,7 @@ def main():
                 continue
             if infence:
                 continue
+            fails.extend(_adr_span_fails(path, lineno, line))
             for m in LINK.finditer(_strip_spans(line)):
                 target = m.group(1)
                 if target.startswith(("http://", "https://", "mailto:", "#")):

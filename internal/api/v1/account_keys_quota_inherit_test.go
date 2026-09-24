@@ -99,3 +99,58 @@ func TestAccountKeysCreate_UncappedParentMintsUncappedChild(t *testing.T) {
 			"inventing one here 429s keys that never had a ceiling)", sub.MonthlyQuota)
 	}
 }
+
+// TestAdminKeysCreate_InheritsTargetIdentifierCeiling — POST
+// /v1/admin/keys takes no monthly_quota, so a key an operator mints for
+// a metered customer's identifier must take the ceiling that
+// identifier's credentials already carry, through the production store
+// and validator. The audit row records the ceiling actually issued.
+func TestAdminKeysCreate_InheritsTargetIdentifierCeiling(t *testing.T) {
+	const planQuota int64 = 250_000
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	store := auth.NewRedisAPIKeyStore(rdb)
+	if _, _, err := store.Create(context.Background(), auth.CreateAPIKeyRequest{
+		Identifier: "acct:metered-co", Tier: auth.TierAPIKey, MonthlyQuota: planQuota,
+	}); err != nil {
+		t.Fatalf("seed metered key: %v", err)
+	}
+
+	sink := &recordingAuditSink{}
+	ts := newAdminTestServer(t, operatorSubject(), store, sink)
+	resp := postJSON(t, ts.URL+"/v1/admin/keys", `{"identifier":"acct:metered-co","label":"ops-minted"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("POST /v1/admin/keys status = %d, want 201", resp.StatusCode)
+	}
+	var body struct {
+		Data struct {
+			Plaintext string `json:"plaintext"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode mint response: %v", err)
+	}
+	sub, err := auth.NewRedisAPIKeyValidator(rdb).Lookup(context.Background(), body.Data.Plaintext)
+	if err != nil {
+		t.Fatalf("lookup minted key: %v", err)
+	}
+	if sub.MonthlyQuota != planQuota {
+		t.Fatalf("operator-minted Subject.MonthlyQuota = %d, want %d (a zero cap bills the "+
+			"customer's shared counter unmetered)", sub.MonthlyQuota, planQuota)
+	}
+
+	if len(sink.entries) != 1 {
+		t.Fatalf("audit entries = %d, want 1", len(sink.entries))
+	}
+	var meta struct {
+		MonthlyQuota *int64 `json:"monthly_quota"`
+	}
+	if err := json.Unmarshal(sink.entries[0].Metadata, &meta); err != nil {
+		t.Fatalf("decode audit metadata: %v", err)
+	}
+	if meta.MonthlyQuota == nil || *meta.MonthlyQuota != planQuota {
+		t.Fatalf("audit metadata monthly_quota = %v, want %d: %s",
+			meta.MonthlyQuota, planQuota, sink.entries[0].Metadata)
+	}
+}

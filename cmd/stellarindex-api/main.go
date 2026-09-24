@@ -2445,6 +2445,10 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		return dashboardBundle{}, err
 	}
 
+	// One audit_log (migration 0027) for the admin surfaces, the staff
+	// look-up and every dashboard credential change, so one query
+	// answers "who added or removed this credential, and from where".
+	dashboardAudit := postgresstore.NewAuditStore(pg)
 	authCfg := dashboardauth.Config{
 		Accounts:  accounts,
 		Users:     users,
@@ -2453,12 +2457,8 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 		Generator: buildDashboardGenerator(cfg, logger),
 		// Passkey (WebAuthn) sign-in — webauthn_credentials, migration 0140.
 		Passkeys: postgresstore.NewWebAuthnCredentialStore(pg),
-		// C3-056: the staff customer look-up reads another customer's
-		// PII. Same audit_log (migration 0027) the admin surfaces
-		// already append to, so a staff read lands next to the
-		// staff mutations in one queryable trail.
-		Audit:  postgresstore.NewAuditStore(pg),
-		Logger: logger.With("component", "dashboard-auth"),
+		Audit:    dashboardAudit,
+		Logger:   logger.With("component", "dashboard-auth"),
 		// Now is consumed by BOTH NewHandlers (validate() defaults it)
 		// AND the session-resolver Middleware. NewHandlers now takes
 		// &authCfg, so validate()'s defaults land on this same struct
@@ -2495,6 +2495,7 @@ func buildDashboardBundle(cfg config.DashboardConfig, db *sql.DB, rdb redis.Univ
 	keysH, err := dashboardkeys.NewHandlers(dashboardkeys.Config{
 		Keys:             keysStore,
 		CacheInvalidator: pgValidator,
+		Audit:            dashboardAudit,
 		Logger:           logger.With("component", "dashboard-keys"),
 	})
 	if err != nil {

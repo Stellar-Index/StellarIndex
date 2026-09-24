@@ -34,6 +34,11 @@ type stubMarketsReader struct {
 	pair      v1.Market
 	pairFound bool
 	pairErr   error
+
+	// Sparkline batch stub state.
+	hourVolumes map[string]map[int]string
+	sparkErr    error
+	sparkPairs  [][2]string
 }
 
 func (r *stubMarketsReader) DistinctPairsExt(_ context.Context, cursor string, limit int, order timescale.MarketsOrder) ([]v1.Market, string, error) {
@@ -78,8 +83,30 @@ func (r *stubMarketsReader) AllPools(_ context.Context, _ timescale.PoolsFilter,
 	return out, r.nextCur, nil
 }
 
-func (r *stubMarketsReader) GetPairsVolumeHistory24hBatch(_ context.Context, _ [][2]string) (map[string][]timescale.PairVolumePoint, error) {
-	return map[string][]timescale.PairVolumePoint{}, nil
+// GetPairsVolumeHistory24hBatch mirrors the producer's shape: the SQL
+// CROSS JOINs every requested key with a 24-hour generate_series and
+// COALESCEs gaps to '0', so every key gets exactly 24 points, oldest
+// first. hourVolumes seeds non-zero buckets by hour index (0 = oldest).
+func (r *stubMarketsReader) GetPairsVolumeHistory24hBatch(_ context.Context, pairs [][2]string) (map[string][]timescale.PairVolumePoint, error) {
+	r.sparkPairs = pairs
+	if r.sparkErr != nil {
+		return nil, r.sparkErr
+	}
+	newest := time.Now().UTC().Truncate(time.Hour)
+	out := make(map[string][]timescale.PairVolumePoint, len(pairs))
+	for _, p := range pairs {
+		key := p[0] + "|" + p[1]
+		series := make([]timescale.PairVolumePoint, 24)
+		for h := range series {
+			vol := "0"
+			if v, ok := r.hourVolumes[key][h]; ok {
+				vol = v
+			}
+			series[h] = timescale.PairVolumePoint{Hour: newest.Add(time.Duration(h-23) * time.Hour), VolumeUSD: vol}
+		}
+		out[key] = series
+	}
+	return out, nil
 }
 
 func (r *stubMarketsReader) PairMarket(_ context.Context, _ canonical.Asset, _ canonical.Asset) (v1.Market, bool, error) {
@@ -158,6 +185,104 @@ func TestMarkets_ReturnsPairsWithCursor(t *testing.T) {
 	}
 	if env.Pagination.Next != "next-opaque" {
 		t.Errorf("next cursor = %q, want next-opaque", env.Pagination.Next)
+	}
+}
+
+// TestMarkets_IncludeSparkline pins the ?include=sparkline contract on
+// the Market wire type: 24 hourly buckets per row, oldest → newest,
+// each row carrying ITS pair's series with zero-filled gaps, and
+// volume_usd passed through as an exact decimal string.
+func TestMarkets_IncludeSparkline(t *testing.T) {
+	ts1 := time.Unix(1_772_000_000, 0).UTC()
+	const bigVol = "123456789012345678901234.5"
+	reader := &stubMarketsReader{
+		pairs: []v1.Market{
+			{Base: "native", Quote: "fiat:USD", LastTradeAt: v1.WireTime(ts1)},
+			{Base: "native", Quote: "fiat:EUR", LastTradeAt: v1.WireTime(ts1)},
+		},
+		hourVolumes: map[string]map[int]string{
+			"native|fiat:USD": {0: "12.5", 23: bigVol},
+			"native|fiat:EUR": {7: "3"},
+		},
+	}
+	srv := v1.New(v1.Options{Markets: reader})
+	ts := httpTestServer(t, srv)
+
+	var env struct {
+		Data []v1.Market `json:"data"`
+	}
+	resp := mustGet(t, ts.URL+"/v1/markets")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	mustDecode(t, resp, &env)
+	if reader.sparkPairs != nil || len(env.Data) != 2 || env.Data[0].VolumeHistory24h != nil {
+		t.Fatalf("without ?include=sparkline: batch pairs=%v rows=%d history=%v; want no batch call and no history",
+			reader.sparkPairs, len(env.Data), env.Data)
+	}
+
+	resp = mustGet(t, ts.URL+"/v1/markets?include=sparkline")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	env.Data = nil
+	mustDecode(t, resp, &env)
+	if len(env.Data) != 2 {
+		t.Fatalf("got %d markets, want 2", len(env.Data))
+	}
+	want := map[string]map[int]string{
+		"fiat:USD": {0: "12.5", 23: bigVol},
+		"fiat:EUR": {7: "3"},
+	}
+	for _, m := range env.Data {
+		assertSparkline(t, m.Quote, m.VolumeHistory24h, want[m.Quote])
+	}
+}
+
+func assertSparkline(t *testing.T, label string, got []v1.MarketVolumeBucket, nonZero map[int]string) {
+	t.Helper()
+	if len(got) != 24 {
+		t.Fatalf("%s: volume_history_24h has %d entries, want 24", label, len(got))
+	}
+	for i, b := range got {
+		want, ok := nonZero[i]
+		if !ok {
+			want = "0"
+		}
+		if b.VolumeUSD != want {
+			t.Errorf("%s[%d].volume_usd = %q, want %q", label, i, b.VolumeUSD, want)
+		}
+		if i > 0 {
+			if step := time.Time(b.Hour).Sub(time.Time(got[i-1].Hour)); step != time.Hour {
+				t.Errorf("%s[%d].hour is %v after its predecessor, want 1h (oldest → newest)", label, i, step)
+			}
+		}
+	}
+}
+
+// TestMarkets_SparklineFailureIsBestEffort: a failed sparkline batch
+// still serves the markets page, just without the series.
+func TestMarkets_SparklineFailureIsBestEffort(t *testing.T) {
+	reader := &stubMarketsReader{
+		pairs:    []v1.Market{{Base: "native", Quote: "fiat:USD", TradeCount24h: 4}},
+		sparkErr: errors.New("sparkline boom"),
+	}
+	srv := v1.New(v1.Options{Markets: reader})
+	ts := httpTestServer(t, srv)
+
+	resp := mustGet(t, ts.URL+"/v1/markets?include=sparkline")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	var env struct {
+		Data []v1.Market `json:"data"`
+	}
+	mustDecode(t, resp, &env)
+	if len(reader.sparkPairs) != 1 {
+		t.Fatalf("sparkline batch saw %v, want the one served pair", reader.sparkPairs)
+	}
+	if len(env.Data) != 1 || env.Data[0].TradeCount24h != 4 || env.Data[0].VolumeHistory24h != nil {
+		t.Errorf("rows = %+v; want the one market with no volume_history_24h", env.Data)
 	}
 }
 

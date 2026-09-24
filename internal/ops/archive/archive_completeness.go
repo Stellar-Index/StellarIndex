@@ -19,6 +19,9 @@ func archiveCompleteness(args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("archive-completeness: subcommand required (check / fix / verify)")
 	}
+	if opsutil.IsHelpArg(args[0]) {
+		return opsutil.Usage("usage: archive-completeness <check|fix|verify> [flags]")
+	}
 	switch args[0] {
 	case "check":
 		return archiveCompletenessCheck(args[1:])

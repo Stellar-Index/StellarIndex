@@ -194,6 +194,31 @@ func TestTotalVolumes(t *testing.T) {
 	}
 }
 
+func TestTotalVolumes_SkipTheTradesVWAPSkips(t *testing.T) {
+	// /v1/vwap serves base_volume and quote_volume beside the price, so
+	// they must be Σb and Σq of the population the price was computed
+	// over: quote_volume / base_volume == price.
+	trades := []canonical.Trade{
+		mkTrade(10, 100),
+		mkTrade(0, 50),  // zero base: unpriced
+		mkTrade(5, -7),  // negative quote: unpriced
+		mkTrade(-3, 30), // negative base: unpriced
+		mkTrade(20, 100),
+	}
+	base := aggregate.TotalBaseVolume(trades).BigInt()
+	quote := aggregate.TotalQuoteVolume(trades).BigInt()
+	if base.Cmp(big.NewInt(30)) != 0 || quote.Cmp(big.NewInt(200)) != 0 {
+		t.Fatalf("TotalBaseVolume = %v, TotalQuoteVolume = %v; want 30, 200", base, quote)
+	}
+	price, err := aggregate.VWAP(trades)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := new(big.Rat).SetFrac(quote, base); got.Cmp(price) != 0 {
+		t.Errorf("quote_volume/base_volume = %v, VWAP = %v; must be equal", got, price)
+	}
+}
+
 func TestSourceContributions_PerSourceWeights(t *testing.T) {
 	trades := []canonical.Trade{
 		mkTradeWithSource("binance", 100, 200), // quote=200

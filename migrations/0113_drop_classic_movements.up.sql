@@ -19,9 +19,12 @@
 -- removes the hypertable, its chunks, indexes and compression policy in
 -- one statement (the same one-statement teardown 0105's own down relies
 -- on). No CAGG, view, or FK references this table, so CASCADE is not
--- needed. Because the table is UNPOPULATED by design, dropping it loses
--- no data; the .down.sql recreates the exact 0105 schema for
--- reversibility.
+-- needed. "Loses no data" rests on the writer history, not on a row
+-- count taken here: 0105 named internal/sources/classicmovements its
+-- Postgres writer and that path shipped until ADR-0048, so
+-- any rows a database kept from that window are dropped with it. The
+-- .down.sql recreates the exact 0105 schema EMPTY; it restores the
+-- table, never its rows (the ClickHouse archive is their source).
 
 BEGIN;
 

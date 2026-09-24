@@ -493,29 +493,13 @@ func amountScaleDecimalsFor(source string) int {
 // [aggregate.TWAP] derive open/close and the time weights from slice order
 // and deliberately do not sort internally.
 //
-// The tiebreak is the trades hypertable's primary key (ledger, source,
-// tx_hash, op_index), NOT slice position. [Server.usdPeggedConstituents]'
-// order is map-iteration-dependent (aggregate.FiatBackers ranges a map), so
-// a merge-order-preserving sort would let two regions — or two consecutive
-// requests in one process — order same-timestamp prints differently and
-// serve different open/close for the identical window, breaking ADR-0015's
-// "all regions return the same rate".
+// Ties are broken by [aggregate.TradeOrderLess], NOT slice position, so
+// the served open/close is a function of the trade set and never of the
+// order the constituents were merged in — ADR-0015's "all regions return
+// the same rate".
 func sortTradesChronological(trades []canonical.Trade) {
 	sort.Slice(trades, func(i, j int) bool {
-		a, b := &trades[i], &trades[j]
-		if !a.Timestamp.Equal(b.Timestamp) {
-			return a.Timestamp.Before(b.Timestamp)
-		}
-		if a.Ledger != b.Ledger {
-			return a.Ledger < b.Ledger
-		}
-		if a.Source != b.Source {
-			return a.Source < b.Source
-		}
-		if a.TxHash != b.TxHash {
-			return a.TxHash < b.TxHash
-		}
-		return a.OpIndex < b.OpIndex
+		return aggregate.TradeOrderLess(&trades[i], &trades[j])
 	})
 }
 
@@ -718,7 +702,8 @@ func (a *ohlcBucketAcc) add(b *OHLCSeriesBar, scale int) {
 
 // finalize renders the bucket, lifting each scale's totals to the
 // bucket's own common scale so the served volumes and the
-// volume-weighted open/close are all in one unit.
+// volume-weighted open/close are all in one unit, and states that unit
+// as the bar's v_base_decimals/v_quote_decimals.
 //
 // The per-scale totals are summed in map-iteration order, which is not
 // deterministic. That is safe HERE and only here: these are exact

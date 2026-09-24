@@ -532,7 +532,7 @@ type dashboardLumens struct {
 
 // LookupCirculatingSupply implements [SupplyReference]. XLM only.
 func (r *StellarDashboardReference) LookupCirculatingSupply(ctx context.Context, asset canonical.Asset) (float64, error) {
-	if !isXLMAsset(asset) {
+	if !isNativeLumensSupplyForm(asset) {
 		return 0, fmt.Errorf("%w: stellar-dashboard publishes XLM supply only, got %q", ErrAssetUnsupported, asset.String())
 	}
 
@@ -641,7 +641,8 @@ type CoinGeckoSupplyOptions struct {
 	// (the Pro-tier auth that lifts the free-tier 429 ceiling).
 	APIKey string
 	// IDMap maps canonical asset_id → CoinGecko coin id. Empty falls
-	// back to the built-in default ("native" / "crypto:XLM" → "stellar").
+	// back to the built-in default ("native" / "crypto:XLM" → "stellar";
+	// not the XLM SAC, see [isNativeLumensSupplyForm]).
 	IDMap map[string]string
 	// MaxAge is the CS-089 staleness ceiling for the response's
 	// `market_data.last_updated`. <= 0 falls back to [DefaultSupplyMaxAge].
@@ -766,14 +767,14 @@ func parseUpstreamTime(s string) time.Time {
 	return t.UTC()
 }
 
-// isXLMAsset reports whether the asset is native lumens in either
-// canonical form (the on-chain `native` form or the abstract
-// `crypto:XLM` ticker).
-func isXLMAsset(a canonical.Asset) bool {
-	if a.Type == canonical.AssetNative {
-		return true
-	}
-	return a.String() == "crypto:XLM"
+// isNativeLumensSupplyForm reports whether a is an XLM alias form whose
+// supply is the ledger's lumens: `native` or `crypto:XLM`. The XLM SAC is
+// excluded on purpose: supply.AssetKey keys it on the contract, whose
+// supply is the wrapped amount, so matching it here would page a false
+// divergence.
+func isNativeLumensSupplyForm(a canonical.Asset) bool {
+	return a.Type != canonical.AssetSoroban &&
+		canonical.CanonicalAsset(a).Type == canonical.AssetNative
 }
 
 // Compile-time checks.

@@ -172,7 +172,8 @@ func TestAssetPriceSnapshot_MoneyStaysNumeric(t *testing.T) {
 	t.Parallel()
 
 	// Writer side: no rounding, no formatting, no float.
-	for _, banned := range []string{"ROUND(", "to_char(", "::float", "::double", "::real", "::bigint", "::int8"} {
+	assertNoFloatSQL(t, "price upsert", refreshAssetPriceSnapshotUpsert)
+	for _, banned := range []string{"ROUND(", "to_char(", "::bigint", "::int8"} {
 		if strings.Contains(refreshAssetPriceSnapshotUpsert, banned) {
 			t.Errorf("price upsert must store money as unrounded NUMERIC; found %q", banned)
 		}

@@ -3,7 +3,7 @@
 # + register completeness (wave-D PS-01) + ClickHouse money-column
 # + hypertable index builds + CAGG re-materialization.
 #
-# Seven passes, all gating (exit non-zero on any violation):
+# Eight passes, all gating (exit non-zero on any violation):
 #   1. money-column — monetary columns must be NUMERIC (ADR-0003).
 #   2. file integrity — every NNNN_*.up.sql has a matching NON-EMPTY
 #      *.down.sql (and no orphan downs), no duplicate NNNN prefixes, and
@@ -21,6 +21,8 @@
 #      IF NOT EXISTS under SET LOCAL lock_timeout (see the pass).
 #   7. CAGG re-materialization — a file that recreates a continuous
 #      aggregate WITH NO DATA names its refresh (see the pass).
+#   8. atomicity — no SQL after a file's first COMMIT/ROLLBACK (see the
+#      pass).
 #
 # ── register-completeness detail ──
 #
@@ -445,7 +447,43 @@ for f in "$MIG_DIR"/*.sql; do
 done
 echo "lint-migrations: CAGG re-materialization pass inspected ${cagg_files} WITH NO DATA file(s) under ${MIG_DIR}."
 
+# ── pass 8: atomicity ───────────────────────────────────────────────
+# golang-migrate sends a whole file as ONE simple-protocol query, which
+# Postgres runs as one implicit transaction. An explicit COMMIT/ROLLBACK
+# ends it, so every statement after the first one runs in a fresh
+# transaction: a failure there leaves the earlier half durable and the
+# version dirty (GH #1158). BEGIN; … COMMIT; around the whole body is
+# fine; anything but comments after the COMMIT is not. TXN_DIR is the
+# fixture seam for scripts/ci/lint-migrations-test.sh.
+#
+# 0030's up is the one shipped instance. Its up body is immutable, so it
+# is exempted here and 0168 restores what a failed tail would lose.
+TXN_DIR="${TXN_DIR:-migrations}"
+txn_exempt="0030_asset_supply_history_unique_constraint.up.sql"
+txn_files=0
+for f in "$TXN_DIR"/*.sql; do
+  [ -e "$f" ] || continue
+  txn_files=$((txn_files + 1))
+  [ "$(basename "$f")" = "$txn_exempt" ] && continue
+  after="$(awk '
+    { line = $0; sub(/--.*/, "", line); gsub(/^[ \t]+|[ \t]+$/, "", line)
+      if (line == "") next
+      if (ended) { print FNR ": " $0; exit }
+      if (toupper(line) ~ /^(COMMIT|ROLLBACK|ABORT)([ \t]+(WORK|TRANSACTION))?[ \t]*;$/) ended = 1 }
+  ' "$f")"
+  if [ -n "$after" ]; then
+    echo "lint-migrations ❌ ${f}:${after%%:*}: SQL after the file's COMMIT/ROLLBACK runs in a separate transaction — a failure there leaves the migration half-applied. Keep every statement inside the one transaction." >&2
+    fail=1
+  fi
+done
+if [ "$txn_files" -eq 0 ]; then
+  echo "lint-migrations ❌ no *.sql under ${TXN_DIR} — the atomicity pass cannot pass vacuously" >&2
+  fail=1
+fi
+echo "lint-migrations: atomicity pass inspected ${txn_files} file(s) under ${TXN_DIR}."
+
+
 if [ "$fail" -eq 0 ]; then
-  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money + down-delete, ${down_files} downs + hypertable index + CAGG re-materialization)."
+  echo "✅ migration lint passed (money-column + pairing/numbering/non-empty + register + ClickHouse money + down-delete, ${down_files} downs + hypertable index + CAGG re-materialization + atomicity)."
 fi
 exit "$fail"

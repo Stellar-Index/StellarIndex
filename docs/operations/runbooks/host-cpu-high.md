@@ -44,14 +44,14 @@ one-shots (re-derives, backfills, bulk SQL, census walks) run
 under `/usr/local/sbin/run-heavy-job.sh`, a transient systemd
 scope with **batch-class CPU/IO weights (CPUWeight=25 /
 IOWeight=25) and MemoryMax=20G**, while galexie carries elevated
-CPU/IO weight + `MemoryLow=16G`. A `run-heavy-*.scope` dominating
+CPU/IO weight + `MemoryLow=16G`. A `heavy-*.scope` dominating
 `systemd-cgtop` is a deprioritised batch job doing its work —
 expected, not a fault; the scheduler will preempt it for the
 service units. The classic real fault is the inverse: **a heavy
 binary run raw (unwrapped)**, which is how the 2026-07-05
 unwindowed re-derive ballooned and wedged galexie's captive core
 for 11 h. If the top CPU consumer is a heavy ops process NOT
-inside a `run-heavy-*.scope`, stop it and re-run under the
+inside a `heavy-*.scope`, stop it and re-run under the
 wrapper.
 
 ## Typical root causes

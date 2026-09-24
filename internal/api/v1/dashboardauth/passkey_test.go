@@ -193,6 +193,51 @@ func TestPasskeyBeginLogin_OptionsAndCeremonyCookie(t *testing.T) {
 	}
 }
 
+// TestPasskeyBeginLogin_CappedPerIP — begin-login is anonymous and each
+// call reserves a ceremony in the shared allkeys-lru Redis, so one IP
+// must not be able to mint reservations at the anonymous request
+// ceiling. Past the cap the call is refused with 429 and, crucially,
+// writes no reservation; another IP keeps its own budget.
+func TestPasskeyBeginLogin_CappedPerIP(t *testing.T) {
+	rig := newPasskeyRig(t)
+	guard := newEvictableCeremonyGuard()
+	rig.h.cfg.PasskeyCeremonyGuard = guard
+
+	begin := func(remoteAddr string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/auth/passkey/begin-login", nil)
+		req.RemoteAddr = remoteAddr
+		w := httptest.NewRecorder()
+		rig.h.HandlePasskeyBeginLogin(w, req)
+		return w
+	}
+
+	for i := range passkeyBeginLoginMaxPerIP {
+		if w := begin("203.0.113.7:40000"); w.Code != http.StatusOK {
+			t.Fatalf("begin %d: status = %d, want 200 (%s)", i+1, w.Code, w.Body.String())
+		}
+	}
+	w := begin("203.0.113.7:40001")
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("begin past cap: status = %d, want 429", w.Code)
+	}
+	if got, want := w.Header().Get("Retry-After"), "60"; got != want {
+		t.Fatalf("Retry-After = %q, want %q", got, want)
+	}
+	if c := ceremonyCookie(t, w); c != nil {
+		t.Fatal("a throttled begin still issued a ceremony cookie")
+	}
+	guard.mu.Lock()
+	reserved := len(guard.live)
+	guard.mu.Unlock()
+	if reserved != passkeyBeginLoginMaxPerIP {
+		t.Fatalf("reservations = %d, want %d — a throttled begin wrote to the guard's store",
+			reserved, passkeyBeginLoginMaxPerIP)
+	}
+	if w := begin("198.51.100.9:40000"); w.Code != http.StatusOK {
+		t.Fatalf("other IP: status = %d, want 200", w.Code)
+	}
+}
+
 func TestPasskeyBeginRegister_RequiresSessionAndExcludesExisting(t *testing.T) {
 	rig := newPasskeyRig(t)
 

@@ -77,6 +77,10 @@ func TestMonthlyQuota_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 	runAbortedWithSubject(t, mw, attacker)
 	clock.advance(middleware.DefaultMonthlyQuotaDwellTime + time.Second)
 	runAbortedWithSubject(t, mw, attacker)
+	if reader.liveReads != 2 {
+		t.Fatalf("the abort flood reached the counter on a live context %d times, want 2: "+
+			"the month-to-date read is still bound to the client's cancellation", reader.liveReads)
+	}
 
 	// A DIFFERENT, well-behaved metered customer now hits one genuine
 	// transient blip. The gate's documented posture for a single blip is
@@ -95,11 +99,12 @@ func TestMonthlyQuota_ClientAbortsDoNotArmFailClosed(t *testing.T) {
 
 	// And with the counter healthy again, metering is ordinary.
 	reader.blip = nil
+	readsBefore := reader.liveReads
 	if status, _, _ := runWithSubject(t, mw, victim); status != http.StatusOK {
 		t.Fatalf("healthy read status = %d, want 200", status)
 	}
-	if reader.liveReads == 0 {
-		t.Fatal("the counter was never read on a live context — the gate is not actually metering")
+	if got := reader.liveReads - readsBefore; got != 1 {
+		t.Fatalf("the healthy request read the counter %d times, want 1 — the gate is not actually metering", got)
 	}
 }
 

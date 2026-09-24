@@ -722,3 +722,105 @@ func TestParseCreateRequest_AcceptsValidAllowlistForms(t *testing.T) {
 		t.Fatalf("valid body rejected: status=%d problem=%q", status, problem)
 	}
 }
+
+type recordingAuditSink struct {
+	mu      sync.Mutex
+	entries []platform.AuditEntry
+}
+
+func (s *recordingAuditSink) Append(_ context.Context, e platform.AuditEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.entries = append(s.entries, e)
+	return nil
+}
+
+func (s *recordingAuditSink) AppendBatch(ctx context.Context, entries []platform.AuditEntry) error {
+	for _, e := range entries {
+		if err := s.Append(ctx, e); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *recordingAuditSink) List(context.Context, platform.AuditQuery) ([]platform.AuditEntry, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]platform.AuditEntry(nil), s.entries...), nil
+}
+
+func (s *recordingAuditSink) only(t *testing.T) platform.AuditEntry {
+	t.Helper()
+	all, _ := s.List(context.Background(), platform.AuditQuery{})
+	if len(all) != 1 {
+		t.Fatalf("audit rows = %d, want exactly 1 (%+v)", len(all), all)
+	}
+	return all[0]
+}
+
+// TestHandleCreate_WritesKeyMintAuditRow — a dashboard mint lands the same
+// key.mint row /v1/account/keys and /v1/admin/keys write.
+func TestHandleCreate_WritesKeyMintAuditRow(t *testing.T) {
+	h, _, sc := newTestRig(t)
+	sink := &recordingAuditSink{}
+	h.cfg.Audit = sink
+	req := sessionRequest(t, http.MethodPost, "/v1/dashboard/keys", createRequest{Name: "production"}, sc)
+	w := httptest.NewRecorder()
+	h.HandleCreate(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp createResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	e := sink.only(t)
+	if e.Action != "key.mint" || e.ActorKind != platform.ActorUser || e.ActorUserID != sc.User.ID ||
+		e.AccountID != sc.Account.ID || e.TargetKind != "api_key" || e.TargetID != resp.Key.ID {
+		t.Fatalf("audit row = %+v, want key.mint by the session user on %s", e, resp.Key.ID)
+	}
+	if e.IP.String() != "203.0.113.5" {
+		t.Fatalf("audit ip = %v, want the caller's", e.IP)
+	}
+	if strings.Contains(string(e.Metadata), resp.Plaintext) {
+		t.Fatal("key.mint audit metadata carries the plaintext key")
+	}
+	var meta map[string]any
+	if err := json.Unmarshal(e.Metadata, &meta); err != nil {
+		t.Fatalf("metadata: %v", err)
+	}
+	if meta["session_id"] != sc.Session.ID.String() || meta["name"] != "production" || meta["route"] != "/v1/dashboard/keys" {
+		t.Fatalf("audit metadata = %v", meta)
+	}
+}
+
+// TestHandleRevoke_WritesKeyRevokeAuditRow — and a refused cross-account
+// revoke writes nothing.
+func TestHandleRevoke_WritesKeyRevokeAuditRow(t *testing.T) {
+	h, store, sc := newTestRig(t)
+	sink := &recordingAuditSink{}
+	h.cfg.Audit = sink
+	store.byID["k-theirs"] = platform.APIKey{ID: "k-theirs", AccountID: uuid.New(), Name: "theirs"}
+	store.byID["k-mine"] = platform.APIKey{ID: "k-mine", AccountID: sc.Account.ID, Name: "mine"}
+
+	req := sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-theirs", nil, sc)
+	req.SetPathValue("id", "k-theirs")
+	w := httptest.NewRecorder()
+	h.HandleRevoke(w, req)
+	if w.Code != http.StatusNotFound || len(sink.entries) != 0 {
+		t.Fatalf("cross-account revoke: status %d, audit rows %d — want 404 and none", w.Code, len(sink.entries))
+	}
+
+	req = sessionRequest(t, http.MethodDelete, "/v1/dashboard/keys/k-mine", nil, sc)
+	req.SetPathValue("id", "k-mine")
+	w = httptest.NewRecorder()
+	h.HandleRevoke(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d", w.Code)
+	}
+	e := sink.only(t)
+	if e.Action != "key.revoke" || e.ActorUserID != sc.User.ID || e.AccountID != sc.Account.ID || e.TargetID != "k-mine" {
+		t.Fatalf("audit row = %+v, want key.revoke by the session user on k-mine", e)
+	}
+}

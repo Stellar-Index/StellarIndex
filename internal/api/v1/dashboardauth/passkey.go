@@ -50,6 +50,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -58,6 +59,8 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/google/uuid"
 
+	"github.com/Stellar-Index/StellarIndex/internal/api/v1/middleware"
+	"github.com/Stellar-Index/StellarIndex/internal/obs"
 	"github.com/Stellar-Index/StellarIndex/internal/platform"
 )
 
@@ -78,6 +81,17 @@ const passkeyCeremonyTTL = 5 * time.Minute
 // TTL expiry under a still-valid challenge, which would refuse a
 // legitimate sign-in for no security gain.
 const passkeyCeremonyReserveSlack = time.Minute
+
+// passkeyBeginLoginMaxPerIP per passkeyBeginLoginWindow caps anonymous
+// begin-login calls per client IP (/64 for IPv6). Each begin reserves
+// its ceremony for passkeyCeremonyTTL+slack in the shared allkeys-lru
+// Redis, so under the anonymous request ceiling alone one IP could hold
+// tens of thousands of live reservations; this bounds it to ~120 per
+// API instance. A human sign-in needs one begin per attempt.
+const (
+	passkeyBeginLoginMaxPerIP = 20
+	passkeyBeginLoginWindow   = time.Minute
+)
 
 // passkeyCeremonyDomain domain-separates the ceremony-cookie HMAC
 // from the login-code HMAC that shares the server secret.
@@ -579,6 +593,7 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	h.recordPasskeyRegistered(r, sc, row)
 	h.clearPasskeyCeremonyCookie(w)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(passkeyDTOFrom(row))
@@ -591,6 +606,9 @@ func (h *Handlers) HandlePasskeyFinishRegister(w http.ResponseWriter, r *http.Re
 // revealed — the authenticator picks the account, so this endpoint
 // leaks nothing an anonymous caller didn't already have.
 func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Request) {
+	if !h.allowPasskeyBeginLogin(w, r) {
+		return
+	}
 	wa, err := h.webAuthn()
 	if err != nil {
 		h.cfg.Logger.Error("webauthn config", "err", err)
@@ -630,6 +648,25 @@ func (h *Handlers) HandlePasskeyBeginLogin(w http.ResponseWriter, r *http.Reques
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(assertion)
+}
+
+// allowPasskeyBeginLogin enforces the per-IP begin-login cap, writing
+// the refusal itself. It runs before any ceremony is minted, so a
+// throttled call writes nothing to the ceremony guard's store.
+func (h *Handlers) allowPasskeyBeginLogin(w http.ResponseWriter, r *http.Request) bool {
+	limiter := h.cfg.passkeyBeginLimiter
+	if limiter == nil {
+		// Only reachable by bypassing NewHandlers; refuse rather than run uncapped.
+		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
+		return false
+	}
+	if limiter.Allow(middleware.RemoteIPThrottleKey(r), passkeyBeginLoginMaxPerIP) {
+		return true
+	}
+	h.cfg.Logger.Warn("passkey begin-login throttled", "ip", clientIP(r).String())
+	w.Header().Set("Retry-After", strconv.Itoa(int(passkeyBeginLoginWindow/time.Second)))
+	writeProblem(w, http.StatusTooManyRequests, "too many passkey sign-in attempts; retry later", r.URL.Path)
+	return false
 }
 
 // HandlePasskeyFinishLogin verifies the assertion and mints the same
@@ -704,9 +741,7 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 		// Sign-count regression: at least two copies of the private
 		// key may exist. Refuse the login and leave a loud trail —
 		// this is the one WebAuthn signal of credential theft.
-		h.cfg.Logger.Error("passkey clone warning — refusing login",
-			"user_id", matchedUser.ID, "credential_id", matchedRow.ID, "ip", clientIP(r).String())
-		writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
+		h.refusePasskeyCloneWarning(w, r, matchedUser, matchedRow, parsed.Response.AuthenticatorData.Counter)
 		return
 	}
 	// Spend the challenge. This is the step that makes a CAPTURED
@@ -720,9 +755,7 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 	// email-code sign-in keeps working is the right way to fail.
 	if err := h.consumeCeremony(r.Context(), ceremony); err != nil {
 		if errors.Is(err, errPasskeyCeremonyReplayed) {
-			h.cfg.Logger.Warn("passkey ceremony replay refused",
-				"user_id", matchedUser.ID, "credential_id", matchedRow.ID, "ip", clientIP(r).String())
-			writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
+			h.refusePasskeyReplay(w, r, matchedUser, matchedRow, parsed.Response.AuthenticatorData.Counter)
 			return
 		}
 		h.cfg.Logger.Error("consume passkey ceremony", "err", err, "user_id", matchedUser.ID)
@@ -752,6 +785,32 @@ func (h *Handlers) HandlePasskeyFinishLogin(w http.ResponseWriter, r *http.Reque
 	h.clearPasskeyCeremonyCookie(w)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(verifyCodeResponse{Status: "ok"})
+}
+
+// refusePasskeyCloneWarning refuses a login whose authenticator reported
+// a sign-count regression — at least two copies of the private key may
+// exist. Split out of [Handlers.HandlePasskeyFinishLogin] for funlen.
+func (h *Handlers) refusePasskeyCloneWarning(
+	w http.ResponseWriter, r *http.Request, user platform.User, cred platform.WebAuthnCredential, signCount uint32,
+) {
+	h.cfg.Logger.Error("passkey clone warning — refusing login",
+		"user_id", user.ID, "credential_id", cred.ID, "ip", clientIP(r).String())
+	h.recordPasskeyLoginRefusal(r, AuditActionPasskeyCloneWarning, obs.PasskeyRefusalCloneWarning,
+		user, cred, signCount)
+	writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
+}
+
+// refusePasskeyReplay refuses a finish-login request whose ceremony was
+// already consumed — a captured request replayed a second time. Split
+// out of [Handlers.HandlePasskeyFinishLogin] for funlen.
+func (h *Handlers) refusePasskeyReplay(
+	w http.ResponseWriter, r *http.Request, user platform.User, cred platform.WebAuthnCredential, signCount uint32,
+) {
+	h.cfg.Logger.Warn("passkey ceremony replay refused",
+		"user_id", user.ID, "credential_id", cred.ID, "ip", clientIP(r).String())
+	h.recordPasskeyLoginRefusal(r, AuditActionPasskeyLoginReplay, obs.PasskeyRefusalCeremonyReplay,
+		user, cred, signCount)
+	writeProblem(w, http.StatusBadRequest, "passkey sign-in failed — try again", r.URL.Path)
 }
 
 // ─── Management (session-gated) ───────────────────────────────────
@@ -830,5 +889,10 @@ func (h *Handlers) HandlePasskeyDelete(w http.ResponseWriter, r *http.Request) {
 		writeProblem(w, http.StatusInternalServerError, "internal error", r.URL.Path)
 		return
 	}
+	RecordSessionCredentialEvent(r, h.cfg.Audit, h.cfg.Logger, h.cfg.Now(), sc, CredentialEvent{
+		Action:     AuditActionPasskeyDelete,
+		TargetKind: auditTargetPasskey,
+		TargetID:   id.String(),
+	})
 	w.WriteHeader(http.StatusNoContent)
 }

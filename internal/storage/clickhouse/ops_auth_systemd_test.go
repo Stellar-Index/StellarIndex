@@ -4,6 +4,7 @@
 package clickhouse
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -94,77 +95,196 @@ func TestOpsBatchIdentityNeverReachesLiveDaemons(t *testing.T) {
 		}
 	}
 
-	// The ops env file, as docs/operations/clickhouse-ops-batch-profile.md
-	// tells the operator to write it.
-	const opsUser, opsPass = "ops_batch", "vault-generated-hex"
+	requireHeavyJobWrapperImportsPair(t, root)
+	scripts := loadOpsScripts(t, root)
 
 	var liveChecked, batchChecked []string
 	for _, u := range units {
-		env := u.resolveEnv(map[string]string{OpsUserEnv: opsUser, OpsPasswordEnv: opsPass})
+		env := u.resolveEnv(opsEnvPair, scripts)
 		auth, err := opsAuthFrom(func(k string) string { return env[k] })
 		if err != nil {
 			t.Fatalf("%s: opsAuthFrom on the resolved unit environment: %v", u.rel, err)
 		}
-
-		switch {
-		case u.runsAnyOf(serving):
+		arm, violation := identityViolation(u, auth, serving, scripts)
+		switch arm {
+		case armLive:
 			liveChecked = append(liveChecked, u.rel)
-			want := clickhouse.Auth{Database: "stellar"}
-			if auth != want {
-				t.Errorf("%s starts a live serving binary but would authenticate to ClickHouse as %+v, want %+v (CH's unauthenticated `default` user).\n"+
-					"  It sources %v, and the ops-batch pair is templated into /etc/default/%s, so every ClickHouse connection this daemon opens would run at the LOW-priority ops_batch tier — the inverse of the 2026-08-28 r1 incident (#243, #292).\n"+
-					"  Fix: add `UnsetEnvironment=%s %s` to the unit's [Service] section (or stop sourcing the batch env file).",
-					u.rel, auth, want, u.envFile, opsEnvFileBase, OpsUserEnv, OpsPasswordEnv)
-			}
-		case u.runsAnyOf(opsBinary):
-			// A unit that runs the ops CLI directly IS the batch tier —
-			// it MUST resolve to ops_batch, whether or not it currently
-			// sources the file (#113: 13 ansible rollup/sync units ran
-			// stellarindex-ops without ever sourcing the ops env file
-			// and so stayed at CH `default`/serving priority).
+		case armBatch:
 			batchChecked = append(batchChecked, u.rel)
-			want := clickhouse.Auth{Database: "stellar", Username: opsUser, Password: opsPass}
-			if auth != want {
-				t.Errorf("%s runs stellarindex-ops directly but would authenticate as %+v, want %+v.\n"+
-					"  Fix: add `EnvironmentFile=-/etc/default/%s` to the unit's [Service] section.",
-					u.rel, auth, want, opsEnvFileBase)
-			}
-		case u.sourcesOpsEnvFile():
-			batchChecked = append(batchChecked, u.rel)
-			want := clickhouse.Auth{Database: "stellar", Username: opsUser, Password: opsPass}
-			if auth != want {
-				t.Errorf("%s is a batch unit sourcing /etc/default/%s but would authenticate as %+v, want %+v.\n"+
-					"  Batch jobs are exactly who the low-priority profile is FOR (#243); stripping the pair here re-creates the incident it fixed.",
-					u.rel, opsEnvFileBase, auth, want)
-			}
+		}
+		if violation != "" {
+			t.Error(violation)
 		}
 	}
 
-	// Non-vacuity: both halves must have had something to assert, and the
-	// six known live-daemon units must be among them.
-	sort.Strings(liveChecked)
-	for _, want := range []string{
+	// Non-vacuity: the six known live-daemon units, and batch units from
+	// each batch route (direct, via a shipped script), must be examined.
+	requireExamined(t, "live-daemon", liveChecked, []string{
 		"deploy/systemd/stellarindex-indexer.service",
 		"deploy/systemd/stellarindex-aggregator.service",
 		"deploy/systemd/stellarindex-api.service",
 		"configs/ansible/roles/archival-node/templates/systemd/stellarindex-indexer.service.j2",
 		"configs/ansible/roles/archival-node/templates/systemd/stellarindex-aggregator.service.j2",
 		"configs/ansible/roles/archival-node/templates/systemd/stellarindex-api.service.j2",
-	} {
-		if sort.SearchStrings(liveChecked, want) >= len(liveChecked) || liveChecked[sort.SearchStrings(liveChecked, want)] != want {
-			t.Fatalf("live-daemon unit %s was not among the units examined (%v) — the discovery drifted and this test is no longer covering it", want, liveChecked)
+	})
+	requireExamined(t, "batch", batchChecked, []string{
+		"configs/ansible/roles/archival-node/templates/systemd/cap67-movements.service.j2",
+		"configs/ansible/roles/archival-node/templates/systemd/ch-supply.service.j2",
+		"configs/ansible/roles/archival-node/templates/systemd/compute-completeness.service.j2",
+		"deploy/systemd/stellarindex-completeness.service",
+	})
+}
+
+// opsEnvPair is the ops env file's pair, as
+// docs/operations/clickhouse-ops-batch-profile.md tells the operator to write it.
+var opsEnvPair = map[string]string{OpsUserEnv: "ops_batch", OpsPasswordEnv: "vault-generated-hex"}
+
+const (
+	armLive  = "live"
+	armBatch = "batch"
+)
+
+// identityViolation classifies u (armLive, armBatch, or "" when the unit
+// never reaches a ClickHouse-opening stellarindex binary) and describes
+// why auth is the wrong identity for that arm, or returns "" when right.
+func identityViolation(u systemdUnit, auth clickhouse.Auth, serving map[string]bool, scripts map[string]opsScript) (arm, violation string) {
+	batchWant := clickhouse.Auth{Database: "stellar", Username: opsEnvPair[OpsUserEnv], Password: opsEnvPair[OpsPasswordEnv]}
+	switch {
+	case u.runsAnyOf(serving):
+		want := clickhouse.Auth{Database: "stellar"}
+		if auth != want {
+			violation = fmt.Sprintf("%s starts a live serving binary but would authenticate to ClickHouse as %+v, want %+v (CH's unauthenticated `default` user).\n"+
+				"  It sources %v, and the ops-batch pair is templated into /etc/default/%s, so every ClickHouse connection this daemon opens would run at the LOW-priority ops_batch tier — the inverse of the 2026-08-28 r1 incident (#243, #292).\n"+
+				"  Fix: add `UnsetEnvironment=%s %s` to the unit's [Service] section (or stop sourcing the batch env file).",
+				u.rel, auth, want, u.envFile, opsEnvFileBase, OpsUserEnv, OpsPasswordEnv)
 		}
+		return armLive, violation
+	case u.runsAnyOf(opsBinary) || u.reachesOpsViaScript(scripts):
+		// Running the ops CLI, directly or through a shipped script, IS
+		// the batch tier: it MUST resolve to ops_batch whether or not it
+		// sources the file (#113, #882 — batch units that sourced nothing
+		// ran at CH `default`/serving priority and matched no arm here).
+		if auth != batchWant {
+			violation = fmt.Sprintf("%s runs stellarindex-ops (directly or via a shipped script) but would authenticate as %+v, want %+v.\n"+
+				"  Fix: launch it through %s (imports only the pair), or add `EnvironmentFile=-/etc/default/%s` to the unit's [Service] section.",
+				u.rel, auth, batchWant, heavyJobWrapper, opsEnvFileBase)
+		}
+		return armBatch, violation
+	case u.sourcesOpsEnvFile():
+		if auth != batchWant {
+			violation = fmt.Sprintf("%s is a batch unit sourcing /etc/default/%s but would authenticate as %+v, want %+v.\n"+
+				"  Batch jobs are exactly who the low-priority profile is FOR (#243); stripping the pair here re-creates the incident it fixed.",
+				u.rel, opsEnvFileBase, auth, batchWant)
+		}
+		return armBatch, violation
 	}
-	if len(batchChecked) == 0 {
-		t.Fatalf("no batch unit sourcing /etc/default/%s was found — the ops-batch identity has nowhere left to land, or the discovery drifted", opsEnvFileBase)
+	return "", ""
+}
+
+func requireExamined(t *testing.T, kind string, examined, want []string) {
+	t.Helper()
+	sort.Strings(examined)
+	for _, w := range want {
+		if i := sort.SearchStrings(examined, w); i >= len(examined) || examined[i] != w {
+			t.Fatalf("%s unit %s was not among the units examined (%v) — the discovery drifted and this test is no longer covering it", kind, w, examined)
+		}
 	}
 }
 
-// resolveEnv models the environment systemd hands the unit's process,
-// for the ops-batch pair only: every EnvironmentFile= naming the ops env
-// file contributes `contents`, then UnsetEnvironment= is applied last
-// (systemd.exec(5)).
-func (u systemdUnit) resolveEnv(contents map[string]string) map[string]string {
+// heavyJobWrapper is /usr/local/sbin/run-heavy-job.sh, rendered by
+// 14-stellarindex-services.yml. It imports ONLY the ops-batch pair from
+// the ops env file when the caller has not set it; the rest of that file
+// (MinIO reader keys, DSN) deliberately stays out of the job
+// (scripts/ci/run-heavy-job-test.sh pins the behaviour).
+const heavyJobWrapper = "run-heavy-job.sh"
+
+// requireHeavyJobWrapperImportsPair grounds resolveEnv's wrapper model in
+// the shipped wrapper: if the import goes, the model is fiction.
+func requireHeavyJobWrapperImportsPair(t *testing.T, root string) {
+	t.Helper()
+	const task = "configs/ansible/roles/archival-node/tasks/14-stellarindex-services.yml"
+	b, err := os.ReadFile(filepath.Join(root, task))
+	if err != nil {
+		t.Fatalf("read %s: %v", task, err)
+	}
+	for _, want := range []string{
+		`OPS_ENV="${HEAVY_JOB_OPS_ENV:-/etc/default/` + opsEnvFileBase + `}"`,
+		OpsUserEnv + "=*|" + OpsPasswordEnv + "=*)",
+	} {
+		if !strings.Contains(string(b), want) {
+			t.Fatalf("%s no longer contains %q: %s may have stopped importing the ops-batch pair, so this test's model of wrapped units is no longer true", task, want, heavyJobWrapper)
+		}
+	}
+}
+
+// opsScript is what this test needs to know about a script a unit execs.
+type opsScript struct {
+	invokesOps    bool // runs /usr/local/bin/stellarindex-ops*
+	exportsOpsEnv bool // `load_env_file /etc/default/stellarindex-ops export`
+}
+
+// opsScriptDirs are the repo directories the scripts named in unit
+// ExecStart lines are installed from.
+var opsScriptDirs = []string{"configs/ansible/roles/archival-node/files", "scripts/ops"}
+
+// loadOpsScripts indexes every shipped script by basename (the name a
+// unit's ExecStart uses once installed), from its non-comment lines.
+func loadOpsScripts(t *testing.T, root string) map[string]opsScript {
+	t.Helper()
+	scripts := map[string]opsScript{}
+	for _, d := range opsScriptDirs {
+		matches, err := filepath.Glob(filepath.Join(root, d, "*"))
+		if err != nil || len(matches) == 0 {
+			t.Fatalf("glob %s/*: %d matches, err %v — script discovery drifted", d, len(matches), err)
+		}
+		for _, m := range matches {
+			b, err := os.ReadFile(m)
+			if err != nil {
+				continue // a directory
+			}
+			s := scripts[filepath.Base(m)]
+			for _, line := range strings.Split(string(b), "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "#") {
+					continue
+				}
+				s.invokesOps = s.invokesOps || strings.Contains(line, "/usr/local/bin/stellarindex-ops")
+				s.exportsOpsEnv = s.exportsOpsEnv || line == "load_env_file /etc/default/"+opsEnvFileBase+" export"
+			}
+			scripts[filepath.Base(m)] = s
+		}
+	}
+	return scripts
+}
+
+// execScripts yields the shipped scripts named by absolute path in the
+// unit's ExecStart (including as run-heavy-job.sh's command argument).
+func (u systemdUnit) execScripts(scripts map[string]opsScript) []opsScript {
+	var out []opsScript
+	for _, tok := range execTokens(u.exec) {
+		if s, ok := scripts[filepath.Base(tok)]; ok && strings.HasPrefix(tok, "/") {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func (u systemdUnit) reachesOpsViaScript(scripts map[string]opsScript) bool {
+	for _, s := range u.execScripts(scripts) {
+		if s.invokesOps {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveEnv models the environment the unit's ClickHouse-opening child
+// process sees, for the ops-batch pair only: every EnvironmentFile=
+// naming the ops env file contributes `contents`, UnsetEnvironment= is
+// applied after them (systemd.exec(5)), and then, inside the process,
+// run-heavy-job.sh imports the pair when unset and a script that
+// exports the ops env file loads it.
+func (u systemdUnit) resolveEnv(contents map[string]string, scripts map[string]opsScript) map[string]string {
 	env := map[string]string{}
 	for _, f := range u.envFile {
 		if filepath.Base(f) != opsEnvFileBase {
@@ -176,6 +296,13 @@ func (u systemdUnit) resolveEnv(contents map[string]string) map[string]string {
 	}
 	for k := range u.unset {
 		delete(env, k)
+	}
+	imports := u.runsAnyOf(map[string]bool{heavyJobWrapper: true}) && env[OpsUserEnv] == ""
+	for _, s := range u.execScripts(scripts) {
+		imports = imports || s.exportsOpsEnv
+	}
+	if imports {
+		env[OpsUserEnv], env[OpsPasswordEnv] = contents[OpsUserEnv], contents[OpsPasswordEnv]
 	}
 	return env
 }
@@ -192,14 +319,18 @@ func (u systemdUnit) sourcesOpsEnvFile() bool {
 // runsAnyOf reports whether the unit's ExecStart executes one of the
 // given binaries, including through a `/bin/sh -c '...'` wrapper.
 func (u systemdUnit) runsAnyOf(bins map[string]bool) bool {
-	for _, tok := range strings.FieldsFunc(u.exec, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == '\'' || r == '"'
-	}) {
+	for _, tok := range execTokens(u.exec) {
 		if strings.HasPrefix(tok, "/") && bins[filepath.Base(tok)] {
 			return true
 		}
 	}
 	return false
+}
+
+func execTokens(exec string) []string {
+	return strings.FieldsFunc(exec, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '\'' || r == '"'
+	})
 }
 
 // parseSystemdUnit reads the [Service] directives this test reasons
@@ -294,4 +425,43 @@ func systemdRepoRoot(t *testing.T) string {
 		t.Fatalf("repo root %s has no go.mod: %v", root, err)
 	}
 	return root
+}
+
+// TestOpsBatchIdentityScriptRoutedBatchUnits pins the arm for a unit that
+// reaches stellarindex-ops through a shipped script (#882): one that gets
+// the pair from nowhere must be reported, not silently skipped.
+func TestOpsBatchIdentityScriptRoutedBatchUnits(t *testing.T) {
+	scripts := map[string]opsScript{
+		"run-job.sh":       {invokesOps: true},
+		"run-exporting.sh": {invokesOps: true, exportsOpsEnv: true},
+		"curl-only.sh":     {},
+	}
+	serving := map[string]bool{"stellarindex-api": true}
+	cases := []struct {
+		name, exec    string
+		envFile       []string
+		wantArm       string
+		wantViolation bool
+	}{
+		{"script sourcing nothing", "/usr/local/sbin/run-job.sh", []string{"/etc/default/stellarindex"}, armBatch, true},
+		{"script under the heavy-job wrapper", "/usr/local/sbin/run-heavy-job.sh job /usr/local/sbin/run-job.sh", []string{"/etc/default/stellarindex"}, armBatch, false},
+		{"script that exports the ops env", "/usr/local/bin/run-exporting.sh", nil, armBatch, false},
+		{"script with the ops EnvironmentFile", "/usr/local/sbin/run-job.sh", []string{"/etc/default/stellarindex-ops"}, armBatch, false},
+		{"direct ops sourcing nothing", "/usr/local/bin/stellarindex-ops ch-supply", nil, armBatch, true},
+		{"script that never runs the ops CLI", "/usr/local/sbin/curl-only.sh", nil, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			u := systemdUnit{rel: tc.name, envFile: tc.envFile, unset: map[string]bool{}, exec: tc.exec}
+			env := u.resolveEnv(opsEnvPair, scripts)
+			auth, err := opsAuthFrom(func(k string) string { return env[k] })
+			if err != nil {
+				t.Fatal(err)
+			}
+			arm, violation := identityViolation(u, auth, serving, scripts)
+			if arm != tc.wantArm || (violation != "") != tc.wantViolation {
+				t.Fatalf("arm %q violation %q, want arm %q violation=%v", arm, violation, tc.wantArm, tc.wantViolation)
+			}
+		})
+	}
 }

@@ -5,10 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/Stellar-Index/StellarIndex/internal/canonical"
 )
@@ -245,10 +247,11 @@ func configurePool(db *sql.DB) {
 // safety-net behind F-0151 (the 2026-05-26 cascade left dead
 // conns in the pool for ~14 h after postgres@15-main recovered).
 func Open(ctx context.Context, dsn string) (*Store, error) {
-	db, err := sql.Open("pgx", dsn)
+	cfg, err := sessionConnConfig(dsn)
 	if err != nil {
-		return nil, fmt.Errorf("timescale: sql.Open: %w", err)
+		return nil, err
 	}
+	db := stdlib.OpenDB(*cfg)
 	configurePool(db)
 
 	pctx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -258,6 +261,28 @@ func Open(ctx context.Context, dsn string) (*Store, error) {
 		return nil, fmt.Errorf("timescale: ping: %w", err)
 	}
 	return &Store{db: db}, nil
+}
+
+// sessionConnConfig parses dsn for every pool this package opens and pins
+// the session TimeZone to UTC, overriding the server default, PGTZ and any
+// DSN setting. Calendar interval arithmetic on a timestamptz (`now() -
+// INTERVAL '1 day'`, `'1 month'`) is evaluated in the session zone, so the
+// sargable closed-bucket guards only agree with the UTC time_bucket grid
+// when the session is UTC; elsewhere a DST transition shifts them an hour.
+func sessionConnConfig(dsn string) (*pgx.ConnConfig, error) {
+	cfg, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("timescale: pgx.ParseConfig: %w", err)
+	}
+	// GUC names are case-insensitive: drop every spelling so exactly one
+	// timezone reaches the startup packet.
+	for k := range cfg.RuntimeParams {
+		if strings.EqualFold(k, "timezone") {
+			delete(cfg.RuntimeParams, k)
+		}
+	}
+	cfg.RuntimeParams["timezone"] = "UTC"
+	return cfg, nil
 }
 
 // PingContext exercises the underlying *sql.DB pool. Used by the

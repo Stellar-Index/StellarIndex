@@ -14,14 +14,15 @@ import (
 // XLM base+quote anchor legs — must not silently regress; a full-behaviour
 // check lives in the integration suite (TestSorobanVolume24hUSD_*).
 func TestSorobanVolume24hUSDQueryShape(t *testing.T) {
-	q := sorobanVolume24hUSDQuery
+	// Whitespace-collapsed so the pins below match SQL, not its layout.
+	q := strings.Join(strings.Fields(sorobanVolume24hUSDQuery), " ")
 
 	// Bounded on BOTH the anchor CTE and the outer scan — the whole point
 	// is a cheap 24h read, not a full prices_1m history walk.
 	if strings.Count(q, "bucket >= now() - INTERVAL '24 hours'") < 2 {
 		t.Error("query missing the 24h lower bound on the anchor CTE and/or the outer scan")
 	}
-	if !strings.Contains(q, "AND bucket  < now()") {
+	if !strings.Contains(q, "AND bucket < now()") {
 		t.Error("query missing the closed `bucket < now()` upper bound on the outer scan")
 	}
 

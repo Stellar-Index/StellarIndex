@@ -434,3 +434,110 @@ var (
 	_ = miniredis.RunT
 	_ = cachekeys.Freeze
 )
+
+// ─── An owned ladder nobody advances is bounded like the unowned one ───
+//
+// A window that escalated and then dropped under the USD-volume floor never
+// reaches the freeze step again, so it never retires its own entry, while a
+// still-frozen sibling keeps re-marking the pair. Its escalated ladder must
+// not survive past its hold plus the grace, or the next restart rehydrates
+// it and holds a window nothing is wrong with until a manual unfreeze.
+
+// abandonedEscalated is an escalated ladder whose last writer stopped
+// hours ago: well past HoldUntil plus any grace.
+func abandonedEscalated(now time.Time) freeze.State {
+	return freeze.State{
+		FiredAt:        now.Add(-9 * time.Hour),
+		HoldUntil:      now.Add(-6 * time.Hour),
+		ExtensionsUsed: freeze.DefaultMaxExtensions,
+		Escalated:      true,
+	}
+}
+
+// seedShortLadderBeside writes a windowed marker in which the 5m window
+// holds an abandoned escalated ladder and the 1h window holds `long`.
+func seedShortLadderBeside(t *testing.T, long freeze.State) (*miniredis.Miniredis, *freeze.Writer, string) {
+	t.Helper()
+	mr, rdb := newRedis(t)
+	w, err := freeze.NewWriter(rdb, 0)
+	if err != nil {
+		t.Fatalf("NewWriter: %v", err)
+	}
+	asset, quote := nativeUSD(t)
+	body, err := json.Marshal(freeze.Marker{
+		AssetID: asset.String(), QuoteID: quote.String(), Windowed: true,
+		Ladders: map[string]freeze.State{
+			shortWindow.String(): abandonedEscalated(time.Now().UTC()),
+			longWindow.String():  long,
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal marker: %v", err)
+	}
+	key := cachekeys.Freeze(asset, quote).String()
+	if err := mr.Set(key, string(body)); err != nil {
+		t.Fatalf("seed marker: %v", err)
+	}
+	return mr, w, key
+}
+
+func TestLoadStateForWindow_AbandonedOwnedLadderIsNotRehydrated(t *testing.T) {
+	_, w, _ := seedShortLadderBeside(t, escalatedState(time.Now().UTC()))
+	asset, quote := nativeUSD(t)
+	st, present, err := w.LoadStateForWindow(context.Background(), asset, quote, shortWindow)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow: %v", err)
+	}
+	if !present {
+		t.Fatal("present = false; the pair's marker is still there")
+	}
+	if st.Active() || st.Escalated {
+		t.Fatalf("5m window rehydrated an abandoned ladder: %+v; want the zero State", st)
+	}
+	long, _, err := w.LoadStateForWindow(context.Background(), asset, quote, longWindow)
+	if err != nil {
+		t.Fatalf("LoadStateForWindow(1h): %v", err)
+	}
+	if !long.Escalated {
+		t.Fatalf("1h window lost its live escalated ladder: %+v", long)
+	}
+}
+
+func TestMarkHoldForWindow_PrunesAnAbandonedSiblingLadder(t *testing.T) {
+	now := time.Now().UTC()
+	mr, w, key := seedShortLadderBeside(t, escalatedState(now))
+	asset, quote := nativeUSD(t)
+	if err := w.MarkHoldForWindow(context.Background(), asset, quote, longWindow, "0.1242",
+		freezeDecision(), escalatedState(now), 30*time.Minute); err != nil {
+		t.Fatalf("MarkHoldForWindow(1h): %v", err)
+	}
+	raw, err := mr.Get(key)
+	if err != nil {
+		t.Fatalf("marker gone after re-mark: %v", err)
+	}
+	var got freeze.Marker
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("decode marker: %v", err)
+	}
+	if st, kept := got.Ladders[shortWindow.String()]; kept {
+		t.Fatalf("sibling re-mark carried the abandoned 5m ladder forward: %+v", st)
+	}
+	if !got.Ladders[longWindow.String()].Escalated {
+		t.Fatalf("1h ladder missing from the re-marked marker: %+v", got.Ladders)
+	}
+}
+
+func TestReleaseWindow_AbandonedSiblingDoesNotKeepThePairFrozen(t *testing.T) {
+	mr, w, key := seedShortLadderBeside(t, freshState(time.Now().UTC()))
+	asset, quote := nativeUSD(t)
+	kept, err := w.ReleaseWindow(context.Background(), asset, quote, longWindow)
+	if err != nil {
+		t.Fatalf("ReleaseWindow: %v", err)
+	}
+	if kept {
+		t.Fatal("ReleaseWindow kept the pair frozen on an abandoned sibling ladder")
+	}
+	if mr.Exists(key) {
+		t.Fatal("marker still present after the last live window released")
+	}
+}

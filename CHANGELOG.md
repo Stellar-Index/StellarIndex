@@ -354,6 +354,68 @@ against.
   verdict: a checked verdict under another spelling of the asset wins,
   and only when none exists is `divergence_warning=true,
   divergence_checked=false` served.
+- **auth — operator-minted keys inherit the identifier's monthly
+  ceiling (#1239):** only `POST /v1/account/keys` carried a monthly
+  ceiling onto the key it minted; `POST /v1/admin/keys` and
+  `stellarindex-ops mint-key` build their request without one, so a key
+  an operator minted for a metered customer's identifier was persisted
+  with `monthly_quota: 0` — unmetered, while billing the same
+  per-account counter as the customer's capped keys. The inheritance now
+  lives in the Redis key store's `Create`, which the admin, CLI,
+  self-service and signup mint paths all call: a request without a
+  ceiling takes the most generous ceiling the identifier's existing
+  Redis credentials carry, so a mint can neither lift nor tighten the
+  plan, and a new identifier (or one already holding a live unmetered
+  key) still mints without one. A read failure fails the mint. The
+  `key.mint` audit row and the CLI's audit output now record the
+  ceiling issued. The rotation-resets-the-counter half of #1239 was
+  already closed by per-account metering (RLT-404). Still open: the
+  store sees only Redis records, so an account whose ceiling exists
+  only in Postgres (no Redis mirror or child key) still gets an
+  unmetered operator-minted key; and a self-service child of a
+  Postgres-backed key is written to Redis with its parent's resolved
+  ceiling and read back without the account override cascade, so a
+  later change to that override, up or down, does not reach it.
+
+- **dashboard auth — credential changes are audited (#765):** adding or
+  removing a passkey, and minting or revoking a key from
+  `/v1/dashboard/keys`, now append `passkey.register` /
+  `passkey.delete` / `key.mint` / `key.revoke` rows to `audit_log` with
+  the session, IP and user agent, as `/v1/account/keys` and
+  `/v1/admin/keys` already did. A passkey sign-in refused on a
+  clone warning or a ceremony replay appends a `passkey.clone_warning` /
+  `passkey.login_replay` row and increments the new
+  `stellarindex_passkey_login_refusals_total{reason}`; the new
+  `stellarindex_passkey_clone_warning` alert tickets on a clone warning.
+  Lost rows count on `stellarindex_admin_audit_write_failures_total`
+  under four new `passkey_*` surfaces.
+
+- **aggregator — source contributions keep their window (GH #763):**
+  the contribution sink dropped `ContributionRecord.Window`, so the
+  5m/1h/24h breakdowns of a pair landed in `price_source_contributions`
+  indistinguishable and "latest row" returned whichever window ran
+  last. Migration 0169 adds nullable `window_seconds` plus a
+  window-aware unique key beside 0026's primary key (old-binary-safe),
+  the sink writes it, and `InsertPriceSourceContributions` refuses a
+  row without a whole-second window. 0169 also declares a 90-day
+  retention policy, shipped disabled as 0156's is, and re-issues the table and `bucket`
+  comments to describe the per-tick write they get. Dropping the old
+  key and `SET NOT NULL` is a later release's migration.
+
+- **directory — operator override records its reason (GH #858):** an
+  operator override of a false-positive scam flag republishes a flagged
+  issuer's price but recorded no justification. Migration 0170 adds
+  `account_directory.override_reason` with a CHECK that an
+  `operator-override` row carries a non-blank reason and an upstream row
+  none; `stellarindex-ops directory-override -clear-scam-flag` now
+  requires `-reason TEXT` and stores it. Pre-existing override rows are
+  backfilled with a named placeholder.
+- **explorer — directory label names an operator override (GH #858):** a
+  label whose served `source` is `operator-override` was still attributed
+  wholly to the StellarExpert directory. `DirectoryLabel` now badges it
+  "flag lifted on review" and says the upstream scam-class flag was
+  reviewed as a false positive and removed; the OpenAPI `DirectoryInfo.source`
+  description names the value.
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was

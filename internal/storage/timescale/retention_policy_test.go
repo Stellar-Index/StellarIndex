@@ -176,6 +176,10 @@ func TestRetentionPolicies_AreExactlyTheDeclaredSet(t *testing.T) {
 		// Per-account usage rollups, 12 months (0167) — the same
 		// horizon as api_usage_events. Served for 30 days only.
 		"usage_daily": "0167_usage_daily_retention.up.sql",
+		// Per-tick source-contribution breakdowns, 90 days, shipped
+		// disabled (0169). Appended once per aggregator tick per
+		// (pair, window, source); only the latest bucket is ever read.
+		"price_source_contributions": "0169_price_source_contributions_window.up.sql",
 	}
 
 	held := retentionLedger(t)

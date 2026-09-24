@@ -94,7 +94,9 @@ func (g HistoryGranularity) Validate() error {
 
 // closedBucketInterval is the Postgres INTERVAL string that the
 // closed-bucket guard subtracts from now() per ADR-0015. Equal to
-// the granularity's bucket size.
+// the granularity's bucket size. The calendar spellings ('1 day', '1 month')
+// step on the UTC bucket grid only because [sessionConnConfig] pins every
+// pool's session TimeZone to UTC.
 func (g HistoryGranularity) closedBucketInterval() string {
 	switch g {
 	case Granularity1m:
@@ -470,7 +472,9 @@ func (s *Store) HistoryPoints(ctx context.Context, p canonical.Pair, granularity
 	// alone is not a total order once a bucket holds both directions, and
 	// ADR-0015's byte-identical cross-region serving should not rest on a
 	// planner-defined intra-bucket order. [combineDirVWAP] is commutative,
-	// so the served value is unchanged either way.
+	// so the served value is unchanged either way. With limit=0 and custom
+	// plans (the serving pool) that sort streams as Merge Append on bucket
+	// + Incremental Sort; history_points_unbounded_plan_test.go pins it.
 	args := []any{p.Base.String(), p.Quote.String()}
 	limitClause := ""
 	if rowCap := bucketRowCap(limit); rowCap > 0 {

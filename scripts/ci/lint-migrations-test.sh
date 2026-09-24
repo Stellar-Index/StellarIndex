@@ -41,7 +41,7 @@ fail=0
 
 indent() { printf '%s\n' "         ${1//$'\n'/$'\n'         }"; }
 
-run() { CH_DIR="${1:-deploy/clickhouse}" MIG_DIR="${2:-migrations}" bash "$LINT" 2>&1; }
+run() { CH_DIR="${1:-deploy/clickhouse}" MIG_DIR="${2:-migrations}" TXN_DIR="${TXN:-migrations}" bash "$LINT" 2>&1; }
 
 clean() { # clean <desc> <ch_dir>
   local desc="$1" dir="$2" out got
@@ -293,6 +293,56 @@ WITH NO DATA;
 SQL
 )"
 clean_mig "an initial CAGG creation (nothing dropped, nothing emptied) passes" "$d"
+
+echo "lint-migrations-test: atomicity pass"
+
+TXN="$(mk txn-tail 0900_tail.up.sql <<'SQL'
+-- header
+BEGIN;
+ALTER TABLE t SET (timescaledb.compress = false);
+COMMIT;
+
+-- restore
+ALTER TABLE t SET (timescaledb.compress);
+SQL
+)"
+catches "SQL after COMMIT is caught with its line" deploy/clickhouse \
+  "0900_tail.up.sql:7: SQL after the file's COMMIT/ROLLBACK"
+
+TXN="$(mk txn-lower 0901_lower.down.sql <<'SQL'
+begin;
+select 1;
+commit work;
+select 2;
+SQL
+)"
+catches "a lower-case COMMIT WORK followed by SQL is caught" deploy/clickhouse \
+  "0901_lower.down.sql:4:"
+
+TXN="$(mk txn-ok 0902_ok.up.sql <<'SQL'
+-- a COMMIT; in a comment is not a statement
+BEGIN;
+DO $$
+BEGIN
+    PERFORM 1;
+END
+$$;
+COMMIT;
+-- trailing comments are fine
+SQL
+)"
+clean "a fully wrapped body with a DO block and trailing comments passes" deploy/clickhouse
+
+TXN="$TMP/empty"
+catches "an empty migrations directory fails rather than passing vacuously" deploy/clickhouse \
+  "atomicity pass cannot pass vacuously"
+unset TXN
+
+out="$(run deploy/clickhouse)"
+case "$out" in
+  *"atomicity pass inspected "[1-9]*) echo "  ok   real tree reports a non-zero atomicity file count"; pass=$((pass + 1)) ;;
+  *) echo "  FAIL real tree did not report its atomicity file count"; indent "$out"; fail=$((fail + 1)) ;;
+esac
 
 echo "lint-migrations-test: ${pass} passed, ${fail} failed"
 [ "$fail" -eq 0 ]

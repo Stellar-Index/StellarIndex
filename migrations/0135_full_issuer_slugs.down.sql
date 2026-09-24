@@ -4,20 +4,15 @@
 -- semantics). Deterministic: the same inputs produce the same slugs
 -- 0134 assigned.
 --
--- Corrected 2026-09-02 (#357 F10, migrations/README.md "Amending a
--- shipped migration"): this block used to omit 0134's `taken` EXISTS
--- branch, so it was NOT a faithful re-run of 0134 — it was merely
--- equivalent BECAUSE the `UPDATE … SET slug = NULL` above happens to
--- empty the column first, which makes the EXISTS always false. That is
--- a coincidence of statement order, not the tier rule, and anyone who
--- reordered or reused this block would have silently lost tier 2's
--- "the tier-1 form is already taken by an existing slug" case. The
--- branch is restored verbatim from 0134:52-63; the result on a
--- down-migration is byte-identical to before.
+-- Only slugs equal to asset_id (the form 0135 and its writer produce)
+-- are cleared and recomputed. A slug set any other way is a public URL
+-- key 0135 did not write and is kept (GH #1172); 0134's `taken` branch
+-- (copied verbatim from 0134) then routes a tier-1 form it already
+-- occupies to tier 2 instead of violating the UNIQUE constraint.
 
 BEGIN;
 
-UPDATE classic_assets SET slug = NULL;
+UPDATE classic_assets SET slug = NULL WHERE slug = asset_id;
 
 WITH computed AS (
     SELECT ca.asset_id,

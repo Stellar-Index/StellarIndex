@@ -155,6 +155,7 @@ func mintKey(args []string) error {
 	fmt.Fprintf(os.Stderr, "  label:            %s\n", rec.Label)
 	fmt.Fprintf(os.Stderr, "  tier:             %s\n", rec.Tier)
 	fmt.Fprintf(os.Stderr, "  rate_limit_per_min: %d\n", rec.RateLimitPerMin)
+	fmt.Fprintf(os.Stderr, "  monthly_quota:    %d\n", rec.MonthlyQuota)
 	fmt.Fprintf(os.Stderr, "  created_at:       %s\n", rec.CreatedAt.UTC().Format(time.RFC3339))
 	if !rec.ExpiresAt.IsZero() {
 		fmt.Fprintf(os.Stderr, "  expires_at:       %s\n", rec.ExpiresAt.UTC().Format(time.RFC3339))

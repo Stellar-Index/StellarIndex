@@ -20,7 +20,11 @@ severity: P3
 ## Symptoms
 
 - `> 50%` of `stellarindex_aggregator_supply_refresh_total` ticks
-  have `outcome != "ok"` for ≥ 30 min.
+  have an outcome other than `ok`, `dormant` or `missing_baseline`
+  for ≥ 30 min (`outcome!~"ok|dormant|missing_baseline"`). `dormant`
+  is an accepted snapshot; `missing_baseline` means the SEP-41
+  genesis baseline is unseeded (run
+  `stellarindex-ops supply seed-sep41-genesis`), not corruption.
 - Aggregator logs show repeated `supply refresh: <outcome>` lines
   with the same outcome label.
 

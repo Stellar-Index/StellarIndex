@@ -103,11 +103,19 @@ func VWAP(base, quote canonical.Asset, window time.Duration) VWAPKey {
 // 5 minutes = 10 missed ticks at the default cadence. Deliberately the
 // same number, and the same reasoning, as [FreezeTTL]: long enough to
 // ride out a deploy or a slow tick, short enough that a dead publisher
-// stops serving. It also sits well above the freshness SLO the serving
-// path already alarms on — `stellarindex_api_price_stale` pages at
-// `stellarindex_price_staleness_seconds > 120` (deploy/monitoring/
-// rules/api.yml), i.e. operators are alerted minutes before the value
-// expires and the surface starts answering 404 instead.
+// stops serving.
+//
+// No page precedes the expiry: customers see 404s first. The page that
+// covers a dead publisher is `stellarindex_aggregator_silent`
+// (deploy/monitoring/rules/aggregator.yml), which fires about 10 minutes
+// after the last write while the process is still scraped and about
+// 15 minutes after it when the process is gone — so the 404 window
+// opens 5 to 10 minutes before anyone is paged. The freshness alert,
+// `stellarindex_api_price_stale`, is a ticket, and its `> 120` leg reads
+// a gauge this same aggregator emits, so it is silent in this scenario.
+// Raising this constant to meet the page would serve a dead publisher's
+// value as current for that long; if the gap must close, tighten the
+// alert, not this grace.
 //
 // Expiry is the fail-closed answer for a rolling window: `/v1/price
 // ?window=…` documents a missing key as an honest 404 and refuses to

@@ -10,6 +10,8 @@ package diagnostics
 
 import (
 	"fmt"
+
+	"github.com/Stellar-Index/StellarIndex/internal/ops/opsutil"
 )
 
 // Run is the internal/ops/diagnostics package's entry point — see
@@ -21,6 +23,9 @@ func Run(args []string) error {
 	case "rpc-probe":
 		endpoint := "http://127.0.0.1:8000"
 		if len(args) > 1 {
+			if opsutil.IsHelpArg(args[1]) {
+				return opsutil.Usage("usage: rpc-probe [endpoint]  (default " + endpoint + ")")
+			}
 			endpoint = args[1]
 		}
 		return rpcProbe(endpoint)

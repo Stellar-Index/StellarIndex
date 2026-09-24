@@ -404,10 +404,12 @@ func TestKeyIndex_BuildIsSingleFlightAndLookupsStayCorrect(t *testing.T) {
 	f := newKeyIndexFixture(t)
 	ctx := context.Background()
 	const owner = "account:busy"
-	rec, _ := f.mint(t, owner)
+	// Lock first: issuance reads the index too, so the mint itself must
+	// run against the held lock rather than build the index ahead of it.
 	if err := f.mr.Set(cachekeys.APIKeyIndexBuildLock().String(), "held-by-another-process"); err != nil {
 		t.Fatalf("seed lock: %v", err)
 	}
+	rec, _ := f.mint(t, owner)
 
 	if _, err := f.store.BuildKeyIndex(ctx); !errors.Is(err, ErrKeyIndexBuildBusy) {
 		t.Fatalf("BuildKeyIndex under a held lock = %v, want ErrKeyIndexBuildBusy", err)

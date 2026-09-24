@@ -63,10 +63,12 @@ type panicSite struct {
 //   - DecoderPanicsTotal pages immediately (stellarindex_decoder_panicked).
 //
 // A panicking Matches is treated exactly like a panicking Decode: the
-// input is that decoder's error, and the seam stops scanning. Offering
-// the input to the NEXT decoder instead would let a broken decoder
-// silently hand its events to a different source — a misattribution,
-// which ADR-0033 cannot see, whereas the gap this produces it can.
+// input is that decoder's error, and a first-match seam stops scanning.
+// Offering the input to the NEXT decoder instead would let a broken
+// decoder silently hand its events to a different source — a
+// misattribution, which ADR-0033 cannot see, whereas the gap this
+// produces it can. The op seam is the exception by design: it already
+// offers every op to every decoder, so continuing re-attributes nothing.
 //
 // seenCounted says whether bumpEventsSeen already ran for this input
 // (i.e. the panic came out of Decode, not Matches). When it did not, we

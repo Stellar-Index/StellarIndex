@@ -61,21 +61,21 @@ type CreateAPIKeyRequest struct {
 
 	// MonthlyQuota — non-zero is the calendar-month billable-request
 	// ceiling `middleware.MonthlyQuota` enforces against the key.
-	// Zero means "no ceiling": the cap is opt-in by contract and the
-	// store never invents one (see [APIKeyRecord.MonthlyQuota]).
+	// Zero means "inherit": the store copies the ceiling the
+	// identifier's existing credentials already carry (see
+	// [RedisAPIKeyStore.inheritedMonthlyQuota]), and persists 0 — no
+	// ceiling — only when the identifier has none. The cap is opt-in
+	// by contract; the store never invents one.
 	//
-	// Set by the self-service rotation path (POST /v1/account/keys)
-	// to the caller's own effective quota, so a child key inherits
-	// its parent's ceiling — the same reasoning as EmailVerifiedAt
-	// below: the cap is a property of the identifier's plan, not of
-	// one record. Pre-fix the field did not exist, so a child minted
-	// from a metered parent persisted 0 and the middleware's
-	// `MonthlyQuota <= 0` short-circuit left it UNMETERED — one
-	// rotation turned a capped customer into an uncapped one
-	// (RLT-404, reverification 2026-09-18).
+	// The self-service rotation path (POST /v1/account/keys) sets it to
+	// the caller's EFFECTIVE quota rather than its stored per-key value:
+	// a record this store writes is read back without the Postgres
+	// validator's account-override cascade, so copying a per-key 0
+	// would ship the child unmetered.
 	MonthlyQuota int64
 
-	// ExpiresAt — zero means never.
+	// ExpiresAt — zero means never. The self-service rotation path sets
+	// it to the caller's own expiry via [ChildKeyRequest].
 	ExpiresAt time.Time
 
 	// EmailVerifiedAt — zero means the key has not (yet) passed the
@@ -86,6 +86,25 @@ type CreateAPIKeyRequest struct {
 	// not of one record, and there is no path that can verify a
 	// non-signup KeyID after the fact. Signup leaves it zero.
 	EmailVerifiedAt time.Time
+}
+
+// ChildKeyRequest builds the mint request for a key that parent delegates
+// to itself (POST /v1/account/keys). It is the one place every delegated
+// dimension is copied, so a field added to [CreateAPIKeyRequest] is pinned
+// by TestChildKeyRequest_InheritsEveryField instead of silently minting
+// as zero — zero means "unlimited" for quota and "never" for expiry.
+// scopes must already be clamped to parent's own (middleware.ClampMintScopes).
+func ChildKeyRequest(parent Subject, label string, scopes []string) CreateAPIKeyRequest {
+	return CreateAPIKeyRequest{
+		Identifier:      parent.Identifier,
+		Label:           label,
+		Tier:            parent.Tier,
+		Scopes:          scopes,
+		RateLimitPerMin: parent.RateLimitPerMin,
+		MonthlyQuota:    parent.MonthlyQuota,
+		ExpiresAt:       parent.ExpiresAt,
+		EmailVerifiedAt: parent.EmailVerifiedAt,
+	}
 }
 
 // RedisAPIKeyStore implements [APIKeyStore] against the same
@@ -145,7 +164,8 @@ func NewRedisAPIKeyStore(rdb redis.Cmdable, opts ...StoreOption) *RedisAPIKeySto
 //
 // Workflow:
 //
-//  1. Validate request (Identifier required).
+//  1. Validate request (Identifier required); resolve an unset
+//     MonthlyQuota from the identifier's existing credentials.
 //  2. Generate KeyID (`kid_<16-hex>`) and plaintext (`sip_<64-hex>`).
 //  3. Build APIKeyRecord with stamped CreatedAt and tier-defaulted Tier.
 //  4. SET apikey:<sha256(plaintext)> JSON. SETNX semantics aren't
@@ -158,6 +178,17 @@ func NewRedisAPIKeyStore(rdb redis.Cmdable, opts ...StoreOption) *RedisAPIKeySto
 func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) (APIKeyRecord, string, error) {
 	if req.Identifier == "" {
 		return APIKeyRecord{}, "", errors.New("auth: Create: Identifier is required")
+	}
+	monthlyQuota := req.MonthlyQuota
+	if monthlyQuota <= 0 {
+		// Resolved here, not in each handler, so no mint path (admin
+		// mint, ops CLI, signup) can issue an unmetered credential to an
+		// identifier whose plan is metered. Fail closed on a read error.
+		inherited, err := s.inheritedMonthlyQuota(ctx, req.Identifier)
+		if err != nil {
+			return APIKeyRecord{}, "", fmt.Errorf("auth: Create: inherit monthly quota: %w", err)
+		}
+		monthlyQuota = inherited
 	}
 
 	keyID, err := generateID(s.randRead, "kid_", 8)
@@ -187,7 +218,7 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		Tier:            tier,
 		Scopes:          req.Scopes,
 		RateLimitPerMin: req.RateLimitPerMin,
-		MonthlyQuota:    req.MonthlyQuota,
+		MonthlyQuota:    monthlyQuota,
 		CreatedAt:       s.now().UTC(),
 		ExpiresAt:       req.ExpiresAt,
 		EmailVerifiedAt: req.EmailVerifiedAt,
@@ -218,6 +249,37 @@ func (s *RedisAPIKeyStore) Create(ctx context.Context, req CreateAPIKeyRequest) 
 		return APIKeyRecord{}, "", fmt.Errorf("auth: Create: redis set: %w", err)
 	}
 	return rec, plaintext, nil
+}
+
+// inheritedMonthlyQuota is the ceiling a key minted without one takes
+// from the credentials its identifier already holds: the most generous
+// LIVE one, so a mint can neither lift the identifier's plan nor tighten
+// it. A live unmetered credential means the plan is unmetered (0). With
+// no live credential the most generous lapsed one still binds, so letting
+// every key lapse cannot reset a metered identifier to unmetered.
+func (s *RedisAPIKeyStore) inheritedMonthlyQuota(ctx context.Context, identifier string) (int64, error) {
+	recs, err := s.ListKeysForIdentifier(ctx, identifier)
+	if err != nil {
+		return 0, err
+	}
+	now := s.now()
+	var live, lapsed int64
+	anyLive := false
+	for _, rec := range recs {
+		if !rec.RevokedAt.IsZero() || (!rec.ExpiresAt.IsZero() && !now.Before(rec.ExpiresAt)) {
+			lapsed = max(lapsed, rec.MonthlyQuota)
+			continue
+		}
+		if rec.MonthlyQuota <= 0 {
+			return 0, nil
+		}
+		anyLive = true
+		live = max(live, rec.MonthlyQuota)
+	}
+	if anyLive {
+		return live, nil
+	}
+	return lapsed, nil
 }
 
 // keyPrefix returns the human-friendly identifier portion of a

@@ -36,6 +36,14 @@ export const DIRECTORY_SCAM_FLAG_TAGS = [
   'phishing',
 ] as const;
 
+/**
+ * DIRECTORY_OPERATOR_OVERRIDE_SOURCE is the served `source` of a label an
+ * operator took over to lift a false-positive scam flag (Go:
+ * timescale.DirectoryOperatorOverrideSource). The tags are no longer the
+ * upstream's, so the attribution must say so.
+ */
+export const DIRECTORY_OPERATOR_OVERRIDE_SOURCE = 'operator-override';
+
 const FLAG_SET = new Set<string>(DIRECTORY_SCAM_FLAG_TAGS);
 
 /**

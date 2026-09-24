@@ -395,6 +395,7 @@ func (v *RedisAPIKeyValidator) Lookup(ctx context.Context, key string) (Subject,
 		// (legacy operator-minted + dashboard-minted keys are
 		// scoped out so the gate doesn't break them).
 		EmailVerifiedAt: rec.EmailVerifiedAt,
+		ExpiresAt:       rec.ExpiresAt,
 		// Permission posture (F-1226 second half, found 2026-06-12): the
 		// record has carried these fields since wave 45, but Lookup never
 		// mapped them onto the Subject — so EVERY redis-minted key hit the

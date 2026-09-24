@@ -184,7 +184,7 @@ func TestTick_EveryFXQueryInheritsTheTickDeadline(t *testing.T) {
 		FXStore:        fx,
 		FreezeWriter:   &recordingFreezeMarker{},
 		Baselines: stubBaselineSource{
-			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: 100_000}},
+			multi:      baseline.MultiBaseline{Day30: &baseline.Baseline{Median: 0, MAD: 0.01, N: maxDay30Returns}},
 			computedAt: now,
 		},
 		CompositeReference: CompositeReferenceConfig{Enabled: true, Targets: []canonical.Pair{xlmGBP}},

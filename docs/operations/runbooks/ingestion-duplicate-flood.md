@@ -53,7 +53,7 @@ than inserting them. Before treating a firing as a stuck cursor,
 check whether a heavy job is in flight:
 
 ```sh
-ssh root@136.243.90.96 'systemctl list-units "run-heavy-job*" --all --no-pager; pgrep -a stellarindex-ops'
+ssh root@136.243.90.96 'systemctl list-units "heavy-*.scope" --all --no-pager; pgrep -a stellarindex-ops'
 ```
 
 If one is, the alert is expected for the duration of the job and the

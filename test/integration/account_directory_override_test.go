@@ -4,6 +4,7 @@ package integration_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"slices"
 	"strings"
@@ -36,7 +37,19 @@ import (
 const (
 	dirUpstreamSource = "stellar-expert"
 	dirOtherUpstream  = "second-upstream"
+	dirOverrideReason = "issuer verified via its stellar.toml; upstream tag is a false positive"
 )
+
+// dirOverrideReasonOf reads the row's override_reason ("" for NULL).
+func dirOverrideReasonOf(t *testing.T, ctx context.Context, store *timescale.Store, address string) string {
+	t.Helper()
+	var reason sql.NullString
+	if err := store.DB().QueryRowContext(ctx,
+		`SELECT override_reason FROM account_directory WHERE address = $1`, address).Scan(&reason); err != nil {
+		t.Fatalf("read override_reason %s: %v", address, err)
+	}
+	return reason.String
+}
 
 // dirAddress renders a G-strkey-shaped address that satisfies migration
 // 0136's `^[GC][A-Z2-7]{55}$` CHECK.
@@ -126,7 +139,7 @@ func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 	}
 
 	// A row with no scam tag is refused, and stays upstream-owned.
-	if _, _, _, err := store.ClearDirectoryScamFlag(ctx, neighbour); !errors.Is(err, timescale.ErrDirectoryNotScamFlagged) {
+	if _, _, _, err := store.ClearDirectoryScamFlag(ctx, neighbour, dirOverrideReason); !errors.Is(err, timescale.ErrDirectoryNotScamFlagged) {
 		t.Fatalf("ClearDirectoryScamFlag(unflagged) err = %v, want ErrDirectoryNotScamFlagged", err)
 	}
 	if got := mustDirectoryEntry(t, ctx, store, neighbour); got.Source != dirUpstreamSource {
@@ -135,8 +148,11 @@ func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 
 	// 2. The operator judges it a false positive and records a
 	//    correction: same address, only the scam tag dropped.
-	if _, _, found, err := store.ClearDirectoryScamFlag(ctx, flagged); err != nil || !found {
+	if _, _, found, err := store.ClearDirectoryScamFlag(ctx, flagged, dirOverrideReason); err != nil || !found {
 		t.Fatalf("ClearDirectoryScamFlag: found=%v err=%v", found, err)
+	}
+	if got := dirOverrideReasonOf(t, ctx, store, flagged); got != dirOverrideReason {
+		t.Errorf("override_reason after the takeover = %q, want %q", got, dirOverrideReason)
 	}
 	if scamWithheld(ctx, store, flagged) {
 		t.Fatal("gate still withholds immediately after the override — the correction never took effect")
@@ -160,6 +176,9 @@ func TestDirectoryOperatorOverride_SurvivesUpstreamSync(t *testing.T) {
 	}
 	if got.Name != "Rio Issuer" || got.Domain != "example.org" {
 		t.Errorf("after sync, name/domain = %q/%q, want the upstream's kept", got.Name, got.Domain)
+	}
+	if got := dirOverrideReasonOf(t, ctx, store, flagged); got != dirOverrideReason {
+		t.Errorf("after sync, override_reason = %q, want %q kept", got, dirOverrideReason)
 	}
 	if scamWithheld(ctx, store, flagged) {
 		t.Error("gate withholds again after a sync — the override is not durable, which is the whole defect")
@@ -243,5 +262,77 @@ func TestDirectoryUpsert_SourcesDoNotStealEachOthersRows(t *testing.T) {
 	}
 	if len(got.Tags) != 2 {
 		t.Errorf("tags = %v, want the owning source's 2-tag update to land", got.Tags)
+	}
+}
+
+// TestDirectoryOverrideReason_Migration0170 executes 0170 up and down:
+// an override row written before the column existed is backfilled with
+// the named placeholder, the CHECK then refuses an override without a
+// reason and an upstream row with one, the store refuses a blank reason
+// before touching the row, and down drops the column.
+func TestDirectoryOverrideReason_Migration0170(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	dsn := startTimescale(t, ctx)
+	applyMigrationsUpTo(t, dsn, 169)
+	store, err := timescale.Open(ctx, dsn)
+	if err != nil {
+		t.Fatalf("store open: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.DB()
+
+	legacy := dirAddress("LEGACYOVR")
+	upstream := dirAddress("UPSTREAMROW")
+	flagged := dirAddress("FLAGGEDROW")
+	for _, r := range []struct{ addr, source, tag string }{
+		{legacy, timescale.DirectoryOperatorOverrideSource, "issuer"},
+		{upstream, dirUpstreamSource, "exchange"},
+		{flagged, dirUpstreamSource, "unsafe"},
+	} {
+		if _, err := db.ExecContext(ctx,
+			`INSERT INTO account_directory (address, name, tags, source) VALUES ($1, 'n', ARRAY[$2], $3)`,
+			r.addr, r.tag, r.source); err != nil {
+			t.Fatalf("seed %s: %v", r.addr, err)
+		}
+	}
+
+	applyMigrationsUpTo(t, dsn, 170)
+	if got := dirOverrideReasonOf(t, ctx, store, legacy); !strings.Contains(got, "migration 0170") {
+		t.Errorf("pre-0170 override row reason = %q, want the backfill placeholder", got)
+	}
+	if got := dirOverrideReasonOf(t, ctx, store, upstream); got != "" {
+		t.Errorf("upstream row reason = %q, want NULL", got)
+	}
+
+	for name, q := range map[string]string{
+		"override without a reason":    `UPDATE account_directory SET source = 'operator-override', override_reason = NULL WHERE address = $1`,
+		"override with a blank reason": `UPDATE account_directory SET source = 'operator-override', override_reason = '  ' WHERE address = $1`,
+		"upstream row with a reason":   `UPDATE account_directory SET override_reason = 'stale' WHERE address = $1`,
+	} {
+		if _, err := db.ExecContext(ctx, q, flagged); err == nil || !strings.Contains(err.Error(), "account_directory_override_reason_chk") {
+			t.Errorf("%s: err = %v, want the account_directory_override_reason_chk violation", name, err)
+		}
+	}
+
+	if _, _, _, err := store.ClearDirectoryScamFlag(ctx, flagged, " \t"); !errors.Is(err, timescale.ErrDirectoryOverrideReasonRequired) {
+		t.Fatalf("ClearDirectoryScamFlag(blank reason) err = %v, want ErrDirectoryOverrideReasonRequired", err)
+	}
+	if got := mustDirectoryEntry(t, ctx, store, flagged); got.Source != dirUpstreamSource || !slices.Equal(got.Tags, []string{"unsafe"}) {
+		t.Fatalf("a refused takeover changed the row: source=%q tags=%q", got.Source, got.Tags)
+	}
+
+	applyMigrationsUpTo(t, dsn, 169)
+	var cols int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM information_schema.columns
+		WHERE table_name = 'account_directory' AND column_name = 'override_reason'`).Scan(&cols); err != nil {
+		t.Fatalf("column probe: %v", err)
+	}
+	if cols != 0 {
+		t.Errorf("override_reason survives 0170 down")
+	}
+	if got := mustDirectoryEntry(t, ctx, store, legacy); got.Source != timescale.DirectoryOperatorOverrideSource {
+		t.Errorf("0170 down changed the override row's ownership: source = %q", got.Source)
 	}
 }
