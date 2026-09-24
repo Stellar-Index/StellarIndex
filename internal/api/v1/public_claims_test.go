@@ -139,6 +139,29 @@ func TestPublicClaimsMatchTheDeployment(t *testing.T) {
 				"It can only raise a limit, never lower one",
 			},
 		},
+		{
+			// T534: the limiter is a fixed-window INCRBY+EXPIRE counter
+			// (internal/ratelimit/doc.go), not a token bucket.
+			path:      "docs/reference/api-design.md",
+			forbidden: []string{"**Algorithm:** token bucket"},
+			required:  []string{"**Algorithm:** fixed window"},
+		},
+		{
+			// T534: the runbook called the limiter a token bucket and said it
+			// fails open unconditionally; past DefaultDwellTime of sustained
+			// Redis errors the middleware fails CLOSED with 503.
+			path: "docs/operations/runbooks/ratelimit-fail-open.md",
+			forbidden: []string{
+				"token-bucket",
+				"token bucket",
+				`Do not "fix" this by failing closed`,
+			},
+			required: []string{
+				"fixed-window counter",
+				"`ratelimit.DefaultDwellTime` (" + ratelimit.DefaultDwellTime.String() + ")",
+				"fails **closed** with `503`",
+			},
+		},
 	}
 
 	for _, tc := range cases {

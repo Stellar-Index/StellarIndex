@@ -1,6 +1,6 @@
 ---
 title: Runbook — ratelimit-fail-open
-last_verified: 2026-07-26
+last_verified: 2026-09-24
 status: draft
 severity: P3
 ---
@@ -18,13 +18,27 @@ severity: P3
 
 ## What this fires on
 
-`internal/api/v1/middleware/ratelimit.go` deliberately **fails open**:
-if the Redis token-bucket read/write errors, the request is allowed
-through rather than 500'd or 429'd. That is the right trade — a Redis
-outage should not take the whole public API down — but it means the
-abuse control silently switches itself off, and the only trace is
-`stellarindex_ratelimit_fail_open_total` (incremented at both the
-per-key and the per-IP gates).
+The limiter is a Redis fixed-window counter (one atomic `INCRBY` +
+`EXPIRE` per key per minute, `internal/ratelimit`). When that Redis
+call errors, `internal/api/v1/middleware/ratelimit.go` **fails open**
+for a bounded window: the request is allowed through rather than
+500'd or 429'd, and `stellarindex_ratelimit_fail_open_total` is
+incremented (at both the per-key and the per-IP gates). A Redis blip
+should not take the whole public API down.
+
+The window is bounded. Once a bucket's Redis calls have been failing
+for longer than `ratelimit.DefaultDwellTime` (30s), the middleware
+fails **closed** with `503` (`errors/throttle-unavailable`,
+`Retry-After: 30`) instead, and this counter stops moving. The
+closed state clears only after the same dwell time of *unbroken*
+Redis successes; a flapping Redis keeps it armed. The anonymous and
+authenticated tiers are separate buckets with separate clocks.
+
+So this alert sees the fail-open portion only: repeated short error
+episodes, each starting a fresh fail-open window. A hard, sustained
+Redis outage shows up as API `503`s and a red Redis readiness check,
+**not** as this alert (the counter goes flat about 30s in, and
+`for: 10m` never elapses).
 
 The counter has existed since the limiter shipped. Until C6-032
 (audit-2026-07-23) **nothing in either rule tree selected it**, so the
@@ -62,32 +76,36 @@ The rule fires on `rate(...[5m]) > 0` sustained `for: 10m`, so:
 
 ## Remediation
 
-- **Redis down** → follow the Redis recovery path; the limiter
-  self-heals on the first successful command and the alert clears
-  within ~10 min of the last bypass.
+- **Redis down** → follow the Redis recovery path. Every Redis call
+  that succeeds is limited normally straight away; calls that still
+  fail keep answering `503` until Redis has answered without error for
+  `DefaultDwellTime`. The alert clears within ~10 min of the last
+  bypass.
 - **AUTH drift** → the API's Redis password is the
   `STELLARINDEX_REDIS_PASSWORD` environment override (config field
   `[storage] redis_password_env`), not a hand-edited TOML value. Re-sync it
   in the unit's `EnvironmentFile` (`/etc/default/stellarindex`) to Redis's
   `requirepass` (ansible `redis_password`), then
   `systemctl restart stellarindex-api`.
-- **Sustained abuse while open** → the limiter cannot help. Apply the
-  block at the edge (Caddy/HAProxy) for the offending source, per
+- **Sustained abuse while open** → the limiter cannot help during the
+  fail-open windows. Apply the block at the edge (Caddy/HAProxy) for the offending source, per
   [api-latency](api-latency.md)'s traffic-shedding section, until
   Redis is back.
 
 ## Do NOT
 
-- **Do not "fix" this by failing closed.** Returning 429/500 on a Redis
-  error converts a Redis outage into a full API outage. The fail-open
-  behaviour is deliberate; this alert exists so it is *observed*, not so
-  it is removed.
+- **Do not remove the fail-open window** (a zero dwell time). Failing
+  closed on the first Redis error converts every Redis blip into an API
+  outage. Nor disable the fail-closed switch (a negative
+  `WithDwellTime`): an attacker who can degrade Redis would then pivot
+  to unlimited request volume.
 - Do not silence the alert while Redis is down "because we know" — the
   10-minute `for:` already absorbs failovers, so a firing instance means
   a genuinely sustained unprotected window.
 
 ## Related
 
-- [api-down](api-down.md) — the failing-closed outcome we are avoiding.
+- [api-down](api-down.md) — where a sustained Redis outage lands once
+  the limiter has failed closed.
 - [metrics-registry-absent](metrics-registry-absent.md) — the sibling
   class: a metric whose *producer* is missing rather than its consumer.

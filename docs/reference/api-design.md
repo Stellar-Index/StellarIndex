@@ -455,7 +455,8 @@ mTLS for internal service-to-service only (see [HA plan §6](../architecture/ha-
 
 ## 7. Rate limiting
 
-- **Algorithm:** token bucket.
+- **Algorithm:** fixed window — one atomic `INCRBY` + `EXPIRE` counter
+  per key per minute (`internal/ratelimit`), not a token bucket.
 - **Storage:** Redis (per-key/per-subject + per-IP).
 - **Window:** per-minute.
 - **Scope:** authenticated callers use the authenticated subject/key
