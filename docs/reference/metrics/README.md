@@ -1072,6 +1072,19 @@ per-`Stream` registry that `pipeline.LedgerstreamConfig` leaves nil
 (W5-mon-3; before that fix this metric was nil in production and the
 `both_missing` page could never fire).
 
+### `stellarindex_ledgerstream_stream_path_total`
+
+Counter, label `path` (`tiered` / `cold_degraded` / `hot_single_ledger`
+/ `sdk`).
+
+One increment per `ledgerstream.Stream` walk attempt, by the read path
+it took: `tiered` = hot + cold `TieredDataStore`, `cold_degraded` = a
+cold tier is configured but failed to open so the walk ran hot-only,
+`hot_single_ledger` = the one-ledger bounded walk the SDK loop rejects,
+`sdk` = the SDK's `ApplyLedgerMetadata` loop. A nonzero `cold_degraded`
+rate means the configured cold tier is out of service and archive-range
+reads will stall on the first trimmed ledger. Seeded at boot.
+
 ### `stellarindex_ledgerstream_cold_read_duration_seconds`
 
 Histogram, label `outcome` (`ok` = cold hit / `miss` = cold not-found,

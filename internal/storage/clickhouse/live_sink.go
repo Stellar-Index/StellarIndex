@@ -150,12 +150,16 @@ func (l *LiveSink) Start() { go l.run() }
 
 // PushLedger enqueues a ledger's structural extract for the worker. NON-BLOCKING:
 // drops (DroppedCount++) if the buffer is full or shutdown is in progress, so it
-// never stalls the caller (the live ingest loop).
+// never stalls the caller (the live ingest loop). A drop is logged with its
+// ledger: the lake watermark stalls at that hole until the catch-up timer
+// heals it, and the log is what names the ledger to re-derive.
 func (l *LiveSink) PushLedger(ext LedgerExtract) {
 	select {
 	case l.ch <- ext:
 	default:
 		l.bump(&l.dropped)
+		l.logger.Warn("clickhouse live-sink: buffer full — ledger DROPPED from the live lake write",
+			"ledger", ext.Ledger.LedgerSeq, "buffer", cap(l.ch))
 	}
 }
 

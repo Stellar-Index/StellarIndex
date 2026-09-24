@@ -39,6 +39,11 @@ type fakeStore struct {
 	seeks   int
 	seekErr error
 
+	// cursorErr fails the ("projector", src) cursor read; streamErr fails
+	// StreamSorobanEvents.
+	cursorErr error
+	streamErr error
+
 	// dirtyWindows / dirtyErr back ProjectionDirtyWindows — the
 	// operator-recorded projector-replay rewind windows the
 	// replay-window watcher reads (see replay_window_test.go).
@@ -90,6 +95,9 @@ func (f *fakeStore) GetCursor(_ context.Context, source, _ string) (timescale.Cu
 	case "ledgerstream":
 		return timescale.Cursor{Source: source, LastLedger: f.tipLedger}, nil
 	case "projector":
+		if f.cursorErr != nil {
+			return timescale.Cursor{}, f.cursorErr
+		}
 		if !f.haveCursor {
 			return timescale.Cursor{}, timescale.ErrNotFound
 		}
@@ -115,7 +123,11 @@ func (f *fakeStore) StreamSorobanEvents(_ context.Context, from, to uint32,
 ) error {
 	f.mu.Lock()
 	rows := append([]sorobanevents.Row(nil), f.rows...)
+	streamErr := f.streamErr
 	f.mu.Unlock()
+	if streamErr != nil {
+		return streamErr
+	}
 	for _, r := range rows {
 		if r.Ledger < from || r.Ledger > to {
 			continue

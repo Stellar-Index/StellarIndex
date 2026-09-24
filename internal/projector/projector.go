@@ -286,6 +286,12 @@ type Projector struct {
 	// soroban_events read.
 	chAddr string
 
+	// rawSettled, in soroban_events mode, blocks until every raw row pushed
+	// before the call is committed (the in-process raw sink's Sync). The
+	// ledgerstream cursor advances on enqueue, not on commit, so it is the
+	// soroban_events analogue of the lake's contiguous watermark.
+	rawSettled func(context.Context) error
+
 	// cursorMu guards lastCursor: the last cursor position each source
 	// observed at the top of its cycle, published by cycleOneSource and
 	// read by the single replay-window watcher. Keeping it in memory is
@@ -306,6 +312,12 @@ type Projector struct {
 // ClickHouse lake at addr instead of Postgres soroban_events (ADR-0034 #10).
 // Call before Run. Empty addr keeps the legacy soroban_events source.
 func (p *Projector) SetClickHouseSource(addr string) { p.chAddr = addr }
+
+// SetRawEventBarrier installs the soroban_events completeness barrier
+// resolveTip waits on in soroban_events mode. Call before Run. Without it
+// the soroban_events read trusts the ledgerstream cursor, which is only
+// sound when nothing buffers the raw writes (tests writing rows directly).
+func (p *Projector) SetRawEventBarrier(settled func(context.Context) error) { p.rawSettled = settled }
 
 // New constructs a Projector. Callers must call Run to start
 // the loop.
@@ -969,6 +981,7 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if err != nil && !errors.Is(err, timescale.ErrNotFound) {
 		p.logger.Warn("projector: read cursor failed", "source", src.Name, "err", err)
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
+		p.publishLagFromLastRead(cycleCtx, src.Name)
 		return
 	}
 	var fromLedger uint32
@@ -1001,8 +1014,15 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 	if err != nil {
 		p.logger.Warn("projector: tip resolve failed", "source", src.Name, "err", err)
 		obs.ProjectorRunsTotal.WithLabelValues(src.Name, "error").Inc()
+		if durableTip > 0 {
+			publishLag(src.Name, fromLedger, durableTip)
+		}
 		return
 	}
+	// Published before the scan so every later exit (stream error, gate
+	// re-read, failed commit) reports the true lag instead of a stale gauge;
+	// a committing cycle overwrites it with its post-commit value.
+	publishLag(src.Name, fromLedger, durableTip)
 	if tip < fromLedger {
 		// Caught up — nothing at or beyond fromLedger. Must be `<`, not `<=`:
 		// fromLedger = cursor.LastLedger+1 is the next UNPROCESSED ledger and
@@ -1321,7 +1341,6 @@ func (p *Projector) cycleOneSource(ctx context.Context, src Source, window *uint
 		// committed, so DON'T move the cursor; the next cycle retries the
 		// identical range. This is a VISIBLE stall (rising lag + the
 		// sink_retry metrics below), never a silent advance-past-loss.
-		obs.ProjectorLagLedgers.WithLabelValues(src.Name).Set(float64(durableTip - fromLedger + 1))
 		obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_retry").Add(float64(sinkTransientFails))
 		if sinkPermanentFails > 0 {
 			obs.ProjectorEventsDecoded.WithLabelValues(src.Name, "sink_permanent").Add(float64(sinkPermanentFails))
@@ -1482,15 +1501,42 @@ func recoverWindow(current uint32) uint32 {
 // caught up: it is counted as watermark_held and its lag is the real distance
 // to the durable tip, so a watermark that stops advancing pages via lag.
 func (p *Projector) recordNothingToScan(source string, fromLedger, scanTip, durableTip uint32) {
+	publishLag(source, fromLedger, durableTip)
 	if durableTip < fromLedger {
 		obs.ProjectorRunsTotal.WithLabelValues(source, "idle").Inc()
-		obs.ProjectorLagLedgers.WithLabelValues(source).Set(0)
 		return
 	}
 	obs.ProjectorRunsTotal.WithLabelValues(source, "watermark_held").Inc()
-	obs.ProjectorLagLedgers.WithLabelValues(source).Set(float64(durableTip - fromLedger + 1))
 	p.logger.Warn("projector: held at the lake's contiguous watermark — ledgers past it are not yet provably complete",
 		"source", source, "from", fromLedger, "watermark", scanTip, "durable_tip", durableTip)
+}
+
+// publishLag sets the source's lag gauge to the ledgers in
+// [fromLedger, durableTip] — everything the durable tip holds past the
+// cursor — or 0 once the cursor has reached it.
+func publishLag(source string, fromLedger, durableTip uint32) {
+	lag := 0.0
+	if durableTip >= fromLedger {
+		lag = float64(durableTip - fromLedger + 1)
+	}
+	obs.ProjectorLagLedgers.WithLabelValues(source).Set(lag)
+}
+
+// publishLagFromLastRead keeps the lag gauge live on a cycle whose cursor
+// read failed. Only this projector advances the cursor, and never without a
+// read, so the last read position is still where the source stands. With no
+// prior read or no durable tip the gauge is left alone and the error outcome
+// in ProjectorRunsTotal is the signal.
+func (p *Projector) publishLagFromLastRead(ctx context.Context, source string) {
+	last, ok := p.observedCursor(source)
+	if !ok {
+		return
+	}
+	c, err := p.store.GetCursor(ctx, "ledgerstream", "")
+	if err != nil {
+		return
+	}
+	publishLag(source, last+1, c.LastLedger)
 }
 
 // seedFromLedger returns the first ledger a source with no cursor scans. Every
@@ -1588,9 +1634,16 @@ func (p *Projector) holdForWidenedGate(source string, from, to uint32, added []s
 // to the watermark stalls the source AT a hole until the catch-up
 // timer heals it, instead of skipping over it (ADR-0034 #10).
 //
+// In soroban_events mode the same hazard has a different shape: the raw
+// sink commits asynchronously after the cursor advances, so the tip's own
+// rows may still be buffered. The bound is only returned once the raw-event
+// barrier ([Projector.SetRawEventBarrier]) has seen every row pushed before
+// the cursor read commit; a barrier that cannot settle fails the cycle.
+//
 // It also returns the unclamped ledgerstream tip: lag is always measured
 // against that, so a stalled watermark shows as rising lag rather than as
-// a caught-up source.
+// a caught-up source. A watermark error still returns durableTip, so the
+// failed cycle can publish lag.
 func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint32) (scanTip, durableTip uint32, err error) {
 	c, err := p.store.GetCursor(ctx, "ledgerstream", "")
 	if err != nil {
@@ -1604,14 +1657,18 @@ func (p *Projector) resolveTip(ctx context.Context, lake *sourceLake, from uint3
 	if p.chAddr != "" {
 		reader, rerr := lake.reader(ctx)
 		if rerr != nil {
-			return 0, 0, fmt.Errorf("ch watermark conn: %w", rerr)
+			return 0, durableTip, fmt.Errorf("ch watermark conn: %w", rerr)
 		}
 		wm, werr := reader.ContiguousWatermark(ctx, from)
 		if werr != nil {
-			return 0, 0, fmt.Errorf("ch watermark: %w", werr)
+			return 0, durableTip, fmt.Errorf("ch watermark: %w", werr)
 		}
 		if wm < scanTip {
 			scanTip = wm
+		}
+	} else if p.rawSettled != nil {
+		if serr := p.rawSettled(ctx); serr != nil {
+			return 0, durableTip, fmt.Errorf("soroban_events barrier: %w", serr)
 		}
 	}
 	return scanTip, durableTip, nil

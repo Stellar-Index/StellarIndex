@@ -3,6 +3,7 @@ package sorobanevents
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -157,6 +158,9 @@ type AsyncSink struct {
 	skipped uint64
 	written uint64
 	lost    uint64
+	// accepted counts rows that entered ch. Every one ends written or
+	// lost, in channel order, which is what [AsyncSink.Sync] relies on.
+	accepted uint64
 }
 
 // NewAsyncSink constructs an AsyncSink. Returns the sink in stopped
@@ -251,9 +255,51 @@ func (s *AsyncSink) PushEvent(ev events.Event) {
 	}
 	select {
 	case s.ch <- row:
+		s.mu.Lock()
+		s.accepted++
+		s.mu.Unlock()
 	case <-s.stopping:
 		s.countDropped()
 	}
+}
+
+// syncPoll is how often [AsyncSink.Sync] re-checks the settled count.
+const syncPoll = 20 * time.Millisecond
+
+// ErrSinkStopped is returned by [AsyncSink.Sync] when the drain worker
+// exited with rows it accepted still unsettled.
+var ErrSinkStopped = errors.New("sorobanevents: sink stopped before its rows settled")
+
+// Sync blocks until every row whose PushEvent returned before the call has
+// settled — committed to soroban_events, or counted lost — or ctx ends.
+// PushEvent returns before the ledgerstream cursor is written, so after Sync
+// every row of every ledger at or below a cursor read before the call is
+// readable, unless LostCount says otherwise. The worker drains ch in order
+// and settles each batch in order, so reaching the count settles the prefix.
+func (s *AsyncSink) Sync(ctx context.Context) error {
+	s.mu.Lock()
+	target := s.accepted
+	s.mu.Unlock()
+	t := time.NewTicker(syncPoll)
+	defer t.Stop()
+	settled := func() bool {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.written+s.lost >= target
+	}
+	for !settled() {
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("sorobanevents: waiting for accepted rows to settle: %w", ctx.Err())
+		case <-s.done:
+			if settled() {
+				return nil
+			}
+			return ErrSinkStopped
+		case <-t.C:
+		}
+	}
+	return nil
 }
 
 func (s *AsyncSink) countDropped() {

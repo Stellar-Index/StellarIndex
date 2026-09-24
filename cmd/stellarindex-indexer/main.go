@@ -685,6 +685,9 @@ func run(cfgPath string, dryRun bool) error {
 			return pipeline.HandleEvent(ctx, logger, store, ev)
 		}
 		proj := projector.New(store, registry, sinkFn, logger.With("component", "projector"))
+		// soroban_events mode only: the ledgerstream cursor advances when a
+		// ledger's rows are enqueued to rawEventSink, not when they commit.
+		proj.SetRawEventBarrier(rawEventSink.Sync)
 		// Feed-switch (ADR-0034 #10): read forward events from the CH lake
 		// (dual-sink-fed) instead of Postgres soroban_events, so the latter can
 		// be decommissioned. ON since ADR-0041; requires the dual-sink running,
