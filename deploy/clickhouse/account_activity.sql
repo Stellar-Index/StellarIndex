@@ -120,11 +120,11 @@ GROUP BY account_id;
 --  window and an unchecked one "succeeds" over nothing, so TIP is validated
 --  before anything runs (the windows are counted in bash, not by `seq`:
 --  BSD seq prints 2e+06 for a large value);
--- * run-heavy-job.sh finds the per-job lock held → a manual run is refused
---  non-zero, but one launched from a systemd unit prints "skipping this
---  fire" and exits 0 WITHOUT running the payload. Exit status cannot tell
---  that from success, so each payload writes a marker file only after its
---  INSERT returns 0, and a job with no marker aborts the run;
+-- * run-heavy-job.sh finds the per-job lock held → it exits 75 (never 0)
+--  WITHOUT running the payload, whether the caller is a systemd unit's
+--  overlapping fire or a manual run; that aborts the loop as DID NOT
+--  RUN. Each payload also writes a marker file only after its INSERT
+--  returns 0, and a job with no marker aborts the run;
 -- * the closing count must see every job's marker (N of N, N > 0).
 -- The whole loop is ONE parenthesised subshell with the COMPLETE line
 -- chained behind `&&`: an abort ends the subshell, never the operator's
@@ -145,9 +145,9 @@ GROUP BY account_id;
 --     aa_job() {
 --       AA_MARK="$AA_MARKS/$1-$2.ok"
 --       /usr/local/sbin/run-heavy-job.sh "acct-activity-$1-$2" bash -c 'clickhouse-client --port 9300 -q "$1" && : > "$2"' aa-job "$3" "$AA_MARK" </dev/null \
---         || { echo "account_activity backfill: $1 window $2 FAILED - aborting, the watermark is INCOMPLETE from window $2 up" >&2; exit 1; }
+--         || { if [ $? -eq 75 ]; then echo "account_activity backfill: $1 window $2 DID NOT RUN (the wrapper exited 75 - its per-job lock was held and it skipped) - aborting, the watermark is INCOMPLETE from window $2 up"; else echo "account_activity backfill: $1 window $2 FAILED - aborting, the watermark is INCOMPLETE from window $2 up"; fi >&2; exit 1; }
 --       [ -e "$AA_MARK" ] \
---         || { echo "account_activity backfill: $1 window $2 DID NOT RUN (the wrapper exited 0 with no success marker - its per-job lock was held and it skipped) - aborting, the watermark is INCOMPLETE from window $2 up" >&2; exit 1; }
+--         || { echo "account_activity backfill: $1 window $2 DID NOT RUN (the wrapper exited 0 with no success marker) - aborting, the watermark is INCOMPLETE from window $2 up" >&2; exit 1; }
 --       AA_DONE=$((AA_DONE + 1))
 --     }
 --     W=2
@@ -245,10 +245,10 @@ GROUP BY account_id;
 --           GROUP BY acct
 --           HAVING truth > 0)
 --         SETTINGS max_threads = 4, max_memory_usage = 8000000000" </dev/null > "$AA_OUT" \
---         || { echo "account_activity verify: window $W FAILED to run - aborting, NOTHING is verified" >&2; exit 1; }
+--         || { if [ $? -eq 75 ]; then echo "account_activity verify: window $W DID NOT RUN (the wrapper exited 75 - its per-job lock was held and it skipped) - aborting, NOTHING is verified"; else echo "account_activity verify: window $W FAILED to run - aborting, NOTHING is verified"; fi >&2; exit 1; }
 --       AA_N=$(cat "$AA_OUT")
 --       case "$AA_N" in ''|*[^0-9]*)
---         echo "account_activity verify: window $W answered '$AA_N', not a count (the wrapper's lock-skip exits 0 and prints nothing) - aborting, NOTHING is verified" >&2; exit 1 ;;
+--         echo "account_activity verify: window $W answered '$AA_N', not a count - aborting, NOTHING is verified" >&2; exit 1 ;;
 --       esac
 --       AA_SEEN=$((AA_SEEN + 1))
 --       [ "$AA_N" -eq 0 ] \

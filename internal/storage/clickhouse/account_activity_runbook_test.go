@@ -22,9 +22,10 @@ import (
 // the SHIPPED /usr/local/sbin/run-heavy-job.sh, extracted from the ansible
 // task that installs it (the technique of scripts/ci/run-heavy-job-test.sh).
 // A pass-through stand-in for the wrapper cannot see the wrapper's own
-// lock branch: when the per-job lock is held a manual run is refused
-// non-zero, and a systemd-launched one prints "skipping this fire" and
-// exits 0 without running the payload.
+// lock branch: when the per-job lock is held every caller is refused
+// with exit 75 (a manual run prints "refusing to start", a
+// systemd-launched one prints "skipping this fire") without running
+// the payload.
 //
 // Every way the runbook can end WITHOUT covering (Step 2) or checking
 // (Step 3) every window must end non-zero and without its success line.
@@ -311,14 +312,14 @@ func TestAccountActivityRunbook_Step2FailsClosed(t *testing.T) {
 			want: []string{"is not a ledger number"},
 		},
 		{name: "TIP below the first window", env: []string{"AA_TIP_OUT=1"}, want: []string{"0 of 0 jobs"}},
+		// The shipped wrapper exits 75 here in both branches, without running the payload.
 		{
 			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=2"}, inserts: 1,
-			want: []string{"refusing to start acct-activity-tx-2", "tx window 2 FAILED"},
+			want: []string{"refusing to start acct-activity-tx-2", "tx window 2 DID NOT RUN (the wrapper exited 75"},
 		},
-		// Launched from a unit, the shipped wrapper exits 0 without running the payload.
 		{
 			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=2", "INVOCATION_ID=0123456789abcdef"},
-			inserts: 1, want: []string{"skipping this fire", "tx window 2 DID NOT RUN"},
+			inserts: 1, want: []string{"skipping this fire", "tx window 2 DID NOT RUN (the wrapper exited 75"},
 		},
 		{
 			name: "job fails, pasted into a nested shell", nested: true,
@@ -355,11 +356,11 @@ func TestAccountActivityRunbook_Step3FailsClosed(t *testing.T) {
 		},
 		{
 			name: "per-job lock held", env: []string{tip, "AA_FLOCK_FAIL_ON=2"}, checks: 1,
-			want: []string{"refusing to start acct-activity-verify-2000002", "window 2000002 FAILED to run"},
+			want: []string{"refusing to start acct-activity-verify-2000002", "window 2000002 DID NOT RUN (the wrapper exited 75"},
 		},
 		{
 			name: "per-job lock held, systemd-launched", env: []string{tip, "AA_FLOCK_FAIL_ON=2", "INVOCATION_ID=0123456789abcdef"},
-			checks: 1, want: []string{"skipping this fire", "window 2000002 answered '', not a count"},
+			checks: 1, want: []string{"skipping this fire", "window 2000002 DID NOT RUN (the wrapper exited 75"},
 		},
 		{name: "sample modulus 0", env: []string{tip, "AA_MOD=0"}, want: []string{"is not a positive integer"}},
 		{

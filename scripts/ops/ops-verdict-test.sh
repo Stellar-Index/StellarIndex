@@ -287,6 +287,14 @@ case $out in
   *) bad "…carrying Result and ExecMainStatus — got '$out'" ;;
 esac
 
+# A heavy-job unit whose fire found the wrapper's lock held: the unit
+# declares SuccessExitStatus=75, so Result=success, but nothing ran.
+mkunit skipped-heavy.service no \
+  "activating|start|$PREV|success|0" \
+  "inactive|dead|$NEW|success|75"
+out=$(wait_for_oneshot skipped-heavy.service 30 "0:$PREV" 2>&1); rc=$?
+res "$(t "$rc" -eq 5; echo $?)" "a NEW run the heavy-job wrapper skipped (exit 75) returns 5, not success" "rc=$rc out=$out"
+
 mkunit stuck-rollup.service no "activating|start|$PREV|success|0"
 out=$(wait_for_oneshot stuck-rollup.service 1 "0:$PREV" 2>&1); rc=$?
 res "$(t "$rc" -eq 2; echo $?)" "a unit still activating at the timeout returns 2" "rc=$rc out=$out"

@@ -27,6 +27,9 @@ EnvironmentFile=-/etc/default/stellarindex
 Environment=CONFIG_PATH=/etc/stellarindex.toml
 Environment=CH_ADDR=127.0.0.1:9300
 
+# 75 = run-heavy-job.sh skipped this fire (per-job lock held): not a
+# failure, but ExecMainStatus=75 keeps it distinct from a run.
+SuccessExitStatus=75
 ExecStart=/usr/local/sbin/run-heavy-job.sh compute-completeness /usr/local/sbin/run-compute-completeness.sh
 
 # De-privileged (CS-118, audit-2026-06-30) — the stellarindex user is

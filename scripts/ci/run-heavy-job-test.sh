@@ -34,14 +34,16 @@
 #      every other spelling and anything under the 90 s floor (the
 #      systemd default this bound replaces), exiting 2 without running
 #      the payload.
-#   7. a held lock is a REFUSAL (exit 75, payload not run) for a caller
-#      systemd did not launch — an operator or a script, who would read
-#      an exit-0 skip as a finished run — and stays a clean exit-0 skip
-#      for a unit's overlapping fire ($INVOCATION_ID set).
-#   8. the disk watchdog does not hold the lock fd: an orphaned
+#   7. a held lock is a REFUSAL (exit 75, payload not run) for every
+#      caller, never 0 — a manual caller cannot tell an exit-0 skip
+#      from a finished run, and neither can a unit's overlapping fire
+#      ($INVOCATION_ID set).
+#   8. every systemd unit that ExecStarts the wrapper declares
+#      SuccessExitStatus=75, so that skip is not a unit failure.
+#   9. the disk watchdog does not hold the lock fd: an orphaned
 #      watchdog `sleep` held it past the job's exit, so a prompt
 #      relaunch of a failed job found it "held" and was skipped.
-#   9. no operator-facing text tells operators to use a UNIQUE job name
+#   10. no operator-facing text tells operators to use a UNIQUE job name
 #      per attempt: that is what defeated the per-name lock.
 #
 # Runs the wrapper's non-root exec path (no systemd-run / flock needed:
@@ -249,7 +251,7 @@ else
   if err_has "TimeoutStopSec=infinity — a systemctl stop will NEVER escalate to SIGKILL"; then ok "infinity says on stderr that no stop will ever escalate"; else bad "infinity accepted silently ($(cat "$TMP/err"))"; fi
 fi
 
-# ── 7. a held lock: refusal for a manual run, skip for a unit's fire ──
+# ── 7. a held lock: exit 75 for every caller, payload not run ────────
 run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_HELD=1
 if [ "$rc" -eq 75 ] && [ ! -s "$TMP/out" ] && err_has "refusing to start test-job" && err_has "still alive"; then
   ok "held lock, manual run: refused with exit 75, payload not run"
@@ -257,13 +259,22 @@ else
   bad "held lock, manual run not refused (rc=$rc, out='$(tr '\n' ' ' < "$TMP/out")', err='$(tr '\n' ' ' < "$TMP/err")')"
 fi
 run HEAVY_JOB_OPS_ENV="$OPS_ENV" FLOCK_HELD=1 INVOCATION_ID=0123456789abcdef
-if [ "$rc" -eq 0 ] && [ ! -s "$TMP/out" ] && err_has "skipping this fire"; then
-  ok "held lock, systemd unit fire: skipped with exit 0, payload not run"
+if [ "$rc" -eq 75 ] && [ ! -s "$TMP/out" ] && err_has "skipping this fire"; then
+  ok "held lock, systemd unit fire: skipped with exit 75, payload not run"
 else
-  bad "held lock, systemd unit fire not a clean skip (rc=$rc, err='$(tr '\n' ' ' < "$TMP/err")')"
+  bad "held lock, systemd unit fire not a clean exit-75 skip (rc=$rc, err='$(tr '\n' ' ' < "$TMP/err")')"
 fi
 
-# ── 8. the watchdog does not hold the lock (root branch only) ────────
+# ── 8. every wrapper unit tolerates the skip code ─────────────────────
+echo "  [systemd units]"
+units=0
+while IFS= read -r unit; do
+  units=$((units + 1))
+  if grep -qx 'SuccessExitStatus=75' "$unit"; then ok "$unit declares SuccessExitStatus=75"; else bad "$unit ExecStarts run-heavy-job.sh without SuccessExitStatus=75 — a lock skip would fail the unit"; fi
+done < <(grep -rlE '^ExecStart=[^ ]*run-heavy-job\.sh ' configs/ansible/roles/archival-node/templates/systemd deploy/systemd)
+if [ "$units" -gt 0 ]; then ok "$units wrapper unit(s) checked"; else bad "no unit ExecStarts run-heavy-job.sh — the unit check ran over nothing"; fi
+
+# ── 9. the watchdog does not hold the lock (root branch only) ────────
 if [ "$branch" != "non-root" ]; then
   rm -f "$TMP/fd9"
   run HEAVY_JOB_OPS_ENV="$OPS_ENV" FD9_REC="$TMP/fd9"
@@ -275,12 +286,13 @@ if [ "$branch" != "non-root" ]; then
 fi
 
 }
+mkdir -p "$TMP/heldbin"; printf '#!/usr/bin/env bash\nexit 1\n' > "$TMP/heldbin/flock"; chmod +x "$TMP/heldbin/flock"
 mkdir -p "$TMP/userbin"; printf '#!/usr/bin/env bash\necho 1000\n' > "$TMP/userbin/id"; chmod +x "$TMP/userbin/id"
 PATH="$TMP/userbin:$PATH" run_cases "non-root"
 mkdir -p "$TMP/rootbin"; printf '#!/usr/bin/env bash\necho 0\n' > "$TMP/rootbin/id"; chmod +x "$TMP/rootbin/id"
 PATH="$TMP/rootbin:$PATH" run_cases "root (id stubbed)"
 
-# ── 9. nothing tells an operator to pick a per-attempt job name ──────
+# ── 10. nothing tells an operator to pick a per-attempt job name ─────
 echo "  [operator-facing text]"
 # git grep: tracked files only, so git-ignored local scratch never trips it.
 if hits=$(git grep -nIiE 'unique (job )?name per attempt|with a unique job name|run-heavy-job\.sh [^ ]*-try[0-9<]' \
