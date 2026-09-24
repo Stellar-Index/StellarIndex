@@ -329,27 +329,122 @@ func TestDefaultPairs_FitSyntheticTxHash(t *testing.T) {
 }
 
 // A raw-fill backfill and the live streamer must derive the same
-// tx_hash for the same Kraken fill, or backfilling a streamed window
-// inserts every fill twice. Red today: the raw-fill path hashes
-// "<SYM>-fill-<id>-BF-<ts>" via backfillTxHash, the streamer
-// "<SYM>-<id>" via formatTxHash. The fix is in backfill_trades.go,
-// which is held by another change.
+// trades-PK identity (tx_hash and the stored microsecond ts) for the
+// same Kraken fill, or backfilling a streamed window inserts every fill
+// twice and doubles its volume.
 func TestRawFillTxHashMatchesLiveIdentity(t *testing.T) {
-	t.Skip("GH-994 part 1: needs krakenFillToTrade (backfill_trades.go) to call formatTxHash")
 	pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
 	if err != nil {
 		t.Fatalf("NewPair: %v", err)
 	}
-	f := krakenFill{price: "0.19329800", volume: "159.80957483", ts: 1530403200.5, id: 12345678}
-	backfilled, err := krakenFillToTrade(f, "XLM/USD", pair)
-	if err != nil {
-		t.Fatalf("krakenFillToTrade: %v", err)
+	pairMap := map[string]canonical.Pair{"XLM/USD": pair}
+
+	liveFrame := `{"channel":"trade","type":"update","data":[{"symbol":"XLM/USD","side":"buy","qty":159.80957483,"price":0.193298,"ord_type":"limit","trade_id":460991,"timestamp":"2018-07-01T00:00:25.1Z"}]}`
+	res, err := parseFrame([]byte(liveFrame), pairMap)
+	if err != nil || len(res.Trades) != 1 {
+		t.Fatalf("parseFrame: %d trade(s), err %v", len(res.Trades), err)
 	}
-	live, err := formatTxHash("XLM/USD", f.id)
-	if err != nil {
-		t.Fatalf("formatTxHash: %v", err)
+	live := res.Trades[0]
+
+	restPage := `{"error":[],"result":{"XXLMZUSD":[["0.19329800","159.80957483",1530403225.1,"b","l","",460991]],"last":"1530403225100000000"}}`
+	backfilled := backfillOnePage(t, pairMap, pair, restPage)
+	if len(backfilled) != 1 {
+		t.Fatalf("BackfillTrades: %d trade(s), want 1", len(backfilled))
 	}
-	if backfilled.TxHash != live {
-		t.Fatalf("raw-fill tx_hash %s != live tx_hash %s for fill %d", backfilled.TxHash, live, f.id)
+	bf := backfilled[0]
+	if bf.TxHash != live.TxHash {
+		t.Errorf("raw-fill tx_hash %s != live tx_hash %s for fill 460991", bf.TxHash, live.TxHash)
+	}
+	// Postgres keeps microseconds; the driver truncates below that.
+	if b, l := bf.Timestamp.Truncate(time.Microsecond), live.Timestamp.Truncate(time.Microsecond); !b.Equal(l) {
+		t.Errorf("raw-fill ts %s != live ts %s at the stored precision", b.Format(time.RFC3339Nano), l.Format(time.RFC3339Nano))
+	}
+}
+
+// A fill without a trade_id has no identity that can match the live
+// row, so the page is refused rather than stored under a made-up one.
+func TestBackfillTrades_RefusesFillWithoutTradeID(t *testing.T) {
+	pair, err := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+	if err != nil {
+		t.Fatalf("NewPair: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"error":[],"result":{"XXLMZUSD":[["0.19329800","159.80957483",1530403225.1,"b","l",""]],"last":"1530403225100000000"}}`))
+	}))
+	defer srv.Close()
+	s := &Streamer{Endpoint: srv.URL, PairMap: map[string]canonical.Pair{"XLM/USD": pair}}
+	from := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+	trades, err := s.BackfillTrades(context.Background(), pair, from, from.Add(24*time.Hour))
+	if err == nil {
+		t.Fatalf("fill without trade_id accepted as %d trade(s)", len(trades))
+	}
+}
+
+// backfillOnePage runs BackfillTrades against a venue serving page once
+// and an empty page after it.
+func backfillOnePage(t *testing.T, pairMap map[string]canonical.Pair, pair canonical.Pair, page string) []canonical.Trade {
+	t.Helper()
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			_, _ = w.Write([]byte(page))
+			return
+		}
+		_, _ = w.Write([]byte(`{"error":[],"result":{"XXLMZUSD":[],"last":""}}`))
+	}))
+	defer srv.Close()
+	s := &Streamer{Endpoint: srv.URL, PairMap: pairMap}
+	from := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+	trades, err := s.BackfillTrades(context.Background(), pair, from, from.Add(24*time.Hour))
+	if err != nil {
+		t.Fatalf("BackfillTrades: %v", err)
+	}
+	return trades
+}
+
+// A venue fault after the first page must not discard that page: the
+// fills are returned with the error, as the ctx-expiry arm already does.
+func TestBackfillTrades_VenueErrorKeepsFetchedPages(t *testing.T) {
+	faults := map[string]http.HandlerFunc{
+		"http_502": func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+		},
+		"venue_error": func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"error":["EAPI:Rate limit exceeded"]}`))
+		},
+	}
+	for name, fault := range faults {
+		t.Run(name, func(t *testing.T) {
+			calls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					_, _ = w.Write([]byte(krakenTradesPage1))
+					return
+				}
+				fault(w, r)
+			}))
+			defer srv.Close()
+
+			pair, _ := canonical.NewPair(mustAsset(t, "crypto:XLM"), mustAsset(t, "fiat:USD"))
+			s := &Streamer{Endpoint: srv.URL, PairMap: map[string]canonical.Pair{"XXLMZUSD": pair}}
+			from := time.Date(2018, 7, 1, 0, 0, 0, 0, time.UTC)
+			to := time.Date(2018, 7, 2, 0, 0, 0, 0, time.UTC)
+
+			trades, err := s.BackfillTrades(context.Background(), pair, from, to)
+			if err == nil {
+				t.Fatal("BackfillTrades returned nil error after a venue fault on page 2")
+			}
+			if calls != 2 {
+				t.Fatalf("venue calls = %d, want 2", calls)
+			}
+			if len(trades) != 3 {
+				t.Fatalf("trades = %d, want the 3 fills of page 1 returned with the error", len(trades))
+			}
+			if got := trades[0].BaseAmount.String(); got != "15980957483" {
+				t.Errorf("first fill base = %s, want 15980957483", got)
+			}
+		})
 	}
 }

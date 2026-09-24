@@ -232,10 +232,12 @@ type storedTradeProbe interface {
 }
 
 // refuseStoredOverlap refuses a window that already holds trades for
-// (source, pair). An off-chain row's identity is its synthesised tx_hash,
-// and no backfill shape derives the live streamer's (a candle has no
-// venue trade id), so writing over live rows double-counts their volume
-// with no VWAP, outlier or divergence guard to notice. Any stored row
+// (source, pair). An off-chain row's identity is its synthesised tx_hash
+// plus ts. A candle has no venue trade id, so it never matches a live row;
+// a kraken raw fill shares the streamer's tx_hash, but its REST ts is not
+// proven to equal the streamed ts at the stored microsecond. Writing over
+// live rows would double-count their volume with no VWAP, outlier or
+// divergence guard to notice. Any stored row
 // refuses, not only live ones: the tool cannot tell a row it wrote
 // itself from one it did not, and -allow-overlap covers its own re-runs.
 func refuseStoredOverlap(ctx context.Context, probe storedTradeProbe, source string, pair canonical.Pair, from, to time.Time) error {
@@ -331,8 +333,10 @@ func backfillKrakenRawTrades(kr *externalkraken.Streamer, pair canonical.Pair, f
 // walkWindowed fetches [from, to) window by window and hands each window
 // to sink before fetching the next. Every window before the one that
 // stops the walk is fully written, so resuming at the stopping window's
-// start skips nothing and re-fetches at most one window; whatever that
-// window's walk returned is discarded rather than trusted. A per-row
+// start skips nothing and re-fetches at most one window. The partial
+// fills that window's walk returned are discarded: writing them would put
+// rows inside the resume range, which refuseStoredOverlap then blocks
+// unless the operator disables the overlap guard for the rest. A per-row
 // write fault does not stop the walk (the rows are already logged and
 // lost) but keeps the exit non-zero; an infra write fault stops it.
 func walkWindowed(ctx context.Context, plan windowPlan, from, to time.Time, fetch windowFetch, sink windowSink, log io.Writer) error {
