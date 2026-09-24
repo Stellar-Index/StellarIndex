@@ -34,15 +34,46 @@ set -euo pipefail
 LOG=/var/log/galexie-mirror.log
 PARALLEL="${PARALLEL:-8}"
 
-# Hot floor (2026-07-25, ADR-0027 trim): partitions whose ledger range
-# ends BELOW this are deliberately trimmed from local storage — the cold
-# tier (aws-public-blockchain) serves them. Without this filter, Phase 2
-# sees every trimmed partition as "missing" and re-downloads the lot,
-# which would make trim and fill adversaries (~3.7 TB re-pulled).
-# Sourced from /etc/default/galexie-archive-fill (ansible-templated from
-# stellarindex_archive_hot_floor); 0 = no floor, mirror everything.
+# One run at a time, whoever the caller is: the timer runs this under
+# run-heavy-job.sh, an operator runs it by hand with PARTIALS=..., and a
+# second run would mirror from work lists the first is rewriting. The
+# lock is this script's own file on an auto-allocated fd, so it neither
+# collides with nor closes the wrapper's fd-9 lock. 75 = EX_TEMPFAIL,
+# the wrapper's "declined to run" code.
+LOCK=/run/lock/galexie-archive-fill.lock
+exec {lock_fd}>"$LOCK"
+if ! flock -n "$lock_fd"; then
+  echo "galexie-archive-fill: another run holds $LOCK (fuser -v $LOCK); not starting, exit 75" >&2
+  exit 75
+fi
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/galexie-fill.XXXXXX")
+trap 'rm -rf "$WORK"' EXIT
+
+# Hot floor (ADR-0027 trim): partitions whose ledger range ends BELOW
+# this are deliberately trimmed from local storage — the cold tier
+# (aws-public-blockchain) serves them. Without this filter, Phase 2 sees
+# every trimmed partition as "missing" and re-downloads the lot, making
+# trim and fill adversaries (~3.7 TB re-pulled). The floor is the higher
+# of the static ARCHIVE_HOT_FLOOR (/etc/default/galexie-archive-fill,
+# ansible's stellarindex_archive_hot_floor; 0 = none) and the cutoff the
+# trim itself last used, which compute-trim-cutoff.sh persists to
+# ARCHIVE_HOT_FLOOR_FILE before every trim — so the floor rolls
+# forward with the trim instead of trailing it.
+# shellcheck source=/dev/null  # ansible-rendered ARCHIVE_HOT_FLOOR=<int>
 [ -f /etc/default/galexie-archive-fill ] && . /etc/default/galexie-archive-fill
 ARCHIVE_HOT_FLOOR="${ARCHIVE_HOT_FLOOR:-0}"
+ARCHIVE_HOT_FLOOR_FILE=/var/lib/galexie-archive/hot-floor
+if [ -e "$ARCHIVE_HOT_FLOOR_FILE" ]; then
+  trim_floor=$(tr -d '[:space:]' < "$ARCHIVE_HOT_FLOOR_FILE")
+  if ! [[ "$trim_floor" =~ ^[0-9]+$ ]]; then
+    # Fail closed: without the floor, every trimmed partition looks missing.
+    echo "galexie-archive-fill: FATAL — $ARCHIVE_HOT_FLOOR_FILE holds '$trim_floor', not a ledger" >&2
+    exit 1
+  fi
+  if [ "$trim_floor" -gt "$ARCHIVE_HOT_FLOOR" ]; then
+    ARCHIVE_HOT_FLOOR=$trim_floor
+  fi
+fi
 PARTIAL_CHECK_WINDOW="${PARTIAL_CHECK_WINDOW:-4}"
 
 # Known partials: pass via env var (newline- or space-separated), e.g.
@@ -61,10 +92,10 @@ aws_ls() {  # $1=prefix (after aws-public/), remaining args passed to mc ls
   local prefix="$1"; shift
   local attempt out
   for attempt in 1 2 3; do
-    if out=$(mc ls "$@" "aws-public/${prefix}" 2>/tmp/galexie-fill.awsls.err); then
+    if out=$(mc ls "$@" "aws-public/${prefix}" 2>"$WORK/awsls.err"); then
       printf '%s\n' "$out"; return 0
     fi
-    echo "galexie-archive-fill: aws listing attempt ${attempt}/3 failed for ${prefix}: $(tail -1 /tmp/galexie-fill.awsls.err | cut -c1-160)" >&2
+    echo "galexie-archive-fill: aws listing attempt ${attempt}/3 failed for ${prefix}: $(tail -1 "$WORK/awsls.err" | cut -c1-160)" >&2
     sleep $((attempt * 5))
   done
   echo "galexie-archive-fill: FATAL — AWS listing of ${prefix} failed 3 times; not a local fault" >&2
@@ -88,7 +119,7 @@ fi
 # never the full bucket.
 if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   echo "=== $(date -Iseconds) Phase 1b: scan latest $PARTIAL_CHECK_WINDOW partitions for partials ===" | tee -a "$LOG"
-  : > /tmp/galexie-fill.incomplete.txt
+  : > "$WORK/incomplete.txt"
   # Galexie partitions are named with a DESCENDING-hex prefix so that
   # alphabetical sort puts the most recent (highest-ledger) partition
   # FIRST. e.g. FC42F7FF--62720000-... sorts BEFORE FFFFFFFF--0-63999
@@ -108,9 +139,9 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
   # because the AWS call itself succeeded).
   aws_ls aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
     | awk '{print $NF}' | sed 's:/$::' | { grep -v '^\.' || true; } \
-    | sort > /tmp/galexie-fill.partitions.txt
-  head -n "$PARTIAL_CHECK_WINDOW" /tmp/galexie-fill.partitions.txt \
-    > /tmp/galexie-fill.tail.txt
+    | sort > "$WORK/partitions.txt"
+  head -n "$PARTIAL_CHECK_WINDOW" "$WORK/partitions.txt" \
+    > "$WORK/tail.txt"
   while read -r p; do
     [ -z "$p" ] && continue
     aws_n=$(aws_ls "aws-public-blockchain/v1.1/stellar/ledgers/pubnet/$p/" --recursive | wc -l)
@@ -133,45 +164,45 @@ if [ "$PARTIAL_CHECK_WINDOW" -gt 0 ]; then
       # that exists locally but is incomplete is never revisited. Adding
       # it to the needs-work list closes that hole without the delete.
       echo "  incomplete: $p  local=$local_n  aws=$aws_n  -> queued for incremental mirror" | tee -a "$LOG"
-      echo "$p" >> /tmp/galexie-fill.incomplete.txt
+      echo "$p" >> "$WORK/incomplete.txt"
     else
       echo "  ok: $p  local=$local_n  aws=$aws_n" | tee -a "$LOG"
     fi
-  done < /tmp/galexie-fill.tail.txt
+  done < "$WORK/tail.txt"
 fi
 
 echo "=== $(date -Iseconds) Phase 2: build needs-work list ===" | tee -a "$LOG"
 aws_ls aws-public-blockchain/v1.1/stellar/ledgers/pubnet/ \
-  | awk '{print $NF}' | sed 's:/$::' | sort > /tmp/galexie-fill.aws.txt
+  | awk '{print $NF}' | sed 's:/$::' | sort > "$WORK/aws.txt"
 mc ls local/galexie-archive/ \
-  | awk '{print $NF}' | sed 's:/$::' | sort > /tmp/galexie-fill.local.txt
-comm -23 /tmp/galexie-fill.aws.txt /tmp/galexie-fill.local.txt \
-  > /tmp/galexie-fill.missing.txt
+  | awk '{print $NF}' | sed 's:/$::' | sort > "$WORK/local.txt"
+comm -23 "$WORK/aws.txt" "$WORK/local.txt" \
+  > "$WORK/missing.txt"
 # needs-work = MISSING (never mirrored) + INCOMPLETE (present but short,
 # from Phase 1b). Before 2026-07-25 the incomplete set was handled by
 # deleting those partitions so they showed up as missing here; they are
 # now unioned in directly and mirrored incrementally.
-touch /tmp/galexie-fill.incomplete.txt
-sort -u /tmp/galexie-fill.missing.txt /tmp/galexie-fill.incomplete.txt \
-  > /tmp/galexie-fill.needs-work.unfloored.txt
+touch "$WORK/incomplete.txt"
+sort -u "$WORK/missing.txt" "$WORK/incomplete.txt" \
+  > "$WORK/needs-work.unfloored.txt"
 # Drop partitions entirely below the hot floor — those are trimmed on
 # purpose, not missing. A partition STRADDLING the floor stays eligible.
 below=0
-: > /tmp/galexie-fill.needs-work.txt
+: > "$WORK/needs-work.txt"
 while read -r p; do
   [ -z "$p" ] && continue
   end=${p##*-}
   if [[ "$end" =~ ^[0-9]+$ ]] && [ "$end" -lt "$ARCHIVE_HOT_FLOOR" ]; then
     below=$((below+1)); continue
   fi
-  echo "$p" >> /tmp/galexie-fill.needs-work.txt
-done < /tmp/galexie-fill.needs-work.unfloored.txt
+  echo "$p" >> "$WORK/needs-work.txt"
+done < "$WORK/needs-work.unfloored.txt"
 echo "  below hot floor ($ARCHIVE_HOT_FLOOR), intentionally not mirrored: $below" | tee -a "$LOG"
-echo "  AWS partitions: $(wc -l < /tmp/galexie-fill.aws.txt)" | tee -a "$LOG"
-echo "  local partitions present: $(wc -l < /tmp/galexie-fill.local.txt)" | tee -a "$LOG"
-echo "  missing entirely: $(wc -l < /tmp/galexie-fill.missing.txt)" | tee -a "$LOG"
-echo "  incomplete (queued by Phase 1b): $(wc -l < /tmp/galexie-fill.incomplete.txt)" | tee -a "$LOG"
-echo "  needs work (total): $(wc -l < /tmp/galexie-fill.needs-work.txt)" | tee -a "$LOG"
+echo "  AWS partitions: $(wc -l < "$WORK/aws.txt")" | tee -a "$LOG"
+echo "  local partitions present: $(wc -l < "$WORK/local.txt")" | tee -a "$LOG"
+echo "  missing entirely: $(wc -l < "$WORK/missing.txt")" | tee -a "$LOG"
+echo "  incomplete (queued by Phase 1b): $(wc -l < "$WORK/incomplete.txt")" | tee -a "$LOG"
+echo "  needs work (total): $(wc -l < "$WORK/needs-work.txt")" | tee -a "$LOG"
 
 echo "=== $(date -Iseconds) Phase 3: mirror per-partition (parallel=$PARALLEL) ===" | tee -a "$LOG"
 # Partitions here are either fully missing or incomplete; `mc mirror`
@@ -180,7 +211,8 @@ echo "=== $(date -Iseconds) Phase 3: mirror per-partition (parallel=$PARALLEL) =
 # objects rather than a full re-download. --skip-errors is belt-and-braces.
 # Parallel=8 is conservative — 100 MB/s observed link saturation, so
 # more workers won't help.
-xargs -a /tmp/galexie-fill.needs-work.txt -P "$PARALLEL" -I {} bash -c '
+# shellcheck disable=SC2016  # $(date) is expanded by the per-partition bash
+xargs -a "$WORK/needs-work.txt" -P "$PARALLEL" -I {} bash -c '
   echo "==> $(date -Iseconds) {}" >> "'"$LOG"'"
   mc mirror --skip-errors \
     "aws-public/aws-public-blockchain/v1.1/stellar/ledgers/pubnet/{}/" \

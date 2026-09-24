@@ -21,7 +21,15 @@
 #     headroom to make sense (a brand-new node has nothing to trim).
 #   - bails when the resulting cutoff is below ledger 2 (the
 #     first real ledger; ledger 1 is empty by Stellar design).
+#   - persists the cutoff as the archive's hot floor BEFORE the trim
+#     runs, and bails if it cannot. galexie-archive-fill reads that
+#     file and does not re-mirror partitions below it; a floor from any
+#     other source drifts from this rolling cutoff and turns trim and
+#     fill into adversaries. The floor only ever rises: a lower
+#     cutoff trims less, it does not restore what was trimmed.
 set -euo pipefail
+
+ARCHIVE_HOT_FLOOR_FILE=/var/lib/galexie-archive/hot-floor
 
 # Read a systemd EnvironmentFile VERBATIM — never `.`/source it. Its
 # values are unquoted (that is what systemd wants), so the shell would
@@ -64,5 +72,20 @@ if [ "$CUTOFF" -lt 2 ]; then
   exit 1
 fi
 
+FLOOR=$CUTOFF
+if [ -e "$ARCHIVE_HOT_FLOOR_FILE" ]; then
+  PREV=$(tr -d '[:space:]' < "$ARCHIVE_HOT_FLOOR_FILE")
+  if ! [[ "$PREV" =~ ^[0-9]+$ ]]; then
+    echo "compute-trim-cutoff: $ARCHIVE_HOT_FLOOR_FILE holds '$PREV', not a ledger; refusing to trim" >&2
+    exit 1
+  fi
+  if [ "$PREV" -gt "$FLOOR" ]; then
+    FLOOR=$PREV
+  fi
+fi
+mkdir -p "$(dirname "$ARCHIVE_HOT_FLOOR_FILE")"
+echo "$FLOOR" > "$ARCHIVE_HOT_FLOOR_FILE.tmp"
+mv -f "$ARCHIVE_HOT_FLOOR_FILE.tmp" "$ARCHIVE_HOT_FLOOR_FILE"
+
 echo "TRIM_CUTOFF=$CUTOFF" > /run/galexie-archive-trim.env
-echo "compute-trim-cutoff: tip=$TIP cutoff=$CUTOFF (90d hot window)" >&2
+echo "compute-trim-cutoff: tip=$TIP cutoff=$CUTOFF hot-floor=$FLOOR (90d hot window)" >&2

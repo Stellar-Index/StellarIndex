@@ -460,7 +460,10 @@
   # which partitions are trimmed ON PURPOSE (cold tier serves them) so
   # it stops treating them as missing — without it, trim and fill are
   # adversaries and the fill re-downloads everything trimmed (~3.7 TB
-  # at the planned 49,984,000 boundary).
+  # at the planned 49,984,000 boundary). This is only the static floor:
+  # once galexie-archive-trim runs, the fill also honours the rolling
+  # cutoff compute-trim-cutoff.sh persists to
+  # /var/lib/galexie-archive/hot-floor, and uses the higher of the two.
   ansible.builtin.copy:
     dest: /etc/default/galexie-archive-fill
     owner: root

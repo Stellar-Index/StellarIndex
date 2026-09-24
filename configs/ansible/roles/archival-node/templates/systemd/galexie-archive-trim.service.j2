@@ -30,6 +30,9 @@ Wants=network-online.target
 Type=oneshot
 User=root
 
+# The helper also persists the cutoff as galexie-archive-fill's hot floor
+# (/var/lib/galexie-archive/hot-floor) and fails if it cannot, so the
+# hourly fill never re-mirrors what this run is about to delete.
 ExecStartPre=/usr/local/sbin/compute-trim-cutoff.sh
 EnvironmentFile=-/run/galexie-archive-trim.env
 EnvironmentFile=-/etc/default/stellarindex-ops
