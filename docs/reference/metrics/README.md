@@ -3271,7 +3271,7 @@ a per-component freshness reader fell off its index. Buckets span
 ### `stellarindex_sep41_supply_rollup_advances_total`
 
 Counter, labels `contract_id` + `outcome` (`ok` / `noop` /
-`error`).
+`no_cursor` / `error`).
 
 Counts passes of the aggregator's SEP-41 supply rollup worker —
 the incremental maintainer (migration 0085) that keeps the
@@ -3285,7 +3285,11 @@ aggregate over `sep41_supply_events` (grown to hundreds of millions
 of rows by the 2026-07-05 re-derive) took minutes, ran in parallel
 across watched contracts, saturated Postgres IO, and blew up API
 p95/p99. `noop` is the dormant-token steady state (nothing new
-settled). Sustained `error` for a `contract_id` means that
+settled). `no_cursor` means the pass folded nothing because the
+projector's `(projector, sep41_supply)` ingestion cursor is absent, so
+the checkpoint is pinned and every read for that contract takes the
+full sum; `stellarindex_sep41_supply_rollup_no_cursor` alerts on it.
+Sustained `error` for a `contract_id` means that
 contract's checkpoint is frozen and the reader silently fell back
 to the slow full sum for it — correlate with a p99 climb on
 `_aggregator_supply_refresh_duration_seconds`.

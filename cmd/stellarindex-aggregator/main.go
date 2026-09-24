@@ -1475,6 +1475,25 @@ type sep41RollupAdvancer interface {
 	AdvanceSEP41SupplyRollup(ctx context.Context, contractID string) (timescale.SEP41RollupAdvance, error)
 }
 
+// sep41RollupOutcomeNoCursor labels a pass that folded nothing because the
+// projector's sep41_supply cursor row is absent: the fold stays pinned and the
+// supply reader pays the full-history scan, so it must not read as "noop".
+const sep41RollupOutcomeNoCursor = "no_cursor"
+
+// sep41RollupOutcome maps one advance to its
+// stellarindex_sep41_supply_rollup_advances_total outcome label.
+func sep41RollupOutcome(res timescale.SEP41RollupAdvance, err error) string {
+	switch {
+	case err != nil:
+		return "error"
+	case res.CursorAbsent:
+		return sep41RollupOutcomeNoCursor
+	case !res.Advanced:
+		return "noop"
+	}
+	return "ok"
+}
+
 // runSEP41SupplyRollup periodically folds each watched SEP-41 contract's
 // newly-settled mint/burn/clawback events into its rollup checkpoint
 // (migration 0085, incident 2026-07-06). Advancing the rollup is what
@@ -1488,6 +1507,9 @@ type sep41RollupAdvancer interface {
 // fanning back out into the concurrent full-table scans that saturated
 // Postgres and blew up API p95/p99 in the first place.
 func runSEP41SupplyRollup(ctx context.Context, advancer sep41RollupAdvancer, contracts []string, cadence time.Duration, logger *slog.Logger) {
+	// Contracts currently pinned by an absent projector cursor; WARN once on
+	// entering that state, not every cadence.
+	noCursor := make(map[string]bool, len(contracts))
 	advanceAll := func() {
 		for _, c := range contracts {
 			if ctx.Err() != nil {
@@ -1495,21 +1517,21 @@ func runSEP41SupplyRollup(ctx context.Context, advancer sep41RollupAdvancer, con
 			}
 			start := time.Now()
 			res, err := advancer.AdvanceSEP41SupplyRollup(ctx, c)
-			outcome := "ok"
-			switch {
-			case err != nil:
-				outcome = "error"
-			case !res.Advanced:
-				outcome = "noop"
-			}
+			outcome := sep41RollupOutcome(res, err)
 			obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(c, outcome).Inc()
 			obs.SEP41SupplyRollupAdvanceDurationSeconds.WithLabelValues(outcome).Observe(time.Since(start).Seconds())
 			switch {
 			case err != nil && ctx.Err() == nil:
 				logger.Warn("sep41 supply rollup advance failed", "contract_id", c, "err", err)
+			case outcome == sep41RollupOutcomeNoCursor && !noCursor[c]:
+				logger.Warn("sep41 supply rollup pinned: projector cursor for sep41_supply is absent; supply reads use the full-history scan until it appears",
+					"contract_id", c, "checkpoint_ledger", res.ToLedger)
 			case res.Advanced:
 				logger.Debug("sep41 supply rollup advanced",
 					"contract_id", c, "from_ledger", res.FromLedger, "to_ledger", res.ToLedger)
+			}
+			if err == nil {
+				noCursor[c] = outcome == sep41RollupOutcomeNoCursor
 			}
 		}
 	}

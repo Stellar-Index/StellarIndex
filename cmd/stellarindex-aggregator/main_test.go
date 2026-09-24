@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"go/ast"
@@ -384,6 +385,67 @@ func waitForRollup(t *testing.T, cond func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("timed out waiting for rollup worker to advance all contracts")
+}
+
+// TestRunSEP41SupplyRollup_AbsentCursorIsNoCursorNotNoop pins GH-1153: a pass
+// that folds nothing because the projector's sep41_supply cursor row is
+// absent leaves the fold pinned and every supply read on the full-history
+// scan. It must count as outcome="no_cursor" (never the steady-state "noop"
+// a dormant token produces) and WARN once per contract, not every cadence.
+func TestRunSEP41SupplyRollup_AbsentCursorIsNoCursorNotNoop(t *testing.T) {
+	const cPinned = "CROLLUPNOCURSOR0000000000000000000000000000000000000000"
+	fake := &fakeRollupAdvancer{
+		results: map[string]timescale.SEP41RollupAdvance{
+			cPinned: {ContractID: cPinned, Advanced: false, CursorAbsent: true},
+		},
+	}
+	counter := func(outcome string) float64 {
+		return testutil.ToFloat64(obs.SEP41SupplyRollupAdvancesTotal.WithLabelValues(cPinned, outcome))
+	}
+	beforeNoCursor, beforeNoop := counter("no_cursor"), counter("noop")
+
+	var logs bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		runSEP41SupplyRollup(ctx, fake, []string{cPinned}, time.Millisecond,
+			slog.New(slog.NewTextHandler(&logs, nil)))
+	}()
+	const passes = 3
+	waitForRollup(t, func() bool { return fake.callCount() >= passes })
+	cancel()
+	<-done
+
+	calls := float64(fake.callCount())
+	if got := counter("no_cursor") - beforeNoCursor; got != calls {
+		t.Errorf("no_cursor outcomes = %v over %v passes; want one per pass", got, calls)
+	}
+	if got := counter("noop") - beforeNoop; got != 0 {
+		t.Errorf("noop outcomes = %v; an absent cursor must not report as steady-state noop", got)
+	}
+	if got := strings.Count(logs.String(), "level=WARN"); got != 1 {
+		t.Errorf("WARN lines = %d over %v passes; want exactly 1 (first occurrence per contract)\n%s", got, calls, logs.String())
+	}
+}
+
+func TestSEP41RollupOutcome(t *testing.T) {
+	cases := []struct {
+		name string
+		res  timescale.SEP41RollupAdvance
+		err  error
+		want string
+	}{
+		{"advanced", timescale.SEP41RollupAdvance{Advanced: true}, nil, "ok"},
+		{"steady-state", timescale.SEP41RollupAdvance{}, nil, "noop"},
+		{"absent cursor", timescale.SEP41RollupAdvance{CursorAbsent: true}, nil, "no_cursor"},
+		{"error wins", timescale.SEP41RollupAdvance{CursorAbsent: true}, errors.New("boom"), "error"},
+	}
+	for _, tc := range cases {
+		if got := sep41RollupOutcome(tc.res, tc.err); got != tc.want {
+			t.Errorf("%s: outcome = %q; want %q", tc.name, got, tc.want)
+		}
+	}
 }
 
 // TestBuildSupplyPolicy_TranslatesConfig — CFG-11 (audit-2026-07-23).
