@@ -390,6 +390,18 @@ against.
   Lost rows count on `stellarindex_admin_audit_write_failures_total`
   under four new `passkey_*` surfaces.
 
+- **aggregator — source contributions keep their window (GH #763):**
+  the contribution sink dropped `ContributionRecord.Window`, so the
+  5m/1h/24h breakdowns of a pair landed in `price_source_contributions`
+  indistinguishable and "latest row" returned whichever window ran
+  last. Migration 0169 adds nullable `window_seconds` plus a
+  window-aware unique key beside 0026's primary key (old-binary-safe),
+  the sink writes it, and `InsertPriceSourceContributions` refuses a
+  row without a whole-second window. 0169 also declares a 90-day
+  retention policy, shipped disabled as 0156's is, and re-issues the table and `bucket`
+  comments to describe the per-tick write they get. Dropping the old
+  key and `SET NOT NULL` is a later release's migration.
+
 - **sources — chainlink round dedup (RNC26):** the poller now marks a
   round as emitted only after its oracle update is built. A round whose
   projection failed (unresolved decimals, malformed answer) was
