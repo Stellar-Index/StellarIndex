@@ -38,6 +38,8 @@ except ImportError:
     sys.exit(2)
 
 ROLES_DIR = "configs/ansible/roles"
+PLAYBOOKS_DIR = "configs/ansible/playbooks"
+TASKS_DIR = "configs/ansible/tasks"
 
 # Suffix-anchored on purpose: `stellar_passphrase` (the public network
 # passphrase) and `ssh_permit_password_auth` (a bool) must NOT match, while
@@ -86,6 +88,25 @@ def template_renders_secret(path):
             if SECRET_VAR.search(m.group(1))]
 
 
+def role_of(task_file):
+    """Role name for a file under ROLES_DIR/<role>/..., else None.
+
+    Playbooks and the top-level configs/ansible/tasks/ files are not
+    role-scoped: ansible resolves their template `src` against a
+    `templates/` directory next to the file itself, not a role's.
+    """
+    parts = task_file.split(os.sep)
+    if parts[:3] == ROLES_DIR.split(os.sep) and len(parts) >= 4:
+        return parts[3]
+    return None
+
+
+def templates_dir_for(task_file, role):
+    if role is not None:
+        return os.path.join(ROLES_DIR, role, "templates")
+    return os.path.join(os.path.dirname(task_file), "templates")
+
+
 def walk(tasks, task_file, role):
     global checked
     for task in tasks:
@@ -106,14 +127,18 @@ def walk(tasks, task_file, role):
             # loop-driven src (e.g. systemd/{{ item }}.j2) — not statically
             # resolvable; those templates render unit files, not secrets.
             continue
-        tpl = os.path.join(ROLES_DIR, role, "templates", src)
+        tpl = os.path.join(templates_dir_for(task_file, role), src)
         if not os.path.isfile(tpl):
             continue
         hits = template_renders_secret(tpl)
         if not hits:
             continue
         checked += 1
-        key = f"{role}/{os.path.relpath(task_file, os.path.join(ROLES_DIR, role))}::{task.get('name')}"
+        if role is not None:
+            rel_base = os.path.join(ROLES_DIR, role)
+            key = f"{role}/{os.path.relpath(task_file, rel_base)}::{task.get('name')}"
+        else:
+            key = f"{os.path.relpath(task_file, 'configs/ansible')}::{task.get('name')}"
         suppressed = task.get("diff") is False or task.get("no_log") is True
         if key in GRANDFATHERED:
             seen_grandfathered.add(key)
@@ -128,9 +153,19 @@ def walk(tasks, task_file, role):
                 f"the CI log")
 
 
-task_files = sorted(glob.glob(os.path.join(ROLES_DIR, "*", "tasks", "*.yml")))
+# Role tasks/ (recursive — a role may nest tasks in subdirectories) and
+# handlers/, plus the play-level surfaces that are NOT under any role:
+# playbooks/ and the shared configs/ansible/tasks/ imported by them.
+# T492: the original scan covered only ROLES_DIR/*/tasks/*.yml, so a
+# secret-rendering template task anywhere else was invisible to this lint.
+task_files = sorted(set(
+    glob.glob(os.path.join(ROLES_DIR, "*", "tasks", "**", "*.yml"), recursive=True)
+    + glob.glob(os.path.join(ROLES_DIR, "*", "handlers", "*.yml"))
+    + glob.glob(os.path.join(PLAYBOOKS_DIR, "*.yml"))
+    + glob.glob(os.path.join(TASKS_DIR, "*.yml"))
+))
 for task_file in task_files:
-    role = task_file.split(os.sep)[3]
+    role = role_of(task_file)
     with open(task_file, encoding="utf-8") as fh:
         try:
             doc = yaml.safe_load(fh)
